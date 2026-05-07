@@ -1,0 +1,240 @@
+    @keyframes hazaz {
+    0% { transform: rotate(1deg); }
+    10% { transform: rotate(-1deg); }
+    20% { transform: rotate(1deg); }
+    30% { transform: rotate(-1deg); }
+    40% { transform: rotate(1deg); }
+    50% { transform: rotate(-1deg); }
+    100% { transform: rotate(0deg); }
+}
+.hazaz{
+    animation-name: hazaz;
+    animation-duration: 1s;
+    animation-iteration-count: 1;
+}
+
+    @keyframes hazazinfinite {
+    0% { transform: rotate(0deg); }
+    10% { transform: rotate(-1deg); }
+    20% { transform: rotate(1deg); }
+    100% { transform: rotate(0deg); }
+}
+.hazaz-infinite{
+    animation-name: hazazinfinite;
+    animation-duration: 5s;
+    animation-iteration-count: 100;
+}
+
+
+    @keyframes hadiwonder {
+    0% { transform: rotate(1deg); }
+    10% { transform: rotate(-1deg); }
+    20% { transform: rotate(1deg); }
+    30% { transform: rotate(1deg); }
+    40% { transform: rotate(2deg); }
+    50% { transform: rotate(2deg); }
+    100% { transform: rotate(0deg); }
+}
+.hadiwonder{
+    animation-name: hadiwonder;
+    animation-duration: 1s;
+    animation-iteration-count: 1;
+}
+
+
+.loader{
+    background-color: gray;
+    color: white;
+    font-size:22vw;
+    width: 100%;
+    height: 100%;
+    position: fixed;
+    z-index: 9999;
+    animation: welcome 5s;
+  }
+    @keyframes welcome {
+0% { height: 100%; }
+20% { height: 30%; }
+100% {height: 0%;}
+}
+
+    @keyframes lafaf {
+    0% { rotate:0deg; }
+    10% { rotate:30deg; }
+    20% { rotate:60deg; }
+    30% { rotate:90deg; }
+    100% { rotate:360deg; }
+}
+.lafaf{
+    animation-name: lafaf;
+    animation-duration: 1s;
+    position: relative;
+    animation-iteration-count: 1;
+}
+
+
+    @keyframes ymen {
+    0% { margin-left: -100px !important;}
+    80% { margin-left:-25px !important; }
+    100% { margin-left:0 !important; }
+}
+.ymen{
+    animation-name: ymen;
+    animation-duration: 1s;
+    animation-iteration-count: 1;
+}
+
+
+    @keyframes yasar {
+    0% { right: 100px; }
+    80% { right:-25px; }
+    100% { right:0; }
+}
+.yasar{
+    animation-name: yasar;
+    animation-duration: 1s;
+    animation-iteration-count: 1;
+}
+    @keyframes hadi-alert {
+    0% { opacity: 0%; }
+    90% { opacity: 100%; }
+    93% { opacity: 0%; }
+    97% { opacity: 100%; }
+    100% { opacity:0%; }
+}
+.hadi-alert{
+    position: fixed;
+    bottom:20px;
+    left:20px;
+    z-index: 99;
+    width:300px;
+    height:50px;
+    font-size: 24px;
+    text-align:center;
+  
+  
+    animation-name: hadi-alert;
+    animation-duration: 1s;
+    animation-iteration-count: 1;
+}
+
+
+    @keyframes police {
+    0% { background-color: red; }
+    25% { background-color: blue; }
+    50% { background-color: red; }
+    75% { background-color: blue; }
+    100% { background-color: red; }
+}
+
+.police {
+    animation-name: police;
+    animation-duration: .5s; /* Changed to 4 seconds for better visibility */
+    animation-delay: 1s;
+    animation-iteration-count: 1;
+
+}
+
+    @keyframes wewe {
+    0% { background-color: red; }
+    25% { background-color: blue; }
+    50% { background-color: red; }
+    75% { background-color: blue; }
+    100% { background-color: red; }
+}
+
+.wewe {
+    animation-name: wewe;
+    animation-duration: .5s; /* Changed to 4 seconds for better visibility */
+    animation-delay: 1s;
+
+}
+
+
+
+
+    @keyframes hadi-white-flash {
+    0% { background-color:black; }
+    10% { background-color:white; }
+    20% { background-color:black; }
+    30% { background-color:white; }
+    100% {}
+}
+
+.hadi-white-flash {
+    animation-name: hadi-white-flash;
+    animation-duration: 1s; /* Changed to 4 seconds for better visibility */
+    animation-delay: 1s;
+
+}
+
+
+    @keyframes hadi-fade-in {
+    0% { opacity: 0; }
+    50% { opacity: 0; } /* Element is hidden for the first half of the animation */
+    100% { opacity: 1; } /* Element is fully visible at the end */
+}
+
+.hadi-fade-in {
+    animation-name: hadi-fade-in1;
+    animation-duration: 1s; /* Changed to 4 seconds for better visibility */
+    animation-delay: 0s; /* Delay added before the animation starts */
+    animation-timing-function: ease-in; /* Ease-in timing function */
+}
+
+
+    @keyframes hadi-fade-in1 {
+    0% { opacity: 0; }
+    60% { opacity: 0; } /* Element is hidden for the first half of the animation */
+    100% { opacity: 1; } /* Element is fully visible at the end */
+}
+
+.hadi-fade-in1 {
+    animation-name: hadi-fade-in1;
+    animation-duration: 2s; /* Changed to 4 seconds for better visibility */
+    animation-delay: 0s; /* Delay added before the animation starts */
+    animation-timing-function: ease-in; /* Ease-in timing function */
+   
+}
+
+
+    @keyframes hadi-fade-in2 {
+    0% { opacity: 0; }
+    60% { opacity: 0; } /* Element is hidden for the first half of the animation */
+    100% { opacity: 1; } /* Element is fully visible at the end */
+}
+
+.hadi-fade-in2 {
+    animation-name: hadi-fade-in2;
+    animation-duration: 3s; /* Changed to 4 seconds for better visibility */
+    animation-delay: 0s; /* Delay added before the animation starts */
+    animation-timing-function: ease-in; /* Ease-in timing function */
+ }
+
+ 
+    @keyframes hadi-fade-in3 {
+    0% { opacity: 0; }
+    60% { opacity: 0; } /* Element is hidden for the first half of the animation */
+    100% { opacity: 1; } /* Element is fully visible at the end */
+}
+
+.hadi-fade-in3 {
+    animation-name: hadi-fade-in3;
+    animation-duration: 4s; /* Changed to 4 seconds for better visibility */
+    animation-delay: 0s; /* Delay added before the animation starts */
+    animation-timing-function: ease-in; /* Ease-in timing function */
+ }
+
+ 
+    @keyframes hadi-fade-in4 {
+    0% { opacity: 0; }
+    60% { opacity: 0; } /* Element is hidden for the first half of the animation */
+    100% { opacity: 1; } /* Element is fully visible at the end */
+}
+
+.hadi-fade-in4 {
+    animation-name: hadi-fade-in4;
+    animation-duration: 5s; /* Changed to 4 seconds for better visibility */
+    animation-delay: 0s; /* Delay added before the animation starts */
+    animation-timing-function: ease-in; /* Ease-in timing function */
+ }

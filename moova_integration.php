@@ -1,0 +1,232 @@
+<?php include('includes/header.php'); ?>
+<?php include('includes/navbar.php'); ?>
+<?php include('includes/sidebar.php'); ?>
+<?php
+require_once('classes/MoovaPosIntegration.php');
+
+MoovaPosIntegration::ensureSchema($conn);
+
+$moovaUserId = (int) ($_SESSION['userid'] ?? 0);
+$moovaScope = MoovaPosIntegration::getCurrentUserScope($conn, $moovaUserId);
+$canManageMoova = MoovaPosIntegration::userCanManageIntegration($conn, $moovaUserId);
+$activeMoovaLink = $moovaScope ? MoovaPosIntegration::findActiveLinkForScope($conn, $moovaScope) : null;
+
+if (empty($_SESSION['moova_integration_csrf'])) {
+    $_SESSION['moova_integration_csrf'] = bin2hex(random_bytes(24));
+}
+$moovaCsrf = $_SESSION['moova_integration_csrf'];
+
+$defaultWidgetUrl = $activeMoovaLink['widget_url'] ?? 'https://withmoova.com/pos-widget';
+$maskedToken = '';
+if ($activeMoovaLink && !empty($activeMoovaLink['moova_device_token_last4'])) {
+    $maskedToken = '•••• ' . $activeMoovaLink['moova_device_token_last4'];
+}
+?>
+
+<div class="content-wrapper">
+  <section class="content-header">
+    <div class="container-fluid">
+      <div class="row mb-2 align-items-center">
+        <div class="col-sm-6">
+          <h1 class="m-0 text-dark"><i class="fas fa-plug text-primary ml-2"></i> ربط Moova بالـ POS</h1>
+        </div>
+        <div class="col-sm-6">
+          <ol class="breadcrumb float-sm-left m-0 bg-transparent p-0">
+            <li class="breadcrumb-item"><a href="dashboard.php">الرئيسية</a></li>
+            <li class="breadcrumb-item active">Moova Integration</li>
+          </ol>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="content">
+    <div class="container-fluid">
+      <?php if (!$canManageMoova): ?>
+        <div class="alert alert-danger shadow-sm">
+          <i class="fas fa-lock ml-2"></i>
+          ليس لديك صلاحية إدارة ربط Moova. افتح الصفحة بحساب مدير.
+        </div>
+      <?php elseif (!$moovaScope): ?>
+        <div class="alert alert-danger shadow-sm">
+          <i class="fas fa-exclamation-triangle ml-2"></i>
+          لا يمكن تحديد الفرع/المؤسسة لهذا المستخدم، لذلك لن يتم تفعيل الربط.
+        </div>
+      <?php else: ?>
+        <div class="row">
+          <div class="col-lg-8">
+            <div class="card card-primary card-outline shadow-sm">
+              <div class="card-header">
+                <h3 class="card-title"><i class="fas fa-link ml-2"></i> بيانات الربط</h3>
+              </div>
+              <div class="card-body">
+                <div id="moovaIntegrationAlert" class="alert d-none" role="alert"></div>
+
+                <form id="moovaIntegrationForm" autocomplete="off">
+                  <input type="hidden" id="moovaCsrf" value="<?= htmlspecialchars($moovaCsrf, ENT_QUOTES, 'UTF-8') ?>">
+
+                  <div class="form-group">
+                    <label for="moovaDeviceToken">Moova Device Token <?= $activeMoovaLink ? '' : '<span class="text-danger">*</span>' ?></label>
+                    <input type="password" class="form-control" id="moovaDeviceToken"
+                           placeholder="<?= $activeMoovaLink ? htmlspecialchars($maskedToken, ENT_QUOTES, 'UTF-8') . ' - اتركه فارغا للإبقاء عليه' : 'الصق التوكن من صفحة Moova Admin' ?>">
+                    <small class="form-text text-muted">هذا التوكن يحدد فرع Moova المرتبط بهذا الـ POS. لا يتم عرضه بعد الحفظ.</small>
+                  </div>
+
+                  <div class="row">
+                    <div class="col-md-8">
+                      <div class="form-group">
+                        <label for="moovaWidgetUrl">Widget URL <span class="text-danger">*</span></label>
+                        <input type="url" class="form-control" id="moovaWidgetUrl" required
+                               value="<?= htmlspecialchars((string)$defaultWidgetUrl, ENT_QUOTES, 'UTF-8') ?>"
+                               placeholder="https://withmoova.com/pos-widget">
+                      </div>
+                    </div>
+                    <div class="col-md-4">
+                      <div class="form-group">
+                        <label for="moovaLocale">لغة الودجت</label>
+                        <select class="form-control" id="moovaLocale">
+                          <?php $locale = (string)($activeMoovaLink['locale'] ?? 'ar'); ?>
+                          <option value="ar" <?= $locale === 'ar' ? 'selected' : '' ?>>العربية</option>
+                          <option value="en" <?= $locale === 'en' ? 'selected' : '' ?>>English</option>
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="d-flex flex-wrap align-items-center gap-2 mt-3">
+                    <button type="submit" class="btn btn-primary px-4" id="moovaSaveBtn">
+                      <i class="fas fa-save ml-1"></i> حفظ الربط
+                    </button>
+                    <?php if ($activeMoovaLink): ?>
+                      <button type="button" class="btn btn-outline-danger px-4 mr-2" id="moovaDisconnectBtn">
+                        <i class="fas fa-unlink ml-1"></i> إلغاء الربط
+                      </button>
+                    <?php endif; ?>
+                    <a class="btn btn-outline-secondary px-4 mr-2" href="pos_barcode.php">
+                      <i class="fas fa-cash-register ml-1"></i> فتح شاشة البيع
+                    </a>
+                  </div>
+                </form>
+              </div>
+            </div>
+          </div>
+
+          <div class="col-lg-4">
+            <div class="card card-info card-outline shadow-sm">
+              <div class="card-header">
+                <h3 class="card-title"><i class="fas fa-store ml-2"></i> فرع الـ POS الحالي</h3>
+              </div>
+              <div class="card-body">
+                <dl class="row mb-0">
+                  <dt class="col-5">Tenant</dt>
+                  <dd class="col-7"><?= (int)$moovaScope['tenant'] ?></dd>
+                  <dt class="col-5">Branch</dt>
+                  <dd class="col-7"><?= (int)$moovaScope['branch'] ?></dd>
+                  <dt class="col-5">الحالة</dt>
+                  <dd class="col-7">
+                    <?php if ($activeMoovaLink): ?>
+                      <span class="badge badge-success px-3 py-2">متصل</span>
+                    <?php else: ?>
+                      <span class="badge badge-secondary px-3 py-2">غير متصل</span>
+                    <?php endif; ?>
+                  </dd>
+                  <?php if ($activeMoovaLink): ?>
+                    <dt class="col-5">Token</dt>
+                    <dd class="col-7"><?= htmlspecialchars($maskedToken, ENT_QUOTES, 'UTF-8') ?></dd>
+                    <dt class="col-5">آخر تعديل</dt>
+                    <dd class="col-7"><?= htmlspecialchars((string)$activeMoovaLink['updated_at'], ENT_QUOTES, 'UTF-8') ?></dd>
+                  <?php endif; ?>
+                </dl>
+              </div>
+            </div>
+
+            <div class="alert alert-warning shadow-sm">
+              <i class="fas fa-shield-alt ml-2"></i>
+              أي طلب من Moova لن يقبل إلا إذا كان Device Token مطابقا لهذا الربط، وكان الكاشير داخل نفس Tenant وBranch.
+            </div>
+          </div>
+        </div>
+      <?php endif; ?>
+    </div>
+  </section>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+  const form = document.getElementById('moovaIntegrationForm');
+  const alertBox = document.getElementById('moovaIntegrationAlert');
+  const saveBtn = document.getElementById('moovaSaveBtn');
+  const disconnectBtn = document.getElementById('moovaDisconnectBtn');
+
+  function showAlert(type, message) {
+    if (!alertBox) return;
+    alertBox.className = 'alert alert-' + type;
+    alertBox.textContent = message;
+    alertBox.classList.remove('d-none');
+  }
+
+	  function payload() {
+	    return {
+	      csrf: document.getElementById('moovaCsrf').value,
+	      deviceToken: document.getElementById('moovaDeviceToken').value.trim(),
+	      widgetUrl: document.getElementById('moovaWidgetUrl').value.trim(),
+	      locale: document.getElementById('moovaLocale').value
+    };
+  }
+
+  async function postJson(url, body) {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        'X-Requested-With': 'XMLHttpRequest'
+      },
+      body: JSON.stringify(body)
+    });
+    const data = await response.json().catch(function () { return {}; });
+    if (!response.ok || !data.success) {
+      throw new Error(data.message || 'حدث خطأ أثناء الحفظ');
+    }
+    return data;
+  }
+
+  if (form) {
+    form.addEventListener('submit', async function (event) {
+      event.preventDefault();
+      saveBtn.disabled = true;
+      try {
+        await postJson('ajax/moova_save_integration.php', payload());
+        showAlert('success', 'تم حفظ الربط بنجاح. سيتم إظهار ودجت Moova في شاشة البيع لهذا الفرع.');
+        setTimeout(function () { window.location.reload(); }, 900);
+      } catch (error) {
+        showAlert('danger', error.message);
+      } finally {
+        saveBtn.disabled = false;
+      }
+    });
+  }
+
+  if (disconnectBtn) {
+    disconnectBtn.addEventListener('click', async function () {
+      if (!confirm('هل تريد إلغاء ربط Moova بهذا الفرع؟')) {
+        return;
+      }
+      disconnectBtn.disabled = true;
+      try {
+        await postJson('ajax/moova_disconnect_integration.php', {
+          csrf: document.getElementById('moovaCsrf').value
+        });
+        showAlert('success', 'تم إلغاء الربط.');
+        setTimeout(function () { window.location.reload(); }, 900);
+      } catch (error) {
+        showAlert('danger', error.message);
+      } finally {
+        disconnectBtn.disabled = false;
+      }
+    });
+  }
+});
+</script>
+
+<?php include('includes/footer.php'); ?>

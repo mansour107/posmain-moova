@@ -1,0 +1,130 @@
+Date: 2026-01-26 17:00:09
+Request Method: POST
+Edit ID (REQUEST): 
+Edit ID (POST): 
+POST Data: Array
+(
+    [edit_id] => 
+    [pro_tybe] => 9
+    [pro_serial] => 0
+    [pro_id] => 1
+    [age] => 2
+    [pro_date] => 2026-01-26
+    [accural_date] => 2026-01-26
+    [table_id] => 1
+    [table_name] => طاولة 1
+    [edit] => 
+    [store_id] => 234
+    [emp_id] => 236
+    [acc2_id] => 184
+    [fund_id] => 179
+    [itmname] => Array
+        (
+            [0] => 1916
+        )
+
+    [itmqty] => Array
+        (
+            [0] => 1
+        )
+
+    [u_val] => Array
+        (
+            [0] => 1
+        )
+
+    [itmprice] => Array
+        (
+            [0] => 10.00
+        )
+
+    [itmdisc] => Array
+        (
+            [0] => 0
+        )
+
+    [itmval] => Array
+        (
+            [0] => 10.00
+        )
+
+    [headtotal] => 10.00
+    [headplus] => 
+    [headnet] => 10.00
+    [headdisc] => 0
+    [info] => 
+    [paid] => 0
+    [jal_name] => 
+    [jal_notes] => 
+    [jal_amount] => 0.00
+    [submit] => save
+)
+
+Date: 2026-01-26 17:00:37
+Request Method: POST
+Edit ID (REQUEST): 6714
+Edit ID (POST): 6714
+POST Data: Array
+(
+    [edit_id] => 6714
+    [pro_tybe] => 9
+    [pro_serial] => 0
+    [pro_id] => 1
+    [age] => 2
+    [pro_date] => 2026-01-26
+    [accural_date] => 2026-01-26
+    [table_id] => 0
+    [table_name] => 
+    [edit] => 0
+    [store_id] => 234
+    [emp_id] => 236
+    [acc2_id] => 184
+    [fund_id] => 179
+    [itmname] => Array
+        (
+            [0] => 1916
+            [1] => 1782
+        )
+
+    [itmqty] => Array
+        (
+            [0] => 1
+            [1] => 1
+        )
+
+    [u_val] => Array
+        (
+            [0] => 1
+            [1] => 1
+        )
+
+    [itmprice] => Array
+        (
+            [0] => 10.00
+            [1] => 50.00
+        )
+
+    [itmdisc] => Array
+        (
+            [0] => 0
+            [1] => 0
+        )
+
+    [itmval] => Array
+        (
+            [0] => 10.00
+            [1] => 50.00
+        )
+
+    [headtotal] => 60.00
+    [headplus] => 
+    [headnet] => 60.00
+    [headdisc] => 0
+    [info] => 
+    [paid] => 0
+    [jal_name] => 
+    [jal_notes] => 
+    [jal_amount] => 0.00
+    [submit] => save
+)
+

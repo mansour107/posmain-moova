@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document</title>
+</head>
+<body>
+    <h1>updates</h1>
+<div class="row">
+    <div class="col"><h2>1,1</h2></div>
+    <div class="col">
+        <pre>
+@database
+        ALTER TABLE `zankat` CHANGE `ctp` `ctp` INT(1) NULL;
+        ALTER TABLE `zankat` CHANGE `print` `print` INT(1) NULL;
+        ALTER TABLE `zankat` CHANGE `service` `service` INT(1) NULL;
+        ALTER TABLE `zankat` CHANGE `ptype` `ptype` INT(1) NULL;
+        ALTER TABLE `zankat` CHANGE `prod` `prod` INT(1) NULL;
+@do     doadd_zanka
+@       add_zanka.php
+    </pre>
+    <pre>
+    2
+    
+        @database
+        ALTER TABLE `tasks` ADD `emp_comment` VARCHAR(200) NULL AFTER `urgent`;
+        ALTER TABLE `tasks` ADD `cl_comment` VARCHAR(200) NULL AFTER `cl_comment`;
+        ALTER TABLE `myitems` ADD `itmqty` DOUBLE NOT NULL DEFAULT '0' AFTER `barcode`;
+
+        CREATE TABLE `myvouchers` (
+  `id` int(11) NOT NULL,
+  `vdate` date NOT NULL DEFAULT current_timestamp(),
+  `tybe` int(1) NOT NULL,
+  `val` double DEFAULT NULL,
+  `account` int(1) NOT NULL,
+  `fund_account` int(1) NOT NULL,
+  `voucher_id` varchar(15) NOT NULL,
+  `cost_center` int(1) DEFAULT NULL,
+  `crtime` timestamp NOT NULL DEFAULT current_timestamp(),
+  `mdtime` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
+  `user` int(11) NOT NULL DEFAULT 1
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+ALTER TABLE `myvouchers`
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
+
+ 
+CREATE TABLE `karta` (
+    `id` int(11) NOT NULL,
+    `kname` varchar(200) NOT NULL,
+    `info` varchar(200) DEFAULT NULL,
+    `crtime` timestamp NOT NULL DEFAULT current_timestamp(),
+    `mdtime` timestamp NULL DEFAULT current_timestamp()
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+  ALTER TABLE `karta`
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
+
+  CREATE TABLE `crm_style` (
+    `id` int(11) NOT NULL,
+    `cname` varchar(200) NOT NULL,
+    `info` varchar(200) DEFAULT NULL,
+    `crtime` timestamp NOT NULL DEFAULT current_timestamp(),
+    `mdtime` timestamp NULL DEFAULT current_timestamp()
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  ALTER TABLE `crm_style`
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
+
+
+
+  CREATE TABLE `criminals` (
+    `id` int(11) NOT NULL,
+    `cname` varchar(200) NOT NULL , 
+    `nickname` varchar(200) NOT NULL, 
+    `dateofbirth` date DEFAULT NULL, 
+    `jop` varchar(200) NOT NULL, 
+    `station` VARCHAR(200) NULL,
+    `mname` varchar(200) NOT NULL, 
+    `crmaddress` varchar(200) NOT NULL, 
+    `idcardnum` varchar(200) NOT NULL, 
+    `scar` int(11) NOT NULL, 
+    `otherdetails` varchar(200) NOT NULL, 
+    `prtnrs` varchar(200) NOT NULL, 
+    `crmstyle` int(11) DEFAULT NULL, 
+    `dngrs` int(11) DEFAULT NULL, 
+    `fesh` int(11) DEFAULT NULL, 
+    `karta` int(11) DEFAULT NULL, 
+    `entry` int(11) DEFAULT NULL,
+    `crtime` timestamp NOT NULL DEFAULT current_timestamp(),
+    `mdtime` timestamp NULL DEFAULT current_timestamp()
+  )ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  ALTER TABLE `criminals`
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
+
+
+
+CREATE TABLE `skills` (
+  `id` int(11) NOT NULL,
+  `sname` varchar(200) NOT NULL,
+  `icon` varchar(100) DEFAULT NULL,
+  `info` varchar(200) DEFAULT NULL,
+  `scolor` varchar(100) DEFAULT NULL,
+  `crtime` timestamp NOT NULL DEFAULT current_timestamp(),
+  `mdtime` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
+  `user` int(11) NOT NULL DEFAULT 1
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+--
+-- Indexes for dumped tables
+--
+--
+-- Indexes for table `skills`
+--
+ALTER TABLE `skills`
+  ADD PRIMARY KEY (`id`);
+--
+-- AUTO_INCREMENT for dumped tables
+--
+--
+-- AUTO_INCREMENT for table `skills`
+--
+ALTER TABLE `skills`
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
+
+  ALTER TABLE `acc_head` ADD `is_fund` INT NULL DEFAULT '0' AFTER `is_stock`;
+  ALTER TABLE `myvouchers` ADD `serial_number` VARCHAR(20) NULL AFTER `voucher_id`;
+
+</pre>
+            
+<div class="divider"></div>
+
+    </div>
+    </div>
+</div>
+
+</body>
+</html>

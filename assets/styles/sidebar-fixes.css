@@ -1,0 +1,167 @@
+/* إصلاحات السايد بار - Sidebar Fixes */
+/* فرض أولوية عالية جداً */
+body .wrapper .main-sidebar .nav-sidebar .nav-link {
+    position: relative !important;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
+    z-index: 1 !important;
+    display: flex !important;
+    align-items: center !important;
+}
+
+/* تأثير الهوفر المحسن */
+body .wrapper .main-sidebar .nav-sidebar .nav-link:hover,
+body .wrapper .main-sidebar .nav-sidebar .nav-link:focus {
+    background: linear-gradient(135deg, #eff6ff, #dbeafe) !important;
+    color: #1e40af !important;
+    transform: translateX(3px) scale(1.02) !important;
+    box-shadow: 0 4px 12px rgba(59, 130, 246, 0.25) !important;
+    border-radius: 12px !important;
+    z-index: 2 !important;
+}
+
+/* تأثير الأيقونات عند الهوفر */
+.main-sidebar .nav-sidebar .nav-link:hover .nav-icon,
+.main-sidebar .nav-sidebar .nav-link:focus .nav-icon {
+    color: #2563eb !important;
+    transform: scale(1.15) rotate(5deg) !important;
+    transition: all 0.3s ease !important;
+}
+
+/* تأثير السهم عند الهوفر */
+.main-sidebar .nav-sidebar .nav-link:hover .right,
+.main-sidebar .nav-sidebar .nav-link:focus .right {
+    color: #2563eb !important;
+    transform: scale(1.1) !important;
+}
+
+/* تأثير الهوفر للقوائم الفرعية */
+.main-sidebar .nav-treeview .nav-link:hover,
+.main-sidebar .nav-treeview .nav-link:focus {
+    background: linear-gradient(135deg, #f0f9ff, #e0f2fe) !important;
+    color: #0369a1 !important;
+    transform: translateX(5px) scale(1.02) !important;
+    box-shadow: 0 2px 8px rgba(3, 105, 161, 0.3) !important;
+    border-radius: 10px !important;
+    font-weight: 600 !important;
+}
+
+/* تأثير الأيقونات في القوائم الفرعية */
+.main-sidebar .nav-treeview .nav-link:hover .nav-icon,
+.main-sidebar .nav-treeview .nav-link:focus .nav-icon {
+    color: #0284c7 !important;
+    transform: translateX(3px) scale(1.1) !important;
+}
+
+/* تحسين الانتقالات */
+.main-sidebar .nav-icon,
+.main-sidebar .right {
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
+}
+
+/* إصلاح مشاكل التداخل */
+.main-sidebar .nav-sidebar>.nav-item {
+    position: relative !important;
+    z-index: 1 !important;
+}
+
+.main-sidebar .nav-sidebar>.nav-item:hover {
+    z-index: 10 !important;
+}
+
+/* تأثير النشاط المحسن */
+.main-sidebar .nav-sidebar .nav-link.active {
+    background: linear-gradient(135deg, #dbeafe, #bfdbfe) !important;
+    color: #1e40af !important;
+    font-weight: 600 !important;
+    box-shadow: 0 2px 8px rgba(59, 130, 246, 0.2) !important;
+    border-right: 4px solid #3b82f6 !important;
+}
+
+/* تأثير الضغط */
+.main-sidebar .nav-link:active {
+    transform: scale(0.98) !important;
+    transition: transform 0.1s ease !important;
+}
+
+/* تحسين الاستجابة للمس */
+@media (hover: none) and (pointer: coarse) {
+    .main-sidebar .nav-link:hover {
+        background: transparent !important;
+        transform: none !important;
+        box-shadow: none !important;
+    }
+
+    .main-sidebar .nav-link:active,
+    .main-sidebar .nav-link:focus {
+        background: linear-gradient(135deg, #eff6ff, #dbeafe) !important;
+        color: #1e40af !important;
+        transform: scale(1.02) !important;
+        box-shadow: 0 4px 12px rgba(59, 130, 246, 0.25) !important;
+    }
+}
+
+/* إصلاح مشاكل الخطوط */
+.main-sidebar .nav-link p {
+    margin: 0 !important;
+    display: inline-block !important;
+    transition: all 0.3s ease !important;
+}
+
+/* تحسين مظهر البحث */
+.main-sidebar .user-panel #searchSide:focus {
+    transform: scale(1.02) !important;
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1) !important;
+}
+
+/* تأثير التمييز للبحث */
+.search-highlight {
+    background: linear-gradient(135deg, #fef3c7, #fde68a) !important;
+    color: #92400e !important;
+    padding: 0.1rem 0.2rem !important;
+    border-radius: 3px !important;
+    font-weight: 600 !important;
+    animation: highlightPulse 1s ease-in-out !important;
+}
+
+@keyframes highlightPulse {
+
+    0%,
+    100% {
+        opacity: 1;
+    }
+
+    50% {
+        opacity: 0.7;
+    }
+}
+
+/* تحسين الأداء */
+.main-sidebar {
+    will-change: transform !important;
+    backface-visibility: hidden !important;
+    perspective: 1000px !important;
+}
+
+.main-sidebar .nav-link {
+    will-change: transform, background-color, box-shadow !important;
+    backface-visibility: hidden !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+}
+
+/* إصلاح تموضع العناصر */
+.main-sidebar .nav-link p {
+    flex: 1 !important;
+    margin: 0 !important;
+}
+
+.main-sidebar .nav-link .nav-icon {
+    margin-left: 0.75rem !important;
+    flex-shrink: 0 !important;
+}
+
+.main-sidebar .nav-link .right {
+    margin-left: 0.5rem !important;
+    flex-shrink: 0 !important;
+}

@@ -1,0 +1,12 @@
+@font-face {
+  font-family: 'Source Sans Pro';
+  font-style: normal;
+  font-weight: 400;
+  src: url(fonts/source-sans-pro-400.ttf) format('truetype');
+}
+@font-face {
+  font-family: 'Source Sans Pro';
+  font-style: normal;
+  font-weight: 700;
+  src: url(fonts/source-sans-pro-700.ttf) format('truetype');
+}

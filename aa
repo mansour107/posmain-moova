@@ -1,0 +1,11 @@
+myproject/
+├── public/
+│   └── index.php
+├── src/
+│   ├── controllers/
+│   │   └── PageController.php
+│   └── views/
+│       ├── home.php
+│       ├── about.php
+│       └── contact.php
+└── router.php

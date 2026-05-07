@@ -1,0 +1,220 @@
+:root {
+    --primary-navy: #2c3e50;
+    --primary-violet: #8e44ad;
+    --neutral-light: #f8f9fa;
+    --neutral-gray: #e9ecef;
+    --soft-gray: #dee2e6;
+    --text-dark: #2c3e50;
+}
+
+body {
+    background-color: var(--neutral-light);
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    color: var(--text-dark);
+}
+
+.categories-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    margin-bottom: 0.8rem;
+}
+
+.category-card {
+    background: var(--primary-navy);
+    border: 2px solid var(--primary-navy);
+    border-radius: 8px;
+    padding: 0.5rem 0.8rem;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    display: inline-flex;
+    flex-direction: row;
+    justify-content: center;
+    align-items: center;
+    gap: 0.4rem;
+    box-shadow: 0 2px 6px rgba(44, 62, 80, 0.3);
+    white-space: nowrap;
+}
+
+.category-card:hover {
+    transform: translateY(-2px) scale(1.03);
+    box-shadow: 0 4px 12px rgba(44, 62, 80, 0.5);
+    background: #1a252f;
+    border-color: #1a252f;
+}
+
+.category-card.active {
+    background: var(--primary-violet);
+    border-color: var(--primary-violet);
+    box-shadow: 0 4px 12px rgba(142, 68, 173, 0.5);
+}
+
+.category-icon {
+    font-size: 1rem;
+    color: white;
+    margin-bottom: 0;
+}
+
+.category-name {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: white;
+    margin: 0;
+    line-height: 1.2;
+    white-space: nowrap;
+}
+
+.items-grid {
+    margin: 0 !important;
+}
+
+.item-card {
+    background: white;
+    border: 1px solid var(--soft-gray);
+    border-radius: 6px;
+    overflow: hidden;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+}
+
+.item-card:hover {
+    border-color: var(--primary-navy);
+    box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+    transform: translateY(-2px);
+}
+
+.item-image {
+    height: 110px;
+    background: var(--neutral-gray);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+}
+
+.item-image img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.item-image i {
+    font-size: 2rem !important;
+}
+
+.item-details {
+    padding: 0.7rem 0.6rem;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    gap: 0.4rem;
+}
+
+.item-name {
+    font-size: 0.8rem;
+    font-weight: 600;
+    margin-bottom: 0;
+    color: var(--text-dark);
+    line-height: 1.2;
+}
+
+.item-price {
+    background: var(--primary-violet);
+    color: white;
+    padding: 0.2rem 0.4rem;
+    border-radius: 12px;
+    font-weight: bold;
+    display: inline-block;
+    font-size: 0.7rem;
+    align-self: center;
+}
+
+.order-section {
+    background: white;
+    border: 1px solid var(--soft-gray);
+    border-radius: 8px;
+    height: calc(100vh - 90px);
+    display: flex;
+    flex-direction: column;
+}
+
+.order-header {
+    background: var(--primary-navy);
+    color: white;
+    padding: 0.6rem 0.8rem;
+    border-radius: 8px 8px 0 0;
+}
+
+.order-items {
+    flex: 0 0 auto;
+    padding: 0.6rem 0.8rem;
+    overflow-y: visible;
+}
+
+.order-items-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 0 0.8rem;
+    max-height: 250px;
+}
+
+.order-item {
+    background: var(--neutral-light);
+    border: 1px solid var(--soft-gray);
+    border-radius: 4px;
+    padding: 0.5rem;
+    margin-bottom: 0.4rem;
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+}
+
+.order-footer {
+    border-top: 1px solid var(--soft-gray);
+    padding: 0.6rem 0.8rem;
+    background: var(--neutral-light);
+}
+
+.btn-navy {
+    background-color: var(--primary-navy);
+    border-color: var(--primary-navy);
+    color: white;
+}
+
+.btn-navy:hover {
+    background-color: #1a252f;
+    border-color: #1a252f;
+    color: white;
+}
+
+.btn-violet {
+    background-color: var(--primary-violet);
+    border-color: var(--primary-violet);
+    color: white;
+}
+
+.btn-violet:hover {
+    background-color: #7d3c98;
+    border-color: #7d3c98;
+    color: white;
+}
+
+.items-container {
+    display: none;
+}
+
+.items-container.show {
+    display: block;
+}
+
+.no-items-message {
+    text-align: center;
+    padding: 3rem;
+    color: #6c757d;
+}

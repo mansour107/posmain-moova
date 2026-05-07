@@ -1,0 +1,70 @@
+/* POS Search Enhancements - Optimized for Performance */
+
+/* Search input styling */
+#itemFilterInput {
+    border: 2px solid #17a2b8;
+}
+
+#itemFilterInput:focus {
+    border-color: #0056b3;
+    box-shadow: 0 0 0 0.2rem rgba(0, 123, 255, 0.25);
+}
+
+/* Filter button styling */
+#clearFilter {
+    border-color: #6c757d;
+    color: #6c757d;
+}
+
+#clearFilter:hover {
+    background-color: #6c757d;
+    color: white;
+    border-color: #6c757d;
+}
+
+/* Input group styling for seamless look */
+.input-group .input-group-text.border-end-0 {
+    border-right: 0;
+}
+
+.input-group .form-control.border-start-0 {
+    border-left: 0;
+}
+
+.input-group .form-control.border-start-0:focus {
+    border-left: 0;
+}
+
+/* Performance optimization - use CSS for hiding */
+.item-wrapper {
+    display: block;
+}
+
+.item-wrapper.hidden {
+    display: none !important;
+}
+
+/* Responsive search bar */
+@media (max-width: 768px) {
+    .card-header .input-group {
+        width: 200px !important;
+        font-size: 0.8rem;
+    }
+    
+    #itemFilterInput {
+        font-size: 0.8rem;
+    }
+}
+
+/* No results message */
+.no-search-results {
+    text-align: center;
+    padding: 40px 20px;
+    color: #6c757d;
+}
+
+.no-search-results i {
+    font-size: 3rem;
+    margin-bottom: 1rem;
+    opacity: 0.5;
+}

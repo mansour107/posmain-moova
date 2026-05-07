@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CoFe POS Approval Widget</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/pos-widget.css">
+</head>
+<body class="pos-widget-body">
+  <div id="pos-widget-root" class="pos-widget-root">
+    <div id="pos-widget-anchor" class="pw-anchor" aria-live="polite">
+      <div class="pw-controls">
+        <button
+          id="pos-widget-sound-toggle"
+          class="pw-sound-toggle"
+          type="button"
+          aria-label="Mute notifications"
+          title="Mute notifications"
+        >
+          <span id="pos-widget-sound-label" class="pw-sr-only">Mute notifications</span>
+          <span class="pw-sound-icon" aria-hidden="true">
+            <svg class="pw-sound-icon-on" viewBox="0 0 24 24" role="presentation">
+              <path d="M4 9.5h3.2L12 5.7v12.6l-4.8-3.8H4v-5Zm10.2-.8 1.1-1.1A6.1 6.1 0 0 1 17 12c0 1.7-.7 3.3-1.8 4.4l-1.1-1.1a4.5 4.5 0 0 0 1.3-3.3c0-1.3-.5-2.5-1.2-3.3Zm2.4-2.4 1.1-1.1A9.6 9.6 0 0 1 20.5 12c0 2.6-1.1 5-2.8 6.8l-1.1-1.1A8 8 0 0 0 19 12c0-2.2-.9-4.2-2.4-5.7Z"></path>
+            </svg>
+            <svg class="pw-sound-icon-off" viewBox="0 0 24 24" role="presentation">
+              <path d="M4 9.5h3.2L12 5.7v12.6l-4.8-3.8H4v-5Zm11.1-.6 1.2-1.2 2.2 2.2 2.2-2.2 1.2 1.2-2.2 2.2 2.2 2.2-1.2 1.2-2.2-2.2-2.2 2.2-1.2-1.2 2.2-2.2-2.2-2.2Z"></path>
+            </svg>
+          </span>
+        </button>
+
+        <button
+          id="pos-widget-bell"
+          class="pw-bell"
+          type="button"
+          aria-label="Pending approvals"
+          title="Pending approvals"
+          hidden
+        >
+          <span id="pos-widget-bell-label" class="pw-sr-only">Pending approvals</span>
+          <span class="pw-bell-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" role="presentation">
+              <path d="M12 3a4 4 0 0 0-4 4v1.07a7.5 7.5 0 0 1-1.72 4.8L5 14.5V16h14v-1.5l-1.28-1.63A7.5 7.5 0 0 1 16 8.07V7a4 4 0 0 0-4-4Zm0 18a2.75 2.75 0 0 1-2.58-1.8h5.16A2.75 2.75 0 0 1 12 21Z"></path>
+            </svg>
+          </span>
+          <span id="pos-widget-bell-meta" class="pw-sr-only">Waiting for orders</span>
+          <span id="pos-widget-badge" class="pw-badge" hidden>0</span>
+        </button>
+      </div>
+
+      <section id="pos-widget-stack" class="pw-stack" hidden></section>
+    </div>
+
+    <div id="pos-widget-toast" class="pw-toast" hidden></div>
+
+    <div id="pos-widget-all-orders-modal" class="pw-modal" hidden>
+      <div class="pw-modal-backdrop" data-modal-close="all-orders"></div>
+      <div class="pw-dialog pw-dialog-wide" role="dialog" aria-modal="true" aria-labelledby="pw-all-orders-title">
+        <div class="pw-dialog-header">
+          <div>
+            <p id="pw-all-orders-kicker" class="pw-dialog-kicker">Pending approval queue</p>
+            <h2 id="pw-all-orders-title">All pending orders</h2>
+          </div>
+          <button class="pw-close" type="button" data-modal-close="all-orders" aria-label="Close all orders">&times;</button>
+        </div>
+        <div id="pos-widget-all-orders-content" class="pw-dialog-body"></div>
+      </div>
+    </div>
+
+    <div id="pos-widget-detail-modal" class="pw-modal" hidden>
+      <div class="pw-modal-backdrop" data-modal-close="detail"></div>
+      <div class="pw-dialog" role="dialog" aria-modal="true" aria-labelledby="pw-detail-title">
+        <div class="pw-dialog-header">
+          <div>
+            <p id="pw-detail-kicker" class="pw-dialog-kicker">Order review</p>
+            <h2 id="pw-detail-title">Order details</h2>
+          </div>
+          <button class="pw-close" type="button" data-modal-close="detail" aria-label="Close order details">&times;</button>
+        </div>
+        <div id="pos-widget-detail-content" class="pw-dialog-body"></div>
+      </div>
+    </div>
+
+    <div id="pos-widget-notes-modal" class="pw-modal" hidden>
+      <div class="pw-modal-backdrop" data-modal-close="notes"></div>
+      <div class="pw-dialog pw-dialog-notes" role="dialog" aria-modal="true" aria-labelledby="pw-notes-title">
+        <div class="pw-dialog-header">
+          <div>
+            <p id="pw-notes-kicker" class="pw-dialog-kicker">Notes review</p>
+            <h2 id="pw-notes-title">Customer notes</h2>
+          </div>
+          <button class="pw-close" type="button" data-modal-close="notes" aria-label="Close notes">&times;</button>
+        </div>
+        <div id="pos-widget-notes-content" class="pw-dialog-body"></div>
+      </div>
+    </div>
+
+    <div id="pos-widget-decline-modal" class="pw-modal" hidden>
+      <div class="pw-modal-backdrop" data-modal-close="decline"></div>
+      <div class="pw-dialog pw-dialog-notes" role="dialog" aria-modal="true" aria-labelledby="pw-decline-title">
+        <div class="pw-dialog-header">
+          <div>
+            <p id="pw-decline-kicker" class="pw-dialog-kicker">Decline order</p>
+            <h2 id="pw-decline-title">Reason for decline</h2>
+          </div>
+          <button class="pw-close" type="button" data-modal-close="decline" aria-label="Close decline reason">&times;</button>
+        </div>
+        <div id="pos-widget-decline-content" class="pw-dialog-body"></div>
+      </div>
+    </div>
+  </div>
+
+  <script defer src="/pos-widget.js"></script>
+</body>
+</html>

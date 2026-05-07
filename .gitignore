@@ -1,0 +1,26 @@
+vendor
+composer.lock
+composer.phar
+.phpunit.result.cache
+.DS_Store
+
+# Local runtime data
+backup/
+uploads/
+logs/
+.playwright-mcp/
+*.log
+Thumbs.db
+
+# Local credentials / machine-specific config
+.env
+.env.*
+config/database.php
+debug.php
+
+# Temporary office/system files
+~$*
+2025-01-01
+2025-01-08
+'2025-01-01'
+'2025-01-08'

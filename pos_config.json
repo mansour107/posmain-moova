@@ -1,0 +1,28 @@
+{
+  "scale_barcode": {
+    "enabled": true,
+    "prefix": "200",
+    "barcode_length": 13,
+    "item_code_start": 3,
+    "item_code_length": 4,
+    "weight_start": 7,
+    "weight_length": 5,
+    "weight_divisor": 1000,
+    "description": "إعدادات باركود الميزان - الباركود: 200XXYYYYY#"
+  },
+  "display": {
+    "items_per_row": 4,
+    "show_item_images": true,
+    "default_icon": "fa-utensils"
+  },
+  "colors": {
+    "primary": "#0a7ea4",
+    "primary_rgb": "10, 126, 164"
+  },
+  "behavior": {
+    "auto_focus_barcode": true,
+    "clear_barcode_after_scan": true,
+    "increment_existing_items": true
+  }
+}
+

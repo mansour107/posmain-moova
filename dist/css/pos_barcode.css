@@ -1,0 +1,345 @@
+/**
+ * POS Barcode System - Custom Styles
+ * نظام نقاط البيع بالباركود - التنسيقات المخصصة
+ * Modern Design Overhaul
+ */
+
+@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700&display=swap');
+
+:root {
+    /* Navy Blue & Orange Palette */
+    --primary-navy: #1a2f5a;
+    --primary-orange: #ff8c42;
+    --soft-navy: #2d4a7c;
+    --soft-orange: #ffb380;
+    
+    --bs-primary: #1a2f5a;
+    --bs-primary-rgb: 26, 47, 90;
+    --bs-secondary: #ff8c42;
+    --bs-success: #06d6a0;
+    --bs-warning: #ff8c42;
+    --bs-danger: #ef233c;
+    --bs-info: #2d4a7c;
+    --bs-light: #f8f9fa;
+    --bs-dark: #1a2f5a;
+    
+    --bg-main: #f5f7fa;
+    --card-bg: #ffffff;
+    --border-radius: 12px;
+    --box-shadow: 0 2px 8px rgba(26, 47, 90, 0.08);
+    --box-shadow-hover: 0 4px 16px rgba(26, 47, 90, 0.12);
+    --transition: all 0.3s ease;
+}
+
+body {
+    font-family: 'Cairo', system-ui, -apple-system, sans-serif;
+    background: #f5f8fa;
+    font-size: 0.9rem;
+    color: #2d2d2d;
+}
+
+/* Fix navbar-toggler background issue */
+.navbar-toggler {
+    background-color: transparent !important;
+    border: 1px solid rgba(255, 255, 255, 0.1) !important;
+    padding: 0.25rem 0.75rem;
+}
+
+.navbar-toggler:hover,
+.navbar-toggler:focus {
+    background-color: rgba(255, 255, 255, 0.1) !important;
+    border-color: rgba(255, 255, 255, 0.3) !important;
+}
+
+.navbar-toggler-icon {
+    background-image: url("data:image/svg+xml;charset=utf8,%3Csvg viewBox='0 0 30 30' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath stroke='rgba(255, 255, 255, 0.75)' stroke-width='2' stroke-linecap='round' stroke-miterlimit='10' d='M4 7h22M4 15h22M4 23h22'/%3E%3C/svg%3E") !important;
+}
+
+.navbar-toggler:hover .navbar-toggler-icon,
+.navbar-toggler:focus .navbar-toggler-icon {
+    background-image: url("data:image/svg+xml;charset=utf8,%3Csvg viewBox='0 0 30 30' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath stroke='rgba(255, 255, 255, 1)' stroke-width='2' stroke-linecap='round' stroke-miterlimit='10' d='M4 7h22M4 15h22M4 23h22'/%3E%3C/svg%3E") !important;
+}
+
+/* --- Overrides --- */
+
+.text-primary {
+    color: var(--bs-primary) !important;
+}
+
+.border-primary {
+    border-color: var(--bs-primary) !important;
+}
+
+.btn-primary {
+    background: #ff8c42 !important;
+    border: none !important;
+    box-shadow: 0 2px 8px rgba(255, 140, 66, 0.3);
+    transition: var(--transition);
+}
+
+.btn-primary:hover {
+    background: #ff7a28 !important;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(255, 140, 66, 0.4);
+}
+
+.btn-outline-primary {
+    color: #1a2f5a !important;
+    border: 2px solid #1a2f5a !important;
+    background: white;
+    transition: var(--transition);
+}
+
+.btn-outline-primary:hover {
+    background: #ff8c42 !important;
+    border-color: #ff8c42 !important;
+    color: white !important;
+    transform: translateY(-2px);
+    box-shadow: 0 2px 8px rgba(255, 140, 66, 0.3);
+}
+
+/* Fix Active Button Text Color */
+.btn-check:checked + .btn-outline-primary {
+    background: linear-gradient(135deg, #1a2f5a 0%, #2d4a7c 100%) !important;
+    border-color: transparent !important;
+    color: white !important;
+    box-shadow: 0 2px 8px rgba(26, 47, 90, 0.3);
+}
+
+/* --- Cards --- */
+
+.card {
+    border: none;
+    border-radius: var(--border-radius);
+    background: white;
+    box-shadow: var(--box-shadow);
+    margin-bottom: 0.5rem;
+    transition: var(--transition);
+}
+
+.card-header {
+    background: white;
+    border-bottom: 1px solid #e8eef5;
+    color: var(--bs-dark);
+    font-weight: 700;
+    border-radius: var(--border-radius) var(--border-radius) 0 0 !important;
+    padding: 1rem 1.25rem;
+}
+
+/* Force header bg override if relying on utilitarian classes */
+.card-header.bg-primary {
+    background: linear-gradient(135deg, #1a2f5a 0%, #2d4a7c 100%) !important;
+    color: white !important;
+    border: none;
+}
+
+/* --- Navbar --- */
+.navbar {
+    background: linear-gradient(135deg, #1a2f5a 0%, #2d4a7c 100%) !important;
+    margin-bottom: 25px;
+    box-shadow: 0 2px 8px rgba(26, 47, 90, 0.2);
+    padding: 0.75rem 1.5rem;
+}
+
+.navbar-brand {
+    font-weight: 700;
+    letter-spacing: -0.5px;
+    font-size: 1.2rem;
+}
+
+/* --- Inputs --- */
+.form-control, .form-select {
+    border-radius: 8px;
+    border: 1px solid #e0e0e0;
+    padding: 0.4rem 0.8rem;
+    font-size: 0.85rem;
+    transition: var(--transition);
+}
+
+.form-control:focus, .form-select:focus {
+    border-color: #ff8c42;
+    box-shadow: 0 0 0 3px rgba(255, 140, 66, 0.15);
+}
+
+/* Barcode Input Special */
+#barcodeInput {
+    border: 2px solid #ff8c42 !important;
+    background-color: #fff8f3 !important;
+    font-weight: bold;
+    letter-spacing: 1px;
+}
+
+#barcodeInput:focus {
+    box-shadow: 0 0 0 3px rgba(255, 140, 66, 0.2) !important;
+    border-color: #ff8c42 !important;
+}
+
+/* --- Search Box --- */
+#searchInput {
+    border-radius: 8px;
+}
+
+/* --- Buttons --- */
+.btn {
+    border-radius: 8px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+}
+
+.category-btn {
+    border-radius: 50px; /* Pill shape */
+    padding: 0.3rem 1rem !important;
+    margin: 2px;
+}
+
+.category-btn.active {
+    background: #ff8c42 !important;
+    color: white !important;
+    box-shadow: 0 2px 8px rgba(255, 140, 66, 0.3);
+}
+
+/* --- Order Items List --- */
+.card-body#itemData {
+    background-color: #f8f9fa !important;
+    padding: 0.5rem !important;
+}
+
+.item-card-order {
+    background: white;
+    border-radius: 10px;
+    border: none !important;
+    border-right: 3px solid #ff8c42 !important;
+    box-shadow: 0 2px 6px rgba(26, 47, 90, 0.08);
+    margin-bottom: 0.75rem !important;
+    transition: var(--transition);
+}
+
+.item-card-order:hover {
+    transform: translateX(-3px);
+    box-shadow: 0 3px 10px rgba(255, 140, 66, 0.2);
+}
+
+/* --- Product Grid --- */
+.items-section-card {
+    background: transparent;
+    box-shadow: none;
+    height: calc(100vh - 80px) !important;
+}
+
+.items-section-card .card-header {
+    border-radius: var(--border-radius);
+    margin-bottom: 1rem;
+    box-shadow: var(--box-shadow);
+}
+
+.items-section-card .card-body {
+    padding: 0;
+    background: transparent;
+    overflow-y: auto;
+}
+
+.item-wrapper {
+    padding: 5px;
+}
+
+.item-card {
+    background: white;
+    border: 1px solid #e8eef5;
+    border-radius: 12px;
+    overflow: hidden;
+    height: 100%;
+    transition: var(--transition);
+    cursor: pointer;
+}
+
+.item-card:hover {
+    box-shadow: 0 4px 12px rgba(255, 140, 66, 0.15);
+    transform: translateY(-2px);
+    border-color: #ff8c42;
+}
+
+.item-image-container {
+    background: #fff8f3;
+    border-radius: 10px;
+    margin-bottom: 0.75rem;
+    overflow: hidden;
+    height: 120px !important;
+}
+
+.item-card .card-title {
+    font-weight: 700;
+    color: var(--bs-dark);
+}
+
+.item-card .price-tag {
+    background: #ff8c42;
+    color: white;
+    border-radius: 6px;
+    padding: 4px 10px;
+    font-weight: 700;
+    font-size: 1rem;
+    display: inline-block;
+}
+
+/* --- Totals Area --- */
+#total_display {
+    color: #1a2f5a;
+    font-weight: 800;
+    font-size: 1.6rem;
+}
+
+#net_display {
+    color: #ff8c42;
+    font-weight: 800;
+    font-size: 1.6rem;
+}
+
+/* --- Modals --- */
+.modal-content {
+    border-radius: 16px;
+    border: none;
+    box-shadow: 0 8px 24px rgba(26, 47, 90, 0.15);
+}
+
+.modal-header {
+    background: linear-gradient(135deg, #1a2f5a 0%, #2d4a7c 100%) !important;
+    color: white;
+    border-radius: 16px 16px 0 0;
+    padding: 1.5rem;
+}
+
+.modal-title {
+    font-weight: 700;
+}
+
+/* --- SweetAlert2 Overrides if needed --- */
+div:where(.swal2-container) div:where(.swal2-popup) {
+    border-radius: 16px !important;
+    font-family: 'Cairo', sans-serif !important;
+}
+
+/* --- Scrollbars --- */
+::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+    background: linear-gradient(180deg, #1a2f5a 0%, #ff8c42 100%);
+    border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: linear-gradient(180deg, #2d4a7c 0%, #ffb380 100%);
+}
+
+/* --- Responsive --- */
+@media (max-width: 768px) {
+    .items-section-card {
+        height: auto !important;
+    }
+}

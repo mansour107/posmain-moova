@@ -1,0 +1,52 @@
+/* أنماط الجداول والعناصر */
+#itmrow tr {
+    height: 40px !important; /* تعيين ارتفاع الصف إلى 40 بكسل */
+}
+
+.itemlight1{
+    position: fixed;
+    bottom:0%;
+}
+.itembadges{
+    height: 350px;
+    overflow: scroll;
+}
+.itemtable , .searchtable{
+    height: 300px;
+    overflow: scroll;}
+
+    .select2-search__field{
+color:red !important;
+background-color: aquamarine ;
+}
+.select2-results__options{
+color:navy;
+}
+
+.tool {
+position: relative;
+display: inline-block;
+cursor: pointer;
+}
+
+.tool .tooltext {
+visibility: hidden;
+width: 120px;
+background-color: cadetblue;
+color: #fff;
+text-align: center;
+border-radius: 5px;
+padding: 5px;
+position: absolute;
+z-index: 999;
+top: 100%;
+left: 100%;
+margin-left: -150px;
+opacity: .8;
+transition: opacity .5s;
+}
+
+.tool:hover .tooltext {
+visibility: visible;
+opacity: 1;
+}

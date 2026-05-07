@@ -1,0 +1,34 @@
+services:
+  mysql:
+    image: mariadb:10.11
+    container_name: posmain-mysql
+    environment:
+      MARIADB_ALLOW_EMPTY_ROOT_PASSWORD: "1"
+      MARIADB_DATABASE: kody2
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_general_ci
+    ports:
+      - "127.0.0.1:3307:3306"
+      - "127.0.0.1:8010:8000"
+    volumes:
+      - posmain_mysql_data:/var/lib/mysql
+      - posmain_mysql_run:/run/mysqld
+      - ./db/DB.sql:/docker-entrypoint-initdb.d/01-db.sql:ro
+      - ./db/moova_pos_integration.sql:/docker-entrypoint-initdb.d/02-moova-pos.sql:ro
+
+  php:
+    build:
+      context: .
+      dockerfile: Dockerfile.posmain-php
+    container_name: posmain-php
+    network_mode: service:mysql
+    depends_on:
+      - mysql
+    volumes:
+      - .:/app:ro
+      - posmain_mysql_run:/run/mysqld
+
+volumes:
+  posmain_mysql_data:
+  posmain_mysql_run:

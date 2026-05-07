@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>نظام نقاط البيع - أوفلاين</title>
+    <link href="assets/libs/bootstrap.min.css" rel="stylesheet">
+    <link href="assets/libs/fontawesome.min.css" rel="stylesheet">
+    <style>
+        .item-card { cursor: pointer; transition: all 0.3s; }
+        .item-card:hover { transform: scale(1.05); box-shadow: 0 4px 8px rgba(0,0,0,0.2); }
+        .cart-item { border-left: 4px solid #007bff; }
+        .offline-indicator { position: fixed; top: 10px; right: 10px; z-index: 9999; }
+        .sync-status { position: fixed; bottom: 10px; left: 10px; z-index: 9999; }
+    </style>
+</head>
+<body class="bg-light">
+    <!-- حالة الاتصال -->
+    <div id="offlineIndicator" class="offline-indicator">
+        <span class="badge bg-success" id="connectionStatus">متصل</span>
+    </div>
+
+    <!-- حالة المزامنة -->
+    <div id="syncStatus" class="sync-status">
+        <span class="badge bg-info" id="syncIndicator">محفوظ محلياً</span>
+    </div>
+
+    <!-- Navbar -->
+    <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+        <div class="container-fluid">
+            <a class="navbar-brand" href="#">
+                <i class="fas fa-cash-register me-2"></i>نظام نقاط البيع - أوفلاين
+            </a>
+            <div class="navbar-nav ms-auto">
+                <button class="btn btn-outline-light btn-sm me-2" onclick="syncData()">
+                    <i class="fas fa-sync-alt"></i> مزامنة
+                </button>
+                <button class="btn btn-outline-light btn-sm" onclick="clearCache()">
+                    <i class="fas fa-trash"></i> مسح البيانات
+                </button>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container-fluid mt-3">
+        <div class="row">
+            <!-- قائمة الأصناف -->
+            <div class="col-md-8">
+                <div class="card">
+                    <div class="card-header bg-primary text-white">
+                        <h5 class="mb-0"><i class="fas fa-boxes me-2"></i>الأصناف</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="row g-2" id="itemsGrid">
+                            <!-- سيتم ملؤها بـ JavaScript -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- سلة التسوق -->
+            <div class="col-md-4">
+                <div class="card">
+                    <div class="card-header bg-success text-white">
+                        <h5 class="mb-0">
+                            <i class="fas fa-shopping-cart me-2"></i>السلة 
+                            <span class="badge bg-light text-dark" id="cartCount">0</span>
+                        </h5>
+                    </div>
+                    <div class="card-body" style="max-height: 400px; overflow-y: auto;">
+                        <div id="cartItems">
+                            <p class="text-muted text-center">السلة فارغة</p>
+                        </div>
+                    </div>
+                    <div class="card-footer">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <strong>الإجمالي:</strong>
+                            <strong id="totalAmount">0.00 ج.م</strong>
+                        </div>
+                        <button class="btn btn-primary w-100" onclick="processOrder()" id="checkoutBtn" disabled>
+                            <i class="fas fa-check me-1"></i>إتمام الطلب
+                        </button>
+                    </div>
+                </div>
+
+                <!-- الطلبات المحفوظة -->
+                <div class="card mt-3">
+                    <div class="card-header bg-info text-white">
+                        <h6 class="mb-0">
+                            <i class="fas fa-history me-2"></i>الطلبات المحفوظة
+                            <span class="badge bg-light text-dark" id="ordersCount">0</span>
+                        </h6>
+                    </div>
+                    <div class="card-body" style="max-height: 200px; overflow-y: auto;">
+                        <div id="savedOrders">
+                            <p class="text-muted text-center">لا توجد طلبات</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal إضافة صنف جديد -->
+    <div class="modal fade" id="addItemModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">إضافة صنف جديد</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="addItemForm">
+                        <div class="mb-3">
+                            <label class="form-label">اسم الصنف</label>
+                            <input type="text" class="form-control" id="itemName" required>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">السعر</label>
+                            <input type="number" class="form-control" id="itemPrice" step="0.01" required>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">الباركود</label>
+                            <input type="text" class="form-control" id="itemBarcode">
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">إلغاء</button>
+                    <button type="button" class="btn btn-primary" onclick="addNewItem()">حفظ</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="assets/libs/bootstrap.bundle.min.js"></script>
+    <script src="js/pos_offline.js"></script>
+</body>
+</html>

@@ -1,0 +1,1 @@
+ALTER TABLE ot_head ADD COLUMN jal_amount DECIMAL(10, 2) DEFAULT 0.00;

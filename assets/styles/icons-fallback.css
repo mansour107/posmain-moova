@@ -1,0 +1,158 @@
+/* Icons Fallback - Using Unicode Characters */
+
+/* Hide broken Font Awesome icons */
+.fas, .far, .fab, .fa {
+    font-family: Arial, sans-serif !important;
+    font-weight: normal !important;
+}
+
+/* Replace common icons with Unicode */
+.fa-users::before,
+.fas.fa-users::before {
+    content: "👥 " !important;
+    font-family: "Segoe UI Emoji", Arial !important;
+}
+
+.fa-user::before,
+.fas.fa-user::before {
+    content: "👤 " !important;
+    font-family: "Segoe UI Emoji", Arial !important;
+}
+
+.fa-user-shield::before,
+.fas.fa-user-shield::before {
+    content: "🛡️ " !important;
+    font-family: "Segoe UI Emoji", Arial !important;
+}
+
+.fa-plus-circle::before,
+.fas.fa-plus-circle::before {
+    content: "➕ " !important;
+    font-family: "Segoe UI Emoji", Arial !important;
+}
+
+.fa-edit::before,
+.fas.fa-edit::before {
+    content: "✏️ " !important;
+    font-family: "Segoe UI Emoji", Arial !important;
+}
+
+.fa-trash::before,
+.fas.fa-trash::before {
+    content: "🗑️ " !important;
+    font-family: "Segoe UI Emoji", Arial !important;
+}
+
+.fa-list::before,
+.fas.fa-list::before {
+    content: "📋 " !important;
+    font-family: "Segoe UI Emoji", Arial !important;
+}
+
+.fa-exclamation-triangle::before,
+.fas.fa-exclamation-triangle::before {
+    content: "⚠️ " !important;
+    font-family: "Segoe UI Emoji", Arial !important;
+}
+
+.fa-check-circle::before,
+.fas.fa-check-circle::before {
+    content: "✅ " !important;
+    font-family: "Segoe UI Emoji", Arial !important;
+}
+
+.fa-heart::before,
+.far.fa-heart::before {
+    content: "❤️ " !important;
+    font-family: "Segoe UI Emoji", Arial !important;
+}
+
+.fa-users-slash::before,
+.fas.fa-users-slash::before {
+    content: "🚫 " !important;
+    font-family: "Segoe UI Emoji", Arial !important;
+}
+
+.fa-phone::before,
+.fas.fa-phone::before {
+    content: "📞 " !important;
+    font-family: "Segoe UI Emoji", Arial !important;
+}
+
+.fa-flag::before,
+.fas.fa-flag::before {
+    content: "🚩 " !important;
+    font-family: "Segoe UI Emoji", Arial !important;
+}
+
+.fa-tags::before,
+.fas.fa-tags::before {
+    content: "🏷️ " !important;
+    font-family: "Segoe UI Emoji", Arial !important;
+}
+
+.fa-user-tie::before,
+.fas.fa-user-tie::before {
+    content: "👔 " !important;
+    font-family: "Segoe UI Emoji", Arial !important;
+}
+
+.fa-calendar::before,
+.fas.fa-calendar::before {
+    content: "📅 " !important;
+    font-family: "Segoe UI Emoji", Arial !important;
+}
+
+.fa-save::before,
+.fas.fa-save::before {
+    content: "💾 " !important;
+    font-family: "Segoe UI Emoji", Arial !important;
+}
+
+.fa-times::before,
+.fas.fa-times::before {
+    content: "❌ " !important;
+    font-family: "Segoe UI Emoji", Arial !important;
+}
+
+.fa-tasks::before,
+.fas.fa-tasks::before {
+    content: "📝 " !important;
+    font-family: "Segoe UI Emoji", Arial !important;
+}
+
+.fa-bullseye::before,
+.fas.fa-bullseye::before {
+    content: "🎯 " !important;
+    font-family: "Segoe UI Emoji", Arial !important;
+}
+
+.fa-exclamation-circle::before,
+.fas.fa-exclamation-circle::before {
+    content: "❗ " !important;
+    font-family: "Segoe UI Emoji", Arial !important;
+}
+
+.fa-calendar-day::before,
+.fas.fa-calendar-day::before {
+    content: "📆 " !important;
+    font-family: "Segoe UI Emoji", Arial !important;
+}
+
+.fa-folder-open::before,
+.fas.fa-folder-open::before {
+    content: "📂 " !important;
+    font-family: "Segoe UI Emoji", Arial !important;
+}
+
+.fa-clock::before,
+.fas.fa-clock::before {
+    content: "🕐 " !important;
+    font-family: "Segoe UI Emoji", Arial !important;
+}
+
+.fa-comment::before,
+.fas.fa-comment::before {
+    content: "💬 " !important;
+    font-family: "Segoe UI Emoji", Arial !important;
+}

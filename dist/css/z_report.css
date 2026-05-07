@@ -1,0 +1,136 @@
+/* Z-Report Styling */
+body.z-report-page {
+    background-color: #f5f5f5;
+    color: #333;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+
+.ticket {
+    width: 75mm;
+    max-width: 75mm;
+    background: #fff;
+    margin: 20px auto;
+    padding: 10px;
+    box-shadow: 0 0 10px rgba(0,0,0,0.1);
+}
+
+.ticket-header {
+    text-align: center;
+    border-bottom: 2px dashed #000;
+    padding-bottom: 10px;
+    margin-bottom: 10px;
+}
+
+.ticket-header h4 {
+    margin: 5px 0;
+    font-size: 1.2rem;
+    font-weight: bold;
+}
+
+.ticket-info {
+    font-size: 0.8rem;
+    margin-bottom: 10px;
+}
+
+.ticket-info div {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 2px;
+}
+
+.section-title {
+    font-weight: bold;
+    border-bottom: 1px solid #000;
+    margin: 10px 0 5px 0;
+    font-size: 0.9rem;
+}
+
+.summary-table {
+    width: 100%;
+    font-size: 0.85rem;
+    border-collapse: collapse;
+}
+
+.summary-table td {
+    padding: 3px 0;
+}
+
+.summary-table .amount {
+    text-align: left; /* English numbers usually align left or right, but Arabic UI? LTR/RTL mixed. matching logic */
+    font-weight: bold;
+}
+
+.total-row {
+    font-weight: bold;
+    border-top: 1px dashed #000;
+    font-size: 1rem;
+}
+
+.breakdown-item {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.8rem;
+    margin-bottom: 2px;
+}
+
+.input-section {
+    background: #e9ecef;
+    padding: 10px;
+    margin-top: 15px;
+    border-radius: 5px;
+    display: block; /* Hidden in print */
+}
+
+.form-group {
+    margin-bottom: 10px;
+    text-align: right;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 5px;
+    font-weight: bold;
+}
+
+.form-control {
+    width: 100%;
+    padding: 5px;
+    border: 1px solid #ccc;
+    border-radius: 3px;
+    text-align: center;
+    font-size: 1rem;
+}
+
+.btn-close-shift {
+    width: 100%;
+    padding: 10px;
+    background: #dc3545;
+    color: white;
+    border: none;
+    font-weight: bold;
+    cursor: pointer;
+    margin-top: 10px;
+}
+
+.btn-close-shift:hover {
+    background: #c82333;
+}
+
+@media print {
+    body {
+        background: #fff;
+    }
+    .ticket {
+        margin: 0;
+        box-shadow: none;
+        width: 100%;
+        max-width: 100%;
+    }
+    .no-print {
+        display: none !important;
+    }
+    .input-section {
+         display: none !important; 
+    }
+    /* Show actual inputs as text if needed? No, standard Z-Report prints calculated values. */
+}
