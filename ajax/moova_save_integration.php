@@ -121,6 +121,7 @@ try {
             'id' => $saved['id'],
             'moovaShopId' => $saved['moova_shop_id'],
             'moovaBranchId' => $saved['moova_branch_id'],
+            'deviceToken' => $deviceToken,
             'deviceTokenMasked' => MoovaPosIntegration::maskDeviceToken($deviceToken),
             'widgetUrl' => $saved['widget_url'],
             'locale' => $saved['locale'],

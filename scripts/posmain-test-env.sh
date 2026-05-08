@@ -18,7 +18,7 @@ case "${1:-up}" in
   php-lint)
     shift || true
     if [ "$#" -eq 0 ]; then
-      set -- classes/MoovaPosIntegration.php classes/PosOrderService.php ajax/moova_confirm_order.php elements/pos/cofe_widget.php moova_pos_widget.php moova_pos_proxy.php
+      set -- classes/MoovaPosIntegration.php classes/PosOrderService.php ajax/moova_confirm_order.php ajax/moova_change_order.php elements/pos/cofe_widget.php moova_pos_widget.php moova_pos_proxy.php
     fi
     for file in "$@"; do
       docker exec posmain-php php -l "$file"
@@ -32,6 +32,7 @@ case "${1:-up}" in
     docker exec posmain-php php -l classes/MoovaPosIntegration.php
     docker exec posmain-php php -l classes/PosOrderService.php
     docker exec posmain-php php -l ajax/moova_confirm_order.php
+    docker exec posmain-php php -l ajax/moova_change_order.php
     docker exec posmain-php php -l elements/pos/cofe_widget.php
     docker exec posmain-php php -l moova_pos_widget.php
     docker exec posmain-php php -l moova_pos_proxy.php

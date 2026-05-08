@@ -9,7 +9,7 @@ try {
     $sql = "SELECT 
                 o.id,
                 o.pro_id as invoice_number,
-                DATE_FORMAT(o.pro_date, '%Y-%m-%d %H:%i') as date,
+                DATE_FORMAT(COALESCE(o.mdtime, o.crtime, o.pro_date), '%Y-%m-%d %H:%i') as date,
                 c.aname as customer_name,
                 CASE 
                     WHEN o.info LIKE '%نوع الطلب: طاولة%' OR o.info LIKE '%طاولة:%' THEN 'طاولة'
@@ -27,7 +27,7 @@ try {
             LEFT JOIN acc_head c ON o.acc1 = c.id
             WHERE o.pro_tybe = 9 
             AND o.isdeleted = 0
-            ORDER BY o.id DESC 
+            ORDER BY COALESCE(o.mdtime, o.crtime, o.pro_date) DESC, o.id DESC
             LIMIT 10";
 
     $result = $conn->query($sql);

@@ -17,10 +17,7 @@ if (empty($_SESSION['moova_integration_csrf'])) {
 $moovaCsrf = $_SESSION['moova_integration_csrf'];
 
 $defaultWidgetUrl = $activeMoovaLink['widget_url'] ?? 'https://withmoova.com/pos-widget';
-$maskedToken = '';
-if ($activeMoovaLink && !empty($activeMoovaLink['moova_device_token_last4'])) {
-    $maskedToken = '•••• ' . $activeMoovaLink['moova_device_token_last4'];
-}
+$visibleDeviceToken = $activeMoovaLink ? (string) ($activeMoovaLink['moova_device_token'] ?? '') : '';
 ?>
 
 <div class="content-wrapper">
@@ -67,9 +64,11 @@ if ($activeMoovaLink && !empty($activeMoovaLink['moova_device_token_last4'])) {
 
                   <div class="form-group">
                     <label for="moovaDeviceToken">Moova Device Token <?= $activeMoovaLink ? '' : '<span class="text-danger">*</span>' ?></label>
-                    <input type="password" class="form-control" id="moovaDeviceToken"
-                           placeholder="<?= $activeMoovaLink ? htmlspecialchars($maskedToken, ENT_QUOTES, 'UTF-8') . ' - اتركه فارغا للإبقاء عليه' : 'الصق التوكن من صفحة Moova Admin' ?>">
-                    <small class="form-text text-muted">هذا التوكن يحدد فرع Moova المرتبط بهذا الـ POS. لا يتم عرضه بعد الحفظ.</small>
+                    <input type="text" class="form-control" id="moovaDeviceToken"
+                           value="<?= htmlspecialchars($visibleDeviceToken, ENT_QUOTES, 'UTF-8') ?>"
+                           placeholder="الصق التوكن من صفحة Moova Admin"
+                           dir="ltr" spellcheck="false" <?= $activeMoovaLink ? '' : 'required' ?>>
+                    <small class="form-text text-muted">هذا التوكن يحدد فرع Moova المرتبط بهذا الـ POS وسيظل ظاهرا هنا بعد الحفظ.</small>
                   </div>
 
                   <div class="row">
@@ -132,7 +131,7 @@ if ($activeMoovaLink && !empty($activeMoovaLink['moova_device_token_last4'])) {
                   </dd>
                   <?php if ($activeMoovaLink): ?>
                     <dt class="col-5">Token</dt>
-                    <dd class="col-7"><?= htmlspecialchars($maskedToken, ENT_QUOTES, 'UTF-8') ?></dd>
+                    <dd class="col-7 text-break" dir="ltr"><?= htmlspecialchars($visibleDeviceToken, ENT_QUOTES, 'UTF-8') ?></dd>
                     <dt class="col-5">آخر تعديل</dt>
                     <dd class="col-7"><?= htmlspecialchars((string)$activeMoovaLink['updated_at'], ENT_QUOTES, 'UTF-8') ?></dd>
                   <?php endif; ?>

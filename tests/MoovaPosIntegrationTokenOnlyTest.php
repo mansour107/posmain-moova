@@ -64,6 +64,8 @@ class MoovaPosIntegrationTokenOnlyTest extends TestCase
 
         $byToken = MoovaPosIntegration::findActiveLinkByToken(self::$conn, $token);
         $this->assertNotNull($byToken);
+        $this->assertSame($token, (string) $byToken['moova_device_token']);
+        $this->assertSame(substr($token, -4), (string) $byToken['moova_device_token_last4']);
         $this->assertSame('', (string) $byToken['moova_branch_id']);
         $this->assertSame((int) $this->scope['tenant'], (int) $byToken['pos_tenant']);
         $this->assertSame((int) $this->scope['branch'], (int) $byToken['pos_branch']);

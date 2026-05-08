@@ -1,5 +1,14 @@
-<?php 
-include('includes/pos_simple_header.php');
+<?php
+if (session_status() == PHP_SESSION_NONE) {
+    session_start();
+}
+
+if (!isset($_SESSION['login'])) {
+    header('location:index.php');
+    exit;
+}
+
+include(__DIR__ . '/includes/connect.php');
 
 // معالجة تسجيل الخروج
 if (isset($_GET['logout'])) {
@@ -89,6 +98,9 @@ if(isset($_SESSION['success_message'])){
     $success_message = $_SESSION['success_message'];
     unset($_SESSION['success_message']);
 }
+
+$pos_body_class = 'bg-light';
+include('includes/pos_simple_header.php');
 ?>
 
 <!-- Assets (CSS & JS) -->
@@ -96,8 +108,6 @@ if(isset($_SESSION['success_message'])){
 
 <!-- نظام القفل -->
 <?php include('includes/pos_lock_system.php'); ?>
-
-<body class="bg-light">
 
 <!-- Hidden input for Edit Mode -->
 <input type="hidden" id="edit_order_id" value="<?= isset($id) ? $id : '' ?>">

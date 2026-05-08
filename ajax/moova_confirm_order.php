@@ -114,17 +114,22 @@ function moova_create_order_link(mysqli $conn, array $payload, array $link, $ide
     return $id;
 }
 
-function moova_update_order_link_success(mysqli $conn, $linkId, $orderId, $providerStatus, array $response)
+function moova_update_order_link_success(mysqli $conn, $linkId, $orderId, $providerStatus, array $response, $stateHash = null, $statePayload = null)
 {
     $responseJson = json_encode($response, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    $statePayloadJson = $statePayload === null
+        ? null
+        : json_encode($statePayload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     $stmt = $conn->prepare("
         UPDATE moova_pos_order_links
         SET pos_order_id = ?,
             provider_status = ?,
+            last_pos_state_hash = ?,
+            last_pos_state_payload = ?,
             response_payload = ?
         WHERE id = ?
     ");
-    $stmt->bind_param("issi", $orderId, $providerStatus, $responseJson, $linkId);
+    $stmt->bind_param("issssi", $orderId, $providerStatus, $stateHash, $statePayloadJson, $responseJson, $linkId);
     $stmt->execute();
     $stmt->close();
 }
@@ -216,6 +221,8 @@ try {
         'branch' => (int) $shopLink['pos_branch'],
         'user_id' => (int) $_SESSION['userid'],
     ], $payload);
+    $stateHash = $order['state_hash'] ?? null;
+    $statePayload = $order['state_payload'] ?? null;
 
     $providerStatus = $order['merged'] ? 'updated' : 'created';
     $response = [
@@ -234,8 +241,19 @@ try {
             'net' => (float) $order['net'],
         ],
     ];
+    if (!empty($stateHash)) {
+        $response['stateHash'] = $stateHash;
+    }
 
-    moova_update_order_link_success($conn, $orderLinkId, (int) $order['order_id'], $providerStatus, $response);
+    moova_update_order_link_success(
+        $conn,
+        $orderLinkId,
+        (int) $order['order_id'],
+        $providerStatus,
+        $response,
+        $stateHash,
+        $statePayload
+    );
 
     $conn->commit();
     moova_json_response(200, $response);

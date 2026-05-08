@@ -56,6 +56,8 @@ class MoovaPosIntegration
                 pos_branch INT(11) NOT NULL DEFAULT 0,
                 pos_order_id INT(11) DEFAULT NULL,
                 provider_status VARCHAR(32) NOT NULL DEFAULT 'processing',
+                last_pos_state_hash CHAR(64) DEFAULT NULL,
+                last_pos_state_payload LONGTEXT,
                 request_payload LONGTEXT,
                 response_payload LONGTEXT,
                 created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -67,11 +69,71 @@ class MoovaPosIntegration
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
         ");
 
+        $conn->query("
+            CREATE TABLE IF NOT EXISTS moova_pos_order_change_links (
+                id INT(11) NOT NULL AUTO_INCREMENT,
+                idempotency_key VARCHAR(191) NOT NULL,
+                request_hash CHAR(64) NOT NULL,
+                moova_order_id VARCHAR(191) NOT NULL,
+                moova_request_event_id VARCHAR(191) DEFAULT NULL,
+                change_type VARCHAR(20) NOT NULL,
+                moova_branch_id VARCHAR(128) NOT NULL,
+                pos_tenant INT(11) NOT NULL DEFAULT 0,
+                pos_branch INT(11) NOT NULL DEFAULT 0,
+                pos_order_id INT(11) DEFAULT NULL,
+                provider_status VARCHAR(32) NOT NULL DEFAULT 'processing',
+                request_payload LONGTEXT,
+                response_payload LONGTEXT,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                PRIMARY KEY (id),
+                UNIQUE KEY uq_moova_change_idempotency_scope (pos_tenant, pos_branch, idempotency_key),
+                KEY idx_moova_change_order_scope (moova_order_id, pos_tenant, pos_branch),
+                KEY idx_moova_change_pos_order (pos_order_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+        ");
+
+        $conn->query("
+            CREATE TABLE IF NOT EXISTS moova_pos_order_lines (
+                id INT(11) NOT NULL AUTO_INCREMENT,
+                moova_order_id VARCHAR(191) NOT NULL,
+                pos_order_id INT(11) NOT NULL,
+                fat_detail_id INT(11) NOT NULL,
+                item_id INT(11) NOT NULL,
+                qty_out DOUBLE NOT NULL DEFAULT 0,
+                price DOUBLE NOT NULL DEFAULT 0,
+                discount DOUBLE NOT NULL DEFAULT 0,
+                det_value DOUBLE NOT NULL DEFAULT 0,
+                line_hash CHAR(64) NOT NULL,
+                status VARCHAR(20) NOT NULL DEFAULT 'active',
+                pos_tenant INT(11) NOT NULL DEFAULT 0,
+                pos_branch INT(11) NOT NULL DEFAULT 0,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                PRIMARY KEY (id),
+                KEY idx_moova_line_order_scope (moova_order_id, pos_tenant, pos_branch, status),
+                KEY idx_moova_line_pos_order (pos_order_id, status),
+                KEY idx_moova_line_detail (fat_detail_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+        ");
+
         self::ensureColumn(
             $conn,
             'moova_pos_shop_links',
             'moova_device_token',
             "ALTER TABLE moova_pos_shop_links ADD COLUMN moova_device_token VARCHAR(191) DEFAULT NULL AFTER moova_branch_id"
+        );
+        self::ensureColumn(
+            $conn,
+            'moova_pos_order_links',
+            'last_pos_state_hash',
+            "ALTER TABLE moova_pos_order_links ADD COLUMN last_pos_state_hash CHAR(64) DEFAULT NULL AFTER provider_status"
+        );
+        self::ensureColumn(
+            $conn,
+            'moova_pos_order_links',
+            'last_pos_state_payload',
+            "ALTER TABLE moova_pos_order_links ADD COLUMN last_pos_state_payload LONGTEXT AFTER last_pos_state_hash"
         );
         self::ensureIndex(
             $conn,
@@ -363,6 +425,34 @@ class MoovaPosIntegration
         return hash(
             'sha256',
             json_encode(self::normalizePayloadForHash($payload), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
+        );
+    }
+
+    public static function normalizeChangePayloadForHash(array $payload)
+    {
+        $items = [];
+        foreach (($payload['items'] ?? []) as $item) {
+            $items[] = [
+                'itemId' => trim((string) ($item['itemId'] ?? '')),
+                'qty' => (float) ($item['qty'] ?? 0),
+            ];
+        }
+
+        return [
+            'action' => trim((string) ($payload['action'] ?? '')),
+            'moovaOrderId' => trim((string) ($payload['moovaOrderId'] ?? $payload['orderId'] ?? '')),
+            'requestEventId' => trim((string) ($payload['requestEventId'] ?? '')),
+            'providerOrderId' => trim((string) ($payload['providerOrderId'] ?? '')),
+            'providerReferenceId' => trim((string) ($payload['providerReferenceId'] ?? '')),
+            'items' => $items,
+        ];
+    }
+
+    public static function changePayloadHash(array $payload)
+    {
+        return hash(
+            'sha256',
+            json_encode(self::normalizeChangePayloadForHash($payload), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
         );
     }
 }

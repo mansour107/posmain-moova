@@ -4,6 +4,11 @@
   const DEFAULT_HEARTBEAT_INTERVAL_MS = 20000;
   const TOAST_DURATION_MS = 3200;
   const HOST_ORDER_ACK_TIMEOUT_MS = 30000;
+  const HOST_ORDER_CHANGE_TIMEOUT_MS = 30000;
+  const PANEL_BASE_HEIGHT = 96;
+  const PANEL_CARD_HEIGHT = 324;
+  const PANEL_FOOTER_HEIGHT = 64;
+  const PANEL_MAX_HEIGHT = 760;
   const ORDER_NOTIFICATION_SOUND_URL = '/assets/new.wav';
   const NOTIFICATION_SOUND_INTERVAL_MS = 6000;
   const NOTIFICATION_SOUND_VOLUME = 1.0;
@@ -25,8 +30,6 @@
       missingDeviceToken: 'Missing device token.',
       failedStartWidget: 'Failed to start the approval widget.',
       failedFetchPending: 'Failed to fetch pending orders.',
-      newOrderToast: 'New POS order received.',
-      pendingOrdersNotice: 'There are pending POS orders.',
       muteNotifications: 'Mute notifications',
       unmuteNotifications: 'Unmute notifications',
       notesConfirmedToast: 'Notes confirmed.',
@@ -36,6 +39,8 @@
       failedConfirmOrder: 'Failed to confirm the order.',
       orderDeclinedToast: 'Order declined.',
       failedDeclineOrder: 'Failed to decline the order.',
+      failedConfirmChange: 'Failed to confirm the order change.',
+      failedDeclineChange: 'Failed to decline the order change.',
       missingHostOrderPayload: 'Order data is not ready yet. Please refresh and try again.',
       hostOrderAckTimeout: 'The POS did not confirm order creation in time.',
       syncing: 'syncing',
@@ -47,6 +52,20 @@
       total: 'Total',
       confirm: 'Confirm',
       confirmOrder: 'Confirm order',
+      changeRequestKicker: 'Order change request',
+      editRequestKicker: 'Order edit request',
+      cancelRequestKicker: 'Order cancellation request',
+      editRequestTitle: 'Edit request',
+      cancelRequestTitle: 'Cancel request',
+      confirmChange: 'Confirm change',
+      declineChange: 'Decline change',
+      confirmEditChange: 'Confirm edit',
+      declineEditChange: 'Decline edit',
+      confirmCancelChange: 'Confirm cancellation',
+      declineCancelChange: 'Decline cancellation',
+      newOrderDetails: 'New order details',
+      oldOrderDetails: 'Old order details',
+      orderReference: ({ reference }) => `Order ${reference}`,
       noOrdersWaitingTitle: 'No orders waiting now',
       noOrdersWaitingCopy: 'The queue is empty. New POS approvals will appear here automatically.',
       noNotes: 'No notes',
@@ -99,8 +118,6 @@
       missingDeviceToken: 'رمز الجهاز غير موجود.',
       failedStartWidget: 'تعذر تشغيل ويدجت الموافقة.',
       failedFetchPending: 'تعذر جلب الطلبات المعلّقة.',
-      newOrderToast: 'وصل طلب جديد لنقاط البيع.',
-      pendingOrdersNotice: 'توجد طلبات معلّقة لنقاط البيع.',
       muteNotifications: 'كتم صوت الإشعارات',
       unmuteNotifications: 'تشغيل صوت الإشعارات',
       notesConfirmedToast: 'تم تأكيد الملاحظات.',
@@ -110,6 +127,8 @@
       failedConfirmOrder: 'تعذر تأكيد الطلب.',
       orderDeclinedToast: 'تم رفض الطلب.',
       failedDeclineOrder: 'تعذر رفض الطلب.',
+      failedConfirmChange: 'تعذر تأكيد تعديل الطلب.',
+      failedDeclineChange: 'تعذر رفض تعديل الطلب.',
       missingHostOrderPayload: 'بيانات الطلب غير جاهزة بعد. حدّث الصفحة وحاول مرة أخرى.',
       hostOrderAckTimeout: 'لم يؤكد نظام نقاط البيع إنشاء الطلب في الوقت المحدد.',
       syncing: 'جارٍ التحديث',
@@ -121,6 +140,20 @@
       total: 'الإجمالي',
       confirm: 'تأكيد',
       confirmOrder: 'تأكيد الطلب',
+      changeRequestKicker: 'طلب تعديل أوردر',
+      editRequestKicker: 'طلب تعديل أوردر',
+      cancelRequestKicker: 'طلب إلغاء أوردر',
+      editRequestTitle: 'طلب تعديل',
+      cancelRequestTitle: 'طلب إلغاء',
+      confirmChange: 'تأكيد التعديل',
+      declineChange: 'رفض التعديل',
+      confirmEditChange: 'تأكيد التعديل',
+      declineEditChange: 'رفض التعديل',
+      confirmCancelChange: 'تأكيد الإلغاء',
+      declineCancelChange: 'رفض الإلغاء',
+      newOrderDetails: 'تفاصيل الطلب الجديدة',
+      oldOrderDetails: 'تفاصيل الطلب القديمة',
+      orderReference: ({ reference }) => `أوردر ${reference}`,
       noOrdersWaitingTitle: 'لا توجد طلبات بانتظار الموافقة',
       noOrdersWaitingCopy: 'القائمة فارغة الآن. ستظهر طلبات نقاط البيع الجديدة هنا تلقائياً.',
       noNotes: 'لا توجد ملاحظات',
@@ -174,8 +207,10 @@
     panelOpen: false,
     emptyStateOpen: false,
     detailDraftId: null,
+    detailCommandId: null,
     notesDraftId: null,
     declineDraftId: null,
+    declineCommandId: null,
     declineVia: 'overlay',
     allOrdersOpen: false,
     refreshPromise: null,
@@ -194,7 +229,11 @@
     confirmingDraftIds: new Set(),
     confirmingNotesIds: new Set(),
     decliningDraftIds: new Set(),
+    confirmingCommandIds: new Set(),
+    decliningCommandIds: new Set(),
+    processingCommandIds: new Set(),
     pendingHostOrderResults: new Map(),
+    pendingHostCommandResults: new Map(),
     lastSignals: {
       visible: null,
       count: null,
@@ -254,7 +293,7 @@
 
     if (elements.bell) {
       elements.bell.addEventListener('click', () => {
-        if (state.drafts.length === 0) {
+        if (getNotificationItems().length === 0) {
           state.emptyStateOpen = !state.emptyStateOpen;
           state.panelOpen = state.emptyStateOpen;
         } else {
@@ -268,7 +307,7 @@
     if (elements.soundToggle) {
       elements.soundToggle.addEventListener('click', () => {
         setNotificationMuted(!isMuted());
-        if (!isMuted() && state.drafts.length) {
+        if (!isMuted() && getNotificationItems().length) {
           startContinuousBeep('new');
         }
         render();
@@ -316,6 +355,10 @@
       handleHostOrderResult(event, payload);
       return;
     }
+    if (payload.type === 'cofe.host.order-change-result') {
+      handleHostOrderChangeResult(event, payload);
+      return;
+    }
     if (payload.type === 'cofe.host.open' || payload.type === 'cofe.host.toggle' || payload.type === 'cofe.host.close') {
       handleHostControlMessage(payload);
       return;
@@ -355,7 +398,7 @@
       closeAllSurfaces();
       return;
     }
-    if (!state.drafts.length) {
+    if (!getNotificationItems().length) {
       state.panelOpen = false;
       state.emptyStateOpen = false;
       render();
@@ -411,15 +454,21 @@
     state.hostBellMode = Boolean(state.hostBellMode);
     state.navbarBellMode = Boolean(state.navbarBellMode);
     state.detailDraftId = null;
+    state.detailCommandId = null;
     state.notesDraftId = null;
     state.declineDraftId = null;
+    state.declineCommandId = null;
     state.declineVia = 'overlay';
     state.allOrdersOpen = false;
     state.wsConnected = false;
     state.confirmingDraftIds.clear();
     state.confirmingNotesIds.clear();
     state.decliningDraftIds.clear();
+    state.confirmingCommandIds.clear();
+    state.decliningCommandIds.clear();
+    state.processingCommandIds.clear();
     clearPendingHostOrderResults(createWidgetError(t('failedConfirmOrder'), 409, 'host_order_cancelled'));
+    clearPendingHostCommandResults(createWidgetError(t('failedConfirmOrder'), 409, 'host_order_change_cancelled'));
   }
 
   function cleanupRealtime() {
@@ -561,7 +610,7 @@
   }
 
   function hasAnyNotifications() {
-    return state.drafts.length > 0;
+    return getNotificationItems().length > 0;
   }
 
   function isMuted() {
@@ -662,8 +711,9 @@
       const payload = safeParseJson(event.data);
       if (!payload || typeof payload.type !== 'string') return;
       if (payload.type === 'pos.bridge_draft.upsert') {
-        showToast(t('newOrderToast'));
         refreshPending({ initKey, silent: true, forceOpen: true });
+      } else if (payload.type === 'pos.bridge_command.upsert') {
+        refreshPending({ initKey, silent: true });
       }
     });
 
@@ -697,25 +747,26 @@
         if (!isActiveInit(initKey)) {
           return result;
         }
-        const previousCount = state.drafts.length;
-        const previousIds = new Set(state.drafts.map((draft) => String(draft.id)));
+        const previousItems = getNotificationItems();
+        const previousCount = previousItems.length;
+        const previousIds = new Set(previousItems.map((item) => item.key));
         state.device = result.device || state.device;
         state.commands = Array.isArray(result.commands) ? result.commands : [];
         state.drafts = Array.isArray(result.drafts) ? result.drafts.slice() : [];
-        const hasNewDraft = state.drafts.length > previousCount
-          || state.drafts.some((draft) => !previousIds.has(String(draft.id)));
-        const shouldNotify = Boolean(state.drafts.length && (options?.forceOpen || hasNewDraft));
+        const nextItems = getNotificationItems();
+        const hasNewNotification = nextItems.length > previousCount
+          || nextItems.some((item) => !previousIds.has(item.key));
+        const shouldNotify = Boolean(nextItems.length && (options?.forceOpen || hasNewNotification));
         if (shouldNotify) {
           state.emptyStateOpen = false;
           state.panelOpen = true;
         }
         if (shouldNotify) {
-          showToast(t('newOrderToast'));
           startContinuousBeep('new');
         } else {
           syncNotificationSoundLoop();
         }
-        if (!state.drafts.length) {
+        if (!nextItems.length) {
           state.panelOpen = state.emptyStateOpen;
         }
         reconcileModalState();
@@ -741,6 +792,9 @@
     if (state.detailDraftId && !findDraft(state.detailDraftId)) {
       state.detailDraftId = null;
     }
+    if (state.detailCommandId && !findOrderChangeCommand(state.detailCommandId)) {
+      state.detailCommandId = null;
+    }
     if (state.notesDraftId && !findDraft(state.notesDraftId)) {
       state.notesDraftId = null;
     }
@@ -748,9 +802,49 @@
       state.declineDraftId = null;
       state.declineVia = 'overlay';
     }
-    if (state.allOrdersOpen && !state.drafts.length) {
+    if (state.declineCommandId && !findOrderChangeCommand(state.declineCommandId)) {
+      state.declineCommandId = null;
+      state.declineVia = 'overlay';
+    }
+    if (state.allOrdersOpen && !getNotificationItems().length) {
       state.allOrdersOpen = false;
     }
+  }
+
+  function getOrderChangeCommands() {
+    if (!Array.isArray(state.commands)) {
+      return [];
+    }
+    return state.commands.filter((command) => {
+      const type = String(command?.commandType || '').trim().toLowerCase();
+      const status = String(command?.status || '').trim().toLowerCase();
+      return type === 'order_change' && !['completed', 'expired', 'cancelled'].includes(status);
+    });
+  }
+
+  function getNotificationItems() {
+    const drafts = (Array.isArray(state.drafts) ? state.drafts : []).map((draft) => ({
+      kind: 'draft',
+      key: `draft:${draft.id}`,
+      id: String(draft.id),
+      createdAt: draft.createdAt || draft.updatedAt || null,
+      record: draft,
+    }));
+    const changes = getOrderChangeCommands().map((command) => ({
+      kind: 'change',
+      key: `change:${command.id}`,
+      id: String(command.id),
+      createdAt: command.createdAt || command.updatedAt || null,
+      record: command,
+    }));
+    return drafts.concat(changes).sort((a, b) => {
+      const aTime = new Date(a.createdAt || 0).getTime();
+      const bTime = new Date(b.createdAt || 0).getTime();
+      if (Number.isFinite(aTime) && Number.isFinite(bTime) && aTime !== bTime) {
+        return aTime - bTime;
+      }
+      return a.key.localeCompare(b.key);
+    });
   }
 
   function handleStackClick(event) {
@@ -759,9 +853,14 @@
       event.stopPropagation();
       const action = actionButton.getAttribute('data-action');
       const draftId = actionButton.getAttribute('data-draft-id');
+      const commandId = actionButton.getAttribute('data-command-id');
       if (action === 'show-more') {
         state.allOrdersOpen = true;
         render();
+      } else if (action === 'confirm-change' && commandId) {
+        confirmOrderChange(commandId);
+      } else if (action === 'decline-change' && commandId) {
+        declineOrderChange(commandId, '', actionButton.getAttribute('data-declined-via') || 'overlay');
       } else if (action === 'open-notes' && draftId) {
         openNotesModal(draftId);
       } else if (action === 'confirm-order' && draftId) {
@@ -774,6 +873,11 @@
     const card = event.target.closest('[data-draft-card]');
     if (card) {
       openDetailModal(card.getAttribute('data-draft-id'));
+      return;
+    }
+    const changeCard = event.target.closest('[data-change-card]');
+    if (changeCard) {
+      openChangeDetailModal(changeCard.getAttribute('data-command-id'));
     }
   }
 
@@ -782,9 +886,13 @@
     if (!actionButton) return;
     const action = actionButton.getAttribute('data-action');
     const draftId = actionButton.getAttribute('data-draft-id');
+    const commandId = actionButton.getAttribute('data-command-id');
     if (action === 'open-detail' && draftId) {
       state.allOrdersOpen = false;
       openDetailModal(draftId);
+    } else if (action === 'open-change-detail' && commandId) {
+      state.allOrdersOpen = false;
+      openChangeDetailModal(commandId);
     }
   }
 
@@ -793,6 +901,16 @@
     if (!actionButton) return;
     const action = actionButton.getAttribute('data-action');
     const draftId = actionButton.getAttribute('data-draft-id');
+    const commandId = actionButton.getAttribute('data-command-id');
+    if (!draftId && !commandId) return;
+    if (action === 'confirm-change' && commandId) {
+      confirmOrderChange(commandId);
+      return;
+    }
+    if (action === 'decline-change' && commandId) {
+      declineOrderChange(commandId, '', actionButton.getAttribute('data-declined-via') || 'detail_modal');
+      return;
+    }
     if (!draftId) return;
     if (action === 'open-notes') {
       openNotesModal(draftId);
@@ -827,15 +945,28 @@
   function handleDeclineSubmit(event) {
     event.preventDefault();
     const draftId = state.declineDraftId;
-    if (!draftId) return;
+    const commandId = state.declineCommandId;
+    if (!draftId && !commandId) return;
     const reasonInput = document.getElementById('pw-decline-reason');
     const reason = asText(reasonInput?.value);
+    if (commandId) {
+      declineOrderChange(commandId, reason, state.declineVia || 'decline_modal');
+      return;
+    }
     declineOrder(draftId, reason, state.declineVia || 'decline_modal');
   }
 
   function openDetailModal(draftId) {
     if (!findDraft(draftId)) return;
     state.detailDraftId = draftId;
+    state.detailCommandId = null;
+    render();
+  }
+
+  function openChangeDetailModal(commandId) {
+    if (!findOrderChangeCommand(commandId)) return;
+    state.detailCommandId = commandId;
+    state.detailDraftId = null;
     render();
   }
 
@@ -848,6 +979,7 @@
   function openDeclineModal(draftId, declinedVia) {
     if (!findDraft(draftId)) return;
     state.declineDraftId = draftId;
+    state.declineCommandId = null;
     state.declineVia = declinedVia || 'overlay';
     render();
     setTimeout(() => {
@@ -862,10 +994,15 @@
     if (state.declineDraftId) {
       state.declineDraftId = null;
       state.declineVia = 'overlay';
+    } else if (state.declineCommandId) {
+      state.declineCommandId = null;
+      state.declineVia = 'overlay';
     } else if (state.notesDraftId) {
       state.notesDraftId = null;
     } else if (state.detailDraftId) {
       state.detailDraftId = null;
+    } else if (state.detailCommandId) {
+      state.detailCommandId = null;
     } else if (state.allOrdersOpen) {
       state.allOrdersOpen = false;
     }
@@ -887,8 +1024,10 @@
     state.emptyStateOpen = false;
     state.allOrdersOpen = false;
     state.detailDraftId = null;
+    state.detailCommandId = null;
     state.notesDraftId = null;
     state.declineDraftId = null;
+    state.declineCommandId = null;
     state.declineVia = 'overlay';
     render();
   }
@@ -898,10 +1037,12 @@
       state.allOrdersOpen = false;
     } else if (modalName === 'detail') {
       state.detailDraftId = null;
+      state.detailCommandId = null;
     } else if (modalName === 'notes') {
       state.notesDraftId = null;
     } else if (modalName === 'decline') {
       state.declineDraftId = null;
+      state.declineCommandId = null;
       state.declineVia = 'overlay';
     }
     render();
@@ -1099,6 +1240,264 @@
     return metadataType === 'iframe_widget' || bridgeType === 'iframe_widget';
   }
 
+  function processPendingCommands() {
+    // Order-change commands must stay visible until the cashier approves or declines.
+  }
+
+  async function confirmOrderChange(commandId) {
+    const normalizedCommandId = asText(commandId);
+    const command = findOrderChangeCommand(normalizedCommandId);
+    if (!command || state.confirmingCommandIds.has(normalizedCommandId)) {
+      return;
+    }
+    state.confirmingCommandIds.add(normalizedCommandId);
+    state.processingCommandIds.add(normalizedCommandId);
+    render();
+    try {
+      const claimed = await apiFetch(`/api/integrations/pos/local-bridge/commands/${encodeURIComponent(normalizedCommandId)}/claim`, {
+        method: 'POST',
+      });
+      const claimedCommand = claimed.command || command;
+      if (String(claimedCommand.status || '').toLowerCase() === 'completed') {
+        applyCommandResult(claimedCommand);
+        return;
+      }
+      const requestPayload = getCommandRequestPayload(claimedCommand);
+      const action = String(requestPayload.action || '').trim().toLowerCase();
+      const hostResult = await sendCommandToHostForOrderChange(claimedCommand);
+      const applied = hostResult.applied === true && hostResult.declined !== true;
+      const declined = hostResult.declined === true || hostResult.applied === false;
+      const completeResult = await apiFetch(`/api/integrations/pos/local-bridge/commands/${encodeURIComponent(normalizedCommandId)}/complete`, {
+          method: 'POST',
+          body: {
+            action: action === 'cancel' ? 'cancel' : 'edit',
+            cashierReviewed: true,
+            cashierAction: 'confirm',
+            applied,
+            decision: applied ? 'accepted' : (declined ? 'declined' : undefined),
+            providerOrderId: asText(hostResult.providerOrderId) || null,
+          providerReferenceId: asText(hostResult.providerReferenceId) || null,
+          providerStatus: asText(hostResult.providerStatus) || (applied ? 'applied' : 'declined'),
+          message: asText(hostResult.message) || null,
+          declineReason: asText(hostResult.message) || null,
+          responsePayload: {
+            source: WIDGET_SOURCE,
+            buildVersion: BUILD_VERSION,
+            hostResponse: hostResult.responsePayload || hostResult,
+          },
+        },
+      });
+      applyCommandResult(completeResult.command);
+      if (state.detailCommandId === normalizedCommandId) {
+        state.detailCommandId = null;
+      }
+      if (state.declineCommandId === normalizedCommandId) {
+        state.declineCommandId = null;
+        state.declineVia = 'overlay';
+      }
+      refreshPending({ silent: true });
+    } catch (error) {
+      await acknowledgeHostOrderChangeFailure(normalizedCommandId, command, error);
+      showToast(error.message || t('failedConfirmChange'));
+    } finally {
+      state.confirmingCommandIds.delete(normalizedCommandId);
+      state.processingCommandIds.delete(normalizedCommandId);
+      render();
+    }
+  }
+
+  async function declineOrderChange(commandId, reason, declinedVia) {
+    const normalizedCommandId = asText(commandId);
+    const command = findOrderChangeCommand(normalizedCommandId);
+    if (!command || state.decliningCommandIds.has(normalizedCommandId)) {
+      return;
+    }
+    state.decliningCommandIds.add(normalizedCommandId);
+    render();
+    try {
+      const requestPayload = getCommandRequestPayload(command);
+      const action = String(requestPayload.action || '').trim().toLowerCase();
+      const normalizedReason = asText(reason) || t('declineChange');
+      const completeResult = await apiFetch(`/api/integrations/pos/local-bridge/commands/${encodeURIComponent(normalizedCommandId)}/complete`, {
+        method: 'POST',
+        body: {
+          action: action === 'cancel' ? 'cancel' : 'edit',
+          cashierReviewed: true,
+          cashierAction: 'decline',
+          applied: false,
+          decision: 'declined',
+          message: normalizedReason,
+          declineReason: normalizedReason,
+          responsePayload: {
+            source: WIDGET_SOURCE,
+            declinedVia: declinedVia || 'overlay',
+            buildVersion: BUILD_VERSION,
+          },
+        },
+      });
+      applyCommandResult(completeResult.command);
+      if (state.detailCommandId === normalizedCommandId) {
+        state.detailCommandId = null;
+      }
+      if (state.declineCommandId === normalizedCommandId) {
+        state.declineCommandId = null;
+        state.declineVia = 'overlay';
+      }
+      showToast(t('orderDeclinedToast'));
+      refreshPending({ silent: true });
+    } catch (error) {
+      showToast(error.message || t('failedDeclineChange'));
+    } finally {
+      state.decliningCommandIds.delete(normalizedCommandId);
+      render();
+    }
+  }
+
+  function getCommandRequestPayload(command) {
+    return command && command.requestPayload && typeof command.requestPayload === 'object'
+      ? command.requestPayload
+      : {};
+  }
+
+  function getCommandPosPayload(command) {
+    const requestPayload = getCommandRequestPayload(command);
+    return requestPayload.posPayload && typeof requestPayload.posPayload === 'object'
+      ? requestPayload.posPayload
+      : {};
+  }
+
+  function sendCommandToHostForOrderChange(command) {
+    const commandId = asText(command.id);
+    const requestPayload = getCommandRequestPayload(command);
+    const posPayload = getCommandPosPayload(command);
+    const action = String(requestPayload.action || posPayload.action || '').trim().toLowerCase();
+    const moovaOrderId = asText(requestPayload.orderId || requestPayload.moovaOrderId || posPayload.moovaOrderId || posPayload.cofeOrderId);
+    if (!commandId || (action !== 'edit' && action !== 'cancel') || !moovaOrderId) {
+      const error = createWidgetError(t('missingHostOrderPayload'), 409, 'host_order_change_payload_missing');
+      error.phase = 'host_order_change_prepare';
+      return Promise.reject(error);
+    }
+    if (!window.parent || window.parent === window) {
+      const error = createWidgetError(t('failedConfirmOrder'), 409, 'host_parent_missing');
+      error.phase = 'host_order_change_prepare';
+      return Promise.reject(error);
+    }
+
+    return new Promise((resolve, reject) => {
+      const existing = state.pendingHostCommandResults.get(commandId);
+      if (existing?.timeoutId) {
+        clearTimeout(existing.timeoutId);
+      }
+      const timeoutId = window.setTimeout(() => {
+        state.pendingHostCommandResults.delete(commandId);
+        const error = createWidgetError(t('hostOrderAckTimeout'), 408, 'host_order_change_ack_timeout');
+        error.phase = 'host_order_change_ack';
+        reject(error);
+      }, HOST_ORDER_CHANGE_TIMEOUT_MS);
+      state.pendingHostCommandResults.set(commandId, {
+        resolve,
+        reject,
+        timeoutId,
+      });
+
+      try {
+        window.parent.postMessage(
+          {
+            type: 'cofe.order.change-requested',
+            commandId,
+            action,
+            cashierReviewed: true,
+            cashierAction: 'confirm',
+            moovaOrderId,
+            idempotencyKey: asText(posPayload.idempotencyKey || requestPayload.idempotencyKey || requestPayload.requestEventId || commandId),
+            requestEventId: asText(requestPayload.requestEventId) || null,
+            providerOrderId: asText(requestPayload.providerOrderId || posPayload.providerOrderId) || null,
+            providerReferenceId: asText(requestPayload.providerReferenceId || posPayload.providerReferenceId) || null,
+            branchId: asText(posPayload.branchId || requestPayload.branchId) || null,
+            items: Array.isArray(posPayload.items) ? posPayload.items : [],
+          },
+          state.parentOrigin || '*',
+        );
+      } catch (error) {
+        clearTimeout(timeoutId);
+        state.pendingHostCommandResults.delete(commandId);
+        error.phase = 'host_order_change_post_message';
+        reject(error);
+      }
+    });
+  }
+
+  function handleHostOrderChangeResult(event, payload) {
+    if (state.parentOrigin && event.origin !== state.parentOrigin) {
+      return;
+    }
+    const commandId = asText(payload && payload.commandId);
+    if (!commandId) {
+      return;
+    }
+    const pending = state.pendingHostCommandResults.get(commandId);
+    if (!pending) {
+      return;
+    }
+    if (pending.timeoutId) {
+      clearTimeout(pending.timeoutId);
+    }
+    state.pendingHostCommandResults.delete(commandId);
+    if (payload.ok === true) {
+      pending.resolve(payload);
+      return;
+    }
+    const message = asText(payload.message) || t('failedConfirmOrder');
+    const error = createWidgetError(message, 409, 'host_order_change_failed');
+    error.phase = 'host_order_change_result';
+    error.retryable = payload.retryable !== false;
+    error.errorPayload = payload.errorPayload || payload;
+    pending.reject(error);
+  }
+
+  async function acknowledgeHostOrderChangeFailure(commandId, command, error) {
+    try {
+      if (error?.retryable === false) {
+        const requestPayload = getCommandRequestPayload(command);
+        const result = await apiFetch(`/api/integrations/pos/local-bridge/commands/${encodeURIComponent(commandId)}/complete`, {
+          method: 'POST',
+          body: {
+            action: String(requestPayload.action || '').trim().toLowerCase() === 'cancel' ? 'cancel' : 'edit',
+            cashierReviewed: true,
+            cashierAction: 'confirm',
+            applied: false,
+            decision: 'declined',
+            message: error?.message || t('failedConfirmOrder'),
+            responsePayload: {
+              source: WIDGET_SOURCE,
+              buildVersion: BUILD_VERSION,
+              code: error?.code || null,
+              hostResponse: error?.errorPayload || null,
+            },
+          },
+        });
+        applyCommandResult(result.command);
+        return;
+      }
+      const result = await apiFetch(`/api/integrations/pos/local-bridge/commands/${encodeURIComponent(commandId)}/fail`, {
+        method: 'POST',
+        body: {
+          message: error?.message || t('failedConfirmOrder'),
+          retryable: error?.retryable !== false,
+          errorPayload: {
+            source: WIDGET_SOURCE,
+            buildVersion: BUILD_VERSION,
+            code: error?.code || null,
+            hostResponse: error?.errorPayload || null,
+          },
+        },
+      });
+      applyCommandResult(result.command);
+    } catch {
+      // Keep the command visible to the next poll if backend acknowledgement fails.
+    }
+  }
+
   function sendDraftToHostForCreation(draft, confirmedVia) {
     const requestPayload = draft && draft.requestPayload && typeof draft.requestPayload === 'object'
       ? draft.requestPayload
@@ -1220,6 +1619,18 @@
     state.pendingHostOrderResults.clear();
   }
 
+  function clearPendingHostCommandResults(error) {
+    state.pendingHostCommandResults.forEach((entry) => {
+      if (entry?.timeoutId) {
+        clearTimeout(entry.timeoutId);
+      }
+      if (entry?.reject && error) {
+        entry.reject(error);
+      }
+    });
+    state.pendingHostCommandResults.clear();
+  }
+
   function applyDraftResult(updatedDraft) {
     if (!updatedDraft || !updatedDraft.id) {
       return;
@@ -1241,6 +1652,29 @@
     syncNotificationSoundLoop();
   }
 
+  function applyCommandResult(updatedCommand) {
+    if (!updatedCommand || !updatedCommand.id) {
+      return;
+    }
+    const terminalStatuses = new Set(['completed', 'expired', 'cancelled']);
+    if (terminalStatuses.has(String(updatedCommand.status || '').toLowerCase())) {
+      state.commands = state.commands.filter((command) => String(command.id) !== String(updatedCommand.id));
+      reconcileModalState();
+      syncNotificationSoundLoop();
+      return;
+    }
+    const nextCommands = state.commands.slice();
+    const index = nextCommands.findIndex((command) => String(command.id) === String(updatedCommand.id));
+    if (index >= 0) {
+      nextCommands[index] = updatedCommand;
+    } else {
+      nextCommands.push(updatedCommand);
+    }
+    state.commands = nextCommands;
+    reconcileModalState();
+    syncNotificationSoundLoop();
+  }
+
   function render() {
     applyLocaleChrome();
     renderBell();
@@ -1255,7 +1689,7 @@
 
   function renderBell() {
     if (!elements.bell || !elements.badge || !elements.bellMeta) return;
-    const count = state.drafts.length;
+    const count = getNotificationItems().length;
     elements.bell.hidden = state.hostBellMode;
     if (state.hostBellMode) {
       return;
@@ -1293,12 +1727,13 @@
 
   function renderStack() {
     if (!elements.stack) return;
+    const notifications = getNotificationItems();
     if (!state.panelOpen) {
       elements.stack.hidden = true;
       elements.stack.innerHTML = '';
       return;
     }
-    if (state.drafts.length === 0) {
+    if (notifications.length === 0) {
       elements.stack.hidden = false;
       elements.stack.innerHTML = renderEmptyState(
         t('noOrdersWaitingTitle'),
@@ -1306,23 +1741,21 @@
       );
       return;
     }
-    const topDrafts = state.drafts.slice(0, 3);
-    const noticeMessage = state.toastMessage || (state.navbarBellMode && state.drafts.length ? t('pendingOrdersNotice') : '');
-    const noticeHtml = noticeMessage
-      ? `<div class="pw-stack-notice">${escapeHtml(noticeMessage)}</div>`
-      : '';
-    const cardsHtml = topDrafts.map((draft) => renderOverlayCard(draft)).join('');
-    const footerHtml = state.drafts.length > 3
+    const topItems = notifications.slice(0, 3);
+    const cardsHtml = topItems.map((item) => (
+      item.kind === 'change' ? renderOrderChangeCard(item.record) : renderOverlayCard(item.record)
+    )).join('');
+    const footerHtml = notifications.length > 3
       ? `
         <div class="pw-stack-footer">
           <button class="pw-show-more" type="button" data-action="show-more">
-            ${escapeHtml(t('showAll', { count: formatNumber(state.drafts.length) }))}
+            ${escapeHtml(t('showAll', { count: formatNumber(notifications.length) }))}
           </button>
         </div>
       `
       : '';
     elements.stack.hidden = false;
-    elements.stack.innerHTML = `${noticeHtml}${cardsHtml}${footerHtml}`;
+    elements.stack.innerHTML = `${cardsHtml}${footerHtml}`;
   }
 
   function renderOverlayCard(draft) {
@@ -1381,6 +1814,79 @@
     `;
   }
 
+  function isCashierReviewRequiredFailure(command) {
+    const resultPayload = command && command.resultPayload && typeof command.resultPayload === 'object'
+      ? command.resultPayload
+      : {};
+    const errorPayload = resultPayload.errorPayload && typeof resultPayload.errorPayload === 'object'
+      ? resultPayload.errorPayload
+      : {};
+    const hostResponse = errorPayload.hostResponse && typeof errorPayload.hostResponse === 'object'
+      ? errorPayload.hostResponse
+      : {};
+    const hostPayload = hostResponse.payload && typeof hostResponse.payload === 'object'
+      ? hostResponse.payload
+      : {};
+    const code = asText(hostPayload.code || hostResponse.code || errorPayload.code || resultPayload.code).toUpperCase();
+    return code === 'CASHIER_REVIEW_REQUIRED';
+  }
+
+  function renderOrderChangeCard(command) {
+    const ui = getOrderChangeUi(command);
+    const labels = getOrderChangeLabels(ui.action);
+    const commandId = String(command.id);
+    const isConfirming = state.confirmingCommandIds.has(commandId);
+    const isDeclining = state.decliningCommandIds.has(commandId);
+    const itemRows = renderItemLines(ui.items, { compact: true });
+    const status = String(command.status || 'pending').toLowerCase();
+    const showFailure = status === 'failed' && !isCashierReviewRequiredFailure(command);
+    const statusChip = showFailure
+      ? `<span class="pw-state-chip" data-state="failed">${escapeHtml(t('retryNeeded'))}</span>`
+      : '';
+    return `
+      <article class="pw-card pw-card-change pw-card-${escapeHtml(ui.action)}-change" data-change-card="true" data-command-id="${escapeHtml(commandId)}" data-status="${escapeHtml(status)}" data-change-action="${escapeHtml(ui.action)}">
+        <div class="pw-card-top">
+          <div>
+            <p class="pw-card-kicker">${escapeHtml(labels.kicker)}</p>
+            <h3 class="pw-card-title">${escapeHtml(ui.title)}</h3>
+            <div class="pw-card-meta">
+              <span>${escapeHtml(formatPlacedAt(command.createdAt))}</span>
+              <span>${escapeHtml(ui.reference)}</span>
+              ${command.lastError && showFailure ? `<span>${escapeHtml(command.lastError)}</span>` : ''}
+            </div>
+          </div>
+          ${statusChip}
+        </div>
+        <div class="pw-items">${itemRows}</div>
+        <div class="pw-card-summary">
+          <span class="pw-card-summary-label">${escapeHtml(t('table'))}</span>
+          <strong class="pw-card-summary-value">${escapeHtml(getTableDisplay(ui.tableNumber))}</strong>
+        </div>
+        <div class="pw-card-actions">
+          <button
+            class="pw-button pw-button-danger"
+            type="button"
+            data-action="decline-change"
+            data-command-id="${escapeHtml(commandId)}"
+            data-declined-via="overlay"
+            ${isConfirming || isDeclining ? 'disabled' : ''}
+          >
+            ${escapeHtml(isDeclining ? t('declining') : labels.decline)}
+          </button>
+          <button
+            class="pw-button pw-button-primary"
+            type="button"
+            data-action="confirm-change"
+            data-command-id="${escapeHtml(commandId)}"
+            ${isConfirming || isDeclining ? 'disabled' : ''}
+          >
+            ${escapeHtml(isConfirming ? t('confirming') : labels.confirm)}
+          </button>
+        </div>
+      </article>
+    `;
+  }
+
   function renderNotesButton(draft) {
     const confirmed = Boolean(draft.notesConfirmedAt);
     return `
@@ -1403,11 +1909,12 @@
   function renderAllOrdersModal() {
     if (!elements.allOrdersModal || !elements.allOrdersContent) return;
     elements.allOrdersModal.hidden = !state.allOrdersOpen;
+    const notifications = getNotificationItems();
     if (!state.allOrdersOpen) {
       elements.allOrdersContent.innerHTML = '';
       return;
     }
-    if (!state.drafts.length) {
+    if (!notifications.length) {
       elements.allOrdersContent.innerHTML = renderEmptyState(
         t('noOrdersWaitingTitle'),
         t('noOrdersWaitingCopy'),
@@ -1416,7 +1923,25 @@
     }
     elements.allOrdersContent.innerHTML = `
       <div class="pw-queue">
-        ${state.drafts.map((draft) => {
+        ${notifications.map((entry) => {
+          if (entry.kind === 'change') {
+            const command = entry.record;
+            const ui = getOrderChangeUi(command);
+            return `
+              <button class="pw-queue-row pw-queue-row-change" type="button" data-action="open-change-detail" data-command-id="${escapeHtml(String(command.id))}">
+                <div>
+                  <p class="pw-card-kicker">${escapeHtml(t('changeRequestKicker'))}</p>
+                  <h3 class="pw-queue-title">${escapeHtml(ui.title)}</h3>
+                  <div class="pw-queue-meta">${escapeHtml(summarizeItems(ui.items))}</div>
+                </div>
+                <div style="text-align:right;">
+                  <div class="pw-card-summary-value">${escapeHtml(getTableDisplay(ui.tableNumber))}</div>
+                  <div class="pw-queue-meta">${escapeHtml(ui.reference)}</div>
+                </div>
+              </button>
+            `;
+          }
+          const draft = entry.record;
           const ui = getUiPayload(draft);
           const summaryLine = summarizeItems(ui.items);
           const noteLabel = draftNeedsNotes(draft)
@@ -1443,9 +1968,19 @@
   function renderDetailModal() {
     if (!elements.detailModal || !elements.detailContent) return;
     const draft = findDraft(state.detailDraftId);
-    elements.detailModal.hidden = !draft;
-    if (!draft) {
+    const command = findOrderChangeCommand(state.detailCommandId);
+    elements.detailModal.hidden = !draft && !command;
+    if (command) {
+      elements.detailModal.dataset.changeAction = getOrderChangeUi(command).action;
+    } else {
+      delete elements.detailModal.dataset.changeAction;
+    }
+    if (!draft && !command) {
       elements.detailContent.innerHTML = '';
+      return;
+    }
+    if (command) {
+      elements.detailContent.innerHTML = renderOrderChangeDetail(command);
       return;
     }
     const ui = getUiPayload(draft);
@@ -1478,7 +2013,7 @@
               <div class="pw-detail-item">
                 <div class="pw-detail-item-main">
                   <div class="pw-detail-item-name">${escapeHtml(formatItemLabel(item))}</div>
-                  <div class="pw-detail-item-price">${escapeHtml(formatDetailItemMeta(item, ui.summary?.currencyCode || ui.currencyCode))}</div>
+                  <div class="pw-detail-item-meta">${renderDetailItemMeta(item, ui.summary?.currencyCode || ui.currencyCode)}</div>
                 </div>
                 ${item && item.note ? `<div class="pw-detail-item-note">${escapeHtml(item.note)}</div>` : ''}
               </div>
@@ -1509,6 +2044,80 @@
           ${escapeHtml(isConfirming ? t('confirming') : t('confirmOrder'))}
         </button>
       </div>
+    `;
+  }
+
+  function renderOrderChangeDetail(command) {
+    const ui = getOrderChangeUi(command);
+    const labels = getOrderChangeLabels(ui.action);
+    const commandId = String(command.id);
+    const isConfirming = state.confirmingCommandIds.has(commandId);
+    const isDeclining = state.decliningCommandIds.has(commandId);
+    const items = Array.isArray(ui.items) ? ui.items : [];
+    const oldItems = Array.isArray(ui.oldItems) ? ui.oldItems : [];
+    const itemSections = ui.action === 'edit'
+      ? `
+        ${renderOrderChangeDetailSection(t('newOrderDetails'), items, `pw-detail-card-${ui.action}-change`)}
+        ${renderOrderChangeDetailSection(t('oldOrderDetails'), oldItems, 'pw-detail-card-old-change')}
+      `
+      : renderOrderChangeDetailSection('', items, `pw-detail-card-${ui.action}-change`);
+    return `
+      <div class="pw-detail-header pw-detail-header-change pw-detail-header-${escapeHtml(ui.action)}-change">
+        <div class="pw-detail-hero">
+          <div>
+            <p class="pw-card-kicker">${escapeHtml(labels.kicker)}</p>
+            <h3 class="pw-detail-table">${escapeHtml(ui.title)}</h3>
+            <div class="pw-detail-meta">${escapeHtml(`${formatPlacedAt(command.createdAt)} · ${ui.reference}`)}</div>
+          </div>
+          <div class="pw-detail-total">${escapeHtml(getTableDisplay(ui.tableNumber))}</div>
+        </div>
+        ${command.lastError && String(command.status || '').toLowerCase() === 'failed' && !isCashierReviewRequiredFailure(command)
+          ? `<div class="pw-detail-note-callout">${escapeHtml(command.lastError)}</div>`
+          : ''}
+      </div>
+      <div class="pw-detail-grid">
+        ${itemSections}
+      </div>
+      <div class="pw-detail-actions">
+        <button
+          class="pw-button pw-button-danger"
+          type="button"
+          data-action="decline-change"
+          data-command-id="${escapeHtml(commandId)}"
+          data-declined-via="detail_modal"
+          ${isConfirming || isDeclining ? 'disabled' : ''}
+        >
+          ${escapeHtml(isDeclining ? t('declining') : labels.decline)}
+        </button>
+        <button
+          class="pw-button pw-button-primary"
+          type="button"
+          data-action="confirm-change"
+          data-command-id="${escapeHtml(commandId)}"
+          ${isConfirming || isDeclining ? 'disabled' : ''}
+        >
+          ${escapeHtml(isConfirming ? t('confirming') : labels.confirm)}
+        </button>
+      </div>
+    `;
+  }
+
+  function renderOrderChangeDetailSection(title, items, extraClass) {
+    const list = Array.isArray(items) ? items : [];
+    return `
+      <section class="pw-detail-card pw-detail-card-change ${escapeHtml(extraClass || '')}">
+        ${title ? `<p class="pw-detail-section-title">${escapeHtml(title)}</p>` : ''}
+        <div class="pw-detail-items">
+          ${list.length ? list.map((item) => `
+            <div class="pw-detail-item">
+              <div class="pw-detail-item-main">
+                <div class="pw-detail-item-name">${escapeHtml(formatItemLabel(item))}</div>
+                <div class="pw-detail-item-meta">${renderDetailItemMeta(item)}</div>
+              </div>
+            </div>
+          `).join('') : `<div class="pw-empty-copy">${escapeHtml(t('noItemsReceived'))}</div>`}
+        </div>
+      </section>
     `;
   }
 
@@ -1615,8 +2224,8 @@
   }
 
   function syncParentSignals() {
-    const visible = Boolean(state.panelOpen || state.detailDraftId || state.notesDraftId || state.declineDraftId || state.allOrdersOpen);
-    const count = state.drafts.length;
+    const visible = Boolean(state.panelOpen || state.detailDraftId || state.detailCommandId || state.notesDraftId || state.declineDraftId || state.declineCommandId || state.allOrdersOpen);
+    const count = getNotificationItems().length;
     if (state.lastSignals.visible !== visible) {
       state.lastSignals.visible = visible;
       postToParent('cofe.widget.visibility', { visible });
@@ -1651,6 +2260,14 @@
           maxHeight: 760,
         });
       }
+      if (state.detailCommandId) {
+        return measureFrameElement('modal', elements.detailModal?.querySelector('.pw-dialog'), {
+          width: 684,
+          height: 760,
+          maxWidth: 684,
+          maxHeight: 760,
+        });
+      }
       if (state.notesDraftId) {
         return measureFrameElement('modal', elements.notesModal?.querySelector('.pw-dialog'), {
           width: 604,
@@ -1667,7 +2284,15 @@
           maxHeight: 560,
         });
       }
-      if (state.panelOpen && state.drafts.length) {
+      if (state.declineCommandId) {
+        return measureFrameElement('modal', elements.declineModal?.querySelector('.pw-dialog'), {
+          width: 604,
+          height: 560,
+          maxWidth: 604,
+          maxHeight: 560,
+        });
+      }
+      if (state.panelOpen && getNotificationItems().length) {
         return measureFrameElement('panel', elements.stack, {
           width: 396,
           height: 160,
@@ -1683,20 +2308,30 @@
     if (state.detailDraftId) {
       return { mode: 'modal', width: 684, height: 760 };
     }
+    if (state.detailCommandId) {
+      return { mode: 'modal', width: 684, height: 760 };
+    }
     if (state.notesDraftId) {
       return { mode: 'modal', width: 604, height: 640 };
     }
     if (state.declineDraftId) {
       return { mode: 'modal', width: 604, height: 560 };
     }
+    if (state.declineCommandId) {
+      return { mode: 'modal', width: 604, height: 560 };
+    }
     if (state.panelOpen) {
-      const visibleCards = state.drafts.length ? Math.min(Math.max(state.drafts.length, 1), 3) : 1;
-      const footerHeight = state.drafts.length > 3 ? 64 : 0;
-      const emptyStateAdjustment = state.drafts.length ? 0 : 24;
+      const notificationCount = getNotificationItems().length;
+      const visibleCards = notificationCount ? Math.min(Math.max(notificationCount, 1), 3) : 1;
+      const footerHeight = notificationCount > 3 ? PANEL_FOOTER_HEIGHT : 0;
+      const emptyStateAdjustment = notificationCount ? 0 : 24;
       return {
         mode: 'panel',
         width: 432,
-        height: Math.min(760, 96 + (visibleCards * 188) + footerHeight + emptyStateAdjustment),
+        height: Math.min(
+          PANEL_MAX_HEIGHT,
+          PANEL_BASE_HEIGHT + (visibleCards * PANEL_CARD_HEIGHT) + footerHeight + emptyStateAdjustment,
+        ),
       };
     }
     if (state.toastVisible) {
@@ -1800,8 +2435,54 @@
     return state.drafts.find((draft) => String(draft.id) === String(draftId)) || null;
   }
 
+  function findOrderChangeCommand(commandId) {
+    const normalizedCommandId = asText(commandId);
+    if (!normalizedCommandId) return null;
+    return getOrderChangeCommands().find((command) => String(command.id) === normalizedCommandId) || null;
+  }
+
   function getUiPayload(draft) {
     return draft && draft.uiPayload && typeof draft.uiPayload === 'object' ? draft.uiPayload : {};
+  }
+
+  function getOrderChangeLabels(action) {
+    const isCancel = String(action || '').toLowerCase() === 'cancel';
+    return {
+      kicker: isCancel ? t('cancelRequestKicker') : t('editRequestKicker'),
+      confirm: isCancel ? t('confirmCancelChange') : t('confirmEditChange'),
+      decline: isCancel ? t('declineCancelChange') : t('declineEditChange'),
+    };
+  }
+
+  function getOrderChangeUi(command) {
+    const requestPayload = getCommandRequestPayload(command);
+    const posPayload = getCommandPosPayload(command);
+    const action = String(requestPayload.action || posPayload.action || '').trim().toLowerCase() === 'cancel'
+      ? 'cancel'
+      : 'edit';
+    const normalizeChangeItems = (rawItems) => (Array.isArray(rawItems) ? rawItems : []).map((item) => ({
+      ...item,
+      name: asText(item?.name || item?.label || item?.itemName || item?.providerName || item?.itemId || item?.providerItemId) || t('itemFallback'),
+      quantity: item?.quantity ?? item?.qty ?? 1,
+    }));
+    const items = normalizeChangeItems(posPayload.items);
+    const oldItems = normalizeChangeItems(posPayload.oldItems || posPayload.previousItems);
+    const reference = asText(
+      requestPayload.providerOrderId
+      || posPayload.providerOrderId
+      || requestPayload.providerReferenceId
+      || posPayload.providerReferenceId
+      || requestPayload.orderId
+      || posPayload.moovaOrderId,
+    );
+    return {
+      action,
+      title: action === 'cancel' ? t('cancelRequestTitle') : t('editRequestTitle'),
+      reference: reference ? t('orderReference', { reference }) : t('changeRequestKicker'),
+      tableNumber: asText(posPayload.tableNumber || requestPayload.tableNumber),
+      items,
+      oldItems,
+    };
   }
 
   function draftNeedsNotes(draft) {
@@ -1957,6 +2638,16 @@
     } catch {
       return date.toLocaleString();
     }
+  }
+
+  function renderDetailItemMeta(item, currencyCode) {
+    const quantityLabel = formatQuantity(item && item.quantity);
+    const lineTotal = Number(item && (item.lineTotalAfterDiscount ?? item.lineTotalBeforeDiscount));
+    const priceLabel = Number.isFinite(lineTotal) ? formatCurrency(lineTotal, currencyCode) : '';
+    return `
+      <span class="pw-detail-item-qty">${escapeHtml(quantityLabel)}</span>
+      ${priceLabel ? `<span class="pw-detail-item-price">(${escapeHtml(priceLabel)})</span>` : ''}
+    `;
   }
 
   function formatDetailItemMeta(item, currencyCode) {

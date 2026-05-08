@@ -9,8 +9,10 @@ if (!isset($_SESSION['login'])) {
     exit;
 }
 
-// Fix the include path - we're already in the includes directory
-include(__DIR__ . '/connect.php');
+// Reuse an existing POS bootstrap connection when the page has already loaded it.
+if (!isset($conn) || !($conn instanceof mysqli)) {
+    include(__DIR__ . '/connect.php');
+}
 
 $userid = $_SESSION['userid'];
 $up = $conn->query("SELECT * FROM users where id = $userid ");
@@ -80,4 +82,4 @@ if (!$language_file_found || $lang == null || $lang == '') {
         }
     </style>
 </head>
-<body>
+<body<?= !empty($pos_body_class) ? ' class="' . htmlspecialchars($pos_body_class, ENT_QUOTES, 'UTF-8') . '"' : '' ?>>

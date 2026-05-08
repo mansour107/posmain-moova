@@ -24,19 +24,13 @@ class PosOrderService
         $defaults = $this->loadTenantDefaults($conn, $tenant, $branch);
         $table = $this->resolveTable($conn, $tenant, $branch, $branchId, $tableToken);
         $incomingItems = $this->resolveIncomingItems($conn, $tenant, $branch, $payload['items'] ?? []);
+        $moovaOrderId = trim((string) ($payload['cofeOrderId'] ?? $payload['moovaOrderId'] ?? ''));
 
         if (!$incomingItems) {
             throw new Exception('NO_VALID_ITEMS');
         }
 
-        $existingOrder = $this->findActiveTableOrderForUpdate($conn, $tenant, $branch, (int) $table['id']);
         $lines = [];
-        $isMerge = false;
-
-        if ($existingOrder) {
-            $isMerge = true;
-            $lines = $this->loadExistingOrderLines($conn, $tenant, $branch, (int) $existingOrder['id']);
-        }
 
         foreach ($incomingItems as $item) {
             $id = (int) $item['id'];
@@ -65,34 +59,289 @@ class PosOrderService
         $totals = $this->calculateTotals($lines);
         $proDate = date('Y-m-d');
         $info = $this->buildOrderInfo($payload, $table);
+        $existingOrder = $this->findActiveTableOrderForUpdate($conn, $tenant, $branch, (int) $table['id']);
+        $isMerge = (bool) $existingOrder;
 
         if ($existingOrder) {
             $orderId = (int) $existingOrder['id'];
             $proId = (int) ($existingOrder['pro_id'] ?: $orderId);
-            $this->updateOrderHeader($conn, $tenant, $branch, $orderId, $defaults, $totals, $info, $proDate, $userId, (int) $table['id']);
-            $this->clearOrderAccountingAndDetails($conn, $tenant, $branch, $orderId);
         } else {
             $proId = $this->getNextInvoiceNumber($conn, self::TYPE_POS, $tenant, $branch);
             $orderId = $this->insertOrderHeader($conn, $tenant, $branch, $proId, $defaults, $totals, $info, $proDate, $userId, (int) $table['id']);
         }
 
-        $journalHeadId = $this->insertMainJournal($conn, $tenant, $branch, $orderId, $proId, $defaults, $totals, $proDate, $userId);
-        $this->insertOrderDetails($conn, $tenant, $branch, $orderId, $lines, $defaults['store_id']);
-        $profit = $this->refreshOrderProfit($conn, $tenant, $branch, $orderId);
+        $insertedLines = $this->upsertOrderDetails($conn, $tenant, $branch, $orderId, $lines, $defaults['store_id']);
+        if ($moovaOrderId !== '') {
+            $this->insertMoovaLineMappings($conn, $tenant, $branch, $moovaOrderId, $orderId, $insertedLines);
+        }
+        $receiptState = $this->refreshReceiptTotalsAndAccounting($conn, $tenant, $branch, $orderId, $defaults, $proDate, $userId);
         $this->markTableBusy($conn, (int) $table['id']);
         $this->logProcess($conn, 'add cash');
+        $lineSnapshot = $moovaOrderId === ''
+            ? null
+            : $this->getMoovaOrderLineStateSnapshot($conn, $tenant, $branch, $orderId, $moovaOrderId);
 
         return [
             'order_id' => $orderId,
             'pro_id' => $proId,
             'table_id' => (int) $table['id'],
             'table_name' => $table['tname'],
-            'total' => $totals['total'],
-            'discount' => $totals['discount'],
-            'net' => $totals['net'],
-            'profit' => $profit,
-            'journal_head_id' => $journalHeadId,
+            'total' => $receiptState['total'],
+            'discount' => $receiptState['discount'],
+            'net' => $receiptState['net'],
+            'profit' => $receiptState['profit'],
+            'journal_head_id' => $receiptState['journal_head_id'],
             'merged' => $isMerge,
+            'state_hash' => $lineSnapshot['hash'] ?? null,
+            'state_payload' => $lineSnapshot['payload'] ?? null,
+        ];
+    }
+
+    public function getMoovaOrderStateSnapshot(mysqli $conn, $tenant, $branch, $orderId)
+    {
+        $tenant = (int) $tenant;
+        $branch = (int) $branch;
+        $orderId = (int) $orderId;
+        if ($orderId < 1) {
+            return null;
+        }
+
+        $head = $this->queryOne($conn, "
+            SELECT id, pro_id, table_id, order_type, pro_tybe, isdeleted, payment_status,
+                   invoice_status, order_status, fat_total, fat_disc, fat_plus, fat_tax,
+                   fat_net, paid_amount, remaining_amount
+            FROM ot_head
+            WHERE id = ?
+              AND tenant = ?
+              AND branch = ?
+            LIMIT 1
+        ", [$orderId, $tenant, $branch]);
+
+        if (!$head) {
+            return null;
+        }
+
+        $rows = $this->queryAll($conn, "
+            SELECT item_id, u_val, qty_in, qty_out, price, discount, det_value,
+                   det_store, cost_price, profit, isdeleted
+            FROM fat_details
+            WHERE fatid = ?
+              AND tenant = ?
+              AND branch = ?
+            ORDER BY item_id ASC, id ASC
+        ", [$orderId, $tenant, $branch]);
+
+        $snapshot = [
+            'head' => [
+                'id' => (int) $head['id'],
+                'pro_id' => (int) ($head['pro_id'] ?? 0),
+                'table_id' => (int) ($head['table_id'] ?? 0),
+                'order_type' => (string) ($head['order_type'] ?? ''),
+                'pro_tybe' => (int) ($head['pro_tybe'] ?? 0),
+                'isdeleted' => (int) ($head['isdeleted'] ?? 0),
+                'payment_status' => (string) ($head['payment_status'] ?? ''),
+                'invoice_status' => (string) ($head['invoice_status'] ?? ''),
+                'order_status' => (string) ($head['order_status'] ?? ''),
+                'fat_total' => $this->normalizeStateNumber($head['fat_total'] ?? 0),
+                'fat_disc' => $this->normalizeStateNumber($head['fat_disc'] ?? 0),
+                'fat_plus' => $this->normalizeStateNumber($head['fat_plus'] ?? 0),
+                'fat_tax' => $this->normalizeStateNumber($head['fat_tax'] ?? 0),
+                'fat_net' => $this->normalizeStateNumber($head['fat_net'] ?? 0),
+                'paid_amount' => $this->normalizeStateNumber($head['paid_amount'] ?? 0),
+                'remaining_amount' => $this->normalizeStateNumber($head['remaining_amount'] ?? 0),
+            ],
+            'lines' => [],
+        ];
+
+        foreach ($rows as $row) {
+            $snapshot['lines'][] = [
+                'item_id' => (int) ($row['item_id'] ?? 0),
+                'u_val' => $this->normalizeStateNumber($row['u_val'] ?? 1),
+                'qty_in' => $this->normalizeStateNumber($row['qty_in'] ?? 0),
+                'qty_out' => $this->normalizeStateNumber($row['qty_out'] ?? 0),
+                'price' => $this->normalizeStateNumber($row['price'] ?? 0),
+                'discount' => $this->normalizeStateNumber($row['discount'] ?? 0),
+                'det_value' => $this->normalizeStateNumber($row['det_value'] ?? 0),
+                'det_store' => (int) ($row['det_store'] ?? 0),
+                'cost_price' => $this->normalizeStateNumber($row['cost_price'] ?? 0),
+                'profit' => $this->normalizeStateNumber($row['profit'] ?? 0),
+                'isdeleted' => (int) ($row['isdeleted'] ?? 0),
+            ];
+        }
+
+        return [
+            'hash' => hash('sha256', json_encode($snapshot, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)),
+            'payload' => $snapshot,
+        ];
+    }
+
+    public function getMoovaOrderLineStateSnapshot(mysqli $conn, $tenant, $branch, $orderId, $moovaOrderId, $forUpdate = false)
+    {
+        $tenant = (int) $tenant;
+        $branch = (int) $branch;
+        $orderId = (int) $orderId;
+        $moovaOrderId = trim((string) $moovaOrderId);
+        if ($orderId < 1 || $moovaOrderId === '') {
+            return null;
+        }
+
+        $lockSql = $forUpdate ? ' FOR UPDATE' : '';
+        $rows = $this->queryAll($conn, "
+            SELECT
+                l.id AS mapping_id,
+                l.moova_order_id,
+                l.pos_order_id,
+                l.fat_detail_id,
+                l.item_id AS mapped_item_id,
+                l.qty_out AS mapped_qty_out,
+                l.price AS mapped_price,
+                l.discount AS mapped_discount,
+                l.det_value AS mapped_det_value,
+                l.line_hash AS mapped_line_hash,
+                l.status AS mapping_status,
+                fd.item_id,
+                fd.u_val,
+                fd.qty_in,
+                fd.qty_out,
+                fd.price,
+                fd.discount,
+                fd.det_value,
+                fd.det_store,
+                fd.cost_price,
+                fd.profit,
+                fd.isdeleted
+            FROM moova_pos_order_lines l
+            INNER JOIN fat_details fd
+                    ON fd.id = l.fat_detail_id
+                   AND fd.tenant = l.pos_tenant
+                   AND fd.branch = l.pos_branch
+            WHERE l.pos_tenant = ?
+              AND l.pos_branch = ?
+              AND l.pos_order_id = ?
+              AND l.moova_order_id = ?
+              AND l.status = 'active'
+            ORDER BY l.id ASC" . $lockSql, [$tenant, $branch, $orderId, $moovaOrderId]);
+
+        $payload = [
+            'moova_order_id' => $moovaOrderId,
+            'pos_order_id' => $orderId,
+            'lines' => [],
+        ];
+
+        foreach ($rows as $row) {
+            $row['detail_consistent'] = $this->isMappedDetailConsistent($conn, $tenant, $branch, (int) $row['fat_detail_id'], $row);
+            $payload['lines'][] = $this->normalizeMappedLineState($row);
+        }
+
+        return [
+            'hash' => hash('sha256', json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)),
+            'payload' => $payload,
+            'lines' => $payload['lines'],
+        ];
+    }
+
+    public function replaceMoovaTableOrder(mysqli $conn, array $scope, $orderId, array $payload)
+    {
+        $tenant = (int) ($scope['tenant'] ?? 0);
+        $branch = (int) ($scope['branch'] ?? 0);
+        $userId = (int) ($scope['user_id'] ?? 1);
+        if ($userId < 1) {
+            $userId = 1;
+        }
+
+        $moovaOrderId = trim((string) ($payload['moovaOrderId'] ?? $payload['orderId'] ?? $payload['cofeOrderId'] ?? ''));
+        if ($moovaOrderId === '') {
+            throw new Exception('MOOVA_ORDER_REQUIRED');
+        }
+
+        $order = $this->findMoovaOrderForUpdate($conn, $tenant, $branch, (int) $orderId);
+        $this->assertEditableMoovaTableOrder($order);
+        $existingLines = $this->getMoovaOrderLineStateSnapshot($conn, $tenant, $branch, (int) $order['id'], $moovaOrderId, true);
+        if (!$existingLines || empty($existingLines['lines'])) {
+            throw new Exception('POS_ORDER_LINES_UNMAPPED');
+        }
+        $expectedStateHash = trim((string) ($payload['expectedStateHash'] ?? ''));
+        if ($expectedStateHash !== '' && !hash_equals($expectedStateHash, (string) $existingLines['hash'])) {
+            throw new Exception('POS_ORDER_LINES_CHANGED');
+        }
+
+        $table = $this->findTableById($conn, (int) $order['table_id']);
+        if (!$table) {
+            throw new Exception('TABLE_NOT_FOUND');
+        }
+
+        $defaults = $this->loadTenantDefaults($conn, $tenant, $branch);
+        $incomingItems = $this->resolveIncomingItems($conn, $tenant, $branch, $payload['items'] ?? []);
+        $lines = $this->buildReplacementLines($incomingItems);
+        if (!$lines) {
+            throw new Exception('NO_VALID_ITEMS');
+        }
+
+        $proDate = date('Y-m-d');
+        $proId = (int) ($order['pro_id'] ?: $order['id']);
+
+        $this->deactivateMoovaMappedLines($conn, $tenant, $branch, (int) $order['id'], $moovaOrderId, 'replaced');
+        $insertedLines = $this->upsertOrderDetails($conn, $tenant, $branch, (int) $order['id'], $lines, $defaults['store_id']);
+        $this->insertMoovaLineMappings($conn, $tenant, $branch, $moovaOrderId, (int) $order['id'], $insertedLines);
+        $receiptState = $this->refreshReceiptTotalsAndAccounting($conn, $tenant, $branch, (int) $order['id'], $defaults, $proDate, $userId);
+        $this->logProcess($conn, 'edit moova pos order');
+        $snapshot = $this->getMoovaOrderLineStateSnapshot($conn, $tenant, $branch, (int) $order['id'], $moovaOrderId);
+
+        return [
+            'order_id' => (int) $order['id'],
+            'pro_id' => $proId,
+            'table_id' => (int) $table['id'],
+            'table_name' => $table['tname'],
+            'total' => $receiptState['total'],
+            'discount' => $receiptState['discount'],
+            'net' => $receiptState['net'],
+            'profit' => $receiptState['profit'],
+            'journal_head_id' => $receiptState['journal_head_id'],
+            'state_hash' => $snapshot['hash'] ?? null,
+            'state_payload' => $snapshot['payload'] ?? null,
+        ];
+    }
+
+    public function cancelMoovaTableOrder(mysqli $conn, array $scope, $orderId, $moovaOrderId = null, $expectedStateHash = null)
+    {
+        $tenant = (int) ($scope['tenant'] ?? 0);
+        $branch = (int) ($scope['branch'] ?? 0);
+        $userId = (int) ($scope['user_id'] ?? 1);
+        if ($userId < 1) {
+            $userId = 1;
+        }
+        $moovaOrderId = trim((string) $moovaOrderId);
+        if ($moovaOrderId === '') {
+            throw new Exception('MOOVA_ORDER_REQUIRED');
+        }
+
+        $order = $this->findMoovaOrderForUpdate($conn, $tenant, $branch, (int) $orderId);
+        $this->assertEditableMoovaTableOrder($order);
+        $existingLines = $this->getMoovaOrderLineStateSnapshot($conn, $tenant, $branch, (int) $order['id'], $moovaOrderId, true);
+        if (!$existingLines || empty($existingLines['lines'])) {
+            throw new Exception('POS_ORDER_LINES_UNMAPPED');
+        }
+        $expectedStateHash = trim((string) $expectedStateHash);
+        if ($expectedStateHash !== '' && !hash_equals($expectedStateHash, (string) $existingLines['hash'])) {
+            throw new Exception('POS_ORDER_LINES_CHANGED');
+        }
+
+        $tableId = (int) ($order['table_id'] ?? 0);
+        $defaults = $this->loadTenantDefaults($conn, $tenant, $branch);
+        $this->deactivateMoovaMappedLines($conn, $tenant, $branch, (int) $order['id'], $moovaOrderId, 'cancelled');
+        $receiptState = $this->refreshReceiptTotalsAndAccounting($conn, $tenant, $branch, (int) $order['id'], $defaults, date('Y-m-d'), $userId);
+        $this->logProcess($conn, 'cancel moova pos order');
+
+        return [
+            'order_id' => (int) $order['id'],
+            'table_id' => $tableId,
+            'table_name' => '',
+            'total' => $receiptState['total'],
+            'discount' => $receiptState['discount'],
+            'net' => $receiptState['net'],
+            'profit' => $receiptState['profit'],
+            'state_hash' => null,
+            'state_payload' => null,
         ];
     }
 
@@ -557,8 +806,10 @@ class PosOrderService
         return $journalHeadId;
     }
 
-    private function insertOrderDetails(mysqli $conn, $tenant, $branch, $orderId, array $lines, $storeId)
+    private function upsertOrderDetails(mysqli $conn, $tenant, $branch, $orderId, array $lines, $storeId)
     {
+        $inserted = [];
+
         foreach ($lines as $line) {
             $qty = (float) $line['qty'];
             if ($qty <= 0) {
@@ -576,31 +827,119 @@ class PosOrderService
             $unitPrice = $price / $uVal;
             $costPrice = (float) $line['cost_price'];
             $profit = $qty * $uVal * ($unitPrice - $costPrice);
-
-            $this->execute($conn, "
-                INSERT INTO fat_details (
-                    pro_tybe, pro_id, item_id, u_val, qty_in, qty_out, price,
-                    discount, det_value, fatid, fat_tybe, det_store, cost_price, profit,
-                    tenant, branch
-                ) VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ", [
-                self::TYPE_POS,
+            $existingDetail = $this->findMergeableMoovaDetailForUpdate(
+                $conn,
+                $tenant,
+                $branch,
                 $orderId,
                 (int) $line['item_id'],
                 $uVal,
-                $qtyOut,
                 $unitPrice,
                 $discount,
-                $detValue,
-                $orderId,
-                self::TYPE_POS,
-                $storeId,
-                $costPrice,
-                $profit,
-                $tenant,
-                $branch,
-            ]);
+                (int) $storeId,
+                $costPrice
+            );
+
+            if ($existingDetail) {
+                $detailId = (int) $existingDetail['id'];
+                $this->execute($conn, "
+                    UPDATE fat_details
+                    SET qty_out = qty_out + ?,
+                        det_value = det_value + ?,
+                        profit = profit + ?,
+                        isdeleted = 0
+                    WHERE id = ?
+                      AND tenant = ?
+                      AND branch = ?
+                ", [$qtyOut, $detValue, $profit, $detailId, $tenant, $branch]);
+            } else {
+                $this->execute($conn, "
+                    INSERT INTO fat_details (
+                        pro_tybe, pro_id, item_id, u_val, qty_in, qty_out, price,
+                        discount, det_value, fatid, fat_tybe, det_store, cost_price, profit,
+                        tenant, branch
+                    ) VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ", [
+                    self::TYPE_POS,
+                    $orderId,
+                    (int) $line['item_id'],
+                    $uVal,
+                    $qtyOut,
+                    $unitPrice,
+                    $discount,
+                    $detValue,
+                    $orderId,
+                    self::TYPE_POS,
+                    $storeId,
+                    $costPrice,
+                    $profit,
+                    $tenant,
+                    $branch,
+                ]);
+                $detailId = (int) $conn->insert_id;
+            }
+
+            $inserted[] = [
+                'fat_detail_id' => $detailId,
+                'item_id' => (int) $line['item_id'],
+                'u_val' => $uVal,
+                'qty_in' => 0.0,
+                'qty_out' => $qtyOut,
+                'price' => $unitPrice,
+                'discount' => $discount,
+                'det_value' => $detValue,
+                'det_store' => (int) $storeId,
+                'cost_price' => $costPrice,
+                'profit' => $profit,
+                'isdeleted' => 0,
+            ];
         }
+
+        return $inserted;
+    }
+
+    private function findMergeableMoovaDetailForUpdate(mysqli $conn, $tenant, $branch, $orderId, $itemId, $uVal, $unitPrice, $discount, $storeId, $costPrice)
+    {
+        return $this->queryOne($conn, "
+            SELECT fd.*
+            FROM fat_details fd
+            WHERE fd.fatid = ?
+              AND fd.tenant = ?
+              AND fd.branch = ?
+              AND fd.pro_tybe = ?
+              AND fd.fat_tybe = ?
+              AND fd.item_id = ?
+              AND fd.isdeleted = 0
+              AND ABS(COALESCE(fd.u_val, 1) - ?) < 0.0001
+              AND ABS(COALESCE(fd.price, 0) - ?) < 0.0001
+              AND ABS(COALESCE(fd.discount, 0) - ?) < 0.0001
+              AND COALESCE(fd.det_store, 0) = ?
+              AND ABS(COALESCE(fd.cost_price, 0) - ?) < 0.0001
+              AND EXISTS (
+                  SELECT 1
+                  FROM moova_pos_order_lines l
+                  WHERE l.fat_detail_id = fd.id
+                    AND l.pos_order_id = fd.fatid
+                    AND l.pos_tenant = fd.tenant
+                    AND l.pos_branch = fd.branch
+                    AND l.status = 'active'
+              )
+            ORDER BY fd.id ASC
+            LIMIT 1
+            FOR UPDATE
+        ", [
+            (int) $orderId,
+            (int) $tenant,
+            (int) $branch,
+            self::TYPE_POS,
+            self::TYPE_POS,
+            (int) $itemId,
+            (float) $uVal,
+            (float) $unitPrice,
+            (float) $discount,
+            (int) $storeId,
+            (float) $costPrice,
+        ]);
     }
 
     private function refreshOrderProfit(mysqli $conn, $tenant, $branch, $orderId)
@@ -611,6 +950,7 @@ class PosOrderService
             WHERE fatid = ?
               AND tenant = ?
               AND branch = ?
+              AND isdeleted = 0
         ", [$orderId, $tenant, $branch]);
 
         $profit = (float) ($row['tprofit'] ?? 0);
@@ -625,9 +965,455 @@ class PosOrderService
         return $profit;
     }
 
+    private function findMoovaOrderForUpdate(mysqli $conn, $tenant, $branch, $orderId)
+    {
+        return $this->queryOne($conn, "
+            SELECT *
+            FROM ot_head
+            WHERE id = ?
+              AND tenant = ?
+              AND branch = ?
+            LIMIT 1
+            FOR UPDATE
+        ", [(int) $orderId, (int) $tenant, (int) $branch]);
+    }
+
+    private function assertEditableMoovaTableOrder($order)
+    {
+        if (!$order) {
+            throw new Exception('POS_ORDER_NOT_FOUND');
+        }
+        if ((int) ($order['isdeleted'] ?? 0) === 1) {
+            throw new Exception('POS_ORDER_DELETED');
+        }
+        if ((int) ($order['pro_tybe'] ?? 0) !== self::TYPE_POS || (int) ($order['table_id'] ?? 0) < 1) {
+            throw new Exception('POS_ORDER_NOT_TABLE');
+        }
+        $paymentStatus = strtolower(trim((string) ($order['payment_status'] ?? '')));
+        $paidAmount = (float) ($order['paid_amount'] ?? 0);
+        if (($paymentStatus !== '' && $paymentStatus !== 'unpaid') || $paidAmount > 0) {
+            throw new Exception('POS_ORDER_PAID');
+        }
+        if ((float) ($order['fat_net'] ?? 0) <= 0) {
+            throw new Exception('POS_ORDER_NOT_ACTIVE');
+        }
+    }
+
+    private function findTableById(mysqli $conn, $tableId)
+    {
+        return $this->queryOne($conn, "
+            SELECT *
+            FROM tables
+            WHERE id = ?
+              AND isdeleted = 0
+            LIMIT 1
+        ", [(int) $tableId]);
+    }
+
+    private function buildReplacementLines(array $incomingItems)
+    {
+        $lines = [];
+        foreach ($incomingItems as $item) {
+            $id = (int) $item['id'];
+            if ($id < 1) {
+                continue;
+            }
+            if (!isset($lines[$id])) {
+                $lines[$id] = [
+                    'item_id' => $id,
+                    'name' => $item['name'],
+                    'barcode' => $item['barcode'],
+                    'qty' => 0.0,
+                    'price' => (float) $item['price'],
+                    'discount' => 0.0,
+                    'u_val' => 1.0,
+                    'cost_price' => (float) $item['cost_price'],
+                    'itmqty' => (float) $item['itmqty'],
+                ];
+            }
+            $lines[$id]['qty'] += (float) $item['qty'];
+        }
+
+        return array_filter($lines, function ($line) {
+            return (float) ($line['qty'] ?? 0) > 0;
+        });
+    }
+
+    private function clearOrderAccounting(mysqli $conn, $tenant, $branch, $orderId)
+    {
+        $journalRows = $this->queryAll($conn, "
+            SELECT id
+            FROM journal_heads
+            WHERE op_id = ?
+              AND tenant = ?
+              AND branch = ?
+            FOR UPDATE
+        ", [$orderId, $tenant, $branch]);
+
+        foreach ($journalRows as $journalRow) {
+            $this->execute($conn, "
+                DELETE FROM journal_entries
+                WHERE journal_id = ?
+                  AND tenant = ?
+                  AND branch = ?
+            ", [(int) $journalRow['id'], $tenant, $branch]);
+        }
+
+        $this->execute($conn, "
+            DELETE FROM journal_heads
+            WHERE op_id = ?
+              AND tenant = ?
+              AND branch = ?
+        ", [$orderId, $tenant, $branch]);
+
+        $this->execute($conn, "
+            DELETE FROM ot_head
+            WHERE op2 = ?
+              AND tenant = ?
+              AND branch = ?
+        ", [$orderId, $tenant, $branch]);
+    }
+
+    private function insertMoovaLineMappings(mysqli $conn, $tenant, $branch, $moovaOrderId, $orderId, array $insertedLines)
+    {
+        $moovaOrderId = trim((string) $moovaOrderId);
+        if ($moovaOrderId === '' || !$insertedLines) {
+            return;
+        }
+
+        foreach ($insertedLines as $line) {
+            $lineHash = $this->hashMappedLineState($line);
+            $status = 'active';
+            $this->execute($conn, "
+                INSERT INTO moova_pos_order_lines (
+                    moova_order_id, pos_order_id, fat_detail_id, item_id,
+                    qty_out, price, discount, det_value, line_hash,
+                    status, pos_tenant, pos_branch
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ", [
+                $moovaOrderId,
+                (int) $orderId,
+                (int) $line['fat_detail_id'],
+                (int) $line['item_id'],
+                (float) $line['qty_out'],
+                (float) $line['price'],
+                (float) ($line['discount'] ?? 0),
+                (float) $line['det_value'],
+                $lineHash,
+                $status,
+                (int) $tenant,
+                (int) $branch,
+            ]);
+        }
+    }
+
+    private function deactivateMoovaMappedLines(mysqli $conn, $tenant, $branch, $orderId, $moovaOrderId, $status)
+    {
+        $moovaOrderId = trim((string) $moovaOrderId);
+        $status = trim((string) $status);
+        if ($moovaOrderId === '' || $status === '') {
+            return;
+        }
+
+        $ownedRows = $this->queryAll($conn, "
+            SELECT
+                l.id AS mapping_id,
+                l.fat_detail_id,
+                l.qty_out AS mapped_qty_out,
+                l.det_value AS mapped_det_value,
+                fd.qty_out AS detail_qty_out,
+                fd.det_value AS detail_det_value,
+                fd.price,
+                fd.cost_price,
+                fd.profit
+            FROM moova_pos_order_lines l
+            INNER JOIN fat_details fd
+                    ON fd.id = l.fat_detail_id
+                   AND fd.tenant = l.pos_tenant
+                   AND fd.branch = l.pos_branch
+            WHERE l.pos_tenant = ?
+              AND l.pos_branch = ?
+              AND l.pos_order_id = ?
+              AND l.moova_order_id = ?
+              AND l.status = 'active'
+            ORDER BY l.id ASC
+            FOR UPDATE
+        ", [(int) $tenant, (int) $branch, (int) $orderId, $moovaOrderId]);
+
+        foreach ($ownedRows as $row) {
+            $detailId = (int) $row['fat_detail_id'];
+            $ownedQtyOut = (float) $row['mapped_qty_out'];
+            $ownedDetValue = (float) $row['mapped_det_value'];
+            $ownedProfit = $ownedQtyOut * ((float) $row['price'] - (float) $row['cost_price']);
+            $remainingQtyOut = max(0, (float) $row['detail_qty_out'] - $ownedQtyOut);
+            $remainingDetValue = max(0, (float) $row['detail_det_value'] - $ownedDetValue);
+            $remainingProfit = max(0, (float) $row['profit'] - $ownedProfit);
+
+            if ($remainingQtyOut <= 0.0001 || $remainingDetValue <= 0.0001) {
+                $this->execute($conn, "
+                    UPDATE fat_details
+                    SET qty_out = 0,
+                        det_value = 0,
+                        profit = 0,
+                        isdeleted = 1
+                    WHERE id = ?
+                      AND tenant = ?
+                      AND branch = ?
+                ", [$detailId, (int) $tenant, (int) $branch]);
+            } else {
+                $this->execute($conn, "
+                    UPDATE fat_details
+                    SET qty_out = ?,
+                        det_value = ?,
+                        profit = ?,
+                        isdeleted = 0
+                    WHERE id = ?
+                      AND tenant = ?
+                      AND branch = ?
+                ", [$remainingQtyOut, $remainingDetValue, $remainingProfit, $detailId, (int) $tenant, (int) $branch]);
+            }
+        }
+
+        $this->execute($conn, "
+            UPDATE moova_pos_order_lines
+            SET status = ?
+            WHERE pos_tenant = ?
+              AND pos_branch = ?
+              AND pos_order_id = ?
+              AND moova_order_id = ?
+              AND status = 'active'
+        ", [$status, (int) $tenant, (int) $branch, (int) $orderId, $moovaOrderId]);
+    }
+
+    private function refreshReceiptTotalsAndAccounting(mysqli $conn, $tenant, $branch, $orderId, array $defaults, $proDate, $userId)
+    {
+        $order = $this->queryOne($conn, "
+            SELECT id, pro_id
+            FROM ot_head
+            WHERE id = ?
+              AND tenant = ?
+              AND branch = ?
+            LIMIT 1
+        ", [(int) $orderId, (int) $tenant, (int) $branch]);
+
+        if (!$order) {
+            throw new Exception('POS_ORDER_NOT_FOUND');
+        }
+
+        $activeLines = $this->queryAll($conn, "
+            SELECT id, u_val, qty_in, qty_out, price, discount, det_value, profit
+            FROM fat_details
+            WHERE fatid = ?
+              AND tenant = ?
+              AND branch = ?
+              AND isdeleted = 0
+            ORDER BY id ASC
+        ", [(int) $orderId, (int) $tenant, (int) $branch]);
+
+        $this->clearOrderAccounting($conn, $tenant, $branch, (int) $orderId);
+
+        if (!$activeLines) {
+            $this->execute($conn, "
+                UPDATE ot_head
+                SET pro_value = 0,
+                    fat_cost = 0,
+                    profit = 0,
+                    fat_total = 0,
+                    fat_disc = 0,
+                    fat_disc_per = 0,
+                    fat_plus = 0,
+                    fat_plus_per = 0,
+                    fat_tax = 0,
+                    fat_tax_per = 0,
+                    fat_net = 0,
+                    paid_amount = 0,
+                    remaining_amount = 0,
+                    payment_status = 'unpaid',
+                    invoice_status = 'cancelled',
+                    order_status = 'cancelled',
+                    isdeleted = 1,
+                    user = ?
+                WHERE id = ?
+                  AND tenant = ?
+                  AND branch = ?
+            ", [(int) $userId, (int) $orderId, (int) $tenant, (int) $branch]);
+
+            return [
+                'total' => 0.0,
+                'discount' => 0.0,
+                'disc_percent' => 0.0,
+                'net' => 0.0,
+                'profit' => 0.0,
+                'journal_head_id' => null,
+                'active_line_count' => 0,
+            ];
+        }
+
+        $totals = $this->calculateTotalsFromDetailRows($activeLines);
+        $this->execute($conn, "
+            UPDATE ot_head
+            SET pro_value = ?,
+                fat_total = ?,
+                fat_disc = ?,
+                fat_disc_per = ?,
+                fat_plus = 0,
+                fat_plus_per = 0,
+                fat_tax = 0,
+                fat_tax_per = 0,
+                fat_net = ?,
+                paid_amount = 0,
+                remaining_amount = ?,
+                payment_status = 'unpaid',
+                invoice_status = 'draft',
+                order_status = 'active',
+                isdeleted = 0,
+                user = ?
+            WHERE id = ?
+              AND tenant = ?
+              AND branch = ?
+        ", [
+            $totals['total'],
+            $totals['total'],
+            $totals['discount'],
+            $totals['disc_percent'],
+            $totals['net'],
+            $totals['net'],
+            (int) $userId,
+            (int) $orderId,
+            (int) $tenant,
+            (int) $branch,
+        ]);
+
+        $journalHeadId = $this->insertMainJournal(
+            $conn,
+            $tenant,
+            $branch,
+            (int) $orderId,
+            (int) ($order['pro_id'] ?: $orderId),
+            $defaults,
+            $totals,
+            $proDate,
+            $userId
+        );
+        $profit = $this->refreshOrderProfit($conn, $tenant, $branch, (int) $orderId);
+
+        return [
+            'total' => $totals['total'],
+            'discount' => $totals['discount'],
+            'disc_percent' => $totals['disc_percent'],
+            'net' => $totals['net'],
+            'profit' => $profit,
+            'journal_head_id' => $journalHeadId,
+            'active_line_count' => count($activeLines),
+        ];
+    }
+
+    private function calculateTotalsFromDetailRows(array $rows)
+    {
+        $total = 0.0;
+        $net = 0.0;
+
+        foreach ($rows as $row) {
+            $uVal = (float) ($row['u_val'] ?? 1);
+            if ($uVal <= 0) {
+                $uVal = 1;
+            }
+            $qty = abs((float) ($row['qty_out'] ?? 0) - (float) ($row['qty_in'] ?? 0)) / $uVal;
+            $lineGross = $qty * ((float) ($row['price'] ?? 0) * $uVal);
+            $lineNet = (float) ($row['det_value'] ?? 0);
+            if ($lineGross <= 0 && $lineNet > 0) {
+                $lineGross = $lineNet;
+            }
+            $total += $lineGross;
+            $net += $lineNet;
+        }
+
+        $discountTotal = max(0, $total - $net);
+        $discPercent = $total > 0 && $discountTotal > 0 ? round(($discountTotal / $total) * 100, 2) : 0;
+
+        return [
+            'total' => $total,
+            'discount' => $discountTotal,
+            'disc_percent' => $discPercent,
+            'net' => $net,
+        ];
+    }
+
+    private function normalizeMappedLineState(array $row)
+    {
+        $ownedQtyOut = array_key_exists('mapped_qty_out', $row) ? $row['mapped_qty_out'] : ($row['qty_out'] ?? 0);
+        $ownedPrice = array_key_exists('mapped_price', $row) ? $row['mapped_price'] : ($row['price'] ?? 0);
+        $ownedDiscount = array_key_exists('mapped_discount', $row) ? $row['mapped_discount'] : ($row['discount'] ?? 0);
+        $ownedDetValue = array_key_exists('mapped_det_value', $row) ? $row['mapped_det_value'] : ($row['det_value'] ?? 0);
+
+        return [
+            'mapping_id' => (int) ($row['mapping_id'] ?? 0),
+            'fat_detail_id' => (int) ($row['fat_detail_id'] ?? 0),
+            'item_id' => (int) ($row['mapped_item_id'] ?? $row['item_id'] ?? 0),
+            'u_val' => $this->normalizeStateNumber($row['u_val'] ?? 1),
+            'qty_in' => $this->normalizeStateNumber($row['qty_in'] ?? 0),
+            'qty_out' => $this->normalizeStateNumber($ownedQtyOut),
+            'price' => $this->normalizeStateNumber($ownedPrice),
+            'discount' => $this->normalizeStateNumber($ownedDiscount),
+            'det_value' => $this->normalizeStateNumber($ownedDetValue),
+            'det_store' => (int) ($row['det_store'] ?? 0),
+            'cost_price' => $this->normalizeStateNumber($row['cost_price'] ?? 0),
+            'profit' => $this->normalizeStateNumber(((float) $ownedQtyOut) * ((float) $ownedPrice - (float) ($row['cost_price'] ?? 0))),
+            'isdeleted' => (int) ($row['isdeleted'] ?? 0),
+            'detail_consistent' => !empty($row['detail_consistent']) ? 1 : 0,
+        ];
+    }
+
+    private function isMappedDetailConsistent(mysqli $conn, $tenant, $branch, $detailId, array $detailRow)
+    {
+        $sum = $this->queryOne($conn, "
+            SELECT
+                COALESCE(SUM(qty_out), 0) AS mapped_qty_out,
+                COALESCE(SUM(det_value), 0) AS mapped_det_value
+            FROM moova_pos_order_lines
+            WHERE fat_detail_id = ?
+              AND pos_tenant = ?
+              AND pos_branch = ?
+              AND status = 'active'
+        ", [(int) $detailId, (int) $tenant, (int) $branch]);
+
+        $mappedQtyOut = (float) ($sum['mapped_qty_out'] ?? 0);
+        $mappedDetValue = (float) ($sum['mapped_det_value'] ?? 0);
+        $detailQtyOut = (float) ($detailRow['qty_out'] ?? 0);
+        $detailDetValue = (float) ($detailRow['det_value'] ?? 0);
+        $itemMatches = (int) ($detailRow['item_id'] ?? 0) === (int) ($detailRow['mapped_item_id'] ?? 0);
+        $priceMatches = abs((float) ($detailRow['price'] ?? 0) - (float) ($detailRow['mapped_price'] ?? 0)) < 0.0001;
+        $discountMatches = abs((float) ($detailRow['discount'] ?? 0) - (float) ($detailRow['mapped_discount'] ?? 0)) < 0.0001;
+
+        return (int) ($detailRow['isdeleted'] ?? 0) === 0
+            && $itemMatches
+            && $priceMatches
+            && $discountMatches
+            && abs($detailQtyOut - $mappedQtyOut) < 0.0001
+            && abs($detailDetValue - $mappedDetValue) < 0.0001;
+    }
+
+    private function hashMappedLineState(array $line)
+    {
+        return hash(
+            'sha256',
+            json_encode($this->normalizeMappedLineState($line), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
+        );
+    }
+
+    private function normalizeStateNumber($value)
+    {
+        return number_format((float) $value, 4, '.', '');
+    }
+
     private function markTableBusy(mysqli $conn, $tableId)
     {
         $this->execute($conn, "UPDATE tables SET table_case = 1 WHERE id = ?", [$tableId]);
+    }
+
+    private function markTableAvailable(mysqli $conn, $tableId)
+    {
+        $this->execute($conn, "UPDATE tables SET table_case = 0 WHERE id = ?", [(int) $tableId]);
     }
 
     private function logProcess(mysqli $conn, $type)

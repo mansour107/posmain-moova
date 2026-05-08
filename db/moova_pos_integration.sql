@@ -48,6 +48,8 @@ CREATE TABLE IF NOT EXISTS `moova_pos_order_links` (
   `pos_branch` int(11) NOT NULL DEFAULT 0,
   `pos_order_id` int(11) DEFAULT NULL,
   `provider_status` varchar(32) NOT NULL DEFAULT 'processing',
+  `last_pos_state_hash` char(64) DEFAULT NULL,
+  `last_pos_state_payload` longtext,
   `request_payload` longtext,
   `response_payload` longtext,
   `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
@@ -56,6 +58,50 @@ CREATE TABLE IF NOT EXISTS `moova_pos_order_links` (
   UNIQUE KEY `uq_moova_idempotency_scope` (`pos_tenant`, `pos_branch`, `idempotency_key`),
   KEY `idx_moova_order_pos_order` (`pos_order_id`),
   KEY `idx_moova_order_branch` (`moova_branch_id`, `pos_tenant`, `pos_branch`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+CREATE TABLE IF NOT EXISTS `moova_pos_order_change_links` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `idempotency_key` varchar(191) NOT NULL,
+  `request_hash` char(64) NOT NULL,
+  `moova_order_id` varchar(191) NOT NULL,
+  `moova_request_event_id` varchar(191) DEFAULT NULL,
+  `change_type` varchar(20) NOT NULL,
+  `moova_branch_id` varchar(128) NOT NULL,
+  `pos_tenant` int(11) NOT NULL DEFAULT 0,
+  `pos_branch` int(11) NOT NULL DEFAULT 0,
+  `pos_order_id` int(11) DEFAULT NULL,
+  `provider_status` varchar(32) NOT NULL DEFAULT 'processing',
+  `request_payload` longtext,
+  `response_payload` longtext,
+  `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
+  `updated_at` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_moova_change_idempotency_scope` (`pos_tenant`, `pos_branch`, `idempotency_key`),
+  KEY `idx_moova_change_order_scope` (`moova_order_id`, `pos_tenant`, `pos_branch`),
+  KEY `idx_moova_change_pos_order` (`pos_order_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+CREATE TABLE IF NOT EXISTS `moova_pos_order_lines` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `moova_order_id` varchar(191) NOT NULL,
+  `pos_order_id` int(11) NOT NULL,
+  `fat_detail_id` int(11) NOT NULL,
+  `item_id` int(11) NOT NULL,
+  `qty_out` double NOT NULL DEFAULT 0,
+  `price` double NOT NULL DEFAULT 0,
+  `discount` double NOT NULL DEFAULT 0,
+  `det_value` double NOT NULL DEFAULT 0,
+  `line_hash` char(64) NOT NULL,
+  `status` varchar(20) NOT NULL DEFAULT 'active',
+  `pos_tenant` int(11) NOT NULL DEFAULT 0,
+  `pos_branch` int(11) NOT NULL DEFAULT 0,
+  `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
+  `updated_at` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
+  PRIMARY KEY (`id`),
+  KEY `idx_moova_line_order_scope` (`moova_order_id`, `pos_tenant`, `pos_branch`, `status`),
+  KEY `idx_moova_line_pos_order` (`pos_order_id`, `status`),
+  KEY `idx_moova_line_detail` (`fat_detail_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- Example binding:
