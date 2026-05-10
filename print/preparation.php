@@ -1,27 +1,59 @@
 <?php
 include('../includes/connect.php');
 
-$table_id = $_GET['table_id'] ?? 0;
+$table_id = intval($_GET['table_id'] ?? 0);
+$order_id = intval($_GET['order_id'] ?? 0);
+$order = null;
+$table_name = '';
 
-if ($table_id) {
-    // جلب بيانات الطاولة والطلب
-    $table_query = "SELECT tname FROM tables WHERE id = $table_id";
-    $table_result = $conn->query($table_query);
-    $table_name = $table_result->fetch_assoc()['tname'] ?? '';
-    
-    // جلب الطلب
-    $order_query = "SELECT * FROM ot_head WHERE info LIKE '%$table_name%' AND pro_tybe = 9 ORDER BY id DESC LIMIT 1";
-    $order_result = $conn->query($order_query);
-    $order = $order_result->fetch_assoc();
-    
-    if ($order) {
-        $order_id = $order['id'];
-        
-        // جلب الأصناف
-        $items_query = "SELECT fd.*, i.iname FROM fat_details fd 
-                       LEFT JOIN myitems i ON fd.item_id = i.id 
-                       WHERE fd.pro_id = $order_id AND fd.isdeleted = 0";
-        $items_result = $conn->query($items_query);
+if ($order_id > 0) {
+    $stmt = $conn->prepare("
+        SELECT oh.*, t.tname
+        FROM ot_head oh
+        LEFT JOIN tables t ON t.id = oh.table_id
+        WHERE oh.id = ?
+          AND oh.isdeleted = 0
+        LIMIT 1
+    ");
+    $stmt->bind_param("i", $order_id);
+} elseif ($table_id > 0) {
+    $stmt = $conn->prepare("
+        SELECT oh.*, t.tname
+        FROM ot_head oh
+        LEFT JOIN tables t ON t.id = oh.table_id
+        WHERE oh.table_id = ?
+          AND oh.pro_tybe = 9
+          AND oh.isdeleted = 0
+          AND COALESCE(oh.order_status, 'active') = 'active'
+          AND COALESCE(oh.payment_status, 'unpaid') IN ('unpaid', 'partial')
+        ORDER BY oh.id DESC
+        LIMIT 1
+    ");
+    $stmt->bind_param("i", $table_id);
+} else {
+    $stmt = null;
+}
+
+if ($stmt) {
+    $stmt->execute();
+    $order = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+}
+
+if ($order) {
+    $order_id = (int) $order['id'];
+    $table_name = $order['tname'] ?? '';
+    $items_stmt = $conn->prepare("
+        SELECT fd.*, i.iname
+        FROM fat_details fd
+        LEFT JOIN myitems i ON fd.item_id = i.id
+        WHERE fd.fatid = ?
+          AND fd.isdeleted = 0
+        ORDER BY fd.id ASC
+    ");
+    $items_stmt->bind_param("i", $order_id);
+    $items_stmt->execute();
+    $items_result = $items_stmt->get_result();
 ?>
 <!DOCTYPE html>
 <html>
@@ -37,10 +69,13 @@ if ($table_id) {
 <body>
     <div class="header">
         <h2>طلب التحضير</h2>
-        <p>الطاولة: <?= $table_name ?></p>
+        <?php if ($table_name !== ''): ?>
+        <p>الطاولة: <?= htmlspecialchars($table_name, ENT_QUOTES, 'UTF-8') ?></p>
+        <?php endif; ?>
+        <p>رقم الطلب: <?= $order_id ?></p>
         <p>التاريخ: <?= date('Y-m-d H:i') ?></p>
     </div>
-    
+
     <table>
         <thead>
             <tr>
@@ -52,14 +87,14 @@ if ($table_id) {
         <tbody>
             <?php while ($item = $items_result->fetch_assoc()): ?>
             <tr>
-                <td><?= $item['iname'] ?></td>
-                <td><?= $item['qty'] ?></td>
-                <td><?= $item['notes'] ?? '' ?></td>
+                <td><?= htmlspecialchars($item['iname'] ?? '', ENT_QUOTES, 'UTF-8') ?></td>
+                <td><?= floatval($item['qty_out']) - floatval($item['qty_in']) ?></td>
+                <td><?= htmlspecialchars($item['notes'] ?? '', ENT_QUOTES, 'UTF-8') ?></td>
             </tr>
             <?php endwhile; ?>
         </tbody>
     </table>
-    
+
     <script>
         window.print();
         window.close();
@@ -67,6 +102,5 @@ if ($table_id) {
 </body>
 </html>
 <?php
-    }
 }
 ?>

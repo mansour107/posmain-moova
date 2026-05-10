@@ -28,10 +28,12 @@ $sales_query = $conn->query("SELECT
     COALESCE(SUM(fat_net), 0) as net_sales,
     MIN(crtime) as first_sale_time,
     MAX(crtime) as last_sale_time
-    FROM ot_head 
+    FROM ot_head
     WHERE DATE(pro_date) = '$today'
     AND user = '$user_id'
     AND pro_tybe = 9
+    AND payment_status = 'paid'
+    AND order_status = 'completed'
     AND isdeleted = 0");
 $sales_data = $sales_query->fetch_assoc();
 
@@ -44,11 +46,13 @@ $items_query = $conn->query("SELECT
     SUM(fd.det_value) as total_value,
     COUNT(DISTINCT oh.id) as order_count
     FROM ot_head oh
-    JOIN fat_details fd ON oh.id = fd.pro_id
+    JOIN fat_details fd ON oh.id = fd.fatid
     JOIN myitems mi ON fd.item_id = mi.id
     WHERE DATE(oh.pro_date) = '$today'
     AND oh.user = '$user_id'
     AND oh.pro_tybe = 9
+    AND oh.payment_status = 'paid'
+    AND oh.order_status = 'completed'
     AND oh.isdeleted = 0
     AND fd.isdeleted = 0
     GROUP BY fd.item_id, fd.price
@@ -60,16 +64,18 @@ $invoices_query = $conn->query("SELECT
     oh.crtime,
     oh.fat_net,
     oh.info,
-    CASE 
-        WHEN oh.info LIKE '%تيك أواي%' THEN 'تيك أواي'
-        WHEN oh.info LIKE '%طاولة%' THEN 'طاولة'
-        WHEN oh.info LIKE '%دليفري%' THEN 'دليفري'
+    CASE
+        WHEN oh.order_type = 'table' THEN 'طاولة'
+        WHEN oh.order_type = 'delivery' THEN 'دليفري'
+        WHEN oh.order_type = 'takeaway' THEN 'تيك أواي'
         ELSE 'غير محدد'
     END as order_type
     FROM ot_head oh
     WHERE DATE(oh.pro_date) = '$today'
     AND oh.user = '$user_id'
     AND oh.pro_tybe = 9
+    AND oh.payment_status = 'paid'
+    AND oh.order_status = 'completed'
     AND oh.isdeleted = 0
     ORDER BY oh.crtime DESC");
 

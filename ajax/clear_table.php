@@ -1,77 +1,48 @@
 <?php
+session_start();
 include('../includes/connect.php');
+require_once('../classes/TableOrderService.php');
 
-header('Content-Type: application/json');
+header('Content-Type: application/json; charset=utf-8');
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
-    echo json_encode(['success' => false, 'message' => 'طريقة الطلب غير صحيحة']);
+    echo json_encode(['success' => false, 'message' => 'طريقة الطلب غير صحيحة'], JSON_UNESCAPED_UNICODE);
     exit;
 }
 
 $table_id = intval($_POST['table_id'] ?? 0);
+$order_id = intval($_POST['order_id'] ?? 0);
+$reason = trim((string) ($_POST['reason'] ?? 'تم تفريغ الطاولة من نقطة البيع'));
+$user_id = intval($_SESSION['userid'] ?? 1);
 
 if ($table_id <= 0) {
-    echo json_encode(['success' => false, 'message' => 'معرف الطاولة غير صحيح']);
+    echo json_encode(['success' => false, 'message' => 'معرف الطاولة غير صحيح'], JSON_UNESCAPED_UNICODE);
     exit;
 }
 
 try {
+    $tableOrderService = new TableOrderService();
     $conn->begin_transaction();
-    
-    // جلب اسم الطاولة
-    $table_query = "SELECT tname FROM tables WHERE id = ?";
-    $stmt = $conn->prepare($table_query);
-    $stmt->bind_param("i", $table_id);
-    $stmt->execute();
-    $table_result = $stmt->get_result();
-    
-    if ($table_result->num_rows === 0) {
-        throw new Exception('الطاولة غير موجودة');
+
+    $tableOrderService->requireTable($conn, $table_id);
+    if ($order_id <= 0) {
+        $activeOrder = $tableOrderService->findActiveOrderByTableId($conn, $table_id, true);
+        if (!$activeOrder) {
+            throw new Exception('لا يوجد طلب نشط لهذه الطاولة');
+        }
+        $order_id = (int) $activeOrder['id'];
     }
-    
-    $table_data = $table_result->fetch_assoc();
-    $table_name = $table_data['tname'];
-    
-    // البحث عن الطلب النشط للطاولة وحذفه نهائياً
-    $order_query = "SELECT * FROM ot_head WHERE info LIKE ? AND pro_tybe = 9 ORDER BY id DESC LIMIT 1";
-    $stmt = $conn->prepare($order_query);
-    $search_term = "%$table_name%";
-    $stmt->bind_param("s", $search_term);
-    $stmt->execute();
-    $order_result = $stmt->get_result();
-    
-    if ($order_result->num_rows > 0) {
-        $order_data = $order_result->fetch_assoc();
-        $order_id = $order_data['id'];
-        
-        // حذف تفاصيل الطلب
-        $delete_details = "DELETE FROM fat_details WHERE pro_id = ?";
-        $stmt = $conn->prepare($delete_details);
-        $stmt->bind_param("i", $order_id);
-        $stmt->execute();
-        
-        // حذف الطلب نفسه
-        $delete_order = "DELETE FROM ot_head WHERE id = ?";
-        $stmt = $conn->prepare($delete_order);
-        $stmt->bind_param("i", $order_id);
-        $stmt->execute();
-    }
-    
-    // تحديث حالة الطاولة إلى فارغة
-    $update_table = "UPDATE tables SET table_case = 0 WHERE id = ?";
-    $stmt = $conn->prepare($update_table);
-    $stmt->bind_param("i", $table_id);
-    $stmt->execute();
-    
+
+    $tableOrderService->cancelTableOrder($conn, $table_id, $order_id, $reason, $user_id);
     $conn->commit();
-    
+
     echo json_encode([
-        'success' => true, 
-        'message' => 'تم تفريغ الطاولة وحذف الطلب نهائياً'
-    ]);
-    
+        'success' => true,
+        'message' => 'تم تفريغ الطاولة وإلغاء الطلب بدون حذف نهائي',
+        'order_id' => $order_id,
+    ], JSON_UNESCAPED_UNICODE);
 } catch (Exception $e) {
     $conn->rollback();
-    echo json_encode(['success' => false, 'message' => $e->getMessage()]);
+    echo json_encode(['success' => false, 'message' => $e->getMessage()], JSON_UNESCAPED_UNICODE);
 }
 ?>

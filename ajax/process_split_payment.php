@@ -1,196 +1,279 @@
 <?php
-// Prevent PHP notices/warnings from corrupting JSON
 error_reporting(0);
 ini_set('display_errors', 0);
-
-// Start output buffering to catch any stray whitespace or includes output
 ob_start();
-
 session_start();
 include('../includes/connect.php');
-
-// Clear any output generated so far (like whitespace from includes)
+require_once('../classes/TableOrderService.php');
 ob_clean();
 
-header('Content-Type: application/json');
+header('Content-Type: application/json; charset=utf-8');
 
-// استلام البيانات
 $data = json_decode(file_get_contents('php://input'), true);
-
 if (!$data) {
-    echo json_encode(['success' => false, 'message' => 'No data received']);
+    echo json_encode(['success' => false, 'message' => 'No data received'], JSON_UNESCAPED_UNICODE);
     exit;
 }
 
-$original_order_id = intval($data['order_id']);
-$table_id = intval($data['table_id']);
-$selected_items = $data['items']; // Array of detail IDs to split
-$paid_amount = floatval($data['paid_amount']);
-$payment_method = $data['payment_method'] ?? 'cash'; // 'cash' or 'visa'
+$original_order_id = intval($data['order_id'] ?? 0);
+$table_id = intval($data['table_id'] ?? 0);
+$raw_items = is_array($data['items'] ?? null) ? $data['items'] : [];
+$split_requests = [];
+foreach ($raw_items as $item) {
+    if (is_array($item)) {
+        $detailId = intval($item['detail_id'] ?? $item['detailId'] ?? $item['id'] ?? 0);
+        $qty = isset($item['qty']) ? floatval($item['qty']) : (isset($item['quantity']) ? floatval($item['quantity']) : null);
+    } else {
+        $detailId = intval($item);
+        $qty = null;
+    }
 
-if (empty($selected_items)) {
-    echo json_encode(['success' => false, 'message' => 'No items selected']);
+    if ($detailId > 0) {
+        if (!isset($split_requests[$detailId])) {
+            $split_requests[$detailId] = ['qty' => null];
+        }
+        if ($qty !== null) {
+            $split_requests[$detailId]['qty'] = ($split_requests[$detailId]['qty'] ?? 0) + $qty;
+        }
+    }
+}
+$selected_items = array_keys($split_requests);
+$paid_amount = floatval($data['paid_amount'] ?? 0);
+$payment_method = trim((string) ($data['payment_method'] ?? 'cash'));
+$user_id = intval($_SESSION['userid'] ?? 1);
+
+if ($original_order_id <= 0 || $table_id <= 0 || !$selected_items || $paid_amount <= 0) {
+    echo json_encode(['success' => false, 'message' => 'بيانات السداد المقسم غير صحيحة'], JSON_UNESCAPED_UNICODE);
     exit;
 }
 
 try {
+    $service = new TableOrderService();
     $conn->begin_transaction();
 
-    // 1. إنشاء فاتورة جديدة للأصناف المدفوعة
-    
-    // جلب بيانات الفاتورة الأصلية لنسخ البيانات (العميل، الموظف، الخ)
-    $stmt = $conn->prepare("SELECT * FROM ot_head WHERE id = ?");
-    $stmt->bind_param("i", $original_order_id);
-    $stmt->execute();
-    $result = $stmt->get_result();
-    $orig_order = $result->fetch_assoc();
-    $stmt->close();
-    
-    if (!$orig_order) throw new Exception("Original order not found");
-    
-    // إنشاء رأس فاتورة جديدة (مدفوعة)
-    $type_sales = 3; // Sales Invoce
-    
-    // الحصول على رقم فاتورة جديد
-    $next_id_stmt = $conn->prepare("SELECT MAX(CAST(pro_id AS UNSIGNED)) + 1 FROM ot_head WHERE pro_tybe = ?");
-    $next_id_stmt->bind_param("i", $type_sales);
-    $next_id_stmt->execute();
-    $inv_num_res = $next_id_stmt->get_result()->fetch_row();
-    $new_invoice_num = $inv_num_res[0] ?? 1;
-    $next_id_stmt->close();
-
-    $new_info = "سداد جزئي من طاولة " . $table_id;
-
-    $insert_head = $conn->prepare("INSERT INTO ot_head 
-        (pro_id, pro_tybe, pro_date, store_id, emp_id, acc1, acc2, pro_value, fat_net, info, user)
-        VALUES (?, ?, NOW(), ?, ?, ?, ?, ?, ?, ?, ?)");
-        
-    $pro_value = $paid_amount;
-    $fat_net = $paid_amount;
-    
-    // Note: acc2 here uses store_id, which matches original logic. Ensure store_id is int.
-    $acc2 = $orig_order['store_id']; 
-    $user_id = isset($_SESSION['userid']) ? $_SESSION['userid'] : 1;
-
-    $insert_head->bind_param("siiiidddsi", 
-        $new_invoice_num, 
-        $type_sales, 
-        $orig_order['store_id'], 
-        $orig_order['emp_id'],
-        $orig_order['acc1'], 
-        $acc2,
-        $pro_value,
-        $fat_net,
-        $new_info,
-        $user_id
-    );
-    
-    $insert_head->execute();
-    $new_head_id = $conn->insert_id;
-    $insert_head->close();
-
-    // 2. نقل الأصناف المختارة من الفاتورة القديمة للجديدة
-    foreach ($selected_items as $detail_id) {
-        $update_detail = $conn->prepare("UPDATE fat_details SET fatid = ?, pro_id = ?, pro_tybe = ? WHERE id = ?");
-        $update_detail->bind_param("isii", $new_head_id, $new_invoice_num, $type_sales, $detail_id);
-        $update_detail->execute();
-        $update_detail->close();
-    }
-    
-    // 3. إعادة حساب إجمالي الفاتورة القديمة
-    $calc_old = $conn->prepare("SELECT SUM(det_value) FROM fat_details WHERE fatid = ? AND isdeleted = 0");
-    $calc_old->bind_param("i", $original_order_id);
-    $calc_old->execute();
-    $res_old = $calc_old->get_result()->fetch_row();
-    $remaining_total = floatval($res_old[0] ?? 0);
-    $calc_old->close();
-    
-    // تحديث الفاتورة القديمة
-    $update_old = $conn->prepare("UPDATE ot_head SET pro_value = ?, fat_total = ?, fat_net = ? WHERE id = ?");
-    $update_old->bind_param("dddi", $remaining_total, $remaining_total, $remaining_total, $original_order_id);
-    $update_old->execute();
-    $update_old->close();
-    
-    // 5. التحقق مما إذا كانت الفاتورة القديمة فرغت تماماً
-    if ($remaining_total <= 0) {
-        // إغلاق الطاولة
-        $close_tbl = $conn->prepare("UPDATE tables SET table_case = 0 WHERE id = ?");
-        $close_tbl->bind_param("i", $table_id);
-        $close_tbl->execute();
-        
-        // تعليم الفاتورة القديمة كمحذوفة
-        $conn->query("UPDATE ot_head SET isdeleted = 1 WHERE id = $original_order_id");
+    $service->requireTable($conn, $table_id);
+    $orig_order = $service->findActiveOrderByTableAndOrderId($conn, $table_id, $original_order_id, true);
+    if (!$orig_order) {
+        throw new Exception('الطلب الأصلي غير موجود أو لم يعد نشطاً لهذه الطاولة');
     }
 
-    // 6. إنشاء سند قبض (Receipt Voucher) للمبلغ المدفوع
-    $usid = $_SESSION['userid'] ?? 1;
+    $placeholders = implode(',', array_fill(0, count($selected_items), '?'));
+    $detailParams = array_merge([$original_order_id], $selected_items);
+    $details = $service->queryAll($conn, "
+        SELECT *
+        FROM fat_details
+        WHERE fatid = ?
+          AND isdeleted = 0
+          AND id IN ($placeholders)
+        FOR UPDATE
+    ", $detailParams);
+
+    if (count($details) !== count($selected_items)) {
+        throw new Exception('بعض الأصناف المختارة لا تخص الطلب الأصلي');
+    }
+
+    $detailsById = [];
+    foreach ($details as $detail) {
+        $detailsById[(int) $detail['id']] = $detail;
+    }
+
+    $splitLines = [];
+    $childTotal = 0;
+    foreach ($selected_items as $detailId) {
+        $detail = $detailsById[$detailId] ?? null;
+        if (!$detail) {
+            throw new Exception('بعض الأصناف المختارة لا تخص الطلب الأصلي');
+        }
+
+        $availableQty = max(0, floatval($detail['qty_out'] ?? 0) - floatval($detail['qty_in'] ?? 0));
+        $requestedQty = $split_requests[$detailId]['qty'];
+        if ($requestedQty === null) {
+            $requestedQty = $availableQty;
+        }
+        if ($availableQty <= 0 || $requestedQty <= 0 || $requestedQty > $availableQty + 0.0001) {
+            throw new Exception('كمية الصنف المختارة غير صحيحة');
+        }
+
+        $ratio = min(1, $requestedQty / $availableQty);
+        $childValue = round((float) ($detail['det_value'] ?? 0) * $ratio, 4);
+        $childProfit = round((float) ($detail['profit'] ?? 0) * $ratio, 4);
+        $splitLines[] = [
+            'detail' => $detail,
+            'qty' => $requestedQty,
+            'value' => $childValue,
+            'profit' => $childProfit,
+            'is_full' => abs($requestedQty - $availableQty) <= 0.0001,
+        ];
+        $childTotal += $childValue;
+    }
+    if ($childTotal <= 0) {
+        throw new Exception('قيمة الأصناف المختارة غير صحيحة');
+    }
+    if ($paid_amount + 0.0001 < $childTotal) {
+        throw new Exception('المبلغ المدفوع أقل من قيمة الأصناف المختارة');
+    }
+
+    $next = $conn->query("SELECT COALESCE(MAX(CAST(pro_id AS UNSIGNED)), 0) + 1 AS next_id FROM ot_head WHERE pro_tybe = 9")->fetch_assoc();
+    $new_invoice_num = intval($next['next_id'] ?? 1);
+    $split_group_id = bin2hex(random_bytes(16));
     $date = date('Y-m-d');
-    
-    // جلب حساب الخزينة/الصندوق
-    $safe_acc = 51; // القيمة الافتراضية
-    $safe_res = $conn->query("SELECT id FROM acc_head WHERE aname LIKE '%خزينة%' OR aname LIKE '%صندوق%' LIMIT 1");
-    if ($safe_res && $safe_res->num_rows > 0) {
-        $safe_acc = $safe_res->fetch_assoc()['id'];
+    $new_info = "سداد جزئي من طاولة " . $table_id . " - أصل الطلب " . $original_order_id;
+
+    $service->execute($conn, "
+        INSERT INTO ot_head (
+            pro_id, branch_id, table_id, order_type, pro_tybe, pro_date, accural_date,
+            store_id, emp_id, emp2_id, acc1, acc2, pro_value, fat_total, fat_disc,
+            fat_net, paid_amount, remaining_amount, payment_status, invoice_status,
+            order_status, payment_method, payment_date, completed_at, parent_order_id,
+            split_group_id, info, user
+        ) VALUES (
+            ?, ?, ?, 'table', 9, ?, ?,
+            ?, ?, ?, ?, ?, ?, ?, 0,
+            ?, ?, 0, 'paid', 'completed',
+            'completed', ?, NOW(), NOW(), ?,
+            ?, ?, ?
+        )
+    ", [
+        $new_invoice_num,
+        (int) ($orig_order['branch_id'] ?? 0),
+        $table_id,
+        $date,
+        $date,
+        (int) ($orig_order['store_id'] ?? 0),
+        (int) ($orig_order['emp_id'] ?? 0),
+        (int) ($orig_order['emp2_id'] ?? $orig_order['emp_id'] ?? 0),
+        (int) ($orig_order['acc1'] ?? 0),
+        (int) ($orig_order['acc2'] ?? 0),
+        $childTotal,
+        $childTotal,
+        $childTotal,
+        $childTotal,
+        $payment_method,
+        $original_order_id,
+        $split_group_id,
+        $new_info,
+        $user_id,
+    ]);
+    $new_head_id = (int) $conn->insert_id;
+
+    foreach ($splitLines as $line) {
+        $detailId = (int) $line['detail']['id'];
+        if ($line['is_full']) {
+            $service->execute($conn, "
+                UPDATE fat_details
+                SET fatid = ?,
+                    pro_id = ?,
+                    pro_tybe = 9,
+                    fat_tybe = 9
+                WHERE id = ?
+            ", [$new_head_id, $new_head_id, $detailId]);
+        } else {
+            $service->execute($conn, "
+                INSERT INTO fat_details (
+                    pro_tybe, det_store, pro_id, item_id, u_val, qty_in, qty_out,
+                    price, cost_price, stock_value, discount, plus, det_value,
+                    profit, fatid, fat_tybe, tenant, branch
+                )
+                SELECT
+                    9, det_store, ?, item_id, u_val, 0, ?,
+                    price, cost_price, stock_value, discount, plus, ?,
+                    ?, ?, 9, tenant, branch
+                FROM fat_details
+                WHERE id = ?
+            ", [$new_head_id, $line['qty'], $line['value'], $line['profit'], $new_head_id, $detailId]);
+
+            $service->execute($conn, "
+                UPDATE fat_details
+                SET qty_out = qty_out - ?,
+                    det_value = GREATEST(0, det_value - ?),
+                    profit = profit - ?
+                WHERE id = ?
+            ", [$line['qty'], $line['value'], $line['profit'], $detailId]);
+        }
     }
-    
-    // إنشاء سند القبض (pro_tybe = 1)
-    $stmt = $conn->prepare(
-        "INSERT INTO ot_head (
-            pro_tybe, is_journal, journal_tybe, info, pro_date, 
-            emp_id, acc1, acc2, pro_value, fat_net, cost_center, profit, user, op2
-        ) VALUES (1, 1, 1, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?)"
-    );
-    
-    $info_text = "سند قبض - سداد جزئي طاولة " . $table_id . " - فاتورة رقم " . $new_head_id;
-    $customer_acc = $orig_order['acc1'] ?? 0;
-    $emp_id = $orig_order['emp_id'] ?? 0;
-    
-    $stmt->bind_param("ssiiiddii", 
-        $info_text, $date, $emp_id, $safe_acc, $customer_acc, 
-        $paid_amount, $paid_amount, $usid, $new_head_id
-    );
-    $stmt->execute();
-    $receipt_id = $conn->insert_id;
-    $stmt->close();
-    
-    // 7. إنشاء قيد يومية (Journal Entry)
-    // الحصول على رقم القيد التالي
-    $res_jid = $conn->query("SELECT MAX(journal_id) as max_id FROM journal_heads");
-    $row_jid = $res_jid->fetch_assoc();
-    $journal_id = ($row_jid['max_id'] ?? 0) + 1;
-    
-    // رأس القيد
-    $stmt = $conn->prepare("INSERT INTO journal_heads (journal_id, op_id, total, jdate, details, user, op2) VALUES (?, ?, ?, ?, ?, ?, ?)");
-    $j_details = "سند قبض - سداد جزئي طاولة " . $table_id;
-    $stmt->bind_param("idsssii", $journal_id, $receipt_id, $paid_amount, $date, $j_details, $usid, $new_head_id);
-    $stmt->execute();
-    $j_head_id = $conn->insert_id;
-    $stmt->close();
-    
-    // مدين: الخزينة (من ح/ الخزينة)
-    $stmt = $conn->prepare("INSERT INTO journal_entries (journal_id, account_id, debit, credit, tybe, op2) VALUES (?, ?, ?, 0, 0, ?)");
-    $stmt->bind_param("iidi", $j_head_id, $safe_acc, $paid_amount, $new_head_id);
-    $stmt->execute();
-    $stmt->close();
-    
-    // دائن: العميل (إلى ح/ العميل)
-    if ($customer_acc > 0) {
-        $stmt = $conn->prepare("INSERT INTO journal_entries (journal_id, account_id, debit, credit, tybe, op2) VALUES (?, ?, 0, ?, 1, ?)");
-        $stmt->bind_param("iidi", $j_head_id, $customer_acc, $paid_amount, $new_head_id);
-        $stmt->execute();
-        $stmt->close();
+
+    $remainingTotals = $service->recalculateOrderTotals($conn, $original_order_id);
+    $remainingLines = $service->queryOne($conn, "
+        SELECT COUNT(*) AS c
+        FROM fat_details
+        WHERE fatid = ?
+          AND isdeleted = 0
+          AND qty_out > qty_in
+    ", [$original_order_id]);
+
+    if ((int) ($remainingLines['c'] ?? 0) > 0 && $remainingTotals['net'] > 0) {
+        $originalPaid = min((float) ($orig_order['paid_amount'] ?? 0), $remainingTotals['net']);
+        $originalRemaining = max(0, $remainingTotals['net'] - $originalPaid);
+        if ($originalPaid <= 0) {
+            $originalPaymentStatus = 'unpaid';
+            $originalInvoiceStatus = 'draft';
+            $originalOrderStatus = 'active';
+        } elseif ($originalRemaining <= 0.0001) {
+            $originalPaymentStatus = 'paid';
+            $originalInvoiceStatus = 'completed';
+            $originalOrderStatus = 'completed';
+        } else {
+            $originalPaymentStatus = 'partial';
+            $originalInvoiceStatus = 'draft';
+            $originalOrderStatus = 'active';
+        }
+
+        $service->execute($conn, "
+            UPDATE ot_head
+            SET payment_status = ?,
+                invoice_status = ?,
+                order_status = ?,
+                paid_amount = ?,
+                remaining_amount = ?
+            WHERE id = ?
+              AND table_id = ?
+        ", [
+            $originalPaymentStatus,
+            $originalInvoiceStatus,
+            $originalOrderStatus,
+            $originalPaid,
+            $originalRemaining,
+            $original_order_id,
+            $table_id,
+        ]);
+        if ($originalOrderStatus === 'completed') {
+            $service->setTableFreeIfNoActiveOrder($conn, $table_id);
+        } else {
+            $service->markTableOccupied($conn, $table_id);
+        }
+    } else {
+        $service->execute($conn, "
+            UPDATE ot_head
+            SET payment_status = 'paid',
+                invoice_status = 'completed',
+                order_status = 'completed',
+                paid_amount = 0,
+                remaining_amount = 0,
+                completed_at = NOW()
+            WHERE id = ?
+              AND table_id = ?
+        ", [$original_order_id, $table_id]);
+        $service->setTableFreeIfNoActiveOrder($conn, $table_id);
+    }
+
+    $tableCheck = $conn->query("SHOW TABLES LIKE 'order_payments'");
+    if ($tableCheck && $tableCheck->num_rows > 0) {
+        $service->execute($conn, "
+            INSERT INTO order_payments (order_id, amount, payment_method, created_by, created_at)
+            VALUES (?, ?, ?, ?, NOW())
+        ", [$new_head_id, $childTotal, $payment_method, $user_id]);
     }
 
     $conn->commit();
     echo json_encode([
-        'success' => true, 
-        'message' => 'تم سداد الأصناف المختارة بنجاح وإنشاء سند القبض', 
+        'success' => true,
+        'message' => 'تم سداد الأصناف المختارة بنجاح',
         'new_invoice_id' => $new_head_id,
-        'receipt_id' => $receipt_id
-    ]);
-
+        'split_group_id' => $split_group_id,
+        'remaining_total' => $remainingTotals['net'],
+    ], JSON_UNESCAPED_UNICODE);
 } catch (Exception $e) {
     $conn->rollback();
-    echo json_encode(['success' => false, 'message' => $e->getMessage()]);
+    echo json_encode(['success' => false, 'message' => $e->getMessage()], JSON_UNESCAPED_UNICODE);
 }
 ?>

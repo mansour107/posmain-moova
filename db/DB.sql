@@ -1839,6 +1839,27 @@ CREATE TABLE `order_types` (
 -- --------------------------------------------------------
 
 --
+-- Table structure for table `order_payments`
+--
+
+CREATE TABLE `order_payments` (
+  `id` int(11) NOT NULL,
+  `order_id` int(11) NOT NULL,
+  `amount` decimal(12,2) NOT NULL,
+  `payment_method` varchar(50) DEFAULT NULL,
+  `reference_no` varchar(100) DEFAULT NULL,
+  `paid_by_customer_id` int(11) DEFAULT NULL,
+  `created_by` int(11) DEFAULT NULL,
+  `created_at` datetime NOT NULL DEFAULT current_timestamp(),
+  `is_voided` tinyint(1) NOT NULL DEFAULT 0,
+  `voided_at` datetime DEFAULT NULL,
+  `voided_by` int(11) DEFAULT NULL,
+  `void_reason` varchar(255) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
 -- Table structure for table `ot_head`
 --
 
@@ -1890,7 +1911,7 @@ CREATE TABLE `ot_head` (
   `fat_tax_per` double DEFAULT NULL,
   `paid_amount` decimal(15,2) DEFAULT 0.00,
   `remaining_amount` decimal(15,2) DEFAULT 0.00,
-  `payment_status` enum('unpaid','partial','paid','refunded') DEFAULT 'unpaid',
+  `payment_status` enum('unpaid','partial','paid','refunded','voided') DEFAULT 'unpaid',
   `invoice_status` enum('draft','completed','cancelled') DEFAULT 'completed',
   `crtime` timestamp NOT NULL DEFAULT current_timestamp(),
   `acc_fund` int(1) DEFAULT 0,
@@ -1906,6 +1927,14 @@ CREATE TABLE `ot_head` (
   `payment_method` varchar(20) DEFAULT 'cash' COMMENT 'طريقة الدفع',
   `payment_notes` text DEFAULT NULL COMMENT 'ملاحظات الدفع',
   `payment_date` datetime DEFAULT NULL COMMENT 'تاريخ الدفع',
+  `cancelled_at` datetime DEFAULT NULL,
+  `cancelled_by` int(11) DEFAULT NULL,
+  `cancellation_reason` varchar(255) DEFAULT NULL,
+  `completed_at` datetime DEFAULT NULL,
+  `created_by` int(11) DEFAULT NULL,
+  `updated_by` int(11) DEFAULT NULL,
+  `parent_order_id` int(11) DEFAULT NULL,
+  `split_group_id` varchar(64) DEFAULT NULL,
   `jal_name` varchar(255) DEFAULT NULL,
   `jal_notes` text DEFAULT NULL,
   `jal_amount` decimal(10,2) DEFAULT 0.00
@@ -3208,7 +3237,8 @@ ALTER TABLE `fats`
 --
 ALTER TABLE `fat_details`
   ADD PRIMARY KEY (`id`),
-  ADD KEY `item_id` (`item_id`);
+  ADD KEY `item_id` (`item_id`),
+  ADD KEY `idx_fat_details_fatid` (`fatid`,`isdeleted`);
 
 --
 -- Indexes for table `fat_tybes`
@@ -3430,6 +3460,13 @@ ALTER TABLE `order_types`
   ADD PRIMARY KEY (`id`);
 
 --
+-- Indexes for table `order_payments`
+--
+ALTER TABLE `order_payments`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `idx_order_payments_order_id` (`order_id`);
+
+--
 -- Indexes for table `ot_head`
 --
 ALTER TABLE `ot_head`
@@ -3448,6 +3485,8 @@ ALTER TABLE `ot_head`
   ADD KEY `idx_order_type` (`order_type`),
   ADD KEY `idx_payment_status` (`payment_status`),
   ADD KEY `idx_isdeleted` (`isdeleted`),
+  ADD KEY `idx_ot_head_active_table_order` (`table_id`,`pro_tybe`,`isdeleted`,`order_status`,`payment_status`),
+  ADD KEY `idx_ot_head_order_type` (`order_type`,`pro_tybe`,`isdeleted`,`payment_status`,`order_status`),
   ADD KEY `waiter_id` (`waiter_id`);
 
 --
@@ -4073,6 +4112,12 @@ ALTER TABLE `order_status`
 --
 ALTER TABLE `order_types`
   MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=6;
+
+--
+-- AUTO_INCREMENT for table `order_payments`
+--
+ALTER TABLE `order_payments`
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
 
 --
 -- AUTO_INCREMENT for table `ot_head`

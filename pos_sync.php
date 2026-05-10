@@ -105,7 +105,7 @@ function getOrders() {
                            SEPARATOR '|'
                        ) as items
                 FROM ot_head o
-                LEFT JOIN fat_details fd ON o.id = fd.pro_id
+                LEFT JOIN fat_details fd ON o.id = fd.fatid
                 LEFT JOIN myitems m ON fd.item_id = m.id
                 WHERE o.pro_tybe = 9 AND o.isdeleted = 0
                 AND DATE(o.pro_date) = CURDATE()

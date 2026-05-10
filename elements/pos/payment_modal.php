@@ -246,7 +246,7 @@ function openPaymentModal(tableId, tableName) {
             if (response.success) {
                 $('#payment_table_name').val(tableName);
                 $('#payment_date').val(new Date().toLocaleDateString('ar-EG'));
-                $('#payment_order_id').val(tableId); // معرف الطاولة
+                $('#payment_order_id').val(response.order_id || '');
                 $('#payment_total').val(response.total.toFixed(2));
                 $('#payment_discount').val(response.discount.toFixed(2));
                 $('#payment_paid').val(response.paid.toFixed(2));
@@ -256,6 +256,10 @@ function openPaymentModal(tableId, tableName) {
                     $('#paymentModal .modal-body').append('<input type="hidden" id="hidden_table_id">');
                 }
                 $('#hidden_table_id').val(tableId);
+                if (!$('#hidden_order_id').length) {
+                    $('#paymentModal .modal-body').append('<input type="hidden" id="hidden_order_id">');
+                }
+                $('#hidden_order_id').val(response.order_id || '');
                 
                 calculatePaymentTotals();
                 $('#paymentModal').modal('show');
@@ -270,7 +274,8 @@ function openPaymentModal(tableId, tableName) {
 }
 
 function processPayment(printInvoice) {
-    const tableId = $('#payment_order_id').val(); // استخدام معرف الطلب بدلاً من معرف الطاولة
+    const orderId = $('#hidden_order_id').val() || $('#payment_order_id').val();
+    const tableId = $('#hidden_table_id').val();
     const total = parseFloat($('#payment_total').val()) || 0;
     const discount = parseFloat($('#payment_discount').val()) || 0;
     const net = parseFloat($('#payment_net').val()) || 0;
@@ -278,8 +283,8 @@ function processPayment(printInvoice) {
     const paymentMethod = $('input[name="payment_method"]:checked').val();
     const notes = $('#payment_notes').val();
     
-    if (!tableId) {
-        alert('خطأ: لم يتم تحديد الطاولة');
+    if (!tableId || !orderId) {
+        alert('خطأ: لم يتم تحديد الطاولة أو الطلب');
         return;
     }
     
@@ -292,7 +297,8 @@ function processPayment(printInvoice) {
     $('#save_without_print, #save_and_print').prop('disabled', true).addClass('loading');
     
     const paymentData = {
-        table_id: $('#hidden_table_id').val() || tableId, // استخدام معرف الطاولة المحفوظ
+        table_id: tableId,
+        order_id: orderId,
         total: total,
         discount: discount,
         net: net,
@@ -363,6 +369,8 @@ function resetPaymentModal() {
     $('#payment_paid').val('0.00');
     $('#payment_remaining').val('0.00');
     $('#payment_notes').val('');
+    $('#hidden_order_id').val('');
+    $('#hidden_table_id').val('');
     $('#cash_amount').val('0');
     $('#card_amount').val('0');
     $('input[name="payment_method"][value="cash"]').prop('checked', true);

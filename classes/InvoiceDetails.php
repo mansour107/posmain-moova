@@ -44,7 +44,7 @@ class InvoiceDetails extends InvoiceElementBase
                 $query = "SELECT fd.*, mi.iname 
                          FROM fat_details fd 
                          JOIN myitems mi ON fd.item_id = mi.id 
-                         WHERE fd.pro_id = ? AND fd.isdeleted = 0";
+	                         WHERE fd.fatid = ? AND fd.isdeleted = 0";
                 $result = $this->executeSecureQuery($query, [$invoiceId], 'i');
                 $this->existingDetails = $result->fetch_all(MYSQLI_ASSOC);
             }

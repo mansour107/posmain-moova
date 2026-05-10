@@ -9,7 +9,7 @@ $discount = $_POST['itmdisc'];
 $value = $quantity * ($price - $discount);
 
 // Insert data into the database
-$conn->query("INSERT INTO fat_details (item_id, qty, price, discount, det_value) VALUES ($selectedItemId, $quantity, $price, $discount, $value)");
+$conn->query("INSERT INTO fat_details (item_id, qty_in, qty_out, price, discount, det_value) VALUES ($selectedItemId, 0, $quantity, $price, $discount, $value)");
 
 
 header('Content-Type: application/json');

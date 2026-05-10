@@ -23,7 +23,7 @@
                         <?php
                         if (isset($_GET['edit'])){
                             $id = $_GET['edit'];
-                            $sqldet = "SELECT * FROM fat_details where pro_id = $id AND isdeleted  = 0";
+	                            $sqldet = "SELECT * FROM fat_details where fatid = $id AND isdeleted  = 0";
                             $resdet = $conn->query($sqldet);
                             $x = 0;
                             while ($rowdet = $resdet->fetch_assoc()) {

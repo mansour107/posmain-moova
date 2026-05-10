@@ -17,7 +17,6 @@ class POSOfflineAdapter {
         this.loadOfflineData();
         this.setupEventListeners();
         this.interceptAjaxCalls();
-        this.addOfflineIndicator();
         this.cacheCurrentItems();
     }
 
@@ -376,5 +375,4 @@ $(document).ready(function() {
     window.posOfflineAdapter = new POSOfflineAdapter();
     console.log('✅ POS Offline Adapter initialized');
     
-});
 });

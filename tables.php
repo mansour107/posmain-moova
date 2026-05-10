@@ -311,9 +311,15 @@ if ($selected_table) {
         $selected_table_name = $table_name_result->fetch_assoc()['tname'];
     }
     
-    // جلب الطلب النشط للطاولة (يتم البحث باستخدام حقل info الذي يحتوي على اسم الطاولة)
-    // ملاحظة: يمكن تحسين هذا لاحقاً بإضافة عمود table_id لجدول ot_head
-    $order_query = "SELECT * FROM ot_head WHERE info LIKE '%$selected_table_name%' AND pro_tybe = 9 ORDER BY id DESC LIMIT 1";
+    // جلب الطلب النشط للطاولة من العلاقة الفعلية table_id.
+    $order_query = "SELECT * FROM ot_head
+                    WHERE table_id = $selected_table
+                      AND pro_tybe = 9
+                      AND isdeleted = 0
+                      AND COALESCE(order_status, 'active') = 'active'
+                      AND COALESCE(payment_status, 'unpaid') IN ('unpaid', 'partial')
+                    ORDER BY id DESC
+                    LIMIT 1";
     $order_result = $conn->query($order_query);
     
     if ($order_result && $order_result->num_rows > 0) {
@@ -325,7 +331,7 @@ if ($selected_table) {
                        (fd.qty_out - fd.qty_in) as actual_qty
                        FROM fat_details fd 
                        LEFT JOIN myitems i ON fd.item_id = i.id 
-                       WHERE fd.pro_id = $order_id AND fd.isdeleted = 0";
+                       WHERE fd.fatid = $order_id AND fd.isdeleted = 0";
         $items_result = $conn->query($items_query);
         
         if ($items_result) {
@@ -340,8 +346,8 @@ if ($selected_table) {
         $order_totals['extra'] = floatval($order_data['fat_plus'] ?? 0);
         $net = $order_totals['total'] - $order_totals['discount'] + $order_totals['extra'];
         $order_totals['net'] = $net;
-        $order_totals['paid'] = 0; // يمكن إضافة حقل للمدفوع لاحقاً
-        $order_totals['remaining'] = $net;
+        $order_totals['paid'] = floatval($order_data['paid_amount'] ?? 0);
+        $order_totals['remaining'] = floatval($order_data['remaining_amount'] ?? max(0, $net - $order_totals['paid']));
     }
 }
 ?>

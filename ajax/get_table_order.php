@@ -1,65 +1,54 @@
 <?php
 session_start();
 include('../includes/connect.php');
+require_once('../classes/TableOrderService.php');
 
 header('Content-Type: application/json');
 
 try {
     $tableId = isset($_GET['table_id']) ? intval($_GET['table_id']) : 0;
-    $tableName = isset($_GET['table_name']) ? $_GET['table_name'] : '';
-    
-    if (!$tableId || !$tableName) {
+    if (!$tableId) {
         throw new Exception('بيانات الطاولة غير صحيحة');
     }
-    
-    // البحث عن طلب نشط للطاولة
-    $query = "SELECT * FROM ot_head 
-              WHERE info LIKE ? 
-              AND pro_tybe = 9 
-              ORDER BY id DESC 
-              LIMIT 1";
-    
-    $stmt = $conn->prepare($query);
-    $searchTerm = "%$tableName%";
-    $stmt->bind_param("s", $searchTerm);
-    $stmt->execute();
-    $result = $stmt->get_result();
-    
-    if ($result->num_rows > 0) {
-        $order = $result->fetch_assoc();
-        $orderId = $order['id'];
-        
-        // جلب الأصناف
-        $itemsQuery = "SELECT fd.*, i.iname, i.price1 as sprice 
-                      FROM fat_details fd 
-                      LEFT JOIN myitems i ON fd.item_id = i.id 
-                      WHERE fd.pro_id = ? AND fd.isdeleted = 0";
-        
-        $itemsStmt = $conn->prepare($itemsQuery);
-        $itemsStmt->bind_param("i", $orderId);
-        $itemsStmt->execute();
-        $itemsResult = $itemsStmt->get_result();
-        
+
+    $tableOrderService = new TableOrderService();
+    $table = $tableOrderService->requireTable($conn, $tableId);
+    $order = $tableOrderService->findActiveOrderByTableId($conn, $tableId);
+
+    if ($order) {
+        $orderId = (int) $order['id'];
         $items = [];
-        while ($item = $itemsResult->fetch_assoc()) {
+        foreach ($tableOrderService->queryAll($conn, "
+            SELECT fd.*, i.iname, i.price1 AS sprice, i.barcode
+            FROM fat_details fd
+            LEFT JOIN myitems i ON fd.item_id = i.id
+            WHERE fd.fatid = ?
+              AND fd.isdeleted = 0
+            ORDER BY fd.id ASC
+        ", [$orderId]) as $item) {
+            $qty = floatval($item['qty_out']) - floatval($item['qty_in']);
             $items[] = [
                 'id' => $item['item_id'],
                 'name' => $item['iname'],
                 'price' => floatval($item['price']),
-                'qty' => floatval($item['qty']),
-                'subtotal' => floatval($item['price']) * floatval($item['qty']),
-                'barcode' => $item['item_id']
+                'qty' => $qty,
+                'subtotal' => floatval($item['det_value']),
+                'barcode' => $item['barcode'] ?: $item['item_id']
             ];
         }
         
         echo json_encode([
             'success' => true,
-            'order' => $order,
+            'has_order' => true,
+            'order' => array_merge($order, [
+                'table_name' => $table['tname'],
+            ]),
             'items' => $items
         ]);
     } else {
         echo json_encode([
             'success' => true,
+            'has_order' => false,
             'order' => null,
             'items' => []
         ]);
@@ -71,4 +60,3 @@ try {
         'message' => $e->getMessage()
     ]);
 }
-

@@ -1,4 +1,4 @@
-<?php 
+<?php
 session_start();
 include('../includes/connect.php');
 
@@ -17,31 +17,35 @@ $user_data = $user_query->fetch_assoc();
 $cashier_name = $user_data['aname'] ?? 'الكاشير';
 
 // جلب إجمالي مبيعات اليوم للمستخدم المسجل فقط
-$sales_query = $conn->query("SELECT 
+$sales_query = $conn->query("SELECT
     COUNT(*) as total_invoices,
     COALESCE(SUM(fat_total), 0) as total_sales,
     COALESCE(SUM(fat_disc), 0) as total_discounts,
     COALESCE(SUM(fat_net), 0) as net_sales
-    FROM ot_head 
-    WHERE DATE(pro_date) = '$today'
-    AND user = '$user_id'
-    AND pro_tybe = 9
-    AND isdeleted = 0");
+	    FROM ot_head
+	    WHERE DATE(pro_date) = '$today'
+	    AND user = '$user_id'
+	    AND pro_tybe = 9
+	    AND payment_status = 'paid'
+	    AND order_status = 'completed'
+	    AND isdeleted = 0");
 $sales_data = $sales_query->fetch_assoc();
 
 // جلب تفاصيل أصناف اليوم للمستخدم المسجل فقط
-$items_query = $conn->query("SELECT 
+$items_query = $conn->query("SELECT
     mi.iname,
     SUM(fd.qty_out - fd.qty_in) as total_qty,
     fd.price,
     SUM(fd.det_value) as total_value
     FROM ot_head oh
-    JOIN fat_details fd ON oh.id = fd.pro_id
+	    JOIN fat_details fd ON oh.id = fd.fatid
     JOIN myitems mi ON fd.item_id = mi.id
     WHERE DATE(oh.pro_date) = '$today'
-    AND oh.user = '$user_id'
-    AND oh.pro_tybe = 9
-    AND oh.isdeleted = 0
+	    AND oh.user = '$user_id'
+	    AND oh.pro_tybe = 9
+	    AND oh.payment_status = 'paid'
+	    AND oh.order_status = 'completed'
+	    AND oh.isdeleted = 0
     AND fd.isdeleted = 0
     GROUP BY fd.item_id, fd.price
     ORDER BY total_value DESC");
@@ -75,7 +79,7 @@ if ($items_query->num_rows == 0) {
 <div class="card receipt-container" id="printed">
 <div class="card-body">
 
-<?php 
+<?php
 $logo_path = '../assets/logo/logo.jpg';
 if (file_exists($logo_path)) {
     echo '<img src="' . $logo_path . '" alt="" class="img-fluid">';
@@ -115,7 +119,7 @@ if (file_exists($logo_path)) {
 </tr>
 </thead>
 <tbody>
-    <?php 
+    <?php
     if ($items_query->num_rows > 0) {
         while ($item = $items_query->fetch_assoc()) {
     ?>
@@ -125,7 +129,7 @@ if (file_exists($logo_path)) {
 <td><?= $item['price'] ?></td>
 <td><?= $item['total_value'] ?></td>
 </tr>
-    <?php 
+    <?php
         }
     } else {
         foreach ($dummy_items as $item) {
@@ -136,7 +140,7 @@ if (file_exists($logo_path)) {
 <td><?= $item['price'] ?></td>
 <td><?= $item['total_value'] ?></td>
 </tr>
-    <?php 
+    <?php
         }
     }
     ?>
@@ -218,14 +222,14 @@ console.log('Print page opened, flag set');
 // استخدام JavaScript عادي بدلاً من jQuery
 document.addEventListener('DOMContentLoaded', function() {
     var printButton = document.getElementById('printButton');
-    
+
     if (printButton) {
         printButton.addEventListener('click', function() {
             console.log('Print button clicked');
             window.print();
         });
     }
-    
+
     // طباعة تلقائية عند التحميل (اختياري)
     // window.print();
 });

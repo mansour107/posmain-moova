@@ -2,85 +2,55 @@
 error_reporting(0);
 ini_set('display_errors', 0);
 ob_start();
-
+session_start();
 include('../includes/connect.php');
+require_once('../classes/TableOrderService.php');
+ob_clean();
 
-ob_clean(); // Ensure no whitespace from includes
-
-header('Content-Type: application/json');
+header('Content-Type: application/json; charset=utf-8');
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
-    echo json_encode(['success' => false, 'message' => 'طريقة الطلب غير صحيحة']);
+    echo json_encode(['success' => false, 'message' => 'طريقة الطلب غير صحيحة'], JSON_UNESCAPED_UNICODE);
     exit;
 }
 
 $table_id = intval($_POST['table_id'] ?? 0);
-$table_name = $_POST['table_name'] ?? '';
+$order_id = intval($_POST['order_id'] ?? 0);
+$reason = trim((string) ($_POST['reason'] ?? 'تم تفريغ الطاولة'));
+$user_id = intval($_SESSION['userid'] ?? 1);
 
 if ($table_id <= 0) {
-    echo json_encode(['success' => false, 'message' => 'معرف الطاولة غير صحيح']);
+    echo json_encode(['success' => false, 'message' => 'معرف الطاولة غير صحيح'], JSON_UNESCAPED_UNICODE);
     exit;
 }
 
 try {
+    $tableOrderService = new TableOrderService();
     $conn->begin_transaction();
-    
-    // جلب اسم الطاولة
-    $table_query = "SELECT tname FROM tables WHERE id = ?";
-    $stmt = $conn->prepare($table_query);
-    $stmt->bind_param("i", $table_id);
-    $stmt->execute();
-    $table_result = $stmt->get_result();
-    
-    if ($table_result->num_rows === 0) {
-        throw new Exception('الطاولة غير موجودة');
+
+    $tableOrderService->requireTable($conn, $table_id);
+    if ($order_id <= 0) {
+        $activeOrder = $tableOrderService->findActiveOrderByTableId($conn, $table_id, true);
+        if (!$activeOrder) {
+            $tableOrderService->setTableFreeIfNoActiveOrder($conn, $table_id);
+            $conn->commit();
+            echo json_encode(['success' => true, 'message' => 'الطاولة فارغة بالفعل', 'total' => '0.00'], JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+        $order_id = (int) $activeOrder['id'];
     }
-    
-    $table_data = $table_result->fetch_assoc();
-    $table_name = $table_data['tname'];
-    
-    // البحث عن الطلب النشط للطاولة
-    // Use prepared statement for LIKE to be safe
-    $order_query = "SELECT * FROM ot_head WHERE info LIKE ? AND pro_tybe = 9 ORDER BY id DESC LIMIT 1";
-    $stmt = $conn->prepare($order_query);
-    $search_term = "%$table_name%";
-    $stmt->bind_param("s", $search_term);
-    $stmt->execute();
-    $order_result = $stmt->get_result();
-    
-    $total_amount = 0;
-    
-    if ($order_result->num_rows > 0) {
-        $order_data = $order_result->fetch_assoc();
-        $order_id = $order_data['id'];
-        $total_amount = floatval($order_data['fat_total'] ?? 0);
-        
-        // تحديث حالة الطلب إلى مسدد ومحفوظ للتقارير (type 2 or maybe keep as 9 but closed?)
-        // If type 2 is used for paid/archive, then this is fine.
-        $update_order = "UPDATE ot_head SET pro_tybe = 2 WHERE id = ?";
-        $stmt_up = $conn->prepare($update_order);
-        $stmt_up->bind_param("i", $order_id);
-        $stmt_up->execute();
-        $stmt_up->close();
-    }
-    
-    // تحديث حالة الطاولة إلى فارغة (0)
-    $update_table = "UPDATE tables SET table_case = 0 WHERE id = ?";
-    $stmt_tbl = $conn->prepare($update_table);
-    $stmt_tbl->bind_param("i", $table_id);
-    $stmt_tbl->execute();
-    $stmt_tbl->close();
-    
+
+    $order = $tableOrderService->cancelTableOrder($conn, $table_id, $order_id, $reason, $user_id);
     $conn->commit();
-    
+
     echo json_encode([
-        'success' => true, 
+        'success' => true,
         'message' => 'تم تفريغ الطاولة بنجاح',
-        'total' => number_format($total_amount, 2)
-    ]);
-    
+        'order_id' => $order_id,
+        'total' => number_format((float) ($order['fat_total'] ?? 0), 2),
+    ], JSON_UNESCAPED_UNICODE);
 } catch (Exception $e) {
     $conn->rollback();
-    echo json_encode(['success' => false, 'message' => $e->getMessage()]);
+    echo json_encode(['success' => false, 'message' => $e->getMessage()], JSON_UNESCAPED_UNICODE);
 }
 ?>

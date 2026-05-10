@@ -418,7 +418,7 @@ try {
     }
 
     // تحديث تفاصيل الفاتورة
-    $stmt = $conn->prepare("UPDATE fat_details SET isdeleted = 1 WHERE pro_id = ?");
+    $stmt = $conn->prepare("UPDATE fat_details SET isdeleted = 1 WHERE fatid = ?");
     $stmt->bind_param("i", $ot_id);
     $stmt->execute();
     $stmt->close();

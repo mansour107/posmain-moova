@@ -533,13 +533,14 @@ class PosOrderService
         return $this->queryOne($conn, "
             SELECT *
             FROM ot_head
-            WHERE tenant = ?
-              AND branch = ?
-              AND table_id = ?
-              AND pro_tybe = ?
-              AND isdeleted = 0
-              AND fat_net > 0
-            ORDER BY id DESC
+	            WHERE tenant = ?
+	              AND branch = ?
+	              AND table_id = ?
+	              AND pro_tybe = ?
+	              AND isdeleted = 0
+	              AND COALESCE(order_status, 'active') = 'active'
+	              AND COALESCE(payment_status, 'unpaid') IN ('unpaid', 'partial')
+	            ORDER BY id DESC
             LIMIT 1
             FOR UPDATE
         ", [$tenant, $branch, $tableId, self::TYPE_POS]);

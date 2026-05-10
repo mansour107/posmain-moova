@@ -30,7 +30,7 @@ if ($editpass != $edit_pass) {
         }
 
 // مسح تفاصيل العملية 
-    $conn->query("DELETE FROM fat_details where pro_id = '$id'");
+    $conn->query("DELETE FROM fat_details where fatid = '$id'");
 // مسح تفاصيل القيد
     $conn->query("DELETE FROM journal_entries where op_id = '$id'");
 // مسح القيد 
@@ -49,4 +49,3 @@ if ($pro_tybe == 2) {header('location:../operations_summary.php?q=payment');}
 if ($pro_tybe == 3) {header('location:../operations_summary.php?q=sale');}
 if ($pro_tybe == 4) {header('location:../operations_summary.php?q=buy');}
 if ($pro_tybe == 9) {header('location:../operations_summary.php?q=buy');}
-

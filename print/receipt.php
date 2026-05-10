@@ -50,15 +50,11 @@ $prodate = date('md', strtotime($rowfat['pro_date']));
     <?= $prodate.$rowfat['pro_id'] ?></p>
 
     <?php
-    // Check for Table information
-    $info = $rowfat['info'];
     $table_name = '';
-    
-    if (strpos($info, 'طاولة') !== false || strpos($info, 'Table') !== false) {
-        // Try to extract full table name if it's formatted in a specific way, otherwise just use info if it's short
-        // Assuming info might contain just "طاولة 1" or mixed text.
-        // If it comes from tables.php, info is usually just the table name.
-        $table_name = $info;
+    if (!empty($rowfat['table_id'])) {
+        $table_id = intval($rowfat['table_id']);
+        $table_row = $conn->query("SELECT tname FROM tables WHERE id = $table_id")->fetch_assoc();
+        $table_name = $table_row['tname'] ?? '';
     }
     
     if (!empty($table_name)) {
@@ -69,7 +65,7 @@ $prodate = date('md', strtotime($rowfat['pro_date']));
 <?php
 $accid = $rowfat['acc1'];
 $rowacc1= $conn->query("SELECT aname,info from acc_head where id = $accid")->fetch_assoc();
-$is_delivery = strpos($rowfat['info'], 'دليفري') !== false;
+$is_delivery = ($rowfat['order_type'] ?? '') === 'delivery';
 
 if ($is_delivery) {
     $info = $rowfat['info'];
@@ -107,7 +103,7 @@ if ($is_delivery) {
 <tbody>
     <?php 
     $x =0;
-    $resdet = $conn->query("SELECT * FROM fat_details where fatid = $id");
+	    $resdet = $conn->query("SELECT * FROM fat_details where fatid = $id AND isdeleted = 0");
     while ($rowdet =$resdet->fetch_assoc()) {
         $x++;
         $itmid= $rowdet['item_id']; 

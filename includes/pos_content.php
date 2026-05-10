@@ -93,7 +93,7 @@ if (!isset($action_url)) {
                                     </button>
                                     <input type="hidden" id="selected_table_id" name="table_id" value="0">
                                     <input type="hidden" id="selected_table_name" name="table_name" value="">
-                                    <input type="hidden" id="selected_order_id" name="edit" value="0">
+                                    <input type="hidden" id="selected_order_id" name="selected_order_id" value="">
                                 </div>
                             </div>
 
@@ -147,19 +147,38 @@ if (!isset($action_url)) {
 
                                 <!-- العميل -->
                                 <div class="col-3">
+                                    <?php
+                                    $tableDefaultClientId = 0;
+                                    $tableDefaultClientResult = $conn->query("SELECT id FROM `acc_head` WHERE TRIM(aname) = 'العميل الافتراضي' AND code LIKE '122%' AND isdeleted = 0 ORDER BY CASE WHEN is_basic = 0 THEN 0 ELSE 1 END, id LIMIT 1");
+                                    if ($tableDefaultClientResult && $tableDefaultClientResult->num_rows > 0) {
+                                        $tableDefaultClientId = intval($tableDefaultClientResult->fetch_assoc()['id']);
+                                    }
+                                    $shouldUseTableDefaultClient = !isset($_GET['edit']) && isset($_GET['table']) && $tableDefaultClientId > 0;
+                                    $defaultClientExtraCondition = $tableDefaultClientId > 0 ? " OR id = $tableDefaultClientId" : "";
+                                    $resclient = $conn->query("SELECT * FROM `acc_head` WHERE code LIKE '122%' AND isdeleted = 0 AND (is_basic = 0$defaultClientExtraCondition) ORDER BY code, id;");
+                                    if(isset($_GET['edit'])){$rowed = $conn->query("SELECT * FROM ot_head where id = $id")->fetch_assoc();};
+                                    $editClientId = isset($rowed['acc1']) ? intval($rowed['acc1']) : 0;
+                                    $selectedCustomerId = 0;
+                                    if (isset($_GET['edit']) && $editClientId > 0) {
+                                        $selectedCustomerId = $editClientId;
+                                    } elseif ($shouldUseTableDefaultClient) {
+                                        $selectedCustomerId = $tableDefaultClientId;
+                                    } elseif (!empty($rowstg['def_pos_client'])) {
+                                        $selectedCustomerId = intval($rowstg['def_pos_client']);
+                                    }
+                                    ?>
                                     <select name="acc2_id" class="form-select form-select-sm" title="العميل"
-                                        style="font-size: 0.75rem;" required>
+                                        style="font-size: 0.75rem;" required
+                                        data-initial-customer-id="<?= htmlspecialchars((string) $selectedCustomerId, ENT_QUOTES, 'UTF-8') ?>"
+                                        data-table-default-customer-id="<?= htmlspecialchars((string) $tableDefaultClientId, ENT_QUOTES, 'UTF-8') ?>">
                                         <?php
-                                        $resclient = $conn->query("SELECT * FROM `acc_head` WHERE code like '122%'  AND is_basic = 0 AND isdeleted = 0;");
-                                        if(isset($_GET['edit'])){$rowed = $conn->query("SELECT * FROM ot_head where id = $id")->fetch_assoc();};
                                         $first_client = true;
                                         while ($rowclient = $resclient->fetch_assoc()) { 
                                             $selected = '';
-                                            if($rowstg['def_pos_client'] == $rowclient['id']){
+                                            $rowClientId = intval($rowclient['id']);
+                                            if($selectedCustomerId > 0 && $selectedCustomerId == $rowClientId){
                                                 $selected = "selected";
-                                            } elseif(isset($_GET['edit']) && $rowed['acc1'] == $rowclient['id']){
-                                                $selected = "selected";
-                                            } elseif ($first_client && empty($rowstg['def_pos_client']) && !isset($_GET['edit'])) {
+                                            } elseif ($selectedCustomerId == 0 && !$shouldUseTableDefaultClient && $first_client && empty($rowstg['def_pos_client']) && !isset($_GET['edit'])) {
                                                 $selected = "selected";
                                             }
                                             $first_client = false;
@@ -216,7 +235,7 @@ if (!isset($action_url)) {
                                             $sqldet = "SELECT fd.*, m.iname as item_name, m.barcode 
                                                       FROM fat_details fd 
                                                       LEFT JOIN myitems m ON m.id = fd.item_id 
-                                                      WHERE fd.pro_id = $id AND fd.isdeleted = 0";
+	                                                      WHERE fd.fatid = $id AND fd.isdeleted = 0";
                                             $resdet = $conn->query($sqldet);
                                             $x = 0;
                                             while ($rowdet = $resdet->fetch_assoc()) {
@@ -722,22 +741,42 @@ if (!isset($action_url)) {
                 <div class="modal-body p-4">
                     <div class="row g-3" id="tablesGrid">
                         <?php
-                        // Get all tables
-                        $restables = $conn->query("SELECT t.*, 
-                            (SELECT COUNT(*) FROM ot_head o 
-                             WHERE o.info LIKE CONCAT('%', t.tname, '%') 
-                             AND o.pro_tybe = 9 
-                             AND o.isdeleted = 0 
-                             AND o.fat_net > 0) as has_active_order
-                        FROM tables t 
-                        WHERE t.isdeleted = 0 
-                        ORDER BY t.tname");
+                        // Get all tables and their latest active order by table_id.
+                        $restables = $conn->query("
+                            SELECT
+                                t.id AS table_id,
+                                t.tname,
+                                t.table_case,
+                                o.id AS order_id,
+                                o.fat_net,
+                                o.payment_status,
+                                o.order_status,
+                                CASE WHEN o.id IS NULL THEN 0 ELSE 1 END AS has_active_order
+                            FROM tables t
+                            LEFT JOIN (
+                                SELECT oh.*
+                                FROM ot_head oh
+                                INNER JOIN (
+                                    SELECT table_id, MAX(id) AS max_id
+                                    FROM ot_head
+                                    WHERE table_id IS NOT NULL
+                                      AND table_id <> 0
+                                      AND pro_tybe = 9
+                                      AND isdeleted = 0
+                                      AND COALESCE(order_status, 'active') = 'active'
+                                      AND COALESCE(payment_status, 'unpaid') IN ('unpaid', 'partial')
+                                    GROUP BY table_id
+                                ) latest ON latest.max_id = oh.id
+                            ) o ON o.table_id = t.id
+                            WHERE t.isdeleted = 0
+                            ORDER BY t.tname
+                        ");
                         
                         if ($restables && $restables->num_rows > 0) {
                             while ($rowtable = $restables->fetch_assoc()) {
-                                $tableId = $rowtable['id'];
-                                $tableName = htmlspecialchars($rowtable['tname']);
-                                $hasActiveOrder = $rowtable['has_active_order'] > 0;
+	                                $tableId = intval($rowtable['table_id']);
+	                                $tableName = htmlspecialchars($rowtable['tname'], ENT_QUOTES, 'UTF-8');
+	                                $hasActiveOrder = $rowtable['has_active_order'] > 0;
                                 $tableCase = $hasActiveOrder ? 1 : 0; // 1 for occupied, 0 for available
                                 
                                 // Update table status in database if needed
@@ -753,28 +792,17 @@ if (!isset($action_url)) {
                                 // Get order details if table is occupied
                                 $orderTotal = 0;
                                 $orderId = null;
-                                if ($hasActiveOrder) {
-                                    $orderQuery = $conn->query("
-                                        SELECT id, fat_net 
-                                        FROM ot_head 
-                                        WHERE info LIKE '%$tableName%' 
-                                        AND pro_tybe = 9 
-                                        AND isdeleted = 0
-                                        AND fat_net > 0
-                                        ORDER BY id DESC 
-                                        LIMIT 1");
-                                    if ($orderQuery && $orderQuery->num_rows > 0) {
-                                        $orderData = $orderQuery->fetch_assoc();
-                                        $orderId = $orderData['id'];
-                                        $orderTotal = floatval($orderData['fat_net']);
-                                    }
-                                }
+	                                if ($hasActiveOrder) {
+	                                    $orderId = intval($rowtable['order_id']);
+	                                    $orderTotal = floatval($rowtable['fat_net']);
+	                                }
                         ?>
                         <div class="col-md-4 col-sm-6">
                             <button type="button"
                                 class="btn <?= $statusClass ?> w-100 table-select-btn position-relative"
-                                data-table-id="<?= $tableId ?>" data-table-name="<?= $tableName ?>"
-                                data-table-case="<?= $tableCase ?>" data-order-id="<?= $orderId ?>"
+	                                data-table-id="<?= $tableId ?>" data-table-name="<?= $tableName ?>"
+	                                data-table-case="<?= $tableCase ?>" data-order-id="<?= $orderId ?>"
+	                                data-has-active-order="<?= $hasActiveOrder ? 1 : 0 ?>"
                                 style="min-height: 120px; font-size: 1.1rem;">
                                 <div class="d-flex flex-column align-items-center justify-content-center">
                                     <i class="fas fa-utensils fa-2x mb-2"></i>
@@ -1496,6 +1524,11 @@ if (!isset($action_url)) {
         // جمع بيانات الدفع
         let paidCash = parseFloat($('#modal_paid_cash').val()) || 0;
         let paidBank = parseFloat($('#modal_paid_bank').val()) || 0;
+        const isDeferredTableSave = action === 'save' && $('#age2').is(':checked');
+        if (isDeferredTableSave) {
+            paidCash = 0;
+            paidBank = 0;
+        }
         let fundId = $('#payment_fund_id').val();
         let bankId = $('#payment_bank_id').val();
         let net = parseFloat($('#net_val').val()) || 0;
@@ -1582,7 +1615,7 @@ if (!isset($action_url)) {
         paidInput.value = totalPaid;
 
         // Check for Edit ID
-        let editId = $('#edit_order_id').val();
+        let editId = $('#edit_order_id').val() || $('#selected_order_id').val();
         if (editId) {
             console.log('✏️ Edit Mode: ID', editId);
             let editIdInput = form.querySelector('input[name="edit_id"]');
@@ -1593,6 +1626,11 @@ if (!isset($action_url)) {
                 form.appendChild(editIdInput);
             }
             editIdInput.value = editId;
+        } else {
+            let editIdInput = form.querySelector('input[name="edit_id"]');
+            if (editIdInput) {
+                editIdInput.remove();
+            }
         }
 
         const existingSubmits = form.querySelectorAll('input[name="submit"]');
@@ -1722,10 +1760,12 @@ if (!isset($action_url)) {
             function loadRecentOrders() {
                 $('#recentOrdersList').html('<tr><td colspan="8" class="text-center py-5"><div class="spinner-border text-primary" role="status"></div><p class="mt-2">جاري تحميل الطلبات...</p></td></tr>');
                 
-                $.ajax({
-                    url: 'ajax/get_recent_orders.php',
-                    method: 'GET',
-                    success: function(response) {
+	                $.ajax({
+	                    url: 'ajax/get_recent_orders.php',
+	                    method: 'GET',
+	                    cache: false,
+	                    data: { _: Date.now() },
+	                    success: function(response) {
                         try {
                             // If response is a string (due to accidental whitespace/BOM), parse it
                             if (typeof response === 'string') {
@@ -1764,10 +1804,13 @@ if (!isset($action_url)) {
                                                         <button type="button" class="btn btn-secondary" onclick="reprintOrder(${order.id})" title="طباعة">
                                                             <i class="fas fa-print"></i>
                                                         </button>
-                                                        ${order.status !== 'ملغى' ? `
-                                                        <button type="button" class="btn btn-danger" onclick="deleteOrder(${order.id})" title="حذف">
-                                                            <i class="fas fa-trash"></i>
-                                                        </button>` : ''}
+	                                                        ${order.can_delete ? `
+	                                                        <button type="button" class="btn btn-danger" onclick="deleteOrder(${order.id}, ${parseInt(order.table_id || 0, 10)})" title="حذف">
+	                                                            <i class="fas fa-trash"></i>
+	                                                        </button>` : `
+	                                                        <button type="button" class="btn btn-outline-secondary" disabled title="لا يمكن حذف طلب مكتمل أو مدفوع من هنا">
+	                                                            <i class="fas fa-trash"></i>
+		                                                        </button>`}
                                                     </div>
                                                 </td>
                                             </tr>
@@ -1795,10 +1838,12 @@ if (!isset($action_url)) {
                 // Use existing print function logic or redirect
                 // Usually calling the print endpoint directly
                  window.open('print/receipt.php?order_id=' + orderId, '_blank');
-            };
+	            };
 
-            window.deleteOrder = function(orderId) {
-                Swal.fire({
+	            window.deleteOrder = function(orderId, tableId) {
+	                tableId = parseInt(tableId || 0, 10);
+
+	                Swal.fire({
                     title: 'هل أنت متأكد؟',
                     text: "هل أنت متأكد من حذف هذا الطلب؟ لا يمكن التراجع عن هذا الإجراء.",
                     icon: 'warning',
@@ -1809,10 +1854,10 @@ if (!isset($action_url)) {
                     cancelButtonText: 'إلغاء'
                 }).then((result) => {
                     if (result.isConfirmed) {
-                        $.ajax({
-                            url: 'ajax/delete_order.php',
-                            method: 'POST',
-                            data: { id: orderId },
+	                        $.ajax({
+	                            url: 'ajax/delete_order.php',
+	                            method: 'POST',
+	                            data: { order_id: orderId, table_id: tableId },
                             success: function(response) {
                                 try {
                                     if (typeof response === 'string') response = JSON.parse(response);
@@ -1824,11 +1869,11 @@ if (!isset($action_url)) {
                                         );
                                         loadRecentOrders(); // Reload list
                                     } else {
-                                        Swal.fire(
-                                            'خطأ!',
-                                            'فشل الحذف: ' + (response.error || 'خطأ غير معروف'),
-                                            'error'
-                                        );
+	                                        Swal.fire(
+	                                            'خطأ!',
+	                                            'فشل الحذف: ' + (response.message || response.error || 'خطأ غير معروف'),
+	                                            'error'
+	                                        );
                                     }
                                 } catch (e) {
                                     Swal.fire(
@@ -1851,4 +1896,3 @@ if (!isset($action_url)) {
             };
         });
     </script>
-

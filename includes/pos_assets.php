@@ -4,7 +4,6 @@
 <link href="dist/css/pos.css" rel="stylesheet">
 <link href="dist/css/pos_barcode.css" rel="stylesheet">
 <link href="dist/css/pos_search.css" rel="stylesheet">
-<link href="dist/css/pos_clean.css" rel="stylesheet">
 <link href="assets/libs/sweetalert2/sweetalert2-bootstrap-4.css" rel="stylesheet">
 
 <!-- JavaScript Files -->

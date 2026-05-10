@@ -16,16 +16,16 @@ if (!isset($_GET['order_id'])) {
 $order_id = intval($_GET['order_id']);
 
 try {
-    $query = "SELECT fd.id, fd.item_id, m.iname, fd.qty_out, fd.price, fd.pro_id 
-              FROM fat_details fd
-              JOIN myitems m ON fd.item_id = m.id
-              WHERE fd.pro_id = ? AND fd.isdeleted = 0";
-              
+    $query = "SELECT fd.id, fd.item_id, m.iname, fd.qty_out, fd.price, fd.fatid
+	              FROM fat_details fd
+	              JOIN myitems m ON fd.item_id = m.id
+	              WHERE fd.fatid = ? AND fd.isdeleted = 0";
+
     $stmt = $conn->prepare($query);
     $stmt->bind_param("i", $order_id);
     $stmt->execute();
     $result = $stmt->get_result();
-    
+
     $items = [];
     while ($row = $result->fetch_assoc()) {
         $items[] = [
@@ -37,7 +37,7 @@ try {
             'total' => floatval($row['qty_out']) * floatval($row['price'])
         ];
     }
-    
+
     echo json_encode(['success' => true, 'items' => $items]);
 } catch (Exception $e) {
     echo json_encode(['success' => false, 'message' => $e->getMessage()]);

@@ -21,7 +21,7 @@
               <?php
               if (isset($_GET['e'])) { 
                 $x=0;   
-              $resdet = $conn->query("SELECT * FROM fat_details where pro_id = $opid AND isdeleted = 0;");
+              $resdet = $conn->query("SELECT * FROM fat_details where fatid = $opid AND isdeleted = 0;");
               while ($rowdet = $resdet->fetch_assoc()){
                 $x++;
                 $itemid = $rowdet['item_id'];

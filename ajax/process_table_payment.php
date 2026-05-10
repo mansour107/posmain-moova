@@ -4,163 +4,128 @@ ini_set('display_errors', 0);
 ob_start();
 session_start();
 include('../includes/connect.php');
+require_once('../classes/TableOrderService.php');
 ob_end_clean();
 
-header('Content-Type: application/json');
+header('Content-Type: application/json; charset=utf-8');
 
 $table_id = intval($_POST['table_id'] ?? 0);
-$total = floatval($_POST['total'] ?? 0);
-$discount = floatval($_POST['discount'] ?? 0);
-$net = floatval($_POST['net'] ?? 0);
-$paid = floatval($_POST['paid'] ?? 0);
+$order_id = intval($_POST['order_id'] ?? 0);
+$discount = isset($_POST['discount']) ? floatval($_POST['discount']) : null;
+$net = isset($_POST['net']) ? floatval($_POST['net']) : null;
+$paid = floatval($_POST['paid'] ?? $_POST['amount_paid'] ?? 0);
+$payment_method = trim((string) ($_POST['payment_method'] ?? 'cash'));
+$notes = trim((string) ($_POST['notes'] ?? ''));
+$user_id = intval($_SESSION['userid'] ?? 1);
 
-if (!$table_id || $paid <= 0) {
-    echo json_encode(['success' => false, 'message' => 'بيانات غير صحيحة']);
+if ($table_id <= 0 || $paid <= 0) {
+    echo json_encode(['success' => false, 'message' => 'بيانات غير صحيحة'], JSON_UNESCAPED_UNICODE);
     exit;
 }
 
 try {
+    $tableOrderService = new TableOrderService();
     $conn->begin_transaction();
-    
-    // 1. جلب بيانات الطاولة
-    $table_query = "SELECT tname FROM tables WHERE id = ?";
-    $stmt = $conn->prepare($table_query);
-    $stmt->bind_param("i", $table_id);
-    $stmt->execute();
-    $table_result = $stmt->get_result();
-    
-    if ($table_result->num_rows === 0) {
-        throw new Exception('الطاولة غير موجودة');
+
+    $table = $tableOrderService->requireTable($conn, $table_id);
+    if ($order_id <= 0) {
+        $activeOrder = $tableOrderService->findActiveOrderByTableId($conn, $table_id, true);
+        if (!$activeOrder) {
+            throw new Exception('لا يوجد طلب نشط لهذه الطاولة');
+        }
+        $order_id = (int) $activeOrder['id'];
     }
-    
-    $table_data = $table_result->fetch_assoc();
-    $table_name = $table_data['tname'];
-    $stmt->close();
-    
-    // 2. جلب الطلب النشط للطاولة
-    $order_query = "SELECT * FROM ot_head WHERE info LIKE ? AND pro_tybe = 9 ORDER BY id DESC LIMIT 1";
-    $stmt = $conn->prepare($order_query);
-    $search_term = "%$table_name%";
-    $stmt->bind_param("s", $search_term);
-    $stmt->execute();
-    $order_result = $stmt->get_result();
-    
-    if ($order_result->num_rows === 0) {
-        throw new Exception('لا يوجد طلب نشط لهذه الطاولة');
+
+    $paymentResult = $tableOrderService->payTableOrder(
+        $conn,
+        $table_id,
+        $order_id,
+        $paid,
+        $payment_method,
+        $notes,
+        $user_id,
+        $discount,
+        $net
+    );
+
+    $order = $tableOrderService->queryOne($conn, "SELECT * FROM ot_head WHERE id = ? LIMIT 1", [$order_id]);
+    if (!$order) {
+        throw new Exception('الطلب غير موجود');
     }
-    
-    $order_data = $order_result->fetch_assoc();
-    $order_id = $order_data['id'];
-    $customer_acc = $order_data['acc1'] ?? 0;
-    $emp_id = $order_data['emp_id'] ?? 0;
-    $stmt->close();
-    
-    // 3. تحديث الطلب بالخصم والصافي
-    if ($discount > 0) {
-        $update_order_disc = "UPDATE ot_head SET fat_disc = ?, fat_net = ? WHERE id = ?";
-        $stmt = $conn->prepare($update_order_disc);
-        $stmt->bind_param("ddi", $discount, $net, $order_id);
-        $stmt->execute();
-        $stmt->close();
-    }
-    
-    // حساب المبلغ الفعلي الداخل للصندوق (المدفوع - الباقي)
-    $change = max(0, $paid - $net); // الباقي (المرتجع للعميل)
-    $actual_paid = max(0, $paid - $change); // المبلغ الفعلي الداخل
-    
-    error_log('=== PAYMENT CALCULATION (TABLES) ===');
-    error_log('Paid: ' . $paid);
-    error_log('Net: ' . $net);
-    error_log('Change (return): ' . $change);
-    error_log('Actual paid (received): ' . $actual_paid);
-    error_log('====================================');
-    
-    // 4. تحديث حالة الطلب إلى مسدد (type 2)
-    $update_order = "UPDATE ot_head SET pro_tybe = 2 WHERE id = ?";
-    $stmt = $conn->prepare($update_order);
-    $stmt->bind_param("i", $order_id);
-    $stmt->execute();
-    $stmt->close();
-    
-    // 5. إنشاء سند قبض (Receipt Voucher) - فقط إذا كان هناك مبلغ فعلي داخل
+
+    $receipt_id = null;
+    $actual_paid = (float) ($paymentResult['applied_amount'] ?? 0);
     if ($actual_paid > 0) {
-        $usid = $_SESSION['userid'] ?? 1;
         $date = date('Y-m-d');
-        
-        // جلب حساب الخزينة/الصندوق
-        $safe_acc = 51; // القيمة الافتراضية
+        $safe_acc = 51;
         $safe_res = $conn->query("SELECT id FROM acc_head WHERE aname LIKE '%خزينة%' OR aname LIKE '%صندوق%' LIMIT 1");
         if ($safe_res && $safe_res->num_rows > 0) {
-            $safe_acc = $safe_res->fetch_assoc()['id'];
+            $safe_acc = (int) $safe_res->fetch_assoc()['id'];
         }
-        
-        // إنشاء سند القبض (pro_tybe = 1)
+
+        $customer_acc = $tableOrderService->resolveDefaultCustomerId($conn, (int) ($order['acc2'] ?? 0));
+        $emp_id = (int) ($order['emp_id'] ?? 0);
+        $info_text = "سند قبض - سداد طاولة: " . $table['tname'] . " - فاتورة رقم " . $order_id;
+
         $stmt = $conn->prepare(
             "INSERT INTO ot_head (
-                pro_tybe, is_journal, journal_tybe, info, pro_date, 
+                pro_tybe, is_journal, journal_tybe, info, pro_date,
                 emp_id, acc1, acc2, pro_value, fat_net, cost_center, profit, user, op2
             ) VALUES (1, 1, 1, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?)"
         );
-        
-        $info_text = "سند قبض - سداد طاولة: " . $table_name . " - فاتورة رقم " . $order_id;
-        $stmt->bind_param("ssiiiddii", 
-            $info_text, $date, $emp_id, $safe_acc, $customer_acc, 
-            $actual_paid, $actual_paid, $usid, $order_id
+        $stmt->bind_param(
+            "ssiiiddii",
+            $info_text,
+            $date,
+            $emp_id,
+            $safe_acc,
+            $customer_acc,
+            $actual_paid,
+            $actual_paid,
+            $user_id,
+            $order_id
         );
         $stmt->execute();
         $receipt_id = $conn->insert_id;
         $stmt->close();
-    
-    // 6. إنشاء قيد يومية (Journal Entry)
-    // الحصول على رقم القيد التالي
-    $res_jid = $conn->query("SELECT MAX(journal_id) as max_id FROM journal_heads");
-    $row_jid = $res_jid->fetch_assoc();
-    $journal_id = ($row_jid['max_id'] ?? 0) + 1;
-    
-        
-        // رأس القيد
+
+        $res_jid = $conn->query("SELECT MAX(journal_id) as max_id FROM journal_heads");
+        $row_jid = $res_jid->fetch_assoc();
+        $journal_id = ($row_jid['max_id'] ?? 0) + 1;
+
         $stmt = $conn->prepare("INSERT INTO journal_heads (journal_id, op_id, total, jdate, details, user, op2) VALUES (?, ?, ?, ?, ?, ?, ?)");
-        $j_details = "سند قبض - سداد طاولة " . $table_name;
-        $stmt->bind_param("idsssii", $journal_id, $receipt_id, $actual_paid, $date, $j_details, $usid, $order_id);
+        $j_details = "سند قبض - سداد طاولة " . $table['tname'];
+        $stmt->bind_param("idsssii", $journal_id, $receipt_id, $actual_paid, $date, $j_details, $user_id, $order_id);
         $stmt->execute();
         $j_head_id = $conn->insert_id;
         $stmt->close();
-        
-        // مدين: الخزينة (من ح/ الخزينة)
+
         $stmt = $conn->prepare("INSERT INTO journal_entries (journal_id, account_id, debit, credit, tybe, op2) VALUES (?, ?, ?, 0, 0, ?)");
         $stmt->bind_param("iidi", $j_head_id, $safe_acc, $actual_paid, $order_id);
         $stmt->execute();
         $stmt->close();
-        
-        // دائن: العميل (إلى ح/ العميل)
+
         if ($customer_acc > 0) {
             $stmt = $conn->prepare("INSERT INTO journal_entries (journal_id, account_id, debit, credit, tybe, op2) VALUES (?, ?, 0, ?, 1, ?)");
             $stmt->bind_param("iidi", $j_head_id, $customer_acc, $actual_paid, $order_id);
             $stmt->execute();
             $stmt->close();
         }
-    } else {
-        error_log('No actual payment received (change >= paid), skipping receipt voucher creation');
     }
-    
-    // 7. تحديث حالة الطاولة إلى فارغة
-    $update_table = "UPDATE tables SET table_case = 0 WHERE id = ?";
-    $stmt = $conn->prepare($update_table);
-    $stmt->bind_param("i", $table_id);
-    $stmt->execute();
-    $stmt->close();
-    
+
     $conn->commit();
-    
+
     echo json_encode([
-        'success' => true, 
-        'message' => 'تم السداد بنجاح وإنشاء سند القبض',
+        'success' => true,
+        'message' => $paymentResult['fully_paid'] ? 'تم السداد بالكامل' : 'تم تسجيل دفعة جزئية',
         'receipt_id' => $receipt_id,
-        'order_id' => $order_id
-    ]);
-    
+        'order_id' => $order_id,
+        'invoice_id' => $order_id,
+        'payment_status' => $paymentResult['payment_status'],
+        'remaining_amount' => $paymentResult['remaining_amount'],
+    ], JSON_UNESCAPED_UNICODE);
 } catch (Exception $e) {
     $conn->rollback();
-    echo json_encode(['success' => false, 'message' => $e->getMessage()]);
+    echo json_encode(['success' => false, 'message' => $e->getMessage()], JSON_UNESCAPED_UNICODE);
 }
 ?>

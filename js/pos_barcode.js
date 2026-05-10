@@ -11,6 +11,86 @@ $(document).ready(function() {
         updateItemCount();
         updateTotal();
     }
+
+    const $customerSelect = $('select[name="acc2_id"]');
+    let initialCustomerId = '';
+
+    function customerOptionExists(customerId) {
+        const normalizedCustomerId = String(customerId || '');
+        if (!normalizedCustomerId) {
+            return false;
+        }
+
+        return $customerSelect.find('option').filter(function() {
+            return String($(this).val()) === normalizedCustomerId;
+        }).length > 0;
+    }
+
+    function getCustomerIdByName(customerName) {
+        const normalizedCustomerName = String(customerName || '').trim();
+        if (!normalizedCustomerName) {
+            return '';
+        }
+
+        const $matchingOption = $customerSelect.find('option').filter(function() {
+            return String($(this).text()).trim() === normalizedCustomerName;
+        }).first();
+
+        return $matchingOption.length ? String($matchingOption.val()) : '';
+    }
+
+    function getTableDefaultCustomerId() {
+        const configuredCustomerId = String($customerSelect.attr('data-table-default-customer-id') || '');
+        if (customerOptionExists(configuredCustomerId)) {
+            return configuredCustomerId;
+        }
+
+        return getCustomerIdByName('العميل الافتراضي');
+    }
+
+    function selectCustomerById(customerId) {
+        if (!$customerSelect.length) {
+            return;
+        }
+
+        const normalizedCustomerId = String(customerId || '');
+        if (!normalizedCustomerId) {
+            $customerSelect.val('').trigger('change');
+            return;
+        }
+
+        if (customerOptionExists(normalizedCustomerId)) {
+            $customerSelect.val(normalizedCustomerId).trigger('change');
+        }
+    }
+
+    const currentCustomerId = String($customerSelect.val() || '');
+    const configuredInitialCustomerId = String($customerSelect.attr('data-initial-customer-id') || '');
+    if (customerOptionExists(currentCustomerId)) {
+        initialCustomerId = currentCustomerId;
+    } else if (customerOptionExists(configuredInitialCustomerId)) {
+        initialCustomerId = configuredInitialCustomerId;
+    }
+
+    function setTableDefaultCustomer() {
+        if ($('#edit_order_id').val()) {
+            return;
+        }
+
+        selectCustomerById(getTableDefaultCustomerId());
+    }
+
+    function restoreInitialCustomer() {
+        if ($('#edit_order_id').val()) {
+            return;
+        }
+
+        selectCustomerById(initialCustomerId);
+    }
+
+    if ($('#age2').is(':checked')) {
+        setTableDefaultCustomer();
+    }
     
     // ========================================
     // Category Filter
@@ -351,12 +431,16 @@ $(document).ready(function() {
     // مسح الطاولة عند التبديل لتيك أواي أو دليفري
     $('input[name="age"]').on('change', function() {
         const val = $(this).val();
-        if (val == '1' || val == '3') {
+        if (val == '2') {
+            setTableDefaultCustomer();
+        } else if (val == '1' || val == '3') {
             // تيك أواي أو دليفري - امسح الطاولة المختارة
             $('#selected_table_id').val('');
             $('#selected_table_name').val('');
             $('#selected_order_id').val('');
+            $('#edit_order_id').val('');
             $('#selected_table_display').html('اختر طاولة');
+            restoreInitialCustomer();
         }
     });
 
@@ -370,6 +454,7 @@ $(document).ready(function() {
         $('#selected_table_name').val(tableName);
         $('#selected_table_display').html('<i class="fas fa-chair me-1"></i>' + tableName);
         $('#age2').prop('checked', true);
+        setTableDefaultCustomer();
         $('#tablesModal').modal('hide');
         
         Swal.fire({
@@ -387,6 +472,7 @@ $(document).ready(function() {
         } else {
             // طاولة فاضية - طلب جديد
             $('#selected_order_id').val('');
+            $('#edit_order_id').val('');
             $('#itemData').empty();
             updateItemCount();
             updateTotal();
@@ -398,8 +484,10 @@ $(document).ready(function() {
         $('#selected_table_id').val('');
         $('#selected_table_name').val('');
         $('#selected_order_id').val('');
+        $('#edit_order_id').val('');
         $('#selected_table_display').html('بدون طاولة');
         $('#age1').prop('checked', true);
+        restoreInitialCustomer();
         $('#tablesModal').modal('hide');
         clearAllItems();
     };
@@ -410,7 +498,7 @@ $(document).ready(function() {
         $.ajax({
             url: 'ajax/load_order.php',
             method: 'POST',
-            data: { order_id: orderId },
+            data: { order_id: orderId, table_id: $('#selected_table_id').val() },
             dataType: 'json',
             success: function(response) {
                 console.log('📥 Load Order Response:', response);
@@ -437,7 +525,11 @@ $(document).ready(function() {
                     if (response.order) {
                         $('#discount').val(response.order.discount || 0);
                         if (response.order.emp_id) $('select[name="emp_id"]').val(response.order.emp_id);
-                        if (response.order.acc1) $('select[name="acc2_id"]').val(response.order.acc1);
+                        if (customerOptionExists(response.order.acc1)) {
+                            selectCustomerById(response.order.acc1);
+                        } else {
+                            selectCustomerById(getTableDefaultCustomerId());
+                        }
                          // Set hidden edit_order_id
                          $('#edit_order_id').val(response.order.id);
                     }
@@ -553,6 +645,11 @@ $(document).ready(function() {
         // جمع بيانات الدفع
         let paidCash = parseFloat($('#modal_paid_cash').val()) || 0;
         let paidBank = parseFloat($('#modal_paid_bank').val()) || 0;
+        const isDeferredTableSave = action === 'save' && $('#age2').is(':checked');
+        if (isDeferredTableSave) {
+            paidCash = 0;
+            paidBank = 0;
+        }
         let fundId = $('#payment_fund_id').val();
         let bankId = $('#payment_bank_id').val();
         let net = parseFloat($('#net_val').val()) || 0;
@@ -639,7 +736,7 @@ $(document).ready(function() {
         paidInput.value = totalPaid;
 
         // Check for Edit ID
-        let editId = $('#edit_order_id').val();
+        let editId = $('#edit_order_id').val() || $('#selected_order_id').val();
         if (editId) {
             console.log('✏️ Edit Mode: ID', editId);
             let editIdInput = form.querySelector('input[name="edit_id"]');
@@ -650,6 +747,11 @@ $(document).ready(function() {
                 form.appendChild(editIdInput);
             }
             editIdInput.value = editId;
+        } else {
+            let editIdInput = form.querySelector('input[name="edit_id"]');
+            if (editIdInput) {
+                editIdInput.remove();
+            }
         }
         
         const existingSubmits = form.querySelectorAll('input[name="submit"]');
@@ -834,6 +936,8 @@ function loadRecentOrders() {
     $.ajax({
         url: 'ajax/get_recent_orders.php',
         type: 'GET',
+        cache: false,
+        data: { _: Date.now() },
         dataType: 'json',
         success: function(response) {
             console.log('AJAX Response:', response);
@@ -841,6 +945,16 @@ function loadRecentOrders() {
             if (response.success && response.orders && response.orders.length > 0) {
                 let html = '';
                 response.orders.forEach((order, index) => {
+                    const tableId = parseInt(order.table_id || 0, 10);
+                    const canDelete = order.can_delete === true || order.can_delete === 1 || order.can_delete === '1';
+                    const deleteButton = canDelete
+                        ? `<button class="btn btn-danger delete-order" data-id="${order.id}" data-table-id="${tableId}" title="حذف">
+                                <i class="fas fa-trash"></i>
+                           </button>`
+                        : `<button class="btn btn-outline-secondary" disabled title="لا يمكن حذف طلب مكتمل أو مدفوع من هنا">
+                                <i class="fas fa-trash"></i>
+                           </button>`;
+
                     html += `
                         <tr>
                             <td>${index + 1}</td>
@@ -866,9 +980,7 @@ function loadRecentOrders() {
                                     <button class="btn btn-secondary print-order" data-id="${order.id}" title="طباعة الفاتورة">
                                         <i class="fas fa-print"></i>
                                     </button>
-                                    <button class="btn btn-danger delete-order" data-id="${order.id}" title="حذف">
-                                        <i class="fas fa-trash"></i>
-                                    </button>
+                                    ${deleteButton}
                                 </div>
                                 ${order.notes ? `<span class="text-muted ms-2" title="${order.notes}"><i class="fas fa-sticky-note"></i></span>` : ''}
                             </td>
@@ -916,12 +1028,12 @@ function editOrder(orderId) {
     window.location.href = 'pos_barcode.php?edit=' + orderId;
 }
 
-function deleteOrder(orderId) {
+function deleteOrder(orderId, tableId) {
     if (confirm('هل أنت متأكد من حذف هذا الطلب؟ لا يمكن التراجع عن هذه العملية.')) {
         $.ajax({
             url: 'ajax/delete_order.php',
             type: 'POST',
-            data: { id: orderId },
+            data: { order_id: orderId, table_id: parseInt(tableId || 0, 10) },
             dataType: 'json',
             success: function(response) {
                 if (response.success) {
@@ -962,8 +1074,9 @@ $(document).ready(function() {
         e.preventDefault();
         e.stopPropagation();
         const orderId = $(this).data('id');
-        console.log('Delete button clicked for order:', orderId);
-        deleteOrder(orderId);
+        const tableId = $(this).data('table-id');
+        console.log('Delete button clicked for order:', orderId, 'table:', tableId);
+        deleteOrder(orderId, tableId);
     });
 
     // Handle print order button

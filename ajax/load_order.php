@@ -7,6 +7,7 @@ header('Content-Type: application/json; charset=utf-8');
 
 $root_path = dirname(__DIR__);
 include($root_path . '/includes/connect.php');
+require_once($root_path . '/classes/TableOrderService.php');
 
 try {
     if (!isset($_POST['order_id']) || empty($_POST['order_id'])) {
@@ -15,60 +16,50 @@ try {
     }
     
     $order_id = intval($_POST['order_id']);
-    
-    // جلب بيانات رأس الطلب
-    $order_query = "SELECT * FROM ot_head WHERE id = $order_id AND isdeleted = 0 LIMIT 1";
-    $order_result = $conn->query($order_query);
-    
-    if (!$order_result || $order_result->num_rows == 0) {
+    $posted_table_id = isset($_POST['table_id']) ? intval($_POST['table_id']) : null;
+    $tableOrderService = new TableOrderService();
+    $loaded = $tableOrderService->loadOrderWithItems($conn, $order_id, $posted_table_id);
+
+    if (!$loaded) {
         echo json_encode(['success' => false, 'error' => 'Order not found']);
         exit;
     }
-    
-    $order = $order_result->fetch_assoc();
-    
-    // جلب أصناف الطلب
-    $items_query = "SELECT 
-                        fd.*,
-                        m.iname as item_name,
-                        m.barcode,
-                        m.info as item_desc
-                    FROM fat_details fd
-                    LEFT JOIN myitems m ON m.id = fd.item_id
-                    WHERE fd.pro_id = $order_id AND fd.isdeleted = 0
-                    ORDER BY fd.id";
-    
-    $items_result = $conn->query($items_query);
+
+    $order = $loaded['order'];
     $items = [];
-    
-    if ($items_result && $items_result->num_rows > 0) {
-        while ($item = $items_result->fetch_assoc()) {
-            $qty = floatval($item['qty_out']) - floatval($item['qty_in']);
-            $items[] = [
-                'item_id' => $item['item_id'],
-                'item_name' => $item['item_name'] ?: 'صنف غير معروف',
-                'item_desc' => $item['item_desc'] ?: '',
-                'barcode' => $item['barcode'] ?: $item['item_id'],
-                'qty' => $qty,
-                'price' => floatval($item['price']),
-                'subtotal' => floatval($item['det_value'])
-            ];
-        }
+
+    foreach ($loaded['items'] as $item) {
+        $qty = floatval($item['qty_out']) - floatval($item['qty_in']);
+        $items[] = [
+            'item_id' => $item['item_id'],
+            'item_name' => $item['item_name'] ?: 'صنف غير معروف',
+            'item_desc' => $item['item_desc'] ?: '',
+            'barcode' => $item['barcode'] ?: $item['item_id'],
+            'qty' => $qty,
+            'price' => floatval($item['price']),
+            'subtotal' => floatval($item['det_value'])
+        ];
     }
     
     echo json_encode([
         'success' => true,
         'order' => [
             'id' => $order['id'],
+            'table_id' => $order['table_id'],
+            'table_name' => $order['table_name'],
+            'order_type' => $order['order_type'],
+            'payment_status' => $order['payment_status'],
+            'invoice_status' => $order['invoice_status'],
+            'order_status' => $order['order_status'],
             'emp_id' => $order['emp_id'],
             'acc1' => $order['acc1'],
             'store_id' => $order['store_id'],
-            'fund_id' => $order['acc_fund'],
+            'fund_id' => $order['acc_fund'] ?? 0,
             'total' => floatval($order['fat_total']),
             'discount' => floatval($order['fat_disc']),
             'net' => floatval($order['fat_net']),
-            'paid' => floatval($order['paid']),
-            'order_status' => 'active'
+            'paid' => floatval($order['paid_amount'] ?? 0),
+            'remaining' => floatval($order['remaining_amount'] ?? 0)
         ],
         'items' => $items
     ]);

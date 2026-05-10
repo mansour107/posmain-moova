@@ -254,7 +254,7 @@ echo "<strong>" . $label . ":</strong> " . $rowacc1['aname'];?>
 <tbody>
     <?php 
     $x =0;
-    $resdet = $conn->query("SELECT * FROM fat_details where pro_id = $id AND isdeleted = 0 order by id desc");
+	    $resdet = $conn->query("SELECT * FROM fat_details where fatid = $id AND isdeleted = 0 order by id desc");
     while ($rowdet =$resdet->fetch_assoc()) {
         $x++;
         $itmid= $rowdet['item_id']; 

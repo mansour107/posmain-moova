@@ -127,7 +127,7 @@ try {
     $conn->begin_transaction();
     
     // حذف تفاصيل الفاتورة
-    $conn->query("UPDATE fat_details SET isdeleted = 1 WHERE pro_id = $id");
+	    $conn->query("UPDATE fat_details SET isdeleted = 1 WHERE fatid = $id");
     
     // حذف رأس الفاتورة
     $conn->query("UPDATE ot_head SET isdeleted = 1 WHERE id = $id");
