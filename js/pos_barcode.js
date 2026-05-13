@@ -11,6 +11,12 @@ $(document).ready(function() {
         updateItemCount();
         updateTotal();
     }
+    const $filterInput = $('#posUnifiedSearch').length ? $('#posUnifiedSearch') : $('#itemFilterInput');
+    const $currentControls = $('.pos-current-order-controls');
+    if ($currentControls.length) {
+        $currentControls.find('.pos-customer-mount').append($('.pos-customer-field'));
+        $currentControls.find('.pos-table-mount').append($('.pos-table-field'));
+    }
 
     const $customerSelect = $('select[name="acc2_id"]');
     let initialCustomerId = '';
@@ -98,18 +104,29 @@ $(document).ready(function() {
     $('.category-btn').on('click', function() {
         const $this = $(this);
         const categoryId = $this.data('category');
+        const keywords = String($this.data('keywords') || '')
+            .split(',')
+            .map(keyword => keyword.trim().toLowerCase())
+            .filter(Boolean);
         
         // تحديث الأزرار
         $('.category-btn').removeClass('active btn-primary').addClass('btn-outline-primary');
         $this.removeClass('btn-outline-primary').addClass('btn-primary active');
         
         // مسح البحث
-        $('#itemFilterInput').val('');
+        $filterInput.val('');
         
         // فلترة الأصناف
         const $items = $('.item-wrapper');
         if (categoryId === 'all') {
             $items.removeClass('hidden');
+        } else if (keywords.length > 0) {
+            $items.each(function() {
+                const $item = $(this);
+                const itemName = String($item.find('.item-card').data('item-name') || '').toLowerCase();
+                const matches = keywords.some(keyword => itemName.includes(keyword));
+                $item.toggleClass('hidden', !matches);
+            });
         } else {
             $items.addClass('hidden');
             $(`.item-wrapper[data-category="${categoryId}"]`).removeClass('hidden');
@@ -139,7 +156,7 @@ $(document).ready(function() {
                 
                 // Also trigger the filter search
                 if (search.length >= 2) {
-                    $('#itemFilterInput').val(search).trigger('input');
+                    $filterInput.val(search).trigger('input');
                 }
                 
                 $(this).val('');
@@ -149,7 +166,7 @@ $(document).ready(function() {
     
     // البحث البسيط مع Debouncing للأداء
     let searchTimeout;
-    $('#itemFilterInput').on('input', function() {
+    $filterInput.on('input', function() {
         clearTimeout(searchTimeout);
         const searchText = $(this).val().toLowerCase().trim();
         
@@ -181,9 +198,48 @@ $(document).ready(function() {
     });
     
     $('#clearFilter').click(function() {
-        $('#itemFilterInput').val('');
+        $filterInput.val('');
         $('.item-wrapper').removeClass('hidden');
     });
+
+    $('#focusUnifiedSearch').on('click', function() {
+        $filterInput.focus().select();
+    });
+
+    $filterInput.on('keypress', function(e) {
+        if (e.which === 13) {
+            e.preventDefault();
+            let search = $(this).val().trim();
+            if (search) {
+                searchItemByBarcode(search);
+            }
+        }
+    });
+
+    function syncModeTabs() {
+        const activeId = $('input[name="age"]:checked').attr('id');
+        $('.pos-mode-tab').toggleClass('active', false);
+        $(`.pos-mode-tab[data-age-target="${activeId}"]`).toggleClass('active', true);
+    }
+
+    $('.pos-mode-tab').on('click', function() {
+        const targetId = $(this).data('age-target');
+        const $target = $('#' + targetId);
+        if (!$target.length) {
+            return;
+        }
+        $target.prop('checked', true).trigger('change');
+        if (targetId === 'age2') {
+            const tablesModal = document.getElementById('tablesModal');
+            if (tablesModal) {
+                bootstrap.Modal.getOrCreateInstance(tablesModal).show();
+            }
+        }
+        if (targetId === 'age3' && typeof openDeliveryModal === 'function') {
+            openDeliveryModal();
+        }
+    });
+    syncModeTabs();
 
     // ========================================
     // Item Filtering Functions
@@ -243,17 +299,21 @@ $(document).ready(function() {
     // ========================================
     // Item Click Events
     // ========================================
-    $('#itemsGrid').on('click', '.item-image-click', function(e) {
+    $('#itemsGrid').on('click', '.item-card.itemButton', function(e) {
+        if ($(e.target).closest('.item-details-btn').length) {
+            return;
+        }
         e.preventDefault();
         e.stopPropagation();
         
-        let card = $(this).closest('.item-card');
+        let card = $(this);
         let itemId = card.data('item-id');
         let itemName = card.data('item-name');
         let itemPrice = parseFloat(card.data('item-price')) || 0;
         let itemBarcode = card.data('item-barcode');
+        let imageHtml = card.find('.item-image-container').html();
         
-        addItemToOrder(itemId, itemName, itemPrice, itemBarcode);
+        addItemToOrder(itemId, itemName, itemPrice, itemBarcode, 1, imageHtml);
     });
 
     $('#itemsGrid').on('click', '.item-details-btn', function(e) {
@@ -279,7 +339,8 @@ $(document).ready(function() {
             'id': itemId,
             'name': itemName,
             'price': itemPrice,
-            'barcode': itemBarcode
+            'barcode': itemBarcode,
+            'image': imageHtml
         });
         
         $('#itemDetailsModal').modal('show');
@@ -288,14 +349,14 @@ $(document).ready(function() {
     $(document).on('click', '#modal_add_item', function() {
         let data = $(this).data();
         let itemPrice = parseFloat(data.price) || 0;
-        addItemToOrder(data.id, data.name, itemPrice, data.barcode);
+        addItemToOrder(data.id, data.name, itemPrice, data.barcode, 1, data.image);
         $('#itemDetailsModal').modal('hide');
     });
 
     // ========================================
     // Add Item to Order
     // ========================================
-    function addItemToOrder(id, name, price, barcode, qty = 1) {
+    function addItemToOrder(id, name, price, barcode, qty = 1, imageHtml = '') {
         let existingItem = $(`.item-card-order[data-itemid="${barcode}"]`);
         
         if (existingItem.length > 0) {
@@ -316,58 +377,53 @@ $(document).ready(function() {
         
         let subtotal = price * qty;
         let itemNumber = $('#itemData .item-card-order').length + 1;
+        const thumbHtml = imageHtml
+            ? `<div class="pos-cart-thumb">${imageHtml}</div>`
+            : `<div class="pos-cart-thumb pos-cart-thumb-fallback"><i class="fas fa-utensils"></i></div>`;
         
         let itemCard = `
-            <div class="card mb-1 item-card-order shadow-sm border-start border-3" data-itemid="${barcode}" style="border-color: #0a7ea4 !important; max-width: 100%;">
+            <div class="card mb-1 item-card-order pos-cart-row shadow-sm" data-itemid="${barcode}">
                 <div class="card-body p-1">
-                    <div class="d-flex align-items-center gap-1" style="font-size: 0.75rem;">
-                        <span class="badge bg-primary" style="font-size: 0.7rem; min-width: 25px;">#${itemNumber}</span>
-                        
-                        <div style="flex: 1; min-width: 0;">
-                            <input type="hidden" value='${id}' name="itmname[]">
-                            <input type="hidden" class="barcode" value="${barcode}">
-                            <div class="text-truncate fw-bold" style="font-size: 0.75rem;" title="${name}">${name}</div>
+                    <div class="pos-cart-row-inner">
+                        <div class="pos-cart-value">
+                            <input type="hidden" name="itmdisc[]" value="0">
+                            <input type="text"
+                                   class="form-control form-control-sm text-center subtotal fw-bold"
+                                   readonly
+                                   value="${subtotal.toFixed(2)}"
+                                   name="itmval[]"
+                                   title="القيمة">
                         </div>
-                        
-                        <div style="width: 65px;">
-                            <small class="d-block text-center text-muted" style="font-size: 0.6rem; margin-bottom: 1px;">كمية</small>
+                        <div class="pos-cart-qty">
+                            <button type="button" class="btn qty-step qty-decrease" title="تقليل">−</button>
                             <input type="number" 
                                    class="form-control form-control-sm text-center quantityInput nozero fw-bold" 
                                    value="${qty}" 
                                    name="itmqty[]"
                                    min="1" 
-                                   step="0.1"
-                                   style="width: 100%; font-size: 0.75rem; padding: 3px; border: 2px solid #ff6347; height: 26px;"
+                                   step="1"
                                    title="الكمية">
+                            <button type="button" class="btn qty-step qty-increase" title="زيادة">+</button>
                             <input type="hidden" name="u_val[]" value="1">
                         </div>
-                        
-                        <div style="width: 55px;">
-                            <small class="d-block text-center text-muted" style="font-size: 0.6rem; margin-bottom: 1px;">سعر</small>
+                        <div class="pos-cart-main">
+                            <input type="hidden" value='${id}' name="itmname[]">
+                            <input type="hidden" class="barcode" value="${barcode}">
+                            <div class="text-truncate fw-bold pos-cart-name" title="${name}">${name}</div>
+                            <span class="badge bg-primary pos-cart-index">#${itemNumber}</span>
+                        </div>
+                        ${thumbHtml}
+                        <button type="button" class="btn btn-danger btn-sm delRow" title="حذف">
+                            <i class="fas fa-trash-alt"></i>
+                        </button>
+                        <div class="pos-cart-price">
                             <input type="number" 
                                    class="form-control form-control-sm text-center priceInput nozero" 
                                    value="${price.toFixed(2)}" 
                                    name="itmprice[]" 
                                    step="0.01"
-                                   style="width: 100%; font-size: 0.7rem; padding: 3px; height: 26px;"
                                    title="السعر">
                         </div>
-                        
-                        <div style="width: 60px;">
-                            <small class="d-block text-center text-muted" style="font-size: 0.6rem; margin-bottom: 1px;">قيمة</small>
-                            <input type="hidden" name="itmdisc[]" value="0">
-                            <input type="text" 
-                                   class="form-control form-control-sm text-center subtotal fw-bold" 
-                                   readonly 
-                                   value="${subtotal.toFixed(2)}" 
-                                   name="itmval[]"
-                                   style="width: 100%; font-size: 0.7rem; padding: 3px; background: #fff3cd; height: 26px;"
-                                   title="القيمة">
-                        </div>
-                        
-                        <button type="button" class="btn btn-danger btn-sm delRow" style="padding: 2px 6px; font-size: 0.7rem;" title="حذف">
-                            <i class="fas fa-trash"></i>
-                        </button>
                     </div>
                 </div>
             </div>
@@ -428,8 +484,110 @@ $(document).ready(function() {
     // Tables System
     // ========================================
 
+    let tablesRefreshTimer = null;
+    let tablesRefreshInFlight = false;
+
+    function escapeHtml(value) {
+        return $('<div>').text(value == null ? '' : String(value)).html();
+    }
+
+    function formatTableAmount(value) {
+        const amount = parseFloat(value) || 0;
+        return amount.toFixed(2);
+    }
+
+    function renderTableButton(table) {
+        const tableId = parseInt(table.id || table.table_id || 0, 10);
+        const tableName = String(table.tname || table.table_name || '');
+        const tableCase = parseInt(table.table_case || table.has_active_order || 0, 10) ? 1 : 0;
+        const orderId = table.order_id ? parseInt(table.order_id, 10) : '';
+        const orderTotal = parseFloat(table.fat_net || 0) || 0;
+        const statusClass = tableCase ? 'btn-danger' : 'btn-success';
+        const statusIcon = tableCase ? 'fa-utensils' : 'fa-check-circle';
+        const statusText = tableCase ? 'مشغولة' : 'متاحة';
+        const totalBadge = tableCase && orderTotal > 0
+            ? `<div class="mt-2 badge bg-white text-dark">${formatTableAmount(orderTotal)} ج.م</div>`
+            : '';
+
+        return `
+            <div class="col-md-4 col-sm-6">
+                <button type="button"
+                    class="btn ${statusClass} w-100 table-select-btn position-relative"
+                    data-table-id="${tableId}"
+                    data-table-name="${escapeHtml(tableName)}"
+                    data-table-case="${tableCase}"
+                    data-order-id="${orderId}"
+                    data-has-active-order="${tableCase}"
+                    style="min-height: 120px; font-size: 1.1rem;">
+                    <div class="d-flex flex-column align-items-center justify-content-center">
+                        <i class="fas fa-utensils fa-2x mb-2"></i>
+                        <h6 class="mb-1">${escapeHtml(tableName)}</h6>
+                        <small class="d-flex align-items-center">
+                            <i class="fas ${statusIcon} me-1"></i>
+                            ${statusText}
+                        </small>
+                        ${totalBadge}
+                    </div>
+                </button>
+            </div>
+        `;
+    }
+
+    function renderTablesGrid(tables) {
+        const $grid = $('#tablesGrid');
+        if (!$grid.length) {
+            return;
+        }
+
+        if (!Array.isArray(tables) || tables.length === 0) {
+            $grid.html(`
+                <div class="col-12 text-center text-muted">
+                    <i class="fas fa-exclamation-circle fa-3x mb-3"></i>
+                    <p>لا توجد طاولات متاحة</p>
+                </div>
+            `);
+            return;
+        }
+
+        $grid.html(tables.map(renderTableButton).join(''));
+    }
+
+    window.refreshTablesState = function() {
+        if (tablesRefreshInFlight || !$('#tablesGrid').length) {
+            return;
+        }
+
+        tablesRefreshInFlight = true;
+        $.ajax({
+            url: 'ajax/get_tables.php',
+            method: 'GET',
+            dataType: 'json',
+            cache: false,
+            success: function(response) {
+                if (response && response.success) {
+                    renderTablesGrid(response.tables || []);
+                }
+            },
+            complete: function() {
+                tablesRefreshInFlight = false;
+            }
+        });
+    };
+
+    $('#tablesModal').on('shown.bs.modal', function() {
+        window.refreshTablesState();
+        clearInterval(tablesRefreshTimer);
+        tablesRefreshTimer = setInterval(window.refreshTablesState, 4000);
+    });
+
+    $('#tablesModal').on('hidden.bs.modal', function() {
+        clearInterval(tablesRefreshTimer);
+        tablesRefreshTimer = null;
+    });
+
     // مسح الطاولة عند التبديل لتيك أواي أو دليفري
     $('input[name="age"]').on('change', function() {
+        syncModeTabs();
         const val = $(this).val();
         if (val == '2') {
             setTableDefaultCustomer();
@@ -454,17 +612,10 @@ $(document).ready(function() {
         $('#selected_table_name').val(tableName);
         $('#selected_table_display').html('<i class="fas fa-chair me-1"></i>' + tableName);
         $('#age2').prop('checked', true);
+        syncModeTabs();
         setTableDefaultCustomer();
         $('#tablesModal').modal('hide');
-        
-        Swal.fire({
-            icon: 'success',
-            title: 'تم الاختيار',
-            text: 'تم اختيار ' + tableName + ' بنجاح',
-            timer: 1500,
-            showConfirmButton: false
-        });
-        
+
         if (tableCase != 0 && orderId) {
             // طاولة فيها طلب - حمل الطلب واضيف عليه
             $('#selected_order_id').val(orderId);
@@ -487,6 +638,7 @@ $(document).ready(function() {
         $('#edit_order_id').val('');
         $('#selected_table_display').html('بدون طاولة');
         $('#age1').prop('checked', true);
+        syncModeTabs();
         restoreInitialCustomer();
         $('#tablesModal').modal('hide');
         clearAllItems();
@@ -612,6 +764,14 @@ $(document).ready(function() {
         updateItemCount();
         updateTotal();
     });
+
+    $(document).on('click', '.qty-increase, .qty-decrease', function() {
+        let card = $(this).closest('.item-card-order');
+        let qtyInput = card.find('.quantityInput');
+        let currentQty = parseFloat(qtyInput.val()) || 0;
+        let nextQty = $(this).hasClass('qty-increase') ? currentQty + 1 : currentQty - 1;
+        qtyInput.val(Math.max(1, Math.round(nextQty))).trigger('input');
+    });
     
     $(document).on('input', '.quantityInput, .priceInput', function() {
         let card = $(this).closest('.item-card-order');
@@ -625,6 +785,32 @@ $(document).ready(function() {
     // ========================================
     // Form Submission
     // ========================================
+    function createPOSIdempotencyKey(scope) {
+        if (window.crypto && typeof window.crypto.randomUUID === 'function') {
+            return scope + ':' + window.crypto.randomUUID();
+        }
+
+        return scope + ':' + Date.now().toString(36) + ':' + Math.random().toString(36).slice(2);
+    }
+
+    function ensureFormIdempotencyKey(form, action) {
+        const scope = action === 'save' ? 'pos.order.save' : 'pos.order.pay';
+        let keyInput = form.querySelector('input[name="idempotency_key"]');
+        if (!keyInput) {
+            keyInput = document.createElement('input');
+            keyInput.type = 'hidden';
+            keyInput.name = 'idempotency_key';
+            form.appendChild(keyInput);
+        }
+
+        if (!keyInput.value || keyInput.dataset.action !== action) {
+            keyInput.value = createPOSIdempotencyKey(scope);
+            keyInput.dataset.action = action;
+        }
+
+        return keyInput.value;
+    }
+
     window.submitPOS = function(action) {
         console.log('✅ submitPOS called with action:', action);
         
@@ -643,10 +829,10 @@ $(document).ready(function() {
         console.log('✅ Validation passed');
         
         // جمع بيانات الدفع
+        const isSaveOnly = action === 'save';
         let paidCash = parseFloat($('#modal_paid_cash').val()) || 0;
         let paidBank = parseFloat($('#modal_paid_bank').val()) || 0;
-        const isDeferredTableSave = action === 'save' && $('#age2').is(':checked');
-        if (isDeferredTableSave) {
+        if (isSaveOnly) {
             paidCash = 0;
             paidBank = 0;
         }
@@ -669,12 +855,17 @@ $(document).ready(function() {
         console.log('==========================');
         
         // التحقق من صحة البيانات
-        if (paidCash > 0 && (!fundId || fundId == '0')) {
+        if (!isSaveOnly && net > 0 && paidCash + paidBank <= 0) {
+            alert('يجب إدخال مبلغ الدفع قبل تأكيد الدفع');
+            return false;
+        }
+
+        if (!isSaveOnly && paidCash > 0 && (!fundId || fundId == '0')) {
             alert('يجب اختيار الصندوق عند الدفع كاش');
             return false;
         }
         
-        if (paidBank > 0 && (!bankId || bankId == '0' || bankId == '')) {
+        if (!isSaveOnly && paidBank > 0 && (!bankId || bankId == '0' || bankId == '')) {
             alert('يجب اختيار البنك عند الدفع صرافة');
             return false;
         }
@@ -762,17 +953,18 @@ $(document).ready(function() {
         submitInput.name = 'submit';
         submitInput.value = action;
         form.appendChild(submitInput);
+        ensureFormIdempotencyKey(form, action);
         
         console.log('➕ Added submit input with value:', action);
         
-        let saveBtn = $("button:contains('حفظ الطلب')");
-        let printBtn = $("button:contains('حفظ وطباعة')");
+        let saveBtn = $(".pos-save-order-btn");
+        let printBtn = $(".pos-pay-confirm-btn");
         
         if (saveBtn.length > 0) {
             saveBtn.prop('disabled', true).html('<i class="fas fa-spinner fa-spin"></i> جاري الحفظ...');
         }
         if (printBtn.length > 0) {
-            printBtn.prop('disabled', true).html('<i class="fas fa-spinner fa-spin"></i> جاري الحفظ...');
+            printBtn.prop('disabled', true).html('<i class="fas fa-spinner fa-spin"></i> جاري الدفع...');
         }
         
         $('#paymentModal').modal('hide');
@@ -800,7 +992,7 @@ $(document).ready(function() {
                     saveBtn.prop('disabled', false).html('<i class="fas fa-save me-1"></i>حفظ الطلب');
                 }
                 if (printBtn.length > 0) {
-                    printBtn.prop('disabled', false).html('<i class="fas fa-print me-1"></i>حفظ وطباعة');
+                    printBtn.prop('disabled', false).html('<i class="fas fa-receipt me-1"></i>دفع وطباعة');
                 }
             }
         }, 100);
@@ -815,12 +1007,12 @@ $(document).ready(function() {
         // Ctrl + F or F3 for search focus
         if ((e.ctrlKey && e.key === 'f') || e.key === 'F3') {
             e.preventDefault();
-            $('#itemFilterInput').focus().select();
+            $filterInput.focus().select();
         }
         
         // Escape to clear search
         if (e.key === 'Escape') {
-            if ($('#itemFilterInput').is(':focus') && $('#itemFilterInput').val() !== '') {
+            if ($filterInput.is(':focus') && $filterInput.val() !== '') {
                 $('#clearFilter').click();
             }
         }
@@ -834,7 +1026,7 @@ $(document).ready(function() {
         // Alt + S for search input focus  
         if (e.altKey && e.key === 's') {
             e.preventDefault();
-            $('#searchInput').focus().select();
+            $filterInput.focus().select();
         }
     });
     
@@ -920,6 +1112,42 @@ function dis() {
 // ========================================
 // Recent Orders Functions
 // ========================================
+function cleanupStaleRecentOrdersBackdrop() {
+    const hasOpenOffcanvas = document.querySelector('.offcanvas.show, .offcanvas.showing');
+    if (hasOpenOffcanvas) {
+        return;
+    }
+
+    document.querySelectorAll('.offcanvas-backdrop').forEach((backdrop) => {
+        backdrop.remove();
+    });
+
+    if (!document.querySelector('.modal.show')) {
+        document.body.classList.remove('modal-open');
+        document.body.style.removeProperty('overflow');
+        document.body.style.removeProperty('padding-right');
+    }
+}
+
+function scheduleRecentOrdersBackdropCleanup() {
+    window.setTimeout(cleanupStaleRecentOrdersBackdrop, 250);
+    window.setTimeout(cleanupStaleRecentOrdersBackdrop, 650);
+}
+
+function showRecentOrdersOffcanvas() {
+    const recentOrdersModal = document.getElementById('recentOrdersModal');
+    if (!recentOrdersModal || typeof bootstrap === 'undefined' || !bootstrap.Offcanvas) {
+        return null;
+    }
+
+    const offcanvas = typeof bootstrap.Offcanvas.getOrCreateInstance === 'function'
+        ? bootstrap.Offcanvas.getOrCreateInstance(recentOrdersModal)
+        : new bootstrap.Offcanvas(recentOrdersModal);
+
+    offcanvas.show();
+    return offcanvas;
+}
+
 function loadRecentOrders() {
     console.log('Loading recent orders...');
     $('#recentOrdersList').html(`
@@ -1033,7 +1261,11 @@ function deleteOrder(orderId, tableId) {
         $.ajax({
             url: 'ajax/delete_order.php',
             type: 'POST',
-            data: { order_id: orderId, table_id: parseInt(tableId || 0, 10) },
+            data: {
+                order_id: orderId,
+                table_id: parseInt(tableId || 0, 10),
+                idempotency_key: createPOSIdempotencyKey('pos.order.cancel')
+            },
             dataType: 'json',
             success: function(response) {
                 if (response.success) {
@@ -1052,11 +1284,22 @@ function deleteOrder(orderId, tableId) {
 
 // Initialize recent orders functionality
 $(document).ready(function() {
+    const $recentOrdersModal = $('#recentOrdersModal');
+    if ($recentOrdersModal.length) {
+        $recentOrdersModal
+            .off('.recentOrdersCleanup')
+            .on('hidden.bs.offcanvas.recentOrdersCleanup', cleanupStaleRecentOrdersBackdrop)
+            .on('hide.bs.offcanvas.recentOrdersCleanup', scheduleRecentOrdersBackdropCleanup);
+
+        $(document)
+            .off('click.recentOrdersCleanup', '#recentOrdersModal [data-bs-dismiss="offcanvas"]')
+            .on('click.recentOrdersCleanup', '#recentOrdersModal [data-bs-dismiss="offcanvas"]', scheduleRecentOrdersBackdropCleanup);
+    }
+
     $(document).on('click', '.recent-orders-btn, #recentOrdersBtn1, #recentOrdersBtn2', function(e) {
         e.preventDefault();
         console.log('Recent orders button clicked');
-        const offcanvas = new bootstrap.Offcanvas(document.getElementById('recentOrdersModal'));
-        offcanvas.show();
+        showRecentOrdersOffcanvas();
         loadRecentOrders();
     });
 

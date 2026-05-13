@@ -6,7 +6,7 @@ include('../includes/connect.php');
 ob_clean();
 
 require_once('../classes/MoovaPosIntegration.php');
-require_once('../classes/PosOrderService.php');
+require_once('../classes/Pos/Service/PosOrderMutationService.php');
 
 header('Content-Type: application/json; charset=utf-8');
 
@@ -71,69 +71,6 @@ function moova_error_status($message)
     return $map[$code] ?? 500;
 }
 
-function moova_fetch_order_link_for_update(mysqli $conn, $tenant, $branch, $idempotencyKey)
-{
-    $stmt = $conn->prepare("
-        SELECT *
-        FROM moova_pos_order_links
-        WHERE pos_tenant = ?
-          AND pos_branch = ?
-          AND idempotency_key = ?
-        LIMIT 1
-        FOR UPDATE
-    ");
-    $stmt->bind_param("iis", $tenant, $branch, $idempotencyKey);
-    $stmt->execute();
-    $row = $stmt->get_result()->fetch_assoc();
-    $stmt->close();
-
-    return $row ?: null;
-}
-
-function moova_create_order_link(mysqli $conn, array $payload, array $link, $idempotencyKey, $requestHash, $requestJson)
-{
-    $status = 'processing';
-    $stmt = $conn->prepare("
-        INSERT INTO moova_pos_order_links (
-            idempotency_key, request_hash, moova_order_id, moova_branch_id,
-            pos_tenant, pos_branch, provider_status, request_payload
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    ");
-    $moovaOrderId = trim((string) ($payload['cofeOrderId'] ?? ''));
-    $branchId = trim((string) ($payload['branchId'] ?? ''));
-    if ($branchId === '' && !empty($link['moova_branch_id'])) {
-        $branchId = trim((string) $link['moova_branch_id']);
-    }
-    $tenant = (int) $link['pos_tenant'];
-    $branch = (int) $link['pos_branch'];
-    $stmt->bind_param("ssssiiss", $idempotencyKey, $requestHash, $moovaOrderId, $branchId, $tenant, $branch, $status, $requestJson);
-    $stmt->execute();
-    $id = (int) $conn->insert_id;
-    $stmt->close();
-
-    return $id;
-}
-
-function moova_update_order_link_success(mysqli $conn, $linkId, $orderId, $providerStatus, array $response, $stateHash = null, $statePayload = null)
-{
-    $responseJson = json_encode($response, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-    $statePayloadJson = $statePayload === null
-        ? null
-        : json_encode($statePayload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-    $stmt = $conn->prepare("
-        UPDATE moova_pos_order_links
-        SET pos_order_id = ?,
-            provider_status = ?,
-            last_pos_state_hash = ?,
-            last_pos_state_payload = ?,
-            response_payload = ?
-        WHERE id = ?
-    ");
-    $stmt->bind_param("issssi", $orderId, $providerStatus, $stateHash, $statePayloadJson, $responseJson, $linkId);
-    $stmt->execute();
-    $stmt->close();
-}
-
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     moova_json_response(405, ['success' => false, 'code' => 'METHOD_NOT_ALLOWED', 'message' => 'Method not allowed']);
 }
@@ -176,87 +113,17 @@ try {
         throw new MoovaOrderHttpException('TENANT_SCOPE_MISMATCH', 403);
     }
 
-    $requestHash = MoovaPosIntegration::payloadHash($payload);
-    $requestJson = json_encode(
-        MoovaPosIntegration::normalizePayloadForHash($payload),
-        JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
-    );
-
     $conn->begin_transaction();
-    $orderLink = moova_fetch_order_link_for_update(
-        $conn,
-        (int) $shopLink['pos_tenant'],
-        (int) $shopLink['pos_branch'],
-        $idempotencyKey
-    );
-
-    if ($orderLink) {
-        if (!hash_equals((string) $orderLink['request_hash'], $requestHash)) {
-            throw new MoovaOrderHttpException('IDEMPOTENCY_PAYLOAD_CONFLICT', 409);
-        }
-
-        if ((int) ($orderLink['pos_order_id'] ?? 0) > 0) {
-            $responsePayload = json_decode((string) ($orderLink['response_payload'] ?? ''), true);
-            if (!is_array($responsePayload)) {
-                $responsePayload = [
-                    'success' => true,
-                    'orderId' => (int) $orderLink['pos_order_id'],
-                    'providerOrderId' => (string) $orderLink['pos_order_id'],
-                    'providerReferenceId' => $idempotencyKey,
-                    'providerStatus' => (string) ($orderLink['provider_status'] ?: 'created'),
-                ];
-            }
-            $conn->commit();
-            moova_json_response(200, $responsePayload);
-        }
-
-        $orderLinkId = (int) $orderLink['id'];
-    } else {
-        $orderLinkId = moova_create_order_link($conn, $payload, $shopLink, $idempotencyKey, $requestHash, $requestJson);
-    }
-
-    $service = new PosOrderService();
-    $order = $service->createOrMergeMoovaTableOrder($conn, [
-        'tenant' => (int) $shopLink['pos_tenant'],
-        'branch' => (int) $shopLink['pos_branch'],
+    $result = (new PosOrderMutationService())->confirmMoovaOrder($conn, [
+        'link' => $shopLink,
+        'payload' => $payload,
+    ], [
+        'idempotency_key' => $idempotencyKey,
         'user_id' => (int) $_SESSION['userid'],
-    ], $payload);
-    $stateHash = $order['state_hash'] ?? null;
-    $statePayload = $order['state_payload'] ?? null;
-
-    $providerStatus = $order['merged'] ? 'updated' : 'created';
-    $response = [
-        'success' => true,
-        'orderId' => (int) $order['order_id'],
-        'providerOrderId' => (string) $order['order_id'],
-        'providerReferenceId' => $idempotencyKey,
-        'providerStatus' => $providerStatus,
-        'merged' => (bool) $order['merged'],
-        'receiptUrl' => 'print/receipt.php?id=' . (int) $order['order_id'],
-        'tableId' => (int) $order['table_id'],
-        'tableName' => $order['table_name'],
-        'totals' => [
-            'total' => (float) $order['total'],
-            'discount' => (float) $order['discount'],
-            'net' => (float) $order['net'],
-        ],
-    ];
-    if (!empty($stateHash)) {
-        $response['stateHash'] = $stateHash;
-    }
-
-    moova_update_order_link_success(
-        $conn,
-        $orderLinkId,
-        (int) $order['order_id'],
-        $providerStatus,
-        $response,
-        $stateHash,
-        $statePayload
-    );
-
+        'response_mode' => 'direct',
+    ]);
     $conn->commit();
-    moova_json_response(200, $response);
+    moova_json_response(200, $result['response']);
 } catch (MoovaOrderHttpException $e) {
     try {
         $conn->rollback();

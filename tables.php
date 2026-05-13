@@ -1,25 +1,26 @@
-<?php 
-include('includes/header.php');
+<?php
+require_once __DIR__ . '/includes/session_bootstrap.php';
 
-// معالجة تسجيل الخروج
-if (isset($_GET['logout'])) {
-    unset($_SESSION['pos_authenticated']);
-    unset($_SESSION['pos_user_id']);
-    unset($_SESSION['pos_user_name']);
-    header('Location: pos_barcode.php');
-    exit();
+if (!isset($_SESSION['login']) || !isset($_SESSION['userid'])) {
+    header('location:index.php');
+    exit;
 }
+
+include('includes/connect.php');
+
+if (
+    !isset($_SESSION['pos_authenticated']) ||
+    $_SESSION['pos_authenticated'] !== true ||
+    (int) ($_SESSION['pos_user_id'] ?? 0) !== (int) $_SESSION['userid']
+) {
+    header('location:pos_barcode.php');
+    exit;
+}
+
+include('includes/header.php');
 
 // جلب الإعدادات
 $rowstg = $conn->query("SELECT * FROM settings WHERE id = 1")->fetch_assoc();
-
-// نظام الحماية البسيط
-if (isset($rowstg['pos_has_password']) && $rowstg['pos_has_password'] == 1) {
-    if (!isset($_SESSION['pos_authenticated']) || $_SESSION['pos_authenticated'] !== true) {
-        header('Location: pos_barcode.php');
-        exit();
-    }
-}
 ?>
 
 <style>
@@ -673,6 +674,28 @@ if ($selected_table) {
 
 <!-- Scripts are located after footer to ensure jQuery is loaded -->
 <script>
+const posTablePageRequestKeys = {};
+
+function createPOSTablePageIdempotencyKey(scope) {
+    if (window.crypto && typeof window.crypto.randomUUID === 'function') {
+        return scope + ':' + window.crypto.randomUUID();
+    }
+
+    return scope + ':' + Date.now() + ':' + Math.random().toString(16).slice(2);
+}
+
+function getPOSTablePageIdempotencyKey(scope) {
+    if (!posTablePageRequestKeys[scope]) {
+        posTablePageRequestKeys[scope] = createPOSTablePageIdempotencyKey(scope);
+    }
+
+    return posTablePageRequestKeys[scope];
+}
+
+function clearPOSTablePageIdempotencyKey(scope) {
+    delete posTablePageRequestKeys[scope];
+}
+
 // حساب الخصم والصافي
 $(document).ready(function() {
     $(document).on('input', '#modal_discperc, #modal_discount', function() {
@@ -732,6 +755,7 @@ function calculateChange() {
 
 function processAdvancedPayment() {
     console.log('تم استدعاء processAdvancedPayment');
+    const requestScope = 'pos.payment.table';
     
     const tableId = $('#currentTableId').val();
     const total = parseFloat($('#modal_total').text().replace(' ج.م', '')) || 0;
@@ -759,12 +783,14 @@ function processAdvancedPayment() {
             total: total,
             discount: discount,
             net: net,
-            paid: paid
+            paid: paid,
+            idempotency_key: getPOSTablePageIdempotencyKey(requestScope)
         },
         dataType: 'json',
         success: function(data) {
             console.log('استجابة الخادم:', data);
             if (data.success) {
+                clearPOSTablePageIdempotencyKey(requestScope);
                 closeModal();
                 const orderId = $('#currentOrderId').val();
                 // التحويل مباشرة إلى صفحة الفاتورة
@@ -820,15 +846,21 @@ function processTablePayment(tableId) {
 
 function clearTableNormal(tableId) {
     if (!tableId) { alert('خطأ: رقم الطاولة غير موجود'); return; }
+    const requestScope = 'pos.order.cancel';
     if(confirm('هل تريد تفريغ الطاولة تفريغ عادي؟\nسيتم حفظ الطلب في النظام وتفريغ الطاولة')) {
         $.ajax({
             url: 'ajax/clear_table_normal.php',
             method: 'POST',
-            data: { table_id: tableId, table_name: 'Table ' + tableId },
+            data: {
+                table_id: tableId,
+                table_name: 'Table ' + tableId,
+                idempotency_key: getPOSTablePageIdempotencyKey(requestScope)
+            },
             success: function(data) {
                 try {
                     let response = (typeof data === 'string') ? JSON.parse(data) : data;
                     if (response.success) {
+                        clearPOSTablePageIdempotencyKey(requestScope);
                         alert('تم تفريغ الطاولة بنجاح\nإجمالي المبيعات: ' + response.total + ' ج.م');
                         location.reload();
                     } else {
@@ -849,15 +881,21 @@ function clearTableNormal(tableId) {
 
 function clearTableDirect(tableId) {
     if (!tableId) { alert('خطأ: رقم الطاولة غير موجود'); return; }
+    const requestScope = 'pos.order.cancel';
     if(confirm('هل تريد تفريغ الطاولة مباشرة بدون سداد؟')) {
         $.ajax({
             url: 'ajax/update_table_status.php',
             method: 'POST',
-            data: { table_id: tableId, action: 'clear' },
+            data: {
+                table_id: tableId,
+                action: 'clear',
+                idempotency_key: getPOSTablePageIdempotencyKey(requestScope)
+            },
             success: function(data) {
                 try {
                     let response = (typeof data === 'string') ? JSON.parse(data) : data;
                     if (response.success) {
+                        clearPOSTablePageIdempotencyKey(requestScope);
                         alert('تم تفريغ الطاولة بنجاح');
                         location.reload();
                     } else {
@@ -955,6 +993,7 @@ function updateSplitTotal() {
 }
 
 function confirmSplitPayment() {
+    const requestScope = 'pos.payment.split';
     let selectedItems = [];
     $('.split-item-check:checked').each(function() {
         selectedItems.push($(this).val());
@@ -976,11 +1015,13 @@ function confirmSplitPayment() {
                 order_id: currentSplitOrderId,
                 table_id: currentSplitTableId,
                 items: selectedItems,
-                paid_amount: amount
+                paid_amount: amount,
+                idempotency_key: getPOSTablePageIdempotencyKey(requestScope)
             }),
             success: function(data) {
                 let response = (typeof data === 'string') ? JSON.parse(data) : data;
                 if (response.success) {
+                    clearPOSTablePageIdempotencyKey(requestScope);
                     $('#splitPaymentModal').modal('hide');
                     alert('تم السداد بنجاح');
                     if (response.new_invoice_id) {
@@ -998,13 +1039,19 @@ function confirmSplitPayment() {
     }
 }
 function activateTable(tableId) {
+    const requestScope = 'pos.order.cancel';
     $.ajax({
         url: 'ajax/update_table_status.php',
         method: 'POST',
-        data: { table_id: tableId, action: 'activate' },
+        data: {
+            table_id: tableId,
+            action: 'activate',
+            idempotency_key: getPOSTablePageIdempotencyKey(requestScope)
+        },
         success: function(data) {
             let response = (typeof data === 'string') ? JSON.parse(data) : data;
             if (response.success) {
+                clearPOSTablePageIdempotencyKey(requestScope);
                 alert('تم تشغيل الطاولة');
                 location.reload();
             } else {
@@ -1018,37 +1065,4 @@ function activateTable(tableId) {
     });
 }
 </script>
-
-
-<?php if(isset($rowstg['pos_has_password']) && $rowstg['pos_has_password'] == 1): ?>
-<!-- نظام القفل البسيط -->
-<script>
-    // القفل عند تبديل التاب
-    document.addEventListener('visibilitychange', function() {
-        if (!document.hidden && sessionStorage.getItem('pos_hidden')) {
-            window.location.href = 'pos_barcode.php?logout=1';
-        }
-        if (document.hidden) {
-            sessionStorage.setItem('pos_hidden', '1');
-        }
-    });
-    
-    // القفل عند الضغط على أي رابط غير tables.php و pos_barcode.php
-    document.addEventListener('click', function(e) {
-        const link = e.target.closest('a');
-        if (link && link.href && 
-            !link.href.includes('tables.php') && 
-            !link.href.includes('pos_barcode.php') && 
-            link.target !== '_blank') {
-            // قفل الجلسة قبل المغادرة
-            sessionStorage.setItem('pos_locked', '1');
-        }
-    });
-    
-    // فحص عند تحميل الصفحة: لو راجع من صفحة تانية، اقفل
-    if (sessionStorage.getItem('pos_locked') === '1') {
-        sessionStorage.removeItem('pos_locked');
-        window.location.href = 'pos_barcode.php?logout=1';
-    }
-</script>
-<?php endif; ?>
+<?php include('includes/pos_lock_system.php'); ?>

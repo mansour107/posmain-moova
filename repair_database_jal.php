@@ -1,4 +1,7 @@
 <?php
+require_once __DIR__ . '/includes/production_guard.php';
+production_guard_deny_route('repair_database_jal.php');
+
 error_reporting(E_ALL);
 ini_set('display_errors', 1);
 

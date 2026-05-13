@@ -1,33 +1,18 @@
 <?php
 // بدء الجلسة
-if (session_status() === PHP_SESSION_NONE) {
-    session_start();
-}
+require_once __DIR__ . '/session_bootstrap.php';
 
-$dbhost = 'localhost';
-$dbuser = 'root';
-$dbpass = '';
-$dbname = 'kody2';
+require_once __DIR__ . '/db_bootstrap.php';
 
-mysqli_report(MYSQLI_REPORT_OFF);
-$conn = @new mysqli($dbhost, $dbuser, $dbpass);
-
-if ($conn->connect_error) {
+try {
+    $conn = posmain_db_connect();
+} catch (Throwable $e) {
+    $reason = posmain_db_error_is_missing_database($e) ? 'reason=db_missing' : 'error=server_down';
     if (basename($_SERVER['PHP_SELF']) !== 'pre_start.php' && strpos($_SERVER['PHP_SELF'], 'ajax/') === false) {
-        header("Location: pre_start.php?error=server_down");
+        header("Location: pre_start.php?" . $reason);
         exit;
     } else {
-        die("Connection failed: " . $conn->connect_error);
-    }
-}
-
-if (!$conn->select_db($dbname)) {
-    if (basename($_SERVER['PHP_SELF']) !== 'pre_start.php' && strpos($_SERVER['PHP_SELF'], 'ajax/') === false) {
-        header("Location: pre_start.php?reason=db_missing");
-        exit;
-    } else if (strpos($_SERVER['PHP_SELF'], 'ajax/') !== false) {
-
-        die("Database '$dbname' not found. Please run pre_start.php");
+        die("Connection failed: " . $e->getMessage());
     }
 }
 
@@ -105,6 +90,11 @@ $role = $resrole->fetch_assoc();
 
 $edit_pass = $rowstg['edit_pass'];
 date_default_timezone_set('Africa/Cairo'); 
+$appConfig = function_exists('posmain_app_config') ? posmain_app_config() : [];
+$appTimezone = trim((string) ($appConfig['timezone'] ?? 'Africa/Cairo'));
+if ($appTimezone !== '') {
+    date_default_timezone_set($appTimezone);
+}
 $now = new DateTime();
 
 if ((int)$now->format('H') < 4) {

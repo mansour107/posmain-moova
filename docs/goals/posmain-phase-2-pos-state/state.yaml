@@ -1,0 +1,2055 @@
+# Goal Maker v2 state.yaml
+# Board truth lives here. goal.md is the editable charter; notes/ holds long receipts only.
+
+version: 2
+
+goal:
+  title: "POSMAIN Phase 2 POS State"
+  slug: "posmain-phase-2-pos-state"
+  kind: specific
+  tranche: "Implement Phase 2 canonical POS state foundations: idempotency, events, counters, UUIDs, mutation services, active endpoint routing, contracts, and focused verification."
+  status: done
+
+rules:
+  pm_owns_state: true
+  one_active_task: true
+  max_write_workers: 1
+  no_implementation_without_worker_or_pm_task: true
+  no_completion_without_judge_or_pm_audit: true
+
+agents:
+  scout: installed
+  worker: installed
+  judge: installed
+
+active_task: null
+
+tasks:
+  - id: T000
+    type: pm
+    assignee: PM
+    status: done
+    objective: "Create the Phase 2 Goal Maker board and record the safety framing."
+    inputs:
+      - "/Users/ab.mansour1agmail.com/Desktop/pos expansion plan.txt"
+      - "docs/goals/posmain-phase-0-production-readiness"
+      - "docs/production"
+      - "git status --short"
+    constraints:
+      - "Only write Goal Maker control files."
+      - "Do not edit implementation files before the board exists."
+    expected_output:
+      - "Goal board exists."
+      - "First active task is safe and read-only."
+      - "Goal command is documented."
+    receipt:
+      result: done
+      changed_files:
+        - "docs/goals/posmain-phase-2-pos-state/goal.md"
+        - "docs/goals/posmain-phase-2-pos-state/state.yaml"
+      summary: "Created the Phase 2 Goal Maker board with a read-only Scout task first, preserving the dirty worktree and requiring bounded Worker tasks for implementation."
+  - id: T001
+    type: scout
+    assignee: Scout
+    status: done
+    objective: "Map Phase 2 current-state evidence, dirty-file overlap, existing services/tests/migrations, and the safest implementation slices."
+    inputs:
+      - "/Users/ab.mansour1agmail.com/Desktop/pos expansion plan.txt Phase 2"
+      - "docs/goals/posmain-phase-0-production-readiness/state.yaml"
+      - "docs/production/write_surface_classification.md"
+      - "docs/production/active_route_map.md"
+      - "docs/production/baseline_inventory_2026-05-12.md"
+      - "Current git status and diffs for Phase 2 candidate files"
+    constraints:
+      - "Read-only."
+      - "Do not edit implementation files."
+      - "Prefer concrete file-path evidence over generic advice."
+      - "Identify dirty files that must be handled carefully."
+    expected_output:
+      - "Impacted surfaces and compatibility risks for Phase 2."
+      - "Existing Phase 1 foundations that Phase 2 should reuse."
+      - "Verification commands and current known failures."
+      - "Recommended Worker task sequence with allowed file sets."
+    receipt:
+      result: done
+      summary: "Mapped Phase 2 surfaces and found strong existing foundations, but the dirty worktree overlaps active mutation files; proceed only in small Judge-approved slices."
+      evidence:
+        - "docs/production/write_surface_classification.md"
+        - "docs/production/active_route_map.md"
+        - "classes/Sync/DocumentCounterService.php"
+        - "classes/Sync/SyncOutboxEventService.php"
+        - "classes/Sync/SchemaManager.php"
+        - "classes/Moova/MoovaNewOrderApplyService.php"
+        - "classes/Moova/MoovaChangeOrderApplyService.php"
+        - "tools/backfill_document_counters.php"
+        - "tests/sync/"
+      dirty_overlap:
+        - "ajax/save_order.php"
+        - "ajax/process_table_payment.php"
+        - "ajax/process_split_payment.php"
+        - "ajax/delete_order.php"
+        - "ajax/clear_table.php"
+        - "ajax/clear_table_normal.php"
+        - "ajax/update_table_status.php"
+        - "ajax/cofe_create_order.php"
+        - "ajax/moova_confirm_order.php"
+        - "ajax/moova_change_order.php"
+        - "do/doadd_invoice.php"
+        - "close_shift.php"
+        - "do_close_shift_z.php"
+        - "classes/PosOrderService.php"
+      verification:
+        - cmd: "php -l for core POS/Moova/sync files"
+          status: pass
+        - cmd: "POSMAIN_DB_PORT=3307 php tools/run_migrations.php --dry-run"
+          status: pass
+        - cmd: "POSMAIN_DB_PORT=3307 php tools/backfill_document_counters.php --dry-run"
+          status: pass
+        - cmd: "focused PHPUnit"
+          status: blocked_no_phpunit_available
+      recommended_sequence:
+        - "P2-W001: create docs/production/api_contracts_pos.md before runtime edits."
+        - "P2-W002: add pos_request_keys and order_events schema/service foundation."
+        - "P2-W003: finish document counter adoption in active table/payment/split paths."
+        - "P2-W004: build canonical service skeleton behind existing endpoints."
+  - id: T002
+    type: judge
+    assignee: Judge
+    status: done
+    objective: "Review Scout findings and approve the first safe Phase 2 implementation slice."
+    inputs:
+      - "T001 receipt"
+      - "Current dirty diff"
+      - "Phase 2 checklist"
+    constraints:
+      - "Read-only."
+      - "Do not implement."
+      - "Pick a slice that is reviewable and regression-testable."
+      - "Escalate if the dirty worktree makes implementation unsafe."
+    expected_output:
+      - "Decision"
+      - "First Worker task with allowed_files and verify commands"
+      - "Deferred or blocked tasks"
+    receipt:
+      result: approved_with_constraints
+      decision: "Approve P2-W001 first: create docs/production/api_contracts_pos.md before runtime edits because the current dirty worktree overlaps active POS mutation files."
+      next_allowed_task: T003
+      evidence:
+        - "Phase 2 plan section 2.16 requires endpoint response contracts."
+        - "T001 Scout found dirty overlap in active POS/table/payment/Moova mutation files."
+        - "docs/production/write_surface_classification.md"
+        - "docs/production/active_route_map.md"
+      blocked_tasks:
+        - "P2-W002 schema/services until W001 defines contract names, scopes, retry semantics, and error codes."
+        - "P2-W003 active endpoint counter edits until dirty diff ownership is reviewed per-file."
+        - "P2-W004 canonical service routing until contract plus schema/idempotency foundations exist."
+      safety_constraints:
+        - "No destructive schema changes."
+        - "Use existing Phase 1 db_bootstrap/config and existing Sync SchemaManager/DocumentCounterService patterns."
+        - "Before touching each dirty active endpoint, inspect current diff and preserve unrelated changes."
+        - "Runtime slices must include focused tests or executable smoke checks."
+        - "Table state must follow active-order truth, not table_case alone."
+        - "Cloud/sync/outbox failure must not block local cashier mutations."
+  - id: T003
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "P2-W001: document active POS endpoint contracts before runtime edits."
+    allowed_files:
+      - "docs/production/api_contracts_pos.md"
+      - "docs/goals/posmain-phase-2-pos-state/state.yaml"
+      - "docs/goals/posmain-phase-2-pos-state/notes/"
+    verify:
+      - "test -f docs/production/api_contracts_pos.md"
+      - "rg -n \"do/doadd_invoice.php|ajax/save_order.php|ajax/process_table_payment.php|ajax/process_split_payment.php|ajax/delete_order.php|ajax/clear_table.php|ajax/clear_table_normal.php|ajax/update_table_status.php|ajax/moova_confirm_order.php|ajax/moova_change_order.php\" docs/production/api_contracts_pos.md"
+      - "rg -n \"idempotency|IDEMPOTENCY_CONFLICT|retry|AUTH_REQUIRED|ORDER_NOT_ACTIVE|PAYMENT_AMOUNT_INVALID|POS_ORDER_LINES_CHANGED\" docs/production/api_contracts_pos.md"
+      - "git diff --name-only -- docs/production/api_contracts_pos.md docs/goals/posmain-phase-2-pos-state"
+      - "node /Users/ab.mansour1agmail.com/.codex/skills/goal-maker/scripts/check-goal-state.mjs docs/goals/posmain-phase-2-pos-state/state.yaml"
+    stop_if:
+      - "Need files outside allowed_files."
+      - "Behavior is ambiguous."
+      - "Verification fails twice for the same changed behavior."
+      - "Would overwrite unrelated dirty worktree changes."
+    receipt:
+      result: done
+      changed_files:
+        - "docs/production/api_contracts_pos.md"
+        - "docs/goals/posmain-phase-2-pos-state/state.yaml"
+      commands:
+        - cmd: "test -f docs/production/api_contracts_pos.md"
+          status: pass
+        - cmd: "rg -n \"do/doadd_invoice.php|ajax/save_order.php|ajax/process_table_payment.php|ajax/process_split_payment.php|ajax/delete_order.php|ajax/clear_table.php|ajax/clear_table_normal.php|ajax/update_table_status.php|ajax/moova_confirm_order.php|ajax/moova_change_order.php\" docs/production/api_contracts_pos.md"
+          status: pass
+        - cmd: "rg -n \"idempotency|IDEMPOTENCY_CONFLICT|retry|AUTH_REQUIRED|ORDER_NOT_ACTIVE|PAYMENT_AMOUNT_INVALID|POS_ORDER_LINES_CHANGED\" docs/production/api_contracts_pos.md"
+          status: pass
+        - cmd: "git status --short -- docs/production/api_contracts_pos.md docs/goals/posmain-phase-2-pos-state"
+          status: pass
+        - cmd: "node /Users/ab.mansour1agmail.com/.codex/skills/goal-maker/scripts/check-goal-state.mjs docs/goals/posmain-phase-2-pos-state/state.yaml"
+          status: pass
+      summary: "Created the Phase 2 active POS endpoint contract document, covering idempotency scopes, retry behavior, error codes, active endpoint request/response shapes, Moova change safeguards, and event contract before runtime edits."
+  - id: T004
+    type: judge
+    assignee: Judge
+    status: done
+    objective: "Review and approve the schema/service foundation slice for pos_request_keys and order_events."
+    inputs:
+      - "T001 Scout receipt"
+      - "T002 Judge receipt"
+      - "docs/production/api_contracts_pos.md"
+      - "classes/Sync/SchemaManager.php"
+      - "Existing tests/sync patterns"
+      - "Phase 2 sections 2.3 and 2.4"
+    constraints:
+      - "Read-only."
+      - "Do not implement."
+      - "Approve only additive, migration-safe schema/service work."
+      - "Require verification commands before Worker implementation."
+    expected_output:
+      - "Decision"
+      - "Allowed files for pos_request_keys/order_events Worker"
+      - "Verify commands"
+      - "Deferred risks or blocked tasks"
+    receipt:
+      result: approved_with_constraints
+      decision: "Approve P2-W002 now as an additive schema/service foundation only; no endpoint routing, active POS mutation edits, or UUID/backfill work in this slice."
+      next_allowed_task: T005
+      evidence:
+        - "docs/production/api_contracts_pos.md defines pos_request_keys storage and order_events contract."
+        - "Phase 2 plan sections 2.3 and 2.4 define additive CREATE TABLE IF NOT EXISTS migrations."
+        - "classes/Sync/SchemaManager.php centralizes plannedStatements, inspect, pendingStatements, and apply."
+        - "tools/run_migrations.php already supports dry-run/apply, backup gate, destructive guard, and schema_migrations tracking."
+      blocked_tasks:
+        - "P2-W003 document counter adoption in active endpoints."
+        - "P2-W004 canonical mutation service routing."
+        - "Any edits to ajax/*, do/doadd_invoice.php, classes/PosOrderService.php, payment/table/cancel endpoints, UUID/backfill work, or sync/outbox behavior beyond tests."
+      safety_constraints:
+        - "Schema changes must be additive CREATE TABLE IF NOT EXISTS only."
+        - "pos_request_keys must match contract with UNIQUE(scope,idempotency_key), status and tenant indexes."
+        - "order_events must match contract with order/type/tenant-branch indexes."
+        - "IdempotencyService must return stored response for same key/hash, conflict on different hash, and stale reclaim only with explicit TTL/options."
+        - "OrderEventService must insert inside caller transaction and JSON-encode snapshots/metadata consistently."
+        - "No foreign keys on legacy order tables in this slice."
+      implementation_can_proceed_now: true
+  - id: T005
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "P2-W002: add additive pos_request_keys and order_events schema/service foundation without endpoint routing."
+    allowed_files:
+      - "classes/Sync/SchemaManager.php"
+      - "classes/Pos/Service/IdempotencyService.php"
+      - "classes/Pos/Service/OrderEventService.php"
+      - "tests/sync/sync_schema_migration_test.php"
+      - "tests/sync/pos_request_keys_idempotency_service_test.php"
+      - "tests/sync/order_event_service_test.php"
+      - "docs/goals/posmain-phase-2-pos-state/state.yaml"
+      - "docs/goals/posmain-phase-2-pos-state/notes/"
+    verify:
+      - "php -l classes/Sync/SchemaManager.php && php -l classes/Pos/Service/IdempotencyService.php && php -l classes/Pos/Service/OrderEventService.php && php -l tests/sync/sync_schema_migration_test.php && php -l tests/sync/pos_request_keys_idempotency_service_test.php && php -l tests/sync/order_event_service_test.php"
+      - "POSMAIN_DB_PORT=3307 php tools/run_migrations.php --dry-run | tee /tmp/posmain-p2w002-migration.txt"
+      - "rg -n \"pos_request_keys|order_events|uq_scope_key|idx_order_created|idx_type_created|idx_tenant_branch_created\" /tmp/posmain-p2w002-migration.txt"
+      - "git diff --check -- classes/Sync/SchemaManager.php classes/Pos/Service/IdempotencyService.php classes/Pos/Service/OrderEventService.php tests/sync/sync_schema_migration_test.php tests/sync/pos_request_keys_idempotency_service_test.php tests/sync/order_event_service_test.php"
+      - "node /Users/ab.mansour1agmail.com/.codex/skills/goal-maker/scripts/check-goal-state.mjs docs/goals/posmain-phase-2-pos-state/state.yaml"
+      - "POSMAIN_TEST_MYSQL_PORT=3307 vendor/bin/phpunit tests/sync/sync_schema_migration_test.php tests/sync/pos_request_keys_idempotency_service_test.php tests/sync/order_event_service_test.php"
+    stop_if:
+      - "Need to edit active endpoint files."
+      - "Need destructive schema changes."
+      - "Need foreign keys on legacy order tables."
+      - "Verification fails twice for changed behavior."
+      - "Would overwrite unrelated dirty worktree changes."
+    receipt:
+      result: done
+      changed_files:
+        - "classes/Sync/SchemaManager.php"
+        - "classes/Pos/Service/IdempotencyService.php"
+        - "classes/Pos/Service/OrderEventService.php"
+        - "tests/sync/sync_schema_migration_test.php"
+        - "tests/sync/pos_request_keys_idempotency_service_test.php"
+        - "tests/sync/order_event_service_test.php"
+      commands:
+        - cmd: "php -l classes/Sync/SchemaManager.php && php -l classes/Pos/Service/IdempotencyService.php && php -l classes/Pos/Service/OrderEventService.php && php -l tests/sync/sync_schema_migration_test.php && php -l tests/sync/pos_request_keys_idempotency_service_test.php && php -l tests/sync/order_event_service_test.php"
+          status: pass
+        - cmd: "POSMAIN_DB_PORT=3307 php tools/run_migrations.php --dry-run | tee /tmp/posmain-p2w002-migration.txt"
+          status: pass_2_pending_additive_tables
+        - cmd: "rg -n \"pos_request_keys|order_events|uq_scope_key|idx_order_created|idx_type_created|idx_tenant_branch_created\" /tmp/posmain-p2w002-migration.txt"
+          status: pass
+        - cmd: "git diff --check -- classes/Sync/SchemaManager.php classes/Pos/Service/IdempotencyService.php classes/Pos/Service/OrderEventService.php tests/sync/sync_schema_migration_test.php tests/sync/pos_request_keys_idempotency_service_test.php tests/sync/order_event_service_test.php"
+          status: pass
+        - cmd: "direct PHP smoke in throwaway MariaDB schema"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 vendor/bin/phpunit tests/sync/sync_schema_migration_test.php tests/sync/pos_request_keys_idempotency_service_test.php tests/sync/order_event_service_test.php"
+          status: blocked_no_vendor_phpunit
+        - cmd: "node /Users/ab.mansour1agmail.com/.codex/skills/goal-maker/scripts/check-goal-state.mjs docs/goals/posmain-phase-2-pos-state/state.yaml"
+          status: pass
+      summary: "Added additive pos_request_keys and order_events schema foundations to SyncSchemaManager, created transaction-neutral IdempotencyService and OrderEventService, extended schema tests, and added focused service tests. PHPUnit is still unavailable, so behavior was smoke-tested with a temporary MariaDB schema."
+  - id: T006
+    type: judge
+    assignee: Judge
+    status: done
+    objective: "Choose the next safe Phase 2 implementation slice after idempotency/event foundations."
+    inputs:
+      - "T001 Scout receipt"
+      - "T002/T004 Judge receipts"
+      - "T003/T005 Worker receipts"
+      - "docs/production/api_contracts_pos.md"
+      - "Current dirty diff"
+      - "Phase 2 checklist"
+    constraints:
+      - "Read-only."
+      - "Do not implement."
+      - "Prefer the next smallest slice with strong verification."
+      - "Escalate if active endpoint dirty overlap makes the next slice unsafe."
+    expected_output:
+      - "Decision for next Worker task"
+      - "Allowed files"
+      - "Verify commands"
+      - "Deferred or blocked tasks"
+    receipt:
+      result: approved_with_constraints
+      decision: "Next Worker should add nullable UUID column schema/backfill foundation, not document counter adoption or endpoint routing, because it avoids dirty active endpoints and matches P2-004/P2-005."
+      next_allowed_task: T007
+      evidence:
+        - "T005 completed idempotency/event foundations but PHPUnit remains unavailable."
+        - "Current dirty worktree overlaps active endpoint files."
+        - "Phase 2 checklist lists UUID work before active endpoint counter replacement."
+        - "SchemaManager already owns migration planning."
+      blocked_tasks:
+        - "Document counter adoption in active endpoints."
+        - "Active endpoint routing to canonical services."
+        - "Moova confirm/change endpoint edits."
+        - "Production/apply UUID backfill without backup/operator confirmation."
+      safety_constraints:
+        - "UUID columns must be nullable CHAR(36), additive only."
+        - "Unique indexes must be existence-checked and tolerate already-migrated DBs."
+        - "Backfill must be batched, resumable, skip existing UUIDs, and require explicit --apply --confirm-no-backup."
+        - "No active endpoint, cashier UI, payment, table, Moova, accounting, or stock behavior changes."
+      implementation_can_proceed_now: true
+  - id: T007
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "Add nullable UUID columns and resumable batched UUID backfill tooling for ot_head, fat_details, order_payments, tables, and closed_orders without endpoint routing."
+    allowed_files:
+      - "classes/Sync/SchemaManager.php"
+      - "tools/backfill_uuid_columns.php"
+      - "tests/sync/sync_schema_migration_test.php"
+      - "tests/sync/uuid_backfill_smoke_test.php"
+      - "docs/goals/posmain-phase-2-pos-state/state.yaml"
+      - "docs/goals/posmain-phase-2-pos-state/notes/"
+    verify:
+      - "php -l classes/Sync/SchemaManager.php && php -l tools/backfill_uuid_columns.php && php -l tests/sync/sync_schema_migration_test.php && php -l tests/sync/uuid_backfill_smoke_test.php"
+      - "POSMAIN_DB_PORT=3307 php tools/run_migrations.php --dry-run | tee /tmp/posmain-p2w003-uuid-migration.txt"
+      - "rg -n \"ot_head|fat_details|order_payments|tables|closed_orders|uuid|CHAR\\(36\\)|UNIQUE\" /tmp/posmain-p2w003-uuid-migration.txt"
+      - "POSMAIN_DB_PORT=3307 php tools/backfill_uuid_columns.php --dry-run --batch-size=500 | tee /tmp/posmain-p2w003-uuid-backfill.txt"
+      - "rg -n \"Dry run|ot_head|fat_details|order_payments|tables|closed_orders|batch|uuid\" /tmp/posmain-p2w003-uuid-backfill.txt"
+      - "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/uuid_backfill_smoke_test.php"
+      - "git diff --check -- classes/Sync/SchemaManager.php tools/backfill_uuid_columns.php tests/sync/sync_schema_migration_test.php tests/sync/uuid_backfill_smoke_test.php"
+      - "node /Users/ab.mansour1agmail.com/.codex/skills/goal-maker/scripts/check-goal-state.mjs docs/goals/posmain-phase-2-pos-state/state.yaml"
+    stop_if:
+      - "Need active endpoint edits."
+      - "Need non-null UUID columns or numeric ID replacement."
+      - "Need unbounded whole-table UPDATE."
+      - "Target table primary-key assumptions are missing."
+      - "Verification fails twice for changed behavior."
+    receipt:
+      result: done
+      changed_files:
+        - "classes/Sync/SchemaManager.php"
+        - "tools/backfill_uuid_columns.php"
+        - "tests/sync/sync_schema_migration_test.php"
+        - "tests/sync/uuid_backfill_smoke_test.php"
+        - "docs/goals/posmain-phase-2-pos-state/state.yaml"
+      commands:
+        - cmd: "php -l classes/Sync/SchemaManager.php && php -l tools/backfill_uuid_columns.php && php -l tests/sync/sync_schema_migration_test.php && php -l tests/sync/uuid_backfill_smoke_test.php"
+          status: pass
+        - cmd: "POSMAIN_DB_PORT=3307 php tools/run_migrations.php --dry-run | tee /tmp/posmain-p2w003-uuid-migration.txt"
+          status: pass_12_pending_including_uuid_schema
+        - cmd: "rg -n \"ot_head|fat_details|order_payments|tables|closed_orders|uuid|CHAR\\(36\\)|UNIQUE\" /tmp/posmain-p2w003-uuid-migration.txt"
+          status: pass
+        - cmd: "POSMAIN_DB_PORT=3307 php tools/backfill_uuid_columns.php --dry-run --batch-size=500 | tee /tmp/posmain-p2w003-uuid-backfill.txt"
+          status: pass_missing_uuid_schema_reported_safely
+        - cmd: "rg -n \"Dry run|ot_head|fat_details|order_payments|tables|closed_orders|batch|uuid\" /tmp/posmain-p2w003-uuid-backfill.txt"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/uuid_backfill_smoke_test.php"
+          status: pass
+        - cmd: "git diff --check -- classes/Sync/SchemaManager.php tools/backfill_uuid_columns.php tests/sync/sync_schema_migration_test.php tests/sync/uuid_backfill_smoke_test.php"
+          status: pass
+        - cmd: "node /Users/ab.mansour1agmail.com/.codex/skills/goal-maker/scripts/check-goal-state.mjs docs/goals/posmain-phase-2-pos-state/state.yaml"
+          status: pass
+      summary: "Added additive nullable uuid schema planning for ot_head, fat_details, order_payments, tables, and closed_orders; added a bounded resumable UUID backfill CLI; extended schema tests; and verified the backfill path in a throwaway MariaDB schema without touching active endpoints."
+  - id: T008
+    type: judge
+    assignee: Judge
+    status: done
+    objective: "Choose the next safe Phase 2 implementation slice after UUID schema/backfill foundation."
+    inputs:
+      - "T001 Scout receipt"
+      - "T002/T004/T006 Judge receipts"
+      - "T003/T005/T007 Worker receipts"
+      - "Current dirty diff"
+      - "Phase 2 checklist"
+    constraints:
+      - "Read-only."
+      - "Do not implement."
+      - "Prefer a slice that moves Phase 2 forward without unsafe dirty endpoint collisions."
+      - "Require pre-change diff review before any active endpoint file is approved."
+    expected_output:
+      - "Decision for next Worker task"
+      - "Allowed files"
+      - "Verify commands"
+      - "Deferred or blocked tasks"
+    receipt:
+      result: approved_with_constraints
+      decision: "Create T009 as the next Worker slice: replace remaining direct MAX()+1 allocation in ajax/save_order.php, ajax/process_split_payment.php, and ajax/process_table_payment.php through DocumentCounterService via TableOrderService."
+      next_allowed_task: T009
+      evidence:
+        - "rg found direct counters in ajax/save_order.php, ajax/process_split_payment.php, and ajax/process_table_payment.php."
+        - "Current dirty diffs in those endpoint files are sync outbox additions that must be preserved."
+        - "document_counters exists in the local DB with Phase 2 scope columns."
+      blocked_tasks:
+        - "Endpoint routing to canonical services."
+        - "Moova confirm/change, cofe_create_order.php, do/doadd_invoice.php, and classes/PosOrderService.php edits."
+        - "Live migration apply, UUID backfill, or document counter backfill."
+        - "Idempotency enforcement in active endpoints."
+      safety_constraints:
+        - "Preserve existing dirty sync-outbox edits."
+        - "Counter allocation must occur inside existing transactions."
+        - "Use legacy tenant/branch scope 0/0 unless endpoint already writes matching tenant/branch values."
+        - "No cashier-visible Arabic copy or response-shape changes."
+      implementation_can_proceed_now: true
+  - id: T009
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "Replace direct MAX()+1 allocation in remaining table/payment counter hotspots through TableOrderService and DocumentCounterService without endpoint routing."
+    allowed_files:
+      - "classes/TableOrderService.php"
+      - "ajax/save_order.php"
+      - "ajax/process_split_payment.php"
+      - "ajax/process_table_payment.php"
+      - "tests/sync/table_order_counter_smoke_test.php"
+      - "docs/goals/posmain-phase-2-pos-state/state.yaml"
+      - "docs/goals/posmain-phase-2-pos-state/notes/"
+    verify:
+      - "php -l classes/TableOrderService.php && php -l ajax/save_order.php && php -l ajax/process_split_payment.php && php -l ajax/process_table_payment.php && php -l tests/sync/table_order_counter_smoke_test.php"
+      - "POSMAIN_DB_PORT=3307 php tools/run_migrations.php --dry-run | tee /tmp/posmain-p2w004-counter-migration.txt"
+      - "POSMAIN_DB_PORT=3307 php -r 'require \"includes/db_bootstrap.php\"; $c=posmain_db_connect(); $r=$c->query(\"SHOW TABLES LIKE '\\''document_counters'\\''\"); if (!$r || $r->num_rows < 1) { fwrite(STDERR, \"document_counters missing\\n\"); exit(1); } echo \"document_counters exists\\n\";'"
+      - "if rg -n \"COALESCE\\(MAX|SELECT MAX\\(journal_id\\)|\\+ 1 AS next_id|\\$row_jid\\['max_id'\\].*\\+ 1\" ajax/save_order.php ajax/process_split_payment.php ajax/process_table_payment.php; then exit 1; else echo \"no direct endpoint MAX+1 counters\"; fi"
+      - "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/table_order_counter_smoke_test.php"
+      - "git diff --check -- classes/TableOrderService.php ajax/save_order.php ajax/process_split_payment.php ajax/process_table_payment.php tests/sync/table_order_counter_smoke_test.php"
+      - "node /Users/ab.mansour1agmail.com/.codex/skills/goal-maker/scripts/check-goal-state.mjs docs/goals/posmain-phase-2-pos-state/state.yaml"
+    stop_if:
+      - "Need files outside allowed_files."
+      - "Need DocumentCounterService behavior changes."
+      - "document_counters schema is missing."
+      - "Would change cashier-visible copy or response shape."
+      - "Would overwrite unrelated dirty worktree changes."
+    receipt:
+      result: done
+      changed_files:
+        - "classes/TableOrderService.php"
+        - "ajax/save_order.php"
+        - "ajax/process_split_payment.php"
+        - "ajax/process_table_payment.php"
+        - "tests/sync/table_order_counter_smoke_test.php"
+        - "docs/goals/posmain-phase-2-pos-state/state.yaml"
+      commands:
+        - cmd: "php -l classes/TableOrderService.php && php -l ajax/save_order.php && php -l ajax/process_split_payment.php && php -l ajax/process_table_payment.php && php -l tests/sync/table_order_counter_smoke_test.php"
+          status: pass
+        - cmd: "POSMAIN_DB_PORT=3307 php tools/run_migrations.php --dry-run | tee /tmp/posmain-p2w004-counter-migration.txt"
+          status: pass
+        - cmd: "POSMAIN_DB_PORT=3307 php -r 'require \"includes/db_bootstrap.php\"; $c=posmain_db_connect(); $r=$c->query(\"SHOW TABLES LIKE '\\''document_counters'\\''\"); if (!$r || $r->num_rows < 1) { fwrite(STDERR, \"document_counters missing\\n\"); exit(1); } echo \"document_counters exists\\n\";'"
+          status: pass
+        - cmd: "if rg -n \"COALESCE\\(MAX|SELECT MAX\\(journal_id\\)|\\+ 1 AS next_id|\\$row_jid\\['max_id'\\].*\\+ 1\" ajax/save_order.php ajax/process_split_payment.php ajax/process_table_payment.php; then exit 1; else echo \"no direct endpoint MAX+1 counters\"; fi"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/table_order_counter_smoke_test.php"
+          status: pass
+        - cmd: "git diff --check -- classes/TableOrderService.php ajax/save_order.php ajax/process_split_payment.php ajax/process_table_payment.php tests/sync/table_order_counter_smoke_test.php"
+          status: pass
+        - cmd: "node /Users/ab.mansour1agmail.com/.codex/skills/goal-maker/scripts/check-goal-state.mjs docs/goals/posmain-phase-2-pos-state/state.yaml"
+          status: pass
+      summary: "Routed remaining table/payment pro_id and journal_id allocations through TableOrderService helpers backed by DocumentCounterService, preserving existing endpoint responses and sync-outbox edits; added a throwaway MariaDB smoke test for pro_id and journal_id sequences."
+  - id: T010
+    type: judge
+    assignee: Judge
+    status: done
+    objective: "Choose the next safe Phase 2 implementation slice after table/payment counter adoption."
+    inputs:
+      - "All prior receipts"
+      - "Current dirty diff"
+      - "Phase 2 checklist"
+      - "docs/production/api_contracts_pos.md"
+    constraints:
+      - "Read-only."
+      - "Do not implement."
+      - "Prefer service skeleton or tests before high-risk endpoint routing unless evidence supports endpoint work."
+    expected_output:
+      - "Decision for next Worker task"
+      - "Allowed files"
+      - "Verify commands"
+      - "Deferred or blocked tasks"
+    receipt:
+      result: approved_with_constraints
+      decision: "Approve a tests-first Worker slice before endpoint routing: add throwaway-MariaDB contract coverage for TableOrderService table truth and payment status behavior."
+      next_allowed_task: T011
+      evidence:
+        - "T009 changed active table/payment endpoint counter allocation."
+        - "Phase 2 P2-020 still needs table truth and payment-status contract coverage."
+        - "No PosOrderMutationService, PaymentService, or TableStateService classes exist yet."
+      blocked_tasks:
+        - "Endpoint routing to new services."
+        - "Cancel/clear/update_table_status routing."
+        - "Moova confirm/change routing."
+        - "Idempotency enforcement inside active endpoints."
+        - "do/doadd_invoice.php or cofe_create_order.php refactors."
+      safety_constraints:
+        - "Use throwaway DB and drop it."
+        - "No endpoint, service, schema, UI, or production behavior edits."
+        - "Cover partial payment, full payment freeing table, active unpaid/partial table truth, and paid/cancelled orders not keeping table occupied."
+        - "If the test exposes a behavior defect, stop with a finding."
+      implementation_can_proceed_now: true
+  - id: T011
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "Add throwaway-DB contract coverage for TableOrderService table truth and payment status behavior before service routing."
+    allowed_files:
+      - "tests/sync/table_order_state_payment_contract_test.php"
+      - "docs/goals/posmain-phase-2-pos-state/state.yaml"
+      - "docs/goals/posmain-phase-2-pos-state/notes/"
+    verify:
+      - "php -l classes/TableOrderService.php"
+      - "php -l tests/sync/table_order_state_payment_contract_test.php"
+      - "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/table_order_state_payment_contract_test.php"
+      - "git diff --check -- tests/sync/table_order_state_payment_contract_test.php"
+      - "node /Users/ab.mansour1agmail.com/.codex/skills/goal-maker/scripts/check-goal-state.mjs docs/goals/posmain-phase-2-pos-state/state.yaml"
+    stop_if:
+      - "Need endpoint, service, schema, UI, or production behavior edits."
+      - "Test exposes a behavior defect that needs implementation changes."
+      - "Cannot isolate in a throwaway database."
+    receipt:
+      result: done
+      changed_files:
+        - "tests/sync/table_order_state_payment_contract_test.php"
+        - "docs/goals/posmain-phase-2-pos-state/state.yaml"
+      commands:
+        - cmd: "php -l classes/TableOrderService.php"
+          status: pass
+        - cmd: "php -l tests/sync/table_order_state_payment_contract_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/table_order_state_payment_contract_test.php"
+          status: pass
+        - cmd: "git diff --check -- tests/sync/table_order_state_payment_contract_test.php"
+          status: pass
+        - cmd: "node /Users/ab.mansour1agmail.com/.codex/skills/goal-maker/scripts/check-goal-state.mjs docs/goals/posmain-phase-2-pos-state/state.yaml"
+          status: pass
+      summary: "Added a throwaway-MariaDB contract smoke test for TableOrderService table truth and payment status behavior, covering partial payment, full payment freeing the table, paid/cancelled orders not occupying a table, and cancel freeing the last active order."
+  - id: T012
+    type: judge
+    assignee: Judge
+    status: done
+    objective: "Choose the next safe Phase 2 implementation slice after table/payment contract coverage."
+    inputs:
+      - "All prior receipts"
+      - "Current dirty diff"
+      - "Phase 2 checklist"
+      - "docs/production/api_contracts_pos.md"
+    constraints:
+      - "Read-only."
+      - "Do not implement."
+      - "Prefer service skeleton or one carefully bounded endpoint wrapper slice."
+    expected_output:
+      - "Decision for next Worker task"
+      - "Allowed files"
+      - "Verify commands"
+      - "Deferred or blocked tasks"
+    receipt:
+      result: approved_with_constraints
+      decision: "Approve service skeleton slice next without endpoint routing because active endpoint files remain heavily dirty."
+      next_allowed_task: T013
+      evidence:
+        - "Phase 2 next unchecked items include P2-008 PosOrderMutationService, P2-009 PaymentService, and P2-010 TableStateService."
+        - "Only IdempotencyService and OrderEventService currently exist under classes/Pos/Service."
+        - "Current table/payment contract smokes pass."
+      blocked_tasks:
+        - "Endpoint routing for do/doadd_invoice.php and AJAX table/payment/split routes."
+        - "Cancel/clear/update_table_status endpoint wrappers."
+        - "Moova confirm/change convergence."
+        - "Idempotency enforcement inside active endpoints."
+        - "Live migration/backfill apply or production data mutation."
+      safety_constraints:
+        - "No active endpoint files."
+        - "No cashier-visible Arabic copy or response-shape changes."
+        - "No schema changes."
+        - "Use existing TableOrderService behavior for table truth and payment status."
+        - "Unimplemented public methods fail closed with explicit NOT_IMPLEMENTED."
+      implementation_can_proceed_now: true
+  - id: T013
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "Create the first canonical table/payment POS mutation service skeleton without endpoint routing."
+    allowed_files:
+      - "classes/Pos/Service/PosOrderMutationService.php"
+      - "classes/Pos/Service/PaymentService.php"
+      - "classes/Pos/Service/TableStateService.php"
+      - "tests/sync/pos_mutation_service_skeleton_test.php"
+      - "docs/goals/posmain-phase-2-pos-state/state.yaml"
+      - "docs/goals/posmain-phase-2-pos-state/notes/"
+    verify:
+      - "php -l classes/Pos/Service/PosOrderMutationService.php && php -l classes/Pos/Service/PaymentService.php && php -l classes/Pos/Service/TableStateService.php && php -l tests/sync/pos_mutation_service_skeleton_test.php"
+      - "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_mutation_service_skeleton_test.php"
+      - "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/table_order_state_payment_contract_test.php"
+      - "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/table_order_counter_smoke_test.php"
+      - "git diff --check -- classes/Pos/Service/PosOrderMutationService.php classes/Pos/Service/PaymentService.php classes/Pos/Service/TableStateService.php tests/sync/pos_mutation_service_skeleton_test.php"
+      - "node /Users/ab.mansour1agmail.com/.codex/skills/goal-maker/scripts/check-goal-state.mjs docs/goals/posmain-phase-2-pos-state/state.yaml"
+    stop_if:
+      - "Need active endpoint edits."
+      - "Need TableOrderService, Moova, accounting, or inventory edits."
+      - "Need schema changes."
+      - "A method would need fake success instead of fail-closed NOT_IMPLEMENTED."
+    receipt:
+      result: done
+      changed_files:
+        - "classes/Pos/Service/PosOrderMutationService.php"
+        - "classes/Pos/Service/PaymentService.php"
+        - "classes/Pos/Service/TableStateService.php"
+        - "tests/sync/pos_mutation_service_skeleton_test.php"
+        - "docs/goals/posmain-phase-2-pos-state/state.yaml"
+      commands:
+        - cmd: "php -l classes/Pos/Service/PosOrderMutationService.php && php -l classes/Pos/Service/PaymentService.php && php -l classes/Pos/Service/TableStateService.php && php -l tests/sync/pos_mutation_service_skeleton_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_mutation_service_skeleton_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/table_order_state_payment_contract_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/table_order_counter_smoke_test.php"
+          status: pass
+        - cmd: "git diff --check -- classes/Pos/Service/PosOrderMutationService.php classes/Pos/Service/PaymentService.php classes/Pos/Service/TableStateService.php tests/sync/pos_mutation_service_skeleton_test.php"
+          status: pass
+      summary: "Added the first canonical POS mutation service skeleton for table payments and table cancels, delegating to existing TableOrderService behavior and keeping future create/split/Moova routes fail-closed with explicit NOT_IMPLEMENTED errors; added a throwaway-MariaDB smoke test for the wrappers."
+  - id: T999
+    type: judge
+    assignee: Judge
+    status: done
+    objective: "Audit whether the Phase 2 tranche is complete."
+    inputs:
+      - "All done task receipts"
+      - "Last verification"
+      - "Current dirty diff"
+      - "Phase 2 checklist from the plan"
+    constraints:
+      - "Read-only."
+      - "Do not mark complete without mapping receipts to Phase 2 exit criteria."
+    expected_output:
+      - "complete | not_complete"
+      - "missing evidence"
+      - "next task if not complete"
+    receipt:
+      result: not_complete
+      decision: "Phase 2 cannot close yet; core foundations are in place, but accounting/inventory wrappers and active endpoint routing/idempotency enforcement remain outstanding."
+      completed_evidence:
+        - "P2-002/P2-003 idempotency and order event schema/service foundation."
+        - "P2-004/P2-005 UUID schema/backfill foundation."
+        - "P2-006/P2-007 document counter foundation and table/payment counter adoption."
+        - "P2-008/P2-009/P2-010 first POS mutation, payment, and table-state service skeleton."
+        - "P2-019 endpoint contract document."
+        - "P2-020 focused idempotency, counter, table truth, and payment-status smoke tests."
+      missing_evidence:
+        - "P2-011 AccountingPostingService wrapper."
+        - "P2-012 InventoryMovementService wrapper or validator."
+        - "P2-013 through P2-018 active endpoint routing through the canonical services."
+        - "Active-write idempotency enforcement in endpoint/service paths."
+        - "Accounting/stock preservation tests before deep do/doadd_invoice.php routing."
+      next_allowed_task: T014
+      safety_constraints:
+        - "Keep active endpoint files untouched in the next slice."
+        - "Do not change cashier-visible responses."
+        - "Mirror existing accounting and inventory calculations before routing behavior."
+        - "Use throwaway DB coverage."
+  - id: T014
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "Add AccountingPostingService and InventoryMovementService wrapper/validator foundations without endpoint routing."
+    allowed_files:
+      - "classes/Pos/Service/AccountingPostingService.php"
+      - "classes/Pos/Service/InventoryMovementService.php"
+      - "tests/sync/pos_accounting_inventory_service_test.php"
+      - "docs/goals/posmain-phase-2-pos-state/state.yaml"
+      - "docs/goals/posmain-phase-2-pos-state/notes/"
+    verify:
+      - "php -l classes/Pos/Service/AccountingPostingService.php && php -l classes/Pos/Service/InventoryMovementService.php && php -l tests/sync/pos_accounting_inventory_service_test.php"
+      - "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_accounting_inventory_service_test.php"
+      - "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_mutation_service_skeleton_test.php"
+      - "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/table_order_state_payment_contract_test.php"
+      - "git diff --check -- classes/Pos/Service/AccountingPostingService.php classes/Pos/Service/InventoryMovementService.php tests/sync/pos_accounting_inventory_service_test.php"
+      - "node /Users/ab.mansour1agmail.com/.codex/skills/goal-maker/scripts/check-goal-state.mjs docs/goals/posmain-phase-2-pos-state/state.yaml"
+    stop_if:
+      - "Need active endpoint edits."
+      - "Need schema changes."
+      - "Cannot mirror existing accounting or inventory behavior safely."
+      - "Would change journal, stock, cashier response, or Arabic UI behavior."
+    receipt:
+      result: done
+      changed_files:
+        - "classes/Pos/Service/AccountingPostingService.php"
+        - "classes/Pos/Service/InventoryMovementService.php"
+        - "tests/sync/pos_accounting_inventory_service_test.php"
+        - "docs/goals/posmain-phase-2-pos-state/state.yaml"
+      commands:
+        - cmd: "php -l classes/Pos/Service/AccountingPostingService.php && php -l classes/Pos/Service/InventoryMovementService.php && php -l tests/sync/pos_accounting_inventory_service_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_accounting_inventory_service_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_mutation_service_skeleton_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/table_order_state_payment_contract_test.php"
+          status: pass
+        - cmd: "git diff --check -- classes/Pos/Service/AccountingPostingService.php classes/Pos/Service/InventoryMovementService.php tests/sync/pos_accounting_inventory_service_test.php"
+          status: pass
+      summary: "Added accounting and inventory foundations without routing endpoints: AccountingPostingService mirrors the current table-payment receipt/journal posting, and InventoryMovementService normalizes legacy invoice detail quantity/cost/profit rules for future POS mutation routing."
+  - id: T015
+    type: judge
+    assignee: Judge
+    status: done
+    objective: "Choose the first safe active endpoint routing slice after service wrapper foundations."
+    inputs:
+      - "T013 service skeleton receipt"
+      - "T014 accounting/inventory wrapper receipt"
+      - "ajax/process_table_payment.php current dirty diff"
+      - "docs/production/api_contracts_pos.md"
+      - "Phase 2 endpoint routing checklist"
+    constraints:
+      - "Read-only."
+      - "Do not implement."
+      - "Prefer one active endpoint with existing focused service coverage."
+      - "Preserve pre-existing SyncOutboxEventService edits."
+    expected_output:
+      - "Decision for next Worker task"
+      - "Allowed files"
+      - "Verify commands"
+      - "Safety constraints"
+    receipt:
+      result: approved_with_constraints
+      decision: "Approve routing ajax/process_table_payment.php first because its behavior is already covered by T011/T013/T014 focused smoke tests and its current dirty diff is limited to document counters plus sync outbox."
+      next_allowed_task: T016
+      evidence:
+        - "ajax/process_table_payment.php current dirty diff only adds SyncOutboxEventService and DocumentCounterService-backed journal allocation."
+        - "PaymentService delegates to TableOrderService::payTableOrder."
+        - "AccountingPostingService mirrors the current table-payment receipt/journal posting shape."
+        - "table_order_state_payment_contract_test.php and pos_mutation_service_skeleton_test.php cover partial/full payment and table truth."
+      blocked_tasks:
+        - "do/doadd_invoice.php routing until accounting/stock fixture coverage is broader."
+        - "ajax/save_order.php, process_split_payment.php, cancel/clear/update_table_status, and Moova endpoint routing until table payment route is proven."
+        - "Idempotency enforcement inside the endpoint until route service delegation is stable."
+      safety_constraints:
+        - "Preserve JSON response keys and Arabic messages."
+        - "Preserve SyncOutboxEventService calls and table/order snapshot semantics."
+        - "Do not change TableOrderService behavior."
+        - "No schema changes."
+        - "No cashier UI edits."
+  - id: T016
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "Route ajax/process_table_payment.php through PosOrderMutationService and AccountingPostingService without changing the endpoint response contract."
+    allowed_files:
+      - "ajax/process_table_payment.php"
+      - "tests/sync/process_table_payment_endpoint_routing_test.php"
+      - "docs/goals/posmain-phase-2-pos-state/state.yaml"
+      - "docs/goals/posmain-phase-2-pos-state/notes/"
+    verify:
+      - "php -l ajax/process_table_payment.php && php -l tests/sync/process_table_payment_endpoint_routing_test.php"
+      - "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/process_table_payment_endpoint_routing_test.php"
+      - "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_accounting_inventory_service_test.php"
+      - "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_mutation_service_skeleton_test.php"
+      - "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/table_order_state_payment_contract_test.php"
+      - "git diff --check -- ajax/process_table_payment.php tests/sync/process_table_payment_endpoint_routing_test.php"
+      - "node /Users/ab.mansour1agmail.com/.codex/skills/goal-maker/scripts/check-goal-state.mjs docs/goals/posmain-phase-2-pos-state/state.yaml"
+    stop_if:
+      - "Need another endpoint file."
+      - "Need TableOrderService behavior changes."
+      - "Need schema changes."
+      - "Would alter JSON response keys or Arabic messages."
+      - "Would remove or weaken sync outbox calls."
+    receipt:
+      result: done
+      changed_files:
+        - "ajax/process_table_payment.php"
+        - "tests/sync/process_table_payment_endpoint_routing_test.php"
+        - "docs/goals/posmain-phase-2-pos-state/state.yaml"
+      commands:
+        - cmd: "php -l ajax/process_table_payment.php && php -l tests/sync/process_table_payment_endpoint_routing_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/process_table_payment_endpoint_routing_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_accounting_inventory_service_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_mutation_service_skeleton_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/table_order_state_payment_contract_test.php"
+          status: pass
+        - cmd: "git diff --check -- ajax/process_table_payment.php tests/sync/process_table_payment_endpoint_routing_test.php"
+          status: pass
+      summary: "Routed ajax/process_table_payment.php through PosOrderMutationService for the payment mutation and AccountingPostingService for receipt/journal posting, while preserving the endpoint JSON response keys, Arabic messages, and SyncOutboxEventService calls."
+  - id: T017
+    type: judge
+    assignee: Judge
+    status: done
+    objective: "Choose the next endpoint routing or idempotency slice after table-payment routing."
+    inputs:
+      - "T016 receipt"
+      - "Current dirty diff"
+      - "Phase 2 routing checklist"
+      - "docs/production/api_contracts_pos.md"
+    constraints:
+      - "Read-only."
+      - "Do not implement."
+      - "Prefer the next smallest route with existing service coverage."
+      - "Avoid do/doadd_invoice.php until broader stock/accounting fixtures are ready."
+    expected_output:
+      - "Decision for next Worker task"
+      - "Allowed files"
+      - "Verify commands"
+      - "Safety constraints"
+    receipt:
+      result: approved_with_constraints
+      decision: "Approve routing the cancel/clear/status endpoint group through PosOrderMutationService for cancel operations because all four endpoints already share TableOrderService cancel semantics and the existing table-state contract covers the core behavior."
+      next_allowed_task: T018
+      evidence:
+        - "ajax/delete_order.php, ajax/clear_table.php, ajax/clear_table_normal.php, and ajax/update_table_status.php all call TableOrderService::cancelTableOrder for cancel/clear."
+        - "TableStateService and PosOrderMutationService now wrap that same cancel path."
+        - "table_order_state_payment_contract_test.php covers cancelled active order removal and table freeing."
+      blocked_tasks:
+        - "ajax/save_order.php routing."
+        - "ajax/process_split_payment.php routing."
+        - "do/doadd_invoice.php routing."
+        - "Moova confirm/change convergence."
+        - "Endpoint idempotency enforcement."
+      safety_constraints:
+        - "Preserve endpoint JSON response keys and Arabic messages."
+        - "Preserve empty-table behavior in clear_table_normal.php."
+        - "Preserve update_table_status activate behavior."
+        - "Preserve SyncOutboxEventService calls."
+        - "No schema or service behavior changes."
+  - id: T018
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "Route cancel/clear/status table endpoints through PosOrderMutationService for cancel operations without changing responses."
+    allowed_files:
+      - "ajax/delete_order.php"
+      - "ajax/clear_table.php"
+      - "ajax/clear_table_normal.php"
+      - "ajax/update_table_status.php"
+      - "tests/sync/table_cancel_endpoint_routing_test.php"
+      - "docs/goals/posmain-phase-2-pos-state/state.yaml"
+      - "docs/goals/posmain-phase-2-pos-state/notes/"
+    verify:
+      - "php -l ajax/delete_order.php && php -l ajax/clear_table.php && php -l ajax/clear_table_normal.php && php -l ajax/update_table_status.php && php -l tests/sync/table_cancel_endpoint_routing_test.php"
+      - "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/table_cancel_endpoint_routing_test.php"
+      - "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/table_order_state_payment_contract_test.php"
+      - "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_mutation_service_skeleton_test.php"
+      - "git diff --check -- ajax/delete_order.php ajax/clear_table.php ajax/clear_table_normal.php ajax/update_table_status.php tests/sync/table_cancel_endpoint_routing_test.php"
+      - "node /Users/ab.mansour1agmail.com/.codex/skills/goal-maker/scripts/check-goal-state.mjs docs/goals/posmain-phase-2-pos-state/state.yaml"
+    stop_if:
+      - "Need TableOrderService behavior changes."
+      - "Need schema changes."
+      - "Would alter JSON response keys or Arabic messages."
+      - "Would remove or weaken sync outbox calls."
+    receipt:
+      result: done
+      changed_files:
+        - "ajax/delete_order.php"
+        - "ajax/clear_table.php"
+        - "ajax/clear_table_normal.php"
+        - "ajax/update_table_status.php"
+        - "tests/sync/table_cancel_endpoint_routing_test.php"
+        - "docs/goals/posmain-phase-2-pos-state/state.yaml"
+      commands:
+        - cmd: "php -l ajax/delete_order.php && php -l ajax/clear_table.php && php -l ajax/clear_table_normal.php && php -l ajax/update_table_status.php && php -l tests/sync/table_cancel_endpoint_routing_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/table_cancel_endpoint_routing_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/table_order_state_payment_contract_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_mutation_service_skeleton_test.php"
+          status: pass
+        - cmd: "git diff --check -- ajax/delete_order.php ajax/clear_table.php ajax/clear_table_normal.php ajax/update_table_status.php tests/sync/table_cancel_endpoint_routing_test.php"
+          status: pass
+      summary: "Routed table cancel/clear/status endpoints through PosOrderMutationService for cancel operations while preserving their Arabic messages, response keys, empty-table behavior, activate behavior, and sync-outbox calls."
+  - id: T019
+    type: judge
+    assignee: Judge
+    status: done
+    objective: "Choose the next safe table-save implementation slice after cancel endpoint routing."
+    inputs:
+      - "T018 receipt"
+      - "ajax/save_order.php current implementation"
+      - "PosOrderMutationService currently fail-closed saveTableOrder method"
+      - "Phase 2 section 2.8"
+    constraints:
+      - "Read-only."
+      - "Do not implement."
+      - "Prefer implementing service behavior with throwaway DB coverage before endpoint routing."
+    expected_output:
+      - "Decision for next Worker task"
+      - "Allowed files"
+      - "Verify commands"
+      - "Safety constraints"
+    receipt:
+      result: approved_with_constraints
+      decision: "Approve implementing PosOrderMutationService::saveTableOrder with throwaway DB coverage before routing ajax/save_order.php."
+      next_allowed_task: T020
+      evidence:
+        - "ajax/save_order.php currently owns table save/add/update behavior directly."
+        - "PosOrderMutationService::saveTableOrder still fails closed with NOT_IMPLEMENTED."
+        - "TableOrderService already provides table validation, active-order truth, counters, totals, and table occupancy helpers."
+      blocked_tasks:
+        - "ajax/save_order.php endpoint routing until service behavior is covered."
+        - "Split payment routing."
+        - "Takeaway do/doadd_invoice.php routing."
+        - "Moova endpoint convergence."
+        - "Idempotency enforcement."
+      safety_constraints:
+        - "Mirror current ajax/save_order.php behavior and response data."
+        - "No endpoint edits in this slice."
+        - "No schema changes."
+        - "Do not alter TableOrderService."
+        - "Use throwaway DB tests for create, occupied-table rejection, update, totals, paid preservation, and table occupancy."
+  - id: T020
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "Implement PosOrderMutationService::saveTableOrder behind the service layer without routing ajax/save_order.php yet."
+    allowed_files:
+      - "classes/Pos/Service/PosOrderMutationService.php"
+      - "tests/sync/pos_mutation_service_skeleton_test.php"
+      - "tests/sync/pos_table_save_service_test.php"
+      - "docs/goals/posmain-phase-2-pos-state/state.yaml"
+      - "docs/goals/posmain-phase-2-pos-state/notes/"
+    verify:
+      - "php -l classes/Pos/Service/PosOrderMutationService.php && php -l tests/sync/pos_table_save_service_test.php && php -l tests/sync/pos_mutation_service_skeleton_test.php"
+      - "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_table_save_service_test.php"
+      - "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_mutation_service_skeleton_test.php"
+      - "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/table_order_state_payment_contract_test.php"
+      - "git diff --check -- classes/Pos/Service/PosOrderMutationService.php tests/sync/pos_table_save_service_test.php tests/sync/pos_mutation_service_skeleton_test.php"
+      - "node /Users/ab.mansour1agmail.com/.codex/skills/goal-maker/scripts/check-goal-state.mjs docs/goals/posmain-phase-2-pos-state/state.yaml"
+    stop_if:
+      - "Need ajax/save_order.php edits."
+      - "Need TableOrderService changes."
+      - "Need schema changes."
+      - "Cannot match current save_order behavior without guessing."
+    receipt:
+      result: done
+      changed_files:
+        - "classes/Pos/Service/PosOrderMutationService.php"
+        - "tests/sync/pos_mutation_service_skeleton_test.php"
+        - "tests/sync/pos_table_save_service_test.php"
+        - "docs/goals/posmain-phase-2-pos-state/state.yaml"
+      commands:
+        - cmd: "php -l classes/Pos/Service/PosOrderMutationService.php && php -l tests/sync/pos_table_save_service_test.php && php -l tests/sync/pos_mutation_service_skeleton_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_table_save_service_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_mutation_service_skeleton_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/table_order_state_payment_contract_test.php"
+          status: pass
+        - cmd: "git diff --check -- classes/Pos/Service/PosOrderMutationService.php tests/sync/pos_table_save_service_test.php tests/sync/pos_mutation_service_skeleton_test.php"
+          status: pass
+      summary: "Implemented PosOrderMutationService::saveTableOrder using the current ajax/save_order.php behavior behind the service layer, including active-order truth, document counter allocation, recalculated totals, existing payment preservation, and table occupancy updates; added throwaway DB coverage."
+  - id: T021
+    type: judge
+    assignee: Judge
+    status: done
+    objective: "Approve or block routing ajax/save_order.php through the implemented saveTableOrder service."
+    inputs:
+      - "T020 receipt"
+      - "ajax/save_order.php current behavior"
+      - "tests/sync/pos_table_save_service_test.php"
+      - "docs/production/api_contracts_pos.md"
+    constraints:
+      - "Read-only."
+      - "Do not implement."
+      - "Route only if response shape and sync outbox behavior can be preserved."
+    expected_output:
+      - "Decision for next Worker task"
+      - "Allowed files"
+      - "Verify commands"
+      - "Safety constraints"
+    receipt:
+      result: approved_with_constraints
+      decision: "Approve routing ajax/save_order.php through PosOrderMutationService::saveTableOrder now that service behavior has throwaway DB coverage."
+      next_allowed_task: T022
+      evidence:
+        - "T020 implemented saveTableOrder and covered create, occupied-table rejection, update, paid preservation, and occupancy."
+        - "ajax/save_order.php response shape is small and can be preserved after service delegation."
+        - "SyncOutboxEventService calls can remain in the endpoint transaction by passing in_transaction context to the service."
+      blocked_tasks:
+        - "Split payment routing."
+        - "Takeaway do/doadd_invoice.php routing."
+        - "Moova endpoint convergence."
+        - "Endpoint idempotency enforcement."
+      safety_constraints:
+        - "Preserve JSON response keys and Arabic message."
+        - "Preserve SyncOutboxEventService order/table snapshots."
+        - "Do not alter service behavior or TableOrderService in this endpoint routing slice."
+        - "No schema changes."
+  - id: T022
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "Route ajax/save_order.php through PosOrderMutationService::saveTableOrder while preserving response shape and sync outbox behavior."
+    allowed_files:
+      - "ajax/save_order.php"
+      - "tests/sync/save_order_endpoint_routing_test.php"
+      - "docs/goals/posmain-phase-2-pos-state/state.yaml"
+      - "docs/goals/posmain-phase-2-pos-state/notes/"
+    verify:
+      - "php -l ajax/save_order.php && php -l tests/sync/save_order_endpoint_routing_test.php"
+      - "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/save_order_endpoint_routing_test.php"
+      - "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_table_save_service_test.php"
+      - "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_mutation_service_skeleton_test.php"
+      - "git diff --check -- ajax/save_order.php tests/sync/save_order_endpoint_routing_test.php"
+      - "node /Users/ab.mansour1agmail.com/.codex/skills/goal-maker/scripts/check-goal-state.mjs docs/goals/posmain-phase-2-pos-state/state.yaml"
+    stop_if:
+      - "Need service behavior changes."
+      - "Need schema changes."
+      - "Would alter JSON response keys or Arabic messages."
+      - "Would remove or weaken sync outbox calls."
+    receipt:
+      result: done
+      changed_files:
+        - "ajax/save_order.php"
+        - "tests/sync/save_order_endpoint_routing_test.php"
+        - "docs/goals/posmain-phase-2-pos-state/state.yaml"
+      commands:
+        - cmd: "php -l ajax/save_order.php && php -l tests/sync/save_order_endpoint_routing_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/save_order_endpoint_routing_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_table_save_service_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_mutation_service_skeleton_test.php"
+          status: pass
+        - cmd: "git diff --check -- ajax/save_order.php tests/sync/save_order_endpoint_routing_test.php"
+          status: pass
+      summary: "Routed ajax/save_order.php through PosOrderMutationService::saveTableOrder, preserving endpoint validation, JSON response keys/message, and SyncOutboxEventService snapshots inside the same transaction."
+  - id: T023
+    type: judge
+    assignee: Judge
+    status: done
+    objective: "Choose the safe split-payment implementation path after table-save endpoint routing."
+    inputs:
+      - "T022 receipt"
+      - "ajax/process_split_payment.php current implementation"
+      - "Phase 2 section 2.10"
+      - "docs/production/api_contracts_pos.md"
+    constraints:
+      - "Read-only."
+      - "Do not implement."
+      - "Prefer service behavior and tests before endpoint routing if split logic is still direct."
+    expected_output:
+      - "Decision for next Worker task"
+      - "Allowed files"
+      - "Verify commands"
+      - "Safety constraints"
+    receipt:
+      result: approved_with_constraints
+      decision: "Approve service-first split payment implementation before routing ajax/process_split_payment.php because the endpoint still owns direct line movement and child paid-order creation."
+      next_allowed_task: T024
+      evidence:
+        - "ajax/process_split_payment.php directly locks fat_details, creates a paid child ot_head row, moves/splits detail quantities, updates original order status, and inserts order_payments."
+        - "PosOrderMutationService::splitTablePayment still fails closed."
+        - "Phase 2 section 2.10 requires quantity preservation and table truth around split payment."
+      blocked_tasks:
+        - "ajax/process_split_payment.php routing until service behavior is covered."
+        - "do/doadd_invoice.php routing."
+        - "Moova endpoint convergence."
+        - "Endpoint idempotency enforcement."
+      safety_constraints:
+        - "Mirror current process_split_payment.php behavior."
+        - "No endpoint edits in this slice."
+        - "No schema changes."
+        - "Use throwaway DB coverage for full-line and partial-line split behavior."
+  - id: T024
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "Implement PosOrderMutationService::splitTablePayment without routing ajax/process_split_payment.php yet."
+    allowed_files:
+      - "classes/Pos/Service/PosOrderMutationService.php"
+      - "tests/sync/pos_split_payment_service_test.php"
+      - "tests/sync/pos_mutation_service_skeleton_test.php"
+      - "docs/goals/posmain-phase-2-pos-state/state.yaml"
+      - "docs/goals/posmain-phase-2-pos-state/notes/"
+    verify:
+      - "php -l classes/Pos/Service/PosOrderMutationService.php && php -l tests/sync/pos_split_payment_service_test.php && php -l tests/sync/pos_mutation_service_skeleton_test.php"
+      - "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_split_payment_service_test.php"
+      - "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_mutation_service_skeleton_test.php"
+      - "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/table_order_state_payment_contract_test.php"
+      - "git diff --check -- classes/Pos/Service/PosOrderMutationService.php tests/sync/pos_split_payment_service_test.php tests/sync/pos_mutation_service_skeleton_test.php"
+      - "node /Users/ab.mansour1agmail.com/.codex/skills/goal-maker/scripts/check-goal-state.mjs docs/goals/posmain-phase-2-pos-state/state.yaml"
+    stop_if:
+      - "Need ajax/process_split_payment.php edits."
+      - "Need schema changes."
+      - "Cannot preserve split quantity/value behavior."
+    receipt:
+      result: done
+      changed_files:
+        - "classes/Pos/Service/PosOrderMutationService.php"
+        - "tests/sync/pos_split_payment_service_test.php"
+        - "tests/sync/pos_mutation_service_skeleton_test.php"
+        - "docs/goals/posmain-phase-2-pos-state/state.yaml"
+      commands:
+        - cmd: "php -l classes/Pos/Service/PosOrderMutationService.php && php -l tests/sync/pos_split_payment_service_test.php && php -l tests/sync/pos_mutation_service_skeleton_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_split_payment_service_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_mutation_service_skeleton_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/table_order_state_payment_contract_test.php"
+          status: pass
+        - cmd: "git diff --check -- classes/Pos/Service/PosOrderMutationService.php tests/sync/pos_split_payment_service_test.php tests/sync/pos_mutation_service_skeleton_test.php"
+          status: pass
+      summary: "Implemented PosOrderMutationService::splitTablePayment with current split-payment behavior: selected detail locking, full-line movement, partial-line copy/reduction, paid child order creation, original order recalculation, payment row insert, and table occupancy updates."
+  - id: T025
+    type: judge
+    assignee: Judge
+    status: done
+    objective: "Approve or block routing ajax/process_split_payment.php through splitTablePayment."
+    inputs:
+      - "T024 receipt"
+      - "ajax/process_split_payment.php current response/outbox behavior"
+      - "tests/sync/pos_split_payment_service_test.php"
+    constraints:
+      - "Read-only."
+      - "Do not implement."
+      - "Preserve response keys and SyncOutboxEventService calls."
+    expected_output:
+      - "Decision for next Worker task"
+      - "Allowed files"
+      - "Verify commands"
+      - "Safety constraints"
+    receipt:
+      result: approved_with_constraints
+      decision: "Approve routing ajax/process_split_payment.php through PosOrderMutationService::splitTablePayment now that split service behavior has focused throwaway DB coverage."
+      next_allowed_task: T026
+      evidence:
+        - "T024 covers full-line and partial-line split behavior plus child payment and table occupancy."
+        - "Endpoint response keys can be preserved from service data."
+        - "Endpoint sync outbox calls can remain in the same transaction via in_transaction context."
+      blocked_tasks:
+        - "Takeaway do/doadd_invoice.php routing."
+        - "Moova endpoint convergence."
+        - "Endpoint idempotency enforcement."
+      safety_constraints:
+        - "Preserve JSON response keys and Arabic message."
+        - "Preserve SyncOutboxEventService order/table snapshots."
+        - "Do not alter split service behavior in this endpoint routing slice."
+        - "No schema changes."
+  - id: T026
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "Route ajax/process_split_payment.php through PosOrderMutationService::splitTablePayment while preserving response and outbox behavior."
+    allowed_files:
+      - "ajax/process_split_payment.php"
+      - "tests/sync/process_split_payment_endpoint_routing_test.php"
+      - "docs/goals/posmain-phase-2-pos-state/state.yaml"
+      - "docs/goals/posmain-phase-2-pos-state/notes/"
+    verify:
+      - "php -l ajax/process_split_payment.php && php -l tests/sync/process_split_payment_endpoint_routing_test.php"
+      - "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/process_split_payment_endpoint_routing_test.php"
+      - "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_split_payment_service_test.php"
+      - "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_mutation_service_skeleton_test.php"
+      - "git diff --check -- ajax/process_split_payment.php tests/sync/process_split_payment_endpoint_routing_test.php"
+      - "node /Users/ab.mansour1agmail.com/.codex/skills/goal-maker/scripts/check-goal-state.mjs docs/goals/posmain-phase-2-pos-state/state.yaml"
+    stop_if:
+      - "Need split service behavior changes."
+      - "Need schema changes."
+      - "Would alter JSON response keys or Arabic messages."
+      - "Would remove or weaken sync outbox calls."
+    receipt:
+      result: done
+      changed_files:
+        - "ajax/process_split_payment.php"
+        - "tests/sync/process_split_payment_endpoint_routing_test.php"
+        - "docs/goals/posmain-phase-2-pos-state/state.yaml"
+      commands:
+        - cmd: "php -l ajax/process_split_payment.php && php -l tests/sync/process_split_payment_endpoint_routing_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/process_split_payment_endpoint_routing_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_split_payment_service_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_mutation_service_skeleton_test.php"
+          status: pass
+        - cmd: "git diff --check -- ajax/process_split_payment.php tests/sync/process_split_payment_endpoint_routing_test.php"
+          status: pass
+      summary: "Routed ajax/process_split_payment.php through PosOrderMutationService::splitTablePayment, preserving JSON response keys/message and SyncOutboxEventService order/table snapshots inside the endpoint transaction."
+  - id: T027
+    type: judge
+    assignee: Judge
+    status: done
+    objective: "Audit remaining Phase 2 work after table save/payment/split/cancel routing."
+    inputs:
+      - "All receipts through T026"
+      - "Phase 2 checklist"
+      - "Current direct endpoint/service code"
+    constraints:
+      - "Read-only."
+      - "Do not implement."
+      - "Identify whether next safe slice is takeaway, Moova convergence, or idempotency enforcement."
+    expected_output:
+      - "complete | not_complete"
+      - "Remaining checklist"
+      - "Next Worker task if safe"
+    receipt:
+      result: not_complete_high_risk_remaining
+      decision: "Phase 2 is not complete. Table save/payment/split/cancel routing is implemented, but the remaining active POS takeaway, Moova convergence, idempotency enforcement, UUID population, and order_events wiring are high-risk enough to require owner confirmation before deeper edits."
+      completed_evidence:
+        - "ajax/save_order.php routes through PosOrderMutationService::saveTableOrder."
+        - "ajax/process_table_payment.php routes through PosOrderMutationService and AccountingPostingService."
+        - "ajax/process_split_payment.php routes through PosOrderMutationService::splitTablePayment."
+        - "ajax/delete_order.php, clear_table.php, clear_table_normal.php, and update_table_status.php route cancel operations through PosOrderMutationService."
+        - "Schema/service foundations exist for pos_request_keys, order_events, UUID columns/backfill, document counters, accounting posting, inventory normalization, table state, and payments."
+      missing_evidence:
+        - "do/doadd_invoice.php POS pro_tybe=9 still owns direct takeaway/accounting/inventory mutation logic."
+        - "ajax/moova_confirm_order.php and ajax/moova_change_order.php still call Moova apply services directly rather than a PosOrderMutationService Moova contract."
+        - "Active endpoints do not yet enforce pos_request_keys idempotency."
+        - "New mutations do not yet populate UUID columns or record order_events."
+        - "Full accounting/stock preservation fixture coverage for do/doadd_invoice.php is still missing."
+      risk:
+        - "do/doadd_invoice.php mixes POS sale, non-POS invoice types, accounting journals, payments, stock cost/profit, edit mode, sync outbox, redirects, and cashier-visible Arabic session messages."
+        - "Moova convergence risks direct widget and queued worker parity."
+        - "Forcing idempotency without front-end hidden keys could break existing cashier submits."
+      recommendation: "Pause for owner confirmation before routing do/doadd_invoice.php or changing idempotency from optional foundation to enforced active-write behavior."
+  - id: T028
+    type: pm
+    assignee: PM
+    status: done
+    objective: "Wait for owner confirmation on the high-risk remaining Phase 2 scope: do/doadd_invoice.php routing, Moova convergence, mandatory idempotency, UUID population, and order_events wiring."
+    inputs:
+      - "T027 audit receipt"
+      - "AGENTS.md major-change safety rule"
+      - "Phase 2 exit criteria"
+    constraints:
+      - "Do not edit high-risk remaining files until user confirms the next risk tranche."
+      - "If continuing, create a new Judge-approved Worker task with narrow allowed files and fixture coverage first."
+    expected_output:
+      - "Owner confirmation or revised scope."
+    receipt:
+      result: confirmed
+      summary: "Owner explicitly approved continuing the high-risk remaining Phase 2 scope and requested rigid script tests during work plus final script and GUI clicking tests."
+  - id: T029
+    type: judge
+    assignee: Judge
+    status: done
+    objective: "Select the first high-risk continuation slice after owner confirmation."
+    inputs:
+      - "Owner confirmation to continue high-risk tranche."
+      - "T027 audit receipt."
+      - "do/doadd_invoice.php current POS pro_tybe=9 behavior."
+      - "AGENTS.md major-change safety rule."
+    constraints:
+      - "Read-only."
+      - "Do not route do/doadd_invoice.php before fixture coverage exists."
+      - "Require script tests before behavior edits and final GUI clicking tests before completion."
+    expected_output:
+      - "Decision for next Worker task"
+      - "Allowed files"
+      - "Verify commands"
+      - "Safety constraints"
+    receipt:
+      result: approved_with_constraints
+      decision: "Start with a tests-first do/doadd_invoice.php POS fixture slice. It must execute the legacy form handler against a throwaway database and assert header/detail/journal/payment/process/sync invariants before any routing."
+      next_allowed_task: T030
+      evidence:
+        - "do/doadd_invoice.php owns POS pro_tybe=9 sale, payment, journal, detail, profit, process, redirect, and sync-outbox behavior."
+        - "Routing this file before executable fixture coverage would risk cashier-visible regressions."
+      safety_constraints:
+        - "No implementation behavior edits in the first slice."
+        - "Use a throwaway database and drop it."
+        - "Exercise the actual do/doadd_invoice.php handler through a subprocess because it exits after redirect."
+        - "Verify both script output/exit behavior and database invariants."
+  - id: T030
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "Add rigid script fixture coverage for the current do/doadd_invoice.php POS takeaway sale behavior before routing."
+    allowed_files:
+      - "tests/sync/pos_takeaway_invoice_handler_test.php"
+      - "docs/goals/posmain-phase-2-pos-state/state.yaml"
+      - "docs/goals/posmain-phase-2-pos-state/notes/"
+    verify:
+      - "php -l tests/sync/pos_takeaway_invoice_handler_test.php"
+      - "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_takeaway_invoice_handler_test.php"
+      - "git diff --check -- tests/sync/pos_takeaway_invoice_handler_test.php"
+      - "node /Users/ab.mansour1agmail.com/.codex/skills/goal-maker/scripts/check-goal-state.mjs docs/goals/posmain-phase-2-pos-state/state.yaml"
+    stop_if:
+      - "Need to edit do/doadd_invoice.php or service behavior."
+      - "Cannot execute the handler in isolation."
+      - "Fixture cannot assert journal/detail/payment/process/sync invariants."
+    receipt:
+      result: done
+      changed_files:
+        - "tests/sync/pos_takeaway_invoice_handler_test.php"
+        - "docs/goals/posmain-phase-2-pos-state/state.yaml"
+      commands:
+        - cmd: "php -l tests/sync/pos_takeaway_invoice_handler_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_takeaway_invoice_handler_test.php"
+          status: pass
+        - cmd: "git diff --check -- tests/sync/pos_takeaway_invoice_handler_test.php"
+          status: pass
+      summary: "Added a rigid throwaway-DB fixture that executes do/doadd_invoice.php through a subprocess and asserts the paid takeaway POS header, detail lines, journal entries, cash receipt, process row, document counters, and sync_outbox payload."
+  - id: T031
+    type: judge
+    assignee: Judge
+    status: done
+    objective: "Review the do/doadd_invoice.php takeaway fixture and decide whether routing work may begin."
+    inputs:
+      - "T030 receipt"
+      - "tests/sync/pos_takeaway_invoice_handler_test.php"
+      - "do/doadd_invoice.php current POS pro_tybe=9 behavior"
+      - "AGENTS.md major-change safety rule"
+    constraints:
+      - "Read-only."
+      - "Do not implement routing in this Judge task."
+      - "Require preservation of paid takeaway journal/payment/detail/process/sync behavior."
+      - "Keep final GUI clicking tests as a Phase 2 completion gate."
+    expected_output:
+      - "Decision for next Worker task"
+      - "Allowed files"
+      - "Verify commands"
+      - "Safety constraints"
+    receipt:
+      result: approved_with_constraints
+      decision: "Approve a service-only takeaway implementation slice before editing do/doadd_invoice.php. The T030 fixture now protects legacy handler behavior, but routing the legacy script should wait until PosOrderMutationService has isolated paid takeaway behavior with its own throwaway-DB service test."
+      next_allowed_task: T032
+      evidence:
+        - "T030 executes the current legacy handler in a subprocess and asserts header/detail/journal/payment/process/counter/sync invariants."
+        - "PosOrderMutationService::createTakeawayOrder currently fails closed, so a service implementation can be tested without changing cashier routing yet."
+        - "AccountingPostingService and InventoryMovementService already provide reusable counter/payment and line-normalization foundations, but paid takeaway must preserve legacy journal/payment shapes exactly."
+      blocked_tasks:
+        - "Editing do/doadd_invoice.php routing before service parity tests pass."
+        - "Mandatory idempotency enforcement before front-end request keys exist."
+        - "Moova convergence and GUI completion tests."
+      safety_constraints:
+        - "No edits to do/doadd_invoice.php in this slice."
+        - "Preserve paid takeaway fields asserted by T030: order statuses, line quantities/profit, sales journal, cash receipt, process row, counters, and sync payload shape."
+        - "Update the skeleton test because createTakeawayOrder should no longer be NOT_IMPLEMENTED after this slice."
+        - "Run the T030 legacy handler fixture after service work to prove adjacent behavior remains unchanged."
+  - id: T032
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "Implement PosOrderMutationService::createTakeawayOrder for paid cash takeaway parity without routing do/doadd_invoice.php yet."
+    allowed_files:
+      - "classes/Pos/Service/PosOrderMutationService.php"
+      - "tests/sync/pos_takeaway_order_service_test.php"
+      - "tests/sync/pos_mutation_service_skeleton_test.php"
+      - "docs/goals/posmain-phase-2-pos-state/state.yaml"
+      - "docs/goals/posmain-phase-2-pos-state/notes/"
+    verify:
+      - "php -l classes/Pos/Service/PosOrderMutationService.php && php -l tests/sync/pos_takeaway_order_service_test.php && php -l tests/sync/pos_mutation_service_skeleton_test.php"
+      - "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_takeaway_order_service_test.php"
+      - "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_mutation_service_skeleton_test.php"
+      - "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_takeaway_invoice_handler_test.php"
+      - "git diff --check -- classes/Pos/Service/PosOrderMutationService.php tests/sync/pos_takeaway_order_service_test.php tests/sync/pos_mutation_service_skeleton_test.php"
+      - "node /Users/ab.mansour1agmail.com/.codex/skills/goal-maker/scripts/check-goal-state.mjs docs/goals/posmain-phase-2-pos-state/state.yaml"
+    stop_if:
+      - "Need to edit do/doadd_invoice.php."
+      - "Need schema changes."
+      - "Cannot preserve the T030 paid takeaway database invariants."
+      - "Would change table, split, cancel, or payment behavior outside createTakeawayOrder."
+    receipt:
+      result: done
+      changed_files:
+        - "classes/Pos/Service/PosOrderMutationService.php"
+        - "tests/sync/pos_takeaway_order_service_test.php"
+        - "tests/sync/pos_mutation_service_skeleton_test.php"
+        - "docs/goals/posmain-phase-2-pos-state/state.yaml"
+      commands:
+        - cmd: "php -l classes/Pos/Service/PosOrderMutationService.php && php -l tests/sync/pos_takeaway_order_service_test.php && php -l tests/sync/pos_mutation_service_skeleton_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_takeaway_order_service_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_mutation_service_skeleton_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_takeaway_invoice_handler_test.php"
+          status: pass
+        - cmd: "git diff --check -- classes/Pos/Service/PosOrderMutationService.php tests/sync/pos_takeaway_order_service_test.php tests/sync/pos_mutation_service_skeleton_test.php"
+          status: pass
+      summary: "Implemented PosOrderMutationService::createTakeawayOrder for paid cash takeaway parity without routing do/doadd_invoice.php yet, with direct fixture coverage for order header/status, detail/profit, sales journal, cash receipt, process audit row, counters, and sync outbox payload. Updated the skeleton smoke to stop expecting createTakeawayOrder to fail closed."
+  - id: T033
+    type: judge
+    assignee: Judge
+    status: done
+    objective: "Review T032 service parity and decide whether do/doadd_invoice.php may route POS paid takeaway through PosOrderMutationService."
+    inputs:
+      - "T030 legacy handler fixture receipt"
+      - "T032 service implementation receipt"
+      - "classes/Pos/Service/PosOrderMutationService.php"
+      - "do/doadd_invoice.php POS pro_tybe=9 flow"
+    constraints:
+      - "Read-only."
+      - "Do not implement routing in this Judge task."
+      - "Only approve a narrow route if it preserves non-POS invoice behavior and table/delivery/edit branches."
+      - "Require legacy handler fixture and service fixture to run after routing."
+    expected_output:
+      - "Decision for next Worker task"
+      - "Allowed files"
+      - "Verify commands"
+      - "Stop conditions"
+    receipt:
+      result: approved_with_constraints
+      decision: "Approve routing only the fresh paid-cash POS takeaway branch in do/doadd_invoice.php through PosOrderMutationService::createTakeawayOrder. Keep table, delivery, save-only, edit/update, bank/split-payment, and non-POS invoice flows on the legacy path until separate fixtures exist."
+      next_allowed_task: T034
+      evidence:
+        - "T030 protects the current handler-level paid takeaway cash sale invariants."
+        - "T032 provides matching service-level paid takeaway cash sale invariants."
+        - "do/doadd_invoice.php already computes pro_tybe, order_type_db, submit, selected_order_id, paid_cash, paid_bank, and payment_fund_id before the transaction block."
+      safety_constraints:
+        - "Route only pro_tybe=9, order_type_db=takeaway, submit=cash, selected_order_id=0, edit_id absent/zero, paid_cash>0, paid_bank<=0."
+        - "Preserve Arabic success message and receipt redirect to ../print/receipt.php?id={order_id}."
+        - "Catch Throwable and preserve the current visible error prefix for handler failures."
+        - "Run both service and handler fixtures after routing."
+  - id: T034
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "Route the fresh paid-cash POS takeaway branch in do/doadd_invoice.php through PosOrderMutationService while preserving tested behavior."
+    allowed_files:
+      - "do/doadd_invoice.php"
+      - "tests/sync/pos_takeaway_invoice_endpoint_routing_test.php"
+      - "docs/goals/posmain-phase-2-pos-state/state.yaml"
+      - "docs/goals/posmain-phase-2-pos-state/notes/"
+    verify:
+      - "php -l do/doadd_invoice.php && php -l tests/sync/pos_takeaway_invoice_endpoint_routing_test.php"
+      - "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_takeaway_invoice_endpoint_routing_test.php"
+      - "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_takeaway_invoice_handler_test.php"
+      - "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_takeaway_order_service_test.php"
+      - "git diff --check -- do/doadd_invoice.php tests/sync/pos_takeaway_invoice_endpoint_routing_test.php"
+      - "node /Users/ab.mansour1agmail.com/.codex/skills/goal-maker/scripts/check-goal-state.mjs docs/goals/posmain-phase-2-pos-state/state.yaml"
+    stop_if:
+      - "Need to route table, delivery, save-only, edit/update, bank/split-payment, or non-POS invoice flows."
+      - "Handler fixture no longer matches paid takeaway invariants."
+      - "Need schema changes or frontend changes."
+      - "Would alter receipt redirect or success/error message semantics."
+    receipt:
+      result: done
+      changed_files:
+        - "do/doadd_invoice.php"
+        - "tests/sync/pos_takeaway_invoice_endpoint_routing_test.php"
+        - "docs/goals/posmain-phase-2-pos-state/state.yaml"
+      commands:
+        - cmd: "php -l do/doadd_invoice.php && php -l tests/sync/pos_takeaway_invoice_endpoint_routing_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_takeaway_invoice_endpoint_routing_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_takeaway_invoice_handler_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_takeaway_order_service_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_mutation_service_skeleton_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_table_save_service_test.php && POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_split_payment_service_test.php && POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_accounting_inventory_service_test.php"
+          status: pass
+        - cmd: "git diff --check -- do/doadd_invoice.php tests/sync/pos_takeaway_invoice_endpoint_routing_test.php"
+          status: pass
+      summary: "Routed only the fresh paid-cash POS takeaway branch in do/doadd_invoice.php through PosOrderMutationService::createTakeawayOrder, preserving receipt redirect and Arabic success/error message semantics. Added a static routing guard and reran handler, service, and adjacent POS service smokes."
+  - id: T035
+    type: judge
+    assignee: Judge
+    status: done
+    objective: "Audit remaining Phase 2 scope after paid takeaway routing and select the next safest slice."
+    inputs:
+      - "T034 receipt"
+      - "T027 remaining checklist"
+      - "Phase 2 sections on idempotency, order_events, UUIDs, and Moova convergence"
+      - "Current tests and docs"
+    constraints:
+      - "Read-only."
+      - "Do not implement in this Judge task."
+      - "Prefer non-invasive instrumentation before mandatory behavior changes."
+      - "Keep final script plus GUI clicking tests as completion gate."
+    expected_output:
+      - "complete | not_complete"
+      - "Next Worker task if safe"
+      - "Allowed files"
+      - "Verification commands"
+    receipt:
+      result: not_complete_approved_next_slice
+      decision: "Phase 2 is still not complete. Approve the next low-risk slice: wire best-effort order_events recording through PosOrderMutationService for already-routed POS mutations. This adds auditability without changing cashier-visible responses or enforcing idempotency yet."
+      next_allowed_task: T036
+      remaining:
+        - "Mandatory pos_request_keys idempotency is still foundation-only and should wait for request-key frontend/endpoint coverage."
+        - "UUID population for new mutations is still incomplete."
+        - "Moova confirm/change convergence remains high-risk."
+        - "Final script suite and GUI clicking tests remain required before completion."
+      safety_constraints:
+        - "Order event recording must not break mutations when order_events is missing."
+        - "Do not change endpoint response shapes or outbox event calls."
+        - "Record events inside the caller transaction when the table exists."
+        - "Keep event payloads summary-level to avoid large snapshots."
+  - id: T036
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "Wire best-effort order_events recording through PosOrderMutationService for routed POS mutations."
+    allowed_files:
+      - "classes/Pos/Service/OrderEventService.php"
+      - "classes/Pos/Service/PosOrderMutationService.php"
+      - "tests/sync/pos_order_mutation_event_recording_test.php"
+      - "tests/sync/pos_takeaway_order_service_test.php"
+      - "docs/goals/posmain-phase-2-pos-state/state.yaml"
+      - "docs/goals/posmain-phase-2-pos-state/notes/"
+    verify:
+      - "php -l classes/Pos/Service/OrderEventService.php && php -l classes/Pos/Service/PosOrderMutationService.php && php -l tests/sync/pos_order_mutation_event_recording_test.php && php -l tests/sync/pos_takeaway_order_service_test.php"
+      - "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_order_mutation_event_recording_test.php"
+      - "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_takeaway_order_service_test.php"
+      - "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_takeaway_invoice_handler_test.php"
+      - "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_table_save_service_test.php && POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_mutation_service_skeleton_test.php"
+      - "git diff --check -- classes/Pos/Service/OrderEventService.php classes/Pos/Service/PosOrderMutationService.php tests/sync/pos_order_mutation_event_recording_test.php tests/sync/pos_takeaway_order_service_test.php"
+      - "node /Users/ab.mansour1agmail.com/.codex/skills/goal-maker/scripts/check-goal-state.mjs docs/goals/posmain-phase-2-pos-state/state.yaml"
+    stop_if:
+      - "Need endpoint response changes."
+      - "Need mandatory idempotency behavior."
+      - "Event recording would block mutations when order_events is missing."
+      - "Need Moova endpoint changes."
+    receipt:
+      result: done
+      changed_files:
+        - "classes/Pos/Service/OrderEventService.php"
+        - "classes/Pos/Service/PosOrderMutationService.php"
+        - "tests/sync/pos_order_mutation_event_recording_test.php"
+        - "tests/sync/pos_takeaway_order_service_test.php"
+        - "docs/goals/posmain-phase-2-pos-state/state.yaml"
+      commands:
+        - cmd: "php -l classes/Pos/Service/OrderEventService.php && php -l classes/Pos/Service/PosOrderMutationService.php && php -l tests/sync/pos_order_mutation_event_recording_test.php && php -l tests/sync/pos_takeaway_order_service_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_order_mutation_event_recording_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_takeaway_order_service_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_takeaway_invoice_handler_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_table_save_service_test.php && POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_mutation_service_skeleton_test.php"
+          status: pass
+        - cmd: "git diff --check -- classes/Pos/Service/OrderEventService.php classes/Pos/Service/PosOrderMutationService.php tests/sync/pos_order_mutation_event_recording_test.php tests/sync/pos_takeaway_order_service_test.php"
+          status: pass
+      summary: "Added best-effort order_events recording for routed POS mutations through PosOrderMutationService. Event writes occur when order_events exists, include actor/source/metadata, and gracefully no-op when the audit table is missing so cashier mutations are not blocked."
+  - id: T037
+    type: judge
+    assignee: Judge
+    status: done
+    objective: "Assess whether UUID population, idempotency enforcement, or Moova convergence is the next safe Phase 2 slice."
+    inputs:
+      - "T036 receipt"
+      - "T027 remaining checklist"
+      - "classes/Sync/SchemaManager.php UUID targets"
+      - "tools/backfill_uuid_columns.php"
+      - "IdempotencyService foundation"
+      - "Moova apply services and endpoints"
+    constraints:
+      - "Read-only."
+      - "Do not implement in this Judge task."
+      - "Prefer additive compatibility over behavior enforcement."
+      - "Reserve GUI clicking tests for the completion gate after script tests pass."
+    expected_output:
+      - "Decision for next Worker task"
+      - "Allowed files"
+      - "Verification commands"
+      - "Deferred risks"
+    receipt:
+      result: approved_with_constraints
+      decision: "Approve UUID population as the next additive slice. New routed POS mutations should populate uuid columns when present, while preserving compatibility when migrations have not yet added those columns."
+      next_allowed_task: T038
+      deferred:
+        - "Mandatory idempotency enforcement remains deferred until request keys can be introduced without breaking cashier submits."
+        - "Moova convergence remains deferred because it affects external inbound/apply semantics."
+        - "Final GUI clicking tests remain a completion gate."
+      safety_constraints:
+        - "UUID assignment must be opportunistic: if the uuid column is missing, mutation behavior must remain unchanged."
+        - "Use v4 UUIDs consistent with the existing backfill tool."
+        - "Do not alter sync snapshot deterministic UUID behavior."
+        - "Do not update unrelated legacy rows beyond the row just created or updated by the current mutation."
+  - id: T038
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "Populate uuid columns opportunistically for new routed POS mutation rows."
+    allowed_files:
+      - "classes/Pos/Service/PosOrderMutationService.php"
+      - "classes/TableOrderService.php"
+      - "tests/sync/pos_uuid_population_test.php"
+      - "tests/sync/pos_takeaway_order_service_test.php"
+      - "docs/goals/posmain-phase-2-pos-state/state.yaml"
+      - "docs/goals/posmain-phase-2-pos-state/notes/"
+    verify:
+      - "php -l classes/Pos/Service/PosOrderMutationService.php && php -l classes/TableOrderService.php && php -l tests/sync/pos_uuid_population_test.php && php -l tests/sync/pos_takeaway_order_service_test.php"
+      - "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_uuid_population_test.php"
+      - "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_takeaway_order_service_test.php"
+      - "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/uuid_backfill_smoke_test.php"
+      - "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_takeaway_invoice_handler_test.php"
+      - "git diff --check -- classes/Pos/Service/PosOrderMutationService.php classes/TableOrderService.php tests/sync/pos_uuid_population_test.php tests/sync/pos_takeaway_order_service_test.php"
+      - "node /Users/ab.mansour1agmail.com/.codex/skills/goal-maker/scripts/check-goal-state.mjs docs/goals/posmain-phase-2-pos-state/state.yaml"
+    stop_if:
+      - "Need destructive schema changes."
+      - "UUID logic changes cloud deterministic aggregate UUIDs."
+      - "Mutation fails when uuid columns are absent."
+      - "Need Moova endpoint changes."
+    receipt:
+      result: done
+      changed_files:
+        - "classes/Pos/Service/PosOrderMutationService.php"
+        - "classes/TableOrderService.php"
+        - "tests/sync/pos_uuid_population_test.php"
+        - "tests/sync/pos_takeaway_order_service_test.php"
+        - "docs/goals/posmain-phase-2-pos-state/state.yaml"
+      commands:
+        - cmd: "php -l classes/Pos/Service/PosOrderMutationService.php && php -l classes/TableOrderService.php && php -l tests/sync/pos_uuid_population_test.php && php -l tests/sync/pos_takeaway_order_service_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_uuid_population_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_takeaway_order_service_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/uuid_backfill_smoke_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_takeaway_invoice_handler_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_table_save_service_test.php && POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_split_payment_service_test.php && POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_mutation_service_skeleton_test.php"
+          status: pass
+        - cmd: "git diff --check -- classes/Pos/Service/PosOrderMutationService.php classes/TableOrderService.php tests/sync/pos_uuid_population_test.php tests/sync/pos_takeaway_order_service_test.php"
+          status: pass
+      summary: "Added opportunistic v4 UUID assignment for newly created POS order, detail, and payment rows when uuid columns exist. The helper no-ops when columns are missing, preserving pre-migration compatibility and leaving sync snapshot deterministic UUIDs unchanged."
+  - id: T039
+    type: judge
+    assignee: Judge
+    status: done
+    objective: "Decide whether remaining Phase 2 work should implement idempotency/Moova convergence or move to final verification with documented deferrals."
+    inputs:
+      - "T038 receipt"
+      - "T027 remaining checklist"
+      - "Phase 2 plan"
+      - "Current risk from mandatory idempotency and Moova convergence"
+    constraints:
+      - "Read-only."
+      - "Do not implement in this Judge task."
+      - "Do not approve high-risk behavior changes without fixture coverage and clear UI/request-key path."
+    expected_output:
+      - "Decision"
+      - "Next Worker task or completion audit task"
+      - "Deferred risks"
+      - "Verification requirements"
+    receipt:
+      result: not_complete_ready_for_verification_audit
+      decision: "Do not start mandatory idempotency or Moova convergence in this tranche. Mandatory idempotency requires a cashier request-key path and endpoint conflict UX; Moova convergence affects external direct/queued semantics and needs a dedicated acceptance fixture. Move to final script and GUI verification for the completed Phase 2 slices, with explicit deferrals."
+      completed_now:
+        - "Schema/service foundations for idempotency, events, UUIDs, counters, outbox, accounting/inventory/table/payment services."
+        - "Active table save/payment/split/cancel routing through PosOrderMutationService."
+        - "Paid-cash takeaway routing through PosOrderMutationService with handler and service fixtures."
+        - "Best-effort order_events recording."
+        - "Opportunistic UUID population for new routed POS rows."
+      deferred:
+        - "Mandatory idempotency enforcement on every active endpoint."
+        - "Moova confirm/change convergence through PosOrderMutationService."
+        - "Full table/delivery/edit/bank takeaway routing beyond the guarded paid-cash takeaway path."
+      next_allowed_task: T040
+  - id: T040
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "Run final script verification and GUI clicking tests for completed Phase 2 slices; record remaining deferrals."
+    allowed_files:
+      - "docs/goals/posmain-phase-2-pos-state/state.yaml"
+      - "docs/goals/posmain-phase-2-pos-state/notes/"
+    verify:
+      - "Full focused PHP lint and script smoke suite for completed Phase 2 files."
+      - "Browser GUI clicking test against local POS surface if the app starts cleanly."
+      - "Board checker."
+    stop_if:
+      - "GUI cannot authenticate or app cannot start cleanly."
+      - "Script test regression appears."
+      - "Need implementation edits."
+    receipt:
+      result: done_with_deferrals
+      changed_files:
+        - "docs/goals/posmain-phase-2-pos-state/state.yaml"
+      commands:
+        - cmd: "Focused PHP lint loop for Phase 2 service, endpoint, and test files."
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_takeaway_invoice_endpoint_routing_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_takeaway_invoice_handler_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_takeaway_order_service_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_order_mutation_event_recording_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_uuid_population_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/uuid_backfill_smoke_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_table_save_service_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_split_payment_service_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_accounting_inventory_service_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_mutation_service_skeleton_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/table_order_state_payment_contract_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/table_order_counter_smoke_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/save_order_endpoint_routing_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/process_table_payment_endpoint_routing_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/process_split_payment_endpoint_routing_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/table_cancel_endpoint_routing_test.php"
+          status: pass
+        - cmd: "git diff --check -- Phase 2 changed files"
+          status: pass
+        - cmd: "Browser GUI clicking test: login, POS lock, add TEMP TEST شاي, pay cash, land on print/receipt.php?id=462"
+          status: pass
+        - cmd: "DB sanity for GUI receipt 462: completed paid takeaway, one detail row, sync_outbox pending order snapshot"
+          status: pass
+      gui_evidence:
+        url: "http://127.0.0.1:8020/print/receipt.php?id=462"
+        visible_receipt_line: "TEMP TEST شاي / qty 1 / total 18"
+        db_order_id: 462
+        db_status: "order_status=completed, invoice_status=completed, payment_status=paid"
+        db_sync_outbox: "aggregate_type=order, aggregate_local_id=462, status=pending"
+        warning: "Local Moova widget bootstrap returned 502 during GUI test; core POS order/payment/receipt flow still passed and Moova convergence remains deferred."
+      deferred:
+        - "Mandatory idempotency enforcement on every active endpoint."
+        - "Moova confirm/change convergence through PosOrderMutationService."
+        - "Full table/delivery/edit/bank takeaway routing beyond guarded paid-cash takeaway."
+      summary: "Final verification passed for the completed Phase 2 slices, including focused script tests and a browser-clicked paid takeaway receipt flow. Remaining high-risk Phase 2 scope is explicitly deferred instead of mixed into this tranche."
+  - id: T041
+    type: pm
+    assignee: PM
+    status: done
+    objective: "Decide the next tranche for deferred mandatory idempotency, Moova convergence, and remaining takeaway routing, or stop with this partial Phase 2 handoff."
+    inputs:
+      - "T039 deferral decision"
+      - "T040 final verification receipt"
+      - "Phase 2 plan remaining idempotency and Moova requirements"
+    constraints:
+      - "Do not implement until the next tranche is scoped."
+      - "Require dedicated acceptance fixtures before mandatory idempotency or Moova convergence changes."
+      - "Preserve completed Phase 2 cashier-visible behavior."
+    expected_output:
+      - "Next tranche decision"
+      - "Worker allowed files and verification commands, or explicit stop/handoff receipt"
+    receipt:
+      result: done
+      decision: "Owner explicitly requested completing Phase 2. Resume with mandatory idempotency first because duplicate submits/retries are a cross-cutting safety gate before broader routing and Moova convergence."
+      next_allowed_task: T042
+      spawned_tasks:
+        - T042
+        - T043
+        - T044
+        - T045
+      safety_constraints:
+        - "No silent duplicate orders/payments/journals from same idempotency key."
+        - "Same key/different payload must return IDEMPOTENCY_CONFLICT."
+        - "Client/UI key generation must be additive and must not change Arabic cashier button wording."
+        - "Keep idempotency completion in the same DB transaction as the business mutation when the endpoint owns the transaction."
+  - id: T042
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "Implement mandatory idempotency for active cashier/table POS writes and add focused duplicate/conflict coverage."
+    allowed_files:
+      - "classes/Pos/Service/PosOrderMutationService.php"
+      - "classes/Pos/Service/IdempotencyService.php"
+      - "ajax/save_order.php"
+      - "ajax/process_table_payment.php"
+      - "ajax/process_split_payment.php"
+      - "ajax/delete_order.php"
+      - "ajax/clear_table.php"
+      - "ajax/clear_table_normal.php"
+      - "ajax/update_table_status.php"
+      - "do/doadd_invoice.php"
+      - "tables.php"
+      - "js/pos_barcode.js"
+      - "js/pos_tables.js"
+      - "includes/pos_content.php"
+      - "tests/sync/pos_takeaway_order_idempotency_test.php"
+      - "tests/sync/pos_takeaway_order_service_test.php"
+      - "tests/sync/pos_table_endpoint_idempotency_test.php"
+      - "tests/sync/pos_request_keys_idempotency_service_test.php"
+      - "docs/goals/posmain-phase-2-pos-state/state.yaml"
+      - "docs/goals/posmain-phase-2-pos-state/notes/"
+    verify:
+      - "php -l classes/Pos/Service/PosOrderMutationService.php && php -l classes/Pos/Service/IdempotencyService.php && php -l ajax/save_order.php && php -l ajax/process_table_payment.php && php -l ajax/process_split_payment.php && php -l ajax/delete_order.php && php -l ajax/clear_table.php && php -l ajax/clear_table_normal.php && php -l ajax/update_table_status.php && php -l do/doadd_invoice.php && php -l tests/sync/pos_takeaway_order_service_test.php && php -l tests/sync/pos_takeaway_order_idempotency_test.php && php -l tests/sync/pos_table_endpoint_idempotency_test.php"
+      - "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_request_keys_idempotency_service_test.php"
+      - "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_takeaway_order_idempotency_test.php"
+      - "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_table_endpoint_idempotency_test.php"
+      - "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_takeaway_invoice_handler_test.php"
+      - "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_table_save_service_test.php && POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_split_payment_service_test.php"
+      - "git diff --check -- classes/Pos/Service/PosOrderMutationService.php classes/Pos/Service/IdempotencyService.php ajax/save_order.php ajax/process_table_payment.php ajax/process_split_payment.php ajax/delete_order.php ajax/clear_table.php ajax/clear_table_normal.php ajax/update_table_status.php do/doadd_invoice.php js/pos_barcode.js js/pos_tables.js includes/pos_content.php tests/sync/pos_takeaway_order_service_test.php tests/sync/pos_takeaway_order_idempotency_test.php tests/sync/pos_table_endpoint_idempotency_test.php tests/sync/pos_request_keys_idempotency_service_test.php"
+      - "node /Users/ab.mansour1agmail.com/.codex/skills/goal-maker/scripts/check-goal-state.mjs docs/goals/posmain-phase-2-pos-state/state.yaml"
+    stop_if:
+      - "Need to change Moova apply behavior in this task."
+      - "Need destructive schema changes."
+      - "Existing GUI submit flow loses the ability to save/pay."
+      - "A duplicate idempotency replay creates a second order/payment/journal."
+    receipt:
+      result: done
+      changed_files:
+        - "classes/Pos/Service/IdempotencyService.php"
+        - "classes/Pos/Service/PosOrderMutationService.php"
+        - "ajax/save_order.php"
+        - "ajax/process_table_payment.php"
+        - "ajax/process_split_payment.php"
+        - "ajax/delete_order.php"
+        - "ajax/clear_table.php"
+        - "ajax/clear_table_normal.php"
+        - "ajax/update_table_status.php"
+        - "js/pos_barcode.js"
+        - "js/pos_tables.js"
+        - "includes/pos_content.php"
+        - "tables.php"
+        - "tests/sync/pos_request_keys_idempotency_service_test.php"
+        - "tests/sync/pos_takeaway_order_service_test.php"
+        - "tests/sync/pos_takeaway_order_idempotency_test.php"
+        - "tests/sync/pos_takeaway_invoice_handler_test.php"
+        - "tests/sync/pos_table_endpoint_idempotency_test.php"
+        - "docs/goals/posmain-phase-2-pos-state/state.yaml"
+      commands:
+        - cmd: "php -l Phase 2 idempotency services/endpoints/UI test files"
+          status: pass
+        - cmd: "bash scripts/posmain-test-env.sh recover"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_request_keys_idempotency_service_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_takeaway_order_service_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_takeaway_order_idempotency_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_takeaway_invoice_handler_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_table_save_service_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_split_payment_service_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_table_endpoint_idempotency_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/save_order_endpoint_routing_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/process_table_payment_endpoint_routing_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/process_split_payment_endpoint_routing_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/table_cancel_endpoint_routing_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_mutation_service_skeleton_test.php"
+          status: pass
+        - cmd: "git diff --check -- T042 allowed files"
+          status: pass
+      summary: "Mandatory idempotency now exists for the active cashier takeaway create path and table save/payment/split/cancel AJAX writes. Same-key replay returns stored responses, same-key changed payload conflicts, and visible POS/table UI submit/click paths generate request keys without changing Arabic button wording."
+  - id: T043
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "Route remaining POS takeaway/delivery/table form branches safely through canonical mutation contracts or document unreachable legacy exceptions with tests."
+    allowed_files:
+      - "do/doadd_invoice.php"
+      - "classes/Pos/Service/PosOrderMutationService.php"
+      - "docs/production/api_contracts_pos.md"
+      - "docs/production/active_route_map.md"
+      - "tests/sync/pos_takeaway_invoice_endpoint_routing_test.php"
+      - "tests/sync/pos_takeaway_invoice_handler_test.php"
+      - "tests/sync/pos_takeaway_order_service_test.php"
+      - "docs/goals/posmain-phase-2-pos-state/state.yaml"
+      - "docs/goals/posmain-phase-2-pos-state/notes/"
+    verify:
+      - "php -l do/doadd_invoice.php && php -l classes/Pos/Service/PosOrderMutationService.php && php -l tests/sync/pos_takeaway_invoice_endpoint_routing_test.php && php -l tests/sync/pos_takeaway_invoice_handler_test.php && php -l tests/sync/pos_takeaway_order_service_test.php"
+      - "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_takeaway_invoice_endpoint_routing_test.php"
+      - "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_takeaway_invoice_handler_test.php"
+      - "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_takeaway_order_service_test.php"
+      - "git diff --check -- do/doadd_invoice.php classes/Pos/Service/PosOrderMutationService.php docs/production/api_contracts_pos.md docs/production/active_route_map.md tests/sync/pos_takeaway_invoice_endpoint_routing_test.php tests/sync/pos_takeaway_invoice_handler_test.php tests/sync/pos_takeaway_order_service_test.php"
+      - "node /Users/ab.mansour1agmail.com/.codex/skills/goal-maker/scripts/check-goal-state.mjs docs/goals/posmain-phase-2-pos-state/state.yaml"
+    stop_if:
+      - "Need to rewrite non-POS invoice behavior."
+      - "Need table payment/cancel endpoint changes already handled by T042."
+      - "Cannot prove bank/split takeaway behavior with fixture coverage."
+      - "Would break the main cashier save/pay/receipt redirect."
+    receipt:
+      result: done
+      changed_files:
+        - "do/doadd_invoice.php"
+        - "docs/production/api_contracts_pos.md"
+        - "docs/production/active_route_map.md"
+        - "tests/sync/pos_takeaway_invoice_endpoint_routing_test.php"
+        - "tests/sync/pos_takeaway_invoice_handler_test.php"
+        - "tests/sync/pos_takeaway_order_service_test.php"
+        - "docs/goals/posmain-phase-2-pos-state/state.yaml"
+      commands:
+        - cmd: "php -l do/doadd_invoice.php && php -l classes/Pos/Service/PosOrderMutationService.php && php -l tests/sync/pos_takeaway_invoice_endpoint_routing_test.php && php -l tests/sync/pos_takeaway_invoice_handler_test.php && php -l tests/sync/pos_takeaway_order_service_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_takeaway_invoice_endpoint_routing_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_takeaway_order_service_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_takeaway_invoice_handler_test.php"
+          status: pass
+        - cmd: "git diff --check -- T043 allowed files"
+          status: pass
+      summary: "Broadened the service-backed takeaway form route to include bank-only and cash+bank paid submits, with service and full handler fixtures proving cash and mixed-payment orders, receipts, journals, counters, process rows, outbox snapshots, and idempotency behavior. Documented table AJAX ownership plus delivery/edit legacy compatibility exceptions."
+  - id: T044
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "Converge Moova confirm/change with the shared POS mutation contract and prove duplicate/stale behavior."
+    allowed_files:
+      - "classes/Pos/Service/PosOrderMutationService.php"
+      - "ajax/moova_confirm_order.php"
+      - "ajax/moova_change_order.php"
+      - "classes/Moova/MoovaNewOrderApplyService.php"
+      - "classes/Moova/MoovaChangeOrderApplyService.php"
+      - "tests/sync/moova_pos_mutation_convergence_test.php"
+      - "tests/sync/moova_confirm_change_routing_test.php"
+      - "docs/production/api_contracts_pos.md"
+      - "docs/goals/posmain-phase-2-pos-state/state.yaml"
+      - "docs/goals/posmain-phase-2-pos-state/notes/"
+    verify:
+      - "php -l classes/Pos/Service/PosOrderMutationService.php && php -l ajax/moova_confirm_order.php && php -l ajax/moova_change_order.php && php -l classes/Moova/MoovaNewOrderApplyService.php && php -l classes/Moova/MoovaChangeOrderApplyService.php && php -l tests/sync/moova_pos_mutation_convergence_test.php && php -l tests/sync/moova_confirm_change_routing_test.php"
+      - "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/moova_pos_mutation_convergence_test.php"
+      - "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/moova_confirm_change_routing_test.php"
+      - "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_takeaway_order_service_test.php"
+      - "git diff --check -- classes/Pos/Service/PosOrderMutationService.php ajax/moova_confirm_order.php ajax/moova_change_order.php classes/Moova/MoovaNewOrderApplyService.php classes/Moova/MoovaChangeOrderApplyService.php tests/sync/moova_pos_mutation_convergence_test.php tests/sync/moova_confirm_change_routing_test.php docs/production/api_contracts_pos.md"
+      - "node /Users/ab.mansour1agmail.com/.codex/skills/goal-maker/scripts/check-goal-state.mjs docs/goals/posmain-phase-2-pos-state/state.yaml"
+    stop_if:
+      - "Need to change external Moova API contract without a compatibility wrapper."
+      - "Cannot prove duplicate confirm does not create a duplicate POS order."
+      - "Cannot prove stale change declines without mutating POS lines."
+      - "Need schema changes outside existing Phase 2 foundations."
+    receipt:
+      result: done
+      changed_files:
+        - "classes/Pos/Service/PosOrderMutationService.php"
+        - "ajax/moova_confirm_order.php"
+        - "ajax/moova_change_order.php"
+        - "tests/sync/moova_pos_mutation_convergence_test.php"
+        - "tests/sync/moova_confirm_change_routing_test.php"
+        - "docs/production/api_contracts_pos.md"
+        - "docs/goals/posmain-phase-2-pos-state/state.yaml"
+      commands:
+        - cmd: "php -l classes/Pos/Service/PosOrderMutationService.php && php -l ajax/moova_confirm_order.php && php -l ajax/moova_change_order.php && php -l classes/Moova/MoovaNewOrderApplyService.php && php -l classes/Moova/MoovaChangeOrderApplyService.php && php -l tests/sync/moova_pos_mutation_convergence_test.php && php -l tests/sync/moova_confirm_change_routing_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/moova_pos_mutation_convergence_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/moova_confirm_change_routing_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_takeaway_order_service_test.php"
+          status: pass
+        - cmd: "git diff --check -- T044 allowed files"
+          status: pass
+      summary: "Direct Moova confirm/change endpoints now call PosOrderMutationService wrappers, which delegate to the existing Moova apply services. The queued worker continues to call the same apply services with queued response mode, preserving duplicate-key replay/conflict behavior and stale change decline checks while converging direct endpoints onto the canonical mutation entrypoint."
+  - id: T045
+    type: judge
+    assignee: Judge
+    status: done
+    objective: "Audit Phase 2 completion against plan exit criteria, focused tests, and GUI clicking evidence."
+    inputs:
+      - "T040 through T044 receipts"
+      - "Phase 2 plan exit criteria"
+      - "Final script and GUI verification"
+    constraints:
+      - "Read-only."
+      - "Do not mark complete if active writes still bypass idempotency or canonical services without documented exception."
+    expected_output:
+      - "complete | not_complete"
+      - "Missing evidence if not complete"
+      - "Final receipt if complete"
+    receipt:
+      result: done
+      decision: complete
+      summary: "Phase 2 exit criteria are satisfied for the current tranche: active POS table/save/payment/split/cancel/Moova endpoints use idempotency or canonical mutation service entrypoints, takeaway paid submits route through the service, UUID/counter/event foundations are covered, and focused script plus browser-click flows passed."
+      evidence:
+        - "Active AJAX direct write audit returned no ot_head/fat_details/tables writes."
+        - "do/doadd_invoice.php still has documented delivery/edit/non-POS legacy branches; the new paid takeaway route uses PosOrderMutationService."
+        - "Browser GUI: paid takeaway receipt id=466 for TEMP TEST شاي 18.00."
+        - "Browser GUI: table 2 save order id=468 with TEMP TEST شاي + TEMP TEST مياه total 30.00."
+        - "Browser GUI: split payment created receipt id=469 for tea 18.00 and left water 12.00."
+        - "Browser GUI: clear-as-credit button cleared table 2 back to فارغة and totals 0.00."
+        - "DB audit: pos_request_keys completed rows for takeaway, split payment, and table clear; order_events recorded saved, split update, split paid, and cancel events."
+      commands:
+        - cmd: "php -l Phase 2 touched service, endpoint, handler, and test files"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_request_keys_idempotency_service_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_takeaway_invoice_endpoint_routing_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_takeaway_invoice_handler_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_takeaway_order_service_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_takeaway_order_idempotency_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_table_endpoint_idempotency_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_table_save_service_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_split_payment_service_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_accounting_inventory_service_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_mutation_service_skeleton_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/table_order_state_payment_contract_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/table_order_counter_smoke_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/save_order_endpoint_routing_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/process_table_payment_endpoint_routing_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/process_split_payment_endpoint_routing_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/table_cancel_endpoint_routing_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_order_mutation_event_recording_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_uuid_population_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/uuid_backfill_smoke_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/moova_pos_mutation_convergence_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/moova_confirm_change_routing_test.php"
+          status: pass
+        - cmd: "POSMAIN_DB_PORT=3307 php tools/run_migrations.php --dry-run"
+          status: pass
+        - cmd: "POSMAIN_DB_PORT=3307 php tools/backfill_document_counters.php --dry-run"
+          status: pass
+        - cmd: "git diff --check -- Phase 2 changed files"
+          status: pass
+      residual_risk:
+        - "The POS page still logs one Moova widget bootstrap console error in the local test environment, but cashier save/pay/split/clear flows completed and no Phase 2 core regression was observed."
+        - "Legacy invoice branches remain intentionally documented rather than rewritten in this tranche."
+
+checks:
+  dirty_fingerprint: "large pre-existing dirty worktree; see git status at task start"
+  last_verification:
+    result: pass
+    task: T045
+    commands:
+      - "Focused PHP lint loop for Phase 2 service, endpoint, and test files"
+      - "Focused POS sync/test regression loop with POSMAIN_TEST_MYSQL_PORT=3307"
+      - "POSMAIN_DB_PORT=3307 php tools/run_migrations.php --dry-run"
+      - "POSMAIN_DB_PORT=3307 php tools/backfill_document_counters.php --dry-run"
+      - "git diff --check -- Phase 2 changed files"
+      - "Browser GUI clicking tests against http://127.0.0.1:8010 for takeaway pay/receipt, table save, split payment, receipt, and table clear"
+      - "DB sanity queries for GUI order ids 466, 468, 469, pos_request_keys, and order_events"
+      - "node /Users/ab.mansour1agmail.com/.codex/skills/goal-maker/scripts/check-goal-state.mjs docs/goals/posmain-phase-2-pos-state/state.yaml"

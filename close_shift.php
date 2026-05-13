@@ -1,5 +1,5 @@
 <?php
-session_start();
+require_once __DIR__ . '/includes/session_bootstrap.php';
 include('includes/connect.php');
 
 // التحقق من تسجيل الدخول
@@ -35,10 +35,11 @@ try {
     $total_orders = intval($sales_data['total_orders'] ?? 0);
     $total_sales = floatval($sales_data['total_sales'] ?? 0);
     
-    // جلب اسم المستخدم
-    $user_query = "SELECT aname FROM acc_head WHERE id = '$user_id'";
+    // جلب اسم المستخدم من نفس جدول تسجيل الدخول
+    $user_query = "SELECT uname FROM users WHERE id = '$user_id'";
     $user_result = $conn->query($user_query);
-    $username = $user_result ? $user_result->fetch_assoc()['aname'] : 'Unknown';
+    $user_row = $user_result ? $user_result->fetch_assoc() : null;
+    $username = $user_row['uname'] ?? ($_SESSION['login'] ?? 'Unknown');
     
     // جلب بيانات إغلاق الشيفت من POST
     $expenses = floatval($_POST['expenses'] ?? 0);
@@ -67,11 +68,14 @@ try {
         }
         
         $_SESSION['success_message'] = $success_message;
+        unset($_SESSION['pos_authenticated'], $_SESSION['pos_user_id'], $_SESSION['pos_user_name']);
     } else {
+        error_log('Shift close insert failed: ' . $conn->error);
         $_SESSION['error_message'] = 'حدث خطأ أثناء إغلاق الشيفت';
     }
     
 } catch (Exception $e) {
+    error_log('Shift close exception: ' . $e->getMessage());
     $_SESSION['error_message'] = 'حدث خطأ أثناء إغلاق الشيفت';
 }
 

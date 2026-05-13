@@ -1,4 +1,8 @@
-<?php include '../includes/connect.php';
+<?php
+require_once __DIR__ . '/../includes/production_guard.php';
+production_guard_deny_route('do/dobackup.php');
+
+include '../includes/connect.php';
 
 $tables =array();
 $res = $conn->query("SHOW TABLES ");

@@ -1,4 +1,7 @@
 <?php
+require_once __DIR__ . '/../includes/production_guard.php';
+production_guard_deny_route('ajax/db_setup.php');
+
 // ajax/db_setup.php - Database Setup Backend
 header('Content-Type: application/json');
 

@@ -1,4 +1,7 @@
 <?php
+require_once __DIR__ . '/includes/production_guard.php';
+production_guard_deny_route('run_table_updates.php');
+
 // =====================================================
 // تنفيذ تحديثات نظام الطاولات
 // =====================================================
@@ -117,4 +120,3 @@ $conn->close();
     }
     .btn-primary:hover { background: #086482; }
 </style>
-

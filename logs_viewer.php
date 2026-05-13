@@ -1,4 +1,7 @@
-<?php 
+<?php
+require_once __DIR__ . '/includes/production_guard.php';
+production_guard_deny_route('logs_viewer.php');
+
 include('includes/header.php');
 include('includes/navbar.php');
 include('includes/sidebar.php');

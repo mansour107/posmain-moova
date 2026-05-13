@@ -15,6 +15,7 @@ Thumbs.db
 # Local credentials / machine-specific config
 .env
 .env.*
+!.env.example
 config/database.php
 debug.php
 

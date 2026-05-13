@@ -5,6 +5,9 @@ ob_start();
 session_start();
 include('../includes/connect.php');
 require_once('../classes/TableOrderService.php');
+require_once('../classes/Pos/Service/PosOrderMutationService.php');
+require_once('../classes/Pos/Service/AccountingPostingService.php');
+require_once('../classes/Sync/SyncOutboxEventService.php');
 ob_end_clean();
 
 header('Content-Type: application/json; charset=utf-8');
@@ -25,7 +28,39 @@ if ($table_id <= 0 || $paid <= 0) {
 
 try {
     $tableOrderService = new TableOrderService();
+    $posMutationService = new PosOrderMutationService();
+    $accountingPostingService = new AccountingPostingService();
+    $syncOutbox = new SyncOutboxEventService();
+    $idempotencyService = new IdempotencyService();
+    $idempotencyKey = $idempotencyService->resolveKey($_POST, $_SERVER);
+    $idempotencyHash = $idempotencyService->requestHashForPayload($_POST);
     $conn->begin_transaction();
+
+    $idempotency = $idempotencyService->begin($conn, PosOrderMutationService::SCOPE_TABLE_PAYMENT, $idempotencyKey, $idempotencyHash, [
+        'user_id' => $user_id,
+        'tenant' => 0,
+        'branch' => 0,
+        'stale_after_seconds' => 300,
+    ]);
+    if (($idempotency['status'] ?? '') === 'conflict') {
+        $conn->rollback();
+        http_response_code(409);
+        echo json_encode([
+            'success' => false,
+            'code' => 'IDEMPOTENCY_CONFLICT',
+            'message' => 'تم استخدام نفس مفتاح الطلب مع بيانات مختلفة',
+            'request_id' => $idempotencyKey,
+        ], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+    if (($idempotency['status'] ?? '') === 'completed') {
+        $conn->commit();
+        echo json_encode($idempotency['response'], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+    if (!in_array($idempotency['status'] ?? '', ['started', 'reclaimed'], true)) {
+        throw new Exception('طلب سابق بنفس المفتاح لا يزال قيد المعالجة');
+    }
 
     $table = $tableOrderService->requireTable($conn, $table_id);
     if ($order_id <= 0) {
@@ -36,17 +71,17 @@ try {
         $order_id = (int) $activeOrder['id'];
     }
 
-    $paymentResult = $tableOrderService->payTableOrder(
-        $conn,
-        $table_id,
-        $order_id,
-        $paid,
-        $payment_method,
-        $notes,
-        $user_id,
-        $discount,
-        $net
-    );
+    $paymentEnvelope = $posMutationService->payTableOrder($conn, [
+        'table_id' => $table_id,
+        'order_id' => $order_id,
+        'paid' => $paid,
+        'payment_method' => $payment_method,
+        'notes' => $notes,
+        'user_id' => $user_id,
+        'discount' => $discount,
+        'net' => $net,
+    ], ['user_id' => $user_id]);
+    $paymentResult = $paymentEnvelope['data'] ?? [];
 
     $order = $tableOrderService->queryOne($conn, "SELECT * FROM ot_head WHERE id = ? LIMIT 1", [$order_id]);
     if (!$order) {
@@ -65,65 +100,44 @@ try {
 
         $customer_acc = $tableOrderService->resolveDefaultCustomerId($conn, (int) ($order['acc2'] ?? 0));
         $emp_id = (int) ($order['emp_id'] ?? 0);
-        $info_text = "سند قبض - سداد طاولة: " . $table['tname'] . " - فاتورة رقم " . $order_id;
-
-        $stmt = $conn->prepare(
-            "INSERT INTO ot_head (
-                pro_tybe, is_journal, journal_tybe, info, pro_date,
-                emp_id, acc1, acc2, pro_value, fat_net, cost_center, profit, user, op2
-            ) VALUES (1, 1, 1, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?)"
-        );
-        $stmt->bind_param(
-            "ssiiiddii",
-            $info_text,
-            $date,
-            $emp_id,
-            $safe_acc,
-            $customer_acc,
-            $actual_paid,
-            $actual_paid,
-            $user_id,
-            $order_id
-        );
-        $stmt->execute();
-        $receipt_id = $conn->insert_id;
-        $stmt->close();
-
-        $res_jid = $conn->query("SELECT MAX(journal_id) as max_id FROM journal_heads");
-        $row_jid = $res_jid->fetch_assoc();
-        $journal_id = ($row_jid['max_id'] ?? 0) + 1;
-
-        $stmt = $conn->prepare("INSERT INTO journal_heads (journal_id, op_id, total, jdate, details, user, op2) VALUES (?, ?, ?, ?, ?, ?, ?)");
-        $j_details = "سند قبض - سداد طاولة " . $table['tname'];
-        $stmt->bind_param("idsssii", $journal_id, $receipt_id, $actual_paid, $date, $j_details, $user_id, $order_id);
-        $stmt->execute();
-        $j_head_id = $conn->insert_id;
-        $stmt->close();
-
-        $stmt = $conn->prepare("INSERT INTO journal_entries (journal_id, account_id, debit, credit, tybe, op2) VALUES (?, ?, ?, 0, 0, ?)");
-        $stmt->bind_param("iidi", $j_head_id, $safe_acc, $actual_paid, $order_id);
-        $stmt->execute();
-        $stmt->close();
-
-        if ($customer_acc > 0) {
-            $stmt = $conn->prepare("INSERT INTO journal_entries (journal_id, account_id, debit, credit, tybe, op2) VALUES (?, ?, 0, ?, 1, ?)");
-            $stmt->bind_param("iidi", $j_head_id, $customer_acc, $actual_paid, $order_id);
-            $stmt->execute();
-            $stmt->close();
-        }
+        $accountingResult = $accountingPostingService->postTablePaymentReceipt($conn, [
+            'order_id' => $order_id,
+            'table_name' => $table['tname'] ?? '',
+            'amount' => $actual_paid,
+            'safe_account_id' => $safe_acc,
+            'customer_account_id' => $customer_acc,
+            'emp_id' => $emp_id,
+            'payment_date' => $date,
+            'user_id' => $user_id,
+        ], ['user_id' => $user_id, 'tenant' => 0, 'branch' => 0]);
+        $receipt_id = $accountingResult['receipt_id'] ?? null;
     }
 
-    $conn->commit();
+    $syncOutbox->recordOrderSnapshot($conn, $order_id, [
+        'event_type' => 'order.payment_recorded',
+        'source_system' => 'pos_table_payment',
+    ]);
+    $syncOutbox->recordTableSnapshot($conn, $table_id, [
+        'event_type' => 'table.updated',
+        'source_system' => 'pos_table_payment',
+        'active_order_id' => $paymentResult['fully_paid'] ? null : $order_id,
+    ]);
 
-    echo json_encode([
+    $response = [
         'success' => true,
+        'code' => 'OK',
         'message' => $paymentResult['fully_paid'] ? 'تم السداد بالكامل' : 'تم تسجيل دفعة جزئية',
         'receipt_id' => $receipt_id,
         'order_id' => $order_id,
         'invoice_id' => $order_id,
         'payment_status' => $paymentResult['payment_status'],
         'remaining_amount' => $paymentResult['remaining_amount'],
-    ], JSON_UNESCAPED_UNICODE);
+        'request_id' => $idempotencyKey,
+    ];
+    $idempotencyService->complete($conn, PosOrderMutationService::SCOPE_TABLE_PAYMENT, $idempotencyKey, $idempotencyHash, $response);
+    $conn->commit();
+
+    echo json_encode($response, JSON_UNESCAPED_UNICODE);
 } catch (Exception $e) {
     $conn->rollback();
     echo json_encode(['success' => false, 'message' => $e->getMessage()], JSON_UNESCAPED_UNICODE);

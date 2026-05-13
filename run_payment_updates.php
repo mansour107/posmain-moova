@@ -1,4 +1,7 @@
 <?php
+require_once __DIR__ . '/includes/production_guard.php';
+production_guard_deny_route('run_payment_updates.php');
+
 include('includes/connect.php');
 
 echo "<h2>تحديث قاعدة البيانات لنظام السداد المحسن</h2>";

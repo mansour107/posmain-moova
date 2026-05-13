@@ -1,18 +1,14 @@
 <?php
-// Copy this file to config/database.php and adjust for the target environment.
-$host = getenv('POSMAIN_API_DB_HOST') ?: '127.0.0.1';
-$username = getenv('POSMAIN_API_DB_USER') ?: 'root';
-$password = getenv('POSMAIN_API_DB_PASS') ?: '';
-$database = getenv('POSMAIN_API_DB_NAME') ?: 'kody2';
+// Example compatibility shim for legacy API files that expect $conn.
+// Runtime credentials must come from environment variables or .env, not this file.
+require_once __DIR__ . '/../includes/db_bootstrap.php';
 
-$conn = new mysqli($host, $username, $password, $database);
-
-if ($conn->connect_error) {
+try {
+    $conn = posmain_db_connect();
+} catch (Throwable $e) {
     http_response_code(500);
     die(json_encode([
         'status' => 'error',
         'message' => 'Database connection failed',
     ]));
 }
-
-$conn->set_charset('utf8mb4');

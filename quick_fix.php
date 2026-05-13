@@ -1,4 +1,7 @@
 <?php
+require_once __DIR__ . '/includes/production_guard.php';
+production_guard_deny_route('quick_fix.php');
+
 /**
  * إصلاح سريع للمشاكل
  */

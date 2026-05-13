@@ -1,4 +1,7 @@
 <?php
+require_once __DIR__ . '/includes/production_guard.php';
+production_guard_deny_route('setup_demo_data.php');
+
 /**
  * ملف إنشاء بيانات تجريبية للنظام
  * قم بتشغيل هذا الملف مرة واحدة فقط لإنشاء البيانات التجريبية
@@ -142,4 +145,3 @@ echo "
 
 $conn->close();
 ?>
-

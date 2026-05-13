@@ -1,5 +1,7 @@
 <?php
 
+require_once __DIR__ . '/Sync/DocumentCounterService.php';
+
 class TableOrderService
 {
     const POS_TYPE = 9;
@@ -19,6 +21,56 @@ class TableOrderService
         }
 
         return $scope;
+    }
+
+    public function nextPosProId(mysqli $conn, $proTybe = self::POS_TYPE, $tenant = 0, $branch = 0)
+    {
+        $proTybe = (int) $proTybe;
+        $tenant = (int) $tenant;
+        $branch = (int) $branch;
+        $row = $this->queryOne($conn, "
+            SELECT COALESCE(MAX(CAST(pro_id AS UNSIGNED)), 0) AS max_id
+            FROM ot_head
+            WHERE pro_tybe = ?
+              AND COALESCE(tenant, 0) = ?
+              AND COALESCE(branch, 0) = ?
+        ", [$proTybe, $tenant, $branch]);
+
+        $counter = new DocumentCounterService();
+        $counter->ensureCounterRow(
+            $conn,
+            $tenant,
+            $branch,
+            'pro_id',
+            'pro_tybe:' . $proTybe,
+            (int) ($row['max_id'] ?? 0)
+        );
+
+        return $counter->nextProId($conn, $proTybe, $tenant, $branch);
+    }
+
+    public function nextJournalId(mysqli $conn, $tenant = 0, $branch = 0)
+    {
+        $tenant = (int) $tenant;
+        $branch = (int) $branch;
+        $row = $this->queryOne($conn, "
+            SELECT COALESCE(MAX(journal_id), 0) AS max_id
+            FROM journal_heads
+            WHERE COALESCE(tenant, 0) = ?
+              AND COALESCE(branch, 0) = ?
+        ", [$tenant, $branch]);
+
+        $counter = new DocumentCounterService();
+        $counter->ensureCounterRow(
+            $conn,
+            $tenant,
+            $branch,
+            'journal_id',
+            'journal:default',
+            (int) ($row['max_id'] ?? 0)
+        );
+
+        return $counter->nextJournalId($conn, $tenant, $branch);
     }
 
     public function findTableById(mysqli $conn, $tableId)
@@ -382,6 +434,7 @@ class TableOrderService
             trim((string) $notes),
             (int) $userId,
         ]);
+        $this->assignUuidIfPresent($conn, 'order_payments', (int) $conn->insert_id);
     }
 
     public function queryOne(mysqli $conn, $sql, array $params = [])
@@ -427,6 +480,55 @@ class TableOrderService
         return $affected;
     }
 
+    public function assignUuidIfPresent(mysqli $conn, $tableName, $id, $primaryKey = 'id')
+    {
+        $id = (int) $id;
+        $tableName = (string) $tableName;
+        $primaryKey = (string) $primaryKey;
+        if ($id < 1 || !$this->safeIdentifier($tableName) || !$this->safeIdentifier($primaryKey)) {
+            return null;
+        }
+
+        try {
+            if (!$this->columnExists($conn, $tableName, $primaryKey) || !$this->columnExists($conn, $tableName, 'uuid')) {
+                return null;
+            }
+
+            $quotedTable = $this->quoteIdentifier($tableName);
+            $quotedPk = $this->quoteIdentifier($primaryKey);
+            $row = $this->queryOne($conn, "SELECT uuid FROM {$quotedTable} WHERE {$quotedPk} = ? LIMIT 1", [$id]);
+            if (!$row) {
+                return null;
+            }
+            if (trim((string) ($row['uuid'] ?? '')) !== '') {
+                return (string) $row['uuid'];
+            }
+
+            for ($attempt = 0; $attempt < 5; $attempt++) {
+                $uuid = $this->uuidV4();
+                try {
+                    $affected = $this->execute($conn, "
+                        UPDATE {$quotedTable}
+                        SET uuid = ?
+                        WHERE {$quotedPk} = ?
+                          AND (uuid IS NULL OR uuid = '')
+                    ", [$uuid, $id]);
+                    if ($affected > 0) {
+                        return $uuid;
+                    }
+                } catch (mysqli_sql_exception $exception) {
+                    if ((int) $exception->getCode() !== 1062) {
+                        throw $exception;
+                    }
+                }
+            }
+        } catch (Throwable $exception) {
+            error_log('UUID assignment skipped for ' . $tableName . ':' . $id . ' - ' . $exception->getMessage());
+        }
+
+        return null;
+    }
+
     private function bindParams(mysqli_stmt $stmt, array $params)
     {
         $types = '';
@@ -464,5 +566,32 @@ class TableOrderService
         $columnName = $conn->real_escape_string($columnName);
         $result = $conn->query("SHOW COLUMNS FROM `{$tableName}` LIKE '{$columnName}'");
         return $result && $result->num_rows > 0;
+    }
+
+    private function safeIdentifier($value)
+    {
+        return (bool) preg_match('/^[A-Za-z0-9_]+$/', (string) $value);
+    }
+
+    private function quoteIdentifier($value)
+    {
+        return '`' . str_replace('`', '``', (string) $value) . '`';
+    }
+
+    private function uuidV4()
+    {
+        $bytes = random_bytes(16);
+        $bytes[6] = chr((ord($bytes[6]) & 0x0f) | 0x40);
+        $bytes[8] = chr((ord($bytes[8]) & 0x3f) | 0x80);
+        $hex = bin2hex($bytes);
+
+        return sprintf(
+            '%s-%s-%s-%s-%s',
+            substr($hex, 0, 8),
+            substr($hex, 8, 4),
+            substr($hex, 12, 4),
+            substr($hex, 16, 4),
+            substr($hex, 20, 12)
+        );
     }
 }

@@ -2,7 +2,8 @@
     font-family: 'Cairo';
     font-style: normal;
     font-weight: 400;
-    src: url('../fonts/Cairo-Regular.woff2') format('woff2');
+    src: local('Cairo'), local('Cairo Regular'),
+         url('../libs/fonts/playpen-sans-arabic-400.ttf') format('truetype');
 }
 
 @font-face {

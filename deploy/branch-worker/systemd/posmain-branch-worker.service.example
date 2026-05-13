@@ -1,0 +1,23 @@
+[Unit]
+Description=POSMAIN branch worker daemon
+Documentation=file:/opt/posmain/docs/branch_worker_daemon.md
+After=network-online.target mariadb.service mysql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/posmain
+EnvironmentFile=/etc/posmain/branch-worker.env
+ExecStartPre=/usr/bin/php /opt/posmain/cli/branch_worker_daemon.php --preflight --strict
+ExecStart=/usr/bin/php /opt/posmain/cli/branch_worker_daemon.php --loop --sleep=5 --max-runtime=300
+Restart=always
+RestartSec=10
+User=www-data
+Group=www-data
+KillSignal=SIGTERM
+TimeoutStopSec=30
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

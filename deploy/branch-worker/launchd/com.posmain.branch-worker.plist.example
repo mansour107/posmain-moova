@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "https://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.posmain.branch-worker</string>
+  <key>WorkingDirectory</key>
+  <string>/opt/posmain</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/php</string>
+    <string>/opt/posmain/cli/branch_worker_daemon.php</string>
+    <string>--loop</string>
+    <string>--sleep=5</string>
+    <string>--max-runtime=300</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>POSMAIN_ROLE</key>
+    <string>branch</string>
+    <key>POSMAIN_DB_HOST</key>
+    <string>127.0.0.1</string>
+    <key>POSMAIN_DB_PORT</key>
+    <string>3306</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/var/log/posmain/branch-worker.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/var/log/posmain/branch-worker.err.log</string>
+</dict>
+</plist>

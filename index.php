@@ -1,28 +1,17 @@
 <?php
 // login.php
 // صفحة تسجيل الدخول (مصححة ومحسنة)
-// ملاحظات: انقل إعدادات الداتابيس لملف منفصل في مرحلة الإنتاج.
 
-session_start();
+require_once __DIR__ . '/includes/session_bootstrap.php';
+require_once __DIR__ . '/includes/db_bootstrap.php';
+require_once __DIR__ . '/classes/PasswordService.php';
 
 // -------------------- إعدادات الداتابيس --------------------
-$dbhost = 'localhost';
-$dbuser = 'root';
-$dbpass = '';
-$dbname = 'kody2';
-
-// Check connection
-mysqli_report(MYSQLI_REPORT_OFF);
-$conn = @new mysqli($dbhost, $dbuser, $dbpass);
-
-if ($conn->connect_error) {
-    header("Location: pre_start.php?error=server_down");
-    exit;
-}
-
-// Try to select database
-if (!$conn->select_db($dbname)) {
-    header("Location: pre_start.php?reason=db_missing");
+try {
+    $conn = posmain_db_connect();
+} catch (Throwable $e) {
+    $reason = posmain_db_error_is_missing_database($e) ? 'reason=db_missing' : 'error=server_down';
+    header("Location: pre_start.php?" . $reason);
     exit;
 }
 
@@ -75,28 +64,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                     $password_ok = false;
 
-                    // حالة 1: كلمة المرور مخزنة باستخدام password_hash (bcrypt/argon2...)
-                    if (strlen($storedHash) >= 60 || str_starts_with($storedHash, '$2y$') || str_starts_with($storedHash, '$2a$') || str_starts_with($storedHash, '$argon')) {
-                        if (password_verify($password, $storedHash)) {
-                            $password_ok = true;
-                            // اذا كانت تحتاج إعادة هاش (خافت/تحسين الخوارزمية) -> اعيد هاش
-                            if (password_needs_rehash($storedHash, PASSWORD_DEFAULT)) {
-                                $newHash = password_hash($password, PASSWORD_DEFAULT);
-                                $u = $conn->prepare("UPDATE users SET password = ? WHERE id = ?");
-                                if ($u) {
-                                    $u->bind_param("si", $newHash, $userId);
-                                    $u->execute();
-                                    $u->close();
-                                }
-                            }
-                        }
-                    }
-                    // حالة 2: كلمة السر مخزنة بـ MD5 (طول 32) — دعم قديم، ننصح بالهجرة
-                    elseif (strlen($storedHash) === 32) {
-                        if (md5($password) === $storedHash) {
-                            $password_ok = true;
-                            // نعمل rehash إلى password_hash
-                            $newHash = password_hash($password, PASSWORD_DEFAULT);
+                    if (PasswordService::verifyPassword($password, $storedHash)) {
+                        $password_ok = true;
+                        if (PasswordService::needsRehash($storedHash)) {
+                            $newHash = PasswordService::hashPassword($password);
                             $u = $conn->prepare("UPDATE users SET password = ? WHERE id = ?");
                             if ($u) {
                                 $u->bind_param("si", $newHash, $userId);
@@ -104,16 +75,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                 $u->close();
                             }
                         }
-                    } else {
-                        // محاولة password_verify كخيار عام
-                        if (password_verify($password, $storedHash)) {
-                            $password_ok = true;
-                        }
                     }
 
                     if ($password_ok) {
                         // تسجيل جلسة آمن
-                        session_regenerate_id(true);
+                        posmain_session_regenerate();
                         $_SESSION['userid'] = $row['id'];
                         $_SESSION['usrole'] = $row['userrole'];
                         $_SESSION['usty'] = $row['usertype'];
@@ -190,7 +156,7 @@ if ($resuser) {
 
     body {
         font-family: 'Cairo', sans-serif;
-        background-image: url('assets/wallpaper/background.jpg');
+        background-image: url('assets/wallpaper/background1.jpg');
         background-size: cover;
         background-position: center;
         background-repeat: no-repeat;

@@ -1,4 +1,7 @@
 <?php
+require_once __DIR__ . '/../includes/production_guard.php';
+production_guard_deny_route('do/debug_ot_head.php');
+
 include('../includes/connect.php');
 
 if ($conn->connect_error) {

@@ -21,30 +21,34 @@ $moovaBranchId = (string) $moovaWidgetLink['moova_branch_id'];
 $moovaLocale = trim((string) ($moovaWidgetLink['locale'] ?: 'ar'));
 $localWidgetUrl = 'moova_pos_widget.php';
 ?>
-<style>
-  .moova-navbar-widget {
-    width: 74px;
-    height: 38px;
-    flex: 0 0 74px;
-    display: flex;
-    align-self: center;
-    align-items: center;
-    justify-content: center;
-    margin-inline-start: .25rem;
-    margin-inline-end: .5rem;
-    line-height: 0;
-    overflow: visible;
-  }
+	<style>
+	  .moova-navbar-widget {
+	    width: 92px;
+	    min-width: 92px;
+	    height: 40px;
+	    flex: 0 0 92px;
+	    display: flex;
+	    align-self: center;
+	    align-items: center;
+	    justify-content: center;
+	    margin: 0;
+	    line-height: 0;
+	    overflow: visible;
+	    border: 1px solid rgba(255, 255, 255, .36);
+	    border-radius: 10px;
+	    background: rgba(255, 255, 255, .12);
+	    box-shadow: inset 0 0 0 1px rgba(15, 35, 67, .08);
+	  }
 
-  #cofe-pos-widget {
-    width: 74px;
-    height: 38px;
-    flex: 0 0 74px;
-    border: 0;
-    background: transparent;
-    overflow: hidden;
-    display: block;
-  }
+	  #cofe-pos-widget {
+	    width: 74px;
+	    height: 38px;
+	    flex: 0 0 74px;
+	    border: 0;
+	    background: transparent;
+	    overflow: hidden;
+	    display: block;
+	  }
 
   #cofe-pos-widget.moova-widget-panel-open {
     position: fixed;
@@ -69,6 +73,21 @@ $localWidgetUrl = 'moova_pos_widget.php';
     const DEVICE_TOKEN = <?= json_encode($moovaDeviceToken) ?>;
     const MOOVA_BRANCH_ID = <?= json_encode($moovaBranchId) ?>;
     const LOCALE = <?= json_encode($moovaLocale) ?>;
+    const HOST_CAPABILITIES = {
+      bridgeVersion: 2,
+      deliveryPath: 'widget',
+      applyPath: 'direct_widget',
+      orderCreation: {
+        eventType: 'new_order',
+        terminalStatuses: ['created', 'updated', 'declined']
+      },
+      orderChanges: {
+        eventTypes: ['edit_order', 'cancel_order'],
+        actions: ['edit', 'cancel'],
+        requiresCashierConfirm: true,
+        staleStateDeclineCode: 'POS_ORDER_LINES_CHANGED'
+      }
+    };
     let widgetSurfaceOpen = false;
     let widgetClosedRect = null;
 
@@ -81,6 +100,19 @@ $localWidgetUrl = 'moova_pos_widget.php';
     function closeWidgetSurface() {
       if (!frame.contentWindow || !widgetSurfaceOpen) return;
       frame.contentWindow.postMessage({ type: 'cofe.host.close' }, WIDGET_ORIGIN);
+    }
+
+    function syncEventTypeForAction(action) {
+      return action === 'cancel' ? 'cancel_order' : 'edit_order';
+    }
+
+    function bridgeMetadata(result, fallbackEventType, fallbackStatus) {
+      return {
+        deliveryPath: result?.deliveryPath || HOST_CAPABILITIES.deliveryPath,
+        applyPath: result?.applyPath || HOST_CAPABILITIES.applyPath,
+        syncEventType: result?.syncEventType || fallbackEventType,
+        syncStatus: result?.syncStatus || fallbackStatus
+      };
     }
 
     async function createOrderInSupplierPos(payload) {
@@ -153,7 +185,13 @@ $localWidgetUrl = 'moova_pos_widget.php';
       if (!frame.contentWindow) return;
       console.log('[Moova] Sending cofe.init');
       frame.contentWindow.postMessage(
-        { type: 'cofe.init', deviceToken: DEVICE_TOKEN, locale: LOCALE, displayMode: 'navbar_bell' },
+        {
+          type: 'cofe.init',
+          deviceToken: DEVICE_TOKEN,
+          locale: LOCALE,
+          displayMode: 'navbar_bell',
+          hostCapabilities: HOST_CAPABILITIES
+        },
         WIDGET_ORIGIN
       );
     }
@@ -218,6 +256,10 @@ $localWidgetUrl = 'moova_pos_widget.php';
               action: data.action,
               message: 'Order change must be confirmed by the cashier.',
               retryable: true,
+              deliveryPath: HOST_CAPABILITIES.deliveryPath,
+              applyPath: HOST_CAPABILITIES.applyPath,
+              syncEventType: syncEventTypeForAction(data.action),
+              syncStatus: 'cashier_review_required',
               errorPayload: {
                 code: 'CASHIER_REVIEW_REQUIRED'
               }
@@ -242,6 +284,11 @@ $localWidgetUrl = 'moova_pos_widget.php';
 
         try {
           const supplierResult = await changeOrderInSupplierPos(payload);
+          const metadata = bridgeMetadata(
+            supplierResult,
+            syncEventTypeForAction(payload.action),
+            supplierResult?.applied === false ? 'declined' : 'applied'
+          );
 
           frame.contentWindow.postMessage(
             {
@@ -256,6 +303,10 @@ $localWidgetUrl = 'moova_pos_widget.php';
               providerOrderId: supplierResult?.providerOrderId || supplierResult?.orderId || payload.providerOrderId || null,
               providerReferenceId: supplierResult?.providerReferenceId || payload.idempotencyKey || null,
               providerStatus: supplierResult?.providerStatus || (supplierResult?.applied === false ? 'declined' : 'applied'),
+              deliveryPath: metadata.deliveryPath,
+              applyPath: metadata.applyPath,
+              syncEventType: metadata.syncEventType,
+              syncStatus: metadata.syncStatus,
               responsePayload: supplierResult || null
             },
             WIDGET_ORIGIN
@@ -271,6 +322,10 @@ $localWidgetUrl = 'moova_pos_widget.php';
               action: payload.action,
               message: error?.message || 'POS order change failed',
               retryable: error?.retryable !== false,
+              deliveryPath: HOST_CAPABILITIES.deliveryPath,
+              applyPath: HOST_CAPABILITIES.applyPath,
+              syncEventType: syncEventTypeForAction(payload.action),
+              syncStatus: 'failed',
               errorPayload: {
                 code: error?.code || 'POS_CHANGE_FAILED',
                 payload: error?.payload || payload
@@ -295,6 +350,7 @@ $localWidgetUrl = 'moova_pos_widget.php';
 
       try {
         const supplierResult = await createOrderInSupplierPos(payload);
+        const metadata = bridgeMetadata(supplierResult, 'new_order', 'applied');
 
         frame.contentWindow.postMessage(
           {
@@ -304,6 +360,10 @@ $localWidgetUrl = 'moova_pos_widget.php';
             providerOrderId: supplierResult?.providerOrderId || supplierResult?.orderId || null,
             providerReferenceId: supplierResult?.providerReferenceId || supplierResult?.referenceId || payload.idempotencyKey || null,
             providerStatus: supplierResult?.providerStatus || supplierResult?.status || 'created',
+            deliveryPath: metadata.deliveryPath,
+            applyPath: metadata.applyPath,
+            syncEventType: metadata.syncEventType,
+            syncStatus: metadata.syncStatus,
             responsePayload: supplierResult || null
           },
           WIDGET_ORIGIN
@@ -318,6 +378,10 @@ $localWidgetUrl = 'moova_pos_widget.php';
             draftId: data.draftId,
             message: error?.message || 'POS order creation failed',
             retryable: true,
+            deliveryPath: HOST_CAPABILITIES.deliveryPath,
+            applyPath: HOST_CAPABILITIES.applyPath,
+            syncEventType: 'new_order',
+            syncStatus: 'failed',
             errorPayload: {
               code: error?.code || 'POS_CREATE_FAILED',
               payload: payload

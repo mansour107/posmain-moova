@@ -1,12 +1,14 @@
 <?php
 include('../includes/connect.php');
+require_once __DIR__ . '/../classes/PasswordService.php';
+
 $uname = $_POST['uname'];
 $password = $_POST['password'];
-// استخدام password_hash للتشفير الآمن بدلاً من MD5
-$hashpass = md5($password);
-$usertype = $_POST['usertype'];
-$usertype = $_POST['userrole'];
+$hashpass = PasswordService::hashPassword($password);
+$userrole = $_POST['userrole'];
+$usertype = $userrole;
 $is_waiter = isset($_POST['is_waiter']) ? 1 : 0;
+$new_kvr_name = '';
 
 if ($_FILES['img']['size'] > 100 )  {
 $filekvr = $_FILES['img']['name'];
@@ -25,17 +27,13 @@ if ($kvr_uploaded_size > 2000000) {
 }
 $new_kvr_name = $arrkvr['0'].rand(1, 1000000).".".$arrkvr['1'];
 move_uploaded_file($kvr_name, "../uploads/$new_kvr_name");
-
-
-$sql ="INSERT INTO users (uname , password , userrole , img , is_waiter) VALUES ('$uname','$hashpass','$usertype' , '$new_kvr_name', $is_waiter)";
-}else{
-	$sql ="INSERT INTO users (uname , password , userrole , is_waiter) VALUES ('$uname','$hashpass','$usertype', $is_waiter)";
 }
-$conn->query($sql);
+
+$stmt = $conn->prepare("INSERT INTO users (uname, password, usertype, userrole, img, is_waiter) VALUES (?, ?, ?, ?, ?, ?)");
+$stmt->bind_param("ssiisi", $uname, $hashpass, $usertype, $userrole, $new_kvr_name, $is_waiter);
+$stmt->execute();
+$stmt->close();
 $conn->query("INSERT INTO `process`(`type`) VALUES ('add user')");
 
 header('location:../users.php');
 ?>
-
-
-

@@ -1,5 +1,5 @@
 <?php
-session_start();
+require_once __DIR__ . '/includes/session_bootstrap.php';
 include('includes/connect.php');
 
 // التحقق من تسجيل الدخول
@@ -47,10 +47,11 @@ $details_array = [
 ];
 $json_details = json_encode($details_array, JSON_UNESCAPED_UNICODE);
 
-// جلب اسم المستخدم
-$user_query = "SELECT aname FROM acc_head WHERE id = '$user_id'";
+// جلب اسم المستخدم من نفس جدول تسجيل الدخول
+$user_query = "SELECT uname FROM users WHERE id = '$user_id'";
 $user_result = $conn->query($user_query);
-$username = $user_result ? $user_result->fetch_assoc()['aname'] : 'Unknown';
+$user_row = $user_result ? $user_result->fetch_assoc() : null;
+$username = $user_row['uname'] ?? ($_SESSION['login'] ?? 'Unknown');
 
 // رقم الشيفت
 $shift_number = date('Ymd') . '_' . $user_id;
@@ -74,6 +75,7 @@ if ($conn->query($insert_query)) {
     // تسجيل الخروج أو رسالة نجاح
     // سنقوم بتوجيه لصفحة طباعة نهائية او العودة
     $_SESSION['success_message'] = "تم إغلاق الشيفت بنجاح. العجز/الزيادة: " . number_format($total_deficit, 2);
+    unset($_SESSION['pos_authenticated'], $_SESSION['pos_user_id'], $_SESSION['pos_user_name']);
     
     // الخيار: تسجيل خروج المستخدم فوراً
     // include('do/do_logout.php'); // اذا اردنا

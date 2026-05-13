@@ -1,0 +1,15 @@
+$ErrorActionPreference = 'Stop'
+
+$php = 'C:\php\php.exe'
+$appRoot = 'C:\posmain'
+$daemon = Join-Path $appRoot 'cli\branch_worker_daemon.php'
+
+Set-Location $appRoot
+
+& $php $daemon --preflight --strict
+if ($LASTEXITCODE -ne 0) {
+    exit $LASTEXITCODE
+}
+
+& $php $daemon --loop --sleep=5 --max-runtime=300
+exit $LASTEXITCODE

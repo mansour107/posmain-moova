@@ -1,3 +1,22 @@
+# Production exposure guardrails
+Options -Indexes
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+
+    # Private source, data, tooling, and operator-only directories.
+    RewriteRule ^(\.git|backup|logs|db|dbase|update|tools|tests|cli|deploy|docs)(/|$) - [F,L]
+
+    # Runtime secrets and non-public project metadata.
+    RewriteRule (^|/)\.env(\.|$) - [F,L]
+    RewriteRule (^|/)(composer\.(json|lock)|package(-lock)?\.json|phpunit\.xml|phpstan\.neon\.dist)$ - [F,L]
+    RewriteRule \.(sql|log|bak|patch)$ - [F,L]
+</IfModule>
+
+<FilesMatch "^\.">
+    Require all denied
+</FilesMatch>
+
 # Enable Gzip Compression
 <IfModule mod_deflate.c>
     AddOutputFilterByType DEFLATE text/html

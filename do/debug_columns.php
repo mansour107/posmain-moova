@@ -1,4 +1,7 @@
 <?php
+require_once __DIR__ . '/../includes/production_guard.php';
+production_guard_deny_route('do/debug_columns.php');
+
 header('Content-Type: application/json');
 include('../includes/connect.php');
 

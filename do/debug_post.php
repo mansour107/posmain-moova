@@ -1,4 +1,7 @@
 <?php
+require_once __DIR__ . '/../includes/production_guard.php';
+production_guard_deny_route('do/debug_post.php');
+
 session_start();
 
 echo "<h2>🔍 POST Data Debug</h2>";

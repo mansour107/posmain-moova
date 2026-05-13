@@ -11,10 +11,10 @@ if (!isset($_SESSION['userid'])) {
 $user_id = $_SESSION['userid'];
 $today = date('Y-m-d');
 
-// جلب اسم المستخدم
-$user_query = $conn->query("SELECT aname FROM acc_head WHERE id = $user_id");
+// جلب اسم المستخدم من نفس جدول تسجيل الدخول
+$user_query = $conn->query("SELECT uname FROM users WHERE id = $user_id");
 $user_data = $user_query->fetch_assoc();
-$cashier_name = $user_data['aname'] ?? 'الكاشير';
+$cashier_name = $user_data['uname'] ?? 'الكاشير';
 
 // جلب إعدادات الشركة
 $settings_query = $conn->query("SELECT * FROM settings WHERE id = 1");

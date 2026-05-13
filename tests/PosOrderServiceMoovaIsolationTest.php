@@ -38,14 +38,7 @@ class PosOrderServiceMoovaIsolationTest extends TestCase
 
     public function test_same_table_moova_orders_share_receipt_but_cancel_only_owned_lines(): void
     {
-        $table = self::$conn->query("
-            SELECT id
-            FROM tables
-            WHERE isdeleted = 0
-              AND (branch IS NULL OR branch = '' OR branch = '0')
-            ORDER BY id ASC
-            LIMIT 1
-        ")->fetch_assoc();
+        $table = $this->loadFreeTable();
         $items = self::$conn->query("
             SELECT id
             FROM myitems
@@ -172,14 +165,7 @@ class PosOrderServiceMoovaIsolationTest extends TestCase
 
     public function test_last_moova_line_cancel_zeroes_receipt_without_freeing_table(): void
     {
-        $table = self::$conn->query("
-            SELECT id
-            FROM tables
-            WHERE isdeleted = 0
-              AND (branch IS NULL OR branch = '' OR branch = '0')
-            ORDER BY id ASC
-            LIMIT 1
-        ")->fetch_assoc();
+        $table = $this->loadFreeTable();
         $item = self::$conn->query("
             SELECT id
             FROM myitems
@@ -221,5 +207,28 @@ class PosOrderServiceMoovaIsolationTest extends TestCase
         } finally {
             self::$conn->rollback();
         }
+    }
+
+    private function loadFreeTable(): ?array
+    {
+        return self::$conn->query("
+            SELECT t.id
+            FROM tables t
+            WHERE t.isdeleted = 0
+              AND (t.branch IS NULL OR t.branch = '' OR t.branch = '0')
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM ot_head h
+                  WHERE h.tenant = 0
+                    AND h.branch = 0
+                    AND h.table_id = t.id
+                    AND h.pro_tybe = 9
+                    AND h.isdeleted = 0
+                    AND COALESCE(h.order_status, 'active') = 'active'
+                    AND COALESCE(h.payment_status, 'unpaid') IN ('unpaid', 'partial')
+              )
+            ORDER BY t.id ASC
+            LIMIT 1
+        ")->fetch_assoc() ?: null;
     }
 }

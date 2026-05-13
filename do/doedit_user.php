@@ -3,6 +3,7 @@
 // يفترض أن include('../includes/connect.php') يعرّف $conn (mysqli)
 
 include('../includes/connect.php');
+require_once __DIR__ . '/../classes/PasswordService.php';
 
 // تأكد من أن id رقم صحيح
 if (!isset($_GET['id'])) {
@@ -51,12 +52,12 @@ if ($userrole !== '') {
     $values[] = $userrole;
 }
 
-// كلمة المرور: خزنها كـ MD5 فقط (حسب طلبك)
+// كلمة المرور: خزنها باستخدام password_hash مع استمرار دعم تسجيل دخول MD5 القديم.
 if ($password !== '') {
-    $md5_pass = md5($password);
+    $password_hash = PasswordService::hashPassword($password);
     $fields[] = "password = ?";
     $types .= "s";
-    $values[] = $md5_pass;
+    $values[] = $password_hash;
 }
 
 // حالة الويتر

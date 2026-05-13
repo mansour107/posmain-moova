@@ -35,7 +35,20 @@ try {
     $tables = [];
     if ($result) {
         while ($row = $result->fetch_assoc()) {
-            $row['table_case'] = (int) ($row['has_active_order'] ?? 0);
+            $tableCase = (int) ($row['has_active_order'] ?? 0);
+            $tableId = (int) ($row['id'] ?? 0);
+
+            if ($tableId > 0 && $tableCase !== (int) ($row['table_case'] ?? 0)) {
+                $updateStmt = $conn->prepare("UPDATE tables SET table_case = ? WHERE id = ?");
+                $updateStmt->bind_param("ii", $tableCase, $tableId);
+                $updateStmt->execute();
+                $updateStmt->close();
+            }
+
+            $row['table_case'] = $tableCase;
+            $row['order_id'] = isset($row['order_id']) ? (int) $row['order_id'] : null;
+            $row['fat_net'] = isset($row['fat_net']) ? (float) $row['fat_net'] : 0;
+            $row['has_active_order'] = $tableCase;
             $tables[] = $row;
         }
     }

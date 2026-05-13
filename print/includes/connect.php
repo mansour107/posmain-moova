@@ -1,20 +1,12 @@
 
 <?php
-$dbhost = 'localhost';
-$dbuser = 'root';
-$dbpass = '';
-$dbname = 'kody2';
+require_once __DIR__ . '/../../includes/db_bootstrap.php';
 
-mysqli_report(MYSQLI_REPORT_OFF);
-$conn = @new mysqli($dbhost, $dbuser, $dbpass);
-
-if ($conn->connect_error) {
-    header("Location: ../pre_start.php?error=server_down");
-    exit;
-}
-
-if (!$conn->select_db($dbname)) {
-    header("Location: ../pre_start.php?reason=db_missing");
+try {
+    $conn = posmain_db_connect();
+} catch (Throwable $e) {
+    $reason = posmain_db_error_is_missing_database($e) ? 'reason=db_missing' : 'error=server_down';
+    header("Location: ../pre_start.php?" . $reason);
     exit;
 }
 
@@ -35,5 +27,3 @@ $user_role_id = $_SESSION['usrole'];
 $sqlrole = "SELECT * FROM `usr_pwrs` WHERE id = $user_role_id ";
 $resrole = $conn->query($sqlrole);
 $role = $resrole->fetch_assoc();}
-
-

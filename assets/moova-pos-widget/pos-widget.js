@@ -30,6 +30,11 @@
       missingDeviceToken: 'Missing device token.',
       failedStartWidget: 'Failed to start the approval widget.',
       failedFetchPending: 'Failed to fetch pending orders.',
+      moovaUnreachable: 'Moova is unreachable. Check the Moova service connection and try again.',
+      posUnreachable: 'POS server is unreachable. Check this POS connection and try again.',
+      pleaseLoginFirst: 'POS session expired. Please log in again.',
+      moovaLinkMissing: 'Moova is not linked for this cashier. Check the Moova integration settings.',
+      moovaMappingUnavailable: 'Moova connection settings are unavailable. Check the POS integration setup.',
       muteNotifications: 'Mute notifications',
       unmuteNotifications: 'Unmute notifications',
       notesConfirmedToast: 'Notes confirmed.',
@@ -118,6 +123,11 @@
       missingDeviceToken: 'رمز الجهاز غير موجود.',
       failedStartWidget: 'تعذر تشغيل ويدجت الموافقة.',
       failedFetchPending: 'تعذر جلب الطلبات المعلّقة.',
+      moovaUnreachable: 'تعذر الاتصال بـ Moova. تحقق من تشغيل خدمة Moova والاتصال ثم حاول مرة أخرى.',
+      posUnreachable: 'تعذر الاتصال بنظام نقاط البيع. تحقق من تشغيل النظام والاتصال ثم حاول مرة أخرى.',
+      pleaseLoginFirst: 'انتهت جلسة نقاط البيع. سجّل الدخول مرة أخرى.',
+      moovaLinkMissing: 'ربط Moova غير متاح لهذا الكاشير. تحقق من إعدادات الربط.',
+      moovaMappingUnavailable: 'إعدادات اتصال Moova غير متاحة. تحقق من إعدادات الربط في نقاط البيع.',
       muteNotifications: 'كتم صوت الإشعارات',
       unmuteNotifications: 'تشغيل صوت الإشعارات',
       notesConfirmedToast: 'تم تأكيد الملاحظات.',
@@ -2399,13 +2409,40 @@
     });
     const payload = await parseResponsePayload(response);
     if (!response.ok) {
-      throw createWidgetError(
-        payload && typeof payload.error === 'string' ? payload.error : `Request failed (${response.status})`,
-        response.status,
-        payload && typeof payload.code === 'string' ? payload.code : null,
-      );
+      const errorInfo = normalizeApiErrorPayload(payload, response.status);
+      throw createWidgetError(errorInfo.message, response.status, errorInfo.code, payload);
     }
     return payload;
+  }
+
+  function normalizeApiErrorPayload(payload, status) {
+    const code = asText(payload?.code || payload?.error).toUpperCase();
+    const mappedMessage = messageForApiError(code);
+    const fallbackMessage = asText(payload?.message) || asText(payload?.error) || `Request failed (${status})`;
+
+    return {
+      code: code || null,
+      message: mappedMessage || fallbackMessage,
+    };
+  }
+
+  function messageForApiError(code) {
+    switch (code) {
+      case 'MOOVA_UNREACHABLE':
+        return t('moovaUnreachable');
+      case 'POS_UNREACHABLE':
+        return t('posUnreachable');
+      case 'PLEASE_LOGIN_FIRST':
+        return t('pleaseLoginFirst');
+      case 'MOOVA_LINK_MISSING':
+        return t('moovaLinkMissing');
+      case 'MOOVA_MAPPING_UNAVAILABLE':
+      case 'INVALID_MOOVA_ORIGIN':
+      case 'INVALID_MOOVA_PROXY_PATH':
+        return t('moovaMappingUnavailable');
+      default:
+        return '';
+    }
   }
 
   async function parseResponsePayload(response) {
@@ -2424,10 +2461,11 @@
     }
   }
 
-  function createWidgetError(message, status, code) {
+  function createWidgetError(message, status, code, payload) {
     const error = new Error(message);
     error.status = status;
     error.code = code || null;
+    error.errorPayload = payload || null;
     return error;
   }
 

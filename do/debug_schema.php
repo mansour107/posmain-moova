@@ -1,4 +1,7 @@
 <?php
+require_once __DIR__ . '/../includes/production_guard.php';
+production_guard_deny_route('do/debug_schema.php');
+
 $conn = new mysqli('localhost', 'root', '', 'focus');
 if ($conn->connect_error) {
     die("Connection failed: " . $conn->connect_error);

@@ -1,4 +1,7 @@
 <?php
+require_once __DIR__ . '/../../includes/production_guard.php';
+production_guard_deny_route('do/dbase/do_turncate.php');
+
 include('../../includes/connect.php');
 
 if ($_SERVER['REQUEST_METHOD'] != 'POST') {

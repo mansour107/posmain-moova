@@ -1,0 +1,28 @@
+services:
+  branch-worker:
+    image: ${POSMAIN_PHP_IMAGE:-posmain-php}
+    working_dir: /app
+    command:
+      - php
+      - cli/branch_worker_daemon.php
+      - --loop
+      - --sleep=5
+      - --max-runtime=300
+    env_file:
+      - .env.branch-worker
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - php
+        - cli/branch_worker_daemon.php
+        - --preflight
+        - --strict
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    depends_on:
+      - mysql
+    volumes:
+      - .:/app:ro

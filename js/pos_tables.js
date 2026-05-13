@@ -5,6 +5,27 @@ let currentOrder = {
     discount: 0,
     net: 0
 };
+let posTableRequestKeys = {};
+
+function createPOSTableIdempotencyKey(scope) {
+    if (window.crypto && typeof window.crypto.randomUUID === 'function') {
+        return scope + ':' + window.crypto.randomUUID();
+    }
+
+    return scope + ':' + Date.now().toString(36) + ':' + Math.random().toString(36).slice(2);
+}
+
+function getPOSTableIdempotencyKey(scope) {
+    if (!posTableRequestKeys[scope]) {
+        posTableRequestKeys[scope] = createPOSTableIdempotencyKey(scope);
+    }
+
+    return posTableRequestKeys[scope];
+}
+
+function clearPOSTableIdempotencyKey(scope) {
+    delete posTableRequestKeys[scope];
+}
 
 // تحميل الطاولات عند بدء الصفحة
 $(document).ready(function() {
@@ -289,7 +310,8 @@ function saveOrder() {
         items: currentOrder.items,
         total: currentOrder.total,
         discount: currentOrder.discount,
-        net: currentOrder.net
+        net: currentOrder.net,
+        idempotency_key: getPOSTableIdempotencyKey('pos.table.save')
     };
     
     $('#save-order').addClass('loading').prop('disabled', true);
@@ -304,6 +326,7 @@ function saveOrder() {
             if (response.success) {
                 alert('تم حفظ الطلب بنجاح');
                 $('#current_order_id').val(response.order_id);
+                clearPOSTableIdempotencyKey('pos.table.save');
                 loadTables(); // تحديث حالة الطاولات
             } else {
                 alert('خطأ: ' + response.message);
@@ -374,7 +397,8 @@ function cancelOrder() {
             method: 'POST',
             data: { 
                 order_id: orderId,
-                table_id: tableId
+                table_id: tableId,
+                idempotency_key: getPOSTableIdempotencyKey('pos.order.cancel')
             },
             dataType: 'json',
             success: function(response) {
@@ -382,6 +406,7 @@ function cancelOrder() {
                     alert('تم إلغاء الطلب بنجاح');
                     currentOrder.items = [];
                     $('#current_order_id').val('');
+                    clearPOSTableIdempotencyKey('pos.order.cancel');
                     displayOrderItems();
                     calculateTotal();
                     loadTables(); // تحديث حالة الطاولات
@@ -456,4 +481,3 @@ function clearOrder() {
     displayOrderItems();
     calculateTotal();
 }
-

@@ -6,6 +6,8 @@
 ob_start(); // امسح أي output قبل الـ JSON
 session_start();
 include('../includes/connect.php');
+require_once('../classes/Sync/DocumentCounterService.php');
+require_once('../classes/Sync/SyncOutboxEventService.php');
 
 // امسح أي output جاي من connect.php (warnings, notices, etc.)
 ob_clean();
@@ -176,13 +178,8 @@ $acc2 = $acc2_id;  // العميل دائن
 $conn->begin_transaction();
 
 try {
-    // رقم الفاتورة التالي
-    $r = $conn->prepare("SELECT MAX(CAST(pro_id AS UNSIGNED)) as max_id FROM ot_head WHERE pro_tybe = ?");
-    $r->bind_param("i", $pro_tybe);
-    $r->execute();
-    $row = $r->get_result()->fetch_assoc();
-    $r->close();
-    $pro_id = $row && $row['max_id'] ? ($row['max_id'] + 1) : 1;
+    $counterService = new DocumentCounterService();
+    $pro_id = nextCofeProId($conn, $counterService, $pro_tybe);
 
     // ===== إدراج رأس الفاتورة =====
     // الأعمدة: pro_id(1) pro_tybe(2) is_stock is_journal journal_tybe(3) info(4) pro_date(5)
@@ -235,11 +232,7 @@ try {
 
     // ===== القيود المحاسبية =====
     // رقم القيد التالي
-    $r = $conn->prepare("SELECT MAX(journal_id) as max_id FROM journal_heads");
-    $r->execute();
-    $row = $r->get_result()->fetch_assoc();
-    $r->close();
-    $journal_id = $row && $row['max_id'] ? ($row['max_id'] + 1) : 1;
+    $journal_id = nextCofeJournalId($conn, $counterService);
 
     // رأس القيد
     $details = "فاتورة ريسيت _ {$last_op}";
@@ -272,11 +265,7 @@ try {
     $stmt->close();
 
     // ===== سند القبض (الدفع الكاش) =====
-    $r = $conn->prepare("SELECT MAX(CAST(pro_id AS UNSIGNED)) as max_id FROM ot_head WHERE pro_tybe = 1");
-    $r->execute();
-    $row = $r->get_result()->fetch_assoc();
-    $r->close();
-    $cash_op_id = $row && $row['max_id'] ? ($row['max_id'] + 1) : 1;
+    $cash_op_id = nextCofeProId($conn, $counterService, 1);
 
     $cash_info = $info . " - دفع كاش";
     $stmt = $conn->prepare(
@@ -303,11 +292,7 @@ try {
     $stmt->close();
 
     // قيد سند القبض
-    $r = $conn->prepare("SELECT MAX(journal_id) as max_id FROM journal_heads");
-    $r->execute();
-    $row = $r->get_result()->fetch_assoc();
-    $r->close();
-    $journal_id2 = $row && $row['max_id'] ? ($row['max_id'] + 1) : 1;
+    $journal_id2 = nextCofeJournalId($conn, $counterService);
 
     $cash_details = "سند قبض كاش _ {$pro_id}";
     $stmt = $conn->prepare(
@@ -404,6 +389,19 @@ try {
     $stmt->execute();
     $stmt->close();
 
+    $syncOutbox = new SyncOutboxEventService();
+    $syncOutbox->recordOrderSnapshot($conn, $last_op, [
+        'event_type' => 'order.saved',
+        'source_system' => 'cofe_widget',
+    ]);
+    if (!empty($tableNumber) && intval($tableNumber) > 0) {
+        $syncOutbox->recordTableSnapshot($conn, intval($tableNumber), [
+            'event_type' => 'table.updated',
+            'source_system' => 'cofe_widget',
+            'active_order_id' => $last_op,
+        ]);
+    }
+
     $conn->commit();
 
     echo json_encode([
@@ -425,4 +423,25 @@ try {
         'code'    => 'DB_ERROR',
         'message' => 'خطأ في حفظ الطلب: ' . $e->getMessage(),
     ]);
+}
+
+function nextCofeProId(mysqli $conn, DocumentCounterService $counterService, int $proTybe): int
+{
+    $stmt = $conn->prepare("SELECT MAX(CAST(pro_id AS UNSIGNED)) AS max_id FROM ot_head WHERE pro_tybe = ?");
+    $stmt->bind_param("i", $proTybe);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+
+    $counterService->ensureCounterRow($conn, 0, 0, 'pro_id', 'pro_tybe:' . $proTybe, $row && $row['max_id'] ? (int) $row['max_id'] : 0);
+
+    return $counterService->nextProId($conn, $proTybe, 0, 0);
+}
+
+function nextCofeJournalId(mysqli $conn, DocumentCounterService $counterService): int
+{
+    $row = $conn->query("SELECT MAX(journal_id) AS max_id FROM journal_heads")->fetch_assoc();
+    $counterService->ensureCounterRow($conn, 0, 0, 'journal_id', 'journal:default', $row && $row['max_id'] ? (int) $row['max_id'] : 0);
+
+    return $counterService->nextJournalId($conn, 0, 0);
 }

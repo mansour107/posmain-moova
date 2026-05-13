@@ -8,8 +8,8 @@
 
     CREATE TABLE `closed_orders` (
   `id` int(11) NOT NULL,
-  `shift` varchar(10) NOT NULL,
-  `user` varchar(10) NOT NULL,
+	  `shift` varchar(20) NOT NULL,
+	  `user` varchar(50) NOT NULL,
   `date` date DEFAULT NULL,
   `strttime` datetime DEFAULT NULL,
   `endtime` time DEFAULT NULL,

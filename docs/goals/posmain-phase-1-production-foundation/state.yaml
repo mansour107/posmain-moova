@@ -1,0 +1,478 @@
+# Goal Maker v2 state.yaml
+# Board truth lives here. goal.md is the editable charter; notes/ holds long receipts only.
+
+version: 2
+
+goal:
+  title: "POSMAIN Phase 1 Production Foundation"
+  slug: "posmain-phase-1-production-foundation"
+  kind: specific
+  tranche: "Implement Phase 1 production foundation from the POS expansion plan using Phase 0 docs as baseline."
+  status: done
+
+rules:
+  pm_owns_state: true
+  one_active_task: true
+  max_write_workers: 1
+  no_implementation_without_worker_or_pm_task: true
+  no_completion_without_judge_or_pm_audit: true
+
+agents:
+  scout: installed
+  worker: installed
+  judge: installed
+
+active_task: null
+
+tasks:
+  - id: T001
+    type: pm
+    assignee: PM
+    status: done
+    objective: "Create the Phase 1 Goal Maker board and bind it to Phase 0 artifacts."
+    inputs:
+      - "/Users/ab.mansour1agmail.com/Desktop/pos expansion plan.txt"
+      - "docs/goals/posmain-phase-0-production-readiness/"
+      - "docs/production/"
+    constraints:
+      - "Only write Goal Maker control files."
+      - "Do not edit implementation files before the board exists."
+    expected_output:
+      - "Goal board exists and first active task is safe/read-only."
+      - "Scout, Worker, and Judge roles are available."
+    receipt:
+      result: done
+      changed_files:
+        - "docs/goals/posmain-phase-1-production-foundation/goal.md"
+        - "docs/goals/posmain-phase-1-production-foundation/state.yaml"
+      summary: "Created Phase 1 Goal Maker board; agents are available from the configured goal_scout, goal_worker, and goal_judge roles."
+  - id: T002
+    type: scout
+    assignee: Scout
+    status: done
+    objective: "Map Phase 1 requirements against current Phase 0 artifacts and repo files before implementation."
+    inputs:
+      - "Phase 1 plan"
+      - "docs/production/"
+      - "Existing config/session/password/migration/health files"
+    constraints:
+      - "Read-only."
+      - "Prefer concrete file-path evidence."
+      - "Identify unrelated dirty worktree changes that must not be touched."
+    expected_output:
+      - "Impacted surfaces and compatibility risks."
+      - "Current implementation gaps."
+      - "Focused Worker slices and verification commands."
+    receipt:
+      result: done
+      note: "notes/T002-phase1-scout-map.md"
+      summary: "Mapped Phase 1 against Phase 0 artifacts and current code. Main gaps are hardcoded DB runtime paths, committed config/database.php secret, missing .env.example/session bootstrap/password service, missing upload/private-dir deny rules, no Phase 1 backup runbook, and no general health endpoint."
+      evidence:
+        - "docs/production/baseline_inventory_2026-05-12.md"
+        - "docs/production/write_surface_classification.md"
+        - "config/app_config.php"
+        - "includes/connect.php"
+        - "print/includes/connect.php"
+        - "config/database.php"
+        - "index.php"
+        - "do/doadd_user.php"
+        - "do/doedit_user.php"
+        - "do/dochange_password.php"
+        - "tools/run_migrations.php"
+        - "api/sync/status.php"
+      commands:
+        - cmd: "docker ps --filter name=posmain --format '{{.Names}} {{.Status}} {{.Ports}}'"
+          status: pass
+        - cmd: "POSMAIN_DB_PORT=3307 php tools/run_migrations.php --dry-run"
+          status: pass
+        - cmd: "php -l config/app_config.php && php -l includes/db_bootstrap.php && php -l includes/connect.php && php -l print/includes/connect.php && php -l index.php && php -l tools/run_migrations.php && php -l api/sync/status.php"
+          status: pass
+  - id: T003
+    type: judge
+    assignee: Judge
+    status: done
+    objective: "Review Scout findings and approve the smallest safe Phase 1 implementation sequence."
+    inputs:
+      - "T002 receipt"
+      - "Major-change safety checklist"
+    constraints:
+      - "Read-only."
+      - "Defer destructive or credential-rotation work to docs/runbooks."
+    expected_output:
+      - "Decision on implementation order."
+      - "Allowed next Worker task."
+      - "Risks that require owner confirmation."
+    receipt:
+      result: done
+      decision: "Proceed with the planned small slices. Start with config/db bootstrap because it is foundational, locally verifiable, and can preserve existing cashier globals without touching order/payment/table mutation behavior."
+      next_allowed_task: T004
+      summary: "Major-change safety check: impacted surfaces are shared config/db/session/login, API health, docs, and production exposure rules; compatibility risks are legacy globals, local Docker DB port, MD5 migration, and secret exposure; verification will run after each Worker slice."
+      blocked_tasks:
+        - "Real credential rotation is documented only; no production credential operation is allowed in this tranche."
+        - "Destructive restore rehearsal is documented only unless owner explicitly provides a staging target and backup."
+  - id: T004
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "Unify runtime configuration and DB bootstrapping without changing POS business mutations."
+    allowed_files:
+      - "config/app_config.php"
+      - "config/database.php"
+      - "config/database.example.php"
+      - "includes/bootstrap.php"
+      - "includes/db_bootstrap.php"
+      - "includes/connect.php"
+      - "print/includes/connect.php"
+      - "index.php"
+      - ".env.example"
+      - ".gitignore"
+      - "docs/goals/posmain-phase-1-production-foundation/state.yaml"
+      - "docs/goals/posmain-phase-1-production-foundation/notes/"
+    verify:
+      - "php -l config/app_config.php"
+      - "php -l includes/db_bootstrap.php"
+      - "php -l includes/connect.php"
+      - "php -l print/includes/connect.php"
+      - "php -l index.php"
+      - "POSMAIN_DB_HOST=127.0.0.1 POSMAIN_DB_PORT=3307 php -r 'require \"includes/db_bootstrap.php\"; $db=posmain_db(); echo $db instanceof mysqli ? \"db-ok\\n\" : \"bad\\n\";'"
+    stop_if:
+      - "Need to rewrite unrelated DB callers."
+      - "Need real production credentials."
+      - "Local DB cannot be reached and the failure is not from this slice."
+    receipt:
+      result: done
+      changed_files:
+        - "config/app_config.php"
+        - "includes/db_bootstrap.php"
+        - "includes/connect.php"
+        - "print/includes/connect.php"
+        - "config/database.php"
+        - "config/database.example.php"
+        - "index.php"
+        - "includes/bootstrap.php"
+        - ".env.example"
+        - ".gitignore"
+      commands:
+        - cmd: "php -l config/app_config.php && php -l includes/db_bootstrap.php && php -l includes/connect.php && php -l print/includes/connect.php && php -l index.php && php -l config/database.php && php -l config/database.example.php && php -l includes/bootstrap.php"
+          status: pass
+        - cmd: "POSMAIN_DB_HOST=127.0.0.1 POSMAIN_DB_PORT=3307 php -r 'require \"includes/db_bootstrap.php\"; $db=posmain_db(); echo $db instanceof mysqli ? \"db-ok\\n\" : \"bad\\n\";'"
+          status: pass
+        - cmd: "POSMAIN_DB_HOST=127.0.0.1 POSMAIN_DB_PORT=3307 php -r '$_SERVER[\"PHP_SELF\"]=\"/test.php\"; require \"includes/connect.php\"; echo isset($conn,$rowstg,$today) ? \"legacy-connect-ok\\n\" : \"legacy-connect-missing\\n\";'"
+          status: pass
+        - cmd: "POSMAIN_DB_HOST=127.0.0.1 POSMAIN_DB_PORT=3307 php tools/run_migrations.php --dry-run"
+          status: pass
+        - cmd: "curl -I --max-time 5 http://127.0.0.1:8010/index.php"
+          status: pass
+      summary: "Expanded app_config to load .env and expose Phase 1 flags; added .env.example and bootstrap shim; routed legacy connect, print connect, index login, and config/database.php through db_bootstrap while preserving legacy globals and db_missing/server_down redirects."
+  - id: T005
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "Add production exposure protections, upload denial, and deployment/credential runbooks."
+    allowed_files:
+      - ".htaccess"
+      - "uploads/.htaccess"
+      - "docs/production/deployment_profile.md"
+      - "docs/production/credential_rotation.md"
+      - "docs/production/least_privilege_db_users.sql"
+      - "docs/goals/posmain-phase-1-production-foundation/state.yaml"
+      - "docs/goals/posmain-phase-1-production-foundation/notes/"
+    verify:
+      - "test -f docs/production/deployment_profile.md"
+      - "test -f docs/production/credential_rotation.md"
+      - "test -f docs/production/least_privilege_db_users.sql"
+      - "test -f uploads/.htaccess"
+    stop_if:
+      - "Need to rotate real credentials."
+      - "Deny rules would block needed public app routes."
+    receipt:
+      result: done
+      changed_files:
+        - ".htaccess"
+        - "uploads/.htaccess"
+        - "docs/production/deployment_profile.md"
+        - "docs/production/credential_rotation.md"
+        - "docs/production/least_privilege_db_users.sql"
+      commands:
+        - cmd: "test -f docs/production/deployment_profile.md && test -f docs/production/credential_rotation.md && test -f docs/production/least_privilege_db_users.sql && test -f uploads/.htaccess"
+          status: pass
+        - cmd: "rg -n 'known leaked credential strings' Phase 1 scoped files"
+          status: pass_no_matches
+        - cmd: "rg -n \"RewriteRule ^\\(\\\\.git|php_flag engine off|RemoveHandler|posmain_app_user|POSMAIN_PRODUCTION_MODE=1\" .htaccess uploads/.htaccess docs/production/deployment_profile.md docs/production/least_privilege_db_users.sql"
+          status: pass
+        - cmd: "php -l config/app_config.php && POSMAIN_DB_HOST=127.0.0.1 POSMAIN_DB_PORT=3307 php tools/run_migrations.php --dry-run"
+          status: pass
+      summary: "Added root private-path deny rules, blocked PHP/script execution in uploads, and created deployment, credential-rotation, and least-privilege DB user runbooks without retaining the leaked credential string."
+  - id: T006
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "Add central session bootstrap and password hashing support while preserving legacy login compatibility."
+    allowed_files:
+      - "includes/session_bootstrap.php"
+      - "includes/connect.php"
+      - "classes/PasswordService.php"
+      - "index.php"
+      - "do/doadd_user.php"
+      - "do/doedit_user.php"
+      - "do/dochange_password.php"
+      - "tools/report_legacy_password_hashes.php"
+      - "docs/goals/posmain-phase-1-production-foundation/state.yaml"
+      - "docs/goals/posmain-phase-1-production-foundation/notes/"
+    verify:
+      - "php -l includes/session_bootstrap.php"
+      - "php -l classes/PasswordService.php"
+      - "php -l index.php"
+      - "php -l do/doadd_user.php"
+      - "php -l do/doedit_user.php"
+      - "php -l do/dochange_password.php || true"
+      - "php -r 'require \"classes/PasswordService.php\"; $h=PasswordService::hashPassword(\"secret\"); if (!PasswordService::verifyPassword(\"secret\", $h)) exit(1); echo \"password-ok\\n\";'"
+    stop_if:
+      - "Password storage column length is too short and migration is not safe in this tranche."
+      - "Login compatibility cannot be preserved."
+    receipt:
+      result: done
+      changed_files:
+        - "includes/session_bootstrap.php"
+        - "includes/connect.php"
+        - "classes/PasswordService.php"
+        - "index.php"
+        - "do/doadd_user.php"
+        - "do/doedit_user.php"
+        - "do/dochange_password.php"
+        - "tools/report_legacy_password_hashes.php"
+      commands:
+        - cmd: "php -l includes/session_bootstrap.php && php -l classes/PasswordService.php && php -l includes/connect.php && php -l index.php && php -l do/doadd_user.php && php -l do/doedit_user.php && php -l do/dochange_password.php && php -l tools/report_legacy_password_hashes.php"
+          status: pass
+        - cmd: "php -r 'require \"classes/PasswordService.php\"; $h=PasswordService::hashPassword(\"secret\"); if (!PasswordService::verifyPassword(\"secret\", $h)) exit(1); if (!PasswordService::verifyPassword(\"secret\", md5(\"secret\"))) exit(2); if (!PasswordService::needsRehash(md5(\"secret\"))) exit(3); echo \"password-ok\\n\";'"
+          status: pass
+        - cmd: "POSMAIN_DB_HOST=127.0.0.1 POSMAIN_DB_PORT=3307 php -r '$_SERVER[\"PHP_SELF\"]=\"/test.php\"; require \"includes/connect.php\"; echo isset($conn,$rowstg,$today) ? \"legacy-connect-ok\\n\" : \"legacy-connect-missing\\n\";'"
+          status: pass
+        - cmd: "POSMAIN_DB_HOST=127.0.0.1 POSMAIN_DB_PORT=3307 php tools/report_legacy_password_hashes.php"
+          status: pass
+        - cmd: "curl -I --max-time 5 http://127.0.0.1:8010/index.php"
+          status: pass_session_cookie_httponly_samesite
+        - cmd: "rg -n \"md5\\(\\$password\\)|md5\\(\\$new_password\\)|md5_pass\" index.php do/doadd_user.php do/doedit_user.php do/dochange_password.php classes/PasswordService.php tools/report_legacy_password_hashes.php"
+          status: pass_no_matches
+        - cmd: "POSMAIN_DB_HOST=127.0.0.1 POSMAIN_DB_PORT=3307 php tools/run_migrations.php --dry-run"
+          status: pass
+      summary: "Added central session bootstrap with HttpOnly/SameSite cookie settings and configurable timeouts; introduced PasswordService; preserved MD5 login compatibility with rehash; converted active user password writes to password_hash; added legacy hash report tool."
+  - id: T007
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "Improve migration discipline, backup/restore runbook, and operator health endpoint."
+    allowed_files:
+      - "tools/run_migrations.php"
+      - "run_migrations.php"
+      - "tools/backup_database.php"
+      - "api/health.php"
+      - "api/sync/status.php"
+      - "docs/production/backup_restore_runbook.md"
+      - "docs/goals/posmain-phase-1-production-foundation/state.yaml"
+      - "docs/goals/posmain-phase-1-production-foundation/notes/"
+    verify:
+      - "php -l tools/run_migrations.php"
+      - "php -l tools/backup_database.php"
+      - "php -l api/health.php"
+      - "php tools/run_migrations.php --dry-run"
+      - "php api/health.php"
+    stop_if:
+      - "Need destructive migration."
+      - "Need real backup restore against production data."
+      - "Health endpoint would expose secrets."
+    receipt:
+      result: done
+      changed_files:
+        - "tools/run_migrations.php"
+        - "tools/backup_database.php"
+        - "api/health.php"
+        - "api/sync/status.php"
+        - "docs/production/backup_restore_runbook.md"
+      commands:
+        - cmd: "php -l tools/run_migrations.php && php -l tools/backup_database.php && php -l api/health.php && php -l api/sync/status.php"
+          status: pass
+        - cmd: "POSMAIN_DB_HOST=127.0.0.1 POSMAIN_DB_PORT=3307 php tools/run_migrations.php --dry-run"
+          status: pass
+        - cmd: "POSMAIN_DB_HOST=127.0.0.1 POSMAIN_DB_PORT=3307 php api/health.php"
+          status: pass
+        - cmd: "POSMAIN_DB_HOST=127.0.0.1 POSMAIN_DB_PORT=3307 POSMAIN_STATUS_TOKEN=test-token HTTP_X_POSMAIN_STATUS_TOKEN=test-token QUERY_STRING='detail=1' php api/health.php"
+          status: pass
+        - cmd: "POSMAIN_DB_HOST=127.0.0.1 POSMAIN_DB_PORT=3307 QUERY_STRING='detail=1' php api/health.php"
+          status: pass_403
+        - cmd: "POSMAIN_DB_HOST=127.0.0.1 POSMAIN_DB_PORT=3307 php tools/backup_database.php --output=/tmp/posmain-phase1-test.sql --dry-run"
+          status: pass
+        - cmd: "POSMAIN_DB_HOST=127.0.0.1 POSMAIN_DB_PORT=3307 POSMAIN_STATUS_TOKEN=test-token HTTP_X_POSMAIN_STATUS_TOKEN=test-token php api/sync/status.php"
+          status: pass_reports_existing_sync_attention
+        - cmd: "POSMAIN_DB_HOST=127.0.0.1 POSMAIN_DB_PORT=3307 php tools/backup_database.php --output=/tmp/posmain-phase1-backup-smoke.sql"
+          status: fail_mysqldump_not_installed
+      summary: "Added schema_migrations tracking logic to the CLI migration runner, requiring backup evidence for apply unless local override is explicit; added a masked backup tool and backup/restore runbook; added public/detailed health endpoint with token-protected details; updated sync status to accept POSMAIN_STATUS_TOKEN."
+  - id: T008
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "Run Phase 1 verification and fix only Phase 1 regressions."
+    allowed_files:
+      - "config/app_config.php"
+      - "config/database.php"
+      - "includes/bootstrap.php"
+      - "includes/db_bootstrap.php"
+      - "includes/connect.php"
+      - "print/includes/connect.php"
+      - "includes/session_bootstrap.php"
+      - "classes/PasswordService.php"
+      - "pos_barcode.php"
+      - "tables.php"
+      - "close_shift.php"
+      - "do_close_shift_z.php"
+      - "print/receipt.php"
+      - "print/includes/header.php"
+      - "print/daily_sales_receipt.php"
+      - "print/shift_sales_receipt.php"
+      - "print_my_shift.php"
+      - "tools/run_migrations.php"
+      - "tools/backup_database.php"
+      - "api/health.php"
+      - "api/sync/status.php"
+      - "docs/production/"
+      - "docs/goals/posmain-phase-1-production-foundation/state.yaml"
+      - "docs/goals/posmain-phase-1-production-foundation/notes/"
+    verify:
+      - "php -l config/app_config.php"
+      - "php -l includes/db_bootstrap.php"
+      - "php -l includes/session_bootstrap.php"
+      - "php -l includes/production_guard.php"
+      - "php tools/run_migrations.php --dry-run"
+      - "php tools/branch_go_live_readiness.php --json --backup-file=/tmp/nonexistent.sql"
+      - "curl checks for denied dirs/uploads if local server is available"
+    stop_if:
+      - "Verification failure belongs to unrelated dirty work."
+      - "Fix requires files outside allowed_files."
+    receipt:
+      result: done
+      changed_files:
+        - "config/app_config.php"
+        - "includes/db_bootstrap.php"
+        - "includes/session_bootstrap.php"
+        - "includes/production_guard.php"
+        - "includes/connect.php"
+        - "print/includes/connect.php"
+        - "index.php"
+        - "pos_barcode.php"
+        - "tables.php"
+        - "close_shift.php"
+        - "do_close_shift_z.php"
+        - "print/includes/header.php"
+        - "print/daily_sales_receipt.php"
+        - "print/shift_sales_receipt.php"
+        - "print_my_shift.php"
+        - "classes/PasswordService.php"
+        - "tools/run_migrations.php"
+        - "tools/backup_database.php"
+        - "api/health.php"
+        - "api/sync/status.php"
+      commands:
+        - cmd: "php -l config/app_config.php && php -l includes/db_bootstrap.php && php -l includes/session_bootstrap.php && php -l includes/production_guard.php && php -l includes/connect.php && php -l print/includes/connect.php && php -l index.php && php -l pos_barcode.php && php -l tables.php && php -l close_shift.php && php -l do_close_shift_z.php && php -l print/includes/header.php && php -l print/daily_sales_receipt.php && php -l print/shift_sales_receipt.php && php -l print_my_shift.php && php -l classes/PasswordService.php && php -l tools/run_migrations.php && php -l tools/backup_database.php && php -l api/health.php && php -l api/sync/status.php"
+          status: pass
+        - cmd: "POSMAIN_DB_HOST=127.0.0.1 POSMAIN_DB_PORT=3307 php tools/run_migrations.php --dry-run && POSMAIN_DB_HOST=127.0.0.1 POSMAIN_DB_PORT=3307 php api/health.php"
+          status: pass
+        - cmd: "php -r 'require \"classes/PasswordService.php\"; $h=PasswordService::hashPassword(\"secret\"); if (!PasswordService::verifyPassword(\"secret\", $h)) exit(1); if (!PasswordService::verifyPassword(\"secret\", md5(\"secret\"))) exit(2); if (!PasswordService::needsRehash(md5(\"secret\"))) exit(3); echo \"password-ok\\n\";'"
+          status: pass
+        - cmd: "curl -I --max-time 5 http://127.0.0.1:8010/index.php && curl -I --max-time 5 http://127.0.0.1:8010/pos_barcode.php"
+          status: pass_session_cookie_httponly_samesite
+        - cmd: "POSMAIN_PRODUCTION_MODE=1 php -S 127.0.0.1:18085 -t .; curl D-class routes"
+          status: pass_pre_start_403_db_setup_403_doadd_invoice_debug_404
+        - cmd: "POSMAIN_DB_HOST=127.0.0.1 POSMAIN_DB_PORT=3307 php tools/backup_database.php --output=/tmp/posmain-phase1-test.sql --dry-run"
+          status: pass
+        - cmd: "php tools/branch_go_live_readiness.php --json --skip-db --backup-file=/tmp/nonexistent.sql; test $? -eq 2"
+          status: pass_expected_not_ready
+        - cmd: "git diff --check -- Phase 1 scoped files"
+          status: pass
+        - cmd: "node /Users/ab.mansour1agmail.com/.codex/skills/goal-maker/scripts/check-goal-state.mjs docs/goals/posmain-phase-1-production-foundation/state.yaml"
+          status: pass
+      summary: "Ran Phase 1 syntax, DB dry-run, health, password, login/POS HTTP, production guard, backup dry-run, readiness, and whitespace checks. Fixed active POS/print/shift entry points to use the central session bootstrap so cookies now include HttpOnly and SameSite."
+  - id: T999
+    type: judge
+    assignee: Judge
+    status: done
+    objective: "Audit whether Phase 1 tranche is complete and safely reviewable."
+    inputs:
+      - "All done task receipts"
+      - "Last verification"
+      - "Current dirty diff"
+    constraints:
+      - "Read-only."
+      - "Do not mark complete if Phase 1 acceptance has material gaps."
+    expected_output:
+      - "complete | not_complete"
+      - "missing evidence"
+      - "next task if not complete"
+    receipt:
+      result: not_complete
+      decision: "Phase 1 implementation is code-complete enough for review except backup/restore still needs a real local rehearsal. Host mysqldump is missing, but Docker MariaDB contains mysqldump, so add one bounded Worker task to prove backup/restore on a disposable local DB."
+      next_allowed_task: T009
+      missing_evidence:
+        - "Real backup file created from local DB."
+        - "Restore into disposable DB and smoke verification."
+  - id: T009
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "Rehearse local backup/restore using the Docker MariaDB container and a disposable restore database."
+    allowed_files:
+      - "docs/goals/posmain-phase-1-production-foundation/state.yaml"
+    verify:
+      - "docker exec posmain-mysql mysqldump kody2 > /tmp/posmain-phase1-restore-smoke.sql"
+      - "docker exec posmain-mysql mysql -e 'DROP DATABASE IF EXISTS kody2_restore_smoke; CREATE DATABASE kody2_restore_smoke CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;'"
+      - "docker exec -i posmain-mysql mysql kody2_restore_smoke < /tmp/posmain-phase1-restore-smoke.sql"
+      - "docker exec posmain-mysql mysql -N -e 'SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=\"kody2_restore_smoke\";'"
+      - "docker exec posmain-mysql mysql -e 'DROP DATABASE IF EXISTS kody2_restore_smoke;'"
+    stop_if:
+      - "Docker containers are unavailable."
+      - "Backup or restore command would target production data."
+    receipt:
+      result: done
+      changed_files:
+        - "docs/goals/posmain-phase-1-production-foundation/state.yaml"
+      commands:
+        - cmd: "docker exec posmain-mysql mysqldump -uroot --single-transaction --routines --triggers --default-character-set=utf8mb4 kody2 > /tmp/posmain-phase1-restore-smoke.sql"
+          status: pass
+        - cmd: "docker exec posmain-mysql mysql -uroot -e 'DROP DATABASE IF EXISTS kody2_restore_smoke; CREATE DATABASE kody2_restore_smoke CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;'"
+          status: pass
+        - cmd: "docker exec -i posmain-mysql mysql -uroot kody2_restore_smoke < /tmp/posmain-phase1-restore-smoke.sql"
+          status: pass
+        - cmd: "docker exec posmain-mysql mysql -uroot -N -e 'SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=\"kody2_restore_smoke\"; SELECT COUNT(*) FROM kody2_restore_smoke.ot_head; SELECT COUNT(*) FROM kody2_restore_smoke.users;'"
+          status: pass_tables_136_ot_head_103_users_2
+        - cmd: "docker exec posmain-mysql mysql -uroot -e 'DROP DATABASE IF EXISTS kody2_restore_smoke;'"
+          status: pass
+      summary: "Created an 857K local dump from the Docker MariaDB container, restored it into disposable database kody2_restore_smoke, verified table/core row counts, and dropped the disposable DB."
+  - id: T010
+    type: judge
+    assignee: Judge
+    status: done
+    objective: "Final audit whether Phase 1 tranche is complete after backup/restore rehearsal."
+    inputs:
+      - "All done task receipts"
+      - "T009 backup/restore receipt"
+      - "Current dirty diff"
+    constraints:
+      - "Read-only."
+    expected_output:
+      - "complete | not_complete"
+      - "missing evidence"
+    receipt:
+      result: complete
+      decision: complete
+      missing_evidence: []
+      residual_risks:
+        - "Real production credential rotation remains an operator action and is documented, not executed."
+        - "Host mysqldump is not installed; local backup/restore rehearsal used the Docker MariaDB container successfully."
+        - "The current Docker PHP service mounts the repo read-only, so web health can report writable-path attention there; CLI health against the workspace passed."
+      summary: "Phase 1 tranche is complete for review. Config/secrets, production exposure, session/password foundations, migration tracking logic, health/status, backup tooling/runbook, and a real local backup/restore rehearsal all have receipts and verification."
+
+checks:
+  dirty_fingerprint: "Captured before Phase 1; worktree already dirty from Phase 0/sync/Moova work."
+  last_verification:
+    result: unknown
+    task: null
+    commands: []

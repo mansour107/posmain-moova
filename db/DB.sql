@@ -468,8 +468,8 @@ CREATE TABLE `clients` (
 
 CREATE TABLE `closed_orders` (
   `id` int(11) NOT NULL,
-  `shift` varchar(10) NOT NULL,
-  `user` varchar(10) DEFAULT NULL,
+  `shift` varchar(20) NOT NULL,
+  `user` varchar(50) DEFAULT NULL,
   `date` date DEFAULT NULL,
   `strttime` datetime DEFAULT NULL,
   `endtime` time DEFAULT NULL,

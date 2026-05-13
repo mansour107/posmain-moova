@@ -28,7 +28,7 @@
                     <!-- نموذج الإضافة -->
                     <div class="row mb-4">
                         <div class="col-md-6">
-                            <form action="do/doadd_group2.php" method="post" class="form-inline">
+                            <form action="do/doadd_group.php?return_to=item_categories" method="post" class="form-inline">
                                 <label class="mr-2">التصنيف الجديد:</label>
                                 <input 
                                     type="text" 
@@ -56,7 +56,7 @@
                             <tbody>
                                 <?php 
                                 $x = 0;
-                                $resgrb = $conn->query("SELECT * FROM item_group2 WHERE isdeleted = 0 ORDER BY id ASC");
+                                $resgrb = $conn->query("SELECT * FROM item_group WHERE isdeleted = 0 ORDER BY id ASC");
                                 
                                 if ($resgrb->num_rows == 0) {
                                     echo '<tr><td colspan="3" class="text-center text-muted">لا توجد تصنيفات</td></tr>';
@@ -66,7 +66,7 @@
                                     $x++;
                                 ?>
                                 <tr>
-                                    <form action="do/doedit_group2.php?id=<?= $rowgrb['id'] ?>" method="post" class="d-contents">
+                                    <form action="do/doedit_group.php?id=<?= $rowgrb['id'] ?>&return_to=item_categories" method="post" class="d-contents">
                                         <td><?= $x ?></td>
                                         <td>
                                             <input 
@@ -82,7 +82,7 @@
                                                 <i class="fas fa-edit"></i> 
                                             </button>
                                             <a 
-                                                href="do/dodel_group2.php?id=<?= $rowgrb['id'] ?>" 
+                                                href="do/dodel_group.php?id=<?= $rowgrb['id'] ?>&return_to=item_categories" 
                                                 class="btn btn-sm btn-danger"
                                                 onclick="return confirm('هل تريد حذف هذا التصنيف؟')"
                                             >

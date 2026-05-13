@@ -166,7 +166,7 @@ $postedPass = isset($_POST['password']) ? (string) $_POST['password'] : null;
           </div>
           <div class="card-body">
             <div class="row">
-              <div class="col-lg-6">
+              <div class="col-lg-12">
                 <div class="form-group">
                   <label for="pos_type">نوع نظام POS</label>
                   <select class="form-control" id="pos_type" name="pos_type">
@@ -174,17 +174,6 @@ $postedPass = isset($_POST['password']) ? (string) $_POST['password'] : null;
                     <option value="clothes" <?= (($rowstg['pos_type'] ?? 'barcode') === 'clothes') ? 'selected' : '' ?>>POS ملابس</option>
                   </select>
                   <small class="form-text text-muted">يحدد نوع واجهة POS من القائمة.</small>
-                </div>
-              </div>
-              <div class="col-lg-6">
-                <div class="form-group mb-0">
-                  <label class="d-block">حماية POS بكلمة مرور</label>
-                  <div class="custom-control custom-switch pt-1">
-                    <input type="checkbox" class="custom-control-input" id="pos_has_password" name="pos_has_password" value="1"
-                           <?= (!empty($rowstg['pos_has_password'])) ? 'checked' : '' ?>>
-                    <label class="custom-control-label" for="pos_has_password">طلب مسح باركود قبل فتح POS</label>
-                  </div>
-                  <small class="form-text text-muted">عند التفعيل يُطلب التحقق قبل استخدام الكاشير.</small>
                 </div>
               </div>
             </div>

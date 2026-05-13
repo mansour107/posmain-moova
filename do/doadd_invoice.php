@@ -1,4 +1,7 @@
 <?php
+require_once __DIR__ . '/../includes/production_guard.php';
+production_guard_deny_debug_request('do/doadd_invoice.php');
+
 session_start();
 include('../includes/connect.php');
 
@@ -33,6 +36,9 @@ $usid = $_SESSION['userid'];
 // تضمين فئات النظام الجديد
 require_once('../classes/InvoiceElementFactory.php');
 require_once('../classes/TableOrderService.php');
+require_once('../classes/Sync/DocumentCounterService.php');
+require_once('../classes/Sync/SyncOutboxEventService.php');
+require_once('../classes/Pos/Service/PosOrderMutationService.php');
 
 // تعريف ثوابت أنواع الفواتير
 define('INVOICE_TYPES', [
@@ -69,6 +75,7 @@ $headnet = isset($_POST['headnet']) ? floatval($_POST['headnet']) : 0;
 $fund_id = isset($_POST['fund_id']) ? intval($_POST['fund_id']) : 0;
 $info = isset($_POST['info']) ? htmlspecialchars(trim($_POST['info']), ENT_QUOTES, 'UTF-8') : '';
 $submit = isset($_POST['submit_action']) ? htmlspecialchars($_POST['submit_action'], ENT_QUOTES, 'UTF-8') : (isset($_POST['submit']) ? htmlspecialchars($_POST['submit'], ENT_QUOTES, 'UTF-8') : 'save');
+$is_save_only = ($submit === 'save');
 $jal_name = isset($_POST['jal_name']) ? htmlspecialchars(trim($_POST['jal_name']), ENT_QUOTES, 'UTF-8') : NULL;
 $jal_notes = isset($_POST['jal_notes']) ? htmlspecialchars(trim($_POST['jal_notes']), ENT_QUOTES, 'UTF-8') : NULL;
 $jal_amount = isset($_POST['jal_amount']) ? floatval($_POST['jal_amount']) : 0;
@@ -150,7 +157,7 @@ if(in_array($pro_tybe, [INVOICE_TYPES['PURCHASE_ORDER'], INVOICE_TYPES['SALES_OR
     $paid = isset($_POST['paid']) ? floatval($_POST['paid']) : 0;
 }
 
-if ($order_type_db === 'table' && $submit === 'save') {
+if ($is_save_only) {
     $paid = 0;
     $paid_cash = 0;
     $paid_bank = 0;
@@ -332,41 +339,75 @@ if (!$config) {
 // تحديد الحسابات المحاسبية
 $accounts = getAccountingAccounts($pro_tybe, $store_id, $acc2_id, $fund_id);
 error_log('Accounting accounts: ' . print_r($accounts, true));
-/**
- * دالة الحصول على رقم الفاتورة التالي باستخدام Prepared Statement
- * Get next invoice number using prepared statement
- */
-function getNextInvoiceNumber($conn, $invoice_type) {
-    $stmt = $conn->prepare("SELECT MAX(CAST(pro_id AS UNSIGNED)) as max_id FROM ot_head WHERE pro_tybe = ?");
-    if (!$stmt) {
-        throw new Exception('فشل في تحضير الاستعلام: ' . $conn->error);
+
+$route_takeaway_service = $pro_tybe === INVOICE_TYPES['POS']
+    && $order_type_db === 'takeaway'
+    && $submit === 'cash'
+    && $selected_order_id <= 0
+    && (int) ($_REQUEST['edit_id'] ?? 0) <= 0
+    && ($paid_cash + $paid_bank) > 0;
+
+if ($route_takeaway_service) {
+    try {
+        $takeawayRequest = $_POST;
+        $takeawayRequest['store_id'] = $store_id;
+        $takeawayRequest['pro_serial'] = $pro_serial;
+        $takeawayRequest['pro_date'] = $pro_date;
+        $takeawayRequest['accural_date'] = $accural_date;
+        $takeawayRequest['acc2_id'] = $acc2_id;
+        $takeawayRequest['emp_id'] = $emp_id;
+        $takeawayRequest['headtotal'] = $headtotal;
+        $takeawayRequest['headdisc'] = $headdisc;
+        $takeawayRequest['headplus'] = $headplus;
+        $takeawayRequest['headnet'] = $headnet;
+        $takeawayRequest['fund_id'] = $fund_id;
+        $takeawayRequest['info'] = $info;
+        $takeawayRequest['paid_cash'] = $paid_cash;
+        $takeawayRequest['paid_bank'] = $paid_bank;
+        $takeawayRequest['payment_fund_id'] = $payment_fund_id;
+        $takeawayRequest['payment_bank_id'] = $payment_bank_id;
+        $takeawayRequest['jal_name'] = $jal_name;
+        $takeawayRequest['jal_notes'] = $jal_notes;
+        $takeawayRequest['jal_amount'] = $jal_amount;
+
+        $mutationService = new PosOrderMutationService();
+        $serviceResult = $mutationService->createTakeawayOrder($conn, $takeawayRequest, [
+            'user_id' => (int) $usid,
+        ]);
+        $last_op = (int) $serviceResult['data']['order_id'];
+        $pro_id = (int) $serviceResult['data']['pro_id'];
+        $_SESSION['success_message'] = 'تم حفظ الطلب بنجاح - رقم الفاتورة: ' . $pro_id;
+        header("Location: ../print/receipt.php?id=$last_op");
+        exit;
+    } catch (Throwable $e) {
+        error_log('ERROR in takeaway service route: ' . $e->getMessage());
+        error_log('ERROR trace: ' . $e->getTraceAsString());
+        die('حدث خطأ أثناء معالجة الفاتورة: ' . $e->getMessage());
     }
+}
 
-    $stmt->bind_param("i", $invoice_type);
+function nextLegacyInvoiceProId(mysqli $conn, DocumentCounterService $counterService, int $invoiceType): int
+{
+    $stmt = $conn->prepare("SELECT MAX(CAST(pro_id AS UNSIGNED)) AS max_id FROM ot_head WHERE pro_tybe = ?");
+    if (!$stmt) {
+        throw new Exception('فشل في تحضير استعلام رقم الفاتورة: ' . $conn->error);
+    }
+    $stmt->bind_param("i", $invoiceType);
     $stmt->execute();
-
-    $result = $stmt->get_result();
-    $row = $result->fetch_assoc();
+    $row = $stmt->get_result()->fetch_assoc();
     $stmt->close();
 
-    return $row && $row['max_id'] ? ($row['max_id'] + 1) : 1;
+    $counterService->ensureCounterRow($conn, 0, 0, 'pro_id', 'pro_tybe:' . $invoiceType, $row && $row['max_id'] ? (int) $row['max_id'] : 0);
+
+    return $counterService->nextProId($conn, $invoiceType, 0, 0);
 }
 
-/**
- * دالة الحصول على رقم العملية التالي
- * Get next operation number for accounting operations
- */
-function getNextOperationNumber($conn, $operation_type) {
-    return getNextInvoiceNumber($conn, $operation_type);
-}
+function nextLegacyInvoiceJournalId(mysqli $conn, DocumentCounterService $counterService): int
+{
+    $row = $conn->query("SELECT MAX(journal_id) AS max_id FROM journal_heads")->fetch_assoc();
+    $counterService->ensureCounterRow($conn, 0, 0, 'journal_id', 'journal:default', $row && $row['max_id'] ? (int) $row['max_id'] : 0);
 
-// الحصول على أرقام العمليات
-try {
-    $pro_id = getNextInvoiceNumber($conn, $pro_tybe);
-    $disc_op_id = getNextOperationNumber($conn, $config['disc_type']);
-    $paid_op_id = getNextOperationNumber($conn, $config['paid_type']);
-} catch (Exception $e) {
-    die('خطأ في الحصول على أرقام العمليات: ' . $e->getMessage());
+    return $counterService->nextJournalId($conn, 0, 0);
 }
 // حساب النسب المئوية للخصم والإضافي
 $fat_disc_per = ($headtotal > 0 && $headdisc > 0) ? number_format($headdisc/$headtotal*100, 2) : 0;
@@ -379,6 +420,8 @@ try {
     $conn->begin_transaction();
     error_log('Database transaction started successfully');
     $lockedTableOrder = null;
+    $counterService = new DocumentCounterService();
+    $pro_id = null;
 
     $edit_id = isset($_REQUEST['edit_id']) ? intval($_REQUEST['edit_id']) : 0;
     if ($order_type_db === 'table' && $selected_order_id > 0) {
@@ -467,10 +510,12 @@ try {
         }
 
         $last_op = $edit_id; // last_op now refers to the primary key of the updated ot_head record
+        $pro_id = $original_pro_id;
         error_log('Order header updated successfully for ID: ' . $last_op);
 
     } else {
         // --- إدخال فاتورة جديدة (INSERT) ---
+        $pro_id = nextLegacyInvoiceProId($conn, $counterService, (int) $pro_tybe);
         $stmt = $conn->prepare(
             "INSERT INTO ot_head (
                 pro_id, pro_tybe, is_stock, is_journal, journal_tybe, info, pro_date,
@@ -589,15 +634,9 @@ try {
         $stmt_structured->close();
 
     // إنشاء القيود المحاسبية (فقط للفواتير الفعلية، ليس للأوامر أو العروض)
-    $should_create_payment_vouchers = !($order_type_db === 'table' && $submit === 'save');
+    $should_create_payment_vouchers = !$is_save_only;
     if ($should_create_payment_vouchers && !in_array($pro_tybe, [INVOICE_TYPES['PURCHASE_ORDER'], INVOICE_TYPES['SALES_ORDER'], INVOICE_TYPES['OFFER']])) {
-        // الحصول على رقم القيد التالي
-        $stmt = $conn->prepare("SELECT MAX(journal_id) as max_id FROM journal_heads");
-        $stmt->execute();
-        $result = $stmt->get_result();
-        $row = $result->fetch_assoc();
-        $journal_id = $row && $row['max_id'] ? ($row['max_id'] + 1) : 1;
-        $stmt->close();
+        $journal_id = nextLegacyInvoiceJournalId($conn, $counterService);
 
         // إدخال رأس القيد
         $stmt = $conn->prepare(
@@ -705,7 +744,7 @@ try {
             error_log('Processing cash payment: ' . $actual_cash_received . ' to fund: ' . $payment_fund_id);
 
             // إدخال عملية الدفع الكاش
-            $cash_op_id = getNextOperationNumber($conn, $config['paid_type']);
+            $cash_op_id = nextLegacyInvoiceProId($conn, $counterService, (int) $config['paid_type']);
             $stmt = $conn->prepare(
                 "INSERT INTO ot_head (
                     pro_id, pro_tybe, is_journal, journal_tybe, info, pro_date,
@@ -728,12 +767,7 @@ try {
             $stmt->close();
 
             // إدخال قيد الدفع الكاش
-            $stmt = $conn->prepare("SELECT MAX(journal_id) as max_id FROM journal_heads");
-            $stmt->execute();
-            $result = $stmt->get_result();
-            $row = $result->fetch_assoc();
-            $journal_id = $row && $row['max_id'] ? ($row['max_id'] + 1) : 1;
-            $stmt->close();
+            $journal_id = nextLegacyInvoiceJournalId($conn, $counterService);
 
             // رأس قيد الدفع الكاش
             $stmt = $conn->prepare(
@@ -773,7 +807,7 @@ try {
             error_log('Processing bank payment: ' . $actual_bank_received . ' to bank: ' . $payment_bank_id);
 
             // إدخال عملية الدفع الصرافة
-            $bank_op_id = getNextOperationNumber($conn, $config['paid_type']);
+            $bank_op_id = nextLegacyInvoiceProId($conn, $counterService, (int) $config['paid_type']);
             $stmt = $conn->prepare(
                 "INSERT INTO ot_head (
                     pro_id, pro_tybe, is_journal, journal_tybe, info, pro_date,
@@ -796,12 +830,7 @@ try {
             $stmt->close();
 
             // إدخال قيد الدفع الصرافة
-            $stmt = $conn->prepare("SELECT MAX(journal_id) as max_id FROM journal_heads");
-            $stmt->execute();
-            $result = $stmt->get_result();
-            $row = $result->fetch_assoc();
-            $journal_id = $row && $row['max_id'] ? ($row['max_id'] + 1) : 1;
-            $stmt->close();
+            $journal_id = nextLegacyInvoiceJournalId($conn, $counterService);
 
             // رأس قيد الدفع الصرافة
             $stmt = $conn->prepare(
@@ -983,8 +1012,23 @@ try {
             }
         }
 
+        if ((int) $pro_tybe === INVOICE_TYPES['POS']) {
+            $syncOutbox = new SyncOutboxEventService();
+            $syncOutbox->recordOrderSnapshot($conn, (int) $last_op, [
+                'event_type' => $edit_id > 0 ? 'order.updated' : 'order.saved',
+                'source_system' => 'pos_cashier',
+            ]);
+            if ($order_type_db === 'table' && $table_id > 0) {
+                $syncOutbox->recordTableSnapshot($conn, $table_id, [
+                    'event_type' => 'table.updated',
+                    'source_system' => 'pos_cashier',
+                    'active_order_id' => $order_status_db === 'active' ? (int) $last_op : null,
+                ]);
+            }
+        }
+
 	    // إتمام المعاملة
-    error_log('Committing transaction');
+	    error_log('Committing transaction');
     $conn->commit();
     error_log('Transaction committed successfully');
 

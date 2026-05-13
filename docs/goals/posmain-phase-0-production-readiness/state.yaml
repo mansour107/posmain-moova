@@ -1,0 +1,392 @@
+# Goal Maker v2 state.yaml
+# Board truth lives here. goal.md is the editable charter; notes/ holds long receipts only.
+
+version: 2
+
+goal:
+  title: "POSMAIN Phase 0 Production Readiness"
+  slug: "posmain-phase-0-production-readiness"
+  kind: specific
+  tranche: "Implement Phase 0: branch/baseline, write-route ownership docs, production guard, offline prototype gating, and verification."
+  status: done
+
+rules:
+  pm_owns_state: true
+  one_active_task: true
+  max_write_workers: 1
+  no_implementation_without_worker_or_pm_task: true
+  no_completion_without_judge_or_pm_audit: true
+
+agents:
+  scout: installed
+  worker: installed
+  judge: installed
+
+active_task: null
+
+tasks:
+  - id: T001
+    type: pm
+    assignee: PM
+    status: done
+    objective: "Create the Goal Maker board and establish the dedicated Phase 0 branch/baseline fingerprint."
+    inputs:
+      - "/Users/ab.mansour1agmail.com/Desktop/pos expansion plan.txt"
+      - "git status --short"
+      - "git diff --stat"
+    constraints:
+      - "Do not discard dirty worktree changes."
+      - "Only write Goal Maker control files and safe baseline artifacts."
+    expected_output:
+      - "Goal board exists and passes checker."
+      - "Dedicated branch exists or current branch is documented."
+      - "Current dirty state is captured."
+    receipt:
+      result: done
+      summary: "Goal board created, checker passed, and dirty worktree carried onto dedicated branch codex/posmain-phase-0-production-readiness without discarding changes."
+      evidence:
+        - "docs/goals/posmain-phase-0-production-readiness/goal.md"
+        - "docs/goals/posmain-phase-0-production-readiness/state.yaml"
+        - "/tmp/posmain-current-diff-before-production-plan.patch"
+        - "/tmp/posmain-current-diff-before-production-plan.stat"
+      commands:
+        - cmd: "node /Users/ab.mansour1agmail.com/.codex/skills/goal-maker/scripts/check-goal-state.mjs docs/goals/posmain-phase-0-production-readiness/state.yaml"
+          status: pass
+        - cmd: "git switch -c codex/posmain-phase-0-production-readiness"
+          status: pass
+        - cmd: "git diff > /tmp/posmain-current-diff-before-production-plan.patch && git diff --stat > /tmp/posmain-current-diff-before-production-plan.stat"
+          status: pass
+  - id: T002
+    type: scout
+    assignee: Scout
+    status: done
+    objective: "Map Phase 0 impacted surfaces, active write routes, route ownership, and verification commands."
+    inputs:
+      - "Phase 0 plan"
+      - "Current repo files"
+      - "Existing tests/tools"
+    constraints:
+      - "Read-only."
+      - "Prefer concrete file-path evidence."
+    expected_output:
+      - "Impacted surfaces and compatibility risks."
+      - "Write-surface classification evidence."
+      - "Active route map evidence."
+      - "Focused verification commands."
+    receipt:
+      result: done
+      note: "notes/T002-phase0-scout-map.md"
+      summary: "Mapped Phase 0 surfaces: active cashier/table/Moova writes, D-class debug/setup/repair routes, offline adapter inclusion, DB/runtime verification blockers, and focused checks."
+      evidence:
+        - "pos_barcode.php"
+        - "includes/pos_content.php"
+        - "tables.php"
+        - "js/pos_barcode.js"
+        - "elements/pos/cofe_widget.php"
+        - "tools/audit_write_paths.php"
+        - "tools/run_migrations.php"
+        - "docker-compose.posmain-test.yml"
+      commands:
+        - cmd: "php tools/audit_write_paths.php --json"
+          status: pass
+        - cmd: "php tools/run_migrations.php --dry-run"
+          status: fail_db_unreachable
+        - cmd: "docker ps -a --filter name=posmain"
+          status: fail_docker_daemon_unavailable
+  - id: T003
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "Create Phase 0 baseline inventory, write-surface classification, and active route map documents."
+    allowed_files:
+      - "docs/production/baseline_inventory_2026-05-12.md"
+      - "docs/production/write_surface_classification.md"
+      - "docs/production/active_route_map.md"
+      - "docs/production/write_surface_audit_latest.json"
+      - "docs/goals/posmain-phase-0-production-readiness/state.yaml"
+      - "docs/goals/posmain-phase-0-production-readiness/notes/"
+    verify:
+      - "test -f docs/production/baseline_inventory_2026-05-12.md"
+      - "test -f docs/production/write_surface_classification.md"
+      - "test -f docs/production/active_route_map.md"
+      - "php tools/audit_write_paths.php --json"
+      - "php tools/run_migrations.php --dry-run"
+    stop_if:
+      - "Need to discard dirty changes."
+      - "DB/runtime is unreachable and exact failure cannot be documented."
+      - "Verification fails twice for unrelated pre-existing reasons."
+    receipt:
+      result: done
+      changed_files:
+        - "docs/production/baseline_inventory_2026-05-12.md"
+        - "docs/production/write_surface_classification.md"
+        - "docs/production/active_route_map.md"
+        - "docs/production/write_surface_audit_latest.json"
+      commands:
+        - cmd: "test -f docs/production/baseline_inventory_2026-05-12.md && test -f docs/production/write_surface_classification.md && test -f docs/production/active_route_map.md"
+          status: pass
+        - cmd: "php tools/audit_write_paths.php --json >/tmp/phase0-audit-check.json && php -r '$j=json_decode(file_get_contents(\"/tmp/phase0-audit-check.json\"), true); if (!is_array($j)) exit(1); echo \"audit-ok surfaces=\".count($j[\"surfaces\"]).\"\\n\";'"
+          status: pass
+        - cmd: "POSMAIN_DB_PORT=3307 php tools/run_migrations.php --dry-run"
+          status: pass
+        - cmd: "curl -I --max-time 5 http://127.0.0.1:8010/index.php"
+          status: pass
+      summary: "Created Phase 0 baseline inventory, write-surface classification, active route map, and generated write-surface audit JSON; recovered existing Docker POSMAIN containers and verified migration dry-run plus login HTTP 200."
+  - id: T004
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "Implement production guard and apply it to D-class debug/setup/repair/update/log routes."
+    allowed_files:
+      - "includes/production_guard.php"
+      - "pre_start.php"
+      - "setup_demo_data.php"
+      - "quick_fix.php"
+      - "repair_database_jal.php"
+      - "run_migrations.php"
+      - "run_payment_updates.php"
+      - "run_table_updates.php"
+      - "logs_viewer.php"
+      - "view_logs.php"
+      - "ajax/db_setup.php"
+      - "do/debug_columns.php"
+      - "do/debug_ot_head.php"
+      - "do/debug_post.php"
+      - "do/debug_schema.php"
+      - "do/debug_schema_2.php"
+      - "do/dbase/do_turncate.php"
+      - "do/dobackup.php"
+      - "do/doadd_invoice.php"
+      - "docs/goals/posmain-phase-0-production-readiness/state.yaml"
+      - "docs/goals/posmain-phase-0-production-readiness/notes/"
+    verify:
+      - "php -l includes/production_guard.php"
+      - "POSMAIN_PRODUCTION_MODE=1 php -r '$_SERVER[\"REQUEST_METHOD\"]=\"GET\"; require \"includes/production_guard.php\"; production_guard_deny_route(\"test\", [\"allow_cli\"=>true]); echo \"cli-ok\\n\";'"
+      - "POSMAIN_PRODUCTION_MODE=1 php -S 127.0.0.1:18080 -t ."
+      - "curl -i http://127.0.0.1:18080/pre_start.php"
+    stop_if:
+      - "A route file does not exist; document instead of inventing it."
+      - "Guarding a route would block needed CLI behavior."
+      - "A guarded route must remain public for production but no permission rule is defined."
+    receipt:
+      result: done
+      changed_files:
+        - "includes/production_guard.php"
+        - "do/doadd_invoice.php"
+        - "pre_start.php"
+        - "setup_demo_data.php"
+        - "quick_fix.php"
+        - "repair_database_jal.php"
+        - "run_migrations.php"
+        - "run_payment_updates.php"
+        - "run_table_updates.php"
+        - "logs_viewer.php"
+        - "view_logs.php"
+        - "ajax/db_setup.php"
+        - "do/debug_columns.php"
+        - "do/debug_ot_head.php"
+        - "do/debug_post.php"
+        - "do/debug_schema.php"
+        - "do/debug_schema_2.php"
+        - "do/dbase/do_turncate.php"
+        - "do/dobackup.php"
+      commands:
+        - cmd: "php -l includes/production_guard.php"
+          status: pass
+        - cmd: "for f in do/doadd_invoice.php pre_start.php setup_demo_data.php quick_fix.php repair_database_jal.php run_migrations.php run_payment_updates.php run_table_updates.php logs_viewer.php view_logs.php ajax/db_setup.php do/debug_columns.php do/debug_ot_head.php do/debug_post.php do/debug_schema.php do/debug_schema_2.php do/dbase/do_turncate.php do/dobackup.php; do php -l \"$f\" || exit 1; done"
+          status: pass
+        - cmd: "POSMAIN_PRODUCTION_MODE=1 php -r '$_SERVER[\"REQUEST_METHOD\"]=\"GET\"; require \"includes/production_guard.php\"; production_guard_deny_route(\"test\", [\"allow_cli\"=>true]); echo \"cli-ok\\n\";'"
+          status: pass
+        - cmd: "curl -i http://127.0.0.1:18080/pre_start.php"
+          status: pass_403
+        - cmd: "curl -i http://127.0.0.1:18080/ajax/db_setup.php"
+          status: pass_403
+        - cmd: "curl -i 'http://127.0.0.1:18080/do/doadd_invoice.php?debug=1'"
+          status: pass_404
+        - cmd: "curl -i http://127.0.0.1:18080/do/debug_post.php"
+          status: pass_403
+      summary: "Added production_guard, applied it before output/DB access to D-class setup/debug/repair/log/backup routes, and blocked do/doadd_invoice.php debug output in production while preserving CLI execution."
+  - id: T005
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "Disable the legacy browser offline prototype in production while preserving local/non-production behavior."
+    allowed_files:
+      - "pos_barcode.php"
+      - "includes/pos_content.php"
+      - "js/pos_barcode.js"
+      - "pos_sw.js"
+      - "pos_offline.html"
+      - "docs/goals/posmain-phase-0-production-readiness/state.yaml"
+      - "docs/goals/posmain-phase-0-production-readiness/notes/"
+    verify:
+      - "php -l pos_barcode.php"
+      - "php -l includes/pos_content.php"
+      - "POSMAIN_PRODUCTION_MODE=1 php -r 'require \"includes/production_guard.php\"; echo (!production_guard_is_production() || production_guard_env_bool(\"POSMAIN_ENABLE_LEGACY_OFFLINE_PROTOTYPE\", false)) ? \"bad\" : \"ok\";'"
+      - "POSMAIN_PRODUCTION_MODE=1 POSMAIN_ENABLE_LEGACY_OFFLINE_PROTOTYPE=1 php -r 'require \"includes/production_guard.php\"; echo (!production_guard_is_production() || production_guard_env_bool(\"POSMAIN_ENABLE_LEGACY_OFFLINE_PROTOTYPE\", false)) ? \"ok\" : \"bad\";'"
+    stop_if:
+      - "Offline adapter inclusion is generated by an unknown build step."
+      - "Production gating would change cashier save/payment behavior."
+    receipt:
+      result: done
+      changed_files:
+        - "includes/pos_content.php"
+        - "docs/goals/posmain-phase-0-production-readiness/state.yaml"
+      commands:
+        - cmd: "php -l includes/pos_content.php && php -l pos_barcode.php"
+          status: pass
+        - cmd: "POSMAIN_PRODUCTION_MODE=1 php -r 'require \"includes/production_guard.php\"; echo (!production_guard_is_production() || production_guard_env_bool(\"POSMAIN_ENABLE_LEGACY_OFFLINE_PROTOTYPE\", false)) ? \"bad\\n\" : \"ok\\n\";'"
+          status: pass
+        - cmd: "POSMAIN_PRODUCTION_MODE=1 POSMAIN_ENABLE_LEGACY_OFFLINE_PROTOTYPE=1 php -r 'require \"includes/production_guard.php\"; echo (!production_guard_is_production() || production_guard_env_bool(\"POSMAIN_ENABLE_LEGACY_OFFLINE_PROTOTYPE\", false)) ? \"ok\\n\" : \"bad\\n\";'"
+          status: pass
+        - cmd: "rg -n \"legacyOfflinePrototypeEnabled|pos_offline_adapter|Starting POS Offline System|POSMAIN_ENABLE_LEGACY_OFFLINE_PROTOTYPE\" includes/pos_content.php includes/production_guard.php"
+          status: pass
+      summary: "Gated js/pos_offline_adapter.js and its offline-ready script behind production_guard checks so production mode disables it by default and POSMAIN_ENABLE_LEGACY_OFFLINE_PROTOTYPE=1 opt-in keeps it available."
+  - id: T006
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "Run focused and broad verification for Phase 0 and fix Phase 0 regressions until green."
+    allowed_files:
+      - "includes/production_guard.php"
+      - "pre_start.php"
+      - "setup_demo_data.php"
+      - "quick_fix.php"
+      - "repair_database_jal.php"
+      - "run_migrations.php"
+      - "run_payment_updates.php"
+      - "run_table_updates.php"
+      - "logs_viewer.php"
+      - "view_logs.php"
+      - "ajax/db_setup.php"
+      - "do/debug_columns.php"
+      - "do/debug_ot_head.php"
+      - "do/debug_post.php"
+      - "do/debug_schema.php"
+      - "do/debug_schema_2.php"
+      - "do/dbase/do_turncate.php"
+      - "do/dobackup.php"
+      - "do/doadd_invoice.php"
+      - "pos_barcode.php"
+      - "includes/pos_content.php"
+      - "docs/production/"
+      - "docs/goals/posmain-phase-0-production-readiness/state.yaml"
+      - "docs/goals/posmain-phase-0-production-readiness/notes/"
+    verify:
+      - "php -l includes/production_guard.php"
+      - "find . -path './vendor' -prune -o -name '*.php' -print | xargs -n 1 php -l"
+      - "php tools/audit_write_paths.php --json"
+      - "php tools/run_migrations.php --dry-run"
+      - "vendor/bin/phpunit"
+      - "docker compose -f docker-compose.posmain-test.yml up -d"
+      - "curl -I http://127.0.0.1:8010/index.php"
+    stop_if:
+      - "A verification failure is unrelated and unsafe to modify under Phase 0."
+      - "Fix requires credentials or destructive DB action."
+    receipt:
+      result: done
+      changed_files:
+        - "includes/production_guard.php"
+        - "includes/pos_content.php"
+        - "do/doadd_invoice.php"
+        - "pre_start.php"
+        - "setup_demo_data.php"
+        - "quick_fix.php"
+        - "repair_database_jal.php"
+        - "run_migrations.php"
+        - "run_payment_updates.php"
+        - "run_table_updates.php"
+        - "logs_viewer.php"
+        - "view_logs.php"
+        - "ajax/db_setup.php"
+        - "do/debug_columns.php"
+        - "do/debug_ot_head.php"
+        - "do/debug_post.php"
+        - "do/debug_schema.php"
+        - "do/debug_schema_2.php"
+        - "do/dbase/do_turncate.php"
+        - "do/dobackup.php"
+        - "docs/production/baseline_inventory_2026-05-12.md"
+        - "docs/production/write_surface_classification.md"
+        - "docs/production/active_route_map.md"
+        - "docs/production/write_surface_audit_latest.json"
+      commands:
+        - cmd: "php -l includes/production_guard.php && php -l includes/pos_content.php && php -l do/doadd_invoice.php"
+          status: pass
+        - cmd: "find ... -name '*.php' -print0 | xargs -0 -n 1 php -l"
+          status: pass_710_files
+        - cmd: "php tools/audit_write_paths.php --json"
+          status: pass
+        - cmd: "POSMAIN_DB_PORT=3307 php tools/run_migrations.php --dry-run"
+          status: pass
+        - cmd: "curl -I --max-time 5 http://127.0.0.1:8010/index.php"
+          status: pass_200
+        - cmd: "curl title check http://127.0.0.1:8010/index.php"
+          status: pass_title_kody_pos
+        - cmd: "Production-mode HTTP sweep for 17 D-class routes"
+          status: pass_all_403
+        - cmd: "Production-mode HTTP check do/doadd_invoice.php?debug=1"
+          status: pass_404
+        - cmd: "vendor/bin/phpunit"
+          status: blocked_missing_phpunit
+        - cmd: "composer validate"
+          status: blocked_missing_composer
+        - cmd: "git diff --check"
+          status: fail_preexisting_item_categories_trailing_whitespace
+      summary: "Ran Phase 0 verification. Changed files are syntax-clean, all scanned PHP files lint with null-delimited paths, audit and migration dry-run pass, Docker POS login returns HTTP 200/title, D-class production guard sweep passes, and blocked dependency/style gaps are documented."
+  - id: T999
+    type: judge
+    assignee: Judge
+    status: done
+    objective: "Audit whether Phase 0 is complete and regression evidence is sufficient."
+    inputs:
+      - "All done task receipts"
+      - "Current dirty diff"
+      - "Last verification"
+      - "Phase 0 exit criteria"
+    constraints:
+      - "Do not implement."
+      - "Call out missing evidence directly."
+    expected_output:
+      - "complete | not_complete"
+      - "Missing evidence"
+      - "Next task if not complete"
+    receipt:
+      result: done
+      decision: complete
+      summary: "Phase 0 is complete: dedicated branch and baseline artifacts exist, write surfaces and active routes are classified, D-class routes are production-guarded, invoice debug output is blocked in production, legacy offline adapter inclusion is feature-gated, and focused/runtime verification passed."
+      evidence:
+        - "docs/production/baseline_inventory_2026-05-12.md"
+        - "docs/production/write_surface_classification.md"
+        - "docs/production/active_route_map.md"
+        - "docs/production/write_surface_audit_latest.json"
+        - "includes/production_guard.php"
+        - "includes/pos_content.php"
+      missing_evidence:
+        - "PHPUnit suite could not run because vendor/bin/phpunit and phpunit are not installed in this checkout."
+        - "composer validate could not run because composer is not installed."
+        - "git diff --check is red due to pre-existing trailing whitespace in item_categories.php, outside the Phase 0 allowed write scope."
+        - "Codex in-app browser verification was unavailable; curl and Docker HTTP smoke checks were used instead."
+      commands:
+        - cmd: "node /Users/ab.mansour1agmail.com/.codex/skills/goal-maker/scripts/check-goal-state.mjs docs/goals/posmain-phase-0-production-readiness/state.yaml"
+          status: pass_before_completion
+        - cmd: "php lint changed files and 710 scanned PHP files"
+          status: pass
+        - cmd: "POSMAIN_DB_PORT=3307 php tools/run_migrations.php --dry-run"
+          status: pass
+        - cmd: "production-mode HTTP guard sweep"
+          status: pass
+        - cmd: "curl -I --max-time 5 http://127.0.0.1:8010/index.php"
+          status: pass
+
+checks:
+  dirty_fingerprint: "branch=codex/posmain-phase-0-production-readiness head=68eca7dfcb360a7da1d17ce851e949e826914a12 pre-phase0-diff=/tmp/posmain-current-diff-before-production-plan.patch"
+  last_verification:
+    result: pass
+    task: T006
+    commands:
+      - "php lint changed files and 710 scanned PHP files"
+      - "php tools/audit_write_paths.php --json"
+      - "POSMAIN_DB_PORT=3307 php tools/run_migrations.php --dry-run"
+      - "curl -I --max-time 5 http://127.0.0.1:8010/index.php"
+      - "production-mode HTTP guard sweep"

@@ -1,19 +1,24 @@
 <?php
+require_once __DIR__ . '/production_guard.php';
+
 if (!isset($action_url)) {
     $action_url = "do/doadd_invoice.php";
 }
+
+$legacyOfflinePrototypeEnabled = !production_guard_is_production()
+    || production_guard_env_bool('POSMAIN_ENABLE_LEGACY_OFFLINE_PROTOTYPE', false);
 ?>
 <!-- Main Content -->
 <form action="<?= $action_url ?>" method="post" id="posForm">
-        <div class="container-fluid h-100" style="height: calc(100vh - 60px);">
-            <div class="row h-100 g-1">
+        <div class="container-fluid h-100 pos-shell" style="height: calc(100vh - 60px);">
+            <div class="row h-100 g-2 pos-layout-row">
                 <!-- القسم الأيمن - معلومات الطلب -->
-                <div class="col-lg-4">
+                <div class="col-lg-3 pos-order-column">
                     <div class="card shadow-sm h-100 d-flex flex-column">
                         <div
-                            class="card-header bg-primary text-white py-2 d-flex justify-content-between align-items-center">
+                            class="card-header bg-primary text-white py-2 d-flex justify-content-between align-items-center pos-current-order-header">
                             <h6 class="mb-0">
-                            معلومات الطلب
+                                <i class="fas fa-shopping-cart me-1"></i>الطلب الحالي
                             </h6>
                             <button type="button" id="recentOrdersBtn2" class="btn btn-light btn-sm recent-orders-btn">
                                  عرض الطلبات السابقة
@@ -24,9 +29,13 @@ if (!isset($action_url)) {
                             <input type="hidden" name="pro_tybe" value="9">
                             <input type="hidden" name="pro_serial" value="0">
                             <input type="hidden" name="pro_id" value="1">
+                            <div class="pos-current-order-controls">
+                                <div class="pos-customer-mount"></div>
+                                <div class="pos-table-mount"></div>
+                            </div>
 
                             <!-- نوع الطلب -->
-                            <div class="mb-2">
+                            <div class="mb-2 pos-order-type-control">
                                 <div class="btn-group w-100" role="group">
                                     <input type="radio" class="btn-check" id="age1" name="age" value="1" checked>
                                     <label class="btn btn-outline-primary btn-sm" for="age1">
@@ -48,7 +57,7 @@ if (!isset($action_url)) {
                             </div>
 
                             <!-- الباركود والبحث -->
-                            <div class="row g-1 mb-2">
+                            <div class="row g-1 mb-2 pos-barcode-search-control">
                                 <!-- البحث -->
                                 <div class="col-6">
                                     <div class="input-group input-group-sm">
@@ -71,20 +80,20 @@ if (!isset($action_url)) {
                             </div>
 
                             <!-- الحقول الثانوية - في الناحية التانية -->
-                            <div class="row g-1 mb-2">
+                            <div class="row g-1 mb-2 pos-date-table-control">
                                 <!-- التواريخ -->
-                                <div class="col-4">
+                                <div class="col-4 pos-date-field">
                                     <input type="date" name="pro_date" class="form-control form-control-sm"
                                         value="<?= $posdate ?>" title="التاريخ" style="font-size: 0.75rem;">
                                 </div>
-                                <div class="col-4">
+                                <div class="col-4 pos-date-field">
                                     <input type="date" name="accural_date" class="form-control form-control-sm"
                                         value="<?php echo isset($_GET['edit']) ? $rowed['accural_date'] : date('Y-m-d'); ?>"
                                         title="تاريخ الاستحقاق" style="font-size: 0.75rem;">
                                 </div>
 
                                 <!-- اختيار الطاولة -->
-                                <div class="col-4">
+                                <div class="col-4 pos-table-field">
                                     <button type="button" class="btn btn-outline-primary btn-sm w-100"
                                         data-bs-toggle="modal" data-bs-target="#tablesModal" title="اختر الطاولة"
                                         style="font-size: 0.75rem;">
@@ -98,9 +107,9 @@ if (!isset($action_url)) {
                             </div>
 
                             <!-- الحقول الصغيرة -->
-                            <div class="row g-1 mb-2">
+                            <div class="row g-1 mb-2 pos-setup-control">
                                 <!-- المخزن -->
-                                <div class="col-3">
+                                <div class="col-3 pos-store-field">
                                     <select name="store_id" class="form-select form-select-sm" title="المخزن"
                                         style="font-size: 0.75rem;" required>
                                         <?php
@@ -122,7 +131,7 @@ if (!isset($action_url)) {
                                 </div>
 
                                 <!-- الموظف -->
-                                <div class="col-3">
+                                <div class="col-3 pos-employee-field">
                                     <select name="emp_id" class="form-select form-select-sm" title="الموظف"
                                         style="font-size: 0.75rem;" required>
                                         <?php
@@ -146,7 +155,7 @@ if (!isset($action_url)) {
                                 </div>
 
                                 <!-- العميل -->
-                                <div class="col-3">
+                                <div class="col-3 pos-customer-field">
                                     <?php
                                     $tableDefaultClientId = 0;
                                     $tableDefaultClientResult = $conn->query("SELECT id FROM `acc_head` WHERE TRIM(aname) = 'العميل الافتراضي' AND code LIKE '122%' AND isdeleted = 0 ORDER BY CASE WHEN is_basic = 0 THEN 0 ELSE 1 END, id LIMIT 1");
@@ -190,7 +199,7 @@ if (!isset($action_url)) {
                                 </div>
 
                                 <!-- الصندوق -->
-                                <div class="col-3">
+                                <div class="col-3 pos-fund-field">
                                     <select name="fund_id" class="form-select form-select-sm" title="الصندوق"
                                         style="font-size: 0.75rem;" required>
                                         <?php
@@ -249,35 +258,35 @@ if (!isset($action_url)) {
                                                 $subtotal = floatval($rowdet['det_value']);
                                                 $barcode = $rowdet['barcode'] ?: $rowdet['item_id'];
                                                 ?>
-                                        <div class="card mb-1 item-card-order shadow-sm border-start border-3"
+                                        <div class="card mb-1 item-card-order pos-cart-row shadow-sm border-start border-3"
                                             data-itemid="<?= $barcode ?>"
                                             style="border-color: #0a7ea4 !important; max-width: 100%;">
                                             <div class="card-body p-1">
-                                                <div class="d-flex align-items-center gap-1"
+                                                <div class="d-flex align-items-center gap-1 pos-cart-row-inner"
                                                     style="font-size: 0.75rem;">
-                                                    <span class="badge bg-primary"
+                                                    <span class="badge bg-primary pos-cart-index"
                                                         style="font-size: 0.7rem; min-width: 25px;">#<?= $x ?></span>
 
-                                                    <div style="flex: 1; min-width: 0;">
+                                                    <div class="pos-cart-main" style="flex: 1; min-width: 0;">
                                                         <input type="hidden" value='<?= $rowdet['item_id'] ?>'
                                                             name="itmname[]">
                                                         <input type="hidden" class="barcode" value="<?= $barcode ?>">
-                                                        <div class="text-truncate fw-bold" style="font-size: 0.75rem;"
+                                                        <div class="text-truncate fw-bold pos-cart-name" style="font-size: 0.75rem;"
                                                             title="<?= $item_name ?>"><?= $item_name ?></div>
                                                     </div>
 
-                                                    <div style="width: 65px;">
+                                                    <div class="pos-cart-qty" style="width: 65px;">
                                                         <small class="d-block text-center text-muted"
                                                             style="font-size: 0.6rem; margin-bottom: 1px;">كمية</small>
                                                         <input type="number"
                                                             class="form-control form-control-sm text-center quantityInput nozero fw-bold"
-                                                            value="<?= $qty ?>" name="itmqty[]" min="1" step="0.1"
+                                                            value="<?= $qty ?>" name="itmqty[]" min="1" step="1"
                                                             style="width: 100%; font-size: 0.75rem; padding: 3px; border: 2px solid #ff6347; height: 26px;"
                                                             title="الكمية">
                                                         <input type="hidden" name="u_val[]" value="1">
                                                     </div>
 
-                                                    <div style="width: 55px;">
+                                                    <div class="pos-cart-price" style="width: 55px;">
                                                         <small class="d-block text-center text-muted"
                                                             style="font-size: 0.6rem; margin-bottom: 1px;">سعر</small>
                                                         <input type="number"
@@ -288,7 +297,7 @@ if (!isset($action_url)) {
                                                             title="السعر">
                                                     </div>
 
-                                                    <div style="width: 60px;">
+                                                    <div class="pos-cart-value" style="width: 60px;">
                                                         <small class="d-block text-center text-muted"
                                                             style="font-size: 0.6rem; margin-bottom: 1px;">قيمة</small>
                                                         <input type="hidden" name="itmdisc[]" value="0">
@@ -350,30 +359,25 @@ if (!isset($action_url)) {
                                     </div>
 
                                     <!-- أزرار الإجراءات -->
-                                    <div class="d-flex gap-1 justify-content-between align-items-center">
-                                        <button type="button" class="btn btn-primary flex-grow-1" data-bs-toggle="modal"
-                                            data-bs-target="#paymentModal" style="font-size: 0.8rem; padding: 0.4rem;">
-                                            <i class="fas fa-money-bill-wave me-1"></i>دفع وحفظ
-                                            <div style="font-size: 0.7rem; font-weight: bold;" id="total_display_btn">
-                                                0.00 ج.م</div>
+                                    <div class="pos-action-stack">
+                                        <button type="button" class="btn btn-outline-primary pos-save-order-btn"
+                                            onclick="submitPOS('save');">
+                                            <i class="fas fa-bookmark me-1"></i>
+                                            <?php if(isset($id)): ?>حفظ التعديل<?php else: ?>حفظ الطلب<?php endif; ?>
                                         </button>
-                                        <div class="d-flex align-items-center gap-1">
-                                            <!-- <button type="button" class="btn btn-outline-info btn-sm recent-orders-btn" title="الطلبات الأخيرة">
-                                                <i class="fas fa-history"></i>
-                                            </button>
-                                            <a href="tables.php" class="btn btn-outline-primary" style="font-size: 0.7rem; padding: 0.4rem 0.6rem;" title="الطاولات">
-                                                <i class="fas fa-th-large"></i>
-                                            </a> -->
-                                            <div id="selectedTableDisplay" class="badge bg-primary text-white"
-                                                style="font-size: 0.8rem; display: none;">
-                                                <i class="fas fa-chair me-1"></i><span id="selectedTableName"></span>
-                                            </div>
-                                        </div>
-                                        <button type="button" class="btn btn-outline-danger"
-                                            style="font-size: 0.7rem; padding: 0.4rem 0.6rem;"
+                                        <button type="button" class="btn btn-primary pos-pay-order-btn"
+                                            data-bs-toggle="modal" data-bs-target="#paymentModal">
+                                            <span><i class="fas fa-money-bill-wave me-1"></i>دفع</span>
+                                            <strong id="total_display_btn">0.00 ج.م</strong>
+                                        </button>
+                                        <button type="button" class="btn btn-outline-danger pos-clear-btn"
                                             onclick="clearAllItems();" title="مسح">
-                                            <i class="fas fa-eraser"></i>
+                                            <i class="fas fa-trash-alt me-1"></i><span>إلغاء</span>
                                         </button>
+                                    </div>
+                                    <div id="selectedTableDisplay" class="badge bg-primary text-white pos-selected-table"
+                                        style="display: none;">
+                                        <i class="fas fa-chair me-1"></i><span id="selectedTableName"></span>
                                     </div>
                                 </div>
                             </div>
@@ -383,25 +387,34 @@ if (!isset($action_url)) {
                 </div>
 
                 <!-- القسم الأوسط - الأصناف -->
-                <div class="col-lg-8">
+                <div class="col-lg-9 pos-items-column">
                     <div class="card shadow-sm items-section-card">
                         <div class="card-header bg-primary text-white py-2">
-                            <div class="d-flex justify-content-between align-items-center">
-                                <h6 class="mb-0">
-                                    <i class="fas fa-boxes me-2"></i>الأصناف المتاحة
-                                </h6>
-                                <div class="d-flex align-items-center gap-2">
-                                    <div class="input-group" style="width: 280px;">
-                                       
-                                        <input type="text" class="scnd form-control border-start-0" id="itemFilterInput"
-                                            placeholder="فلترة الأصناف..." autocomplete="off"
-                                            title="اضغط Ctrl+F للتركيز | Escape للمسح"
-                                            style="font-size: 0.9rem;">
+                            <div class="pos-catalog-toolbar">
+                                <div class="pos-search-tools">
+                                    <button type="button" class="btn pos-barcode-btn" id="focusUnifiedSearch" title="بحث أو باركود">
+                                        <i class="fas fa-barcode"></i>
+                                    </button>
+                                    <div class="input-group pos-unified-search">
+                                        <input type="text" class="scnd form-control" id="posUnifiedSearch"
+                                            placeholder="بحث أو باركود" autocomplete="off"
+                                            title="اكتب للفلترة أو اضغط Enter للبحث بالباركود">
                                         <button class="btn btn-outline-secondary" type="button" id="clearFilter"
                                             title="مسح الفلتر">
-                                            <i class="fas fa-times"></i>
+                                            <i class="fas fa-search"></i>
                                         </button>
                                     </div>
+                                </div>
+                                <div class="pos-mode-tabs" role="group" aria-label="نوع الطلب">
+                                    <button type="button" class="pos-mode-tab active" data-age-target="age1">
+                                        <i class="fas fa-shopping-bag"></i><span>تيك اواي</span>
+                                    </button>
+                                    <button type="button" class="pos-mode-tab" data-age-target="age2">
+                                        <i class="fas fa-chair"></i><span>طاولة</span>
+                                    </button>
+                                    <button type="button" class="pos-mode-tab" data-age-target="age3">
+                                        <i class="fas fa-motorcycle"></i><span>دليفري</span>
+                                    </button>
                                 </div>
                             </div>
                         </div>
@@ -427,6 +440,18 @@ if (!isset($action_url)) {
                                 } else {
                                     echo '<button type="button" class="btn btn-primary btn-sm category-btn active" data-category="all">
                                             <i class="fas fa-th me-1"></i>الكل
+                                          </button>';
+                                    echo '<button type="button" class="btn btn-outline-primary btn-sm category-btn" data-keywords="شاي,قهوة,عصير,مياه,لاتيه,كابتشينو">
+                                            <i class="fas fa-mug-hot me-1"></i>مشروبات
+                                          </button>';
+                                    echo '<button type="button" class="btn btn-outline-primary btn-sm category-btn" data-keywords="كرواسون,خبز,ساندويتش">
+                                            <i class="fas fa-bread-slice me-1"></i>مخبوزات
+                                          </button>';
+                                    echo '<button type="button" class="btn btn-outline-primary btn-sm category-btn" data-keywords="كيك,كوكيز,براونيز,مافن,دونتس">
+                                            <i class="fas fa-birthday-cake me-1"></i>حلويات
+                                          </button>';
+                                    echo '<button type="button" class="btn btn-outline-primary btn-sm category-btn" data-keywords="برجر,بطاطس,وجبات,أومليت">
+                                            <i class="fas fa-hamburger me-1"></i>وجبات
                                           </button>';
                                 }
                                 ?>
@@ -468,16 +493,24 @@ if (!isset($action_url)) {
                                     }
                                     
                                     $itemDesc = isset($rowitem['info']) ? htmlspecialchars($rowitem['info']) : '';
+                                    $fallbackIcon = 'fa-utensils';
+                                    if (strpos($itemName, 'قهوة') !== false || strpos($itemName, 'لاتيه') !== false || strpos($itemName, 'كابتشينو') !== false) {
+                                        $fallbackIcon = 'fa-mug-hot';
+                                    } elseif (strpos($itemName, 'شاي') !== false || strpos($itemName, 'عصير') !== false || strpos($itemName, 'مياه') !== false) {
+                                        $fallbackIcon = 'fa-tint';
+                                    } elseif (strpos($itemName, 'كرواسون') !== false || strpos($itemName, 'خبز') !== false) {
+                                        $fallbackIcon = 'fa-bread-slice';
+                                    }
                             ?>
-                                <div class="col-lg-3  col-md-4 col-sm-6 item-wrapper"
+                                <div class="col-xxl-2 col-xl-3 col-lg-4 col-md-4 col-sm-6 item-wrapper"
                                     data-category="<?= $itemCategory ?>">
-                                    <div class="card item-card itemButton  shadow-sm border-0"
+                                    <div class="card item-card itemButton pos-menu-card shadow-sm border-0"
                                         data-item-id="<?= $itemId ?>" data-item-name="<?= $itemName ?>"
                                         data-item-price="<?= $itemPrice ?>" data-item-barcode="<?= $itemBarcode ?>"
                                         data-item-desc="<?= $itemDesc ?>" style="transition: all 0.3s ease;">
                                         <div class="card-body p-2 text-center">
                                             <!-- الصورة -->
-                                            <div class="item-image-container mb-2 ratio ratio-1x1 rounded overflow-hidden"
+                                            <div class="item-image-container mb-2 ratio ratio-1x1 overflow-hidden"
                                                 style="cursor: pointer; background: #f8f9fa;">
                                                 <?php if (!empty($itemImage) && file_exists($itemImage)): ?>
                                                 <img src="<?= $itemImage ?>"
@@ -485,8 +518,8 @@ if (!isset($action_url)) {
                                                     style="width: 100%; height: 100%;">
                                                 <?php else: ?>
                                                 <div
-                                                    class="d-flex align-items-center justify-content-center item-image-click">
-                                                    <i class="fas fa-utensils fa-3x text-primary opacity-50"></i>
+                                                    class="d-flex align-items-center justify-content-center item-image-click pos-item-fallback">
+                                                    <i class="fas <?= $fallbackIcon ?> fa-3x"></i>
                                                 </div>
                                                 <?php endif; ?>
                                             </div>
@@ -498,10 +531,9 @@ if (!isset($action_url)) {
                                             </h6>
 
                                             <!-- السعر -->
-                                            <div class="bg-primary rounded px-2 py-1 mb-2">
-                                                <p class="card-text fw-bold text-white mb-0" style="font-size: 1.1rem;">
-                                                    <?= number_format($itemPrice, 2) ?> <span
-                                                        class="text-white opacity-75">ج.م</span>
+                                            <div class="pos-item-footer">
+                                                <p class="card-text fw-bold pos-item-price mb-0">
+                                                    <?= number_format($itemPrice, 2) ?> <span>ج.م</span>
                                                 </p>
                                             </div>
 
@@ -710,17 +742,8 @@ if (!isset($action_url)) {
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
                         <i class="fas fa-times me-1"></i>إلغاء
                     </button>
-                    <?php if(isset($id)): ?>
-                    <button type="button" class="btn btn-warning text-dark fw-bold" onclick="submitPOS('save');">
-                        <i class="fas fa-edit me-1"></i>حفظ التعديل
-                    </button>
-                    <?php else: ?>
-                    <button type="button" class="btn btn-success" onclick="submitPOS('save');">
-                       حفظ الطلب
-                    </button>
-                    <?php endif; ?>
-                    <button type="button" class="btn btn-primary" onclick="submitPOS('cash');">
-                        حفظ وطباعة
+                    <button type="button" class="btn btn-primary pos-pay-confirm-btn" onclick="submitPOS('cash');">
+                        <i class="fas fa-receipt me-1"></i>دفع وطباعة
                     </button>
                 </div>
             </div>
@@ -882,7 +905,7 @@ if (!isset($action_url)) {
                         <i class="fas fa-times me-1"></i>إغلاق
                     </button>
                     <button type="button" class="btn btn-primary" id="modal_add_item">
-                        <i class="fas fa-plus me-1"></i>إضافة للطلب
+                        <i class="fas fa-cart-arrow-down me-1"></i>إضافة للطلب
                     </button>
                 </div>
             </div>
@@ -1018,13 +1041,6 @@ if (!isset($action_url)) {
         </div>
     </div>
 
-    <!-- زر عائم للطاولات -->
-    <a href="tables.php" class="btn btn-primary position-fixed"
-        style="bottom: 20px; right: 20px; z-index: 1000; border-radius: 50px; width: 60px; height: 60px; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 12px rgba(0,0,0,0.3);"
-        title="عرض الطاولات">
-        <i class="fas fa-th-large fa-lg"></i>
-    </a>
-
     <!-- Scripts - jQuery (CDN for reliability) -->
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
@@ -1035,9 +1051,12 @@ if (!isset($action_url)) {
     </script>
     <script src="assets/libs/bootstrap.bundle.min.js"></script>
     <script src="js/pos_config_loader.js?v=<?= time() ?>"></script>
+    <?php if ($legacyOfflinePrototypeEnabled): ?>
     <script src="js/pos_offline_adapter.js?v=<?= time() ?>"></script>
+    <?php endif; ?>
     <script src="js/pos_barcode.js?v=<?= time() ?>"></script>
     
+    <?php if ($legacyOfflinePrototypeEnabled): ?>
     <script>
         // تفعيل النظام الأوفلاين فور تحميل الصفحة
         $(document).ready(function() {
@@ -1051,6 +1070,7 @@ if (!isset($action_url)) {
             }
         });
     </script>
+    <?php endif; ?>
 
     <script>
         // دالة طباعة تقرير المبيعات اليومية
@@ -1349,18 +1369,6 @@ if (!isset($action_url)) {
                 clearDeliveryForm();
             });
 
-            // Listen for changes on the 'age' radio buttons
-            $('input[name="age"]').change(function(){
-                if($(this).val() == '2') { // Table option
-                    Swal.fire({
-                        icon: 'info',
-                        title: 'تنبيه',
-                        text: 'يرجى اختيار طاولة',
-                        confirmButtonText: 'حسناً'
-                    });
-                }
-            });
-
             window.confirmDeliveryOrder = function () {
                 const phone = $('#customer_phone').val().trim();
                 const name = $('#customer_name').val().trim();
@@ -1503,6 +1511,32 @@ if (!isset($action_url)) {
     </script>
     <script>
     // override submitPOS to ensure new logic is used immediately (bypassing cache)
+    function createPOSIdempotencyKey(scope) {
+        if (window.crypto && typeof window.crypto.randomUUID === 'function') {
+            return scope + ':' + window.crypto.randomUUID();
+        }
+
+        return scope + ':' + Date.now().toString(36) + ':' + Math.random().toString(36).slice(2);
+    }
+
+    function ensureFormIdempotencyKey(form, action) {
+        const scope = action === 'save' ? 'pos.order.save' : 'pos.order.pay';
+        let keyInput = form.querySelector('input[name="idempotency_key"]');
+        if (!keyInput) {
+            keyInput = document.createElement('input');
+            keyInput.type = 'hidden';
+            keyInput.name = 'idempotency_key';
+            form.appendChild(keyInput);
+        }
+
+        if (!keyInput.value || keyInput.dataset.action !== action) {
+            keyInput.value = createPOSIdempotencyKey(scope);
+            keyInput.dataset.action = action;
+        }
+
+        return keyInput.value;
+    }
+
     window.submitPOS = function(action) {
         console.log('✅ submitPOS (Inline Override) called with action:', action);
         
@@ -1522,10 +1556,10 @@ if (!isset($action_url)) {
         }
         
         // جمع بيانات الدفع
+        const isSaveOnly = action === 'save';
         let paidCash = parseFloat($('#modal_paid_cash').val()) || 0;
         let paidBank = parseFloat($('#modal_paid_bank').val()) || 0;
-        const isDeferredTableSave = action === 'save' && $('#age2').is(':checked');
-        if (isDeferredTableSave) {
+        if (isSaveOnly) {
             paidCash = 0;
             paidBank = 0;
         }
@@ -1548,7 +1582,16 @@ if (!isset($action_url)) {
         console.log('==================================');
         
         // التحقق من صحة البيانات
-        if (paidCash > 0 && (!fundId || fundId == '0')) {
+        if (!isSaveOnly && net > 0 && paidCash + paidBank <= 0) {
+            Swal.fire({
+                icon: 'warning',
+                title: 'تنبيه',
+                text: 'يجب إدخال مبلغ الدفع قبل تأكيد الدفع'
+            });
+            return false;
+        }
+
+        if (!isSaveOnly && paidCash > 0 && (!fundId || fundId == '0')) {
             Swal.fire({
                 icon: 'warning',
                 title: 'تنبيه',
@@ -1557,7 +1600,7 @@ if (!isset($action_url)) {
             return false;
         }
         
-        if (paidBank > 0 && (!bankId || bankId == '0' || bankId == '')) {
+        if (!isSaveOnly && paidBank > 0 && (!bankId || bankId == '0' || bankId == '')) {
             Swal.fire({
                 icon: 'warning',
                 title: 'تنبيه',
@@ -1641,15 +1684,16 @@ if (!isset($action_url)) {
         submitInput.name = 'submit';
         submitInput.value = action;
         form.appendChild(submitInput);
+        ensureFormIdempotencyKey(form, action);
         
-        let saveBtn = $("button:contains('حفظ الطلب')");
-        let printBtn = $("button:contains('حفظ وطباعة')");
+        let saveBtn = $(".pos-save-order-btn");
+        let printBtn = $(".pos-pay-confirm-btn");
         
         if (saveBtn.length > 0) saveBtn.prop('disabled', true).html('<i class="fas fa-spinner fa-spin"></i> جاري الحفظ...');
-        if (printBtn.length > 0) printBtn.prop('disabled', true).html('<i class="fas fa-spinner fa-spin"></i> جاري الحفظ...');
+        if (printBtn.length > 0) printBtn.prop('disabled', true).html('<i class="fas fa-spinner fa-spin"></i> جاري الدفع...');
         
         $('#paymentModal').modal('hide');
-        form.submit();
+        HTMLFormElement.prototype.submit.call(form);
         return true;
     };
     </script>
@@ -1751,9 +1795,20 @@ if (!isset($action_url)) {
     <script>
         $(document).ready(function() {
             // Recent Orders Button Handler
-            $('#recentOrdersBtn2').click(function() {
-                var offcanvas = new bootstrap.Offcanvas(document.getElementById('recentOrdersModal'));
-                offcanvas.show();
+            $('#recentOrdersBtn2').click(function(e) {
+                e.preventDefault();
+                e.stopPropagation();
+                if (typeof window.showRecentOrdersOffcanvas === 'function') {
+                    window.showRecentOrdersOffcanvas();
+                } else {
+                    var recentOrdersModal = document.getElementById('recentOrdersModal');
+                    if (recentOrdersModal) {
+                        var offcanvas = typeof bootstrap.Offcanvas.getOrCreateInstance === 'function'
+                            ? bootstrap.Offcanvas.getOrCreateInstance(recentOrdersModal)
+                            : new bootstrap.Offcanvas(recentOrdersModal);
+                        offcanvas.show();
+                    }
+                }
                 loadRecentOrders();
             });
 
@@ -1857,7 +1912,11 @@ if (!isset($action_url)) {
 	                        $.ajax({
 	                            url: 'ajax/delete_order.php',
 	                            method: 'POST',
-	                            data: { order_id: orderId, table_id: tableId },
+	                            data: {
+                                    order_id: orderId,
+                                    table_id: tableId,
+                                    idempotency_key: createPOSIdempotencyKey('pos.order.cancel')
+                                },
                             success: function(response) {
                                 try {
                                     if (typeof response === 'string') response = JSON.parse(response);

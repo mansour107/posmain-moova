@@ -76,7 +76,7 @@ if (isset($_GET)) {
 <?php
 // التأكد من ان balance في acc_head لكل row = 
 // اجمالي المدين - اجمالي الدائن في جدول journal_entries where account_id = acc_head.id 
-$sqlchk = "UPDATE acc_head SET balance = ( SELECT SUM(journal_entries.debit)- SUM(journal_entries.credit) FROM journal_entries WHERE journal_entries.account_id = acc_head.id AND journal_entries.isdeleted = 0 );";
+$sqlchk = "UPDATE acc_head SET balance = ( SELECT COALESCE(SUM(journal_entries.debit), 0) - COALESCE(SUM(journal_entries.credit), 0) FROM journal_entries WHERE journal_entries.account_id = acc_head.id AND journal_entries.isdeleted = 0 );";
 
 $conn->query($sqlchk);
 

@@ -101,7 +101,7 @@
             <i class="fas fa-barcode"></i>
         </div>
         <h2>نظام POS محمي</h2>
-        <p>امسح الباركود للدخول</p>
+        <p>أدخل كود المستخدم الحالي: <?= htmlspecialchars($_SESSION['login'] ?? '', ENT_QUOTES, 'UTF-8') ?></p>
         
         <?php if (isset($login_error)): ?>
         <div class="error">
@@ -115,7 +115,7 @@
                 type="text" 
                 name="pos_barcode" 
                 class="form-control" 
-                placeholder="الباركود"
+                placeholder="كود المستخدم الحالي"
                 autocomplete="off"
                 autofocus
                 required

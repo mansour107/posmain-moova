@@ -1,74 +1,57 @@
 <?php
-if (session_status() == PHP_SESSION_NONE) {
-    session_start();
-}
+require_once __DIR__ . '/includes/session_bootstrap.php';
+require_once __DIR__ . '/classes/PasswordService.php';
 
-if (!isset($_SESSION['login'])) {
+if (!isset($_SESSION['login']) || !isset($_SESSION['userid'])) {
     header('location:index.php');
     exit;
 }
 
 include(__DIR__ . '/includes/connect.php');
 
-// معالجة تسجيل الخروج
 if (isset($_GET['logout'])) {
-    unset($_SESSION['pos_authenticated']);
-    unset($_SESSION['pos_user_id']);
-    unset($_SESSION['pos_user_name']);
-    header('Location: pos_barcode.php');
-    exit();
+    unset($_SESSION['pos_authenticated'], $_SESSION['pos_user_id'], $_SESSION['pos_user_name']);
+    header('location:pos_barcode.php');
+    exit;
 }
 
-// نظام الحماية البسيط
-if (isset($rowstg['pos_has_password']) && $rowstg['pos_has_password'] == 1) {
-    
-    // معالجة تسجيل الدخول
-    if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['pos_barcode'])) {
-        $barcode = trim($_POST['pos_barcode']);
-        
-        if (empty($barcode)) {
-            $login_error = 'الرجاء إدخال الباركود';
-        } else {
-            // استخدام prepared statement للأمان
-            $stmt = $conn->prepare("SELECT id, uname, password FROM users WHERE isdeleted = 0");
-            $stmt->execute();
-            $result = $stmt->get_result();
-            
-            $user_found = false;
-            
-            if ($result && $result->num_rows > 0) {
-                while ($user = $result->fetch_assoc()) {
-                    $stored_password = $user['password'];
-                    $is_valid = false;
-                    if (strlen($stored_password) == 32) {
-                        $is_valid = (md5($barcode) === $stored_password);
-                    }
-                    elseif (strpos($stored_password, '$2y$') === 0) {
-                        $is_valid = password_verify($barcode, $stored_password);
-                    }
-                    
-                    if ($is_valid) {
-                        $_SESSION['pos_authenticated'] = true;
-                        $_SESSION['pos_user_id'] = $user['id'];
-                        $_SESSION['pos_user_name'] = $user['uname'];
-                        $stmt->close();
-                        header('Location: pos_barcode.php');
-                        exit();
-                    }
-                }
-                $login_error = 'باركود غير صحيح';
-            } else {
-                $login_error = 'خطأ في قاعدة البيانات';
-            }
-            $stmt->close();
-        }
+$current_user_id = (int) $_SESSION['userid'];
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['pos_barcode'])) {
+    $entered_code = trim($_POST['pos_barcode']);
+
+    $stmt = $conn->prepare("SELECT id, uname, password FROM users WHERE id = ? AND isdeleted = 0 LIMIT 1");
+    $stmt->bind_param("i", $current_user_id);
+    $stmt->execute();
+    $current_user = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+
+    $is_valid_user_code = false;
+    if ($current_user) {
+        $stored_password = (string) $current_user['password'];
+        $is_valid_user_code = PasswordService::verifyPassword($entered_code, $stored_password);
     }
-    if (!isset($_SESSION['pos_authenticated']) || $_SESSION['pos_authenticated'] !== true) {
-        // عرض شاشة تسجيل الدخول
-        include('includes/pos_login_screen.php');
-        exit();
+
+    if ($is_valid_user_code) {
+        $_SESSION['pos_authenticated'] = true;
+        $_SESSION['pos_user_id'] = (int) $current_user['id'];
+        $_SESSION['pos_user_name'] = $current_user['uname'];
+        header('location:pos_barcode.php');
+        exit;
     }
+
+    $login_error = 'كود هذا المستخدم غير صحيح';
 }
+
+if (
+    !isset($_SESSION['pos_authenticated']) ||
+    $_SESSION['pos_authenticated'] !== true ||
+    (int) ($_SESSION['pos_user_id'] ?? 0) !== $current_user_id
+) {
+    include('includes/pos_login_screen.php');
+    exit;
+}
+
 $check_tables = $conn->query("SELECT COUNT(*) as count FROM tables WHERE isdeleted = 0");
 if ($check_tables) {
     $tables_count = $check_tables->fetch_assoc()['count'];
@@ -105,30 +88,37 @@ include('includes/pos_simple_header.php');
 
 <!-- Assets (CSS & JS) -->
 <?php include('includes/pos_assets.php'); ?>
-
-<!-- نظام القفل -->
 <?php include('includes/pos_lock_system.php'); ?>
 
 <!-- Hidden input for Edit Mode -->
 <input type="hidden" id="edit_order_id" value="<?= isset($id) ? $id : '' ?>">
 
 <!-- Navbar -->
-<nav class="navbar navbar-expand-lg navbar-dark bg-primary shadow-sm">
+<nav class="navbar navbar-expand-lg navbar-dark bg-primary shadow-sm pos-topbar">
     <div class="container-fluid">
-        <div class="moova-navbar-widget" aria-label="Moova POS widget">
-            <?php include('elements/pos/cofe_widget.php'); ?>
+        <div class="pos-brand-with-moova">
+            <a class="navbar-brand fw-bold" href="dashboard.php">
+                <i class="fas fa-home me-2"></i>
+                <span>نظام نقاط البيع</span>
+            </a>
+            <div class="moova-navbar-widget" aria-label="Moova POS widget">
+                <?php include('elements/pos/cofe_widget.php'); ?>
+            </div>
         </div>
-
-        <a class="navbar-brand me-3 fw-bold" href="dashboard.php">
-            <i class="fas fa-home me-2"></i>
-            نظام نقاط البيع
-        </a>
 
         <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
             <span class="navbar-toggler-icon"></span>
         </button>
 
         <div class="collapse navbar-collapse" id="navbarNav">
+            <div class="navbar-nav mx-auto pos-shift-status">
+                <span class="pos-shift-pill">
+                    <i class="fas fa-circle me-1"></i>الشيفت مفتوح
+                </span>
+                <span class="pos-cashier-pill">
+                    <i class="fas fa-user me-1"></i>الكاشير: <?= htmlspecialchars($_SESSION['login'] ?? 'الموظف 1') ?>
+                </span>
+            </div>
             <ul class="navbar-nav me-auto"></ul>
 
             <ul class="navbar-nav">

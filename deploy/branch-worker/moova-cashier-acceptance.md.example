@@ -1,0 +1,39 @@
+# POSMAIN Moova Cashier Acceptance Evidence
+
+Keep the completed copy outside git and pass it to:
+
+```bash
+php tools/branch_go_live_readiness.php --json \
+  --env-file=/etc/posmain/branch-worker.env \
+  --backup-file=/absolute/path/to/posmain-backup.sql \
+  --moova-acceptance-file=/absolute/path/to/moova-cashier-acceptance.md
+```
+
+## Branch
+
+- branch_uuid:
+- operator:
+- accepted_at:
+- pos_url:
+- moova_url:
+- backup_file:
+
+## Required Result Markers
+
+Leave each marker exactly as `=pass` only after the cashier confirms the scenario.
+
+```text
+queued_new_order=pass
+queued_edit_order=pass
+queued_cancel_order=pass
+pos_drop_recovery=pass
+moova_drop_recovery=pass
+```
+
+## Notes
+
+- queued_new_order:
+- queued_edit_order:
+- queued_cancel_order:
+- pos_drop_recovery:
+- moova_drop_recovery:

@@ -1,5 +1,7 @@
 <?php
 
+require_once __DIR__ . '/Sync/DocumentCounterService.php';
+
 class PosOrderService
 {
     const TYPE_POS = 9;
@@ -330,6 +332,9 @@ class PosOrderService
         $defaults = $this->loadTenantDefaults($conn, $tenant, $branch);
         $this->deactivateMoovaMappedLines($conn, $tenant, $branch, (int) $order['id'], $moovaOrderId, 'cancelled');
         $receiptState = $this->refreshReceiptTotalsAndAccounting($conn, $tenant, $branch, (int) $order['id'], $defaults, date('Y-m-d'), $userId);
+        if ($tableId > 0) {
+            $this->markTableBusy($conn, $tableId);
+        }
         $this->logProcess($conn, 'cancel moova pos order');
 
         return [
@@ -1432,7 +1437,17 @@ class PosOrderService
               AND branch = ?
         ", [$invoiceType, $tenant, $branch]);
 
-        return $row && $row['max_id'] ? ((int) $row['max_id'] + 1) : 1;
+        $counter = new DocumentCounterService();
+        $counter->ensureCounterRow(
+            $conn,
+            (int) $tenant,
+            (int) $branch,
+            'pro_id',
+            'pro_tybe:' . (int) $invoiceType,
+            $row && $row['max_id'] ? (int) $row['max_id'] : 0
+        );
+
+        return $counter->nextProId($conn, (int) $invoiceType, (int) $tenant, (int) $branch);
     }
 
     private function getNextJournalId(mysqli $conn, $tenant, $branch)
@@ -1444,7 +1459,17 @@ class PosOrderService
               AND branch = ?
         ", [$tenant, $branch]);
 
-        return $row && $row['max_id'] ? ((int) $row['max_id'] + 1) : 1;
+        $counter = new DocumentCounterService();
+        $counter->ensureCounterRow(
+            $conn,
+            (int) $tenant,
+            (int) $branch,
+            'journal_id',
+            'journal:default',
+            $row && $row['max_id'] ? (int) $row['max_id'] : 0
+        );
+
+        return $counter->nextJournalId($conn, (int) $tenant, (int) $branch);
     }
 
     private function queryOne(mysqli $conn, $sql, array $params = [])

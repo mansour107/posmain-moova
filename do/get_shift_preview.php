@@ -60,13 +60,13 @@ try {
     
     // Get cashier name
     $cashier_name = 'الكاشير';
-    $user_stmt = $conn->prepare("SELECT aname FROM acc_head WHERE id = ?");
+    $user_stmt = $conn->prepare("SELECT uname FROM users WHERE id = ?");
     if ($user_stmt) {
         $user_stmt->bind_param("i", $user_id);
         $user_stmt->execute();
         $user_result = $user_stmt->get_result();
         if ($row = $user_result->fetch_assoc()) {
-            $cashier_name = $row['aname'];
+            $cashier_name = $row['uname'];
         }
         $user_stmt->close();
     }

@@ -1,4 +1,7 @@
 <?php
+require_once __DIR__ . '/includes/production_guard.php';
+production_guard_deny_route('run_migrations.php');
+
 /**
  * POS Database Migrations Runner
  * Purpose: تنفيذ migrations بشكل آمن ومنظم
@@ -167,4 +170,3 @@ echo "
 
 $conn->close();
 ?>
-

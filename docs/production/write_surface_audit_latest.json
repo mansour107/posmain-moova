@@ -1,0 +1,6659 @@
+{
+    "generated_by": "tools/audit_write_paths.php",
+    "scope": "PHP files with INSERT, UPDATE, DELETE, REPLACE, ALTER, CREATE, DROP, or configured delegated write surfaces",
+    "categories": [
+        "pos_order",
+        "table_state",
+        "payments/accounting",
+        "shift_session",
+        "menu_catalog",
+        "moova_bridge",
+        "user_admin",
+        "inventory_stock",
+        "other_business_write"
+    ],
+    "summary": {
+        "pos_order": 34,
+        "table_state": 18,
+        "payments/accounting": 28,
+        "shift_session": 7,
+        "menu_catalog": 28,
+        "moova_bridge": 16,
+        "user_admin": 9,
+        "inventory_stock": 3,
+        "other_business_write": 138
+    },
+    "surfaces": [
+        {
+            "path": "about.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "settings"
+            ],
+            "writes": [
+                {
+                    "operation": "ALTER",
+                    "table": "settings",
+                    "line": 8
+                }
+            ]
+        },
+        {
+            "path": "acc_report.php",
+            "categories": [
+                "payments/accounting"
+            ],
+            "tables": [
+                "acc_head"
+            ],
+            "writes": [
+                {
+                    "operation": "UPDATE",
+                    "table": "acc_head",
+                    "line": 79
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "acc_head",
+                    "line": 86
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "acc_head",
+                    "line": 91
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "acc_head",
+                    "line": 94
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "acc_head",
+                    "line": 97
+                }
+            ]
+        },
+        {
+            "path": "add_manual_price_column.php",
+            "categories": [
+                "menu_catalog"
+            ],
+            "tables": [
+                "myitems"
+            ],
+            "writes": [
+                {
+                    "operation": "ALTER",
+                    "table": "myitems",
+                    "line": 5
+                }
+            ]
+        },
+        {
+            "path": "ajax/activate_table.php",
+            "categories": [
+                "table_state"
+            ],
+            "tables": [
+                "tables"
+            ],
+            "writes": [
+                {
+                    "operation": "UPDATE",
+                    "table": "tables",
+                    "line": 18
+                }
+            ]
+        },
+        {
+            "path": "ajax/cofe_create_order.php",
+            "categories": [
+                "moova_bridge",
+                "payments/accounting",
+                "pos_order",
+                "table_state"
+            ],
+            "tables": [
+                "fat_details",
+                "journal_entries",
+                "journal_heads",
+                "ot_head",
+                "process",
+                "tables"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "ot_head",
+                    "line": 192
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "journal_heads",
+                    "line": 240
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "journal_entries",
+                    "line": 250
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "journal_entries",
+                    "line": 259
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "ot_head",
+                    "line": 272
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "journal_heads",
+                    "line": 299
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "journal_entries",
+                    "line": 309
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "journal_entries",
+                    "line": 318
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "fat_details",
+                    "line": 329
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "ot_head",
+                    "line": 372
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "tables",
+                    "line": 381
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "process",
+                    "line": 387
+                }
+            ]
+        },
+        {
+            "path": "ajax/get_tables.php",
+            "categories": [
+                "table_state"
+            ],
+            "tables": [
+                "tables"
+            ],
+            "writes": [
+                {
+                    "operation": "UPDATE",
+                    "table": "tables",
+                    "line": 42
+                }
+            ]
+        },
+        {
+            "path": "ajax/moova_change_order.php",
+            "categories": [
+                "moova_bridge",
+                "pos_order",
+                "table_state"
+            ],
+            "tables": [
+                "moova_pos_order_change_links"
+            ],
+            "writes": [
+                {
+                    "operation": "DELEGATE",
+                    "table": "moova_pos_order_change_links",
+                    "line": 9
+                }
+            ]
+        },
+        {
+            "path": "ajax/moova_confirm_order.php",
+            "categories": [
+                "moova_bridge",
+                "pos_order",
+                "table_state"
+            ],
+            "tables": [
+                "moova_pos_order_links"
+            ],
+            "writes": [
+                {
+                    "operation": "DELEGATE",
+                    "table": "moova_pos_order_links",
+                    "line": 9
+                }
+            ]
+        },
+        {
+            "path": "ajax/process_split_payment.php",
+            "categories": [
+                "pos_order"
+            ],
+            "tables": [
+                "fat_details",
+                "order_payments",
+                "ot_head"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "ot_head",
+                    "line": 125
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "fat_details",
+                    "line": 165
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "fat_details",
+                    "line": 174
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "fat_details",
+                    "line": 188
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "ot_head",
+                    "line": 225
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "ot_head",
+                    "line": 250
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "order_payments",
+                    "line": 266
+                }
+            ]
+        },
+        {
+            "path": "ajax/process_table_payment.php",
+            "categories": [
+                "payments/accounting",
+                "pos_order"
+            ],
+            "tables": [
+                "journal_entries",
+                "journal_heads",
+                "ot_head"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "ot_head",
+                    "line": 73
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "journal_heads",
+                    "line": 98
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "journal_entries",
+                    "line": 105
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "journal_entries",
+                    "line": 111
+                }
+            ]
+        },
+        {
+            "path": "ajax/save_order.php",
+            "categories": [
+                "pos_order"
+            ],
+            "tables": [
+                "fat_details",
+                "ot_head"
+            ],
+            "writes": [
+                {
+                    "operation": "UPDATE",
+                    "table": "ot_head",
+                    "line": 64
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "fat_details",
+                    "line": 103
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "ot_head",
+                    "line": 108
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "fat_details",
+                    "line": 150
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "ot_head",
+                    "line": 174
+                }
+            ]
+        },
+        {
+            "path": "classes/Moova/MoovaChangeOrderApplyService.php",
+            "categories": [
+                "moova_bridge",
+                "pos_order",
+                "table_state"
+            ],
+            "tables": [
+                "moova_pos_order_change_links",
+                "moova_pos_order_links"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "moova_pos_order_change_links",
+                    "line": 228
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "moova_pos_order_links",
+                    "line": 259
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "moova_pos_order_change_links",
+                    "line": 274
+                }
+            ]
+        },
+        {
+            "path": "classes/Moova/MoovaNewOrderApplyService.php",
+            "categories": [
+                "moova_bridge",
+                "pos_order",
+                "table_state"
+            ],
+            "tables": [
+                "moova_pos_order_links"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "moova_pos_order_links",
+                    "line": 143
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "moova_pos_order_links",
+                    "line": 168
+                }
+            ]
+        },
+        {
+            "path": "classes/MoovaPosIntegration.php",
+            "categories": [
+                "moova_bridge"
+            ],
+            "tables": [
+                "moova_pos_order_change_links",
+                "moova_pos_order_lines",
+                "moova_pos_order_links",
+                "moova_pos_shop_links",
+                "moova_pos_table_links"
+            ],
+            "writes": [
+                {
+                    "operation": "CREATE",
+                    "table": "moova_pos_shop_links",
+                    "line": 8
+                },
+                {
+                    "operation": "CREATE",
+                    "table": "moova_pos_table_links",
+                    "line": 32
+                },
+                {
+                    "operation": "CREATE",
+                    "table": "moova_pos_order_links",
+                    "line": 49
+                },
+                {
+                    "operation": "CREATE",
+                    "table": "moova_pos_order_change_links",
+                    "line": 73
+                },
+                {
+                    "operation": "CREATE",
+                    "table": "moova_pos_order_lines",
+                    "line": 97
+                },
+                {
+                    "operation": "ALTER",
+                    "table": "moova_pos_shop_links",
+                    "line": 124
+                },
+                {
+                    "operation": "ALTER",
+                    "table": "moova_pos_order_links",
+                    "line": 130
+                },
+                {
+                    "operation": "ALTER",
+                    "table": "moova_pos_order_links",
+                    "line": 136
+                },
+                {
+                    "operation": "ALTER",
+                    "table": "moova_pos_shop_links",
+                    "line": 142
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "moova_pos_shop_links",
+                    "line": 341
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "moova_pos_shop_links",
+                    "line": 350
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "moova_pos_shop_links",
+                    "line": 393
+                }
+            ]
+        },
+        {
+            "path": "classes/PosOrderService.php",
+            "categories": [
+                "moova_bridge",
+                "payments/accounting",
+                "pos_order",
+                "table_state"
+            ],
+            "tables": [
+                "fat_details",
+                "journal_entries",
+                "journal_heads",
+                "moova_pos_order_lines",
+                "ot_head",
+                "process",
+                "tables"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "ot_head",
+                    "line": 647
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "ot_head",
+                    "line": 691
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "journal_entries",
+                    "line": 763
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "journal_heads",
+                    "line": 771
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "ot_head",
+                    "line": 778
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "fat_details",
+                    "line": 785
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "journal_heads",
+                    "line": 798
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "journal_entries",
+                    "line": 805
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "journal_entries",
+                    "line": 810
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "fat_details",
+                    "line": 854
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "fat_details",
+                    "line": 865
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "ot_head",
+                    "line": 966
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "journal_entries",
+                    "line": 1063
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "journal_heads",
+                    "line": 1071
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "ot_head",
+                    "line": 1078
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "moova_pos_order_lines",
+                    "line": 1096
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "fat_details",
+                    "line": 1162
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "fat_details",
+                    "line": 1173
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "moova_pos_order_lines",
+                    "line": 1186
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "ot_head",
+                    "line": 1225
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "ot_head",
+                    "line": 1262
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "tables",
+                    "line": 1419
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "tables",
+                    "line": 1424
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "process",
+                    "line": 1429
+                }
+            ]
+        },
+        {
+            "path": "classes/Sync/BranchIdentity.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "sync_branch_identity"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "sync_branch_identity",
+                    "line": 39
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "sync_branch_identity",
+                    "line": 109
+                }
+            ]
+        },
+        {
+            "path": "classes/Sync/BranchMoovaAckWorker.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "sync_worker_logs"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "sync_worker_logs",
+                    "line": 258
+                }
+            ]
+        },
+        {
+            "path": "classes/Sync/BranchMoovaApplyWorker.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "sync_worker_logs"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "sync_worker_logs",
+                    "line": 322
+                }
+            ]
+        },
+        {
+            "path": "classes/Sync/BranchMoovaPollWorker.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "sync_checkpoints",
+                "sync_worker_logs"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "sync_checkpoints",
+                    "line": 287
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "sync_worker_logs",
+                    "line": 304
+                }
+            ]
+        },
+        {
+            "path": "classes/Sync/BranchSyncWorker.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "sync_outbox",
+                "sync_worker_logs"
+            ],
+            "writes": [
+                {
+                    "operation": "UPDATE",
+                    "table": "sync_outbox",
+                    "line": 183
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "sync_outbox",
+                    "line": 200
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "sync_outbox",
+                    "line": 216
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "sync_worker_logs",
+                    "line": 265
+                }
+            ]
+        },
+        {
+            "path": "classes/Sync/CloudMenuSnapshotService.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "cloud_menu_items"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "cloud_menu_items",
+                    "line": 39
+                }
+            ]
+        },
+        {
+            "path": "classes/Sync/CloudOrderSnapshotService.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "cloud_order_lines",
+                "cloud_order_payments",
+                "cloud_orders",
+                "cloud_payment_receipts"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "cloud_orders",
+                    "line": 62
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "cloud_order_lines",
+                    "line": 184
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "cloud_order_payments",
+                    "line": 262
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "cloud_payment_receipts",
+                    "line": 330
+                }
+            ]
+        },
+        {
+            "path": "classes/Sync/CloudShiftSnapshotService.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "cloud_shifts"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "cloud_shifts",
+                    "line": 42
+                }
+            ]
+        },
+        {
+            "path": "classes/Sync/CloudTableSnapshotService.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "cloud_tables"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "cloud_tables",
+                    "line": 35
+                }
+            ]
+        },
+        {
+            "path": "classes/Sync/DatabaseBranchSecretProvider.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "cloud_branches"
+            ],
+            "writes": [
+                {
+                    "operation": "UPDATE",
+                    "table": "cloud_branches",
+                    "line": 64
+                }
+            ]
+        },
+        {
+            "path": "classes/Sync/DocumentCounterService.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "document_counters"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "document_counters",
+                    "line": 39
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "document_counters",
+                    "line": 58
+                }
+            ]
+        },
+        {
+            "path": "classes/Sync/MoovaBranchEventCursor.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "cloud_moova_branch_events"
+            ],
+            "writes": [
+                {
+                    "operation": "UPDATE",
+                    "table": "cloud_moova_branch_events",
+                    "line": 67
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "cloud_moova_branch_events",
+                    "line": 78
+                }
+            ]
+        },
+        {
+            "path": "classes/Sync/MoovaInboundQueueService.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "moova_pos_inbound_events",
+                "sync_conflicts"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "moova_pos_inbound_events",
+                    "line": 53
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "moova_pos_inbound_events",
+                    "line": 119
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "moova_pos_inbound_events",
+                    "line": 191
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "moova_pos_inbound_events",
+                    "line": 264
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "sync_conflicts",
+                    "line": 455
+                }
+            ]
+        },
+        {
+            "path": "classes/Sync/OutboxWorker.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "sync_outbox"
+            ],
+            "writes": [
+                {
+                    "operation": "UPDATE",
+                    "table": "sync_outbox",
+                    "line": 24
+                }
+            ]
+        },
+        {
+            "path": "classes/Sync/SchemaManager.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "cloud_branches",
+                "cloud_menu_items",
+                "cloud_moova_branch_events",
+                "cloud_order_lines",
+                "cloud_order_payments",
+                "cloud_orders",
+                "cloud_payment_receipts",
+                "cloud_shifts",
+                "cloud_tables",
+                "document_counters",
+                "moova_pos_inbound_events",
+                "sync_branch_identity",
+                "sync_checkpoints",
+                "sync_conflicts",
+                "sync_inbox",
+                "sync_outbox",
+                "sync_worker_logs"
+            ],
+            "writes": [
+                {
+                    "operation": "ALTER",
+                    "table": "sync_branch_identity",
+                    "line": 116
+                },
+                {
+                    "operation": "ALTER",
+                    "table": "sync_branch_identity",
+                    "line": 117
+                },
+                {
+                    "operation": "ALTER",
+                    "table": "sync_branch_identity",
+                    "line": 118
+                },
+                {
+                    "operation": "ALTER",
+                    "table": "sync_branch_identity",
+                    "line": 119
+                },
+                {
+                    "operation": "ALTER",
+                    "table": "sync_branch_identity",
+                    "line": 120
+                },
+                {
+                    "operation": "ALTER",
+                    "table": "sync_branch_identity",
+                    "line": 121
+                },
+                {
+                    "operation": "ALTER",
+                    "table": "sync_branch_identity",
+                    "line": 122
+                },
+                {
+                    "operation": "ALTER",
+                    "table": "sync_branch_identity",
+                    "line": 123
+                },
+                {
+                    "operation": "ALTER",
+                    "table": "sync_branch_identity",
+                    "line": 134
+                },
+                {
+                    "operation": "ALTER",
+                    "table": "document_counters",
+                    "line": 146
+                },
+                {
+                    "operation": "ALTER",
+                    "table": "document_counters",
+                    "line": 147
+                },
+                {
+                    "operation": "ALTER",
+                    "table": "document_counters",
+                    "line": 148
+                },
+                {
+                    "operation": "ALTER",
+                    "table": "document_counters",
+                    "line": 149
+                },
+                {
+                    "operation": "ALTER",
+                    "table": "document_counters",
+                    "line": 160
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "document_counters",
+                    "line": 176
+                },
+                {
+                    "operation": "ALTER",
+                    "table": "document_counters",
+                    "line": 186
+                },
+                {
+                    "operation": "ALTER",
+                    "table": "sync_outbox",
+                    "line": 198
+                },
+                {
+                    "operation": "ALTER",
+                    "table": "sync_outbox",
+                    "line": 199
+                },
+                {
+                    "operation": "ALTER",
+                    "table": "sync_outbox",
+                    "line": 200
+                },
+                {
+                    "operation": "ALTER",
+                    "table": "sync_outbox",
+                    "line": 201
+                },
+                {
+                    "operation": "ALTER",
+                    "table": "sync_outbox",
+                    "line": 202
+                },
+                {
+                    "operation": "ALTER",
+                    "table": "sync_outbox",
+                    "line": 203
+                },
+                {
+                    "operation": "ALTER",
+                    "table": "sync_outbox",
+                    "line": 204
+                },
+                {
+                    "operation": "ALTER",
+                    "table": "sync_outbox",
+                    "line": 205
+                },
+                {
+                    "operation": "ALTER",
+                    "table": "sync_outbox",
+                    "line": 206
+                },
+                {
+                    "operation": "ALTER",
+                    "table": "sync_outbox",
+                    "line": 207
+                },
+                {
+                    "operation": "ALTER",
+                    "table": "sync_outbox",
+                    "line": 208
+                },
+                {
+                    "operation": "ALTER",
+                    "table": "sync_outbox",
+                    "line": 209
+                },
+                {
+                    "operation": "ALTER",
+                    "table": "sync_outbox",
+                    "line": 210
+                },
+                {
+                    "operation": "ALTER",
+                    "table": "sync_outbox",
+                    "line": 211
+                },
+                {
+                    "operation": "ALTER",
+                    "table": "sync_outbox",
+                    "line": 212
+                },
+                {
+                    "operation": "ALTER",
+                    "table": "sync_outbox",
+                    "line": 213
+                },
+                {
+                    "operation": "ALTER",
+                    "table": "sync_outbox",
+                    "line": 225
+                },
+                {
+                    "operation": "ALTER",
+                    "table": "sync_outbox",
+                    "line": 231
+                },
+                {
+                    "operation": "ALTER",
+                    "table": "sync_outbox",
+                    "line": 242
+                },
+                {
+                    "operation": "ALTER",
+                    "table": "cloud_moova_branch_events",
+                    "line": 255
+                },
+                {
+                    "operation": "ALTER",
+                    "table": "cloud_moova_branch_events",
+                    "line": 261
+                },
+                {
+                    "operation": "ALTER",
+                    "table": "moova_pos_inbound_events",
+                    "line": 273
+                },
+                {
+                    "operation": "ALTER",
+                    "table": "moova_pos_inbound_events",
+                    "line": 274
+                },
+                {
+                    "operation": "ALTER",
+                    "table": "moova_pos_inbound_events",
+                    "line": 275
+                },
+                {
+                    "operation": "ALTER",
+                    "table": "moova_pos_inbound_events",
+                    "line": 276
+                },
+                {
+                    "operation": "ALTER",
+                    "table": "moova_pos_inbound_events",
+                    "line": 277
+                },
+                {
+                    "operation": "ALTER",
+                    "table": "moova_pos_inbound_events",
+                    "line": 278
+                },
+                {
+                    "operation": "ALTER",
+                    "table": "moova_pos_inbound_events",
+                    "line": 279
+                },
+                {
+                    "operation": "ALTER",
+                    "table": "moova_pos_inbound_events",
+                    "line": 280
+                },
+                {
+                    "operation": "ALTER",
+                    "table": "moova_pos_inbound_events",
+                    "line": 281
+                },
+                {
+                    "operation": "ALTER",
+                    "table": "moova_pos_inbound_events",
+                    "line": 293
+                },
+                {
+                    "operation": "ALTER",
+                    "table": "moova_pos_inbound_events",
+                    "line": 299
+                },
+                {
+                    "operation": "ALTER",
+                    "table": "moova_pos_inbound_events",
+                    "line": 305
+                },
+                {
+                    "operation": "CREATE",
+                    "table": "sync_branch_identity",
+                    "line": 424
+                },
+                {
+                    "operation": "CREATE",
+                    "table": "document_counters",
+                    "line": 442
+                },
+                {
+                    "operation": "CREATE",
+                    "table": "sync_outbox",
+                    "line": 459
+                },
+                {
+                    "operation": "CREATE",
+                    "table": "sync_inbox",
+                    "line": 501
+                },
+                {
+                    "operation": "CREATE",
+                    "table": "sync_conflicts",
+                    "line": 525
+                },
+                {
+                    "operation": "CREATE",
+                    "table": "sync_checkpoints",
+                    "line": 550
+                },
+                {
+                    "operation": "CREATE",
+                    "table": "sync_worker_logs",
+                    "line": 565
+                },
+                {
+                    "operation": "CREATE",
+                    "table": "moova_pos_inbound_events",
+                    "line": 581
+                },
+                {
+                    "operation": "CREATE",
+                    "table": "cloud_branches",
+                    "line": 624
+                },
+                {
+                    "operation": "CREATE",
+                    "table": "cloud_orders",
+                    "line": 643
+                },
+                {
+                    "operation": "CREATE",
+                    "table": "cloud_order_lines",
+                    "line": 689
+                },
+                {
+                    "operation": "CREATE",
+                    "table": "cloud_order_payments",
+                    "line": 719
+                },
+                {
+                    "operation": "CREATE",
+                    "table": "cloud_payment_receipts",
+                    "line": 742
+                },
+                {
+                    "operation": "CREATE",
+                    "table": "cloud_tables",
+                    "line": 766
+                },
+                {
+                    "operation": "CREATE",
+                    "table": "cloud_shifts",
+                    "line": 789
+                },
+                {
+                    "operation": "CREATE",
+                    "table": "cloud_menu_items",
+                    "line": 818
+                },
+                {
+                    "operation": "CREATE",
+                    "table": "cloud_moova_branch_events",
+                    "line": 844
+                }
+            ]
+        },
+        {
+            "path": "classes/Sync/SyncInboxService.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "sync_conflicts",
+                "sync_inbox"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "sync_inbox",
+                    "line": 44
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "sync_inbox",
+                    "line": 131
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "sync_conflicts",
+                    "line": 155
+                }
+            ]
+        },
+        {
+            "path": "classes/Sync/SyncOutboxEventService.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "sync_outbox"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "sync_outbox",
+                    "line": 46
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "sync_outbox",
+                    "line": 138
+                }
+            ]
+        },
+        {
+            "path": "classes/TableOrderService.php",
+            "categories": [
+                "pos_order",
+                "table_state"
+            ],
+            "tables": [
+                "fat_details",
+                "order_payments",
+                "ot_head",
+                "tables"
+            ],
+            "writes": [
+                {
+                    "operation": "UPDATE",
+                    "table": "ot_head",
+                    "line": 205
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "tables",
+                    "line": 222
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "tables",
+                    "line": 238
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "ot_head",
+                    "line": 253
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "fat_details",
+                    "line": 266
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "ot_head",
+                    "line": 292
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "ot_head",
+                    "line": 319
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "order_payments",
+                    "line": 375
+                }
+            ]
+        },
+        {
+            "path": "close_shift.php",
+            "categories": [
+                "shift_session"
+            ],
+            "tables": [
+                "closed_orders"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "closed_orders",
+                    "line": 57
+                }
+            ]
+        },
+        {
+            "path": "create_acc_head_table.php",
+            "categories": [
+                "payments/accounting"
+            ],
+            "tables": [
+                "acc_head"
+            ],
+            "writes": [
+                {
+                    "operation": "CREATE",
+                    "table": "acc_head",
+                    "line": 17
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "acc_head",
+                    "line": 40
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "acc_head",
+                    "line": 41
+                }
+            ]
+        },
+        {
+            "path": "crud_tables.php",
+            "categories": [
+                "table_state"
+            ],
+            "tables": [
+                "tables"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "tables",
+                    "line": 14
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "tables",
+                    "line": 28
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "tables",
+                    "line": 43
+                }
+            ]
+        },
+        {
+            "path": "debug_db.php",
+            "categories": [
+                "payments/accounting"
+            ],
+            "tables": [
+                "journal_entries"
+            ],
+            "writes": [
+                {
+                    "operation": "DELETE",
+                    "table": "journal_entries",
+                    "line": 157
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "journal_entries",
+                    "line": 160
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "journal_entries",
+                    "line": 178
+                }
+            ]
+        },
+        {
+            "path": "do/dbase/do_turncate.php",
+            "categories": [
+                "payments/accounting"
+            ],
+            "tables": [
+                "acc_head"
+            ],
+            "writes": [
+                {
+                    "operation": "UPDATE",
+                    "table": "acc_head",
+                    "line": 115
+                }
+            ]
+        },
+        {
+            "path": "do/do_deletetask.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "process",
+                "tasks"
+            ],
+            "writes": [
+                {
+                    "operation": "UPDATE",
+                    "table": "tasks",
+                    "line": 15
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "process",
+                    "line": 28
+                }
+            ]
+        },
+        {
+            "path": "do/do_delprint.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "print",
+                "process"
+            ],
+            "writes": [
+                {
+                    "operation": "DELETE",
+                    "table": "print",
+                    "line": 8
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "process",
+                    "line": 11
+                }
+            ]
+        },
+        {
+            "path": "do/do_delprod.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "process",
+                "prods"
+            ],
+            "writes": [
+                {
+                    "operation": "DELETE",
+                    "table": "prods",
+                    "line": 8
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "process",
+                    "line": 11
+                }
+            ]
+        },
+        {
+            "path": "do/do_delptypes.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "paper_types",
+                "process"
+            ],
+            "writes": [
+                {
+                    "operation": "DELETE",
+                    "table": "paper_types",
+                    "line": 8
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "process",
+                    "line": 11
+                }
+            ]
+        },
+        {
+            "path": "do/do_delservice.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "process",
+                "services"
+            ],
+            "writes": [
+                {
+                    "operation": "DELETE",
+                    "table": "services",
+                    "line": 8
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "process",
+                    "line": 11
+                }
+            ]
+        },
+        {
+            "path": "do/do_deluser.php",
+            "categories": [
+                "user_admin"
+            ],
+            "tables": [
+                "process",
+                "users"
+            ],
+            "writes": [
+                {
+                    "operation": "DELETE",
+                    "table": "users",
+                    "line": 4
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "process",
+                    "line": 9
+                }
+            ]
+        },
+        {
+            "path": "do/do_delzanka.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "process",
+                "zankat"
+            ],
+            "writes": [
+                {
+                    "operation": "DELETE",
+                    "table": "zankat",
+                    "line": 10
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "process",
+                    "line": 12
+                }
+            ]
+        },
+        {
+            "path": "do/do_edittask.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "process",
+                "tasks"
+            ],
+            "writes": [
+                {
+                    "operation": "UPDATE",
+                    "table": "tasks",
+                    "line": 15
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "process",
+                    "line": 24
+                }
+            ]
+        },
+        {
+            "path": "do/do_logout.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "process"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "process",
+                    "line": 16
+                }
+            ]
+        },
+        {
+            "path": "do/doadd_account.php",
+            "categories": [
+                "payments/accounting"
+            ],
+            "tables": [
+                "acc_head",
+                "process"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "acc_head",
+                    "line": 76
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "process",
+                    "line": 81
+                }
+            ]
+        },
+        {
+            "path": "do/doadd_allowance.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "allowances",
+                "process"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "allowances",
+                    "line": 11
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "process",
+                    "line": 14
+                }
+            ]
+        },
+        {
+            "path": "do/doadd_booking.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "booking_cards",
+                "clients"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "clients",
+                    "line": 8
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "booking_cards",
+                    "line": 23
+                }
+            ]
+        },
+        {
+            "path": "do/doadd_calcgroup.php",
+            "categories": [
+                "menu_catalog"
+            ],
+            "tables": [
+                "attdocs",
+                "attlog",
+                "process"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "attlog",
+                    "line": 152
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "attlog",
+                    "line": 162
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "attdocs",
+                    "line": 257
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "attlog",
+                    "line": 265
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "process",
+                    "line": 270
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "process",
+                    "line": 275
+                }
+            ]
+        },
+        {
+            "path": "do/doadd_calcsalary.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "attdocs",
+                "attlog",
+                "process"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "attlog",
+                    "line": 149
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "attlog",
+                    "line": 159
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "attdocs",
+                    "line": 254
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "attlog",
+                    "line": 262
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "process",
+                    "line": 267
+                }
+            ]
+        },
+        {
+            "path": "do/doadd_chance.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "chances",
+                "process",
+                "tasks"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "chances",
+                    "line": 11
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "tasks",
+                    "line": 14
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "process",
+                    "line": 17
+                }
+            ]
+        },
+        {
+            "path": "do/doadd_client.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "clients",
+                "process"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "clients",
+                    "line": 18
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "process",
+                    "line": 20
+                }
+            ]
+        },
+        {
+            "path": "do/doadd_close.php",
+            "categories": [
+                "pos_order",
+                "shift_session"
+            ],
+            "tables": [
+                "closed_orders",
+                "ot_head"
+            ],
+            "writes": [
+                {
+                    "operation": "UPDATE",
+                    "table": "ot_head",
+                    "line": 33
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "closed_orders",
+                    "line": 36
+                }
+            ]
+        },
+        {
+            "path": "do/doadd_ctp copy.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "ctp"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "ctp",
+                    "line": 8
+                }
+            ]
+        },
+        {
+            "path": "do/doadd_ctp.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "ctp",
+                "process"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "ctp",
+                    "line": 8
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "process",
+                    "line": 10
+                }
+            ]
+        },
+        {
+            "path": "do/doadd_cv.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "cvs",
+                "process"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "cvs",
+                    "line": 20
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "process",
+                    "line": 23
+                }
+            ]
+        },
+        {
+            "path": "do/doadd_department.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "departments",
+                "process"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "departments",
+                    "line": 9
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "process",
+                    "line": 12
+                }
+            ]
+        },
+        {
+            "path": "do/doadd_dis.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "clients",
+                "process",
+                "reservations"
+            ],
+            "writes": [
+                {
+                    "operation": "UPDATE",
+                    "table": "reservations",
+                    "line": 11
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "clients",
+                    "line": 12
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "process",
+                    "line": 14
+                }
+            ]
+        },
+        {
+            "path": "do/doadd_docs.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "imgs",
+                "process"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "imgs",
+                    "line": 33
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "process",
+                    "line": 35
+                }
+            ]
+        },
+        {
+            "path": "do/doadd_drug.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "drugs",
+                "process"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "drugs",
+                    "line": 17
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "process",
+                    "line": 20
+                }
+            ]
+        },
+        {
+            "path": "do/doadd_empkbi.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "emp_kbis"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "emp_kbis",
+                    "line": 9
+                }
+            ]
+        },
+        {
+            "path": "do/doadd_employee.php",
+            "categories": [
+                "payments/accounting"
+            ],
+            "tables": [
+                "acc_head",
+                "employees",
+                "process"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "employees",
+                    "line": 62
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "employees",
+                    "line": 71
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "acc_head",
+                    "line": 91
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "process",
+                    "line": 93
+                }
+            ]
+        },
+        {
+            "path": "do/doadd_group.php",
+            "categories": [
+                "menu_catalog"
+            ],
+            "tables": [
+                "item_group",
+                "process"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "item_group",
+                    "line": 23
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "process",
+                    "line": 28
+                }
+            ]
+        },
+        {
+            "path": "do/doadd_group2.php",
+            "categories": [
+                "menu_catalog"
+            ],
+            "tables": [
+                "item_group2",
+                "process"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "item_group2",
+                    "line": 16
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "process",
+                    "line": 17
+                }
+            ]
+        },
+        {
+            "path": "do/doadd_hiringcontract.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "emp_allowences",
+                "hiringcontracts",
+                "process"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "hiringcontracts",
+                    "line": 10
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "emp_allowences",
+                    "line": 25
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "process",
+                    "line": 31
+                }
+            ]
+        },
+        {
+            "path": "do/doadd_hr_operation.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "hr_operation_steps",
+                "hr_operations"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "hr_operations",
+                    "line": 9
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "hr_operation_steps",
+                    "line": 23
+                }
+            ]
+        },
+        {
+            "path": "do/doadd_invoice.php",
+            "categories": [
+                "menu_catalog",
+                "payments/accounting",
+                "pos_order"
+            ],
+            "tables": [
+                "fat_details",
+                "journal_entries",
+                "journal_heads",
+                "myitems",
+                "ot_head",
+                "process"
+            ],
+            "writes": [
+                {
+                    "operation": "UPDATE",
+                    "table": "ot_head",
+                    "line": 400
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "fat_details",
+                    "line": 438
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "fat_details",
+                    "line": 443
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "journal_entries",
+                    "line": 451
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "journal_heads",
+                    "line": 454
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "ot_head",
+                    "line": 455
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "ot_head",
+                    "line": 469
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "ot_head",
+                    "line": 527
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "ot_head",
+                    "line": 555
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "journal_heads",
+                    "line": 592
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "journal_entries",
+                    "line": 612
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "journal_entries",
+                    "line": 624
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "journal_entries",
+                    "line": 640
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "journal_entries",
+                    "line": 652
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "ot_head",
+                    "line": 698
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "journal_heads",
+                    "line": 723
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "journal_entries",
+                    "line": 735
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "journal_entries",
+                    "line": 744
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "ot_head",
+                    "line": 761
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "journal_heads",
+                    "line": 786
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "journal_entries",
+                    "line": 798
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "journal_entries",
+                    "line": 807
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "fat_details",
+                    "line": 824
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "myitems",
+                    "line": 841
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "ot_head",
+                    "line": 950
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "process",
+                    "line": 992
+                }
+            ]
+        },
+        {
+            "path": "do/doadd_invoice_clothes.php",
+            "categories": [
+                "payments/accounting",
+                "pos_order"
+            ],
+            "tables": [
+                "fat_details",
+                "journal_entries",
+                "journal_heads",
+                "ot_head"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "ot_head",
+                    "line": 73
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "fat_details",
+                    "line": 98
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "journal_heads",
+                    "line": 139
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "journal_entries",
+                    "line": 155
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "journal_entries",
+                    "line": 167
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "ot_head",
+                    "line": 181
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "journal_heads",
+                    "line": 213
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "journal_entries",
+                    "line": 225
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "journal_entries",
+                    "line": 234
+                }
+            ]
+        },
+        {
+            "path": "do/doadd_invoice_waiter.php",
+            "categories": [
+                "menu_catalog",
+                "pos_order",
+                "table_state"
+            ],
+            "tables": [
+                "items",
+                "ot_details",
+                "ot_head",
+                "tables"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "ot_head",
+                    "line": 51
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "ot_details",
+                    "line": 80
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "items",
+                    "line": 89
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "tables",
+                    "line": 96
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "ot_head",
+                    "line": 102
+                }
+            ]
+        },
+        {
+            "path": "do/doadd_item.php",
+            "categories": [
+                "menu_catalog"
+            ],
+            "tables": [
+                "imgs",
+                "item_units",
+                "myitems",
+                "process"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "myitems",
+                    "line": 35
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "item_units",
+                    "line": 64
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "imgs",
+                    "line": 90
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "process",
+                    "line": 95
+                }
+            ]
+        },
+        {
+            "path": "do/doadd_jop.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "jops",
+                "process"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "jops",
+                    "line": 6
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "process",
+                    "line": 8
+                }
+            ]
+        },
+        {
+            "path": "do/doadd_joplevel.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "joplevels",
+                "process"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "joplevels",
+                    "line": 8
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "process",
+                    "line": 10
+                }
+            ]
+        },
+        {
+            "path": "do/doadd_joprule.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "joprules",
+                "process"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "joprules",
+                    "line": 11
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "process",
+                    "line": 13
+                }
+            ]
+        },
+        {
+            "path": "do/doadd_journal.php",
+            "categories": [
+                "payments/accounting"
+            ],
+            "tables": [
+                "journal_entries",
+                "journal_heads",
+                "process"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "journal_heads",
+                    "line": 19
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "journal_entries",
+                    "line": 26
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "journal_entries",
+                    "line": 29
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "process",
+                    "line": 31
+                }
+            ]
+        },
+        {
+            "path": "do/doadd_kbi.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "kbis",
+                "process"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "kbis",
+                    "line": 7
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "process",
+                    "line": 9
+                }
+            ]
+        },
+        {
+            "path": "do/doadd_manualfp.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "attandance",
+                "process"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "attandance",
+                    "line": 9
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "process",
+                    "line": 10
+                }
+            ]
+        },
+        {
+            "path": "do/doadd_mopfp.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "attandance",
+                "process"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "attandance",
+                    "line": 9
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "process",
+                    "line": 11
+                }
+            ]
+        },
+        {
+            "path": "do/doadd_multijournal.php",
+            "categories": [
+                "payments/accounting"
+            ],
+            "tables": [
+                "journal_entries",
+                "journal_heads",
+                "process"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "journal_heads",
+                    "line": 16
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "journal_entries",
+                    "line": 27
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "journal_entries",
+                    "line": 38
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "process",
+                    "line": 44
+                }
+            ]
+        },
+        {
+            "path": "do/doadd_news.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "my_news",
+                "process"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "my_news",
+                    "line": 13
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "my_news",
+                    "line": 31
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "process",
+                    "line": 34
+                }
+            ]
+        },
+        {
+            "path": "do/doadd_operation_step.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "hr_operation_steps"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "hr_operation_steps",
+                    "line": 8
+                }
+            ]
+        },
+        {
+            "path": "do/doadd_order.php",
+            "categories": [
+                "pos_order"
+            ],
+            "tables": [
+                "orders",
+                "process"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "orders",
+                    "line": 9
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "process",
+                    "line": 13
+                }
+            ]
+        },
+        {
+            "path": "do/doadd_presc.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "prescdetails",
+                "prescs",
+                "process"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "prescs",
+                    "line": 10
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "prescdetails",
+                    "line": 24
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "process",
+                    "line": 29
+                }
+            ]
+        },
+        {
+            "path": "do/doadd_printer.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "print",
+                "process"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "print",
+                    "line": 8
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "process",
+                    "line": 10
+                }
+            ]
+        },
+        {
+            "path": "do/doadd_prod.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "process",
+                "prods"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "prods",
+                    "line": 6
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "process",
+                    "line": 8
+                }
+            ]
+        },
+        {
+            "path": "do/doadd_production.php",
+            "categories": [
+                "inventory_stock"
+            ],
+            "tables": [
+                "productions"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "productions",
+                    "line": 9
+                }
+            ]
+        },
+        {
+            "path": "do/doadd_ptype.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "paper_types"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "paper_types",
+                    "line": 6
+                }
+            ]
+        },
+        {
+            "path": "do/doadd_rent.php",
+            "categories": [
+                "payments/accounting"
+            ],
+            "tables": [
+                "acc_head",
+                "myinstallments",
+                "myrents",
+                "process"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "myrents",
+                    "line": 18
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "myinstallments",
+                    "line": 34
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "acc_head",
+                    "line": 39
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "process",
+                    "line": 40
+                }
+            ]
+        },
+        {
+            "path": "do/doadd_reservation.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "clients",
+                "process",
+                "reservations"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "clients",
+                    "line": 23
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "reservations",
+                    "line": 34
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "process",
+                    "line": 35
+                }
+            ]
+        },
+        {
+            "path": "do/doadd_role.php",
+            "categories": [
+                "user_admin"
+            ],
+            "tables": [
+                "process",
+                "usr_pwrs"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "usr_pwrs",
+                    "line": 256
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "process",
+                    "line": 261
+                }
+            ]
+        },
+        {
+            "path": "do/doadd_service.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "process",
+                "services"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "services",
+                    "line": 6
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "process",
+                    "line": 8
+                }
+            ]
+        },
+        {
+            "path": "do/doadd_shift.php",
+            "categories": [
+                "shift_session"
+            ],
+            "tables": [
+                "process",
+                "shifts"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "shifts",
+                    "line": 35
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "process",
+                    "line": 37
+                }
+            ]
+        },
+        {
+            "path": "do/doadd_store.php",
+            "categories": [
+                "payments/accounting"
+            ],
+            "tables": [
+                "acc_head",
+                "process"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "acc_head",
+                    "line": 33
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "process",
+                    "line": 34
+                }
+            ]
+        },
+        {
+            "path": "do/doadd_task.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "process",
+                "tasks"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "tasks",
+                    "line": 14
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "process",
+                    "line": 18
+                }
+            ]
+        },
+        {
+            "path": "do/doadd_town.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "process",
+                "towns"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "towns",
+                    "line": 3
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "process",
+                    "line": 4
+                }
+            ]
+        },
+        {
+            "path": "do/doadd_unit.php",
+            "categories": [
+                "menu_catalog"
+            ],
+            "tables": [
+                "myunits",
+                "process"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "myunits",
+                    "line": 4
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "process",
+                    "line": 5
+                }
+            ]
+        },
+        {
+            "path": "do/doadd_user.php",
+            "categories": [
+                "user_admin"
+            ],
+            "tables": [
+                "process",
+                "users"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "users",
+                    "line": 31
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "process",
+                    "line": 35
+                }
+            ]
+        },
+        {
+            "path": "do/doadd_visit.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "process",
+                "visits"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "visits",
+                    "line": 12
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "process",
+                    "line": 14
+                }
+            ]
+        },
+        {
+            "path": "do/doadd_voucher.php",
+            "categories": [
+                "payments/accounting",
+                "pos_order"
+            ],
+            "tables": [
+                "journal_entries",
+                "journal_heads",
+                "myinstallments",
+                "ot_head",
+                "process"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "ot_head",
+                    "line": 28
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "journal_heads",
+                    "line": 36
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "journal_entries",
+                    "line": 38
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "journal_entries",
+                    "line": 39
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "process",
+                    "line": 41
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "myinstallments",
+                    "line": 46
+                }
+            ]
+        },
+        {
+            "path": "do/doadd_vtybe.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "process",
+                "visittybes"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "visittybes",
+                    "line": 6
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "process",
+                    "line": 8
+                }
+            ]
+        },
+        {
+            "path": "do/doassign_operation.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "employee_operations"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "employee_operations",
+                    "line": 8
+                }
+            ]
+        },
+        {
+            "path": "do/dochange_password.php",
+            "categories": [
+                "user_admin"
+            ],
+            "tables": [
+                "process",
+                "users"
+            ],
+            "writes": [
+                {
+                    "operation": "UPDATE",
+                    "table": "users",
+                    "line": 71
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "process",
+                    "line": 76
+                }
+            ]
+        },
+        {
+            "path": "do/dodel_account.php",
+            "categories": [
+                "payments/accounting"
+            ],
+            "tables": [
+                "acc_head"
+            ],
+            "writes": [
+                {
+                    "operation": "UPDATE",
+                    "table": "acc_head",
+                    "line": 4
+                }
+            ]
+        },
+        {
+            "path": "do/dodel_allowances.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "allowances"
+            ],
+            "writes": [
+                {
+                    "operation": "UPDATE",
+                    "table": "allowances",
+                    "line": 4
+                }
+            ]
+        },
+        {
+            "path": "do/dodel_attdoc.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "attdocs",
+                "attlog"
+            ],
+            "writes": [
+                {
+                    "operation": "DELETE",
+                    "table": "attlog",
+                    "line": 3
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "attdocs",
+                    "line": 4
+                }
+            ]
+        },
+        {
+            "path": "do/dodel_client.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "clients"
+            ],
+            "writes": [
+                {
+                    "operation": "DELETE",
+                    "table": "clients",
+                    "line": 6
+                }
+            ]
+        },
+        {
+            "path": "do/dodel_contract.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "hiringcontracts"
+            ],
+            "writes": [
+                {
+                    "operation": "UPDATE",
+                    "table": "hiringcontracts",
+                    "line": 4
+                }
+            ]
+        },
+        {
+            "path": "do/dodel_department.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "departments"
+            ],
+            "writes": [
+                {
+                    "operation": "UPDATE",
+                    "table": "departments",
+                    "line": 10
+                }
+            ]
+        },
+        {
+            "path": "do/dodel_employee.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "employees"
+            ],
+            "writes": [
+                {
+                    "operation": "UPDATE",
+                    "table": "employees",
+                    "line": 5
+                }
+            ]
+        },
+        {
+            "path": "do/dodel_employee_operation.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "employee_operations"
+            ],
+            "writes": [
+                {
+                    "operation": "DELETE",
+                    "table": "employee_operations",
+                    "line": 6
+                }
+            ]
+        },
+        {
+            "path": "do/dodel_follow.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "tasks"
+            ],
+            "writes": [
+                {
+                    "operation": "DELETE",
+                    "table": "tasks",
+                    "line": 3
+                }
+            ]
+        },
+        {
+            "path": "do/dodel_fp.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "attandance"
+            ],
+            "writes": [
+                {
+                    "operation": "UPDATE",
+                    "table": "attandance",
+                    "line": 4
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "attandance",
+                    "line": 5
+                }
+            ]
+        },
+        {
+            "path": "do/dodel_group.php",
+            "categories": [
+                "menu_catalog"
+            ],
+            "tables": [
+                "item_group"
+            ],
+            "writes": [
+                {
+                    "operation": "UPDATE",
+                    "table": "item_group",
+                    "line": 8
+                }
+            ]
+        },
+        {
+            "path": "do/dodel_group2.php",
+            "categories": [
+                "menu_catalog"
+            ],
+            "tables": [
+                "item_group2"
+            ],
+            "writes": [
+                {
+                    "operation": "UPDATE",
+                    "table": "item_group2",
+                    "line": 3
+                }
+            ]
+        },
+        {
+            "path": "do/dodel_hr_operation.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "hr_operations"
+            ],
+            "writes": [
+                {
+                    "operation": "DELETE",
+                    "table": "hr_operations",
+                    "line": 6
+                }
+            ]
+        },
+        {
+            "path": "do/dodel_invoice.php",
+            "categories": [
+                "payments/accounting",
+                "pos_order"
+            ],
+            "tables": [
+                "fat_details",
+                "journal_entries",
+                "journal_heads",
+                "ot_head"
+            ],
+            "writes": [
+                {
+                    "operation": "UPDATE",
+                    "table": "fat_details",
+                    "line": 130
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "ot_head",
+                    "line": 133
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "journal_entries",
+                    "line": 136
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "journal_heads",
+                    "line": 137
+                }
+            ]
+        },
+        {
+            "path": "do/dodel_item.php",
+            "categories": [
+                "menu_catalog"
+            ],
+            "tables": [
+                "myitems"
+            ],
+            "writes": [
+                {
+                    "operation": "UPDATE",
+                    "table": "myitems",
+                    "line": 6
+                }
+            ]
+        },
+        {
+            "path": "do/dodel_jop.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "jops"
+            ],
+            "writes": [
+                {
+                    "operation": "UPDATE",
+                    "table": "jops",
+                    "line": 6
+                }
+            ]
+        },
+        {
+            "path": "do/dodel_joplevel.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "joplevels"
+            ],
+            "writes": [
+                {
+                    "operation": "UPDATE",
+                    "table": "joplevels",
+                    "line": 8
+                }
+            ]
+        },
+        {
+            "path": "do/dodel_joprule.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "joprules"
+            ],
+            "writes": [
+                {
+                    "operation": "UPDATE",
+                    "table": "joprules",
+                    "line": 4
+                }
+            ]
+        },
+        {
+            "path": "do/dodel_kbi.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "kbis"
+            ],
+            "writes": [
+                {
+                    "operation": "UPDATE",
+                    "table": "kbis",
+                    "line": 3
+                }
+            ]
+        },
+        {
+            "path": "do/dodel_operation_step.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "hr_operation_steps"
+            ],
+            "writes": [
+                {
+                    "operation": "DELETE",
+                    "table": "hr_operation_steps",
+                    "line": 7
+                }
+            ]
+        },
+        {
+            "path": "do/dodel_pro.php",
+            "categories": [
+                "payments/accounting",
+                "pos_order"
+            ],
+            "tables": [
+                "fat_details",
+                "journal_entries",
+                "journal_heads",
+                "ot_head",
+                "process"
+            ],
+            "writes": [
+                {
+                    "operation": "DELETE",
+                    "table": "journal_entries",
+                    "line": 23
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "journal_heads",
+                    "line": 25
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "ot_head",
+                    "line": 27
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "fat_details",
+                    "line": 33
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "journal_entries",
+                    "line": 35
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "journal_heads",
+                    "line": 37
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "ot_head",
+                    "line": 40
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "process",
+                    "line": 44
+                }
+            ]
+        },
+        {
+            "path": "do/dodel_production.php",
+            "categories": [
+                "inventory_stock"
+            ],
+            "tables": [
+                "productions"
+            ],
+            "writes": [
+                {
+                    "operation": "DELETE",
+                    "table": "productions",
+                    "line": 4
+                }
+            ]
+        },
+        {
+            "path": "do/dodel_reservation.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "reservations"
+            ],
+            "writes": [
+                {
+                    "operation": "DELETE",
+                    "table": "reservations",
+                    "line": 4
+                }
+            ]
+        },
+        {
+            "path": "do/dodel_shift.php",
+            "categories": [
+                "shift_session"
+            ],
+            "tables": [
+                "shifts"
+            ],
+            "writes": [
+                {
+                    "operation": "UPDATE",
+                    "table": "shifts",
+                    "line": 6
+                }
+            ]
+        },
+        {
+            "path": "do/dodel_task.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "tasks"
+            ],
+            "writes": [
+                {
+                    "operation": "UPDATE",
+                    "table": "tasks",
+                    "line": 5
+                }
+            ]
+        },
+        {
+            "path": "do/dodel_town.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "towns"
+            ],
+            "writes": [
+                {
+                    "operation": "UPDATE",
+                    "table": "towns",
+                    "line": 3
+                }
+            ]
+        },
+        {
+            "path": "do/dodel_unit.php",
+            "categories": [
+                "menu_catalog"
+            ],
+            "tables": [
+                "myunits"
+            ],
+            "writes": [
+                {
+                    "operation": "DELETE",
+                    "table": "myunits",
+                    "line": 7
+                }
+            ]
+        },
+        {
+            "path": "do/dodel_voucher.php",
+            "categories": [
+                "payments/accounting",
+                "pos_order"
+            ],
+            "tables": [
+                "journal_entries",
+                "journal_heads",
+                "ot_head"
+            ],
+            "writes": [
+                {
+                    "operation": "DELETE",
+                    "table": "journal_entries",
+                    "line": 12
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "journal_heads",
+                    "line": 13
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "ot_head",
+                    "line": 14
+                }
+            ]
+        },
+        {
+            "path": "do/dodel_vtybe.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "visittybes"
+            ],
+            "writes": [
+                {
+                    "operation": "UPDATE",
+                    "table": "visittybes",
+                    "line": 4
+                }
+            ]
+        },
+        {
+            "path": "do/dodelete_chance.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "chances"
+            ],
+            "writes": [
+                {
+                    "operation": "DELETE",
+                    "table": "chances",
+                    "line": 3
+                }
+            ]
+        },
+        {
+            "path": "do/doedit_account.php",
+            "categories": [
+                "payments/accounting"
+            ],
+            "tables": [
+                "acc_head"
+            ],
+            "writes": [
+                {
+                    "operation": "UPDATE",
+                    "table": "acc_head",
+                    "line": 26
+                }
+            ]
+        },
+        {
+            "path": "do/doedit_allowances.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "allowances"
+            ],
+            "writes": [
+                {
+                    "operation": "UPDATE",
+                    "table": "allowances",
+                    "line": 10
+                }
+            ]
+        },
+        {
+            "path": "do/doedit_chance.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "tasks"
+            ],
+            "writes": [
+                {
+                    "operation": "UPDATE",
+                    "table": "tasks",
+                    "line": 10
+                }
+            ]
+        },
+        {
+            "path": "do/doedit_client.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "clients"
+            ],
+            "writes": [
+                {
+                    "operation": "UPDATE",
+                    "table": "clients",
+                    "line": 18
+                }
+            ]
+        },
+        {
+            "path": "do/doedit_ctp.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "ctp"
+            ],
+            "writes": [
+                {
+                    "operation": "UPDATE",
+                    "table": "ctp",
+                    "line": 9
+                }
+            ]
+        },
+        {
+            "path": "do/doedit_cv.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "cvs"
+            ],
+            "writes": [
+                {
+                    "operation": "UPDATE",
+                    "table": "cvs",
+                    "line": 8
+                }
+            ]
+        },
+        {
+            "path": "do/doedit_department.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "departments"
+            ],
+            "writes": [
+                {
+                    "operation": "UPDATE",
+                    "table": "departments",
+                    "line": 7
+                }
+            ]
+        },
+        {
+            "path": "do/doedit_employee.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "employees"
+            ],
+            "writes": [
+                {
+                    "operation": "UPDATE",
+                    "table": "employees",
+                    "line": 33
+                }
+            ]
+        },
+        {
+            "path": "do/doedit_fp.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "attandance"
+            ],
+            "writes": [
+                {
+                    "operation": "UPDATE",
+                    "table": "attandance",
+                    "line": 9
+                }
+            ]
+        },
+        {
+            "path": "do/doedit_group.php",
+            "categories": [
+                "menu_catalog"
+            ],
+            "tables": [
+                "item_group"
+            ],
+            "writes": [
+                {
+                    "operation": "UPDATE",
+                    "table": "item_group",
+                    "line": 24
+                }
+            ]
+        },
+        {
+            "path": "do/doedit_group2.php",
+            "categories": [
+                "menu_catalog"
+            ],
+            "tables": [
+                "item_group2"
+            ],
+            "writes": [
+                {
+                    "operation": "UPDATE",
+                    "table": "item_group2",
+                    "line": 16
+                }
+            ]
+        },
+        {
+            "path": "do/doedit_hr_operation.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "hr_operations"
+            ],
+            "writes": [
+                {
+                    "operation": "UPDATE",
+                    "table": "hr_operations",
+                    "line": 9
+                }
+            ]
+        },
+        {
+            "path": "do/doedit_invoice.php",
+            "categories": [
+                "menu_catalog",
+                "payments/accounting",
+                "pos_order"
+            ],
+            "tables": [
+                "fat_details",
+                "journal_entries",
+                "journal_heads",
+                "myitems",
+                "ot_head",
+                "process"
+            ],
+            "writes": [
+                {
+                    "operation": "UPDATE",
+                    "table": "ot_head",
+                    "line": 199
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "journal_heads",
+                    "line": 226
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "journal_entries",
+                    "line": 250
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "journal_entries",
+                    "line": 259
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "ot_head",
+                    "line": 289
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "journal_heads",
+                    "line": 316
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "journal_entries",
+                    "line": 328
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "journal_entries",
+                    "line": 337
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "ot_head",
+                    "line": 347
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "journal_heads",
+                    "line": 355
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "journal_entries",
+                    "line": 375
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "journal_entries",
+                    "line": 383
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "ot_head",
+                    "line": 393
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "journal_heads",
+                    "line": 398
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "journal_entries",
+                    "line": 413
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "fat_details",
+                    "line": 421
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "fat_details",
+                    "line": 430
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "myitems",
+                    "line": 447
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "ot_head",
+                    "line": 556
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "process",
+                    "line": 573
+                }
+            ]
+        },
+        {
+            "path": "do/doedit_item.php",
+            "categories": [
+                "menu_catalog"
+            ],
+            "tables": [
+                "imgs",
+                "item_units",
+                "myitems"
+            ],
+            "writes": [
+                {
+                    "operation": "DELETE",
+                    "table": "imgs",
+                    "line": 67
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "imgs",
+                    "line": 69
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "myitems",
+                    "line": 75
+                },
+                {
+                    "operation": "ALTER",
+                    "table": "myitems",
+                    "line": 80
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "myitems",
+                    "line": 84
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "item_units",
+                    "line": 99
+                }
+            ]
+        },
+        {
+            "path": "do/doedit_jop.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "jops"
+            ],
+            "writes": [
+                {
+                    "operation": "UPDATE",
+                    "table": "jops",
+                    "line": 7
+                }
+            ]
+        },
+        {
+            "path": "do/doedit_joplevel.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "joplevels"
+            ],
+            "writes": [
+                {
+                    "operation": "UPDATE",
+                    "table": "joplevels",
+                    "line": 7
+                }
+            ]
+        },
+        {
+            "path": "do/doedit_joprule.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "joprules"
+            ],
+            "writes": [
+                {
+                    "operation": "UPDATE",
+                    "table": "joprules",
+                    "line": 7
+                }
+            ]
+        },
+        {
+            "path": "do/doedit_kbi.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "kbis"
+            ],
+            "writes": [
+                {
+                    "operation": "UPDATE",
+                    "table": "kbis",
+                    "line": 6
+                }
+            ]
+        },
+        {
+            "path": "do/doedit_printer.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "print"
+            ],
+            "writes": [
+                {
+                    "operation": "UPDATE",
+                    "table": "print",
+                    "line": 9
+                }
+            ]
+        },
+        {
+            "path": "do/doedit_prod.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "prods"
+            ],
+            "writes": [
+                {
+                    "operation": "UPDATE",
+                    "table": "prods",
+                    "line": 7
+                }
+            ]
+        },
+        {
+            "path": "do/doedit_production.php",
+            "categories": [
+                "inventory_stock"
+            ],
+            "tables": [
+                "productions"
+            ],
+            "writes": [
+                {
+                    "operation": "DELETE",
+                    "table": "productions",
+                    "line": 10
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "productions",
+                    "line": 12
+                }
+            ]
+        },
+        {
+            "path": "do/doedit_ptype.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "paper_types"
+            ],
+            "writes": [
+                {
+                    "operation": "UPDATE",
+                    "table": "paper_types",
+                    "line": 7
+                }
+            ]
+        },
+        {
+            "path": "do/doedit_reservation.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "clients",
+                "reservations"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "clients",
+                    "line": 10
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "reservations",
+                    "line": 21
+                }
+            ]
+        },
+        {
+            "path": "do/doedit_role.php",
+            "categories": [
+                "user_admin"
+            ],
+            "tables": [
+                "usr_pwrs"
+            ],
+            "writes": [
+                {
+                    "operation": "UPDATE",
+                    "table": "usr_pwrs",
+                    "line": 245
+                }
+            ]
+        },
+        {
+            "path": "do/doedit_service.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "services"
+            ],
+            "writes": [
+                {
+                    "operation": "UPDATE",
+                    "table": "services",
+                    "line": 7
+                }
+            ]
+        },
+        {
+            "path": "do/doedit_settings.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "settings"
+            ],
+            "writes": [
+                {
+                    "operation": "UPDATE",
+                    "table": "settings",
+                    "line": 44
+                }
+            ]
+        },
+        {
+            "path": "do/doedit_shift.php",
+            "categories": [
+                "shift_session"
+            ],
+            "tables": [
+                "shifts"
+            ],
+            "writes": [
+                {
+                    "operation": "UPDATE",
+                    "table": "shifts",
+                    "line": 50
+                }
+            ]
+        },
+        {
+            "path": "do/doedit_town.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "towns"
+            ],
+            "writes": [
+                {
+                    "operation": "UPDATE",
+                    "table": "towns",
+                    "line": 5
+                }
+            ]
+        },
+        {
+            "path": "do/doedit_unit.php",
+            "categories": [
+                "menu_catalog"
+            ],
+            "tables": [
+                "myunits"
+            ],
+            "writes": [
+                {
+                    "operation": "UPDATE",
+                    "table": "myunits",
+                    "line": 6
+                }
+            ]
+        },
+        {
+            "path": "do/doedit_user.php",
+            "categories": [
+                "user_admin"
+            ],
+            "tables": [
+                "users"
+            ],
+            "writes": [
+                {
+                    "operation": "UPDATE",
+                    "table": "users",
+                    "line": 108
+                }
+            ]
+        },
+        {
+            "path": "do/doedit_voucher.php",
+            "categories": [
+                "pos_order"
+            ],
+            "tables": [
+                "ot_head"
+            ],
+            "writes": [
+                {
+                    "operation": "UPDATE",
+                    "table": "ot_head",
+                    "line": 22
+                }
+            ]
+        },
+        {
+            "path": "do/doedit_vtybe.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "visittybes"
+            ],
+            "writes": [
+                {
+                    "operation": "UPDATE",
+                    "table": "visittybes",
+                    "line": 6
+                }
+            ]
+        },
+        {
+            "path": "do/doedit_zanka.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "zankat"
+            ],
+            "writes": [
+                {
+                    "operation": "UPDATE",
+                    "table": "zankat",
+                    "line": 18
+                }
+            ]
+        },
+        {
+            "path": "do/doeditclprofile.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "clients"
+            ],
+            "writes": [
+                {
+                    "operation": "UPDATE",
+                    "table": "clients",
+                    "line": 24
+                }
+            ]
+        },
+        {
+            "path": "do/doimportfp.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "attandance"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "attandance",
+                    "line": 92
+                }
+            ]
+        },
+        {
+            "path": "do/dotest.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "your_table_name"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "your_table_name",
+                    "line": 27
+                }
+            ]
+        },
+        {
+            "path": "do/doupdate_operation_status.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "employee_operations"
+            ],
+            "writes": [
+                {
+                    "operation": "UPDATE",
+                    "table": "employee_operations",
+                    "line": 7
+                }
+            ]
+        },
+        {
+            "path": "do/importdata.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "test"
+            ],
+            "writes": [
+                {
+                    "operation": "UPDATE",
+                    "table": "test",
+                    "line": 41
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "test",
+                    "line": 44
+                }
+            ]
+        },
+        {
+            "path": "do/offline_sync.php",
+            "categories": [
+                "pos_order"
+            ],
+            "tables": [
+                "customers",
+                "fat_details",
+                "ot_head"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "ot_head",
+                    "line": 60
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "fat_details",
+                    "line": 86
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "customers",
+                    "line": 133
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "customers",
+                    "line": 138
+                }
+            ]
+        },
+        {
+            "path": "do/recost.php",
+            "categories": [
+                "menu_catalog",
+                "pos_order"
+            ],
+            "tables": [
+                "fat_details",
+                "myitems"
+            ],
+            "writes": [
+                {
+                    "operation": "ALTER",
+                    "table": "myitems",
+                    "line": 9
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "fat_details",
+                    "line": 53
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "fat_details",
+                    "line": 57
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "fat_details",
+                    "line": 66
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "fat_details",
+                    "line": 70
+                }
+            ]
+        },
+        {
+            "path": "do/reset_manual_prices.php",
+            "categories": [
+                "menu_catalog"
+            ],
+            "tables": [
+                "myitems"
+            ],
+            "writes": [
+                {
+                    "operation": "UPDATE",
+                    "table": "myitems",
+                    "line": 6
+                }
+            ]
+        },
+        {
+            "path": "do/save_customer.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "delivery_clients"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "delivery_clients",
+                    "line": 27
+                }
+            ]
+        },
+        {
+            "path": "do/settle_credit.php",
+            "categories": [
+                "payments/accounting",
+                "pos_order"
+            ],
+            "tables": [
+                "journal_entries",
+                "journal_heads",
+                "ot_head"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "ot_head",
+                    "line": 33
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "journal_heads",
+                    "line": 55
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "journal_entries",
+                    "line": 63
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "journal_entries",
+                    "line": 69
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "ot_head",
+                    "line": 76
+                }
+            ]
+        },
+        {
+            "path": "do/start/doaddinstallment.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "myinstallments"
+            ],
+            "writes": [
+                {
+                    "operation": "UPDATE",
+                    "table": "myinstallments",
+                    "line": 2
+                }
+            ]
+        },
+        {
+            "path": "do/start/dodel_rent.php",
+            "categories": [
+                "payments/accounting"
+            ],
+            "tables": [
+                "acc_head",
+                "myinstallments",
+                "myrents"
+            ],
+            "writes": [
+                {
+                    "operation": "DELETE",
+                    "table": "myinstallments",
+                    "line": 6
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "myrents",
+                    "line": 7
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "acc_head",
+                    "line": 8
+                }
+            ]
+        },
+        {
+            "path": "do/update_customer.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "delivery_clients"
+            ],
+            "writes": [
+                {
+                    "operation": "UPDATE",
+                    "table": "delivery_clients",
+                    "line": 26
+                }
+            ]
+        },
+        {
+            "path": "do/update_item_price.php",
+            "categories": [
+                "menu_catalog"
+            ],
+            "tables": [
+                "myitems"
+            ],
+            "writes": [
+                {
+                    "operation": "UPDATE",
+                    "table": "myitems",
+                    "line": 19
+                }
+            ]
+        },
+        {
+            "path": "do/update_waiter_barcode.php",
+            "categories": [
+                "user_admin"
+            ],
+            "tables": [
+                "users"
+            ],
+            "writes": [
+                {
+                    "operation": "UPDATE",
+                    "table": "users",
+                    "line": 50
+                }
+            ]
+        },
+        {
+            "path": "do/uploaditems.php",
+            "categories": [
+                "menu_catalog"
+            ],
+            "tables": [
+                "myitems"
+            ],
+            "writes": [
+                {
+                    "operation": "UPDATE",
+                    "table": "myitems",
+                    "line": 44
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "myitems",
+                    "line": 47
+                }
+            ]
+        },
+        {
+            "path": "do_close_shift_z.php",
+            "categories": [
+                "shift_session"
+            ],
+            "tables": [
+                "closed_orders"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "closed_orders",
+                    "line": 62
+                }
+            ]
+        },
+        {
+            "path": "fix_database.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "alerts",
+                "system_logs"
+            ],
+            "writes": [
+                {
+                    "operation": "CREATE",
+                    "table": "system_logs",
+                    "line": 22
+                },
+                {
+                    "operation": "CREATE",
+                    "table": "alerts",
+                    "line": 49
+                }
+            ]
+        },
+        {
+            "path": "fix_journal_entries.php",
+            "categories": [
+                "payments/accounting"
+            ],
+            "tables": [
+                "journal_entries"
+            ],
+            "writes": [
+                {
+                    "operation": "ALTER",
+                    "table": "journal_entries",
+                    "line": 16
+                },
+                {
+                    "operation": "ALTER",
+                    "table": "journal_entries",
+                    "line": 17
+                },
+                {
+                    "operation": "ALTER",
+                    "table": "journal_entries",
+                    "line": 77
+                },
+                {
+                    "operation": "ALTER",
+                    "table": "journal_entries",
+                    "line": 78
+                }
+            ]
+        },
+        {
+            "path": "fix_passwords.php",
+            "categories": [
+                "user_admin"
+            ],
+            "tables": [
+                "users"
+            ],
+            "writes": [
+                {
+                    "operation": "UPDATE",
+                    "table": "users",
+                    "line": 36
+                }
+            ]
+        },
+        {
+            "path": "get/reduce_remain.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "booking_cards",
+                "notes"
+            ],
+            "writes": [
+                {
+                    "operation": "UPDATE",
+                    "table": "booking_cards",
+                    "line": 30
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "notes",
+                    "line": 39
+                }
+            ]
+        },
+        {
+            "path": "includes/alerts.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "alerts"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "alerts",
+                    "line": 79
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "alerts",
+                    "line": 160
+                }
+            ]
+        },
+        {
+            "path": "includes/logger.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "system_logs"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "system_logs",
+                    "line": 142
+                }
+            ]
+        },
+        {
+            "path": "includes/pos_content.php",
+            "categories": [
+                "table_state"
+            ],
+            "tables": [
+                "tables"
+            ],
+            "writes": [
+                {
+                    "operation": "UPDATE",
+                    "table": "tables",
+                    "line": 802
+                }
+            ]
+        },
+        {
+            "path": "index.php",
+            "categories": [
+                "user_admin"
+            ],
+            "tables": [
+                "session_time",
+                "users"
+            ],
+            "writes": [
+                {
+                    "operation": "UPDATE",
+                    "table": "users",
+                    "line": 85
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "users",
+                    "line": 100
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "session_time",
+                    "line": 123
+                }
+            ]
+        },
+        {
+            "path": "indexmop.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "session_time"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "session_time",
+                    "line": 46
+                }
+            ]
+        },
+        {
+            "path": "js/ajax/add_row_to_fat_details.php",
+            "categories": [
+                "pos_order"
+            ],
+            "tables": [
+                "fat_details"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "fat_details",
+                    "line": 9
+                }
+            ]
+        },
+        {
+            "path": "js/ajax/addcl.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "clients"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "clients",
+                    "line": 19
+                }
+            ]
+        },
+        {
+            "path": "js/ajax/delitmdet.php",
+            "categories": [
+                "pos_order"
+            ],
+            "tables": [
+                "fat_details"
+            ],
+            "writes": [
+                {
+                    "operation": "DELETE",
+                    "table": "fat_details",
+                    "line": 6
+                }
+            ]
+        },
+        {
+            "path": "js/ajax/doadd_item.php",
+            "categories": [
+                "menu_catalog"
+            ],
+            "tables": [
+                "item_units",
+                "myitems"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "myitems",
+                    "line": 31
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "item_units",
+                    "line": 37
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "item_units",
+                    "line": 42
+                }
+            ]
+        },
+        {
+            "path": "js/ajax/insert_time.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "reservations"
+            ],
+            "writes": [
+                {
+                    "operation": "UPDATE",
+                    "table": "reservations",
+                    "line": 19
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "reservations",
+                    "line": 41
+                }
+            ]
+        },
+        {
+            "path": "js/ajax/insertfatdet.php",
+            "categories": [
+                "pos_order"
+            ],
+            "tables": [
+                "fat_details"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "fat_details",
+                    "line": 12
+                }
+            ]
+        },
+        {
+            "path": "js/ajax/posgetclient.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "clients"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "clients",
+                    "line": 44
+                }
+            ]
+        },
+        {
+            "path": "js/ajax/recost.php",
+            "categories": [
+                "pos_order"
+            ],
+            "tables": [
+                "fat_details"
+            ],
+            "writes": [
+                {
+                    "operation": "UPDATE",
+                    "table": "fat_details",
+                    "line": 26
+                }
+            ]
+        },
+        {
+            "path": "js/ajax/reindex.php",
+            "categories": [
+                "menu_catalog"
+            ],
+            "tables": [
+                "myitems"
+            ],
+            "writes": [
+                {
+                    "operation": "UPDATE",
+                    "table": "myitems",
+                    "line": 10
+                }
+            ]
+        },
+        {
+            "path": "js/ajax/scan_fb.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "attandance"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "attandance",
+                    "line": 13
+                }
+            ]
+        },
+        {
+            "path": "js/ajax/update_kbi.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "emp_kbis"
+            ],
+            "writes": [
+                {
+                    "operation": "UPDATE",
+                    "table": "emp_kbis",
+                    "line": 20
+                }
+            ]
+        },
+        {
+            "path": "js/ajax/update_price.php",
+            "categories": [
+                "menu_catalog"
+            ],
+            "tables": [
+                "myitems"
+            ],
+            "writes": [
+                {
+                    "operation": "UPDATE",
+                    "table": "myitems",
+                    "line": 7
+                }
+            ]
+        },
+        {
+            "path": "operations.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "myoper_det"
+            ],
+            "writes": [
+                {
+                    "operation": "CREATE",
+                    "table": "myoper_det",
+                    "line": 16
+                }
+            ]
+        },
+        {
+            "path": "pos_barcode.php",
+            "categories": [
+                "table_state"
+            ],
+            "tables": [
+                "tables"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "tables",
+                    "line": 65
+                }
+            ]
+        },
+        {
+            "path": "pos_barcode0.php",
+            "categories": [
+                "table_state"
+            ],
+            "tables": [
+                "tables"
+            ],
+            "writes": [
+                {
+                    "operation": "CREATE",
+                    "table": "tables",
+                    "line": 6
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "tables",
+                    "line": 26
+                }
+            ]
+        },
+        {
+            "path": "pos_sync.php",
+            "categories": [
+                "menu_catalog",
+                "pos_order"
+            ],
+            "tables": [
+                "fat_details",
+                "myitems",
+                "ot_head"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "ot_head",
+                    "line": 163
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "fat_details",
+                    "line": 174
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "myitems",
+                    "line": 204
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "myitems",
+                    "line": 236
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "myitems",
+                    "line": 241
+                }
+            ]
+        },
+        {
+            "path": "pos_tables.php",
+            "categories": [
+                "table_state"
+            ],
+            "tables": [
+                "tables"
+            ],
+            "writes": [
+                {
+                    "operation": "CREATE",
+                    "table": "tables",
+                    "line": 96
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "tables",
+                    "line": 114
+                }
+            ]
+        },
+        {
+            "path": "quick_fix.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "system_logs"
+            ],
+            "writes": [
+                {
+                    "operation": "CREATE",
+                    "table": "system_logs",
+                    "line": 21
+                }
+            ]
+        },
+        {
+            "path": "refresh_balances.php",
+            "categories": [
+                "payments/accounting"
+            ],
+            "tables": [
+                "acc_head"
+            ],
+            "writes": [
+                {
+                    "operation": "UPDATE",
+                    "table": "acc_head",
+                    "line": 15
+                }
+            ]
+        },
+        {
+            "path": "save_start_balance.php",
+            "categories": [
+                "menu_catalog"
+            ],
+            "tables": [
+                "myitems"
+            ],
+            "writes": [
+                {
+                    "operation": "UPDATE",
+                    "table": "myitems",
+                    "line": 33
+                }
+            ]
+        },
+        {
+            "path": "setup_demo_data.php",
+            "categories": [
+                "menu_catalog"
+            ],
+            "tables": [
+                "item_group",
+                "myitems"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "item_group",
+                    "line": 42
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "myitems",
+                    "line": 95
+                }
+            ]
+        },
+        {
+            "path": "tables.php",
+            "categories": [
+                "table_state"
+            ],
+            "tables": [
+                "tables"
+            ],
+            "writes": [
+                {
+                    "operation": "CREATE",
+                    "table": "tables",
+                    "line": 266
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "tables",
+                    "line": 286
+                }
+            ]
+        },
+        {
+            "path": "tests/MoovaPosIntegrationTokenOnlyTest.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "moova_pos_shop_links"
+            ],
+            "writes": [
+                {
+                    "operation": "DELETE",
+                    "table": "moova_pos_shop_links",
+                    "line": 52
+                }
+            ]
+        },
+        {
+            "path": "tests/PosOrderServiceMoovaIsolationTest.php",
+            "categories": [
+                "pos_order"
+            ],
+            "tables": [
+                "fat_details"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "fat_details",
+                    "line": 89
+                }
+            ]
+        },
+        {
+            "path": "tests/sync/branch_cloud_runtime_test.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "cloud_branches",
+                "cloud_orders",
+                "sync_branch_identity",
+                "sync_conflicts",
+                "sync_inbox",
+                "sync_outbox",
+                "sync_worker_logs"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "sync_branch_identity",
+                    "line": 69
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "sync_outbox",
+                    "line": 236
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "cloud_branches",
+                    "line": 350
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "cloud_orders",
+                    "line": 388
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "sync_inbox",
+                    "line": 389
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "sync_conflicts",
+                    "line": 390
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "sync_outbox",
+                    "line": 391
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "sync_worker_logs",
+                    "line": 392
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "cloud_branches",
+                    "line": 393
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "sync_branch_identity",
+                    "line": 394
+                }
+            ]
+        },
+        {
+            "path": "tests/sync/branch_identity_test.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "sync_branch_identity"
+            ],
+            "writes": [
+                {
+                    "operation": "DELETE",
+                    "table": "sync_branch_identity",
+                    "line": 43
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "sync_branch_identity",
+                    "line": 52
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "sync_branch_identity",
+                    "line": 56
+                }
+            ]
+        },
+        {
+            "path": "tests/sync/branch_moova_ack_worker_test.php",
+            "categories": [
+                "moova_bridge"
+            ],
+            "tables": [
+                "cloud_branches",
+                "cloud_moova_branch_events",
+                "moova_pos_inbound_events",
+                "sync_branch_identity"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "sync_branch_identity",
+                    "line": 64
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "cloud_moova_branch_events",
+                    "line": 155
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "moova_pos_inbound_events",
+                    "line": 185
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "cloud_branches",
+                    "line": 291
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "moova_pos_inbound_events",
+                    "line": 336
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "cloud_moova_branch_events",
+                    "line": 337
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "cloud_branches",
+                    "line": 338
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "sync_branch_identity",
+                    "line": 339
+                }
+            ]
+        },
+        {
+            "path": "tests/sync/branch_moova_apply_worker_test.php",
+            "categories": [
+                "moova_bridge",
+                "payments/accounting",
+                "pos_order",
+                "table_state"
+            ],
+            "tables": [
+                "fat_details",
+                "journal_heads",
+                "moova_pos_inbound_events",
+                "moova_pos_order_change_links",
+                "moova_pos_order_lines",
+                "moova_pos_order_links",
+                "ot_head",
+                "sync_branch_identity",
+                "sync_worker_logs",
+                "tables"
+            ],
+            "writes": [
+                {
+                    "operation": "DELETE",
+                    "table": "sync_branch_identity",
+                    "line": 51
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "sync_branch_identity",
+                    "line": 61
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "sync_branch_identity",
+                    "line": 64
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "moova_pos_order_links",
+                    "line": 339
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "journal_heads",
+                    "line": 598
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "moova_pos_order_lines",
+                    "line": 599
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "fat_details",
+                    "line": 600
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "ot_head",
+                    "line": 601
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "tables",
+                    "line": 603
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "moova_pos_inbound_events",
+                    "line": 607
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "moova_pos_order_change_links",
+                    "line": 608
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "moova_pos_order_links",
+                    "line": 609
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "sync_worker_logs",
+                    "line": 610
+                }
+            ]
+        },
+        {
+            "path": "tests/sync/branch_moova_poll_worker_test.php",
+            "categories": [
+                "moova_bridge"
+            ],
+            "tables": [
+                "cloud_branches",
+                "cloud_moova_branch_events",
+                "moova_pos_inbound_events",
+                "sync_branch_identity",
+                "sync_checkpoints"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "sync_branch_identity",
+                    "line": 65
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "cloud_moova_branch_events",
+                    "line": 154
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "cloud_branches",
+                    "line": 253
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "sync_checkpoints",
+                    "line": 347
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "moova_pos_inbound_events",
+                    "line": 348
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "cloud_moova_branch_events",
+                    "line": 349
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "cloud_branches",
+                    "line": 350
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "sync_branch_identity",
+                    "line": 351
+                }
+            ]
+        },
+        {
+            "path": "tests/sync/cloud_menu_snapshot_test.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "cloud_branches",
+                "cloud_menu_items",
+                "sync_conflicts",
+                "sync_inbox"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "cloud_branches",
+                    "line": 228
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "cloud_menu_items",
+                    "line": 298
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "sync_inbox",
+                    "line": 299
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "sync_conflicts",
+                    "line": 300
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "cloud_branches",
+                    "line": 301
+                }
+            ]
+        },
+        {
+            "path": "tests/sync/cloud_moova_event_service_test.php",
+            "categories": [
+                "moova_bridge"
+            ],
+            "tables": [
+                "cloud_branches",
+                "cloud_moova_branch_events"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "cloud_moova_branch_events",
+                    "line": 179
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "cloud_moova_branch_events",
+                    "line": 205
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "cloud_branches",
+                    "line": 234
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "cloud_moova_branch_events",
+                    "line": 273
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "cloud_branches",
+                    "line": 274
+                }
+            ]
+        },
+        {
+            "path": "tests/sync/cloud_order_snapshot_test.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "cloud_branches",
+                "cloud_order_lines",
+                "cloud_order_payments",
+                "cloud_orders",
+                "cloud_payment_receipts",
+                "sync_conflicts",
+                "sync_inbox"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "cloud_branches",
+                    "line": 334
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "cloud_payment_receipts",
+                    "line": 483
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "cloud_order_payments",
+                    "line": 484
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "cloud_order_lines",
+                    "line": 485
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "cloud_orders",
+                    "line": 486
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "sync_inbox",
+                    "line": 487
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "sync_conflicts",
+                    "line": 488
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "cloud_branches",
+                    "line": 489
+                }
+            ]
+        },
+        {
+            "path": "tests/sync/cloud_register_branch_test.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "cloud_branches"
+            ],
+            "writes": [
+                {
+                    "operation": "DELETE",
+                    "table": "cloud_branches",
+                    "line": 39
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "cloud_branches",
+                    "line": 45
+                }
+            ]
+        },
+        {
+            "path": "tests/sync/cloud_shift_snapshot_test.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "cloud_branches",
+                "cloud_shifts",
+                "sync_conflicts",
+                "sync_inbox"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "cloud_branches",
+                    "line": 233
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "cloud_shifts",
+                    "line": 303
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "sync_inbox",
+                    "line": 304
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "sync_conflicts",
+                    "line": 305
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "cloud_branches",
+                    "line": 306
+                }
+            ]
+        },
+        {
+            "path": "tests/sync/cloud_table_snapshot_test.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "cloud_branches",
+                "cloud_tables",
+                "sync_conflicts",
+                "sync_inbox"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "cloud_branches",
+                    "line": 217
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "cloud_tables",
+                    "line": 287
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "sync_inbox",
+                    "line": 288
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "sync_conflicts",
+                    "line": 289
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "cloud_branches",
+                    "line": 290
+                }
+            ]
+        },
+        {
+            "path": "tests/sync/document_counter_tests.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "document_counters"
+            ],
+            "writes": [
+                {
+                    "operation": "DELETE",
+                    "table": "document_counters",
+                    "line": 39
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "document_counters",
+                    "line": 46
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "document_counters",
+                    "line": 51
+                }
+            ]
+        },
+        {
+            "path": "tests/sync/moova_branch_event_cursor_test.php",
+            "categories": [
+                "moova_bridge"
+            ],
+            "tables": [
+                "cloud_moova_branch_events"
+            ],
+            "writes": [
+                {
+                    "operation": "DELETE",
+                    "table": "cloud_moova_branch_events",
+                    "line": 39
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "cloud_moova_branch_events",
+                    "line": 45
+                },
+                {
+                    "operation": "CREATE",
+                    "table": "cloud_moova_branch_events",
+                    "line": 53
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "cloud_moova_branch_events",
+                    "line": 111
+                }
+            ]
+        },
+        {
+            "path": "tests/sync/moova_change_order_apply_service_test.php",
+            "categories": [
+                "moova_bridge"
+            ],
+            "tables": [
+                "moova_pos_order_change_links"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "moova_pos_order_change_links",
+                    "line": 16
+                }
+            ]
+        },
+        {
+            "path": "tests/sync/moova_inbound_queue_test.php",
+            "categories": [
+                "moova_bridge"
+            ],
+            "tables": [
+                "moova_pos_inbound_events",
+                "sync_conflicts"
+            ],
+            "writes": [
+                {
+                    "operation": "UPDATE",
+                    "table": "moova_pos_inbound_events",
+                    "line": 127
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "moova_pos_inbound_events",
+                    "line": 135
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "moova_pos_inbound_events",
+                    "line": 335
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "sync_conflicts",
+                    "line": 336
+                }
+            ]
+        },
+        {
+            "path": "tests/sync/moova_local_ingest_service_test.php",
+            "categories": [
+                "moova_bridge"
+            ],
+            "tables": [
+                "moova_pos_inbound_events",
+                "sync_conflicts"
+            ],
+            "writes": [
+                {
+                    "operation": "DELETE",
+                    "table": "moova_pos_inbound_events",
+                    "line": 304
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "sync_conflicts",
+                    "line": 305
+                }
+            ]
+        },
+        {
+            "path": "tests/sync/moova_new_order_apply_service_test.php",
+            "categories": [
+                "moova_bridge"
+            ],
+            "tables": [
+                "moova_pos_order_links"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "moova_pos_order_links",
+                    "line": 16
+                }
+            ]
+        },
+        {
+            "path": "tests/sync/outbox_worker_reclaim_test.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "sync_outbox"
+            ],
+            "writes": [
+                {
+                    "operation": "DELETE",
+                    "table": "sync_outbox",
+                    "line": 42
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "sync_outbox",
+                    "line": 48
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "sync_outbox",
+                    "line": 100
+                }
+            ]
+        },
+        {
+            "path": "tests/sync/pos_order_outbox_event_service_test.php",
+            "categories": [
+                "menu_catalog",
+                "pos_order"
+            ],
+            "tables": [
+                "cloud_branches",
+                "cloud_order_lines",
+                "cloud_order_payments",
+                "cloud_orders",
+                "cloud_payment_receipts",
+                "fat_details",
+                "myitems",
+                "ot_head",
+                "sync_branch_identity",
+                "sync_conflicts",
+                "sync_inbox",
+                "sync_outbox",
+                "sync_worker_logs"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "sync_branch_identity",
+                    "line": 73
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "myitems",
+                    "line": 162
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "ot_head",
+                    "line": 172
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "fat_details",
+                    "line": 190
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "ot_head",
+                    "line": 201
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "cloud_branches",
+                    "line": 249
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "cloud_order_lines",
+                    "line": 317
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "cloud_order_payments",
+                    "line": 318
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "cloud_payment_receipts",
+                    "line": 319
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "cloud_orders",
+                    "line": 320
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "sync_inbox",
+                    "line": 321
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "sync_conflicts",
+                    "line": 322
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "sync_outbox",
+                    "line": 323
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "sync_worker_logs",
+                    "line": 324
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "cloud_branches",
+                    "line": 325
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "sync_branch_identity",
+                    "line": 326
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "fat_details",
+                    "line": 330
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "ot_head",
+                    "line": 331
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "ot_head",
+                    "line": 332
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "myitems",
+                    "line": 336
+                }
+            ]
+        },
+        {
+            "path": "tests/sync/pos_order_service_counter_test.php",
+            "categories": [
+                "payments/accounting",
+                "pos_order"
+            ],
+            "tables": [
+                "journal_heads",
+                "ot_head"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "ot_head",
+                    "line": 55
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "journal_heads",
+                    "line": 59
+                }
+            ]
+        },
+        {
+            "path": "tests/sync/remaining_write_surfaces_outbox_test.php",
+            "categories": [
+                "table_state"
+            ],
+            "tables": [
+                "cloud_branches",
+                "cloud_tables",
+                "sync_branch_identity",
+                "sync_conflicts",
+                "sync_inbox",
+                "sync_outbox",
+                "tables"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "sync_branch_identity",
+                    "line": 69
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "tables",
+                    "line": 144
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "cloud_branches",
+                    "line": 233
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "cloud_tables",
+                    "line": 271
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "sync_inbox",
+                    "line": 272
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "sync_conflicts",
+                    "line": 273
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "sync_outbox",
+                    "line": 274
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "cloud_branches",
+                    "line": 275
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "sync_branch_identity",
+                    "line": 276
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "tables",
+                    "line": 279
+                }
+            ]
+        },
+        {
+            "path": "tests/sync/sync_conflict_tool_test.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "sync_conflicts"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "sync_conflicts",
+                    "line": 117
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "sync_conflicts",
+                    "line": 151
+                }
+            ]
+        },
+        {
+            "path": "tests/sync/sync_recovery_tool_test.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "moova_pos_inbound_events",
+                "sync_outbox"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "sync_outbox",
+                    "line": 136
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "moova_pos_inbound_events",
+                    "line": 172
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "sync_outbox",
+                    "line": 231
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "moova_pos_inbound_events",
+                    "line": 232
+                }
+            ]
+        },
+        {
+            "path": "tests/sync/sync_schema_migration_test.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "cloud_branches",
+                "cloud_menu_items",
+                "cloud_moova_branch_events",
+                "cloud_order_lines",
+                "cloud_order_payments",
+                "cloud_orders",
+                "cloud_payment_receipts",
+                "cloud_shifts",
+                "cloud_tables",
+                "document_counters",
+                "moova_pos_inbound_events",
+                "sync_branch_identity",
+                "sync_checkpoints",
+                "sync_conflicts",
+                "sync_inbox",
+                "sync_outbox",
+                "sync_worker_logs"
+            ],
+            "writes": [
+                {
+                    "operation": "CREATE",
+                    "table": "sync_branch_identity",
+                    "line": 60
+                },
+                {
+                    "operation": "CREATE",
+                    "table": "document_counters",
+                    "line": 66
+                },
+                {
+                    "operation": "CREATE",
+                    "table": "sync_outbox",
+                    "line": 71
+                },
+                {
+                    "operation": "CREATE",
+                    "table": "sync_inbox",
+                    "line": 81
+                },
+                {
+                    "operation": "CREATE",
+                    "table": "sync_checkpoints",
+                    "line": 84
+                },
+                {
+                    "operation": "CREATE",
+                    "table": "sync_conflicts",
+                    "line": 86
+                },
+                {
+                    "operation": "CREATE",
+                    "table": "sync_worker_logs",
+                    "line": 88
+                },
+                {
+                    "operation": "CREATE",
+                    "table": "moova_pos_inbound_events",
+                    "line": 90
+                },
+                {
+                    "operation": "CREATE",
+                    "table": "cloud_branches",
+                    "line": 101
+                },
+                {
+                    "operation": "CREATE",
+                    "table": "cloud_orders",
+                    "line": 103
+                },
+                {
+                    "operation": "CREATE",
+                    "table": "cloud_order_lines",
+                    "line": 108
+                },
+                {
+                    "operation": "CREATE",
+                    "table": "cloud_order_payments",
+                    "line": 111
+                },
+                {
+                    "operation": "CREATE",
+                    "table": "cloud_payment_receipts",
+                    "line": 113
+                },
+                {
+                    "operation": "CREATE",
+                    "table": "cloud_tables",
+                    "line": 115
+                },
+                {
+                    "operation": "CREATE",
+                    "table": "cloud_shifts",
+                    "line": 119
+                },
+                {
+                    "operation": "CREATE",
+                    "table": "cloud_menu_items",
+                    "line": 124
+                },
+                {
+                    "operation": "CREATE",
+                    "table": "cloud_moova_branch_events",
+                    "line": 129
+                }
+            ]
+        },
+        {
+            "path": "tools/cloud_register_branch.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "cloud_branches"
+            ],
+            "writes": [
+                {
+                    "operation": "INSERT",
+                    "table": "cloud_branches",
+                    "line": 28
+                }
+            ]
+        },
+        {
+            "path": "tools/e2e_mock_online_offline_sync.php",
+            "categories": [
+                "pos_order"
+            ],
+            "tables": [
+                "cloud_moova_branch_events",
+                "sync_outbox"
+            ],
+            "writes": [
+                {
+                    "operation": "DELETE",
+                    "table": "sync_outbox",
+                    "line": 232
+                },
+                {
+                    "operation": "DELETE",
+                    "table": "cloud_moova_branch_events",
+                    "line": 233
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "sync_outbox",
+                    "line": 404
+                },
+                {
+                    "operation": "INSERT",
+                    "table": "cloud_moova_branch_events",
+                    "line": 432
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "sync_outbox",
+                    "line": 479
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "sync_outbox",
+                    "line": 491
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "sync_outbox",
+                    "line": 513
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "cloud_moova_branch_events",
+                    "line": 544
+                }
+            ]
+        },
+        {
+            "path": "tools/sync_conflict_tool.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "sync_conflicts"
+            ],
+            "writes": [
+                {
+                    "operation": "UPDATE",
+                    "table": "sync_conflicts",
+                    "line": 133
+                }
+            ]
+        },
+        {
+            "path": "tools/sync_recovery_tool.php",
+            "categories": [
+                "other_business_write"
+            ],
+            "tables": [
+                "moova_pos_inbound_events",
+                "sync_outbox"
+            ],
+            "writes": [
+                {
+                    "operation": "UPDATE",
+                    "table": "sync_outbox",
+                    "line": 225
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "sync_outbox",
+                    "line": 236
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "moova_pos_inbound_events",
+                    "line": 248
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "moova_pos_inbound_events",
+                    "line": 258
+                },
+                {
+                    "operation": "UPDATE",
+                    "table": "moova_pos_inbound_events",
+                    "line": 269
+                }
+            ]
+        },
+        {
+            "path": "update.php",
+            "categories": [
+                "shift_session"
+            ],
+            "tables": [
+                "closed_orders"
+            ],
+            "writes": [
+                {
+                    "operation": "CREATE",
+                    "table": "closed_orders",
+                    "line": 9
+                },
+                {
+                    "operation": "ALTER",
+                    "table": "closed_orders",
+                    "line": 33
+                },
+                {
+                    "operation": "ALTER",
+                    "table": "closed_orders",
+                    "line": 36
+                }
+            ]
+        }
+    ]
+}
