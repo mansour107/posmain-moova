@@ -1,4 +1,8 @@
-<?php include('includes/header.php');?>
+<?php
+require_once __DIR__ . '/includes/session_bootstrap.php';
+require_once __DIR__ . '/includes/csrf.php';
+include('includes/header.php');
+?>
 <style>
     #pos-container {
         height: 100vh;
@@ -315,7 +319,14 @@ if ($tables_count == 0) {
 <!-- تضمين مودال السداد -->
 <?php include('elements/pos/payment_modal.php'); ?>
 
+<?= csrf_meta_tag('pos_browser', 'posmain-csrf-token') ?>
+<script>
+(function () {
+    const tokenElement = document.querySelector('meta[name="posmain-csrf-token"]');
+    window.POSMAIN_CSRF_TOKEN = tokenElement ? tokenElement.getAttribute('content') : '';
+    window.POSMAIN_CSRF_HEADER = 'X-CSRF-Token';
+})();
+</script>
 <script src="js/pos_tables.js"></script>
 
 <?php include('includes/footer.php');?>
-

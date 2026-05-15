@@ -6,6 +6,9 @@ require_once __DIR__ . '/TableStateService.php';
 require_once __DIR__ . '/InventoryMovementService.php';
 require_once __DIR__ . '/OrderEventService.php';
 require_once __DIR__ . '/IdempotencyService.php';
+require_once __DIR__ . '/ItemAvailabilityService.php';
+require_once __DIR__ . '/ManagerApprovalService.php';
+require_once __DIR__ . '/ModifierLineNoteService.php';
 require_once __DIR__ . '/../../Sync/SyncOutboxEventService.php';
 require_once __DIR__ . '/../../Moova/MoovaNewOrderApplyService.php';
 require_once __DIR__ . '/../../Moova/MoovaChangeOrderApplyService.php';
@@ -26,8 +29,11 @@ class PosOrderMutationService
     private $inventoryMovementService;
     private $orderEventService;
     private $idempotencyService;
+    private $itemAvailabilityService;
+    private $managerApprovalService;
+    private $modifierLineNoteService;
 
-    public function __construct(?PaymentService $paymentService = null, ?TableStateService $tableStateService = null, ?TableOrderService $tableOrderService = null, ?InventoryMovementService $inventoryMovementService = null, ?OrderEventService $orderEventService = null, ?IdempotencyService $idempotencyService = null)
+    public function __construct(?PaymentService $paymentService = null, ?TableStateService $tableStateService = null, ?TableOrderService $tableOrderService = null, ?InventoryMovementService $inventoryMovementService = null, ?OrderEventService $orderEventService = null, ?IdempotencyService $idempotencyService = null, ?ItemAvailabilityService $itemAvailabilityService = null, ?ManagerApprovalService $managerApprovalService = null, ?ModifierLineNoteService $modifierLineNoteService = null)
     {
         $this->paymentService = $paymentService ?: new PaymentService();
         $this->tableStateService = $tableStateService ?: new TableStateService();
@@ -35,6 +41,9 @@ class PosOrderMutationService
         $this->inventoryMovementService = $inventoryMovementService ?: new InventoryMovementService();
         $this->orderEventService = $orderEventService ?: new OrderEventService();
         $this->idempotencyService = $idempotencyService ?: new IdempotencyService();
+        $this->itemAvailabilityService = $itemAvailabilityService ?: new ItemAvailabilityService();
+        $this->managerApprovalService = $managerApprovalService ?: new ManagerApprovalService();
+        $this->modifierLineNoteService = $modifierLineNoteService ?: new ModifierLineNoteService();
     }
 
     public function payTableOrder(mysqli $conn, array $request, array $context = []): array
@@ -175,7 +184,18 @@ class PosOrderMutationService
             throw new InvalidArgumentException('INVALID_PAYLOAD');
         }
 
-        return (new MoovaChangeOrderApplyService())->applyInTransaction($conn, $link, $payload, $context);
+        $result = (new MoovaChangeOrderApplyService())->applyInTransaction($conn, $link, $payload, $context);
+        if (
+            strtolower((string) ($context['action'] ?? $payload['action'] ?? '')) === 'cancel'
+            && (string) ($result['status'] ?? '') === 'applied'
+        ) {
+            $tableId = (int) ($result['response']['tableId'] ?? $result['response']['table_id'] ?? 0);
+            if ($tableId > 0) {
+                $this->tableOrderService->setTableFreeIfNoActiveOrder($conn, $tableId);
+            }
+        }
+
+        return $result;
     }
 
     private function beginIdempotency(mysqli $conn, string $scope, array $request, array $context): array
@@ -211,11 +231,13 @@ class PosOrderMutationService
         $empId = $this->requiredPositiveInt($request, 'emp_id', 'بيانات مطلوبة مفقودة - الموظف');
         $fundId = $this->requiredPositiveInt($request, 'fund_id', 'بيانات مطلوبة مفقودة - الصندوق');
         $items = $this->normalizeTakeawayItems($request);
+        $this->assertItemsAvailable($conn, $items, $request, $context);
         $userId = $this->contextUserId($request, $context);
         $date = $this->requestDate($request, ['pro_date', 'order_date', 'date']);
         $accrualDate = $this->requestDate($request, ['accural_date', 'accrual_date'], $date);
         $headTotal = (float) ($request['headtotal'] ?? $request['total'] ?? 0);
         $headDiscount = (float) ($request['headdisc'] ?? $request['discount'] ?? 0);
+        $this->requireDiscountApprovalIfNeeded($conn, null, $headDiscount, $request, $context);
         $headPlus = (float) ($request['headplus'] ?? $request['plus'] ?? 0);
         $headNet = (float) ($request['headnet'] ?? $request['net'] ?? max(0, $headTotal - $headDiscount + $headPlus));
         if ($headNet < 0) {
@@ -305,8 +327,9 @@ class PosOrderMutationService
         $lineResult = $this->inventoryMovementService->normalizeInvoiceLines($conn, InventoryMovementService::TYPE_POS, $items, [
             'store_id' => $storeId,
         ]);
-        foreach ($lineResult['lines'] as $line) {
-            $this->insertTakeawayDetailLine($conn, $orderId, $storeId, $line);
+        foreach ($lineResult['lines'] as $index => $line) {
+            $line['note'] = $this->lineNoteFromItem($items[$index] ?? []);
+            $this->insertTakeawayDetailLine($conn, $orderId, $storeId, $line, $context);
         }
         $this->tableOrderService->execute($conn, "UPDATE ot_head SET profit = ? WHERE id = ?", [
             (float) $lineResult['totals']['profit'],
@@ -380,6 +403,7 @@ class PosOrderMutationService
                 'price' => (float) ($request['itmprice'][$index] ?? 0),
                 'discount' => (float) ($request['itmdisc'][$index] ?? 0),
                 'u_val' => (float) ($request['u_val'][$index] ?? 1),
+                'note' => (string) ($request['itmnote'][$index] ?? ''),
             ];
         }
 
@@ -504,7 +528,7 @@ class PosOrderMutationService
         ];
     }
 
-    private function insertTakeawayDetailLine(mysqli $conn, int $orderId, int $storeId, array $line): void
+    private function insertTakeawayDetailLine(mysqli $conn, int $orderId, int $storeId, array $line, array $context = []): void
     {
         $this->tableOrderService->execute($conn, "
             INSERT INTO fat_details (
@@ -525,7 +549,9 @@ class PosOrderMutationService
             (float) $line['cost_price'],
             (float) $line['profit'],
         ]);
-        $this->tableOrderService->assignUuidIfPresent($conn, 'fat_details', (int) $conn->insert_id);
+        $detailId = (int) $conn->insert_id;
+        $this->tableOrderService->assignUuidIfPresent($conn, 'fat_details', $detailId);
+        $this->persistLineNoteIfAvailable($conn, $orderId, $detailId, (int) $line['item_id'], $line['note'] ?? '', $context);
     }
 
     private function nextInvoiceProId(mysqli $conn, int $invoiceType, int $tenant, int $branch): int
@@ -564,8 +590,10 @@ class PosOrderMutationService
         $empId = $this->requiredPositiveInt($request, 'emp_id', 'بيانات المخزن أو الموظف أو الصندوق ناقصة');
         $fundId = $this->requiredPositiveInt($request, 'fund_id', 'بيانات المخزن أو الموظف أو الصندوق ناقصة');
         $items = $this->requiredItems($request);
+        $this->assertItemsAvailable($conn, $items, $request, $context);
         $total = (float) ($request['total'] ?? 0);
         $discount = (float) ($request['discount'] ?? 0);
+        $this->requireDiscountApprovalIfNeeded($conn, $orderId > 0 ? $orderId : null, $discount, $request, $context);
         $net = (float) ($request['net'] ?? max(0, $total - $discount));
         $userId = $this->contextUserId($request, $context);
         $isUpdate = $orderId > 0;
@@ -621,7 +649,7 @@ class PosOrderMutationService
         }
         $this->tableOrderService->assignUuidIfPresent($conn, 'ot_head', $orderId);
 
-        $this->insertTableOrderItems($conn, $orderId, $storeId, $items);
+        $this->insertTableOrderItems($conn, $orderId, $storeId, $items, $context);
         $totals = $this->tableOrderService->recalculateOrderTotals($conn, $orderId);
         $status = $this->applyPaidState($conn, $orderId, $tableId, $existingPaid, (float) $totals['net']);
 
@@ -698,6 +726,8 @@ class PosOrderMutationService
             throw new RuntimeException('المبلغ المدفوع أقل من قيمة الأصناف المختارة');
         }
 
+        $drawerContext = array_merge($request, $context, ['drawer_reason' => 'split_payment']);
+        $drawerSession = $this->paymentService->preflightCashDrawerForPayment($conn, $paymentMethod, $childTotal, $userId, $drawerContext);
         $newHeadId = $this->insertSplitChildOrder($conn, $originalOrder, $tableId, $originalOrderId, $childTotal, $paymentMethod, $userId);
         foreach ($splitLines as $line) {
             $this->moveOrCopySplitLine($conn, $newHeadId, $line);
@@ -705,7 +735,8 @@ class PosOrderMutationService
 
         $remainingTotals = $this->tableOrderService->recalculateOrderTotals($conn, $originalOrderId);
         $activeTableOrderId = $this->refreshOriginalAfterSplit($conn, $originalOrder, $originalOrderId, $tableId, (float) $remainingTotals['net']);
-        $this->insertSplitPaymentRecordIfAvailable($conn, $newHeadId, $childTotal, $paymentMethod, $userId);
+        $paymentId = $this->insertSplitPaymentRecordIfAvailable($conn, $newHeadId, $childTotal, $paymentMethod, $userId);
+        $this->paymentService->recordCashDrawerMovementForPayment($conn, $paymentMethod, $childTotal, $newHeadId, $userId, $drawerContext, $drawerSession, $paymentId);
         $this->recordOrderEvent($conn, $originalOrderId, 'order.updated', $context['event_source'] ?? 'pos_split_payment', $context, [
             'table_id' => $tableId,
             'split_child_order_id' => $newHeadId,
@@ -970,7 +1001,7 @@ class PosOrderMutationService
         return null;
     }
 
-    private function insertSplitPaymentRecordIfAvailable(mysqli $conn, int $newHeadId, float $childTotal, string $paymentMethod, int $userId): void
+    private function insertSplitPaymentRecordIfAvailable(mysqli $conn, int $newHeadId, float $childTotal, string $paymentMethod, int $userId): ?int
     {
         $tableCheck = $conn->query("SHOW TABLES LIKE 'order_payments'");
         if ($tableCheck && $tableCheck->num_rows > 0) {
@@ -978,8 +1009,13 @@ class PosOrderMutationService
                 INSERT INTO order_payments (order_id, amount, payment_method, created_by, created_at)
                 VALUES (?, ?, ?, ?, NOW())
             ", [$newHeadId, $childTotal, $paymentMethod, $userId]);
-            $this->tableOrderService->assignUuidIfPresent($conn, 'order_payments', (int) $conn->insert_id);
+            $paymentId = (int) $conn->insert_id;
+            $this->tableOrderService->assignUuidIfPresent($conn, 'order_payments', $paymentId);
+
+            return $paymentId;
         }
+
+        return null;
     }
 
     private function splitGroupIdForOrder(mysqli $conn, int $orderId): ?string
@@ -1098,7 +1134,7 @@ class PosOrderMutationService
         return (int) $conn->insert_id;
     }
 
-    private function insertTableOrderItems(mysqli $conn, int $orderId, int $storeId, array $items): void
+    private function insertTableOrderItems(mysqli $conn, int $orderId, int $storeId, array $items, array $context = []): void
     {
         foreach ($items as $item) {
             $itemId = (int) ($item['id'] ?? $item['item_id'] ?? 0);
@@ -1115,7 +1151,9 @@ class PosOrderMutationService
                     discount, det_value, fatid, fat_tybe, det_store
                 ) VALUES (9, ?, ?, 1, 0, ?, ?, 0, ?, ?, 9, ?)
             ", [$orderId, $itemId, $qty, $price, $detValue, $orderId, $storeId]);
-            $this->tableOrderService->assignUuidIfPresent($conn, 'fat_details', (int) $conn->insert_id);
+            $detailId = (int) $conn->insert_id;
+            $this->tableOrderService->assignUuidIfPresent($conn, 'fat_details', $detailId);
+            $this->persistLineNoteIfAvailable($conn, $orderId, $detailId, $itemId, $this->lineNoteFromItem($item), $context);
         }
     }
 
@@ -1190,6 +1228,154 @@ class PosOrderMutationService
         }
 
         return $items;
+    }
+
+    private function lineNoteFromItem(array $item): string
+    {
+        foreach (['note', 'kitchen_note', 'notes', 'line_note'] as $key) {
+            if (array_key_exists($key, $item)) {
+                if (is_array($item[$key])) {
+                    continue;
+                }
+
+                return trim((string) $item[$key]);
+            }
+        }
+
+        return '';
+    }
+
+    private function persistLineNoteIfAvailable(mysqli $conn, int $orderId, int $detailId, int $itemId, $note, array $context = []): void
+    {
+        $note = trim((string) $note);
+        if ($note === '' || !$this->tableExists($conn, 'order_line_notes')) {
+            return;
+        }
+
+        if ($this->lineNoteServiceTablesAvailable($conn)) {
+            try {
+                $this->modifierLineNoteService->saveLineCustomizations(
+                    $conn,
+                    $orderId,
+                    $detailId,
+                    $itemId,
+                    [],
+                    [['note_type' => 'kitchen', 'note_text' => $note]],
+                    [
+                        'modifiers_enabled' => true,
+                        'user_id' => (int) ($context['user_id'] ?? 0),
+                    ]
+                );
+                return;
+            } catch (Throwable $exception) {
+                error_log('Modifier line note service skipped: ' . $exception->getMessage());
+            }
+        }
+
+        $this->replaceKitchenLineNoteDirectly($conn, $orderId, $detailId, $note, (int) ($context['user_id'] ?? 0));
+    }
+
+    private function lineNoteServiceTablesAvailable(mysqli $conn): bool
+    {
+        foreach (['order_line_modifiers', 'item_modifier_groups', 'modifier_groups', 'modifier_options'] as $tableName) {
+            if (!$this->tableExists($conn, $tableName)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private function replaceKitchenLineNoteDirectly(mysqli $conn, int $orderId, int $detailId, string $note, int $userId): void
+    {
+        try {
+            if (function_exists('mb_substr')) {
+                $note = mb_substr($note, 0, 500);
+            } else {
+                $note = substr($note, 0, 500);
+            }
+
+            $delete = $conn->prepare("DELETE FROM order_line_notes WHERE order_id = ? AND detail_id = ? AND note_type = 'kitchen'");
+            $delete->bind_param('ii', $orderId, $detailId);
+            $delete->execute();
+            $delete->close();
+
+            $type = 'kitchen';
+            $createdBy = $userId > 0 ? $userId : null;
+            $insert = $conn->prepare("
+                INSERT INTO order_line_notes (order_id, detail_id, note_type, note_text, created_by)
+                VALUES (?, ?, ?, ?, ?)
+            ");
+            $insert->bind_param('iissi', $orderId, $detailId, $type, $note, $createdBy);
+            $insert->execute();
+            $insert->close();
+        } catch (Throwable $exception) {
+            error_log('Direct line note persistence skipped: ' . $exception->getMessage());
+        }
+    }
+
+    private function assertItemsAvailable(mysqli $conn, array $items, array $request, array $context): void
+    {
+        if (!$this->tableExists($conn, 'item_availability')) {
+            return;
+        }
+
+        $scope = [
+            'tenant' => $this->scopeNonNegativeInt($request, $context, ['tenant', 'pos_tenant']),
+            'branch' => $this->scopeNonNegativeInt($request, $context, ['branch', 'pos_branch']),
+            'channel' => $request['availability_channel'] ?? $request['channel'] ?? $context['availability_channel'] ?? $context['channel'] ?? 'pos',
+        ];
+        foreach ($this->itemIdsFromLines($items) as $itemId) {
+            $this->itemAvailabilityService->assertSellable($conn, $itemId, $scope);
+        }
+    }
+
+    private function requireDiscountApprovalIfNeeded(mysqli $conn, ?int $orderId, float $discount, array $request, array $context): void
+    {
+        $this->managerApprovalService->requireApprovedIfNeeded(
+            $conn,
+            'discount.override',
+            'pos_order',
+            $orderId,
+            max(0, $discount),
+            $request,
+            $context
+        );
+    }
+
+    private function itemIdsFromLines(array $items): array
+    {
+        $ids = [];
+        foreach ($items as $item) {
+            $itemId = (int) ($item['id'] ?? $item['item_id'] ?? 0);
+            if ($itemId > 0) {
+                $ids[$itemId] = $itemId;
+            }
+        }
+
+        return array_values($ids);
+    }
+
+    private function scopeNonNegativeInt(array $request, array $context, array $keys): int
+    {
+        foreach ($keys as $key) {
+            if (array_key_exists($key, $request) && $request[$key] !== '' && $request[$key] !== null) {
+                return max(0, (int) $request[$key]);
+            }
+            if (array_key_exists($key, $context) && $context[$key] !== '' && $context[$key] !== null) {
+                return max(0, (int) $context[$key]);
+            }
+        }
+
+        return 0;
+    }
+
+    private function tableExists(mysqli $conn, string $tableName): bool
+    {
+        $tableName = $conn->real_escape_string($tableName);
+        $result = $conn->query("SHOW TABLES LIKE '{$tableName}'");
+
+        return $result && $result->num_rows > 0;
     }
 
     private function requiredPositiveInt(array $request, string $key, string $message): int

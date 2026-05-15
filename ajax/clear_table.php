@@ -1,20 +1,33 @@
 <?php
 session_start();
 include('../includes/connect.php');
+require_once('../includes/auth_guard.php');
+require_once('../includes/csrf.php');
+require_once('../classes/Pos/Validation/TableInputValidator.php');
 require_once('../classes/TableOrderService.php');
 require_once('../classes/Pos/Service/PosOrderMutationService.php');
 require_once('../classes/Sync/SyncOutboxEventService.php');
 
 header('Content-Type: application/json; charset=utf-8');
 
+require_pos_authenticated();
+if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
+    require_csrf('pos_browser');
+}
+
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     echo json_encode(['success' => false, 'message' => 'طريقة الطلب غير صحيحة'], JSON_UNESCAPED_UNICODE);
     exit;
 }
 
-$table_id = intval($_POST['table_id'] ?? 0);
-$order_id = intval($_POST['order_id'] ?? 0);
-$reason = trim((string) ($_POST['reason'] ?? 'تم تفريغ الطاولة من نقطة البيع'));
+try {
+    $table_id = TableInputValidator::positiveInt($_POST['table_id'] ?? 0, 'معرف الطاولة غير صحيح');
+    $order_id = TableInputValidator::optionalPositiveInt($_POST['order_id'] ?? 0, 'معرف الطلب غير صحيح');
+    $reason = TableInputValidator::reason($_POST['reason'] ?? '', 'تم تفريغ الطاولة من نقطة البيع');
+} catch (Exception $e) {
+    echo json_encode(TableInputValidator::failureResponse($e), JSON_UNESCAPED_UNICODE);
+    exit;
+}
 $user_id = intval($_SESSION['userid'] ?? 1);
 $idempotencyService = new IdempotencyService();
 
@@ -94,6 +107,6 @@ try {
     echo json_encode($response, JSON_UNESCAPED_UNICODE);
 } catch (Exception $e) {
     $conn->rollback();
-    echo json_encode(['success' => false, 'message' => $e->getMessage()], JSON_UNESCAPED_UNICODE);
+    echo json_encode(TableInputValidator::failureResponse($e), JSON_UNESCAPED_UNICODE);
 }
 ?>

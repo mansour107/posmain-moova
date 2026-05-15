@@ -112,6 +112,7 @@ class MoovaLocalIngestService
         if ($notes !== null) {
             $posPayload['notes'] = (string) $notes;
         }
+        $this->copyFulfillmentFieldsForPos($payload, $posPayload);
 
         return $posPayload;
     }
@@ -282,11 +283,23 @@ class MoovaLocalIngestService
 
                 $normalized['items'][] = $this->canonicalize([
                     'item_id' => $this->firstNonEmpty($item, ['item_id', 'itemId', 'id']),
-                    'qty' => $this->firstNonEmpty($item, ['qty', 'quantity', 'count']),
-                    'price' => $this->firstNonEmpty($item, ['price', 'unit_price', 'unitPrice']),
+                    'qty' => $this->normalizeNumericHashValue($this->firstNonEmpty($item, ['qty', 'quantity', 'count'])),
+                    'price' => $this->normalizeNumericHashValue($this->firstNonEmpty($item, ['price', 'unit_price', 'unitPrice'])),
                     'name' => $this->firstNonEmpty($item, ['name', 'item_name', 'itemName']),
                     'modifiers' => isset($item['modifiers']) && is_array($item['modifiers']) ? $item['modifiers'] : null,
                 ]);
+            }
+        }
+
+        if (!isset($normalized['action'])) {
+            $eventType = $this->firstNonEmpty($payload, ['event_type', 'eventType']);
+            if ($eventType !== null) {
+                $eventType = $this->normalizeEventType((string) $eventType);
+                if ($eventType === 'edit_order') {
+                    $normalized['action'] = 'edit';
+                } elseif ($eventType === 'cancel_order') {
+                    $normalized['action'] = 'cancel';
+                }
             }
         }
 
@@ -326,6 +339,62 @@ class MoovaLocalIngestService
         }
 
         return $normalized;
+    }
+
+    private function copyFulfillmentFieldsForPos(array $payload, array &$posPayload): void
+    {
+        foreach ([
+            'orderChannel' => ['orderChannel', 'order_channel', 'channel'],
+            'fulfillmentType' => ['fulfillmentType', 'fulfillment_type', 'orderType', 'order_type', 'type'],
+            'externalProvider' => ['externalProvider', 'external_provider', 'provider', 'sourceSystem', 'source_system'],
+            'externalOrderId' => ['externalOrderId', 'external_order_id', 'providerOrderId', 'provider_order_id'],
+            'customerName' => ['customerName', 'customer_name', 'deliveryCustomerName', 'delivery_customer_name'],
+            'customerPhone' => ['customerPhone', 'customer_phone', 'deliveryCustomerPhone', 'delivery_customer_phone'],
+            'customerAddress' => ['customerAddress', 'customer_address', 'deliveryCustomerAddress', 'delivery_customer_address', 'deliveryAddress', 'delivery_address', 'address'],
+            'deliveryZone' => ['deliveryZone', 'delivery_zone', 'zone'],
+            'deliveryFee' => ['deliveryFee', 'delivery_fee', 'shippingFee', 'shipping_fee', 'deliveryCharge', 'delivery_charge'],
+            'deliveryStatus' => ['deliveryStatus', 'delivery_status'],
+            'promisedAt' => ['promisedAt', 'promised_at', 'eta', 'deliveryEta', 'delivery_eta'],
+        ] as $target => $aliases) {
+            $value = $this->firstNonEmpty($payload, $aliases);
+            if ($value !== null) {
+                $posPayload[$target] = is_array($value) ? $value : (string) $value;
+            }
+        }
+
+        if (isset($payload['customer']) && is_array($payload['customer'])) {
+            $posPayload['customer'] = $payload['customer'];
+            foreach ([
+                'customerName' => ['name', 'fullName', 'full_name'],
+                'customerPhone' => ['phone', 'mobile', 'mobileNumber', 'mobile_number'],
+                'customerAddress' => ['address', 'customerAddress', 'customer_address'],
+            ] as $target => $aliases) {
+                if (!isset($posPayload[$target])) {
+                    $value = $this->firstNonEmpty($payload['customer'], $aliases);
+                    if ($value !== null) {
+                        $posPayload[$target] = is_array($value) ? $value : (string) $value;
+                    }
+                }
+            }
+        }
+
+        if (isset($payload['delivery']) && is_array($payload['delivery'])) {
+            $posPayload['delivery'] = $payload['delivery'];
+            foreach ([
+                'customerAddress' => ['address', 'customerAddress', 'customer_address', 'deliveryAddress', 'delivery_address'],
+                'deliveryZone' => ['zone', 'deliveryZone', 'delivery_zone'],
+                'deliveryFee' => ['fee', 'deliveryFee', 'delivery_fee', 'shippingFee', 'shipping_fee'],
+                'deliveryStatus' => ['status', 'deliveryStatus', 'delivery_status'],
+                'promisedAt' => ['promisedAt', 'promised_at', 'eta', 'deliveryEta', 'delivery_eta'],
+            ] as $target => $aliases) {
+                if (!isset($posPayload[$target])) {
+                    $value = $this->firstNonEmpty($payload['delivery'], $aliases);
+                    if ($value !== null) {
+                        $posPayload[$target] = is_array($value) ? $value : (string) $value;
+                    }
+                }
+            }
+        }
     }
 
     private function eventUuid(array $payload, string $idempotencyKey): string
@@ -410,6 +479,21 @@ class MoovaLocalIngestService
         }
 
         return substr(trim($value), 0, 191);
+    }
+
+    private function normalizeNumericHashValue($value)
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        if (!is_numeric($value)) {
+            return $value;
+        }
+
+        $normalized = rtrim(rtrim(sprintf('%.6F', (float) $value), '0'), '.');
+
+        return $normalized === '' ? '0' : $normalized;
     }
 
     private function canonicalize($value)

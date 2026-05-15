@@ -30,6 +30,7 @@ try {
 
     foreach ($loaded['items'] as $item) {
         $qty = floatval($item['qty_out']) - floatval($item['qty_in']);
+        $lineNote = trim((string) ($item['kitchen_note'] ?? $item['notes'] ?? ''));
         $items[] = [
             'item_id' => $item['item_id'],
             'item_name' => $item['item_name'] ?: 'صنف غير معروف',
@@ -37,7 +38,9 @@ try {
             'barcode' => $item['barcode'] ?: $item['item_id'],
             'qty' => $qty,
             'price' => floatval($item['price']),
-            'subtotal' => floatval($item['det_value'])
+            'subtotal' => floatval($item['det_value']),
+            'note' => $lineNote,
+            'kitchen_note' => $lineNote,
         ];
     }
     

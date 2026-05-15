@@ -300,7 +300,10 @@ class MoovaPosIntegration
         }
 
         $stmt = $conn->prepare("
-            SELECT u.userrole, COALESCE(r.show_users, 0) AS show_users
+            SELECT u.userrole,
+                   COALESCE(r.show_users, 0) AS show_users,
+                   COALESCE(r.edit_sales, 0) AS edit_sales,
+                   COALESCE(r.sid_sales, 0) AS sid_sales
             FROM users u
             LEFT JOIN usr_pwrs r ON r.id = u.userrole
             WHERE u.id = ?
@@ -316,7 +319,10 @@ class MoovaPosIntegration
             return false;
         }
 
-        return (int) ($row['show_users'] ?? 0) === 1 || (int) ($row['userrole'] ?? 0) === 1;
+        return (int) ($row['userrole'] ?? 0) === 1
+            || (int) ($row['show_users'] ?? 0) === 1
+            || (int) ($row['edit_sales'] ?? 0) === 1
+            || (int) ($row['sid_sales'] ?? 0) === 1;
     }
 
     public static function saveActiveLinkForScope(mysqli $conn, array $scope, array $data)

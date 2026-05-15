@@ -9,6 +9,9 @@ if (!class_exists('MoovaPosIntegration')) {
 if (!class_exists('PosOrderService')) {
     require_once __DIR__ . '/../PosOrderService.php';
 }
+if (!class_exists('OrderFulfillmentService')) {
+    require_once __DIR__ . '/../Pos/Service/OrderFulfillmentService.php';
+}
 if (!class_exists('SyncOutboxEventService')) {
     require_once __DIR__ . '/../Sync/SyncOutboxEventService.php';
 }
@@ -17,11 +20,17 @@ class MoovaNewOrderApplyService
 {
     private PosOrderService $posOrders;
     private SyncOutboxEventService $syncOutbox;
+    private OrderFulfillmentService $fulfillment;
 
-    public function __construct(?PosOrderService $posOrders = null, ?SyncOutboxEventService $syncOutbox = null)
+    public function __construct(
+        ?PosOrderService $posOrders = null,
+        ?SyncOutboxEventService $syncOutbox = null,
+        ?OrderFulfillmentService $fulfillment = null
+    )
     {
         $this->posOrders = $posOrders ?: new PosOrderService();
         $this->syncOutbox = $syncOutbox ?: new SyncOutboxEventService();
+        $this->fulfillment = $fulfillment ?: new OrderFulfillmentService();
     }
 
     public function applyInTransaction(mysqli $conn, array $link, array $payload, array $options = []): array
@@ -46,6 +55,7 @@ class MoovaNewOrderApplyService
         }
 
         if ($orderLink && (int) ($orderLink['pos_order_id'] ?? 0) > 0) {
+            $this->fulfillment->upsertMoovaFulfillment($conn, (int) $orderLink['pos_order_id'], $payload);
             $response = json_decode((string) ($orderLink['response_payload'] ?? ''), true);
             if (!is_array($response)) {
                 $response = $this->responseFromExistingLink($orderLink, $idempotencyKey);
@@ -70,6 +80,7 @@ class MoovaNewOrderApplyService
             'branch' => $branch,
             'user_id' => $userId,
         ], $payload);
+        $this->fulfillment->upsertMoovaFulfillment($conn, (int) $order['order_id'], $payload);
 
         $providerStatus = !empty($order['merged']) ? 'updated' : 'created';
         $response = $this->responseFromOrder($order, $idempotencyKey, $providerStatus);

@@ -1,0 +1,166 @@
+# Goal Maker v2 state.yaml
+# Board truth lives here. goal.md is the editable charter; notes/ holds long receipts only.
+
+version: 2
+
+goal:
+  title: "POSMAIN Phase 3 Security Migration Apply"
+  slug: "posmain-phase-3-security-migrations-apply"
+  kind: specific
+  tranche: "Apply the verified local Phase 3 security migrations, then test and iterate."
+  status: done
+
+rules:
+  pm_owns_state: true
+  one_active_task: true
+  max_write_workers: 1
+  no_implementation_without_worker_or_pm_task: true
+  no_completion_without_judge_or_pm_audit: true
+
+agents:
+  scout: installed
+  worker: installed
+  judge: installed
+
+active_task: null
+
+tasks:
+  - id: T000
+    type: pm
+    assignee: PM
+    status: done
+    objective: "Create the migration-apply Goal Maker board."
+    constraints:
+      - "Only write Goal Maker control files."
+    receipt:
+      result: done
+      changed_files:
+        - "docs/goals/posmain-phase-3-security-migrations-apply/goal.md"
+        - "docs/goals/posmain-phase-3-security-migrations-apply/state.yaml"
+      summary: "Created a bounded Goal Maker board for applying the verified Phase 3 additive security migrations to the local/dev database."
+  - id: T001
+    type: scout
+    assignee: Scout
+    status: done
+    objective: "Verify migration target, pending SQL, and safety constraints before applying."
+    inputs:
+      - "docs/goals/posmain-phase-3-security-hardening/state.yaml"
+      - "tools/run_migrations.php"
+      - "tools/backup_database.php"
+      - "config/app_config.php"
+      - "classes/Sync/SchemaManager.php"
+    constraints:
+      - "Read-only."
+      - "Do not apply migrations."
+    receipt:
+      result: done
+      summary: "Verified local/dev target and pending SQL. Target is env=local, production_mode=0, host=127.0.0.1, port=3307, db=kody2, user=root. Dry-run shows exactly two additive CREATE TABLE migrations: security_audit_log and failed_login_attempts."
+      note: "notes/T001-target-and-pending-sql.md"
+      evidence:
+        - "tools/run_migrations.php requires --dry-run or --apply and backup/confirm guard for apply."
+        - "POSMAIN_DB_PORT=3307 config inspection reported env=local and production_mode=0."
+        - "POSMAIN_DB_PORT=3307 php tools/run_migrations.php --dry-run reported 2 pending additive CREATE TABLE statements."
+      commands:
+        - cmd: "POSMAIN_DB_PORT=3307 php -r 'require \"config/app_config.php\"; ...'"
+          status: "pass; local non-production target"
+        - cmd: "POSMAIN_DB_PORT=3307 php tools/run_migrations.php --dry-run"
+          status: "pass; 2 pending additive security tables"
+      next_task: T002
+  - id: T002
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "Back up the local database, apply the two Phase 3 security migrations, then verify migrated behavior."
+    allowed_files:
+      - "database:kody2@127.0.0.1:3307"
+      - "/tmp/posmain-*.sql"
+      - "docs/goals/posmain-phase-3-security-migrations-apply/state.yaml"
+    verify:
+      - "POSMAIN_DB_PORT=3307 php tools/run_migrations.php --dry-run"
+      - "POSMAIN_DB_PORT=3307 php tools/backup_database.php --output=/tmp/<backup>.sql"
+      - "POSMAIN_DB_PORT=3307 php tools/run_migrations.php --apply --backup-file=/tmp/<backup>.sql"
+      - "POSMAIN_DB_PORT=3307 php tools/run_migrations.php --dry-run"
+      - "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/security_schema_migration_test.php"
+      - "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/security_audit_logger_test.php"
+      - "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/login_throttle_service_test.php"
+      - "POSMAIN_DB_PORT=3307 php -r 'inspect security tables and schema_migrations'"
+    stop_if:
+      - "Target is production or not clearly local/dev."
+      - "Pending SQL includes destructive statements."
+      - "Backup cannot be created and the target is not confirmed local/dev."
+      - "Migration apply fails twice."
+      - "Focused migrated-DB tests fail twice."
+      - "Need to edit implementation files."
+    receipt:
+      result: done
+      changed_files:
+        - "database:kody2@127.0.0.1:3307"
+        - "/tmp/posmain-kody2-before-phase3-security-migrations-20260513-162357.sql"
+        - "docs/goals/posmain-phase-3-security-migrations-apply/state.yaml"
+      commands:
+        - cmd: "POSMAIN_DB_PORT=3307 php tools/run_migrations.php --dry-run"
+          status: "pass; tracking missing before apply, 2 pending additive security tables"
+        - cmd: "docker exec posmain-mysql mariadb-dump --single-transaction --routines --triggers --default-character-set=utf8mb4 -uroot kody2 > /tmp/posmain-kody2-before-phase3-security-migrations-20260513-162357.sql"
+          status: "pass; backup file 948K"
+        - cmd: "POSMAIN_DB_PORT=3307 php tools/run_migrations.php --apply --backup-file=/tmp/posmain-kody2-before-phase3-security-migrations-20260513-162357.sql"
+          status: "pass; applied security_audit_log and failed_login_attempts"
+        - cmd: "POSMAIN_DB_PORT=3307 php tools/run_migrations.php --dry-run"
+          status: "pass; tracking ready, 0 pending"
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/security_schema_migration_test.php && POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/security_audit_logger_test.php && POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/login_throttle_service_test.php"
+          status: pass
+        - cmd: "php tests/sync/login_security_integration_test.php && php tests/sync/production_error_handling_test.php && php tests/sync/admin_write_security_test.php && php tests/sync/moova_admin_security_test.php"
+          status: pass
+        - cmd: "POSMAIN_DB_PORT=3307 php -r 'inspect security tables and schema_migrations'"
+          status: "pass; security_audit_log, failed_login_attempts, schema_migrations exist and sync_schema_manager record exists"
+        - cmd: "POSMAIN_DB_PORT=3307 php -r 'real DB transactional SecurityAuditLogger/LoginThrottleService smoke'"
+          status: "pass after correcting command argument shape; rollback left 0 migration_smoke rows"
+      summary: "Backed up the local kody2 MariaDB database, applied the two additive Phase 3 security migrations, verified the migration runner now has zero pending changes, confirmed the schema_migrations record, and proved SecurityAuditLogger/LoginThrottleService can write to the migrated schema inside a rolled-back transaction."
+  - id: T999
+    type: judge
+    assignee: Judge
+    status: done
+    objective: "Audit whether the Phase 3 security migrations are applied and verified."
+    inputs:
+      - "T002 receipt"
+      - "Migration dry-run after apply"
+      - "Focused security test results"
+    constraints:
+      - "Read-only."
+    expected_output:
+      - "complete | not_complete"
+      - "missing evidence"
+      - "residual risks"
+    receipt:
+      result: done
+      decision: complete
+      summary: "The Phase 3 security migrations are applied and verified on the local/dev kody2 database at 127.0.0.1:3307."
+      evidence:
+        - "Pre-apply dry-run showed exactly two additive pending tables: security_audit_log and failed_login_attempts."
+        - "A Docker-based MariaDB backup was created at /tmp/posmain-kody2-before-phase3-security-migrations-20260513-162357.sql before apply."
+        - "Migration apply reported: Applied 2 sync schema change(s): security_audit_log, failed_login_attempts."
+        - "Post-apply dry-run reports tracking ready and 0 pending sync schema changes."
+        - "Direct schema inspection confirms security_audit_log, failed_login_attempts, and schema_migrations exist."
+        - "Focused security schema/logger/throttle tests pass, and a real-DB transactional smoke passed then rolled back with no smoke rows left behind."
+      commands:
+        - cmd: "POSMAIN_DB_PORT=3307 php tools/run_migrations.php --dry-run"
+          status: "pass; 0 pending"
+        - cmd: "POSMAIN_DB_PORT=3307 php -r 'inspect security_audit_log, failed_login_attempts, schema_migrations'"
+          status: pass
+        - cmd: "git diff --check -- docs/goals/posmain-phase-3-security-migrations-apply"
+          status: pass
+        - cmd: "node /Users/ab.mansour1agmail.com/.codex/skills/goal-maker/scripts/check-goal-state.mjs docs/goals/posmain-phase-3-security-migrations-apply/state.yaml"
+          status: pass
+      residual_risk:
+        - "This applied the migrations only to the verified local/dev MariaDB target on port 3307, not to any remote or production database."
+        - "The backup was created through Docker because mysqldump/mariadb-dump is not installed on the host shell."
+
+checks:
+  last_verification:
+    result: pass
+    task: T999
+    commands:
+      - "POSMAIN_DB_PORT=3307 php tools/run_migrations.php --dry-run"
+      - "Direct schema inspection of security_audit_log, failed_login_attempts, schema_migrations"
+      - "Focused Phase 3 migrated-DB security tests"
+      - "Real-DB transactional SecurityAuditLogger/LoginThrottleService smoke"
+      - "node /Users/ab.mansour1agmail.com/.codex/skills/goal-maker/scripts/check-goal-state.mjs docs/goals/posmain-phase-3-security-migrations-apply/state.yaml"

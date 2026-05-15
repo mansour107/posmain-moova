@@ -3,21 +3,40 @@
 <?php include('includes/sidebar.php'); ?>
 <?php
 require_once('classes/MoovaPosIntegration.php');
+require_once('includes/auth_guard.php');
+require_once('includes/csrf.php');
+require_once('classes/Security/SecurityAuditLogger.php');
 
 MoovaPosIntegration::ensureSchema($conn);
 
 $moovaUserId = (int) ($_SESSION['userid'] ?? 0);
 $moovaScope = MoovaPosIntegration::getCurrentUserScope($conn, $moovaUserId);
-$canManageMoova = MoovaPosIntegration::userCanManageIntegration($conn, $moovaUserId);
+$canManageMoova = MoovaPosIntegration::userCanManageIntegration($conn, $moovaUserId)
+    || auth_guard_has_permission('moova.manage', $conn);
 $activeMoovaLink = $moovaScope ? MoovaPosIntegration::findActiveLinkForScope($conn, $moovaScope) : null;
 
-if (empty($_SESSION['moova_integration_csrf'])) {
-    $_SESSION['moova_integration_csrf'] = bin2hex(random_bytes(24));
-}
-$moovaCsrf = $_SESSION['moova_integration_csrf'];
+$moovaCsrf = csrf_token('moova_integration');
 
 $defaultWidgetUrl = $activeMoovaLink['widget_url'] ?? 'https://withmoova.com/pos-widget';
-$visibleDeviceToken = $activeMoovaLink ? (string) ($activeMoovaLink['moova_device_token'] ?? '') : '';
+$visibleDeviceToken = ($canManageMoova && $activeMoovaLink) ? (string) ($activeMoovaLink['moova_device_token'] ?? '') : '';
+
+if ($visibleDeviceToken !== '') {
+    try {
+        (new SecurityAuditLogger())->record($conn, 'moova_device_token_viewed', [
+            'user_id' => $moovaUserId,
+            'tenant' => (int) ($moovaScope['tenant'] ?? 0),
+            'branch' => (int) ($moovaScope['branch'] ?? 0),
+            'target_type' => 'moova_pos_shop_link',
+            'target_id' => (int) ($activeMoovaLink['id'] ?? 0),
+            'metadata' => [
+                'moova_branch_id' => (string) ($activeMoovaLink['moova_branch_id'] ?? ''),
+                'device_token_last4' => (string) ($activeMoovaLink['moova_device_token_last4'] ?? substr($visibleDeviceToken, -4)),
+            ],
+        ]);
+    } catch (Throwable $ignored) {
+        error_log('[Moova POS] token view audit failed: ' . $ignored->getMessage());
+    }
+}
 ?>
 
 <div class="content-wrapper">

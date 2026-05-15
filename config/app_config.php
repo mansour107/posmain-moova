@@ -168,12 +168,57 @@ if (!function_exists('posmain_app_config')) {
     {
         $env = (string) posmain_env('POSMAIN_ENV', 'local');
         $productionMode = posmain_bool(posmain_env('POSMAIN_PRODUCTION_MODE', null), strtolower($env) === 'production');
+        $moovaMode = strtolower(trim((string) posmain_env('POSMAIN_MOOVA_MODE', '')));
+        $moovaMode = str_replace(['-', ' '], '_', $moovaMode);
+        if ($moovaMode === 'direct') {
+            $moovaMode = 'direct_widget';
+        } elseif ($moovaMode === 'queued') {
+            $moovaMode = 'queued_worker';
+        }
+
+        $rawMoovaDirectApply = posmain_bool(
+            posmain_first_env(['POSMAIN_ENABLE_MOOVA_DIRECT_APPLY', 'POSMAIN_MOOVA_DIRECT_APPLY_ENABLED'], null),
+            false
+        );
+        $rawMoovaQueuedApply = posmain_bool(
+            posmain_first_env(['POSMAIN_ENABLE_MOOVA_QUEUED_APPLY', 'POSMAIN_MOOVA_QUEUED_APPLY_ENABLED'], null),
+            false
+        );
+        $rawMoovaWorkerApply = posmain_bool(
+            posmain_first_env(['POSMAIN_MOOVA_APPLY_ENABLED', 'POSMAIN_ENABLE_MOOVA_QUEUED_APPLY'], null),
+            false
+        );
+
+        if (!in_array($moovaMode, ['disabled', 'direct_widget', 'queued_worker', 'hybrid'], true)) {
+            if ($rawMoovaDirectApply && ($rawMoovaQueuedApply || $rawMoovaWorkerApply)) {
+                $moovaMode = 'hybrid';
+            } elseif ($rawMoovaDirectApply) {
+                $moovaMode = 'direct_widget';
+            } elseif ($rawMoovaQueuedApply || $rawMoovaWorkerApply) {
+                $moovaMode = 'queued_worker';
+            } else {
+                $moovaMode = 'disabled';
+            }
+        }
+
+        $moovaModeAllowsDirect = in_array($moovaMode, ['direct_widget', 'hybrid'], true);
+        $moovaModeAllowsQueued = in_array($moovaMode, ['queued_worker', 'hybrid'], true);
+        $moovaDirectApply = $moovaModeAllowsDirect && ($rawMoovaDirectApply || posmain_env('POSMAIN_MOOVA_MODE', '') !== '');
+        $moovaQueuedApply = $moovaModeAllowsQueued && $rawMoovaQueuedApply;
+        $moovaWorkerApply = $moovaModeAllowsQueued && $rawMoovaWorkerApply;
 
         $config = [
             'env' => $env,
             'role' => (string) posmain_env('POSMAIN_ROLE', 'branch'),
             'timezone' => (string) posmain_env('POSMAIN_TIMEZONE', 'Africa/Cairo'),
             'production_mode' => $productionMode,
+            'moova' => [
+                'mode' => $moovaMode,
+                'direct_apply_enabled' => $moovaDirectApply,
+                'queued_apply_enabled' => $moovaQueuedApply,
+                'worker_apply_enabled' => $moovaWorkerApply,
+                'queued_worker_requires_acceptance' => true,
+            ],
             'public_base_url' => (string) posmain_env('POSMAIN_PUBLIC_BASE_URL', ''),
             'status_token' => (string) posmain_first_env(['POSMAIN_STATUS_TOKEN', 'POSMAIN_SYNC_STATUS_TOKEN'], '', true),
             'database' => [
@@ -210,8 +255,8 @@ if (!function_exists('posmain_app_config')) {
             'features' => [
                 'legacy_debug_routes' => posmain_bool(posmain_env('POSMAIN_ENABLE_LEGACY_DEBUG_ROUTES', '0'), false),
                 'legacy_offline_prototype' => posmain_bool(posmain_env('POSMAIN_ENABLE_LEGACY_OFFLINE_PROTOTYPE', '0'), false),
-                'moova_direct_apply' => posmain_bool(posmain_first_env(['POSMAIN_ENABLE_MOOVA_DIRECT_APPLY', 'POSMAIN_MOOVA_DIRECT_APPLY_ENABLED'], '0'), false),
-                'moova_queued_apply' => posmain_bool(posmain_first_env(['POSMAIN_ENABLE_MOOVA_QUEUED_APPLY', 'POSMAIN_MOOVA_QUEUED_APPLY_ENABLED'], '0'), false),
+                'moova_direct_apply' => $moovaDirectApply,
+                'moova_queued_apply' => $moovaQueuedApply,
                 'sync_outbox' => posmain_bool(posmain_first_env(['POSMAIN_ENABLE_SYNC_OUTBOX', 'POSMAIN_SYNC_OUTBOX_ENABLED'], '1'), true),
                 'cloud_sync' => posmain_bool(posmain_first_env(['POSMAIN_ENABLE_CLOUD_SYNC', 'POSMAIN_BRANCH_SYNC_ENABLED'], '0'), false),
                 'kds' => posmain_bool(posmain_env('POSMAIN_ENABLE_KDS', '0'), false),
@@ -229,7 +274,7 @@ if (!function_exists('posmain_app_config')) {
                 'cloud_apply_enabled' => posmain_bool(posmain_env('POSMAIN_CLOUD_APPLY_ENABLED', '1'), true),
                 'shadow_mode' => posmain_bool(posmain_env('POSMAIN_SYNC_SHADOW_MODE', '0'), false),
                 'moova_poller_enabled' => posmain_bool(posmain_env('POSMAIN_MOOVA_POLLER_ENABLED', '1'), true),
-                'moova_apply_enabled' => posmain_bool(posmain_first_env(['POSMAIN_MOOVA_APPLY_ENABLED', 'POSMAIN_ENABLE_MOOVA_QUEUED_APPLY'], '0'), false),
+                'moova_apply_enabled' => $moovaWorkerApply,
                 'moova_apply_user_id' => posmain_int(posmain_env('POSMAIN_MOOVA_APPLY_USER_ID', null), 1),
                 'menu_sync_enabled' => posmain_bool(posmain_env('POSMAIN_MENU_SYNC_ENABLED', '0'), false),
                 'http_connect_timeout_ms' => posmain_int(posmain_env('POSMAIN_SYNC_HTTP_CONNECT_TIMEOUT_MS', null), 1000),

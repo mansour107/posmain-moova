@@ -1,6 +1,11 @@
-<?php include('includes/header.php') ?>
-<?php include('includes/navbar.php') ?>
-<?php include('includes/sidebar.php') ?>
+<?php
+require_once __DIR__ . '/includes/auth_guard.php';
+include('includes/connect.php');
+require_admin_or_permission('users.manage', $conn);
+include('includes/header.php');
+include('includes/navbar.php');
+include('includes/sidebar.php');
+?>
 
 <div class="content-wrapper">
 <style>

@@ -10,6 +10,12 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
 ?>
 <!-- Main Content -->
 <form action="<?= $action_url ?>" method="post" id="posForm">
+        <?php if (function_exists('csrf_input')) { echo csrf_input('pos_browser'); } ?>
+        <?php if (function_exists('csrf_token')): ?>
+        <script>
+            window.POSMAIN_SHIFT_CSRF_TOKEN = <?= json_encode(csrf_token('shift_close'), JSON_UNESCAPED_SLASHES) ?>;
+        </script>
+        <?php endif; ?>
         <div class="container-fluid h-100 pos-shell" style="height: calc(100vh - 60px);">
             <div class="row h-100 g-2 pos-layout-row">
                 <!-- القسم الأيمن - معلومات الطلب -->
@@ -79,148 +85,159 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                                 </div>
                             </div>
 
-                            <!-- الحقول الثانوية - في الناحية التانية -->
-                            <div class="row g-1 mb-2 pos-date-table-control">
-                                <!-- التواريخ -->
-                                <div class="col-4 pos-date-field">
+                            <!-- الطاولة الحالية -->
+                            <div class="mb-2 pos-table-visible-control">
+                                <button type="button" class="btn btn-outline-primary btn-sm w-100"
+                                    data-bs-toggle="modal" data-bs-target="#tablesModal" title="اختر الطاولة">
+                                    <i class="fas fa-chair me-1"></i>
+                                    <span id="selected_table_display">اختر طاولة</span>
+                                </button>
+                                <input type="hidden" id="selected_table_id" name="table_id" value="0">
+                                <input type="hidden" id="selected_table_name" name="table_name" value="">
+                                <input type="hidden" id="selected_order_id" name="selected_order_id" value="">
+                            </div>
+
+                            <div class="mb-2">
+                                <button class="btn btn-outline-secondary btn-sm w-100" type="button"
+                                    data-bs-toggle="collapse" data-bs-target="#posAdvancedSetup"
+                                    aria-expanded="false" aria-controls="posAdvancedSetup">
+                                    <i class="fas fa-sliders-h me-1"></i>إعدادات متقدمة
+                                </button>
+                            </div>
+
+                            <div class="collapse" id="posAdvancedSetup">
+                                <div class="border rounded-3 p-2 mb-2 bg-light">
+                                    <!-- الحقول الثانوية - في الناحية التانية -->
+                                    <div class="row g-1 mb-2 pos-date-table-control">
+                                        <!-- التواريخ -->
+                                        <div class="col-6 pos-date-field">
                                     <input type="date" name="pro_date" class="form-control form-control-sm"
                                         value="<?= $posdate ?>" title="التاريخ" style="font-size: 0.75rem;">
-                                </div>
-                                <div class="col-4 pos-date-field">
+                                        </div>
+                                        <div class="col-6 pos-date-field">
                                     <input type="date" name="accural_date" class="form-control form-control-sm"
                                         value="<?php echo isset($_GET['edit']) ? $rowed['accural_date'] : date('Y-m-d'); ?>"
                                         title="تاريخ الاستحقاق" style="font-size: 0.75rem;">
-                                </div>
+                                        </div>
+                                    </div>
 
-                                <!-- اختيار الطاولة -->
-                                <div class="col-4 pos-table-field">
-                                    <button type="button" class="btn btn-outline-primary btn-sm w-100"
-                                        data-bs-toggle="modal" data-bs-target="#tablesModal" title="اختر الطاولة"
-                                        style="font-size: 0.75rem;">
-                                        
-                                        <span id="selected_table_display">اختر طاولة</span>
-                                    </button>
-                                    <input type="hidden" id="selected_table_id" name="table_id" value="0">
-                                    <input type="hidden" id="selected_table_name" name="table_name" value="">
-                                    <input type="hidden" id="selected_order_id" name="selected_order_id" value="">
-                                </div>
-                            </div>
+                                    <!-- الحقول الصغيرة -->
+                                    <div class="row g-1 mb-2 pos-setup-control">
+                                        <!-- المخزن -->
+                                        <div class="col-3 pos-store-field">
+                                            <select name="store_id" class="form-select form-select-sm" title="المخزن"
+                                                style="font-size: 0.75rem;" required>
+                                                <?php
+                                                $resstore = $conn->query("SELECT * FROM `acc_head` WHERE is_stock =1 AND isdeleted = 0;");
+                                                $first = true;
+                                                while ($rowstore = $resstore->fetch_assoc()) {
+                                                    $selected = '';
+                                                    if($rowstg['def_pos_store'] == $rowstore['id']){
+                                                        $selected = "selected";
+                                                    } elseif ($first && empty($rowstg['def_pos_store'])) {
+                                                        $selected = "selected";
+                                                    }
+                                                    $first = false;
+                                                ?>
+                                                <option <?= $selected ?> value="<?= $rowstore['id'] ?>">
+                                                    <?= $rowstore['aname'] ?></option>
+                                                <?php } ?>
+                                            </select>
+                                        </div>
 
-                            <!-- الحقول الصغيرة -->
-                            <div class="row g-1 mb-2 pos-setup-control">
-                                <!-- المخزن -->
-                                <div class="col-3 pos-store-field">
-                                    <select name="store_id" class="form-select form-select-sm" title="المخزن"
-                                        style="font-size: 0.75rem;" required>
-                                        <?php
-                                        $resstore = $conn->query("SELECT * FROM `acc_head` WHERE is_stock =1 AND isdeleted = 0;");
-                                        $first = true;
-                                        while ($rowstore = $resstore->fetch_assoc()) { 
-                                            $selected = '';
-                                            if($rowstg['def_pos_store'] == $rowstore['id']){
-                                                $selected = "selected";
-                                            } elseif ($first && empty($rowstg['def_pos_store'])) {
-                                                $selected = "selected";
+                                        <!-- الموظف -->
+                                        <div class="col-3 pos-employee-field">
+                                            <select name="emp_id" class="form-select form-select-sm" title="الموظف"
+                                                style="font-size: 0.75rem;" required>
+                                                <?php
+                                                $resemp = $conn->query("SELECT * FROM `acc_head` WHERE parent_id = 35 AND is_basic = 0 AND isdeleted = 0;");
+                                                $first_emp = true;
+                                                while ($rowemp = $resemp->fetch_assoc()) {
+                                                    $selected = '';
+                                                    if($rowstg['def_pos_employee'] == $rowemp['id']){
+                                                        $selected = "selected";
+                                                    } elseif(isset($_GET['edit']) && $rowed['emp_id'] == $rowemp['id']){
+                                                        $selected = "selected";
+                                                    } elseif ($first_emp && empty($rowstg['def_pos_employee']) && !isset($_GET['edit'])) {
+                                                        $selected = "selected";
+                                                    }
+                                                    $first_emp = false;
+                                                ?>
+                                                <option <?= $selected ?> value="<?= $rowemp['id'] ?>"><?= $rowemp['aname'] ?>
+                                                </option>
+                                                <?php } ?>
+                                            </select>
+                                        </div>
+
+                                        <!-- العميل -->
+                                        <div class="col-3 pos-customer-field">
+                                            <?php
+                                            $tableDefaultClientId = 0;
+                                            $tableDefaultClientResult = $conn->query("SELECT id FROM `acc_head` WHERE TRIM(aname) = 'العميل الافتراضي' AND code LIKE '122%' AND isdeleted = 0 ORDER BY CASE WHEN is_basic = 0 THEN 0 ELSE 1 END, id LIMIT 1");
+                                            if ($tableDefaultClientResult && $tableDefaultClientResult->num_rows > 0) {
+                                                $tableDefaultClientId = intval($tableDefaultClientResult->fetch_assoc()['id']);
                                             }
-                                            $first = false;
-                                        ?>
-                                        <option <?= $selected ?> value="<?= $rowstore['id'] ?>">
-                                            <?= $rowstore['aname'] ?></option>
-                                        <?php } ?>
-                                    </select>
-                                </div>
-
-                                <!-- الموظف -->
-                                <div class="col-3 pos-employee-field">
-                                    <select name="emp_id" class="form-select form-select-sm" title="الموظف"
-                                        style="font-size: 0.75rem;" required>
-                                        <?php
-                                        $resemp = $conn->query("SELECT * FROM `acc_head` WHERE parent_id = 35 AND is_basic = 0 AND isdeleted = 0;");
-                                        $first_emp = true;
-                                        while ($rowemp = $resemp->fetch_assoc()) { 
-                                            $selected = '';
-                                            if($rowstg['def_pos_employee'] == $rowemp['id']){
-                                                $selected = "selected";
-                                            } elseif(isset($_GET['edit']) && $rowed['emp_id'] == $rowemp['id']){
-                                                $selected = "selected";
-                                            } elseif ($first_emp && empty($rowstg['def_pos_employee']) && !isset($_GET['edit'])) {
-                                                $selected = "selected";
+                                            $shouldUseTableDefaultClient = !isset($_GET['edit']) && isset($_GET['table']) && $tableDefaultClientId > 0;
+                                            $defaultClientExtraCondition = $tableDefaultClientId > 0 ? " OR id = $tableDefaultClientId" : "";
+                                            $resclient = $conn->query("SELECT * FROM `acc_head` WHERE code LIKE '122%' AND isdeleted = 0 AND (is_basic = 0$defaultClientExtraCondition) ORDER BY code, id;");
+                                            if(isset($_GET['edit'])){$rowed = $conn->query("SELECT * FROM ot_head where id = $id")->fetch_assoc();};
+                                            $editClientId = isset($rowed['acc1']) ? intval($rowed['acc1']) : 0;
+                                            $selectedCustomerId = 0;
+                                            if (isset($_GET['edit']) && $editClientId > 0) {
+                                                $selectedCustomerId = $editClientId;
+                                            } elseif ($shouldUseTableDefaultClient) {
+                                                $selectedCustomerId = $tableDefaultClientId;
+                                            } elseif (!empty($rowstg['def_pos_client'])) {
+                                                $selectedCustomerId = intval($rowstg['def_pos_client']);
                                             }
-                                            $first_emp = false;
-                                        ?>
-                                        <option <?= $selected ?> value="<?= $rowemp['id'] ?>"><?= $rowemp['aname'] ?>
-                                        </option>
-                                        <?php } ?>
-                                    </select>
-                                </div>
+                                            ?>
+                                            <select name="acc2_id" class="form-select form-select-sm" title="العميل"
+                                                style="font-size: 0.75rem;" required
+                                                data-initial-customer-id="<?= htmlspecialchars((string) $selectedCustomerId, ENT_QUOTES, 'UTF-8') ?>"
+                                                data-table-default-customer-id="<?= htmlspecialchars((string) $tableDefaultClientId, ENT_QUOTES, 'UTF-8') ?>">
+                                                <?php
+                                                $first_client = true;
+                                                while ($rowclient = $resclient->fetch_assoc()) {
+                                                    $selected = '';
+                                                    $rowClientId = intval($rowclient['id']);
+                                                    if($selectedCustomerId > 0 && $selectedCustomerId == $rowClientId){
+                                                        $selected = "selected";
+                                                    } elseif ($selectedCustomerId == 0 && !$shouldUseTableDefaultClient && $first_client && empty($rowstg['def_pos_client']) && !isset($_GET['edit'])) {
+                                                        $selected = "selected";
+                                                    }
+                                                    $first_client = false;
+                                                ?>
+                                                <option <?= $selected ?> value="<?= $rowclient['id'] ?>">
+                                                    <?= $rowclient['aname'] ?></option>
+                                                <?php } ?>
+                                            </select>
+                                        </div>
 
-                                <!-- العميل -->
-                                <div class="col-3 pos-customer-field">
-                                    <?php
-                                    $tableDefaultClientId = 0;
-                                    $tableDefaultClientResult = $conn->query("SELECT id FROM `acc_head` WHERE TRIM(aname) = 'العميل الافتراضي' AND code LIKE '122%' AND isdeleted = 0 ORDER BY CASE WHEN is_basic = 0 THEN 0 ELSE 1 END, id LIMIT 1");
-                                    if ($tableDefaultClientResult && $tableDefaultClientResult->num_rows > 0) {
-                                        $tableDefaultClientId = intval($tableDefaultClientResult->fetch_assoc()['id']);
-                                    }
-                                    $shouldUseTableDefaultClient = !isset($_GET['edit']) && isset($_GET['table']) && $tableDefaultClientId > 0;
-                                    $defaultClientExtraCondition = $tableDefaultClientId > 0 ? " OR id = $tableDefaultClientId" : "";
-                                    $resclient = $conn->query("SELECT * FROM `acc_head` WHERE code LIKE '122%' AND isdeleted = 0 AND (is_basic = 0$defaultClientExtraCondition) ORDER BY code, id;");
-                                    if(isset($_GET['edit'])){$rowed = $conn->query("SELECT * FROM ot_head where id = $id")->fetch_assoc();};
-                                    $editClientId = isset($rowed['acc1']) ? intval($rowed['acc1']) : 0;
-                                    $selectedCustomerId = 0;
-                                    if (isset($_GET['edit']) && $editClientId > 0) {
-                                        $selectedCustomerId = $editClientId;
-                                    } elseif ($shouldUseTableDefaultClient) {
-                                        $selectedCustomerId = $tableDefaultClientId;
-                                    } elseif (!empty($rowstg['def_pos_client'])) {
-                                        $selectedCustomerId = intval($rowstg['def_pos_client']);
-                                    }
-                                    ?>
-                                    <select name="acc2_id" class="form-select form-select-sm" title="العميل"
-                                        style="font-size: 0.75rem;" required
-                                        data-initial-customer-id="<?= htmlspecialchars((string) $selectedCustomerId, ENT_QUOTES, 'UTF-8') ?>"
-                                        data-table-default-customer-id="<?= htmlspecialchars((string) $tableDefaultClientId, ENT_QUOTES, 'UTF-8') ?>">
-                                        <?php
-                                        $first_client = true;
-                                        while ($rowclient = $resclient->fetch_assoc()) { 
-                                            $selected = '';
-                                            $rowClientId = intval($rowclient['id']);
-                                            if($selectedCustomerId > 0 && $selectedCustomerId == $rowClientId){
-                                                $selected = "selected";
-                                            } elseif ($selectedCustomerId == 0 && !$shouldUseTableDefaultClient && $first_client && empty($rowstg['def_pos_client']) && !isset($_GET['edit'])) {
-                                                $selected = "selected";
-                                            }
-                                            $first_client = false;
-                                        ?>
-                                        <option <?= $selected ?> value="<?= $rowclient['id'] ?>">
-                                            <?= $rowclient['aname'] ?></option>
-                                        <?php } ?>
-                                    </select>
-                                </div>
-
-                                <!-- الصندوق -->
-                                <div class="col-3 pos-fund-field">
-                                    <select name="fund_id" class="form-select form-select-sm" title="الصندوق"
-                                        style="font-size: 0.75rem;" required>
-                                        <?php
-                                        if(isset($_GET['edit'])){$rowed = $conn->query("SELECT * FROM ot_head where id = $id")->fetch_assoc();};
-                                        $resfund = $conn->query("SELECT * FROM `acc_head` WHERE is_fund =1 AND is_basic = 0 AND isdeleted = 0;");
-                                        $first_fund = true;
-                                        while ($rowfund = $resfund->fetch_assoc()) { 
-                                            $selected = '';
-                                            if($rowstg['def_pos_fund'] == $rowfund['id']){
-                                                $selected = "selected";
-                                            } elseif((isset($_GET['edit'])) && $rowed['acc_fund'] == $rowfund['id']){
-                                                $selected = "selected";
-                                            } elseif ($first_fund && empty($rowstg['def_pos_fund']) && !isset($_GET['edit'])) {
-                                                $selected = "selected";
-                                            }
-                                            $first_fund = false;
-                                        ?>
-                                        <option <?= $selected ?> value="<?= $rowfund['id'] ?>"><?= $rowfund['aname'] ?>
-                                        </option>
-                                        <?php } ?>
-                                    </select>
+                                        <!-- الصندوق -->
+                                        <div class="col-3 pos-fund-field">
+                                            <select name="fund_id" class="form-select form-select-sm" title="الصندوق"
+                                                style="font-size: 0.75rem;" required>
+                                                <?php
+                                                if(isset($_GET['edit'])){$rowed = $conn->query("SELECT * FROM ot_head where id = $id")->fetch_assoc();};
+                                                $resfund = $conn->query("SELECT * FROM `acc_head` WHERE is_fund =1 AND is_basic = 0 AND isdeleted = 0;");
+                                                $first_fund = true;
+                                                while ($rowfund = $resfund->fetch_assoc()) {
+                                                    $selected = '';
+                                                    if($rowstg['def_pos_fund'] == $rowfund['id']){
+                                                        $selected = "selected";
+                                                    } elseif((isset($_GET['edit'])) && $rowed['acc_fund'] == $rowfund['id']){
+                                                        $selected = "selected";
+                                                    } elseif ($first_fund && empty($rowstg['def_pos_fund']) && !isset($_GET['edit'])) {
+                                                        $selected = "selected";
+                                                    }
+                                                    $first_fund = false;
+                                                ?>
+                                                <option <?= $selected ?> value="<?= $rowfund['id'] ?>"><?= $rowfund['aname'] ?>
+                                                </option>
+                                                <?php } ?>
+                                            </select>
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
 
@@ -257,6 +274,7 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                                                 // Fix: Use det_value instead of val
                                                 $subtotal = floatval($rowdet['det_value']);
                                                 $barcode = $rowdet['barcode'] ?: $rowdet['item_id'];
+                                                $line_note = $rowdet['notes'] ?? '';
                                                 ?>
                                         <div class="card mb-1 item-card-order pos-cart-row shadow-sm border-start border-3"
                                             data-itemid="<?= $barcode ?>"
@@ -271,18 +289,35 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                                                         <input type="hidden" value='<?= $rowdet['item_id'] ?>'
                                                             name="itmname[]">
                                                         <input type="hidden" class="barcode" value="<?= $barcode ?>">
-                                                        <div class="text-truncate fw-bold pos-cart-name" style="font-size: 0.75rem;"
-                                                            title="<?= $item_name ?>"><?= $item_name ?></div>
+                                                        <div class="fw-bold pos-cart-name"
+                                                            title="<?= htmlspecialchars($item_name, ENT_QUOTES, 'UTF-8') ?>"><?= htmlspecialchars($item_name, ENT_QUOTES, 'UTF-8') ?></div>
+                                                        <input type="hidden"
+                                                            class="lineNoteInput"
+                                                            name="itmnote[]"
+                                                            value="<?= htmlspecialchars($line_note, ENT_QUOTES, 'UTF-8') ?>">
+                                                    </div>
+
+                                                    <div class="pos-cart-note">
+                                                        <button type="button"
+                                                            class="btn lineNoteButton line-note-empty"
+                                                            title="إضافة ملاحظة للمطبخ"
+                                                            aria-label="إضافة ملاحظة للمطبخ">
+                                                            <i class="fas fa-sticky-note"></i>
+                                                        </button>
                                                     </div>
 
                                                     <div class="pos-cart-qty" style="width: 65px;">
                                                         <small class="d-block text-center text-muted"
                                                             style="font-size: 0.6rem; margin-bottom: 1px;">كمية</small>
+                                                        <button type="button" class="btn qty-step qty-decrease"
+                                                            title="تقليل">−</button>
                                                         <input type="number"
                                                             class="form-control form-control-sm text-center quantityInput nozero fw-bold"
                                                             value="<?= $qty ?>" name="itmqty[]" min="1" step="1"
                                                             style="width: 100%; font-size: 0.75rem; padding: 3px; border: 2px solid #ff6347; height: 26px;"
                                                             title="الكمية">
+                                                        <button type="button" class="btn qty-step qty-increase"
+                                                            title="زيادة">+</button>
                                                         <input type="hidden" name="u_val[]" value="1">
                                                     </div>
 
@@ -1126,6 +1161,9 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                 form.append($('<input>', { type: 'hidden', name: 'cash', value: cash }));
                 form.append($('<input>', { type: 'hidden', name: 'fund_after', value: fundAfter }));
                 form.append($('<input>', { type: 'hidden', name: 'notes', value: notes }));
+                if (window.POSMAIN_SHIFT_CSRF_TOKEN) {
+                    form.append($('<input>', { type: 'hidden', name: 'csrf_token', value: window.POSMAIN_SHIFT_CSRF_TOKEN }));
+                }
                 
                 $('body').append(form);
                 form.submit();
@@ -1722,6 +1760,7 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">إلغاء</button>
                     <form action="close_shift.php" method="POST" id="closeShiftForm" class="d-inline">
+                        <?php if (function_exists('csrf_input')) { echo csrf_input('shift_close'); } ?>
                         <!-- بيانات المصروفات والعهدة -->
                         <div class="input-group mb-3">
                             <span class="input-group-text">مصروفات</span>

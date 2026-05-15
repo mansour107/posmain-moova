@@ -1,0 +1,2551 @@
+# Goal Maker v2 state.yaml
+# Board truth lives here. goal.md is the editable charter; notes/ holds long receipts only.
+
+version: 2
+
+goal:
+  title: "POSMAIN P0-P6 Strict Verification"
+  slug: "posmain-p0-p6-strict-verification"
+  kind: audit
+  tranche: "Verify implemented phases 0 through 6, core POS flows, and Moova local integration with strict scripted and GUI evidence before pilot confidence claims."
+  status: done
+
+rules:
+  pm_owns_state: true
+  one_active_task: true
+  max_write_workers: 1
+  no_implementation_without_worker_or_pm_task: true
+  no_completion_without_judge_or_pm_audit: true
+
+agents:
+  scout: installed
+  worker: installed
+  judge: installed
+
+active_task: null
+
+tasks:
+  - id: T001
+    type: scout
+    assignee: Scout
+    status: done
+    objective: "Map the current P0-P6 implementation evidence, dirty worktree, test inventory, runtime topology, Moova dependencies, and safe verification boundaries before running tests."
+    inputs:
+      - "docs/goals/posmain-phase-0-production-readiness/state.yaml"
+      - "docs/goals/posmain-phase-1-production-foundation/state.yaml"
+      - "docs/goals/posmain-phase-2-pos-state/state.yaml"
+      - "docs/goals/posmain-phase-3-security-hardening/state.yaml"
+      - "docs/goals/posmain-phase-4-midscale-product/state.yaml"
+      - "docs/goals/posmain-phase-5-moova-reliability/state.yaml"
+      - "docs/goals/posmain-phase-6-pilot-qa/state.yaml"
+      - "tests/"
+      - "tools/"
+      - "docker-compose.posmain-test.yml"
+      - "/Users/ab.mansour1agmail.com/Desktop/cofe/cofe_order"
+    constraints:
+      - "Read-only."
+      - "Do not edit implementation files or tests."
+      - "Do not start destructive DB reset flows."
+      - "Prefer concrete file, command, route, and port evidence."
+      - "Separate confirmed current evidence from memory-derived or stale evidence."
+    expected_output:
+      - "P0-P6 evidence map with known gaps."
+      - "Complete script-test inventory and likely command order."
+      - "GUI/browser scenario map for cashier, table, payment, security, reports, and Moova surfaces."
+      - "Moova local-server startup requirements and risk list."
+      - "Safe next tasks for Judge/PM/Worker."
+    receipt:
+      result: done
+      summary: "Mapped P0-P6 evidence, test inventory, runtime topology, Moova dependencies, and safe verification boundaries. Phase boards mostly claim done, but strict verification has not yet run; POS HTTP on 127.0.0.1:8010 currently returns an empty reply because posmain-php is exited, and COFE/Moova on 3001 is reachable from /Users/Shared/cofe_order_runtime with readyz reporting database=true and redis=false."
+      evidence:
+        - "docs/goals/posmain-phase-0-production-readiness/state.yaml"
+        - "docs/goals/posmain-phase-1-production-foundation/state.yaml"
+        - "docs/goals/posmain-phase-2-pos-state/state.yaml"
+        - "docs/goals/posmain-phase-3-security-hardening/state.yaml"
+        - "docs/goals/posmain-phase-3-security-migrations-apply/state.yaml"
+        - "docs/goals/posmain-phase-4-midscale-product/state.yaml"
+        - "docs/goals/posmain-phase-5-moova-reliability/state.yaml"
+        - "docs/goals/posmain-phase-6-pilot-qa/state.yaml"
+        - "docs/production/phase6_e2e_local_command.md"
+        - "docker-compose.posmain-test.yml"
+        - "tools/"
+        - "tests/"
+        - "/Users/ab.mansour1agmail.com/Desktop/cofe/cofe_order/package.json"
+      findings:
+        - "Dirty worktree is large and overlaps active POS, Moova, security, table, and payment files."
+        - "Tests inventory has many standalone PHP sync tests plus PHPUnit-style tests, but vendor/bin/phpunit and a PHAR fallback are not present right now."
+        - "GUI and Moova E2E verification should wait until the POS HTTP runtime is healthy."
+        - "Phase 6 browser matrix is documented but cannot be marked passed from source review alone."
+      candidate_next_tasks:
+        - "Judge should approve the verification order and classify the 8010 empty reply as blocker or preflight recovery."
+        - "Restore/install a PHPUnit runner only if Judge allows tooling changes."
+        - "Run non-destructive standalone/source-contract tests before any current-DB mutating seed/load commands."
+        - "Run GUI and Moova E2E only after POS plus correct COFE runtime path are confirmed."
+
+  - id: T002
+    type: judge
+    assignee: Judge
+    status: done
+    objective: "Review the Scout map and approve the strict verification order, stop conditions, destructive-operation boundaries, and whether any test-writing Worker task is needed before execution."
+    inputs:
+      - "T001 receipt or note"
+      - "Current dirty worktree fingerprint"
+      - "Current test inventory"
+    constraints:
+      - "Read-only."
+      - "Do not implement fixes."
+      - "Prioritize verification that protects money, stock, accounting, table state, Moova idempotency, and cashier UX."
+    expected_output:
+      - "Approved verification sequence."
+      - "Explicit blocked or unsafe tests."
+      - "Decision on whether to add missing tests before running broad verification."
+      - "Next allowed task id."
+    receipt:
+      result: done
+      decision: approved_with_gates
+      summary: "Approved strict verification only as a gated release-style sequence. Do not claim P0-P6 verified until scripted, browser, and Moova evidence run against healthy local services. Current runtime blocks GUI and Moova execution."
+      approved_verification_sequence:
+        - "T006 first: restore only an ephemeral PHPUnit runner/bootstrap or mark PHPUnit blocked; no test writing and no repo vendor install by default."
+        - "Then T003: run non-destructive scripted checks first: syntax/static/source-contract tests, isolated standalone tests, migration dry-runs, and PHPUnit groups if T006 succeeds."
+        - "Then Phase 6 dry-run or isolated disposable DB checks before any current-DB mutation."
+        - "Then T004 GUI only after 8010 serves a real login/app response."
+        - "Then T005 Moova only after POS is healthy and COFE/Moova readyz is healthy, including redis=true or a documented non-Redis mode."
+      blocked_or_unsafe_tests:
+        - "All PHPUnit-style tests are blocked until a runner exists."
+        - "Browser/POS GUI tests are blocked while posmain-php is exited and 8010 returns empty reply."
+        - "Moova E2E is blocked while COFE readyz is ok=false/redis=false."
+        - "Current-DB mutating commands are blocked initially: run_migrations --apply, seed_demo_restaurant --apply, phase6_load_concurrency_check --allow-current-db, sync_recovery --apply, conflict resolve, backfill apply."
+        - "Docker destructive operations are blocked: down -v, rm containers/volumes, DB drop/reset of kody2."
+      next_allowed_task: T006
+      blocked_tasks:
+        - T003
+        - T004
+        - T005
+        - T007
+
+  - id: T003
+    type: pm
+    assignee: PM
+    status: done
+    objective: "Run the approved non-destructive scripted verification pass for P0-P6 and record exact pass/fail/blocker evidence."
+    inputs:
+      - "T002 receipt"
+      - "Approved verification commands"
+    constraints:
+      - "Do not edit implementation files."
+      - "Do not mutate production-like data except through disposable/local test fixtures approved by T002."
+      - "Record exact command, status, and key failure lines."
+      - "Do not run current-DB mutating commands such as run_migrations --apply, seed_demo_restaurant --apply, phase6_load_concurrency_check --allow-current-db, sync_recovery --apply, conflict resolve, or backfill apply."
+      - "Stop broad verification on the first reproduced money, stock, accounting, table-state, auth, or Moova-idempotency failure."
+    expected_output:
+      - "Scripted verification receipt."
+      - "Failing commands grouped by phase and risk."
+      - "Candidate Worker tasks only for reproduced failures."
+    receipt:
+      result: fail_with_evidence
+      completed_at: "2026-05-14T10:15:46Z"
+      environment:
+        pos_db: "MariaDB container posmain-mysql on 127.0.0.1:3307, current DB kody2"
+        pos_http: "Recovered non-destructively with docker start posmain-php; 127.0.0.1:8010/index.php now returns HTTP 200 login page."
+        moova_runtime: "/Users/Shared/cofe_order_runtime on 127.0.0.1:3001"
+        disposable_db: "Created schema-only copy posmain_strict_p06_20260514130517 from kody2 for mutating script/PHPUnit tests, then dropped it."
+      commands:
+        - cmd: "find . -path ./.git -prune -o -path './.playwright-mcp' -prune -o -path './backup' -prune -o -name '*.php' -print0 | xargs -0 -n 1 php -l"
+          status: "pass; no PHP syntax errors, but many PHP 8.5 deprecation warnings from bundled src/Twilio files"
+        - cmd: "node --check first-party JS files: assets/js, assets/moova-pos-widget, components/pos_clothes, js/pos*.js, pos_sw.js, sw.js, print/code.js"
+          status: "fail; 17/18 pass, js/pos_auto_lock.js fails with SyntaxError unexpected token } at line 116"
+        - cmd: "POSMAIN_DB_PORT=3307 php tools/run_migrations.php --dry-run"
+          status: "fail/blocker; current kody2 has 1 pending sync schema change: order_fulfillment CREATE TABLE"
+        - cmd: "POSMAIN_DB_HOST=127.0.0.1 POSMAIN_DB_PORT=3307 POSMAIN_DB_USER=root POSMAIN_DB_PASS='' POSMAIN_DB_NAME=kody2 php tools/backup_database.php --output=/tmp/posmain-strict-backup-dry-run.sql --dry-run"
+          status: "pass; prints masked mysqldump command for 127.0.0.1:3307/kody2"
+        - cmd: "php tools/audit_write_paths.php --json"
+          status: "pass; write inventory produced categories including pos_order=58, table_state=36, payments/accounting=41, shift_session=8, menu_catalog=39, moova_bridge=15, user_admin=11, inventory_stock=3, other_business_write=154"
+        - cmd: "php tools/moova_reachability_smoke.php --self-test"
+          status: "pass; 8/8 mock POS/Moova steps passed for online, queued, edit, cancel, POS drop/recovery, Moova drop/recovery"
+        - cmd: "php tools/moova_local_topology_check.php"
+          status: "fail/blocker; POS HTTP healthy and POS DB active link visible, but Moova /readyz is HTTP 503 with redis=false"
+        - cmd: "standalone direct PHP tests without TestCase, isolated/disposable DB environment"
+          status: "fail; 76/78 passed, table_order_counter_smoke_test.php and uuid_backfill_smoke_test.php fail in SyncSchemaManager on missing legacy columns inside minimal fixture schemas"
+        - cmd: "php /tmp/posmain-phpunit-9.phar --bootstrap /tmp/posmain-phpunit-autoload.php --colors=never --testdox tests"
+          status: "pass_with_skips; 68 tests, 171 assertions, 10 skipped; deprecation warnings in BarcodeGeneratorJPG/PNG imagedestroy and TypeTelepen ord under PHP 8.5"
+        - cmd: "PHPUnit-style sync tests run file-by-file against disposable schema"
+          status: "fail; 41/43 files passed, moova_widget_bridge_contract_test.php has 2 failures, write_surface_inventory_test.php has 1 failure; branch_moova_apply_worker_test.php also has 4 fixture-dependent skips"
+      reproduced_failures:
+        - risk: "frontend"
+          evidence: "js/pos_auto_lock.js:116 has an extra closing IIFE terminator, causing node --check to fail with SyntaxError."
+        - risk: "phase5_phase6_schema"
+          evidence: "run_migrations dry-run shows order_fulfillment is pending on current kody2, so the current DB does not match the claimed Phase 5/6 fulfillment foundation."
+        - risk: "sync_schema_tests"
+          evidence: "table_order_counter_smoke_test.php and uuid_backfill_smoke_test.php fail because SyncSchemaManager applies phase4 legacy upgrades that assume columns like ot_head.table_id and tables.table_case exist even in minimal fixture schemas."
+        - risk: "moova_direct_contract"
+          evidence: "moova_widget_bridge_contract_test.php expects ajax/moova_confirm_order.php to require MoovaNewOrderApplyService and ajax/moova_change_order.php to require MoovaChangeOrderApplyService; both currently route through PosOrderMutationService instead."
+        - risk: "write_inventory"
+          evidence: "write_surface_inventory_test.php reports ajax/moova_confirm_order.php no longer classified as moova_bridge."
+        - risk: "moova_runtime"
+          evidence: "Moova readyz remains ok=false database=true redis=false on 127.0.0.1:3001. Code inspection shows readyz requires Redis when config.redisUrl is set, while lib/redis disables Redis when config.env is test."
+      compatibility_notes:
+        - "No implementation files or tests were edited in T003."
+        - "Current DB mutating commands remained blocked; mutating tests used a disposable schema copied from kody2 and then dropped."
+        - "docker start posmain-php was the only runtime recovery action; no volumes, data, or containers were removed."
+        - "PHPUnit runner remains ephemeral in /tmp."
+
+  - id: T004
+    type: pm
+    assignee: PM
+    status: done
+    objective: "Run the approved complete GUI/browser verification pass for core POS, table, payment, print, security, report, and phase-visible flows."
+    inputs:
+      - "T002 receipt"
+      - "T003 receipt"
+      - "Approved GUI scenario matrix"
+    constraints:
+      - "Use the local POS runtime only after health checks pass."
+      - "Do not perform irreversible database actions without disposable data."
+      - "Capture screenshots or browser evidence for meaningful failures."
+    expected_output:
+      - "GUI verification receipt."
+      - "Scenario pass/fail matrix."
+      - "Screenshots or logs for failures."
+      - "Candidate Worker tasks only for reproduced failures."
+    receipt:
+      result: partial_pass_blocked
+      completed_at: "2026-05-14T10:20:00Z"
+      commands:
+        - cmd: "Browser GUI login at http://127.0.0.1:8010/index.php"
+          status: "pass; omar/1234 authenticated to dashboard.php"
+        - cmd: "Browser GUI open/unlock POS at pos_barcode.php"
+          status: "pass; protected POS code entry unlocked to cashier view showing current order, customer select, order type controls, item catalog, totals, shift state, and Moova widget iframe"
+        - cmd: "Browser GUI add item and adjust quantity"
+          status: "pass; clicking TEMP TEST شاي added one line, plus button raised quantity to 2, totals changed from 18.00 to 36.00 ج.م"
+        - cmd: "Browser GUI open payment modal"
+          status: "pass; payment dialog opened with total/net 36.00 ج.م, cash/bank inputs, remaining 0.00, and دفع وطباعة action visible; modal was cancelled without submitting payment"
+        - cmd: "Browser GUI smoke dashboard.php, pos_tables.php, pos_simple.php, add_item.php, myitems.php"
+          status: "pass; each loaded authenticated UI without SQL/fatal error text"
+        - cmd: "Browser GUI Moova integration page"
+          status: "pass; moova_integration.php shows active state, widget URL, visible full device token, tenant=0, branch=0"
+        - cmd: "Browser GUI POS-side Moova widget"
+          status: "pass; moova_pos_widget.php loads, Pending approvals button opens empty queue state"
+        - cmd: "Browser GUI mobile viewport smoke 390x844"
+          status: "pass; pos_barcode.php still exposes current order and payment controls without SQL/fatal error text"
+      not_run_due_to_safety_gate:
+        - "Real current-DB save order, payment submit, print, table assignment save, shift close, backup button, integration save/disconnect, and destructive admin actions."
+      blockers:
+        - "T003 found current DB schema drift: order_fulfillment pending on kody2."
+        - "T003 found js/pos_auto_lock.js syntax error, so any GUI path depending on that script cannot be called healthy."
+        - "T003 found Moova/runtime and contract failures; full Moova browser E2E remains blocked."
+      compatibility_notes:
+        - "No implementation files or tests were edited."
+        - "GUI actions avoided irreversible writes to kody2; the payment modal was opened but not submitted."
+        - "Browser viewport override was reset after mobile smoke."
+
+  - id: T005
+    type: pm
+    assignee: PM
+    status: done
+    objective: "Run the approved Moova local-server end-to-end verification across POS, COFE/Moova backend, widget, token, accept, decline, edit, cancel, stale, and offline/unreachable scenarios."
+    inputs:
+      - "T002 receipt"
+      - "T003 receipt"
+      - "T004 receipt"
+      - "/Users/ab.mansour1agmail.com/Desktop/cofe/cofe_order"
+    constraints:
+      - "Recheck live ports, Docker services, seeded shop/device rows, and visible token before claiming Moova readiness."
+      - "Keep token/device/shop checks intact."
+      - "Do not replace the existing working POS port baseline unless Judge approves it."
+    expected_output:
+      - "Moova E2E verification receipt."
+      - "Backend/POS/widget pass-fail matrix."
+      - "Exact blocker list for any unavailable local service."
+    receipt:
+      result: blocked_with_partial_pass
+      completed_at: "2026-05-14T10:23:00Z"
+      commands:
+        - cmd: "php tools/moova_local_topology_check.php"
+          status: "fail/blocker; POS TCP/HTTP ok, Moova TCP ok, Moova /pos-widget ok, POS DB active link ok, but Moova /readyz is HTTP 503 redis=false"
+        - cmd: "curl http://127.0.0.1:3001/readyz"
+          status: "fail/blocker; {ok:false,database:true,redis:false}"
+        - cmd: "curl -I http://127.0.0.1:3001/pos-widget"
+          status: "pass; widget endpoint returns HTTP 200"
+        - cmd: "Browser GUI moova_pos_widget.php"
+          status: "pass; POS-side widget loads and pending approvals opens empty queue"
+        - cmd: "Browser GUI moova_integration.php"
+          status: "pass; active link and full visible Moova device token are shown"
+        - cmd: "php tools/moova_reachability_smoke.php --self-test"
+          status: "pass; mock online/offline/recovery scenarios all passed"
+        - cmd: "Inspect /Users/Shared/cofe_order_runtime server.js, config/index.js, lib/redis.js"
+          status: "diagnostic; readyz requires Redis when config.redisUrl is set, but lib/redis returns null when config.env is test, producing redis=false in this runtime"
+      not_run_due_to_blocker:
+        - "Live Moova accept, decline, edit, cancel, stale, and offline/unreachable E2E against 127.0.0.1:3001."
+        - "Live Moova-to-POS write flows against current kody2."
+      blockers:
+        - "Moova readyz is not healthy: database=true but redis=false."
+        - "T003 contract tests also fail around direct widget apply-service requirements and write-surface classification."
+      compatibility_notes:
+        - "No implementation files or tests were edited."
+        - "No Moova/POS current-DB mutations were submitted."
+        - "The POS-side link/token/widget visibility is verified, but backend readiness prevents full E2E certification."
+
+  - id: T006
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "Restore an ephemeral PHPUnit runner/bootstrap outside the repo or record PHPUnit as blocked, without writing tests or implementation files."
+    allowed_files:
+      - "/tmp/posmain-phpunit-9.phar"
+      - "/tmp/posmain-phpunit-autoload.php"
+    verify:
+      - "php /tmp/posmain-phpunit-9.phar --version"
+      - "git status --short /tmp/posmain-phpunit-9.phar /tmp/posmain-phpunit-autoload.php"
+      - "git status --short"
+    stop_if:
+      - "Need files outside allowed_files."
+      - "The expected behavior is ambiguous."
+      - "The task would modify production behavior instead of test or helper coverage."
+      - "Verification fails twice for the same reason."
+    receipt:
+      result: partial_success
+      changed_files:
+        - "/tmp/posmain-phpunit-9.phar"
+        - "/tmp/posmain-phpunit-autoload.php"
+      commands:
+        - cmd: "curl -L --fail --show-error --output /tmp/posmain-phpunit-9.phar https://phar.phpunit.de/phpunit-9.phar && chmod +x /tmp/posmain-phpunit-9.phar"
+          status: pass
+        - cmd: "php /tmp/posmain-phpunit-9.phar --version"
+          status: "pass; PHPUnit 9.6.34"
+        - cmd: "git status --short /tmp/posmain-phpunit-9.phar /tmp/posmain-phpunit-autoload.php"
+          status: "not_applicable; Git rejects /tmp paths outside the repo"
+        - cmd: "git status --short"
+          status: "pass; repo still has pre-existing dirty worktree, no repo files edited by T006"
+        - cmd: "php -r \"require '/tmp/posmain-phpunit-autoload.php'; ...\""
+          status: "pass; autoload-ok"
+      summary: "Restored ephemeral PHPUnit 9 tooling in /tmp only. No repo vendor install, no composer.lock, and no implementation/test files were edited."
+
+  - id: T007
+    type: worker
+    assignee: Worker
+    status: queued
+    objective: "Reserved for fixing a reproduced P0-P6 or POS/Moova regression after the failure is documented and allowed_files are narrowed."
+    allowed_files: []
+    verify: []
+    stop_if:
+      - "Need files outside allowed_files."
+      - "The failure is not reproducible."
+      - "The fix touches accounting, stock, table state, Moova idempotency, or auth behavior without Judge approval."
+      - "Verification fails twice."
+    receipt: null
+
+  - id: T008
+    type: pm
+    assignee: PM
+    status: done
+    objective: "Temporarily unblock Moova local runtime health and run live POS widget order-create and cancel E2E evidence without editing implementation files."
+    inputs:
+      - "T005 receipt"
+      - "/Users/Shared/cofe_order_runtime"
+      - "http://127.0.0.1:8010/pos_barcode.php"
+      - "http://127.0.0.1:3001"
+    constraints:
+      - "No implementation edits."
+      - "Use clearly labeled test data."
+      - "Do not leave a foreground exec session running after verification."
+      - "Record the persistent runtime caveat separately from temporary foreground success."
+    expected_output:
+      - "Moova readiness recheck receipt."
+      - "Live POS widget create/cancel E2E evidence."
+      - "Remaining runtime/config blockers."
+    receipt:
+      result: partial_pass_with_persistent_runtime_caveat
+      completed_at: "2026-05-14T10:40:00Z"
+      note: "docs/goals/posmain-p0-p6-strict-verification/notes/moova-live-e2e-2026-05-14.md"
+      commands:
+        - cmd: "launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.codex.cofe-order-3001.plist"
+          status: "pass; stopped the auto-respawning test-mode Moova LaunchAgent for the verification window"
+        - cmd: "Foreground /Users/Shared/cofe_order_runtime/server.js with NODE_ENV=production, REDIS_URL=redis://localhost:6379, START_WORKER=false"
+          status: "pass; startup checks reported database=true and redis=true"
+        - cmd: "curl -i http://127.0.0.1:3001/readyz"
+          status: "pass; HTTP 200 {ok:true,database:true,redis:true}"
+        - cmd: "php tools/moova_local_topology_check.php"
+          status: "pass; POS HTTP, Moova readyz, Moova widget, Docker dependencies, and POS active link all reachable"
+        - cmd: "node scripts/seed-posmain-local-shop.js"
+          status: "pass; refreshed seeded Moova shop/device/menu rows for POSMAIN local test device ending c3cb"
+        - cmd: "Live Moova API create order for TEMP TEST شاي, then Browser POS widget confirm notes/order"
+          status: "pass; Moova order 87195d0d-2dea-481b-b400-a56b4d4ccbbb became CONFIRMED, draft 085bf2ea-8d39-4227-a627-45e4edcb585e became ACKED, POS link provider order id 101, and POS fat_details row 556 was inserted"
+        - cmd: "Live Moova patron cancel request, then Browser POS widget تأكيد الإلغاء"
+          status: "pass; Moova order became DISMISSED, bridge command completed, POS change link 213 has change_type=cancel/provider_status=cancelled, and POS fat_details row 556 was marked deleted/zeroed"
+        - cmd: "curl /api/integrations/pos/local-bridge/pending"
+          status: "pass; after create/cancel acknowledgements, live pending drafts and commands were empty"
+        - cmd: "Stop foreground Moova runtime, restore com.codex.cofe-order-3001 LaunchAgent, then curl /readyz"
+          status: "restored_persistent_service; port 3001 listens again, but /readyz returned {ok:false,database:true,redis:false}"
+      not_run_due_to_scope:
+        - "Live decline flow."
+        - "Live edit flow."
+        - "Live stale-state conflict flow."
+        - "Live offline/unreachable recovery with the real POS widget."
+      blockers:
+        - "Persistent Moova LaunchAgent still uses the old test-mode command unless its configuration is changed."
+        - "Scripted contract tests still fail around Moova endpoint service expectations and write-surface classification."
+        - "Current DB migration dry-run still needs a refreshed check before any readiness claim."
+      compatibility_notes:
+        - "No implementation files or tests were edited."
+        - "The live test intentionally created and then cancelled a clearly labeled POSMAIN STRICT LIVE E2E TEST order."
+        - "The Moova foreground runtime was a test-window runtime, not a durable service configuration fix."
+
+  - id: T009
+    type: pm
+    assignee: PM
+    status: done
+    objective: "Extend the temporary Moova live E2E pass with decline, edit, and cancel-after-edit evidence without editing implementation files."
+    inputs:
+      - "T008 receipt"
+      - "docs/goals/posmain-p0-p6-strict-verification/notes/moova-live-e2e-2026-05-14.md"
+      - "http://127.0.0.1:8010/pos_barcode.php"
+      - "http://127.0.0.1:3001"
+    constraints:
+      - "No implementation edits."
+      - "Use clearly labeled test data."
+      - "Stop and restore the persistent Moova LaunchAgent after verification."
+      - "Do not convert temporary foreground success into a durable runtime-health claim."
+    expected_output:
+      - "Live decline evidence."
+      - "Live edit evidence."
+      - "Live cancel-after-edit cleanup evidence."
+      - "Restored persistent runtime caveat."
+    receipt:
+      result: partial_pass_with_persistent_runtime_caveat
+      completed_at: "2026-05-14T10:55:00Z"
+      note: "docs/goals/posmain-p0-p6-strict-verification/notes/moova-live-extra-e2e-2026-05-14.md"
+      commands:
+        - cmd: "Live Moova API create order for TEMP TEST مياه, then Browser POS widget decline with reason"
+          status: "pass; Moova order 2d286f7a-ffe9-4eaf-a279-aeafad0babc7 became DISMISSED, draft b00440a8-bf0b-4f4d-8902-7f614137b991 became DECLINED, reason persisted, and no POS order link was created"
+        - cmd: "Live Moova API create order 7241be85-c2c5-4d28-8b85-6b5b679dba53 for TEMP TEST شاي, then Browser POS widget confirm notes/order"
+          status: "pass; Moova order became CONFIRMED, draft 9b092760-aef2-4ad4-912f-c4a8f1114cb3 became ACKED, and POS link row 250 mapped it to POS order 101"
+        - cmd: "POST /api/orders/patron/edit using client status token 0e24a1f7-ec14-4742-8963-74d494a70fbb"
+          status: "pass; edit request event dce8021d-c25d-422e-824f-772f0e1ca2ae was queued for TEMP TEST عصير مانجو"
+        - cmd: "Browser POS widget تأكيد التعديل"
+          status: "pass; Moova recorded order.edit.accepted and order.edited, bridge command 1d64cfce-b674-442b-8d76-15fd370a4af1 completed, POS change link 214 has change_type=edit/provider_status=edited/syncStatus=applied, and POS fat_details row 558 inserted item 3"
+        - cmd: "POST /api/orders/patron/cancel for the edited order, then Browser POS widget تأكيد الإلغاء"
+          status: "pass; Moova order became DISMISSED with Cancelled by customer, bridge command 2e748743-0913-4682-bef4-55357c66f5d3 completed, POS change link 215 has change_type=cancel/provider_status=cancelled/syncStatus=applied, and POS fat_details row 558 was deleted/zeroed"
+        - cmd: "POST /api/orders/patron/edit for older order 5210adfd-5377-4bce-af05-1b72d81bebda"
+          status: "pass_as_stale_guard; returned {error: Edit window has expired.}"
+        - cmd: "Stop foreground Moova runtime, restore com.codex.cofe-order-3001 LaunchAgent, then curl /readyz"
+          status: "restored_persistent_service; port 3001 listens again, but /readyz returned {ok:false,database:true,redis:false}"
+      not_run_due_to_scope:
+        - "Live stale-state conflict beyond the expired edit-window guard."
+        - "Live offline/unreachable recovery with the real POS widget."
+      blockers:
+        - "Persistent Moova LaunchAgent still uses the old test-mode command unless its configuration is changed."
+        - "Scripted contract tests still fail around Moova endpoint service expectations and write-surface classification."
+        - "Current DB migration dry-run and JS syntax blockers still remain."
+      compatibility_notes:
+        - "No implementation files or tests were edited."
+        - "The foreground Moova runtime was stopped and the persistent LaunchAgent was restored."
+        - "The added live proof is valid for the temporary Redis-capable runtime only."
+
+  - id: T999
+    type: judge
+    assignee: Judge
+    status: done
+    objective: "Audit whether the current P0-P6 strict verification tranche is complete and whether POSMAIN can be described as working well for the tested pilot scope."
+    inputs:
+      - "All done task receipts"
+      - "Last scripted verification"
+      - "Last GUI verification"
+      - "Last Moova verification"
+      - "Current dirty diff"
+    constraints:
+      - "Do not overclaim that no future bugs exist."
+      - "Separate complete, not complete, blocked, and untested areas."
+    expected_output:
+      - "complete | not_complete"
+      - "Missing evidence"
+      - "Known blockers"
+      - "Next task if not complete"
+    receipt:
+      decision: not_complete
+      result: blocked
+      completed_at: "2026-05-14T11:08:00Z"
+      updated_at: "2026-05-14T11:12:32Z"
+      summary: "P0-P6 cannot be certified as complete/bug-free from this strict run. Scripted tests and GUI smoke found reproducible blockers. A temporary Moova foreground runtime allowed live POS-widget create, confirm, decline, edit, cancel, and cancel-after-edit E2E to pass. A disposable GUI runtime allowed real save, payment/receipt, table-save, and shift-close writes to be tested without touching kody2. Follow-up evidence reclassified the extra empty-looking ot_head row as the expected cash receipt voucher, not a duplicate POS order. Persistent runtime config plus scripted contract/schema/frontend blockers remain."
+      complete:
+        - "POS runtime is now reachable on 127.0.0.1:8010 after non-destructive docker start."
+        - "Core authenticated GUI smoke passed for login, dashboard, POS unlock, cart add/quantity, payment modal open/cancel, table screen, item pages, Moova integration screen, POS widget queue, and mobile viewport."
+        - "Most standalone and PHPUnit coverage passed in disposable DB or non-mutating mode."
+        - "Moova mock reachability self-test passed all online/offline/recovery scenarios."
+        - "Temporary Redis-capable Moova runtime passed /readyz and topology checks."
+        - "Live Browser POS widget accepted a seeded Moova order and confirmed notes/order through ajax/moova_confirm_order.php."
+        - "Live Browser POS widget accepted a cancellation request through ajax/moova_change_order.php."
+        - "Live Browser POS widget declined a seeded Moova order before POS creation and persisted the cashier reason."
+        - "Live Browser POS widget accepted an edit request, updated Moova order items, completed the bridge command, and wrote POS change link 214."
+        - "Live Browser POS widget accepted a cancel request after the edit, completed the bridge command, and zeroed/deleted the edited POS detail row."
+        - "Live POS browser unreachable-service check confirmed the POS page stays usable when Moova is stopped and the proxy returns 502 MOOVA_UNREACHABLE/retryable=true."
+        - "Disposable POS GUI write runtime on 127.0.0.1:8011 verified save-order, payment/receipt, table-save, and shift-close flows against cloned schema posmain_gui_write_20260514140156."
+        - "Payment/receipt follow-up classified the extra empty-looking ot_head row as the expected pro_tybe=1 cash receipt voucher linked by op2 to the paid POS order."
+      not_complete:
+        - "Current kody2 schema is not fully migrated: order_fulfillment remains pending."
+        - "First-party JS syntax is not fully clean: js/pos_auto_lock.js has an unexpected closing brace at line 116."
+        - "Persistent Moova LaunchAgent is not fully healthy: the installed com.codex.cofe-order-3001 command still starts the old test-mode runtime that reports redis=false."
+        - "Visible Moova widget offline UX is weak: after the transient MOOVA_UNREACHABLE error, the bell panel can still settle into an empty-queue message."
+        - "Moova direct-widget contract tests fail for expected apply-service requirements."
+        - "Write-surface inventory test fails because ajax/moova_confirm_order.php is not classified as moova_bridge."
+        - "Two direct schema smoke tests fail against minimal fixture schemas due SyncSchemaManager legacy-upgrade column assumptions."
+      missing_evidence:
+        - "No real kody2 save/payment/print/shift-close/table-assignment mutation was submitted; those flows were verified on a disposable clone instead."
+        - "Live Moova accept/create, decline, edit, and cancel E2E passed only under a temporary foreground runtime."
+        - "Live stale-state conflict beyond an expired edit-window guard was not run against the real POS widget."
+      next_recommended_task:
+        - "Ask for permission to switch from audit to fixes, then narrow T007 allowed_files around js/pos_auto_lock.js, migrations/order_fulfillment application strategy, SyncSchemaManager fixture compatibility, Moova LaunchAgent/runtime config, and Moova direct-widget/write-inventory contract alignment."
+
+  - id: T010
+    type: pm
+    assignee: PM
+    status: done
+    objective: "Run live Moova unreachable/degraded-widget recovery checks against the real POS browser surface without editing implementation files."
+    inputs:
+      - "T009 receipt"
+      - "http://127.0.0.1:8010/pos_barcode.php"
+      - "http://127.0.0.1:3001"
+      - "~/Library/LaunchAgents/com.codex.cofe-order-3001.plist"
+    constraints:
+      - "No implementation edits."
+      - "Do not submit POS payments, print jobs, shift close, or destructive DB actions."
+      - "Stop only the Moova LaunchAgent/service for the verification window and restore it afterward."
+      - "Record whether POS stays usable, what the widget shows, and whether service restoration works."
+    expected_output:
+      - "Unreachable service browser evidence."
+      - "Restored persistent service evidence."
+      - "Updated completion audit with any remaining blockers."
+    receipt:
+      result: partial_pass_with_ux_gap
+      completed_at: "2026-05-14T10:59:00Z"
+      note: "docs/goals/posmain-p0-p6-strict-verification/notes/moova-unreachable-widget-2026-05-14.md"
+      commands:
+        - cmd: "Baseline Browser POS widget on persistent degraded Moova service"
+          status: "pass; POS page and local widget loaded, widget idle text showed بانتظار الطلبات"
+        - cmd: "launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.codex.cofe-order-3001.plist"
+          status: "pass; 127.0.0.1:3001 stopped and no listener remained"
+        - cmd: "Reload pos_barcode.php with Moova stopped"
+          status: "partial_pass; POS cashier page stayed usable with no SQL/fatal/PHP error text and local widget iframe still loaded"
+        - cmd: "Logged-in browser fetch /moova_pos_proxy.php?...pending and ...widget/bootstrap while Moova stopped"
+          status: "pass; both returned HTTP 502 with code MOOVA_UNREACHABLE, retryable=true, and connection-refused details"
+        - cmd: "Browser console observation while Moova stopped"
+          status: "pass; widget emitted cofe.widget.error with Arabic unreachable-service message and code MOOVA_UNREACHABLE"
+        - cmd: "Click widget bell while Moova stopped"
+          status: "ux_gap; visible panel can still show empty-queue copy instead of a persistent unreachable warning"
+        - cmd: "launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.codex.cofe-order-3001.plist"
+          status: "restored; port 3001 listened again, proxy pending/bootstrap returned HTTP 200, but /readyz remained {ok:false,database:true,redis:false}"
+      blockers:
+        - "Persistent Moova service health remains degraded with redis=false."
+        - "Visible widget offline state is not strong enough for a clean readiness claim."
+        - "Prior JS, migration, contract, and schema test blockers still remain."
+      compatibility_notes:
+        - "No implementation files or tests were edited."
+        - "No POS payment, print, shift close, table assignment, or destructive DB action was submitted."
+        - "The LaunchAgent was restored after the unreachable-service test."
+
+  - id: T011
+    type: pm
+    assignee: PM
+    status: done
+    objective: "Run previously safety-gated POS GUI write flows against a disposable database clone instead of the live kody2 baseline."
+    inputs:
+      - "T004 receipt"
+      - "docker-compose.posmain-test.yml"
+      - "http://127.0.0.1:8010"
+      - "MariaDB container posmain-mysql"
+    constraints:
+      - "No implementation edits."
+      - "Do not mutate the normal kody2 baseline."
+      - "Use a disposable cloned schema and temporary POS server on a separate port."
+      - "Clean up temporary server and schema after capturing evidence."
+    expected_output:
+      - "Disposable GUI save-order evidence."
+      - "Disposable GUI payment/receipt evidence."
+      - "Disposable GUI table-save evidence."
+      - "Disposable GUI shift-close evidence."
+      - "Cleanup evidence and any new findings."
+    receipt:
+      result: pass_with_receipt_voucher_classified
+      completed_at: "2026-05-14T11:12:32Z"
+      note: "docs/goals/posmain-p0-p6-strict-verification/notes/pos-disposable-gui-write-2026-05-14.md"
+      commands:
+        - cmd: "Clone kody2 into posmain_gui_write_20260514140156 and run posmain-php-disposable on 127.0.0.1:8011"
+          status: "pass; temporary POS server returned HTTP 200 and used the disposable DB via POSMAIN_DB_NAME"
+        - cmd: "Browser login/unlock on 127.0.0.1:8011 as omar/1234 and POS code 1234"
+          status: "pass; disposable POS cashier UI loaded"
+        - cmd: "Browser add TEMP TEST مياه and click حفظ الطلب"
+          status: "pass; disposable ot_head row 471 and fat_details row 559 were created as unpaid draft takeaway"
+        - cmd: "Browser add TEMP TEST شاي, click دفع, submit cash payment with دفع وطباعة"
+          status: "pass; disposable ot_head row 472 became paid/completed, fat_details row 560 created, and print/receipt.php?id=472 rendered receipt text without fatal errors"
+        - cmd: "Browser table mode, choose طاولة 5, add TEMP TEST كرواسون, click حفظ الطلب"
+          status: "pass; disposable ot_head row 474 has order_type=table/table_id=5, fat_details row 561 created, and table 5 had table_case=1"
+        - cmd: "Browser إغلاق الشيفت submit on disposable server"
+          status: "pass; disposable closed_orders row 8 created for omar with total_sales=85 and closed_sessions.php showed Arabic success message"
+        - cmd: "Cleanup disposable container and schema"
+          status: "pass; removed posmain-php-disposable, dropped posmain_gui_write_20260514140156, normal 8010 baseline still HTTP 200"
+        - cmd: "POSMAIN_TEST_MYSQL_HOST=127.0.0.1 POSMAIN_TEST_MYSQL_PORT=3307 POSMAIN_TEST_MYSQL_USER=root POSMAIN_TEST_MYSQL_PASS='' php tests/sync/pos_takeaway_order_service_test.php"
+          status: "pass; targeted service test asserts paid POS order plus pro_tybe=1 receipt voucher linked through op2, with no duplicate pro_tybe=9 POS order on replay"
+        - cmd: "Read-only kody2 schema/default and recent ot_head receipt-voucher classification queries"
+          status: "pass; ot_head defaults match the empty-looking row shape and current rows show pro_tybe=1 receipt vouchers linked to paid orders by op2"
+      findings:
+        - "Classified: the extra empty-looking ot_head row shape is expected for cash receipt vouchers inserted by PosOrderMutationService::insertTakeawayReceipt, not a duplicate POS order."
+      blockers:
+        - "This improves GUI write-flow evidence but does not fix existing JS syntax, migration, Moova persistent health, Moova contract/write-inventory, or schema smoke blockers."
+      compatibility_notes:
+        - "No implementation files or tests were edited."
+        - "The normal kody2 database was not targeted by the disposable GUI server."
+        - "Temporary DB/server artifacts were cleaned up after evidence capture."
+
+  - id: T012
+    type: pm
+    assignee: PM
+    status: done
+    objective: "Refresh the completion audit against the actual current state after T011 receipt-voucher classification."
+    inputs:
+      - "docs/goals/posmain-p0-p6-strict-verification/goal.md"
+      - "docs/goals/posmain-p0-p6-strict-verification/state.yaml"
+      - "docs/goals/posmain-p0-p6-strict-verification/notes/completion-audit-2026-05-14.md"
+      - "Current local POS and Moova runtimes"
+    constraints:
+      - "No implementation edits."
+      - "Do not mark the goal complete unless all prompt requirements are covered by fresh evidence."
+      - "Do not mutate the normal kody2 baseline."
+    expected_output:
+      - "Prompt-to-artifact checklist."
+      - "Fresh current blocker evidence."
+      - "Updated completion decision."
+    receipt:
+      result: blocked_not_complete
+      completed_at: "2026-05-14T11:15:03Z"
+      note: "docs/goals/posmain-p0-p6-strict-verification/notes/completion-audit-2026-05-14.md"
+      prompt_to_artifact_summary:
+        - "Goal Maker board exists and checker passes."
+        - "Script, GUI, Moova, unreachable-mode, and disposable write-flow verification receipts exist."
+        - "The request for no-bug readiness is not satisfied because current blockers reproduce."
+        - "No app-code edits were made during the refreshed audit."
+      commands:
+        - cmd: "node /Users/ab.mansour1agmail.com/.codex/skills/goal-maker/scripts/check-goal-state.mjs docs/goals/posmain-p0-p6-strict-verification/state.yaml"
+          status: "pass; goal_status=blocked, active_task=null, task_count=12 before adding T012"
+        - cmd: "curl -i http://127.0.0.1:3001/readyz and curl http://127.0.0.1:8010/index.php"
+          status: "blocked/pass; Moova readyz HTTP 503 redis=false, POS HTTP 200"
+        - cmd: "node --check js/pos_auto_lock.js"
+          status: "fail; SyntaxError unexpected token } at line 116"
+        - cmd: "POSMAIN_DB_HOST=127.0.0.1 POSMAIN_DB_PORT=3307 POSMAIN_DB_USER=root POSMAIN_DB_PASS='' POSMAIN_DB_NAME=kody2 php tools/run_migrations.php --dry-run"
+          status: "blocked; pending order_fulfillment schema change remains"
+        - cmd: "php /tmp/posmain-phpunit-9.phar --bootstrap /tmp/posmain-phpunit-autoload.php --colors=never tests/sync/moova_widget_bridge_contract_test.php"
+          status: "fail; 3 tests, 15 assertions, 2 failures for missing direct apply-service require statements"
+        - cmd: "php /tmp/posmain-phpunit-9.phar --bootstrap /tmp/posmain-phpunit-autoload.php --colors=never tests/sync/write_surface_inventory_test.php"
+          status: "fail; 2 tests, 314 assertions, 1 failure for ajax/moova_confirm_order.php not classified as moova_bridge"
+        - cmd: "POSMAIN_TEST_MYSQL_HOST=127.0.0.1 POSMAIN_TEST_MYSQL_PORT=3307 POSMAIN_TEST_MYSQL_USER=root POSMAIN_TEST_MYSQL_PASS='' php tests/sync/table_order_counter_smoke_test.php"
+          status: "fail; SyncSchemaManager assumes ot_head.table_id exists in minimal fixture"
+        - cmd: "POSMAIN_TEST_MYSQL_HOST=127.0.0.1 POSMAIN_TEST_MYSQL_PORT=3307 POSMAIN_TEST_MYSQL_USER=root POSMAIN_TEST_MYSQL_PASS='' php tests/sync/uuid_backfill_smoke_test.php"
+          status: "fail; SyncSchemaManager assumes tables.table_case exists in minimal fixture"
+        - cmd: "docker exec posmain-mysql mariadb -uroot -N -e \"SHOW DATABASES LIKE 'posmain_takeaway_service_%'; SHOW DATABASES LIKE 'posmain_gui_write_%'; SHOW DATABASES LIKE 'posmain_strict_p06_%';\""
+          status: "pass; no disposable schemas remained"
+      completion_decision:
+        - "Not achieved: POSMAIN P0-P6 cannot be certified complete or bug-free from the current evidence."
+        - "Next progress requires an explicit fix tranche or owner approval for migration/runtime changes."
+
+  - id: T013
+    type: pm
+    assignee: PM
+    status: done
+    objective: "Prepare a major-change safety precheck and bounded fix-tranche packet for the remaining blockers without editing implementation files."
+    inputs:
+      - "T012 receipt"
+      - "docs/goals/posmain-p0-p6-strict-verification/notes/fix-scope-2026-05-14.md"
+      - "js/pos_auto_lock.js"
+      - "classes/Sync/SchemaManager.php"
+      - "ajax/moova_confirm_order.php"
+      - "ajax/moova_change_order.php"
+      - "tools/audit_write_paths.php"
+      - "~/Library/LaunchAgents/com.codex.cofe-order-3001.plist"
+      - "/Users/Shared/cofe_order_runtime/.env"
+      - "/Users/Shared/cofe_order_runtime/.env.local"
+    constraints:
+      - "No implementation edits."
+      - "Follow AGENTS.md major-change safety framing."
+      - "Keep ambiguous fix decisions explicit instead of silently choosing a direction."
+    expected_output:
+      - "Impacted surfaces for every remaining blocker."
+      - "Compatibility risks."
+      - "Smallest safe candidate fix or operation."
+      - "Verification commands for each tranche."
+    receipt:
+      result: done
+      completed_at: "2026-05-14T11:17:27Z"
+      note: "docs/goals/posmain-p0-p6-strict-verification/notes/fix-scope-2026-05-14.md"
+      summary: "Prepared a documentation-only pre-change packet for the six remaining blockers: JS syntax, Moova direct-widget contract, write-surface inventory, minimal fixture schema smoke, pending order_fulfillment migration, and persistent Moova runtime health."
+      key_findings:
+        - "The js/pos_auto_lock.js syntax issue is narrowly scoped to a duplicate trailing IIFE terminator; verification still needs browser POS lock smoke if fixed."
+        - "Moova endpoint contract failures need an explicit decision: endpoints now call PosOrderMutationService, which itself delegates to MoovaNewOrderApplyService and MoovaChangeOrderApplyService, so the failing source-contract test may be stale in where it expects the apply-service call."
+        - "The write-surface audit is likely aligned with the same facade/delegation decision because delegated-surface discovery still keys on older endpoint-level Moova*ApplyService strings."
+        - "Schema smoke failures are caused by phase4 legacy ADD COLUMN statements using AFTER anchors that are absent in minimal fixture schemas."
+        - "The order_fulfillment migration is additive but still a current-DB mutation requiring backup/approval."
+        - "Persistent Moova health is explained by LaunchAgent missing NODE_ENV, causing .env.local NODE_ENV=test to override and disable Redis while readyz still requires Redis."
+      verification_gates:
+        - "node --check js/pos_auto_lock.js plus first-party JS sweep and browser POS lock smoke."
+        - "Moova widget bridge contract PHPUnit file plus live Moova direct-widget E2E."
+        - "php tools/audit_write_paths.php --json plus write_surface_inventory_test.php."
+        - "table_order_counter_smoke_test.php, uuid_backfill_smoke_test.php, and full standalone direct PHP sync loop."
+        - "backup_database.php, run_migrations.php --apply with backup, then dry-run expecting zero pending changes."
+        - "LaunchAgent restart, /readyz ok=true/database=true/redis=true, moova_local_topology_check.php, then live Moova E2E and unreachable/recovery."
+      compatibility_notes:
+        - "No app implementation files or tests were edited."
+        - "The packet explicitly preserves dirty-worktree boundaries and asks for approval before code, test, migration, or LaunchAgent changes."
+
+  - id: T014
+    type: pm
+    assignee: PM
+    status: done
+    objective: "Create a phase-by-phase readiness matrix that maps prior P0-P6 board completion to current strict audit evidence and blockers."
+    inputs:
+      - "docs/goals/posmain-phase-0-production-readiness/state.yaml"
+      - "docs/goals/posmain-phase-1-production-foundation/state.yaml"
+      - "docs/goals/posmain-phase-2-pos-state/state.yaml"
+      - "docs/goals/posmain-phase-3-security-hardening/state.yaml"
+      - "docs/goals/posmain-phase-3-security-migrations-apply/state.yaml"
+      - "docs/goals/posmain-phase-4-midscale-product/state.yaml"
+      - "docs/goals/posmain-phase-5-moova-reliability/state.yaml"
+      - "docs/goals/posmain-phase-6-pilot-qa/state.yaml"
+      - "T003 through T013 receipts"
+    constraints:
+      - "No implementation edits."
+      - "Do not let older phase-board done status override fresh strict-run blockers."
+      - "Keep phase ownership and current readiness separate."
+    expected_output:
+      - "Phase-by-phase matrix."
+      - "Current blocker ownership by phase."
+      - "Clear strict readiness verdict."
+    receipt:
+      result: done
+      completed_at: "2026-05-14T11:19:18Z"
+      note: "docs/goals/posmain-p0-p6-strict-verification/notes/phase-readiness-matrix-2026-05-14.md"
+      summary: "Created a phase readiness matrix that distinguishes prior phase-board completion from current strict certification. P0/P1/P3 have no fresh phase-specific red blockers from this audit, while P2 needs Moova contract alignment, P4 has JS/schema-fixture blockers, P5 has the heaviest Moova/runtime/migration/contract blockers, and P6 remains blocked for pilot readiness until those are cleared."
+      phase_verdicts:
+        - "P0: prior board complete; no independent fresh blocker, but whole-system certification remains blocked."
+        - "P1: prior board complete; migration tooling works, but current drift is Phase 5 order_fulfillment."
+        - "P2: partially verified by disposable GUI/payment and service tests; blocked by Moova contract-alignment decision."
+        - "P3: prior board and migration apply complete; no fresh Phase 3-specific blocker reproduced, but live kody2 write security was not exhaustively adversarially retested."
+        - "P4: blocked by legacy schema fixture compatibility and POS-adjacent JS syntax."
+        - "P5: blocked by persistent Moova redis=false, pending order_fulfillment, Moova contract/write-inventory failures, and widget offline UX gap."
+        - "P6: blocked for pilot readiness because Phase 5/current-state blockers remain and full corrected-state E2E has not been rerun."
+      compatibility_notes:
+        - "No implementation files or tests were edited."
+        - "This note improves audit traceability but does not change the blocked completion decision."
+
+  - id: T015
+    type: pm
+    assignee: PM
+    status: done
+    objective: "Create a post-fix rerun checklist defining the minimum evidence required to change the strict verdict from blocked to pass."
+    inputs:
+      - "T012 completion audit"
+      - "T013 fix-scope safety packet"
+      - "T014 phase readiness matrix"
+      - "Current known blockers"
+    constraints:
+      - "No implementation edits."
+      - "Do not imply current blockers are fixed."
+      - "Separate current-DB mutation gates from non-mutating checks."
+    expected_output:
+      - "Ordered rerun gates."
+      - "Exact commands where possible."
+      - "Pass criteria for script, GUI, migration, and Moova checks."
+    receipt:
+      result: done
+      completed_at: "2026-05-14T11:21:07Z"
+      note: "docs/goals/posmain-p0-p6-strict-verification/notes/post-fix-rerun-checklist-2026-05-14.md"
+      summary: "Created a post-fix rerun checklist with seven gates: board/runtime preflight, syntax/static sweeps, focused reproduced-failure tests, migration readiness, broader script regression, GUI browser regression, and live Moova E2E."
+      exit_criteria:
+        - "All known blockers in state.yaml must have direct green rerun evidence."
+        - "Script, GUI, migration, and Moova gates must pass."
+        - "Remaining production-only work must be documented as external evidence, not silently ignored."
+        - "The board checker must pass after receipts are updated."
+      compatibility_notes:
+        - "No implementation files or tests were edited."
+        - "The checklist preserves explicit owner approval for current-DB migration and live runtime changes."
+
+  - id: T016
+    type: pm
+    assignee: PM
+    status: done
+    objective: "Record the stop-rule owner-input gate now that remaining blockers require fixes, migrations, or runtime changes beyond audit-only verification."
+    inputs:
+      - "docs/goals/posmain-p0-p6-strict-verification/goal.md"
+      - "T003 through T015 receipts"
+      - "Fresh board/POS/Moova probes"
+    constraints:
+      - "No implementation edits."
+      - "Do not mark the active goal complete."
+      - "State exactly what owner input is needed next."
+    expected_output:
+      - "Stop-rule receipt."
+      - "Prompt-to-artifact coverage summary."
+      - "Owner input options."
+    receipt:
+      result: blocked_owner_input_required
+      completed_at: "2026-05-14T11:22:33Z"
+      note: "docs/goals/posmain-p0-p6-strict-verification/notes/stop-rule-owner-input-2026-05-14.md"
+      summary: "Audit-only work is exhausted. The board is valid and the POS is reachable, but persistent Moova remains degraded and the remaining blockers require implementation edits, current-DB migration approval, runtime LaunchAgent/config changes, or a source-contract decision."
+      fresh_probe:
+        - "Board checker passed with goal_status=blocked, active_task=null, task_count=16 before T016."
+        - "POS HTTP returned 200."
+        - "Persistent Moova /readyz returned HTTP 503 with database=true and redis=false."
+        - "Dirty overlapping files remain: ajax/moova_confirm_order.php, ajax/moova_change_order.php, classes/Sync/SchemaManager.php."
+      owner_input_options:
+        - "Approve a bounded fix tranche for documented blockers."
+        - "Approve only non-code runtime/migration operations such as Moova LaunchAgent repair or order_fulfillment migration with backup."
+        - "Keep the project in blocked audit state and defer fixes."
+      completion_decision:
+        - "Do not call update_goal: the strict verification objective is not achieved."
+        - "Goal remains blocked pending owner approval."
+
+  - id: T017
+    type: pm
+    assignee: PM
+    status: done
+    objective: "Create an audit artifact index so the completed verification receipts can be navigated without repeating tests."
+    inputs:
+      - "docs/goals/posmain-p0-p6-strict-verification/goal.md"
+      - "docs/goals/posmain-p0-p6-strict-verification/state.yaml"
+      - "docs/goals/posmain-p0-p6-strict-verification/notes/"
+    constraints:
+      - "No implementation edits."
+      - "Do not change the blocked verdict."
+      - "Do not rerun broad tests just to restate existing evidence."
+    expected_output:
+      - "Artifact index mapping each note to the question it answers."
+      - "Current verdict restated."
+    receipt:
+      result: done
+      completed_at: "2026-05-14T11:26:23Z"
+      note: "docs/goals/posmain-p0-p6-strict-verification/notes/audit-artifact-index-2026-05-14.md"
+      summary: "Created a compact artifact index covering the charter, board, completion audit, live Moova E2E notes, unreachable-widget note, disposable GUI write note, fix-scope packet, phase readiness matrix, post-fix rerun checklist, and stop-rule owner-input gate."
+      verdict:
+        - "The audit package is complete enough to support a clear blocked decision."
+        - "The audit package is not evidence that P0-P6 is complete or bug-free."
+      compatibility_notes:
+        - "No implementation files or tests were edited."
+        - "No broad verification was repeated."
+
+  - id: T018
+    type: pm
+    assignee: PM
+    status: done
+    objective: "Classify the reachability and GUI blast radius of the js/pos_auto_lock.js syntax failure without editing code."
+    inputs:
+      - "js/pos_auto_lock.js"
+      - "pos_barcode.php"
+      - "includes/pos_content.php"
+      - "elements/"
+      - "Current POS HTTP runtime"
+    constraints:
+      - "Read-only."
+      - "Do not reclassify a failing syntax check as pass."
+      - "Separate script-suite failure from observed live GUI impact."
+    expected_output:
+      - "Script reference search evidence."
+      - "Current GUI blast-radius classification."
+      - "Follow-up decision options."
+    receipt:
+      result: done
+      completed_at: "2026-05-14T11:27:28Z"
+      note: "docs/goals/posmain-p0-p6-strict-verification/notes/pos-auto-lock-reachability-2026-05-14.md"
+      summary: "Classified js/pos_auto_lock.js as a real first-party JS syntax blocker, but current source search did not find it loaded by pos_barcode.php/includes/pos_content.php or the POS elements. This lowers the observed live GUI blast radius while preserving the strict script-suite blocker."
+      commands:
+        - cmd: "rg -n \"pos_auto_lock|Auto-lock|posPasswordOverlay|pos_authenticated|posPasswordInput|posPasswordError\" . -g '!backup/**' -g '!docs/goals/posmain-p0-p6-strict-verification/**' -g '!*.sql'"
+          status: "pass; pos_auto_lock and expected overlay IDs only appeared in js/pos_auto_lock.js, while PHP session POS auth appeared in POS/session guard files"
+        - cmd: "rg -n \"<script|pos_auto_lock|pos_password|posPasswordOverlay|sessionStorage\" pos_barcode.php includes/pos_content.php elements -S"
+          status: "pass; current POS scripts include pos_config_loader, pos_offline_adapter, and pos_barcode but not pos_auto_lock"
+        - cmd: "curl -sS http://127.0.0.1:8010/pos_barcode.php | rg -n \"pos_auto_lock|posPasswordOverlay|pos_authenticated|<script\""
+          status: "no matches in unauthenticated response"
+      classification:
+        - "Still blocked for strict first-party JS syntax."
+        - "Not proven to crash the currently loaded POS GUI."
+        - "If intended as active POS lock behavior, also a wiring/coverage gap."
+      compatibility_notes:
+        - "No implementation files or tests were edited."
+        - "This refines risk classification but does not change the overall blocked verdict."
+
+  - id: T019
+    type: pm
+    assignee: PM
+    status: done
+    objective: "Root-cause the write-surface inventory failure without editing the audit tool or tests."
+    inputs:
+      - "tools/audit_write_paths.php"
+      - "tests/sync/write_surface_inventory_test.php"
+      - "Current audit_write_paths --json output"
+      - "ajax/moova_confirm_order.php"
+      - "ajax/moova_change_order.php"
+    constraints:
+      - "Read-only."
+      - "Do not modify the audit tool or tests."
+      - "Separate absence from audit output from category mismatch."
+    expected_output:
+      - "Root cause of write-surface test failure."
+      - "Suggested alignment point for a future fix tranche."
+    receipt:
+      result: done
+      completed_at: "2026-05-14T11:28:47Z"
+      note: "docs/goals/posmain-p0-p6-strict-verification/notes/write-surface-root-cause-2026-05-14.md"
+      summary: "Confirmed ajax/moova_confirm_order.php and ajax/moova_change_order.php are absent from audit_write_paths output under the new PosOrderMutationService facade path. The delegated-write detector only recognizes old endpoint-level MoovaNewOrderApplyService/MoovaChangeOrderApplyService strings, so classifySurface never gets a chance to mark these endpoints as moova_bridge."
+      commands:
+        - cmd: "php tools/audit_write_paths.php --json | php -r '...print Moova-related surfaces...'"
+          status: "pass; output included ajax/cofe_create_order.php, PosOrderMutationService, Moova apply services, and Moova tests, but not ajax/moova_confirm_order.php or ajax/moova_change_order.php"
+        - cmd: "sed -n '1,230p' tools/audit_write_paths.php"
+          status: "pass; findDelegatedWrites only looks for old endpoint-level Moova*ApplyService strings"
+        - cmd: "sed -n '1,105p' tests/sync/write_surface_inventory_test.php"
+          status: "pass; test expects Moova endpoints to be present and have DELEGATE operation/category"
+      classification:
+        - "Stale delegated-write discovery rule tied to the facade-vs-direct-service decision."
+        - "The failure is endpoint absence from audit output, not just a category mismatch."
+      compatibility_notes:
+        - "No implementation files or tests were edited."
+        - "This refines fix scope but does not change the blocked verdict."
+
+  - id: T020
+    type: pm
+    assignee: PM
+    status: done
+    objective: "Root-cause the Moova widget bridge contract failure against current facade code and prior Phase 2 receipts."
+    inputs:
+      - "tests/sync/moova_widget_bridge_contract_test.php"
+      - "ajax/moova_confirm_order.php"
+      - "ajax/moova_change_order.php"
+      - "classes/Pos/Service/PosOrderMutationService.php"
+      - "classes/Moova/MoovaNewOrderApplyService.php"
+      - "classes/Moova/MoovaChangeOrderApplyService.php"
+      - "elements/pos/cofe_widget.php"
+      - "docs/goals/posmain-phase-2-pos-state/state.yaml"
+    constraints:
+      - "Read-only."
+      - "Do not modify source or tests."
+      - "Separate stale source-contract assertions from live behavior proof."
+    expected_output:
+      - "Moova contract root-cause classification."
+      - "Recommended contract assertions if facade path is canonical."
+    receipt:
+      result: done
+      completed_at: "2026-05-14T11:29:51Z"
+      note: "docs/goals/posmain-p0-p6-strict-verification/notes/moova-contract-root-cause-2026-05-14.md"
+      summary: "Confirmed the Moova widget bridge contract failure is stale with respect to the intentional PosOrderMutationService facade architecture recorded in Phase 2. Current endpoints call the facade with response_mode=direct; the facade delegates to MoovaNewOrderApplyService/MoovaChangeOrderApplyService; the apply services still stamp direct-widget metadata through MoovaApplyResponse."
+      commands:
+        - cmd: "sed -n '1,70p' tests/sync/moova_widget_bridge_contract_test.php && sed -n '1,210p' classes/Pos/Service/PosOrderMutationService.php"
+          status: "pass; test expects endpoint-level Moova*ApplyService strings, while facade requires and delegates to those services"
+        - cmd: "sed -n '1,165p' ajax/moova_confirm_order.php && sed -n '1,215p' ajax/moova_change_order.php"
+          status: "pass; endpoints use MoovaLocalIngestService plus PosOrderMutationService and pass response_mode=direct"
+        - cmd: "sed -n '1930,1985p' docs/goals/posmain-phase-2-pos-state/state.yaml && rg -n \"PosOrderMutationService|MoovaNewOrderApplyService|MoovaChangeOrderApplyService|response_mode|syncStatus|syncEventType\" classes/Moova/MoovaNewOrderApplyService.php classes/Moova/MoovaChangeOrderApplyService.php elements/pos/cofe_widget.php"
+          status: "pass; Phase 2 receipt documents facade as intentional and apply/widget sources still expose direct metadata paths"
+      classification:
+        - "Valid test failure, but stale source-level expectation rather than direct proof of missing live metadata stamping."
+        - "Strict verdict remains blocked until the contract is updated or architecture is intentionally changed and reverified."
+      compatibility_notes:
+        - "No implementation files or tests were edited."
+        - "This refines fix scope but does not change the blocked verdict."
+
+  - id: T021
+    type: pm
+    assignee: PM
+    status: done
+    objective: "Root-cause the minimal schema fixture smoke failures without editing SchemaManager or tests."
+    inputs:
+      - "tests/sync/table_order_counter_smoke_test.php"
+      - "tests/sync/uuid_backfill_smoke_test.php"
+      - "classes/Sync/SchemaManager.php"
+      - "Fresh reruns of both smoke tests"
+    constraints:
+      - "Read-only."
+      - "Do not modify SchemaManager or fixtures."
+      - "Separate fixture prerequisites from migration-helper compatibility."
+    expected_output:
+      - "Root cause of each fixture failure."
+      - "Safe fix direction."
+      - "Verification commands after fix."
+    receipt:
+      result: done
+      completed_at: "2026-05-14T11:31:06Z"
+      note: "docs/goals/posmain-p0-p6-strict-verification/notes/schema-fixture-root-cause-2026-05-14.md"
+      summary: "Confirmed both schema smoke failures come from Phase 4 legacy ADD COLUMN statements using AFTER anchors that are absent in intentionally minimal disposable fixture tables: ot_head.table_id for guest_count and tables.table_case for area_id."
+      commands:
+        - cmd: "sed -n '1,120p' tests/sync/table_order_counter_smoke_test.php && sed -n '1,115p' tests/sync/uuid_backfill_smoke_test.php"
+          status: "pass; table counter fixture creates ot_head without table_id, uuid fixture creates tables with only id"
+        - cmd: "sed -n '1,90p' classes/Sync/SchemaManager.php && sed -n '463,535p' classes/Sync/SchemaManager.php && rg -n \"phase4LegacyTargets|table_id|table_case|guest_count|area_id|AFTER\" classes/Sync/SchemaManager.php"
+          status: "pass; phase4 legacy targets add guest_count AFTER table_id and area_id AFTER table_case without checking anchor presence"
+        - cmd: "POSMAIN_TEST_MYSQL_HOST=127.0.0.1 POSMAIN_TEST_MYSQL_PORT=3307 POSMAIN_TEST_MYSQL_USER=root POSMAIN_TEST_MYSQL_PASS='' php tests/sync/table_order_counter_smoke_test.php; POSMAIN_TEST_MYSQL_HOST=127.0.0.1 POSMAIN_TEST_MYSQL_PORT=3307 POSMAIN_TEST_MYSQL_USER=root POSMAIN_TEST_MYSQL_PASS='' php tests/sync/uuid_backfill_smoke_test.php"
+          status: "fail; reproduced Unknown column table_id and Unknown column table_case in SyncSchemaManager::apply"
+      classification:
+        - "Migration-helper compatibility issue with reduced/minimal schemas."
+        - "Preferred fix direction is anchor-aware ADD COLUMN generation rather than broad fixture expansion, unless full legacy anchors are declared as prerequisites."
+      compatibility_notes:
+        - "No implementation files or tests were edited."
+        - "This refines fix scope but does not change the blocked verdict."
+
+  - id: T022
+    type: pm
+    assignee: PM
+    status: done
+    objective: "Root-cause persistent Moova readyz redis=false without changing runtime configuration."
+    inputs:
+      - "~/Library/LaunchAgents/com.codex.cofe-order-3001.plist"
+      - "/Users/Shared/cofe_order_runtime/.env"
+      - "/Users/Shared/cofe_order_runtime/.env.local"
+      - "/Users/Shared/cofe_order_runtime/config/index.js"
+      - "/Users/Shared/cofe_order_runtime/lib/redis.js"
+      - "/Users/Shared/cofe_order_runtime/server.js"
+      - "cofe_redis container"
+      - "http://127.0.0.1:3001/readyz"
+    constraints:
+      - "Read-only."
+      - "Do not edit LaunchAgent or env files."
+      - "Do not restart services."
+      - "Do not expose unrelated secrets."
+    expected_output:
+      - "Runtime root cause for persistent redis=false."
+      - "Safe fix direction."
+      - "Verification commands after fix."
+    receipt:
+      result: done
+      completed_at: "2026-05-14T11:32:21Z"
+      note: "docs/goals/posmain-p0-p6-strict-verification/notes/moova-persistent-runtime-root-cause-2026-05-14.md"
+      summary: "Confirmed Redis itself is reachable, but the persistent LaunchAgent does not set NODE_ENV, allowing .env.local to force NODE_ENV=test. In test mode lib/redis.js disables Redis while /readyz still requires Redis when redisUrl is present, so persistent readyz returns redis=false."
+      commands:
+        - cmd: "launchctl print gui/$(id -u)/com.codex.cofe-order-3001 && plutil -p ~/Library/LaunchAgents/com.codex.cofe-order-3001.plist"
+          status: "pass; LaunchAgent command starts server.js without NODE_ENV"
+        - cmd: "cd /Users/Shared/cofe_order_runtime && rg -n '^(NODE_ENV|REDIS_URL)=' .env .env.local .env.development .env.example"
+          status: "pass; .env has NODE_ENV=production/blank REDIS_URL, .env.local has NODE_ENV=test and REDIS_URL=redis://localhost:6379"
+        - cmd: "cd /Users/Shared/cofe_order_runtime && rg -n \"isProduction|\\.env.local|config\\.env === 'test'|checkRedisConnection|redisRequired|readyz|redisUrl\" config/index.js lib/redis.js server.js"
+          status: "pass; config can load .env.local when NODE_ENV is not pre-set production; lib/redis disables Redis in test; readyz requires Redis when redisUrl is set"
+        - cmd: "docker exec cofe_redis redis-cli ping; curl -sS -i http://127.0.0.1:3001/readyz"
+          status: "blocked; Redis returned PONG, while Moova readyz returned HTTP 503 redis=false"
+      classification:
+        - "Persistent Moova readiness is blocked by runtime environment configuration, not by Redis container availability."
+        - "The successful foreground Moova E2E used NODE_ENV=production and Redis enabled; the persistent LaunchAgent does not preserve that mode."
+      compatibility_notes:
+        - "No implementation files, env files, LaunchAgent files, or tests were edited."
+        - "No service restart was performed."
+        - "This refines fix scope but does not change the blocked verdict."
+
+  - id: T023
+    type: pm
+    assignee: PM
+    status: done
+    objective: "Verify order_fulfillment migration readiness and safety gates without applying the current-database migration."
+    inputs:
+      - "classes/Sync/SchemaManager.php"
+      - "classes/Pos/Service/OrderFulfillmentService.php"
+      - "tools/run_migrations.php"
+      - "tools/backup_database.php"
+      - "tests/sync/moova_delivery_foundation_test.php"
+      - "tests/sync/phase5_order_fulfillment_service_test.php"
+      - "Current kody2 MariaDB schema"
+    constraints:
+      - "Read-only for application code."
+      - "Do not apply migrations without owner approval."
+      - "Do not create a real backup artifact unless the user approves current-DB mutation prep."
+      - "Classify additive schema shape separately from approval requirement."
+    expected_output:
+      - "Current table-existence evidence."
+      - "Migration shape and safety-gate classification."
+      - "Focused fulfillment test results."
+      - "Approval path needed to clear the blocker."
+    receipt:
+      result: done
+      completed_at: "2026-05-14T11:37:00Z"
+      note: "docs/goals/posmain-p0-p6-strict-verification/notes/order-fulfillment-migration-readiness-2026-05-14.md"
+      summary: "Confirmed current kody2 lacks order_fulfillment and migration dry-run still reports exactly one pending additive CREATE TABLE IF NOT EXISTS statement. The fulfillment service is missing-table tolerant by default, focused fulfillment tests pass on disposable/non-current-db paths, and the migration runner refuses bare --apply without a backup file or explicit local no-backup override."
+      commands:
+        - cmd: "POSMAIN_DB_HOST=127.0.0.1 POSMAIN_DB_PORT=3307 POSMAIN_DB_USER=root POSMAIN_DB_PASS='' POSMAIN_DB_NAME=kody2 php tools/run_migrations.php --dry-run"
+          status: "blocked; 1 pending sync schema change remains: order_fulfillment CREATE TABLE"
+        - cmd: "docker exec posmain-mysql mariadb -uroot kody2 -N -e \"SHOW TABLES LIKE 'order_fulfillment';\""
+          status: "pass; no rows, table absent"
+        - cmd: "POSMAIN_DB_HOST=127.0.0.1 POSMAIN_DB_PORT=3307 POSMAIN_DB_USER=root POSMAIN_DB_PASS='' POSMAIN_DB_NAME=kody2 php tools/backup_database.php --output=/tmp/posmain-order-fulfillment-precheck.sql --dry-run"
+          status: "pass; printed masked mysqldump command and created no backup file"
+        - cmd: "POSMAIN_DB_HOST=127.0.0.1 POSMAIN_DB_PORT=3307 POSMAIN_DB_USER=root POSMAIN_DB_PASS='' POSMAIN_DB_NAME=kody2 php tools/run_migrations.php --apply"
+          status: "blocked safely; refused without --backup-file or --confirm-no-backup"
+        - cmd: "php tests/sync/moova_delivery_foundation_test.php"
+          status: "pass; moova-delivery-foundation-ok"
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/phase5_order_fulfillment_service_test.php"
+          status: "pass; phase5-order-fulfillment-service-ok with disposable schema cleaned up"
+        - cmd: "curl -s -o /tmp/posmain-current-http.txt -w '%{http_code}\\n' http://127.0.0.1:8010/index.php"
+          status: "pass; POS HTTP 200"
+        - cmd: "curl -s -o /tmp/moova-current-readyz.json -w '%{http_code}\\n' http://127.0.0.1:3001/readyz && cat /tmp/moova-current-readyz.json"
+          status: "blocked; HTTP 503 {ok:false,database:true,redis:false}"
+      classification:
+        - "The pending migration is additive and narrowly scoped."
+        - "It still requires owner-approved current-DB mutation with a real backup file before strict readiness can clear."
+        - "Leaving it unapplied means Phase 5/6 fulfillment metadata persistence is not DB-ready on current kody2."
+      compatibility_notes:
+        - "No implementation files or tests were edited."
+        - "No migration was applied to kody2."
+        - "No real backup file was created."
+        - "The attempted bare apply confirmed the safety gate and made no schema change."
+
+  - id: T024
+    type: pm
+    assignee: PM
+    status: done
+    objective: "Perform a current completion audit against the user objective and decide whether the goal can be marked achieved."
+    inputs:
+      - "docs/goals/posmain-p0-p6-strict-verification/goal.md"
+      - "docs/goals/posmain-p0-p6-strict-verification/state.yaml"
+      - "Current POS HTTP runtime"
+      - "Current Moova /readyz runtime"
+      - "Known blocker tests and migration probes"
+    constraints:
+      - "Read-only for application code, tests, DB schema, and runtime config."
+      - "Do not mark the goal complete unless every explicit objective requirement is covered by current evidence."
+      - "Treat uncertainty and fresh red blockers as not achieved."
+    expected_output:
+      - "Prompt-to-artifact checklist."
+      - "Fresh current-state blocker evidence."
+      - "Completion decision."
+      - "Owner-input gates."
+    receipt:
+      result: blocked
+      completed_at: "2026-05-14T11:39:01Z"
+      note: "docs/goals/posmain-p0-p6-strict-verification/notes/current-completion-audit-2026-05-14.md"
+      summary: "Performed a current completion audit. Goal Maker receipts are durable and POS HTTP is reachable, but the objective cannot be marked achieved because fresh checks still reproduce JS syntax, pending migration, persistent Moova readiness, Moova contract/write-inventory, and minimal schema-fixture blockers."
+      commands:
+        - cmd: "node /Users/ab.mansour1agmail.com/.codex/skills/goal-maker/scripts/check-goal-state.mjs docs/goals/posmain-p0-p6-strict-verification/state.yaml"
+          status: "pass; board valid, goal_status blocked, active_task null"
+        - cmd: "curl -s -o /tmp/posmain-current-http2.txt -w '%{http_code}\\n' http://127.0.0.1:8010/index.php"
+          status: "pass; POS HTTP 200"
+        - cmd: "curl -s -o /tmp/moova-current-readyz2.json -w '%{http_code}\\n' http://127.0.0.1:3001/readyz && cat /tmp/moova-current-readyz2.json"
+          status: "blocked; HTTP 503 {ok:false,database:true,redis:false}"
+        - cmd: "node --check js/pos_auto_lock.js"
+          status: "fail; SyntaxError Unexpected token } at line 116"
+        - cmd: "POSMAIN_DB_HOST=127.0.0.1 POSMAIN_DB_PORT=3307 POSMAIN_DB_USER=root POSMAIN_DB_PASS='' POSMAIN_DB_NAME=kody2 php tools/run_migrations.php --dry-run"
+          status: "blocked; one pending order_fulfillment schema change remains"
+        - cmd: "php /tmp/posmain-phpunit-9.phar --bootstrap /tmp/posmain-phpunit-autoload.php --colors=never tests/sync/moova_widget_bridge_contract_test.php"
+          status: "fail; 3 tests, 15 assertions, 2 failures"
+        - cmd: "php /tmp/posmain-phpunit-9.phar --bootstrap /tmp/posmain-phpunit-autoload.php --colors=never tests/sync/write_surface_inventory_test.php"
+          status: "fail; 2 tests, 314 assertions, 1 failure"
+        - cmd: "POSMAIN_TEST_MYSQL_HOST=127.0.0.1 POSMAIN_TEST_MYSQL_PORT=3307 POSMAIN_TEST_MYSQL_USER=root POSMAIN_TEST_MYSQL_PASS='' php tests/sync/table_order_counter_smoke_test.php"
+          status: "fail; Unknown column table_id in ot_head"
+        - cmd: "POSMAIN_TEST_MYSQL_HOST=127.0.0.1 POSMAIN_TEST_MYSQL_PORT=3307 POSMAIN_TEST_MYSQL_USER=root POSMAIN_TEST_MYSQL_PASS='' php tests/sync/uuid_backfill_smoke_test.php"
+          status: "fail; Unknown column table_case in tables"
+        - cmd: "php tests/sync/moova_delivery_foundation_test.php"
+          status: "pass; moova-delivery-foundation-ok"
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/phase5_order_fulfillment_service_test.php"
+          status: "pass; phase5-order-fulfillment-service-ok with disposable schema cleaned up"
+      checklist_verdict:
+        - "Durable Goal Maker receipts: satisfied."
+        - "P0-P6 complete and bug-free: not satisfied."
+        - "All script tests green: not satisfied."
+        - "Core POS reachable: satisfied only as a baseline signal."
+        - "Complete GUI/browser certification: not satisfied without post-fix full rerun."
+        - "Moova local E2E readiness: partially satisfied by foreground proof, blocked by persistent readyz."
+        - "Current DB Phase 5/6 readiness: not satisfied while order_fulfillment is pending."
+      owner_input_needed:
+        - "Approve bounded code/test fixes."
+        - "Approve non-code runtime/DB operations with backup."
+        - "Or stop at audit-only with a blocked verdict."
+      compatibility_notes:
+        - "No implementation files or tests were edited."
+        - "No migration was applied."
+        - "No runtime config was changed."
+        - "No destructive database reset was run."
+
+  - id: T025
+    type: pm
+    assignee: PM
+    status: done
+    objective: "Run a fresh non-saving browser smoke for the current core POS GUI and record whether it changes the blocked verdict."
+    inputs:
+      - "http://127.0.0.1:8010/pos_barcode.php"
+      - "Codex in-app browser"
+      - "Current authenticated POS session"
+    constraints:
+      - "Do not edit implementation files or tests."
+      - "Do not click save order, confirm payment, close shift, or apply migrations."
+      - "Treat GUI smoke pass as partial evidence only while script/runtime blockers remain."
+    expected_output:
+      - "Fresh current GUI load evidence."
+      - "Safe cart and payment-modal interaction evidence."
+      - "Console-error check."
+      - "Updated completion classification."
+    receipt:
+      result: done
+      completed_at: "2026-05-14T11:42:52Z"
+      note: "docs/goals/posmain-p0-p6-strict-verification/notes/current-gui-smoke-2026-05-14.md"
+      summary: "Fresh in-app browser smoke loaded pos_barcode.php as cashier omar, added TEMP TEST شاي to the cart, verified plus/minus total recalculation from 18.00 to 36.00 and back, opened and closed the payment modal, and found no console errors for the tab. No save/payment/shift action was submitted, so this strengthens GUI evidence but does not clear the overall blocked verdict."
+      commands:
+        - cmd: "Open http://127.0.0.1:8010/pos_barcode.php in Codex in-app browser"
+          status: "pass; title نظام الإدارة, cashier omar, shift open, cart/payment/catalog visible"
+        - cmd: "Click item TEMP TEST شاي"
+          status: "pass; cart count 1 and total/net 18.00 ج.م"
+        - cmd: "Click cart + then -"
+          status: "pass; total/net changed to 36.00 ج.م then returned to 18.00 ج.م"
+        - cmd: "Click دفع 18.00 ج.م then Close"
+          status: "pass; payment dialog opened with cash/card sections and closed successfully"
+        - cmd: "Read browser console errors for the tab"
+          status: "pass; []"
+      classification:
+        - "Core POS GUI smoke currently passes for non-saving cart/payment-modal interactions."
+        - "Overall P0-P6 strict certification remains blocked by current script, migration, Moova runtime, contract, write-inventory, and schema-smoke failures."
+      compatibility_notes:
+        - "No implementation files or tests were edited."
+        - "No order was saved."
+        - "No payment was confirmed."
+        - "No shift or runtime state was intentionally changed."
+
+  - id: T026
+    type: pm
+    assignee: PM
+    status: done
+    objective: "Run a fresh browser smoke for the embedded Moova widget UI and classify degraded-runtime cashier visibility."
+    inputs:
+      - "http://127.0.0.1:8010/pos_barcode.php"
+      - "moova_pos_widget.php"
+      - "http://127.0.0.1:3001/readyz"
+      - "Fallback browser automation context"
+    constraints:
+      - "Do not edit implementation files, tests, DB schema, or runtime config."
+      - "Do not save orders, confirm payments, close shifts, or apply migrations."
+      - "Separate widget-load evidence from Moova service-readiness evidence."
+    expected_output:
+      - "Widget iframe presence and panel text."
+      - "Console-error check."
+      - "Current Moova health check."
+      - "Cashier-facing degraded-state classification."
+    receipt:
+      result: done
+      completed_at: "2026-05-14T11:46:17Z"
+      note: "docs/goals/posmain-p0-p6-strict-verification/notes/current-moova-widget-gui-smoke-2026-05-14.md"
+      summary: "Fresh browser smoke confirmed the POS Moova widget iframe loads and opens after POS login/unlock, with no captured browser console errors. The panel shows an empty queue message while persistent Moova /readyz is still HTTP 503 redis=false, so the degraded/offline cashier UX gap remains."
+      commands:
+        - cmd: "Fallback browser automation: login as omar, unlock POS with local code, open pos_barcode.php"
+          status: "pass; POS page title نظام الإدارة, cashier omar and shift open visible"
+        - cmd: "Inspect #cofe-pos-widget iframe and moova_pos_widget.php frame"
+          status: "pass; iframe present, title Cofe POS Widget, src moova_pos_widget.php, bell count 1"
+        - cmd: "Open widget bell panel"
+          status: "pass; panel text says لا توجد طلبات بانتظار الموافقة / القائمة فارغة الآن"
+        - cmd: "Read browser console errors during widget smoke"
+          status: "pass; []"
+        - cmd: "curl -s -o /tmp/moova-widget-smoke-readyz.json -w '%{http_code}\\n' http://127.0.0.1:3001/readyz && cat /tmp/moova-widget-smoke-readyz.json"
+          status: "blocked; HTTP 503 {ok:false,database:true,redis:false}"
+      classification:
+        - "Widget embed/panel GUI currently loads."
+        - "Cashier-facing degraded-runtime UX remains weak because the panel presents empty-queue copy while Moova readiness is red."
+        - "Overall strict certification remains blocked."
+      compatibility_notes:
+        - "No implementation files or tests were edited."
+        - "No order was saved."
+        - "No payment was confirmed."
+        - "No shift was closed."
+        - "No migration or runtime config change was made."
+
+  - id: T027
+    type: pm
+    assignee: PM
+    status: done
+    objective: "Run safe focused Phase 6 pilot documentation, demo-seed, and load/concurrency checks without touching current kody2."
+    inputs:
+      - "tests/sync/phase6_pilot_docs_contract_test.php"
+      - "tests/sync/phase6_e2e_docs_contract_test.php"
+      - "tests/sync/phase6_seed_demo_restaurant_test.php"
+      - "tests/sync/phase6_load_concurrency_check_test.php"
+      - "tools/seed_demo_restaurant.php"
+      - "tools/phase6_load_concurrency_check.php"
+    constraints:
+      - "Do not apply Phase 6 demo seed to current kody2."
+      - "Use only disposable test schemas for apply/load checks."
+      - "Verify temporary schema cleanup."
+      - "Do not edit implementation files or tests."
+    expected_output:
+      - "Focused Phase 6 command results."
+      - "Temporary schema cleanup evidence."
+      - "Classification against the overall blocked verdict."
+    receipt:
+      result: done
+      completed_at: "2026-05-14T11:47:49Z"
+      note: "docs/goals/posmain-p0-p6-strict-verification/notes/phase6-focused-readiness-tests-2026-05-14.md"
+      summary: "Safe Phase 6 focused checks passed: pilot docs contract, E2E docs contract, disposable demo seed dry-run/apply/idempotency/reset/production-refusal, and disposable load/concurrency scenarios. Temporary posmain_phase6_* schemas were cleaned up and POS HTTP remained 200. This strengthens Phase 6 evidence but does not clear the overall blocked verdict."
+      commands:
+        - cmd: "php tests/sync/phase6_pilot_docs_contract_test.php"
+          status: "pass; phase6-pilot-docs-contract-ok"
+        - cmd: "php tests/sync/phase6_e2e_docs_contract_test.php"
+          status: "pass; phase6-e2e-docs-contract-ok"
+        - cmd: "POSMAIN_TEST_MYSQL_HOST=127.0.0.1 POSMAIN_TEST_MYSQL_PORT=3307 POSMAIN_TEST_MYSQL_USER=root POSMAIN_TEST_MYSQL_PASS='' php tests/sync/phase6_seed_demo_restaurant_test.php"
+          status: "pass; phase6-seed-demo-restaurant-ok db=posmain_phase6_demo_seed_31914"
+        - cmd: "POSMAIN_TEST_MYSQL_HOST=127.0.0.1 POSMAIN_TEST_MYSQL_PORT=3307 POSMAIN_TEST_MYSQL_USER=root POSMAIN_TEST_MYSQL_PASS='' php tests/sync/phase6_load_concurrency_check_test.php"
+          status: "pass; phase6-load-concurrency-check-ok db=posmain_phase6_load_31915"
+        - cmd: "docker exec posmain-mysql mariadb -uroot -N -e \"SHOW DATABASES LIKE 'posmain_phase6_%';\""
+          status: "pass; no rows, disposable Phase 6 schemas cleaned up"
+        - cmd: "curl -s -o /tmp/posmain-after-phase6-tests-http.txt -w '%{http_code}\\n' http://127.0.0.1:8010/index.php"
+          status: "pass; POS HTTP 200"
+      classification:
+        - "Phase 6 focused readiness artifacts and disposable checks pass."
+        - "This is not a full live pilot certification and does not cover the current Moova/runtime/migration/script blockers."
+        - "Overall strict certification remains blocked."
+      compatibility_notes:
+        - "No implementation files or tests were edited."
+        - "No current kody2 seed or migration was applied."
+        - "No order/payment/shift GUI action was submitted."
+        - "No temporary Phase 6 schema remained after the tests."
+
+  - id: T028
+    type: pm
+    assignee: PM
+    status: done
+    objective: "Run focused Phase 3/security hardening tests with safe runners and record current evidence."
+    inputs:
+      - "tests/sync/phase3_security_helpers_test.php"
+      - "tests/sync/admin_write_security_test.php"
+      - "tests/sync/pos_browser_write_csrf_test.php"
+      - "tests/sync/security_audit_logger_test.php"
+      - "tests/sync/moova_token_visibility_security_test.php"
+      - "tests/sync/security_schema_migration_test.php"
+      - "tests/sync/moova_admin_security_test.php"
+      - "tests/sync/upload_guard_test.php"
+      - "tests/sync/phase3_permission_matrix_test.php"
+      - "tests/sync/upload_route_contract_test.php"
+      - "tests/sync/login_throttle_service_test.php"
+      - "tests/sync/login_security_integration_test.php"
+      - "tests/sync/password_change_security_test.php"
+      - "tests/sync/pos_form_write_security_test.php"
+      - "tests/sync/cloud_auth_service_test.php"
+    constraints:
+      - "Do not edit implementation files or tests."
+      - "Do not apply security migrations to current kody2."
+      - "Use disposable schemas or source-contract tests only."
+      - "Use PHPUnit runner for PHPUnit-style tests."
+    expected_output:
+      - "Focused Phase 3/security command results."
+      - "Temporary schema cleanup evidence."
+      - "Classification against the overall blocked verdict."
+    receipt:
+      result: done
+      completed_at: "2026-05-14T11:49:52Z"
+      note: "docs/goals/posmain-p0-p6-strict-verification/notes/phase3-security-focused-tests-2026-05-14.md"
+      summary: "Focused Phase 3/security hardening tests passed across auth/CSRF helpers, admin and POS write contracts, upload guard/routes, permission matrix, login throttling/security, audit logger, security schema disposable migration, Moova admin/token visibility contracts, password-change security, and cloud auth service PHPUnit coverage. Temporary security/login schemas were cleaned up and POS HTTP remained 200."
+      commands:
+        - cmd: "php tests/sync/phase3_security_helpers_test.php"
+          status: "pass; phase3-security-helpers-ok"
+        - cmd: "php tests/sync/admin_write_security_test.php"
+          status: "pass; admin-write-security-ok"
+        - cmd: "php tests/sync/pos_browser_write_csrf_test.php"
+          status: "pass; pos-browser-write-csrf-ok"
+        - cmd: "POSMAIN_TEST_MYSQL_HOST=127.0.0.1 POSMAIN_TEST_MYSQL_PORT=3307 POSMAIN_TEST_MYSQL_USER=root POSMAIN_TEST_MYSQL_PASS='' php tests/sync/security_audit_logger_test.php"
+          status: "pass; security-audit-logger-ok db=posmain_security_audit_36099"
+        - cmd: "php tests/sync/moova_token_visibility_security_test.php"
+          status: "pass; moova-token-visibility-security-ok"
+        - cmd: "POSMAIN_TEST_MYSQL_HOST=127.0.0.1 POSMAIN_TEST_MYSQL_PORT=3307 POSMAIN_TEST_MYSQL_USER=root POSMAIN_TEST_MYSQL_PASS='' php tests/sync/security_schema_migration_test.php"
+          status: "pass; security-schema-migration-ok db=posmain_security_schema_36103"
+        - cmd: "php tests/sync/moova_admin_security_test.php"
+          status: "pass; moova-admin-security-ok"
+        - cmd: "php tests/sync/upload_guard_test.php"
+          status: "pass; upload-guard-ok"
+        - cmd: "php tests/sync/phase3_permission_matrix_test.php"
+          status: "pass; phase3-permission-matrix-ok"
+        - cmd: "php tests/sync/upload_route_contract_test.php"
+          status: "pass; upload-route-contract-ok"
+        - cmd: "POSMAIN_TEST_MYSQL_HOST=127.0.0.1 POSMAIN_TEST_MYSQL_PORT=3307 POSMAIN_TEST_MYSQL_USER=root POSMAIN_TEST_MYSQL_PASS='' php tests/sync/login_throttle_service_test.php"
+          status: "pass; login-throttle-service-ok db=posmain_login_throttle_37405"
+        - cmd: "php tests/sync/login_security_integration_test.php"
+          status: "pass; login-security-integration-ok"
+        - cmd: "php tests/sync/password_change_security_test.php"
+          status: "pass; password-change-security-ok"
+        - cmd: "php tests/sync/pos_form_write_security_test.php"
+          status: "pass; pos-form-write-security-ok"
+        - cmd: "php /tmp/posmain-phpunit-9.phar --bootstrap /tmp/posmain-phpunit-autoload.php --colors=never tests/sync/cloud_auth_service_test.php"
+          status: "pass; OK (3 tests, 7 assertions)"
+        - cmd: "docker exec posmain-mysql mariadb -uroot -N -e \"SHOW DATABASES LIKE 'posmain_security_%'; SHOW DATABASES LIKE 'posmain_login_throttle_%';\""
+          status: "pass; no rows, disposable security/login schemas cleaned up"
+        - cmd: "curl -s -o /tmp/posmain-after-phase3-tests-http.txt -w '%{http_code}\\n' http://127.0.0.1:8010/index.php"
+          status: "pass; POS HTTP 200"
+      classification:
+        - "Focused Phase 3/security evidence is green."
+        - "The direct php runner error for cloud_auth_service_test.php was a runner mismatch and was cleared with PHPUnit."
+        - "Overall strict certification remains blocked by non-Phase-3 blockers."
+      compatibility_notes:
+        - "No implementation files or tests were edited."
+        - "No current kody2 migration was applied."
+        - "No destructive database reset was run."
+        - "No temporary security/login schema remained after the tests."
+
+  - id: T029
+    type: pm
+    assignee: PM
+    status: done
+    objective: "Run the full focused Phase 4 midscale-product test batch and record current evidence."
+    inputs:
+      - "tests/sync/phase4_*.php"
+      - "classes/Sync/SchemaManager.php"
+      - "Phase 4 service/source-contract tests"
+    constraints:
+      - "Do not edit implementation files or tests."
+      - "Do not apply migrations to current kody2."
+      - "Use only source-contract or disposable-schema test paths."
+      - "Verify temporary schema cleanup."
+    expected_output:
+      - "Focused Phase 4 batch results."
+      - "Temporary schema cleanup evidence."
+      - "Classification against known minimal-schema smoke blockers."
+    receipt:
+      result: done
+      completed_at: "2026-05-14T11:51:47Z"
+      note: "docs/goals/posmain-p0-p6-strict-verification/notes/phase4-focused-midscale-tests-2026-05-14.md"
+      summary: "All 29 focused phase4_*.php tests passed, covering additive schema, cashier controls/line notes, availability, drawer/payment/shift, print, manager approval, table merge/move/transfer, modifiers/nutrition, reports, and endpoint/UI source contracts. Temporary posmain_phase4_* schemas were cleaned up and POS HTTP remained 200. The separate minimal-schema fixture blocker remains because those smoke tests use reduced schemas without expected legacy anchor columns."
+      commands:
+        - cmd: "for f in $(rg --files tests/sync | rg 'phase4_' | sort); do POSMAIN_TEST_MYSQL_HOST=127.0.0.1 POSMAIN_TEST_MYSQL_PORT=3307 POSMAIN_TEST_MYSQL_USER=root POSMAIN_TEST_MYSQL_PASS='' php \"$f\"; done"
+          status: "pass; 29 focused Phase 4 tests passed"
+        - cmd: "docker exec posmain-mysql mariadb -uroot -N -e \"SHOW DATABASES LIKE 'posmain_phase4_%';\""
+          status: "pass; no rows, disposable Phase 4 schemas cleaned up"
+        - cmd: "curl -s -o /tmp/posmain-after-phase4-tests-http.txt -w '%{http_code}\\n' http://127.0.0.1:8010/index.php"
+          status: "pass; POS HTTP 200"
+      passed_outputs:
+        - "phase4-browser-print-audit-service-ok"
+        - "phase4-cashier-advanced-controls-contract-ok"
+        - "phase4-cashier-line-note-contract-ok"
+        - "phase4-decimal-stock-inventory-ok"
+        - "phase4-drawer-payment-integration-ok"
+        - "phase4-drawer-session-service-ok"
+        - "phase4-item-availability-order-blocking-ok"
+        - "phase4-item-availability-service-ok"
+        - "phase4-manager-approval-integration-contract-ok"
+        - "phase4-manager-approval-service-ok"
+        - "phase4-merge-table-endpoint-contract-ok"
+        - "phase4-midscale-schema-migration-ok"
+        - "phase4-modifier-line-note-service-ok disabled"
+        - "phase4-move-table-endpoint-contract-ok"
+        - "phase4-nutrition-profile-service-ok disabled"
+        - "phase4-order-print-payload-service-ok"
+        - "phase4-payment-method-service-ok"
+        - "phase4-print-job-service-ok"
+        - "phase4-print-template-audit-contract-ok"
+        - "phase4-print-template-payload-contract-ok"
+        - "phase4-restaurant-report-contract-service-ok"
+        - "phase4-search-availability-endpoint-contract-ok"
+        - "phase4-shift-drawer-reconciliation-service-ok"
+        - "phase4-table-merge-service-ok"
+        - "phase4-table-merge-ui-contract-ok"
+        - "phase4-table-move-ui-contract-ok"
+        - "phase4-table-transfer-service-ok"
+        - "phase4-z-close-drawer-contract-ok"
+        - "phase4-z-report-drawer-contract-ok"
+      classification:
+        - "Focused Phase 4 representative midscale evidence is green."
+        - "This does not clear the separate minimal-schema fixture smoke blocker."
+        - "Overall strict certification remains blocked by non-green blockers listed in the completion audit."
+      compatibility_notes:
+        - "No implementation files or tests were edited."
+        - "No current kody2 migration was applied."
+        - "No order/payment/shift GUI action was submitted."
+        - "No temporary Phase 4 schema remained after the tests."
+
+  - id: T030
+    type: pm
+    assignee: PM
+    status: done
+    objective: "Run safe focused Phase 5/Moova reliability tests while avoiding current-DB mutation paths."
+    inputs:
+      - "tests/sync/moova_cashier_ux_contract_test.php"
+      - "tests/sync/moova_confirm_change_routing_test.php"
+      - "tests/sync/moova_direct_queued_convergence_test.php"
+      - "tests/sync/moova_mode_config_test.php"
+      - "tests/sync/moova_pos_mutation_convergence_test.php"
+      - "tests/sync/moova_reliability_scenarios_test.php"
+      - "tests/sync/moova_delivery_foundation_test.php"
+      - "tests/sync/phase5_order_fulfillment_service_test.php"
+      - "tests/sync/moova_apply_response_contract_test.php"
+      - "tests/sync/moova_cashier_acceptance_runner_test.php"
+      - "tests/sync/moova_change_order_apply_service_test.php"
+      - "tests/sync/moova_new_order_apply_service_test.php"
+      - "tests/sync/moova_reachability_smoke_contract_test.php"
+      - "tests/sync/moova_widget_reachability_messages_test.php"
+      - "tests/sync/cloud_moova_event_service_test.php"
+      - "tests/sync/moova_branch_event_cursor_test.php"
+      - "tests/sync/moova_inbound_queue_test.php"
+      - "tests/sync/moova_local_ingest_service_test.php"
+    constraints:
+      - "Do not edit implementation files or tests."
+      - "Do not apply migrations to current kody2."
+      - "Run DB-dependent PHPUnit tests only against a disposable database."
+      - "Keep known red topology/widget-bridge blockers separate from the green batch."
+    expected_output:
+      - "Focused Phase 5/Moova command results."
+      - "Temporary schema cleanup evidence."
+      - "Classification against known Moova blockers."
+    receipt:
+      result: done
+      completed_at: "2026-05-14T11:54:55Z"
+      note: "docs/goals/posmain-p0-p6-strict-verification/notes/phase5-focused-moova-tests-2026-05-14.md"
+      summary: "Safe Phase 5/Moova reliability tests passed across mode config, direct/queued convergence, facade mutation convergence, confirm/change routing, cashier UX, scenario docs, delivery foundation, fulfillment service, apply response/new/change apply source contracts, cashier acceptance runner, reachability harness/messages, cloud Moova events, branch cursor, inbound queue, and local ingest service. DB-dependent PHPUnit tests used a disposable schema, cleanup left no posmain_phase5_* schemas, POS stayed HTTP 200, and persistent Moova still returned 503 redis=false."
+      commands:
+        - cmd: "Direct PHP Phase 5/Moova batch excluding known red topology/widget-bridge checks"
+          status: "pass; moova-cashier-ux-contract-ok, moova-confirm-change-routing-ok, moova-direct-queued-convergence-ok, moova-mode-config-ok, moova-pos-mutation-convergence-ok, moova-reliability-scenarios-ok, moova-delivery-foundation-ok, phase5-order-fulfillment-service-ok"
+        - cmd: "php /tmp/posmain-phpunit-9.phar --bootstrap /tmp/posmain-phpunit-autoload.php --colors=never moova apply/acceptance/reachability source-contract batch"
+          status: "pass; OK (5 tests, 18 assertions)"
+        - cmd: "POSMAIN_TEST_MYSQL_DB=posmain_phase5_moova_phpunit_<pid> php /tmp/posmain-phpunit-9.phar --bootstrap /tmp/posmain-phpunit-autoload.php --colors=never cloud_moova_event_service, moova_branch_event_cursor, moova_inbound_queue, moova_local_ingest_service"
+          status: "pass; OK (4 tests, 19 assertions), disposable DB dropped"
+        - cmd: "docker exec posmain-mysql mariadb -uroot -N -e \"SHOW DATABASES LIKE 'posmain_phase5_%'; SHOW DATABASES LIKE 'posmain_phase5_moova_%';\""
+          status: "pass; no rows, disposable Phase 5 schemas cleaned up"
+        - cmd: "curl -s -o /tmp/posmain-after-phase5-tests-http.txt -w '%{http_code}\\n' http://127.0.0.1:8010/index.php"
+          status: "pass; POS HTTP 200"
+        - cmd: "curl -s -o /tmp/moova-after-phase5-tests-readyz.json -w '%{http_code}\\n' http://127.0.0.1:3001/readyz && cat /tmp/moova-after-phase5-tests-readyz.json"
+          status: "blocked; HTTP 503 {ok:false,database:true,redis:false}"
+      intentionally_not_run:
+        - "moova_local_topology_check_test.php: already blocked by persistent redis=false runtime."
+        - "moova_widget_bridge_contract_test.php: already documented stale/red against the facade architecture."
+        - "branch_moova_*_worker_test.php: defaults to current kody2 and calls SyncSchemaManager::apply, so it needs a fixture-safe wrapper or explicit current-DB mutation approval."
+      classification:
+        - "Safe focused Phase 5/Moova reliability evidence is green."
+        - "The persistent local Moova runtime and stale contract blockers remain red."
+        - "Overall strict certification remains blocked."
+      compatibility_notes:
+        - "No implementation files or tests were edited."
+        - "No current kody2 migration was applied."
+        - "No runtime config was changed."
+        - "No temporary Phase 5 schema remained after the tests."
+
+  - id: T031
+    type: pm
+    assignee: PM
+    status: done
+    objective: "Run focused Phase 0-2 production foundation and POS state tests, then classify fixture-dependent failures without mutating current kody2."
+    inputs:
+      - "P0/P1/P2 direct PHP sync tests"
+      - "P0/P2 PHPUnit branch/cloud/POS-state tests"
+      - "Disposable schema-only clone of current kody2"
+    constraints:
+      - "Do not edit implementation files or tests."
+      - "Do not apply migrations to current kody2."
+      - "Use disposable or schema-only clone databases only for mutating checks."
+      - "Drop temporary schemas after the run."
+    expected_output:
+      - "Focused Phase 0-2 command results."
+      - "Fixture-failure classification."
+      - "Temporary schema cleanup evidence."
+      - "Classification against the overall blocked verdict."
+    receipt:
+      result: done
+      completed_at: "2026-05-14T12:08:00Z"
+      note: "docs/goals/posmain-p0-p6-strict-verification/notes/phase0-2-focused-foundation-tests-2026-05-14.md"
+      summary: "Focused Phase 0-2 foundation tests passed across direct PHP POS/accounting/inventory/idempotency/table/takeaway/payment/security-routing contracts and PHPUnit branch/cloud/POS-state contracts. Five PHPUnit files that failed on an empty fixture passed against a schema-only clone of current kody2, so those specific failures are classified as fixture-environment issues. Temporary P0/P2 schemas were cleaned up, POS HTTP remained 200, and persistent Moova still returned 503 redis=false."
+      commands:
+        - cmd: "Direct PHP P0/P1/P2 batch with POSMAIN_TEST_MYSQL_HOST=127.0.0.1 POSMAIN_TEST_MYSQL_PORT=3307 POSMAIN_TEST_MYSQL_USER=root POSMAIN_TEST_MYSQL_PASS=''"
+          status: "pass; 21 direct tests emitted expected *-ok lines, including accounting/inventory, endpoint validation, POS mutation, request idempotency, split payment, table save, takeaway invoice/order, UUID population, production error handling, save-order routing, search injection, and table payment/state contracts"
+        - cmd: "Initial P0/P2 PHPUnit batch against an empty disposable DB"
+          status: "mixed; most branch/cloud/POS-state files passed, but five files failed because the fixture DB lacked legacy tables/columns such as sync_outbox, myitems, ot_head, and tables"
+        - cmd: "Create schema-only clone posmain_p0p2_schema_clone_46892 from kody2 and run tools/run_migrations.php --apply --confirm-no-backup plus --dry-run against the clone"
+          status: "pass; migration tracking ready and dry-run reported 0 pending sync schema changes on the clone"
+        - cmd: "Rerun five failed PHPUnit files against posmain_p0p2_schema_clone_46892"
+          status: "pass; branch_worker_daemon_contract OK (4 tests, 35 assertions), branch_worker_status OK (5 tests, 58 assertions), pos_order_outbox_event_service OK (2 tests, 25 assertions), pos_order_service_counter OK (1 test, 6 assertions), remaining_write_surfaces_outbox OK (2 tests, 56 assertions)"
+        - cmd: "Drop posmain_p0p2_schema_clone_46892 and leftover posmain_p0p2_schema_clone_46837; query temporary DB patterns"
+          status: "pass; no rows for posmain_p0p2_%, posmain_accounting_inventory_%, posmain_takeaway_%, posmain_table_%, posmain_uuid_population_%, posmain_split_payment_%, posmain_order_events_%, posmain_pos_mutation_%"
+        - cmd: "curl -sS -o /tmp/posmain-http-check.html -w '%{http_code} %{url_effective}\\n' http://127.0.0.1:8010/index.php"
+          status: "pass; 200 http://127.0.0.1:8010/index.php"
+        - cmd: "curl -sS -o /tmp/moova-readyz-check.json -w '%{http_code}\\n' http://127.0.0.1:3001/readyz && cat /tmp/moova-readyz-check.json"
+          status: "blocked; HTTP 503 {ok:false,database:true,redis:false}"
+      classification:
+        - "Focused Phase 0-2 foundation evidence is green on a legacy-compatible schema fixture."
+        - "The initial five empty-DB failures are classified as fixture-environment mismatches, not confirmed app defects."
+        - "The separate minimal-schema smoke blocker remains open."
+        - "Overall strict certification remains blocked."
+      compatibility_notes:
+        - "No implementation files or tests were edited."
+        - "No current kody2 migration was applied."
+        - "No GUI write was submitted."
+        - "No temporary P0/P2 schema remained after cleanup."
+
+  - id: T032
+    type: pm
+    assignee: PM
+    status: done
+    objective: "Refresh current blockers and run remaining safe Moova branch worker tests on a disposable full clone."
+    inputs:
+      - "Known red blocker commands"
+      - "tests/sync/branch_moova_ack_worker_test.php"
+      - "tests/sync/branch_moova_poll_worker_test.php"
+      - "tests/sync/branch_moova_apply_worker_test.php"
+      - "Full disposable clone of current kody2"
+    constraints:
+      - "Do not edit implementation files or tests."
+      - "Do not mutate current kody2."
+      - "Use a disposable full clone for worker tests that need POS table/item fixtures."
+      - "Drop temporary clone after the run."
+    expected_output:
+      - "Current blocker command results."
+      - "Moova branch worker test results."
+      - "Current migration-readiness classification."
+      - "Temporary schema cleanup evidence."
+    receipt:
+      result: blocked_with_new_passes
+      completed_at: "2026-05-14T12:16:00Z"
+      note: "docs/goals/posmain-p0-p6-strict-verification/notes/current-blocker-refresh-and-moova-worker-tests-2026-05-14.md"
+      summary: "Refreshed current blockers and ran the remaining safe Moova branch worker tests. Current kody2 now has order_fulfillment and run_migrations --dry-run reports 0 pending sync schema changes, so the previous fulfillment-migration blocker is cleared in current runtime state. Moova branch ack, poll, and apply worker tests passed on a full disposable kody2 clone. Strict certification remains blocked by the JS syntax error, persistent Moova redis=false runtime, stale Moova widget bridge contract, write-surface inventory failure, two minimal-schema smoke failures, the widget degraded/offline UX gap, and missing post-fix full rerun gates."
+      commands:
+        - cmd: "node --check js/pos_auto_lock.js"
+          status: "fail; SyntaxError unexpected token } at js/pos_auto_lock.js:116"
+        - cmd: "POSMAIN_DB_HOST=127.0.0.1 POSMAIN_DB_PORT=3307 POSMAIN_DB_USER=root POSMAIN_DB_PASS='' POSMAIN_DB_NAME=kody2 php tools/run_migrations.php --dry-run"
+          status: "pass; Migration tracking ready, dry-run 0 pending sync schema changes"
+        - cmd: "SHOW TABLES LIKE 'order_fulfillment'; SELECT COUNT(*) FROM order_fulfillment"
+          status: "pass; order_fulfillment exists on current kody2 with 0 rows"
+        - cmd: "curl http://127.0.0.1:3001/readyz"
+          status: "blocked; HTTP 503 {ok:false,database:true,redis:false}"
+        - cmd: "php /tmp/posmain-phpunit-9.phar --bootstrap /tmp/posmain-phpunit-autoload.php --colors=never tests/sync/moova_widget_bridge_contract_test.php"
+          status: "fail; 3 tests, 15 assertions, 2 failures for stale direct-service require_once expectations"
+        - cmd: "php /tmp/posmain-phpunit-9.phar --bootstrap /tmp/posmain-phpunit-autoload.php --colors=never tests/sync/write_surface_inventory_test.php"
+          status: "fail; 2 tests, 314 assertions, 1 failure because ajax/moova_confirm_order.php is not classified as moova_bridge"
+        - cmd: "POSMAIN_TEST_MYSQL_HOST=127.0.0.1 POSMAIN_TEST_MYSQL_PORT=3307 POSMAIN_TEST_MYSQL_USER=root POSMAIN_TEST_MYSQL_PASS='' php tests/sync/table_order_counter_smoke_test.php"
+          status: "fail; minimal fixture lacks ot_head.table_id"
+        - cmd: "POSMAIN_TEST_MYSQL_HOST=127.0.0.1 POSMAIN_TEST_MYSQL_PORT=3307 POSMAIN_TEST_MYSQL_USER=root POSMAIN_TEST_MYSQL_PASS='' php tests/sync/uuid_backfill_smoke_test.php"
+          status: "fail; minimal fixture lacks tables.table_case"
+        - cmd: "Full disposable clone posmain_moova_worker_clone_47869: branch_moova_ack_worker_test.php, branch_moova_poll_worker_test.php, branch_moova_apply_worker_test.php"
+          status: "pass; OK (2 tests, 19 assertions), OK (2 tests, 21 assertions), OK (7 tests, 118 assertions)"
+        - cmd: "Drop posmain_moova_worker_clone_47869 and query clone patterns"
+          status: "pass; no rows for posmain_moova_worker_clone_% or posmain_p0p2_%"
+        - cmd: "curl -sS -o /tmp/posmain-after-moova-worker-tests-http.txt -w '%{http_code} %{url_effective}\\n' http://127.0.0.1:8010/index.php"
+          status: "pass; 200 http://127.0.0.1:8010/index.php"
+      classification:
+        - "Current fulfillment schema readiness is green."
+        - "Remaining safe Moova branch worker tests are green on a full disposable clone."
+        - "Overall strict certification remains blocked by the remaining red commands and GUI/runtime gap."
+      compatibility_notes:
+        - "No implementation files or tests were edited."
+        - "No current kody2 mutation was intentionally performed in this task."
+        - "The disposable full clone was dropped."
+        - "No temporary Moova worker clone remained after cleanup."
+
+  - id: T033
+    type: pm
+    assignee: PM
+    status: done
+    objective: "Perform a fresh completion audit against the goal objective and latest current-state evidence."
+    inputs:
+      - "docs/goals/posmain-p0-p6-strict-verification/goal.md"
+      - "docs/goals/posmain-p0-p6-strict-verification/state.yaml"
+      - "Latest current blocker commands"
+      - "All focused phase receipts T027-T032"
+    constraints:
+      - "Do not edit implementation files or tests."
+      - "Do not mark the goal complete if any requirement remains red, stale, weakly verified, or blocked."
+      - "Map every explicit objective requirement to concrete evidence."
+      - "Update stale audit notes only to prevent current-status confusion."
+    expected_output:
+      - "Prompt-to-artifact completion checklist."
+      - "Fresh command evidence."
+      - "Current achieved/not-achieved decision."
+      - "Updated board status."
+    receipt:
+      result: blocked_not_complete
+      completed_at: "2026-05-14T12:26:00Z"
+      note: "docs/goals/posmain-p0-p6-strict-verification/notes/fresh-completion-audit-2026-05-14.md"
+      summary: "Performed a fresh completion audit against the actual objective and latest evidence. The board is valid and the verification campaign is well-receipted. Current kody2 migration readiness is now green with order_fulfillment present and dry-run 0 pending, but strict completion is still blocked by js/pos_auto_lock.js syntax failure, persistent Moova readyz 503 redis=false, stale/red Moova widget bridge contract, write-surface inventory failure, two minimal-schema smoke failures, Moova widget degraded/offline UX gap, and absence of a post-fix full rerun."
+      commands:
+        - cmd: "node /Users/ab.mansour1agmail.com/.codex/skills/goal-maker/scripts/check-goal-state.mjs docs/goals/posmain-p0-p6-strict-verification/state.yaml"
+          status: "pass; ok=true, goal_status=blocked, active_task=null, task_count=34"
+        - cmd: "curl -sS -o /tmp/posmain-audit-http.html -w '%{http_code} %{url_effective}\\n' http://127.0.0.1:8010/index.php"
+          status: "pass; 200 http://127.0.0.1:8010/index.php"
+        - cmd: "POSMAIN_DB_HOST=127.0.0.1 POSMAIN_DB_PORT=3307 POSMAIN_DB_USER=root POSMAIN_DB_PASS='' POSMAIN_DB_NAME=kody2 php tools/run_migrations.php --dry-run"
+          status: "pass; Migration tracking ready, dry-run 0 pending sync schema changes"
+        - cmd: "SHOW TABLES LIKE 'order_fulfillment'; SELECT COUNT(*) FROM order_fulfillment"
+          status: "pass; order_fulfillment exists on kody2 with 0 rows"
+        - cmd: "curl -sS -o /tmp/moova-audit-readyz.json -w '%{http_code}\\n' http://127.0.0.1:3001/readyz"
+          status: "blocked; HTTP 503 {ok:false,database:true,redis:false}"
+        - cmd: "node --check js/pos_auto_lock.js"
+          status: "fail; SyntaxError unexpected token } at js/pos_auto_lock.js:116"
+        - cmd: "php /tmp/posmain-phpunit-9.phar --bootstrap /tmp/posmain-phpunit-autoload.php --colors=never tests/sync/moova_widget_bridge_contract_test.php"
+          status: "fail; 3 tests, 15 assertions, 2 failures"
+        - cmd: "php /tmp/posmain-phpunit-9.phar --bootstrap /tmp/posmain-phpunit-autoload.php --colors=never tests/sync/write_surface_inventory_test.php"
+          status: "fail; 2 tests, 314 assertions, 1 failure"
+        - cmd: "POSMAIN_TEST_MYSQL_HOST=127.0.0.1 POSMAIN_TEST_MYSQL_PORT=3307 POSMAIN_TEST_MYSQL_USER=root POSMAIN_TEST_MYSQL_PASS='' php tests/sync/table_order_counter_smoke_test.php"
+          status: "fail; Unknown column table_id in ot_head"
+        - cmd: "POSMAIN_TEST_MYSQL_HOST=127.0.0.1 POSMAIN_TEST_MYSQL_PORT=3307 POSMAIN_TEST_MYSQL_USER=root POSMAIN_TEST_MYSQL_PASS='' php tests/sync/uuid_backfill_smoke_test.php"
+          status: "fail; Unknown column table_case in tables"
+      prompt_to_artifact_decision:
+        - "Goal Maker durable receipts: satisfied."
+        - "Script tests: covered but not green."
+        - "GUI tests: partially covered, post-fix full rerun missing."
+        - "P0-P6 phase evidence: broadly covered, but P4/P5/P6 strict readiness blocked by current failures."
+        - "Moova local E2E: foreground E2E proven, persistent runtime unhealthy."
+        - "No bugs: not satisfied."
+      compatibility_notes:
+        - "No implementation files or tests were edited."
+        - "No current kody2 mutation was intentionally performed."
+        - "Older audit/matrix notes were marked or adjusted to reflect that the fulfillment migration blocker is now cleared."
+        - "The goal must remain blocked; update_goal was not called."
+
+  - id: T034
+    type: pm
+    assignee: PM
+    status: done
+    objective: "Convert the latest blocked audit evidence into a current approval handoff that excludes cleared migration work."
+    inputs:
+      - "docs/goals/posmain-p0-p6-strict-verification/notes/fresh-completion-audit-2026-05-14.md"
+      - "docs/goals/posmain-p0-p6-strict-verification/notes/current-blocker-refresh-and-moova-worker-tests-2026-05-14.md"
+      - "docs/goals/posmain-p0-p6-strict-verification/notes/fix-scope-2026-05-14.md"
+      - "docs/goals/posmain-p0-p6-strict-verification/notes/post-fix-rerun-checklist-2026-05-14.md"
+    constraints:
+      - "Do not edit implementation files or tests."
+      - "Do not reintroduce the cleared order_fulfillment migration as an active blocker."
+      - "List only the current approval/fix tranches needed to unblock strict readiness."
+      - "Keep the goal blocked until owner approval or green rerun evidence exists."
+    expected_output:
+      - "Current approval handoff note."
+      - "Stale-fix-scope marker."
+      - "Post-fix checklist migration gate clarification."
+      - "Board receipt and validation."
+    receipt:
+      result: blocked_owner_approval_needed
+      completed_at: "2026-05-14T12:34:00Z"
+      note: "docs/goals/posmain-p0-p6-strict-verification/notes/current-approval-handoff-2026-05-14.md"
+      summary: "Created a current approval handoff with five active blocker tranches: POS auto-lock JS syntax, Moova endpoint contract alignment, write-surface inventory alignment, minimal fixture schema compatibility, and persistent Moova runtime plus widget degraded/offline UX. The handoff explicitly removes order_fulfillment from active blockers because current migration readiness is green. Older fix-scope and post-fix checklist notes were annotated to avoid stale migration confusion."
+      current_blockers:
+        - "js/pos_auto_lock.js syntax failure"
+        - "moova_widget_bridge_contract_test.php contract alignment"
+        - "write_surface_inventory_test.php Moova bridge classification"
+        - "table_order_counter_smoke_test.php and uuid_backfill_smoke_test.php minimal fixture compatibility"
+        - "Persistent Moova readyz redis=false and widget degraded/offline UX gap"
+      no_longer_blocking:
+        - "order_fulfillment current kody2 migration readiness"
+      compatibility_notes:
+        - "No implementation files or tests were edited."
+        - "No runtime configuration was changed."
+        - "No database mutation was performed."
+        - "The goal remains blocked; update_goal was not called."
+
+  - id: T035
+    type: pm
+    assignee: PM
+    status: done
+    objective: "Record the current stop-rule state showing that remaining strict-readiness work requires owner approval."
+    inputs:
+      - "docs/goals/posmain-p0-p6-strict-verification/goal.md"
+      - "docs/goals/posmain-p0-p6-strict-verification/notes/current-approval-handoff-2026-05-14.md"
+      - "Fresh red probes for current blockers"
+    constraints:
+      - "Do not edit implementation files or tests."
+      - "Do not change runtime configuration."
+      - "Do not mutate current database data."
+      - "Do not call update_goal unless the objective is actually achieved."
+    expected_output:
+      - "Fresh stop-rule receipt."
+      - "Owner-decision list."
+      - "Board remains blocked."
+    receipt:
+      result: blocked_owner_input_required
+      completed_at: "2026-05-14T12:41:00Z"
+      note: "docs/goals/posmain-p0-p6-strict-verification/notes/current-stop-rule-owner-input-2026-05-14.md"
+      summary: "Fresh stop-rule probes confirm the audit-only goal is still blocked: board validates, POS HTTP is 200, migration dry-run is 0 pending, but Moova readyz is still 503 redis=false, js/pos_auto_lock.js still has a syntax error, Moova widget bridge and write-surface inventory tests still fail, and the two minimal-schema smokes still fail. Remaining work requires owner approval for code/test edits, runtime changes, or explicit risk reclassification."
+      commands:
+        - cmd: "node /Users/ab.mansour1agmail.com/.codex/skills/goal-maker/scripts/check-goal-state.mjs docs/goals/posmain-p0-p6-strict-verification/state.yaml"
+          status: "pass; goal_status=blocked, active_task=null, task_count=36 after adding this receipt"
+        - cmd: "curl -sS -o /tmp/posmain-stoprule-http.html -w '%{http_code} %{url_effective}\\n' http://127.0.0.1:8010/index.php"
+          status: "pass; 200 http://127.0.0.1:8010/index.php"
+        - cmd: "POSMAIN_DB_HOST=127.0.0.1 POSMAIN_DB_PORT=3307 POSMAIN_DB_USER=root POSMAIN_DB_PASS='' POSMAIN_DB_NAME=kody2 php tools/run_migrations.php --dry-run"
+          status: "pass; Migration tracking ready, dry-run 0 pending sync schema changes"
+        - cmd: "curl -sS -o /tmp/moova-stoprule-readyz.json -w '%{http_code}\\n' http://127.0.0.1:3001/readyz"
+          status: "blocked; HTTP 503 {ok:false,database:true,redis:false}"
+        - cmd: "node --check js/pos_auto_lock.js"
+          status: "fail; SyntaxError unexpected token } at js/pos_auto_lock.js:116"
+        - cmd: "php /tmp/posmain-phpunit-9.phar --bootstrap /tmp/posmain-phpunit-autoload.php --colors=never tests/sync/moova_widget_bridge_contract_test.php --stop-on-failure"
+          status: "fail; stop-on-failure reproduced endpoint contract failure"
+        - cmd: "php /tmp/posmain-phpunit-9.phar --bootstrap /tmp/posmain-phpunit-autoload.php --colors=never tests/sync/write_surface_inventory_test.php --stop-on-failure"
+          status: "fail; ajax/moova_confirm_order.php not classified as moova_bridge"
+        - cmd: "POSMAIN_TEST_MYSQL_HOST=127.0.0.1 POSMAIN_TEST_MYSQL_PORT=3307 POSMAIN_TEST_MYSQL_USER=root POSMAIN_TEST_MYSQL_PASS='' php tests/sync/table_order_counter_smoke_test.php"
+          status: "fail; Unknown column table_id in ot_head"
+        - cmd: "POSMAIN_TEST_MYSQL_HOST=127.0.0.1 POSMAIN_TEST_MYSQL_PORT=3307 POSMAIN_TEST_MYSQL_USER=root POSMAIN_TEST_MYSQL_PASS='' php tests/sync/uuid_backfill_smoke_test.php"
+          status: "fail; Unknown column table_case in tables"
+      owner_decisions_needed:
+        - "Approve bounded code/test fixes for the five active blocker tranches."
+        - "Approve persistent Moova runtime work."
+        - "Approve widget degraded-state work or explicitly accept the current UX risk."
+      compatibility_notes:
+        - "No implementation files or tests were edited."
+        - "No runtime configuration was changed."
+        - "No database mutation was performed."
+        - "The goal remains blocked; update_goal was not called."
+
+  - id: T036
+    type: pm
+    assignee: PM
+    status: done
+    objective: "Refresh the audit artifact index so it reflects the latest completion audit, approval handoff, and stop-rule receipts."
+    inputs:
+      - "docs/goals/posmain-p0-p6-strict-verification/notes/audit-artifact-index-2026-05-14.md"
+      - "docs/goals/posmain-p0-p6-strict-verification/notes/fresh-completion-audit-2026-05-14.md"
+      - "docs/goals/posmain-p0-p6-strict-verification/notes/current-approval-handoff-2026-05-14.md"
+      - "docs/goals/posmain-p0-p6-strict-verification/notes/current-stop-rule-owner-input-2026-05-14.md"
+    constraints:
+      - "Do not edit implementation files or tests."
+      - "Do not change runtime configuration."
+      - "Do not mutate current database data."
+      - "Keep historical notes available while clearly marking superseded current-status artifacts."
+    expected_output:
+      - "Updated artifact index."
+      - "Board receipt and validation."
+      - "Current verdict remains blocked."
+    receipt:
+      result: done_blocked_index_refreshed
+      completed_at: "2026-05-14T12:48:00Z"
+      note: "docs/goals/posmain-p0-p6-strict-verification/notes/audit-artifact-index-2026-05-14.md"
+      summary: "Refreshed the audit artifact index to include the latest focused phase receipts, current blocker refresh, fresh completion audit, current approval handoff, current stop-rule owner-input receipt, and the historical T999 Judge card. The index now marks historical notes as superseded where needed and records order_fulfillment as a current non-blocker. The goal remains blocked because the live red blockers still require owner-approved fixes/runtime work."
+      compatibility_notes:
+        - "No implementation files or tests were edited."
+        - "No runtime configuration was changed."
+        - "No database mutation was performed."
+        - "The goal remains blocked; update_goal was not called."
+
+  - id: T037
+    type: pm
+    assignee: PM
+    status: done
+    objective: "Create an explicit owner decision menu for the remaining blocked strict-readiness work."
+    inputs:
+      - "docs/goals/posmain-p0-p6-strict-verification/notes/current-approval-handoff-2026-05-14.md"
+      - "docs/goals/posmain-p0-p6-strict-verification/notes/current-stop-rule-owner-input-2026-05-14.md"
+      - "docs/goals/posmain-p0-p6-strict-verification/notes/post-fix-rerun-checklist-2026-05-14.md"
+    constraints:
+      - "Do not edit implementation files or tests."
+      - "Do not change runtime configuration."
+      - "Do not mutate current database data."
+      - "Keep audit-only and fix-approved paths separate."
+    expected_output:
+      - "Owner decision menu note."
+      - "Exact allowed scopes for each approval path."
+      - "Board remains blocked."
+    receipt:
+      result: done_blocked_decision_menu
+      completed_at: "2026-05-14T12:54:00Z"
+      note: "docs/goals/posmain-p0-p6-strict-verification/notes/owner-decision-menu-2026-05-14.md"
+      summary: "Created a concise owner decision menu with four paths: stop at audit-only, approve source/test fixes only, approve runtime/widget work only, or approve the full strict-pass fix tranche. The note keeps no-code audit mode separate from any future implementation/runtime approval and makes clear that only the full strict-pass tranche can satisfy the original objective."
+      choices:
+        - "Option A: stop at audit-only; goal remains blocked."
+        - "Option B: source/test fix tranche only."
+        - "Option C: runtime/widget tranche only."
+        - "Option D: full strict-pass fix tranche using the post-fix rerun checklist."
+      compatibility_notes:
+        - "No implementation files or tests were edited."
+        - "No runtime configuration was changed."
+        - "No database mutation was performed."
+        - "The goal remains blocked; update_goal was not called."
+
+  - id: T038
+    type: pm
+    assignee: PM
+    status: done
+    objective: "Verify the testing campaign left no disposable schemas or temporary foreground runtimes behind."
+    inputs:
+      - "Docker container state"
+      - "MariaDB temporary schema patterns"
+      - "POS and Moova listener state"
+      - "LaunchAgent state for com.codex.cofe-order-3001"
+    constraints:
+      - "Do not edit implementation files or tests."
+      - "Do not change runtime configuration."
+      - "Do not mutate current database data."
+      - "Do not stop or restart services."
+    expected_output:
+      - "Environment restoration note."
+      - "Disposable DB cleanup evidence."
+      - "Runtime/listener evidence."
+      - "Board remains blocked."
+    receipt:
+      result: done_blocked_environment_clean
+      completed_at: "2026-05-14T13:00:00Z"
+      note: "docs/goals/posmain-p0-p6-strict-verification/notes/environment-restoration-audit-2026-05-14.md"
+      summary: "Verified the audit did not leave disposable verification schemas or a foreground Moova test runtime behind. Checked temporary DB patterns returned no rows, POS HTTP stayed 200, and port 3001 is owned by the expected com.codex.cofe-order-3001 LaunchAgent child process. Persistent Moova remains unhealthy with redis=false, which is the known runtime blocker."
+      commands:
+        - cmd: "node /Users/ab.mansour1agmail.com/.codex/skills/goal-maker/scripts/check-goal-state.mjs docs/goals/posmain-p0-p6-strict-verification/state.yaml"
+          status: "pass; goal_status=blocked, active_task=null, task_count=38 before adding this receipt"
+        - cmd: "docker exec posmain-mysql mariadb -uroot -N -e \"SHOW DATABASES LIKE ...\" for verification schema patterns"
+          status: "pass; no rows for posmain_moova_worker_clone_%, posmain_p0p2_%, posmain_phase5_%, posmain_phase4_%, posmain_phase6_%, posmain_security_%, posmain_login_throttle_%, posmain_gui_write_%, posmain_strict_p06_%"
+        - cmd: "curl POS index and Moova /readyz"
+          status: "pass/blocker; POS HTTP 200, Moova HTTP 503 {ok:false,database:true,redis:false}"
+        - cmd: "lsof -nP -iTCP:8010 -sTCP:LISTEN; lsof -nP -iTCP:3001 -sTCP:LISTEN"
+          status: "pass; 8010 listener is Docker, 3001 listener is node"
+        - cmd: "launchctl print gui/$(id -u)/com.codex.cofe-order-3001"
+          status: "pass; LaunchAgent is running from /Users/Shared/cofe_order_runtime with node server.js child process"
+        - cmd: "docker ps --format"
+          status: "pass; POS, COFE, Redis/Postgres, and support containers are running; no cleanup action taken"
+      compatibility_notes:
+        - "No implementation files or tests were edited."
+        - "No runtime configuration was changed."
+        - "No services were stopped or restarted."
+        - "No database mutation was performed."
+        - "The goal remains blocked; update_goal was not called."
+
+  - id: T039
+    type: pm
+    assignee: PM
+    status: done
+    objective: "Create a stable ID-based manifest of the current remaining blockers and their proof commands."
+    inputs:
+      - "docs/goals/posmain-p0-p6-strict-verification/notes/current-approval-handoff-2026-05-14.md"
+      - "docs/goals/posmain-p0-p6-strict-verification/notes/owner-decision-menu-2026-05-14.md"
+      - "docs/goals/posmain-p0-p6-strict-verification/notes/current-stop-rule-owner-input-2026-05-14.md"
+    constraints:
+      - "Do not edit implementation files or tests."
+      - "Do not change runtime configuration."
+      - "Do not mutate current database data."
+      - "Do not mark the goal complete."
+    expected_output:
+      - "Current blocker manifest note."
+      - "Stable blocker IDs."
+      - "Proof commands, allowed scopes, and pass criteria."
+      - "Board remains blocked."
+    receipt:
+      result: done_blocked_manifest_created
+      completed_at: "2026-05-14T13:06:00Z"
+      note: "docs/goals/posmain-p0-p6-strict-verification/notes/current-blocker-manifest-2026-05-14.md"
+      summary: "Created a stable blocker manifest with IDs B001-B006 covering POS auto-lock syntax, Moova endpoint contract alignment, write-surface inventory classification, minimal fixture schema compatibility, persistent Moova runtime health, and Moova widget degraded/offline UX. The manifest records proof commands, likely scopes, pass criteria, and confirms order_fulfillment is a current non-blocker."
+      blockers:
+        - "B001 POS auto-lock script syntax"
+        - "B002 Moova endpoint contract alignment"
+        - "B003 Write-surface inventory classification"
+        - "B004 Minimal fixture schema compatibility"
+        - "B005 Persistent Moova runtime health"
+        - "B006 Moova widget degraded/offline UX"
+      no_longer_blocking:
+        - "order_fulfillment migration readiness"
+      compatibility_notes:
+        - "No implementation files or tests were edited."
+        - "No runtime configuration was changed."
+        - "No services were stopped or restarted."
+        - "No database mutation was performed."
+        - "The goal remains blocked; update_goal was not called."
+
+  - id: T040
+    type: pm
+    assignee: PM
+    status: done
+    objective: "Verify the current blocker manifest is internally consistent with the board, artifact index, and referenced file scopes."
+    inputs:
+      - "docs/goals/posmain-p0-p6-strict-verification/notes/current-blocker-manifest-2026-05-14.md"
+      - "docs/goals/posmain-p0-p6-strict-verification/notes/audit-artifact-index-2026-05-14.md"
+      - "Repo file presence checks for manifest scopes"
+    constraints:
+      - "Do not edit implementation files or tests."
+      - "Do not change runtime configuration."
+      - "Do not mutate current database data."
+      - "Do not rerun expensive or already-receipted test suites."
+    expected_output:
+      - "Manifest consistency receipt."
+      - "File scope presence evidence."
+      - "Board remains blocked."
+    receipt:
+      result: done_blocked_manifest_consistent
+      completed_at: "2026-05-14T13:12:00Z"
+      note: "docs/goals/posmain-p0-p6-strict-verification/notes/blocker-manifest-consistency-check-2026-05-14.md"
+      summary: "Verified the current blocker manifest has stable IDs B001-B006, each with status, proof, approved scope, and pass criteria. Confirmed all repo files named in source/test/widget scopes exist, runtime targets are intentionally external and already covered by runtime receipts, and the artifact index matches the manifest with order_fulfillment treated as a current non-blocker."
+      commands:
+        - cmd: "node /Users/ab.mansour1agmail.com/.codex/skills/goal-maker/scripts/check-goal-state.mjs docs/goals/posmain-p0-p6-strict-verification/state.yaml"
+          status: "pass; goal_status=blocked, active_task=null, task_count=40 before adding this receipt"
+        - cmd: "rg -n '^### B00[1-9]|^Status:|^Proof command|^Primary scope if approved|^Pass criteria|^## Current Non-Blocker|order_fulfillment' current-blocker-manifest"
+          status: "pass; B001-B006 plus current non-blocker section present"
+        - cmd: "File presence loop over manifest repo paths"
+          status: "pass; all referenced repo files are present"
+        - cmd: "rg -n 'B00[1-9]|Current active blockers|order_fulfillment|Latest validated count|T039' index and state"
+          status: "pass; index/state references match current manifest and supersede historical order_fulfillment blocker lines"
+      compatibility_notes:
+        - "No implementation files or tests were edited."
+        - "No runtime configuration was changed."
+        - "No services were stopped or restarted."
+        - "No database mutation was performed."
+        - "The goal remains blocked; update_goal was not called."
+
+  - id: T041
+    type: pm
+    assignee: PM
+    status: done
+    objective: "Record the no-code boundary for the strict verification audit against the dirty implementation worktree."
+    inputs:
+      - "git status --short"
+      - "Goal Maker board files"
+      - "Non-board dirty worktree file list"
+    constraints:
+      - "Do not edit implementation files or tests."
+      - "Do not change runtime configuration."
+      - "Do not mutate current database data."
+      - "Do not revert user or phase worktree changes."
+    expected_output:
+      - "No-code boundary receipt."
+      - "Audit artifact scope."
+      - "Pre-existing dirty worktree distinction."
+      - "Board remains blocked."
+    receipt:
+      result: done_blocked_no_code_boundary_recorded
+      completed_at: "2026-05-14T13:18:00Z"
+      note: "docs/goals/posmain-p0-p6-strict-verification/notes/no-code-boundary-audit-2026-05-14.md"
+      summary: "Recorded the current file-change boundary: this verification continuation is audit-only and writes under docs/goals/posmain-p0-p6-strict-verification, while the many modified/untracked implementation files outside the board are pre-existing phase/worktree changes. No app code, tests, runtime configuration, services, or database data were changed by this receipt."
+      commands:
+        - cmd: "node /Users/ab.mansour1agmail.com/.codex/skills/goal-maker/scripts/check-goal-state.mjs docs/goals/posmain-p0-p6-strict-verification/state.yaml"
+          status: "pass; goal_status=blocked, active_task=null, task_count=41 before adding this receipt"
+        - cmd: "git status --short"
+          status: "pass; large dirty worktree remains, including implementation and test files outside this audit board"
+        - cmd: "find docs/goals/posmain-p0-p6-strict-verification -maxdepth 2 -type f | sort"
+          status: "pass; audit board files are goal.md, state.yaml, and notes/*.md"
+        - cmd: "git diff --name-only -- . ':(exclude)docs/goals/posmain-p0-p6-strict-verification/**'"
+          status: "pass; non-board modified tracked files listed separately as existing dirty implementation worktree"
+      compatibility_notes:
+        - "No implementation files or tests were edited."
+        - "No runtime configuration was changed."
+        - "No services were stopped or restarted."
+        - "No database mutation was performed."
+        - "The goal remains blocked; update_goal was not called."
+
+  - id: T042
+    type: pm
+    assignee: PM
+    status: done
+    objective: "Verify durable receipt completeness and update the artifact index to name current handoff/hygiene notes explicitly."
+    inputs:
+      - "docs/goals/posmain-p0-p6-strict-verification/state.yaml"
+      - "docs/goals/posmain-p0-p6-strict-verification/notes/"
+      - "docs/goals/posmain-p0-p6-strict-verification/notes/audit-artifact-index-2026-05-14.md"
+    constraints:
+      - "Do not edit implementation files or tests."
+      - "Do not change runtime configuration."
+      - "Do not mutate current database data."
+      - "Only update Goal Maker receipts/index."
+    expected_output:
+      - "Receipt completeness note."
+      - "State-to-file note reference check."
+      - "Artifact index update."
+      - "Board remains blocked."
+    receipt:
+      result: done_blocked_receipts_complete
+      completed_at: "2026-05-14T13:24:00Z"
+      note: "docs/goals/posmain-p0-p6-strict-verification/notes/receipt-completeness-audit-2026-05-14.md"
+      summary: "Verified exact notes referenced by state.yaml exist, excluding prose wildcard references, and updated the artifact index to explicitly name the latest handoff/hygiene receipts. The board remains blocked and receipt durability is sound for the current audit package."
+      commands:
+        - cmd: "node /Users/ab.mansour1agmail.com/.codex/skills/goal-maker/scripts/check-goal-state.mjs docs/goals/posmain-p0-p6-strict-verification/state.yaml"
+          status: "pass; goal_status=blocked, active_task=null, task_count=42 before adding this receipt"
+        - cmd: "rg -o 'notes/[^\" ]+\\.md' state.yaml, then test each exact note path on disk while ignoring wildcard prose"
+          status: "pass; all exact state note references exist"
+        - cmd: "find docs/goals/posmain-p0-p6-strict-verification/notes -maxdepth 1 -type f -name '*.md'"
+          status: "pass; notes directory enumerated for index comparison"
+        - cmd: "comm comparison between note filenames and filenames named by artifact index"
+          status: "pass_after_index_update; current handoff/hygiene notes are now explicitly named"
+      compatibility_notes:
+        - "No implementation files or tests were edited."
+        - "No runtime configuration was changed."
+        - "No services were stopped or restarted."
+        - "No database mutation was performed."
+        - "The goal remains blocked; update_goal was not called."
+
+  - id: T043
+    type: pm
+    assignee: PM
+    status: done
+    objective: "Create a concise owner-facing pilot-readiness summary from the current evidence package."
+    inputs:
+      - "docs/goals/posmain-p0-p6-strict-verification/notes/fresh-completion-audit-2026-05-14.md"
+      - "docs/goals/posmain-p0-p6-strict-verification/notes/current-blocker-manifest-2026-05-14.md"
+      - "docs/goals/posmain-p0-p6-strict-verification/notes/owner-decision-menu-2026-05-14.md"
+    constraints:
+      - "Do not edit implementation files or tests."
+      - "Do not change runtime configuration."
+      - "Do not mutate current database data."
+      - "Do not overclaim strict readiness."
+    expected_output:
+      - "One-page pilot readiness summary."
+      - "Clear green/red/current decision sections."
+      - "Board remains blocked."
+    receipt:
+      result: done_blocked_owner_summary
+      completed_at: "2026-05-14T13:30:00Z"
+      note: "docs/goals/posmain-p0-p6-strict-verification/notes/pilot-readiness-one-page-summary-2026-05-14.md"
+      summary: "Created a concise owner-facing one-page summary. It states POSMAIN is not strict-ready for pilot yet, lists the major green evidence, names active blockers B001-B006, calls out persistent Moova reliability as the heaviest risk, clarifies order_fulfillment is no longer a blocker, and points to Option D as the only path to satisfy the original strict-readiness objective."
+      compatibility_notes:
+        - "No implementation files or tests were edited."
+        - "No runtime configuration was changed."
+        - "No services were stopped or restarted."
+        - "No database mutation was performed."
+        - "The goal remains blocked; update_goal was not called."
+
+  - id: T044
+    type: pm
+    assignee: PM
+    status: done
+    objective: "Create approval-gated future task cards for the possible owner-approved fix and rerun paths."
+    inputs:
+      - "docs/goals/posmain-p0-p6-strict-verification/notes/owner-decision-menu-2026-05-14.md"
+      - "docs/goals/posmain-p0-p6-strict-verification/notes/current-blocker-manifest-2026-05-14.md"
+      - "docs/goals/posmain-p0-p6-strict-verification/notes/post-fix-rerun-checklist-2026-05-14.md"
+    constraints:
+      - "Do not edit implementation files or tests."
+      - "Do not change runtime configuration."
+      - "Do not mutate current database data."
+      - "Future fix tasks must remain blocked until owner approval."
+    expected_output:
+      - "Approval-gated backlog note."
+      - "Blocked source/test fix task."
+      - "Blocked runtime/widget task."
+      - "Blocked final strict-pass rerun task."
+    receipt:
+      result: done_blocked_backlog_created
+      completed_at: "2026-05-14T13:36:00Z"
+      note: "docs/goals/posmain-p0-p6-strict-verification/notes/approval-gated-task-backlog-2026-05-14.md"
+      summary: "Created approval-gated future task cards for Option B source/test fixes, Option C runtime/widget work, and Option D final strict-pass rerun. The future tasks are blocked pending explicit owner approval; active_task remains null and the goal remains blocked."
+      spawned_tasks:
+        - T045
+        - T046
+        - T047
+      compatibility_notes:
+        - "No implementation files or tests were edited."
+        - "No runtime configuration was changed."
+        - "No services were stopped or restarted."
+        - "No database mutation was performed."
+        - "The goal remains blocked; update_goal was not called."
+
+  - id: T045
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "If the owner approves Option B, fix or reclassify source/test blockers B001-B004 without touching runtime configuration."
+    allowed_files:
+      - "js/pos_auto_lock.js"
+      - "tests/sync/moova_widget_bridge_contract_test.php"
+      - "ajax/moova_confirm_order.php"
+      - "ajax/moova_change_order.php"
+      - "classes/Pos/Service/PosOrderMutationService.php"
+      - "tools/audit_write_paths.php"
+      - "tests/sync/write_surface_inventory_test.php"
+      - "classes/Sync/SchemaManager.php"
+      - "tests/sync/table_order_counter_smoke_test.php"
+      - "tests/sync/uuid_backfill_smoke_test.php"
+    verify:
+      - "node --check js/pos_auto_lock.js"
+      - "php /tmp/posmain-phpunit-9.phar --bootstrap /tmp/posmain-phpunit-autoload.php --colors=never tests/sync/moova_widget_bridge_contract_test.php"
+      - "php /tmp/posmain-phpunit-9.phar --bootstrap /tmp/posmain-phpunit-autoload.php --colors=never tests/sync/write_surface_inventory_test.php"
+      - "POSMAIN_TEST_MYSQL_HOST=127.0.0.1 POSMAIN_TEST_MYSQL_PORT=3307 POSMAIN_TEST_MYSQL_USER=root POSMAIN_TEST_MYSQL_PASS='' php tests/sync/table_order_counter_smoke_test.php"
+      - "POSMAIN_TEST_MYSQL_HOST=127.0.0.1 POSMAIN_TEST_MYSQL_PORT=3307 POSMAIN_TEST_MYSQL_USER=root POSMAIN_TEST_MYSQL_PASS='' php tests/sync/uuid_backfill_smoke_test.php"
+    stop_if:
+      - "Owner approval for Option B or Option D is not explicit."
+      - "Need files outside allowed_files."
+      - "Changing Moova endpoint behavior would affect idempotency, accounting, stock, table state, or auth beyond the approved contract decision."
+      - "Verification fails twice for the same reason."
+    receipt:
+      result: done
+      completed_at: "2026-05-14T12:51:32Z"
+      changed_files:
+        - "js/pos_auto_lock.js"
+        - "tests/sync/moova_widget_bridge_contract_test.php"
+        - "tools/audit_write_paths.php"
+        - "classes/Sync/SchemaManager.php"
+      commands:
+        - cmd: "node --check js/pos_auto_lock.js"
+          status: "pass"
+        - cmd: "php /tmp/posmain-phpunit-9.phar --bootstrap /tmp/posmain-phpunit-autoload.php --colors=never tests/sync/moova_widget_bridge_contract_test.php"
+          status: "pass; OK (3 tests, 30 assertions)"
+        - cmd: "php /tmp/posmain-phpunit-9.phar --bootstrap /tmp/posmain-phpunit-autoload.php --colors=never tests/sync/write_surface_inventory_test.php"
+          status: "pass; OK (2 tests, 323 assertions)"
+        - cmd: "POSMAIN_TEST_MYSQL_HOST=127.0.0.1 POSMAIN_TEST_MYSQL_PORT=3307 POSMAIN_TEST_MYSQL_USER=root POSMAIN_TEST_MYSQL_PASS='' php tests/sync/table_order_counter_smoke_test.php"
+          status: "pass; table-order-counter-smoke-ok"
+        - cmd: "POSMAIN_TEST_MYSQL_HOST=127.0.0.1 POSMAIN_TEST_MYSQL_PORT=3307 POSMAIN_TEST_MYSQL_USER=root POSMAIN_TEST_MYSQL_PASS='' php tests/sync/uuid_backfill_smoke_test.php"
+          status: "pass; uuid-backfill-smoke-ok"
+      summary: "Fixed B001-B004. Removed the duplicate pos_auto_lock IIFE terminator, aligned the Moova widget contract test to the current PosOrderMutationService facade that delegates to the apply services, classified facade-based Moova endpoints as delegated Moova writes, and made Phase 4 legacy column additions omit missing AFTER anchors for reduced fixtures."
+
+  - id: T046
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "If the owner approves Option C, repair persistent Moova runtime health and widget degraded/offline UX."
+    allowed_files:
+      - "/Users/ab.mansour1agmail.com/Library/LaunchAgents/com.codex.cofe-order-3001.plist"
+      - "/Users/Shared/cofe_order_runtime/.env"
+      - "/Users/Shared/cofe_order_runtime/.env.local"
+      - "assets/moova-pos-widget/pos-widget.js"
+      - "moova_pos_proxy.php"
+      - "moova_pos_widget.php"
+    verify:
+      - "curl http://127.0.0.1:3001/readyz"
+      - "php tools/moova_local_topology_check.php"
+      - "Browser widget smoke verifies degraded/offline copy when Moova is stopped."
+      - "Live Moova create/confirm, decline, edit, cancel, and cancel-after-edit pass after persistent runtime is healthy."
+    stop_if:
+      - "Owner approval for Option C or Option D is not explicit."
+      - "Need files outside allowed_files."
+      - "Runtime change would start production-only noisy services without an explicit disable/allow plan."
+      - "Persistent Moova cannot be restored after a test restart."
+    receipt:
+      result: done
+      completed_at: "2026-05-14T12:56:17Z"
+      changed_files:
+        - "/Users/Shared/cofe_order_runtime/.env.local"
+        - "assets/moova-pos-widget/pos-widget.js"
+      commands:
+        - cmd: "node --check assets/moova-pos-widget/pos-widget.js"
+          status: "pass"
+        - cmd: "cd /Users/Shared/cofe_order_runtime && node -e \"const config=require('./config'); console.log({env:config.env, redisUrl:config.redisUrl})\""
+          status: "pass; env=production and redisUrl=redis://localhost:6379"
+        - cmd: "launchctl kickstart -k gui/$(id -u)/com.codex.cofe-order-3001 && curl http://127.0.0.1:3001/readyz"
+          status: "pass; {ok:true,database:true,redis:true}"
+        - cmd: "php tools/moova_local_topology_check.php"
+          status: "pass; TOPOLOGY_LOOKS_REACHABLE"
+        - cmd: "Browser offline widget smoke with Moova LaunchAgent booted out"
+          status: "pass; widget displayed اتصال Moova غير متاح and the Moova unreachable message instead of empty-queue copy"
+        - cmd: "launchctl bootstrap gui/$(id -u) /Users/ab.mansour1agmail.com/Library/LaunchAgents/com.codex.cofe-order-3001.plist && curl http://127.0.0.1:3001/readyz && php tools/moova_local_topology_check.php"
+          status: "pass; persistent service restored healthy"
+      summary: "Fixed B005-B006. Changed the persistent local Moova runtime env from test to production so Redis is enabled, then restarted the LaunchAgent and verified readyz/topology green. Added widget transport-error state for bootstrap and pending-refresh failures so Moova outage shows a clear degraded/offline panel instead of misleading empty-queue copy."
+
+  - id: T047
+    type: pm
+    assignee: PM
+    status: done
+    objective: "After approved fixes or explicit reclassification, run the full post-fix strict-pass checklist and final completion audit."
+    inputs:
+      - "docs/goals/posmain-p0-p6-strict-verification/notes/post-fix-rerun-checklist-2026-05-14.md"
+      - "T045 receipt if source/test fixes are approved"
+      - "T046 receipt if runtime/widget work is approved"
+      - "Any owner/Judge reclassification of remaining blockers"
+    constraints:
+      - "Do not claim pass until every applicable gate has direct current green evidence."
+      - "Do not skip GUI or live Moova E2E if strict readiness is still the target."
+      - "Do not call update_goal unless the final completion audit shows no required local work remains."
+    expected_output:
+      - "Post-fix rerun receipt."
+      - "Fresh completion audit."
+      - "update_goal(status=complete) only if achieved."
+    receipt:
+      result: done
+      decision: complete
+      completed_at: "2026-05-14T13:29:00Z"
+      summary: "Option D completed. B001-B006 were fixed or reclassified with current evidence, the full post-fix strict checklist was rerun, POS GUI and disposable write flows were verified, persistent Moova readyz/topology are green with redis=true, and live Moova create/confirm, decline, edit, cancel, and cancel-table-cache replay passed. No required strict-verification blocker remains."
+      commands:
+        - cmd: "node --check js/pos_auto_lock.js && node --check assets/moova-pos-widget/pos-widget.js && php -l classes/Pos/Service/PosOrderMutationService.php"
+          status: "pass"
+        - cmd: "Full PHP lint sweep excluding .git/.playwright-mcp/backup"
+          status: "pass; 3814 PHP files parsed, no syntax errors; vendor PHP 8.5 deprecation warnings only"
+        - cmd: "php /tmp/posmain-phpunit-9.phar --bootstrap /tmp/posmain-phpunit-autoload.php --colors=never --testdox tests"
+          status: "pass_with_expected_skips; 68 tests, 191 assertions, 8 Imagick skips"
+        - cmd: "php /tmp/posmain-phpunit-9.phar --bootstrap /tmp/posmain-phpunit-autoload.php --colors=never tests/sync/moova_widget_bridge_contract_test.php"
+          status: "pass; OK (3 tests, 30 assertions)"
+        - cmd: "php /tmp/posmain-phpunit-9.phar --bootstrap /tmp/posmain-phpunit-autoload.php --colors=never tests/sync/write_surface_inventory_test.php"
+          status: "pass; OK (2 tests, 323 assertions)"
+        - cmd: "POSMAIN_TEST_MYSQL_HOST=127.0.0.1 POSMAIN_TEST_MYSQL_PORT=3307 POSMAIN_TEST_MYSQL_USER=root POSMAIN_TEST_MYSQL_PASS='' php tests/sync/table_order_counter_smoke_test.php && php tests/sync/uuid_backfill_smoke_test.php"
+          status: "pass; table-order-counter-smoke-ok and uuid-backfill-smoke-ok"
+        - cmd: "POSMAIN_TEST_MYSQL_HOST=127.0.0.1 POSMAIN_TEST_MYSQL_PORT=3307 POSMAIN_TEST_MYSQL_USER=root POSMAIN_TEST_MYSQL_PASS='' php tests/sync/pos_takeaway_order_service_test.php && php tests/sync/phase5_order_fulfillment_service_test.php"
+          status: "pass; takeaway and phase5 fulfillment disposable DB smokes passed"
+        - cmd: "POSMAIN_DB_HOST=127.0.0.1 POSMAIN_DB_PORT=3307 POSMAIN_DB_USER=root POSMAIN_DB_PASS='' POSMAIN_DB_NAME=kody2 php tools/run_migrations.php --dry-run"
+          status: "pass; 0 pending sync schema changes"
+        - cmd: "php tools/moova_reachability_smoke.php --self-test"
+          status: "pass; 8/8 online, queued, edit, cancel, drop, and recovery cases passed"
+        - cmd: "curl http://127.0.0.1:3001/readyz && php tools/moova_local_topology_check.php --fail-on-down"
+          status: "pass; readyz {ok:true,database:true,redis:true}; topology reachable after disposable container cleanup"
+        - cmd: "Browser POS GUI current runtime smoke"
+          status: "pass; login/unlock, item add/quantity/payment modal, tables page, item catalog, Moova integration page, and standalone widget rendered without fatal errors"
+        - cmd: "Disposable GUI write flows on posmain_gui_write_20260514160555"
+          status: "pass; save draft order, cash payment receipt, table order, and shift close verified; disposable server/schema removed"
+        - cmd: "Persistent Moova live E2E"
+          status: "pass; confirm created POS link, decline dismissed with reason and no POS link, edit changed order total/items, cancel dismissed order and cancelled POS order, idempotent cancel replay freed table cache"
+        - cmd: "Disposable schema hygiene and git diff --check"
+          status: "pass; no posmain_gui_write/table_counter/uuid/takeaway/phase5 temp schemas remained; diff whitespace check passed"
+      changed_files:
+        - "js/pos_auto_lock.js"
+        - "tests/sync/moova_widget_bridge_contract_test.php"
+        - "tools/audit_write_paths.php"
+        - "classes/Sync/SchemaManager.php"
+        - "classes/Pos/Service/PosOrderMutationService.php"
+        - "/Users/Shared/cofe_order_runtime/.env.local"
+        - "assets/moova-pos-widget/pos-widget.js"
+        - "docs/goals/posmain-p0-p6-strict-verification/state.yaml"
+      compatibility_notes:
+        - "The Moova endpoint contract was aligned to the existing PosOrderMutationService facade rather than changing endpoint behavior."
+        - "The write inventory classifies Moova endpoint writes as delegated facade writes without hiding the underlying mutation category."
+        - "SchemaManager only strips AFTER anchors when reduced fixture schemas lack the anchor column, preserving normal production column order."
+        - "Moova production-mode runtime keeps workers/push disabled through the LaunchAgent command while allowing Redis health to pass."
+        - "The widget degraded-state change affects transport failures only and keeps normal pending/order-change rendering unchanged."
+        - "Moova cancel table-cache reconciliation uses setTableFreeIfNoActiveOrder, so mixed active table orders stay occupied."
+
+  - id: T048
+    type: pm
+    assignee: PM
+    status: done
+    objective: "Create a resume command pack keyed to the blocked owner-decision paths."
+    inputs:
+      - "docs/goals/posmain-p0-p6-strict-verification/notes/owner-decision-menu-2026-05-14.md"
+      - "docs/goals/posmain-p0-p6-strict-verification/notes/current-blocker-manifest-2026-05-14.md"
+      - "docs/goals/posmain-p0-p6-strict-verification/notes/post-fix-rerun-checklist-2026-05-14.md"
+      - "T045"
+      - "T046"
+      - "T047"
+    constraints:
+      - "Do not edit implementation files or tests."
+      - "Do not change runtime configuration."
+      - "Do not mutate current database data."
+      - "Do not activate blocked fix tasks without owner approval."
+    expected_output:
+      - "Resume command pack note."
+      - "Option A/B/C/D command boundaries."
+      - "Stop conditions and completion rule."
+      - "Board remains blocked."
+    receipt:
+      result: done_blocked_resume_pack_created
+      completed_at: "2026-05-14T13:42:00Z"
+      note: "docs/goals/posmain-p0-p6-strict-verification/notes/resume-command-pack-2026-05-14.md"
+      summary: "Created a docs-only command pack for the next owner-approved path. It maps Option A audit-only stop, Option B source/test fix gates, Option C runtime/widget gates, and Option D final strict-pass rerun without approving implementation or changing code/runtime/database state."
+      commands:
+        - cmd: "node /Users/ab.mansour1agmail.com/.codex/skills/goal-maker/scripts/check-goal-state.mjs docs/goals/posmain-p0-p6-strict-verification/state.yaml"
+          status: "pass; goal_status=blocked, active_task=null, task_count=49, no checker errors or warnings"
+        - cmd: "git diff --check -- docs/goals/posmain-p0-p6-strict-verification/state.yaml docs/goals/posmain-p0-p6-strict-verification/notes/resume-command-pack-2026-05-14.md docs/goals/posmain-p0-p6-strict-verification/notes/audit-artifact-index-2026-05-14.md"
+          status: "pass; no tracked diff whitespace output, but goal directory is currently untracked"
+        - cmd: "awk '/[ \\t]$/ { print FILENAME \":\" FNR \": trailing whitespace\"; bad=1 } END { exit bad }' docs/goals/posmain-p0-p6-strict-verification/state.yaml docs/goals/posmain-p0-p6-strict-verification/notes/resume-command-pack-2026-05-14.md docs/goals/posmain-p0-p6-strict-verification/notes/audit-artifact-index-2026-05-14.md"
+          status: "pass; no trailing whitespace in the touched untracked board files"
+        - cmd: "git status --short -- docs/goals/posmain-p0-p6-strict-verification"
+          status: "pass; goal directory is untracked as a board artifact"
+      compatibility_notes:
+        - "No implementation files or tests were edited."
+        - "No runtime configuration was changed."
+        - "No services were stopped or restarted."
+        - "No database mutation was performed."
+        - "T045-T047 remain blocked pending owner approval."
+        - "The goal remains blocked; update_goal was not called."
+
+  - id: T049
+    type: pm
+    assignee: PM
+    status: done
+    objective: "Refresh current-state blocker probes and perform a completion audit before any completion decision."
+    inputs:
+      - "docs/goals/posmain-p0-p6-strict-verification/goal.md"
+      - "docs/goals/posmain-p0-p6-strict-verification/state.yaml"
+      - "docs/goals/posmain-p0-p6-strict-verification/notes/current-blocker-manifest-2026-05-14.md"
+      - "docs/goals/posmain-p0-p6-strict-verification/notes/resume-command-pack-2026-05-14.md"
+    constraints:
+      - "Do not edit implementation files or tests."
+      - "Do not change runtime configuration."
+      - "Do not mutate current database data except any temporary schemas created and cleaned by existing smoke tests."
+      - "Do not activate blocked fix tasks without owner approval."
+      - "Do not call update_goal unless the completion audit proves the objective is achieved."
+    expected_output:
+      - "Fresh prompt-to-artifact checklist."
+      - "Current blocker proof commands."
+      - "Completion decision."
+      - "Board remains blocked if any objective requirement is missing."
+    receipt:
+      result: done_blocked_current_state_audit
+      completed_at: "2026-05-14T12:34:02Z"
+      note: "docs/goals/posmain-p0-p6-strict-verification/notes/current-state-completion-audit-2026-05-14.md"
+      summary: "Performed a fresh current-state completion audit. POS HTTP and migration dry-run are green, but the objective is not achieved because B001-B006 remain red: auto-lock JS syntax, Moova endpoint contract, write-surface inventory, minimal-schema smokes, persistent Moova readyz/topology, and Moova degraded/offline widget UX."
+      commands:
+        - cmd: "node /Users/ab.mansour1agmail.com/.codex/skills/goal-maker/scripts/check-goal-state.mjs docs/goals/posmain-p0-p6-strict-verification/state.yaml"
+          status: "pass; goal_status=blocked, active_task=null, task_count=49 before adding this receipt"
+        - cmd: "curl -sS -i --max-time 5 http://127.0.0.1:8010/index.php | head -n 20"
+          status: "pass; HTTP 200 POS login page"
+        - cmd: "POSMAIN_DB_HOST=127.0.0.1 POSMAIN_DB_PORT=3307 POSMAIN_DB_USER=root POSMAIN_DB_PASS='' POSMAIN_DB_NAME=kody2 php tools/run_migrations.php --dry-run"
+          status: "pass; 0 pending sync schema change(s)"
+        - cmd: "node --check js/pos_auto_lock.js"
+          status: "fail; SyntaxError Unexpected token } at js/pos_auto_lock.js:116"
+        - cmd: "php /tmp/posmain-phpunit-9.phar --bootstrap /tmp/posmain-phpunit-autoload.php --colors=never tests/sync/moova_widget_bridge_contract_test.php"
+          status: "fail; 3 tests, 15 assertions, 2 failures on direct Moova apply service requires"
+        - cmd: "php /tmp/posmain-phpunit-9.phar --bootstrap /tmp/posmain-phpunit-autoload.php --colors=never tests/sync/write_surface_inventory_test.php"
+          status: "fail; ajax/moova_confirm_order.php not classified as moova_bridge"
+        - cmd: "POSMAIN_TEST_MYSQL_HOST=127.0.0.1 POSMAIN_TEST_MYSQL_PORT=3307 POSMAIN_TEST_MYSQL_USER=root POSMAIN_TEST_MYSQL_PASS='' php tests/sync/table_order_counter_smoke_test.php"
+          status: "fail; Unknown column table_id in ot_head from classes/Sync/SchemaManager.php:184"
+        - cmd: "POSMAIN_TEST_MYSQL_HOST=127.0.0.1 POSMAIN_TEST_MYSQL_PORT=3307 POSMAIN_TEST_MYSQL_USER=root POSMAIN_TEST_MYSQL_PASS='' php tests/sync/uuid_backfill_smoke_test.php"
+          status: "fail; Unknown column table_case in tables from classes/Sync/SchemaManager.php:184"
+        - cmd: "curl -sS -i --max-time 8 http://127.0.0.1:3001/readyz"
+          status: "fail; HTTP 503 {ok:false,database:true,redis:false}"
+        - cmd: "php tools/moova_local_topology_check.php"
+          status: "fail; POS HTTP healthy, Moova TCP/widget route answers, but readyz is HTTP 503 with MOOVA_READYZ_DOWN"
+        - cmd: "launchctl print gui/$(id -u)/com.codex.cofe-order-3001"
+          status: "pass_for_presence_only; persistent LaunchAgent is running, but Moova health remains red"
+      compatibility_notes:
+        - "No implementation files or tests were edited."
+        - "No runtime configuration was changed."
+        - "No services were stopped, started, or restarted."
+        - "No current database mutation was intentionally performed."
+        - "T045-T047 remain blocked pending owner approval."
+        - "The goal remains blocked; update_goal was not called."
+
+  - id: T050
+    type: pm
+    assignee: PM
+    status: done
+    objective: "Verify the fresh failed smoke probes did not leave disposable MariaDB schemas behind."
+    inputs:
+      - "tests/sync/table_order_counter_smoke_test.php"
+      - "tests/sync/uuid_backfill_smoke_test.php"
+      - "docs/goals/posmain-p0-p6-strict-verification/notes/current-state-completion-audit-2026-05-14.md"
+    constraints:
+      - "Do not edit implementation files or tests."
+      - "Do not change runtime configuration."
+      - "Do not drop any schema unless it is clearly disposable residue from the current smoke probes."
+      - "Do not activate blocked fix tasks without owner approval."
+    expected_output:
+      - "Disposable schema residue check."
+      - "Cleanup decision."
+      - "Board remains blocked."
+    receipt:
+      result: done_blocked_no_residue
+      completed_at: "2026-05-14T12:36:28Z"
+      note: "docs/goals/posmain-p0-p6-strict-verification/notes/post-refresh-environment-hygiene-2026-05-14.md"
+      summary: "Verified that the fresh failed table counter and UUID smoke tests did not leave their disposable schemas behind. The host mysql client was unavailable, so the check used the running posmain-mysql container. Only information_schema, kody2, mysql, performance_schema, sys, and u173148011_focus were present; no posmain_table_counter_smoke_* or posmain_uuid_smoke_* schemas remained."
+      commands:
+        - cmd: "mysql -h127.0.0.1 -P3307 -uroot -N -e \"SHOW DATABASES\""
+          status: "blocked; host shell has no mysql command"
+        - cmd: "docker exec posmain-mysql mariadb -uroot -N -e \"SHOW DATABASES\""
+          status: "pass; no posmain_table_counter_smoke_* or posmain_uuid_smoke_* schemas listed"
+        - cmd: "docker exec posmain-mysql mysql -uroot -N -e \"SHOW DATABASES\""
+          status: "pass; same schema list confirmed"
+        - cmd: "Exact state note-reference check excluding prose wildcards"
+          status: "pass; all exact note references in state.yaml exist"
+      compatibility_notes:
+        - "No implementation files or tests were edited."
+        - "No runtime configuration was changed."
+        - "No services were stopped, started, or restarted."
+        - "No database cleanup or mutation was performed."
+        - "The existing u173148011_focus schema was not touched."
+        - "The goal remains blocked; update_goal was not called."
+
+  - id: T051
+    type: pm
+    assignee: PM
+    status: done
+    objective: "Align blocked future task scopes with the current blocker manifest and owner approval handoff."
+    inputs:
+      - "docs/goals/posmain-p0-p6-strict-verification/notes/current-blocker-manifest-2026-05-14.md"
+      - "docs/goals/posmain-p0-p6-strict-verification/notes/current-approval-handoff-2026-05-14.md"
+      - "T045"
+      - "T046"
+    constraints:
+      - "Do not edit implementation files or tests."
+      - "Do not change runtime configuration."
+      - "Do not mutate database data."
+      - "Do not activate blocked fix tasks without owner approval."
+      - "Keep runtime files out of the source/test task."
+    expected_output:
+      - "Approval-scope consistency note."
+      - "Blocked task scope consistency repair if needed."
+      - "Board remains blocked."
+    receipt:
+      result: done_blocked_scope_consistency_repaired
+      completed_at: "2026-05-14T12:39:16Z"
+      note: "docs/goals/posmain-p0-p6-strict-verification/notes/approval-scope-consistency-2026-05-14.md"
+      summary: "Compared blocked future task scopes against the current blocker manifest and approval handoff. T045 was narrower than B002's documented candidate endpoint/service scope, so its allowed_files now also include ajax/moova_confirm_order.php, ajax/moova_change_order.php, and classes/Pos/Service/PosOrderMutationService.php. T045 remains blocked pending explicit owner approval; no implementation files were edited."
+      compatibility_notes:
+        - "No implementation files or tests were edited."
+        - "No runtime configuration was changed."
+        - "No services were stopped, started, or restarted."
+        - "No database mutation was performed."
+        - "T045-T047 remain blocked pending owner approval."
+        - "The goal remains blocked; update_goal was not called."
+
+  - id: T052
+    type: pm
+    assignee: PM
+    status: done
+    objective: "Propagate the repaired Option B scope into owner-facing handoff notes."
+    inputs:
+      - "docs/goals/posmain-p0-p6-strict-verification/notes/approval-gated-task-backlog-2026-05-14.md"
+      - "docs/goals/posmain-p0-p6-strict-verification/notes/owner-decision-menu-2026-05-14.md"
+      - "T045.allowed_files"
+      - "docs/goals/posmain-p0-p6-strict-verification/notes/approval-scope-consistency-2026-05-14.md"
+    constraints:
+      - "Do not edit implementation files or tests."
+      - "Do not change runtime configuration."
+      - "Do not mutate database data."
+      - "Do not activate blocked fix tasks without owner approval."
+    expected_output:
+      - "Owner-facing notes agree with T045 source/test scope."
+      - "Board remains blocked."
+    receipt:
+      result: done_blocked_handoff_scope_synced
+      completed_at: "2026-05-14T12:40:37Z"
+      summary: "Updated the approval-gated backlog and owner decision menu so Option B now lists the same B002 endpoint/service candidate files as T045 and the current blocker manifest: ajax/moova_confirm_order.php, ajax/moova_change_order.php, and classes/Pos/Service/PosOrderMutationService.php. The notes clarify those files are allowed only for the owner-approved B002 contract decision."
+      changed_files:
+        - "docs/goals/posmain-p0-p6-strict-verification/notes/approval-gated-task-backlog-2026-05-14.md"
+        - "docs/goals/posmain-p0-p6-strict-verification/notes/owner-decision-menu-2026-05-14.md"
+      compatibility_notes:
+        - "No implementation files or tests were edited."
+        - "No runtime configuration was changed."
+        - "No services were stopped, started, or restarted."
+        - "No database mutation was performed."
+        - "T045-T047 remain blocked pending owner approval."
+        - "The goal remains blocked; update_goal was not called."
+
+  - id: T053
+    type: pm
+    assignee: PM
+    status: done
+    objective: "Verify the final blocked-to-pass gate is consistent across board and handoff artifacts."
+    inputs:
+      - "docs/goals/posmain-p0-p6-strict-verification/state.yaml"
+      - "docs/goals/posmain-p0-p6-strict-verification/notes/post-fix-rerun-checklist-2026-05-14.md"
+      - "docs/goals/posmain-p0-p6-strict-verification/notes/resume-command-pack-2026-05-14.md"
+      - "docs/goals/posmain-p0-p6-strict-verification/notes/owner-decision-menu-2026-05-14.md"
+    constraints:
+      - "Do not edit implementation files or tests."
+      - "Do not change runtime configuration."
+      - "Do not mutate database data."
+      - "Do not activate blocked fix tasks without owner approval."
+      - "Do not call update_goal unless the completion audit proves the objective is achieved."
+    expected_output:
+      - "Final-gate consistency note."
+      - "Board remains blocked unless all completion gates are satisfied."
+    receipt:
+      result: done_blocked_final_gate_consistent
+      completed_at: "2026-05-14T12:42:01Z"
+      note: "docs/goals/posmain-p0-p6-strict-verification/notes/final-gate-consistency-2026-05-14.md"
+      summary: "Verified T047, the resume command pack, owner decision menu, and post-fix rerun checklist agree on the blocked-to-pass path. Option D must complete/reclassify T045 and T046, run the seven-gate post-fix checklist, create a fresh completion audit, and call update_goal only if no required work remains. No final-gate board repair was needed."
+      compatibility_notes:
+        - "No implementation files or tests were edited."
+        - "No runtime configuration was changed."
+        - "No services were stopped, started, or restarted."
+        - "No database mutation was performed."
+        - "T045-T047 remain blocked pending owner approval."
+        - "The goal remains blocked; update_goal was not called."
+
+checks:
+  dirty_fingerprint: "captured_2026-05-14_many_modified_and_untracked_phase_files"
+  last_verification:
+    result: complete
+    task: T047
+    commands:
+      - "Option D final strict pass complete: B001-B006 fixed/reclassified and full post-fix script, GUI, disposable write, persistent Moova E2E, topology, hygiene, and board gates passed"
+      - "Persistent Moova readyz is healthy with redis=true and topology check passed after disposable container cleanup"
+      - "Live Moova widget E2E passed for confirm, decline, edit, cancel, and idempotent cancel table-cache replay"
+      - "Full PHPUnit passed with expected Imagick skips: 68 tests, 191 assertions, 8 skipped"
+      - "Full PHP lint sweep parsed 3814 files with no syntax errors"
+      - "Final blocked-to-pass gate consistency checked across T047, resume pack, owner menu, and post-fix checklist; no repair needed"
+      - "Owner-facing Option B handoff notes synced with repaired T045 allowed_files"
+      - "Approval scope consistency repaired: T045 allowed_files now match B002 manifest/handoff candidate endpoint/service files while remaining blocked"
+      - "Post-refresh environment hygiene check confirmed no disposable schemas remained from fresh failed smoke probes"
+      - "Current-state completion audit created with prompt-to-artifact checklist and fresh proof commands; objective remains not achieved"
+      - "Fresh green current probes: POS HTTP 200, run_migrations dry-run 0 pending"
+      - "Fresh red current probes: js/pos_auto_lock.js syntax, moova_widget_bridge_contract, write_surface_inventory, table_order_counter_smoke, uuid_backfill_smoke, Moova readyz/topology"
+      - "Resume command pack created for Option A/B/C/D with explicit owner-approval gates, verification commands, stop conditions, and completion rule"
+      - "Approval-gated future task cards T045-T047 created and blocked pending owner approval"
+      - "Pilot-readiness one-page summary created with blocked verdict, green evidence, red blockers, and owner decision needed"
+      - "Receipt completeness audit verified exact state note references and explicit index coverage for current handoff/hygiene notes"
+      - "No-code boundary audit recorded audit-board scope versus pre-existing dirty implementation worktree"
+      - "Blocker manifest consistency check passed for B001-B006, file scopes, index, and current non-blocker status"
+      - "Current blocker manifest created with stable IDs B001-B006 and proof/pass criteria"
+      - "Environment restoration audit verified no leftover disposable schemas and no temporary foreground Moova runtime"
+      - "Owner decision menu created with audit-only, source/test, runtime/widget, and full strict-pass paths"
+      - "Audit artifact index refreshed; current board validation is 49 task cards after T048"
+      - "Current stop-rule receipt confirms owner approval is required before remaining fixes/runtime work"
+      - "Current approval handoff created with five remaining blocker tranches and order_fulfillment removed from active blockers"
+      - "Fresh completion audit mapped objective requirements to artifacts and confirmed strict readiness is still blocked"
+      - "Current migration readiness green: run_migrations dry-run 0 pending and order_fulfillment exists on kody2"
+      - "Current blockers still red: js/pos_auto_lock.js, Moova readyz redis=false, moova_widget_bridge_contract, write_surface_inventory, table_order_counter_smoke, uuid_backfill_smoke, Moova widget degraded-state UX"
+      - "Current blocker refresh: run_migrations dry-run now 0 pending and order_fulfillment exists on current kody2"
+      - "Moova branch worker tests passed on full disposable kody2 clone: ack OK (2/19), poll OK (2/21), apply OK (7/118)"
+      - "Remaining blockers refreshed: node --check js/pos_auto_lock.js fails; Moova readyz 503 redis=false; moova_widget_bridge_contract fails; write_surface_inventory fails; table_order_counter_smoke and uuid_backfill_smoke fail on minimal fixtures"
+      - "Focused Phase 0-2 foundation tests: direct PHP batch passed, empty-fixture PHPUnit failures reran green on schema-only kody2 clone, and temporary schemas were cleaned up"
+      - "curl http://127.0.0.1:8010/index.php -> 200"
+      - "curl http://127.0.0.1:3001/readyz -> 503 {ok:false,database:true,redis:false}"
+      - "node /Users/ab.mansour1agmail.com/.codex/skills/goal-maker/scripts/check-goal-state.mjs docs/goals/posmain-p0-p6-strict-verification/state.yaml"
+      - "Safe Phase 5/Moova focused tests passed; persistent Moova readyz still 503 redis=false"
+      - "Focused Phase 4 midscale tests: all tests/sync/phase4_*.php passed with disposable schema cleanup"
+      - "Focused Phase 3/security tests: auth/CSRF/admin/POS-write/upload/login/audit/schema/Moova/cloud-auth passed"
+      - "Codex in-app browser GUI smoke: pos_barcode.php load, item add, plus/minus totals, payment modal open/close, console errors []"
+      - "Fallback browser Moova widget smoke: login/unlock, iframe present, bell panel empty-queue copy, console errors []"
+      - "php tests/sync/phase6_pilot_docs_contract_test.php"
+      - "php tests/sync/phase6_e2e_docs_contract_test.php"
+      - "POSMAIN_TEST_MYSQL_HOST=127.0.0.1 POSMAIN_TEST_MYSQL_PORT=3307 POSMAIN_TEST_MYSQL_USER=root POSMAIN_TEST_MYSQL_PASS='' php tests/sync/phase6_seed_demo_restaurant_test.php"
+      - "POSMAIN_TEST_MYSQL_HOST=127.0.0.1 POSMAIN_TEST_MYSQL_PORT=3307 POSMAIN_TEST_MYSQL_USER=root POSMAIN_TEST_MYSQL_PASS='' php tests/sync/phase6_load_concurrency_check_test.php"
+      - "curl http://127.0.0.1:3001/readyz"
+      - "node --check js/pos_auto_lock.js"
+      - "php /tmp/posmain-phpunit-9.phar --bootstrap /tmp/posmain-phpunit-autoload.php --colors=never tests/sync/moova_widget_bridge_contract_test.php"
+      - "php /tmp/posmain-phpunit-9.phar --bootstrap /tmp/posmain-phpunit-autoload.php --colors=never tests/sync/write_surface_inventory_test.php"
+      - "POSMAIN_DB_HOST=127.0.0.1 POSMAIN_DB_PORT=3307 POSMAIN_DB_USER=root POSMAIN_DB_PASS='' POSMAIN_DB_NAME=kody2 php tools/run_migrations.php --dry-run"
+      - "php tests/sync/moova_delivery_foundation_test.php"
+      - "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/phase5_order_fulfillment_service_test.php"
+      - "POSMAIN_TEST_MYSQL_HOST=127.0.0.1 POSMAIN_TEST_MYSQL_PORT=3307 POSMAIN_TEST_MYSQL_USER=root POSMAIN_TEST_MYSQL_PASS='' php tests/sync/table_order_counter_smoke_test.php"
+      - "POSMAIN_TEST_MYSQL_HOST=127.0.0.1 POSMAIN_TEST_MYSQL_PORT=3307 POSMAIN_TEST_MYSQL_USER=root POSMAIN_TEST_MYSQL_PASS='' php tests/sync/uuid_backfill_smoke_test.php"

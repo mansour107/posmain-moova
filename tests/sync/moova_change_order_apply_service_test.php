@@ -28,10 +28,14 @@ class MoovaChangeOrderApplyServiceTest extends TestCase
     {
         $source = $this->source('ajax/moova_change_order.php');
 
-        $this->assertStringContainsString("require_once('../classes/Moova/MoovaChangeOrderApplyService.php')", $source);
+        $this->assertStringContainsString("require_once('../classes/Moova/MoovaLocalIngestService.php')", $source);
+        $this->assertStringContainsString("require_once('../classes/Pos/Service/PosOrderMutationService.php')", $source);
         $this->assertStringContainsString('moova_change_is_cashier_confirmed($payload)', $source);
-        $this->assertStringContainsString('new MoovaChangeOrderApplyService()', $source);
+        $this->assertStringContainsString('new MoovaLocalIngestService()', $source);
+        $this->assertStringContainsString('normalizeChangeForPos($payload)', $source);
+        $this->assertStringContainsString('->changeMoovaOrder($conn', $source);
         $this->assertStringContainsString("'response_mode' => 'direct'", $source);
+        $this->assertStringContainsString("'request_hash' => \$requestHash", $source);
         $this->assertStringNotContainsString('function moova_change_fetch_order_link_for_update', $source);
         $this->assertStringNotContainsString('function moova_change_create_action', $source);
         $this->assertStringNotContainsString('function moova_change_update_action', $source);

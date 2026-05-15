@@ -25,9 +25,13 @@ class MoovaNewOrderApplyServiceTest extends TestCase
     {
         $source = $this->source('ajax/moova_confirm_order.php');
 
-        $this->assertStringContainsString("require_once('../classes/Moova/MoovaNewOrderApplyService.php')", $source);
-        $this->assertStringContainsString('new MoovaNewOrderApplyService()', $source);
+        $this->assertStringContainsString("require_once('../classes/Moova/MoovaLocalIngestService.php')", $source);
+        $this->assertStringContainsString("require_once('../classes/Pos/Service/PosOrderMutationService.php')", $source);
+        $this->assertStringContainsString('new MoovaLocalIngestService()', $source);
+        $this->assertStringContainsString('normalizeNewOrderForPos($payload)', $source);
+        $this->assertStringContainsString('->confirmMoovaOrder($conn', $source);
         $this->assertStringContainsString("'response_mode' => 'direct'", $source);
+        $this->assertStringContainsString("'request_hash' => \$requestHash", $source);
         $this->assertStringNotContainsString('function moova_fetch_order_link_for_update', $source);
         $this->assertStringNotContainsString('function moova_create_order_link', $source);
         $this->assertStringNotContainsString('function moova_update_order_link_success', $source);

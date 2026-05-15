@@ -1,6 +1,8 @@
-<?php 
+<?php
 
-include('includes/header.php'); 
+include('includes/header.php');
+require_once __DIR__ . '/../classes/Pos/Service/OrderPrintPayloadService.php';
+require_once __DIR__ . '/../classes/Pos/Service/BrowserPrintAuditService.php';
 
 if (!isset($_GET['id'])) {
     echo "لا يوجد فاتورة بهذا الرقم";
@@ -12,6 +14,28 @@ $rowfat = $conn->query("SELECT * FROM `ot_head` where id = $id")->fetch_assoc();
 if ($rowfat == null) {
     echo "لا يوجد فاتورة بهذا الرقم";die;
 }else{
+    $print_payload = null;
+    try {
+        $print_payload = (new OrderPrintPayloadService())->buildReceiptPayload($conn, $id);
+    } catch (Throwable $printPayloadError) {
+        $print_payload = null;
+    }
+    if ($print_payload !== null) {
+        try {
+            (new BrowserPrintAuditService())->recordRenderedPrint(
+                $conn,
+                'receipt',
+                $id,
+                $print_payload,
+                isset($_SESSION['userid']) ? (int) $_SESSION['userid'] : null,
+                [
+                    'source' => 'print_receipt_page',
+                    'reprint_reason' => $_GET['reprint_reason'] ?? null,
+                ]
+            );
+        } catch (Throwable $printAuditError) {
+        }
+    }
     $tybe = $rowfat['pro_tybe'];
     
     // تحديد صفحة العودة حسب نوع POS
@@ -50,8 +74,8 @@ $prodate = date('md', strtotime($rowfat['pro_date']));
     <?= $prodate.$rowfat['pro_id'] ?></p>
 
     <?php
-    $table_name = '';
-    if (!empty($rowfat['table_id'])) {
+    $table_name = $print_payload['table']['name'] ?? '';
+    if ($table_name === '' && !empty($rowfat['table_id'])) {
         $table_id = intval($rowfat['table_id']);
         $table_row = $conn->query("SELECT tname FROM tables WHERE id = $table_id")->fetch_assoc();
         $table_name = $table_row['tname'] ?? '';
@@ -102,45 +126,72 @@ if ($is_delivery) {
 </thead>
 <tbody>
     <?php 
-    $x =0;
-	    $resdet = $conn->query("SELECT * FROM fat_details where fatid = $id AND isdeleted = 0");
-    while ($rowdet =$resdet->fetch_assoc()) {
-        $x++;
-        $itmid= $rowdet['item_id']; 
-        $rowitm = $conn->query("SELECT * FROM myitems where id = $itmid ")->fetch_assoc();
-        $qty = $rowdet['qty_out'];       
+    $receipt_lines = is_array($print_payload['lines'] ?? null) ? $print_payload['lines'] : null;
+    if ($receipt_lines !== null) {
+        foreach ($receipt_lines as $line) {
+            $line_modifiers = is_array($line['modifiers'] ?? null) ? $line['modifiers'] : [];
+            $line_notes = is_array($line['notes'] ?? null) ? $line['notes'] : [];
     ?>
+<tr>
+<td class="p-1" style="font-size:small; border: 1px solid #ddd;">
+    <?= htmlspecialchars($line['name'] ?? '', ENT_QUOTES, 'UTF-8') ?>
+    <?php foreach ($line_modifiers as $modifier): ?>
+        <div style="font-size:10px; color:#444;">+ <?= htmlspecialchars($modifier['name_ar'] ?? $modifier['name_en'] ?? '', ENT_QUOTES, 'UTF-8') ?> (<?= htmlspecialchars($modifier['qty'] ?? '1.000', ENT_QUOTES, 'UTF-8') ?>)</div>
+    <?php endforeach; ?>
+    <?php foreach ($line_notes as $note): ?>
+        <div style="font-size:10px; color:#555;">ملاحظة: <?= htmlspecialchars($note['note_text'] ?? '', ENT_QUOTES, 'UTF-8') ?></div>
+    <?php endforeach; ?>
+</td>
+<td style="border: 1px solid #ddd;"><?= htmlspecialchars($line['qty'] ?? '0.000', ENT_QUOTES, 'UTF-8') ?></td>
+<td style="border: 1px solid #ddd;"><?= htmlspecialchars($line['price'] ?? '0.00', ENT_QUOTES, 'UTF-8') ?></td>
+<td style="border: 1px solid #ddd;"><?= htmlspecialchars($line['line_total'] ?? '0.00', ENT_QUOTES, 'UTF-8') ?></td>
+</tr>
+<?php
+        }
+    } else {
+        $x =0;
+        $resdet = $conn->query("SELECT * FROM fat_details where fatid = $id AND isdeleted = 0");
+        while ($rowdet =$resdet->fetch_assoc()) {
+            $x++;
+            $itmid= $rowdet['item_id'];
+            $rowitm = $conn->query("SELECT * FROM myitems where id = $itmid ")->fetch_assoc();
+            $qty = $rowdet['qty_out'];
+?>
 <tr>
 <td class="p-1" style="font-size:small; border: 1px solid #ddd;"><?= $rowitm['iname']  ?></td>
 <td style="border: 1px solid #ddd;"><?= $qty  ?></td>
 <td style="border: 1px solid #ddd;"><?= $rowdet['price']?></td>
 <td style="border: 1px solid #ddd;"><?= $rowdet['det_value']?></td>
 </tr>
-<?php }?>
+<?php
+        }
+    }
+?>
 </tbody>
 </table>
 
 <table class="table col-md-12 table-bordered text-center" style="border: 1px solid #ddd; margin-top: 0;">
 <tbody>
+<?php $receipt_totals = is_array($print_payload['totals'] ?? null) ? $print_payload['totals'] : null; ?>
 <tr style="font-weight: bold;background-color: #f0f0f0;">
 <td style="border: 1px solid #ddd; padding: 8px;">اجمالي</td>
-<?php if ($rowfat['fat_disc'] > 0 ){?>
+<?php if (($receipt_totals !== null ? (float) $receipt_totals['discount'] : (float) $rowfat['fat_disc']) > 0 ){?>
 <td style="border: 1px solid #ddd; padding: 8px;">خصم</td>
 <?php }?>
-<?php if ($rowfat['fat_plus'] > 0 ){?>
+<?php if (($receipt_totals !== null ? (float) $receipt_totals['extra'] : (float) $rowfat['fat_plus']) > 0 ){?>
 <td style="border: 1px solid #ddd; padding: 8px;">اضافي</td>
 <?php }?>
 <td style="border: 1px solid #ddd; padding: 8px;">الصافي</td>
 </tr>
 <tr style="font-weight: bold;">
-<td style="border: 1px solid #ddd; padding: 8px;"><?= $rowfat['fat_total'] ?></td>
-<?php if ($rowfat['fat_disc'] > 0 ){?>
-<td style="border: 1px solid #ddd; padding: 8px;"><?= $rowfat['fat_disc'] ?></td>
+<td style="border: 1px solid #ddd; padding: 8px;"><?= $receipt_totals !== null ? $receipt_totals['total'] : $rowfat['fat_total'] ?></td>
+<?php if (($receipt_totals !== null ? (float) $receipt_totals['discount'] : (float) $rowfat['fat_disc']) > 0 ){?>
+<td style="border: 1px solid #ddd; padding: 8px;"><?= $receipt_totals !== null ? $receipt_totals['discount'] : $rowfat['fat_disc'] ?></td>
 <?php }?>
-<?php if ($rowfat['fat_plus'] > 0 ){?>
-<td style="border: 1px solid #ddd; padding: 8px;"><?= $rowfat['fat_plus'] ?></td>
+<?php if (($receipt_totals !== null ? (float) $receipt_totals['extra'] : (float) $rowfat['fat_plus']) > 0 ){?>
+<td style="border: 1px solid #ddd; padding: 8px;"><?= $receipt_totals !== null ? $receipt_totals['extra'] : $rowfat['fat_plus'] ?></td>
 <?php }?>
-<td style="border: 1px solid #ddd; padding: 8px;"><?= $rowfat['fat_net'] ?></td>
+<td style="border: 1px solid #ddd; padding: 8px;"><?= $receipt_totals !== null ? $receipt_totals['net'] : $rowfat['fat_net'] ?></td>
 </tr>
 </tbody>
 </table>

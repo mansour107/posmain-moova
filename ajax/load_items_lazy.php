@@ -6,12 +6,13 @@
 
 header('Content-Type: application/json');
 require_once '../includes/connect.php';
+require_once '../classes/Pos/Service/ItemAvailabilityService.php';
 
 try {
     // معاملات البحث والصفحات
-    $search = isset($_GET['search']) ? trim($_GET['search']) : '';
-    $page = isset($_GET['page']) ? intval($_GET['page']) : 1;
-    $limit = isset($_GET['limit']) ? intval($_GET['limit']) : 50;
+    $search = isset($_GET['search']) ? substr(trim((string) $_GET['search']), 0, 120) : '';
+    $page = isset($_GET['page']) ? max(1, intval($_GET['page'])) : 1;
+    $limit = isset($_GET['limit']) ? min(100, max(1, intval($_GET['limit']))) : 50;
     $offset = ($page - 1) * $limit;
     
     // بناء الاستعلام
@@ -59,6 +60,16 @@ try {
             'barcode' => $row['barcode'] ?? ''
         ];
     }
+
+    $branchConfig = function_exists('posmain_app_config')
+        ? (posmain_app_config()['branch'] ?? [])
+        : [];
+    $availabilityScope = [
+        'tenant' => (int)($branchConfig['pos_tenant'] ?? 0),
+        'branch' => (int)($branchConfig['pos_branch'] ?? 0),
+        'channel' => 'pos',
+    ];
+    $items = (new ItemAvailabilityService())->decorateItems($conn, $items, $availabilityScope);
     
     // حساب إجمالي العدد
     $count_query = "SELECT COUNT(*) as total FROM myitems WHERE {$where}";
@@ -86,8 +97,13 @@ try {
     
 } catch (Exception $e) {
     http_response_code(500);
-    echo json_encode([
-        'success' => false,
-        'error' => $e->getMessage()
-    ]);
+    $payload = posmain_exception_payload(
+        $e,
+        'حدث خطأ أثناء تحميل الأصناف، يرجى المحاولة مرة أخرى',
+        'ERROR',
+        false,
+        'load_items_lazy'
+    );
+    $payload['error'] = $payload['message'];
+    echo json_encode($payload, JSON_UNESCAPED_UNICODE);
 }

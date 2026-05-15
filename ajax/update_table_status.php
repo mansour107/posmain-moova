@@ -4,6 +4,9 @@ ini_set('display_errors', 0);
 ob_start();
 session_start();
 include('../includes/connect.php');
+require_once('../includes/auth_guard.php');
+require_once('../includes/csrf.php');
+require_once('../classes/Pos/Validation/TableInputValidator.php');
 require_once('../classes/TableOrderService.php');
 require_once('../classes/Pos/Service/PosOrderMutationService.php');
 require_once('../classes/Sync/SyncOutboxEventService.php');
@@ -11,17 +14,20 @@ ob_clean();
 
 header('Content-Type: application/json; charset=utf-8');
 
+require_pos_authenticated();
+if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
+    require_csrf('pos_browser');
+}
+
 try {
     if (!isset($_POST['table_id'])) {
         throw new Exception('المعاملات مفقودة');
     }
 
-    $table_id = intval($_POST['table_id']);
-    $order_id = intval($_POST['order_id'] ?? 0);
-    $action = isset($_POST['action'])
-        ? (string) $_POST['action']
-        : (intval($_POST['is_occupied'] ?? 0) === 1 ? 'activate' : 'clear');
-    $reason = trim((string) ($_POST['reason'] ?? 'تم تفريغ الطاولة'));
+    $table_id = TableInputValidator::positiveInt($_POST['table_id'] ?? 0, 'رقم الطاولة غير صحيح');
+    $order_id = TableInputValidator::optionalPositiveInt($_POST['order_id'] ?? 0, 'معرف الطلب غير صحيح');
+    $action = TableInputValidator::tableStatusAction($_POST);
+    $reason = TableInputValidator::reason($_POST['reason'] ?? '', 'تم تفريغ الطاولة');
     $user_id = intval($_SESSION['userid'] ?? 1);
     $idempotencyService = new IdempotencyService();
     $idempotencyKey = $idempotencyService->resolveKey($_POST, $_SERVER);
@@ -122,9 +128,12 @@ try {
     if (isset($conn) && $conn instanceof mysqli) {
         $conn->rollback();
     }
-    echo json_encode([
-        'success' => false,
-        'message' => $e->getMessage()
-    ], JSON_UNESCAPED_UNICODE);
+    echo json_encode(posmain_exception_payload(
+        $e,
+        'حدث خطأ أثناء تحديث حالة الطاولة، يرجى المحاولة مرة أخرى',
+        'ERROR',
+        true,
+        'update_table_status'
+    ), JSON_UNESCAPED_UNICODE);
 }
 ?>

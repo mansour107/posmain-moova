@@ -1,6 +1,26 @@
 <?php
 include('../includes/connect.php');
+require_once __DIR__ . '/../includes/auth_guard.php';
+require_once __DIR__ . '/../includes/csrf.php';
 require_once __DIR__ . '/../classes/PasswordService.php';
+require_once __DIR__ . '/../classes/Security/SecurityAuditLogger.php';
+require_once __DIR__ . '/../includes/upload_guard.php';
+
+require_admin_or_permission('users.manage', $conn);
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+    header('location:../users.php');
+    exit();
+}
+require_csrf('users_write');
+
+function doadd_user_audit(mysqli $conn, string $eventType, array $options = []): void
+{
+    try {
+        (new SecurityAuditLogger())->record($conn, $eventType, $options);
+    } catch (Throwable $exception) {
+        error_log('User add audit skipped: ' . $exception->getMessage());
+    }
+}
 
 $uname = $_POST['uname'];
 $password = $_POST['password'];
@@ -10,30 +30,26 @@ $usertype = $userrole;
 $is_waiter = isset($_POST['is_waiter']) ? 1 : 0;
 $new_kvr_name = '';
 
-if ($_FILES['img']['size'] > 100 )  {
-$filekvr = $_FILES['img']['name'];
-$kvr_uploaded_size = $_FILES['img']['size'];
-$kvr_name = $_FILES['img']['tmp_name'];
-$arrkvr = explode(".", $filekvr);
-$kvr_ext = ($arrkvr['1']);
-$allow_ext = ["jpg", "png", "gif", "jpeg"];
-if (!in_array($kvr_ext, $allow_ext)) {
-	echo $kvr_ext."<h2>الملف المحمل ليس صوره او امتداد غير مسموح به</h2>";
-	exit();
-}
-if ($kvr_uploaded_size > 2000000) {
-	echo "<h2>بعض الملفات اكبر من اللازم  20 ميجا بايت </h2>";
-	exit();
-}
-$new_kvr_name = $arrkvr['0'].rand(1, 1000000).".".$arrkvr['1'];
-move_uploaded_file($kvr_name, "../uploads/$new_kvr_name");
+if (!empty($_FILES['img']['name']) && (int) ($_FILES['img']['size'] ?? 0) > 0) {
+    try {
+        $new_kvr_name = posmain_store_image_upload($_FILES['img'], __DIR__ . '/../uploads', 'user', 2000000);
+    } catch (Throwable $exception) {
+        echo "<h2>" . htmlspecialchars(posmain_safe_exception_message($exception, 'تعذر رفع صورة المستخدم', true), ENT_QUOTES, 'UTF-8') . "</h2>";
+        exit();
+    }
 }
 
 $stmt = $conn->prepare("INSERT INTO users (uname, password, usertype, userrole, img, is_waiter) VALUES (?, ?, ?, ?, ?, ?)");
 $stmt->bind_param("ssiisi", $uname, $hashpass, $usertype, $userrole, $new_kvr_name, $is_waiter);
 $stmt->execute();
+$newUserId = (int) $conn->insert_id;
 $stmt->close();
 $conn->query("INSERT INTO `process`(`type`) VALUES ('add user')");
+doadd_user_audit($conn, 'user_created', [
+    'target_type' => 'user',
+    'target_id' => $newUserId,
+    'metadata' => ['username' => $uname, 'is_waiter' => $is_waiter],
+]);
 
 header('location:../users.php');
 ?>

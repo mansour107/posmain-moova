@@ -1,6 +1,7 @@
 <?php
 session_start();
 include('includes/connect.php');
+require_once __DIR__ . '/includes/csrf.php';
 include('classes/ShiftReport.php');
 
 // التحقق من تسجيل الدخول
@@ -15,6 +16,7 @@ $user_id = $_SESSION['userid'];
 $report = new ShiftReport($conn, $user_id);
 $totals = $report->getTotals();
 $breakdown = $report->getPaymentBreakdown();
+$drawer_reconciliation = $report->getDrawerReconciliation();
 $returns = $report->getReturns();
 $expenses = $report->getExpenses();
 
@@ -22,22 +24,37 @@ $expenses = $report->getExpenses();
 $total_cash_sys = 0;
 $total_visa_sys = 0;
 
-// تجميع المدفوعات (يمكن تحسين المنطق لمعرفة النقدية والفيزا بدقة اذا كانت اسماء الصناديق معروفة)
-// سنفترض مؤقتاً هنا للعرض، ولكن في الإغلاق سنرسل كل صندوق على حدة
+// تجميع المدفوعات من خدمة التوافق الجديدة عند توفرها، مع إبقاء الرجوع القديم كاحتياط
 $breakdown_data = [];
-while($row = $breakdown->fetch_assoc()) {
-    $breakdown_data[] = $row;
-    // منطق تقريبي: "بنك" أو "فيزا" في الاسم يعني فيزا
-    if (strpos($row['fund_name'], 'بنك') !== false || strpos($row['fund_name'], 'فيزا') !== false || strpos($row['fund_name'], 'Bank') !== false) {
-        $total_visa_sys += $row['total'];
-    } else {
-        // افتراض الباقي نقدي (خزينة)
-        $total_cash_sys += $row['total'];
+$reconciled_methods = $drawer_reconciliation['payments']['methods'] ?? [];
+if ($reconciled_methods) {
+    foreach ($reconciled_methods as $method_row) {
+        $breakdown_data[] = [
+            'fund_name' => $method_row['payment_method'] !== '' ? $method_row['payment_method'] : $method_row['type'],
+            'fund_id' => null,
+            'count' => $method_row['count'],
+            'total' => (float) $method_row['total'],
+            'type' => $method_row['type'],
+        ];
+    }
+    $total_cash_sys = (float) ($drawer_reconciliation['payments']['cash'] ?? 0);
+    $total_visa_sys = (float) ($drawer_reconciliation['payments']['non_cash'] ?? 0);
+} else {
+    while($row = $breakdown->fetch_assoc()) {
+        $breakdown_data[] = $row;
+        if (strpos($row['fund_name'], 'بنك') !== false || strpos($row['fund_name'], 'فيزا') !== false || strpos($row['fund_name'], 'Bank') !== false) {
+            $total_visa_sys += $row['total'];
+        } else {
+            $total_cash_sys += $row['total'];
+        }
     }
 }
 
 $expenses_total = $expenses['total'];
-$net_cash_expected = $total_cash_sys - $expenses_total;
+$has_drawer_session = !empty($drawer_reconciliation['drawer_session']);
+$drawer_expected_cash = (float) ($drawer_reconciliation['reconciliation']['expected_cash'] ?? 0);
+$drawer_cash_difference = (float) ($drawer_reconciliation['reconciliation']['cash_difference'] ?? 0);
+$net_cash_expected = $has_drawer_session ? $drawer_expected_cash : $total_cash_sys - $expenses_total;
 
 ?>
 <!DOCTYPE html>
@@ -121,12 +138,16 @@ $net_cash_expected = $total_cash_sys - $expenses_total;
     <!-- Input Section for Closing -->
     <div class="input-section no-print">
         <form action="do_close_shift_z.php" method="POST" id="closeForm">
+            <?= csrf_input('shift_close_z') ?>
             <!-- Hidden Fields for System Calculations -->
             <input type="hidden" name="sys_total_sales" value="<?= $totals['total_net'] ?>">
             <input type="hidden" name="sys_total_cash" value="<?= $total_cash_sys ?>">
             <input type="hidden" name="sys_total_visa" value="<?= $total_visa_sys ?>">
             <input type="hidden" name="sys_expenses" value="<?= $expenses_total ?>">
             <input type="hidden" name="expected_cash" value="<?= $net_cash_expected ?>">
+            <input type="hidden" name="drawer_session_id" value="<?= (int) ($drawer_reconciliation['drawer_session']['id'] ?? 0) ?>">
+            <input type="hidden" name="drawer_expected_cash" value="<?= htmlspecialchars((string) $net_cash_expected, ENT_QUOTES, 'UTF-8') ?>">
+            <input type="hidden" name="drawer_cash_difference" value="<?= htmlspecialchars((string) $drawer_cash_difference, ENT_QUOTES, 'UTF-8') ?>">
             
             <div class="form-group">
                 <label>النقدية الفعلية (العد)</label>

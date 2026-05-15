@@ -1,16 +1,26 @@
 <?php
 session_start();
 include('../includes/connect.php');
+require_once('../includes/auth_guard.php');
+require_once('../includes/csrf.php');
+require_once('../classes/Pos/Validation/OrderInputValidator.php');
+require_once('../classes/Pos/Validation/TableInputValidator.php');
 require_once('../classes/Pos/Service/PosOrderMutationService.php');
 require_once('../classes/Sync/SyncOutboxEventService.php');
 
 header('Content-Type: application/json; charset=utf-8');
+
+require_pos_authenticated();
+if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
+    require_csrf('pos_browser');
+}
 
 try {
     $data = json_decode(file_get_contents('php://input'), true);
     if (!$data) {
         throw new Exception('بيانات غير صحيحة');
     }
+    $data = OrderInputValidator::validateTableSave($data);
 
     $tableId = intval($data['table_id'] ?? 0);
     $orderId = intval($data['order_id'] ?? 0);
@@ -109,9 +119,16 @@ try {
     if (isset($conn) && $conn instanceof mysqli) {
         $conn->rollback();
     }
-    echo json_encode([
-        'success' => false,
-        'message' => $e->getMessage()
-    ], JSON_UNESCAPED_UNICODE);
+    $payload = posmain_exception_payload(
+        $e,
+        'حدث خطأ أثناء حفظ الطلب، يرجى المحاولة مرة أخرى',
+        'ERROR',
+        true,
+        'save_order'
+    );
+    if ($e instanceof InvalidArgumentException) {
+        $payload['code'] = 'VALIDATION_FAILED';
+    }
+    echo json_encode($payload, JSON_UNESCAPED_UNICODE);
 }
 ?>

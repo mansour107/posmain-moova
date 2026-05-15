@@ -1,14 +1,20 @@
 <?php
 
 require_once __DIR__ . '/../../TableOrderService.php';
+require_once __DIR__ . '/PaymentMethodService.php';
+require_once __DIR__ . '/DrawerSessionService.php';
 
 class PaymentService
 {
     private $tableOrderService;
+    private $paymentMethodService;
+    private $drawerSessionService;
 
-    public function __construct(?TableOrderService $tableOrderService = null)
+    public function __construct(?TableOrderService $tableOrderService = null, ?PaymentMethodService $paymentMethodService = null, ?DrawerSessionService $drawerSessionService = null)
     {
         $this->tableOrderService = $tableOrderService ?: new TableOrderService();
+        $this->paymentMethodService = $paymentMethodService ?: new PaymentMethodService();
+        $this->drawerSessionService = $drawerSessionService ?: new DrawerSessionService();
     }
 
     public function payTableOrder(mysqli $conn, array $request, array $context = []): array
@@ -21,6 +27,8 @@ class PaymentService
         $userId = $this->contextUserId($request, $context);
         $discount = $this->optionalFloat($request, ['discount', 'fat_disc']);
         $netOverride = $this->optionalFloat($request, ['net', 'fat_net']);
+        $drawerContext = array_merge($request, $context, ['drawer_reason' => 'table_payment']);
+        $drawerSession = $this->preflightCashDrawerForPayment($conn, $paymentMethod, $amountPaid, $userId, $drawerContext);
 
         $result = $this->tableOrderService->payTableOrder(
             $conn,
@@ -34,12 +42,68 @@ class PaymentService
             $netOverride
         );
 
+        $this->recordCashDrawerMovementForPayment(
+            $conn,
+            $paymentMethod,
+            (float) ($result['applied_amount'] ?? 0),
+            (int) ($result['order_id'] ?? $orderId),
+            $userId,
+            $drawerContext,
+            $drawerSession
+        );
+
         return [
             'success' => true,
             'code' => 'OK',
             'message' => 'PAYMENT_APPLIED',
             'data' => $result,
         ];
+    }
+
+    public function preflightCashDrawerForPayment(mysqli $conn, string $paymentMethod, float $amount, int $userId, array $context = []): ?array
+    {
+        if ($amount <= 0 || !$this->isCashPaymentMethod($conn, $paymentMethod)) {
+            return null;
+        }
+
+        return $this->openDrawerSessionForCashPayment($conn, $userId, $context);
+    }
+
+    public function recordCashDrawerMovementForPayment(mysqli $conn, string $paymentMethod, float $amount, int $orderId, int $userId, array $context = [], ?array $preflightSession = null, ?int $paymentId = null): ?array
+    {
+        if ($amount <= 0 || !$this->isCashPaymentMethod($conn, $paymentMethod)) {
+            return null;
+        }
+
+        $session = $preflightSession ?: $this->openDrawerSessionForCashPayment($conn, $userId, $context);
+        if (!$session) {
+            return null;
+        }
+
+        return $this->drawerSessionService->recordMovement($conn, (int) $session['id'], [
+            'movement_type' => 'sale_cash',
+            'amount' => $amount,
+            'order_id' => $orderId,
+            'payment_id' => $paymentId,
+            'reason' => $context['drawer_reason'] ?? 'pos_cash_payment',
+            'created_by' => $userId,
+        ]);
+    }
+
+    public function isCashPaymentMethod(mysqli $conn, $paymentMethod): bool
+    {
+        $legacyCash = strtolower(trim((string) $paymentMethod)) === 'cash';
+        if (!$this->tableExists($conn, 'payment_methods')) {
+            return $legacyCash;
+        }
+
+        try {
+            $method = $this->paymentMethodService->resolveActive($conn, $paymentMethod);
+        } catch (Throwable $exception) {
+            return $legacyCash;
+        }
+
+        return ($method['type'] ?? '') === 'cash';
     }
 
     private function resolveOrderId(mysqli $conn, int $tableId, array $request): int
@@ -119,5 +183,52 @@ class PaymentService
         }
 
         return $userId;
+    }
+
+    private function openDrawerSessionForCashPayment(mysqli $conn, int $userId, array $context): ?array
+    {
+        $hasDrawerTables = $this->tableExists($conn, 'drawer_sessions') && $this->tableExists($conn, 'drawer_movements');
+        if (!$hasDrawerTables) {
+            if ($this->requiresOpenShift()) {
+                throw new RuntimeException('DRAWER_SESSION_REQUIRED');
+            }
+
+            return null;
+        }
+
+        $tenant = $this->contextNonNegativeInt($context, ['tenant', 'pos_tenant']);
+        $branch = $this->contextNonNegativeInt($context, ['branch', 'pos_branch']);
+        $session = $this->drawerSessionService->findOpenSession($conn, $userId, $tenant, $branch);
+        if (!$session && $this->requiresOpenShift()) {
+            throw new RuntimeException('DRAWER_SESSION_REQUIRED');
+        }
+
+        return $session;
+    }
+
+    private function requiresOpenShift(): bool
+    {
+        $value = strtolower(trim((string) getenv('POSMAIN_REQUIRE_OPEN_SHIFT')));
+
+        return in_array($value, ['1', 'true', 'yes', 'on'], true);
+    }
+
+    private function contextNonNegativeInt(array $context, array $keys): int
+    {
+        foreach ($keys as $key) {
+            if (array_key_exists($key, $context) && $context[$key] !== '' && $context[$key] !== null) {
+                return max(0, (int) $context[$key]);
+            }
+        }
+
+        return 0;
+    }
+
+    private function tableExists(mysqli $conn, string $tableName): bool
+    {
+        $tableName = $conn->real_escape_string($tableName);
+        $result = $conn->query("SHOW TABLES LIKE '{$tableName}'");
+
+        return $result && $result->num_rows > 0;
     }
 }

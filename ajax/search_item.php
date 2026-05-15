@@ -12,7 +12,7 @@ include($root_path . '/includes/connect.php');
 header('Content-Type: application/json');
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['barcode'])) {
-    $barcode = trim($_POST['barcode']);
+    $barcode = substr(trim((string) $_POST['barcode']), 0, 120);
     
     if (empty($barcode)) {
         echo json_encode(['success' => false, 'message' => 'الباركود فارغ']);
@@ -21,12 +21,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['barcode'])) {
     
     // البحث بالباركود أو ID أو اسم الصنف
     // محاولة تحويل الباركود لرقم للبحث بالـ ID
-    $numericBarcode = is_numeric($barcode) ? intval($barcode) : 0;
+    $numericBarcode = preg_match('/^\d+$/', $barcode) ? intval($barcode) : 0;
     
-    $sql = "SELECT * FROM myitems WHERE (barcode = ? OR id = ? OR id = ? OR iname LIKE ?) AND isdeleted = 0 LIMIT 1";
+    $sql = "SELECT * FROM myitems WHERE (barcode = ? OR id = ? OR iname LIKE ?) AND isdeleted = 0 LIMIT 1";
     $stmt = $conn->prepare($sql);
     $searchLike = "%{$barcode}%";
-    $stmt->bind_param("siss", $barcode, $numericBarcode, $barcode, $searchLike);
+    $stmt->bind_param("sis", $barcode, $numericBarcode, $searchLike);
     $stmt->execute();
     $result = $stmt->get_result();
     

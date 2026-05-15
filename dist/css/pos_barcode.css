@@ -825,9 +825,9 @@ div:where(.swal2-container) div:where(.swal2-popup) {
 
 .pos-cart-row-inner {
     display: grid !important;
-    grid-template-columns: 58px 24px 34px 24px minmax(0, 1fr) 18px;
-    grid-template-areas: "value decrease qty increase name delete";
-    gap: 0.22rem;
+    grid-template-columns: 58px 24px 34px 24px minmax(0, 1fr) 26px 18px;
+    grid-template-areas: "value decrease qty increase name note delete";
+    gap: 0.18rem;
     align-items: center;
     direction: ltr;
     min-height: 52px;
@@ -841,14 +841,12 @@ div:where(.swal2-container) div:where(.swal2-popup) {
 .pos-cart-main {
     grid-area: name;
     min-width: 0;
-    display: flex;
-    align-items: center;
-    justify-content: flex-end;
-    gap: 0.4rem;
+    display: block;
     direction: rtl;
 }
 
 .pos-cart-row .pos-cart-main,
+.pos-cart-row .pos-cart-note,
 .pos-cart-row .pos-cart-qty,
 .pos-cart-row .pos-cart-price,
 .pos-cart-row .pos-cart-value {
@@ -863,6 +861,48 @@ div:where(.swal2-container) div:where(.swal2-popup) {
     max-width: 100%;
     min-width: 0;
     text-align: right;
+    white-space: normal !important;
+    overflow: visible !important;
+    text-overflow: clip !important;
+    word-break: break-word;
+}
+
+.pos-cart-note {
+    grid-area: note;
+    display: flex;
+    justify-content: center;
+}
+
+.lineNoteButton {
+    width: 26px;
+    height: 26px;
+    padding: 0;
+    display: inline-flex !important;
+    align-items: center;
+    justify-content: center;
+    border-radius: 6px !important;
+    border: 1px solid #d9e2ef;
+    background: #ffffff;
+    font-size: 0.74rem;
+    transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.lineNoteButton.line-note-empty {
+    color: #8a97aa;
+    border-color: #d9e2ef;
+    background: #ffffff;
+}
+
+.lineNoteButton.line-note-has-value {
+    color: #0f7a43;
+    border-color: #75c49a;
+    background: #e5f7ed;
+}
+
+.lineNoteButton:focus,
+.lineNoteButton:hover {
+    border-color: #0b2a5b;
+    color: #0b2a5b;
 }
 
 .pos-cart-qty {
@@ -1181,8 +1221,8 @@ div:where(.swal2-container) div:where(.swal2-popup) {
     }
 
     .pos-cart-row-inner {
-        grid-template-columns: 54px 22px 32px 22px minmax(0, 1fr) 18px;
-        grid-template-areas: "value decrease qty increase name delete";
+        grid-template-columns: 54px 22px 32px 22px minmax(0, 1fr) 24px 18px;
+        grid-template-areas: "value decrease qty increase name note delete";
         gap: 0.18rem;
         min-height: 46px;
         padding: 0 0.15rem;
@@ -1194,8 +1234,14 @@ div:where(.swal2-container) div:where(.swal2-popup) {
 
     .pos-cart-name {
         font-size: 0.68rem !important;
-        white-space: nowrap;
+        white-space: normal !important;
         line-height: 1.25;
+    }
+
+    .lineNoteButton {
+        width: 24px;
+        height: 24px;
+        font-size: 0.68rem;
     }
 
     .pos-cart-qty {

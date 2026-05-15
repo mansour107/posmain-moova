@@ -1,0 +1,492 @@
+# Goal Maker v2 state.yaml
+# Board truth lives here. goal.md is the editable charter; notes/ holds long receipts only.
+
+version: 2
+
+goal:
+  title: "POSMAIN Phase 5 Moova Reliability"
+  slug: "posmain-phase-5-moova-reliability"
+  kind: specific
+  tranche: "Implement Phase 5: Moova mode decision, direct/queued mutation unification, token protection, delivery foundations, cashier UX evidence, and Moova reliability tests."
+  status: done
+
+rules:
+  pm_owns_state: true
+  one_active_task: true
+  max_write_workers: 1
+  no_implementation_without_worker_or_pm_task: true
+  no_completion_without_judge_or_pm_audit: true
+
+agents:
+  scout: installed
+  worker: installed
+  judge: installed
+
+active_task: null
+
+tasks:
+  - id: T001
+    type: pm
+    assignee: PM
+    status: done
+    objective: "Create the Goal Maker board for Phase 5 and capture the safety posture before implementation."
+    inputs:
+      - "/Users/ab.mansour1agmail.com/Desktop/pos expansion plan.txt Phase 5"
+      - "docs/goals/posmain-phase-0-production-readiness"
+      - "docs/goals/posmain-phase-1-production-foundation"
+      - "docs/goals/posmain-phase-2-pos-state"
+      - "docs/goals/posmain-phase-3-security-hardening"
+      - "docs/goals/posmain-phase-4-midscale-product"
+      - "docs/production"
+      - "git status --short"
+    constraints:
+      - "Do not edit implementation files before the board exists."
+      - "Do not discard, revert, or absorb unrelated dirty worktree changes."
+      - "Make the first active task read-only because Phase 5 touches Moova, POS mutation, security, delivery metadata, and cashier UI."
+    expected_output:
+      - "Goal Maker v2 board exists and passes the checker."
+      - "First active task is safe and read-only."
+      - "Scout, Worker, and Judge roles are available."
+    receipt:
+      result: done
+      summary: "Created the Phase 5 Goal Maker board with Scout as the first active task. Current repo has substantial pre-existing dirty Phase 3/4 work, so Phase 5 implementation must use explicit Worker allowed_files and focused verification."
+      evidence:
+        - "docs/goals/posmain-phase-5-moova-reliability/goal.md"
+        - "docs/goals/posmain-phase-5-moova-reliability/state.yaml"
+        - "docs/goals/posmain-phase-5-moova-reliability/notes/"
+        - "git status --short"
+      commands:
+        - cmd: "mkdir -p docs/goals/posmain-phase-5-moova-reliability/notes"
+          status: pass
+  - id: T002
+    type: scout
+    assignee: Scout
+    status: done
+    objective: "Map current Moova direct/queued apply, token visibility, delivery metadata, cashier UX, tests, and Phase 0-4 dependencies before any Phase 5 implementation."
+    inputs:
+      - "/Users/ab.mansour1agmail.com/Desktop/pos expansion plan.txt lines 1943-2063"
+      - "docs/production/write_surface_classification.md"
+      - "docs/production/active_route_map.md"
+      - "docs/production/api_contracts_pos.md"
+      - "docs/production/permission_matrix.md"
+      - "docs/goals/posmain-phase-0-production-readiness/state.yaml"
+      - "docs/goals/posmain-phase-1-production-foundation/state.yaml"
+      - "docs/goals/posmain-phase-2-pos-state/state.yaml"
+      - "docs/goals/posmain-phase-3-security-hardening/state.yaml"
+      - "docs/goals/posmain-phase-4-midscale-product/state.yaml"
+      - "ajax/moova_confirm_order.php"
+      - "ajax/moova_change_order.php"
+      - "moova_integration.php"
+      - "moova_pos_proxy.php"
+      - "elements/pos/cofe_widget.php"
+      - "assets/moova-pos-widget/pos-widget.js"
+      - "classes/Moova/"
+      - "classes/MoovaPosIntegration.php"
+      - "classes/PosOrderService.php"
+      - "classes/Pos/Service/"
+      - "classes/Sync/"
+      - "cli/"
+      - "tools/"
+      - "tests/sync/"
+    constraints:
+      - "Read-only."
+      - "Apply the AGENTS.md pre-change checklist in the findings: impacted surfaces, compatibility risks, tests, smallest increments, and adjacent regression checks."
+      - "Separate confirmed current repo evidence from memory-derived or stale assumptions."
+      - "Identify which Phase 5 acceptance items are already satisfied by Phase 0-4 work and which still need implementation."
+    expected_output:
+      - "Phase 5 gap map with concrete file-path evidence."
+      - "Direct vs queued Moova apply path map, including idempotency keys and stale edit/cancel behavior."
+      - "Token visibility/security map and permission/audit gaps."
+      - "Delivery foundation schema/service options with compatibility risk."
+      - "Cashier UX/test scenario coverage gaps."
+      - "Recommended Worker task sequence with allowed_files and verification commands."
+    receipt:
+      result: done
+      note: notes/T002-phase5-moova-scout-map.md
+      summary: "Mapped direct widget and queued Moova apply paths, token visibility/security posture, delivery metadata gaps, cashier UX evidence, and focused tests. Main gap: queued events use MoovaLocalIngestService normalization while direct endpoints still rely on endpoint/MoovaPosIntegration hashing, so direct-vs-queued duplicate safety needs proof or unification."
+      evidence:
+        - "ajax/moova_confirm_order.php"
+        - "ajax/moova_change_order.php"
+        - "classes/Moova/MoovaLocalIngestService.php"
+        - "classes/Moova/MoovaNewOrderApplyService.php"
+        - "classes/Moova/MoovaChangeOrderApplyService.php"
+        - "classes/Sync/BranchMoovaApplyWorker.php"
+        - "classes/Sync/MoovaInboundQueueService.php"
+        - "moova_integration.php"
+        - "elements/pos/cofe_widget.php"
+        - "docs/production/api_contracts_pos.md"
+        - "docs/production/permission_matrix.md"
+      spawned_tasks:
+        - T005
+        - T006
+        - T007
+        - T008
+        - T009
+        - T010
+  - id: T003
+    type: judge
+    assignee: Judge
+    status: done
+    objective: "Review Scout findings and choose the first safe Phase 5 implementation slice."
+    inputs:
+      - "T002 receipt or note"
+      - "Current dirty diff"
+      - "Phase 5 acceptance criteria"
+    constraints:
+      - "Read-only; do not implement."
+      - "Pick a small reversible slice with strong focused verification."
+      - "If direct/queued behavior is ambiguous or risky, require another Scout task before Worker."
+    expected_output:
+      - "Decision on official Phase 5 implementation sequence."
+      - "First Worker task with allowed_files and verify commands."
+      - "Blocked/deferred items, especially live real-shop acceptance or credentials."
+    receipt:
+      result: done
+      decision: "Start with T005/P5-001. It is the smallest reversible slice: document direct-widget pilot mode, keep queued apply disabled by default, and make config naming explicit before changing direct/queued mutation code."
+      next_allowed_task: T005
+      blocked_tasks: []
+      rationale:
+        - "T006 direct/queued convergence is higher risk because it touches active Moova mutation endpoints and idempotency hashes."
+        - "T007 token protection depends on the chosen Moova pilot mode and audit wording."
+        - "T008 delivery foundations should wait until the mode and direct/queued contracts are documented."
+  - id: T004
+    type: worker
+    assignee: Worker
+    status: queued
+    objective: "Implement the first Judge-approved Phase 5 slice."
+    allowed_files: []
+    verify: []
+    stop_if:
+      - "Allowed files have not been filled by PM after Scout/Judge."
+      - "Need files outside allowed_files."
+      - "Need production credentials, destructive DB operations, or real-shop cashier acceptance."
+      - "Behavior is ambiguous or could duplicate/corrupt POS orders."
+      - "Verification fails twice for a reason not understood."
+    receipt: null
+  - id: T005
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "Implement P5-001 Moova mode decision and flag alignment after Scout/Judge confirm current gaps."
+    allowed_files:
+      - "docs/production/moova_mode_decision.md"
+      - ".env.example"
+      - "config/app_config.php"
+      - "tests/sync/moova_mode_config_test.php"
+    verify:
+      - "php -l config/app_config.php"
+      - "php -l tests/sync/moova_mode_config_test.php"
+      - "php tests/sync/moova_mode_config_test.php"
+      - "git diff --check -- docs/production/moova_mode_decision.md .env.example config/app_config.php tests/sync/moova_mode_config_test.php"
+    stop_if:
+      - "Allowed files have not been filled by PM after Scout/Judge."
+      - "Chosen mode would enable queued apply without worker supervision evidence."
+      - "Need product-owner decision beyond the Phase 5 plan recommendation."
+    receipt:
+      result: done
+      changed_files:
+        - "docs/production/moova_mode_decision.md"
+        - ".env.example"
+        - "config/app_config.php"
+        - "tests/sync/moova_mode_config_test.php"
+      commands:
+        - cmd: "php -l config/app_config.php"
+          status: pass
+        - cmd: "php -l tests/sync/moova_mode_config_test.php"
+          status: pass
+        - cmd: "php tests/sync/moova_mode_config_test.php"
+          status: pass
+        - cmd: "git diff --check -- docs/production/moova_mode_decision.md .env.example config/app_config.php tests/sync/moova_mode_config_test.php"
+          status: pass
+      summary: "Documented direct_widget as the Phase 5 pilot mode, kept queued worker apply disabled by default, added POSMAIN_MOOVA_MODE and explicit worker-apply config, and covered direct/queued/hybrid config behavior with a focused test."
+  - id: T006
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "Implement P5-002 direct and queued Moova mutation unification with duplicate-event proof."
+    allowed_files:
+      - "ajax/moova_confirm_order.php"
+      - "ajax/moova_change_order.php"
+      - "classes/Moova/MoovaLocalIngestService.php"
+      - "classes/Moova/MoovaNewOrderApplyService.php"
+      - "classes/Moova/MoovaChangeOrderApplyService.php"
+      - "tests/sync/moova_direct_queued_convergence_test.php"
+      - "tests/sync/moova_new_order_apply_service_test.php"
+      - "tests/sync/moova_change_order_apply_service_test.php"
+      - "tests/sync/moova_confirm_change_routing_test.php"
+      - "tests/sync/moova_pos_mutation_convergence_test.php"
+    verify:
+      - "php -l ajax/moova_confirm_order.php"
+      - "php -l ajax/moova_change_order.php"
+      - "php -l classes/Moova/MoovaLocalIngestService.php"
+      - "php -l tests/sync/moova_direct_queued_convergence_test.php"
+      - "php tests/sync/moova_direct_queued_convergence_test.php"
+      - "php tests/sync/moova_confirm_change_routing_test.php"
+      - "php tests/sync/moova_pos_mutation_convergence_test.php"
+      - "git diff --check -- ajax/moova_confirm_order.php ajax/moova_change_order.php classes/Moova/MoovaLocalIngestService.php classes/Moova/MoovaNewOrderApplyService.php classes/Moova/MoovaChangeOrderApplyService.php tests/sync/moova_direct_queued_convergence_test.php tests/sync/moova_new_order_apply_service_test.php tests/sync/moova_change_order_apply_service_test.php tests/sync/moova_confirm_change_routing_test.php tests/sync/moova_pos_mutation_convergence_test.php"
+    stop_if:
+      - "Allowed files have not been filled by PM after Scout/Judge."
+      - "Need to alter non-Moova POS mutation behavior outside the approved slice."
+      - "Cannot prove duplicate direct/queued event safety with focused tests."
+    receipt:
+      result: done
+      changed_files:
+        - "ajax/moova_confirm_order.php"
+        - "ajax/moova_change_order.php"
+        - "classes/Moova/MoovaLocalIngestService.php"
+        - "tests/sync/moova_direct_queued_convergence_test.php"
+        - "tests/sync/moova_new_order_apply_service_test.php"
+        - "tests/sync/moova_change_order_apply_service_test.php"
+      commands:
+        - cmd: "php -l ajax/moova_confirm_order.php && php -l ajax/moova_change_order.php && php -l classes/Moova/MoovaLocalIngestService.php && php -l tests/sync/moova_direct_queued_convergence_test.php"
+          status: pass
+        - cmd: "php tests/sync/moova_direct_queued_convergence_test.php && php tests/sync/moova_confirm_change_routing_test.php && php tests/sync/moova_pos_mutation_convergence_test.php"
+          status: pass
+        - cmd: "git diff --check -- ajax/moova_confirm_order.php ajax/moova_change_order.php classes/Moova/MoovaLocalIngestService.php classes/Moova/MoovaNewOrderApplyService.php classes/Moova/MoovaChangeOrderApplyService.php tests/sync/moova_direct_queued_convergence_test.php tests/sync/moova_new_order_apply_service_test.php tests/sync/moova_change_order_apply_service_test.php tests/sync/moova_confirm_change_routing_test.php tests/sync/moova_pos_mutation_convergence_test.php"
+          status: pass
+      summary: "Direct Moova confirm/change endpoints now normalize idempotency keys, payload hashes, and POS-shaped payloads through MoovaLocalIngestService, matching the queued worker path. The normalizer now canonicalizes numeric item values and derives edit/cancel action from event_type so widget-shaped and poller-shaped events hash the same."
+  - id: T007
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "Implement P5-003 Moova device-token permission, audit, and rotation safeguards while respecting the business requirement that authorized users can see the full token."
+    allowed_files:
+      - "moova_integration.php"
+      - "ajax/moova_save_integration.php"
+      - "ajax/moova_disconnect_integration.php"
+      - "classes/MoovaPosIntegration.php"
+      - "docs/production/moova_token_rotation.md"
+      - "tests/sync/moova_admin_security_test.php"
+      - "tests/sync/moova_token_visibility_security_test.php"
+    verify:
+      - "php -l moova_integration.php"
+      - "php -l classes/MoovaPosIntegration.php"
+      - "php -l tests/sync/moova_token_visibility_security_test.php"
+      - "php tests/sync/moova_admin_security_test.php"
+      - "php tests/sync/moova_token_visibility_security_test.php"
+      - "git diff --check -- moova_integration.php ajax/moova_save_integration.php ajax/moova_disconnect_integration.php classes/MoovaPosIntegration.php docs/production/moova_token_rotation.md tests/sync/moova_admin_security_test.php tests/sync/moova_token_visibility_security_test.php"
+    stop_if:
+      - "Allowed files have not been filled by PM after Scout/Judge."
+      - "The change would hide the token from authorized Moova managers."
+      - "The permission model conflicts with docs/production/permission_matrix.md."
+    receipt:
+      result: done
+      changed_files:
+        - "moova_integration.php"
+        - "classes/MoovaPosIntegration.php"
+        - "docs/production/moova_token_rotation.md"
+        - "tests/sync/moova_admin_security_test.php"
+        - "tests/sync/moova_token_visibility_security_test.php"
+      commands:
+        - cmd: "php -l moova_integration.php"
+          status: pass
+        - cmd: "php -l classes/MoovaPosIntegration.php"
+          status: pass
+        - cmd: "php -l tests/sync/moova_token_visibility_security_test.php"
+          status: pass
+        - cmd: "php tests/sync/moova_admin_security_test.php"
+          status: pass
+        - cmd: "php tests/sync/moova_token_visibility_security_test.php"
+          status: pass
+        - cmd: "git diff --check -- moova_integration.php ajax/moova_save_integration.php ajax/moova_disconnect_integration.php classes/MoovaPosIntegration.php docs/production/moova_token_rotation.md tests/sync/moova_admin_security_test.php tests/sync/moova_token_visibility_security_test.php"
+          status: pass
+      summary: "Full Moova token visibility is still available to authorized managers, but the page now honors the moova.manage bridge, audits full-token views, and documents rotation plus at-rest token risk."
+  - id: T008
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "Implement P5-004 delivery-order foundations without risky ot_head churn unless Scout/Judge approve it."
+    allowed_files:
+      - "classes/Sync/SchemaManager.php"
+      - "classes/Pos/Service/OrderFulfillmentService.php"
+      - "classes/Moova/MoovaLocalIngestService.php"
+      - "classes/Moova/MoovaNewOrderApplyService.php"
+      - "docs/production/moova_delivery_foundation.md"
+      - "tests/sync/phase5_order_fulfillment_service_test.php"
+      - "tests/sync/moova_delivery_foundation_test.php"
+    verify:
+      - "php -l classes/Sync/SchemaManager.php"
+      - "php -l classes/Pos/Service/OrderFulfillmentService.php"
+      - "php -l classes/Moova/MoovaLocalIngestService.php"
+      - "php -l classes/Moova/MoovaNewOrderApplyService.php"
+      - "php -l tests/sync/phase5_order_fulfillment_service_test.php"
+      - "php -l tests/sync/moova_delivery_foundation_test.php"
+      - "php tests/sync/moova_delivery_foundation_test.php"
+      - "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/phase5_order_fulfillment_service_test.php"
+      - "git diff --check -- classes/Sync/SchemaManager.php classes/Pos/Service/OrderFulfillmentService.php classes/Moova/MoovaLocalIngestService.php classes/Moova/MoovaNewOrderApplyService.php docs/production/moova_delivery_foundation.md tests/sync/phase5_order_fulfillment_service_test.php tests/sync/moova_delivery_foundation_test.php"
+    stop_if:
+      - "Allowed files have not been filled by PM after Scout/Judge."
+      - "Need destructive schema changes or a migration that is not idempotent."
+      - "Delivery metadata would be stored only as unstructured free text."
+    receipt:
+      result: done
+      changed_files:
+        - "classes/Sync/SchemaManager.php"
+        - "classes/Pos/Service/OrderFulfillmentService.php"
+        - "classes/Moova/MoovaLocalIngestService.php"
+        - "classes/Moova/MoovaNewOrderApplyService.php"
+        - "docs/production/moova_delivery_foundation.md"
+        - "tests/sync/phase5_order_fulfillment_service_test.php"
+        - "tests/sync/moova_delivery_foundation_test.php"
+      commands:
+        - cmd: "php -l classes/Sync/SchemaManager.php"
+          status: pass
+        - cmd: "php -l classes/Pos/Service/OrderFulfillmentService.php"
+          status: pass
+        - cmd: "php -l classes/Moova/MoovaLocalIngestService.php"
+          status: pass
+        - cmd: "php -l classes/Moova/MoovaNewOrderApplyService.php"
+          status: pass
+        - cmd: "php -l tests/sync/phase5_order_fulfillment_service_test.php"
+          status: pass
+        - cmd: "php -l tests/sync/moova_delivery_foundation_test.php"
+          status: pass
+        - cmd: "php tests/sync/moova_delivery_foundation_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/phase5_order_fulfillment_service_test.php"
+          status: pass
+        - cmd: "git diff --check -- classes/Sync/SchemaManager.php classes/Pos/Service/OrderFulfillmentService.php classes/Moova/MoovaLocalIngestService.php classes/Moova/MoovaNewOrderApplyService.php docs/production/moova_delivery_foundation.md tests/sync/phase5_order_fulfillment_service_test.php tests/sync/moova_delivery_foundation_test.php"
+          status: pass
+        - cmd: "php tests/sync/moova_direct_queued_convergence_test.php"
+          status: pass
+        - cmd: "php tests/sync/moova_pos_mutation_convergence_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/phase4_midscale_schema_migration_test.php"
+          status: pass
+      summary: "Added an additive order_fulfillment table and OrderFulfillmentService so Moova QR/table and future Moova delivery orders can be reported with structured channel, fulfillment, customer, delivery, and provider fields. Moova new-order apply now persists fulfillment metadata when the table exists, while missing Phase 5 schema remains nonblocking for existing cashier order creation."
+  - id: T009
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "Implement P5-005 cashier-facing Moova UX evidence for pending, decline reason, stale conflict, invalid token, and unreachable states."
+    allowed_files:
+      - "elements/pos/cofe_widget.php"
+      - "assets/moova-pos-widget/pos-widget.js"
+      - "docs/production/moova_cashier_ux_evidence.md"
+      - "tests/sync/moova_cashier_ux_contract_test.php"
+    verify:
+      - "php -l tests/sync/moova_cashier_ux_contract_test.php"
+      - "php tests/sync/moova_cashier_ux_contract_test.php"
+      - "php tests/sync/moova_direct_queued_convergence_test.php"
+      - "git diff --check -- elements/pos/cofe_widget.php assets/moova-pos-widget/pos-widget.js docs/production/moova_cashier_ux_evidence.md tests/sync/moova_cashier_ux_contract_test.php"
+    stop_if:
+      - "Allowed files have not been filled by PM after Scout/Judge."
+      - "Need live hosted Moova credentials or real-shop cashier acceptance."
+      - "Arabic labels or POS card colors would conflict with existing Phase 4 cashier UI."
+    receipt:
+      result: done
+      changed_files:
+        - "elements/pos/cofe_widget.php"
+        - "assets/moova-pos-widget/pos-widget.js"
+        - "docs/production/moova_cashier_ux_evidence.md"
+        - "tests/sync/moova_cashier_ux_contract_test.php"
+      commands:
+        - cmd: "php -l tests/sync/moova_cashier_ux_contract_test.php"
+          status: pass
+        - cmd: "php -l elements/pos/cofe_widget.php"
+          status: pass
+        - cmd: "node --check assets/moova-pos-widget/pos-widget.js"
+          status: pass
+        - cmd: "php tests/sync/moova_cashier_ux_contract_test.php"
+          status: pass
+        - cmd: "php tests/sync/moova_direct_queued_convergence_test.php"
+          status: pass
+        - cmd: "git diff --check -- elements/pos/cofe_widget.php assets/moova-pos-widget/pos-widget.js docs/production/moova_cashier_ux_evidence.md tests/sync/moova_cashier_ux_contract_test.php"
+          status: pass
+      summary: "Moova cashier UX now requires a typed decline reason for new/edit/cancel rejections, maps stale edit/cancel and invalid token/link failures to visible Arabic/English messages, renders customer name/phone/address in the review modal, and forwards structured customer/delivery fields through the direct widget bridge."
+  - id: T010
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "Implement P5-006 Moova reliability scenario tests and fill any remaining safe gaps."
+    allowed_files:
+      - "docs/production/moova_reliability_scenarios.md"
+      - "tests/sync/moova_reliability_scenarios_test.php"
+    verify:
+      - "php -l tests/sync/moova_reliability_scenarios_test.php"
+      - "php tests/sync/moova_reliability_scenarios_test.php"
+      - "php tests/sync/moova_mode_config_test.php"
+      - "php tests/sync/moova_direct_queued_convergence_test.php"
+      - "php tests/sync/moova_cashier_ux_contract_test.php"
+      - "php tests/sync/moova_delivery_foundation_test.php"
+      - "git diff --check -- docs/production/moova_reliability_scenarios.md tests/sync/moova_reliability_scenarios_test.php"
+    stop_if:
+      - "Allowed files have not been filled by PM after Scout/Judge."
+      - "A required scenario depends on external live services and cannot be simulated locally."
+      - "Test setup would mutate unrelated production-like data."
+    receipt:
+      result: done
+      changed_files:
+        - "docs/production/moova_reliability_scenarios.md"
+        - "tests/sync/moova_reliability_scenarios_test.php"
+      commands:
+        - cmd: "php -l tests/sync/moova_reliability_scenarios_test.php"
+          status: pass
+        - cmd: "php tests/sync/moova_reliability_scenarios_test.php"
+          status: pass
+        - cmd: "php tests/sync/moova_mode_config_test.php"
+          status: pass
+        - cmd: "php tests/sync/moova_direct_queued_convergence_test.php"
+          status: pass
+        - cmd: "php tests/sync/moova_cashier_ux_contract_test.php"
+          status: pass
+        - cmd: "php tests/sync/moova_delivery_foundation_test.php"
+          status: pass
+        - cmd: "git diff --check -- docs/production/moova_reliability_scenarios.md tests/sync/moova_reliability_scenarios_test.php"
+          status: pass
+      summary: "Added a local Phase 5 Moova reliability scenario matrix that ties mode flags, direct/queued convergence, stale edit/cancel handling, token audit, delivery metadata, cashier UX, and reachability evidence to focused local checks while documenting live credentials/cashier acceptance as remaining pilot blockers."
+  - id: T999
+    type: judge
+    assignee: Judge
+    status: done
+    objective: "Audit whether Phase 5 is complete for the current pilot-readiness tranche."
+    inputs:
+      - "All done task receipts"
+      - "Last verification"
+      - "Current dirty diff"
+      - "Phase 5 exit criteria"
+    constraints:
+      - "Read-only."
+      - "Do not mark complete if live real-shop acceptance is still required but not represented as a documented blocker."
+      - "Confirm no unrelated dirty worktree changes were mixed into Phase 5 receipts."
+    expected_output:
+      - "complete | not_complete"
+      - "Evidence mapped to P5-001 through P5-007"
+      - "Missing evidence or next task if not complete"
+    receipt:
+      result: done
+      decision: complete
+      summary: "Phase 5 is complete for the local pilot-readiness tranche. P5-001 through P5-006 have receipts and passing focused verification. Live Moova credentials, real-shop cashier acceptance, and queued-worker production rollout remain documented pilot blockers rather than unfinished local implementation work."
+      evidence:
+        - "docs/production/moova_mode_decision.md"
+        - "docs/production/moova_token_rotation.md"
+        - "docs/production/moova_delivery_foundation.md"
+        - "docs/production/moova_cashier_ux_evidence.md"
+        - "docs/production/moova_reliability_scenarios.md"
+        - "tests/sync/moova_reliability_scenarios_test.php"
+      commands:
+        - cmd: "php tests/sync/moova_mode_config_test.php && php tests/sync/moova_direct_queued_convergence_test.php && php tests/sync/moova_confirm_change_routing_test.php && php tests/sync/moova_pos_mutation_convergence_test.php"
+          status: pass
+        - cmd: "php tests/sync/moova_admin_security_test.php && php tests/sync/moova_token_visibility_security_test.php"
+          status: pass
+        - cmd: "php tests/sync/moova_delivery_foundation_test.php && POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/phase5_order_fulfillment_service_test.php"
+          status: pass
+        - cmd: "php tests/sync/moova_cashier_ux_contract_test.php && php tests/sync/moova_reliability_scenarios_test.php"
+          status: pass
+        - cmd: "node --check assets/moova-pos-widget/pos-widget.js"
+          status: pass
+        - cmd: "git diff --check -- Phase 5 touched files"
+          status: pass
+
+checks:
+  dirty_fingerprint: "pre-existing dirty worktree present on 2026-05-13; run git status --short before each Worker task"
+  last_verification:
+    result: pass
+    task: T999
+    commands:
+      - "php tests/sync/moova_mode_config_test.php && php tests/sync/moova_direct_queued_convergence_test.php && php tests/sync/moova_confirm_change_routing_test.php && php tests/sync/moova_pos_mutation_convergence_test.php"
+      - "php tests/sync/moova_admin_security_test.php && php tests/sync/moova_token_visibility_security_test.php"
+      - "php tests/sync/moova_delivery_foundation_test.php && POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/phase5_order_fulfillment_service_test.php"
+      - "php tests/sync/moova_cashier_ux_contract_test.php && php tests/sync/moova_reliability_scenarios_test.php"
+      - "node --check assets/moova-pos-widget/pos-widget.js"
+      - "git diff --check -- Phase 5 touched files"

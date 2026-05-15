@@ -5,6 +5,8 @@
 require_once __DIR__ . '/includes/session_bootstrap.php';
 require_once __DIR__ . '/includes/db_bootstrap.php';
 require_once __DIR__ . '/classes/PasswordService.php';
+require_once __DIR__ . '/classes/Security/LoginThrottleService.php';
+require_once __DIR__ . '/classes/Security/SecurityAuditLogger.php';
 
 // -------------------- إعدادات الداتابيس --------------------
 try {
@@ -23,6 +25,102 @@ function e($str) {
     return htmlspecialchars($str, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
 }
 
+function login_security_table_exists(mysqli $conn, string $table): bool
+{
+    static $cache = [];
+    if (array_key_exists($table, $cache)) {
+        return $cache[$table];
+    }
+
+    try {
+        $stmt = $conn->prepare("
+            SELECT 1
+              FROM information_schema.TABLES
+             WHERE TABLE_SCHEMA = DATABASE()
+               AND TABLE_NAME = ?
+             LIMIT 1
+        ");
+        $stmt->bind_param('s', $table);
+        $stmt->execute();
+        $exists = $stmt->get_result()->fetch_assoc() !== null;
+        $stmt->close();
+        $cache[$table] = $exists;
+        return $exists;
+    } catch (Throwable $exception) {
+        error_log('Login security table check skipped: ' . $exception->getMessage());
+        $cache[$table] = false;
+        return false;
+    }
+}
+
+function login_security_options(): array
+{
+    return [
+        'max_attempts' => 5,
+        'window_seconds' => 900,
+        'lock_seconds' => 900,
+        'user_agent' => (string) ($_SERVER['HTTP_USER_AGENT'] ?? ''),
+    ];
+}
+
+function login_client_ip(): string
+{
+    return (string) ($_SERVER['REMOTE_ADDR'] ?? 'unknown');
+}
+
+function login_throttle_blocked(mysqli $conn, LoginThrottleService $throttle, string $username, string $ip): bool
+{
+    if (!login_security_table_exists($conn, 'failed_login_attempts')) {
+        return false;
+    }
+
+    try {
+        return $throttle->isBlocked($conn, $username, $ip, login_security_options());
+    } catch (Throwable $exception) {
+        error_log('Login throttle check skipped: ' . $exception->getMessage());
+        return false;
+    }
+}
+
+function login_throttle_failure(mysqli $conn, LoginThrottleService $throttle, string $username, string $ip): void
+{
+    if (!login_security_table_exists($conn, 'failed_login_attempts')) {
+        return;
+    }
+
+    try {
+        $throttle->recordFailure($conn, $username, $ip, login_security_options());
+    } catch (Throwable $exception) {
+        error_log('Login throttle failure skipped: ' . $exception->getMessage());
+    }
+}
+
+function login_throttle_success(mysqli $conn, LoginThrottleService $throttle, string $username, string $ip): void
+{
+    if (!login_security_table_exists($conn, 'failed_login_attempts')) {
+        return;
+    }
+
+    try {
+        $throttle->recordSuccess($conn, $username, $ip);
+    } catch (Throwable $exception) {
+        error_log('Login throttle clear skipped: ' . $exception->getMessage());
+    }
+}
+
+function login_audit(mysqli $conn, SecurityAuditLogger $auditLogger, string $eventType, array $options = []): void
+{
+    if (!login_security_table_exists($conn, 'security_audit_log')) {
+        return;
+    }
+
+    try {
+        $auditLogger->record($conn, $eventType, $options);
+    } catch (Throwable $exception) {
+        error_log('Login audit skipped: ' . $exception->getMessage());
+    }
+}
+
 // generate CSRF token
 if (empty($_SESSION['csrf_token'])) {
     $_SESSION['csrf_token'] = bin2hex(random_bytes(24));
@@ -35,6 +133,8 @@ if (isset($_SESSION['login']) && isset($_SESSION['userid'])) {
 }
 
 $error_message = null;
+$loginThrottle = new LoginThrottleService();
+$securityAuditLogger = new SecurityAuditLogger();
 
 // -------------------- معالجة POST (تسجيل الدخول) --------------------
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -49,6 +149,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($user === '' || $password === '') {
             $error_message = "يرجى إدخال اسم المستخدم وكلمة المرور";
         } else {
+            $clientIp = login_client_ip();
+            if (login_throttle_blocked($conn, $loginThrottle, $user, $clientIp)) {
+                $error_message = "تم إيقاف محاولات الدخول مؤقتاً. حاول مرة أخرى بعد قليل.";
+                login_audit($conn, $securityAuditLogger, 'login_throttled', [
+                    'ip' => $clientIp,
+                    'target_type' => 'user',
+                    'metadata' => ['username' => $user],
+                ]);
+            } else {
             // استعلام مستخدم بواسطة prepared statement
             $stmt = $conn->prepare("SELECT id, uname, password, userrole, usertype FROM users WHERE uname = ? AND isdeleted != 1 LIMIT 1");
             if ($stmt === false) {
@@ -78,6 +187,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     }
 
                     if ($password_ok) {
+                        login_throttle_success($conn, $loginThrottle, $user, $clientIp);
+                        login_audit($conn, $securityAuditLogger, 'login_success', [
+                            'user_id' => $userId,
+                            'ip' => $clientIp,
+                            'target_type' => 'user',
+                            'target_id' => $userId,
+                            'metadata' => ['username' => $row['uname']],
+                        ]);
+
                         // تسجيل جلسة آمن
                         posmain_session_regenerate();
                         $_SESSION['userid'] = $row['id'];
@@ -101,15 +219,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     } else {
                         // رسالة عامة لا تكشف إن اليوزر غير موجود أو الباسورد خاطئ
                         $error_message = "اسم المستخدم أو كلمة المرور غير صحيحة";
+                        login_throttle_failure($conn, $loginThrottle, $user, $clientIp);
+                        login_audit($conn, $securityAuditLogger, 'login_failure', [
+                            'ip' => $clientIp,
+                            'target_type' => 'user',
+                            'metadata' => ['username' => $user, 'reason' => 'invalid_credentials'],
+                        ]);
                         // if (isset($logger)) { $logger->logLogin($user, false, "Invalid credentials"); }
                     }
                 } else {
                     // مستخدم غير موجود
                     $error_message = "اسم المستخدم أو كلمة المرور غير صحيحة";
+                    login_throttle_failure($conn, $loginThrottle, $user, $clientIp);
+                    login_audit($conn, $securityAuditLogger, 'login_failure', [
+                        'ip' => $clientIp,
+                        'target_type' => 'user',
+                        'metadata' => ['username' => $user, 'reason' => 'user_not_found'],
+                    ]);
                     // if (isset($logger)) { $logger->logLogin($user, false, "User not found"); }
                 }
 
                 $stmt->close();
+            }
             }
         }
     }

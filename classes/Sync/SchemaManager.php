@@ -9,6 +9,23 @@ class SyncSchemaManager
             'document_counters' => $this->documentCountersSql(),
             'pos_request_keys' => $this->posRequestKeysSql(),
             'order_events' => $this->orderEventsSql(),
+            'order_fulfillment' => $this->orderFulfillmentSql(),
+            'security_audit_log' => $this->securityAuditLogSql(),
+            'failed_login_attempts' => $this->failedLoginAttemptsSql(),
+            'item_availability' => $this->itemAvailabilitySql(),
+            'modifier_groups' => $this->modifierGroupsSql(),
+            'modifier_options' => $this->modifierOptionsSql(),
+            'item_modifier_groups' => $this->itemModifierGroupsSql(),
+            'order_line_modifiers' => $this->orderLineModifiersSql(),
+            'order_line_notes' => $this->orderLineNotesSql(),
+            'table_areas' => $this->tableAreasSql(),
+            'payment_methods' => $this->paymentMethodsSql(),
+            'manager_approvals' => $this->managerApprovalsSql(),
+            'drawer_sessions' => $this->drawerSessionsSql(),
+            'drawer_movements' => $this->drawerMovementsSql(),
+            'printers' => $this->printersSql(),
+            'print_jobs' => $this->printJobsSql(),
+            'item_nutrition_profiles' => $this->itemNutritionProfilesSql(),
             'sync_outbox' => $this->syncOutboxSql(),
             'sync_inbox' => $this->syncInboxSql(),
             'sync_checkpoints' => $this->syncCheckpointsSql(),
@@ -24,6 +41,74 @@ class SyncSchemaManager
             'cloud_shifts' => $this->cloudShiftsSql(),
             'cloud_menu_items' => $this->cloudMenuItemsSql(),
             'cloud_moova_branch_events' => $this->cloudMoovaBranchEventsSql(),
+        ];
+    }
+
+    public function phase4LegacyTargets()
+    {
+        return [
+            'tables' => [
+                'columns' => [
+                    'area_id' => "ALTER TABLE `tables` ADD COLUMN area_id BIGINT UNSIGNED NULL AFTER table_case",
+                    'capacity' => "ALTER TABLE `tables` ADD COLUMN capacity INT NULL AFTER area_id",
+                    'pos_x' => "ALTER TABLE `tables` ADD COLUMN pos_x INT NULL AFTER capacity",
+                    'pos_y' => "ALTER TABLE `tables` ADD COLUMN pos_y INT NULL AFTER pos_x",
+                    'shape' => "ALTER TABLE `tables` ADD COLUMN shape VARCHAR(40) NULL AFTER pos_y",
+                    'display_order' => "ALTER TABLE `tables` ADD COLUMN display_order INT NOT NULL DEFAULT 0 AFTER shape",
+                ],
+                'indexes' => [
+                    'idx_tables_area_order' => [
+                        'columns' => ['area_id', 'display_order'],
+                        'sql' => "ALTER TABLE `tables` ADD KEY idx_tables_area_order (area_id, display_order)",
+                    ],
+                ],
+            ],
+            'ot_head' => [
+                'columns' => [
+                    'guest_count' => "ALTER TABLE ot_head ADD COLUMN guest_count INT NULL AFTER table_id",
+                    'waiter_id' => "ALTER TABLE ot_head ADD COLUMN waiter_id BIGINT NULL AFTER guest_count",
+                ],
+                'indexes' => [
+                    'idx_ot_head_waiter' => [
+                        'columns' => ['waiter_id'],
+                        'sql' => "ALTER TABLE ot_head ADD KEY idx_ot_head_waiter (waiter_id)",
+                    ],
+                ],
+            ],
+            'myitems' => [
+                'columns' => [
+                    'item_type' => "ALTER TABLE myitems ADD COLUMN item_type ENUM('sellable','ingredient','packaging','service') NOT NULL DEFAULT 'sellable'",
+                    'track_stock' => "ALTER TABLE myitems ADD COLUMN track_stock TINYINT(1) NOT NULL DEFAULT 1",
+                    'preferred_unit_id' => "ALTER TABLE myitems ADD COLUMN preferred_unit_id BIGINT UNSIGNED NULL",
+                ],
+                'indexes' => [
+                    'idx_myitems_type_stock' => [
+                        'columns' => ['item_type', 'track_stock'],
+                        'sql' => "ALTER TABLE myitems ADD KEY idx_myitems_type_stock (item_type, track_stock)",
+                    ],
+                    'idx_myitems_barcode_deleted' => [
+                        'columns' => ['barcode', 'isdeleted'],
+                        'sql' => "ALTER TABLE myitems ADD KEY idx_myitems_barcode_deleted (barcode, isdeleted)",
+                    ],
+                    'idx_myitems_group_deleted' => [
+                        'columns' => ['group1', 'isdeleted'],
+                        'sql' => "ALTER TABLE myitems ADD KEY idx_myitems_group_deleted (group1, isdeleted)",
+                    ],
+                ],
+            ],
+            'fat_details' => [
+                'columns' => [],
+                'indexes' => [
+                    'idx_fat_details_stock_item' => [
+                        'columns' => ['item_id', 'isdeleted', 'qty_in', 'qty_out'],
+                        'sql' => "ALTER TABLE fat_details ADD KEY idx_fat_details_stock_item (item_id, isdeleted, qty_in, qty_out)",
+                    ],
+                    'idx_fat_details_fatid_deleted' => [
+                        'columns' => ['fatid', 'isdeleted'],
+                        'sql' => "ALTER TABLE fat_details ADD KEY idx_fat_details_fatid_deleted (fatid, isdeleted)",
+                    ],
+                ],
+            ],
         ];
     }
 
@@ -82,6 +167,10 @@ class SyncSchemaManager
         }
 
         foreach ($this->phase2UuidUpgradeStatements($conn) as $label => $statement) {
+            $pending[$label] = $statement;
+        }
+
+        foreach ($this->phase4LegacyUpgradeStatements($conn) as $label => $statement) {
             $pending[$label] = $statement;
         }
 
@@ -371,6 +460,77 @@ ALTER TABLE {$quotedTable}
         return $statements;
     }
 
+    private function phase4LegacyUpgradeStatements(mysqli $conn)
+    {
+        $statements = [];
+
+        foreach ($this->phase4LegacyTargets() as $table => $target) {
+            if (!$this->tableExists($conn, $table)) {
+                continue;
+            }
+
+            $availableColumns = array_fill_keys($this->existingColumns($conn, $table), true);
+            $plannedColumns = $target['columns'] ?? [];
+            foreach ($plannedColumns as $column => $sql) {
+                if (!$this->columnExists($conn, $table, $column)) {
+                    $statements[$table . '.add_' . $column] = $this->sqlWithAvailableAfterAnchor($sql, $availableColumns);
+                    $availableColumns[$column] = true;
+                } else {
+                    $availableColumns[$column] = true;
+                }
+            }
+
+            foreach (($target['indexes'] ?? []) as $index => $definition) {
+                $columns = $definition['columns'] ?? [];
+                if (
+                    $this->indexExists($conn, $table, $index)
+                    || $this->indexWithColumnsExists($conn, $table, $columns)
+                ) {
+                    continue;
+                }
+
+                if (!$this->phase4IndexColumnsAvailable($conn, $table, $columns, $plannedColumns)) {
+                    continue;
+                }
+
+                $statements[$table . '.add_' . $index] = $definition['sql'];
+            }
+        }
+
+        return $statements;
+    }
+
+    private function sqlWithAvailableAfterAnchor($sql, array $availableColumns)
+    {
+        if (!preg_match('/\s+AFTER\s+`?([a-zA-Z0-9_]+)`?\s*$/i', $sql, $matches)) {
+            return $sql;
+        }
+
+        $anchor = $matches[1];
+        if (isset($availableColumns[$anchor])) {
+            return $sql;
+        }
+
+        return preg_replace('/\s+AFTER\s+`?[a-zA-Z0-9_]+`?\s*$/i', '', $sql);
+    }
+
+    private function phase4IndexColumnsAvailable(mysqli $conn, $table, array $columns, array $plannedColumns)
+    {
+        foreach ($columns as $column) {
+            if ($this->columnExists($conn, $table, $column)) {
+                continue;
+            }
+
+            if (array_key_exists($column, $plannedColumns)) {
+                continue;
+            }
+
+            return false;
+        }
+
+        return true;
+    }
+
     private function columnExists(mysqli $conn, $table, $column)
     {
         return in_array($column, $this->existingColumns($conn, $table), true);
@@ -379,6 +539,40 @@ ALTER TABLE {$quotedTable}
     private function indexExists(mysqli $conn, $table, $index)
     {
         return in_array($index, $this->existingIndexes($conn, $table), true);
+    }
+
+    private function indexWithColumnsExists(mysqli $conn, $table, array $columns)
+    {
+        if (!$columns || !$this->tableExists($conn, $table)) {
+            return false;
+        }
+
+        foreach ($columns as $column) {
+            if (!$this->columnExists($conn, $table, $column)) {
+                return false;
+            }
+        }
+
+        $stmt = $conn->prepare("
+            SELECT INDEX_NAME, GROUP_CONCAT(COLUMN_NAME ORDER BY SEQ_IN_INDEX SEPARATOR ',') AS index_columns
+            FROM INFORMATION_SCHEMA.STATISTICS
+            WHERE TABLE_SCHEMA = DATABASE()
+              AND TABLE_NAME = ?
+            GROUP BY INDEX_NAME
+        ");
+        $stmt->bind_param('s', $table);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        $needle = implode(',', $columns);
+        while ($row = $result->fetch_assoc()) {
+            if ((string) ($row['index_columns'] ?? '') === $needle) {
+                $stmt->close();
+                return true;
+            }
+        }
+        $stmt->close();
+
+        return false;
     }
 
     private function legacyDocumentCounterScopeNeedsCopy(mysqli $conn)
@@ -558,6 +752,352 @@ CREATE TABLE IF NOT EXISTS order_events (
   KEY idx_order_created (order_id, created_at),
   KEY idx_type_created (event_type, created_at),
   KEY idx_tenant_branch_created (tenant, branch, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
+    private function orderFulfillmentSql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS order_fulfillment (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  order_id BIGINT UNSIGNED NOT NULL,
+  order_channel VARCHAR(40) NOT NULL DEFAULT 'cashier',
+  fulfillment_type VARCHAR(40) NOT NULL DEFAULT 'takeaway',
+  external_provider VARCHAR(40) NULL,
+  external_order_id VARCHAR(120) NULL,
+  customer_name VARCHAR(160) NULL,
+  customer_phone VARCHAR(60) NULL,
+  customer_address VARCHAR(500) NULL,
+  delivery_zone VARCHAR(120) NULL,
+  delivery_fee DECIMAL(12,3) NOT NULL DEFAULT 0.000,
+  delivery_status VARCHAR(40) NOT NULL DEFAULT 'none',
+  promised_at DATETIME NULL,
+  metadata_json JSON NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_order_fulfillment_order (order_id),
+  KEY idx_order_fulfillment_channel (order_channel, fulfillment_type, delivery_status),
+  KEY idx_order_fulfillment_provider (external_provider, external_order_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
+    private function securityAuditLogSql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS security_audit_log (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  event_type VARCHAR(80) NOT NULL,
+  user_id BIGINT NULL,
+  tenant INT NOT NULL DEFAULT 0,
+  branch INT NOT NULL DEFAULT 0,
+  ip VARCHAR(64) NULL,
+  user_agent VARCHAR(255) NULL,
+  target_type VARCHAR(80) NULL,
+  target_id BIGINT NULL,
+  metadata_json JSON NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_security_audit_event_created (event_type, created_at),
+  KEY idx_security_audit_user_created (user_id, created_at),
+  KEY idx_security_audit_target (target_type, target_id),
+  KEY idx_security_audit_tenant_branch (tenant, branch, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
+    private function failedLoginAttemptsSql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS failed_login_attempts (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  username_hash CHAR(64) NOT NULL,
+  username VARCHAR(191) NULL,
+  ip VARCHAR(64) NOT NULL,
+  user_agent VARCHAR(255) NULL,
+  attempt_count INT UNSIGNED NOT NULL DEFAULT 0,
+  first_failed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  last_failed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  locked_until DATETIME NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_failed_login_identity (username_hash, ip),
+  KEY idx_failed_login_locked (locked_until),
+  KEY idx_failed_login_last_failed (last_failed_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
+    private function itemAvailabilitySql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS item_availability (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  item_id BIGINT UNSIGNED NOT NULL,
+  tenant INT NOT NULL DEFAULT 0,
+  branch INT NOT NULL DEFAULT 0,
+  channel VARCHAR(40) NOT NULL DEFAULT 'all',
+  is_available TINYINT(1) NOT NULL DEFAULT 1,
+  unavailable_reason VARCHAR(255) NULL,
+  updated_by BIGINT UNSIGNED NULL,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_item_branch_channel (item_id, tenant, branch, channel),
+  KEY idx_item_availability_branch (tenant, branch, is_available),
+  KEY idx_item_availability_updated (updated_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
+    private function modifierGroupsSql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS modifier_groups (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  name_ar VARCHAR(120) NOT NULL,
+  name_en VARCHAR(120) NULL,
+  selection_min INT NOT NULL DEFAULT 0,
+  selection_max INT NOT NULL DEFAULT 1,
+  is_required TINYINT(1) NOT NULL DEFAULT 0,
+  is_active TINYINT(1) NOT NULL DEFAULT 1,
+  tenant INT NOT NULL DEFAULT 0,
+  branch INT NOT NULL DEFAULT 0,
+  sort_order INT NOT NULL DEFAULT 0,
+  PRIMARY KEY (id),
+  KEY idx_modifier_groups_branch (tenant, branch, is_active, sort_order)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
+    private function modifierOptionsSql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS modifier_options (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  group_id BIGINT UNSIGNED NOT NULL,
+  name_ar VARCHAR(120) NOT NULL,
+  name_en VARCHAR(120) NULL,
+  price_delta DECIMAL(12,3) NOT NULL DEFAULT 0.000,
+  is_active TINYINT(1) NOT NULL DEFAULT 1,
+  sort_order INT NOT NULL DEFAULT 0,
+  PRIMARY KEY (id),
+  KEY idx_modifier_options_group (group_id, is_active, sort_order)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
+    private function itemModifierGroupsSql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS item_modifier_groups (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  item_id BIGINT UNSIGNED NOT NULL,
+  group_id BIGINT UNSIGNED NOT NULL,
+  sort_order INT NOT NULL DEFAULT 0,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_item_group (item_id, group_id),
+  KEY idx_item_modifier_groups_group (group_id, sort_order)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
+    private function orderLineModifiersSql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS order_line_modifiers (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  order_id BIGINT UNSIGNED NOT NULL,
+  detail_id BIGINT UNSIGNED NOT NULL,
+  modifier_group_id BIGINT UNSIGNED NOT NULL,
+  modifier_option_id BIGINT UNSIGNED NOT NULL,
+  qty DECIMAL(12,3) NOT NULL DEFAULT 1.000,
+  price_delta DECIMAL(12,3) NOT NULL DEFAULT 0.000,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_order_line_modifiers_order (order_id, detail_id),
+  KEY idx_order_line_modifiers_option (modifier_option_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
+    private function orderLineNotesSql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS order_line_notes (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  order_id BIGINT UNSIGNED NOT NULL,
+  detail_id BIGINT UNSIGNED NOT NULL,
+  note_type ENUM('kitchen','cashier','customer') NOT NULL DEFAULT 'kitchen',
+  note_text VARCHAR(500) NOT NULL,
+  created_by BIGINT UNSIGNED NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_order_line_notes_order (order_id, detail_id),
+  KEY idx_order_line_notes_type (note_type, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
+    private function tableAreasSql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS table_areas (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  name_ar VARCHAR(120) NOT NULL,
+  name_en VARCHAR(120) NULL,
+  sort_order INT NOT NULL DEFAULT 0,
+  tenant INT NOT NULL DEFAULT 0,
+  branch INT NOT NULL DEFAULT 0,
+  is_active TINYINT(1) NOT NULL DEFAULT 1,
+  PRIMARY KEY (id),
+  KEY idx_table_areas_branch (tenant, branch, is_active, sort_order)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
+    private function paymentMethodsSql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS payment_methods (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  code VARCHAR(40) NOT NULL,
+  name_ar VARCHAR(120) NOT NULL,
+  name_en VARCHAR(120) NULL,
+  account_id BIGINT UNSIGNED NULL,
+  type ENUM('cash','card','wallet','bank','gift_card','other') NOT NULL,
+  requires_reference TINYINT(1) NOT NULL DEFAULT 0,
+  is_active TINYINT(1) NOT NULL DEFAULT 1,
+  sort_order INT NOT NULL DEFAULT 0,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_payment_methods_code (code),
+  KEY idx_payment_methods_active (is_active, sort_order),
+  KEY idx_payment_methods_account (account_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
+    private function managerApprovalsSql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS manager_approvals (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  action_type VARCHAR(80) NOT NULL,
+  target_type VARCHAR(80) NOT NULL,
+  target_id BIGINT UNSIGNED NULL,
+  requested_by BIGINT UNSIGNED NOT NULL,
+  approved_by BIGINT UNSIGNED NULL,
+  status ENUM('requested','approved','declined','expired') NOT NULL DEFAULT 'requested',
+  reason VARCHAR(500) NULL,
+  metadata_json JSON NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  decided_at DATETIME NULL,
+  PRIMARY KEY (id),
+  KEY idx_manager_approvals_status (status, created_at),
+  KEY idx_manager_approvals_target (target_type, target_id),
+  KEY idx_manager_approvals_action (action_type, status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
+    private function drawerSessionsSql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS drawer_sessions (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  uuid CHAR(36) NOT NULL,
+  user_id BIGINT UNSIGNED NOT NULL,
+  tenant INT NOT NULL DEFAULT 0,
+  branch INT NOT NULL DEFAULT 0,
+  fund_account_id BIGINT UNSIGNED NULL,
+  opened_at DATETIME NOT NULL,
+  opened_by BIGINT UNSIGNED NOT NULL,
+  opening_cash DECIMAL(12,3) NOT NULL DEFAULT 0.000,
+  closed_at DATETIME NULL,
+  closed_by BIGINT UNSIGNED NULL,
+  expected_cash DECIMAL(12,3) NULL,
+  counted_cash DECIMAL(12,3) NULL,
+  difference DECIMAL(12,3) NULL,
+  status ENUM('open','closed','forced_closed') NOT NULL DEFAULT 'open',
+  notes VARCHAR(500) NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_drawer_sessions_uuid (uuid),
+  KEY idx_drawer_sessions_user_status (user_id, status, opened_at),
+  KEY idx_drawer_sessions_branch_status (tenant, branch, status, opened_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
+    private function drawerMovementsSql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS drawer_movements (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  drawer_session_id BIGINT UNSIGNED NOT NULL,
+  movement_type ENUM('sale_cash','refund_cash','paid_in','paid_out','safe_drop','opening','closing_adjustment') NOT NULL,
+  amount DECIMAL(12,3) NOT NULL,
+  order_id BIGINT UNSIGNED NULL,
+  payment_id BIGINT UNSIGNED NULL,
+  reason VARCHAR(500) NULL,
+  created_by BIGINT UNSIGNED NOT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_drawer_movements_session (drawer_session_id, created_at),
+  KEY idx_drawer_movements_order (order_id, payment_id),
+  KEY idx_drawer_movements_type (movement_type, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
+    private function printersSql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS printers (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  name VARCHAR(120) NOT NULL,
+  printer_type ENUM('receipt','kitchen','label','other') NOT NULL,
+  connection_type ENUM('browser','network','usb','file','cloud') NOT NULL DEFAULT 'browser',
+  config_json JSON NULL,
+  tenant INT NOT NULL DEFAULT 0,
+  branch INT NOT NULL DEFAULT 0,
+  is_active TINYINT(1) NOT NULL DEFAULT 1,
+  PRIMARY KEY (id),
+  KEY idx_printers_branch_type (tenant, branch, printer_type, is_active)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
+    private function printJobsSql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS print_jobs (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  job_type ENUM('receipt','kot','kitchen','z_report','x_report') NOT NULL,
+  order_id BIGINT UNSIGNED NULL,
+  drawer_session_id BIGINT UNSIGNED NULL,
+  printer_id BIGINT UNSIGNED NULL,
+  status ENUM('queued','printed','failed','cancelled') NOT NULL DEFAULT 'queued',
+  payload_json JSON NULL,
+  attempts INT NOT NULL DEFAULT 0,
+  last_error VARCHAR(500) NULL,
+  created_by BIGINT UNSIGNED NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  printed_at DATETIME NULL,
+  PRIMARY KEY (id),
+  KEY idx_print_jobs_status (status, created_at),
+  KEY idx_print_jobs_order (order_id, job_type),
+  KEY idx_print_jobs_printer (printer_id, status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
+    private function itemNutritionProfilesSql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS item_nutrition_profiles (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  item_id BIGINT UNSIGNED NOT NULL,
+  serving_qty DECIMAL(12,3) NOT NULL DEFAULT 1.000,
+  serving_unit_id BIGINT UNSIGNED NULL,
+  calories_kcal DECIMAL(12,3) NULL,
+  protein_g DECIMAL(12,3) NULL,
+  carbs_g DECIMAL(12,3) NULL,
+  fat_g DECIMAL(12,3) NULL,
+  sugar_g DECIMAL(12,3) NULL,
+  fiber_g DECIMAL(12,3) NULL,
+  sodium_mg DECIMAL(12,3) NULL,
+  allergens_json JSON NULL,
+  dietary_flags_json JSON NULL,
+  data_source VARCHAR(120) NULL,
+  verified_by BIGINT UNSIGNED NULL,
+  verified_at DATETIME NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_item_nutrition (item_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
     }
 

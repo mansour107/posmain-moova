@@ -158,18 +158,36 @@ function findDelegatedWrites($path, $content)
 {
     $writes = [];
 
-    if ($path === 'ajax/moova_confirm_order.php' && strpos($content, 'MoovaNewOrderApplyService') !== false) {
+    if (
+        $path === 'ajax/moova_confirm_order.php'
+        && (
+            strpos($content, 'MoovaNewOrderApplyService') !== false
+            || (
+                strpos($content, 'PosOrderMutationService') !== false
+                && strpos($content, 'confirmMoovaOrder') !== false
+            )
+        )
+    ) {
         $writes[] = [
             'operation' => 'DELEGATE',
             'table' => 'moova_pos_order_links',
-            'line' => firstLineContaining($content, 'MoovaNewOrderApplyService'),
+            'line' => firstLineContaining($content, strpos($content, 'confirmMoovaOrder') !== false ? 'confirmMoovaOrder' : 'MoovaNewOrderApplyService'),
         ];
     }
-    if ($path === 'ajax/moova_change_order.php' && strpos($content, 'MoovaChangeOrderApplyService') !== false) {
+    if (
+        $path === 'ajax/moova_change_order.php'
+        && (
+            strpos($content, 'MoovaChangeOrderApplyService') !== false
+            || (
+                strpos($content, 'PosOrderMutationService') !== false
+                && strpos($content, 'changeMoovaOrder') !== false
+            )
+        )
+    ) {
         $writes[] = [
             'operation' => 'DELEGATE',
             'table' => 'moova_pos_order_change_links',
-            'line' => firstLineContaining($content, 'MoovaChangeOrderApplyService'),
+            'line' => firstLineContaining($content, strpos($content, 'changeMoovaOrder') !== false ? 'changeMoovaOrder' : 'MoovaChangeOrderApplyService'),
         ];
     }
 

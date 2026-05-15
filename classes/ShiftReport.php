@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__ . '/Pos/Service/ShiftDrawerReconciliationService.php';
 
 class ShiftReport {
     private $conn;
@@ -6,11 +7,13 @@ class ShiftReport {
     private $username;
     private $date;
     private $lastClosingTime = null;
+    private $drawerReconciliationService;
     
     public function __construct($conn, $userId, $date = null) {
         $this->conn = $conn;
         $this->userId = $userId;
         $this->date = $date ? $date : date('Y-m-d');
+        $this->drawerReconciliationService = new ShiftDrawerReconciliationService();
         
         // جلب اسم المستخدم للبحث في جدول الإغلاقات
         $this->username = $this->getUsernameById($userId);
@@ -184,6 +187,15 @@ class ShiftReport {
         $stmt->bind_param("ss", $this->date, $this->userId);
         $stmt->execute();
         return $stmt->get_result();
+    }
+
+    public function getDrawerReconciliation(array $scope = []) {
+        $scope = array_merge($scope, [
+            'user_id' => $this->userId,
+            'date' => $this->date,
+        ]);
+
+        return $this->drawerReconciliationService->buildForUser($this->conn, $scope);
     }
 }
 ?>

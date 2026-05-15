@@ -1,7 +1,12 @@
-<?php include('includes/header.php'); ?>
-<?php include('includes/sidebar.php'); ?>
-<?php include('includes/navbar.php'); ?>
-<?php include('includes/connect.php'); ?>
+<?php
+require_once __DIR__ . '/includes/auth_guard.php';
+require_once __DIR__ . '/includes/csrf.php';
+include('includes/connect.php');
+require_admin_or_permission('users.manage', $conn);
+include('includes/header.php');
+include('includes/sidebar.php');
+include('includes/navbar.php');
+?>
 
 
 <div class="content-wrapper">
@@ -18,6 +23,7 @@
     </div>
 
     <form role="form" action="do/doadd_user.php" method="post" autocomplete="off" enctype="multipart/form-data">
+      <?= csrf_input('users_write') ?>
       <div class="card-body">
         <div class="form-group">
           <label for="exampleInputEmail1"><?= $lang_username ?></label>

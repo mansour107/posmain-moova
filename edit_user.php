@@ -1,13 +1,27 @@
-<?php include 'includes/header.php'; ?>
-<?php include 'includes/navbar.php'; ?>
-<?php include 'includes/sidebar.php'; ?>
-<?php include 'includes/connect.php'; ?>
 <?php
+require_once __DIR__ . '/includes/auth_guard.php';
+require_once __DIR__ . '/includes/csrf.php';
+include 'includes/connect.php';
+require_admin_or_permission('users.manage', $conn);
+include 'includes/header.php';
+include 'includes/navbar.php';
+include 'includes/sidebar.php';
 
-$id = $_GET['id'];
-$sql = "select * from users where id = $id";
-$res = $conn->query($sql);
+$id = (int) ($_GET['id'] ?? 0);
+if ($id < 1) {
+    header('Location: users.php');
+    exit;
+}
+$stmt = $conn->prepare("SELECT * FROM users WHERE id = ? LIMIT 1");
+$stmt->bind_param('i', $id);
+$stmt->execute();
+$res = $stmt->get_result();
 $row = $res->fetch_assoc();
+$stmt->close();
+if (!$row) {
+    header('Location: users.php');
+    exit;
+}
 
 ?>
 <style>
@@ -187,6 +201,7 @@ $row = $res->fetch_assoc();
         </div>
         
         <form role="form" enctype="multipart/form-data" action="do/doedit_user.php?id=<?= $row['id'] ?>" method="post" autocomplete="off">
+            <?= csrf_input('users_write') ?>
             <div class="card-body-clean">
                 <div class="form-container">
                     <!-- اسم المستخدم -->

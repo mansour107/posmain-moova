@@ -141,10 +141,31 @@ $localWidgetUrl = 'moova_pos_widget.php';
       if (!response.ok || !result.success) {
         const err = new Error(result.message || 'POS order creation failed');
         err.code = result.code || 'POS_CREATE_FAILED';
+        err.retryable = moovaIsRetryableError(err.code, response.status, result);
+        err.payload = result;
         throw err;
       }
 
       return result;
+    }
+
+    function moovaIsRetryableError(code, status, result) {
+      if (result && result.retryable === false) return false;
+      const normalizedCode = String(code || '').toUpperCase();
+      const nonRetryableCodes = [
+        'DEVICE_TOKEN_REQUIRED',
+        'UNAUTHORIZED',
+        'INTEGRATION_NOT_MAPPED',
+        'TENANT_SCOPE_MISMATCH',
+        'INVALID_PAYLOAD',
+        'TABLE_REQUIRED',
+        'TABLE_NOT_FOUND',
+        'ITEM_NOT_FOUND',
+        'NO_VALID_ITEMS',
+        'IDEMPOTENCY_PAYLOAD_CONFLICT'
+      ];
+      if (nonRetryableCodes.includes(normalizedCode)) return false;
+      return Number(status) >= 500;
     }
 
     async function changeOrderInSupplierPos(payload) {
@@ -347,6 +368,29 @@ $localWidgetUrl = 'moova_pos_widget.php';
         tableNumber: data.tableNumber,
         items: data.items
       };
+      [
+        'notes',
+        'orderChannel',
+        'fulfillmentType',
+        'externalProvider',
+        'externalOrderId',
+        'customerName',
+        'customerPhone',
+        'customerAddress',
+        'deliveryZone',
+        'deliveryFee',
+        'deliveryStatus',
+        'promisedAt'
+      ].forEach(function (key) {
+        if (data[key] !== undefined && data[key] !== null && data[key] !== '') {
+          payload[key] = data[key];
+        }
+      });
+      ['customer', 'delivery'].forEach(function (key) {
+        if (data[key] && typeof data[key] === 'object') {
+          payload[key] = data[key];
+        }
+      });
 
       try {
         const supplierResult = await createOrderInSupplierPos(payload);
@@ -377,14 +421,14 @@ $localWidgetUrl = 'moova_pos_widget.php';
             ok: false,
             draftId: data.draftId,
             message: error?.message || 'POS order creation failed',
-            retryable: true,
+            retryable: error?.retryable !== false,
             deliveryPath: HOST_CAPABILITIES.deliveryPath,
             applyPath: HOST_CAPABILITIES.applyPath,
             syncEventType: 'new_order',
             syncStatus: 'failed',
             errorPayload: {
               code: error?.code || 'POS_CREATE_FAILED',
-              payload: payload
+              payload: error?.payload || payload
             }
           },
           WIDGET_ORIGIN

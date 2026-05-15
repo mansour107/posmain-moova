@@ -4,6 +4,10 @@ ini_set('display_errors', 0);
 ob_start();
 session_start();
 include('../includes/connect.php');
+require_once('../includes/auth_guard.php');
+require_once('../includes/csrf.php');
+require_once('../classes/Pos/Validation/PaymentInputValidator.php');
+require_once('../classes/Pos/Validation/TableInputValidator.php');
 require_once('../classes/TableOrderService.php');
 require_once('../classes/Pos/Service/PosOrderMutationService.php');
 require_once('../classes/Pos/Service/AccountingPostingService.php');
@@ -12,13 +16,25 @@ ob_end_clean();
 
 header('Content-Type: application/json; charset=utf-8');
 
-$table_id = intval($_POST['table_id'] ?? 0);
-$order_id = intval($_POST['order_id'] ?? 0);
-$discount = isset($_POST['discount']) ? floatval($_POST['discount']) : null;
-$net = isset($_POST['net']) ? floatval($_POST['net']) : null;
-$paid = floatval($_POST['paid'] ?? $_POST['amount_paid'] ?? 0);
-$payment_method = trim((string) ($_POST['payment_method'] ?? 'cash'));
-$notes = trim((string) ($_POST['notes'] ?? ''));
+require_pos_authenticated();
+if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
+    require_csrf('pos_browser');
+}
+
+try {
+    $paymentInput = PaymentInputValidator::validateTablePayment($_POST);
+} catch (Exception $e) {
+    echo json_encode(TableInputValidator::failureResponse($e), JSON_UNESCAPED_UNICODE);
+    exit;
+}
+
+$table_id = intval($paymentInput['table_id'] ?? 0);
+$order_id = intval($paymentInput['order_id'] ?? 0);
+$discount = $paymentInput['discount'];
+$net = $paymentInput['net'];
+$paid = floatval($paymentInput['paid'] ?? 0);
+$payment_method = (string) ($paymentInput['payment_method'] ?? 'cash');
+$notes = (string) ($paymentInput['notes'] ?? '');
 $user_id = intval($_SESSION['userid'] ?? 1);
 
 if ($table_id <= 0 || $paid <= 0) {
@@ -140,6 +156,6 @@ try {
     echo json_encode($response, JSON_UNESCAPED_UNICODE);
 } catch (Exception $e) {
     $conn->rollback();
-    echo json_encode(['success' => false, 'message' => $e->getMessage()], JSON_UNESCAPED_UNICODE);
+    echo json_encode(TableInputValidator::failureResponse($e), JSON_UNESCAPED_UNICODE);
 }
 ?>

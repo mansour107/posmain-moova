@@ -1,16 +1,24 @@
 <?php
 session_start();
 include('../includes/connect.php');
+require_once('../includes/auth_guard.php');
+require_once('../includes/csrf.php');
+require_once('../classes/Pos/Validation/TableInputValidator.php');
 require_once('../classes/TableOrderService.php');
 require_once('../classes/Pos/Service/PosOrderMutationService.php');
 require_once('../classes/Sync/SyncOutboxEventService.php');
 
 header('Content-Type: application/json; charset=utf-8');
 
+require_pos_authenticated();
+if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
+    require_csrf('pos_browser');
+}
+
 try {
-    $order_id = intval($_POST['order_id'] ?? 0);
-    $table_id = intval($_POST['table_id'] ?? 0);
-    $reason = trim((string) ($_POST['reason'] ?? 'تم إلغاء الطلب من نظام الطاولات'));
+    $order_id = TableInputValidator::positiveInt($_POST['order_id'] ?? 0, 'معرف الطلب مطلوب');
+    $table_id = TableInputValidator::optionalPositiveInt($_POST['table_id'] ?? 0, 'معرف الطاولة غير صحيح');
+    $reason = TableInputValidator::reason($_POST['reason'] ?? '', 'تم إلغاء الطلب من نظام الطاولات');
     $user_id = intval($_SESSION['userid'] ?? 1);
     $idempotencyService = new IdempotencyService();
     $idempotencyKey = $idempotencyService->resolveKey($_POST, $_SERVER);
@@ -99,9 +107,12 @@ try {
     if (isset($conn) && $conn instanceof mysqli) {
         $conn->rollback();
     }
-    echo json_encode([
-        'success' => false,
-        'message' => $e->getMessage()
-    ], JSON_UNESCAPED_UNICODE);
+    echo json_encode(posmain_exception_payload(
+        $e,
+        'حدث خطأ أثناء إلغاء الطلب، يرجى المحاولة مرة أخرى',
+        'ERROR',
+        true,
+        'delete_order'
+    ), JSON_UNESCAPED_UNICODE);
 }
 ?>

@@ -1,0 +1,349 @@
+# Goal Maker v2 state.yaml
+# Board truth lives here. goal.md is the editable charter; notes/ holds long receipts only.
+
+version: 2
+
+goal:
+  title: "POSMAIN Phase 6 Pilot QA"
+  slug: "posmain-phase-6-pilot-qa"
+  kind: specific
+  tranche: "Implement Phase 6: demo restaurant data, E2E and concurrency proof, go-live checklist, pilot monitoring template, and exit criteria."
+  status: done
+
+rules:
+  pm_owns_state: true
+  one_active_task: true
+  max_write_workers: 1
+  no_implementation_without_worker_or_pm_task: true
+  no_completion_without_judge_or_pm_audit: true
+
+agents:
+  scout: installed
+  worker: installed
+  judge: installed
+
+active_task: null
+
+tasks:
+  - id: T001
+    type: pm
+    assignee: PM
+    status: done
+    objective: "Create the Goal Maker board for Phase 6 and capture the safety posture before implementation."
+    inputs:
+      - "/Users/ab.mansour1agmail.com/Desktop/pos expansion plan.txt Phase 6"
+      - "docs/goals/posmain-phase-0-production-readiness/state.yaml"
+      - "docs/goals/posmain-phase-1-production-foundation/state.yaml"
+      - "docs/goals/posmain-phase-2-pos-state/state.yaml"
+      - "docs/goals/posmain-phase-3-security-hardening/state.yaml"
+      - "docs/goals/posmain-phase-4-midscale-product/state.yaml"
+      - "docs/goals/posmain-phase-5-moova-reliability/state.yaml"
+      - "docs/production"
+      - "git status --short"
+    constraints:
+      - "Do not edit implementation files before the board exists."
+      - "Do not discard, revert, or absorb unrelated dirty worktree changes."
+      - "Keep this PM task limited to Goal Maker control files."
+      - "Make the first implementation-discovery task read-only because Phase 6 touches seed data, browser flows, concurrency, pilot readiness, and operations docs."
+    expected_output:
+      - "Goal Maker v2 board exists and passes the checker."
+      - "First active task after board setup is safe and read-only."
+      - "Scout, Worker, and Judge roles are available."
+    receipt:
+      result: done
+      summary: "Created the Phase 6 Goal Maker board with a safe read-only Scout as the next active task. Current repo has substantial pre-existing dirty Phase 1-5 work, so Phase 6 implementation must use explicit Worker allowed_files and focused verification."
+      evidence:
+        - "docs/goals/posmain-phase-6-pilot-qa/goal.md"
+        - "docs/goals/posmain-phase-6-pilot-qa/state.yaml"
+        - "docs/goals/posmain-phase-6-pilot-qa/notes/"
+        - "git status --short"
+      commands:
+        - cmd: "mkdir -p docs/goals/posmain-phase-6-pilot-qa/notes"
+          status: pass
+        - cmd: "node /Users/ab.mansour1agmail.com/.codex/skills/goal-maker/scripts/check-goal-state.mjs docs/goals/posmain-phase-6-pilot-qa/state.yaml"
+          status: pass
+  - id: T002
+    type: scout
+    assignee: Scout
+    status: done
+    objective: "Map current Phase 6 gaps, existing test/tooling surfaces, local runtime requirements, and safe implementation sequence."
+    inputs:
+      - "/Users/ab.mansour1agmail.com/Desktop/pos expansion plan.txt lines 2065-2176"
+      - "docs/production/active_route_map.md"
+      - "docs/production/api_contracts_pos.md"
+      - "docs/production/backup_restore_runbook.md"
+      - "docs/production/deployment_profile.md"
+      - "docs/production/moova_mode_decision.md"
+      - "docs/production/moova_reliability_scenarios.md"
+      - "docs/goals/posmain-phase-0-production-readiness/state.yaml"
+      - "docs/goals/posmain-phase-1-production-foundation/state.yaml"
+      - "docs/goals/posmain-phase-2-pos-state/state.yaml"
+      - "docs/goals/posmain-phase-3-security-hardening/state.yaml"
+      - "docs/goals/posmain-phase-4-midscale-product/state.yaml"
+      - "docs/goals/posmain-phase-5-moova-reliability/state.yaml"
+      - "tools/"
+      - "tests/"
+      - "docker-compose.posmain-test.yml"
+      - "package.json"
+      - "composer.json"
+    constraints:
+      - "Read-only."
+      - "Apply the AGENTS.md pre-change checklist in the findings."
+      - "Separate confirmed current repo evidence from assumptions or external pilot-only requirements."
+      - "Identify which Phase 6 acceptance items are already satisfied by Phase 0-5 work and which still need implementation."
+    expected_output:
+      - "Phase 6 gap map with concrete file-path evidence."
+      - "Demo seed/reset surface recommendation and data safety constraints."
+      - "Browser E2E strategy and available tooling."
+      - "Load/concurrency test strategy and DB/runtime prerequisites."
+      - "Pilot docs gaps and external evidence blockers."
+      - "Recommended Worker task sequence with allowed_files and verification commands."
+    receipt:
+      result: done
+      note: "notes/T002-phase6-scout-map.md"
+      summary: "Mapped Phase 6 gaps. Prior phases provide route maps, backup/readiness, schema, POS/Moova service tests, and Moova scenario docs; remaining local work is a safe CLI demo seed tool, pilot docs, load/concurrency checks, and documented/automated E2E proof. First recommended Worker slice is P6-001 seed tooling with dry-run and disposable-DB tests."
+      evidence:
+        - "setup_demo_data.php"
+        - "docs/production/active_route_map.md"
+        - "docs/production/backup_restore_runbook.md"
+        - "docs/production/moova_reliability_scenarios.md"
+        - "tools/branch_go_live_readiness.php"
+        - "classes/Sync/SchemaManager.php"
+        - "tests/sync/pos_takeaway_order_service_test.php"
+        - "tests/sync/pos_table_save_service_test.php"
+      spawned_tasks:
+        - T004
+  - id: T003
+    type: judge
+    assignee: Judge
+    status: done
+    objective: "Review Scout findings and choose the first safe Phase 6 implementation slice."
+    inputs:
+      - "T002 receipt or note"
+      - "Current dirty diff"
+      - "Phase 6 acceptance criteria"
+    constraints:
+      - "Read-only; do not implement."
+      - "Pick small reviewable work."
+      - "Prefer non-destructive dry-run/test harness work before reset tooling or browser automation."
+      - "If local runtime or data safety is unclear, require another Scout or PM task before Worker."
+    expected_output:
+      - "Decision on Phase 6 implementation sequence."
+      - "First Worker task with allowed_files and verify commands."
+      - "Blocked or deferred tasks, especially live pilot evidence."
+    receipt:
+      result: done
+      decision: "Start with P6-001 demo restaurant seed tooling. It is prerequisite infrastructure for later E2E, load, and pilot checks, and it can be built safely as CLI-only dry-run/apply behavior against disposable databases before touching live local data."
+      next_allowed_task: T004
+      blocked_tasks: []
+      rationale:
+        - "Browser E2E claims would be weak before realistic demo data exists and before the currently stopped local stack is intentionally started."
+        - "Load/concurrency checks need a known dataset and should not run against uncontrolled data."
+        - "Pilot docs can follow after the seed tool clarifies exact commands and safety boundaries."
+  - id: T004
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "Implement P6-001 CLI demo restaurant seed/reset tooling with dry-run and disposable-DB tests."
+    allowed_files:
+      - "tools/seed_demo_restaurant.php"
+      - "tests/sync/phase6_seed_demo_restaurant_test.php"
+      - "docs/goals/posmain-phase-6-pilot-qa/state.yaml"
+      - "docs/goals/posmain-phase-6-pilot-qa/notes/"
+    verify:
+      - "php -l tools/seed_demo_restaurant.php"
+      - "php -l tests/sync/phase6_seed_demo_restaurant_test.php"
+      - "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/phase6_seed_demo_restaurant_test.php"
+      - "git diff --check -- tools/seed_demo_restaurant.php tests/sync/phase6_seed_demo_restaurant_test.php"
+    stop_if:
+      - "Need files outside allowed_files."
+      - "Need destructive DB operations on non-test data."
+      - "Need production credentials, real printer hardware, or real-shop pilot evidence."
+      - "Behavior is ambiguous or could corrupt orders, payments, stock, accounting, table state, or Moova state."
+      - "Verification fails twice for a reason not understood."
+    receipt:
+      result: done
+      changed_files:
+        - "tools/seed_demo_restaurant.php"
+        - "tests/sync/phase6_seed_demo_restaurant_test.php"
+      summary: "Implemented a CLI-only Phase 6 demo restaurant seed/reset tool. It defaults to dry-run, refuses production mode, uses P6-DEMO/p6_ prefixes for reset scoping, seeds realistic categories/items/modifiers/tables/users/payment methods/settings, and adds Moova dummy links only in test/explicit mode without replacing an existing active tenant/branch link. Added a disposable-DB regression test for dry-run, apply, idempotent reapply, reset/reseed, hashed credentials, Moova dummy links, and production refusal."
+      commands:
+        - cmd: "php -l tools/seed_demo_restaurant.php"
+          status: pass
+        - cmd: "php -l tests/sync/phase6_seed_demo_restaurant_test.php"
+          status: pass
+        - cmd: "docker start posmain-mysql"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/phase6_seed_demo_restaurant_test.php"
+          status: pass
+        - cmd: "git diff --check -- tools/seed_demo_restaurant.php tests/sync/phase6_seed_demo_restaurant_test.php"
+          status: pass
+  - id: T005
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "Implement Phase 6 pilot go-live, daily review, and exit criteria documents with a focused contract test."
+    allowed_files:
+      - "docs/production/pilot_go_live_checklist.md"
+      - "docs/production/pilot_daily_review_template.md"
+      - "docs/production/pilot_exit_criteria.md"
+      - "tests/sync/phase6_pilot_docs_contract_test.php"
+      - "docs/goals/posmain-phase-6-pilot-qa/state.yaml"
+      - "docs/goals/posmain-phase-6-pilot-qa/notes/"
+    verify:
+      - "php -l tests/sync/phase6_pilot_docs_contract_test.php"
+      - "php tests/sync/phase6_pilot_docs_contract_test.php"
+      - "git diff --check -- docs/production/pilot_go_live_checklist.md docs/production/pilot_daily_review_template.md docs/production/pilot_exit_criteria.md tests/sync/phase6_pilot_docs_contract_test.php"
+    stop_if:
+      - "Need files outside allowed_files."
+      - "Need to claim real pilot completion without live-shop evidence."
+      - "Need production credentials, printer hardware, or real Moova credentials."
+      - "Verification fails twice for a reason not understood."
+    receipt:
+      result: done
+      changed_files:
+        - "docs/production/pilot_go_live_checklist.md"
+        - "docs/production/pilot_daily_review_template.md"
+        - "docs/production/pilot_exit_criteria.md"
+        - "tests/sync/phase6_pilot_docs_contract_test.php"
+      summary: "Added Phase 6 pilot operating docs covering go-live readiness, daily monitoring, and exit criteria. The docs reference the existing deployment, backup/restore, route-map, Moova mode, Moova reliability, seed, and branch readiness artifacts, and explicitly separate local/staging proof from live pilot evidence."
+      commands:
+        - cmd: "php -l tests/sync/phase6_pilot_docs_contract_test.php"
+          status: pass
+        - cmd: "php tests/sync/phase6_pilot_docs_contract_test.php"
+          status: pass
+        - cmd: "git diff --check -- docs/production/pilot_go_live_checklist.md docs/production/pilot_daily_review_template.md docs/production/pilot_exit_criteria.md tests/sync/phase6_pilot_docs_contract_test.php"
+          status: pass
+  - id: T006
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "Implement Phase 6 load/concurrency checks for duplicate IDs, table conflicts, duplicate payment, and item-search timing against disposable data."
+    allowed_files:
+      - "tools/phase6_load_concurrency_check.php"
+      - "tests/sync/phase6_load_concurrency_check_test.php"
+      - "docs/goals/posmain-phase-6-pilot-qa/state.yaml"
+      - "docs/goals/posmain-phase-6-pilot-qa/notes/"
+    verify:
+      - "php -l tools/phase6_load_concurrency_check.php"
+      - "php -l tests/sync/phase6_load_concurrency_check_test.php"
+      - "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/phase6_load_concurrency_check_test.php"
+      - "git diff --check -- tools/phase6_load_concurrency_check.php tests/sync/phase6_load_concurrency_check_test.php"
+    stop_if:
+      - "Need files outside allowed_files."
+      - "Need to run high-volume writes against production or non-disposable shop data."
+      - "Need to alter POS mutation services instead of adding a bounded check."
+      - "Verification fails twice for a reason not understood."
+    receipt:
+      result: done
+      changed_files:
+        - "tools/phase6_load_concurrency_check.php"
+        - "tests/sync/phase6_load_concurrency_check_test.php"
+      summary: "Added a CLI Phase 6 load/concurrency runner with production refusal, disposable/staging DB guardrails, P6-CONC scoped fixtures, cleanup by default, concurrent cashier sale writers, waiter table saves, same-table conflict proof, duplicate payment submit proof, and 100 item-search timing. Added a disposable-DB regression test covering the invariants and safety refusals."
+      commands:
+        - cmd: "php -l tools/phase6_load_concurrency_check.php"
+          status: pass
+        - cmd: "php -l tests/sync/phase6_load_concurrency_check_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/phase6_load_concurrency_check_test.php"
+          status: pass
+        - cmd: "git diff --check -- tools/phase6_load_concurrency_check.php tests/sync/phase6_load_concurrency_check_test.php"
+          status: pass
+  - id: T007
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "Implement the Phase 6 documented local E2E command and browser scenario matrix with a focused contract test."
+    allowed_files:
+      - "docs/production/phase6_e2e_local_command.md"
+      - "tests/sync/phase6_e2e_docs_contract_test.php"
+      - "docs/goals/posmain-phase-6-pilot-qa/state.yaml"
+      - "docs/goals/posmain-phase-6-pilot-qa/notes/"
+    verify:
+      - "php -l tests/sync/phase6_e2e_docs_contract_test.php"
+      - "php tests/sync/phase6_e2e_docs_contract_test.php"
+      - "git diff --check -- docs/production/phase6_e2e_local_command.md tests/sync/phase6_e2e_docs_contract_test.php"
+    stop_if:
+      - "Need files outside allowed_files."
+      - "Need to add a new browser automation dependency without user confirmation."
+      - "Need to claim browser pass without a running seeded local stack."
+      - "Verification fails twice for a reason not understood."
+    receipt:
+      result: done
+      changed_files:
+        - "docs/production/phase6_e2e_local_command.md"
+        - "tests/sync/phase6_e2e_docs_contract_test.php"
+      summary: "Added the Phase 6 documented local E2E command and browser scenario matrix. The document covers the local Docker/migration/seed/load command sequence, demo accounts, all required browser scenarios, active backend owners, pass/fail rules, and evidence fields. Added a focused contract test to keep the required scenarios and command references present."
+      commands:
+        - cmd: "php -l tests/sync/phase6_e2e_docs_contract_test.php"
+          status: pass
+        - cmd: "php tests/sync/phase6_e2e_docs_contract_test.php"
+          status: pass
+        - cmd: "git diff --check -- docs/production/phase6_e2e_local_command.md tests/sync/phase6_e2e_docs_contract_test.php"
+          status: pass
+  - id: T999
+    type: judge
+    assignee: Judge
+    status: done
+    objective: "Audit whether the Phase 6 pilot QA tranche is complete."
+    inputs:
+      - "All done task receipts"
+      - "Last verification"
+      - "Current dirty diff"
+      - "Phase 6 acceptance criteria"
+    constraints:
+      - "Read-only."
+      - "Do not mark complete if live-only pilot blockers are presented as local proof."
+    expected_output:
+      - "complete | not_complete"
+      - "missing evidence"
+      - "next task if not complete"
+    receipt:
+      result: done
+      decision: complete
+      summary: "Phase 6 local implementation is complete. P6-001 is covered by a safe CLI demo seed/reset tool and disposable-DB test. P6-002 is covered by the documented local E2E command and browser scenario matrix, which is the accepted path because no browser E2E dependency is currently declared. P6-003 is covered by the load/concurrency runner and disposable-DB test. P6-004, P6-005, and P6-006 are covered by pilot go-live, daily review, and exit criteria docs with contract coverage."
+      evidence:
+        - "tools/seed_demo_restaurant.php"
+        - "tests/sync/phase6_seed_demo_restaurant_test.php"
+        - "docs/production/phase6_e2e_local_command.md"
+        - "tools/phase6_load_concurrency_check.php"
+        - "tests/sync/phase6_load_concurrency_check_test.php"
+        - "docs/production/pilot_go_live_checklist.md"
+        - "docs/production/pilot_daily_review_template.md"
+        - "docs/production/pilot_exit_criteria.md"
+      external_pilot_evidence_not_claimed:
+        - "Seven real service days without critical data loss."
+        - "Real shop Z report, cash/card/wallet reconciliation, printer, cashier acceptance, and backup/restore evidence."
+        - "Live Moova credentials and cashier acceptance evidence if Moova is enabled."
+      commands:
+        - cmd: "php -l tools/seed_demo_restaurant.php && php -l tests/sync/phase6_seed_demo_restaurant_test.php"
+          status: pass
+        - cmd: "php -l tools/phase6_load_concurrency_check.php && php -l tests/sync/phase6_load_concurrency_check_test.php"
+          status: pass
+        - cmd: "php -l tests/sync/phase6_pilot_docs_contract_test.php && php tests/sync/phase6_pilot_docs_contract_test.php"
+          status: pass
+        - cmd: "php -l tests/sync/phase6_e2e_docs_contract_test.php && php tests/sync/phase6_e2e_docs_contract_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/phase6_seed_demo_restaurant_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/phase6_load_concurrency_check_test.php"
+          status: pass
+        - cmd: "git diff --check -- Phase 6 files and Goal Maker board"
+          status: pass
+        - cmd: "node /Users/ab.mansour1agmail.com/.codex/skills/goal-maker/scripts/check-goal-state.mjs docs/goals/posmain-phase-6-pilot-qa/state.yaml"
+          status: pass
+
+checks:
+  dirty_fingerprint: "Pre-existing dirty tree includes Phase 1-5 implementation/doc/test files; Phase 6 must avoid mixing unrelated changes."
+  last_verification:
+    result: pass
+    task: T999
+    commands:
+      - "php -l tools/seed_demo_restaurant.php && php -l tests/sync/phase6_seed_demo_restaurant_test.php"
+      - "php -l tools/phase6_load_concurrency_check.php && php -l tests/sync/phase6_load_concurrency_check_test.php"
+      - "php -l tests/sync/phase6_pilot_docs_contract_test.php && php tests/sync/phase6_pilot_docs_contract_test.php"
+      - "php -l tests/sync/phase6_e2e_docs_contract_test.php && php tests/sync/phase6_e2e_docs_contract_test.php"
+      - "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/phase6_seed_demo_restaurant_test.php"
+      - "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/phase6_load_concurrency_check_test.php"
+      - "git diff --check -- tools/seed_demo_restaurant.php tests/sync/phase6_seed_demo_restaurant_test.php docs/production/pilot_go_live_checklist.md docs/production/pilot_daily_review_template.md docs/production/pilot_exit_criteria.md tests/sync/phase6_pilot_docs_contract_test.php tools/phase6_load_concurrency_check.php tests/sync/phase6_load_concurrency_check_test.php docs/production/phase6_e2e_local_command.md tests/sync/phase6_e2e_docs_contract_test.php docs/goals/posmain-phase-6-pilot-qa/state.yaml docs/goals/posmain-phase-6-pilot-qa/goal.md docs/goals/posmain-phase-6-pilot-qa/notes/T002-phase6-scout-map.md"
+      - "node /Users/ab.mansour1agmail.com/.codex/skills/goal-maker/scripts/check-goal-state.mjs docs/goals/posmain-phase-6-pilot-qa/state.yaml"

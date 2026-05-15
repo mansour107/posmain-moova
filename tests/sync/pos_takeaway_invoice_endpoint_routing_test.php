@@ -16,7 +16,9 @@ posTakeawayRoutingAssert(strpos($source, '$paid_bank <= 0') === false, 'route sh
 posTakeawayRoutingAssert(strpos($source, '$mutationService->createTakeawayOrder($conn, $takeawayRequest') !== false, 'handler should route through createTakeawayOrder');
 posTakeawayRoutingAssert(strpos($source, "\$_SESSION['success_message'] = 'تم حفظ الطلب بنجاح - رقم الفاتورة: ' . \$pro_id;") !== false, 'route should preserve success message');
 posTakeawayRoutingAssert(strpos($source, 'header("Location: ../print/receipt.php?id=$last_op");') !== false, 'route should preserve receipt redirect');
-posTakeawayRoutingAssert(strpos($source, "die('حدث خطأ أثناء معالجة الفاتورة: ' . \$e->getMessage());") !== false, 'route should preserve visible error prefix');
+posTakeawayRoutingAssert(strpos($source, 'posmain_browser_exception_response(') !== false, 'route should use the central safe browser error response');
+posTakeawayRoutingAssert(strpos($source, "'invoice_takeaway_route'") !== false, 'takeaway service errors should have a logging context');
+posTakeawayRoutingAssert(strpos($source, "'invoice_transaction'") !== false, 'legacy transaction errors should have a logging context');
 
 echo "pos-takeaway-invoice-endpoint-routing-ok\n";
 

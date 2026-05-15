@@ -1,13 +1,27 @@
 <?php 
 error_log('[Settings] doedit_settings.php accessed - Method: ' . $_SERVER['REQUEST_METHOD']);
-error_log('[Settings] POST data: ' . print_r($_POST, true));
 
 include('../includes/connect.php');
+require_once __DIR__ . '/../includes/auth_guard.php';
+require_once __DIR__ . '/../includes/csrf.php';
+require_once __DIR__ . '/../classes/Security/SecurityAuditLogger.php';
+
+require_admin_or_permission('system.tools.run', $conn);
+
+function doedit_settings_audit(mysqli $conn, string $eventType, array $options = []): void
+{
+    try {
+        (new SecurityAuditLogger())->record($conn, $eventType, $options);
+    } catch (Throwable $exception) {
+        error_log('Settings audit skipped: ' . $exception->getMessage());
+    }
+}
 
 // التحقق من طريقة الطلب
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     die("Invalid request method");
 }
+require_csrf('settings_write');
 
 // التحقق من تسجيل الدخول
 if (!isset($_SESSION['login']) || !isset($_SESSION['userid'])) {
@@ -71,9 +85,18 @@ $stmt->bind_param("sssssiiiisissiiisi",
 );
 
 if ($stmt->execute()) {
+    doedit_settings_audit($conn, 'settings_updated', [
+        'target_type' => 'settings',
+        'metadata' => [
+            'companyname' => $companyname,
+            'lang' => $lang,
+            'pos_type' => $pos_type,
+        ],
+    ]);
     header('location:../dashboard.php');
 } else {
-    echo "Error updating settings: " . $conn->error;
+    $settingsException = new RuntimeException($conn->error ?: 'settings update failed');
+    echo htmlspecialchars(posmain_safe_exception_message($settingsException, 'حدث خطأ أثناء تحديث الإعدادات', false), ENT_QUOTES, 'UTF-8');
 }
 
 $stmt->close();

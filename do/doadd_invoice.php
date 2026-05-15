@@ -4,18 +4,14 @@ production_guard_deny_debug_request('do/doadd_invoice.php');
 
 session_start();
 include('../includes/connect.php');
-
-// Debug مؤقت - اعرض الـ POST data
-if (isset($_GET['debug'])) {
-    header('Content-Type: text/plain');
-    print_r($_POST);
-    exit;
-}
-
+require_once('../includes/auth_guard.php');
+require_once('../includes/csrf.php');
 
 
 // التحقق من المصادقة والصلاحيات
-if (!isset($_SESSION['userid'])) {
+if (PHP_SAPI !== 'cli') {
+    require_pos_authenticated();
+} elseif (!isset($_SESSION['userid'])) {
     header('Location: ../login.php');
     exit;
 }
@@ -25,13 +21,11 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     header('Location: ../sales.php');
     exit;
 }
+if (PHP_SAPI !== 'cli') {
+    require_csrf('pos_browser');
+}
 
 $usid = $_SESSION['userid'];
-
-// إزالة عرض البيانات الحساسة في الإنتاج
-// echo "<pre>";
-// print_r($_POST);
-// echo "</pre>";
 
 // تضمين فئات النظام الجديد
 require_once('../classes/InvoiceElementFactory.php');
@@ -39,6 +33,7 @@ require_once('../classes/TableOrderService.php');
 require_once('../classes/Sync/DocumentCounterService.php');
 require_once('../classes/Sync/SyncOutboxEventService.php');
 require_once('../classes/Pos/Service/PosOrderMutationService.php');
+require_once('../classes/Pos/Service/ModifierLineNoteService.php');
 
 // تعريف ثوابت أنواع الفواتير
 define('INVOICE_TYPES', [
@@ -123,7 +118,13 @@ if ($order_type_db === 'table') {
         $tableRow = $tableOrderService->requireTable($conn, $table_id);
         $db_table_name = $tableRow['tname'];
     } catch (Exception $e) {
-        die('خطأ: ' . $e->getMessage());
+        posmain_browser_exception_response(
+            $e,
+            'حدث خطأ أثناء تجهيز طلب الطاولة، يرجى المحاولة مرة أخرى أو التواصل مع الدعم',
+            500,
+            true,
+            'invoice_table_lookup'
+        );
     }
 }
 
@@ -382,7 +383,13 @@ if ($route_takeaway_service) {
     } catch (Throwable $e) {
         error_log('ERROR in takeaway service route: ' . $e->getMessage());
         error_log('ERROR trace: ' . $e->getTraceAsString());
-        die('حدث خطأ أثناء معالجة الفاتورة: ' . $e->getMessage());
+        posmain_browser_exception_response(
+            $e,
+            'حدث خطأ أثناء معالجة الفاتورة، يرجى المحاولة مرة أخرى أو التواصل مع الدعم',
+            500,
+            false,
+            'invoice_takeaway_route'
+        );
     }
 }
 
@@ -409,6 +416,85 @@ function nextLegacyInvoiceJournalId(mysqli $conn, DocumentCounterService $counte
 
     return $counterService->nextJournalId($conn, 0, 0);
 }
+
+function posmainInvoiceTableExists(mysqli $conn, string $tableName): bool
+{
+    $tableName = $conn->real_escape_string($tableName);
+    $result = $conn->query("SHOW TABLES LIKE '{$tableName}'");
+
+    return $result && $result->num_rows > 0;
+}
+
+function posmainInvoiceLineNoteServiceTablesAvailable(mysqli $conn): bool
+{
+    foreach (['order_line_notes', 'order_line_modifiers', 'item_modifier_groups', 'modifier_groups', 'modifier_options'] as $tableName) {
+        if (!posmainInvoiceTableExists($conn, $tableName)) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+function posmainInvoicePersistKitchenLineNote(
+    mysqli $conn,
+    ModifierLineNoteService $lineNoteService,
+    int $orderId,
+    int $detailId,
+    int $itemId,
+    $note,
+    int $userId
+): void {
+    $note = trim((string) $note);
+    if ($note === '' || !posmainInvoiceTableExists($conn, 'order_line_notes')) {
+        return;
+    }
+
+    if (posmainInvoiceLineNoteServiceTablesAvailable($conn)) {
+        try {
+            $lineNoteService->saveLineCustomizations(
+                $conn,
+                $orderId,
+                $detailId,
+                $itemId,
+                [],
+                [['note_type' => 'kitchen', 'note_text' => $note]],
+                [
+                    'modifiers_enabled' => true,
+                    'user_id' => $userId,
+                ]
+            );
+            return;
+        } catch (Throwable $exception) {
+            error_log('Invoice line note service skipped: ' . $exception->getMessage());
+        }
+    }
+
+    try {
+        if (function_exists('mb_substr')) {
+            $note = mb_substr($note, 0, 500);
+        } else {
+            $note = substr($note, 0, 500);
+        }
+
+        $delete = $conn->prepare("DELETE FROM order_line_notes WHERE order_id = ? AND detail_id = ? AND note_type = 'kitchen'");
+        $delete->bind_param('ii', $orderId, $detailId);
+        $delete->execute();
+        $delete->close();
+
+        $type = 'kitchen';
+        $createdBy = $userId > 0 ? $userId : null;
+        $insert = $conn->prepare("
+            INSERT INTO order_line_notes (order_id, detail_id, note_type, note_text, created_by)
+            VALUES (?, ?, ?, ?, ?)
+        ");
+        $insert->bind_param('iissi', $orderId, $detailId, $type, $note, $createdBy);
+        $insert->execute();
+        $insert->close();
+    } catch (Throwable $exception) {
+        error_log('Invoice direct line note persistence skipped: ' . $exception->getMessage());
+    }
+}
 // حساب النسب المئوية للخصم والإضافي
 $fat_disc_per = ($headtotal > 0 && $headdisc > 0) ? number_format($headdisc/$headtotal*100, 2) : 0;
 $fat_plus_per = ($headtotal > 0 && $headplus > 0) ? number_format($headplus/$headtotal*100, 2) : 0;
@@ -421,6 +507,7 @@ try {
     error_log('Database transaction started successfully');
     $lockedTableOrder = null;
     $counterService = new DocumentCounterService();
+    $lineNoteService = new ModifierLineNoteService();
     $pro_id = null;
 
     $edit_id = isset($_REQUEST['edit_id']) ? intval($_REQUEST['edit_id']) : 0;
@@ -903,6 +990,7 @@ try {
             $itmprice = floatval($_POST['itmprice'][$index] ?? 0);
             $itmdisc  = floatval($_POST['itmdisc'][$index]  ?? 0);
             $u_val   = floatval($_POST['u_val'][$index]   ?? 1);
+            $line_note = $_POST['itmnote'][$index] ?? '';
             if ($u_val <= 0) $u_val = 1; // حماية من القسمة على صفر
 
             // تحديد الكميات حسب نوع الفاتورة
@@ -937,7 +1025,7 @@ try {
             }
 
             $oldprice = floatval($rowbl['cost_price']);
-            $oldqty = intval($rowbl['itmqty']);
+            $oldqty = floatval($rowbl['itmqty']);
             $cost_price = $oldprice;
             $itmprofit = 0;
 
@@ -980,6 +1068,16 @@ try {
             if (!$stmt_details->execute()) {
                 throw new Exception('فشل في إدخال تفاصيل الصنف ' . $itmname);
             }
+
+            posmainInvoicePersistKitchenLineNote(
+                $conn,
+                $lineNoteService,
+                (int) $last_op,
+                (int) $conn->insert_id,
+                (int) $itmname,
+                $line_note,
+                (int) $usid
+            );
         }
 
         // إغلاق الاستعلامات
@@ -1054,7 +1152,13 @@ try {
     error_log('ERROR trace: ' . $e->getTraceAsString());
     $conn->rollback();
     error_log('خطأ في معالجة الفاتورة: ' . $e->getMessage());
-    die('حدث خطأ أثناء معالجة الفاتورة: ' . $e->getMessage());
+    posmain_browser_exception_response(
+        $e,
+        'حدث خطأ أثناء معالجة الفاتورة، يرجى المحاولة مرة أخرى أو التواصل مع الدعم',
+        500,
+        false,
+        'invoice_transaction'
+    );
 }
 
 // إعادة التوجيه حسب نوع العملية

@@ -1,25 +1,28 @@
 <?php 
 include_once '../includes/connect.php'; 
+require_once __DIR__ . '/../includes/upload_guard.php';
 
 require_once '../vendor/autoload.php';
 
 use PhpOffice\PhpSpreadsheet\Reader\Xls;
 use PhpOffice\PhpSpreadsheet\Reader\Xlsx; 
  
-    // Allowed mime types 
-    $excelext = array('xls', 'xlsx' , 'application/vnd.ms-excel '); 
-     $filename= $_FILES['file']['name'];
-     $extarr = explode(".",$filename);
-     $extentions= ["xls","xslx"];
-    // Validate whether selected file is a Excel file 
-    if(in_array($extarr[1], $excelext)){ 
-        
+    if (!isset($_FILES['file'])) {
+        header('location:../myitems.php?status=err');
+        exit;
+    }
+
+    try {
+        $validatedUpload = posmain_validate_spreadsheet_upload($_FILES['file']);
+    } catch (Throwable $exception) {
+        header('location:../myitems.php?status=err');
+        exit;
+    }
+
+    if(is_uploaded_file($validatedUpload['tmp_name'])){
  
-        // If the file is uploaded 
-        if(is_uploaded_file($_FILES['file']['tmp_name'])){
- 
-            $reader = new Xls(); 
-            $spreadsheet = $reader->load($_FILES['file']['tmp_name']); 
+            $reader = $validatedUpload['extension'] === 'xlsx' ? new Xlsx() : new Xls();
+            $spreadsheet = $reader->load($validatedUpload['tmp_name']);
             $worksheet = $spreadsheet->getActiveSheet();  
             $worksheet_arr = $worksheet->toArray(); 
 
@@ -51,7 +54,6 @@ use PhpOffice\PhpSpreadsheet\Reader\Xlsx;
         }else{ 
             $qstring = '?status=err'; 
         } 
-    }
  
 header('location:../myitems.php');
 ?>

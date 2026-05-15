@@ -1,0 +1,897 @@
+# Goal Maker v2 state.yaml
+# Board truth lives here. goal.md is the editable charter; notes/ holds long receipts only.
+
+version: 2
+
+goal:
+  title: "POSMAIN Phase 3 Security Hardening"
+  slug: "posmain-phase-3-security-hardening"
+  kind: specific
+  tranche: "Implement Phase 3 security, permissions, SQL/input/upload/audit/error/login hardening for active production routes."
+  status: done
+
+rules:
+  pm_owns_state: true
+  one_active_task: true
+  max_write_workers: 1
+  no_implementation_without_worker_or_pm_task: true
+  no_completion_without_judge_or_pm_audit: true
+
+agents:
+  scout: installed
+  worker: installed
+  judge: installed
+
+active_task: null
+
+tasks:
+  - id: T000
+    type: pm
+    assignee: PM
+    status: done
+    objective: "Create the Phase 3 Goal Maker board and bind it to the completed Phase 0-2 artifacts."
+    inputs:
+      - "/Users/ab.mansour1agmail.com/Desktop/pos expansion plan.txt"
+      - "docs/goals/posmain-phase-0-production-readiness"
+      - "docs/goals/posmain-phase-1-production-foundation"
+      - "docs/goals/posmain-phase-2-pos-state"
+      - "docs/production"
+      - "git status --short"
+    constraints:
+      - "Only write Goal Maker control files."
+      - "Do not edit implementation files before the board exists."
+    expected_output:
+      - "Goal board exists."
+      - "First active task is safe and read-only."
+      - "Goal command is documented."
+    receipt:
+      result: done
+      changed_files:
+        - "docs/goals/posmain-phase-3-security-hardening/goal.md"
+        - "docs/goals/posmain-phase-3-security-hardening/state.yaml"
+      summary: "Created the Phase 3 Goal Maker board with a read-only Scout task first and recorded the /goal command in the charter."
+  - id: T001
+    type: scout
+    assignee: Scout
+    status: done
+    objective: "Map Phase 3 requirements against current Phase 0-2 artifacts, route code, schema helpers, and available verification before implementation."
+    inputs:
+      - "/Users/ab.mansour1agmail.com/Desktop/pos expansion plan.txt Phase 3"
+      - "docs/production/write_surface_classification.md"
+      - "docs/production/active_route_map.md"
+      - "docs/production/api_contracts_pos.md"
+      - "Phase 0-2 Goal Maker boards"
+      - "Current repo files and tests"
+    constraints:
+      - "Read-only."
+      - "Do not edit implementation files."
+      - "Prefer concrete file-path evidence over generic advice."
+      - "Identify compatibility risks and any dirty-file overlap."
+    expected_output:
+      - "Impacted surfaces and compatibility risks for Phase 3."
+      - "Existing helpers Phase 3 can reuse."
+      - "Recommended Worker task sequence with allowed file sets."
+      - "Focused verification commands and current known blockers."
+    receipt:
+      result: done
+      summary: "Mapped Phase 3 against Phase 0-2 artifacts. Start with central auth/CSRF/permission docs, then additive audit/throttle schema, then route-level browser write guards, validators/uploads, production error handling, and login throttling."
+      impacted_surfaces:
+        - "Browser-origin writes: do/doadd_invoice.php, ajax/save_order.php, ajax/process_table_payment.php, ajax/process_split_payment.php, ajax/delete_order.php, ajax/clear_table*.php, ajax/update_table_status.php"
+        - "Admin/user/settings writes: do/doadd_user.php, do/doedit_user.php, do/dochange_password.php, do/doedit_settings.php, role/user routes"
+        - "Moova admin UI: moova_integration.php, ajax/moova_save_integration.php, ajax/moova_disconnect_integration.php"
+        - "Machine endpoints exempt from CSRF: ajax/moova_confirm_order.php, ajax/moova_change_order.php, moova_pos_proxy.php"
+        - "Uploads: do/doadd_user.php, do/doedit_user.php, do/uploaditems.php, uploads/"
+        - "Schema: classes/Sync/SchemaManager.php for security_audit_log and failed_login_attempts"
+      compatibility_risks:
+        - "CSRF can break Arabic cashier/table AJAX unless token injection and JS headers ship in the same slice."
+        - "Auth guard must preserve current session keys: login, userid, usrole, waiter_id."
+        - "Permission mapping must bridge new named permissions to existing usr_pwrs flags without broad role rewrites."
+        - "Do not require CSRF for Moova/cloud machine calls that already use device tokens or HMAC-style credentials."
+        - "Upload hardening must preserve existing image display paths while blocking PHP execution and unsafe filenames."
+        - "Production error handling must preserve Phase 2 JSON/idempotency response shapes."
+      existing_helpers:
+        - "includes/session_bootstrap.php"
+        - "includes/production_guard.php"
+        - "config/app_config.php"
+        - "includes/db_bootstrap.php"
+        - "includes/connect.php"
+        - "classes/PasswordService.php"
+        - "classes/Sync/SchemaManager.php"
+        - "classes/Pos/Service/IdempotencyService.php"
+        - "classes/Pos/Service/OrderEventService.php"
+      evidence:
+        - "/Users/ab.mansour1agmail.com/Desktop/pos expansion plan.txt"
+        - "docs/production/write_surface_classification.md"
+        - "docs/production/active_route_map.md"
+        - "docs/production/api_contracts_pos.md"
+        - "docs/goals/posmain-phase-0-production-readiness/state.yaml"
+        - "docs/goals/posmain-phase-1-production-foundation/state.yaml"
+        - "docs/goals/posmain-phase-2-pos-state/state.yaml"
+        - "includes/session_bootstrap.php"
+        - "includes/production_guard.php"
+        - "classes/Sync/SchemaManager.php"
+      recommended_sequence:
+        - "P3-W001: central auth, CSRF, permission matrix docs, helper tests."
+        - "P3-W002: additive security audit and login throttle schema/services."
+        - "P3-W003: apply auth/CSRF to low-risk admin/Moova browser writes."
+        - "P3-W004: add POS/table CSRF propagation and guard active browser-origin AJAX writes."
+        - "P3-W005: validators and obvious active SQL/input/upload hardening."
+      commands:
+        - cmd: "php tools/audit_write_paths.php --json"
+          status: "pass; 259 surfaces"
+        - cmd: "POSMAIN_DB_PORT=3307 php tools/run_migrations.php --dry-run"
+          status: "pass; 0 pending sync schema changes"
+        - cmd: "php -l includes/production_guard.php includes/session_bootstrap.php index.php ajax/save_order.php ajax/process_table_payment.php ajax/process_split_payment.php ajax/delete_order.php do/doadd_invoice.php ajax/moova_save_integration.php ajax/moova_disconnect_integration.php"
+          status: pass
+        - cmd: "test -f uploads/.htaccess && test -f .htaccess"
+          status: pass
+      blockers:
+        - "No central auth_guard.php or csrf.php exists yet."
+        - "No docs/production/permission_matrix.md yet."
+        - "No security_audit_log or failed_login_attempts schema yet."
+        - "No focused Phase 3 tests currently found for auth/CSRF/permission/upload/error throttling."
+        - "uploads/dashboard.php exists; Apache denial exists but quarantine decision belongs to upload-hardening slice."
+      spawned_tasks:
+        - T002
+  - id: T002
+    type: judge
+    assignee: Judge
+    status: done
+    objective: "Review Scout findings and approve the smallest safe Phase 3 implementation sequence."
+    inputs:
+      - "T001 Scout receipt"
+      - "Phase 3 checklist"
+      - "Major-change safety checklist"
+    constraints:
+      - "Read-only."
+      - "Do not implement."
+      - "Defer destructive or production-credential operations."
+    expected_output:
+      - "Decision on implementation order."
+      - "Allowed next Worker task."
+      - "Risks that require owner confirmation."
+    receipt:
+      result: done
+      decision: "Approve Phase 3, starting with the smallest non-breaking foundation slice: central auth/CSRF helpers, permission matrix, and focused helper tests only. Do not apply route enforcement to cashier/table AJAX yet."
+      next_allowed_task: T003
+      evidence:
+        - "T001 Scout maps auth, CSRF, permissions, audit, uploads, throttling, and route risks."
+        - "/Users/ab.mansour1agmail.com/Desktop/pos expansion plan.txt Phase 3 defines requirements and exit criteria."
+        - "docs/production/write_surface_classification.md documents active A-class routes and current missing central CSRF."
+        - "docs/production/active_route_map.md confirms cashier/table/Moova route ownership."
+        - "includes/session_bootstrap.php already provides session hardening to reuse."
+      implementation_sequence:
+        - "P3-W001: create central auth/CSRF helpers, permission matrix doc, and helper tests; no route enforcement yet."
+        - "P3-W002: add additive audit-log and login-throttle schema/services; dry-run migrations only unless explicitly approved."
+        - "P3-W003: apply auth/CSRF/audit to low-risk admin and Moova browser admin writes."
+        - "P3-W004: add POS CSRF token propagation, then guard active cashier/table AJAX writes while preserving Arabic JSON/legacy response shapes."
+        - "P3-W005: add validators and prepared-SQL cleanup for active A-class POS/table/search routes in small route groups."
+        - "P3-W006: upload hardening and executable upload blocking; quarantine existing files only with owner confirmation."
+        - "P3-W007: production-safe errors, final audit coverage, and Judge completion audit."
+      blocked_tasks:
+        - "Route-level CSRF enforcement on POS/table writes until POS JS token propagation is implemented and tested."
+        - "CSRF on machine-to-machine Moova/cloud endpoints using device token/HMAC-style auth."
+        - "Quarantine/delete of uploads/dashboard.php or any existing uploaded file without owner confirmation."
+        - "Broad all-file SQL cleanup; only active A-class routes in focused slices."
+        - "Production credential use, destructive migration, or public deployment."
+      major_change_safety_constraints:
+        - "Each Worker must map impacted API contracts, shared utilities, DB access, state shape, UI flows, auth/permissions, and integrations before edits."
+        - "Preserve current cashier/table/payment/Moova behavior unless intentionally blocking unsafe unauthenticated or invalid browser writes."
+        - "Keep changes small and additive; no broad role rewrites, no framework rewrite, no unrelated formatting."
+        - "Add focused tests in the same slice as changed behavior."
+        - "Verify adjacent active POS/Moova route contracts after any enforcement slice."
+  - id: T003
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "P3-W001: Build Phase 3 security foundation helpers and tests without enforcing them on active routes yet."
+    allowed_files:
+      - "includes/auth_guard.php"
+      - "includes/csrf.php"
+      - "docs/production/permission_matrix.md"
+      - "tests/sync/phase3_security_helpers_test.php"
+      - "tests/sync/phase3_permission_matrix_test.php"
+      - "docs/goals/posmain-phase-3-security-hardening/state.yaml"
+      - "docs/goals/posmain-phase-3-security-hardening/notes/"
+    verify:
+      - "php -l includes/auth_guard.php includes/csrf.php"
+      - "php tests/sync/phase3_security_helpers_test.php"
+      - "php tests/sync/phase3_permission_matrix_test.php"
+      - "php tools/audit_write_paths.php --json"
+      - "POSMAIN_DB_PORT=3307 php tools/run_migrations.php --dry-run"
+    stop_if:
+      - "Need files outside allowed_files."
+      - "Behavior is ambiguous."
+      - "Verification fails twice for changed behavior."
+      - "Would overwrite unrelated dirty worktree changes."
+      - "Need to edit active routes such as index.php, ajax/*.php, do/*.php, or includes/connect.php."
+      - "Helper behavior would change current session keys: login, userid, usrole, waiter_id."
+      - "Permission mapping cannot safely bridge usr_pwrs without inventing new production semantics."
+    receipt:
+      result: done
+      changed_files:
+        - "includes/auth_guard.php"
+        - "includes/csrf.php"
+        - "docs/production/permission_matrix.md"
+        - "tests/sync/phase3_security_helpers_test.php"
+        - "tests/sync/phase3_permission_matrix_test.php"
+        - "docs/goals/posmain-phase-3-security-hardening/state.yaml"
+      commands:
+        - cmd: "php -l includes/auth_guard.php && php -l includes/csrf.php && php -l tests/sync/phase3_security_helpers_test.php && php -l tests/sync/phase3_permission_matrix_test.php"
+          status: pass
+        - cmd: "php tests/sync/phase3_security_helpers_test.php"
+          status: pass
+        - cmd: "php tests/sync/phase3_permission_matrix_test.php"
+          status: pass
+        - cmd: "php tools/audit_write_paths.php --json"
+          status: "pass; 259 surfaces"
+        - cmd: "POSMAIN_DB_PORT=3307 php tools/run_migrations.php --dry-run"
+          status: pass
+        - cmd: "git diff --check -- includes/auth_guard.php includes/csrf.php docs/production/permission_matrix.md tests/sync/phase3_security_helpers_test.php tests/sync/phase3_permission_matrix_test.php"
+          status: pass
+      summary: "Added passive Phase 3 auth/CSRF helper foundations, named permission-to-usr_pwrs bridge, permission matrix documentation, and focused helper/doc tests without enforcing the helpers on active routes yet."
+  - id: T004
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "P3-W002: Add additive security audit and login throttle schema/services without route enforcement."
+    allowed_files:
+      - "classes/Sync/SchemaManager.php"
+      - "classes/Security/SecurityAuditLogger.php"
+      - "classes/Security/LoginThrottleService.php"
+      - "tests/sync/security_schema_migration_test.php"
+      - "tests/sync/security_audit_logger_test.php"
+      - "tests/sync/login_throttle_service_test.php"
+      - "docs/goals/posmain-phase-3-security-hardening/state.yaml"
+      - "docs/goals/posmain-phase-3-security-hardening/notes/"
+    verify:
+      - "php -l classes/Sync/SchemaManager.php classes/Security/SecurityAuditLogger.php classes/Security/LoginThrottleService.php tests/sync/security_schema_migration_test.php tests/sync/security_audit_logger_test.php tests/sync/login_throttle_service_test.php"
+      - "POSMAIN_DB_PORT=3307 php tools/run_migrations.php --dry-run"
+      - "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/security_schema_migration_test.php"
+      - "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/security_audit_logger_test.php"
+      - "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/login_throttle_service_test.php"
+      - "git diff --check -- classes/Sync/SchemaManager.php classes/Security/SecurityAuditLogger.php classes/Security/LoginThrottleService.php tests/sync/security_schema_migration_test.php tests/sync/security_audit_logger_test.php tests/sync/login_throttle_service_test.php"
+    stop_if:
+      - "Need to edit active routes."
+      - "Need destructive schema changes."
+      - "Need to apply migrations against production or without a local/dev confirmation."
+      - "Verification fails twice for changed behavior."
+      - "Would overwrite unrelated dirty worktree changes."
+    receipt:
+      result: done
+      changed_files:
+        - "classes/Sync/SchemaManager.php"
+        - "classes/Security/SecurityAuditLogger.php"
+        - "classes/Security/LoginThrottleService.php"
+        - "tests/sync/security_schema_migration_test.php"
+        - "tests/sync/security_audit_logger_test.php"
+        - "tests/sync/login_throttle_service_test.php"
+        - "docs/goals/posmain-phase-3-security-hardening/state.yaml"
+      commands:
+        - cmd: "php -l classes/Sync/SchemaManager.php && php -l classes/Security/SecurityAuditLogger.php && php -l classes/Security/LoginThrottleService.php && php -l tests/sync/security_schema_migration_test.php && php -l tests/sync/security_audit_logger_test.php && php -l tests/sync/login_throttle_service_test.php"
+          status: pass
+        - cmd: "POSMAIN_DB_PORT=3307 php tools/run_migrations.php --dry-run"
+          status: "pass; 2 pending additive security tables"
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/security_schema_migration_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/security_audit_logger_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/login_throttle_service_test.php"
+          status: pass
+        - cmd: "git diff --check -- classes/Sync/SchemaManager.php classes/Security/SecurityAuditLogger.php classes/Security/LoginThrottleService.php tests/sync/security_schema_migration_test.php tests/sync/security_audit_logger_test.php tests/sync/login_throttle_service_test.php"
+          status: pass
+      summary: "Added additive security_audit_log and failed_login_attempts schema plans plus non-route-enforced SecurityAuditLogger and LoginThrottleService, verified with temp database tests and migration dry-run."
+  - id: T005
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "P3-W003: Apply central auth, CSRF, and audit hooks to low-risk Moova admin and password-change browser writes."
+    allowed_files:
+      - "moova_integration.php"
+      - "ajax/moova_save_integration.php"
+      - "ajax/moova_disconnect_integration.php"
+      - "change_password.php"
+      - "do/dochange_password.php"
+      - "tests/sync/moova_admin_security_test.php"
+      - "tests/sync/password_change_security_test.php"
+      - "docs/goals/posmain-phase-3-security-hardening/state.yaml"
+      - "docs/goals/posmain-phase-3-security-hardening/notes/"
+    verify:
+      - "php -l moova_integration.php ajax/moova_save_integration.php ajax/moova_disconnect_integration.php change_password.php do/dochange_password.php tests/sync/moova_admin_security_test.php tests/sync/password_change_security_test.php"
+      - "php tests/sync/moova_admin_security_test.php"
+      - "php tests/sync/password_change_security_test.php"
+      - "git diff --check -- moova_integration.php ajax/moova_save_integration.php ajax/moova_disconnect_integration.php change_password.php do/dochange_password.php tests/sync/moova_admin_security_test.php tests/sync/password_change_security_test.php"
+    stop_if:
+      - "Need to edit POS/table cashier routes."
+      - "Need CSRF on machine-to-machine Moova confirm/change endpoints."
+      - "Need to apply migrations to production."
+      - "Verification fails twice for changed behavior."
+      - "Would overwrite unrelated dirty worktree changes."
+    receipt:
+      result: done
+      changed_files:
+        - "moova_integration.php"
+        - "ajax/moova_save_integration.php"
+        - "ajax/moova_disconnect_integration.php"
+        - "change_password.php"
+        - "do/dochange_password.php"
+        - "tests/sync/moova_admin_security_test.php"
+        - "tests/sync/password_change_security_test.php"
+        - "docs/goals/posmain-phase-3-security-hardening/state.yaml"
+      commands:
+        - cmd: "php -l moova_integration.php && php -l ajax/moova_save_integration.php && php -l ajax/moova_disconnect_integration.php && php -l change_password.php && php -l do/dochange_password.php && php -l tests/sync/moova_admin_security_test.php && php -l tests/sync/password_change_security_test.php"
+          status: pass
+        - cmd: "php tests/sync/moova_admin_security_test.php"
+          status: pass
+        - cmd: "php tests/sync/password_change_security_test.php"
+          status: pass
+        - cmd: "POSMAIN_DB_PORT=3307 php tools/run_migrations.php --dry-run"
+          status: "pass; 2 pending additive security tables"
+        - cmd: "php tools/audit_write_paths.php --json"
+          status: "pass; 261 surfaces"
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/security_audit_logger_test.php && POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/login_throttle_service_test.php"
+          status: pass
+        - cmd: "git diff --check -- moova_integration.php ajax/moova_save_integration.php ajax/moova_disconnect_integration.php change_password.php do/dochange_password.php tests/sync/moova_admin_security_test.php tests/sync/password_change_security_test.php"
+          status: pass
+      summary: "Moved Moova admin save/disconnect and password change onto central CSRF/auth helper foundations with nonblocking audit hooks. Machine Moova order confirm/change endpoints remain browser-CSRF exempt."
+  - id: T006
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "P3-W004: Add POS/table CSRF token propagation and guard active browser-origin table/POS AJAX writes."
+    allowed_files:
+      - "pos_barcode.php"
+      - "includes/pos_content.php"
+      - "js/pos_barcode.js"
+      - "tables.php"
+      - "ajax/save_order.php"
+      - "ajax/process_table_payment.php"
+      - "ajax/process_split_payment.php"
+      - "ajax/delete_order.php"
+      - "ajax/clear_table.php"
+      - "ajax/clear_table_normal.php"
+      - "ajax/update_table_status.php"
+      - "tests/sync/pos_browser_write_csrf_test.php"
+      - "tests/sync/pos_table_endpoint_idempotency_test.php"
+      - "docs/goals/posmain-phase-3-security-hardening/state.yaml"
+      - "docs/goals/posmain-phase-3-security-hardening/notes/"
+    verify:
+      - "php -l pos_barcode.php includes/pos_content.php ajax/save_order.php ajax/process_table_payment.php ajax/process_split_payment.php ajax/delete_order.php ajax/clear_table.php ajax/clear_table_normal.php ajax/update_table_status.php tests/sync/pos_browser_write_csrf_test.php tests/sync/pos_table_endpoint_idempotency_test.php"
+      - "php tests/sync/pos_browser_write_csrf_test.php"
+      - "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_table_endpoint_idempotency_test.php"
+      - "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/save_order_endpoint_routing_test.php"
+      - "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/process_table_payment_endpoint_routing_test.php"
+      - "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/process_split_payment_endpoint_routing_test.php"
+      - "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/table_cancel_endpoint_routing_test.php"
+      - "git diff --check -- pos_barcode.php includes/pos_content.php js/pos_barcode.js tables.php ajax/save_order.php ajax/process_table_payment.php ajax/process_split_payment.php ajax/delete_order.php ajax/clear_table.php ajax/clear_table_normal.php ajax/update_table_status.php tests/sync/pos_browser_write_csrf_test.php tests/sync/pos_table_endpoint_idempotency_test.php"
+    stop_if:
+      - "Need to change machine Moova confirm/change endpoints."
+      - "Token propagation cannot be added to all touched browser callers in the same slice."
+      - "Existing Phase 2 table/payment/idempotency tests regress."
+      - "Verification fails twice for changed behavior."
+      - "Would overwrite unrelated dirty worktree changes."
+    receipt:
+      result: done
+      changed_files:
+        - "pos_barcode.php"
+        - "includes/pos_content.php"
+        - "tables.php"
+        - "ajax/save_order.php"
+        - "ajax/process_table_payment.php"
+        - "ajax/process_split_payment.php"
+        - "ajax/delete_order.php"
+        - "ajax/clear_table.php"
+        - "ajax/clear_table_normal.php"
+        - "ajax/update_table_status.php"
+        - "tests/sync/pos_browser_write_csrf_test.php"
+        - "docs/goals/posmain-phase-3-security-hardening/state.yaml"
+      commands:
+        - cmd: "php -l pos_barcode.php includes/pos_content.php ajax/save_order.php ajax/process_table_payment.php ajax/process_split_payment.php ajax/delete_order.php ajax/clear_table.php ajax/clear_table_normal.php ajax/update_table_status.php tests/sync/pos_browser_write_csrf_test.php tests/sync/pos_table_endpoint_idempotency_test.php"
+          status: pass
+        - cmd: "php tests/sync/pos_browser_write_csrf_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_table_endpoint_idempotency_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/save_order_endpoint_routing_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/process_table_payment_endpoint_routing_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/process_split_payment_endpoint_routing_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/table_cancel_endpoint_routing_test.php"
+          status: pass
+        - cmd: "git diff --check -- pos_barcode.php includes/pos_content.php js/pos_barcode.js tables.php ajax/save_order.php ajax/process_table_payment.php ajax/process_split_payment.php ajax/delete_order.php ajax/clear_table.php ajax/clear_table_normal.php ajax/update_table_status.php tests/sync/pos_browser_write_csrf_test.php tests/sync/pos_table_endpoint_idempotency_test.php"
+          status: pass
+      summary: "Added pos_browser CSRF token propagation to the active POS and tables screens, preserved POS direct-form token carry, and guarded active table/POS browser-write AJAX endpoints with central POS/auth and CSRF checks without touching machine Moova endpoints."
+  - id: T007
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "P3-W004B: Add POS table-save CSRF propagation to the separate pos_tables.php/js/pos_tables.js caller now that ajax/save_order.php is guarded."
+    allowed_files:
+      - "pos_tables.php"
+      - "js/pos_tables.js"
+      - "tests/sync/pos_browser_write_csrf_test.php"
+      - "docs/goals/posmain-phase-3-security-hardening/state.yaml"
+      - "docs/goals/posmain-phase-3-security-hardening/notes/"
+    verify:
+      - "php -l pos_tables.php tests/sync/pos_browser_write_csrf_test.php"
+      - "php tests/sync/pos_browser_write_csrf_test.php"
+      - "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_table_endpoint_idempotency_test.php"
+      - "git diff --check -- pos_tables.php js/pos_tables.js tests/sync/pos_browser_write_csrf_test.php"
+    stop_if:
+      - "Need to change save_order.php beyond the existing T006 guard."
+      - "Need files outside the separate table-save caller."
+      - "POS table save idempotency coverage regresses."
+      - "Verification fails twice for changed behavior."
+      - "Would overwrite unrelated dirty worktree changes."
+    receipt:
+      result: done
+      changed_files:
+        - "pos_tables.php"
+        - "js/pos_tables.js"
+        - "tests/sync/pos_browser_write_csrf_test.php"
+        - "docs/goals/posmain-phase-3-security-hardening/state.yaml"
+      commands:
+        - cmd: "php -l pos_tables.php tests/sync/pos_browser_write_csrf_test.php"
+          status: pass
+        - cmd: "php tests/sync/pos_browser_write_csrf_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_table_endpoint_idempotency_test.php"
+          status: pass
+        - cmd: "git diff --check -- pos_tables.php js/pos_tables.js tests/sync/pos_browser_write_csrf_test.php"
+          status: pass
+      summary: "Closed a compatibility gap by adding pos_browser CSRF token output to pos_tables.php and per-request CSRF headers in js/pos_tables.js for its guarded save_order/delete_order AJAX calls."
+  - id: T008
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "P3-W005A: Create POS input validators and wire active table/POS AJAX writes to structured validation before mutations."
+    allowed_files:
+      - "classes/Pos/Validation/OrderInputValidator.php"
+      - "classes/Pos/Validation/PaymentInputValidator.php"
+      - "classes/Pos/Validation/TableInputValidator.php"
+      - "ajax/save_order.php"
+      - "ajax/process_table_payment.php"
+      - "ajax/process_split_payment.php"
+      - "ajax/delete_order.php"
+      - "ajax/clear_table.php"
+      - "ajax/clear_table_normal.php"
+      - "ajax/update_table_status.php"
+      - "tests/sync/pos_input_validation_test.php"
+      - "tests/sync/pos_endpoint_validation_contract_test.php"
+      - "docs/goals/posmain-phase-3-security-hardening/state.yaml"
+      - "docs/goals/posmain-phase-3-security-hardening/notes/"
+    verify:
+      - "php -l classes/Pos/Validation/OrderInputValidator.php classes/Pos/Validation/PaymentInputValidator.php classes/Pos/Validation/TableInputValidator.php ajax/save_order.php ajax/process_table_payment.php ajax/process_split_payment.php ajax/delete_order.php ajax/clear_table.php ajax/clear_table_normal.php ajax/update_table_status.php tests/sync/pos_input_validation_test.php tests/sync/pos_endpoint_validation_contract_test.php"
+      - "php tests/sync/pos_input_validation_test.php"
+      - "php tests/sync/pos_endpoint_validation_contract_test.php"
+      - "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_table_endpoint_idempotency_test.php"
+      - "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/save_order_endpoint_routing_test.php"
+      - "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/process_table_payment_endpoint_routing_test.php"
+      - "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/process_split_payment_endpoint_routing_test.php"
+      - "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/table_cancel_endpoint_routing_test.php"
+      - "git diff --check -- classes/Pos/Validation/OrderInputValidator.php classes/Pos/Validation/PaymentInputValidator.php classes/Pos/Validation/TableInputValidator.php ajax/save_order.php ajax/process_table_payment.php ajax/process_split_payment.php ajax/delete_order.php ajax/clear_table.php ajax/clear_table_normal.php ajax/update_table_status.php tests/sync/pos_input_validation_test.php tests/sync/pos_endpoint_validation_contract_test.php"
+    stop_if:
+      - "Need broad service rewrites or schema changes."
+      - "Need to change machine Moova confirm/change endpoints."
+      - "Validation would reject a currently valid visible cashier/table workflow without clear Phase 3 reason."
+      - "Existing Phase 2 table/payment/idempotency tests regress."
+      - "Verification fails twice for changed behavior."
+      - "Would overwrite unrelated dirty worktree changes."
+    receipt:
+      result: done
+      changed_files:
+        - "classes/Pos/Validation/OrderInputValidator.php"
+        - "classes/Pos/Validation/PaymentInputValidator.php"
+        - "classes/Pos/Validation/TableInputValidator.php"
+        - "ajax/save_order.php"
+        - "ajax/process_table_payment.php"
+        - "ajax/process_split_payment.php"
+        - "ajax/delete_order.php"
+        - "ajax/clear_table.php"
+        - "ajax/clear_table_normal.php"
+        - "ajax/update_table_status.php"
+        - "tests/sync/pos_input_validation_test.php"
+        - "tests/sync/pos_endpoint_validation_contract_test.php"
+        - "docs/goals/posmain-phase-3-security-hardening/state.yaml"
+      commands:
+        - cmd: "php -l classes/Pos/Validation/OrderInputValidator.php classes/Pos/Validation/PaymentInputValidator.php classes/Pos/Validation/TableInputValidator.php ajax/save_order.php ajax/process_table_payment.php ajax/process_split_payment.php ajax/delete_order.php ajax/clear_table.php ajax/clear_table_normal.php ajax/update_table_status.php tests/sync/pos_input_validation_test.php tests/sync/pos_endpoint_validation_contract_test.php"
+          status: pass
+        - cmd: "php tests/sync/pos_input_validation_test.php"
+          status: pass
+        - cmd: "php tests/sync/pos_endpoint_validation_contract_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_table_endpoint_idempotency_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/save_order_endpoint_routing_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/process_table_payment_endpoint_routing_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/process_split_payment_endpoint_routing_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/table_cancel_endpoint_routing_test.php"
+          status: pass
+        - cmd: "git diff --check -- classes/Pos/Validation/OrderInputValidator.php classes/Pos/Validation/PaymentInputValidator.php classes/Pos/Validation/TableInputValidator.php ajax/save_order.php ajax/process_table_payment.php ajax/process_split_payment.php ajax/delete_order.php ajax/clear_table.php ajax/clear_table_normal.php ajax/update_table_status.php tests/sync/pos_input_validation_test.php tests/sync/pos_endpoint_validation_contract_test.php"
+          status: pass
+      summary: "Added pure POS table/order/payment validators and wired active table/POS AJAX writes to validate IDs, decimal amounts, item arrays, split selections, table actions, and reasons before idempotency and mutations. Validation failures now include VALIDATION_FAILED while Phase 2 endpoint routing/idempotency contracts still pass."
+  - id: T009
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "P3-W005B: Harden active item-search AJAX routes against SQL injection while preserving current search result shapes."
+    allowed_files:
+      - "ajax/search_item.php"
+      - "ajax/search_items.php"
+      - "ajax/load_items_lazy.php"
+      - "tests/sync/search_sql_injection_test.php"
+      - "docs/goals/posmain-phase-3-security-hardening/state.yaml"
+      - "docs/goals/posmain-phase-3-security-hardening/notes/"
+    verify:
+      - "php -l ajax/search_item.php ajax/search_items.php ajax/load_items_lazy.php tests/sync/search_sql_injection_test.php"
+      - "php tests/sync/search_sql_injection_test.php"
+      - "git diff --check -- ajax/search_item.php ajax/search_items.php ajax/load_items_lazy.php tests/sync/search_sql_injection_test.php"
+    stop_if:
+      - "Need to change POS item rendering/UI shape."
+      - "Need schema changes."
+      - "Existing prepared search endpoints would need broad refactors outside active search."
+      - "Verification fails twice for changed behavior."
+      - "Would overwrite unrelated dirty worktree changes."
+    receipt:
+      result: done
+      changed_files:
+        - "ajax/search_item.php"
+        - "ajax/search_items.php"
+        - "ajax/load_items_lazy.php"
+        - "tests/sync/search_sql_injection_test.php"
+        - "docs/goals/posmain-phase-3-security-hardening/state.yaml"
+      commands:
+        - cmd: "php -l ajax/search_item.php ajax/search_items.php ajax/load_items_lazy.php tests/sync/search_sql_injection_test.php"
+          status: pass
+        - cmd: "php tests/sync/search_sql_injection_test.php"
+          status: pass
+        - cmd: "git diff --check -- ajax/search_item.php ajax/search_items.php ajax/load_items_lazy.php tests/sync/search_sql_injection_test.php"
+          status: pass
+      summary: "Converted active item search to prepared LIKE parameters, validated barcode-to-ID lookup before binding, clamped lazy search pagination, and added a static injection regression test while preserving existing JSON result keys."
+  - id: T010
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "P3-W006: Add upload validation for active user/item image uploads and verify PHP uploads remain denied."
+    allowed_files:
+      - "includes/upload_guard.php"
+      - "do/doadd_user.php"
+      - "do/doedit_user.php"
+      - "do/uploaditems.php"
+      - "tests/sync/upload_guard_test.php"
+      - "tests/sync/upload_route_contract_test.php"
+      - "docs/goals/posmain-phase-3-security-hardening/state.yaml"
+      - "docs/goals/posmain-phase-3-security-hardening/notes/"
+    verify:
+      - "php -l includes/upload_guard.php do/doadd_user.php do/doedit_user.php do/uploaditems.php tests/sync/upload_guard_test.php tests/sync/upload_route_contract_test.php"
+      - "php tests/sync/upload_guard_test.php"
+      - "php tests/sync/upload_route_contract_test.php"
+      - "test -f uploads/.htaccess"
+      - "git diff --check -- includes/upload_guard.php do/doadd_user.php do/doedit_user.php do/uploaditems.php tests/sync/upload_guard_test.php tests/sync/upload_route_contract_test.php"
+    stop_if:
+      - "Need to quarantine, delete, or move existing uploaded files."
+      - "Need web server reconfiguration outside repo files."
+      - "Need to change non-image upload workflows."
+      - "Verification fails twice for changed behavior."
+      - "Would overwrite unrelated dirty worktree changes."
+    receipt:
+      result: done
+      changed_files:
+        - "includes/upload_guard.php"
+        - "do/doadd_user.php"
+        - "do/doedit_user.php"
+        - "do/uploaditems.php"
+        - "tests/sync/upload_guard_test.php"
+        - "tests/sync/upload_route_contract_test.php"
+        - "docs/goals/posmain-phase-3-security-hardening/state.yaml"
+      commands:
+        - cmd: "php -l includes/upload_guard.php do/doadd_user.php do/doedit_user.php do/uploaditems.php tests/sync/upload_guard_test.php tests/sync/upload_route_contract_test.php"
+          status: pass
+        - cmd: "php tests/sync/upload_guard_test.php"
+          status: pass
+        - cmd: "php tests/sync/upload_route_contract_test.php"
+          status: pass
+        - cmd: "test -f uploads/.htaccess"
+          status: pass
+        - cmd: "git diff --check -- includes/upload_guard.php do/doadd_user.php do/doedit_user.php do/uploaditems.php tests/sync/upload_guard_test.php tests/sync/upload_route_contract_test.php"
+          status: pass
+      summary: "Added a central upload guard for user images and spreadsheet imports, moved user image uploads to server-generated filenames with MIME/dimension validation, denied PHP/non-spreadsheet imports, and verified uploads/.htaccess still blocks executable files."
+  - id: T011
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "P3-W007: Wire DB-backed login throttling and security audit logging into the active login route."
+    allowed_files:
+      - "index.php"
+      - "tests/sync/login_security_integration_test.php"
+      - "docs/goals/posmain-phase-3-security-hardening/state.yaml"
+      - "docs/goals/posmain-phase-3-security-hardening/notes/"
+    verify:
+      - "php -l index.php tests/sync/login_security_integration_test.php"
+      - "php tests/sync/login_security_integration_test.php"
+      - "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/login_throttle_service_test.php"
+      - "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/security_audit_logger_test.php"
+      - "git diff --check -- index.php tests/sync/login_security_integration_test.php"
+    stop_if:
+      - "Need to change password hash semantics or session keys."
+      - "Need to apply migrations outside test databases."
+      - "Login route cannot degrade gracefully before security tables are migrated."
+      - "Verification fails twice for changed behavior."
+      - "Would overwrite unrelated dirty worktree changes."
+    receipt:
+      result: done
+      changed_files:
+        - "index.php"
+        - "tests/sync/login_security_integration_test.php"
+        - "docs/goals/posmain-phase-3-security-hardening/state.yaml"
+      commands:
+        - cmd: "php -l index.php tests/sync/login_security_integration_test.php"
+          status: pass
+        - cmd: "php tests/sync/login_security_integration_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/login_throttle_service_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/security_audit_logger_test.php"
+          status: pass
+        - cmd: "git diff --check -- index.php tests/sync/login_security_integration_test.php"
+          status: pass
+      summary: "Wired active login to LoginThrottleService and SecurityAuditLogger with table-existence fallback so deployments continue to work before security migrations are applied, while migrated installs throttle failed attempts, clear attempts on success, and audit success/failure/throttle events without changing session keys."
+  - id: T012
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "P3-W008: Guard active user/settings admin browser writes with central auth, CSRF, permission checks, and audit hooks."
+    allowed_files:
+      - "add_user.php"
+      - "users.php"
+      - "edit_user.php"
+      - "setting.php"
+      - "do/doadd_user.php"
+      - "do/doedit_user.php"
+      - "do/doedit_settings.php"
+      - "tests/sync/admin_write_security_test.php"
+      - "docs/goals/posmain-phase-3-security-hardening/state.yaml"
+      - "docs/goals/posmain-phase-3-security-hardening/notes/"
+    verify:
+      - "php -l add_user.php users.php edit_user.php setting.php do/doadd_user.php do/doedit_user.php do/doedit_settings.php tests/sync/admin_write_security_test.php"
+      - "php tests/sync/admin_write_security_test.php"
+      - "git diff --check -- add_user.php users.php edit_user.php setting.php do/doadd_user.php do/doedit_user.php do/doedit_settings.php tests/sync/admin_write_security_test.php"
+    stop_if:
+      - "Forms cannot receive CSRF tokens in the same slice as backend enforcement."
+      - "Permission mapping cannot use existing users.manage or system.tools.run/system settings semantics."
+      - "Need to change user/password hash semantics."
+      - "Verification fails twice for changed behavior."
+      - "Would overwrite unrelated dirty worktree changes."
+    receipt:
+      result: done
+      changed_files:
+        - "add_user.php"
+        - "users.php"
+        - "edit_user.php"
+        - "setting.php"
+        - "do/doadd_user.php"
+        - "do/doedit_user.php"
+        - "do/doedit_settings.php"
+        - "tests/sync/admin_write_security_test.php"
+        - "docs/goals/posmain-phase-3-security-hardening/state.yaml"
+      commands:
+        - cmd: "php -l add_user.php users.php edit_user.php setting.php do/doadd_user.php do/doedit_user.php do/doedit_settings.php tests/sync/admin_write_security_test.php"
+          status: pass
+        - cmd: "php tests/sync/admin_write_security_test.php"
+          status: pass
+        - cmd: "git diff --check -- add_user.php users.php edit_user.php setting.php do/doadd_user.php do/doedit_user.php do/doedit_settings.php tests/sync/admin_write_security_test.php"
+          status: pass
+      summary: "Guarded user/settings admin pages and handlers with central permission checks and CSRF, added nonblocking audit hooks for user/settings updates, prepared edit_user lookup by id, and removed raw settings POST logging."
+  - id: T013
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "P3-W009: Guard remaining active POS browser form writes for cashier invoice submit and shift close/Z close."
+    allowed_files:
+      - "includes/pos_content.php"
+      - "do/doadd_invoice.php"
+      - "close_shift.php"
+      - "do_close_shift_z.php"
+      - "z_report.php"
+      - "tests/sync/pos_form_write_security_test.php"
+      - "docs/goals/posmain-phase-3-security-hardening/state.yaml"
+      - "docs/goals/posmain-phase-3-security-hardening/notes/"
+    verify:
+      - "php -l includes/pos_content.php do/doadd_invoice.php close_shift.php do_close_shift_z.php z_report.php tests/sync/pos_form_write_security_test.php"
+      - "php tests/sync/pos_form_write_security_test.php"
+      - "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_takeaway_invoice_handler_test.php"
+      - "git diff --check -- includes/pos_content.php do/doadd_invoice.php close_shift.php do_close_shift_z.php z_report.php tests/sync/pos_form_write_security_test.php"
+    stop_if:
+      - "Need to rewrite invoice business logic."
+      - "Cannot add CSRF tokens to all visible POS form callers in the same slice."
+      - "Takeaway invoice handler regression tests fail."
+      - "Verification fails twice for changed behavior."
+      - "Would overwrite unrelated dirty worktree changes."
+    receipt:
+      result: done
+      changed_files:
+        - "includes/pos_content.php"
+        - "do/doadd_invoice.php"
+        - "close_shift.php"
+        - "do_close_shift_z.php"
+        - "z_report.php"
+        - "tests/sync/pos_form_write_security_test.php"
+        - "docs/goals/posmain-phase-3-security-hardening/state.yaml"
+      commands:
+        - cmd: "php -l includes/pos_content.php do/doadd_invoice.php close_shift.php do_close_shift_z.php z_report.php tests/sync/pos_form_write_security_test.php"
+          status: pass
+        - cmd: "php tests/sync/pos_form_write_security_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_takeaway_invoice_handler_test.php"
+          status: pass
+        - cmd: "git diff --check -- includes/pos_content.php do/doadd_invoice.php close_shift.php do_close_shift_z.php z_report.php tests/sync/pos_form_write_security_test.php"
+          status: pass
+      summary: "Guarded remaining active POS browser form writes: direct cashier invoice submit now uses central POS auth and pos_browser CSRF, shift close and Z close forms receive dedicated CSRF tokens, shift-close handlers use central POS auth/CSRF on web requests, and shift/Z close user and insert queries are prepared. The CLI invoice test path remains compatible for existing regression coverage."
+  - id: T999
+    type: judge
+    assignee: Judge
+    status: done
+    objective: "Audit whether the current Phase 3 tranche is complete."
+    inputs:
+      - "All done task receipts"
+      - "Last verification"
+      - "Current dirty diff"
+      - "Phase 3 checklist"
+    constraints:
+      - "Read-only."
+      - "Do not complete unless receipts and verification cover the tranche."
+    expected_output:
+      - "complete | not_complete"
+      - "missing evidence"
+      - "next task if not complete"
+    receipt:
+      result: not_complete
+      decision: "Phase 3 is close but not complete because P3-013 production-safe error handling still has an active-route gap."
+      evidence:
+        - "includes/connect.php has a central SQL exception handler, but its DB connection failure branch can still die with raw exception text for AJAX/setup cases before the handler is installed."
+        - "Several active Phase 3 routes still return or print Throwable::getMessage()/mysqli errors directly on production-facing error paths."
+        - "No focused Phase 3 test currently covers production-safe raw error suppression and correlation/error reference output."
+      next_task: T014
+  - id: T014
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "P3-W010: Finish production-safe error handling for active Phase 3 routes with safe messages, error references, and focused tests."
+    allowed_files:
+      - "includes/connect.php"
+      - "classes/Pos/Validation/TableInputValidator.php"
+      - "ajax/save_order.php"
+      - "ajax/delete_order.php"
+      - "ajax/update_table_status.php"
+      - "ajax/search_items.php"
+      - "ajax/load_items_lazy.php"
+      - "ajax/moova_save_integration.php"
+      - "ajax/moova_disconnect_integration.php"
+      - "do/doadd_invoice.php"
+      - "do/doadd_user.php"
+      - "do/doedit_user.php"
+      - "do/doedit_settings.php"
+      - "tests/sync/production_error_handling_test.php"
+      - "tests/sync/pos_takeaway_invoice_endpoint_routing_test.php"
+      - "docs/goals/posmain-phase-3-security-hardening/state.yaml"
+      - "docs/goals/posmain-phase-3-security-hardening/notes/"
+    verify:
+      - "php -l includes/connect.php classes/Pos/Validation/TableInputValidator.php ajax/save_order.php ajax/delete_order.php ajax/update_table_status.php ajax/search_items.php ajax/load_items_lazy.php ajax/moova_save_integration.php ajax/moova_disconnect_integration.php do/doadd_invoice.php do/doadd_user.php do/doedit_user.php do/doedit_settings.php tests/sync/production_error_handling_test.php tests/sync/pos_takeaway_invoice_endpoint_routing_test.php"
+      - "php tests/sync/production_error_handling_test.php"
+      - "php tests/sync/pos_takeaway_invoice_endpoint_routing_test.php"
+      - "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_takeaway_invoice_handler_test.php"
+      - "php tests/sync/admin_write_security_test.php"
+      - "php tests/sync/moova_admin_security_test.php"
+      - "git diff --check -- includes/connect.php classes/Pos/Validation/TableInputValidator.php ajax/save_order.php ajax/delete_order.php ajax/update_table_status.php ajax/search_items.php ajax/load_items_lazy.php ajax/moova_save_integration.php ajax/moova_disconnect_integration.php do/doadd_invoice.php do/doadd_user.php do/doedit_user.php do/doedit_settings.php tests/sync/production_error_handling_test.php tests/sync/pos_takeaway_invoice_endpoint_routing_test.php"
+    stop_if:
+      - "Need to redesign all legacy B/C/D error handling outside active Phase 3 routes."
+      - "Need to change business validation messages for non-production/local workflows."
+      - "Existing POS/admin/Moova route contract tests regress."
+      - "Verification fails twice for changed behavior."
+      - "Would overwrite unrelated dirty worktree changes."
+    receipt:
+      result: done
+      changed_files:
+        - "includes/connect.php"
+        - "classes/Pos/Validation/TableInputValidator.php"
+        - "ajax/save_order.php"
+        - "ajax/delete_order.php"
+        - "ajax/update_table_status.php"
+        - "ajax/search_items.php"
+        - "ajax/load_items_lazy.php"
+        - "ajax/moova_save_integration.php"
+        - "ajax/moova_disconnect_integration.php"
+        - "do/doadd_invoice.php"
+        - "do/doadd_user.php"
+        - "do/doedit_user.php"
+        - "do/doedit_settings.php"
+        - "tests/sync/production_error_handling_test.php"
+        - "tests/sync/pos_takeaway_invoice_endpoint_routing_test.php"
+        - "docs/goals/posmain-phase-3-security-hardening/state.yaml"
+      commands:
+        - cmd: "php -l includes/connect.php classes/Pos/Validation/TableInputValidator.php ajax/save_order.php ajax/delete_order.php ajax/update_table_status.php ajax/search_items.php ajax/load_items_lazy.php ajax/moova_save_integration.php ajax/moova_disconnect_integration.php do/doadd_invoice.php do/doadd_user.php do/doedit_user.php do/doedit_settings.php tests/sync/production_error_handling_test.php tests/sync/pos_takeaway_invoice_endpoint_routing_test.php"
+          status: pass
+        - cmd: "php tests/sync/production_error_handling_test.php"
+          status: pass
+        - cmd: "php tests/sync/pos_takeaway_invoice_endpoint_routing_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_takeaway_invoice_handler_test.php"
+          status: pass
+        - cmd: "php tests/sync/admin_write_security_test.php"
+          status: pass
+        - cmd: "php tests/sync/moova_admin_security_test.php"
+          status: pass
+        - cmd: "git diff --check -- includes/connect.php classes/Pos/Validation/TableInputValidator.php ajax/save_order.php ajax/delete_order.php ajax/update_table_status.php ajax/search_items.php ajax/load_items_lazy.php ajax/moova_save_integration.php ajax/moova_disconnect_integration.php do/doadd_invoice.php do/doadd_user.php do/doedit_user.php do/doedit_settings.php tests/sync/production_error_handling_test.php tests/sync/pos_takeaway_invoice_endpoint_routing_test.php"
+          status: pass
+      summary: "Finished the P3-013 gap by centralizing safe exception payload/browser responses with error references, routing production DB-connect/uncaught failures through the safe handler, hiding non-validation raw exception text in active POS/admin/Moova error paths, and adding focused production-error handling coverage while preserving non-production diagnostic detail."
+  - id: T015
+    type: judge
+    assignee: Judge
+    status: done
+    objective: "Final audit whether Phase 3 is complete after production-safe error handling."
+    inputs:
+      - "All done task receipts including T014"
+      - "Current dirty diff"
+      - "Phase 3 checklist"
+      - "Last verification"
+    constraints:
+      - "Read-only."
+      - "Do not complete unless receipts and verification cover the tranche."
+    expected_output:
+      - "complete | not_complete"
+      - "missing evidence"
+      - "residual risks"
+    receipt:
+      result: done
+      decision: complete
+      summary: "Phase 3 is complete for the current active production-route tranche. Central auth/CSRF helpers, permission matrix, audit/throttle schema/services, route guards, validators, active SQL/upload hardening, login throttling, production-safe error handling, and focused tests are in place."
+      checklist_mapping:
+        - "P3-001/P3-002: includes/auth_guard.php and includes/csrf.php created and covered by phase3 helper tests."
+        - "P3-003/P3-004: active browser-origin POS/admin/Moova writes are guarded with central auth and CSRF where applicable; machine Moova endpoints remain CSRF-exempt by documented device-token/secret boundary."
+        - "P3-005/P3-006: docs/production/permission_matrix.md maps roles and permissions to current usr_pwrs flags; admin/settings/Moova permissions are enforced; paid void/refund manager actions have no active route in this tranche and paid table orders are not reachable through the active cancel query."
+        - "P3-007/P3-008/P3-009: active POS/table/search inputs use validators and prepared SQL in the touched A-class routes."
+        - "P3-010/P3-011: security_audit_log schema/service and login/password/user/settings/Moova audit hooks are implemented with nonblocking fallback."
+        - "P3-012: upload validation blocks PHP/non-image or invalid uploads on active user/item upload routes; uploads/.htaccess remains present."
+        - "P3-013: production DB/route errors now use safe messages and error references instead of exposing raw exception text on active Phase 3 paths."
+        - "P3-014: login throttling is DB-backed and wired into the active login route with table-existence fallback before migrations are applied."
+      commands:
+        - cmd: "git ls-files -m -o --exclude-standard '*.php' | xargs -n1 php -l"
+          status: pass
+        - cmd: "php tests/sync/phase3_security_helpers_test.php && php tests/sync/phase3_permission_matrix_test.php && php tests/sync/pos_browser_write_csrf_test.php && php tests/sync/pos_form_write_security_test.php && php tests/sync/pos_input_validation_test.php"
+          status: pass
+        - cmd: "php tests/sync/pos_endpoint_validation_contract_test.php && php tests/sync/search_sql_injection_test.php && php tests/sync/upload_guard_test.php && php tests/sync/upload_route_contract_test.php && php tests/sync/login_security_integration_test.php && php tests/sync/admin_write_security_test.php && php tests/sync/moova_admin_security_test.php && php tests/sync/password_change_security_test.php && php tests/sync/production_error_handling_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/security_schema_migration_test.php && POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/security_audit_logger_test.php && POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/login_throttle_service_test.php"
+          status: pass
+        - cmd: "POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_table_endpoint_idempotency_test.php && POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/save_order_endpoint_routing_test.php && POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/process_table_payment_endpoint_routing_test.php && POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/process_split_payment_endpoint_routing_test.php && POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/table_cancel_endpoint_routing_test.php && POSMAIN_TEST_MYSQL_PORT=3307 php tests/sync/pos_takeaway_invoice_handler_test.php"
+          status: pass
+        - cmd: "POSMAIN_DB_PORT=3307 php tools/run_migrations.php --dry-run"
+          status: "pass; 2 pending additive security tables"
+        - cmd: "php tools/audit_write_paths.php --json"
+          status: "pass; 261 surfaces"
+        - cmd: "git diff --check"
+          status: pass
+        - cmd: "node /Users/ab.mansour1agmail.com/.codex/skills/goal-maker/scripts/check-goal-state.mjs docs/goals/posmain-phase-3-security-hardening/state.yaml"
+          status: pass
+      residual_risk:
+        - "The additive security_audit_log and failed_login_attempts migrations were verified in temp databases and dry-run locally; they were not applied to any real production database in this task."
+        - "Legacy B/C/D routes outside the active Phase 3 route set still contain old raw-error patterns in source and remain governed by the Phase 0/1 production-deny posture rather than being fully rewritten here."
+        - "Deep paid void/refund/manager-approval workflows remain future product work unless a dedicated active route is introduced; current active table cancel operates on active unpaid/partial table orders only."
+
+checks:
+  last_verification:
+    result: pass
+    task: T015
+    commands:
+      - "git ls-files -m -o --exclude-standard '*.php' | xargs -n1 php -l"
+      - "Focused Phase 3 static/security/upload/search/validation/error tests"
+      - "Focused MySQL-backed Phase 3 security and POS endpoint regression tests with POSMAIN_TEST_MYSQL_PORT=3307"
+      - "POSMAIN_DB_PORT=3307 php tools/run_migrations.php --dry-run"
+      - "php tools/audit_write_paths.php --json"
+      - "git diff --check"
+      - "node /Users/ab.mansour1agmail.com/.codex/skills/goal-maker/scripts/check-goal-state.mjs docs/goals/posmain-phase-3-security-hardening/state.yaml"

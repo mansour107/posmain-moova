@@ -6,6 +6,7 @@ include('../includes/connect.php');
 ob_clean();
 
 require_once('../classes/MoovaPosIntegration.php');
+require_once('../classes/Moova/MoovaLocalIngestService.php');
 require_once('../classes/Pos/Service/PosOrderMutationService.php');
 
 header('Content-Type: application/json; charset=utf-8');
@@ -71,6 +72,12 @@ function moova_error_status($message)
     return $map[$code] ?? 500;
 }
 
+function moova_encode_request_json(array $payload)
+{
+    $json = json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    return is_string($json) ? $json : '{}';
+}
+
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     moova_json_response(405, ['success' => false, 'code' => 'METHOD_NOT_ALLOWED', 'message' => 'Method not allowed']);
 }
@@ -113,12 +120,26 @@ try {
         throw new MoovaOrderHttpException('TENANT_SCOPE_MISMATCH', 403);
     }
 
+    if (empty($payload['idempotencyKey']) && empty($payload['idempotency_key'])) {
+        $payload['idempotencyKey'] = $idempotencyKey;
+    }
+
+    $ingest = new MoovaLocalIngestService();
+    $idempotencyKey = $ingest->normalizeIdempotencyKey($payload, 'new_order');
+    $requestHash = $ingest->normalizePayloadHash($payload);
+    $requestJson = moova_encode_request_json($payload);
+    $posPayload = $ingest->normalizeNewOrderForPos($payload);
+
     $conn->begin_transaction();
     $result = (new PosOrderMutationService())->confirmMoovaOrder($conn, [
         'link' => $shopLink,
-        'payload' => $payload,
+        'payload' => $posPayload,
     ], [
         'idempotency_key' => $idempotencyKey,
+        'request_hash' => $requestHash,
+        'request_json' => $requestJson,
+        'moova_order_id' => (string) $posPayload['cofeOrderId'],
+        'moova_branch_id' => (string) $posPayload['branchId'],
         'user_id' => (int) $_SESSION['userid'],
         'response_mode' => 'direct',
     ]);

@@ -1,6 +1,7 @@
 <?php include('includes/header.php') ?>
 <?php include('includes/navbar.php') ?>
 <?php include('includes/sidebar.php') ?>
+<?php require_once __DIR__ . '/includes/csrf.php'; ?>
 
 <div class="content-wrapper">
   <section class="content-header">
@@ -13,6 +14,7 @@
             </div>
             
             <form role="form" action="do/dochange_password.php" method="post" autocomplete="off">
+              <?= csrf_input('password_change') ?>
               <div class="card-body">
                 <div class="form-group">
                   <label for="current_password">كلمة المرور الحالية</label>

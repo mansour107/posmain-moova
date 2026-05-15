@@ -30,6 +30,8 @@
       missingDeviceToken: 'Missing device token.',
       failedStartWidget: 'Failed to start the approval widget.',
       failedFetchPending: 'Failed to fetch pending orders.',
+      offlineTitle: 'Moova connection is offline',
+      offlineCopy: 'The POS is still usable. Check the Moova service connection, then try again.',
       moovaUnreachable: 'Moova is unreachable. Check the Moova service connection and try again.',
       posUnreachable: 'POS server is unreachable. Check this POS connection and try again.',
       pleaseLoginFirst: 'POS session expired. Please log in again.',
@@ -46,6 +48,9 @@
       failedDeclineOrder: 'Failed to decline the order.',
       failedConfirmChange: 'Failed to confirm the order change.',
       failedDeclineChange: 'Failed to decline the order change.',
+      staleOrderChangeConflict: 'This edit or cancellation is stale because the POS order changed after Moova sent it. Refresh the Moova order and try again.',
+      invalidDeviceToken: 'Moova device token is invalid or not linked. Ask a manager to check Moova integration settings.',
+      integrationScopeMismatch: 'This cashier is not allowed to use this Moova branch link.',
       missingHostOrderPayload: 'Order data is not ready yet. Please refresh and try again.',
       hostOrderAckTimeout: 'The POS did not confirm order creation in time.',
       syncing: 'syncing',
@@ -91,10 +96,15 @@
       closeDeclineReason: 'Close decline reason',
       cancelDecline: 'Cancel',
       declineReasonLabel: 'Reason',
-      declineReasonPlaceholder: 'Optional reason for the customer',
-      declineReasonHint: 'Leave blank to decline without a reason.',
+      declineReasonPlaceholder: 'Write the reason for the customer',
+      declineReasonHint: 'A reason is required before declining.',
+      declineReasonRequired: 'Enter a reason before declining.',
       submitDecline: 'Decline order',
       declining: 'Declining...',
+      customerInfo: 'Customer info',
+      customerName: 'Customer',
+      customerPhone: 'Phone',
+      customerAddress: 'Address',
       orderNote: 'Order note',
       deliveryNote: 'Delivery note',
       noItemsReceived: 'No items received.',
@@ -123,6 +133,8 @@
       missingDeviceToken: 'رمز الجهاز غير موجود.',
       failedStartWidget: 'تعذر تشغيل ويدجت الموافقة.',
       failedFetchPending: 'تعذر جلب الطلبات المعلّقة.',
+      offlineTitle: 'اتصال Moova غير متاح',
+      offlineCopy: 'نقاط البيع ما زالت تعمل. تحقق من تشغيل خدمة Moova والاتصال ثم حاول مرة أخرى.',
       moovaUnreachable: 'تعذر الاتصال بـ Moova. تحقق من تشغيل خدمة Moova والاتصال ثم حاول مرة أخرى.',
       posUnreachable: 'تعذر الاتصال بنظام نقاط البيع. تحقق من تشغيل النظام والاتصال ثم حاول مرة أخرى.',
       pleaseLoginFirst: 'انتهت جلسة نقاط البيع. سجّل الدخول مرة أخرى.',
@@ -139,6 +151,9 @@
       failedDeclineOrder: 'تعذر رفض الطلب.',
       failedConfirmChange: 'تعذر تأكيد تعديل الطلب.',
       failedDeclineChange: 'تعذر رفض تعديل الطلب.',
+      staleOrderChangeConflict: 'هذا التعديل أو الإلغاء قديم لأن الأوردر تغيّر داخل نقاط البيع بعد إرساله من Moova. حدّث الطلب في Moova ثم حاول مرة أخرى.',
+      invalidDeviceToken: 'رمز جهاز Moova غير صحيح أو غير مربوط. اطلب من المدير مراجعة إعدادات ربط Moova.',
+      integrationScopeMismatch: 'هذا الكاشير غير مسموح له باستخدام ربط فرع Moova هذا.',
       missingHostOrderPayload: 'بيانات الطلب غير جاهزة بعد. حدّث الصفحة وحاول مرة أخرى.',
       hostOrderAckTimeout: 'لم يؤكد نظام نقاط البيع إنشاء الطلب في الوقت المحدد.',
       syncing: 'جارٍ التحديث',
@@ -184,10 +199,15 @@
       closeDeclineReason: 'إغلاق سبب الرفض',
       cancelDecline: 'إلغاء',
       declineReasonLabel: 'السبب',
-      declineReasonPlaceholder: 'سبب اختياري للعميل',
-      declineReasonHint: 'اتركه فارغاً لرفض الطلب بدون سبب.',
+      declineReasonPlaceholder: 'اكتب سبب الرفض للعميل',
+      declineReasonHint: 'سبب الرفض مطلوب قبل المتابعة.',
+      declineReasonRequired: 'اكتب سبب الرفض قبل المتابعة.',
       submitDecline: 'رفض الطلب',
       declining: 'جارٍ الرفض...',
+      customerInfo: 'بيانات العميل',
+      customerName: 'العميل',
+      customerPhone: 'الهاتف',
+      customerAddress: 'العنوان',
       orderNote: 'ملاحظة الطلب',
       deliveryNote: 'ملاحظة التوصيل',
       noItemsReceived: 'لم تصل أصناف لهذا الطلب.',
@@ -229,6 +249,7 @@
     websocket: null,
     reconnectTimer: null,
     wsConnected: false,
+    transportError: null,
     toastTimer: null,
     toastVisible: false,
     toastMessage: '',
@@ -408,7 +429,7 @@
       closeAllSurfaces();
       return;
     }
-    if (!getNotificationItems().length) {
+    if (!getNotificationItems().length && !state.transportError) {
       state.panelOpen = false;
       state.emptyStateOpen = false;
       render();
@@ -445,6 +466,15 @@
       if (!isActiveInit(initKey)) {
         return;
       }
+      state.transportError = {
+        code: error.code || null,
+        message: error.message || t('failedStartWidget'),
+      };
+      if (!state.hostBellMode && !state.navbarBellMode) {
+        state.panelOpen = true;
+        state.emptyStateOpen = true;
+      }
+      render();
       showToast(error.message || t('failedStartWidget'));
       postToParent('cofe.widget.error', {
         message: error.message || t('failedStartWidget'),
@@ -457,6 +487,7 @@
     state.bootstrap = null;
     state.device = null;
     state.drafts = [];
+    state.transportError = null;
     stopContinuousBeep();
     state.commands = [];
     state.panelOpen = false;
@@ -763,6 +794,7 @@
         state.device = result.device || state.device;
         state.commands = Array.isArray(result.commands) ? result.commands : [];
         state.drafts = Array.isArray(result.drafts) ? result.drafts.slice() : [];
+        state.transportError = null;
         const nextItems = getNotificationItems();
         const hasNewNotification = nextItems.length > previousCount
           || nextItems.some((item) => !previousIds.has(item.key));
@@ -783,12 +815,24 @@
         render();
         return result;
       } catch (error) {
+        if (isActiveInit(initKey)) {
+          state.transportError = {
+            code: error.code || null,
+            message: error.message || t('failedFetchPending'),
+          };
+          if (options?.forceOpen && !state.hostBellMode && !state.navbarBellMode) {
+            state.panelOpen = true;
+            state.emptyStateOpen = true;
+          }
+          stopContinuousBeep();
+          render();
+        }
         if (!options?.silent && isActiveInit(initKey)) {
-      showToast(error.message || t('failedFetchPending'));
-      postToParent('cofe.widget.error', {
-        message: error.message || t('failedFetchPending'),
-        code: error.code || null,
-      });
+          showToast(error.message || t('failedFetchPending'));
+          postToParent('cofe.widget.error', {
+            message: error.message || t('failedFetchPending'),
+            code: error.code || null,
+          });
         }
         throw error;
       } finally {
@@ -870,7 +914,7 @@
       } else if (action === 'confirm-change' && commandId) {
         confirmOrderChange(commandId);
       } else if (action === 'decline-change' && commandId) {
-        declineOrderChange(commandId, '', actionButton.getAttribute('data-declined-via') || 'overlay');
+        openChangeDeclineModal(commandId, actionButton.getAttribute('data-declined-via') || 'overlay');
       } else if (action === 'open-notes' && draftId) {
         openNotesModal(draftId);
       } else if (action === 'confirm-order' && draftId) {
@@ -918,7 +962,7 @@
       return;
     }
     if (action === 'decline-change' && commandId) {
-      declineOrderChange(commandId, '', actionButton.getAttribute('data-declined-via') || 'detail_modal');
+      openChangeDeclineModal(commandId, actionButton.getAttribute('data-declined-via') || 'detail_modal');
       return;
     }
     if (!draftId) return;
@@ -959,6 +1003,17 @@
     if (!draftId && !commandId) return;
     const reasonInput = document.getElementById('pw-decline-reason');
     const reason = asText(reasonInput?.value);
+    if (!reason) {
+      if (reasonInput) {
+        reasonInput.setAttribute('aria-invalid', 'true');
+        if (typeof reasonInput.focus === 'function') {
+          reasonInput.focus();
+        }
+      }
+      showToast(t('declineReasonRequired'));
+      return;
+    }
+    reasonInput?.removeAttribute('aria-invalid');
     if (commandId) {
       declineOrderChange(commandId, reason, state.declineVia || 'decline_modal');
       return;
@@ -990,6 +1045,20 @@
     if (!findDraft(draftId)) return;
     state.declineDraftId = draftId;
     state.declineCommandId = null;
+    state.declineVia = declinedVia || 'overlay';
+    render();
+    setTimeout(() => {
+      const input = document.getElementById('pw-decline-reason');
+      if (input && typeof input.focus === 'function') {
+        input.focus();
+      }
+    }, 0);
+  }
+
+  function openChangeDeclineModal(commandId, declinedVia) {
+    if (!findOrderChangeCommand(commandId)) return;
+    state.declineCommandId = commandId;
+    state.declineDraftId = null;
     state.declineVia = declinedVia || 'overlay';
     render();
     setTimeout(() => {
@@ -1457,8 +1526,8 @@
       pending.resolve(payload);
       return;
     }
-    const message = asText(payload.message) || t('failedConfirmOrder');
-    const error = createWidgetError(message, 409, 'host_order_change_failed');
+    const hostError = normalizeHostBridgeError(payload, t('failedConfirmChange'));
+    const error = createWidgetError(hostError.message, 409, hostError.code || 'host_order_change_failed');
     error.phase = 'host_order_change_result';
     error.retryable = payload.retryable !== false;
     error.errorPayload = payload.errorPayload || payload;
@@ -1542,16 +1611,18 @@
       });
 
       try {
+        const hostPayload = {
+          type: 'cofe.order.confirmed',
+          draftId,
+          cofeOrderId: requestPayload.cofeOrderId || null,
+          idempotencyKey: requestPayload.idempotencyKey || null,
+          branchId: requestPayload.branchId || null,
+          tableNumber: requestPayload.tableNumber || null,
+          items: requestPayload.items,
+          ...buildFulfillmentBridgePayload(requestPayload, getUiPayload(draft)),
+        };
         window.parent.postMessage(
-          {
-            type: 'cofe.order.confirmed',
-            draftId,
-            cofeOrderId: requestPayload.cofeOrderId || null,
-            idempotencyKey: requestPayload.idempotencyKey || null,
-            branchId: requestPayload.branchId || null,
-            tableNumber: requestPayload.tableNumber || null,
-            items: requestPayload.items,
-          },
+          hostPayload,
           state.parentOrigin || '*',
         );
       } catch (error) {
@@ -1583,8 +1654,8 @@
       pending.resolve(payload);
       return;
     }
-    const message = asText(payload.message) || t('failedConfirmOrder');
-    const error = createWidgetError(message, 409, 'host_order_failed');
+    const hostError = normalizeHostBridgeError(payload, t('failedConfirmOrder'));
+    const error = createWidgetError(hostError.message, 409, hostError.code || 'host_order_failed');
     error.phase = 'host_result';
     error.retryable = payload.retryable !== false;
     error.errorPayload = payload.errorPayload || payload;
@@ -1708,6 +1779,10 @@
     elements.badge.hidden = count === 0;
     elements.badge.textContent = formatNumber(count);
     if (!count) {
+      if (state.transportError) {
+        elements.bellMeta.textContent = t('retryNeeded');
+        return;
+      }
       elements.bellMeta.textContent = t('waitingForOrders');
       return;
     }
@@ -1745,10 +1820,17 @@
     }
     if (notifications.length === 0) {
       elements.stack.hidden = false;
-      elements.stack.innerHTML = renderEmptyState(
-        t('noOrdersWaitingTitle'),
-        t('noOrdersWaitingCopy'),
-      );
+      if (state.transportError) {
+        elements.stack.innerHTML = renderEmptyState(
+          t('offlineTitle'),
+          state.transportError.message || t('offlineCopy'),
+        );
+      } else {
+        elements.stack.innerHTML = renderEmptyState(
+          t('noOrdersWaitingTitle'),
+          t('noOrdersWaitingCopy'),
+        );
+      }
       return;
     }
     const topItems = notifications.slice(0, 3);
@@ -2017,6 +2099,7 @@
           : ''}
       </div>
       <div class="pw-detail-grid">
+        ${renderCustomerInfo(ui)}
         <section class="pw-detail-card">
           <div class="pw-detail-items">
             ${items.map((item) => `
@@ -2199,25 +2282,39 @@
   function renderDeclineModal() {
     if (!elements.declineModal || !elements.declineContent) return;
     const draft = findDraft(state.declineDraftId);
-    elements.declineModal.hidden = !draft;
-    if (!draft) {
+    const command = findOrderChangeCommand(state.declineCommandId);
+    elements.declineModal.hidden = !draft && !command;
+    if (!draft && !command) {
       elements.declineContent.innerHTML = '';
       return;
     }
-    const ui = getUiPayload(draft);
-    const isDeclining = state.decliningDraftIds.has(String(draft.id));
+    const ui = draft ? getUiPayload(draft) : getOrderChangeUi(command);
+    const isDeclining = draft
+      ? state.decliningDraftIds.has(String(draft.id))
+      : state.decliningCommandIds.has(String(command.id));
+    if (command) {
+      const labels = getOrderChangeLabels(ui.action);
+      if (elements.declineKicker) elements.declineKicker.textContent = labels.decline;
+      if (elements.declineTitle) elements.declineTitle.textContent = t('declineReasonTitle');
+    } else {
+      if (elements.declineKicker) elements.declineKicker.textContent = t('declineReasonKicker');
+      if (elements.declineTitle) elements.declineTitle.textContent = t('declineReasonTitle');
+    }
+    const summaryTitle = draft ? getTableDisplay(ui.tableNumber) : ui.title;
+    const summaryMeta = draft ? summarizeItems(ui.items) : `${getTableDisplay(ui.tableNumber)} · ${ui.reference}`;
     elements.declineContent.innerHTML = `
       <form id="pw-decline-form" class="pw-decline-form">
         <div class="pw-decline-summary">
-          <p class="pw-card-kicker">${escapeHtml(t('table'))}</p>
-          <h3 class="pw-queue-title">${escapeHtml(getTableDisplay(ui.tableNumber))}</h3>
-          <div class="pw-queue-meta">${escapeHtml(summarizeItems(ui.items))}</div>
+          <p class="pw-card-kicker">${escapeHtml(draft ? t('table') : t('changeRequestKicker'))}</p>
+          <h3 class="pw-queue-title">${escapeHtml(summaryTitle)}</h3>
+          <div class="pw-queue-meta">${escapeHtml(summaryMeta)}</div>
         </div>
         <label class="pw-decline-label" for="pw-decline-reason">${escapeHtml(t('declineReasonLabel'))}</label>
         <textarea
           id="pw-decline-reason"
           class="pw-decline-textarea"
           maxlength="500"
+          required
           placeholder="${escapeHtml(t('declineReasonPlaceholder'))}"
         ></textarea>
         <div class="pw-decline-hint">${escapeHtml(t('declineReasonHint'))}</div>
@@ -2302,7 +2399,7 @@
           maxHeight: 560,
         });
       }
-      if (state.panelOpen && getNotificationItems().length) {
+      if (state.panelOpen && (getNotificationItems().length || state.transportError)) {
         return measureFrameElement('panel', elements.stack, {
           width: 396,
           height: 160,
@@ -2417,7 +2514,7 @@
 
   function normalizeApiErrorPayload(payload, status) {
     const code = asText(payload?.code || payload?.error).toUpperCase();
-    const mappedMessage = messageForApiError(code);
+    const mappedMessage = messageForPosBridgeCode(code) || messageForApiError(code);
     const fallbackMessage = asText(payload?.message) || asText(payload?.error) || `Request failed (${status})`;
 
     return {
@@ -2443,6 +2540,51 @@
       default:
         return '';
     }
+  }
+
+  function messageForPosBridgeCode(code) {
+    switch (code) {
+      case 'POS_ORDER_LINES_CHANGED':
+      case 'IDEMPOTENCY_PAYLOAD_CONFLICT':
+        return t('staleOrderChangeConflict');
+      case 'DEVICE_TOKEN_REQUIRED':
+      case 'INVALID_DEVICE_TOKEN':
+      case 'INTEGRATION_NOT_MAPPED':
+      case 'MOOVA_LINK_NOT_FOUND':
+        return t('invalidDeviceToken');
+      case 'TENANT_SCOPE_MISMATCH':
+        return t('integrationScopeMismatch');
+      case 'UNAUTHORIZED':
+      case 'PLEASE_LOGIN_FIRST':
+        return t('pleaseLoginFirst');
+      default:
+        return '';
+    }
+  }
+
+  function normalizeHostBridgeError(payload, fallbackMessage) {
+    const errorPayload = payload && payload.errorPayload && typeof payload.errorPayload === 'object'
+      ? payload.errorPayload
+      : {};
+    const nestedPayload = errorPayload.payload && typeof errorPayload.payload === 'object'
+      ? errorPayload.payload
+      : {};
+    const hostResponse = errorPayload.hostResponse && typeof errorPayload.hostResponse === 'object'
+      ? errorPayload.hostResponse
+      : {};
+    const code = asText(
+      payload?.code
+      || errorPayload.code
+      || nestedPayload.code
+      || nestedPayload.error
+      || hostResponse.code
+      || hostResponse.error,
+    ).toUpperCase();
+
+    return {
+      code: code || null,
+      message: messageForPosBridgeCode(code) || asText(payload?.message) || fallbackMessage,
+    };
   }
 
   async function parseResponsePayload(response) {
@@ -2555,6 +2697,50 @@
       orderNotes,
       itemNotes,
     };
+  }
+
+  function getCustomerRows(ui) {
+    const customer = ui && ui.customer && typeof ui.customer === 'object' ? ui.customer : {};
+    const delivery = ui && ui.delivery && typeof ui.delivery === 'object' ? ui.delivery : {};
+    const rows = [
+      {
+        label: t('customerName'),
+        value: asText(ui?.customerName || ui?.customer_name || customer.name || customer.fullName || customer.full_name || delivery.customerName || delivery.customer_name),
+      },
+      {
+        label: t('customerPhone'),
+        value: asText(ui?.customerPhone || ui?.customer_phone || customer.phone || customer.mobile || customer.mobileNumber || customer.mobile_number || delivery.customerPhone || delivery.customer_phone),
+      },
+      {
+        label: t('customerAddress'),
+        value: asText(ui?.customerAddress || ui?.customer_address || ui?.deliveryAddress || ui?.delivery_address || customer.address || delivery.address || delivery.customerAddress || delivery.customer_address),
+      },
+    ];
+
+    return rows.filter((row) => row.value);
+  }
+
+  function renderCustomerInfo(ui) {
+    const rows = getCustomerRows(ui);
+    if (!rows.length) {
+      return '';
+    }
+
+    return `
+      <section class="pw-detail-card pw-customer-card">
+        <p class="pw-detail-section-title">${escapeHtml(t('customerInfo'))}</p>
+        <div class="pw-detail-items">
+          ${rows.map((row) => `
+            <div class="pw-detail-item">
+              <div class="pw-detail-item-main">
+                <div class="pw-detail-item-name">${escapeHtml(row.label)}</div>
+                <div class="pw-detail-item-meta">${escapeHtml(row.value)}</div>
+              </div>
+            </div>
+          `).join('')}
+        </div>
+      </section>
+    `;
   }
 
   function renderItemLines(items, options) {
@@ -2700,6 +2886,52 @@
   function getTableDisplay(tableNumber) {
     const normalized = asText(tableNumber);
     return normalized ? t('tableDisplay', { table: normalized }) : t('counterOrder');
+  }
+
+  function buildFulfillmentBridgePayload(...sources) {
+    const output = {};
+    const scalarKeys = [
+      'notes',
+      'orderChannel',
+      'fulfillmentType',
+      'externalProvider',
+      'externalOrderId',
+      'customerName',
+      'customerPhone',
+      'customerAddress',
+      'deliveryZone',
+      'deliveryFee',
+      'deliveryStatus',
+      'promisedAt',
+    ];
+    const objectKeys = ['customer', 'delivery'];
+
+    sources.forEach((source) => {
+      if (!source || typeof source !== 'object') {
+        return;
+      }
+      scalarKeys.forEach((key) => {
+        if (output[key] !== undefined) {
+          return;
+        }
+        const value = source[key];
+        if (value === undefined || value === null || value === '') {
+          return;
+        }
+        output[key] = value;
+      });
+      objectKeys.forEach((key) => {
+        if (output[key] !== undefined) {
+          return;
+        }
+        const value = source[key];
+        if (value && typeof value === 'object') {
+          output[key] = value;
+        }
+      });
+    });
+
+    return output;
   }
 
   function renderEmptyState(title, copy) {

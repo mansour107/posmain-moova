@@ -7,6 +7,19 @@ let currentOrder = {
 };
 let posTableRequestKeys = {};
 
+function getPOSTableCsrfToken() {
+    const tokenElement = document.querySelector('meta[name="posmain-csrf-token"]');
+    return window.POSMAIN_CSRF_TOKEN || (tokenElement ? tokenElement.getAttribute('content') : '');
+}
+
+function attachPOSTableCsrfHeader(xhr) {
+    const token = getPOSTableCsrfToken();
+    if (token) {
+        xhr.setRequestHeader(window.POSMAIN_CSRF_HEADER || 'X-CSRF-Token', token);
+        xhr.setRequestHeader('X-POSMAIN-CSRF-Token', token);
+    }
+}
+
 function createPOSTableIdempotencyKey(scope) {
     if (window.crypto && typeof window.crypto.randomUUID === 'function') {
         return scope + ':' + window.crypto.randomUUID();
@@ -322,6 +335,7 @@ function saveOrder() {
         data: JSON.stringify(orderData),
         contentType: 'application/json',
         dataType: 'json',
+        beforeSend: attachPOSTableCsrfHeader,
         success: function(response) {
             if (response.success) {
                 alert('تم حفظ الطلب بنجاح');
@@ -401,6 +415,7 @@ function cancelOrder() {
                 idempotency_key: getPOSTableIdempotencyKey('pos.order.cancel')
             },
             dataType: 'json',
+            beforeSend: attachPOSTableCsrfHeader,
             success: function(response) {
                 if (response.success) {
                     alert('تم إلغاء الطلب بنجاح');

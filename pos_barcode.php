@@ -1,5 +1,6 @@
 <?php
 require_once __DIR__ . '/includes/session_bootstrap.php';
+require_once __DIR__ . '/includes/csrf.php';
 require_once __DIR__ . '/classes/PasswordService.php';
 
 if (!isset($_SESSION['login']) || !isset($_SESSION['userid'])) {
@@ -88,6 +89,28 @@ include('includes/pos_simple_header.php');
 
 <!-- Assets (CSS & JS) -->
 <?php include('includes/pos_assets.php'); ?>
+<?= csrf_meta_tag('pos_browser', 'posmain-csrf-token') ?>
+<script>
+(function () {
+    const tokenElement = document.querySelector('meta[name="posmain-csrf-token"]');
+    const csrfToken = tokenElement ? tokenElement.getAttribute('content') : '';
+    window.POSMAIN_CSRF_TOKEN = csrfToken;
+    window.POSMAIN_CSRF_HEADER = 'X-CSRF-Token';
+    window.POSMAIN_ATTACH_CSRF_HEADER = function (xhr, settings) {
+        const method = ((settings && (settings.type || settings.method)) || 'GET').toUpperCase();
+        if (!/^(POST|PUT|PATCH|DELETE)$/.test(method) || !window.POSMAIN_CSRF_TOKEN) {
+            return;
+        }
+
+        xhr.setRequestHeader(window.POSMAIN_CSRF_HEADER, window.POSMAIN_CSRF_TOKEN);
+        xhr.setRequestHeader('X-POSMAIN-CSRF-Token', window.POSMAIN_CSRF_TOKEN);
+    };
+
+    if (window.jQuery && typeof window.jQuery.ajaxSetup === 'function') {
+        window.jQuery.ajaxSetup({ beforeSend: window.POSMAIN_ATTACH_CSRF_HEADER });
+    }
+})();
+</script>
 <?php include('includes/pos_lock_system.php'); ?>
 
 <!-- Hidden input for Edit Mode -->

@@ -1,12 +1,43 @@
 <?php
 include('../includes/connect.php');
+require_once __DIR__ . '/../classes/Pos/Service/OrderPrintPayloadService.php';
+require_once __DIR__ . '/../classes/Pos/Service/BrowserPrintAuditService.php';
 
 $table_id = intval($_GET['table_id'] ?? 0);
 $order_id = intval($_GET['order_id'] ?? 0);
 $order = null;
 $table_name = '';
+$print_payload = null;
 
-if ($order_id > 0) {
+try {
+    $payloadService = new OrderPrintPayloadService();
+    if ($order_id > 0) {
+        $print_payload = $payloadService->buildKotPayloadByOrderId($conn, $order_id);
+    } elseif ($table_id > 0) {
+        $print_payload = $payloadService->buildKotPayloadByTableId($conn, $table_id);
+    }
+} catch (Throwable $printPayloadError) {
+    $print_payload = null;
+}
+
+if ($print_payload !== null) {
+    $order_id = (int) $print_payload['order']['id'];
+    $table_name = $print_payload['table']['name'] ?? '';
+    try {
+        (new BrowserPrintAuditService())->recordRenderedPrint(
+            $conn,
+            'kot',
+            $order_id,
+            $print_payload,
+            isset($_SESSION['userid']) ? (int) $_SESSION['userid'] : null,
+            [
+                'source' => 'print_preparation_page',
+                'reprint_reason' => $_GET['reprint_reason'] ?? null,
+            ]
+        );
+    } catch (Throwable $printAuditError) {
+    }
+} elseif ($order_id > 0) {
     $stmt = $conn->prepare("
         SELECT oh.*, t.tname
         FROM ot_head oh
@@ -40,7 +71,11 @@ if ($stmt) {
     $stmt->close();
 }
 
-if ($order) {
+if ($print_payload !== null || $order) {
+    $print_lines = $print_payload['lines'] ?? null;
+    if ($print_payload !== null) {
+        $items_result = null;
+    } else {
     $order_id = (int) $order['id'];
     $table_name = $order['tname'] ?? '';
     $items_stmt = $conn->prepare("
@@ -54,6 +89,7 @@ if ($order) {
     $items_stmt->bind_param("i", $order_id);
     $items_stmt->execute();
     $items_result = $items_stmt->get_result();
+    }
 ?>
 <!DOCTYPE html>
 <html>
@@ -85,6 +121,31 @@ if ($order) {
             </tr>
         </thead>
         <tbody>
+            <?php if (is_array($print_lines)): ?>
+            <?php foreach ($print_lines as $item): ?>
+            <tr>
+                <td>
+                    <?= htmlspecialchars($item['name'] ?? '', ENT_QUOTES, 'UTF-8') ?>
+                    <?php foreach (($item['modifiers'] ?? []) as $modifier): ?>
+                        <div style="font-size: 12px;">+ <?= htmlspecialchars($modifier['name_ar'] ?? $modifier['name_en'] ?? '', ENT_QUOTES, 'UTF-8') ?> (<?= htmlspecialchars($modifier['qty'] ?? '1.000', ENT_QUOTES, 'UTF-8') ?>)</div>
+                    <?php endforeach; ?>
+                </td>
+                <td><?= htmlspecialchars($item['qty'] ?? '0.000', ENT_QUOTES, 'UTF-8') ?></td>
+                <td>
+                    <?php
+                    $notes = is_array($item['notes'] ?? null) ? $item['notes'] : [];
+                    if ($notes) {
+                        foreach ($notes as $note) {
+                            echo '<div>' . htmlspecialchars($note['note_text'] ?? '', ENT_QUOTES, 'UTF-8') . '</div>';
+                        }
+                    } else {
+                        echo htmlspecialchars($item['legacy_notes'] ?? '', ENT_QUOTES, 'UTF-8');
+                    }
+                    ?>
+                </td>
+            </tr>
+            <?php endforeach; ?>
+            <?php else: ?>
             <?php while ($item = $items_result->fetch_assoc()): ?>
             <tr>
                 <td><?= htmlspecialchars($item['iname'] ?? '', ENT_QUOTES, 'UTF-8') ?></td>
@@ -92,6 +153,7 @@ if ($order) {
                 <td><?= htmlspecialchars($item['notes'] ?? '', ENT_QUOTES, 'UTF-8') ?></td>
             </tr>
             <?php endwhile; ?>
+            <?php endif; ?>
         </tbody>
     </table>
 

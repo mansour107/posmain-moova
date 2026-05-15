@@ -6,6 +6,7 @@ include('../includes/connect.php');
 ob_clean();
 
 require_once('../classes/MoovaPosIntegration.php');
+require_once('../classes/Moova/MoovaLocalIngestService.php');
 require_once('../classes/Pos/Service/PosOrderMutationService.php');
 
 header('Content-Type: application/json; charset=utf-8');
@@ -78,6 +79,12 @@ function moova_change_is_cashier_confirmed(array $payload)
     return $reviewed && $cashierAction === 'confirm';
 }
 
+function moova_change_encode_request_json(array $payload)
+{
+    $json = json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    return is_string($json) ? $json : '{}';
+}
+
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     moova_change_json_response(405, ['success' => false, 'code' => 'METHOD_NOT_ALLOWED', 'message' => 'Method not allowed']);
 }
@@ -142,18 +149,23 @@ try {
         throw new MoovaOrderChangeHttpException('TENANT_SCOPE_MISMATCH', 403);
     }
 
-    $requestHash = MoovaPosIntegration::changePayloadHash($payload);
-    $requestJson = json_encode(
-        MoovaPosIntegration::normalizeChangePayloadForHash($payload),
-        JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
-    );
+    if (empty($payload['idempotencyKey']) && empty($payload['idempotency_key'])) {
+        $payload['idempotencyKey'] = $idempotencyKey;
+    }
+
+    $ingest = new MoovaLocalIngestService();
+    $eventType = $action === 'cancel' ? 'cancel_order' : 'edit_order';
+    $idempotencyKey = $ingest->normalizeIdempotencyKey($payload, $eventType);
+    $requestHash = $ingest->normalizePayloadHash($payload);
+    $requestJson = moova_change_encode_request_json($payload);
+    $posPayload = $ingest->normalizeChangeForPos($payload);
 
     $tenant = (int) $shopLink['pos_tenant'];
     $branch = (int) $shopLink['pos_branch'];
     $conn->begin_transaction();
     $result = (new PosOrderMutationService())->changeMoovaOrder($conn, [
         'link' => $shopLink,
-        'payload' => $payload,
+        'payload' => $posPayload,
     ], [
         'idempotency_key' => $idempotencyKey,
         'request_hash' => $requestHash,

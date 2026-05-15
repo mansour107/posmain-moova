@@ -112,5 +112,3 @@
     
     console.log('✅ POS Auto-lock system initialized');
 })();
-
-})();

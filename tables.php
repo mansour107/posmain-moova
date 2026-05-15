@@ -1,5 +1,6 @@
 <?php
 require_once __DIR__ . '/includes/session_bootstrap.php';
+require_once __DIR__ . '/includes/csrf.php';
 
 if (!isset($_SESSION['login']) || !isset($_SESSION['userid'])) {
     header('location:index.php');
@@ -301,6 +302,8 @@ $order_totals = [
     'paid' => 0.00,
     'remaining' => 0.00
 ];
+$move_table_options = [];
+$merge_table_options = [];
 
 // إذا تم اختيار طاولة، جلب بيانات الطلب
 $selected_table_name = '';
@@ -349,6 +352,50 @@ if ($selected_table) {
         $order_totals['net'] = $net;
         $order_totals['paid'] = floatval($order_data['paid_amount'] ?? 0);
         $order_totals['remaining'] = floatval($order_data['remaining_amount'] ?? max(0, $net - $order_totals['paid']));
+
+        $move_stmt = $conn->prepare("
+            SELECT t.id, t.tname
+            FROM tables t
+            WHERE t.isdeleted = 0
+              AND t.id <> ?
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM ot_head oh
+                  WHERE oh.table_id = t.id
+                    AND oh.pro_tybe = 9
+                    AND oh.isdeleted = 0
+                    AND COALESCE(oh.order_status, 'active') = 'active'
+                    AND COALESCE(oh.payment_status, 'unpaid') IN ('unpaid', 'partial')
+              )
+            ORDER BY t.id ASC
+        ");
+        $move_stmt->bind_param('i', $selected_table);
+        $move_stmt->execute();
+        $move_result = $move_stmt->get_result();
+        while ($move_table = $move_result->fetch_assoc()) {
+            $move_table_options[] = $move_table;
+        }
+        $move_stmt->close();
+
+        $merge_stmt = $conn->prepare("
+            SELECT t.id, t.tname, oh.id AS order_id
+            FROM tables t
+            INNER JOIN ot_head oh ON oh.table_id = t.id
+                AND oh.pro_tybe = 9
+                AND oh.isdeleted = 0
+                AND COALESCE(oh.order_status, 'active') = 'active'
+                AND COALESCE(oh.payment_status, 'unpaid') IN ('unpaid', 'partial')
+            WHERE t.isdeleted = 0
+              AND t.id <> ?
+            ORDER BY t.id ASC, oh.id DESC
+        ");
+        $merge_stmt->bind_param('i', $selected_table);
+        $merge_stmt->execute();
+        $merge_result = $merge_stmt->get_result();
+        while ($merge_table = $merge_result->fetch_assoc()) {
+            $merge_table_options[] = $merge_table;
+        }
+        $merge_stmt->close();
     }
 }
 ?>
@@ -466,6 +513,34 @@ if ($selected_table) {
                                             <i class="fas fa-save me-2"></i>حفظ كأجل (تفريغ)
                                         </a></li>
                                     </ul>
+                                </div>
+                            </div>
+                            <div class="col-12">
+                                <div class="input-group">
+                                    <select class="form-select" id="move_destination_table" aria-label="نقل الطلب إلى طاولة">
+                                        <option value="">نقل الطلب إلى...</option>
+                                        <?php foreach ($move_table_options as $move_table): ?>
+                                            <option value="<?= (int) $move_table['id'] ?>"><?= htmlspecialchars($move_table['tname']) ?></option>
+                                        <?php endforeach; ?>
+                                    </select>
+                                    <button class="btn btn-outline-primary" type="button" onclick="moveTableOrder(<?= (int) $selected_table ?>, <?= (int) $order_data['id'] ?>)">
+                                        <i class="fas fa-exchange-alt me-1"></i>نقل
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="col-12">
+                                <div class="input-group">
+                                    <select class="form-select" id="merge_destination_table" aria-label="دمج الطلب مع طاولة">
+                                        <option value="">دمج مع طاولة مشغولة...</option>
+                                        <?php foreach ($merge_table_options as $merge_table): ?>
+                                            <option value="<?= (int) $merge_table['id'] ?>" data-order-id="<?= (int) $merge_table['order_id'] ?>">
+                                                <?= htmlspecialchars($merge_table['tname']) ?> - طلب #<?= (int) $merge_table['order_id'] ?>
+                                            </option>
+                                        <?php endforeach; ?>
+                                    </select>
+                                    <button class="btn btn-outline-success" type="button" onclick="mergeTableOrders(<?= (int) $selected_table ?>, <?= (int) $order_data['id'] ?>)">
+                                        <i class="fas fa-compress-arrows-alt me-1"></i>دمج
+                                    </button>
                                 </div>
                             </div>
                         </div>
@@ -673,7 +748,25 @@ if ($selected_table) {
 <?php include('includes/footer.php') ?>
 
 <!-- Scripts are located after footer to ensure jQuery is loaded -->
+<?= csrf_meta_tag('pos_browser', 'posmain-csrf-token') ?>
 <script>
+const posTableCsrfTokenElement = document.querySelector('meta[name="posmain-csrf-token"]');
+window.POSMAIN_CSRF_TOKEN = posTableCsrfTokenElement ? posTableCsrfTokenElement.getAttribute('content') : '';
+window.POSMAIN_CSRF_HEADER = 'X-CSRF-Token';
+window.POSMAIN_ATTACH_CSRF_HEADER = function (xhr, settings) {
+    const method = ((settings && (settings.type || settings.method)) || 'GET').toUpperCase();
+    if (!/^(POST|PUT|PATCH|DELETE)$/.test(method) || !window.POSMAIN_CSRF_TOKEN) {
+        return;
+    }
+
+    xhr.setRequestHeader(window.POSMAIN_CSRF_HEADER, window.POSMAIN_CSRF_TOKEN);
+    xhr.setRequestHeader('X-POSMAIN-CSRF-Token', window.POSMAIN_CSRF_TOKEN);
+};
+
+if (window.jQuery && typeof window.jQuery.ajaxSetup === 'function') {
+    window.jQuery.ajaxSetup({ beforeSend: window.POSMAIN_ATTACH_CSRF_HEADER });
+}
+
 const posTablePageRequestKeys = {};
 
 function createPOSTablePageIdempotencyKey(scope) {
@@ -912,6 +1005,98 @@ function clearTableDirect(tableId) {
             }
         });
     }
+}
+
+function moveTableOrder(sourceTableId, orderId) {
+    const destinationTableId = $('#move_destination_table').val();
+    const requestScope = 'pos.table.move';
+    if (!sourceTableId || !orderId) {
+        alert('لا يوجد طلب نشط لنقله');
+        return;
+    }
+    if (!destinationTableId) {
+        alert('اختر الطاولة الجديدة أولاً');
+        return;
+    }
+    if (parseInt(destinationTableId, 10) === parseInt(sourceTableId, 10)) {
+        alert('اختر طاولة مختلفة');
+        return;
+    }
+    if (!confirm('هل تريد نقل الطلب إلى الطاولة المختارة؟')) {
+        return;
+    }
+
+    $.ajax({
+        url: 'ajax/move_table_order.php',
+        method: 'POST',
+        dataType: 'json',
+        data: {
+            source_table_id: sourceTableId,
+            destination_table_id: destinationTableId,
+            order_id: orderId,
+            idempotency_key: getPOSTablePageIdempotencyKey(requestScope)
+        },
+        success: function(response) {
+            if (response.success) {
+                clearPOSTablePageIdempotencyKey(requestScope);
+                alert('تم نقل الطلب بنجاح');
+                window.location.href = 'tables.php?table_id=' + encodeURIComponent(destinationTableId);
+            } else {
+                alert('خطأ: ' + (response.message || 'فشل نقل الطلب'));
+            }
+        },
+        error: function(xhr, status, error) {
+            console.error(xhr.responseText);
+            alert('حدث خطأ: ' + error);
+        }
+    });
+}
+
+function mergeTableOrders(sourceTableId, sourceOrderId) {
+    const destinationTableId = $('#merge_destination_table').val();
+    const destinationOrderId = $('#merge_destination_table option:selected').data('order-id') || '';
+    const requestScope = 'pos.table.merge';
+    if (!sourceTableId || !sourceOrderId) {
+        alert('لا يوجد طلب نشط لدمجه');
+        return;
+    }
+    if (!destinationTableId) {
+        alert('اختر طاولة مشغولة للدمج أولاً');
+        return;
+    }
+    if (parseInt(destinationTableId, 10) === parseInt(sourceTableId, 10)) {
+        alert('اختر طاولة مختلفة');
+        return;
+    }
+    if (!confirm('هل تريد دمج طلب هذه الطاولة مع الطاولة المختارة؟ سيتم نقل الأصناف إلى الطاولة الهدف.')) {
+        return;
+    }
+
+    $.ajax({
+        url: 'ajax/merge_table_orders.php',
+        method: 'POST',
+        dataType: 'json',
+        data: {
+            source_table_id: sourceTableId,
+            destination_table_id: destinationTableId,
+            source_order_id: sourceOrderId,
+            destination_order_id: destinationOrderId,
+            idempotency_key: getPOSTablePageIdempotencyKey(requestScope)
+        },
+        success: function(response) {
+            if (response.success) {
+                clearPOSTablePageIdempotencyKey(requestScope);
+                alert('تم دمج الطلب بنجاح');
+                window.location.href = 'tables.php?table_id=' + encodeURIComponent(destinationTableId);
+            } else {
+                alert('خطأ: ' + (response.message || 'فشل دمج الطلب'));
+            }
+        },
+        error: function(xhr, status, error) {
+            console.error(xhr.responseText);
+            alert('حدث خطأ: ' + error);
+        }
+    });
 }
 
 function printPreparation(tableId) {

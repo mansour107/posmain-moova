@@ -187,12 +187,26 @@ class TableOrderService
             throw new Exception('الطلب لا يخص الطاولة المحددة');
         }
 
+        $lineNoteSelect = "NULL AS kitchen_note";
+        if ($this->tableExists($conn, 'order_line_notes')) {
+            $lineNoteSelect = "
+                (
+                    SELECT GROUP_CONCAT(oln.note_text ORDER BY oln.id SEPARATOR '\n')
+                    FROM order_line_notes oln
+                    WHERE oln.order_id = fd.fatid
+                      AND oln.detail_id = fd.id
+                      AND oln.note_type = 'kitchen'
+                ) AS kitchen_note
+            ";
+        }
+
         $items = $this->queryAll($conn, "
             SELECT
                 fd.*,
                 m.iname AS item_name,
                 m.barcode,
-                m.info AS item_desc
+                m.info AS item_desc,
+                {$lineNoteSelect}
             FROM fat_details fd
             LEFT JOIN myitems m ON m.id = fd.item_id
             WHERE fd.fatid = ?

@@ -356,7 +356,146 @@ $(document).ready(function() {
     // ========================================
     // Add Item to Order
     // ========================================
-    function addItemToOrder(id, name, price, barcode, qty = 1, imageHtml = '') {
+    function escapeHtml(value) {
+        return $('<div>').text(value == null ? '' : String(value)).html();
+    }
+
+    let activeLineNoteRow = null;
+    const lineNoteDraftStoragePrefix = 'posmain.lineNotes.v1';
+
+    function lineNoteDraftContext() {
+        const orderId = String($('#edit_order_id').val() || $('#selected_order_id').val() || '').trim();
+        if (orderId) {
+            return 'order:' + orderId;
+        }
+
+        const tableId = String($('#selected_table_id').val() || '').trim();
+        if (tableId && tableId !== '0') {
+            return 'table:' + tableId;
+        }
+
+        return 'mode:' + String($('input[name="age"]:checked').val() || 'takeaway');
+    }
+
+    function lineNoteDraftStorageKey() {
+        return lineNoteDraftStoragePrefix + ':' + lineNoteDraftContext();
+    }
+
+    function lineNoteItemKey(itemId, barcode) {
+        return String(itemId || '') + ':' + String(barcode || '');
+    }
+
+    function lineNoteItemKeyForRow(row) {
+        const $row = $(row);
+        return lineNoteItemKey(
+            $row.find('input[name="itmname[]"]').val(),
+            $row.data('itemid') || $row.find('.barcode').val()
+        );
+    }
+
+    function readLineNoteDrafts() {
+        try {
+            return JSON.parse(localStorage.getItem(lineNoteDraftStorageKey()) || '{}') || {};
+        } catch (error) {
+            return {};
+        }
+    }
+
+    function getLineNoteDraft(itemId, barcode) {
+        const drafts = readLineNoteDrafts();
+        return String(drafts[lineNoteItemKey(itemId, barcode)] || '');
+    }
+
+    function saveLineNoteDraft(row, note) {
+        try {
+            const drafts = readLineNoteDrafts();
+            const key = lineNoteItemKeyForRow(row);
+            note = String(note || '').trim();
+            if (note) {
+                drafts[key] = note;
+            } else {
+                delete drafts[key];
+            }
+            localStorage.setItem(lineNoteDraftStorageKey(), JSON.stringify(drafts));
+        } catch (error) {
+            console.warn('Line note draft was not stored:', error);
+        }
+    }
+
+    function ensureLineNoteModal() {
+        if ($('#lineNoteModal').length > 0) {
+            return;
+        }
+
+        $('body').append(`
+            <div class="modal fade" id="lineNoteModal" tabindex="-1" aria-labelledby="lineNoteModalLabel" aria-hidden="true">
+                <div class="modal-dialog modal-dialog-centered">
+                    <div class="modal-content">
+                        <div class="modal-header bg-primary text-white">
+                            <h5 class="modal-title" id="lineNoteModalLabel">
+                                <i class="fas fa-sticky-note me-2"></i>ملاحظة للمطبخ
+                            </h5>
+                            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                        </div>
+                        <div class="modal-body">
+                            <textarea class="form-control" id="lineNoteModalText" rows="4" maxlength="500" placeholder="اكتب ملاحظة المطبخ هنا"></textarea>
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-outline-danger" id="lineNoteModalClear">مسح</button>
+                            <button type="button" class="btn btn-primary" id="lineNoteModalSave">حفظ</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `);
+    }
+
+    function toggleLineNoteModal(show) {
+        const modal = document.getElementById('lineNoteModal');
+        if (!modal) {
+            return;
+        }
+
+        if (window.bootstrap && bootstrap.Modal) {
+            const instance = typeof bootstrap.Modal.getOrCreateInstance === 'function'
+                ? bootstrap.Modal.getOrCreateInstance(modal)
+                : new bootstrap.Modal(modal);
+            show ? instance.show() : instance.hide();
+            return;
+        }
+
+        $('#lineNoteModal').modal(show ? 'show' : 'hide');
+    }
+
+    function updateLineNoteButton(row) {
+        const $row = $(row);
+        const $input = $row.find('.lineNoteInput');
+        const $button = $row.find('.lineNoteButton');
+        const note = String($input.val() || '').trim();
+        const hasNote = note !== '';
+
+        $button
+            .toggleClass('line-note-has-value', hasNote)
+            .toggleClass('line-note-empty', !hasNote)
+            .attr('title', hasNote ? 'تعديل ملاحظة المطبخ' : 'إضافة ملاحظة للمطبخ')
+            .attr('aria-label', hasNote ? 'تعديل ملاحظة المطبخ' : 'إضافة ملاحظة للمطبخ');
+    }
+
+    function initializeLineNoteButtons(scope) {
+        $(scope || document).find('.item-card-order').each(function() {
+            const $row = $(this);
+            const $input = $row.find('.lineNoteInput');
+            if (String($input.val() || '').trim() === '') {
+                $input.val(getLineNoteDraft(
+                    $row.find('input[name="itmname[]"]').val(),
+                    $row.data('itemid') || $row.find('.barcode').val()
+                ));
+            }
+            updateLineNoteButton(this);
+        });
+    }
+
+    function addItemToOrder(id, name, price, barcode, qty = 1, imageHtml = '', lineNote = '') {
         let existingItem = $(`.item-card-order[data-itemid="${barcode}"]`);
         
         if (existingItem.length > 0) {
@@ -380,6 +519,9 @@ $(document).ready(function() {
         const thumbHtml = imageHtml
             ? `<div class="pos-cart-thumb">${imageHtml}</div>`
             : `<div class="pos-cart-thumb pos-cart-thumb-fallback"><i class="fas fa-utensils"></i></div>`;
+        const noteValue = String(lineNote || '').trim() || getLineNoteDraft(id, barcode);
+        const safeName = escapeHtml(name);
+        const safeLineNote = escapeHtml(noteValue);
         
         let itemCard = `
             <div class="card mb-1 item-card-order pos-cart-row shadow-sm" data-itemid="${barcode}">
@@ -409,8 +551,17 @@ $(document).ready(function() {
                         <div class="pos-cart-main">
                             <input type="hidden" value='${id}' name="itmname[]">
                             <input type="hidden" class="barcode" value="${barcode}">
-                            <div class="text-truncate fw-bold pos-cart-name" title="${name}">${name}</div>
+                            <div class="fw-bold pos-cart-name" title="${safeName}">${safeName}</div>
                             <span class="badge bg-primary pos-cart-index">#${itemNumber}</span>
+                            <input type="hidden"
+                                   class="lineNoteInput"
+                                   name="itmnote[]"
+                                   value="${safeLineNote}">
+                        </div>
+                        <div class="pos-cart-note">
+                            <button type="button" class="btn lineNoteButton line-note-empty" title="إضافة ملاحظة للمطبخ" aria-label="إضافة ملاحظة للمطبخ">
+                                <i class="fas fa-sticky-note"></i>
+                            </button>
                         </div>
                         ${thumbHtml}
                         <button type="button" class="btn btn-danger btn-sm delRow" title="حذف">
@@ -430,6 +581,7 @@ $(document).ready(function() {
         `;
         
         $('#itemData').append(itemCard);
+        initializeLineNoteButtons($('#itemData .item-card-order').last());
         updateItemCount();
         updateTotal();
         $('#barcodeInput').val('').focus();
@@ -667,7 +819,9 @@ $(document).ready(function() {
                                 item.item_name || 'Unknown Item',
                                 parseFloat(item.price) || 0,
                                 item.barcode || item.item_desc || item.item_id, // Use explicit barcode first
-                                parseFloat(item.qty) || 1
+                                parseFloat(item.qty) || 1,
+                                '',
+                                item.note || item.kitchen_note || item.notes || ''
                             );
                         });
                     } else {
@@ -781,6 +935,41 @@ $(document).ready(function() {
         card.find('.subtotal').val(subtotal.toFixed(2));
         updateTotal();
     });
+
+    $(document).on('click', '.lineNoteButton', function() {
+        ensureLineNoteModal();
+        activeLineNoteRow = $(this).closest('.item-card-order');
+        $('#lineNoteModalText').val(activeLineNoteRow.find('.lineNoteInput').val() || '');
+        toggleLineNoteModal(true);
+    });
+
+    $(document).on('click', '#lineNoteModalSave', function() {
+        if (!activeLineNoteRow || activeLineNoteRow.length === 0) {
+            toggleLineNoteModal(false);
+            return;
+        }
+
+        const note = $('#lineNoteModalText').val() || '';
+        activeLineNoteRow.find('.lineNoteInput').val(note);
+        saveLineNoteDraft(activeLineNoteRow, note);
+        updateLineNoteButton(activeLineNoteRow);
+        toggleLineNoteModal(false);
+    });
+
+    $(document).on('click', '#lineNoteModalClear', function() {
+        $('#lineNoteModalText').val('');
+        if (activeLineNoteRow && activeLineNoteRow.length > 0) {
+            activeLineNoteRow.find('.lineNoteInput').val('');
+            saveLineNoteDraft(activeLineNoteRow, '');
+            updateLineNoteButton(activeLineNoteRow);
+        }
+    });
+
+    $(document).on('hidden.bs.modal', '#lineNoteModal', function() {
+        activeLineNoteRow = null;
+    });
+
+    initializeLineNoteButtons();
 
     // ========================================
     // Form Submission

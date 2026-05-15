@@ -4,15 +4,31 @@ ini_set('display_errors', 0);
 ob_start();
 session_start();
 include('../includes/connect.php');
+require_once('../includes/auth_guard.php');
+require_once('../includes/csrf.php');
+require_once('../classes/Pos/Validation/PaymentInputValidator.php');
+require_once('../classes/Pos/Validation/TableInputValidator.php');
 require_once('../classes/Pos/Service/PosOrderMutationService.php');
 require_once('../classes/Sync/SyncOutboxEventService.php');
 ob_clean();
 
 header('Content-Type: application/json; charset=utf-8');
 
+require_pos_authenticated();
+if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
+    require_csrf('pos_browser');
+}
+
 $data = json_decode(file_get_contents('php://input'), true);
 if (!$data) {
     echo json_encode(['success' => false, 'message' => 'No data received'], JSON_UNESCAPED_UNICODE);
+    exit;
+}
+
+try {
+    $data = PaymentInputValidator::validateSplitPayment($data);
+} catch (Exception $e) {
+    echo json_encode(TableInputValidator::failureResponse($e), JSON_UNESCAPED_UNICODE);
     exit;
 }
 
@@ -124,6 +140,6 @@ try {
     echo json_encode($response, JSON_UNESCAPED_UNICODE);
 } catch (Exception $e) {
     $conn->rollback();
-    echo json_encode(['success' => false, 'message' => $e->getMessage()], JSON_UNESCAPED_UNICODE);
+    echo json_encode(TableInputValidator::failureResponse($e), JSON_UNESCAPED_UNICODE);
 }
 ?>
