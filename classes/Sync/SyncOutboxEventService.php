@@ -2,6 +2,7 @@
 
 require_once __DIR__ . '/../../config/app_config.php';
 require_once __DIR__ . '/BranchIdentity.php';
+require_once __DIR__ . '/CloudBranchSyncPublisher.php';
 require_once __DIR__ . '/PosOrderSnapshotBuilder.php';
 
 class SyncOutboxEventService
@@ -18,11 +19,15 @@ class SyncOutboxEventService
     public function recordOrderSnapshot(mysqli $conn, int $orderId, array $options = []): ?array
     {
         $config = $options['config'] ?? (function_exists('posmain_app_config') ? posmain_app_config() : []);
-        if (!$this->outboxEnabled($config)) {
+        $outboxEnabled = $this->outboxEnabled($config);
+        $cloudPublishEnabled = $this->cloudToBranchPublishEnabled($config);
+        if (!$outboxEnabled && !$cloudPublishEnabled) {
             return null;
         }
 
-        $this->assertOutboxTableExists($conn);
+        if ($outboxEnabled) {
+            $this->assertOutboxTableExists($conn);
+        }
 
         $branch = $this->branchIdentity->ensure($conn, $config);
         $branchUuid = (string) $branch['branch_uuid'];
@@ -42,7 +47,9 @@ class SyncOutboxEventService
         $aggregateId = 'ot_head:' . $orderId;
         $idempotencyKey = $this->idempotencyKey($branchUuid, $orderId, $eventType, $payloadHash);
 
-        $stmt = $conn->prepare("
+        $outboxId = null;
+        if ($outboxEnabled) {
+            $stmt = $conn->prepare("
             INSERT INTO sync_outbox (
                 event_uuid,
                 branch_uuid,
@@ -72,26 +79,43 @@ class SyncOutboxEventService
                 updated_at = CURRENT_TIMESTAMP
         ");
 
-        $params = [
-            $eventUuid,
-            $branchUuid,
-            $posTenant,
-            $posBranch,
-            $orderUuid,
-            $orderId,
-            $aggregateId,
-            $orderUuid,
-            $orderId,
-            $eventType,
-            $sourceSystem,
-            $idempotencyKey,
-            $payloadJson,
-            $payloadHash,
-        ];
-        $this->bindParams($stmt, str_repeat('s', count($params)), $params);
-        $stmt->execute();
-        $outboxId = (int) $conn->insert_id;
-        $stmt->close();
+            $params = [
+                $eventUuid,
+                $branchUuid,
+                $posTenant,
+                $posBranch,
+                $orderUuid,
+                $orderId,
+                $aggregateId,
+                $orderUuid,
+                $orderId,
+                $eventType,
+                $sourceSystem,
+                $idempotencyKey,
+                $payloadJson,
+                $payloadHash,
+            ];
+            $this->bindParams($stmt, str_repeat('s', count($params)), $params);
+            $stmt->execute();
+            $outboxId = (int) $conn->insert_id;
+            $stmt->close();
+        }
+
+        $cloudBranchEvents = $this->publishCloudBranchEvent($conn, $config, [
+            'branch_uuid' => $branchUuid,
+            'event_type' => $eventType,
+            'event_version' => (int) ($payload['order']['sync_revision'] ?? 1),
+            'source_system' => $sourceSystem,
+            'aggregate_type' => 'order',
+            'aggregate_uuid' => $orderUuid,
+            'aggregate_local_id' => $orderId,
+            'aggregate_id' => $aggregateId,
+            'entity_type' => 'order',
+            'entity_uuid' => $orderUuid,
+            'entity_local_id' => $orderId,
+            'payload_hash' => $payloadHash,
+            'payload' => $payload,
+        ]);
 
         return [
             'outbox_id' => $outboxId,
@@ -100,13 +124,16 @@ class SyncOutboxEventService
             'order_uuid' => $orderUuid,
             'idempotency_key' => $idempotencyKey,
             'payload_hash' => $payloadHash,
+            'cloud_branch_events' => $cloudBranchEvents,
         ];
     }
 
     public function recordTableSnapshot(mysqli $conn, int $tableId, array $options = []): ?array
     {
         $config = $options['config'] ?? (function_exists('posmain_app_config') ? posmain_app_config() : []);
-        if (!$this->outboxEnabled($config)) {
+        $outboxEnabled = $this->outboxEnabled($config);
+        $cloudPublishEnabled = $this->cloudToBranchPublishEnabled($config);
+        if (!$outboxEnabled && !$cloudPublishEnabled) {
             return null;
         }
 
@@ -114,7 +141,9 @@ class SyncOutboxEventService
             throw new InvalidArgumentException('Table id must be positive.');
         }
 
-        $this->assertOutboxTableExists($conn);
+        if ($outboxEnabled) {
+            $this->assertOutboxTableExists($conn);
+        }
 
         $branch = $this->branchIdentity->ensure($conn, $config);
         $branchUuid = (string) $branch['branch_uuid'];
@@ -134,7 +163,9 @@ class SyncOutboxEventService
         $aggregateId = 'tables:' . $tableId;
         $idempotencyKey = $this->tableIdempotencyKey($branchUuid, $tableId, $eventType, $payloadHash);
 
-        $stmt = $conn->prepare("
+        $outboxId = null;
+        if ($outboxEnabled) {
+            $stmt = $conn->prepare("
             INSERT INTO sync_outbox (
                 event_uuid,
                 branch_uuid,
@@ -164,26 +195,43 @@ class SyncOutboxEventService
                 updated_at = CURRENT_TIMESTAMP
         ");
 
-        $params = [
-            $eventUuid,
-            $branchUuid,
-            $posTenant,
-            $posBranch,
-            $tableUuid,
-            $tableId,
-            $aggregateId,
-            $tableUuid,
-            $tableId,
-            $eventType,
-            $sourceSystem,
-            $idempotencyKey,
-            $payloadJson,
-            $payloadHash,
-        ];
-        $this->bindParams($stmt, str_repeat('s', count($params)), $params);
-        $stmt->execute();
-        $outboxId = (int) $conn->insert_id;
-        $stmt->close();
+            $params = [
+                $eventUuid,
+                $branchUuid,
+                $posTenant,
+                $posBranch,
+                $tableUuid,
+                $tableId,
+                $aggregateId,
+                $tableUuid,
+                $tableId,
+                $eventType,
+                $sourceSystem,
+                $idempotencyKey,
+                $payloadJson,
+                $payloadHash,
+            ];
+            $this->bindParams($stmt, str_repeat('s', count($params)), $params);
+            $stmt->execute();
+            $outboxId = (int) $conn->insert_id;
+            $stmt->close();
+        }
+
+        $cloudBranchEvents = $this->publishCloudBranchEvent($conn, $config, [
+            'branch_uuid' => $branchUuid,
+            'event_type' => $eventType,
+            'event_version' => (int) ($payload['table']['sync_revision'] ?? 1),
+            'source_system' => $sourceSystem,
+            'aggregate_type' => 'table',
+            'aggregate_uuid' => $tableUuid,
+            'aggregate_local_id' => $tableId,
+            'aggregate_id' => $aggregateId,
+            'entity_type' => 'table',
+            'entity_uuid' => $tableUuid,
+            'entity_local_id' => $tableId,
+            'payload_hash' => $payloadHash,
+            'payload' => $payload,
+        ]);
 
         return [
             'outbox_id' => $outboxId,
@@ -192,13 +240,16 @@ class SyncOutboxEventService
             'table_uuid' => $tableUuid,
             'idempotency_key' => $idempotencyKey,
             'payload_hash' => $payloadHash,
+            'cloud_branch_events' => $cloudBranchEvents,
         ];
     }
 
     public function recordMenuItemSnapshot(mysqli $conn, int $itemId, array $options = []): ?array
     {
         $config = $options['config'] ?? (function_exists('posmain_app_config') ? posmain_app_config() : []);
-        if (!$this->outboxEnabled($config) || empty($config['sync']['menu_sync_enabled'])) {
+        $outboxEnabled = $this->outboxEnabled($config);
+        $cloudPublishEnabled = $this->cloudToBranchPublishEnabled($config);
+        if ((!$outboxEnabled && !$cloudPublishEnabled) || empty($config['sync']['menu_sync_enabled'])) {
             return null;
         }
 
@@ -206,7 +257,9 @@ class SyncOutboxEventService
             throw new InvalidArgumentException('Menu item id must be positive.');
         }
 
-        $this->assertOutboxTableExists($conn);
+        if ($outboxEnabled) {
+            $this->assertOutboxTableExists($conn);
+        }
 
         $branch = $this->branchIdentity->ensure($conn, $config);
         $branchUuid = (string) $branch['branch_uuid'];
@@ -225,7 +278,9 @@ class SyncOutboxEventService
         $aggregateId = 'myitems:' . $itemId;
         $idempotencyKey = $this->menuItemIdempotencyKey($branchUuid, $itemId, $eventType, $payloadHash);
 
-        $stmt = $conn->prepare("
+        $outboxId = null;
+        if ($outboxEnabled) {
+            $stmt = $conn->prepare("
             INSERT INTO sync_outbox (
                 event_uuid,
                 branch_uuid,
@@ -255,28 +310,45 @@ class SyncOutboxEventService
                 updated_at = CURRENT_TIMESTAMP
         ");
 
-        $eventVersion = (int) ($payload['menu_item']['menu_version'] ?? 1);
-        $params = [
-            $eventUuid,
-            $branchUuid,
-            $posTenant,
-            $posBranch,
-            $itemUuid,
-            $itemId,
-            $aggregateId,
-            $itemUuid,
-            $itemId,
-            $eventType,
-            $eventVersion,
-            $sourceSystem,
-            $idempotencyKey,
-            $payloadJson,
-            $payloadHash,
-        ];
-        $this->bindParams($stmt, str_repeat('s', count($params)), $params);
-        $stmt->execute();
-        $outboxId = (int) $conn->insert_id;
-        $stmt->close();
+            $eventVersion = (int) ($payload['menu_item']['menu_version'] ?? 1);
+            $params = [
+                $eventUuid,
+                $branchUuid,
+                $posTenant,
+                $posBranch,
+                $itemUuid,
+                $itemId,
+                $aggregateId,
+                $itemUuid,
+                $itemId,
+                $eventType,
+                $eventVersion,
+                $sourceSystem,
+                $idempotencyKey,
+                $payloadJson,
+                $payloadHash,
+            ];
+            $this->bindParams($stmt, str_repeat('s', count($params)), $params);
+            $stmt->execute();
+            $outboxId = (int) $conn->insert_id;
+            $stmt->close();
+        }
+
+        $cloudBranchEvents = $this->publishCloudBranchEvent($conn, $config, [
+            'branch_uuid' => $branchUuid,
+            'event_type' => $eventType,
+            'event_version' => (int) ($payload['menu_item']['menu_version'] ?? 1),
+            'source_system' => $sourceSystem,
+            'aggregate_type' => 'menu_item',
+            'aggregate_uuid' => $itemUuid,
+            'aggregate_local_id' => $itemId,
+            'aggregate_id' => $aggregateId,
+            'entity_type' => 'menu_item',
+            'entity_uuid' => $itemUuid,
+            'entity_local_id' => $itemId,
+            'payload_hash' => $payloadHash,
+            'payload' => $payload,
+        ]);
 
         return [
             'outbox_id' => $outboxId,
@@ -285,12 +357,28 @@ class SyncOutboxEventService
             'item_uuid' => $itemUuid,
             'idempotency_key' => $idempotencyKey,
             'payload_hash' => $payloadHash,
+            'cloud_branch_events' => $cloudBranchEvents,
         ];
     }
 
     private function outboxEnabled(array $config): bool
     {
         return (bool) ($config['sync']['outbox_enabled'] ?? true);
+    }
+
+    private function cloudToBranchPublishEnabled(array $config): bool
+    {
+        return in_array((string) ($config['role'] ?? 'branch'), ['cloud', 'fake_cloud'], true)
+            && !empty($config['sync']['cloud_to_branch_publish_enabled']);
+    }
+
+    private function publishCloudBranchEvent(mysqli $conn, array $config, array $event): array
+    {
+        if (!$this->cloudToBranchPublishEnabled($config)) {
+            return [];
+        }
+
+        return (new CloudBranchSyncPublisher())->publish($conn, $event, $config);
     }
 
     private function assertOutboxTableExists(mysqli $conn): void

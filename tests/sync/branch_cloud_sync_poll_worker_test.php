@@ -1,0 +1,413 @@
+<?php
+
+use PHPUnit\Framework\TestCase;
+
+require_once __DIR__ . '/../../config/app_config.php';
+require_once __DIR__ . '/../../classes/Sync/BranchIdentity.php';
+require_once __DIR__ . '/../../classes/Sync/BranchSecretProvider.php';
+require_once __DIR__ . '/../../classes/Sync/DatabaseBranchSecretProvider.php';
+require_once __DIR__ . '/../../classes/Sync/CloudAuthService.php';
+require_once __DIR__ . '/../../classes/Sync/CloudBranchSyncEventService.php';
+require_once __DIR__ . '/../../classes/Sync/CloudLegacyPosMirrorService.php';
+require_once __DIR__ . '/../../classes/Sync/BranchCloudSyncPollWorker.php';
+require_once __DIR__ . '/../../classes/Sync/SchemaManager.php';
+
+class BranchCloudSyncPollWorkerTest extends TestCase
+{
+    private const BRANCH_UUID = 'dadadada-3333-4333-8333-dadadadadada';
+    private const SECRET = 'phpunit-branch-cloud-sync-secret';
+    private const ITEM_ID = 987654;
+
+    private static $conn;
+    private $originalIdentity;
+
+    public static function setUpBeforeClass(): void
+    {
+        mysqli_report(MYSQLI_REPORT_OFF);
+
+        $host = getenv('POSMAIN_TEST_MYSQL_HOST') ?: '127.0.0.1';
+        $port = (int) (getenv('POSMAIN_TEST_MYSQL_PORT') ?: 3307);
+        $user = getenv('POSMAIN_TEST_MYSQL_USER') ?: 'root';
+        $pass = getenv('POSMAIN_TEST_MYSQL_PASS') ?: '';
+        $db = getenv('POSMAIN_TEST_MYSQL_DB') ?: 'kody2';
+
+        self::$conn = @new mysqli($host, $user, $pass, $db, $port);
+        if (self::$conn->connect_error) {
+            self::$conn = null;
+            return;
+        }
+
+        self::$conn->set_charset('utf8mb4');
+        mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
+        (new SyncSchemaManager())->apply(self::$conn);
+    }
+
+    protected function setUp(): void
+    {
+        if (!self::$conn) {
+            $this->markTestSkipped('MySQL test database is not available.');
+        }
+
+        $this->originalIdentity = (new SyncBranchIdentity())->find(self::$conn);
+        $this->cleanup();
+        self::$conn->query('DELETE FROM sync_branch_identity WHERE id = 1');
+        $this->registerCloudBranch();
+    }
+
+    protected function tearDown(): void
+    {
+        if (!self::$conn) {
+            return;
+        }
+
+        $this->cleanup();
+        if ($this->originalIdentity) {
+            $stmt = self::$conn->prepare("
+                INSERT INTO sync_branch_identity (
+                    id, branch_uuid, branch_name, pos_tenant, pos_branch, cloud_base_url, current_menu_version
+                ) VALUES (1, ?, ?, ?, ?, ?, ?)
+                ON DUPLICATE KEY UPDATE branch_uuid = VALUES(branch_uuid),
+                                        branch_name = VALUES(branch_name),
+                                        pos_tenant = VALUES(pos_tenant),
+                                        pos_branch = VALUES(pos_branch),
+                                        cloud_base_url = VALUES(cloud_base_url),
+                                        current_menu_version = VALUES(current_menu_version)
+            ");
+            $branchUuid = (string) $this->originalIdentity['branch_uuid'];
+            $branchName = $this->originalIdentity['branch_name'];
+            $posTenant = $this->nullableInt($this->originalIdentity['pos_tenant']);
+            $posBranch = $this->nullableInt($this->originalIdentity['pos_branch']);
+            $cloudBaseUrl = $this->originalIdentity['cloud_base_url'];
+            $menuVersion = (int) $this->originalIdentity['current_menu_version'];
+            $stmt->bind_param('ssiisi', $branchUuid, $branchName, $posTenant, $posBranch, $cloudBaseUrl, $menuVersion);
+            $stmt->execute();
+            $stmt->close();
+        }
+    }
+
+    public function testPollerAppliesHostedMenuEditWhenCloudEventIsNewer(): void
+    {
+        $this->insertLocalItem('Local Old Name', '10.00', '2026-01-01 10:00:00');
+        $cursor = $this->insertCloudMenuEvent('Cloud New Name', '14.50', '2026-01-01T10:10:00Z');
+
+        $metrics = (new BranchCloudSyncPollWorker())->runOnce(self::$conn, $this->branchConfig(), [
+            'batch_size' => 10,
+            'http_get' => $this->cloudHttpGet(),
+            'http_post' => $this->cloudHttpPost(),
+        ]);
+
+        $item = $this->fetchItem();
+        $this->assertSame(1, $metrics['fetched']);
+        $this->assertSame(1, $metrics['applied']);
+        $this->assertSame(0, $metrics['stale']);
+        $this->assertSame(1, $metrics['acked']);
+        $this->assertSame($cursor, $metrics['checkpoint']);
+        $this->assertSame('Cloud New Name', $item['iname']);
+        $this->assertSame('14.500', number_format((float) $item['price1'], 3, '.', ''));
+        $this->assertSame('ack_applied', $this->fetchCloudEvent($cursor)['status']);
+        $this->assertSame((string) $cursor, $this->fetchCheckpoint());
+        $this->assertSame('processed', $this->fetchInbox()['status']);
+    }
+
+    public function testPollerDeclinesHostedMenuEditWhenLocalValueIsNewer(): void
+    {
+        $this->insertLocalItem('Local Newer Name', '20.00', '2026-01-01 10:30:00');
+        $cursor = $this->insertCloudMenuEvent('Cloud Older Name', '12.00', '2026-01-01T10:10:00Z');
+
+        $metrics = (new BranchCloudSyncPollWorker())->runOnce(self::$conn, $this->branchConfig(), [
+            'batch_size' => 10,
+            'http_get' => $this->cloudHttpGet(),
+            'http_post' => $this->cloudHttpPost(),
+        ]);
+
+        $item = $this->fetchItem();
+        $this->assertSame(1, $metrics['fetched']);
+        $this->assertSame(0, $metrics['applied']);
+        $this->assertSame(1, $metrics['stale']);
+        $this->assertSame(1, $metrics['acked']);
+        $this->assertSame('Local Newer Name', $item['iname']);
+        $this->assertSame('20.000', number_format((float) $item['price1'], 3, '.', ''));
+        $event = $this->fetchCloudEvent($cursor);
+        $this->assertSame('ack_declined', $event['status']);
+        $this->assertStringContainsString('local value is newer', (string) $event['last_error']);
+    }
+
+    private function insertLocalItem(string $name, string $price, string $mdtime): void
+    {
+        $id = self::ITEM_ID;
+        $barcode = 'phpunit-cloud-sync';
+        $stmt = self::$conn->prepare("
+            INSERT INTO myitems (
+                id, iname, barcode, cost_price, price1, price2, price3, group1, group2, isdeleted, user, tenant, branch, crtime, mdtime
+            ) VALUES (?, ?, ?, 1.000, ?, 0.000, 0.000, 0, 0, 0, 1, 0, 0, ?, ?)
+            ON DUPLICATE KEY UPDATE
+                iname = VALUES(iname),
+                barcode = VALUES(barcode),
+                price1 = VALUES(price1),
+                isdeleted = 0,
+                crtime = VALUES(crtime),
+                mdtime = VALUES(mdtime)
+        ");
+        $stmt->bind_param('isssss', $id, $name, $barcode, $price, $mdtime, $mdtime);
+        $stmt->execute();
+        $stmt->close();
+    }
+
+    private function insertCloudMenuEvent(string $name, string $price, string $capturedAtUtc): int
+    {
+        $itemUuid = '55555555-5555-4555-8555-555555555555';
+        $payload = [
+            'schema_version' => 1,
+            'snapshot_type' => 'pos_menu_item',
+            'source_system' => 'cloud_pos',
+            'branch_uuid' => self::BRANCH_UUID,
+            'captured_at_utc' => $capturedAtUtc,
+            'item_uuid' => $itemUuid,
+            'local_item_id' => self::ITEM_ID,
+            'menu_item' => [
+                'item_uuid' => $itemUuid,
+                'local_item_id' => self::ITEM_ID,
+                'item_id' => self::ITEM_ID,
+                'item_name' => $name,
+                'price' => $price,
+                'price1' => $price,
+                'cost' => '1.00',
+                'cost_price' => '1.00',
+                'category_id' => 0,
+                'isdeleted' => 0,
+                'menu_version' => strtotime($capturedAtUtc),
+            ],
+        ];
+        $payloadJson = json_encode($payload, JSON_UNESCAPED_SLASHES);
+        $hash = hash('sha256', $payloadJson);
+        $eventUuid = SyncBranchIdentity::generateUuidV4();
+        $idempotencyKey = 'phpunit:branch-cloud-sync:' . bin2hex(random_bytes(8));
+        $aggregateId = 'myitems:' . self::ITEM_ID;
+        $sourceSystem = 'cloud_pos';
+        $entityType = 'menu_item';
+        $eventType = 'menu.item_saved';
+        $eventVersion = (int) $payload['menu_item']['menu_version'];
+        $localId = self::ITEM_ID;
+
+        $stmt = self::$conn->prepare("
+            INSERT INTO cloud_sync_branch_events (
+                event_uuid,
+                branch_uuid,
+                event_type,
+                event_version,
+                source_system,
+                aggregate_type,
+                aggregate_uuid,
+                aggregate_local_id,
+                aggregate_id,
+                entity_type,
+                entity_uuid,
+                entity_local_id,
+                idempotency_key,
+                payload_hash,
+                payload_json,
+                status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
+        ");
+        $stmt->bind_param(
+            'sssisssisssisss',
+            $eventUuid,
+            self::BRANCH_UUID,
+            $eventType,
+            $eventVersion,
+            $sourceSystem,
+            $entityType,
+            $itemUuid,
+            $localId,
+            $aggregateId,
+            $entityType,
+            $itemUuid,
+            $localId,
+            $idempotencyKey,
+            $hash,
+            $payloadJson
+        );
+        $stmt->execute();
+        $id = (int) self::$conn->insert_id;
+        $stmt->close();
+
+        return $id;
+    }
+
+    private function cloudHttpGet(): callable
+    {
+        return function (string $url, array $headers): array {
+            $this->assertStringContainsString('/api/sync/branch_events.php', $url);
+            $query = [];
+            parse_str((string) parse_url($url, PHP_URL_QUERY), $query);
+            $result = (new CloudBranchSyncEventService())->handleBranchEvents(
+                self::$conn,
+                $this->headerLinesToMap($headers),
+                $query,
+                $this->cloudConfig()
+            );
+
+            return [
+                'ok' => $result['status_code'] >= 200 && $result['status_code'] < 300,
+                'status' => $result['status_code'],
+                'body' => json_encode($result['body'], JSON_UNESCAPED_SLASHES),
+                'json' => $result['body'],
+                'error' => '',
+            ];
+        };
+    }
+
+    private function cloudHttpPost(): callable
+    {
+        return function (string $url, string $body, array $headers): array {
+            $this->assertStringContainsString('/api/sync/ack_branch_events.php', $url);
+            $result = (new CloudBranchSyncEventService())->handleAck(
+                self::$conn,
+                $this->headerLinesToMap($headers),
+                $body,
+                $this->cloudConfig()
+            );
+
+            return [
+                'ok' => $result['status_code'] >= 200 && $result['status_code'] < 300,
+                'status' => $result['status_code'],
+                'body' => json_encode($result['body'], JSON_UNESCAPED_SLASHES),
+                'json' => $result['body'],
+                'error' => '',
+            ];
+        };
+    }
+
+    private function headerLinesToMap(array $headers): array
+    {
+        $map = [];
+        foreach ($headers as $header) {
+            $parts = explode(':', (string) $header, 2);
+            if (count($parts) === 2) {
+                $map[strtolower(trim($parts[0]))] = trim($parts[1]);
+            }
+        }
+
+        return $map;
+    }
+
+    private function branchConfig(): array
+    {
+        return posmain_app_config([
+            'role' => 'branch',
+            'branch' => [
+                'uuid' => self::BRANCH_UUID,
+                'name' => 'PHPUnit Cloud Sync Branch',
+                'pos_tenant' => 11,
+                'pos_branch' => 22,
+                'cloud_base_url' => 'http://fake-cloud.local',
+            ],
+            'sync' => [
+                'branch_secret' => self::SECRET,
+                'branch_sync_enabled' => true,
+                'worker_enabled' => true,
+                'cloud_pull_enabled' => true,
+            ],
+        ]);
+    }
+
+    private function cloudConfig(): array
+    {
+        return posmain_app_config([
+            'role' => 'cloud',
+            'sync' => [
+                'cloud_branch_secrets' => [self::BRANCH_UUID => self::SECRET],
+            ],
+        ]);
+    }
+
+    private function registerCloudBranch(): void
+    {
+        $hash = hash('sha256', self::SECRET);
+        $name = 'PHPUnit Cloud Sync Branch';
+        $stmt = self::$conn->prepare("
+            INSERT INTO cloud_branches (branch_uuid, branch_name, status, sync_secret_hash)
+            VALUES (?, ?, 'active', ?)
+            ON DUPLICATE KEY UPDATE branch_name = VALUES(branch_name),
+                                    status = 'active',
+                                    sync_secret_hash = VALUES(sync_secret_hash)
+        ");
+        $branchUuid = self::BRANCH_UUID;
+        $stmt->bind_param('sss', $branchUuid, $name, $hash);
+        $stmt->execute();
+        $stmt->close();
+    }
+
+    private function fetchItem(): array
+    {
+        $row = self::$conn->query('SELECT * FROM myitems WHERE id = ' . self::ITEM_ID)->fetch_assoc();
+        return $row ?: [];
+    }
+
+    private function fetchCloudEvent(int $id): array
+    {
+        $row = self::$conn->query('SELECT * FROM cloud_sync_branch_events WHERE id = ' . $id)->fetch_assoc();
+        return $row ?: [];
+    }
+
+    private function fetchCheckpoint(): ?string
+    {
+        $stmt = self::$conn->prepare("
+            SELECT last_cursor
+            FROM sync_checkpoints
+            WHERE branch_uuid = ?
+              AND stream_name = 'cloud_sync'
+            LIMIT 1
+        ");
+        $branchUuid = self::BRANCH_UUID;
+        $stmt->bind_param('s', $branchUuid);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        return $row['last_cursor'] ?? null;
+    }
+
+    private function fetchInbox(): array
+    {
+        $stmt = self::$conn->prepare("
+            SELECT *
+            FROM sync_inbox
+            WHERE branch_uuid = ?
+              AND direction = 'cloud_to_branch'
+              AND idempotency_key LIKE 'phpunit:branch-cloud-sync:%'
+            ORDER BY id DESC
+            LIMIT 1
+        ");
+        $branchUuid = self::BRANCH_UUID;
+        $stmt->bind_param('s', $branchUuid);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        return $row ?: [];
+    }
+
+    private function cleanup(): void
+    {
+        self::$conn->query("DELETE FROM cloud_sync_branch_events WHERE idempotency_key LIKE 'phpunit:branch-cloud-sync:%'");
+        self::$conn->query("DELETE FROM sync_inbox WHERE branch_uuid = '" . self::BRANCH_UUID . "' AND idempotency_key LIKE 'phpunit:branch-cloud-sync:%'");
+        self::$conn->query("DELETE FROM sync_checkpoints WHERE branch_uuid = '" . self::BRANCH_UUID . "' AND stream_name = 'cloud_sync'");
+        self::$conn->query("DELETE FROM cloud_branches WHERE branch_uuid = '" . self::BRANCH_UUID . "'");
+        self::$conn->query('DELETE FROM myitems WHERE id = ' . self::ITEM_ID);
+        self::$conn->query("DELETE FROM sync_branch_identity WHERE branch_uuid = '" . self::BRANCH_UUID . "'");
+    }
+
+    private function nullableInt($value): ?int
+    {
+        if ($value === null || $value === false || $value === '' || !is_numeric($value)) {
+            return null;
+        }
+
+        return (int) $value;
+    }
+}
+
+class branch_cloud_sync_poll_worker_test extends BranchCloudSyncPollWorkerTest
+{
+}

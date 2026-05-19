@@ -34,6 +34,15 @@ class CloudLegacyPosMirrorService
             return null;
         }
 
+        if ($this->isIncomingOlderThanLocal($conn, 'ot_head', $orderId, $event, [$order, $payload])) {
+            return [
+                'legacy_entity_id' => 'ot_head:' . $orderId,
+                'stale' => true,
+                'reason' => 'local_newer',
+            ];
+        }
+
+        $sourceMdtime = $this->incomingDatetime($event, [$order, $payload]);
         $legacy = isset($order['legacy']) && is_array($order['legacy']) ? $order['legacy'] : [];
         $orderUuid = $this->nullableString($this->firstExistingValue([$order, $payload, $event], [
             'order_uuid',
@@ -85,6 +94,7 @@ class CloudLegacyPosMirrorService
             $this->intOrNull($this->firstValue([$legacy, $order], 'store_id')),
             $this->intOrNull($this->firstValue([$legacy, $order], 'acc1')),
             $this->intOrNull($this->firstValue([$legacy, $order], 'acc2')),
+            $sourceMdtime,
         ];
 
         $stmt = $conn->prepare("
@@ -117,8 +127,9 @@ class CloudLegacyPosMirrorService
                 branch,
                 store_id,
                 acc1,
-                acc2
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                acc2,
+                mdtime
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))
             ON DUPLICATE KEY UPDATE
                 id = LAST_INSERT_ID(id),
                 uuid = VALUES(uuid),
@@ -147,13 +158,14 @@ class CloudLegacyPosMirrorService
                 branch = VALUES(branch),
                 store_id = VALUES(store_id),
                 acc1 = VALUES(acc1),
-                acc2 = VALUES(acc2)
+                acc2 = VALUES(acc2),
+                mdtime = COALESCE(VALUES(mdtime), CURRENT_TIMESTAMP)
         ");
         $this->bindParams($stmt, str_repeat('s', count($params)), $params);
         $stmt->execute();
         $stmt->close();
 
-        $lineCount = $this->mirrorOrderLines($conn, $payload, $order, $orderId, $proTybe, $tenant, $branch);
+        $lineCount = $this->mirrorOrderLines($conn, $payload, $order, $orderId, $proTybe, $tenant, $branch, $sourceMdtime);
 
         return [
             'legacy_entity_id' => 'ot_head:' . $orderId,
@@ -168,7 +180,8 @@ class CloudLegacyPosMirrorService
         int $orderId,
         int $proTybe,
         int $tenant,
-        int $branch
+        int $branch,
+        ?string $sourceMdtime = null
     ): int {
         $count = 0;
         foreach ($this->listFromPayload($payload, $order, ['lines', 'order_lines', 'items']) as $line) {
@@ -181,7 +194,7 @@ class CloudLegacyPosMirrorService
                 continue;
             }
 
-            $this->mirrorMenuItemFromLine($conn, $line);
+            $this->mirrorMenuItemFromLine($conn, $line, $sourceMdtime);
             $lineUuid = $this->nullableString($this->firstExistingValue([$line], ['line_uuid', 'local_uuid', 'uuid']), 36);
             $params = [
                 $lineId,
@@ -201,6 +214,7 @@ class CloudLegacyPosMirrorService
                 $this->boolInt($this->firstValue([$line], 'isdeleted'), 0),
                 $tenant,
                 $branch,
+                $sourceMdtime,
             ];
 
             $stmt = $conn->prepare("
@@ -221,8 +235,9 @@ class CloudLegacyPosMirrorService
                     fat_tybe,
                     isdeleted,
                     tenant,
-                    branch
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    branch,
+                    mdtime
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))
                 ON DUPLICATE KEY UPDATE
                     id = LAST_INSERT_ID(id),
                     uuid = VALUES(uuid),
@@ -240,7 +255,8 @@ class CloudLegacyPosMirrorService
                     fat_tybe = VALUES(fat_tybe),
                     isdeleted = VALUES(isdeleted),
                     tenant = VALUES(tenant),
-                    branch = VALUES(branch)
+                    branch = VALUES(branch),
+                    mdtime = COALESCE(VALUES(mdtime), CURRENT_TIMESTAMP)
             ");
             $this->bindParams($stmt, str_repeat('s', count($params)), $params);
             $stmt->execute();
@@ -266,6 +282,14 @@ class CloudLegacyPosMirrorService
             return null;
         }
 
+        if ($this->isIncomingOlderThanLocal($conn, 'tables', $tableId, $event, [$table, $payload])) {
+            return [
+                'legacy_entity_id' => 'tables:' . $tableId,
+                'stale' => true,
+                'reason' => 'local_newer',
+            ];
+        }
+
         $tableUuid = $this->nullableString($this->firstExistingValue([$table, $payload, $event], [
             'table_uuid',
             'local_uuid',
@@ -275,24 +299,26 @@ class CloudLegacyPosMirrorService
         ]), 36);
         $tableName = $this->nullableString($this->firstExistingValue([$table, $payload], ['tname', 'table_name', 'name']), 255)
             ?: 'Table ' . $tableId;
+        $sourceMdtime = $this->incomingDatetime($event, [$table, $payload]);
         $params = [
             $tableId,
             $tableUuid,
             $tableName,
             $this->intOrZero($this->firstExistingValue([$table, $payload], ['table_case', 'case'])),
             $this->boolInt($this->firstExistingValue([$table, $payload], ['isdeleted', 'deleted']), 0),
+            $sourceMdtime,
         ];
 
         $stmt = $conn->prepare("
-            INSERT INTO tables (id, uuid, tname, table_case, isdeleted)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO tables (id, uuid, tname, table_case, isdeleted, mdtime)
+            VALUES (?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))
             ON DUPLICATE KEY UPDATE
                 id = LAST_INSERT_ID(id),
                 uuid = VALUES(uuid),
                 tname = VALUES(tname),
                 table_case = VALUES(table_case),
                 isdeleted = VALUES(isdeleted),
-                mdtime = CURRENT_TIMESTAMP
+                mdtime = COALESCE(VALUES(mdtime), CURRENT_TIMESTAMP)
         ");
         $this->bindParams($stmt, str_repeat('s', count($params)), $params);
         $stmt->execute();
@@ -316,12 +342,20 @@ class CloudLegacyPosMirrorService
             return null;
         }
 
-        $this->mirrorMenuItem($conn, $itemId, $item);
+        if ($this->isIncomingOlderThanLocal($conn, 'myitems', $itemId, $event, [$item, $payload])) {
+            return [
+                'legacy_entity_id' => 'myitems:' . $itemId,
+                'stale' => true,
+                'reason' => 'local_newer',
+            ];
+        }
+
+        $this->mirrorMenuItem($conn, $itemId, $item, $this->incomingDatetime($event, [$item, $payload]));
 
         return ['legacy_entity_id' => 'myitems:' . $itemId];
     }
 
-    private function mirrorMenuItemFromLine(mysqli $conn, array $line): void
+    private function mirrorMenuItemFromLine(mysqli $conn, array $line, ?string $sourceMdtime = null): void
     {
         $itemId = $this->intOrNull($this->firstValue([$line], 'item_id'));
         $itemName = $this->nullableString($this->firstExistingValue([$line], ['item_name', 'name']), 255);
@@ -337,10 +371,10 @@ class CloudLegacyPosMirrorService
             'cost' => $this->firstValue([$line], 'cost_price'),
             'category_id' => 0,
             'isdeleted' => 0,
-        ]);
+        ], $sourceMdtime);
     }
 
-    private function mirrorMenuItem(mysqli $conn, int $itemId, array $item): void
+    private function mirrorMenuItem(mysqli $conn, int $itemId, array $item, ?string $sourceMdtime = null): void
     {
         $categoryId = $this->intOrZero($this->firstExistingValue([$item], ['category_id', 'cat_id', 'group_id', 'group1']));
         if ($categoryId > 0) {
@@ -373,6 +407,7 @@ class CloudLegacyPosMirrorService
             $this->itemType($this->firstValue([$legacy, $item], 'item_type')),
             $this->boolInt($this->firstValue([$legacy, $item], 'track_stock'), 1),
             $this->boolInt($this->firstValue([$legacy, $item], 'manual_price_edit'), 0),
+            $sourceMdtime,
         ];
 
         $stmt = $conn->prepare("
@@ -394,8 +429,9 @@ class CloudLegacyPosMirrorService
                 branch,
                 item_type,
                 track_stock,
-                manual_price_edit
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                manual_price_edit,
+                mdtime
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))
             ON DUPLICATE KEY UPDATE
                 id = LAST_INSERT_ID(id),
                 iname = VALUES(iname),
@@ -414,7 +450,8 @@ class CloudLegacyPosMirrorService
                 branch = VALUES(branch),
                 item_type = VALUES(item_type),
                 track_stock = VALUES(track_stock),
-                manual_price_edit = VALUES(manual_price_edit)
+                manual_price_edit = VALUES(manual_price_edit),
+                mdtime = COALESCE(VALUES(mdtime), CURRENT_TIMESTAMP)
         ");
         $this->bindParams($stmt, str_repeat('s', count($params)), $params);
         $stmt->execute();
@@ -671,6 +708,90 @@ class CloudLegacyPosMirrorService
     {
         $value = strtolower(trim((string) $value));
         return in_array($value, ['sellable', 'ingredient', 'packaging', 'service'], true) ? $value : 'sellable';
+    }
+
+    private function isIncomingOlderThanLocal(mysqli $conn, string $table, int $id, array $event, array $payloadSources): bool
+    {
+        $incomingTimestamp = $this->incomingTimestamp($event, $payloadSources);
+        if ($incomingTimestamp === null) {
+            return false;
+        }
+
+        $localTimestamp = $this->localTimestamp($conn, $table, $id);
+        if ($localTimestamp === null) {
+            return false;
+        }
+
+        return $incomingTimestamp < $localTimestamp;
+    }
+
+    private function incomingTimestamp(array $event, array $payloadSources): ?int
+    {
+        $payload = $this->payload($event);
+        $sources = array_merge([$event, $payload], $payloadSources);
+        foreach (['captured_at_utc', 'updated_at_utc', 'updated_at', 'mdtime', 'created_at', 'crtime'] as $key) {
+            $value = $this->firstValue($sources, $key);
+            $timestamp = $this->timestampOrNull($value);
+            if ($timestamp !== null) {
+                return $timestamp;
+            }
+        }
+
+        foreach (['sync_revision', 'menu_version', 'revision', 'event_version'] as $key) {
+            $value = $this->firstValue($sources, $key);
+            if (is_numeric($value) && (int) $value > 946684800) {
+                return (int) $value;
+            }
+        }
+
+        return null;
+    }
+
+    private function incomingDatetime(array $event, array $payloadSources): ?string
+    {
+        $timestamp = $this->incomingTimestamp($event, $payloadSources);
+        return $timestamp === null ? null : gmdate('Y-m-d H:i:s', $timestamp);
+    }
+
+    private function localTimestamp(mysqli $conn, string $table, int $id): ?int
+    {
+        if (!in_array($table, ['ot_head', 'tables', 'myitems'], true)) {
+            return null;
+        }
+
+        $stmt = $conn->prepare("SELECT mdtime, crtime FROM {$table} WHERE id = ? LIMIT 1");
+        $stmt->bind_param('i', $id);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        if (!$row) {
+            return null;
+        }
+
+        foreach (['mdtime', 'crtime'] as $key) {
+            $timestamp = $this->timestampOrNull($row[$key] ?? null);
+            if ($timestamp !== null) {
+                return $timestamp;
+            }
+        }
+
+        return null;
+    }
+
+    private function timestampOrNull($value): ?int
+    {
+        $value = $this->nullableString($value, 40);
+        if ($value === null) {
+            return null;
+        }
+
+        if (is_numeric($value) && (int) $value > 946684800) {
+            return (int) $value;
+        }
+
+        $timestamp = strtotime($value);
+        return $timestamp === false ? null : (int) $timestamp;
     }
 
     private function bindParams(mysqli_stmt $stmt, string $types, array &$params): void

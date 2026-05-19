@@ -3,25 +3,17 @@ header('Content-Type: application/json');
 header('Access-Control-Allow-Origin: *');
 header('Access-Control-Allow-Methods: GET');
 
-// Database configuration - check if file exists
-if (!file_exists(__DIR__ . '/../config/database.php')) {
+require_once __DIR__ . '/../includes/db_bootstrap.php';
+
+try {
+    $conn = posmain_db_connect();
+} catch (Throwable $e) {
     http_response_code(500);
     echo json_encode([
         'status' => 'error',
-        'message' => 'Database configuration file not found'
-    ]);
-    exit;
-}
-
-require_once __DIR__ . '/../config/database.php';
-
-// Check if connection exists
-if (!isset($conn) || !$conn) {
-    http_response_code(500);
-    echo json_encode([
-        'status' => 'error',
-        'message' => 'Database connection not established'
-    ]);
+        'message' => 'Database connection not established',
+        'debug' => $e->getMessage()
+    ], JSON_PRETTY_PRINT);
     exit;
 }
 

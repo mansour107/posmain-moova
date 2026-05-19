@@ -40,6 +40,7 @@ class SyncSchemaManager
             'cloud_tables' => $this->cloudTablesSql(),
             'cloud_shifts' => $this->cloudShiftsSql(),
             'cloud_menu_items' => $this->cloudMenuItemsSql(),
+            'cloud_sync_branch_events' => $this->cloudSyncBranchEventsSql(),
             'cloud_moova_branch_events' => $this->cloudMoovaBranchEventsSql(),
         ];
     }
@@ -1510,6 +1511,41 @@ CREATE TABLE IF NOT EXISTS cloud_moova_branch_events (
   UNIQUE KEY uq_cloud_moova_branch_idempotency (branch_uuid, idempotency_key),
   KEY idx_cloud_moova_branch_pending (branch_uuid, status, id),
   KEY idx_cloud_moova_order (moova_order_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
+    private function cloudSyncBranchEventsSql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS cloud_sync_branch_events (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  event_uuid CHAR(36) NOT NULL,
+  branch_uuid CHAR(36) NOT NULL,
+  event_type VARCHAR(80) NOT NULL,
+  event_version BIGINT UNSIGNED NOT NULL DEFAULT 1,
+  source_system VARCHAR(40) NOT NULL DEFAULT 'cloud_pos',
+  aggregate_type VARCHAR(50) NOT NULL,
+  aggregate_uuid CHAR(36) NULL,
+  aggregate_local_id BIGINT UNSIGNED NULL,
+  aggregate_id VARCHAR(191) NOT NULL DEFAULT '',
+  entity_type VARCHAR(50) NOT NULL,
+  entity_uuid CHAR(36) NULL,
+  entity_local_id BIGINT UNSIGNED NULL,
+  idempotency_key VARCHAR(191) NOT NULL,
+  payload_hash CHAR(64) NOT NULL,
+  payload_json LONGTEXT NOT NULL,
+  status ENUM('pending','delivered','ack_applied','ack_declined','ack_failed','dead') NOT NULL DEFAULT 'pending',
+  attempts INT UNSIGNED NOT NULL DEFAULT 0,
+  last_error TEXT NULL,
+  created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  delivered_at DATETIME(6) NULL,
+  acknowledged_at DATETIME(6) NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_cloud_sync_branch_event_uuid (event_uuid),
+  UNIQUE KEY uq_cloud_sync_branch_idempotency (branch_uuid, idempotency_key),
+  KEY idx_cloud_sync_branch_pending (branch_uuid, status, id),
+  KEY idx_cloud_sync_branch_entity (branch_uuid, entity_type, entity_local_id),
+  KEY idx_cloud_sync_branch_created (created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
     }
 }

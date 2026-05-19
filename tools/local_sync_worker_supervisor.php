@@ -27,7 +27,7 @@ $options = getopt('', [
 ]);
 
 if (isset($options['help'])) {
-    fwrite(STDOUT, "Usage: php tools/local_sync_worker_supervisor.php [--check|--once|--loop] [--strict] [--env-file=/etc/posmain/branch-worker.env] [--only=sync_outbox,moova_poller,moova_apply,moova_ack] [--sleep=5] [--cycles=0] [--max-runtime=0] [--pid-file=/run/posmain-branch-worker.pid] [--status-file=/var/lib/posmain/branch-worker-status.json]\n");
+    fwrite(STDOUT, "Usage: php tools/local_sync_worker_supervisor.php [--check|--once|--loop] [--strict] [--env-file=/etc/posmain/branch-worker.env] [--only=sync_outbox,moova_poller,cloud_sync_poller,moova_apply,moova_ack] [--sleep=5] [--cycles=0] [--max-runtime=0] [--pid-file=/run/posmain-branch-worker.pid] [--status-file=/var/lib/posmain/branch-worker-status.json]\n");
     fwrite(STDOUT, "--check runs preflight only. --strict turns branch/cloud warnings into blockers. --cycles=0 and --max-runtime=0 mean unlimited while --loop is active.\n");
     exit(0);
 }

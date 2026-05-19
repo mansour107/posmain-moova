@@ -13,6 +13,7 @@ class BranchWorkerDaemonContractTest extends TestCase
         $this->assertSame([
             'sync_outbox',
             'moova_poller',
+            'cloud_sync_poller',
             'moova_apply',
             'moova_ack',
         ], $daemon->jobNames());
@@ -20,8 +21,9 @@ class BranchWorkerDaemonContractTest extends TestCase
         $descriptions = $daemon->describeJobs();
         $this->assertSame('BranchSyncWorker', $descriptions[0]['worker_class']);
         $this->assertSame('BranchMoovaPollWorker', $descriptions[1]['worker_class']);
-        $this->assertSame('BranchMoovaApplyWorker', $descriptions[2]['worker_class']);
-        $this->assertSame('BranchMoovaAckWorker', $descriptions[3]['worker_class']);
+        $this->assertSame('BranchCloudSyncPollWorker', $descriptions[2]['worker_class']);
+        $this->assertSame('BranchMoovaApplyWorker', $descriptions[3]['worker_class']);
+        $this->assertSame('BranchMoovaAckWorker', $descriptions[4]['worker_class']);
     }
 
     public function testCliListIsJsonAndDoesNotRequireDatabase(): void
@@ -35,9 +37,9 @@ class BranchWorkerDaemonContractTest extends TestCase
         $payload = json_decode(implode("\n", $lines), true);
         $this->assertIsArray($payload);
         $this->assertTrue($payload['ok']);
-        $this->assertCount(4, $payload['jobs']);
+        $this->assertCount(5, $payload['jobs']);
         $this->assertSame('sync_outbox', $payload['jobs'][0]['name']);
-        $this->assertSame('moova_ack', $payload['jobs'][3]['name']);
+        $this->assertSame('moova_ack', $payload['jobs'][4]['name']);
     }
 
     public function testDaemonSourceKeepsSupervisionAndPreflightBoundaries(): void

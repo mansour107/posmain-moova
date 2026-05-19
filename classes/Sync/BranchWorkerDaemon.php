@@ -19,6 +19,11 @@ if (!class_exists('BranchMoovaApplyWorker')) {
     require_once __DIR__ . '/../PosOrderService.php';
     require_once __DIR__ . '/BranchMoovaApplyWorker.php';
 }
+if (!class_exists('BranchCloudSyncPollWorker')) {
+    require_once __DIR__ . '/CloudBranchSyncEventService.php';
+    require_once __DIR__ . '/CloudLegacyPosMirrorService.php';
+    require_once __DIR__ . '/BranchCloudSyncPollWorker.php';
+}
 if (!class_exists('BranchMoovaAckWorker')) {
     require_once __DIR__ . '/BranchMoovaAckWorker.php';
 }
@@ -90,6 +95,7 @@ class BranchWorkerDaemon
                 'cloud_base_url_configured' => $cloudBaseUrl !== '',
                 'branch_sync_secret_configured' => $branchSecretConfigured,
                 'branch_sync_enabled' => !empty($config['sync']['branch_sync_enabled']) && !empty($config['sync']['worker_enabled']),
+                'cloud_pull_enabled' => !empty($config['sync']['cloud_pull_enabled']),
                 'moova_poller_enabled' => !empty($config['sync']['moova_poller_enabled']),
                 'moova_apply_enabled' => !empty($config['sync']['moova_apply_enabled']),
             ],
@@ -228,6 +234,12 @@ class BranchWorkerDaemon
                 'worker' => new BranchMoovaPollWorker(),
                 'default_batch_size' => 25,
                 'purpose' => 'Pull cloud Moova events into the local inbound queue.',
+            ],
+            [
+                'name' => 'cloud_sync_poller',
+                'worker' => new BranchCloudSyncPollWorker(),
+                'default_batch_size' => 25,
+                'purpose' => 'Pull hosted POS edits back into local legacy POS tables.',
             ],
             [
                 'name' => 'moova_apply',

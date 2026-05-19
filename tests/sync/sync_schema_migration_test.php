@@ -58,6 +58,7 @@ class SyncSchemaMigrationTest extends TestCase
         $this->assertArrayHasKey('cloud_tables', $manager->plannedStatements());
         $this->assertArrayHasKey('cloud_shifts', $manager->plannedStatements());
         $this->assertArrayHasKey('cloud_menu_items', $manager->plannedStatements());
+        $this->assertArrayHasKey('cloud_sync_branch_events', $manager->plannedStatements());
         $this->assertArrayHasKey('cloud_moova_branch_events', $manager->plannedStatements());
         $this->assertStringContainsString('CREATE TABLE IF NOT EXISTS sync_branch_identity', $sql);
         $this->assertStringContainsString('id TINYINT UNSIGNED NOT NULL', $sql);
@@ -142,6 +143,9 @@ class SyncSchemaMigrationTest extends TestCase
         $this->assertStringContainsString('available_online TINYINT(1) NOT NULL DEFAULT 1', $sql);
         $this->assertStringContainsString('UNIQUE KEY uq_cloud_menu_item_branch_uuid (branch_uuid, item_uuid)', $sql);
         $this->assertStringContainsString('KEY idx_cloud_menu_external (external_item_id)', $sql);
+        $this->assertStringContainsString('CREATE TABLE IF NOT EXISTS cloud_sync_branch_events', $sql);
+        $this->assertStringContainsString('UNIQUE KEY uq_cloud_sync_branch_idempotency (branch_uuid, idempotency_key)', $sql);
+        $this->assertStringContainsString('KEY idx_cloud_sync_branch_pending (branch_uuid, status, id)', $sql);
         $this->assertStringContainsString('CREATE TABLE IF NOT EXISTS cloud_moova_branch_events', $sql);
         $this->assertStringContainsString('id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT', $sql);
         $this->assertStringContainsString('KEY idx_cloud_moova_branch_pending (branch_uuid, status, id)', $sql);
@@ -201,6 +205,7 @@ class SyncSchemaMigrationTest extends TestCase
         $this->assertTrue($inspect['cloud_tables']['exists']);
         $this->assertTrue($inspect['cloud_shifts']['exists']);
         $this->assertTrue($inspect['cloud_menu_items']['exists']);
+        $this->assertTrue($inspect['cloud_sync_branch_events']['exists']);
         $this->assertTrue($inspect['cloud_moova_branch_events']['exists']);
         $this->assertSame([], $manager->pendingStatements(self::$conn));
 
