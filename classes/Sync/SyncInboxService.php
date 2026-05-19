@@ -2,12 +2,13 @@
 
 require_once __DIR__ . '/CloudMenuSnapshotService.php';
 require_once __DIR__ . '/CloudOrderSnapshotService.php';
+require_once __DIR__ . '/CloudLegacyPosMirrorService.php';
 require_once __DIR__ . '/CloudShiftSnapshotService.php';
 require_once __DIR__ . '/CloudTableSnapshotService.php';
 
 class SyncInboxService
 {
-    public function receiveBranchEvent(mysqli $conn, string $branchUuid, array $event, string $mode): array
+    public function receiveBranchEvent(mysqli $conn, string $branchUuid, array $event, string $mode, array $config = []): array
     {
         $eventUuid = trim((string) ($event['event_uuid'] ?? ''));
         $idempotencyKey = trim((string) ($event['idempotency_key'] ?? ''));
@@ -60,15 +61,18 @@ class SyncInboxService
             $cloudEntityId = $this->cloudEntityId($event);
             $message = $mode . ' receive';
             if ($mode !== SyncApplyMode::RECEIVE_ONLY) {
+                $legacyMirror = null;
                 $snapshot = (new CloudOrderSnapshotService())->upsertFromBranchEvent($conn, $branchUuid, $event);
                 if ($snapshot) {
                     $cloudEntityId = 'cloud_order:' . (int) $snapshot['cloud_order_id'];
                     $message = $mode . ' order snapshot';
+                    $legacyMirror = $this->mirrorLegacyPosTables($conn, $branchUuid, $event, $config);
                 } else {
                     $tableSnapshot = (new CloudTableSnapshotService())->upsertFromBranchEvent($conn, $branchUuid, $event);
                     if ($tableSnapshot) {
                         $cloudEntityId = 'cloud_table:' . (int) $tableSnapshot['cloud_table_id'];
                         $message = $mode . ' table snapshot';
+                        $legacyMirror = $this->mirrorLegacyPosTables($conn, $branchUuid, $event, $config);
                     } else {
                         $shiftSnapshot = (new CloudShiftSnapshotService())->upsertFromBranchEvent($conn, $branchUuid, $event);
                         if ($shiftSnapshot) {
@@ -79,9 +83,13 @@ class SyncInboxService
                             if ($menuSnapshot) {
                                 $cloudEntityId = 'cloud_menu_item:' . (int) $menuSnapshot['cloud_menu_item_id'];
                                 $message = $mode . ' menu snapshot';
+                                $legacyMirror = $this->mirrorLegacyPosTables($conn, $branchUuid, $event, $config);
                             }
                         }
                     }
+                }
+                if ($legacyMirror && isset($legacyMirror['legacy_entity_id'])) {
+                    $message .= ' + legacy POS mirror';
                 }
             }
 
@@ -101,6 +109,15 @@ class SyncInboxService
             $conn->rollback();
             throw $e;
         }
+    }
+
+    private function mirrorLegacyPosTables(mysqli $conn, string $branchUuid, array $event, array $config): ?array
+    {
+        if (empty($config['sync']['legacy_pos_mirror_enabled'])) {
+            return null;
+        }
+
+        return (new CloudLegacyPosMirrorService())->mirrorFromBranchEvent($conn, $branchUuid, $event);
     }
 
     private function findForUpdate(mysqli $conn, string $branchUuid, string $idempotencyKey): ?array

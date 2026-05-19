@@ -195,6 +195,99 @@ class SyncOutboxEventService
         ];
     }
 
+    public function recordMenuItemSnapshot(mysqli $conn, int $itemId, array $options = []): ?array
+    {
+        $config = $options['config'] ?? (function_exists('posmain_app_config') ? posmain_app_config() : []);
+        if (!$this->outboxEnabled($config) || empty($config['sync']['menu_sync_enabled'])) {
+            return null;
+        }
+
+        if ($itemId <= 0) {
+            throw new InvalidArgumentException('Menu item id must be positive.');
+        }
+
+        $this->assertOutboxTableExists($conn);
+
+        $branch = $this->branchIdentity->ensure($conn, $config);
+        $branchUuid = (string) $branch['branch_uuid'];
+        $posTenant = $this->intOrZero($branch['pos_tenant'] ?? ($config['branch']['pos_tenant'] ?? 0));
+        $posBranch = $this->intOrZero($branch['pos_branch'] ?? ($config['branch']['pos_branch'] ?? 0));
+        $eventType = $this->eventType($options['event_type'] ?? 'menu.item_saved');
+        $sourceSystem = $this->sourceSystem($options['source_system'] ?? null);
+
+        $payload = $this->buildMenuItemPayload($conn, $branchUuid, $itemId, [
+            'source_system' => $sourceSystem,
+        ]);
+        $payloadJson = $this->encodeJson($payload);
+        $payloadHash = hash('sha256', $payloadJson);
+        $itemUuid = (string) $payload['item_uuid'];
+        $eventUuid = SyncBranchIdentity::generateUuidV4();
+        $aggregateId = 'myitems:' . $itemId;
+        $idempotencyKey = $this->menuItemIdempotencyKey($branchUuid, $itemId, $eventType, $payloadHash);
+
+        $stmt = $conn->prepare("
+            INSERT INTO sync_outbox (
+                event_uuid,
+                branch_uuid,
+                pos_tenant,
+                pos_branch,
+                aggregate_type,
+                aggregate_uuid,
+                aggregate_local_id,
+                aggregate_id,
+                entity_type,
+                entity_uuid,
+                entity_local_id,
+                event_type,
+                event_version,
+                source_system,
+                source_event_uuid,
+                idempotency_key,
+                payload_json,
+                payload_hash,
+                status,
+                attempts
+            ) VALUES (?, ?, ?, ?, 'menu_item', ?, ?, ?, 'menu_item', ?, ?, ?, ?, ?, NULL, ?, ?, ?, 'pending', 0)
+            ON DUPLICATE KEY UPDATE
+                id = LAST_INSERT_ID(id),
+                payload_json = VALUES(payload_json),
+                payload_hash = VALUES(payload_hash),
+                updated_at = CURRENT_TIMESTAMP
+        ");
+
+        $eventVersion = (int) ($payload['menu_item']['menu_version'] ?? 1);
+        $params = [
+            $eventUuid,
+            $branchUuid,
+            $posTenant,
+            $posBranch,
+            $itemUuid,
+            $itemId,
+            $aggregateId,
+            $itemUuid,
+            $itemId,
+            $eventType,
+            $eventVersion,
+            $sourceSystem,
+            $idempotencyKey,
+            $payloadJson,
+            $payloadHash,
+        ];
+        $this->bindParams($stmt, str_repeat('s', count($params)), $params);
+        $stmt->execute();
+        $outboxId = (int) $conn->insert_id;
+        $stmt->close();
+
+        return [
+            'outbox_id' => $outboxId,
+            'event_uuid' => $eventUuid,
+            'branch_uuid' => $branchUuid,
+            'item_uuid' => $itemUuid,
+            'idempotency_key' => $idempotencyKey,
+            'payload_hash' => $payloadHash,
+        ];
+    }
+
     private function outboxEnabled(array $config): bool
     {
         return (bool) ($config['sync']['outbox_enabled'] ?? true);
@@ -216,6 +309,86 @@ class SyncOutboxEventService
     private function tableIdempotencyKey(string $branchUuid, int $tableId, string $eventType, string $payloadHash): string
     {
         return 'pos:table:' . $tableId . ':' . $eventType . ':' . substr(hash('sha256', $branchUuid . ':' . $payloadHash), 0, 32);
+    }
+
+    private function menuItemIdempotencyKey(string $branchUuid, int $itemId, string $eventType, string $payloadHash): string
+    {
+        return 'pos:menu_item:' . $itemId . ':' . $eventType . ':' . substr(hash('sha256', $branchUuid . ':' . $payloadHash), 0, 32);
+    }
+
+    private function buildMenuItemPayload(mysqli $conn, string $branchUuid, int $itemId, array $options): array
+    {
+        $stmt = $conn->prepare("
+            SELECT i.*,
+                   g.gname AS sync_category_name
+            FROM myitems i
+            LEFT JOIN item_group g ON g.id = i.group1
+            WHERE i.id = ?
+            LIMIT 1
+        ");
+        $stmt->bind_param('i', $itemId);
+        $stmt->execute();
+        $item = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        if (!$item) {
+            throw new RuntimeException('POS menu item was not found for sync snapshot: ' . $itemId);
+        }
+
+        $itemUuid = PosOrderSnapshotBuilder::deterministicUuid($branchUuid, 'myitems:' . $itemId);
+        $revision = $this->revisionFromItem($item);
+        $categoryId = $this->intOrNull($item['group1'] ?? null);
+        $price1 = $this->decimalString($item['price1'] ?? null);
+        $price2 = $this->decimalString($item['price2'] ?? null);
+        $price3 = $this->decimalString($item['price3'] ?? null);
+        $cost = $this->decimalString($item['cost_price'] ?? null);
+
+        $menuItem = [
+            'item_uuid' => $itemUuid,
+            'local_item_id' => $itemId,
+            'item_id' => $itemId,
+            'external_item_id' => null,
+            'barcode' => $this->nullableString($item['barcode'] ?? null),
+            'item_name' => $this->nullableString($item['iname'] ?? null),
+            'name2' => $this->nullableString($item['name2'] ?? null),
+            'category_id' => $categoryId,
+            'category_name' => $this->nullableString($item['sync_category_name'] ?? null),
+            'group2' => $this->intOrZero($item['group2'] ?? 0),
+            'price' => $price1,
+            'price1' => $price1,
+            'price2' => $price2,
+            'price3' => $price3,
+            'cost' => $cost,
+            'cost_price' => $cost,
+            'available_online' => ((int) ($item['isdeleted'] ?? 0)) === 0,
+            'isdeleted' => (int) ($item['isdeleted'] ?? 0),
+            'menu_version' => $revision,
+            'legacy' => [
+                'code' => $this->intOrNull($item['code'] ?? null),
+                'info' => $this->nullableString($item['info'] ?? null),
+                'market_price' => $this->decimalString($item['market_price'] ?? null),
+                'user' => $this->intOrNull($item['user'] ?? null),
+                'tenant' => $this->intOrZero($item['tenant'] ?? 0),
+                'branch' => $this->intOrZero($item['branch'] ?? 0),
+                'item_type' => $this->nullableString($item['item_type'] ?? null),
+                'track_stock' => $this->intOrZero($item['track_stock'] ?? 1),
+                'manual_price_edit' => $this->intOrZero($item['manual_price_edit'] ?? 0),
+            ],
+        ];
+
+        $payload = [
+            'schema_version' => 1,
+            'snapshot_type' => 'pos_menu_item',
+            'source_system' => $this->sourceSystem($options['source_system'] ?? null),
+            'branch_uuid' => $branchUuid,
+            'captured_at_utc' => gmdate('Y-m-d\TH:i:s\Z'),
+            'item_uuid' => $itemUuid,
+            'local_item_id' => $itemId,
+            'menu_item' => $menuItem,
+        ];
+        $payload['payload_hash'] = hash('sha256', $this->encodeJson($payload));
+
+        return $payload;
     }
 
     private function buildTablePayload(mysqli $conn, string $branchUuid, int $tableId, array $options): array
@@ -309,6 +482,31 @@ class SyncOutboxEventService
         }
 
         return max(1, (int) ($table['id'] ?? 1));
+    }
+
+    private function revisionFromItem(array $item): int
+    {
+        foreach (['mdtime', 'updated_at', 'crtime', 'created_at'] as $key) {
+            if (empty($item[$key])) {
+                continue;
+            }
+
+            $timestamp = strtotime((string) $item[$key]);
+            if ($timestamp !== false) {
+                return max(1, (int) $timestamp);
+            }
+        }
+
+        return max(1, (int) ($item['id'] ?? 1));
+    }
+
+    private function decimalString($value): string
+    {
+        if ($value === null || $value === '' || !is_numeric($value)) {
+            return '0.00';
+        }
+
+        return number_format((float) $value, 2, '.', '');
     }
 
     private function eventType($value): string

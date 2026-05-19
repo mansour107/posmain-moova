@@ -37,8 +37,12 @@ define('DB_CACHE_ENABLED', true);
 define('DB_PERSISTENT_CONNECTION', false); // استخدام اتصالات دائمة
 
 // إعدادات الجلسات
-ini_set('session.gc_maxlifetime', 3600);
-ini_set('session.cookie_lifetime', 3600);
+$sessionLifetimeSeconds = (int) (getenv('POSMAIN_SESSION_LIFETIME_SECONDS') ?: 86400);
+if ($sessionLifetimeSeconds <= 0) {
+    $sessionLifetimeSeconds = 86400;
+}
+ini_set('session.gc_maxlifetime', (string) $sessionLifetimeSeconds);
+ini_set('session.cookie_lifetime', (string) $sessionLifetimeSeconds);
 
 // تحسين معالجة الأخطاء
 if (defined('PRODUCTION') && PRODUCTION === true) {

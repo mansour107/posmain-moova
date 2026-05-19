@@ -244,7 +244,7 @@ function scenarioCloudMode(
 ): array {
     file_put_contents($cloudStateFile, json_encode(['mode' => $mode], JSON_PRETTY_PRINT));
     $event = insertOutboxEvent($conn, $runId, $branchUuid, 'cloud-mode-' . $mode);
-    $claimed = (new OutboxWorker())->claimBatch($conn, 'e2e-' . $mode, 10, 5);
+    $claimed = (new OutboxWorker())->claimBatch($conn, 'e2e-' . $mode, 10, 5, $branchUuid);
     $push = pushOutboxRows($conn, $claimed, $branchUuid, $branchSecret, cloudPushUrl($cloud));
     $row = fetchOutboxById($conn, $event['id']);
     $first = $push['json']['results'][0] ?? [];
@@ -270,7 +270,7 @@ function scenarioCloudMode(
 function scenarioCloudDrop(mysqli $conn, string $runId, string $branchUuid, string $branchSecret, array $cloud): array
 {
     $event = insertOutboxEvent($conn, $runId, $branchUuid, 'cloud-down');
-    $claimed = (new OutboxWorker())->claimBatch($conn, 'e2e-cloud-down', 10, 5);
+    $claimed = (new OutboxWorker())->claimBatch($conn, 'e2e-cloud-down', 10, 5, $branchUuid);
     $push = pushOutboxRows($conn, $claimed, $branchUuid, $branchSecret, cloudPushUrl($cloud));
     $row = fetchOutboxById($conn, $event['id']);
 
@@ -289,7 +289,7 @@ function scenarioCloudDrop(mysqli $conn, string $runId, string $branchUuid, stri
 
 function finishCloudDropAfterRestart(mysqli $conn, string $branchUuid, string $branchSecret, array $cloud, array $previous): array
 {
-    $claimed = (new OutboxWorker())->claimBatch($conn, 'e2e-cloud-recovery', 10, 5);
+    $claimed = (new OutboxWorker())->claimBatch($conn, 'e2e-cloud-recovery', 10, 5, $branchUuid);
     $push = pushOutboxRows($conn, $claimed, $branchUuid, $branchSecret, cloudPushUrl($cloud));
     $row = fetchOutboxById($conn, $previous['event_id']);
 
@@ -308,9 +308,9 @@ function finishCloudDropAfterRestart(mysqli $conn, string $branchUuid, string $b
 function scenarioWorkerCrashReclaim(mysqli $conn, string $runId, string $branchUuid, string $branchSecret, array $cloud): array
 {
     $event = insertOutboxEvent($conn, $runId, $branchUuid, 'worker-crash');
-    $claimedByCrashedWorker = (new OutboxWorker())->claimBatch($conn, 'e2e-crashed-worker', 10, 1);
+    $claimedByCrashedWorker = (new OutboxWorker())->claimBatch($conn, 'e2e-crashed-worker', 10, 1, $branchUuid);
     usleep(1300000);
-    $claimedByRecoveryWorker = (new OutboxWorker())->claimBatch($conn, 'e2e-recovery-worker', 10, 5);
+    $claimedByRecoveryWorker = (new OutboxWorker())->claimBatch($conn, 'e2e-recovery-worker', 10, 5, $branchUuid);
     $push = pushOutboxRows($conn, $claimedByRecoveryWorker, $branchUuid, $branchSecret, cloudPushUrl($cloud));
     $row = fetchOutboxById($conn, $event['id']);
 

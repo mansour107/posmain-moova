@@ -46,7 +46,7 @@ class CloudReceiveService
         $results = [];
         foreach ($payload['events'] as $event) {
             try {
-                $results[] = $inbox->receiveBranchEvent($conn, $branchUuid, is_array($event) ? $event : [], $mode);
+                $results[] = $inbox->receiveBranchEvent($conn, $branchUuid, is_array($event) ? $event : [], $mode, $config);
             } catch (Throwable $e) {
                 $results[] = [
                     'event_uuid' => is_array($event) ? (string) ($event['event_uuid'] ?? '') : '',

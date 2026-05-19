@@ -2,7 +2,7 @@
 require_once __DIR__ . '/../includes/production_guard.php';
 production_guard_deny_debug_request('do/doadd_invoice.php');
 
-session_start();
+require_once __DIR__ . '/../includes/session_bootstrap.php';
 include('../includes/connect.php');
 require_once('../includes/auth_guard.php');
 require_once('../includes/csrf.php');

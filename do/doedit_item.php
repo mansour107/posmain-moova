@@ -1,6 +1,7 @@
 <?php
 session_start();
 include('../includes/connect.php');
+require_once __DIR__ . '/../classes/Sync/SyncOutboxEventService.php';
 
 $item_id = $_GET['edit'];
 $usid = $_SESSION['userid'];
@@ -108,6 +109,16 @@ foreach ($_POST['unit_id'] as $index => $unit_id) {
     $conn->query($sqlunit);
 }
 
+try {
+    (new SyncOutboxEventService())->recordMenuItemSnapshot($conn, (int) $item_id, [
+        'event_type' => 'menu.item_saved',
+        'source_system' => 'item_form',
+    ]);
+} catch (Throwable $exception) {
+    if (function_exists('posmain_log_exception') && function_exists('posmain_error_reference')) {
+        posmain_log_exception($exception, posmain_error_reference(), 'edit_item_sync_outbox');
+    }
+}
 
     header('Location: ../add_item.php?edit=' . (int) $item_id . '&saved=1');
     exit;

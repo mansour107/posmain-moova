@@ -2,10 +2,7 @@
 // AJAX Header - No HTML output, only authentication and database connection
 // Use this for AJAX endpoints that return JSON
 
-// Check if session is already started
-if (session_status() == PHP_SESSION_NONE) {
-    session_start();
-}
+require_once __DIR__ . '/session_bootstrap.php';
 
 // Authentication check
 if (!isset($_SESSION['login'])) {

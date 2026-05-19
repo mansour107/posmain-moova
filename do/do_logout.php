@@ -1,5 +1,5 @@
 <?php 
-session_start();
+require_once __DIR__ . '/../includes/session_bootstrap.php';
 
 // التحقق من وجود جلسة صالحة
 if (!isset($_SESSION['login']) || !isset($_SESSION['userid'])) {
@@ -24,10 +24,13 @@ $_SESSION = array();
 // حذف cookie الجلسة
 if (ini_get("session.use_cookies")) {
     $params = session_get_cookie_params();
-    setcookie(session_name(), '', time() - 42000,
-        $params["path"], $params["domain"],
-        $params["secure"], $params["httponly"]
-    );
+    setcookie(session_name(), '', time() - 42000, [
+        'path' => $params['path'] ?? '/',
+        'domain' => $params['domain'] ?? '',
+        'secure' => (bool) ($params['secure'] ?? false),
+        'httponly' => (bool) ($params['httponly'] ?? true),
+        'samesite' => $params['samesite'] ?? 'Lax',
+    ]);
 }
 
 session_destroy();

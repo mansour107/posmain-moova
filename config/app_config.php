@@ -272,6 +272,7 @@ if (!function_exists('posmain_app_config')) {
                 'branch_sync_enabled' => posmain_bool(posmain_first_env(['POSMAIN_BRANCH_SYNC_ENABLED', 'POSMAIN_ENABLE_CLOUD_SYNC'], '0'), false),
                 'worker_enabled' => posmain_bool(posmain_env('POSMAIN_SYNC_WORKER_ENABLED', '1'), true),
                 'cloud_apply_enabled' => posmain_bool(posmain_env('POSMAIN_CLOUD_APPLY_ENABLED', '1'), true),
+                'legacy_pos_mirror_enabled' => posmain_bool(posmain_env('POSMAIN_CLOUD_LEGACY_POS_MIRROR_ENABLED', '0'), false),
                 'shadow_mode' => posmain_bool(posmain_env('POSMAIN_SYNC_SHADOW_MODE', '0'), false),
                 'moova_poller_enabled' => posmain_bool(posmain_env('POSMAIN_MOOVA_POLLER_ENABLED', '1'), true),
                 'moova_apply_enabled' => $moovaWorkerApply,

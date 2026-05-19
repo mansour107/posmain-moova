@@ -13,6 +13,29 @@ if ($isEdit) {
         exit;
     }
 }
+
+function posmain_add_item_unit_options(mysqli $conn): array
+{
+    $options = [];
+    $resunit = $conn->query('SELECT * FROM myunits WHERE COALESCE(isdeleted, 0) = 0 ORDER BY id');
+    while ($rowunit = $resunit->fetch_assoc()) {
+        $options[] = [
+            'id' => (int) $rowunit['id'],
+            'uname' => (string) $rowunit['uname'],
+        ];
+    }
+
+    if (!$options) {
+        $options[] = [
+            'id' => 0,
+            'uname' => 'قطعة',
+        ];
+    }
+
+    return $options;
+}
+
+$unitOptions = posmain_add_item_unit_options($conn);
 ?>
 <?php include('includes/navbar.php') ?>
 <?php include('includes/sidebar.php') ?>
@@ -206,9 +229,9 @@ if ($isEdit) {
                                         <th class="align-middle" style="min-width: 90px;">المعامل</th>
                                         <th class="align-middle" style="min-width: 110px;">الباركود</th>
                                         <th class="align-middle" style="min-width: 90px;">التكلفة</th>
-                                        <th class="align-middle" style="min-width: 90px;">البيع 1</th>
-                                        <th class="align-middle" style="min-width: 90px;">البيع 2</th>
-                                        <th class="align-middle" style="min-width: 90px;">السوق</th>
+                                        <th class="align-middle" style="min-width: 110px;">سعر البيع 1</th>
+                                        <th class="align-middle" style="min-width: 110px;">سعر البيع 2</th>
+                                        <th class="align-middle" style="min-width: 100px;">سعر السوق</th>
                                         <th class="align-middle" style="width: 56px;"></th>
                                     </tr>
                                 </thead>
@@ -218,8 +241,7 @@ if ($isEdit) {
                                         <td>
                                             <select name="unit_id[]" class="form-control form-control-sm">
                                                 <?php
-                                                $resunit = $conn->query('SELECT * FROM myunits');
-                                                while ($rowunit = $resunit->fetch_assoc()) { ?>
+                                                foreach ($unitOptions as $rowunit) { ?>
                                                     <option value="<?= (int) $rowunit['id'] ?>"><?= htmlspecialchars($rowunit['uname'], ENT_QUOTES, 'UTF-8') ?></option>
                                                 <?php } ?>
                                             </select>
@@ -241,8 +263,7 @@ if ($isEdit) {
                                             <td>
                                                 <select name="unit_id[]" class="form-control form-control-sm">
                                                     <?php
-                                                    $resunit = $conn->query('SELECT * FROM myunits');
-                                                    while ($rowunit = $resunit->fetch_assoc()) { ?>
+                                                    foreach ($unitOptions as $rowunit) { ?>
                                                         <option <?= ((int) $rowunit['id'] === (int) $rowunt['unit_id']) ? 'selected' : '' ?> value="<?= (int) $rowunit['id'] ?>"><?= htmlspecialchars($rowunit['uname'], ENT_QUOTES, 'UTF-8') ?></option>
                                                     <?php } ?>
                                                 </select>
@@ -252,7 +273,7 @@ if ($isEdit) {
                                             <td><input type="number" name="cost_price[]" class="form-control form-control-sm" value="<?= htmlspecialchars((string) $rowunt['cost_price'], ENT_QUOTES, 'UTF-8') ?>" step="0.001" min="0"></td>
                                             <td><input type="number" name="price1[]" class="form-control form-control-sm" value="<?= htmlspecialchars((string) $rowunt['price1'], ENT_QUOTES, 'UTF-8') ?>" step="0.001" min="0"></td>
                                             <td><input type="number" name="price2[]" class="form-control form-control-sm" value="<?= htmlspecialchars((string) $rowunt['price2'], ENT_QUOTES, 'UTF-8') ?>" step="0.001" min="0"></td>
-                                            <td><input type="number" name="price3[]" class="form-control form-control-sm" value="<?= htmlspecialchars((string) $rowunt['price3'], ENT_QUOTES, 'UTF-8') ?>" step="0.001" min="0"></td>
+                                            <td><input type="number" name="market_price[]" class="form-control form-control-sm" value="<?= htmlspecialchars((string) $rowunt['price3'], ENT_QUOTES, 'UTF-8') ?>" step="0.001" min="0"></td>
                                             <td class="text-center align-middle">
                                                 <button type="button" class="btn btn-sm btn-outline-danger deleteRow" title="حذف الصف"><i class="fas fa-times"></i></button>
                                             </td>
@@ -264,7 +285,7 @@ if ($isEdit) {
                         </div>
                         <p class="text-muted small mb-0 p-3 border-top bg-light">
                             <i class="fas fa-lightbulb ml-1"></i>
-                            السطر الأول يمثل الوحدة الأساسية. تعديل الأسعار فيه يحدّث باقي الصفوف حسب المعامل.
+                            اكتب السعر الأساسي في "سعر البيع 1" بالسطر الأول. تعديل الأسعار فيه يحدّث باقي الصفوف حسب المعامل.
                         </p>
                     </div>
                     <div class="card-footer d-flex flex-wrap align-items-center justify-content-between bg-white">
