@@ -286,7 +286,7 @@ if ($resuser) {
     }
 
     body {
-        font-family: 'Cairo', sans-serif;
+        font-family: 'Inter', 'IBM Plex Sans Arabic', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
         background-image: url('assets/wallpaper/background1.jpg');
         background-size: cover;
         background-position: center;

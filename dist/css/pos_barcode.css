@@ -4,8 +4,6 @@
  * Modern Design Overhaul
  */
 
-@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700&display=swap');
-
 :root {
     /* Navy Blue & Orange Palette */
     --primary-navy: #1a2f5a;
@@ -32,7 +30,7 @@
 }
 
 body {
-    font-family: 'Cairo', system-ui, -apple-system, sans-serif;
+    font-family: 'Inter', 'IBM Plex Sans Arabic', system-ui, -apple-system, sans-serif;
     background: #f5f8fa;
     font-size: 0.9rem;
     color: #2d2d2d;
@@ -333,7 +331,7 @@ body {
 /* --- SweetAlert2 Overrides if needed --- */
 div:where(.swal2-container) div:where(.swal2-popup) {
     border-radius: 16px !important;
-    font-family: 'Cairo', sans-serif !important;
+    font-family: 'Inter', 'IBM Plex Sans Arabic', sans-serif !important;
 }
 
 /* --- Scrollbars --- */

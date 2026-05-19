@@ -72,12 +72,13 @@ if (!$language_file_found || $lang == null || $lang == '') {
     
     <!-- Font Awesome -->
     <link rel="stylesheet" href="plugins/fontawesome-free/css/all.min.css">
+    <link rel="stylesheet" href="assets/fonts/fonts.css">
     
     <!-- NO Bootstrap here - will be loaded in page -->
     
     <style>
         body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            font-family: 'Inter', 'IBM Plex Sans Arabic', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
             background-color: #f8f9fa;
         }
     </style>

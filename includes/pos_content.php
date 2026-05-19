@@ -507,9 +507,14 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                             // استعلام مع join للحصول على الصورة من جدول imgs
                             $sqlitems = "SELECT m.*, i.iname as img_filename
                                         FROM myitems m 
-                                        LEFT JOIN imgs i ON i.itemid = m.id 
+                                        LEFT JOIN (
+                                            SELECT itemid, MIN(id) AS image_id
+                                            FROM imgs
+                                            WHERE isdeleted = 0
+                                            GROUP BY itemid
+                                        ) image_pick ON image_pick.itemid = m.id
+                                        LEFT JOIN imgs i ON i.id = image_pick.image_id
                                         WHERE m.isdeleted = 0 
-                                        GROUP BY m.id
                                         ORDER BY m.iname";
                             $resitems = $conn->query($sqlitems);
                             

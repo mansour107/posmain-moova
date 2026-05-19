@@ -59,7 +59,7 @@ if ($lang == null) {
   <link rel="stylesheet" href="plugins/daterangepicker/daterangepicker.css">
   <!-- summernote -->
   <link rel="stylesheet" href="plugins/summernote/summernote-bs4.css">
-  <link href="plugins/hadi/google.css" rel="stylesheet">
+  <link href="assets/fonts/fonts.css" rel="stylesheet">
   <link rel="stylesheet" href="dist/css/bootstrap4.2.min.css">
 
   <link rel="stylesheet" href="dist/css/custom.css">

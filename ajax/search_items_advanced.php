@@ -28,10 +28,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['search'])) {
     
     $sql = "SELECT m.*, i.iname as img_filename
             FROM myitems m 
-            LEFT JOIN imgs i ON i.itemid = m.id 
+            LEFT JOIN (
+                SELECT itemid, MIN(id) AS image_id
+                FROM imgs
+                WHERE isdeleted = 0
+                GROUP BY itemid
+            ) image_pick ON image_pick.itemid = m.id
+            LEFT JOIN imgs i ON i.id = image_pick.image_id
             WHERE m.isdeleted = 0 
             AND (m.iname LIKE ? OR m.barcode LIKE ? OR m.id = ?)
-            GROUP BY m.id
             ORDER BY m.iname
             LIMIT 20";
     

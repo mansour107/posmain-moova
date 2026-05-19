@@ -35,7 +35,7 @@ $up = $conn->query("SELECT * FROM employees where id = $userid ")
   <link rel="stylesheet" href="plugins/daterangepicker/daterangepicker.css">
   <!-- summernote -->
   <link rel="stylesheet" href="plugins/summernote/summernote-bs4.css">
-  <!-- Google Font: Source Sans Pro -->
+  <!-- POS UI Fonts -->
   <link href="assets/fonts/fonts.css" rel="stylesheet">
   <!-- Bootstrap 4 RTL -->
   <link rel="stylesheet" href="dist/css/bootstrap-rtl.min.css">

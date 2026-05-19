@@ -1,0 +1,15 @@
+.git
+.env
+.env.*
+!.env.example
+.DS_Store
+.phpunit.result.cache
+.playwright-mcp
+backup/
+logs/
+uploads/
+vendor/
+composer.lock
+composer.phar
+*.log
+Thumbs.db

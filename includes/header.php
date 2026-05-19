@@ -75,8 +75,7 @@ $assetVer = is_file(__DIR__ . '/../dist/css/custom.css')
   <link rel="stylesheet" href="plugins/overlayScrollbars/css/OverlayScrollbars.min.css?v=<?= htmlspecialchars($assetVer, ENT_QUOTES, 'UTF-8') ?>">
   <link rel="stylesheet" href="plugins/daterangepicker/daterangepicker.css?v=<?= htmlspecialchars($assetVer, ENT_QUOTES, 'UTF-8') ?>">
   <link rel="stylesheet" href="plugins/summernote/summernote-bs4.css?v=<?= htmlspecialchars($assetVer, ENT_QUOTES, 'UTF-8') ?>">
-  <link rel="stylesheet" href="plugins/hadi/google.css?v=<?= htmlspecialchars($assetVer, ENT_QUOTES, 'UTF-8') ?>">
-  <link rel="stylesheet" href="assets/libs/playpen-sans-arabic-local.css?v=<?= htmlspecialchars($assetVer, ENT_QUOTES, 'UTF-8') ?>">
+  <link rel="stylesheet" href="assets/fonts/fonts.css?v=<?= htmlspecialchars($assetVer, ENT_QUOTES, 'UTF-8') ?>">
   <link rel="stylesheet" href="dist/css/bootstrap4.2.min.css?v=<?= htmlspecialchars($assetVer, ENT_QUOTES, 'UTF-8') ?>">
   <link rel="stylesheet" href="dist/css/custom.css?v=<?= htmlspecialchars($assetVer, ENT_QUOTES, 'UTF-8') ?>">
   <link rel="stylesheet" href="plugins/select2/css/select2.min.css?v=<?= htmlspecialchars($assetVer, ENT_QUOTES, 'UTF-8') ?>">
@@ -188,5 +187,5 @@ $assetVer = is_file(__DIR__ . '/../dist/css/custom.css')
   <script src="dist/js/js.js"></script>
 </head>
 
-<body class="hold-transition sidebar-mini sidebar-collapse layout-fixed font-semibold" style="font-family: 'Playpen Sans Arabic', cursive;">
+<body class="hold-transition sidebar-mini sidebar-collapse layout-fixed font-semibold" style="font-family: 'Inter', 'IBM Plex Sans Arabic', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;">
   <div class="wrapper">

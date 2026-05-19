@@ -1,6 +1,7 @@
 <!-- CSS Files -->
 <?php $posBarcodeCssVersion = @filemtime(__DIR__ . '/../dist/css/pos_barcode.css') ?: time(); ?>
 <link href="assets/libs/bootstrap.min.css" rel="stylesheet">
+<link href="assets/fonts/fonts.css" rel="stylesheet">
 <link href="assets/libs/fontawesome.min.css" rel="stylesheet">
 <link href="dist/css/pos.css" rel="stylesheet">
 <link href="dist/css/pos_barcode.css?v=<?= (int) $posBarcodeCssVersion ?>" rel="stylesheet">

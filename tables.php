@@ -39,7 +39,7 @@ $rowstg = $conn->query("SELECT * FROM settings WHERE id = 1")->fetch_assoc();
 
 body {
     background-color: var(--bg-color);
-    font-family: 'Tajawal', 'Cairo', sans-serif;
+    font-family: 'Inter', 'IBM Plex Sans Arabic', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
 
 /* Page Header */

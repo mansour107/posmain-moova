@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>تسجيل الدخول - POS</title>
     <link href="assets/libs/bootstrap.min.css" rel="stylesheet">
+    <link href="assets/fonts/fonts.css" rel="stylesheet">
     <link href="assets/libs/fontawesome.min.css" rel="stylesheet">
     <style>
         body {
@@ -14,7 +15,7 @@
             align-items: center;
             justify-content: center;
             margin: 0;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            font-family: 'Inter', 'IBM Plex Sans Arabic', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
         }
         .login-box {
             background: white;
