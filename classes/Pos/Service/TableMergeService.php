@@ -108,8 +108,8 @@ class TableMergeService
 
         $this->tableOrderService->execute($conn, "
             UPDATE ot_head
-            SET order_status = 'merged',
-                invoice_status = 'merged',
+            SET order_status = 'cancelled',
+                invoice_status = 'cancelled',
                 payment_status = 'voided',
                 isdeleted = 1,
                 remaining_amount = 0,

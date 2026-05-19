@@ -92,6 +92,14 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                                     <i class="fas fa-chair me-1"></i>
                                     <span id="selected_table_display">اختر طاولة</span>
                                 </button>
+                                <button type="button"
+                                    class="btn btn-outline-primary btn-sm w-100 pos-transfer-table-btn mt-1"
+                                    id="transferTableBtn"
+                                    onclick="openTableTransferFlow();"
+                                    style="display: none;">
+                                    <i class="fas fa-exchange-alt me-1"></i>
+                                    نقل الطاولة
+                                </button>
                                 <input type="hidden" id="selected_table_id" name="table_id" value="0">
                                 <input type="hidden" id="selected_table_name" name="table_name" value="">
                                 <input type="hidden" id="selected_order_id" name="selected_order_id" value="">
@@ -242,8 +250,8 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                             </div>
 
                             <!-- الأصناف المُضافة -->
-                            <div class="mb-2 flex-grow-1 d-flex flex-column">
-                                <div class="card flex-grow-1 d-flex flex-column border-primary">
+                            <div class="mb-2 flex-grow-1 d-flex flex-column pos-order-items-section">
+                                <div class="card flex-grow-1 d-flex flex-column border-primary pos-order-items-card">
                                     <div class="card-header bg-gradient bg-primary text-white py-2">
                                         <div class="d-flex justify-content-between align-items-center">
                                             <h6 class="mb-0" style="font-size: 0.95rem;">
@@ -360,7 +368,7 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                             </div>
 
                             <!-- قسم الدفع والحسابات -->
-                            <div class="card border-primary mt-1">
+                            <div class="card border-primary mt-1 pos-payment-summary-card">
                                 <div class="card-header bg-primary text-white py-1">
                                     <h6 class="mb-0" style="font-size: 0.8rem;">
                                         <i class="fas fa-calculator me-1"></i>الحسابات والدفع
@@ -596,7 +604,7 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
 
     <!-- Modal الدفع -->
     <div class="modal fade" id="paymentModal" tabindex="-1" aria-labelledby="paymentModalLabel" aria-hidden="true">
-        <div class="modal-dialog modal-lg">
+        <div class="modal-dialog modal-lg pos-payment-modal-dialog">
             <div class="modal-content">
                 <div class="modal-header bg-primary text-white">
                     <h5 class="modal-title" id="paymentModalLabel">
@@ -605,10 +613,10 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                     <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"
                         aria-label="Close"></button>
                 </div>
-                <div class="modal-body">
-                    <div class="row g-3">
+                <div class="modal-body pos-payment-modal-body">
+                    <div class="row g-3 pos-payment-grid">
                         <!-- الإجمالي -->
-                        <div class="col-12">
+                        <div class="col-12 pos-payment-total-section">
                             <div class="card bg-light">
                                 <div class="card-body">
                                     <div class="row align-items-center">
@@ -626,7 +634,7 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                         </div>
 
                         <!-- الخصم -->
-                        <div class="col-12">
+                        <div class="col-12 pos-payment-discount-section">
                             <div class="card border-primary">
                                 <div class="card-header bg-primary text-white">
                                     <h6 class="mb-0">
@@ -657,7 +665,7 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                         </div>
 
                         <!-- الصافي -->
-                        <div class="col-12">
+                        <div class="col-12 pos-payment-net-section">
                             <div class="card bg-success bg-opacity-10 border-success">
                                 <div class="card-body">
                                     <div class="row align-items-center">
@@ -675,7 +683,7 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                         </div>
 
                         <!-- قسم الدفع -->
-                        <div class="col-12">
+                        <div class="col-12 pos-payment-method-section">
                             <div class="card border-success">
                                 <div class="card-header bg-success bg-opacity-10">
                                     <h6 class="mb-0 text-success">
@@ -797,6 +805,17 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                         aria-label="Close"></button>
                 </div>
                 <div class="modal-body p-4">
+                    <div class="alert alert-primary d-none mb-3" id="tableTransferHint" role="status">
+                        <div class="d-flex align-items-start gap-2">
+                            <i class="fas fa-exchange-alt mt-1"></i>
+                            <div>
+                                <strong>اختر الطاولة الجديدة</strong>
+                                <div class="small mb-0">
+                                    الطاولة الفارغة تنقل الطلب المحفوظ بالكامل. الطاولة المشغولة تدمج الطلبين بعد التأكيد. احفظ أي تعديل قبل النقل.
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                     <div class="row g-3" id="tablesGrid">
                         <?php
                         // Get all tables and their latest active order by table_id.
@@ -1082,6 +1101,13 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
     <script>
         if (typeof jQuery === 'undefined') { 
             document.write('<script src="plugins/jquery/jquery.min.js"><\/script>'); 
+        }
+    </script>
+    <script>
+        if (window.jQuery
+            && typeof window.jQuery.ajaxSetup === 'function'
+            && typeof window.POSMAIN_ATTACH_CSRF_HEADER === 'function') {
+            window.jQuery.ajaxSetup({ beforeSend: window.POSMAIN_ATTACH_CSRF_HEADER });
         }
     </script>
     <script src="assets/libs/bootstrap.bundle.min.js"></script>

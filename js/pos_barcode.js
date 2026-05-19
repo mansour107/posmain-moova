@@ -638,10 +638,88 @@ $(document).ready(function() {
 
     let tablesRefreshTimer = null;
     let tablesRefreshInFlight = false;
+    let tableTransferMode = false;
+    let tableTransferInFlight = false;
+    let latestTablesState = [];
+    const defaultTablesModalTitle = $('#tablesModalLabel').html() || '<i class="fas fa-th-large me-2"></i>اختر الطاولة';
 
     function escapeHtml(value) {
         return $('<div>').text(value == null ? '' : String(value)).html();
     }
+
+    function getSelectedTableId() {
+        return parseInt($('#selected_table_id').val() || 0, 10) || 0;
+    }
+
+    function getActiveTableOrderId() {
+        return String($('#selected_order_id').val() || $('#edit_order_id').val() || '').trim();
+    }
+
+    function updateTransferTableButton() {
+        const hasActiveTableOrder = getSelectedTableId() > 0 && getActiveTableOrderId() !== '';
+        $('#transferTableBtn').toggle(hasActiveTableOrder);
+    }
+
+    function showPOSNotice(message, type) {
+        type = type || 'success';
+        if (window.Swal && typeof window.Swal.fire === 'function') {
+            Swal.fire({
+                icon: type === 'danger' ? 'error' : type,
+                title: message,
+                timer: 1600,
+                showConfirmButton: false
+            });
+            return;
+        }
+
+        const alertClass = type === 'danger' ? 'alert-danger' : 'alert-success';
+        const alertDiv = $(`<div class="alert ${alertClass} position-fixed top-0 start-50 translate-middle-x mt-3" style="z-index: 9999;">${escapeHtml(message)}</div>`);
+        $('body').append(alertDiv);
+        setTimeout(() => alertDiv.fadeOut(() => alertDiv.remove()), 2000);
+    }
+
+    function confirmPOSAction(title, text, confirmButtonText) {
+        if (window.Swal && typeof window.Swal.fire === 'function') {
+            return Swal.fire({
+                icon: 'question',
+                title: title,
+                text: text,
+                showCancelButton: true,
+                confirmButtonText: confirmButtonText,
+                cancelButtonText: 'إلغاء',
+                reverseButtons: true
+            }).then(result => !!result.isConfirmed);
+        }
+
+        return Promise.resolve(confirm(text || title));
+    }
+
+    function setTableTransferMode(enabled) {
+        tableTransferMode = !!enabled;
+        $('#tableTransferHint').toggleClass('d-none', !tableTransferMode);
+        $('#tablesModalLabel').html(tableTransferMode
+            ? '<i class="fas fa-exchange-alt me-2"></i>نقل الطاولة'
+            : defaultTablesModalTitle
+        );
+
+        if ($('#tablesGrid').length && latestTablesState.length > 0) {
+            renderTablesGrid(latestTablesState);
+        }
+    }
+
+    window.openTableTransferFlow = function() {
+        const sourceTableId = getSelectedTableId();
+        const sourceOrderId = getActiveTableOrderId();
+
+        if (!sourceTableId || !sourceOrderId) {
+            showPOSNotice('اختر طاولة عليها طلب محفوظ أولاً', 'danger');
+            return;
+        }
+
+        setTableTransferMode(true);
+        bootstrap.Modal.getOrCreateInstance(document.getElementById('tablesModal')).show();
+        window.refreshTablesState();
+    };
 
     function formatTableAmount(value) {
         const amount = parseFloat(value) || 0;
@@ -654,9 +732,35 @@ $(document).ready(function() {
         const tableCase = parseInt(table.table_case || table.has_active_order || 0, 10) ? 1 : 0;
         const orderId = table.order_id ? parseInt(table.order_id, 10) : '';
         const orderTotal = parseFloat(table.fat_net || 0) || 0;
-        const statusClass = tableCase ? 'btn-danger' : 'btn-success';
-        const statusIcon = tableCase ? 'fa-utensils' : 'fa-check-circle';
-        const statusText = tableCase ? 'مشغولة' : 'متاحة';
+        let statusClass = tableCase ? 'btn-danger' : 'btn-success';
+        let statusIcon = tableCase ? 'fa-utensils' : 'fa-check-circle';
+        let statusText = tableCase ? 'مشغولة' : 'متاحة';
+        let transferAction = '';
+        let transferClass = '';
+        let disabledAttr = '';
+
+        if (tableTransferMode) {
+            if (tableId === getSelectedTableId()) {
+                statusClass = 'btn-secondary';
+                statusIcon = 'fa-map-marker-alt';
+                statusText = 'الطاولة الحالية';
+                transferClass = 'pos-transfer-source';
+                disabledAttr = 'disabled';
+            } else if (tableCase) {
+                statusClass = 'btn-outline-success';
+                statusIcon = 'fa-compress-arrows-alt';
+                statusText = 'مشغولة - دمج هنا';
+                transferAction = 'merge';
+                transferClass = 'pos-transfer-target pos-transfer-target-merge';
+            } else {
+                statusClass = 'btn-outline-primary';
+                statusIcon = 'fa-exchange-alt';
+                statusText = 'متاحة - انقل هنا';
+                transferAction = 'move';
+                transferClass = 'pos-transfer-target pos-transfer-target-move';
+            }
+        }
+
         const totalBadge = tableCase && orderTotal > 0
             ? `<div class="mt-2 badge bg-white text-dark">${formatTableAmount(orderTotal)} ج.م</div>`
             : '';
@@ -664,15 +768,18 @@ $(document).ready(function() {
         return `
             <div class="col-md-4 col-sm-6">
                 <button type="button"
-                    class="btn ${statusClass} w-100 table-select-btn position-relative"
+                    class="btn ${statusClass} w-100 table-select-btn position-relative ${transferClass}"
                     data-table-id="${tableId}"
                     data-table-name="${escapeHtml(tableName)}"
                     data-table-case="${tableCase}"
                     data-order-id="${orderId}"
                     data-has-active-order="${tableCase}"
+                    data-transfer-action="${transferAction}"
+                    data-destination-order-id="${orderId}"
+                    ${disabledAttr}
                     style="min-height: 120px; font-size: 1.1rem;">
                     <div class="d-flex flex-column align-items-center justify-content-center">
-                        <i class="fas fa-utensils fa-2x mb-2"></i>
+                        <i class="fas ${statusIcon} fa-2x mb-2"></i>
                         <h6 class="mb-1">${escapeHtml(tableName)}</h6>
                         <small class="d-flex align-items-center">
                             <i class="fas ${statusIcon} me-1"></i>
@@ -692,6 +799,7 @@ $(document).ready(function() {
         }
 
         if (!Array.isArray(tables) || tables.length === 0) {
+            latestTablesState = [];
             $grid.html(`
                 <div class="col-12 text-center text-muted">
                     <i class="fas fa-exclamation-circle fa-3x mb-3"></i>
@@ -701,6 +809,7 @@ $(document).ready(function() {
             return;
         }
 
+        latestTablesState = tables;
         $grid.html(tables.map(renderTableButton).join(''));
     }
 
@@ -735,6 +844,7 @@ $(document).ready(function() {
     $('#tablesModal').on('hidden.bs.modal', function() {
         clearInterval(tablesRefreshTimer);
         tablesRefreshTimer = null;
+        setTableTransferMode(false);
     });
 
     // مسح الطاولة عند التبديل لتيك أواي أو دليفري
@@ -751,10 +861,16 @@ $(document).ready(function() {
             $('#edit_order_id').val('');
             $('#selected_table_display').html('اختر طاولة');
             restoreInitialCustomer();
+            updateTransferTableButton();
         }
     });
 
     $(document).on('click', '.table-select-btn', function() {
+        if (tableTransferMode) {
+            handleTableTransferDestination($(this));
+            return;
+        }
+
         const tableId = $(this).data('table-id');
         const tableName = $(this).data('table-name');
         const tableCase = $(this).data('table-case');
@@ -771,6 +887,7 @@ $(document).ready(function() {
         if (tableCase != 0 && orderId) {
             // طاولة فيها طلب - حمل الطلب واضيف عليه
             $('#selected_order_id').val(orderId);
+            updateTransferTableButton();
             loadExistingOrder(orderId, tableName);
         } else {
             // طاولة فاضية - طلب جديد
@@ -779,6 +896,7 @@ $(document).ready(function() {
             $('#itemData').empty();
             updateItemCount();
             updateTotal();
+            updateTransferTableButton();
             console.log('طاولة فاضية: ' + tableName + ' - طلب جديد');
         }
     });
@@ -794,9 +912,115 @@ $(document).ready(function() {
         restoreInitialCustomer();
         $('#tablesModal').modal('hide');
         clearAllItems();
+        updateTransferTableButton();
     };
+
+    function handleTableTransferDestination($button) {
+        if (tableTransferInFlight || $button.prop('disabled')) {
+            return;
+        }
+
+        const sourceTableId = getSelectedTableId();
+        const sourceOrderId = getActiveTableOrderId();
+        const destinationTableId = parseInt($button.data('table-id') || 0, 10) || 0;
+        const destinationName = String($button.data('table-name') || '');
+        const destinationOrderId = $button.data('destination-order-id') || $button.data('order-id') || '';
+        const transferAction = String($button.data('transfer-action') || '');
+
+        if (!sourceTableId || !sourceOrderId) {
+            showPOSNotice('لا يوجد طلب نشط لنقله', 'danger');
+            return;
+        }
+
+        if (!destinationTableId || destinationTableId === sourceTableId || !transferAction) {
+            showPOSNotice('اختر طاولة أخرى', 'danger');
+            return;
+        }
+
+        const isMerge = transferAction === 'merge';
+        const title = isMerge ? 'دمج الطلبين؟' : 'نقل الطلب؟';
+        const text = isMerge
+            ? 'سيتم نقل أصناف الطلب المحفوظ إلى ' + destinationName + ' وإفراغ الطاولة الحالية. احفظ أي تعديل قبل الدمج.'
+            : 'سيتم نقل الطلب المحفوظ بالكامل إلى ' + destinationName + '. احفظ أي تعديل قبل النقل.';
+        const confirmText = isMerge ? 'دمج الطلبين' : 'نقل الطلب';
+
+        confirmPOSAction(title, text, confirmText).then(function(confirmed) {
+            if (!confirmed) {
+                return;
+            }
+
+            performTableTransfer(transferAction, {
+                sourceTableId: sourceTableId,
+                sourceOrderId: sourceOrderId,
+                destinationTableId: destinationTableId,
+                destinationTableName: destinationName,
+                destinationOrderId: destinationOrderId
+            });
+        });
+    }
+
+    function performTableTransfer(transferAction, transferData) {
+        tableTransferInFlight = true;
+        const isMerge = transferAction === 'merge';
+        const requestScope = isMerge ? 'pos.table.merge' : 'pos.table.move';
+        const ajaxData = {
+            source_table_id: transferData.sourceTableId,
+            destination_table_id: transferData.destinationTableId,
+            idempotency_key: createPOSIdempotencyKey(requestScope)
+        };
+
+        if (isMerge) {
+            ajaxData.source_order_id = transferData.sourceOrderId;
+            ajaxData.destination_order_id = transferData.destinationOrderId;
+        } else {
+            ajaxData.order_id = transferData.sourceOrderId;
+        }
+
+        $('.pos-transfer-target').prop('disabled', true).addClass('disabled');
+
+        $.ajax({
+            url: isMerge ? 'ajax/merge_table_orders.php' : 'ajax/move_table_order.php',
+            method: 'POST',
+            dataType: 'json',
+            data: ajaxData,
+            beforeSend: window.POSMAIN_ATTACH_CSRF_HEADER,
+            success: function(response) {
+                if (!response || !response.success) {
+                    showPOSNotice((response && response.message) || 'فشل نقل الطاولة', 'danger');
+                    return;
+                }
+
+                const nextOrderId = isMerge
+                    ? (response.destination_order_id || transferData.destinationOrderId)
+                    : (response.order_id || transferData.sourceOrderId);
+
+                $('#selected_table_id').val(transferData.destinationTableId);
+                $('#selected_table_name').val(transferData.destinationTableName);
+                $('#selected_order_id').val(nextOrderId);
+                $('#edit_order_id').val(nextOrderId);
+                $('#selected_table_display').html('<i class="fas fa-chair me-1"></i>' + escapeHtml(transferData.destinationTableName));
+                $('#age2').prop('checked', true);
+                syncModeTabs();
+                setTableDefaultCustomer();
+                updateTransferTableButton();
+                $('#tablesModal').modal('hide');
+                loadExistingOrder(nextOrderId, transferData.destinationTableName, { silent: true });
+                window.refreshTablesState();
+                showPOSNotice(isMerge ? 'تم دمج الطلب في الطاولة الجديدة' : 'تم نقل الطلب إلى الطاولة الجديدة', 'success');
+            },
+            error: function(xhr, status, error) {
+                console.error('Table transfer error:', xhr.responseText || error);
+                showPOSNotice('حدث خطأ أثناء نقل الطاولة', 'danger');
+            },
+            complete: function() {
+                tableTransferInFlight = false;
+                $('.pos-transfer-target').prop('disabled', false).removeClass('disabled');
+            }
+        });
+    }
     
-    function loadExistingOrder(orderId, tableName) {
+    function loadExistingOrder(orderId, tableName, options) {
+        options = options || {};
         console.log('🔄 Loading existing order:', orderId, 'Table:', tableName);
         
         $.ajax({
@@ -836,18 +1060,22 @@ $(document).ready(function() {
                         } else {
                             selectCustomerById(getTableDefaultCustomerId());
                         }
-                         // Set hidden edit_order_id
-                         $('#edit_order_id').val(response.order.id);
+                        // Set hidden edit_order_id
+                        $('#edit_order_id').val(response.order.id);
+                        $('#selected_order_id').val(response.order.id);
                     }
-                    
+
                     updateItemCount();
                     updateTotal();
-                    
+                    updateTransferTableButton();
+
                     // Show success message briefly
-                    const alertDiv = $('<div class="alert alert-success position-fixed top-0 start-50 translate-middle-x mt-3" style="z-index: 9999;">تم تحميل الطلب بنجاح</div>');
-                    $('body').append(alertDiv);
-                    setTimeout(() => alertDiv.fadeOut(() => alertDiv.remove()), 2000);
-                    
+                    if (!options.silent) {
+                        const alertDiv = $('<div class="alert alert-success position-fixed top-0 start-50 translate-middle-x mt-3" style="z-index: 9999;">تم تحميل الطلب بنجاح</div>');
+                        $('body').append(alertDiv);
+                        setTimeout(() => alertDiv.fadeOut(() => alertDiv.remove()), 2000);
+                    }
+
                 } else {
                     console.error('❌ Load failed:', response.error);
                     alert('خطأ في تحميل طلب الطاولة: ' + (response.error || 'غير معروف'));
@@ -860,6 +1088,8 @@ $(document).ready(function() {
             }
         });
     }
+
+    updateTransferTableButton();
 
     // ========================================
     // Modal Calculations

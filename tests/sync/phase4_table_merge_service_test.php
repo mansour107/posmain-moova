@@ -41,9 +41,10 @@ try {
     phase4TableMergeAssert(abs((float) $merged['remaining_amount'] - 45.0) < 0.0001, 'remaining amount expected');
     phase4TableMergeAssert(abs((float) $merged['net'] - 75.0) < 0.0001, 'merged net expected');
 
-    $source = $conn->query("SELECT table_id, isdeleted, order_status, payment_status, remaining_amount FROM ot_head WHERE id = 100")->fetch_assoc();
+    $source = $conn->query("SELECT table_id, isdeleted, order_status, invoice_status, payment_status, remaining_amount FROM ot_head WHERE id = 100")->fetch_assoc();
     phase4TableMergeAssert((int) $source['isdeleted'] === 1, 'source order should be deleted from active truth');
-    phase4TableMergeAssert($source['order_status'] === 'merged', 'source order status should be merged');
+    phase4TableMergeAssert($source['order_status'] === 'cancelled', 'source order status should use a real DB enum value');
+    phase4TableMergeAssert($source['invoice_status'] === 'cancelled', 'source invoice status should use a real DB enum value');
     phase4TableMergeAssert($source['payment_status'] === 'voided', 'source payment status should be voided');
     phase4TableMergeAssert(abs((float) $source['remaining_amount']) < 0.0001, 'source remaining should be zeroed');
 
@@ -99,9 +100,9 @@ function phase4TableMergeCreateLegacyTables(mysqli $conn): void
             pro_tybe INT NULL,
             table_id INT NULL,
             isdeleted TINYINT(1) NOT NULL DEFAULT 0,
-            order_status VARCHAR(40) NULL,
-            payment_status VARCHAR(40) NULL,
-            invoice_status VARCHAR(40) NULL,
+            order_status ENUM('draft','active','completed','cancelled') NULL,
+            payment_status ENUM('unpaid','partial','paid','refunded','voided') NULL,
+            invoice_status ENUM('draft','completed','cancelled') NULL,
             fat_total DECIMAL(15,4) NOT NULL DEFAULT 0,
             fat_disc DECIMAL(15,4) NOT NULL DEFAULT 0,
             fat_net DECIMAL(15,4) NOT NULL DEFAULT 0,
