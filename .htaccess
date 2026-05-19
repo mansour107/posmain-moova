@@ -5,7 +5,7 @@ Options -Indexes
     RewriteEngine On
 
     # Private source, data, tooling, and operator-only directories.
-    RewriteRule ^(\.git|backup|logs|db|dbase|update|tools|tests|cli|deploy|docs)(/|$) - [F,L]
+    RewriteRule ^(\.git|backup|logs|var|db|dbase|update|tools|tests|cli|deploy|docs)(/|$) - [F,L]
 
     # Runtime secrets and non-public project metadata.
     RewriteRule (^|/)\.env(\.|$) - [F,L]

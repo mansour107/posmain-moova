@@ -1,5 +1,5 @@
 <?php 
-session_start();
+require_once __DIR__ . '/includes/session_bootstrap.php';
 include('includes/connect.php');
 
 if (!isset($_SESSION['userid'])) {

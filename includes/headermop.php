@@ -1,4 +1,4 @@
-<?php session_start();
+<?php require_once __DIR__ . '/session_bootstrap.php';
 if (!isset($_COOKIE['login'])) {
 
   header('location:indexmop.php');

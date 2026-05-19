@@ -4,7 +4,7 @@
  * يستقبل الأوردر من Cofe widget ويحفظه بنفس طريقة doadd_invoice.php
  */
 ob_start(); // امسح أي output قبل الـ JSON
-session_start();
+require_once __DIR__ . '/../includes/session_bootstrap.php';
 include('../includes/connect.php');
 require_once('../classes/Sync/DocumentCounterService.php');
 require_once('../classes/Sync/SyncOutboxEventService.php');

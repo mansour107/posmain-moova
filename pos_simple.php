@@ -5,7 +5,7 @@ ini_set('display_startup_errors', 1);
 error_reporting(E_ALL);
 
 // بدء الجلسة
-session_start();
+require_once __DIR__ . '/includes/session_bootstrap.php';
 
 // تحميل الاتصال
 include 'includes/connect.php';

@@ -86,8 +86,14 @@ $localWidgetUrl = 'moova_pos_widget.php';
         actions: ['edit', 'cancel'],
         requiresCashierConfirm: true,
         staleStateDeclineCode: 'POS_ORDER_LINES_CHANGED'
+      },
+      menuSync: {
+        eventType: 'menu_sync',
+        autoFingerprint: true,
+        source: 'posmain_local_menu'
       }
     };
+    const MENU_FINGERPRINT_INTERVAL_MS = 20000;
     let widgetSurfaceOpen = false;
     let widgetClosedRect = null;
 
@@ -202,6 +208,92 @@ $localWidgetUrl = 'moova_pos_widget.php';
       return result;
     }
 
+    async function fetchMenuSyncPayload(mode) {
+      const response = await fetch('ajax/moova_menu_sync_payload.php?mode=' + encodeURIComponent(mode || 'full'), {
+        method: 'GET',
+        headers: {
+          'Accept': 'application/json',
+          'X-Requested-With': 'XMLHttpRequest',
+          'X-Moova-Device-Token': DEVICE_TOKEN
+        },
+        cache: 'no-store'
+      });
+
+      let result;
+      try {
+        result = await response.json();
+      } catch (e) {
+        throw new Error('استجابة غير صالحة من الخادم (not JSON)');
+      }
+
+      if (!response.ok || !result.success) {
+        const err = new Error(result.message || 'POS menu sync failed');
+        err.code = result.code || 'POS_MENU_SYNC_FAILED';
+        err.retryable = result.retryable !== false && response.status >= 500;
+        err.payload = result;
+        throw err;
+      }
+
+      return result;
+    }
+
+    async function pushMenuSyncFingerprint() {
+      if (!frame.contentWindow) return;
+      try {
+        const result = await fetchMenuSyncPayload('fingerprint');
+        frame.contentWindow.postMessage(
+          {
+            type: 'cofe.host.menu-fingerprint',
+            catalogVersion: result.catalogVersion || result.fingerprint || null,
+            fingerprint: result.fingerprint || result.catalogVersion || null,
+            summary: result.summary || null
+          },
+          WIDGET_ORIGIN
+        );
+      } catch (error) {
+        console.warn('[Moova] Menu fingerprint check failed:', error);
+      }
+    }
+
+    async function handleMenuSyncRequested(data) {
+      try {
+        const payload = await fetchMenuSyncPayload('full');
+        frame.contentWindow.postMessage(
+          {
+            type: 'cofe.host.menu-sync-result',
+            ok: true,
+            commandId: data.commandId,
+            catalogVersion: payload.catalogVersion || payload.fingerprint || null,
+            fingerprint: payload.fingerprint || payload.catalogVersion || null,
+            menu: payload.menu || { categories: [], items: [] },
+            rawPayload: payload.rawPayload || null,
+            responsePayload: {
+              source: 'posmain_local_menu',
+              summary: payload.summary || null
+            }
+          },
+          WIDGET_ORIGIN
+        );
+        pushMenuSyncFingerprint();
+      } catch (error) {
+        console.error('[Moova] Menu sync failed:', error);
+        frame.contentWindow.postMessage(
+          {
+            type: 'cofe.host.menu-sync-result',
+            ok: false,
+            commandId: data.commandId,
+            message: error?.message || 'POS menu sync failed',
+            retryable: error?.retryable !== false,
+            errorPayload: {
+              code: error?.code || 'POS_MENU_SYNC_FAILED',
+              payload: error?.payload || null
+            }
+          },
+          WIDGET_ORIGIN
+        );
+      }
+    }
+
     function sendCofeInit() {
       if (!frame.contentWindow) return;
       console.log('[Moova] Sending cofe.init');
@@ -215,9 +307,11 @@ $localWidgetUrl = 'moova_pos_widget.php';
         },
         WIDGET_ORIGIN
       );
+      pushMenuSyncFingerprint();
     }
 
     frame.addEventListener('load', sendCofeInit);
+    window.setInterval(pushMenuSyncFingerprint, MENU_FINGERPRINT_INTERVAL_MS);
 
     window.addEventListener('message', async function (event) {
       if (event.origin !== WIDGET_ORIGIN) return;
@@ -228,6 +322,11 @@ $localWidgetUrl = 'moova_pos_widget.php';
 
       if (msgType === 'cofe.widget.request-init') {
         sendCofeInit();
+        return;
+      }
+
+      if (msgType === 'cofe.menu-sync.requested') {
+        handleMenuSyncRequested(event.data || {});
         return;
       }
 

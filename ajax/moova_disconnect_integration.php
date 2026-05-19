@@ -1,7 +1,7 @@
 <?php
 
 ob_start();
-session_start();
+require_once __DIR__ . '/../includes/session_bootstrap.php';
 include('../includes/connect.php');
 ob_clean();
 

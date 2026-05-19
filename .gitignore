@@ -8,6 +8,7 @@ composer.phar
 backup/
 uploads/
 logs/
+var/
 .playwright-mcp/
 *.log
 Thumbs.db

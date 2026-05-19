@@ -5,7 +5,7 @@ ob_start();
 error_reporting(E_ALL);
 ini_set('display_errors', 0); // Keep 0 to prevent noise in JSON response
 
-session_start();
+require_once __DIR__ . '/../includes/session_bootstrap.php';
 
 // Valid shutdown handler to catch fatal errors
 register_shutdown_function(function() {

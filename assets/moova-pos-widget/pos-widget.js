@@ -5,6 +5,7 @@
   const TOAST_DURATION_MS = 3200;
   const HOST_ORDER_ACK_TIMEOUT_MS = 30000;
   const HOST_ORDER_CHANGE_TIMEOUT_MS = 30000;
+  const HOST_MENU_SYNC_TIMEOUT_MS = 30000;
   const PANEL_BASE_HEIGHT = 96;
   const PANEL_CARD_HEIGHT = 324;
   const PANEL_FOOTER_HEIGHT = 64;
@@ -263,8 +264,12 @@
     confirmingCommandIds: new Set(),
     decliningCommandIds: new Set(),
     processingCommandIds: new Set(),
+    syncingMenuCommandIds: new Set(),
     pendingHostOrderResults: new Map(),
     pendingHostCommandResults: new Map(),
+    pendingHostMenuSyncResults: new Map(),
+    latestMenuSyncFingerprint: null,
+    latestMenuSyncSummary: null,
     lastSignals: {
       visible: null,
       count: null,
@@ -390,6 +395,14 @@
       handleHostOrderChangeResult(event, payload);
       return;
     }
+    if (payload.type === 'cofe.host.menu-sync-result') {
+      handleHostMenuSyncResult(event, payload);
+      return;
+    }
+    if (payload.type === 'cofe.host.menu-fingerprint') {
+      handleHostMenuFingerprint(event, payload);
+      return;
+    }
     if (payload.type === 'cofe.host.open' || payload.type === 'cofe.host.toggle' || payload.type === 'cofe.host.close') {
       handleHostControlMessage(payload);
       return;
@@ -508,8 +521,12 @@
     state.confirmingCommandIds.clear();
     state.decliningCommandIds.clear();
     state.processingCommandIds.clear();
+    state.syncingMenuCommandIds.clear();
+    state.latestMenuSyncFingerprint = null;
+    state.latestMenuSyncSummary = null;
     clearPendingHostOrderResults(createWidgetError(t('failedConfirmOrder'), 409, 'host_order_cancelled'));
     clearPendingHostCommandResults(createWidgetError(t('failedConfirmOrder'), 409, 'host_order_change_cancelled'));
+    clearPendingHostMenuSyncResults(createWidgetError(t('failedFetchPending'), 409, 'host_menu_sync_cancelled'));
   }
 
   function cleanupRealtime() {
@@ -696,6 +713,12 @@
                 source: WIDGET_SOURCE,
                 buildVersion: BUILD_VERSION,
                 embedded: true,
+                menuSync: state.latestMenuSyncFingerprint ? {
+                  fingerprint: state.latestMenuSyncFingerprint,
+                  catalogVersion: state.latestMenuSyncFingerprint,
+                  summary: state.latestMenuSyncSummary,
+                  source: WIDGET_SOURCE,
+                } : null,
               },
             },
           },
@@ -795,6 +818,7 @@
         state.commands = Array.isArray(result.commands) ? result.commands : [];
         state.drafts = Array.isArray(result.drafts) ? result.drafts.slice() : [];
         state.transportError = null;
+        processPendingCommands();
         const nextItems = getNotificationItems();
         const hasNewNotification = nextItems.length > previousCount
           || nextItems.some((item) => !previousIds.has(item.key));
@@ -873,6 +897,17 @@
       const type = String(command?.commandType || '').trim().toLowerCase();
       const status = String(command?.status || '').trim().toLowerCase();
       return type === 'order_change' && !['completed', 'expired', 'cancelled'].includes(status);
+    });
+  }
+
+  function getMenuSyncCommands() {
+    if (!Array.isArray(state.commands)) {
+      return [];
+    }
+    return state.commands.filter((command) => {
+      const type = String(command?.commandType || '').trim().toLowerCase();
+      const status = String(command?.status || '').trim().toLowerCase();
+      return type === 'menu_sync' && !['completed', 'expired', 'cancelled'].includes(status);
     });
   }
 
@@ -1320,7 +1355,71 @@
   }
 
   function processPendingCommands() {
+    const nextMenuSyncCommand = getMenuSyncCommands()[0] || null;
+    if (nextMenuSyncCommand) {
+      syncMenuCommand(nextMenuSyncCommand.id);
+    }
     // Order-change commands must stay visible until the cashier approves or declines.
+  }
+
+  async function syncMenuCommand(commandId) {
+    const normalizedCommandId = asText(commandId);
+    const command = findMenuSyncCommand(normalizedCommandId);
+    if (!command || state.processingCommandIds.has(normalizedCommandId)) {
+      return;
+    }
+    state.processingCommandIds.add(normalizedCommandId);
+    state.syncingMenuCommandIds.add(normalizedCommandId);
+    try {
+      const claimed = await apiFetch(`/api/integrations/pos/local-bridge/commands/${encodeURIComponent(normalizedCommandId)}/claim`, {
+        method: 'POST',
+      });
+      const claimedCommand = claimed.command || command;
+      if (String(claimedCommand.status || '').toLowerCase() === 'completed') {
+        applyCommandResult(claimedCommand);
+        return;
+      }
+      const requestPayload = getCommandRequestPayload(claimedCommand);
+      const hostResult = await sendCommandToHostForMenuSync(claimedCommand);
+      const catalogVersion = asText(
+        hostResult.catalogVersion
+        || hostResult.fingerprint
+        || requestPayload.catalogVersion
+        || requestPayload.menuFingerprint,
+      ) || null;
+      if (catalogVersion) {
+        state.latestMenuSyncFingerprint = catalogVersion;
+      }
+      if (hostResult.summary && typeof hostResult.summary === 'object') {
+        state.latestMenuSyncSummary = hostResult.summary;
+      } else if (hostResult.responsePayload && typeof hostResult.responsePayload === 'object' && hostResult.responsePayload.summary) {
+        state.latestMenuSyncSummary = hostResult.responsePayload.summary;
+      }
+      const completeResult = await apiFetch(`/api/integrations/pos/local-bridge/commands/${encodeURIComponent(normalizedCommandId)}/complete`, {
+        method: 'POST',
+        body: {
+          catalogVersion,
+          menu: hostResult.menu || { categories: [], items: [] },
+          rawPayload: hostResult.rawPayload || {
+            source: WIDGET_SOURCE,
+            catalogVersion,
+          },
+          responsePayload: {
+            source: WIDGET_SOURCE,
+            buildVersion: BUILD_VERSION,
+            hostResponse: hostResult.responsePayload || null,
+          },
+        },
+      });
+      applyCommandResult(completeResult.command);
+      refreshPending({ silent: true });
+    } catch (error) {
+      await acknowledgeHostMenuSyncFailure(normalizedCommandId, error);
+    } finally {
+      state.syncingMenuCommandIds.delete(normalizedCommandId);
+      state.processingCommandIds.delete(normalizedCommandId);
+      render();
+    }
   }
 
   async function confirmOrderChange(commandId) {
@@ -1534,6 +1633,120 @@
     pending.reject(error);
   }
 
+  function sendCommandToHostForMenuSync(command) {
+    const commandId = asText(command.id);
+    const requestPayload = getCommandRequestPayload(command);
+    if (!commandId) {
+      const error = createWidgetError(t('missingHostOrderPayload'), 409, 'host_menu_sync_payload_missing');
+      error.phase = 'host_menu_sync_prepare';
+      return Promise.reject(error);
+    }
+    if (!window.parent || window.parent === window) {
+      const error = createWidgetError(t('failedConfirmOrder'), 409, 'host_parent_missing');
+      error.phase = 'host_menu_sync_prepare';
+      return Promise.reject(error);
+    }
+
+    return new Promise((resolve, reject) => {
+      const existing = state.pendingHostMenuSyncResults.get(commandId);
+      if (existing?.timeoutId) {
+        clearTimeout(existing.timeoutId);
+      }
+      const timeoutId = window.setTimeout(() => {
+        state.pendingHostMenuSyncResults.delete(commandId);
+        const error = createWidgetError(t('hostOrderAckTimeout'), 408, 'host_menu_sync_ack_timeout');
+        error.phase = 'host_menu_sync_ack';
+        reject(error);
+      }, HOST_MENU_SYNC_TIMEOUT_MS);
+      state.pendingHostMenuSyncResults.set(commandId, {
+        resolve,
+        reject,
+        timeoutId,
+      });
+
+      try {
+        window.parent.postMessage(
+          {
+            type: 'cofe.menu-sync.requested',
+            commandId,
+            requestPayload,
+            catalogVersion: asText(requestPayload.catalogVersion || requestPayload.menuFingerprint) || null,
+            menuFingerprint: asText(requestPayload.menuFingerprint || requestPayload.catalogVersion) || null,
+          },
+          state.parentOrigin || '*',
+        );
+      } catch (error) {
+        clearTimeout(timeoutId);
+        state.pendingHostMenuSyncResults.delete(commandId);
+        error.phase = 'host_menu_sync_post_message';
+        reject(error);
+      }
+    });
+  }
+
+  function handleHostMenuSyncResult(event, payload) {
+    if (state.parentOrigin && event.origin !== state.parentOrigin) {
+      return;
+    }
+    const commandId = asText(payload && payload.commandId);
+    if (!commandId) {
+      return;
+    }
+    const pending = state.pendingHostMenuSyncResults.get(commandId);
+    if (!pending) {
+      return;
+    }
+    if (pending.timeoutId) {
+      clearTimeout(pending.timeoutId);
+    }
+    state.pendingHostMenuSyncResults.delete(commandId);
+    if (payload.ok === true) {
+      pending.resolve(payload);
+      return;
+    }
+    const hostError = normalizeHostBridgeError(payload, t('failedFetchPending'));
+    const error = createWidgetError(hostError.message, 409, hostError.code || 'host_menu_sync_failed');
+    error.phase = 'host_menu_sync_result';
+    error.retryable = payload.retryable !== false;
+    error.errorPayload = payload.errorPayload || payload;
+    pending.reject(error);
+  }
+
+  function handleHostMenuFingerprint(event, payload) {
+    if (state.parentOrigin && event.origin !== state.parentOrigin) {
+      return;
+    }
+    const fingerprint = asText(payload?.fingerprint || payload?.catalogVersion);
+    if (!fingerprint) {
+      return;
+    }
+    state.latestMenuSyncFingerprint = fingerprint;
+    state.latestMenuSyncSummary = payload.summary && typeof payload.summary === 'object'
+      ? payload.summary
+      : null;
+  }
+
+  async function acknowledgeHostMenuSyncFailure(commandId, error) {
+    try {
+      const result = await apiFetch(`/api/integrations/pos/local-bridge/commands/${encodeURIComponent(commandId)}/fail`, {
+        method: 'POST',
+        body: {
+          message: error?.message || t('failedFetchPending'),
+          retryable: error?.retryable !== false,
+          errorPayload: {
+            source: WIDGET_SOURCE,
+            buildVersion: BUILD_VERSION,
+            code: error?.code || null,
+            hostResponse: error?.errorPayload || null,
+          },
+        },
+      });
+      applyCommandResult(result.command);
+    } catch {
+      // Keep the command visible to the next poll if backend acknowledgement fails.
+    }
+  }
+
   async function acknowledgeHostOrderChangeFailure(commandId, command, error) {
     try {
       if (error?.retryable === false) {
@@ -1710,6 +1923,18 @@
       }
     });
     state.pendingHostCommandResults.clear();
+  }
+
+  function clearPendingHostMenuSyncResults(error) {
+    state.pendingHostMenuSyncResults.forEach((entry) => {
+      if (entry?.timeoutId) {
+        clearTimeout(entry.timeoutId);
+      }
+      if (entry?.reject && error) {
+        entry.reject(error);
+      }
+    });
+    state.pendingHostMenuSyncResults.clear();
   }
 
   function applyDraftResult(updatedDraft) {
@@ -2619,6 +2844,12 @@
     const normalizedCommandId = asText(commandId);
     if (!normalizedCommandId) return null;
     return getOrderChangeCommands().find((command) => String(command.id) === normalizedCommandId) || null;
+  }
+
+  function findMenuSyncCommand(commandId) {
+    const normalizedCommandId = asText(commandId);
+    if (!normalizedCommandId) return null;
+    return getMenuSyncCommands().find((command) => String(command.id) === normalizedCommandId) || null;
   }
 
   function getUiPayload(draft) {

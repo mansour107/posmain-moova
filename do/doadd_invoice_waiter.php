@@ -4,7 +4,7 @@
  * Waiter Invoice Handler with Auto-logout Flow
  */
 
-session_start();
+require_once __DIR__ . '/../includes/session_bootstrap.php';
 
 // التحقق من تسجيل دخول الويتر
 if (!isset($_SESSION['user_logged_in']) || $_SESSION['user_logged_in'] !== true || !isset($_SESSION['is_waiter']) || $_SESSION['is_waiter'] != 1) {

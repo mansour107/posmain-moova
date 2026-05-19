@@ -47,6 +47,45 @@ class MoovaWidgetBridgeContractTest extends TestCase
         $this->assertGreaterThanOrEqual(4, substr_count($source, 'syncEventType:'));
     }
 
+    public function testParentWidgetBridgeSupportsTokenBoundMenuSync(): void
+    {
+        $source = $this->source('elements/pos/cofe_widget.php');
+        $endpointSource = $this->source('ajax/moova_menu_sync_payload.php');
+        $widgetSource = $this->source('assets/moova-pos-widget/pos-widget.js');
+
+        $this->assertStringContainsString('menuSync: {', $source);
+        $this->assertStringContainsString("autoFingerprint: true", $source);
+        $this->assertStringContainsString('ajax/moova_menu_sync_payload.php', $source);
+        $this->assertStringContainsString('cofe.host.menu-fingerprint', $source);
+        $this->assertStringContainsString('cofe.menu-sync.requested', $source);
+        $this->assertStringContainsString('cofe.host.menu-sync-result', $source);
+        $this->assertStringContainsString("'X-Moova-Device-Token': DEVICE_TOKEN", $source);
+
+        $this->assertStringContainsString('function moova_menu_sync_fingerprint(mysqli $conn)', $endpointSource);
+        $this->assertStringContainsString('X-Moova-Device-Token', $endpointSource);
+        $this->assertStringContainsString('findActiveLinkForUser($conn', $endpointSource);
+        $this->assertStringContainsString("'pos-cat-' . (int) \$row['id']", $endpointSource);
+        $this->assertStringContainsString("'pos-item-' . \$itemId", $endpointSource);
+
+        $this->assertStringContainsString("payload.type === 'cofe.host.menu-sync-result'", $widgetSource);
+        $this->assertStringContainsString("payload.type === 'cofe.host.menu-fingerprint'", $widgetSource);
+        $this->assertStringContainsString("type === 'menu_sync'", $widgetSource);
+        $this->assertStringContainsString('async function syncMenuCommand(commandId)', $widgetSource);
+        $this->assertStringContainsString("type: 'cofe.menu-sync.requested'", $widgetSource);
+        $this->assertStringContainsString('pendingHostMenuSyncResults: new Map()', $widgetSource);
+        $this->assertStringContainsString('/local-bridge/commands/${encodeURIComponent(normalizedCommandId)}/complete', $widgetSource);
+    }
+
+    public function testItemDeleteRecordsMenuSnapshotForSyncConsumers(): void
+    {
+        $source = $this->source('do/dodel_item.php');
+
+        $this->assertStringContainsString("require_once('../classes/Sync/SyncOutboxEventService.php')", $source);
+        $this->assertStringContainsString('UPDATE myitems SET isdeleted = 1 WHERE id = ?', $source);
+        $this->assertStringContainsString('SyncOutboxEventService::recordMenuItemSnapshot($conn, $id', $source);
+        $this->assertStringContainsString("'source_system' => 'item_delete'", $source);
+    }
+
     private function source(string $path): string
     {
         $absolute = __DIR__ . '/../../' . $path;

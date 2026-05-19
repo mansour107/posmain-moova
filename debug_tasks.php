@@ -1,6 +1,6 @@
 <?php
 include('includes/connect.php');
-session_start();
+require_once __DIR__ . '/includes/session_bootstrap.php';
 
 echo "<h1>Debug Info</h1>";
 echo "<h2>Session</h2>";

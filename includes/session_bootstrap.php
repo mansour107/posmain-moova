@@ -31,6 +31,32 @@ if (!function_exists('posmain_session_configure_runtime')) {
         $lifetime = posmain_session_lifetime_seconds();
         ini_set('session.gc_maxlifetime', (string) $lifetime);
         ini_set('session.cookie_lifetime', (string) $lifetime);
+
+        $savePath = posmain_session_save_path();
+        if ($savePath !== null) {
+            session_save_path($savePath);
+        }
+    }
+}
+
+if (!function_exists('posmain_session_save_path')) {
+    function posmain_session_save_path(): ?string
+    {
+        $configuredPath = trim((string) posmain_env('POSMAIN_SESSION_SAVE_PATH', ''));
+        $path = $configuredPath !== '' ? $configuredPath : __DIR__ . '/../var/sessions';
+
+        if (!is_dir($path) && !@mkdir($path, 0700, true) && !is_dir($path)) {
+            error_log('POSMAIN session save path is not writable: ' . $path);
+            return null;
+        }
+
+        if (!is_writable($path)) {
+            error_log('POSMAIN session save path is not writable: ' . $path);
+            return null;
+        }
+
+        @chmod($path, 0700);
+        return $path;
     }
 }
 

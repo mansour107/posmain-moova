@@ -1,6 +1,6 @@
 <?php
 // Test file to check orders
-session_start();
+require_once __DIR__ . '/../includes/session_bootstrap.php';
 include('../includes/connect.php');
 
 echo "<h2>Testing Orders Query</h2>";

@@ -3,7 +3,7 @@
 error_reporting(0);
 ini_set('display_errors', 0);
 
-session_start();
+require_once __DIR__ . '/../includes/session_bootstrap.php';
 
 // استخدام dirname للحصول على المسار الصحيح
 $root_path = dirname(__DIR__);

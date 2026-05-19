@@ -1,3 +1,4 @@
+<?php require_once __DIR__ . '/includes/session_bootstrap.php'; ?>
 <!DOCTYPE html>
 <html>
 <head>
@@ -19,7 +20,6 @@
   <link href="assets/fonts/fonts.css" rel="stylesheet">
 </head>
 <?php
-                        session_start();
                         if (isset($_COOKIE['login'])) {
                           include('includes/connect.php');
                             header("location:mop.php");

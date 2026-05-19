@@ -1,5 +1,5 @@
 <?php
-session_start();
+require_once __DIR__ . '/includes/session_bootstrap.php';
 if (!isset($_SESSION['login'])) {
     echo json_encode(['success' => false, 'message' => 'غير مصرح']);
     exit;

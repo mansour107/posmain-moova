@@ -1,6 +1,6 @@
 <?php 
 include('../includes/connect.php');
-session_start();
+require_once __DIR__ . '/../includes/session_bootstrap.php';
 
 $user = $_SESSION['userid'];
 $name = $_POST['name'];

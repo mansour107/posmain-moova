@@ -1,5 +1,5 @@
 <?php include('../../includes/connect.php');
-session_start();
+require_once __DIR__ . '/../../includes/session_bootstrap.php';
 $id = $_GET['id'];
 $rent  = $_GET['r'];
 
