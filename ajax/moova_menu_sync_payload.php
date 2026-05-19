@@ -18,6 +18,31 @@ function moova_menu_sync_header(string $name): string
     return isset($_SERVER[$key]) ? trim((string) $_SERVER[$key]) : '';
 }
 
+function moova_menu_sync_bearer_token(): string
+{
+    $authorization = moova_menu_sync_header('Authorization');
+    if (preg_match('/^Bearer\s+(.+)$/i', $authorization, $matches)) {
+        return trim((string) $matches[1]);
+    }
+
+    return '';
+}
+
+function moova_menu_sync_device_token(): string
+{
+    $headerToken = moova_menu_sync_header('X-Moova-Device-Token');
+    if ($headerToken !== '') {
+        return $headerToken;
+    }
+
+    $posHeaderToken = moova_menu_sync_header('X-Pos-Device-Token');
+    if ($posHeaderToken !== '') {
+        return $posHeaderToken;
+    }
+
+    return moova_menu_sync_bearer_token();
+}
+
 function moova_menu_sync_decimal($value): float
 {
     return is_numeric($value) ? (float) $value : 0.0;
@@ -221,6 +246,7 @@ function moova_menu_sync_build_menu(mysqli $conn, string $catalogVersion): array
             'source' => 'posmain_local_menu',
             'catalogVersion' => $catalogVersion,
             'generatedAt' => gmdate('Y-m-d\TH:i:s\Z'),
+            'priceUnit' => 'major',
             'counts' => [
                 'categories' => count($categories),
                 'items' => count($items),
@@ -229,20 +255,33 @@ function moova_menu_sync_build_menu(mysqli $conn, string $catalogVersion): array
     ];
 }
 
-if (empty($_SESSION['userid'])) {
-    moova_menu_sync_json(401, ['success' => false, 'code' => 'AUTH_REQUIRED']);
-}
-
 require __DIR__ . '/../includes/connect.php';
 
 try {
     MoovaPosIntegration::ensureSchema($conn);
-    $link = MoovaPosIntegration::findActiveLinkForUser($conn, (int) $_SESSION['userid']);
+    $deviceToken = moova_menu_sync_device_token();
+    $incomingBranchId = trim((string) (
+        moova_menu_sync_header('X-Moova-Branch-Id')
+        ?: ($_GET['branchId'] ?? $_POST['branchId'] ?? '')
+    ));
+    if ($deviceToken !== '') {
+        $link = $incomingBranchId !== ''
+            ? MoovaPosIntegration::findActiveLinkByTokenAndBranch($conn, $deviceToken, $incomingBranchId)
+            : null;
+        if (!$link) {
+            $link = MoovaPosIntegration::findActiveLinkByToken($conn, $deviceToken);
+        }
+    } else {
+        if (empty($_SESSION['userid'])) {
+            moova_menu_sync_json(401, ['success' => false, 'code' => 'AUTH_REQUIRED']);
+        }
+        $link = MoovaPosIntegration::findActiveLinkForUser($conn, (int) $_SESSION['userid']);
+        $deviceToken = moova_menu_sync_header('X-Moova-Device-Token');
+    }
 } catch (Throwable $e) {
     moova_menu_sync_json(500, ['success' => false, 'code' => 'MOOVA_MAPPING_UNAVAILABLE']);
 }
 
-$deviceToken = moova_menu_sync_header('X-Moova-Device-Token');
 if (!$link || $deviceToken === '' || !hash_equals((string) ($link['moova_device_token'] ?? ''), $deviceToken)) {
     moova_menu_sync_json(403, ['success' => false, 'code' => 'MOOVA_LINK_NOT_FOUND']);
 }

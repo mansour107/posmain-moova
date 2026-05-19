@@ -63,7 +63,11 @@ class MoovaWidgetBridgeContractTest extends TestCase
 
         $this->assertStringContainsString('function moova_menu_sync_fingerprint(mysqli $conn)', $endpointSource);
         $this->assertStringContainsString('X-Moova-Device-Token', $endpointSource);
+        $this->assertStringContainsString('Authorization', $endpointSource);
+        $this->assertStringContainsString('findActiveLinkByToken($conn', $endpointSource);
+        $this->assertStringContainsString('findActiveLinkByTokenAndBranch($conn', $endpointSource);
         $this->assertStringContainsString('findActiveLinkForUser($conn', $endpointSource);
+        $this->assertStringContainsString("'priceUnit' => 'major'", $endpointSource);
         $this->assertStringContainsString("'pos-cat-' . (int) \$row['id']", $endpointSource);
         $this->assertStringContainsString("'pos-item-' . \$itemId", $endpointSource);
 
