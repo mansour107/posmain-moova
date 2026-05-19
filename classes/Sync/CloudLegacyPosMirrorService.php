@@ -2,6 +2,8 @@
 
 class CloudLegacyPosMirrorService
 {
+    private array $columnExistsCache = [];
+
     public function mirrorFromBranchEvent(mysqli $conn, string $branchUuid, array $event): ?array
     {
         if ($this->isOrderEvent($event)) {
@@ -214,8 +216,26 @@ class CloudLegacyPosMirrorService
                 $this->boolInt($this->firstValue([$line], 'isdeleted'), 0),
                 $tenant,
                 $branch,
-                $sourceMdtime,
             ];
+
+            $timestampColumns = '';
+            $timestampValues = '';
+            $timestampUpdates = '';
+            if ($this->columnExists($conn, 'fat_details', 'mdtime')) {
+                $timestampColumns = ',
+                    mdtime';
+                $timestampValues = ', COALESCE(?, CURRENT_TIMESTAMP)';
+                $timestampUpdates = ',
+                    mdtime = COALESCE(VALUES(mdtime), CURRENT_TIMESTAMP)';
+                $params[] = $sourceMdtime;
+            } elseif ($this->columnExists($conn, 'fat_details', 'crtime')) {
+                $timestampColumns = ',
+                    crtime';
+                $timestampValues = ', COALESCE(?, CURRENT_TIMESTAMP)';
+                $timestampUpdates = ',
+                    crtime = COALESCE(VALUES(crtime), crtime)';
+                $params[] = $sourceMdtime;
+            }
 
             $stmt = $conn->prepare("
                 INSERT INTO fat_details (
@@ -235,9 +255,8 @@ class CloudLegacyPosMirrorService
                     fat_tybe,
                     isdeleted,
                     tenant,
-                    branch,
-                    mdtime
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))
+                    branch{$timestampColumns}
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?{$timestampValues})
                 ON DUPLICATE KEY UPDATE
                     id = LAST_INSERT_ID(id),
                     uuid = VALUES(uuid),
@@ -255,8 +274,7 @@ class CloudLegacyPosMirrorService
                     fat_tybe = VALUES(fat_tybe),
                     isdeleted = VALUES(isdeleted),
                     tenant = VALUES(tenant),
-                    branch = VALUES(branch),
-                    mdtime = COALESCE(VALUES(mdtime), CURRENT_TIMESTAMP)
+                    branch = VALUES(branch){$timestampUpdates}
             ");
             $this->bindParams($stmt, str_repeat('s', count($params)), $params);
             $stmt->execute();
@@ -777,6 +795,25 @@ class CloudLegacyPosMirrorService
         }
 
         return null;
+    }
+
+    private function columnExists(mysqli $conn, string $table, string $column): bool
+    {
+        $key = $table . '.' . $column;
+        if (array_key_exists($key, $this->columnExistsCache)) {
+            return $this->columnExistsCache[$key];
+        }
+
+        $tableEscaped = $conn->real_escape_string($table);
+        $columnEscaped = $conn->real_escape_string($column);
+        $result = $conn->query("SHOW COLUMNS FROM `{$tableEscaped}` LIKE '{$columnEscaped}'");
+        $exists = $result && $result->num_rows > 0;
+        if ($result) {
+            $result->free();
+        }
+
+        $this->columnExistsCache[$key] = $exists;
+        return $exists;
     }
 
     private function timestampOrNull($value): ?int

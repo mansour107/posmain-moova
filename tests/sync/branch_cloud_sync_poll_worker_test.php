@@ -17,6 +17,9 @@ class BranchCloudSyncPollWorkerTest extends TestCase
     private const BRANCH_UUID = 'dadadada-3333-4333-8333-dadadadadada';
     private const SECRET = 'phpunit-branch-cloud-sync-secret';
     private const ITEM_ID = 987654;
+    private const ORDER_ID = 987655;
+    private const LINE_ID = 987656;
+    private const TABLE_ID = 987657;
 
     private static $conn;
     private $originalIdentity;
@@ -132,6 +135,36 @@ class BranchCloudSyncPollWorkerTest extends TestCase
         $this->assertStringContainsString('local value is newer', (string) $event['last_error']);
     }
 
+    public function testPollerAppliesHostedTableOrderOnLegacyFatDetailsSchema(): void
+    {
+        $orderCursor = $this->insertCloudOrderEvent('2026-01-01T11:00:00Z');
+        $tableCursor = $this->insertCloudTableEvent('2026-01-01T11:00:00Z');
+
+        $metrics = (new BranchCloudSyncPollWorker())->runOnce(self::$conn, $this->branchConfig(), [
+            'batch_size' => 10,
+            'http_get' => $this->cloudHttpGet(),
+            'http_post' => $this->cloudHttpPost(),
+        ]);
+
+        $order = self::$conn->query('SELECT * FROM ot_head WHERE id = ' . self::ORDER_ID)->fetch_assoc();
+        $line = self::$conn->query('SELECT * FROM fat_details WHERE id = ' . self::LINE_ID)->fetch_assoc();
+        $table = self::$conn->query('SELECT * FROM tables WHERE id = ' . self::TABLE_ID)->fetch_assoc();
+
+        $this->assertSame(2, $metrics['fetched']);
+        $this->assertSame(2, $metrics['applied']);
+        $this->assertSame(2, $metrics['acked']);
+        $this->assertSame($tableCursor, $metrics['checkpoint']);
+        $this->assertSame('ack_applied', $this->fetchCloudEvent($orderCursor)['status']);
+        $this->assertSame('ack_applied', $this->fetchCloudEvent($tableCursor)['status']);
+        $this->assertSame((string) self::TABLE_ID, (string) $order['table_id']);
+        $this->assertSame('active', $order['order_status']);
+        $this->assertSame('18.000', number_format((float) $order['fat_total'], 3, '.', ''));
+        $this->assertSame((string) self::ORDER_ID, (string) $line['fatid']);
+        $this->assertSame((string) self::ITEM_ID, (string) $line['item_id']);
+        $this->assertSame('18.000', number_format((float) $line['det_value'], 3, '.', ''));
+        $this->assertSame('1', (string) $table['table_case']);
+    }
+
     private function insertLocalItem(string $name, string $price, string $mdtime): void
     {
         $id = self::ITEM_ID;
@@ -188,6 +221,7 @@ class BranchCloudSyncPollWorkerTest extends TestCase
         $eventType = 'menu.item_saved';
         $eventVersion = (int) $payload['menu_item']['menu_version'];
         $localId = self::ITEM_ID;
+        $branchUuid = self::BRANCH_UUID;
 
         $stmt = self::$conn->prepare("
             INSERT INTO cloud_sync_branch_events (
@@ -212,7 +246,7 @@ class BranchCloudSyncPollWorkerTest extends TestCase
         $stmt->bind_param(
             'sssisssisssisss',
             $eventUuid,
-            self::BRANCH_UUID,
+            $branchUuid,
             $eventType,
             $eventVersion,
             $sourceSystem,
@@ -222,6 +256,147 @@ class BranchCloudSyncPollWorkerTest extends TestCase
             $aggregateId,
             $entityType,
             $itemUuid,
+            $localId,
+            $idempotencyKey,
+            $hash,
+            $payloadJson
+        );
+        $stmt->execute();
+        $id = (int) self::$conn->insert_id;
+        $stmt->close();
+
+        return $id;
+    }
+
+    private function insertCloudOrderEvent(string $capturedAtUtc): int
+    {
+        $orderUuid = '66666666-6666-4666-8666-666666666666';
+        $lineUuid = '77777777-7777-4777-8777-777777777777';
+        $tableUuid = '88888888-8888-4888-8888-888888888888';
+        $payload = [
+            'schema_version' => 1,
+            'snapshot_type' => 'pos_order',
+            'source_system' => 'pos_cashier',
+            'branch_uuid' => self::BRANCH_UUID,
+            'captured_at_utc' => $capturedAtUtc,
+            'order_uuid' => $orderUuid,
+            'local_order_id' => self::ORDER_ID,
+            'order' => [
+                'order_uuid' => $orderUuid,
+                'local_order_id' => self::ORDER_ID,
+                'pro_id' => '271',
+                'pro_tybe' => 9,
+                'order_type' => 'table',
+                'cashier_user_id' => 1,
+                'waiter_id' => 131,
+                'table_uuid' => $tableUuid,
+                'table_id' => self::TABLE_ID,
+                'table_name' => 'PHPUnit Table',
+                'pro_date' => '2026-01-01',
+                'created_at' => '2026-01-01 11:00:00',
+                'pro_value' => '18.00',
+                'fat_total' => '18.00',
+                'fat_net' => '18.00',
+                'fat_disc' => '0.00',
+                'paid_amount' => '0.00',
+                'remaining_amount' => '18.00',
+                'payment_status' => 'unpaid',
+                'invoice_status' => 'draft',
+                'order_status' => 'active',
+                'isdeleted' => 0,
+                'closed' => 0,
+                'sync_revision' => strtotime($capturedAtUtc),
+                'lines' => [[
+                    'line_uuid' => $lineUuid,
+                    'local_line_id' => self::LINE_ID,
+                    'item_id' => self::ITEM_ID,
+                    'item_name' => 'PHPUnit Tea',
+                    'qty_out' => '1.00',
+                    'price' => '18.00',
+                    'cost_price' => '4.00',
+                    'discount' => '0.00',
+                    'det_value' => '18.00',
+                    'profit' => '14.00',
+                    'isdeleted' => 0,
+                ]],
+            ],
+        ];
+
+        return $this->insertCloudSyncEvent('order.saved', 'order', $orderUuid, self::ORDER_ID, 'ot_head:' . self::ORDER_ID, $payload);
+    }
+
+    private function insertCloudTableEvent(string $capturedAtUtc): int
+    {
+        $tableUuid = '88888888-8888-4888-8888-888888888888';
+        $orderUuid = '66666666-6666-4666-8666-666666666666';
+        $payload = [
+            'schema_version' => 1,
+            'snapshot_type' => 'pos_table',
+            'source_system' => 'pos_cashier',
+            'branch_uuid' => self::BRANCH_UUID,
+            'captured_at_utc' => $capturedAtUtc,
+            'table_uuid' => $tableUuid,
+            'local_table_id' => self::TABLE_ID,
+            'table' => [
+                'table_uuid' => $tableUuid,
+                'local_table_id' => self::TABLE_ID,
+                'table_id' => self::TABLE_ID,
+                'tname' => 'PHPUnit Table',
+                'table_name' => 'PHPUnit Table',
+                'table_case' => 1,
+                'isdeleted' => 0,
+                'active_order_uuid' => $orderUuid,
+                'active_order_local_id' => self::ORDER_ID,
+                'sync_revision' => strtotime($capturedAtUtc),
+            ],
+        ];
+
+        return $this->insertCloudSyncEvent('table.updated', 'table', $tableUuid, self::TABLE_ID, 'tables:' . self::TABLE_ID, $payload);
+    }
+
+    private function insertCloudSyncEvent(string $eventType, string $entityType, string $entityUuid, int $localId, string $aggregateId, array $payload): int
+    {
+        $payloadJson = json_encode($payload, JSON_UNESCAPED_SLASHES);
+        $hash = hash('sha256', $payloadJson);
+        $eventUuid = SyncBranchIdentity::generateUuidV4();
+        $idempotencyKey = 'phpunit:branch-cloud-sync:' . bin2hex(random_bytes(8));
+        $sourceSystem = (string) ($payload['source_system'] ?? 'cloud_pos');
+        $eventVersion = (int) ($payload['order']['sync_revision'] ?? $payload['table']['sync_revision'] ?? 1);
+        $branchUuid = self::BRANCH_UUID;
+
+        $stmt = self::$conn->prepare("
+            INSERT INTO cloud_sync_branch_events (
+                event_uuid,
+                branch_uuid,
+                event_type,
+                event_version,
+                source_system,
+                aggregate_type,
+                aggregate_uuid,
+                aggregate_local_id,
+                aggregate_id,
+                entity_type,
+                entity_uuid,
+                entity_local_id,
+                idempotency_key,
+                payload_hash,
+                payload_json,
+                status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
+        ");
+        $stmt->bind_param(
+            'sssisssisssisss',
+            $eventUuid,
+            $branchUuid,
+            $eventType,
+            $eventVersion,
+            $sourceSystem,
+            $entityType,
+            $entityUuid,
+            $localId,
+            $aggregateId,
+            $entityType,
+            $entityUuid,
             $localId,
             $idempotencyKey,
             $hash,
@@ -394,6 +569,9 @@ class BranchCloudSyncPollWorkerTest extends TestCase
         self::$conn->query("DELETE FROM sync_inbox WHERE branch_uuid = '" . self::BRANCH_UUID . "' AND idempotency_key LIKE 'phpunit:branch-cloud-sync:%'");
         self::$conn->query("DELETE FROM sync_checkpoints WHERE branch_uuid = '" . self::BRANCH_UUID . "' AND stream_name = 'cloud_sync'");
         self::$conn->query("DELETE FROM cloud_branches WHERE branch_uuid = '" . self::BRANCH_UUID . "'");
+        self::$conn->query('DELETE FROM fat_details WHERE id = ' . self::LINE_ID . ' OR fatid = ' . self::ORDER_ID);
+        self::$conn->query('DELETE FROM ot_head WHERE id = ' . self::ORDER_ID);
+        self::$conn->query('DELETE FROM tables WHERE id = ' . self::TABLE_ID);
         self::$conn->query('DELETE FROM myitems WHERE id = ' . self::ITEM_ID);
         self::$conn->query("DELETE FROM sync_branch_identity WHERE branch_uuid = '" . self::BRANCH_UUID . "'");
     }

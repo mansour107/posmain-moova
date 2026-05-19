@@ -222,7 +222,9 @@ class BranchMoovaPollWorker
         $responseBody = curl_exec($ch);
         $error = curl_error($ch);
         $status = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
-        curl_close($ch);
+        if (PHP_VERSION_ID < 80500) {
+            curl_close($ch);
+        }
 
         return $this->formatResponse($responseBody, $status, $error);
     }
