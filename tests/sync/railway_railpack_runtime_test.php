@@ -18,6 +18,8 @@ railpackRuntimeAssert(($railwayConfig['deploy']['restartPolicyType'] ?? null) ==
 
 railpackRuntimeAssert(!file_exists($root . '/Dockerfile'), 'Root Dockerfile should not exist because Railway auto-detects it ahead of Railpack');
 railpackRuntimeAssert(file_exists($root . '/Dockerfile.posmain-php'), 'Local Docker test stack should keep Dockerfile.posmain-php');
+railpackRuntimeAssert(!file_exists($root . '/package.json'), 'Root package.json should not exist because it makes Railpack install Node');
+railpackRuntimeAssert(!file_exists($root . '/package-lock.json'), 'Root package-lock.json should not exist because it makes Railpack run npm');
 
 $railpackConfig = json_decode(file_get_contents($root . '/railpack.json'), true);
 railpackRuntimeAssert(($railpackConfig['provider'] ?? null) === 'php', 'Railpack should be pinned to the PHP provider');
