@@ -1,0 +1,17 @@
+/Dockerfile
+/docker/
+/node_modules/
+/package.json
+/package-lock.json
+package.json
+package-lock.json
+backup/
+logs/
+uploads/*
+!uploads/.htaccess
+var/
+vendor/
+composer.lock
+composer.phar
+*.log
+Thumbs.db
