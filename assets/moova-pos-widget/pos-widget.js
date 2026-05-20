@@ -699,36 +699,41 @@
     }, intervalMs);
   }
 
-  function startHeartbeat(initKey) {
-    const intervalMs = clampInterval(state.bootstrap?.config?.moova?.heartbeatIntervalMs, DEFAULT_HEARTBEAT_INTERVAL_MS);
-    state.heartbeatTimer = window.setInterval(async () => {
-      if (!isActiveInit(initKey)) return;
-      try {
-        const result = await apiFetch('/api/integrations/pos/local-bridge/heartbeat', {
-          method: 'POST',
-          body: {
-            lastError: null,
-            metadata: {
-              widget: {
+  async function sendHeartbeat(initKey) {
+    if (!isActiveInit(initKey)) return;
+    try {
+      const result = await apiFetch('/api/integrations/pos/local-bridge/heartbeat', {
+        method: 'POST',
+        body: {
+          lastError: null,
+          metadata: {
+            widget: {
+              source: WIDGET_SOURCE,
+              buildVersion: BUILD_VERSION,
+              embedded: true,
+              menuSync: state.latestMenuSyncFingerprint ? {
+                fingerprint: state.latestMenuSyncFingerprint,
+                catalogVersion: state.latestMenuSyncFingerprint,
+                summary: state.latestMenuSyncSummary,
                 source: WIDGET_SOURCE,
-                buildVersion: BUILD_VERSION,
-                embedded: true,
-                menuSync: state.latestMenuSyncFingerprint ? {
-                  fingerprint: state.latestMenuSyncFingerprint,
-                  catalogVersion: state.latestMenuSyncFingerprint,
-                  summary: state.latestMenuSyncSummary,
-                  source: WIDGET_SOURCE,
-                } : null,
-              },
+              } : null,
             },
           },
-        });
-        if (isActiveInit(initKey)) {
-          state.device = result.device || state.device;
-        }
-      } catch {
-        // Polling continues even if heartbeat fails transiently.
+        },
+      });
+      if (isActiveInit(initKey)) {
+        state.device = result.device || state.device;
       }
+    } catch {
+      // Polling continues even if heartbeat fails transiently.
+    }
+  }
+
+  function startHeartbeat(initKey) {
+    const intervalMs = clampInterval(state.bootstrap?.config?.moova?.heartbeatIntervalMs, DEFAULT_HEARTBEAT_INTERVAL_MS);
+    sendHeartbeat(initKey);
+    state.heartbeatTimer = window.setInterval(() => {
+      sendHeartbeat(initKey);
     }, intervalMs);
   }
 
@@ -1724,6 +1729,9 @@
     state.latestMenuSyncSummary = payload.summary && typeof payload.summary === 'object'
       ? payload.summary
       : null;
+    if (state.bootstrap && state.activeInitKey) {
+      sendHeartbeat(state.activeInitKey);
+    }
   }
 
   async function acknowledgeHostMenuSyncFailure(commandId, error) {
