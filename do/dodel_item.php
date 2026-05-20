@@ -1,6 +1,6 @@
 <?php
 include('../includes/connect.php');
-require_once('../classes/Sync/SyncOutboxEventService.php');
+require_once('../classes/Sync/MenuItemSyncRecorder.php');
 
 $password = $_POST['password'];
 $srvrpass = $rowstg['edit_pass'];
@@ -16,14 +16,7 @@ if ($id > 0) {
         $conn->query('UPDATE myitems SET isdeleted = 1 WHERE id = ' . $id);
     }
 
-    try {
-        SyncOutboxEventService::recordMenuItemSnapshot($conn, $id, array(
-            'event_type' => 'menu.item_saved',
-            'source_system' => 'item_delete',
-        ));
-    } catch (Throwable $e) {
-        error_log('[Moova Sync] Failed to record deleted item snapshot: ' . $e->getMessage());
-    }
+    posmain_record_menu_item_sync($conn, $id, 'item_delete');
 }
 header('location:../myitems.php');
 }else{

@@ -1,6 +1,7 @@
 <?php 
 include_once '../includes/connect.php'; 
 require_once __DIR__ . '/../includes/upload_guard.php';
+require_once __DIR__ . '/../classes/Sync/MenuItemSyncRecorder.php';
 
 require_once '../vendor/autoload.php';
 
@@ -43,12 +44,16 @@ use PhpOffice\PhpSpreadsheet\Reader\Xlsx;
                 $prevResult = $conn->query($prevQuery); 
                  
                 if($prevResult->num_rows > 0){
+                    $existing = $prevResult->fetch_assoc();
+                    $itemId = (int) ($existing['id'] ?? 0);
                     // Update member data in the database 
-                    $conn->query("UPDATE myitems SET iname='$iname',code='$code',barcode='$barcode',cost_price='$cost_price',price1='$price1',price2='$price2',isdeleted='0'"); 
+                    $conn->query("UPDATE myitems SET iname='$iname',code='$code',barcode='$barcode',cost_price='$cost_price',price1='$price1',price2='$price2',isdeleted='0' WHERE id = " . $itemId);
                 }else{ 
                     // Insert member data in the database 
                     $conn->query("INSERT INTO myitems( iname, code, barcode, cost_price, price1, price2) VALUES ('$iname', '$code', '$barcode', '$cost_price', '$price1', '$price2')"); 
+                    $itemId = (int) $conn->insert_id;
                 } 
+                posmain_record_menu_item_sync($conn, $itemId, 'item_upload');
             } 
              
         }else{ 

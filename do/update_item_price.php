@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/../includes/session_bootstrap.php';
 include('../includes/connect.php');
+require_once __DIR__ . '/../classes/Sync/MenuItemSyncRecorder.php';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $item_id = intval($_POST['item_id']);
@@ -20,6 +21,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $stmt->bind_param("di", $new_price, $item_id);
             
             if ($stmt->execute()) {
+                posmain_record_menu_item_sync($conn, $item_id, 'item_price_update');
                 echo json_encode(['success' => true, 'message' => 'تم تحديث السعر بنجاح']);
             } else {
                 echo json_encode(['success' => false, 'message' => 'فشل في تحديث السعر']);

@@ -2,7 +2,7 @@
 require_once __DIR__ . '/../includes/session_bootstrap.php';
 include('../includes/connect.php');
 require_once __DIR__ . '/../classes/Items/ItemFormInput.php';
-require_once __DIR__ . '/../classes/Sync/SyncOutboxEventService.php';
+require_once __DIR__ . '/../classes/Sync/MenuItemSyncRecorder.php';
 
 $usid = (int) ($_SESSION['userid'] ?? 1);
 
@@ -133,10 +133,7 @@ try {
 
     // إضافة سجل في جدول process
     $conn->query("INSERT INTO process(type) VALUES ('add item')");
-    (new SyncOutboxEventService())->recordMenuItemSnapshot($conn, (int) $last_id, [
-        'event_type' => 'menu.item_saved',
-        'source_system' => 'item_form',
-    ]);
+    posmain_record_menu_item_sync($conn, (int) $last_id, 'item_form');
     $conn->commit();
 } catch (Throwable $exception) {
     if ($conn instanceof mysqli) {
