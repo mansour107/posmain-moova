@@ -7,7 +7,9 @@
 .playwright-mcp
 backup/
 logs/
-uploads/
+uploads/*
+!uploads/.htaccess
+var/
 vendor/
 composer.lock
 composer.phar
