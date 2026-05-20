@@ -22,10 +22,6 @@
         "ext-mbstring": "*",
         "ext-mysqli": "*"
     },
-    "require-dev": {
-        "phpunit/phpunit": "^9.5",
-        "phpstan/phpstan": "^1.10"
-    },
     "suggest": {
         "ext-bcmath": "Barcode IMB (Intelligent Mail Barcode) needs bcmath extension",
         "ext-gd": "For JPG and PNG generators, GD or Imagick is required",
