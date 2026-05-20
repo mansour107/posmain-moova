@@ -214,8 +214,11 @@ document.addEventListener('DOMContentLoaded', function () {
       event.preventDefault();
       saveBtn.disabled = true;
       try {
-        await postJson('ajax/moova_save_integration.php', payload());
-        showAlert('success', 'تم حفظ الربط بنجاح. سيتم إظهار ودجت Moova في شاشة البيع لهذا الفرع.');
+        const result = await postJson('ajax/moova_save_integration.php', payload());
+        const syncMessage = result.autoSync && result.autoSync.ok
+          ? ' وتم بدء مزامنة المنيو تلقائياً.'
+          : ' وسيحاول الودجت مزامنة المنيو عند فتح شاشة البيع.';
+        showAlert('success', 'تم حفظ الربط بنجاح.' + syncMessage);
         setTimeout(function () { window.location.reload(); }, 900);
       } catch (error) {
         showAlert('danger', error.message);

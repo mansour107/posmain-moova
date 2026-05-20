@@ -26,6 +26,9 @@ foreach (['save' => $save, 'disconnect' => $disconnect] as $name => $source) {
 }
 
 moovaAdminAssertContains("moova_integration_saved", $save, 'save endpoint should audit successful save');
+moovaAdminAssertContains("moova_integration_trigger_menu_sync_after_save", $save, 'save endpoint should trigger automatic menu sync after token attach');
+moovaAdminAssertContains("posmain_integration_save", $save, 'save-triggered heartbeat should identify the POS integration save source');
+moovaAdminAssertContains("X-Pos-Widget-Origin", $save, 'save-triggered heartbeat should expose the POS public origin to Moova');
 moovaAdminAssertContains("moova_integration_disconnected", $disconnect, 'disconnect endpoint should audit successful disconnect');
 
 moovaAdminAssertNotContains("verify_csrf_from_post_or_header", $confirm, 'machine Moova confirm should not use browser CSRF');

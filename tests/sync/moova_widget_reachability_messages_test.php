@@ -28,6 +28,16 @@ class MoovaWidgetReachabilityMessagesTest extends TestCase
         $this->assertStringContainsString('$responseBody = moova_proxy_rewrite_browser_moova_urls($responseBody, $widgetOrigin);', $source);
     }
 
+    public function testProxyUsesForwardedOriginWhenWidgetOriginHeaderIsMissing(): void
+    {
+        $source = $this->source('moova_pos_proxy.php');
+
+        $this->assertStringContainsString('function moova_proxy_current_origin', $source);
+        $this->assertStringContainsString("moova_proxy_header('X-Forwarded-Proto')", $source);
+        $this->assertStringContainsString("moova_proxy_header('X-Forwarded-Host')", $source);
+        $this->assertStringContainsString("moova_proxy_header('X-Pos-Widget-Origin') ?: moova_proxy_current_origin()", $source);
+    }
+
     public function testWidgetMapsReachabilityCodesToCashierMessages(): void
     {
         $source = $this->source('assets/moova-pos-widget/pos-widget.js');

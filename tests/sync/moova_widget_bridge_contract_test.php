@@ -59,6 +59,7 @@ class MoovaWidgetBridgeContractTest extends TestCase
         $this->assertStringContainsString('cofe.host.menu-fingerprint', $source);
         $this->assertStringContainsString('cofe.menu-sync.requested', $source);
         $this->assertStringContainsString('cofe.host.menu-sync-result', $source);
+        $this->assertStringContainsString("msgType === 'cofe.widget.connected'", $source);
         $this->assertStringContainsString("'X-Moova-Device-Token': DEVICE_TOKEN", $source);
 
         $this->assertStringContainsString('function moova_menu_sync_fingerprint(mysqli $conn)', $endpointSource);

@@ -29,6 +29,25 @@ function moova_proxy_header($name)
     return isset($_SERVER[$key]) ? trim((string) $_SERVER[$key]) : '';
 }
 
+function moova_proxy_current_origin()
+{
+    $forwardedProto = strtolower(trim(strtok(moova_proxy_header('X-Forwarded-Proto'), ',') ?: ''));
+    $scheme = in_array($forwardedProto, ['http', 'https'], true)
+        ? $forwardedProto
+        : strtolower((string) ($_SERVER['REQUEST_SCHEME'] ?? ''));
+    if (!in_array($scheme, ['http', 'https'], true)) {
+        $scheme = (!empty($_SERVER['HTTPS']) && strtolower((string) $_SERVER['HTTPS']) !== 'off') ? 'https' : 'http';
+    }
+
+    $forwardedHost = trim(strtok(moova_proxy_header('X-Forwarded-Host'), ',') ?: '');
+    $host = $forwardedHost !== '' ? $forwardedHost : trim((string) ($_SERVER['HTTP_HOST'] ?? 'localhost'));
+    if (!preg_match('/^(\[[0-9A-Fa-f:.]+\]|[A-Za-z0-9.-]+)(:\d{1,5})?$/', $host)) {
+        $host = 'localhost';
+    }
+
+    return $scheme . '://' . $host;
+}
+
 function moova_proxy_origin_from_widget_url($widgetUrl)
 {
     $parts = parse_url((string) $widgetUrl);
@@ -156,7 +175,7 @@ $targetUrl = $moovaOrigin . $path;
 $method = strtoupper($_SERVER['REQUEST_METHOD'] ?? 'GET');
 $body = file_get_contents('php://input');
 $deviceToken = (string) $link['moova_device_token'];
-$widgetOrigin = moova_proxy_header('X-Pos-Widget-Origin') ?: (($_SERVER['REQUEST_SCHEME'] ?? 'http') . '://' . ($_SERVER['HTTP_HOST'] ?? 'localhost'));
+$widgetOrigin = moova_proxy_header('X-Pos-Widget-Origin') ?: moova_proxy_current_origin();
 
 $headers = [
     'Authorization: Bearer ' . $deviceToken,

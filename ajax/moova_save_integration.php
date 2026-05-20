@@ -37,6 +37,137 @@ function moova_integration_audit($eventType, array $options = [])
     }
 }
 
+function moova_integration_header($name)
+{
+    $key = 'HTTP_' . strtoupper(str_replace('-', '_', $name));
+    return isset($_SERVER[$key]) ? trim((string) $_SERVER[$key]) : '';
+}
+
+function moova_integration_origin_from_widget_url($widgetUrl)
+{
+    $parts = parse_url((string) $widgetUrl);
+    if (empty($parts['scheme']) || empty($parts['host'])) {
+        return '';
+    }
+
+    $scheme = strtolower((string) $parts['scheme']);
+    if (!in_array($scheme, ['http', 'https'], true)) {
+        return '';
+    }
+
+    return $scheme . '://' . $parts['host'] . (isset($parts['port']) ? ':' . $parts['port'] : '');
+}
+
+function moova_integration_current_origin()
+{
+    $forwardedProto = strtolower(trim(strtok(moova_integration_header('X-Forwarded-Proto'), ',') ?: ''));
+    $scheme = in_array($forwardedProto, ['http', 'https'], true)
+        ? $forwardedProto
+        : strtolower((string) ($_SERVER['REQUEST_SCHEME'] ?? ''));
+    if (!in_array($scheme, ['http', 'https'], true)) {
+        $scheme = (!empty($_SERVER['HTTPS']) && strtolower((string) $_SERVER['HTTPS']) !== 'off') ? 'https' : 'http';
+    }
+
+    $forwardedHost = trim(strtok(moova_integration_header('X-Forwarded-Host'), ',') ?: '');
+    $host = $forwardedHost !== '' ? $forwardedHost : trim((string) ($_SERVER['HTTP_HOST'] ?? 'localhost'));
+    if (!preg_match('/^(\[[0-9A-Fa-f:.]+\]|[A-Za-z0-9.-]+)(:\d{1,5})?$/', $host)) {
+        return '';
+    }
+
+    return $scheme . '://' . $host;
+}
+
+function moova_integration_trigger_menu_sync_after_save(array $saved, $deviceToken)
+{
+    $token = trim((string) $deviceToken);
+    $moovaOrigin = moova_integration_origin_from_widget_url($saved['widget_url'] ?? '');
+    $posOrigin = moova_integration_current_origin();
+    if ($token === '' || $moovaOrigin === '' || $posOrigin === '') {
+        return [
+            'attempted' => false,
+            'ok' => false,
+            'reason' => 'missing_origin_or_token',
+        ];
+    }
+    if (!function_exists('curl_init')) {
+        return [
+            'attempted' => false,
+            'ok' => false,
+            'reason' => 'curl_unavailable',
+        ];
+    }
+
+    $fingerprint = 'attach-' . hash('sha256', implode('|', [
+        $token,
+        (string) ($saved['id'] ?? ''),
+        $posOrigin,
+        sprintf('%.6F', microtime(true)),
+    ]));
+    $body = [
+        'lastError' => null,
+        'metadata' => [
+            'widget' => [
+                'source' => 'posmain_integration_save',
+                'embedded' => false,
+                'menuSync' => [
+                    'fingerprint' => $fingerprint,
+                    'catalogVersion' => $fingerprint,
+                    'summary' => [
+                        'trigger' => 'token_attached',
+                    ],
+                    'source' => 'posmain_integration_save',
+                ],
+            ],
+            'pos' => [
+                'publicOrigin' => $posOrigin,
+                'fetchMenuUrl' => rtrim($posOrigin, '/') . '/ajax/moova_menu_sync_payload.php',
+            ],
+        ],
+    ];
+    $encodedBody = json_encode($body, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    if (!is_string($encodedBody)) {
+        return [
+            'attempted' => false,
+            'ok' => false,
+            'reason' => 'payload_encode_failed',
+        ];
+    }
+
+    $targetUrl = rtrim($moovaOrigin, '/') . '/api/integrations/pos/local-bridge/heartbeat';
+    $ch = curl_init($targetUrl);
+    curl_setopt($ch, CURLOPT_POST, true);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, [
+        'Authorization: Bearer ' . $token,
+        'X-Pos-Device-Token: ' . $token,
+        'X-Pos-Widget-Origin: ' . $posOrigin,
+        'Content-Type: application/json',
+        'Accept: application/json',
+    ]);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, $encodedBody);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 3);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 8);
+
+    $response = curl_exec($ch);
+    $statusCode = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+    $curlError = $response === false ? curl_error($ch) : '';
+    curl_close($ch);
+
+    $ok = $statusCode >= 200 && $statusCode < 300;
+    if (!$ok) {
+        error_log('[Moova POS] attach menu sync heartbeat failed: status=' . $statusCode . ' error=' . $curlError);
+    }
+
+    return [
+        'attempted' => true,
+        'ok' => $ok,
+        'statusCode' => $statusCode,
+        'posOrigin' => $posOrigin,
+        'moovaOrigin' => $moovaOrigin,
+        'retryable' => !$ok,
+    ];
+}
+
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     moova_integration_response(405, ['success' => false, 'code' => 'METHOD_NOT_ALLOWED', 'message' => 'Method not allowed']);
 }
@@ -150,6 +281,8 @@ try {
         ],
     ]);
 
+    $autoSync = moova_integration_trigger_menu_sync_after_save($saved, $deviceToken);
+
     moova_integration_response(200, [
         'success' => true,
         'message' => 'Moova integration saved',
@@ -164,6 +297,7 @@ try {
             'locale' => $saved['locale'],
             'status' => $saved['status'],
         ],
+        'autoSync' => $autoSync,
     ]);
 } catch (Throwable $e) {
     try {

@@ -325,6 +325,11 @@ $localWidgetUrl = 'moova_pos_widget.php';
         return;
       }
 
+      if (msgType === 'cofe.widget.connected') {
+        pushMenuSyncFingerprint();
+        return;
+      }
+
       if (msgType === 'cofe.menu-sync.requested') {
         handleMenuSyncRequested(event.data || {});
         return;
