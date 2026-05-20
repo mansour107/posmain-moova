@@ -97,32 +97,11 @@ function moova_integration_trigger_menu_sync_after_save(array $saved, $deviceTok
         ];
     }
 
-    $fingerprint = 'attach-' . hash('sha256', implode('|', [
-        $token,
-        (string) ($saved['id'] ?? ''),
-        $posOrigin,
-        sprintf('%.6F', microtime(true)),
-    ]));
     $body = [
-        'lastError' => null,
-        'metadata' => [
-            'widget' => [
-                'source' => 'posmain_integration_save',
-                'embedded' => false,
-                'menuSync' => [
-                    'fingerprint' => $fingerprint,
-                    'catalogVersion' => $fingerprint,
-                    'summary' => [
-                        'trigger' => 'token_attached',
-                    ],
-                    'source' => 'posmain_integration_save',
-                ],
-            ],
-            'pos' => [
-                'publicOrigin' => $posOrigin,
-                'fetchMenuUrl' => rtrim($posOrigin, '/') . '/ajax/moova_menu_sync_payload.php',
-            ],
-        ],
+        'publicOrigin' => $posOrigin,
+        'categoriesUrl' => rtrim($posOrigin, '/') . '/api/categories.php',
+        'itemsUrl' => rtrim($posOrigin, '/') . '/api/items.php',
+        'source' => 'posmain_integration_save',
     ];
     $encodedBody = json_encode($body, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     if (!is_string($encodedBody)) {
@@ -133,7 +112,7 @@ function moova_integration_trigger_menu_sync_after_save(array $saved, $deviceTok
         ];
     }
 
-    $targetUrl = rtrim($moovaOrigin, '/') . '/api/integrations/pos/local-bridge/heartbeat';
+    $targetUrl = rtrim($moovaOrigin, '/') . '/api/integrations/pos/local-bridge/menu-endpoints/register';
     $ch = curl_init($targetUrl);
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_HTTPHEADER, [
@@ -155,7 +134,7 @@ function moova_integration_trigger_menu_sync_after_save(array $saved, $deviceTok
 
     $ok = $statusCode >= 200 && $statusCode < 300;
     if (!$ok) {
-        error_log('[Moova POS] attach menu sync heartbeat failed: status=' . $statusCode . ' error=' . $curlError);
+        error_log('[Moova POS] attach endpoint menu sync failed: status=' . $statusCode . ' error=' . $curlError);
     }
 
     return [
