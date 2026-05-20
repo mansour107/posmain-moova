@@ -14,6 +14,10 @@ $railwayConfig = json_decode(file_get_contents($root . '/railway.json'), true);
 railpackRuntimeAssert(is_array($railwayConfig), 'railway.json should be valid JSON');
 railpackRuntimeAssert(($railwayConfig['build']['builder'] ?? null) === 'RAILPACK', 'Railway should use Railpack, not a custom Dockerfile');
 railpackRuntimeAssert(!isset($railwayConfig['build']['dockerfilePath']), 'Railway config should not point at a Dockerfile');
+railpackRuntimeAssert(($railwayConfig['deploy']['healthcheckPath'] ?? null) === '/api/health.php', 'Railway should healthcheck the POS API before marking deploys healthy');
+railpackRuntimeAssert(($railwayConfig['deploy']['healthcheckTimeout'] ?? null) >= 60, 'Railway healthcheck timeout should allow DB-backed boot to settle');
+railpackRuntimeAssert(($railwayConfig['deploy']['overlapSeconds'] ?? null) >= 30, 'Railway deploys should overlap briefly to avoid unnecessary downtime');
+railpackRuntimeAssert(($railwayConfig['deploy']['drainingSeconds'] ?? null) >= 15, 'Railway deploys should drain briefly before SIGKILL');
 railpackRuntimeAssert(($railwayConfig['deploy']['restartPolicyType'] ?? null) === 'ON_FAILURE', 'Railway restart policy should remain conservative');
 
 railpackRuntimeAssert(!file_exists($root . '/Dockerfile'), 'Root Dockerfile should not exist because Railway auto-detects it ahead of Railpack');

@@ -4,6 +4,10 @@
     "builder": "RAILPACK"
   },
   "deploy": {
+    "healthcheckPath": "/api/health.php",
+    "healthcheckTimeout": 60,
+    "overlapSeconds": 30,
+    "drainingSeconds": 15,
     "restartPolicyType": "ON_FAILURE",
     "restartPolicyMaxRetries": 10
   }
