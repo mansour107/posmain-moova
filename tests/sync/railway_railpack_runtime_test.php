@@ -28,8 +28,13 @@ railpackRuntimeAssert(isset($composerConfig['require']['ext-mysqli']), 'Railpack
 railpackRuntimeAssert(isset($composerConfig['require']['ext-mbstring']), 'Railpack must keep mbstring for existing string handling');
 
 $dockerignore = file_get_contents($root . '/.dockerignore');
-foreach (['/Dockerfile', '/docker/', '/package.json', '/package-lock.json', 'uploads/*', '!uploads/.htaccess', 'var/'] as $pattern) {
+foreach (['/Dockerfile', '/docker/', '/package.json', '/package-lock.json', 'package.json', 'package-lock.json', 'uploads/*', '!uploads/.htaccess', 'var/'] as $pattern) {
     railpackRuntimeAssert(strpos($dockerignore, $pattern) !== false, '.dockerignore should include ' . $pattern);
+}
+
+$railpackignore = file_get_contents($root . '/.railpackignore');
+foreach (['/Dockerfile', '/docker/', '/package.json', '/package-lock.json', 'package.json', 'package-lock.json', 'uploads/*', '!uploads/.htaccess', 'var/'] as $pattern) {
+    railpackRuntimeAssert(strpos($railpackignore, $pattern) !== false, '.railpackignore should include ' . $pattern);
 }
 
 $caddyfile = file_get_contents($root . '/Caddyfile');
