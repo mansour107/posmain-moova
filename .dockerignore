@@ -5,6 +5,11 @@
 .DS_Store
 .phpunit.result.cache
 .playwright-mcp
+/Dockerfile
+/docker/
+/node_modules/
+/package.json
+/package-lock.json
 backup/
 logs/
 uploads/*
