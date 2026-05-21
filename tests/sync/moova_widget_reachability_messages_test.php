@@ -16,6 +16,23 @@ class MoovaWidgetReachabilityMessagesTest extends TestCase
         $this->assertStringContainsString('moova_proxy_json(502, moova_proxy_reachability_error($error))', $source);
     }
 
+    public function testProxyFailsFastForPassiveBridgeRequests(): void
+    {
+        $source = $this->source('moova_pos_proxy.php');
+
+        $this->assertStringContainsString('function moova_proxy_is_passive_bridge_path', $source);
+        $this->assertStringContainsString("'/api/integrations/pos/local-bridge/widget/bootstrap'", $source);
+        $this->assertStringContainsString("'/api/integrations/pos/local-bridge/heartbeat'", $source);
+        $this->assertStringContainsString("'/api/integrations/pos/local-bridge/pending'", $source);
+        $this->assertStringContainsString('function moova_proxy_timeout_config', $source);
+        $this->assertStringContainsString("'connect_ms' => 800", $source);
+        $this->assertStringContainsString("'total_ms' => 2000", $source);
+        $this->assertStringContainsString('CURLOPT_CONNECTTIMEOUT_MS', $source);
+        $this->assertStringContainsString('CURLOPT_TIMEOUT_MS', $source);
+        $this->assertStringContainsString('CURLOPT_NOSIGNAL', $source);
+        $this->assertStringNotContainsString('CURLOPT_TIMEOUT, 15', $source);
+    }
+
     public function testProxyRewritesDockerOnlyMoovaUrlsForBrowserBootstrap(): void
     {
         $source = $this->source('moova_pos_proxy.php');
@@ -52,6 +69,20 @@ class MoovaWidgetReachabilityMessagesTest extends TestCase
         $this->assertStringContainsString("return t('moovaUnreachable')", $source);
         $this->assertStringContainsString("return t('posUnreachable')", $source);
         $this->assertStringNotContainsString("payload && typeof payload.error === 'string' ? payload.error", $source);
+    }
+
+    public function testWidgetPausesMoovaBridgeWhileBrowserIsOfflineAndRetriesOnline(): void
+    {
+        $source = $this->source('assets/moova-pos-widget/pos-widget.js');
+
+        $this->assertStringContainsString("window.addEventListener('online', handleBrowserOnline)", $source);
+        $this->assertStringContainsString("window.addEventListener('offline', handleBrowserOffline)", $source);
+        $this->assertStringContainsString('function isBrowserOffline()', $source);
+        $this->assertStringContainsString('function isMoovaBridgePath(path)', $source);
+        $this->assertStringContainsString("isMoovaBridgePath(path) && isBrowserOffline()", $source);
+        $this->assertStringContainsString("throw createWidgetError(t('moovaUnreachable'), 0, 'MOOVA_UNREACHABLE')", $source);
+        $this->assertStringContainsString('cleanupRealtime();', $source);
+        $this->assertStringContainsString('initializeWidget(state.activeInitKey);', $source);
     }
 
     public function testWidgetPreservesRawErrorPayloadForAckFailureDetails(): void

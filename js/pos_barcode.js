@@ -1012,6 +1012,25 @@ $(document).ready(function() {
         $grid.html(tables.map(renderTableButton).join(''));
     }
 
+    function renderTablesLoadError() {
+        const $grid = $('#tablesGrid');
+        if (!$grid.length) {
+            return;
+        }
+
+        if (Array.isArray(latestTablesState) && latestTablesState.length > 0) {
+            renderTablesGrid(latestTablesState);
+            return;
+        }
+
+        $grid.html(`
+            <div class="col-12 text-center text-muted">
+                <i class="fas fa-exclamation-triangle fa-3x mb-3"></i>
+                <p>تعذر تحميل الطاولات من الخادم المحلي</p>
+            </div>
+        `);
+    }
+
     window.refreshTablesState = function() {
         if (tablesRefreshInFlight || !$('#tablesGrid').length) {
             return;
@@ -1027,6 +1046,9 @@ $(document).ready(function() {
                 if (response && response.success) {
                     renderTablesGrid(response.tables || []);
                 }
+            },
+            error: function() {
+                renderTablesLoadError();
             },
             complete: function() {
                 tablesRefreshInFlight = false;

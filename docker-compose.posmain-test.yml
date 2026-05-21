@@ -25,10 +25,19 @@ services:
     network_mode: service:mysql
     depends_on:
       - mysql
+    environment:
+      PHP_CLI_SERVER_WORKERS: "4"
+      POSMAIN_SESSION_DRIVER: file
     volumes:
       - .:/app:ro
+      - posmain_php_logs:/app/logs
+      - posmain_php_uploads:/app/uploads
+      - posmain_php_var:/app/var
       - posmain_mysql_run:/run/mysqld
 
 volumes:
   posmain_mysql_data:
   posmain_mysql_run:
+  posmain_php_logs:
+  posmain_php_uploads:
+  posmain_php_var:

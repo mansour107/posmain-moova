@@ -27,6 +27,8 @@ $posJs = file_get_contents($root . '/js/pos_barcode.js');
 foreach (['startTablesAutoRefresh', "typeof window.refreshTablesState === 'function'", 'setInterval(function()', "url: 'ajax/get_tables.php'"] as $needle) {
     posLazyTablesAssert(strpos($posJs, $needle) !== false, 'POS JS should include ' . $needle);
 }
+posLazyTablesAssert(strpos($posJs, 'function renderTablesLoadError()') !== false, 'Tables modal should not stay on a permanent spinner when refresh fails');
+posLazyTablesAssert(strpos($posJs, 'error: function()') !== false, 'Tables refresh should handle AJAX errors');
 posLazyTablesAssert(strpos($posJs, 'setTimeout(window.refreshTablesState, 800)') === false, 'Tables preload should not pass an undefined handler before refreshTablesState is assigned');
 $refreshAssignmentPos = strpos($posJs, 'window.refreshTablesState = function()');
 $startTablesCallPos = strrpos($posJs, '    startTablesAutoRefresh();');

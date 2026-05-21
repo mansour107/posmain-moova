@@ -4,4 +4,4 @@ RUN docker-php-ext-install mysqli
 
 WORKDIR /app
 
-CMD ["php", "-d", "display_errors=1", "-d", "mysqli.default_socket=/run/mysqld/mysqld.sock", "-S", "0.0.0.0:8000"]
+CMD ["sh", "-c", "mkdir -p /app/logs /app/uploads /app/var/sessions && chmod -R 777 /app/logs /app/uploads /app/var && php -d display_errors=1 -d mysqli.default_socket=/run/mysqld/mysqld.sock -S 0.0.0.0:8000"]

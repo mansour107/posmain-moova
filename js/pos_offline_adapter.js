@@ -108,23 +108,82 @@ class POSOfflineAdapter {
         // حفظ المرجع الأصلي للاستخدام في المزامنة
         this.originalAjax = originalAjax;
         
-        $.ajax = function(options) {
-            console.log('🌐 AJAX Request:', options.url, 'Online:', self.isOnline);
+        $.ajax = function(options, ajaxSettings) {
+            const originalArgs = arguments;
+            const requestOptions = self.normalizeAjaxOptions(options, ajaxSettings);
+            console.log('🌐 AJAX Request:', requestOptions.url, 'Online:', self.isOnline);
             
             // السماح بالمرور للمزامنة
-            if (options._bypassOffline) {
-                return originalAjax.call(this, options);
+            if (requestOptions._bypassOffline) {
+                return originalAjax.apply(this, originalArgs);
+            }
+
+            if (!self.isOnline && self.shouldTryLocalFirst(requestOptions)) {
+                return self.tryLocalAjaxRequest(this, originalArgs, requestOptions);
             }
             
             if (!self.isOnline) {
                 console.log('📴 Handling offline request');
-                return self.handleOfflineRequest(options);
+                return self.handleOfflineRequest(requestOptions);
             }
             
-            return originalAjax.call(this, options).done(function(data) {
-                self.cacheResponse(options.url, data);
+            return originalAjax.apply(this, originalArgs).done(function(data) {
+                self.cacheResponse(requestOptions.url, data);
             });
         };
+    }
+
+    normalizeAjaxOptions(options, ajaxSettings) {
+        if (typeof options === 'string') {
+            return Object.assign({ url: options, method: 'GET' }, ajaxSettings || {});
+        }
+
+        return options || {};
+    }
+
+    shouldTryLocalFirst(options) {
+        if (!options || !options.url) {
+            return true;
+        }
+
+        const method = String(options.method || options.type || 'GET').toUpperCase();
+        if (!['GET', 'POST'].includes(method)) {
+            return false;
+        }
+
+        return this.isSameOriginRequest(options.url);
+    }
+
+    isSameOriginRequest(url) {
+        try {
+            const parsed = new URL(url, window.location.href);
+            return parsed.origin === window.location.origin;
+        } catch (error) {
+            return !/^https?:\/\//i.test(String(url));
+        }
+    }
+
+    tryLocalAjaxRequest(context, originalArgs, requestOptions) {
+        const localRequest = this.originalAjax.apply(context, originalArgs);
+        const deferred = $.Deferred();
+
+        localRequest.done((data, textStatus, jqXHR) => {
+            this.cacheResponse(requestOptions.url, data);
+            deferred.resolveWith(context, [data, textStatus, jqXHR]);
+        });
+
+        localRequest.fail((jqXHR, textStatus, errorThrown) => {
+            console.log('📴 Local request failed while offline - trying fallback:', requestOptions.url);
+            this.handleOfflineRequest(requestOptions)
+                .done((data, fallbackTextStatus, fallbackJqXHR) => {
+                    deferred.resolveWith(context, [data, fallbackTextStatus, fallbackJqXHR]);
+                })
+                .fail(() => {
+                    deferred.rejectWith(context, [jqXHR, textStatus, errorThrown]);
+                });
+        });
+
+        return deferred.promise();
     }
 
     handleOfflineRequest(options) {
@@ -134,6 +193,8 @@ class POSOfflineAdapter {
             this.handleCustomerSearch(options, deferred);
         } else if (options.url && options.url.includes('doadd_invoice.php')) {
             this.handleOrderSave(options, deferred);
+        } else if (options.url && options.url.includes('get_tables.php')) {
+            this.handleTablesRequest(deferred);
         } else if (options.url && options.url.includes('get_items.php')) {
             this.handleItemsRequest(deferred);
         } else {
@@ -193,6 +254,15 @@ class POSOfflineAdapter {
         setTimeout(() => {
             deferred.resolve(JSON.stringify(this.offlineData.items));
         }, 300);
+    }
+
+    handleTablesRequest(deferred) {
+        setTimeout(() => {
+            deferred.resolve({
+                success: true,
+                tables: this.offlineData.tables || []
+            });
+        }, 100);
     }
 
     addOfflineIndicator() {
@@ -328,6 +398,16 @@ class POSOfflineAdapter {
     }
 
     cacheResponse(url, data) {
+        if (url && url.includes('get_tables.php') && data && data.success && Array.isArray(data.tables)) {
+            this.offlineData.tables = data.tables;
+            this.saveOfflineData();
+        }
+
+        if (url && url.includes('get_items.php') && Array.isArray(data)) {
+            this.offlineData.items = data;
+            this.saveOfflineData();
+        }
+
         console.log('Caching response for:', url);
     }
 

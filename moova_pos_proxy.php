@@ -23,6 +23,30 @@ function moova_proxy_reachability_error($details)
     ];
 }
 
+function moova_proxy_is_passive_bridge_path($path)
+{
+    return in_array((string) $path, [
+        '/api/integrations/pos/local-bridge/widget/bootstrap',
+        '/api/integrations/pos/local-bridge/heartbeat',
+        '/api/integrations/pos/local-bridge/pending',
+    ], true);
+}
+
+function moova_proxy_timeout_config($path)
+{
+    if (moova_proxy_is_passive_bridge_path($path)) {
+        return [
+            'connect_ms' => 800,
+            'total_ms' => 2000,
+        ];
+    }
+
+    return [
+        'connect_ms' => 1500,
+        'total_ms' => 15000,
+    ];
+}
+
 function moova_proxy_header($name)
 {
     $key = 'HTTP_' . strtoupper(str_replace('-', '_', $name));
@@ -193,7 +217,10 @@ curl_setopt($ch, CURLOPT_CUSTOMREQUEST, $method);
 curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
 curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
 curl_setopt($ch, CURLOPT_HEADER, true);
-curl_setopt($ch, CURLOPT_TIMEOUT, 15);
+curl_setopt($ch, CURLOPT_NOSIGNAL, true);
+$timeoutConfig = moova_proxy_timeout_config($path);
+curl_setopt($ch, CURLOPT_CONNECTTIMEOUT_MS, $timeoutConfig['connect_ms']);
+curl_setopt($ch, CURLOPT_TIMEOUT_MS, $timeoutConfig['total_ms']);
 
 if ($method !== 'GET' && $method !== 'HEAD') {
     curl_setopt($ch, CURLOPT_POSTFIELDS, $body === false ? '' : $body);

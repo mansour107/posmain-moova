@@ -321,6 +321,8 @@
 
   function bindEvents() {
     window.addEventListener('message', handleInitMessage);
+    window.addEventListener('online', handleBrowserOnline);
+    window.addEventListener('offline', handleBrowserOffline);
     window.addEventListener('keydown', (event) => {
       if (event.key === 'Escape') {
         closeTopModal();
@@ -689,6 +691,39 @@
 
   function isActiveInit(initKey) {
     return Boolean(initKey && state.activeInitKey === initKey && state.deviceToken);
+  }
+
+  function isBrowserOffline() {
+    return typeof navigator !== 'undefined'
+      && Object.prototype.hasOwnProperty.call(navigator, 'onLine')
+      && navigator.onLine === false;
+  }
+
+  function isMoovaBridgePath(path) {
+    return asText(path).startsWith('/api/integrations/pos/local-bridge/');
+  }
+
+  function handleBrowserOffline() {
+    if (!state.deviceToken) {
+      return;
+    }
+    cleanupRealtime();
+    state.transportError = {
+      code: 'MOOVA_UNREACHABLE',
+      message: t('moovaUnreachable'),
+    };
+    render();
+    postToParent('cofe.widget.error', {
+      message: t('moovaUnreachable'),
+      code: 'MOOVA_UNREACHABLE',
+    });
+  }
+
+  function handleBrowserOnline() {
+    if (!state.deviceToken || !state.activeInitKey) {
+      return;
+    }
+    initializeWidget(state.activeInitKey);
   }
 
   function startPolling(initKey) {
@@ -2717,6 +2752,9 @@
   async function apiFetch(path, options) {
     if (!state.deviceToken) {
       throw createWidgetError('Device token is missing.', 401, 'device_token_missing');
+    }
+    if (isMoovaBridgePath(path) && isBrowserOffline()) {
+      throw createWidgetError(t('moovaUnreachable'), 0, 'MOOVA_UNREACHABLE');
     }
     const requestOptions = options || {};
     const headers = new Headers(requestOptions.headers || {});
