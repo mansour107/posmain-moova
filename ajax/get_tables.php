@@ -1,10 +1,12 @@
 <?php
 require_once __DIR__ . '/../includes/session_bootstrap.php';
 include('../includes/connect.php');
+require_once __DIR__ . '/../classes/Sync/SyncOutboxEventService.php';
 
 header('Content-Type: application/json');
 
 try {
+    $syncOutbox = new SyncOutboxEventService();
     $query = "
         SELECT
             t.*,
@@ -43,6 +45,15 @@ try {
                 $updateStmt->bind_param("ii", $tableCase, $tableId);
                 $updateStmt->execute();
                 $updateStmt->close();
+                try {
+                    $syncOutbox->recordTableSnapshot($conn, $tableId, [
+                        'event_type' => 'table.updated',
+                        'source_system' => 'pos_table_refresh',
+                        'active_order_id' => $tableCase === 1 ? (int) ($row['order_id'] ?? 0) : null,
+                    ]);
+                } catch (Throwable $syncException) {
+                    error_log('POS table refresh sync snapshot failed: ' . $syncException->getMessage());
+                }
             }
 
             $row['table_case'] = $tableCase;

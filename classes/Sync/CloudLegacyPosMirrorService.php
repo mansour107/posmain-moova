@@ -318,11 +318,21 @@ class CloudLegacyPosMirrorService
         $tableName = $this->nullableString($this->firstExistingValue([$table, $payload], ['tname', 'table_name', 'name']), 255)
             ?: 'Table ' . $tableId;
         $sourceMdtime = $this->incomingDatetime($event, [$table, $payload]);
+        $tableCase = $this->intOrZero($this->firstExistingValue([$table, $payload], ['table_case', 'case']));
+        $activeOrderLocalId = $this->intOrNull($this->firstExistingValue([$table, $payload], [
+            'active_order_local_id',
+            'current_order_id',
+            'order_id',
+        ]));
+        if ($tableCase === 0 && ($activeOrderLocalId === null || $activeOrderLocalId <= 0)) {
+            $this->closeActiveOrdersForFreedTable($conn, $tableId, $sourceMdtime);
+        }
+
         $params = [
             $tableId,
             $tableUuid,
             $tableName,
-            $this->intOrZero($this->firstExistingValue([$table, $payload], ['table_case', 'case'])),
+            $tableCase,
             $this->boolInt($this->firstExistingValue([$table, $payload], ['isdeleted', 'deleted']), 0),
             $sourceMdtime,
         ];
@@ -343,6 +353,72 @@ class CloudLegacyPosMirrorService
         $stmt->close();
 
         return ['legacy_entity_id' => 'tables:' . $tableId];
+    }
+
+    private function closeActiveOrdersForFreedTable(mysqli $conn, int $tableId, ?string $sourceMdtime = null): int
+    {
+        $orderIds = [];
+        $stmt = $conn->prepare("
+            SELECT id
+            FROM ot_head
+            WHERE table_id = ?
+              AND pro_tybe = 9
+              AND COALESCE(isdeleted, 0) = 0
+              AND COALESCE(order_status, 'active') = 'active'
+              AND COALESCE(payment_status, 'unpaid') IN ('unpaid', 'partial')
+            FOR UPDATE
+        ");
+        $stmt->bind_param('i', $tableId);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        while ($row = $result->fetch_assoc()) {
+            $orderIds[] = (int) $row['id'];
+        }
+        $stmt->close();
+
+        if (!$orderIds) {
+            return 0;
+        }
+
+        $set = [
+            "order_status = 'cancelled'",
+            "invoice_status = 'cancelled'",
+            "payment_status = 'voided'",
+            "isdeleted = 1",
+        ];
+        $params = [];
+        if ($this->columnExists($conn, 'ot_head', 'cancelled_at')) {
+            $set[] = 'cancelled_at = COALESCE(?, CURRENT_TIMESTAMP)';
+            $params[] = $sourceMdtime;
+        }
+        if ($this->columnExists($conn, 'ot_head', 'cancellation_reason')) {
+            $set[] = "cancellation_reason = COALESCE(NULLIF(cancellation_reason, ''), 'Synced table freed remotely')";
+        }
+        if ($this->columnExists($conn, 'ot_head', 'mdtime')) {
+            $set[] = 'mdtime = COALESCE(?, CURRENT_TIMESTAMP)';
+            $params[] = $sourceMdtime;
+        }
+
+        $placeholders = implode(', ', array_fill(0, count($orderIds), '?'));
+        $sql = 'UPDATE ot_head SET ' . implode(', ', $set) . " WHERE id IN ({$placeholders})";
+        foreach ($orderIds as $orderId) {
+            $params[] = $orderId;
+        }
+        $stmt = $conn->prepare($sql);
+        $this->bindParams($stmt, str_repeat('s', count($params)), $params);
+        $stmt->execute();
+        $updated = $stmt->affected_rows;
+        $stmt->close();
+
+        if ($this->tableExists($conn, 'fat_details')) {
+            $stmt = $conn->prepare("UPDATE fat_details SET isdeleted = 1 WHERE fatid IN ({$placeholders})");
+            $lineParams = $orderIds;
+            $this->bindParams($stmt, str_repeat('s', count($lineParams)), $lineParams);
+            $stmt->execute();
+            $stmt->close();
+        }
+
+        return max(0, $updated);
     }
 
     private function mirrorMenuEvent(mysqli $conn, array $event): ?array
@@ -813,6 +889,18 @@ class CloudLegacyPosMirrorService
         }
 
         $this->columnExistsCache[$key] = $exists;
+        return $exists;
+    }
+
+    private function tableExists(mysqli $conn, string $table): bool
+    {
+        $tableEscaped = $conn->real_escape_string($table);
+        $result = $conn->query("SHOW TABLES LIKE '{$tableEscaped}'");
+        $exists = $result && $result->num_rows > 0;
+        if ($result) {
+            $result->free();
+        }
+
         return $exists;
     }
 

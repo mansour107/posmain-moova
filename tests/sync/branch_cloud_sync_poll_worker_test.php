@@ -165,6 +165,32 @@ class BranchCloudSyncPollWorkerTest extends TestCase
         $this->assertSame('1', (string) $table['table_case']);
     }
 
+    public function testPollerAppliesHostedFreedTableAndClosesLocalActiveOrder(): void
+    {
+        $this->insertLocalActiveTableOrder('2026-01-01 11:00:00');
+        $cursor = $this->insertCloudFreedTableEvent('2026-01-01T11:10:00Z');
+
+        $metrics = (new BranchCloudSyncPollWorker())->runOnce(self::$conn, $this->branchConfig(), [
+            'batch_size' => 10,
+            'http_get' => $this->cloudHttpGet(),
+            'http_post' => $this->cloudHttpPost(),
+        ]);
+
+        $order = self::$conn->query('SELECT * FROM ot_head WHERE id = ' . self::ORDER_ID)->fetch_assoc();
+        $table = self::$conn->query('SELECT * FROM tables WHERE id = ' . self::TABLE_ID)->fetch_assoc();
+
+        $this->assertSame(1, $metrics['fetched']);
+        $this->assertSame(1, $metrics['applied']);
+        $this->assertSame(1, $metrics['acked']);
+        $this->assertSame($cursor, $metrics['checkpoint']);
+        $this->assertSame('ack_applied', $this->fetchCloudEvent($cursor)['status']);
+        $this->assertSame('0', (string) $table['table_case']);
+        $this->assertSame('cancelled', (string) $order['order_status']);
+        $this->assertSame('cancelled', (string) $order['invoice_status']);
+        $this->assertSame('voided', (string) $order['payment_status']);
+        $this->assertSame('1', (string) $order['isdeleted']);
+    }
+
     private function insertLocalItem(string $name, string $price, string $mdtime): void
     {
         $id = self::ITEM_ID;
@@ -352,6 +378,62 @@ class BranchCloudSyncPollWorkerTest extends TestCase
         ];
 
         return $this->insertCloudSyncEvent('table.updated', 'table', $tableUuid, self::TABLE_ID, 'tables:' . self::TABLE_ID, $payload);
+    }
+
+    private function insertCloudFreedTableEvent(string $capturedAtUtc): int
+    {
+        $tableUuid = '88888888-8888-4888-8888-888888888888';
+        $payload = [
+            'schema_version' => 1,
+            'snapshot_type' => 'pos_table',
+            'source_system' => 'cloud_pos',
+            'branch_uuid' => self::BRANCH_UUID,
+            'captured_at_utc' => $capturedAtUtc,
+            'table_uuid' => $tableUuid,
+            'local_table_id' => self::TABLE_ID,
+            'table' => [
+                'table_uuid' => $tableUuid,
+                'local_table_id' => self::TABLE_ID,
+                'table_id' => self::TABLE_ID,
+                'tname' => 'PHPUnit Table',
+                'table_name' => 'PHPUnit Table',
+                'table_case' => 0,
+                'isdeleted' => 0,
+                'active_order_uuid' => null,
+                'active_order_local_id' => null,
+                'sync_revision' => strtotime($capturedAtUtc),
+            ],
+        ];
+
+        return $this->insertCloudSyncEvent('table.updated', 'table', $tableUuid, self::TABLE_ID, 'tables:' . self::TABLE_ID, $payload);
+    }
+
+    private function insertLocalActiveTableOrder(string $mdtime): void
+    {
+        self::$conn->query("
+            INSERT INTO tables (id, uuid, tname, table_case, isdeleted, mdtime)
+            VALUES (" . self::TABLE_ID . ", '88888888-8888-4888-8888-888888888888', 'PHPUnit Table', 1, 0, '" . self::$conn->real_escape_string($mdtime) . "')
+            ON DUPLICATE KEY UPDATE table_case = 1,
+                                    isdeleted = 0,
+                                    mdtime = VALUES(mdtime)
+        ");
+        self::$conn->query("
+            INSERT INTO ot_head (
+                id, pro_id, pro_tybe, order_type, table_id, pro_date,
+                fat_total, fat_net, paid_amount, remaining_amount,
+                payment_status, invoice_status, order_status, isdeleted, user, mdtime
+            ) VALUES (
+                " . self::ORDER_ID . ", 271, 9, 'table', " . self::TABLE_ID . ", '2026-01-01',
+                18.000, 18.000, 0.000, 18.000,
+                'unpaid', 'draft', 'active', 0, 1, '" . self::$conn->real_escape_string($mdtime) . "'
+            )
+            ON DUPLICATE KEY UPDATE table_id = VALUES(table_id),
+                                    payment_status = 'unpaid',
+                                    invoice_status = 'draft',
+                                    order_status = 'active',
+                                    isdeleted = 0,
+                                    mdtime = VALUES(mdtime)
+        ");
     }
 
     private function insertCloudSyncEvent(string $eventType, string $entityType, string $entityUuid, int $localId, string $aggregateId, array $payload): int
