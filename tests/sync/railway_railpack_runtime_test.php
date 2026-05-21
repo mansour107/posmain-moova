@@ -19,6 +19,8 @@ railpackRuntimeAssert(file_exists($root . '/api/ready.php'), 'Railway readiness 
 railpackRuntimeAssert(($railwayConfig['deploy']['healthcheckTimeout'] ?? null) >= 60, 'Railway healthcheck timeout should allow runtime boot to settle');
 railpackRuntimeAssert(($railwayConfig['deploy']['overlapSeconds'] ?? null) >= 30, 'Railway deploys should overlap briefly to avoid unnecessary downtime');
 railpackRuntimeAssert(($railwayConfig['deploy']['drainingSeconds'] ?? null) >= 15, 'Railway deploys should drain briefly before SIGKILL');
+railpackRuntimeAssert(strpos((string) ($railwayConfig['deploy']['startCommand'] ?? ''), '/start-container.sh') !== false, 'Railway start command should preserve the Railpack runtime launcher');
+railpackRuntimeAssert(strpos((string) ($railwayConfig['deploy']['startCommand'] ?? ''), '/app/uploads') !== false, 'Railway start command should prepare writable upload storage');
 railpackRuntimeAssert(($railwayConfig['deploy']['restartPolicyType'] ?? null) === 'ON_FAILURE', 'Railway restart policy should remain conservative');
 
 railpackRuntimeAssert(!file_exists($root . '/Dockerfile'), 'Root Dockerfile should not exist because Railway auto-detects it ahead of Railpack');
