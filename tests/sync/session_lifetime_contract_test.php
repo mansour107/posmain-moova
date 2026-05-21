@@ -4,6 +4,10 @@ putenv('POSMAIN_SESSION_LIFETIME_SECONDS');
 putenv('POSMAIN_SESSION_IDLE_SECONDS');
 putenv('POSMAIN_SESSION_ABSOLUTE_SECONDS');
 putenv('POSMAIN_SESSION_SAVE_PATH');
+putenv('POSMAIN_SESSION_DRIVER');
+putenv('POSMAIN_SESSION_TABLE');
+putenv('POSMAIN_ENV');
+putenv('POSMAIN_PRODUCTION_MODE');
 
 require_once __DIR__ . '/../../includes/session_bootstrap.php';
 
@@ -12,13 +16,19 @@ sessionLifetimeAssert((int) ($params['lifetime'] ?? 0) === 86400, 'session cooki
 sessionLifetimeAssert((int) ini_get('session.gc_maxlifetime') === 86400, 'server session GC lifetime should default to 24 hours');
 sessionLifetimeAssert(function_exists('posmain_session_lifetime_seconds'), 'session lifetime helper should exist');
 sessionLifetimeAssert(posmain_session_lifetime_seconds() === 86400, 'session lifetime helper should return 24 hours by default');
+sessionLifetimeAssert(function_exists('posmain_session_driver'), 'session storage driver helper should exist');
+sessionLifetimeAssert(posmain_session_driver() === 'file', 'local sessions should default to file storage');
 sessionLifetimeAssert(function_exists('posmain_session_save_path'), 'session save path helper should exist');
 sessionLifetimeAssert(strpos(session_save_path(), DIRECTORY_SEPARATOR . 'var' . DIRECTORY_SEPARATOR . 'sessions') !== false, 'session save path should default to app-owned var/sessions');
 
 $source = file_get_contents(__DIR__ . '/../../includes/session_bootstrap.php');
 sessionLifetimeAssert(is_string($source), 'unable to read session bootstrap');
+sessionLifetimeAssert(strpos($source, "return !empty(\$config['production_mode']) ? 'database' : 'file';") !== false, 'production sessions should default to database storage');
+sessionLifetimeAssert(strpos($source, 'posmain_session_register_database_handler') !== false, 'session bootstrap should register the database handler');
+sessionLifetimeAssert(strpos($source, 'POSMAIN database session handler unavailable, using file sessions') !== false, 'database session failures should fall back to file sessions');
 sessionLifetimeAssert(strpos($source, "posmain_env('POSMAIN_SESSION_IDLE_SECONDS', \$sessionLifetime)") !== false, 'idle expiry should default to configured session lifetime');
 sessionLifetimeAssert(strpos($source, "posmain_env('POSMAIN_SESSION_ABSOLUTE_SECONDS', \$sessionLifetime)") !== false, 'absolute expiry should default to configured session lifetime');
+sessionLifetimeAssert(is_file(__DIR__ . '/../../classes/Infrastructure/DatabaseSessionHandler.php'), 'database session handler class should exist');
 sessionLifetimeAssert(empty(sessionLifetimeRawSessionStartFiles()), 'all first-party session entry points should load session_bootstrap.php instead of raw session_start()');
 
 echo "session-lifetime-contract-ok\n";

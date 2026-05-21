@@ -5,6 +5,7 @@ class SyncSchemaManager
     public function plannedStatements()
     {
         return [
+            'app_sessions' => $this->appSessionsSql(),
             'sync_branch_identity' => $this->syncBranchIdentitySql(),
             'document_counters' => $this->documentCountersSql(),
             'pos_request_keys' => $this->posRequestKeysSql(),
@@ -691,6 +692,13 @@ CREATE TABLE IF NOT EXISTS sync_branch_identity (
   PRIMARY KEY (id),
   UNIQUE KEY uq_sync_branch_identity_uuid (branch_uuid)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
+    private function appSessionsSql()
+    {
+        require_once __DIR__ . '/../Infrastructure/DatabaseSessionHandler.php';
+
+        return DatabaseSessionHandler::schemaSql('app_sessions');
     }
 
     private function documentCountersSql()

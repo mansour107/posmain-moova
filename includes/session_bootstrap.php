@@ -2,6 +2,23 @@
 
 require_once __DIR__ . '/../config/app_config.php';
 
+if (!function_exists('posmain_session_driver')) {
+    function posmain_session_driver(): string
+    {
+        $configured = strtolower(trim((string) posmain_env('POSMAIN_SESSION_DRIVER', '')));
+        if (in_array($configured, ['database', 'db', 'mysql'], true)) {
+            return 'database';
+        }
+
+        if (in_array($configured, ['file', 'files'], true)) {
+            return 'file';
+        }
+
+        $config = posmain_app_config();
+        return !empty($config['production_mode']) ? 'database' : 'file';
+    }
+}
+
 if (!function_exists('posmain_is_https_request')) {
     function posmain_is_https_request(): bool
     {
@@ -32,9 +49,57 @@ if (!function_exists('posmain_session_configure_runtime')) {
         ini_set('session.gc_maxlifetime', (string) $lifetime);
         ini_set('session.cookie_lifetime', (string) $lifetime);
 
+        if (posmain_session_driver() === 'database' && posmain_session_register_database_handler()) {
+            return;
+        }
+
+        posmain_session_configure_file_runtime();
+    }
+}
+
+if (!function_exists('posmain_session_configure_file_runtime')) {
+    function posmain_session_configure_file_runtime(): void
+    {
         $savePath = posmain_session_save_path();
         if ($savePath !== null) {
             session_save_path($savePath);
+        }
+    }
+}
+
+if (!function_exists('posmain_session_register_database_handler')) {
+    function posmain_session_register_database_handler(): bool
+    {
+        static $registered = false;
+
+        if ($registered) {
+            return true;
+        }
+
+        if (session_status() === PHP_SESSION_ACTIVE) {
+            return false;
+        }
+
+        try {
+            require_once __DIR__ . '/db_bootstrap.php';
+            require_once __DIR__ . '/../classes/Infrastructure/DatabaseSessionHandler.php';
+
+            $tableName = trim((string) posmain_env('POSMAIN_SESSION_TABLE', 'app_sessions'));
+            $handler = new DatabaseSessionHandler(
+                static function (): mysqli {
+                    return posmain_db_connect();
+                },
+                $tableName !== '' ? $tableName : 'app_sessions',
+                posmain_session_lifetime_seconds()
+            );
+            $handler->ensureSchema();
+            session_set_save_handler($handler, true);
+            $registered = true;
+
+            return true;
+        } catch (Throwable $e) {
+            error_log('POSMAIN database session handler unavailable, using file sessions: ' . $e->getMessage());
+            return false;
         }
     }
 }

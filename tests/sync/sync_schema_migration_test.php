@@ -40,6 +40,7 @@ class SyncSchemaMigrationTest extends TestCase
         $manager = new SyncSchemaManager();
         $sql = implode("\n", $manager->plannedStatements());
 
+        $this->assertArrayHasKey('app_sessions', $manager->plannedStatements());
         $this->assertArrayHasKey('sync_branch_identity', $manager->plannedStatements());
         $this->assertArrayHasKey('document_counters', $manager->plannedStatements());
         $this->assertArrayHasKey('pos_request_keys', $manager->plannedStatements());
@@ -60,6 +61,9 @@ class SyncSchemaMigrationTest extends TestCase
         $this->assertArrayHasKey('cloud_menu_items', $manager->plannedStatements());
         $this->assertArrayHasKey('cloud_sync_branch_events', $manager->plannedStatements());
         $this->assertArrayHasKey('cloud_moova_branch_events', $manager->plannedStatements());
+        $this->assertStringContainsString('CREATE TABLE IF NOT EXISTS `app_sessions`', $sql);
+        $this->assertStringContainsString('payload MEDIUMBLOB NOT NULL', $sql);
+        $this->assertStringContainsString('KEY idx_app_sessions_expires_at (expires_at)', $sql);
         $this->assertStringContainsString('CREATE TABLE IF NOT EXISTS sync_branch_identity', $sql);
         $this->assertStringContainsString('id TINYINT UNSIGNED NOT NULL', $sql);
         $this->assertStringContainsString('branch_uuid CHAR(36) NOT NULL', $sql);
@@ -174,6 +178,9 @@ class SyncSchemaMigrationTest extends TestCase
 
         $this->assertIsArray($first);
         $this->assertSame([], $second);
+        $this->assertTrue($inspect['app_sessions']['exists']);
+        $this->assertContains('payload', $inspect['app_sessions']['columns']);
+        $this->assertContains('idx_app_sessions_expires_at', $inspect['app_sessions']['indexes']);
         $this->assertTrue($inspect['sync_branch_identity']['exists']);
         $this->assertTrue($inspect['document_counters']['exists']);
         $this->assertTrue($inspect['pos_request_keys']['exists']);
