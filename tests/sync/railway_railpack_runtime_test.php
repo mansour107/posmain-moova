@@ -47,9 +47,14 @@ $expectedDeployIgnorePatterns = [
     'backup/',
     'docs/',
     'tests/',
+    'logs/*',
+    '!logs/.gitkeep',
     'uploads/*',
     '!uploads/.htaccess',
-    'var/',
+    'var/*',
+    '!var/sessions/',
+    'var/sessions/*',
+    '!var/sessions/.gitkeep',
     'posmain-phase0-login-mobile.png',
     'decumintation.xlsx',
     '~$decumintation.xlsx',
@@ -64,6 +69,10 @@ foreach ($expectedDeployIgnorePatterns as $pattern) {
 $railpackignore = file_get_contents($root . '/.railpackignore');
 foreach ($expectedDeployIgnorePatterns as $pattern) {
     railpackRuntimeAssert(strpos($railpackignore, $pattern) !== false, '.railpackignore should include ' . $pattern);
+}
+
+foreach (['/logs/.gitkeep', '/uploads/.htaccess', '/var/sessions/.gitkeep'] as $runtimeFile) {
+    railpackRuntimeAssert(file_exists($root . $runtimeFile), 'Runtime placeholder should exist: ' . $runtimeFile);
 }
 
 $caddyfile = file_get_contents($root . '/Caddyfile');
