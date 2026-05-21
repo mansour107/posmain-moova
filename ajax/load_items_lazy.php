@@ -7,6 +7,7 @@
 header('Content-Type: application/json');
 require_once '../includes/connect.php';
 require_once '../classes/Pos/Service/ItemAvailabilityService.php';
+require_once '../includes/pos_item_card.php';
 
 try {
     // معاملات البحث والصفحات
@@ -16,22 +17,29 @@ try {
     $offset = ($page - 1) * $limit;
     
     // بناء الاستعلام
-    $where = "isdeleted = 0";
+    $where = "m.isdeleted = 0";
     $params = [];
     $types = '';
     
     if (!empty($search)) {
-        $where .= " AND (iname LIKE ? OR name2 LIKE ? OR barcode LIKE ?)";
+        $where .= " AND (m.iname LIKE ? OR m.name2 LIKE ? OR m.barcode LIKE ?)";
         $search_param = "%{$search}%";
         $params = [$search_param, $search_param, $search_param];
         $types = 'sss';
     }
     
     // استعلام محسّن - جلب الأعمدة المطلوبة فقط
-    $query = "SELECT id, iname, name2, price1, barcode 
-              FROM myitems 
+    $query = "SELECT m.id, m.iname, m.name2, m.price1, m.barcode, m.group1, m.info, i.iname AS img_filename
+              FROM myitems m
+              LEFT JOIN (
+                  SELECT itemid, MIN(id) AS image_id
+                  FROM imgs
+                  WHERE isdeleted = 0
+                  GROUP BY itemid
+              ) image_pick ON image_pick.itemid = m.id
+              LEFT JOIN imgs i ON i.id = image_pick.image_id
               WHERE {$where} 
-              ORDER BY iname 
+              ORDER BY COALESCE(m.salesqty, 0) DESC, m.iname
               LIMIT ? OFFSET ?";
     
     $params[] = $limit;
@@ -52,13 +60,18 @@ try {
     
     $items = [];
     while ($row = $result->fetch_assoc()) {
-        $items[] = [
+        $item = [
             'id' => $row['id'],
             'iname' => $row['iname'],
             'name2' => $row['name2'] ?? '',
             'price1' => floatval($row['price1'] ?? 0),
-            'barcode' => $row['barcode'] ?? ''
+            'barcode' => $row['barcode'] ?? '',
+            'group1' => $row['group1'] ?? '',
+            'info' => $row['info'] ?? '',
+            'img_filename' => $row['img_filename'] ?? '',
         ];
+        $item['html'] = pos_render_item_card($item);
+        $items[] = $item;
     }
 
     $branchConfig = function_exists('posmain_app_config')
@@ -72,7 +85,7 @@ try {
     $items = (new ItemAvailabilityService())->decorateItems($conn, $items, $availabilityScope);
     
     // حساب إجمالي العدد
-    $count_query = "SELECT COUNT(*) as total FROM myitems WHERE {$where}";
+    $count_query = "SELECT COUNT(*) as total FROM myitems m WHERE {$where}";
     $count_stmt = $conn->prepare($count_query);
     
     if (!empty($search)) {

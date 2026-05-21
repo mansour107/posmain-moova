@@ -12,6 +12,8 @@ $(document).ready(function() {
         updateTotal();
     }
     const $filterInput = $('#posUnifiedSearch').length ? $('#posUnifiedSearch') : $('#itemFilterInput');
+    const $itemsGrid = $('#itemsGrid');
+    const $itemsGridLoader = $('#itemsGridLoader');
     const $currentControls = $('.pos-current-order-controls');
     if ($currentControls.length) {
         $currentControls.find('.pos-customer-mount').append($('.pos-customer-field'));
@@ -19,7 +21,11 @@ $(document).ready(function() {
     }
 
     const $customerSelect = $('select[name="acc2_id"]');
+    const $paymentFundSelect = $('#payment_fund_id');
+    const $paymentBankSelect = $('#payment_bank_id');
     let initialCustomerId = '';
+    let customerOptionsLoadStarted = false;
+    let bankOptionsLoadStarted = false;
 
     function customerOptionExists(customerId) {
         const normalizedCustomerId = String(customerId || '');
@@ -97,6 +103,224 @@ $(document).ready(function() {
     if ($('#age2').is(':checked')) {
         setTableDefaultCustomer();
     }
+
+    function mergeSelectOptions($select, options, selectedValue, placeholderHtml) {
+        if (!$select.length) {
+            return;
+        }
+
+        const normalizedSelectedValue = String(selectedValue || $select.val() || '');
+        const existingOptions = new Map();
+        $select.find('option').each(function() {
+            const value = String($(this).val() || '');
+            if (value) {
+                existingOptions.set(value, String($(this).text()).trim());
+            }
+        });
+
+        (options || []).forEach(function(option) {
+            const value = String(option && option.id ? option.id : '');
+            const label = String(option && option.name ? option.name : '').trim();
+            if (value && label) {
+                existingOptions.set(value, label);
+            }
+        });
+
+        const html = [];
+        if (placeholderHtml) {
+            html.push(placeholderHtml);
+        }
+
+        existingOptions.forEach(function(label, value) {
+            html.push($('<option>', { value: value, text: label }).prop('outerHTML'));
+        });
+
+        $select.html(html.join(''));
+        if (normalizedSelectedValue && existingOptions.has(normalizedSelectedValue)) {
+            $select.val(normalizedSelectedValue);
+        }
+    }
+
+    function loadCustomerOptions() {
+        if (!$customerSelect.length || customerOptionsLoadStarted || $customerSelect.attr('data-options-loaded') === '1') {
+            return;
+        }
+
+        customerOptionsLoadStarted = true;
+        const selectedValue = String($customerSelect.val() || initialCustomerId || '');
+        $.ajax({
+            url: 'ajax/get_pos_options.php',
+            method: 'GET',
+            dataType: 'json',
+            cache: false,
+            data: { type: 'customers' },
+            success: function(response) {
+                if (!response || response.success !== true) {
+                    return;
+                }
+
+                mergeSelectOptions($customerSelect, response.options || [], selectedValue);
+                $customerSelect.attr('data-options-loaded', '1');
+                if (selectedValue) {
+                    selectCustomerById(selectedValue);
+                }
+            },
+            complete: function() {
+                customerOptionsLoadStarted = false;
+            }
+        });
+    }
+
+    function syncPaymentFundOptions() {
+        const $mainFundSelect = $('select[name="fund_id"]');
+        if (!$mainFundSelect.length || !$paymentFundSelect.length) {
+            return;
+        }
+
+        $paymentFundSelect.html($mainFundSelect.html());
+        const selectedFund = String($mainFundSelect.val() || '');
+        if (selectedFund) {
+            $paymentFundSelect.val(selectedFund);
+        }
+    }
+
+    function loadBankOptions() {
+        if (!$paymentBankSelect.length || bankOptionsLoadStarted || $paymentBankSelect.attr('data-options-loaded') === '1') {
+            return;
+        }
+
+        bankOptionsLoadStarted = true;
+        const selectedValue = String($paymentBankSelect.val() || '');
+        $.ajax({
+            url: 'ajax/get_pos_options.php',
+            method: 'GET',
+            dataType: 'json',
+            cache: false,
+            data: { type: 'banks' },
+            success: function(response) {
+                if (!response || response.success !== true) {
+                    return;
+                }
+
+                mergeSelectOptions($paymentBankSelect, response.options || [], selectedValue, '<option value="">-- اختر البنك --</option>');
+                $paymentBankSelect.attr('data-options-loaded', '1');
+            },
+            complete: function() {
+                bankOptionsLoadStarted = false;
+            }
+        });
+    }
+
+    window.POSMainSyncPaymentOptions = function() {
+        syncPaymentFundOptions();
+        loadBankOptions();
+    };
+
+    function activeCategoryFilter() {
+        const $activeCategory = $('.category-btn.active').first();
+        return {
+            categoryId: $activeCategory.data('category'),
+            keywords: String($activeCategory.data('keywords') || '')
+                .split(',')
+                .map(keyword => keyword.trim().toLowerCase())
+                .filter(Boolean)
+        };
+    }
+
+    function itemMatchesActiveFilter($item, searchText, categoryFilter) {
+        const $card = $item.find('.item-card');
+        const itemName = String($card.data('item-name') || '').toLowerCase();
+        const itemBarcode = String($card.data('item-barcode') || '').toLowerCase();
+        const categoryId = categoryFilter.categoryId;
+
+        if (searchText && !itemName.includes(searchText) && !itemBarcode.includes(searchText)) {
+            return false;
+        }
+
+        if (!categoryId || categoryId === 'all') {
+            return true;
+        }
+
+        if (categoryFilter.keywords.length > 0) {
+            return categoryFilter.keywords.some(keyword => itemName.includes(keyword));
+        }
+
+        return String($item.data('category')) === String(categoryId);
+    }
+
+    function applyActiveItemFilter() {
+        const searchText = String($filterInput.val() || '').toLowerCase().trim();
+        const categoryFilter = activeCategoryFilter();
+
+        $('.item-wrapper').each(function() {
+            const $item = $(this);
+            $item.toggleClass('hidden', !itemMatchesActiveFilter($item, searchText, categoryFilter));
+        });
+    }
+
+    function appendLazyItems(items) {
+        const existingIds = new Set();
+        $('.item-card').each(function() {
+            existingIds.add(String($(this).data('item-id') || ''));
+        });
+
+        const html = [];
+        (items || []).forEach(function(item) {
+            const itemId = String(item && item.id ? item.id : '');
+            if (!itemId || existingIds.has(itemId) || !item.html) {
+                return;
+            }
+            existingIds.add(itemId);
+            html.push(item.html);
+        });
+
+        if (html.length > 0) {
+            $itemsGrid.append(html.join(''));
+            applyActiveItemFilter();
+        }
+    }
+
+    function loadRemainingItems() {
+        if (!$itemsGrid.length || $itemsGrid.data('lazy-loading-started')) {
+            return;
+        }
+
+        const pageSize = parseInt($itemsGrid.data('page-size'), 10) || 48;
+        let nextPage = (parseInt($itemsGrid.data('initial-page'), 10) || 1) + 1;
+        $itemsGrid.data('lazy-loading-started', true);
+
+        function loadNextPage() {
+            $itemsGridLoader.removeClass('d-none');
+            $.ajax({
+                url: 'ajax/load_items_lazy.php',
+                method: 'GET',
+                dataType: 'json',
+                data: {
+                    page: nextPage,
+                    limit: pageSize
+                },
+                success: function(response) {
+                    if (!response || response.success !== true) {
+                        $itemsGridLoader.addClass('d-none');
+                        return;
+                    }
+
+                    appendLazyItems(response.items || []);
+                    if (response.has_more) {
+                        nextPage += 1;
+                        setTimeout(loadNextPage, 50);
+                    } else {
+                        $itemsGridLoader.addClass('d-none');
+                    }
+                },
+                error: function() {
+                    $itemsGridLoader.addClass('d-none');
+                }
+            });
+        }
+
+        setTimeout(loadNextPage, 250);
+    }
     
     // ========================================
     // Category Filter
@@ -116,21 +340,7 @@ $(document).ready(function() {
         // مسح البحث
         $filterInput.val('');
         
-        // فلترة الأصناف
-        const $items = $('.item-wrapper');
-        if (categoryId === 'all') {
-            $items.removeClass('hidden');
-        } else if (keywords.length > 0) {
-            $items.each(function() {
-                const $item = $(this);
-                const itemName = String($item.find('.item-card').data('item-name') || '').toLowerCase();
-                const matches = keywords.some(keyword => itemName.includes(keyword));
-                $item.toggleClass('hidden', !matches);
-            });
-        } else {
-            $items.addClass('hidden');
-            $(`.item-wrapper[data-category="${categoryId}"]`).removeClass('hidden');
-        }
+        applyActiveItemFilter();
     });
 
     // ========================================
@@ -170,36 +380,21 @@ $(document).ready(function() {
         clearTimeout(searchTimeout);
         const searchText = $(this).val().toLowerCase().trim();
         
-        // لو فاضي، اعرض كل الأصناف فوراً
+        // لو فاضي، اعرض الأصناف حسب التصنيف الحالي فوراً
         if (searchText === '') {
-            $('.item-wrapper').removeClass('hidden');
+            applyActiveItemFilter();
             return;
         }
         
         // انتظر 200ms قبل البحث (debouncing)
         searchTimeout = setTimeout(function() {
-            const $items = $('.item-wrapper');
-            
-            // استخدم CSS classes للأداء الأفضل
-            $items.each(function() {
-                const $this = $(this);
-                const $card = $this.find('.item-card');
-                const itemName = ($card.data('item-name') || '').toString().toLowerCase();
-                const itemBarcode = ($card.data('item-barcode') || '').toString().toLowerCase();
-                
-                // اعرض أو اخفي حسب النتيجة
-                if (itemName.includes(searchText) || itemBarcode.includes(searchText)) {
-                    $this.removeClass('hidden');
-                } else {
-                    $this.addClass('hidden');
-                }
-            });
+            applyActiveItemFilter();
         }, 200);
     });
     
     $('#clearFilter').click(function() {
         $filterInput.val('');
-        $('.item-wrapper').removeClass('hidden');
+        applyActiveItemFilter();
     });
 
     $('#focusUnifiedSearch').on('click', function() {
@@ -240,6 +435,10 @@ $(document).ready(function() {
         }
     });
     syncModeTabs();
+    syncPaymentFundOptions();
+    loadRemainingItems();
+    startTablesAutoRefresh();
+    setTimeout(loadCustomerOptions, 900);
 
     // ========================================
     // Item Filtering Functions
@@ -638,6 +837,7 @@ $(document).ready(function() {
 
     let tablesRefreshTimer = null;
     let tablesRefreshInFlight = false;
+    let tablesPreloadStarted = false;
     let tableTransferMode = false;
     let tableTransferInFlight = false;
     let latestTablesState = [];
@@ -835,15 +1035,21 @@ $(document).ready(function() {
         });
     };
 
+    function startTablesAutoRefresh() {
+        if (tablesPreloadStarted || !$('#tablesGrid').length) {
+            return;
+        }
+
+        tablesPreloadStarted = true;
+        setTimeout(window.refreshTablesState, 800);
+        tablesRefreshTimer = setInterval(window.refreshTablesState, 5000);
+    }
+
     $('#tablesModal').on('shown.bs.modal', function() {
         window.refreshTablesState();
-        clearInterval(tablesRefreshTimer);
-        tablesRefreshTimer = setInterval(window.refreshTablesState, 4000);
     });
 
     $('#tablesModal').on('hidden.bs.modal', function() {
-        clearInterval(tablesRefreshTimer);
-        tablesRefreshTimer = null;
         setTableTransferMode(false);
     });
 
@@ -1128,6 +1334,11 @@ $(document).ready(function() {
         calculateChange();
     });
 
+    $('#paymentModal').on('shown.bs.modal', function() {
+        syncPaymentFundOptions();
+        loadBankOptions();
+    });
+
     function calculateChange() {
         let net = parseFloat($('#net_val').val()) || 0;
         let paidCash = parseFloat($('#modal_paid_cash').val()) || 0;
@@ -1255,6 +1466,7 @@ $(document).ready(function() {
             paidCash = 0;
             paidBank = 0;
         }
+        syncPaymentFundOptions();
         let fundId = $('#payment_fund_id').val();
         let bankId = $('#payment_bank_id').val();
         let net = parseFloat($('#net_val').val()) || 0;

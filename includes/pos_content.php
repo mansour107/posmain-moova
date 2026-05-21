@@ -186,8 +186,6 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                                                 $tableDefaultClientId = intval($tableDefaultClientResult->fetch_assoc()['id']);
                                             }
                                             $shouldUseTableDefaultClient = !isset($_GET['edit']) && isset($_GET['table']) && $tableDefaultClientId > 0;
-                                            $defaultClientExtraCondition = $tableDefaultClientId > 0 ? " OR id = $tableDefaultClientId" : "";
-                                            $resclient = $conn->query("SELECT * FROM `acc_head` WHERE code LIKE '122%' AND isdeleted = 0 AND (is_basic = 0$defaultClientExtraCondition) ORDER BY code, id;");
                                             if(isset($_GET['edit'])){$rowed = $conn->query("SELECT * FROM ot_head where id = $id")->fetch_assoc();};
                                             $editClientId = isset($rowed['acc1']) ? intval($rowed['acc1']) : 0;
                                             $selectedCustomerId = 0;
@@ -198,25 +196,39 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                                             } elseif (!empty($rowstg['def_pos_client'])) {
                                                 $selectedCustomerId = intval($rowstg['def_pos_client']);
                                             }
+                                            $initialCustomerOptions = [];
+                                            $initialCustomerIds = array_values(array_unique(array_filter([$selectedCustomerId, $tableDefaultClientId])));
+                                            foreach ($initialCustomerIds as $initialCustomerId) {
+                                                $initialCustomerId = intval($initialCustomerId);
+                                                $initialCustomerResult = $conn->query("SELECT id, aname FROM `acc_head` WHERE id = $initialCustomerId AND isdeleted = 0 LIMIT 1");
+                                                if ($initialCustomerResult && $initialCustomerResult->num_rows > 0) {
+                                                    $initialCustomer = $initialCustomerResult->fetch_assoc();
+                                                    $initialCustomerOptions[intval($initialCustomer['id'])] = $initialCustomer['aname'];
+                                                }
+                                            }
+                                            if ($selectedCustomerId > 0 && !isset($initialCustomerOptions[$selectedCustomerId])) {
+                                                $selectedCustomerId = 0;
+                                            }
+                                            if ($selectedCustomerId === 0) {
+                                                $fallbackCustomerResult = $conn->query("SELECT id, aname FROM `acc_head` WHERE code LIKE '122%' AND isdeleted = 0 AND is_basic = 0 ORDER BY code, id LIMIT 1");
+                                                if ($fallbackCustomerResult && $fallbackCustomerResult->num_rows > 0) {
+                                                    $fallbackCustomer = $fallbackCustomerResult->fetch_assoc();
+                                                    $selectedCustomerId = intval($fallbackCustomer['id']);
+                                                    $initialCustomerOptions[$selectedCustomerId] = $fallbackCustomer['aname'];
+                                                }
+                                            }
                                             ?>
                                             <select name="acc2_id" class="form-select form-select-sm" title="العميل"
                                                 style="font-size: 0.75rem;" required
+                                                data-options-loaded="0"
                                                 data-initial-customer-id="<?= htmlspecialchars((string) $selectedCustomerId, ENT_QUOTES, 'UTF-8') ?>"
                                                 data-table-default-customer-id="<?= htmlspecialchars((string) $tableDefaultClientId, ENT_QUOTES, 'UTF-8') ?>">
                                                 <?php
-                                                $first_client = true;
-                                                while ($rowclient = $resclient->fetch_assoc()) {
-                                                    $selected = '';
-                                                    $rowClientId = intval($rowclient['id']);
-                                                    if($selectedCustomerId > 0 && $selectedCustomerId == $rowClientId){
-                                                        $selected = "selected";
-                                                    } elseif ($selectedCustomerId == 0 && !$shouldUseTableDefaultClient && $first_client && empty($rowstg['def_pos_client']) && !isset($_GET['edit'])) {
-                                                        $selected = "selected";
-                                                    }
-                                                    $first_client = false;
+                                                foreach ($initialCustomerOptions as $rowClientId => $rowClientName) {
+                                                    $selected = $selectedCustomerId === intval($rowClientId) ? "selected" : "";
                                                 ?>
-                                                <option <?= $selected ?> value="<?= $rowclient['id'] ?>">
-                                                    <?= $rowclient['aname'] ?></option>
+                                                <option <?= $selected ?> value="<?= htmlspecialchars((string) $rowClientId, ENT_QUOTES, 'UTF-8') ?>">
+                                                    <?= htmlspecialchars($rowClientName, ENT_QUOTES, 'UTF-8') ?></option>
                                                 <?php } ?>
                                             </select>
                                         </div>
@@ -502,7 +514,14 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                             </div>
 
                             <!-- شبكة الأصناف -->
-                            <div class="row g-3" id="itemsGrid">
+                            <?php
+                            require_once __DIR__ . '/pos_item_card.php';
+                            $initialPosItemsLimit = 48;
+                            $initialPosItemsPage = 1;
+                            ?>
+                            <div class="row g-3" id="itemsGrid"
+                                data-initial-page="<?= $initialPosItemsPage ?>"
+                                data-page-size="<?= $initialPosItemsLimit ?>">
                                 <?php
                             // استعلام مع join للحصول على الصورة من جدول imgs
                             $sqlitems = "SELECT m.*, i.iname as img_filename
@@ -515,90 +534,22 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                                         ) image_pick ON image_pick.itemid = m.id
                                         LEFT JOIN imgs i ON i.id = image_pick.image_id
                                         WHERE m.isdeleted = 0 
-                                        ORDER BY m.iname";
+                                        ORDER BY COALESCE(m.salesqty, 0) DESC, m.iname
+                                        LIMIT {$initialPosItemsLimit}";
                             $resitems = $conn->query($sqlitems);
                             
                             if ($resitems && $resitems->num_rows > 0) {
                                 while ($rowitem = $resitems->fetch_assoc()) {
-                                    $itemId = isset($rowitem['id']) ? $rowitem['id'] : '';
-                                    $itemName = isset($rowitem['iname']) ? htmlspecialchars($rowitem['iname']) : 'صنف غير محدد';
-                                    
-                                    // تحديد السعر - جرب price1 أو price
-                                    $itemPrice = 0;
-                                    if (isset($rowitem['price1']) && !empty($rowitem['price1'])) {
-                                        $itemPrice = floatval($rowitem['price1']);
-                                    } elseif (isset($rowitem['price']) && !empty($rowitem['price'])) {
-                                        $itemPrice = floatval($rowitem['price']);
-                                    }
-                                    
-                                    $itemBarcode = isset($rowitem['barcode']) ? htmlspecialchars($rowitem['barcode']) : '';
-                                    $itemCategory = isset($rowitem['group1']) ? $rowitem['group1'] : '';
-                                    
-                                    // الصورة من جدول imgs
-                                    $itemImage = '';
-                                    if (isset($rowitem['img_filename']) && !empty($rowitem['img_filename'])) {
-                                        $itemImage = 'uploads/' . htmlspecialchars($rowitem['img_filename']);
-                                    }
-                                    
-                                    $itemDesc = isset($rowitem['info']) ? htmlspecialchars($rowitem['info']) : '';
-                                    $fallbackIcon = 'fa-utensils';
-                                    if (strpos($itemName, 'قهوة') !== false || strpos($itemName, 'لاتيه') !== false || strpos($itemName, 'كابتشينو') !== false) {
-                                        $fallbackIcon = 'fa-mug-hot';
-                                    } elseif (strpos($itemName, 'شاي') !== false || strpos($itemName, 'عصير') !== false || strpos($itemName, 'مياه') !== false) {
-                                        $fallbackIcon = 'fa-tint';
-                                    } elseif (strpos($itemName, 'كرواسون') !== false || strpos($itemName, 'خبز') !== false) {
-                                        $fallbackIcon = 'fa-bread-slice';
-                                    }
-                            ?>
-                                <div class="col-xxl-2 col-xl-3 col-lg-4 col-md-4 col-sm-6 item-wrapper"
-                                    data-category="<?= $itemCategory ?>">
-                                    <div class="card item-card itemButton pos-menu-card shadow-sm border-0"
-                                        data-item-id="<?= $itemId ?>" data-item-name="<?= $itemName ?>"
-                                        data-item-price="<?= $itemPrice ?>" data-item-barcode="<?= $itemBarcode ?>"
-                                        data-item-desc="<?= $itemDesc ?>" style="transition: all 0.3s ease;">
-                                        <div class="card-body p-2 text-center">
-                                            <!-- الصورة -->
-                                            <div class="item-image-container mb-2 ratio ratio-1x1 overflow-hidden"
-                                                style="cursor: pointer; background: #f8f9fa;">
-                                                <?php if (!empty($itemImage) && file_exists($itemImage)): ?>
-                                                <img src="<?= $itemImage ?>"
-                                                    class="item-image-click object-fit-cover w-100 h-100"
-                                                    style="width: 100%; height: 100%;">
-                                                <?php else: ?>
-                                                <div
-                                                    class="d-flex align-items-center justify-content-center item-image-click pos-item-fallback">
-                                                    <i class="fas <?= $fallbackIcon ?> fa-3x"></i>
-                                                </div>
-                                                <?php endif; ?>
-                                            </div>
-
-                                            <!-- اسم الصنف -->
-                                            <h6 class="card-title text-truncate mb-1" style="font-size: 0.85rem;"
-                                                title="<?= $itemName ?>">
-                                                <?= $itemName ?>
-                                            </h6>
-
-                                            <!-- السعر -->
-                                            <div class="pos-item-footer">
-                                                <p class="card-text fw-bold pos-item-price mb-0">
-                                                    <?= number_format($itemPrice, 2) ?> <span>ج.م</span>
-                                                </p>
-                                            </div>
-
-                                            <!-- زر التفاصيل -->
-                                            <button class="btn btn-outline-primary btn-sm w-100 item-details-btn"
-                                                style="font-size: 0.75rem;">
-                                                <i class="fas fa-info-circle me-1"></i>التفاصيل
-                                            </button>
-                                        </div>
-                                    </div>
-                                </div>
-                                <?php 
+                                    echo pos_render_item_card($rowitem);
                                 }
                             } else {
                                 echo '<div class="col-12 text-center text-muted"><p>لا توجد أصناف متاحة</p></div>';
                             }
                             ?>
+                            </div>
+                            <div id="itemsGridLoader" class="text-center text-muted small py-2 d-none">
+                                <span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>
+                                جاري تحميل باقي الأصناف...
                             </div>
                         </div>
                     </div>
@@ -708,18 +659,7 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                                                 <div class="card-body">
                                                     <div class="mb-2">
                                                         <label class="form-label fw-bold">اختر الصندوق</label>
-                                                        <select class="form-select" id="payment_fund_id">
-                                                            <?php
-                                                            $resfund = $conn->query("SELECT * FROM `acc_head` WHERE is_fund = 1 AND is_basic = 0 AND isdeleted = 0 ORDER BY aname");
-                                                            while ($rowfund = $resfund->fetch_assoc()) { 
-                                                                $selected = '';
-                                                                if($rowstg['def_pos_fund'] == $rowfund['id']){
-                                                                    $selected = "selected";
-                                                                }
-                                                            ?>
-                                                            <option <?= $selected ?> value="<?= $rowfund['id'] ?>"><?= $rowfund['aname'] ?></option>
-                                                            <?php } ?>
-                                                        </select>
+                                                        <select class="form-select" id="payment_fund_id" data-options-source="fund_id"></select>
                                                     </div>
                                                     <div>
                                                         <label class="form-label fw-bold">المبلغ المدفوع كاش</label>
@@ -744,13 +684,8 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                                                 <div class="card-body">
                                                     <div class="mb-2">
                                                         <label class="form-label fw-bold">اختر البنك</label>
-                                                        <select class="form-select" id="payment_bank_id">
+                                                        <select class="form-select" id="payment_bank_id" data-options-loaded="0">
                                                             <option value="">-- اختر البنك --</option>
-                                                            <?php
-                                                            $resbank = $conn->query("SELECT * FROM `acc_head` WHERE (parent_id = 124 OR code LIKE '124%') AND is_basic = 0 AND isdeleted = 0 ORDER BY aname");
-                                                            while ($rowbank = $resbank->fetch_assoc()) { ?>
-                                                            <option value="<?= $rowbank['id'] ?>"><?= $rowbank['aname'] ?></option>
-                                                            <?php } ?>
                                                         </select>
                                                     </div>
                                                     <div>
@@ -822,94 +757,10 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                         </div>
                     </div>
                     <div class="row g-3" id="tablesGrid">
-                        <?php
-                        // Get all tables and their latest active order by table_id.
-                        $restables = $conn->query("
-                            SELECT
-                                t.id AS table_id,
-                                t.tname,
-                                t.table_case,
-                                o.id AS order_id,
-                                o.fat_net,
-                                o.payment_status,
-                                o.order_status,
-                                CASE WHEN o.id IS NULL THEN 0 ELSE 1 END AS has_active_order
-                            FROM tables t
-                            LEFT JOIN (
-                                SELECT oh.*
-                                FROM ot_head oh
-                                INNER JOIN (
-                                    SELECT table_id, MAX(id) AS max_id
-                                    FROM ot_head
-                                    WHERE table_id IS NOT NULL
-                                      AND table_id <> 0
-                                      AND pro_tybe = 9
-                                      AND isdeleted = 0
-                                      AND COALESCE(order_status, 'active') = 'active'
-                                      AND COALESCE(payment_status, 'unpaid') IN ('unpaid', 'partial')
-                                    GROUP BY table_id
-                                ) latest ON latest.max_id = oh.id
-                            ) o ON o.table_id = t.id
-                            WHERE t.isdeleted = 0
-                            ORDER BY t.tname
-                        ");
-                        
-                        if ($restables && $restables->num_rows > 0) {
-                            while ($rowtable = $restables->fetch_assoc()) {
-	                                $tableId = intval($rowtable['table_id']);
-	                                $tableName = htmlspecialchars($rowtable['tname'], ENT_QUOTES, 'UTF-8');
-	                                $hasActiveOrder = $rowtable['has_active_order'] > 0;
-                                $tableCase = $hasActiveOrder ? 1 : 0; // 1 for occupied, 0 for available
-                                
-                                // Update table status in database if needed
-                                if ($tableCase != $rowtable['table_case']) {
-                                    $conn->query("UPDATE tables SET table_case = $tableCase WHERE id = $tableId");
-                                }
-                                
-                                // Set status class and text
-                                $statusClass = $hasActiveOrder ? 'btn-danger' : 'btn-success';
-                                $statusIcon = $hasActiveOrder ? 'fa-utensils' : 'fa-check-circle';
-                                $statusText = $hasActiveOrder ? 'مشغولة' : 'متاحة';
-                                
-                                // Get order details if table is occupied
-                                $orderTotal = 0;
-                                $orderId = null;
-	                                if ($hasActiveOrder) {
-	                                    $orderId = intval($rowtable['order_id']);
-	                                    $orderTotal = floatval($rowtable['fat_net']);
-	                                }
-                        ?>
-                        <div class="col-md-4 col-sm-6">
-                            <button type="button"
-                                class="btn <?= $statusClass ?> w-100 table-select-btn position-relative"
-	                                data-table-id="<?= $tableId ?>" data-table-name="<?= $tableName ?>"
-	                                data-table-case="<?= $tableCase ?>" data-order-id="<?= $orderId ?>"
-	                                data-has-active-order="<?= $hasActiveOrder ? 1 : 0 ?>"
-                                style="min-height: 120px; font-size: 1.1rem;">
-                                <div class="d-flex flex-column align-items-center justify-content-center">
-                                    <i class="fas fa-utensils fa-2x mb-2"></i>
-                                    <h6 class="mb-1"><?= $tableName ?></h6>
-                                    <small class="d-flex align-items-center">
-                                        <i class="fas <?= $statusIcon ?> me-1"></i>
-                                        <?= $statusText ?>
-                                    </small>
-                                    <?php if ($tableCase != 0 && $orderTotal > 0): ?>
-                                    <div class="mt-2 badge bg-white text-dark">
-                                        <?= number_format($orderTotal, 2) ?> ج.م
-                                    </div>
-                                    <?php endif; ?>
-                                </div>
-                            </button>
+                        <div class="col-12 text-center text-muted py-4" id="tablesGridLoading">
+                            <div class="spinner-border text-primary mb-2" role="status" aria-hidden="true"></div>
+                            <p class="mb-0">جاري تحميل الطاولات...</p>
                         </div>
-                        <?php
-                            }
-                        } else {
-                            echo '<div class="col-12 text-center text-muted">
-                                    <i class="fas fa-exclamation-circle fa-3x mb-3"></i>
-                                    <p>لا توجد طاولات متاحة</p>
-                                  </div>';
-                        }
-                        ?>
                     </div>
                 </div>
                 <div class="modal-footer">
@@ -1631,6 +1482,9 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
         if (isSaveOnly) {
             paidCash = 0;
             paidBank = 0;
+        }
+        if (typeof window.POSMainSyncPaymentOptions === 'function') {
+            window.POSMainSyncPaymentOptions();
         }
         let fundId = $('#payment_fund_id').val();
         let bankId = $('#payment_bank_id').val();

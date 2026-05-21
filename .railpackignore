@@ -5,8 +5,12 @@
 /package-lock.json
 package.json
 package-lock.json
+.github/
+.playwright-mcp/
 backup/
+docs/
 logs/
+tests/
 uploads/*
 !uploads/.htaccess
 var/
@@ -14,4 +18,8 @@ vendor/
 composer.lock
 composer.phar
 *.log
+posmain-phase0-login-mobile.png
+decumintation.xlsx
+~$decumintation.xlsx
+horstec_documentation.xls
 Thumbs.db
