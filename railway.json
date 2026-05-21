@@ -4,7 +4,7 @@
     "builder": "RAILPACK"
   },
   "deploy": {
-    "healthcheckPath": "/api/health.php",
+    "healthcheckPath": "/api/ready.php",
     "healthcheckTimeout": 60,
     "overlapSeconds": 30,
     "drainingSeconds": 15,
