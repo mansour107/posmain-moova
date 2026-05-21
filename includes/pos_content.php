@@ -951,14 +951,7 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
         </div>
     </div>
 
-    <!-- Scripts - jQuery (CDN for reliability) -->
-    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
-    <script>
-        if (typeof jQuery === 'undefined') { 
-            document.write('<script src="plugins/jquery/jquery.min.js"><\/script>'); 
-        }
-    </script>
+    <!-- POS scripts stay local-first; internet connectivity is only for optional sync/update flows. -->
     <script>
         if (window.jQuery
             && typeof window.jQuery.ajaxSetup === 'function'
@@ -967,11 +960,11 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
         }
     </script>
     <script src="assets/libs/bootstrap.bundle.min.js"></script>
-    <script src="js/pos_config_loader.js?v=<?= time() ?>"></script>
+    <script src="js/pos_config_loader.js?v=<?= (int) (@filemtime(__DIR__ . '/../js/pos_config_loader.js') ?: 1) ?>"></script>
     <?php if ($legacyOfflinePrototypeEnabled): ?>
-    <script src="js/pos_offline_adapter.js?v=<?= time() ?>"></script>
+    <script src="js/pos_offline_adapter.js?v=<?= (int) (@filemtime(__DIR__ . '/../js/pos_offline_adapter.js') ?: 1) ?>"></script>
     <?php endif; ?>
-    <script src="js/pos_barcode.js?v=<?= time() ?>"></script>
+    <script src="js/pos_barcode.js?v=<?= (int) (@filemtime(__DIR__ . '/../js/pos_barcode.js') ?: 1) ?>"></script>
     
     <?php if ($legacyOfflinePrototypeEnabled): ?>
     <script>

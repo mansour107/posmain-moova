@@ -437,7 +437,6 @@ $(document).ready(function() {
     syncModeTabs();
     syncPaymentFundOptions();
     loadRemainingItems();
-    startTablesAutoRefresh();
     setTimeout(loadCustomerOptions, 900);
 
     // ========================================
@@ -1041,8 +1040,16 @@ $(document).ready(function() {
         }
 
         tablesPreloadStarted = true;
-        setTimeout(window.refreshTablesState, 800);
-        tablesRefreshTimer = setInterval(window.refreshTablesState, 5000);
+        setTimeout(function() {
+            if (typeof window.refreshTablesState === 'function') {
+                window.refreshTablesState();
+            }
+        }, 800);
+        tablesRefreshTimer = setInterval(function() {
+            if (typeof window.refreshTablesState === 'function') {
+                window.refreshTablesState();
+            }
+        }, 5000);
     }
 
     $('#tablesModal').on('shown.bs.modal', function() {
@@ -1052,6 +1059,8 @@ $(document).ready(function() {
     $('#tablesModal').on('hidden.bs.modal', function() {
         setTableTransferMode(false);
     });
+
+    startTablesAutoRefresh();
 
     // مسح الطاولة عند التبديل لتيك أواي أو دليفري
     $('input[name="age"]').on('change', function() {

@@ -24,9 +24,12 @@ posLazyTablesAssert(strpos($tablesEndpoint, 'UPDATE tables SET table_case') !== 
 posLazyTablesAssert(strpos($tablesEndpoint, 'has_active_order') !== false, 'Table AJAX should return active order state');
 
 $posJs = file_get_contents($root . '/js/pos_barcode.js');
-foreach (['startTablesAutoRefresh', 'setTimeout(window.refreshTablesState, 800)', 'setInterval(window.refreshTablesState, 5000)', "url: 'ajax/get_tables.php'"] as $needle) {
+foreach (['startTablesAutoRefresh', "typeof window.refreshTablesState === 'function'", 'setInterval(function()', "url: 'ajax/get_tables.php'"] as $needle) {
     posLazyTablesAssert(strpos($posJs, $needle) !== false, 'POS JS should include ' . $needle);
 }
+posLazyTablesAssert(strpos($posJs, 'setTimeout(window.refreshTablesState, 800)') === false, 'Tables preload should not pass an undefined handler before refreshTablesState is assigned');
+$refreshAssignmentPos = strpos($posJs, 'window.refreshTablesState = function()');
+$startTablesCallPos = strrpos($posJs, '    startTablesAutoRefresh();');
+posLazyTablesAssert($refreshAssignmentPos !== false && $startTablesCallPos !== false && $refreshAssignmentPos < $startTablesCallPos, 'Tables preload should start only after refreshTablesState is assigned');
 
 echo "pos-lazy-tables-runtime-ok\n";
-
