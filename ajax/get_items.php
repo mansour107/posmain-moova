@@ -5,7 +5,20 @@ include('../includes/connect.php');
 header('Content-Type: application/json');
 
 try {
-    $query = "SELECT * FROM myitems WHERE isdeleted = 0 ORDER BY iname ASC";
+    $hasVariantTable = false;
+    $variantTable = $conn->query("SHOW TABLES LIKE 'item_variants'");
+    $hasVariantTable = $variantTable && $variantTable->num_rows > 0;
+    $variantSelect = $hasVariantTable
+        ? "(EXISTS (SELECT 1 FROM item_variants iv WHERE iv.parent_item_id = myitems.id AND iv.is_active = 1)) AS has_variants"
+        : "0 AS has_variants";
+    $variantChildFilter = $hasVariantTable
+        ? "AND NOT EXISTS (SELECT 1 FROM item_variants ivc WHERE ivc.variant_item_id = myitems.id AND ivc.is_active = 1)"
+        : "";
+    $query = "SELECT myitems.*, {$variantSelect}
+              FROM myitems
+              WHERE isdeleted = 0
+              {$variantChildFilter}
+              ORDER BY iname ASC";
     $result = $conn->query($query);
     
     $items = [];
@@ -26,4 +39,3 @@ try {
         'message' => $e->getMessage()
     ]);
 }
-

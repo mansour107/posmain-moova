@@ -175,7 +175,7 @@ function displayItems(items) {
                     <div class="card-body text-center">
                         <i class="fas fa-utensils fa-2x mb-2"></i>
                         <h6>${item.iname}</h6>
-                        <p class="mb-0 text-success font-weight-bold">${parseFloat(item.price1).toFixed(2)} ج</p>
+                        <p class="mb-0 text-success font-weight-bold">${item.has_variants ? 'اختيارات' : parseFloat(item.price1).toFixed(2) + ' ج'}</p>
                     </div>
                 </div>
             </div>
@@ -186,6 +186,72 @@ function displayItems(items) {
 
 // إضافة صنف للطلب
 function addItemToOrder(itemId, itemName, price, barcode) {
+    $.ajax({
+        url: 'ajax/get_item_variants.php',
+        method: 'GET',
+        dataType: 'json',
+        data: { item_id: itemId },
+        success: function(response) {
+            const variants = response && response.success && Array.isArray(response.variants) ? response.variants : [];
+            if (variants.length > 0) {
+                showTableVariantPicker(itemName, variants);
+                return;
+            }
+            addSellableItemToOrder(itemId, itemName, price, barcode);
+        },
+        error: function() {
+            addSellableItemToOrder(itemId, itemName, price, barcode);
+        }
+    });
+}
+
+function showTableVariantPicker(parentName, variants) {
+    let html = variants.map(function(variant) {
+        const name = variant.name || variant.iname || variant.variant_label;
+        const label = variant.variant_label || name;
+        const price = parseFloat(variant.price1 || variant.price || 0) || 0;
+        return `<button type="button" class="btn btn-outline-primary btn-block text-right mb-2 tableVariantChoice"
+                    data-item-id="${variant.item_id || variant.variant_item_id}"
+                    data-item-name="${name}"
+                    data-item-price="${price}"
+                    data-item-barcode="${variant.barcode || ''}">
+                    <span class="font-weight-bold">${label}</span>
+                    <span class="float-left text-success">${price.toFixed(2)} ج</span>
+                </button>`;
+    }).join('');
+
+    if ($('#tableVariantModal').length === 0) {
+        $('body').append(`
+            <div class="modal fade" id="tableVariantModal" tabindex="-1">
+                <div class="modal-dialog modal-dialog-centered">
+                    <div class="modal-content">
+                        <div class="modal-header bg-primary text-white">
+                            <h5 class="modal-title" id="tableVariantTitle"></h5>
+                            <button type="button" class="close text-white" data-dismiss="modal">&times;</button>
+                        </div>
+                        <div class="modal-body" id="tableVariantChoices"></div>
+                    </div>
+                </div>
+            </div>
+        `);
+    }
+
+    $('#tableVariantTitle').text(parentName);
+    $('#tableVariantChoices').html(html);
+    $('#tableVariantModal').modal('show');
+}
+
+$(document).on('click', '.tableVariantChoice', function() {
+    addSellableItemToOrder(
+        $(this).data('item-id'),
+        $(this).data('item-name'),
+        $(this).data('item-price'),
+        $(this).data('item-barcode')
+    );
+    $('#tableVariantModal').modal('hide');
+});
+
+function addSellableItemToOrder(itemId, itemName, price, barcode) {
     // التحقق من وجود الصنف
     const existingItem = currentOrder.items.find(item => item.id == itemId);
     

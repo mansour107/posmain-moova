@@ -15,6 +15,9 @@ try {
     $page = isset($_GET['page']) ? max(1, intval($_GET['page'])) : 1;
     $limit = isset($_GET['limit']) ? min(100, max(1, intval($_GET['limit']))) : 50;
     $offset = ($page - 1) * $limit;
+    $hasVariantTable = false;
+    $variantTableResult = $conn->query("SHOW TABLES LIKE 'item_variants'");
+    $hasVariantTable = $variantTableResult && $variantTableResult->num_rows > 0;
     
     // بناء الاستعلام
     $where = "m.isdeleted = 0";
@@ -27,9 +30,20 @@ try {
         $params = [$search_param, $search_param, $search_param];
         $types = 'sss';
     }
+    if ($hasVariantTable && $search === '') {
+        $where .= " AND NOT EXISTS (
+            SELECT 1
+            FROM item_variants ivc
+            WHERE ivc.variant_item_id = m.id
+              AND ivc.is_active = 1
+        )";
+    }
+    $variantSelect = $hasVariantTable
+        ? "(EXISTS (SELECT 1 FROM item_variants iv WHERE iv.parent_item_id = m.id AND iv.is_active = 1)) AS has_variants"
+        : "0 AS has_variants";
     
     // استعلام محسّن - جلب الأعمدة المطلوبة فقط
-    $query = "SELECT m.id, m.iname, m.name2, m.price1, m.barcode, m.group1, m.info, i.iname AS img_filename
+    $query = "SELECT m.id, m.iname, m.name2, m.price1, m.barcode, m.group1, m.info, i.iname AS img_filename, {$variantSelect}
               FROM myitems m
               LEFT JOIN (
                   SELECT itemid, MIN(id) AS image_id
@@ -69,6 +83,7 @@ try {
             'group1' => $row['group1'] ?? '',
             'info' => $row['info'] ?? '',
             'img_filename' => $row['img_filename'] ?? '',
+            'has_variants' => (int) ($row['has_variants'] ?? 0) === 1,
         ];
         $item['html'] = pos_render_item_card($item);
         $items[] = $item;

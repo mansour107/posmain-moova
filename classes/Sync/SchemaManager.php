@@ -14,6 +14,7 @@ class SyncSchemaManager
             'security_audit_log' => $this->securityAuditLogSql(),
             'failed_login_attempts' => $this->failedLoginAttemptsSql(),
             'item_availability' => $this->itemAvailabilitySql(),
+            'item_variants' => $this->itemVariantsSql(),
             'modifier_groups' => $this->modifierGroupsSql(),
             'modifier_options' => $this->modifierOptionsSql(),
             'item_modifier_groups' => $this->itemModifierGroupsSql(),
@@ -32,6 +33,7 @@ class SyncSchemaManager
             'sync_checkpoints' => $this->syncCheckpointsSql(),
             'sync_conflicts' => $this->syncConflictsSql(),
             'sync_worker_logs' => $this->syncWorkerLogsSql(),
+            'sync_runtime_settings' => $this->syncRuntimeSettingsSql(),
             'moova_pos_inbound_events' => $this->moovaPosInboundEventsSql(),
             'cloud_branches' => $this->cloudBranchesSql(),
             'cloud_orders' => $this->cloudOrdersSql(),
@@ -224,6 +226,10 @@ class SyncSchemaManager
             return $this->cloudMoovaBranchEventUpgradeStatements($conn);
         }
 
+        if ($table === 'cloud_branches') {
+            return $this->cloudBranchesUpgradeStatements($conn);
+        }
+
         if ($table === 'moova_pos_inbound_events') {
             return $this->moovaPosInboundEventUpgradeStatements($conn);
         }
@@ -383,6 +389,19 @@ ALTER TABLE cloud_moova_branch_events
             $statements['cloud_moova_branch_events.add_idx_cloud_moova_branch_pending'] = "
 ALTER TABLE cloud_moova_branch_events
   ADD KEY idx_cloud_moova_branch_pending (branch_uuid, status, id)";
+        }
+
+        return $statements;
+    }
+
+    private function cloudBranchesUpgradeStatements(mysqli $conn)
+    {
+        $statements = [];
+
+        if (!$this->columnExists($conn, 'cloud_branches', 'sync_secret_encrypted')) {
+            $statements['cloud_branches.add_sync_secret_encrypted'] = "
+ALTER TABLE cloud_branches
+  ADD COLUMN sync_secret_encrypted TEXT NULL AFTER sync_secret_hash";
         }
 
         return $statements;
@@ -854,6 +873,28 @@ CREATE TABLE IF NOT EXISTS item_availability (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
     }
 
+    private function itemVariantsSql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS item_variants (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  parent_item_id BIGINT UNSIGNED NOT NULL,
+  variant_item_id BIGINT UNSIGNED NOT NULL,
+  variant_label VARCHAR(120) NOT NULL,
+  variant_name_en VARCHAR(120) NULL,
+  sort_order INT NOT NULL DEFAULT 0,
+  is_default TINYINT(1) NOT NULL DEFAULT 0,
+  is_active TINYINT(1) NOT NULL DEFAULT 1,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_item_variant_child (variant_item_id),
+  UNIQUE KEY uq_item_variant_parent_child (parent_item_id, variant_item_id),
+  KEY idx_item_variants_parent (parent_item_id, is_active, sort_order),
+  KEY idx_item_variants_variant (variant_item_id, is_active)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
     private function modifierGroupsSql()
     {
         return "
@@ -1232,6 +1273,22 @@ CREATE TABLE IF NOT EXISTS sync_worker_logs (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
     }
 
+    private function syncRuntimeSettingsSql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS sync_runtime_settings (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  setting_key VARCHAR(120) NOT NULL,
+  setting_value TEXT NULL,
+  is_secret TINYINT(1) NOT NULL DEFAULT 0,
+  source VARCHAR(40) NOT NULL DEFAULT 'ui',
+  created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_sync_runtime_settings_key (setting_key)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
     private function moovaPosInboundEventsSql()
     {
         return "
@@ -1286,6 +1343,7 @@ CREATE TABLE IF NOT EXISTS cloud_branches (
   pos_branch INT NULL,
   status ENUM('active','disabled') NOT NULL DEFAULT 'active',
   sync_secret_hash CHAR(64) NULL,
+  sync_secret_encrypted TEXT NULL,
   last_seen_at DATETIME(6) NULL,
   created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),

@@ -279,6 +279,7 @@ class CloudLegacyPosMirrorService
             $this->bindParams($stmt, str_repeat('s', count($params)), $params);
             $stmt->execute();
             $stmt->close();
+            $this->mirrorLineCustomizations($conn, $orderId, $lineId, $line);
             $count++;
         }
 
@@ -550,6 +551,381 @@ class CloudLegacyPosMirrorService
         $this->bindParams($stmt, str_repeat('s', count($params)), $params);
         $stmt->execute();
         $stmt->close();
+        $this->mirrorMenuVariants($conn, $itemId, $item, $sourceMdtime);
+        $this->mirrorMenuModifiers($conn, $itemId, $item, $sourceMdtime);
+    }
+
+    private function mirrorMenuVariants(mysqli $conn, int $itemId, array $item, ?string $sourceMdtime = null): void
+    {
+        $this->ensureItemVariantsTable($conn);
+        if (!$this->tableExists($conn, 'item_variants')) {
+            return;
+        }
+
+        $parentId = $this->intOrNull($this->firstExistingValue([$item], ['parent_item_id', 'parentItemId']));
+        $variantLabel = $this->nullableString($this->firstExistingValue([$item], ['variant_label', 'variantLabel', 'label']), 120);
+        if ($parentId && $parentId !== $itemId && $variantLabel !== null) {
+            $this->upsertItemVariantRelation($conn, $parentId, $itemId, $variantLabel, 0, true, false);
+        }
+
+        $present = false;
+        $variants = $this->firstListField($item, ['variants', 'item_variants', 'children'], $present);
+        if (!$present) {
+            return;
+        }
+
+        $activeVariantIds = [];
+        foreach ($variants as $index => $variant) {
+            if (!is_array($variant)) {
+                continue;
+            }
+
+            $variantItemId = $this->intOrNull($this->firstExistingValue([$variant], ['variant_item_id', 'item_id', 'local_item_id', 'id']));
+            if (!$variantItemId || $variantItemId === $itemId) {
+                continue;
+            }
+
+            $label = $this->nullableString($this->firstExistingValue([$variant], ['label', 'variant_label', 'name']), 120)
+                ?: 'Variant ' . ($index + 1);
+            $this->mirrorMenuItem($conn, $variantItemId, [
+                'local_item_id' => $variantItemId,
+                'item_name' => $this->nullableString($this->firstExistingValue([$variant], ['name', 'item_name', 'iname']), 200)
+                    ?: $label,
+                'barcode' => $this->nullableString($this->firstExistingValue([$variant], ['barcode', 'bar_code']), 25),
+                'price1' => $this->firstExistingValue([$variant], ['price1', 'price', 'sale_price']),
+                'price2' => $this->firstValue([$variant], 'price2'),
+                'price3' => $this->firstValue([$variant], 'price3'),
+                'cost_price' => $this->firstExistingValue([$variant], ['cost_price', 'cost']),
+                'category_id' => $this->firstExistingValue([$variant, $item], ['category_id', 'group1']),
+                'group2' => $this->firstExistingValue([$variant, $item], ['group2', 'category2_id']),
+                'parent_item_id' => $itemId,
+                'variant_label' => $label,
+                'isdeleted' => 0,
+                'legacy' => [
+                    'info' => $this->firstValue([$item], 'info'),
+                    'user' => $this->firstValue([$item['legacy'] ?? [], $item], 'user'),
+                    'tenant' => $this->firstValue([$item['legacy'] ?? [], $item], 'tenant'),
+                    'branch' => $this->firstValue([$item['legacy'] ?? [], $item], 'branch'),
+                ],
+            ], $sourceMdtime);
+
+            $active = $this->boolInt($this->firstExistingValue([$variant], ['is_active', 'active']), 1) === 1;
+            $isDefault = $this->boolInt($this->firstExistingValue([$variant], ['is_default', 'default']), 0) === 1;
+            $sortOrder = $this->intOrZero($this->firstExistingValue([$variant], ['sort_order', 'sortOrder'])) ?: ($index + 1);
+            $this->upsertItemVariantRelation($conn, $itemId, $variantItemId, $label, $sortOrder, $active, $isDefault);
+            if ($active) {
+                $activeVariantIds[] = $variantItemId;
+            }
+        }
+
+        $this->deactivateMissingVariants($conn, $itemId, $activeVariantIds);
+    }
+
+    private function ensureItemVariantsTable(mysqli $conn): void
+    {
+        if ($this->tableExists($conn, 'item_variants')) {
+            return;
+        }
+
+        $conn->query("
+            CREATE TABLE IF NOT EXISTS item_variants (
+                id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+                parent_item_id BIGINT UNSIGNED NOT NULL,
+                variant_item_id BIGINT UNSIGNED NOT NULL,
+                variant_label VARCHAR(120) NOT NULL,
+                variant_name_en VARCHAR(120) NULL,
+                sort_order INT NOT NULL DEFAULT 0,
+                is_default TINYINT(1) NOT NULL DEFAULT 0,
+                is_active TINYINT(1) NOT NULL DEFAULT 1,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                PRIMARY KEY (id),
+                UNIQUE KEY uq_item_variant_child (variant_item_id),
+                UNIQUE KEY uq_item_variant_parent_child (parent_item_id, variant_item_id),
+                KEY idx_item_variants_parent (parent_item_id, is_active, sort_order),
+                KEY idx_item_variants_variant (variant_item_id, is_active)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+        ");
+    }
+
+    private function upsertItemVariantRelation(mysqli $conn, int $parentItemId, int $variantItemId, string $label, int $sortOrder, bool $active, bool $isDefault): void
+    {
+        $activeInt = $active ? 1 : 0;
+        $defaultInt = $isDefault ? 1 : 0;
+        $nameEn = null;
+        $stmt = $conn->prepare("
+            INSERT INTO item_variants (
+                parent_item_id, variant_item_id, variant_label, variant_name_en, sort_order, is_default, is_active
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON DUPLICATE KEY UPDATE
+                parent_item_id = VALUES(parent_item_id),
+                variant_label = VALUES(variant_label),
+                variant_name_en = VALUES(variant_name_en),
+                sort_order = VALUES(sort_order),
+                is_default = VALUES(is_default),
+                is_active = VALUES(is_active),
+                updated_at = CURRENT_TIMESTAMP
+        ");
+        $stmt->bind_param('iissiii', $parentItemId, $variantItemId, $label, $nameEn, $sortOrder, $defaultInt, $activeInt);
+        $stmt->execute();
+        $stmt->close();
+    }
+
+    private function deactivateMissingVariants(mysqli $conn, int $parentItemId, array $activeVariantIds): void
+    {
+        if (!$this->tableExists($conn, 'item_variants')) {
+            return;
+        }
+
+        if (!$activeVariantIds) {
+            $stmt = $conn->prepare('UPDATE item_variants SET is_active = 0, is_default = 0 WHERE parent_item_id = ?');
+            $stmt->bind_param('i', $parentItemId);
+            $stmt->execute();
+            $stmt->close();
+            return;
+        }
+
+        $activeVariantIds = array_values(array_unique(array_map('intval', $activeVariantIds)));
+        $placeholders = implode(',', array_fill(0, count($activeVariantIds), '?'));
+        $stmt = $conn->prepare("UPDATE item_variants SET is_active = 0, is_default = 0 WHERE parent_item_id = ? AND variant_item_id NOT IN ({$placeholders})");
+        $params = array_merge([$parentItemId], $activeVariantIds);
+        $this->bindParams($stmt, str_repeat('s', count($params)), $params);
+        $stmt->execute();
+        $stmt->close();
+    }
+
+    private function mirrorMenuModifiers(mysqli $conn, int $itemId, array $item, ?string $sourceMdtime = null): void
+    {
+        unset($sourceMdtime);
+        if (
+            !$this->tableExists($conn, 'modifier_groups')
+            || !$this->tableExists($conn, 'modifier_options')
+            || !$this->tableExists($conn, 'item_modifier_groups')
+        ) {
+            return;
+        }
+
+        $present = false;
+        $groups = $this->firstListField($item, ['modifier_groups', 'modifierGroups', 'modifiers', 'options'], $present);
+        if (!$present) {
+            return;
+        }
+
+        $keptGroupIds = [];
+        foreach ($groups as $position => $group) {
+            if (!is_array($group)) {
+                continue;
+            }
+
+            $groupId = $this->idFromKeys($group, ['modifier_group_id', 'group_id', 'local_group_id', 'id']);
+            if (!$groupId) {
+                continue;
+            }
+
+            $nameAr = $this->nullableString($this->firstExistingValue([$group], ['name_ar', 'name', 'title', 'label']), 120)
+                ?: 'Modifier Group ' . $groupId;
+            $nameEn = $this->nullableString($this->firstExistingValue([$group], ['name_en', 'name2', 'nameEn']), 120);
+            $selectionMin = max(0, $this->intOrZero($this->firstExistingValue([$group], ['selection_min', 'min', 'minSelections'])));
+            $selectionMax = max(0, $this->intOrZero($this->firstExistingValue([$group], ['selection_max', 'max', 'maxSelections'])));
+            $isRequired = $this->boolInt($this->firstExistingValue([$group], ['is_required', 'required']), 0);
+            $isActive = $this->boolInt($this->firstExistingValue([$group], ['is_active', 'isActive', 'available']), 1);
+            $sortOrder = $this->intOrNull($this->firstExistingValue([$group], ['sort_order', 'sortOrder', 'position']));
+            $sortOrder = $sortOrder === null ? ((int) $position + 1) : $sortOrder;
+
+            $params = [$groupId, $nameAr, $nameEn, $selectionMin, $selectionMax, $isRequired, $isActive, $sortOrder];
+            $stmt = $conn->prepare("
+                INSERT INTO modifier_groups (
+                    id, name_ar, name_en, selection_min, selection_max, is_required, is_active, tenant, branch, sort_order
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, ?)
+                ON DUPLICATE KEY UPDATE
+                    name_ar = VALUES(name_ar),
+                    name_en = VALUES(name_en),
+                    selection_min = VALUES(selection_min),
+                    selection_max = VALUES(selection_max),
+                    is_required = VALUES(is_required),
+                    is_active = VALUES(is_active),
+                    sort_order = VALUES(sort_order)
+            ");
+            $this->bindParams($stmt, str_repeat('s', count($params)), $params);
+            $stmt->execute();
+            $stmt->close();
+
+            $params = [$itemId, $groupId, $sortOrder];
+            $stmt = $conn->prepare("
+                INSERT INTO item_modifier_groups (item_id, group_id, sort_order)
+                VALUES (?, ?, ?)
+                ON DUPLICATE KEY UPDATE sort_order = VALUES(sort_order)
+            ");
+            $this->bindParams($stmt, str_repeat('s', count($params)), $params);
+            $stmt->execute();
+            $stmt->close();
+
+            $keptGroupIds[] = $groupId;
+            $optionsPresent = false;
+            $options = $this->firstListField($group, ['options', 'values', 'items'], $optionsPresent);
+            if (!$optionsPresent) {
+                continue;
+            }
+
+            $keptOptionIds = [];
+            foreach ($options as $optionPosition => $option) {
+                if (!is_array($option)) {
+                    continue;
+                }
+
+                $optionId = $this->idFromKeys($option, ['modifier_option_id', 'option_id', 'local_option_id', 'id']);
+                if (!$optionId) {
+                    continue;
+                }
+
+                $optionNameAr = $this->nullableString($this->firstExistingValue([$option], ['name_ar', 'name', 'title', 'label']), 120)
+                    ?: 'Modifier Option ' . $optionId;
+                $optionNameEn = $this->nullableString($this->firstExistingValue([$option], ['name_en', 'name2', 'nameEn']), 120);
+                $priceDelta = $this->decimal($this->firstExistingValue([$option], ['price_delta', 'priceDelta', 'price', 'amount']));
+                $optionActive = $this->boolInt($this->firstExistingValue([$option], ['is_active', 'isActive', 'available']), 1);
+                $optionSort = $this->intOrNull($this->firstExistingValue([$option], ['sort_order', 'sortOrder', 'position']));
+                $optionSort = $optionSort === null ? ((int) $optionPosition + 1) : $optionSort;
+
+                $params = [$optionId, $groupId, $optionNameAr, $optionNameEn, $priceDelta, $optionActive, $optionSort];
+                $stmt = $conn->prepare("
+                    INSERT INTO modifier_options (
+                        id, group_id, name_ar, name_en, price_delta, is_active, sort_order
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ON DUPLICATE KEY UPDATE
+                        group_id = VALUES(group_id),
+                        name_ar = VALUES(name_ar),
+                        name_en = VALUES(name_en),
+                        price_delta = VALUES(price_delta),
+                        is_active = VALUES(is_active),
+                        sort_order = VALUES(sort_order)
+                ");
+                $this->bindParams($stmt, str_repeat('s', count($params)), $params);
+                $stmt->execute();
+                $stmt->close();
+                $keptOptionIds[] = $optionId;
+            }
+            $this->deactivateMissingModifierOptions($conn, $groupId, $keptOptionIds);
+        }
+
+        $this->removeMissingItemModifierLinks($conn, $itemId, $keptGroupIds);
+    }
+
+    private function mirrorLineCustomizations(mysqli $conn, int $orderId, int $lineId, array $line): void
+    {
+        $modifiersPresent = false;
+        $modifiers = $this->firstListField($line, ['modifiers', 'modifier_options', 'selected_modifiers'], $modifiersPresent);
+        if ($modifiersPresent && $this->tableExists($conn, 'order_line_modifiers')) {
+            $delete = $conn->prepare('DELETE FROM order_line_modifiers WHERE order_id = ? AND detail_id = ?');
+            $delete->bind_param('ii', $orderId, $lineId);
+            $delete->execute();
+            $delete->close();
+
+            if ($modifiers) {
+                $insert = $conn->prepare("
+                    INSERT INTO order_line_modifiers (
+                        order_id, detail_id, modifier_group_id, modifier_option_id, qty, price_delta
+                    ) VALUES (?, ?, ?, ?, ?, ?)
+                ");
+                foreach ($modifiers as $modifier) {
+                    if (!is_array($modifier)) {
+                        continue;
+                    }
+
+                    $optionId = $this->idFromKeys($modifier, ['modifier_option_id', 'option_id', 'id']);
+                    if (!$optionId) {
+                        continue;
+                    }
+                    $groupId = $this->idFromKeys($modifier, ['modifier_group_id', 'group_id'])
+                        ?: $this->modifierGroupIdForOption($conn, $optionId)
+                        ?: 0;
+                    $qty = $this->decimal($this->firstExistingValue([$modifier], ['qty', 'quantity']));
+                    if ((float) $qty <= 0) {
+                        $qty = '1.0000';
+                    }
+                    $priceDelta = $this->decimal($this->firstExistingValue([$modifier], ['price_delta', 'priceDelta', 'delta']));
+                    $insert->bind_param('iiiiss', $orderId, $lineId, $groupId, $optionId, $qty, $priceDelta);
+                    $insert->execute();
+                }
+                $insert->close();
+            }
+        }
+
+        $notesPresent = false;
+        $notes = $this->firstListField($line, ['notes', 'line_notes'], $notesPresent);
+        if (!$notesPresent) {
+            $noteText = $this->nullableString($this->firstExistingValue([$line], ['note', 'kitchen_note', 'line_note']), 500);
+            if ($noteText !== null) {
+                $notesPresent = true;
+                $notes = [['note_type' => 'kitchen', 'note_text' => $noteText]];
+            }
+        }
+
+        if ($notesPresent && $this->tableExists($conn, 'order_line_notes')) {
+            $delete = $conn->prepare('DELETE FROM order_line_notes WHERE order_id = ? AND detail_id = ?');
+            $delete->bind_param('ii', $orderId, $lineId);
+            $delete->execute();
+            $delete->close();
+
+            if ($notes) {
+                $insert = $conn->prepare("
+                    INSERT INTO order_line_notes (order_id, detail_id, note_type, note_text, created_by)
+                    VALUES (?, ?, ?, ?, ?)
+                ");
+                foreach ($notes as $note) {
+                    if (is_array($note)) {
+                        $noteType = $this->lineNoteType($this->firstExistingValue([$note], ['note_type', 'type']));
+                        $noteText = $this->nullableString($this->firstExistingValue([$note], ['note_text', 'text', 'note']), 500);
+                        $createdBy = $this->intOrNull($this->firstExistingValue([$note], ['created_by', 'user_id']));
+                    } else {
+                        $noteType = 'kitchen';
+                        $noteText = $this->nullableString($note, 500);
+                        $createdBy = null;
+                    }
+                    if ($noteText === null) {
+                        continue;
+                    }
+                    $insert->bind_param('iissi', $orderId, $lineId, $noteType, $noteText, $createdBy);
+                    $insert->execute();
+                }
+                $insert->close();
+            }
+        }
+    }
+
+    private function deactivateMissingModifierOptions(mysqli $conn, int $groupId, array $keptOptionIds): void
+    {
+        if (!$keptOptionIds) {
+            $stmt = $conn->prepare('UPDATE modifier_options SET is_active = 0 WHERE group_id = ?');
+            $stmt->bind_param('i', $groupId);
+            $stmt->execute();
+            $stmt->close();
+            return;
+        }
+
+        $placeholders = implode(',', array_fill(0, count($keptOptionIds), '?'));
+        $params = array_merge([$groupId], $keptOptionIds);
+        $stmt = $conn->prepare("UPDATE modifier_options SET is_active = 0 WHERE group_id = ? AND id NOT IN ({$placeholders})");
+        $this->bindParams($stmt, str_repeat('s', count($params)), $params);
+        $stmt->execute();
+        $stmt->close();
+    }
+
+    private function removeMissingItemModifierLinks(mysqli $conn, int $itemId, array $keptGroupIds): void
+    {
+        if (!$keptGroupIds) {
+            $stmt = $conn->prepare('DELETE FROM item_modifier_groups WHERE item_id = ?');
+            $stmt->bind_param('i', $itemId);
+            $stmt->execute();
+            $stmt->close();
+            return;
+        }
+
+        $placeholders = implode(',', array_fill(0, count($keptGroupIds), '?'));
+        $params = array_merge([$itemId], $keptGroupIds);
+        $stmt = $conn->prepare("DELETE FROM item_modifier_groups WHERE item_id = ? AND group_id NOT IN ({$placeholders})");
+        $this->bindParams($stmt, str_repeat('s', count($params)), $params);
+        $stmt->execute();
+        $stmt->close();
     }
 
     private function ensureCategory(mysqli $conn, int $categoryId, array $item): void
@@ -680,6 +1056,19 @@ class CloudLegacyPosMirrorService
         return is_array($list) ? $list : [];
     }
 
+    private function firstListField(array $source, array $keys, bool &$present): array
+    {
+        foreach ($keys as $key) {
+            if (array_key_exists($key, $source)) {
+                $present = true;
+                return is_array($source[$key]) ? $source[$key] : [];
+            }
+        }
+
+        $present = false;
+        return [];
+    }
+
     private function firstExistingValue(array $sources, array $keys)
     {
         foreach ($sources as $source) {
@@ -723,6 +1112,43 @@ class CloudLegacyPosMirrorService
         }
 
         return (int) $value;
+    }
+
+    private function idFromKeys(array $source, array $keys): ?int
+    {
+        $value = $this->firstExistingValue([$source], $keys);
+        $id = $this->intOrNull($value);
+        if ($id !== null && $id > 0) {
+            return $id;
+        }
+
+        if (is_string($value) && preg_match('/(\d+)$/', $value, $matches)) {
+            $id = (int) $matches[1];
+            return $id > 0 ? $id : null;
+        }
+
+        return null;
+    }
+
+    private function modifierGroupIdForOption(mysqli $conn, int $optionId): ?int
+    {
+        if (!$this->tableExists($conn, 'modifier_options')) {
+            return null;
+        }
+
+        $stmt = $conn->prepare('SELECT group_id FROM modifier_options WHERE id = ? LIMIT 1');
+        $stmt->bind_param('i', $optionId);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        return $row ? $this->intOrNull($row['group_id'] ?? null) : null;
+    }
+
+    private function lineNoteType($value): string
+    {
+        $type = strtolower(trim((string) $value));
+        return in_array($type, ['kitchen', 'cashier', 'customer'], true) ? $type : 'kitchen';
     }
 
     private function intOrZero($value): int

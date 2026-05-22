@@ -483,7 +483,7 @@ $(document).ready(function() {
             dataType: 'json',
             success: function(response) {
                 if (response.success) {
-                    addItemToOrder(response.item.id, response.item.name, response.item.price, response.item.barcode, qty);
+                    beginAddItemToOrder(response.item.id, response.item.name, response.item.price, response.item.barcode, qty);
                 } else {
                     alert('الصنف غير موجود');
                 }
@@ -511,7 +511,7 @@ $(document).ready(function() {
         let itemBarcode = card.data('item-barcode');
         let imageHtml = card.find('.item-image-container').html();
 
-        addItemToOrder(itemId, itemName, itemPrice, itemBarcode, 1, imageHtml);
+        beginAddItemToOrder(itemId, itemName, itemPrice, itemBarcode, 1, imageHtml);
     });
 
     $('#itemsGrid').on('click', '.item-details-btn', function(e) {
@@ -547,7 +547,7 @@ $(document).ready(function() {
     $(document).on('click', '#modal_add_item', function() {
         let data = $(this).data();
         let itemPrice = parseFloat(data.price) || 0;
-        addItemToOrder(data.id, data.name, itemPrice, data.barcode, 1, data.image);
+        beginAddItemToOrder(data.id, data.name, itemPrice, data.barcode, 1, data.image);
         $('#itemDetailsModal').modal('hide');
     });
 
@@ -693,8 +693,122 @@ $(document).ready(function() {
         });
     }
 
+    let activeVariantContext = null;
+
+    function fetchItemVariants(itemId) {
+        return $.ajax({
+            url: 'ajax/get_item_variants.php',
+            type: 'GET',
+            dataType: 'json',
+            data: { item_id: itemId }
+        }).then(function(response) {
+            return response && response.success && Array.isArray(response.variants) ? response.variants : [];
+        }, function() {
+            return [];
+        });
+    }
+
+    function beginAddItemToOrder(id, name, price, barcode, qty, imageHtml, lineNote) {
+        fetchItemVariants(id).then(function(variants) {
+            if (!variants.length) {
+                addItemToOrder(id, name, price, barcode, qty, imageHtml || '', lineNote || '');
+                return;
+            }
+
+            openVariantModal({
+                id: id,
+                name: name,
+                price: parseFloat(price) || 0,
+                barcode: barcode,
+                qty: parseFloat(qty) || 1,
+                imageHtml: imageHtml || '',
+                lineNote: lineNote || '',
+                variants: variants
+            });
+        });
+    }
+
+    function ensureVariantModal() {
+        if ($('#itemVariantModal').length > 0) {
+            return;
+        }
+
+        $('body').append(`
+            <div class="modal fade" id="itemVariantModal" tabindex="-1" aria-labelledby="itemVariantModalLabel" aria-hidden="true">
+                <div class="modal-dialog modal-dialog-centered modal-lg">
+                    <div class="modal-content">
+                        <div class="modal-header bg-primary text-white">
+                            <h5 class="modal-title" id="itemVariantModalLabel">
+                                <i class="fas fa-list-ul me-2"></i>اختر النوع
+                            </h5>
+                            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                        </div>
+                        <div class="modal-body">
+                            <div class="fw-bold mb-3" id="itemVariantParentName"></div>
+                            <div class="row g-2" id="itemVariantChoices"></div>
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">إلغاء</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `);
+    }
+
+    function toggleVariantModal(show) {
+        const modal = document.getElementById('itemVariantModal');
+        if (!modal) {
+            return;
+        }
+
+        if (window.bootstrap && bootstrap.Modal) {
+            const instance = typeof bootstrap.Modal.getOrCreateInstance === 'function'
+                ? bootstrap.Modal.getOrCreateInstance(modal)
+                : new bootstrap.Modal(modal);
+            show ? instance.show() : instance.hide();
+            return;
+        }
+
+        $('#itemVariantModal').modal(show ? 'show' : 'hide');
+    }
+
+    function openVariantModal(context) {
+        ensureVariantModal();
+        activeVariantContext = context;
+        $('#itemVariantParentName').text(context.name || '');
+        $('#itemVariantChoices').html((context.variants || []).map(function(variant) {
+            const variantItemId = parseInt(variant.item_id || variant.variant_item_id || variant.id || 0, 10) || 0;
+            const variantName = String(variant.name || variant.iname || variant.variant_label || '').trim();
+            const variantLabel = String(variant.variant_label || variant.label || '').trim();
+            const variantBarcode = String(variant.barcode || '');
+            const variantPrice = parseFloat(variant.price1 || variant.price || 0) || 0;
+            const badge = variant.is_default ? '<span class="badge bg-primary ms-1">افتراضي</span>' : '';
+            return `
+                <div class="col-md-6">
+                    <button type="button"
+                            class="btn btn-outline-primary w-100 text-start itemVariantChoice"
+                            data-item-id="${variantItemId}"
+                            data-item-name="${escapeHtml(variantName)}"
+                            data-item-price="${variantPrice}"
+                            data-item-barcode="${escapeHtml(variantBarcode)}">
+                        <div class="d-flex justify-content-between align-items-center gap-2">
+                            <span class="fw-bold">${escapeHtml(variantLabel || variantName)} ${badge}</span>
+                            <span class="text-success fw-bold">${variantPrice.toFixed(2)} ج.م</span>
+                        </div>
+                        <small class="text-muted d-block">${escapeHtml(variantName)}</small>
+                    </button>
+                </div>
+            `;
+        }).join(''));
+
+        toggleVariantModal(true);
+    }
+
     function addItemToOrder(id, name, price, barcode, qty = 1, imageHtml = '', lineNote = '') {
-        let existingItem = $(`.item-card-order[data-itemid="${barcode}"]`);
+        let existingItem = $('.item-card-order').filter(function() {
+            return String($(this).find('input[name="itmname[]"]').val()) === String(id);
+        });
 
         if (existingItem.length > 0) {
             let qtyInput = existingItem.find('.quantityInput');
@@ -712,7 +826,8 @@ $(document).ready(function() {
             return;
         }
 
-        let subtotal = price * qty;
+        const unitPrice = parseFloat(price) || 0;
+        let subtotal = unitPrice * qty;
         let itemNumber = $('#itemData .item-card-order').length + 1;
         const thumbHtml = imageHtml
             ? `<div class="pos-cart-thumb">${imageHtml}</div>`
@@ -722,7 +837,7 @@ $(document).ready(function() {
         const safeLineNote = escapeHtml(noteValue);
 
         let itemCard = `
-            <div class="card mb-1 item-card-order pos-cart-row shadow-sm" data-itemid="${barcode}">
+            <div class="card mb-1 item-card-order pos-cart-row shadow-sm" data-itemid="${escapeHtml(barcode)}">
                 <div class="card-body p-1">
                     <div class="pos-cart-row-inner">
                         <div class="pos-cart-value">
@@ -748,7 +863,7 @@ $(document).ready(function() {
                         </div>
                         <div class="pos-cart-main">
                             <input type="hidden" value='${id}' name="itmname[]">
-                            <input type="hidden" class="barcode" value="${barcode}">
+                            <input type="hidden" class="barcode" value="${escapeHtml(barcode)}">
                             <div class="fw-bold pos-cart-name" title="${safeName}">${safeName}</div>
                             <span class="badge bg-primary pos-cart-index">#${itemNumber}</span>
                             <input type="hidden"
@@ -768,7 +883,7 @@ $(document).ready(function() {
                         <div class="pos-cart-price">
                             <input type="number"
                                    class="form-control form-control-sm text-center priceInput nozero"
-                                   value="${price.toFixed(2)}"
+                                   value="${unitPrice.toFixed(2)}"
                                    name="itmprice[]"
                                    step="0.01"
                                    title="السعر">
@@ -1669,6 +1784,28 @@ $(document).ready(function() {
         let subtotal = qty * price;
         card.find('.subtotal').val(subtotal.toFixed(2));
         updateTotal();
+    });
+
+    $(document).on('click', '.itemVariantChoice', function() {
+        if (!activeVariantContext) {
+            return;
+        }
+
+        const $choice = $(this);
+        addItemToOrder(
+            parseInt($choice.data('item-id'), 10) || 0,
+            String($choice.data('item-name') || ''),
+            parseFloat($choice.data('item-price')) || 0,
+            String($choice.data('item-barcode') || ''),
+            activeVariantContext.qty || 1,
+            activeVariantContext.imageHtml || '',
+            activeVariantContext.lineNote || ''
+        );
+        toggleVariantModal(false);
+    });
+
+    $(document).on('hidden.bs.modal', '#itemVariantModal', function() {
+        activeVariantContext = null;
     });
 
     $(document).on('click', '.lineNoteButton', function() {

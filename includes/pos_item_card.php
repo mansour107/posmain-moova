@@ -33,6 +33,7 @@ function pos_render_item_card(array $rowitem): string
     $itemBarcode = htmlspecialchars((string) ($rowitem['barcode'] ?? ''), ENT_QUOTES, 'UTF-8');
     $itemCategory = htmlspecialchars((string) ($rowitem['group1'] ?? ''), ENT_QUOTES, 'UTF-8');
     $itemDesc = htmlspecialchars((string) ($rowitem['info'] ?? ''), ENT_QUOTES, 'UTF-8');
+    $hasVariants = !empty($rowitem['has_variants']) || !empty($rowitem['has_active_variants']);
     $itemImage = '';
     if (!empty($rowitem['img_filename'])) {
         $itemImage = 'uploads/' . htmlspecialchars((string) $rowitem['img_filename'], ENT_QUOTES, 'UTF-8');
@@ -47,7 +48,9 @@ function pos_render_item_card(array $rowitem): string
         <div class="card item-card itemButton pos-menu-card shadow-sm border-0"
             data-item-id="<?= $itemId ?>" data-item-name="<?= $itemName ?>"
             data-item-price="<?= $itemPrice ?>" data-item-barcode="<?= $itemBarcode ?>"
-            data-item-desc="<?= $itemDesc ?>" style="transition: all 0.3s ease;">
+            data-item-desc="<?= $itemDesc ?>"
+            data-has-variants="<?= $hasVariants ? '1' : '0' ?>"
+            style="transition: all 0.3s ease;">
             <div class="card-body p-2 text-center">
                 <div class="item-image-container mb-2 ratio ratio-1x1 overflow-hidden"
                     style="cursor: pointer; background: #f8f9fa;">
@@ -70,7 +73,11 @@ function pos_render_item_card(array $rowitem): string
 
                 <div class="pos-item-footer">
                     <p class="card-text fw-bold pos-item-price mb-0">
-                        <?= number_format($itemPrice, 2) ?> <span>ج.م</span>
+                        <?php if ($hasVariants): ?>
+                            <i class="fas fa-list-ul ml-1"></i>اختيارات
+                        <?php else: ?>
+                            <?= number_format($itemPrice, 2) ?> <span>ج.م</span>
+                        <?php endif; ?>
                     </p>
                 </div>
 
@@ -84,4 +91,3 @@ function pos_render_item_card(array $rowitem): string
     <?php
     return trim(ob_get_clean());
 }
-

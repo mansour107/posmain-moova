@@ -519,13 +519,22 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                             require_once __DIR__ . '/pos_item_card.php';
                             $initialPosItemsLimit = 48;
                             $initialPosItemsPage = 1;
+                            $posHasVariantTable = false;
+                            $posVariantTableResult = $conn->query("SHOW TABLES LIKE 'item_variants'");
+                            $posHasVariantTable = $posVariantTableResult && $posVariantTableResult->num_rows > 0;
+                            $posVariantSelect = $posHasVariantTable
+                                ? "(EXISTS (SELECT 1 FROM item_variants iv WHERE iv.parent_item_id = m.id AND iv.is_active = 1)) AS has_variants"
+                                : "0 AS has_variants";
+                            $posVariantChildFilter = $posHasVariantTable
+                                ? "AND NOT EXISTS (SELECT 1 FROM item_variants ivc WHERE ivc.variant_item_id = m.id AND ivc.is_active = 1)"
+                                : "";
                             ?>
                             <div class="row g-3" id="itemsGrid"
                                 data-initial-page="<?= $initialPosItemsPage ?>"
                                 data-page-size="<?= $initialPosItemsLimit ?>">
                                 <?php
                             // استعلام مع join للحصول على الصورة من جدول imgs
-                            $sqlitems = "SELECT m.*, i.iname as img_filename
+                            $sqlitems = "SELECT m.*, i.iname as img_filename, {$posVariantSelect}
                                         FROM myitems m
                                         LEFT JOIN (
                                             SELECT itemid, MIN(id) AS image_id
@@ -535,6 +544,7 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                                         ) image_pick ON image_pick.itemid = m.id
                                         LEFT JOIN imgs i ON i.id = image_pick.image_id
                                         WHERE m.isdeleted = 0
+                                        {$posVariantChildFilter}
                                         ORDER BY COALESCE(m.salesqty, 0) DESC, m.iname
                                         LIMIT {$initialPosItemsLimit}";
                             $resitems = $conn->query($sqlitems);

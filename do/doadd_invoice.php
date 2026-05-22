@@ -683,6 +683,84 @@ function posmainInvoicePersistKitchenLineNote(
         error_log('Invoice direct line note persistence skipped: ' . $exception->getMessage());
     }
 }
+
+function posmainInvoicePersistLineCustomizations(
+    mysqli $conn,
+    ModifierLineNoteService $lineNoteService,
+    int $orderId,
+    int $detailId,
+    int $itemId,
+    $note,
+    $modifiers,
+    float $lineQty,
+    int $userId
+): void {
+    $note = trim((string) $note);
+    $hasModifierPayload = $modifiers !== null && $modifiers !== '';
+    $lineModifiers = posmainInvoiceLineModifiersFromPost($modifiers, $lineQty);
+    $notes = $note !== '' ? [['note_type' => 'kitchen', 'note_text' => $note]] : [];
+
+    if (posmainInvoiceLineNoteServiceTablesAvailable($conn) && ($hasModifierPayload || $lineModifiers || $notes)) {
+        try {
+            $lineNoteService->saveLineCustomizations(
+                $conn,
+                $orderId,
+                $detailId,
+                $itemId,
+                $lineModifiers,
+                $notes,
+                [
+                    'modifiers_enabled' => true,
+                    'user_id' => $userId,
+                ]
+            );
+            return;
+        } catch (Throwable $exception) {
+            if ($hasModifierPayload || $lineModifiers) {
+                throw $exception;
+            }
+            error_log('Invoice customization service skipped: ' . $exception->getMessage());
+        }
+    }
+
+    posmainInvoicePersistKitchenLineNote($conn, $lineNoteService, $orderId, $detailId, $itemId, $note, $userId);
+}
+
+function posmainInvoiceLineModifiersFromPost($value, float $lineQty): array
+{
+    if ($value === null || $value === '') {
+        return [];
+    }
+
+    if (is_string($value)) {
+        $decoded = json_decode(trim($value), true);
+        $value = is_array($decoded) ? $decoded : [];
+    }
+    if (!is_array($value)) {
+        return [];
+    }
+
+    $lineQty = $lineQty > 0 ? $lineQty : 1.0;
+    $modifiers = [];
+    foreach ($value as $modifier) {
+        if (is_array($modifier)) {
+            $optionId = (int) ($modifier['option_id'] ?? $modifier['id'] ?? $modifier['modifier_option_id'] ?? 0);
+            $qty = (float) ($modifier['qty'] ?? $modifier['quantity'] ?? 1);
+        } else {
+            $optionId = (int) $modifier;
+            $qty = 1.0;
+        }
+        if ($optionId <= 0 || $qty <= 0) {
+            continue;
+        }
+        $modifiers[] = [
+            'option_id' => $optionId,
+            'qty' => $qty * $lineQty,
+        ];
+    }
+
+    return $modifiers;
+}
 // حساب النسب المئوية للخصم والإضافي
 $fat_disc_per = ($headtotal > 0 && $headdisc > 0) ? number_format($headdisc/$headtotal*100, 2) : 0;
 $fat_plus_per = ($headtotal > 0 && $headplus > 0) ? number_format($headplus/$headtotal*100, 2) : 0;
@@ -1181,6 +1259,7 @@ try {
             $itmdisc  = floatval($_POST['itmdisc'][$index]  ?? 0);
             $u_val   = floatval($_POST['u_val'][$index]   ?? 1);
             $line_note = $_POST['itmnote'][$index] ?? '';
+            $line_modifiers = $_POST['itmmodifiers'][$index] ?? null;
             if ($u_val <= 0) $u_val = 1; // حماية من القسمة على صفر
 
             // تحديد الكميات حسب نوع الفاتورة
@@ -1261,13 +1340,15 @@ try {
             $insertedDetailId = (int) $conn->insert_id;
             $insertedDetailIdsByPostIndex[(int) $index] = $insertedDetailId;
 
-            posmainInvoicePersistKitchenLineNote(
+            posmainInvoicePersistLineCustomizations(
                 $conn,
                 $lineNoteService,
                 (int) $last_op,
                 $insertedDetailId,
                 (int) $itmname,
                 $line_note,
+                $line_modifiers,
+                (float) $itmqty,
                 (int) $usid
             );
         }

@@ -65,6 +65,22 @@ function moova_menu_sync_column_exists(mysqli $conn, string $table, string $colu
     return $cache[$key];
 }
 
+function moova_menu_sync_table_exists(mysqli $conn, string $table): bool
+{
+    static $cache = [];
+    if (array_key_exists($table, $cache)) {
+        return $cache[$table];
+    }
+    if (!preg_match('/^[A-Za-z0-9_]+$/', $table)) {
+        $cache[$table] = false;
+        return false;
+    }
+    $safeTable = $conn->real_escape_string($table);
+    $result = $conn->query("SHOW TABLES LIKE '{$safeTable}'");
+    $cache[$table] = $result && $result->num_rows > 0;
+    return $cache[$table];
+}
+
 function moova_menu_sync_optional_expr(mysqli $conn, string $table, string $column, string $alias, string $fallback = 'NULL', string $prefix = ''): string
 {
     if (moova_menu_sync_column_exists($conn, $table, $column)) {
@@ -135,10 +151,144 @@ function moova_menu_sync_fingerprint(mysqli $conn): array
         ],
     ];
 
+    if (
+        moova_menu_sync_table_exists($conn, 'modifier_groups')
+        && moova_menu_sync_table_exists($conn, 'modifier_options')
+        && moova_menu_sync_table_exists($conn, 'item_modifier_groups')
+    ) {
+        $modifiers = $conn->query("
+            SELECT COUNT(*) AS row_count,
+                   COALESCE(SUM(CRC32(CONCAT_WS('|',
+                       img.item_id, img.group_id, img.sort_order,
+                       mg.name_ar, COALESCE(mg.name_en, ''), mg.selection_min, mg.selection_max,
+                       mg.is_required, mg.is_active, mg.sort_order,
+                       COALESCE(mo.id, 0), COALESCE(mo.name_ar, ''), COALESCE(mo.name_en, ''),
+                       COALESCE(mo.price_delta, 0), COALESCE(mo.is_active, 0), COALESCE(mo.sort_order, 0)
+                   ))), 0) AS checksum
+            FROM item_modifier_groups img
+            JOIN modifier_groups mg ON mg.id = img.group_id
+            LEFT JOIN modifier_options mo ON mo.group_id = mg.id
+        ")->fetch_assoc();
+        $raw['modifiers'] = [
+            'count' => (int) ($modifiers['row_count'] ?? 0),
+            'checksum' => (string) ($modifiers['checksum'] ?? '0'),
+            'max_changed_at' => 0,
+        ];
+    }
+    if (moova_menu_sync_table_exists($conn, 'item_variants')) {
+        $variants = $conn->query("
+            SELECT COUNT(*) AS row_count,
+                   COALESCE(SUM(CRC32(CONCAT_WS('|',
+                       parent_item_id, variant_item_id, variant_label, COALESCE(variant_name_en, ''),
+                       sort_order, is_default, is_active, COALESCE(updated_at, created_at)
+                   ))), 0) AS checksum,
+                   COALESCE(MAX(UNIX_TIMESTAMP(COALESCE(updated_at, created_at))), 0) AS max_changed_at
+            FROM item_variants
+        ")->fetch_assoc();
+        $raw['variants'] = [
+            'count' => (int) ($variants['row_count'] ?? 0),
+            'checksum' => (string) ($variants['checksum'] ?? '0'),
+            'max_changed_at' => (int) ($variants['max_changed_at'] ?? 0),
+        ];
+    }
+
     return [
         'fingerprint' => hash('sha256', json_encode($raw, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)),
         'raw' => $raw,
     ];
+}
+
+function moova_menu_sync_item_modifier_groups(mysqli $conn, int $itemId): array
+{
+    if (
+        $itemId <= 0
+        || !moova_menu_sync_table_exists($conn, 'modifier_groups')
+        || !moova_menu_sync_table_exists($conn, 'modifier_options')
+        || !moova_menu_sync_table_exists($conn, 'item_modifier_groups')
+    ) {
+        return [];
+    }
+
+    $stmt = $conn->prepare("
+        SELECT
+            mg.id,
+            mg.name_ar,
+            mg.name_en,
+            mg.selection_min,
+            mg.selection_max,
+            mg.is_required,
+            mg.is_active,
+            COALESCE(img.sort_order, mg.sort_order, 0) AS group_sort_order
+        FROM item_modifier_groups img
+        JOIN modifier_groups mg ON mg.id = img.group_id
+        WHERE img.item_id = ?
+          AND mg.is_active = 1
+        ORDER BY img.sort_order, mg.sort_order, mg.id
+    ");
+    $stmt->bind_param('i', $itemId);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    $groups = [];
+    while ($row = $result->fetch_assoc()) {
+        $groupId = (int) $row['id'];
+        $providerGroupId = 'pos-mod-group-' . $groupId;
+        $groups[$groupId] = [
+            'id' => $providerGroupId,
+            'providerOptionGroupId' => $providerGroupId,
+            'group_id' => $groupId,
+            'name' => (string) ($row['name_ar'] ?? ''),
+            'name2' => trim((string) ($row['name_en'] ?? '')) ?: null,
+            'min' => max(0, (int) ($row['selection_min'] ?? 0)),
+            'max' => max(0, (int) ($row['selection_max'] ?? 0)),
+            'required' => (int) ($row['is_required'] ?? 0) === 1,
+            'isActive' => (int) ($row['is_active'] ?? 1) === 1,
+            'sortOrder' => (int) ($row['group_sort_order'] ?? 0),
+            'options' => [],
+            'values' => [],
+        ];
+    }
+    $stmt->close();
+
+    if (!$groups) {
+        return [];
+    }
+
+    $groupIds = array_keys($groups);
+    $placeholders = implode(',', array_fill(0, count($groupIds), '?'));
+    $stmt = $conn->prepare("
+        SELECT id, group_id, name_ar, name_en, price_delta, is_active, sort_order
+        FROM modifier_options
+        WHERE group_id IN ({$placeholders})
+          AND is_active = 1
+        ORDER BY group_id, sort_order, id
+    ");
+    $stmt->bind_param(str_repeat('i', count($groupIds)), ...$groupIds);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    while ($row = $result->fetch_assoc()) {
+        $groupId = (int) $row['group_id'];
+        if (!isset($groups[$groupId])) {
+            continue;
+        }
+        $optionId = (int) $row['id'];
+        $providerOptionId = 'pos-mod-option-' . $optionId;
+        $option = [
+            'id' => $providerOptionId,
+            'providerOptionId' => $providerOptionId,
+            'option_id' => $optionId,
+            'name' => (string) ($row['name_ar'] ?? ''),
+            'name2' => trim((string) ($row['name_en'] ?? '')) ?: null,
+            'price' => moova_menu_sync_decimal($row['price_delta'] ?? 0),
+            'priceDelta' => moova_menu_sync_decimal($row['price_delta'] ?? 0),
+            'isActive' => (int) ($row['is_active'] ?? 1) === 1,
+            'sortOrder' => (int) ($row['sort_order'] ?? 0),
+        ];
+        $groups[$groupId]['options'][] = $option;
+        $groups[$groupId]['values'][] = $option;
+    }
+    $stmt->close();
+
+    return array_values($groups);
 }
 
 function moova_menu_sync_build_menu(mysqli $conn, string $catalogVersion): array
@@ -179,11 +329,32 @@ function moova_menu_sync_build_menu(mysqli $conn, string $catalogVersion): array
     $itemGroup2Select = moova_menu_sync_optional_expr($conn, 'myitems', 'group2', 'group2', '0', 'i.');
     $itemDeletedWhere = moova_menu_sync_column_exists($conn, 'myitems', 'isdeleted')
         ? 'WHERE COALESCE(i.isdeleted, 0) = 0'
-        : '';
+        : 'WHERE 1 = 1';
     $itemCategoryJoin = moova_menu_sync_column_exists($conn, 'myitems', 'group1')
         ? 'LEFT JOIN item_group g ON g.id = i.group1'
         : '';
     $itemCategoryNameSelect = $itemCategoryJoin ? 'g.gname AS category_name' : 'NULL AS category_name';
+    $hasVariantTable = moova_menu_sync_table_exists($conn, 'item_variants');
+    $variantJoin = $hasVariantTable
+        ? 'LEFT JOIN item_variants iv_child ON iv_child.variant_item_id = i.id AND iv_child.is_active = 1'
+        : '';
+    $variantSelect = $hasVariantTable
+        ? 'iv_child.parent_item_id AS parent_item_id, iv_child.variant_label AS variant_label'
+        : 'NULL AS parent_item_id, NULL AS variant_label';
+    $variantSellableWhere = $hasVariantTable
+        ? " AND NOT EXISTS (
+                SELECT 1
+                FROM item_variants iv_parent
+                WHERE iv_parent.parent_item_id = i.id
+                  AND iv_parent.is_active = 1
+            )
+            AND NOT EXISTS (
+                SELECT 1
+                FROM item_variants iv_inactive
+                WHERE iv_inactive.variant_item_id = i.id
+                  AND iv_inactive.is_active = 0
+            )"
+        : '';
     $itemOrder = moova_menu_sync_column_exists($conn, 'myitems', 'group1')
         ? 'ORDER BY COALESCE(i.group1, 0), i.id ASC'
         : 'ORDER BY i.id ASC';
@@ -199,10 +370,13 @@ function moova_menu_sync_build_menu(mysqli $conn, string $catalogVersion): array
                i.cost_price,
                {$itemGroup1Select},
                {$itemGroup2Select},
-               {$itemCategoryNameSelect}
+               {$itemCategoryNameSelect},
+               {$variantSelect}
         FROM myitems i
         {$itemCategoryJoin}
+        {$variantJoin}
         {$itemDeletedWhere}
+        {$variantSellableWhere}
         {$itemOrder}
     ");
 
@@ -232,7 +406,10 @@ function moova_menu_sync_build_menu(mysqli $conn, string $catalogVersion): array
             'categoryId' => $categoryKey,
             'categoryKey' => $categoryKey,
             'categoryName' => $row['category_name'] ?? null,
-            'options' => [],
+            'isOrderable' => true,
+            'isVariantChild' => !empty($row['parent_item_id']),
+            'parentItemId' => !empty($row['parent_item_id']) ? 'pos-item-' . (int) $row['parent_item_id'] : null,
+            'variantLabel' => trim((string) ($row['variant_label'] ?? '')) ?: null,
         ];
     }
 

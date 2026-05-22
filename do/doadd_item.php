@@ -2,6 +2,7 @@
 require_once __DIR__ . '/../includes/session_bootstrap.php';
 include('../includes/connect.php');
 require_once __DIR__ . '/../classes/Items/ItemFormInput.php';
+require_once __DIR__ . '/../classes/Pos/Service/ItemVariantService.php';
 require_once __DIR__ . '/../classes/Sync/MenuItemSyncRecorder.php';
 
 $usid = (int) ($_SESSION['userid'] ?? 1);
@@ -42,6 +43,8 @@ if (!posmain_add_item_images_are_valid($imageFiles)) {
 }
 
 try {
+    $variantService = new ItemVariantService();
+    $variantService->ensureSchema($conn);
     $conn->begin_transaction();
 
     $stmt = $conn->prepare(
@@ -133,7 +136,13 @@ try {
 
     // إضافة سجل في جدول process
     $conn->query("INSERT INTO process(type) VALUES ('add item')");
-    posmain_record_menu_item_sync($conn, (int) $last_id, 'item_form');
+    $changedItemIds = [(int) $last_id];
+    if (array_key_exists('item_variants_payload_present', $_POST)) {
+        $changedItemIds = $variantService->saveVariantsFromPost($conn, (int) $last_id, $_POST, ['user_id' => $usid]);
+    }
+    foreach ($changedItemIds as $changedItemId) {
+        posmain_record_menu_item_sync($conn, (int) $changedItemId, 'item_form');
+    }
     $conn->commit();
 } catch (Throwable $exception) {
     if ($conn instanceof mysqli) {

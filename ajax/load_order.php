@@ -8,6 +8,7 @@ header('Content-Type: application/json; charset=utf-8');
 $root_path = dirname(__DIR__);
 include($root_path . '/includes/connect.php');
 require_once($root_path . '/classes/TableOrderService.php');
+require_once($root_path . '/classes/Pos/Service/ModifierLineNoteService.php');
 
 try {
     if (!isset($_POST['order_id']) || empty($_POST['order_id'])) {
@@ -27,10 +28,30 @@ try {
 
     $order = $loaded['order'];
     $items = [];
+    $customizationService = new ModifierLineNoteService();
 
     foreach ($loaded['items'] as $item) {
         $qty = floatval($item['qty_out']) - floatval($item['qty_in']);
+        $customizations = ['modifiers' => [], 'notes' => []];
+        try {
+            $customizations = $customizationService->fetchLineCustomizations($conn, (int) $order['id'], (int) $item['id']);
+        } catch (Throwable $ignored) {
+            $customizations = ['modifiers' => [], 'notes' => []];
+        }
         $lineNote = trim((string) ($item['kitchen_note'] ?? $item['notes'] ?? ''));
+        if ($lineNote === '' && !empty($customizations['notes'])) {
+            $lineNote = trim(implode("\n", array_map(static function ($note) {
+                return (string) ($note['note_text'] ?? '');
+            }, $customizations['notes'])));
+        }
+        $modifierLineTotal = 0.0;
+        foreach ($customizations['modifiers'] as $modifier) {
+            $modifierLineTotal += (float) ($modifier['line_delta'] ?? 0);
+        }
+        $basePrice = (float) $item['price'];
+        if ($qty > 0 && $modifierLineTotal > 0) {
+            $basePrice = max(0, $basePrice - ($modifierLineTotal / $qty));
+        }
         $items[] = [
             'item_id' => $item['item_id'],
             'item_name' => $item['item_name'] ?: 'صنف غير معروف',
@@ -38,9 +59,11 @@ try {
             'barcode' => $item['barcode'] ?: $item['item_id'],
             'qty' => $qty,
             'price' => floatval($item['price']),
+            'base_price' => $basePrice,
             'subtotal' => floatval($item['det_value']),
             'note' => $lineNote,
             'kitchen_note' => $lineNote,
+            'modifiers' => $customizations['modifiers'],
         ];
     }
     

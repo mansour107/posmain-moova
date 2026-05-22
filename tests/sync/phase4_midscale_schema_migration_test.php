@@ -22,6 +22,7 @@ try {
 
     $requiredTables = [
         'item_availability',
+        'item_variants',
         'modifier_groups',
         'modifier_options',
         'item_modifier_groups',
@@ -43,6 +44,7 @@ try {
     }
 
     phase4Assert(strpos($plannedSql, 'UNIQUE KEY uq_item_branch_channel') !== false, 'item availability uniqueness missing');
+    phase4Assert(strpos($plannedSql, 'UNIQUE KEY uq_item_variant_parent_child') !== false, 'item variant parent-child uniqueness missing');
     phase4Assert(strpos($plannedSql, 'price_delta DECIMAL(12,3) NOT NULL DEFAULT 0.000') !== false, 'modifier price delta missing');
     phase4Assert(strpos($plannedSql, "note_type ENUM('kitchen','cashier','customer')") !== false, 'line note type enum missing');
     phase4Assert(strpos($plannedSql, 'UNIQUE KEY uq_payment_methods_code (code)') !== false, 'payment method code uniqueness missing');
@@ -75,6 +77,7 @@ try {
     }
 
     phase4Assert(in_array('uq_item_branch_channel', $inspect['item_availability']['indexes'], true), 'item availability unique index not found');
+    phase4Assert(in_array('uq_item_variant_parent_child', $inspect['item_variants']['indexes'], true), 'item variant parent-child unique index not found');
     phase4Assert(in_array('idx_modifier_options_group', $inspect['modifier_options']['indexes'], true), 'modifier options group index not found');
     phase4Assert(in_array('uq_item_group', $inspect['item_modifier_groups']['indexes'], true), 'item modifier group unique index not found');
     phase4Assert(in_array('idx_order_line_notes_order', $inspect['order_line_notes']['indexes'], true), 'line notes order index not found');

@@ -1,13 +1,14 @@
 <?php
 require_once __DIR__ . '/../includes/session_bootstrap.php';
 include('../includes/connect.php');
+require_once __DIR__ . '/../classes/Pos/Service/ItemVariantService.php';
 require_once __DIR__ . '/../classes/Sync/MenuItemSyncRecorder.php';
 
-$item_id = $_GET['edit'];
-$usid = $_SESSION['userid'];
+$item_id = (int) ($_GET['edit'] ?? 0);
+$usid = (int) ($_SESSION['userid'] ?? 0);
 
 // Ensure user is authenticated
-if (!isset($usid)) {
+if ($usid <= 0 || $item_id <= 0) {
     header('location:login.php');
     exit();
 } 
@@ -27,12 +28,17 @@ if (isset($_POST['barcode'])) {
 }
 
 // Item Name Validation (Check for duplicate names)
-$iname = $_POST['iname']; 
+$iname = trim((string) ($_POST['iname'] ?? ''));
+if ($iname === '') {
+    header('Location: ../add_item.php?edit=' . $item_id . '&error=save_failed');
+    exit;
+}
 $sqlchkname  = "SELECT * FROM myitems WHERE iname = ? AND id != ?";
 $stmt = $conn->prepare($sqlchkname);
 $stmt->bind_param('si', $iname, $item_id);
 $stmt->execute();
 $chkname = $stmt->get_result()->fetch_assoc();
+$stmt->close();
 
 if ($chkname !== null) {
     header('Location: ../add_item.php?edit=' . (int) $item_id . '&error=duplicate_name');
@@ -40,40 +46,38 @@ if ($chkname !== null) {
 }
 
 // Prepare to update the main item
-$code = $_POST['code'];
-$name2 = $_POST['name2']; 
-$group1 = $_POST['group1']; 
-$group2 = $_POST['group2']; 
-$info = $_POST['info']; 
-$cost_price = $_POST['cost_price'][0]; 
-$price1 = $_POST['price1'][0];
-$price2 = $_POST['price2'][0]; 
+$code = (int) ($_POST['code'] ?? 0);
+$name2 = (string) ($_POST['name2'] ?? '');
+$group1 = (int) ($_POST['group1'] ?? 0);
+$group2 = (int) ($_POST['group2'] ?? 0);
+$info = (string) ($_POST['info'] ?? '');
+$cost_price = (float) ($_POST['cost_price'][0] ?? 0);
+$price1 = (float) ($_POST['price1'][0] ?? 0);
+$price2 = (float) ($_POST['price2'][0] ?? 0);
 
 
 
 
 // Handle image upload
+$new_kvr_name = null;
 if (isset($_FILES['imgs']) && !empty($_FILES['imgs']['name'][0])) {
     $imgs_name = $_FILES['imgs']['name'][0];
     $tmp_name = $_FILES['imgs']['tmp_name'][0];
     
     $arrkvr = explode(".", $imgs_name);
-    $kvr_ext = end($arrkvr);
+    $kvr_ext = strtolower((string) end($arrkvr));
     
     $allow_ext = ["jpg", "png", "gif", "jpeg", "webp"];
-    if (in_array($kvr_ext, $allow_ext)) {
+    if (in_array($kvr_ext, $allow_ext, true)) {
         $new_kvr_name = $arrkvr[0] . rand(1, 1000000) . "." . $kvr_ext;
-        if (move_uploaded_file($tmp_name, "../uploads/$new_kvr_name")) {
-            // حذف الصور القديمة للصنف
-            $conn->query("DELETE FROM imgs WHERE itemid = '$item_id'");
-            // إضافة الصورة الجديدة
-            $conn->query("INSERT INTO imgs (iname, itemid) VALUES ('$new_kvr_name', '$item_id')");
+        if (!move_uploaded_file($tmp_name, "../uploads/$new_kvr_name")) {
+            $new_kvr_name = null;
         }
+    } else {
+        header('Location: ../add_item.php?edit=' . $item_id . '&error=invalid_image');
+        exit;
     }
 }
-
-// تحديث الجدول الرئيسي
-$sql = "UPDATE myitems SET iname='$iname', name2='$name2', code='$code', info='$info', cost_price='$cost_price', group1='$group1', group2='$group2', price1='$price1' WHERE id='$item_id'";
 
 // إضافة العمود إذا لم يكن موجوداً
 $checkColumn = $conn->query("SHOW COLUMNS FROM myitems LIKE 'manual_price_edit'");
@@ -81,35 +85,86 @@ if ($checkColumn->num_rows == 0) {
     $conn->query("ALTER TABLE myitems ADD COLUMN manual_price_edit TINYINT(1) DEFAULT 0");
 }
 
-// تعيين علامة التعديل اليدوي
-$conn->query("UPDATE myitems SET manual_price_edit=1 WHERE id='$item_id'");
-if (!$conn->query($sql)) {
+try {
+    $variantService = new ItemVariantService();
+    $variantService->ensureSchema($conn);
+    $conn->begin_transaction();
+
+    if ($new_kvr_name !== null) {
+        $deleteImage = $conn->prepare('DELETE FROM imgs WHERE itemid = ?');
+        $deleteImage->bind_param('i', $item_id);
+        $deleteImage->execute();
+        $deleteImage->close();
+
+        $insertImage = $conn->prepare('INSERT INTO imgs (iname, itemid) VALUES (?, ?)');
+        $insertImage->bind_param('si', $new_kvr_name, $item_id);
+        $insertImage->execute();
+        $insertImage->close();
+    }
+
+    // تحديث الجدول الرئيسي
+    $stmt = $conn->prepare("
+        UPDATE myitems
+        SET iname = ?,
+            name2 = ?,
+            code = ?,
+            info = ?,
+            cost_price = ?,
+            group1 = ?,
+            group2 = ?,
+            price1 = ?,
+            price2 = ?,
+            manual_price_edit = 1
+        WHERE id = ?
+    ");
+    $stmt->bind_param('ssisdiiddi', $iname, $name2, $code, $info, $cost_price, $group1, $group2, $price1, $price2, $item_id);
+    if (!$stmt->execute()) {
+        throw new RuntimeException('Unable to update item');
+    }
+    $stmt->close();
+
+    // تحديث وحدات الصنف
+    $unitStmt = $conn->prepare("
+        UPDATE item_units
+        SET cost_price = ?,
+            price1 = ?,
+            price2 = ?,
+            price3 = ?,
+            u_val = ?,
+            unit_barcode = ?
+        WHERE item_id = ? AND unit_id = ?
+    ");
+    foreach ($_POST['unit_id'] as $index => $unit_id) {
+        $unit_id = (int) $unit_id;
+        $u_val = (float) ($_POST['u_val'][$index] ?? 1);
+        $unit_barcode = !empty($_POST['unit_barcode'][$index]) ? (string) $_POST['unit_barcode'][$index] : "99" . $index . ($_POST['unit_barcode'][0] ?? '');
+        $cost_price_unit = (float) ($_POST['cost_price'][$index] ?? 0);
+        $price1_unit = (float) ($_POST['price1'][$index] ?? 0);
+        $price2_unit = (float) ($_POST['price2'][$index] ?? 0);
+        $market_price_unit = isset($_POST['price3'][$index]) ? (float) $_POST['price3'][$index] : (isset($_POST['market_price'][$index]) ? (float) $_POST['market_price'][$index] : 0);
+        $unitStmt->bind_param('dddddsii', $cost_price_unit, $price1_unit, $price2_unit, $market_price_unit, $u_val, $unit_barcode, $item_id, $unit_id);
+        $unitStmt->execute();
+    }
+    $unitStmt->close();
+
+    $changedItemIds = [$item_id];
+    if (array_key_exists('item_variants_payload_present', $_POST)) {
+        $changedItemIds = $variantService->saveVariantsFromPost($conn, $item_id, $_POST, ['user_id' => $usid]);
+    }
+    foreach ($changedItemIds as $changedItemId) {
+        posmain_record_menu_item_sync($conn, (int) $changedItemId, 'item_form');
+    }
+    $conn->commit();
+} catch (Throwable $exception) {
+    if ($conn instanceof mysqli) {
+        $conn->rollback();
+    }
+    if (function_exists('posmain_log_exception') && function_exists('posmain_error_reference')) {
+        posmain_log_exception($exception, posmain_error_reference(), 'edit_item_save');
+    }
     header('Location: ../add_item.php?edit=' . (int) $item_id . '&error=save_failed');
     exit;
 }
-
-// تحديث وحدات الصنف
-foreach ($_POST['unit_id'] as $index => $unit_id) {
-    $u_val = $_POST['u_val'][$index];
-    $unit_barcode = !empty($_POST['unit_barcode'][$index]) ? $_POST['unit_barcode'][$index] : "99" . $index . $_POST['unit_barcode'][0];
-    $cost_price_unit = $_POST['cost_price'][$index];
-    $price1_unit = $_POST['price1'][$index];
-    $price2_unit = $_POST['price2'][$index];
-    $market_price_unit = isset($_POST['price3'][$index]) ? $_POST['price3'][$index] : (isset($_POST['market_price'][$index]) ? $_POST['market_price'][$index] : 0);
-    
-    $sqlunit = "UPDATE item_units SET 
-                cost_price='$cost_price_unit',
-                price1='$price1_unit',
-                price2='$price2_unit',
-                price3='$market_price_unit', 
-                u_val='$u_val',
-                unit_barcode='$unit_barcode' 
-                WHERE item_id='$item_id' AND unit_id='$unit_id'";
-    
-    $conn->query($sqlunit);
-}
-
-posmain_record_menu_item_sync($conn, (int) $item_id, 'item_form');
 
     header('Location: ../add_item.php?edit=' . (int) $item_id . '&saved=1');
     exit;

@@ -49,6 +49,13 @@ $handlerExpectations = [
         'SecurityAuditLogger',
         'print_r($_POST, true)',
     ],
+    'ajax/sync_credentials.php' => [
+        "require_admin_or_permission('system.tools.run', \$conn)",
+        "require_csrf('sync_credentials')",
+        'SecurityAuditLogger',
+        'syncCredentialsRequireEncryption',
+        'print_r($_POST, true)',
+    ],
 ];
 
 foreach ($handlerExpectations as $path => $snippets) {

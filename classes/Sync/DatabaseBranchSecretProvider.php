@@ -1,11 +1,13 @@
 <?php
 
 require_once __DIR__ . '/BranchSecretProvider.php';
+require_once __DIR__ . '/SyncRuntimeCrypto.php';
 
 class DatabaseBranchSecretProvider implements BranchSecretProvider
 {
     private mysqli $conn;
     private array $secrets;
+    private array $dbSecretCache = [];
 
     public function __construct(mysqli $conn, array $secrets)
     {
@@ -35,11 +37,11 @@ class DatabaseBranchSecretProvider implements BranchSecretProvider
             return null;
         }
 
-        if (!array_key_exists($branchUuid, $this->secrets)) {
-            return null;
+        if (array_key_exists($branchUuid, $this->secrets)) {
+            return (string) $this->secrets[$branchUuid];
         }
 
-        return (string) $this->secrets[$branchUuid];
+        return $this->secretFromEncryptedCloudBranch($branchUuid);
     }
 
     public function isBranchActive(string $branchUuid): bool
@@ -69,5 +71,61 @@ class DatabaseBranchSecretProvider implements BranchSecretProvider
         $stmt->bind_param('s', $branchUuid);
         $stmt->execute();
         $stmt->close();
+    }
+
+    private function secretFromEncryptedCloudBranch(string $branchUuid): ?string
+    {
+        if (array_key_exists($branchUuid, $this->dbSecretCache)) {
+            return $this->dbSecretCache[$branchUuid];
+        }
+
+        if (!$this->columnExists('cloud_branches', 'sync_secret_encrypted')) {
+            $this->dbSecretCache[$branchUuid] = null;
+            return null;
+        }
+
+        $stmt = $this->conn->prepare("
+            SELECT sync_secret_encrypted
+            FROM cloud_branches
+            WHERE branch_uuid = ?
+              AND status = 'active'
+            LIMIT 1
+        ");
+        $stmt->bind_param('s', $branchUuid);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        $encrypted = trim((string) ($row['sync_secret_encrypted'] ?? ''));
+        if ($encrypted === '') {
+            $this->dbSecretCache[$branchUuid] = null;
+            return null;
+        }
+
+        try {
+            $this->dbSecretCache[$branchUuid] = (new SyncRuntimeCrypto())->decrypt($encrypted);
+        } catch (Throwable $e) {
+            error_log('Unable to decrypt branch sync secret for ' . $branchUuid . ': ' . $e->getMessage());
+            $this->dbSecretCache[$branchUuid] = null;
+        }
+
+        return $this->dbSecretCache[$branchUuid];
+    }
+
+    private function columnExists(string $table, string $column): bool
+    {
+        $stmt = $this->conn->prepare("
+            SELECT COUNT(*) AS column_count
+            FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE()
+              AND TABLE_NAME = ?
+              AND COLUMN_NAME = ?
+        ");
+        $stmt->bind_param('ss', $table, $column);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        return ((int) ($row['column_count'] ?? 0)) > 0;
     }
 }

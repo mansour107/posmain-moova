@@ -1,5 +1,8 @@
 <?php
 
+require_once __DIR__ . '/../classes/Sync/SyncRuntimeDbConfigFile.php';
+require_once __DIR__ . '/../classes/Sync/SyncRuntimeSettings.php';
+
 if (!function_exists('posmain_load_env_file')) {
     function posmain_load_env_file(?string $path = null): void
     {
@@ -75,6 +78,109 @@ if (!function_exists('posmain_first_env')) {
         foreach ($names as $name) {
             $value = posmain_env((string) $name, null, $allowEmpty);
             if ($value !== null) {
+                return $value;
+            }
+        }
+
+        return $default;
+    }
+}
+
+if (!function_exists('posmain_read_env_file_values')) {
+    function posmain_read_env_file_values(?string $path): array
+    {
+        static $cache = [];
+
+        if ($path === null || $path === '') {
+            return [];
+        }
+
+        $realPath = realpath($path) ?: $path;
+        if (isset($cache[$realPath])) {
+            return $cache[$realPath];
+        }
+
+        if (!is_file($path) || !is_readable($path)) {
+            $cache[$realPath] = [];
+            return [];
+        }
+
+        $lines = file($path, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+        if ($lines === false) {
+            $cache[$realPath] = [];
+            return [];
+        }
+
+        $values = [];
+        foreach ($lines as $line) {
+            $line = trim($line);
+            if ($line === '' || $line[0] === '#') {
+                continue;
+            }
+
+            $parts = explode('=', $line, 2);
+            if (count($parts) !== 2) {
+                continue;
+            }
+
+            $name = trim($parts[0]);
+            if ($name === '') {
+                continue;
+            }
+
+            $value = trim($parts[1]);
+            if (
+                strlen($value) >= 2
+                && (($value[0] === '"' && substr($value, -1) === '"') || ($value[0] === "'" && substr($value, -1) === "'"))
+            ) {
+                $value = substr($value, 1, -1);
+            }
+
+            $values[$name] = $value;
+        }
+
+        $cache[$realPath] = $values;
+        return $values;
+    }
+}
+
+if (!function_exists('posmain_sync_local_env_files')) {
+    function posmain_sync_local_env_files(): array
+    {
+        $paths = [];
+        $customPath = posmain_env('POSMAIN_BRANCH_WORKER_ENV_FILE', '', true);
+        if (is_string($customPath) && trim($customPath) !== '') {
+            $paths[] = trim($customPath);
+        }
+
+        $paths[] = __DIR__ . '/../.env.branch-worker';
+        $paths[] = '/etc/posmain/branch-worker.env';
+
+        return array_values(array_unique($paths));
+    }
+}
+
+if (!function_exists('posmain_first_env_or_file')) {
+    function posmain_first_env_or_file(array $names, $default = null, bool $allowEmpty = false, array $paths = [])
+    {
+        $value = posmain_first_env($names, null, $allowEmpty);
+        if ($value !== null) {
+            return $value;
+        }
+
+        foreach ($paths as $path) {
+            $values = posmain_read_env_file_values((string) $path);
+            foreach ($names as $name) {
+                $name = (string) $name;
+                if (!array_key_exists($name, $values)) {
+                    continue;
+                }
+
+                $value = $values[$name];
+                if (!$allowEmpty && $value === '') {
+                    continue;
+                }
+
                 return $value;
             }
         }
@@ -160,6 +266,60 @@ if (!function_exists('posmain_merge_config')) {
         }
 
         return $base;
+    }
+}
+
+if (!function_exists('posmain_runtime_file_database_overrides')) {
+    function posmain_runtime_file_database_overrides(): array
+    {
+        if (SyncRuntimeDbConfigFile::disabled()) {
+            return [];
+        }
+
+        try {
+            $loaded = (new SyncRuntimeDbConfigFile())->load();
+            return isset($loaded['database']) && is_array($loaded['database'])
+                ? ['database' => $loaded['database']]
+                : [];
+        } catch (Throwable $e) {
+            error_log('POSMAIN runtime DB config ignored: ' . $e->getMessage());
+            return [];
+        }
+    }
+}
+
+if (!function_exists('posmain_runtime_db_settings_overrides')) {
+    function posmain_runtime_db_settings_overrides(array $config): array
+    {
+        if (SyncRuntimeDbConfigFile::disabled()) {
+            return [];
+        }
+
+        $db = $config['database'] ?? [];
+        mysqli_report(MYSQLI_REPORT_OFF);
+        $conn = @new mysqli(
+            (string) ($db['host'] ?? '127.0.0.1'),
+            (string) ($db['user'] ?? 'root'),
+            (string) ($db['pass'] ?? ''),
+            (string) ($db['name'] ?? 'kody2'),
+            (int) ($db['port'] ?? 3306)
+        );
+        mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
+
+        if ($conn->connect_error) {
+            return [];
+        }
+
+        try {
+            $conn->set_charset((string) (($db['charset'] ?? '') ?: 'utf8mb4'));
+            $overrides = (new SyncRuntimeSettings())->fetchConfigOverrides($conn);
+            $conn->close();
+            return $overrides;
+        } catch (Throwable $e) {
+            $conn->close();
+            error_log('POSMAIN sync runtime settings ignored: ' . $e->getMessage());
+            return [];
+        }
     }
 }
 
@@ -284,6 +444,9 @@ if (!function_exists('posmain_app_config')) {
                 'http_timeout_ms' => posmain_int(posmain_env('POSMAIN_SYNC_HTTP_TIMEOUT_MS', null), 5000),
             ],
         ];
+
+        $config = posmain_merge_config($config, posmain_runtime_file_database_overrides());
+        $config = posmain_merge_config($config, posmain_runtime_db_settings_overrides($config));
 
         return posmain_merge_config($config, $overrides);
     }

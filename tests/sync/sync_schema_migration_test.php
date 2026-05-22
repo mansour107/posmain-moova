@@ -45,11 +45,13 @@ class SyncSchemaMigrationTest extends TestCase
         $this->assertArrayHasKey('document_counters', $manager->plannedStatements());
         $this->assertArrayHasKey('pos_request_keys', $manager->plannedStatements());
         $this->assertArrayHasKey('order_events', $manager->plannedStatements());
+        $this->assertArrayHasKey('item_variants', $manager->plannedStatements());
         $this->assertArrayHasKey('sync_outbox', $manager->plannedStatements());
         $this->assertArrayHasKey('sync_inbox', $manager->plannedStatements());
         $this->assertArrayHasKey('sync_checkpoints', $manager->plannedStatements());
         $this->assertArrayHasKey('sync_conflicts', $manager->plannedStatements());
         $this->assertArrayHasKey('sync_worker_logs', $manager->plannedStatements());
+        $this->assertArrayHasKey('sync_runtime_settings', $manager->plannedStatements());
         $this->assertArrayHasKey('moova_pos_inbound_events', $manager->plannedStatements());
         $this->assertArrayHasKey('cloud_branches', $manager->plannedStatements());
         $this->assertArrayHasKey('cloud_orders', $manager->plannedStatements());
@@ -108,6 +110,10 @@ class SyncSchemaMigrationTest extends TestCase
         $this->assertStringContainsString('KEY idx_sync_conflicts_open (resolution_status, created_at)', $sql);
         $this->assertStringContainsString('CREATE TABLE IF NOT EXISTS sync_worker_logs', $sql);
         $this->assertStringContainsString('KEY idx_sync_worker_logs_name_time (worker_name, created_at)', $sql);
+        $this->assertStringContainsString('CREATE TABLE IF NOT EXISTS sync_runtime_settings', $sql);
+        $this->assertStringContainsString('setting_key VARCHAR(120) NOT NULL', $sql);
+        $this->assertStringContainsString('is_secret TINYINT(1) NOT NULL DEFAULT 0', $sql);
+        $this->assertStringContainsString('UNIQUE KEY uq_sync_runtime_settings_key (setting_key)', $sql);
         $this->assertStringContainsString('CREATE TABLE IF NOT EXISTS moova_pos_inbound_events', $sql);
         $this->assertStringContainsString("delivery_path ENUM('widget','poller','manual','test') NOT NULL DEFAULT 'widget'", $sql);
         $this->assertStringContainsString("status ENUM('received','processing','notified','cashier_confirmed','applied','declined','failed','duplicate','conflict') NOT NULL DEFAULT 'received'", $sql);
@@ -121,6 +127,7 @@ class SyncSchemaMigrationTest extends TestCase
         $this->assertStringContainsString('KEY idx_moova_inbound_cloud_ack (cloud_ack_status, status, applied_at, id)', $sql);
         $this->assertStringContainsString('CREATE TABLE IF NOT EXISTS cloud_branches', $sql);
         $this->assertStringContainsString('sync_secret_hash CHAR(64) NULL', $sql);
+        $this->assertStringContainsString('sync_secret_encrypted TEXT NULL', $sql);
         $this->assertStringContainsString('CREATE TABLE IF NOT EXISTS cloud_orders', $sql);
         $this->assertStringContainsString('order_uuid CHAR(36) NOT NULL', $sql);
         $this->assertStringContainsString('pro_value DECIMAL(15,4) NOT NULL DEFAULT 0', $sql);
@@ -194,6 +201,9 @@ class SyncSchemaMigrationTest extends TestCase
         $this->assertTrue($inspect['sync_checkpoints']['exists']);
         $this->assertTrue($inspect['sync_conflicts']['exists']);
         $this->assertTrue($inspect['sync_worker_logs']['exists']);
+        $this->assertTrue($inspect['sync_runtime_settings']['exists']);
+        $this->assertContains('setting_key', $inspect['sync_runtime_settings']['columns']);
+        $this->assertContains('uq_sync_runtime_settings_key', $inspect['sync_runtime_settings']['indexes']);
         $this->assertTrue($inspect['moova_pos_inbound_events']['exists']);
         $this->assertContains('locked_by', $inspect['moova_pos_inbound_events']['columns']);
         $this->assertContains('locked_until', $inspect['moova_pos_inbound_events']['columns']);
@@ -205,6 +215,7 @@ class SyncSchemaMigrationTest extends TestCase
         $this->assertContains('idx_moova_inbound_claim', $inspect['moova_pos_inbound_events']['indexes']);
         $this->assertContains('idx_moova_inbound_cloud_ack', $inspect['moova_pos_inbound_events']['indexes']);
         $this->assertTrue($inspect['cloud_branches']['exists']);
+        $this->assertContains('sync_secret_encrypted', $inspect['cloud_branches']['columns']);
         $this->assertTrue($inspect['cloud_orders']['exists']);
         $this->assertTrue($inspect['cloud_order_lines']['exists']);
         $this->assertTrue($inspect['cloud_order_payments']['exists']);

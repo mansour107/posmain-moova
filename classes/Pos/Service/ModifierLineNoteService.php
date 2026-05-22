@@ -26,10 +26,8 @@ class ModifierLineNoteService
             ];
         }
 
-        $groups = $this->modifierGroupsForItem($conn, $itemId);
-        $selections = $this->normalizeSelections($selectedOptions);
-        $options = $this->modifierOptionsForItem($conn, $itemId, array_keys($selections));
-        $validated = $this->validateSelections($groups, $options, $selections);
+        $preview = $this->previewLineModifiers($conn, $itemId, $selectedOptions, $context);
+        $validated = $preview['modifiers'];
         $lineNotes = $this->normalizeNotes($notes, $context);
 
         $this->replacePersistedModifiers($conn, $orderId, $detailId, $validated);
@@ -44,6 +42,35 @@ class ModifierLineNoteService
             'item_id' => $itemId,
             'modifiers' => $validated,
             'notes' => $lineNotes,
+            'modifier_total' => $preview['modifier_total'],
+        ];
+    }
+
+    public function previewLineModifiers(mysqli $conn, int $itemId, array $selectedOptions, array $context = []): array
+    {
+        $itemId = $this->positiveInt($itemId, 'ITEM_ID_REQUIRED');
+
+        if (!$this->modifiersEnabled($context)) {
+            return [
+                'success' => false,
+                'code' => 'MODIFIERS_DISABLED',
+                'enabled' => false,
+                'modifiers' => [],
+                'modifier_total' => '0.000',
+            ];
+        }
+
+        $groups = $this->modifierGroupsForItem($conn, $itemId);
+        $selections = $this->normalizeSelections($selectedOptions);
+        $options = $this->modifierOptionsForItem($conn, $itemId, array_keys($selections));
+        $validated = $this->validateSelections($groups, $options, $selections);
+
+        return [
+            'success' => true,
+            'code' => 'OK',
+            'enabled' => true,
+            'item_id' => $itemId,
+            'modifiers' => $validated,
             'modifier_total' => $this->formatDecimal($this->modifierTotal($validated)),
         ];
     }

@@ -1,65 +1,17 @@
 <?php
 
 require_once __DIR__ . '/../includes/db_bootstrap.php';
-require_once __DIR__ . '/../classes/Sync/BranchIdentity.php';
-require_once __DIR__ . '/../classes/Sync/SchemaManager.php';
+require_once __DIR__ . '/../classes/Sync/CloudBranchRegistryService.php';
 
 if (!function_exists('cloudRegisterBranch')) {
     function cloudRegisterBranch(mysqli $conn, array $options): array
     {
-        $branchUuid = trim((string) ($options['branch-uuid'] ?? ''));
-        $secret = (string) ($options['secret'] ?? '');
-        if (!SyncBranchIdentity::isUuid($branchUuid)) {
-            throw new InvalidArgumentException('--branch-uuid must be a valid UUID.');
-        }
-        if ($secret === '') {
-            throw new InvalidArgumentException('--secret is required.');
-        }
+        $result = (new CloudBranchRegistryService())->register($conn, $options);
+        $result['branch_env']['POSMAIN_BRANCH_NAME'] = $result['branch_name'] ?: '';
+        $result['branch_env']['POSMAIN_POS_TENANT'] = $result['pos_tenant'] === null ? '' : (string) $result['pos_tenant'];
+        $result['branch_env']['POSMAIN_POS_BRANCH'] = $result['pos_branch'] === null ? '' : (string) $result['pos_branch'];
 
-        $branchName = cloudRegisterNullableString($options['name'] ?? null);
-        $tenant = cloudRegisterNullableInt($options['tenant'] ?? null);
-        $branch = cloudRegisterNullableInt($options['branch'] ?? null);
-        $status = !empty($options['disabled']) ? 'disabled' : 'active';
-        $secretHash = hash('sha256', $secret);
-
-        (new SyncSchemaManager())->apply($conn);
-
-        $stmt = $conn->prepare("
-            INSERT INTO cloud_branches (
-                branch_uuid,
-                branch_name,
-                pos_tenant,
-                pos_branch,
-                status,
-                sync_secret_hash
-            ) VALUES (?, ?, ?, ?, ?, ?)
-            ON DUPLICATE KEY UPDATE branch_name = VALUES(branch_name),
-                                    pos_tenant = VALUES(pos_tenant),
-                                    pos_branch = VALUES(pos_branch),
-                                    status = VALUES(status),
-                                    sync_secret_hash = VALUES(sync_secret_hash),
-                                    updated_at = NOW(6)
-        ");
-        $stmt->bind_param('ssiiss', $branchUuid, $branchName, $tenant, $branch, $status, $secretHash);
-        $stmt->execute();
-        $stmt->close();
-
-        return [
-            'branch_uuid' => $branchUuid,
-            'branch_name' => $branchName,
-            'pos_tenant' => $tenant,
-            'pos_branch' => $branch,
-            'status' => $status,
-            'sync_secret_hash' => $secretHash,
-            'branch_env' => [
-                'POSMAIN_ROLE' => 'branch',
-                'POSMAIN_BRANCH_UUID' => $branchUuid,
-                'POSMAIN_BRANCH_NAME' => $branchName ?: '',
-                'POSMAIN_POS_TENANT' => $tenant === null ? '' : (string) $tenant,
-                'POSMAIN_POS_BRANCH' => $branch === null ? '' : (string) $branch,
-                'POSMAIN_BRANCH_SYNC_SECRET' => $secret,
-            ],
-        ];
+        return $result;
     }
 }
 

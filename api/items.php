@@ -5,6 +5,7 @@ header('Access-Control-Allow-Methods: GET');
 
 require_once __DIR__ . '/../includes/db_bootstrap.php';
 require_once __DIR__ . '/moova_menu_api_auth.php';
+require_once __DIR__ . '/../classes/Pos/Service/ItemVariantService.php';
 
 try {
     $conn = posmain_db_connect();
@@ -142,6 +143,42 @@ try {
     }
     
     $stmt->close();
+
+    $variantService = new ItemVariantService();
+    $itemIds = array_map(static function (array $item): int {
+        return (int) ($item['id'] ?? 0);
+    }, $items);
+    $variantsByParent = $variantService->activeVariantsForParents($conn, $itemIds);
+    foreach ($items as &$item) {
+        $itemId = (int) $item['id'];
+        $variants = $variantsByParent[$itemId] ?? [];
+        $variantParent = $variantService->variantParentForChild($conn, $itemId);
+        $item['has_variants'] = count($variants) > 0;
+        $item['is_orderable'] = !$item['has_variants'];
+        $item['is_variant_child'] = $variantParent !== null;
+        $item['parent_item_id'] = $variantParent ? (int) ($variantParent['parent_item_id'] ?? 0) : null;
+        $item['variant_label'] = $variantParent ? (string) ($variantParent['variant_label'] ?? '') : null;
+        $item['variants'] = array_map(static function (array $variant): array {
+            return [
+                'relation_id' => (int) ($variant['relation_id'] ?? 0),
+                'item_id' => (int) ($variant['variant_item_id'] ?? $variant['item_id'] ?? 0),
+                'variant_item_id' => (int) ($variant['variant_item_id'] ?? $variant['item_id'] ?? 0),
+                'label' => (string) ($variant['variant_label'] ?? $variant['label'] ?? ''),
+                'name' => (string) ($variant['iname'] ?? $variant['name'] ?? ''),
+                'barcode' => (string) ($variant['barcode'] ?? ''),
+                'price' => (float) ($variant['price1'] ?? $variant['price'] ?? 0),
+                'price1' => (float) ($variant['price1'] ?? $variant['price'] ?? 0),
+                'price2' => (float) ($variant['price2'] ?? 0),
+                'price3' => (float) ($variant['price3'] ?? 0),
+                'cost_price' => (float) ($variant['cost_price'] ?? 0),
+                'sort_order' => (int) ($variant['sort_order'] ?? 0),
+                'is_default' => (bool) ($variant['is_default'] ?? false),
+                'is_active' => (bool) ($variant['is_active'] ?? true),
+                'is_orderable' => true,
+            ];
+        }, $variants);
+    }
+    unset($item);
     $conn->close();
     
     // Return success response

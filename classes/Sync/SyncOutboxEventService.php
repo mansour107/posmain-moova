@@ -4,6 +4,7 @@ require_once __DIR__ . '/../../config/app_config.php';
 require_once __DIR__ . '/BranchIdentity.php';
 require_once __DIR__ . '/CloudBranchSyncPublisher.php';
 require_once __DIR__ . '/PosOrderSnapshotBuilder.php';
+require_once __DIR__ . '/../Pos/Service/ItemVariantService.php';
 
 class SyncOutboxEventService
 {
@@ -431,6 +432,12 @@ class SyncOutboxEventService
         $price3 = $this->decimalString($item['price3'] ?? null);
         $cost = $this->decimalString($item['cost_price'] ?? null);
 
+        $variantService = new ItemVariantService();
+        $variants = $variantService->variantsForParent($conn, $itemId, true);
+        $variantParent = $variantService->variantParentForChild($conn, $itemId);
+        $hasVariants = count($variants) > 0;
+        $isVariantChild = $variantParent !== null;
+
         $menuItem = [
             'item_uuid' => $itemUuid,
             'local_item_id' => $itemId,
@@ -449,6 +456,11 @@ class SyncOutboxEventService
             'cost' => $cost,
             'cost_price' => $cost,
             'available_online' => ((int) ($item['isdeleted'] ?? 0)) === 0,
+            'is_orderable' => !$hasVariants && ((int) ($item['isdeleted'] ?? 0)) === 0,
+            'has_variants' => $hasVariants,
+            'is_variant_child' => $isVariantChild,
+            'parent_item_id' => $isVariantChild ? (int) ($variantParent['parent_item_id'] ?? 0) : null,
+            'variant_label' => $isVariantChild ? (string) ($variantParent['variant_label'] ?? '') : null,
             'isdeleted' => (int) ($item['isdeleted'] ?? 0),
             'menu_version' => $revision,
             'legacy' => [
@@ -463,6 +475,25 @@ class SyncOutboxEventService
                 'manual_price_edit' => $this->intOrZero($item['manual_price_edit'] ?? 0),
             ],
         ];
+        $menuItem['variants'] = array_map(function (array $variant): array {
+            return [
+                'relation_id' => (int) ($variant['relation_id'] ?? 0),
+                'item_id' => (int) ($variant['variant_item_id'] ?? $variant['item_id'] ?? 0),
+                'variant_item_id' => (int) ($variant['variant_item_id'] ?? $variant['item_id'] ?? 0),
+                'label' => (string) ($variant['variant_label'] ?? $variant['label'] ?? ''),
+                'name' => (string) ($variant['iname'] ?? $variant['name'] ?? ''),
+                'barcode' => (string) ($variant['barcode'] ?? ''),
+                'price' => $this->decimalString($variant['price1'] ?? $variant['price'] ?? null),
+                'price1' => $this->decimalString($variant['price1'] ?? $variant['price'] ?? null),
+                'price2' => $this->decimalString($variant['price2'] ?? null),
+                'price3' => $this->decimalString($variant['price3'] ?? null),
+                'cost_price' => $this->decimalString($variant['cost_price'] ?? null),
+                'sort_order' => (int) ($variant['sort_order'] ?? 0),
+                'is_default' => (bool) ($variant['is_default'] ?? false),
+                'is_active' => (bool) ($variant['is_active'] ?? true),
+                'is_orderable' => true,
+            ];
+        }, $variants);
 
         $payload = [
             'schema_version' => 1,

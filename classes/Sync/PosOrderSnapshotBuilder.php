@@ -141,6 +141,8 @@ class PosOrderSnapshotBuilder
         while ($row = $result->fetch_assoc()) {
             $localLineId = (int) $row['id'];
             $itemId = $this->nullableInt($row['item_id'] ?? null);
+            $modifiers = $this->lineModifiers($conn, $orderId, $localLineId);
+            $notes = $this->lineNotes($conn, $orderId, $localLineId);
             $lines[] = [
                 'line_uuid' => self::deterministicUuid($branchUuid, 'fat_details:' . $localLineId),
                 'order_uuid' => $orderUuid,
@@ -157,11 +159,92 @@ class PosOrderSnapshotBuilder
                 'det_value' => $this->decimalString($row['det_value'] ?? null),
                 'profit' => $this->decimalString($row['profit'] ?? null),
                 'isdeleted' => (int) ($row['isdeleted'] ?? 0),
+                'modifiers' => $modifiers,
+                'notes' => $notes,
             ];
         }
         $stmt->close();
 
         return $lines;
+    }
+
+    private function lineModifiers(mysqli $conn, int $orderId, int $detailId): array
+    {
+        if (!$this->tableExists($conn, 'order_line_modifiers')) {
+            return [];
+        }
+
+        $optionNameSelect = $this->tableExists($conn, 'modifier_options')
+            ? 'mo.name_ar, mo.name_en'
+            : 'NULL AS name_ar, NULL AS name_en';
+        $optionJoin = $this->tableExists($conn, 'modifier_options')
+            ? 'LEFT JOIN modifier_options mo ON mo.id = olm.modifier_option_id'
+            : '';
+        $stmt = $conn->prepare("
+            SELECT
+                olm.modifier_group_id,
+                olm.modifier_option_id,
+                olm.qty,
+                olm.price_delta,
+                {$optionNameSelect}
+            FROM order_line_modifiers olm
+            {$optionJoin}
+            WHERE olm.order_id = ?
+              AND olm.detail_id = ?
+            ORDER BY olm.id ASC
+        ");
+        $stmt->bind_param('ii', $orderId, $detailId);
+        $stmt->execute();
+        $result = $stmt->get_result();
+
+        $modifiers = [];
+        while ($row = $result->fetch_assoc()) {
+            $qty = (float) ($row['qty'] ?? 0);
+            $priceDelta = (float) ($row['price_delta'] ?? 0);
+            $modifiers[] = [
+                'modifier_group_id' => $this->nullableInt($row['modifier_group_id'] ?? null),
+                'modifier_option_id' => $this->nullableInt($row['modifier_option_id'] ?? null),
+                'option_id' => $this->nullableInt($row['modifier_option_id'] ?? null),
+                'qty' => $this->decimalString($qty),
+                'price_delta' => $this->decimalString($priceDelta),
+                'line_delta' => $this->decimalString($qty * $priceDelta),
+                'name_ar' => $this->nullableString($row['name_ar'] ?? null),
+                'name_en' => $this->nullableString($row['name_en'] ?? null),
+            ];
+        }
+        $stmt->close();
+
+        return $modifiers;
+    }
+
+    private function lineNotes(mysqli $conn, int $orderId, int $detailId): array
+    {
+        if (!$this->tableExists($conn, 'order_line_notes')) {
+            return [];
+        }
+
+        $stmt = $conn->prepare("
+            SELECT note_type, note_text, created_by
+            FROM order_line_notes
+            WHERE order_id = ?
+              AND detail_id = ?
+            ORDER BY id ASC
+        ");
+        $stmt->bind_param('ii', $orderId, $detailId);
+        $stmt->execute();
+        $result = $stmt->get_result();
+
+        $notes = [];
+        while ($row = $result->fetch_assoc()) {
+            $notes[] = [
+                'note_type' => $this->nullableString($row['note_type'] ?? null) ?: 'kitchen',
+                'note_text' => $this->nullableString($row['note_text'] ?? null) ?: '',
+                'created_by' => $this->nullableInt($row['created_by'] ?? null),
+            ];
+        }
+        $stmt->close();
+
+        return $notes;
     }
 
     private function paymentPayloads(mysqli $conn, string $branchUuid, int $orderId, string $orderUuid): array

@@ -1,5 +1,7 @@
 <?php include('includes/header.php') ?>
 <?php
+require_once __DIR__ . '/classes/Pos/Service/ItemVariantService.php';
+
 $isEdit = isset($_GET['edit']);
 $editId = $isEdit ? (int) $_GET['edit'] : 0;
 if ($isEdit && $editId < 1) {
@@ -36,6 +38,14 @@ function posmain_add_item_unit_options(mysqli $conn): array
 }
 
 $unitOptions = posmain_add_item_unit_options($conn);
+$itemVariants = [];
+try {
+    $itemVariantService = new ItemVariantService();
+    $itemVariantService->ensureSchema($conn);
+    $itemVariants = $isEdit ? $itemVariantService->variantsForParent($conn, $editId, false) : [];
+} catch (Throwable $exception) {
+    $itemVariants = [];
+}
 ?>
 <?php include('includes/navbar.php') ?>
 <?php include('includes/sidebar.php') ?>
@@ -97,6 +107,7 @@ $unitOptions = posmain_add_item_unit_options($conn);
                 <?php else: ?>
                     <form action="do/doedit_item.php?edit=<?= $editId ?>" method="post" enctype="multipart/form-data" id="item-main-form">
                 <?php endif; ?>
+                <input type="hidden" name="item_variants_payload_present" value="1">
 
                 <?php
                 $rowlstitm = $conn->query('SELECT MAX(code) AS max_code FROM myitems')->fetch_assoc();
@@ -208,6 +219,92 @@ $unitOptions = posmain_add_item_unit_options($conn);
                             </div>
                         </div>
 
+                    </div>
+                </div>
+
+                <div class="card card-outline card-info shadow-sm mt-4" id="item-variations-card">
+                    <div class="card-header d-flex flex-wrap align-items-center justify-content-between border-info">
+                        <h3 class="card-title font-weight-bold mb-0">
+                            <i class="fas fa-sitemap ml-2"></i> التنوعات
+                        </h3>
+                        <button type="button" id="addVariantRow" class="btn btn-sm btn-info">
+                            <i class="fas fa-plus ml-1"></i> إضافة تنوع
+                        </button>
+                    </div>
+                    <div class="card-body p-0">
+                        <div class="table-responsive">
+                            <table class="table table-sm table-bordered table-hover mb-0">
+                                <thead class="thead-light text-center">
+                                    <tr>
+                                        <th style="min-width: 130px;">النوع</th>
+                                        <th style="min-width: 190px;">اسم الصنف الفرعي</th>
+                                        <th style="min-width: 110px;">الباركود</th>
+                                        <th style="min-width: 90px;">التكلفة</th>
+                                        <th style="min-width: 100px;">سعر 1</th>
+                                        <th style="min-width: 100px;">سعر 2</th>
+                                        <th style="min-width: 100px;">سعر السوق</th>
+                                        <th style="width: 70px;">نشط</th>
+                                        <th style="width: 80px;">افتراضي</th>
+                                        <th style="width: 120px;"></th>
+                                    </tr>
+                                </thead>
+                                <tbody id="variantRowsContainer">
+                                    <?php foreach ($itemVariants as $variantIndex => $variant): ?>
+                                        <?php
+                                        $variantLinkId = (int) ($variant['relation_id'] ?? 0);
+                                        $variantItemId = (int) ($variant['variant_item_id'] ?? 0);
+                                        $variantLabel = htmlspecialchars((string) ($variant['variant_label'] ?? ''), ENT_QUOTES, 'UTF-8');
+                                        $variantName = htmlspecialchars((string) ($variant['iname'] ?? ''), ENT_QUOTES, 'UTF-8');
+                                        $variantBarcode = htmlspecialchars((string) ($variant['barcode'] ?? ''), ENT_QUOTES, 'UTF-8');
+                                        $variantCode = htmlspecialchars((string) ($variant['code'] ?? ''), ENT_QUOTES, 'UTF-8');
+                                        $variantCost = htmlspecialchars((string) ($variant['cost_price'] ?? '0'), ENT_QUOTES, 'UTF-8');
+                                        $variantPrice1 = htmlspecialchars((string) ($variant['price1'] ?? '0'), ENT_QUOTES, 'UTF-8');
+                                        $variantPrice2 = htmlspecialchars((string) ($variant['price2'] ?? '0'), ENT_QUOTES, 'UTF-8');
+                                        $variantPrice3 = htmlspecialchars((string) ($variant['price3'] ?? '0'), ENT_QUOTES, 'UTF-8');
+                                        $variantActive = (int) ($variant['is_active'] ?? 1) === 1;
+                                        $variantDefault = (int) ($variant['is_default'] ?? 0) === 1;
+                                        $variantSort = (int) ($variant['sort_order'] ?? ($variantIndex + 1));
+                                        ?>
+                                        <tr class="variant-row">
+                                            <td>
+                                                <input type="hidden" name="variant_link_id[]" value="<?= $variantLinkId ?>">
+                                                <input type="hidden" name="variant_item_id[]" value="<?= $variantItemId ?>">
+                                                <input type="hidden" name="variant_code[]" value="<?= $variantCode ?>">
+                                                <input type="hidden" class="variant-sort-input" name="variant_sort[]" value="<?= $variantSort ?>">
+                                                <input type="text" class="form-control form-control-sm variant-label-input" name="variant_label[]" value="<?= $variantLabel ?>" placeholder="صغير / كبير">
+                                            </td>
+                                            <td>
+                                                <input type="text" class="form-control form-control-sm variant-name-input" name="variant_name[]" value="<?= $variantName ?>" placeholder="يتولد تلقائياً من اسم الصنف">
+                                            </td>
+                                            <td><input type="text" class="form-control form-control-sm" name="variant_barcode[]" value="<?= $variantBarcode ?>" placeholder="اختياري"></td>
+                                            <td><input type="number" class="form-control form-control-sm" name="variant_cost_price[]" value="<?= $variantCost ?>" step="0.001" min="0"></td>
+                                            <td><input type="number" class="form-control form-control-sm" name="variant_price1[]" value="<?= $variantPrice1 ?>" step="0.001" min="0"></td>
+                                            <td><input type="number" class="form-control form-control-sm" name="variant_price2[]" value="<?= $variantPrice2 ?>" step="0.001" min="0"></td>
+                                            <td><input type="number" class="form-control form-control-sm" name="variant_market_price[]" value="<?= $variantPrice3 ?>" step="0.001" min="0"></td>
+                                            <td class="text-center align-middle">
+                                                <input type="hidden" name="variant_active[<?= (int) $variantIndex ?>]" value="0">
+                                                <input type="checkbox" name="variant_active[<?= (int) $variantIndex ?>]" value="1" <?= $variantActive ? 'checked' : '' ?>>
+                                            </td>
+                                            <td class="text-center align-middle">
+                                                <input type="hidden" name="variant_default[<?= (int) $variantIndex ?>]" value="0">
+                                                <input type="checkbox" class="variant-default-check" name="variant_default[<?= (int) $variantIndex ?>]" value="1" <?= $variantDefault ? 'checked' : '' ?>>
+                                            </td>
+                                            <td class="text-center align-middle">
+                                                <div class="btn-group btn-group-sm">
+                                                    <button type="button" class="btn btn-outline-secondary moveVariantUp" title="رفع"><i class="fas fa-arrow-up"></i></button>
+                                                    <button type="button" class="btn btn-outline-secondary moveVariantDown" title="خفض"><i class="fas fa-arrow-down"></i></button>
+                                                    <button type="button" class="btn btn-outline-danger removeVariantRow" title="حذف"><i class="fas fa-times"></i></button>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    <?php endforeach; ?>
+                                </tbody>
+                            </table>
+                        </div>
+                        <p class="text-muted small mb-0 p-3 border-top bg-light">
+                            <i class="fas fa-info-circle ml-1"></i>
+                            عند وجود تنوعات يظهر الصنف الرئيسي في الكاشير كاختيار، وكل تنوع يحفظ ويباع كصنف مستقل في الفاتورة والمخزون والمزامنة.
+                        </p>
                     </div>
                 </div>
 
@@ -372,7 +469,126 @@ $(document).ready(function() {
         });
     });
 
+    function nextVariantIndex() {
+        return $('#variantRowsContainer .variant-row').length;
+    }
+
+    function variantRowHtml(index) {
+        return `
+            <tr class="variant-row">
+                <td>
+                    <input type="hidden" name="variant_link_id[]" value="0">
+                    <input type="hidden" name="variant_item_id[]" value="0">
+                    <input type="hidden" name="variant_code[]" value="">
+                    <input type="hidden" class="variant-sort-input" name="variant_sort[]" value="${index + 1}">
+                    <input type="text" class="form-control form-control-sm variant-label-input" name="variant_label[]" value="" placeholder="صغير / كبير">
+                </td>
+                <td>
+                    <input type="text" class="form-control form-control-sm variant-name-input" name="variant_name[]" value="" placeholder="يتولد تلقائياً من اسم الصنف">
+                </td>
+                <td><input type="text" class="form-control form-control-sm" name="variant_barcode[]" value="" placeholder="اختياري"></td>
+                <td><input type="number" class="form-control form-control-sm" name="variant_cost_price[]" value="0" step="0.001" min="0"></td>
+                <td><input type="number" class="form-control form-control-sm" name="variant_price1[]" value="0" step="0.001" min="0"></td>
+                <td><input type="number" class="form-control form-control-sm" name="variant_price2[]" value="0" step="0.001" min="0"></td>
+                <td><input type="number" class="form-control form-control-sm" name="variant_market_price[]" value="0" step="0.001" min="0"></td>
+                <td class="text-center align-middle">
+                    <input type="hidden" name="variant_active[${index}]" value="0">
+                    <input type="checkbox" name="variant_active[${index}]" value="1" checked>
+                </td>
+                <td class="text-center align-middle">
+                    <input type="hidden" name="variant_default[${index}]" value="0">
+                    <input type="checkbox" class="variant-default-check" name="variant_default[${index}]" value="1">
+                </td>
+                <td class="text-center align-middle">
+                    <div class="btn-group btn-group-sm">
+                        <button type="button" class="btn btn-outline-secondary moveVariantUp" title="رفع"><i class="fas fa-arrow-up"></i></button>
+                        <button type="button" class="btn btn-outline-secondary moveVariantDown" title="خفض"><i class="fas fa-arrow-down"></i></button>
+                        <button type="button" class="btn btn-outline-danger removeVariantRow" title="حذف"><i class="fas fa-times"></i></button>
+                    </div>
+                </td>
+            </tr>
+        `;
+    }
+
+    function refreshVariantSorts() {
+        $('#variantRowsContainer .variant-row').each(function(index) {
+            $(this).find('.variant-sort-input').val(index + 1);
+            $(this).find('input[name^="variant_active"]').each(function() {
+                $(this).attr('name', 'variant_active[' + index + ']');
+            });
+            $(this).find('input[name^="variant_default"]').each(function() {
+                $(this).attr('name', 'variant_default[' + index + ']');
+            });
+        });
+    }
+
+    function generatedVariantName(label) {
+        var parentName = $.trim($('#iname').val() || '');
+        label = $.trim(label || '');
+        if (parentName === '') return label;
+        if (label === '') return parentName;
+        if (label.indexOf(parentName) === 0) return label;
+        return parentName + ' - ' + label;
+    }
+
+    $('#addVariantRow').on('click', function() {
+        $('#variantRowsContainer').append(variantRowHtml(nextVariantIndex()));
+        refreshVariantSorts();
+    });
+
+    $(document).on('click', '.removeVariantRow', function() {
+        $(this).closest('.variant-row').remove();
+        refreshVariantSorts();
+    });
+
+    $(document).on('click', '.moveVariantUp, .moveVariantDown', function() {
+        var row = $(this).closest('.variant-row');
+        if ($(this).hasClass('moveVariantUp')) {
+            row.prev('.variant-row').before(row);
+        } else {
+            row.next('.variant-row').after(row);
+        }
+        refreshVariantSorts();
+    });
+
+    $(document).on('change', '.variant-default-check', function() {
+        if ($(this).prop('checked')) {
+            $('.variant-default-check').not(this).prop('checked', false);
+        }
+    });
+
+    $(document).on('input', '.variant-label-input', function() {
+        var row = $(this).closest('.variant-row');
+        var nameInput = row.find('.variant-name-input');
+        if ($.trim(nameInput.val() || '') === '') {
+            nameInput.attr('placeholder', generatedVariantName($(this).val()));
+        }
+    });
+
+    function variationsAreValidForSubmit() {
+        var valid = true;
+        var seenLabels = [];
+        $('#variantRowsContainer .variant-row').each(function() {
+            var label = $.trim($(this).find('.variant-label-input').val() || '');
+            var name = $.trim($(this).find('.variant-name-input').val() || '');
+            if (label === '' && name === '') {
+                return;
+            }
+            var key = label.toLowerCase();
+            if (key !== '' && seenLabels.indexOf(key) !== -1) {
+                alert('لا يمكن تكرار نفس نوع التنوع');
+                valid = false;
+                return false;
+            }
+            if (key !== '') {
+                seenLabels.push(key);
+            }
+        });
+        return valid;
+    }
+
     $('#item-main-form').on('submit', function(e) {
+        refreshVariantSorts();
         var selectedValues = [];
         var duplicateFound = false;
         $('select[name="unit_id[]"]').each(function() {
@@ -383,6 +599,9 @@ $(document).ready(function() {
         if (duplicateFound) {
             e.preventDefault();
             alert('غير مسموح بتكرار الوحدات');
+        }
+        if (!variationsAreValidForSubmit()) {
+            e.preventDefault();
         }
     });
 });

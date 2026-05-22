@@ -329,7 +329,8 @@ class PosOrderMutationService
             'store_id' => $storeId,
         ]);
         foreach ($lineResult['lines'] as $index => $line) {
-            $line['note'] = $this->lineNoteFromItem($items[$index] ?? []);
+            $line['_source_item'] = $items[$index] ?? [];
+            $line['note'] = $this->lineNoteFromItem($line['_source_item']);
             $this->insertTakeawayDetailLine($conn, $orderId, $storeId, $line, $context);
         }
         $this->tableOrderService->execute($conn, "UPDATE ot_head SET profit = ? WHERE id = ?", [
@@ -405,6 +406,8 @@ class PosOrderMutationService
                 'discount' => (float) ($request['itmdisc'][$index] ?? 0),
                 'u_val' => (float) ($request['u_val'][$index] ?? 1),
                 'note' => (string) ($request['itmnote'][$index] ?? ''),
+                'modifiers' => $this->decodeLineModifiers($request['itmmodifiers'][$index] ?? []),
+                'base_price' => (float) ($request['itmbaseprice'][$index] ?? $request['itmprice'][$index] ?? 0),
             ];
         }
 
@@ -552,7 +555,16 @@ class PosOrderMutationService
         ]);
         $detailId = (int) $conn->insert_id;
         $this->tableOrderService->assignUuidIfPresent($conn, 'fat_details', $detailId);
-        $this->persistLineNoteIfAvailable($conn, $orderId, $detailId, (int) $line['item_id'], $line['note'] ?? '', $context);
+        $sourceItem = is_array($line['_source_item'] ?? null) ? $line['_source_item'] : $line;
+        $this->persistLineCustomizationsIfAvailable(
+            $conn,
+            $orderId,
+            $detailId,
+            (int) $line['item_id'],
+            $sourceItem,
+            abs((float) ($line['qty_out'] ?? 0) - (float) ($line['qty_in'] ?? 0)),
+            $context
+        );
     }
 
     private function nextInvoiceProId(mysqli $conn, int $invoiceType, int $tenant, int $branch): int
@@ -1154,7 +1166,7 @@ class PosOrderMutationService
             ", [$orderId, $itemId, $qty, $price, $detValue, $orderId, $storeId]);
             $detailId = (int) $conn->insert_id;
             $this->tableOrderService->assignUuidIfPresent($conn, 'fat_details', $detailId);
-            $this->persistLineNoteIfAvailable($conn, $orderId, $detailId, $itemId, $this->lineNoteFromItem($item), $context);
+            $this->persistLineCustomizationsIfAvailable($conn, $orderId, $detailId, $itemId, $item, $qty, $context);
         }
     }
 
@@ -1244,6 +1256,115 @@ class PosOrderMutationService
         }
 
         return '';
+    }
+
+    private function persistLineCustomizationsIfAvailable(
+        mysqli $conn,
+        int $orderId,
+        int $detailId,
+        int $itemId,
+        array $item,
+        float $lineQty,
+        array $context = []
+    ): void {
+        $note = $this->lineNoteFromItem($item);
+        $modifiers = $this->lineModifiersFromItem($item, $lineQty);
+        $hasModifierPayload = $this->itemHasModifierPayload($item);
+
+        if (!$hasModifierPayload && !$modifiers) {
+            $this->persistLineNoteIfAvailable($conn, $orderId, $detailId, $itemId, $note, $context);
+            return;
+        }
+
+        if (!$this->lineNoteServiceTablesAvailable($conn)) {
+            $this->persistLineNoteIfAvailable($conn, $orderId, $detailId, $itemId, $note, $context);
+            return;
+        }
+
+        $notes = $note !== '' ? [['note_type' => 'kitchen', 'note_text' => $note]] : [];
+        $this->modifierLineNoteService->saveLineCustomizations(
+            $conn,
+            $orderId,
+            $detailId,
+            $itemId,
+            $modifiers,
+            $notes,
+            [
+                'modifiers_enabled' => true,
+                'user_id' => (int) ($context['user_id'] ?? 0),
+            ]
+        );
+    }
+
+    private function itemHasModifierPayload(array $item): bool
+    {
+        foreach (['modifiers', 'modifier_options', 'selected_modifiers', 'itmmodifiers'] as $key) {
+            if (array_key_exists($key, $item)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function lineModifiersFromItem(array $item, float $lineQty): array
+    {
+        foreach (['modifiers', 'modifier_options', 'selected_modifiers', 'itmmodifiers'] as $key) {
+            if (!array_key_exists($key, $item)) {
+                continue;
+            }
+
+            $decoded = $this->decodeLineModifiers($item[$key]);
+            if (!$decoded) {
+                return [];
+            }
+
+            $lineQty = $lineQty > 0 ? $lineQty : 1.0;
+            $scaled = [];
+            foreach ($decoded as $modifier) {
+                if (is_array($modifier)) {
+                    $optionId = (int) ($modifier['option_id'] ?? $modifier['id'] ?? $modifier['modifier_option_id'] ?? 0);
+                    if ($optionId <= 0) {
+                        continue;
+                    }
+                    $perItemQty = (float) ($modifier['qty'] ?? $modifier['quantity'] ?? 1);
+                    if ($perItemQty <= 0) {
+                        continue;
+                    }
+                    $scaled[] = [
+                        'option_id' => $optionId,
+                        'qty' => $perItemQty * $lineQty,
+                    ];
+                } else {
+                    $optionId = (int) $modifier;
+                    if ($optionId > 0) {
+                        $scaled[] = [
+                            'option_id' => $optionId,
+                            'qty' => $lineQty,
+                        ];
+                    }
+                }
+            }
+
+            return $scaled;
+        }
+
+        return [];
+    }
+
+    private function decodeLineModifiers($value): array
+    {
+        if (is_array($value)) {
+            return $value;
+        }
+
+        $value = trim((string) $value);
+        if ($value === '') {
+            return [];
+        }
+
+        $decoded = json_decode($value, true);
+        return is_array($decoded) ? $decoded : [];
     }
 
     private function persistLineNoteIfAvailable(mysqli $conn, int $orderId, int $detailId, int $itemId, $note, array $context = []): void
