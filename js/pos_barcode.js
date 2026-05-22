@@ -15,6 +15,7 @@ $(document).ready(function() {
     const $itemsGrid = $('#itemsGrid');
     const $itemsGridLoader = $('#itemsGridLoader');
     const $currentControls = $('.pos-current-order-controls');
+    const itemVariantCache = new Map();
     if ($currentControls.length) {
         $currentControls.find('.pos-customer-mount').append($('.pos-customer-field'));
         $currentControls.find('.pos-table-mount').append($('.pos-table-field'));
@@ -248,6 +249,51 @@ $(document).ready(function() {
         return String($item.data('category')) === String(categoryId);
     }
 
+    function normalizeItemId(itemId) {
+        const normalized = String(itemId || '').trim();
+        return normalized === '0' ? '' : normalized;
+    }
+
+    function itemHasVariantsValue(value) {
+        return value === true || value === 1 || String(value || '') === '1' || String(value || '').toLowerCase() === 'true';
+    }
+
+    function cacheItemVariants(itemId, variants) {
+        const key = normalizeItemId(itemId);
+        if (!key || !Array.isArray(variants)) {
+            return false;
+        }
+
+        itemVariantCache.set(key, variants);
+        return true;
+    }
+
+    function cachedItemVariants(itemId) {
+        const key = normalizeItemId(itemId);
+        return key && itemVariantCache.has(key) ? itemVariantCache.get(key) : null;
+    }
+
+    function registerVariantCacheFromItem(item) {
+        if (item && itemHasVariantsValue(item.has_variants) && Array.isArray(item.variants)) {
+            cacheItemVariants(item.id, item.variants);
+        }
+    }
+
+    function registerVariantCacheFromCard($card) {
+        const itemId = $card.data('item-id');
+        const rawVariants = $card.attr('data-variants');
+        if (!rawVariants) {
+            return;
+        }
+
+        try {
+            const variants = JSON.parse(rawVariants);
+            cacheItemVariants(itemId, variants);
+        } catch (error) {
+            console.warn('Unable to parse preloaded item variants:', error);
+        }
+    }
+
     function applyActiveItemFilter() {
         const searchText = String($filterInput.val() || '').toLowerCase().trim();
         const categoryFilter = activeCategoryFilter();
@@ -270,6 +316,7 @@ $(document).ready(function() {
             if (!itemId || existingIds.has(itemId) || !item.html) {
                 return;
             }
+            registerVariantCacheFromItem(item);
             existingIds.add(itemId);
             html.push(item.html);
         });
@@ -483,7 +530,9 @@ $(document).ready(function() {
             dataType: 'json',
             success: function(response) {
                 if (response.success) {
-                    beginAddItemToOrder(response.item.id, response.item.name, response.item.price, response.item.barcode, qty);
+                    beginAddItemToOrder(response.item.id, response.item.name, response.item.price, response.item.barcode, qty, '', '', {
+                        hasVariants: itemHasVariantsValue(response.item.has_variants)
+                    });
                 } else {
                     alert('الصنف غير موجود');
                 }
@@ -510,8 +559,12 @@ $(document).ready(function() {
         let itemPrice = parseFloat(card.data('item-price')) || 0;
         let itemBarcode = card.data('item-barcode');
         let imageHtml = card.find('.item-image-container').html();
+        let hasVariants = itemHasVariantsValue(card.attr('data-has-variants'));
+        registerVariantCacheFromCard(card);
 
-        beginAddItemToOrder(itemId, itemName, itemPrice, itemBarcode, 1, imageHtml);
+        beginAddItemToOrder(itemId, itemName, itemPrice, itemBarcode, 1, imageHtml, '', {
+            hasVariants: hasVariants
+        });
     });
 
     $('#itemsGrid').on('click', '.item-details-btn', function(e) {
@@ -524,8 +577,10 @@ $(document).ready(function() {
         let itemPrice = card.data('item-price');
         let itemBarcode = card.data('item-barcode');
         let itemDesc = card.data('item-desc') || 'لا يوجد وصف';
+        let hasVariants = itemHasVariantsValue(card.attr('data-has-variants'));
 
         let imageHtml = card.find('.item-image-container').html();
+        registerVariantCacheFromCard(card);
 
         $('#modal_item_name').text(itemName);
         $('#modal_item_barcode').text(itemBarcode || '-');
@@ -538,7 +593,8 @@ $(document).ready(function() {
             'name': itemName,
             'price': itemPrice,
             'barcode': itemBarcode,
-            'image': imageHtml
+            'image': imageHtml,
+            'hasVariants': hasVariants
         });
 
         $('#itemDetailsModal').modal('show');
@@ -547,7 +603,9 @@ $(document).ready(function() {
     $(document).on('click', '#modal_add_item', function() {
         let data = $(this).data();
         let itemPrice = parseFloat(data.price) || 0;
-        beginAddItemToOrder(data.id, data.name, itemPrice, data.barcode, 1, data.image);
+        beginAddItemToOrder(data.id, data.name, itemPrice, data.barcode, 1, data.image, '', {
+            hasVariants: itemHasVariantsValue(data.hasVariants)
+        });
         $('#itemDetailsModal').modal('hide');
     });
 
@@ -702,13 +760,39 @@ $(document).ready(function() {
             dataType: 'json',
             data: { item_id: itemId }
         }).then(function(response) {
-            return response && response.success && Array.isArray(response.variants) ? response.variants : [];
+            const variants = response && response.success && Array.isArray(response.variants) ? response.variants : [];
+            cacheItemVariants(itemId, variants);
+            return variants;
         }, function() {
             return [];
         });
     }
 
-    function beginAddItemToOrder(id, name, price, barcode, qty, imageHtml, lineNote) {
+    function beginAddItemToOrder(id, name, price, barcode, qty, imageHtml, lineNote, options) {
+        const hasVariantHint = options && Object.prototype.hasOwnProperty.call(options, 'hasVariants')
+            ? itemHasVariantsValue(options.hasVariants)
+            : null;
+
+        if (hasVariantHint === false) {
+            addItemToOrder(id, name, price, barcode, qty, imageHtml || '', lineNote || '');
+            return;
+        }
+
+        const cachedVariants = cachedItemVariants(id);
+        if (cachedVariants && cachedVariants.length > 0) {
+            openVariantModal({
+                id: id,
+                name: name,
+                price: parseFloat(price) || 0,
+                barcode: barcode,
+                qty: parseFloat(qty) || 1,
+                imageHtml: imageHtml || '',
+                lineNote: lineNote || '',
+                variants: cachedVariants
+            });
+            return;
+        }
+
         fetchItemVariants(id).then(function(variants) {
             if (!variants.length) {
                 addItemToOrder(id, name, price, barcode, qty, imageHtml || '', lineNote || '');

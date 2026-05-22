@@ -23,7 +23,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['barcode'])) {
     // محاولة تحويل الباركود لرقم للبحث بالـ ID
     $numericBarcode = preg_match('/^\d+$/', $barcode) ? intval($barcode) : 0;
     
-    $sql = "SELECT * FROM myitems WHERE (barcode = ? OR id = ? OR iname LIKE ?) AND isdeleted = 0 LIMIT 1";
+    $hasVariantTable = false;
+    $variantTable = $conn->query("SHOW TABLES LIKE 'item_variants'");
+    $hasVariantTable = $variantTable && $variantTable->num_rows > 0;
+    $variantSelect = $hasVariantTable
+        ? "(EXISTS (SELECT 1 FROM item_variants iv WHERE iv.parent_item_id = myitems.id AND iv.is_active = 1)) AS has_variants"
+        : "0 AS has_variants";
+
+    $sql = "SELECT myitems.*, {$variantSelect} FROM myitems WHERE (barcode = ? OR id = ? OR iname LIKE ?) AND isdeleted = 0 LIMIT 1";
     $stmt = $conn->prepare($sql);
     $searchLike = "%{$barcode}%";
     $stmt->bind_param("sis", $barcode, $numericBarcode, $searchLike);
@@ -47,7 +54,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['barcode'])) {
                 'id' => $item['id'],
                 'name' => $item['iname'],
                 'price' => $price,
-                'barcode' => $item['barcode']
+                'barcode' => $item['barcode'],
+                'has_variants' => (int) ($item['has_variants'] ?? 0) === 1
             ]
         ]);
     } else {

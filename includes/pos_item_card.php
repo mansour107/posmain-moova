@@ -34,6 +34,13 @@ function pos_render_item_card(array $rowitem): string
     $itemCategory = htmlspecialchars((string) ($rowitem['group1'] ?? ''), ENT_QUOTES, 'UTF-8');
     $itemDesc = htmlspecialchars((string) ($rowitem['info'] ?? ''), ENT_QUOTES, 'UTF-8');
     $hasVariants = !empty($rowitem['has_variants']) || !empty($rowitem['has_active_variants']);
+    $variantDataAttribute = '';
+    if ($hasVariants && isset($rowitem['variants']) && is_array($rowitem['variants'])) {
+        $variantJson = json_encode($rowitem['variants'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        if (is_string($variantJson)) {
+            $variantDataAttribute = ' data-variants="' . htmlspecialchars($variantJson, ENT_QUOTES, 'UTF-8') . '"';
+        }
+    }
     $itemImage = '';
     if (!empty($rowitem['img_filename'])) {
         $itemImage = 'uploads/' . htmlspecialchars((string) $rowitem['img_filename'], ENT_QUOTES, 'UTF-8');
@@ -50,6 +57,7 @@ function pos_render_item_card(array $rowitem): string
             data-item-price="<?= $itemPrice ?>" data-item-barcode="<?= $itemBarcode ?>"
             data-item-desc="<?= $itemDesc ?>"
             data-has-variants="<?= $hasVariants ? '1' : '0' ?>"
+            <?= $variantDataAttribute ?>
             style="transition: all 0.3s ease;">
             <div class="card-body p-2 text-center">
                 <div class="item-image-container mb-2 ratio ratio-1x1 overflow-hidden"

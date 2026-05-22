@@ -171,7 +171,7 @@ function displayItems(items) {
     items.forEach(function(item) {
         html += `
             <div class="col-md-4 col-lg-3 mb-3">
-                <div class="card item-card" data-category="${item.group1}" onclick="addItemToOrder(${item.id}, '${item.iname}', ${item.price1}, '${item.barcode}')">
+                <div class="card item-card" data-category="${item.group1}" onclick="addItemToOrder(${item.id}, '${item.iname}', ${item.price1}, '${item.barcode}', ${item.has_variants ? 'true' : 'false'})">
                     <div class="card-body text-center">
                         <i class="fas fa-utensils fa-2x mb-2"></i>
                         <h6>${item.iname}</h6>
@@ -185,7 +185,13 @@ function displayItems(items) {
 }
 
 // إضافة صنف للطلب
-function addItemToOrder(itemId, itemName, price, barcode) {
+function addItemToOrder(itemId, itemName, price, barcode, hasVariants) {
+    const hasKnownNormalHint = hasVariants === false || hasVariants === 0 || String(hasVariants || '') === '0' || String(hasVariants || '').toLowerCase() === 'false';
+    if (hasKnownNormalHint) {
+        addSellableItemToOrder(itemId, itemName, price, barcode);
+        return;
+    }
+
     $.ajax({
         url: 'ajax/get_item_variants.php',
         method: 'GET',

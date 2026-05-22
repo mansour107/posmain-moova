@@ -517,6 +517,7 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                             <!-- شبكة الأصناف -->
                             <?php
                             require_once __DIR__ . '/pos_item_card.php';
+                            require_once __DIR__ . '/../classes/Pos/Service/ItemVariantService.php';
                             $initialPosItemsLimit = 48;
                             $initialPosItemsPage = 1;
                             $posHasVariantTable = false;
@@ -550,7 +551,24 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                             $resitems = $conn->query($sqlitems);
 
                             if ($resitems && $resitems->num_rows > 0) {
+                                $posInitialItems = [];
+                                $posVariantParentIds = [];
                                 while ($rowitem = $resitems->fetch_assoc()) {
+                                    if (!empty($rowitem['has_variants'])) {
+                                        $posVariantParentIds[] = (int) $rowitem['id'];
+                                    }
+                                    $posInitialItems[] = $rowitem;
+                                }
+                                if ($posVariantParentIds) {
+                                    $posVariantsByParent = (new ItemVariantService())->activeVariantsForParents($conn, $posVariantParentIds);
+                                    foreach ($posInitialItems as &$rowitem) {
+                                        if (!empty($rowitem['has_variants'])) {
+                                            $rowitem['variants'] = $posVariantsByParent[(int) $rowitem['id']] ?? [];
+                                        }
+                                    }
+                                    unset($rowitem);
+                                }
+                                foreach ($posInitialItems as $rowitem) {
                                     echo pos_render_item_card($rowitem);
                                 }
                             } else {

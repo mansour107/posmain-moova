@@ -28,6 +28,8 @@ posVariantAssert(strpos($doEditItem, 'saveVariantsFromPost') !== false, 'edit it
 posVariantAssert(strpos($doAddItem, 'foreach ($changedItemIds as $changedItemId)') !== false, 'add item route should sync parent and children');
 
 posVariantAssert(strpos($js, 'ajax/get_item_variants.php') !== false, 'cashier should fetch variants before ordering parent');
+posVariantAssert(strpos($js, 'if (hasVariantHint === false)') !== false, 'cashier should add known normal items without variant lookup');
+posVariantAssert(strpos($js, 'cachedItemVariants') !== false, 'cashier should use cached variants before endpoint fallback');
 posVariantAssert(strpos($js, 'itemVariantModal') !== false, 'cashier should render a variant picker modal');
 posVariantAssert(strpos($js, 'itemVariantChoice') !== false, 'cashier should add selected child variant');
 posVariantAssert(strpos($js, 'addItemToOrder(id, name, price, barcode, qty = 1, imageHtml = \'\', lineNote = \'\')') !== false, 'cart add signature should stay line-note compatible');
@@ -38,6 +40,8 @@ posVariantAssert(strpos($posContent, 'name="itmmodifiers[]"') === false, 'edit-m
 posVariantAssert(strpos($variantEndpoint, 'variantsForParent') !== false, 'variant lookup endpoint should use item variant service');
 posVariantAssert(strpos($lazyItems, 'item_variants ivc') !== false, 'POS item grid should hide active variant child cards by default');
 posVariantAssert(strpos($lazyItems, 'has_variants') !== false, 'POS item grid should flag parent chooser cards');
+posVariantAssert(strpos($lazyItems, 'activeVariantsForParents') !== false, 'POS lazy loader should preload visible parent variants in one batch');
+posVariantAssert(strpos($posContent, 'activeVariantsForParents') !== false, 'initial POS render should preload visible parent variants in one batch');
 
 posVariantAssert(strpos($apiItems, "'variants'") !== false, 'public items API should expose variant metadata');
 posVariantAssert(strpos($apiItems, "'is_orderable'") !== false, 'public items API should expose parent orderability');

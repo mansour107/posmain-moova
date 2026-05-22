@@ -7,6 +7,7 @@
 header('Content-Type: application/json');
 require_once '../includes/connect.php';
 require_once '../classes/Pos/Service/ItemAvailabilityService.php';
+require_once '../classes/Pos/Service/ItemVariantService.php';
 require_once '../includes/pos_item_card.php';
 
 try {
@@ -73,7 +74,9 @@ try {
     $result = $stmt->get_result();
     
     $items = [];
+    $variantParentIds = [];
     while ($row = $result->fetch_assoc()) {
+        $hasVariants = (int) ($row['has_variants'] ?? 0) === 1;
         $item = [
             'id' => $row['id'],
             'iname' => $row['iname'],
@@ -83,11 +86,29 @@ try {
             'group1' => $row['group1'] ?? '',
             'info' => $row['info'] ?? '',
             'img_filename' => $row['img_filename'] ?? '',
-            'has_variants' => (int) ($row['has_variants'] ?? 0) === 1,
+            'has_variants' => $hasVariants,
         ];
-        $item['html'] = pos_render_item_card($item);
+        if ($hasVariants) {
+            $variantParentIds[] = (int) $row['id'];
+        }
         $items[] = $item;
     }
+
+    if ($variantParentIds) {
+        $variantsByParent = (new ItemVariantService())->activeVariantsForParents($conn, $variantParentIds);
+        foreach ($items as &$item) {
+            if (!empty($item['has_variants'])) {
+                $itemId = (int) $item['id'];
+                $item['variants'] = $variantsByParent[$itemId] ?? [];
+            }
+        }
+        unset($item);
+    }
+
+    foreach ($items as &$item) {
+        $item['html'] = pos_render_item_card($item);
+    }
+    unset($item);
 
     $branchConfig = function_exists('posmain_app_config')
         ? (posmain_app_config()['branch'] ?? [])

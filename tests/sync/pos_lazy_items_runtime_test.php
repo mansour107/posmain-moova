@@ -27,9 +27,8 @@ foreach (['loadRemainingItems', 'appendLazyItems', 'applyActiveItemFilter', 'aja
 }
 
 $itemCard = file_get_contents($root . '/includes/pos_item_card.php');
-foreach (['function pos_render_item_card', 'data-item-id', 'data-item-name', 'data-item-price', 'item-details-btn'] as $needle) {
+foreach (['function pos_render_item_card', 'data-item-id', 'data-item-name', 'data-item-price', 'data-variants', 'item-details-btn'] as $needle) {
     posLazyItemsAssert(strpos($itemCard, $needle) !== false, 'Shared item-card renderer should include ' . $needle);
 }
 
 echo "pos-lazy-items-runtime-ok\n";
-
