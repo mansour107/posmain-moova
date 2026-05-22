@@ -24,6 +24,18 @@ posLocalDockerAssert(
     strpos($compose, 'PHP_CLI_SERVER_WORKERS: "4"') !== false,
     'Local POS PHP server should use multiple workers so offline sync calls cannot block local AJAX'
 );
+posLocalDockerAssert(
+    strpos($compose, 'POSMAIN_BRANCH_WORKER_ENV_FILE: /app/.env.branch-worker') !== false,
+    'Local POS web container should know where to read branch sync settings when process env is missing'
+);
+posLocalDockerAssert(
+    strpos($compose, 'POSMAIN_MOOVA_MODE: direct_widget') !== false,
+    'Local POS web container should default Moova to direct widget mode'
+);
+posLocalDockerAssert(
+    strpos($compose, 'POSMAIN_ENABLE_MOOVA_DIRECT_APPLY: "1"') !== false,
+    'Local POS web container should enable direct Moova apply by default'
+);
 
 foreach ([
     'posmain_php_logs:/app/logs',

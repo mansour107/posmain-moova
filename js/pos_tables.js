@@ -228,7 +228,7 @@ function showTableVariantPicker(parentName, variants) {
 
     if ($('#tableVariantModal').length === 0) {
         $('body').append(`
-            <div class="modal fade" id="tableVariantModal" tabindex="-1">
+            <div class="modal" id="tableVariantModal" tabindex="-1">
                 <div class="modal-dialog modal-dialog-centered">
                     <div class="modal-content">
                         <div class="modal-header bg-primary text-white">

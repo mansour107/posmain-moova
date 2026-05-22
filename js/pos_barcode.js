@@ -818,7 +818,7 @@ $(document).ready(function() {
         }
 
         $('body').append(`
-            <div class="modal fade" id="itemVariantModal" tabindex="-1" aria-labelledby="itemVariantModalLabel" aria-hidden="true">
+            <div class="modal" id="itemVariantModal" tabindex="-1" aria-labelledby="itemVariantModalLabel" aria-hidden="true">
                 <div class="modal-dialog modal-dialog-centered modal-lg">
                     <div class="modal-content">
                         <div class="modal-header bg-primary text-white">

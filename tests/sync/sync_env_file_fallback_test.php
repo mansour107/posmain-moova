@@ -4,6 +4,14 @@ require_once __DIR__ . '/../../config/app_config.php';
 
 $oldUuid = getenv('POSMAIN_BRANCH_UUID');
 $oldPort = getenv('POSMAIN_TEST_UI_FALLBACK_PORT');
+$oldBranchEnvFile = getenv('POSMAIN_BRANCH_WORKER_ENV_FILE');
+$oldDisableRuntimeConfig = getenv('POSMAIN_DISABLE_UI_RUNTIME_CONFIG');
+$oldCloudBaseUrl = getenv('POSMAIN_CLOUD_BASE_URL');
+$oldBranchSecret = getenv('POSMAIN_BRANCH_SYNC_SECRET');
+$oldMoovaMode = getenv('POSMAIN_MOOVA_MODE');
+$oldDirectApply = getenv('POSMAIN_ENABLE_MOOVA_DIRECT_APPLY');
+$oldMenuSync = getenv('POSMAIN_MENU_SYNC_ENABLED');
+$oldDbPort = getenv('POSMAIN_DB_PORT');
 
 $tmp = tempnam(sys_get_temp_dir(), 'posmain-env-fallback-');
 if ($tmp === false) {
@@ -16,6 +24,12 @@ file_put_contents($tmp, implode("\n", [
     'POSMAIN_TEST_UI_FALLBACK_PORT=3317',
     'POSMAIN_EMPTY_UI_FALLBACK=',
     'POSMAIN_QUOTED_UI_FALLBACK="quoted value"',
+    'POSMAIN_CLOUD_BASE_URL=https://cloud.example.test',
+    'POSMAIN_BRANCH_SYNC_SECRET=branch-secret-from-file',
+    'POSMAIN_MOOVA_MODE=direct_widget',
+    'POSMAIN_ENABLE_MOOVA_DIRECT_APPLY=1',
+    'POSMAIN_MENU_SYNC_ENABLED=1',
+    'POSMAIN_DB_PORT=9999',
 ]));
 
 putenv('POSMAIN_BRANCH_UUID');
@@ -46,6 +60,49 @@ syncEnvFallbackAssert(
     'reading the fallback file must not mutate process env'
 );
 
+foreach ([
+    'POSMAIN_BRANCH_UUID',
+    'POSMAIN_CLOUD_BASE_URL',
+    'POSMAIN_BRANCH_SYNC_SECRET',
+    'POSMAIN_MOOVA_MODE',
+    'POSMAIN_ENABLE_MOOVA_DIRECT_APPLY',
+    'POSMAIN_MENU_SYNC_ENABLED',
+    'POSMAIN_DB_PORT',
+] as $key) {
+    putenv($key);
+    unset($_ENV[$key]);
+}
+putenv('POSMAIN_BRANCH_WORKER_ENV_FILE=' . $tmp);
+putenv('POSMAIN_DISABLE_UI_RUNTIME_CONFIG=1');
+$_ENV['POSMAIN_BRANCH_WORKER_ENV_FILE'] = $tmp;
+$_ENV['POSMAIN_DISABLE_UI_RUNTIME_CONFIG'] = '1';
+
+$config = posmain_app_config();
+syncEnvFallbackAssert(
+    $config['branch']['uuid'] === '33333333-3333-4333-8333-333333333333',
+    'web config should read branch UUID from branch env fallback'
+);
+syncEnvFallbackAssert(
+    $config['branch']['cloud_base_url'] === 'https://cloud.example.test',
+    'web config should read cloud URL from branch env fallback'
+);
+syncEnvFallbackAssert(
+    $config['sync']['branch_secret'] === 'branch-secret-from-file',
+    'web config should read branch secret from branch env fallback'
+);
+syncEnvFallbackAssert(
+    $config['moova']['mode'] === 'direct_widget' && $config['features']['moova_direct_apply'] === true,
+    'web config should read Moova mode from branch env fallback'
+);
+syncEnvFallbackAssert(
+    $config['sync']['menu_sync_enabled'] === true,
+    'web config should read menu sync from branch env fallback'
+);
+syncEnvFallbackAssert(
+    (int) $config['database']['port'] === 3306,
+    'branch env DB port should not override the web container DB default'
+);
+
 putenv('POSMAIN_BRANCH_UUID=process-uuid');
 syncEnvFallbackAssert(
     posmain_first_env_or_file(['POSMAIN_BRANCH_UUID'], '', false, [$tmp]) === 'process-uuid',
@@ -54,6 +111,14 @@ syncEnvFallbackAssert(
 
 restoreSyncEnvFallbackTestEnv('POSMAIN_BRANCH_UUID', $oldUuid);
 restoreSyncEnvFallbackTestEnv('POSMAIN_TEST_UI_FALLBACK_PORT', $oldPort);
+restoreSyncEnvFallbackTestEnv('POSMAIN_BRANCH_WORKER_ENV_FILE', $oldBranchEnvFile);
+restoreSyncEnvFallbackTestEnv('POSMAIN_DISABLE_UI_RUNTIME_CONFIG', $oldDisableRuntimeConfig);
+restoreSyncEnvFallbackTestEnv('POSMAIN_CLOUD_BASE_URL', $oldCloudBaseUrl);
+restoreSyncEnvFallbackTestEnv('POSMAIN_BRANCH_SYNC_SECRET', $oldBranchSecret);
+restoreSyncEnvFallbackTestEnv('POSMAIN_MOOVA_MODE', $oldMoovaMode);
+restoreSyncEnvFallbackTestEnv('POSMAIN_ENABLE_MOOVA_DIRECT_APPLY', $oldDirectApply);
+restoreSyncEnvFallbackTestEnv('POSMAIN_MENU_SYNC_ENABLED', $oldMenuSync);
+restoreSyncEnvFallbackTestEnv('POSMAIN_DB_PORT', $oldDbPort);
 putenv('POSMAIN_EMPTY_UI_FALLBACK');
 putenv('POSMAIN_QUOTED_UI_FALLBACK');
 @unlink($tmp);

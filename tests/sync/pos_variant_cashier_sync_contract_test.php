@@ -31,6 +31,7 @@ posVariantAssert(strpos($js, 'ajax/get_item_variants.php') !== false, 'cashier s
 posVariantAssert(strpos($js, 'if (hasVariantHint === false)') !== false, 'cashier should add known normal items without variant lookup');
 posVariantAssert(strpos($js, 'cachedItemVariants') !== false, 'cashier should use cached variants before endpoint fallback');
 posVariantAssert(strpos($js, 'itemVariantModal') !== false, 'cashier should render a variant picker modal');
+posVariantAssert(strpos($js, 'modal fade" id="itemVariantModal"') === false, 'cashier variant picker should open without Bootstrap fade animation');
 posVariantAssert(strpos($js, 'itemVariantChoice') !== false, 'cashier should add selected child variant');
 posVariantAssert(strpos($js, 'addItemToOrder(id, name, price, barcode, qty = 1, imageHtml = \'\', lineNote = \'\')') !== false, 'cart add signature should stay line-note compatible');
 posVariantAssert(strpos($js, 'name="itmmodifiers[]"') === false, 'cashier rows should not post modifier payloads for variations');

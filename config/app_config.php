@@ -189,6 +189,17 @@ if (!function_exists('posmain_first_env_or_file')) {
     }
 }
 
+if (!function_exists('posmain_branch_env_file_fallbacks')) {
+    function posmain_branch_env_file_fallbacks(): array
+    {
+        if (posmain_bool(posmain_env('POSMAIN_DISABLE_BRANCH_ENV_FILE_FALLBACK', '0'), false)) {
+            return [];
+        }
+
+        return posmain_sync_local_env_files();
+    }
+}
+
 if (!function_exists('posmain_bool')) {
     function posmain_bool($value, bool $default = false): bool
     {
@@ -326,9 +337,14 @@ if (!function_exists('posmain_runtime_db_settings_overrides')) {
 if (!function_exists('posmain_app_config')) {
     function posmain_app_config(array $overrides = []): array
     {
+        $branchEnvFiles = posmain_branch_env_file_fallbacks();
+        $branchEnv = static function (array $names, $default = null, bool $allowEmpty = false) use ($branchEnvFiles) {
+            return posmain_first_env_or_file($names, $default, $allowEmpty, $branchEnvFiles);
+        };
+
         $env = (string) posmain_env('POSMAIN_ENV', 'local');
         $productionMode = posmain_bool(posmain_env('POSMAIN_PRODUCTION_MODE', null), strtolower($env) === 'production');
-        $moovaMode = strtolower(trim((string) posmain_env('POSMAIN_MOOVA_MODE', '')));
+        $moovaMode = strtolower(trim((string) $branchEnv(['POSMAIN_MOOVA_MODE'], '')));
         $moovaMode = str_replace(['-', ' '], '_', $moovaMode);
         if ($moovaMode === 'direct') {
             $moovaMode = 'direct_widget';
@@ -337,15 +353,15 @@ if (!function_exists('posmain_app_config')) {
         }
 
         $rawMoovaDirectApply = posmain_bool(
-            posmain_first_env(['POSMAIN_ENABLE_MOOVA_DIRECT_APPLY', 'POSMAIN_MOOVA_DIRECT_APPLY_ENABLED'], null),
+            $branchEnv(['POSMAIN_ENABLE_MOOVA_DIRECT_APPLY', 'POSMAIN_MOOVA_DIRECT_APPLY_ENABLED'], null),
             false
         );
         $rawMoovaQueuedApply = posmain_bool(
-            posmain_first_env(['POSMAIN_ENABLE_MOOVA_QUEUED_APPLY', 'POSMAIN_MOOVA_QUEUED_APPLY_ENABLED'], null),
+            $branchEnv(['POSMAIN_ENABLE_MOOVA_QUEUED_APPLY', 'POSMAIN_MOOVA_QUEUED_APPLY_ENABLED'], null),
             false
         );
         $rawMoovaWorkerApply = posmain_bool(
-            posmain_first_env(['POSMAIN_MOOVA_APPLY_ENABLED', 'POSMAIN_ENABLE_MOOVA_QUEUED_APPLY'], null),
+            $branchEnv(['POSMAIN_MOOVA_APPLY_ENABLED', 'POSMAIN_ENABLE_MOOVA_QUEUED_APPLY'], null),
             false
         );
 
@@ -363,14 +379,14 @@ if (!function_exists('posmain_app_config')) {
 
         $moovaModeAllowsDirect = in_array($moovaMode, ['direct_widget', 'hybrid'], true);
         $moovaModeAllowsQueued = in_array($moovaMode, ['queued_worker', 'hybrid'], true);
-        $moovaDirectApply = $moovaModeAllowsDirect && ($rawMoovaDirectApply || posmain_env('POSMAIN_MOOVA_MODE', '') !== '');
+        $moovaDirectApply = $moovaModeAllowsDirect && ($rawMoovaDirectApply || $branchEnv(['POSMAIN_MOOVA_MODE'], '') !== '');
         $moovaQueuedApply = $moovaModeAllowsQueued && $rawMoovaQueuedApply;
         $moovaWorkerApply = $moovaModeAllowsQueued && $rawMoovaWorkerApply;
 
         $config = [
             'env' => $env,
-            'role' => (string) posmain_env('POSMAIN_ROLE', 'branch'),
-            'timezone' => (string) posmain_env('POSMAIN_TIMEZONE', 'Africa/Cairo'),
+            'role' => (string) $branchEnv(['POSMAIN_ROLE'], 'branch'),
+            'timezone' => (string) $branchEnv(['POSMAIN_TIMEZONE'], 'Africa/Cairo'),
             'production_mode' => $productionMode,
             'moova' => [
                 'mode' => $moovaMode,
@@ -380,7 +396,7 @@ if (!function_exists('posmain_app_config')) {
                 'queued_worker_requires_acceptance' => true,
             ],
             'public_base_url' => (string) posmain_env('POSMAIN_PUBLIC_BASE_URL', ''),
-            'status_token' => (string) posmain_first_env(['POSMAIN_STATUS_TOKEN', 'POSMAIN_SYNC_STATUS_TOKEN'], '', true),
+            'status_token' => (string) $branchEnv(['POSMAIN_STATUS_TOKEN', 'POSMAIN_SYNC_STATUS_TOKEN'], '', true),
             'database' => [
                 'host' => (string) posmain_first_env(
                     ['POSMAIN_SYNC_DB_HOST', 'POSMAIN_DB_HOST', 'POSMAIN_TEST_MYSQL_HOST', 'POSMAIN_API_DB_HOST'],
@@ -406,42 +422,42 @@ if (!function_exists('posmain_app_config')) {
                 'charset' => (string) posmain_env('POSMAIN_DB_CHARSET', 'utf8mb4'),
             ],
             'branch' => [
-                'uuid' => (string) posmain_env('POSMAIN_BRANCH_UUID', ''),
-                'name' => (string) posmain_env('POSMAIN_BRANCH_NAME', ''),
-                'pos_tenant' => posmain_int(posmain_env('POSMAIN_POS_TENANT', null), null),
-                'pos_branch' => posmain_int(posmain_env('POSMAIN_POS_BRANCH', null), null),
-                'cloud_base_url' => (string) posmain_env('POSMAIN_CLOUD_BASE_URL', ''),
+                'uuid' => (string) $branchEnv(['POSMAIN_BRANCH_UUID'], ''),
+                'name' => (string) $branchEnv(['POSMAIN_BRANCH_NAME'], ''),
+                'pos_tenant' => posmain_int($branchEnv(['POSMAIN_POS_TENANT'], null), null),
+                'pos_branch' => posmain_int($branchEnv(['POSMAIN_POS_BRANCH'], null), null),
+                'cloud_base_url' => (string) $branchEnv(['POSMAIN_CLOUD_BASE_URL'], ''),
             ],
             'features' => [
-                'legacy_debug_routes' => posmain_bool(posmain_env('POSMAIN_ENABLE_LEGACY_DEBUG_ROUTES', '0'), false),
-                'legacy_offline_prototype' => posmain_bool(posmain_env('POSMAIN_ENABLE_LEGACY_OFFLINE_PROTOTYPE', '0'), false),
+                'legacy_debug_routes' => posmain_bool($branchEnv(['POSMAIN_ENABLE_LEGACY_DEBUG_ROUTES'], '0'), false),
+                'legacy_offline_prototype' => posmain_bool($branchEnv(['POSMAIN_ENABLE_LEGACY_OFFLINE_PROTOTYPE'], '0'), false),
                 'moova_direct_apply' => $moovaDirectApply,
                 'moova_queued_apply' => $moovaQueuedApply,
-                'sync_outbox' => posmain_bool(posmain_first_env(['POSMAIN_ENABLE_SYNC_OUTBOX', 'POSMAIN_SYNC_OUTBOX_ENABLED'], '1'), true),
-                'cloud_sync' => posmain_bool(posmain_first_env(['POSMAIN_ENABLE_CLOUD_SYNC', 'POSMAIN_BRANCH_SYNC_ENABLED'], '0'), false),
-                'kds' => posmain_bool(posmain_env('POSMAIN_ENABLE_KDS', '0'), false),
-                'modifiers' => posmain_bool(posmain_env('POSMAIN_ENABLE_MODIFIERS', '0'), false),
-                'nutrition' => posmain_bool(posmain_env('POSMAIN_ENABLE_NUTRITION', '0'), false),
-                'ai_analytics' => posmain_bool(posmain_env('POSMAIN_ENABLE_AI_ANALYTICS', '0'), false),
-                'eta_ereceipt' => posmain_bool(posmain_first_env(['POSMAIN_ENABLE_ETA_ERECEIPT', 'POSMAIN_ETA_ERECEIPT_ENABLED'], '0'), false),
+                'sync_outbox' => posmain_bool($branchEnv(['POSMAIN_ENABLE_SYNC_OUTBOX', 'POSMAIN_SYNC_OUTBOX_ENABLED'], '1'), true),
+                'cloud_sync' => posmain_bool($branchEnv(['POSMAIN_ENABLE_CLOUD_SYNC', 'POSMAIN_BRANCH_SYNC_ENABLED'], '0'), false),
+                'kds' => posmain_bool($branchEnv(['POSMAIN_ENABLE_KDS'], '0'), false),
+                'modifiers' => posmain_bool($branchEnv(['POSMAIN_ENABLE_MODIFIERS'], '0'), false),
+                'nutrition' => posmain_bool($branchEnv(['POSMAIN_ENABLE_NUTRITION'], '0'), false),
+                'ai_analytics' => posmain_bool($branchEnv(['POSMAIN_ENABLE_AI_ANALYTICS'], '0'), false),
+                'eta_ereceipt' => posmain_bool($branchEnv(['POSMAIN_ENABLE_ETA_ERECEIPT', 'POSMAIN_ETA_ERECEIPT_ENABLED'], '0'), false),
             ],
             'sync' => [
-                'branch_secret' => (string) posmain_env('POSMAIN_BRANCH_SYNC_SECRET', '', true),
-                'cloud_branch_secrets' => posmain_map(posmain_env('POSMAIN_CLOUD_BRANCH_SECRETS', '', true)),
-                'outbox_enabled' => posmain_bool(posmain_first_env(['POSMAIN_SYNC_OUTBOX_ENABLED', 'POSMAIN_ENABLE_SYNC_OUTBOX'], '1'), true),
-                'branch_sync_enabled' => posmain_bool(posmain_first_env(['POSMAIN_BRANCH_SYNC_ENABLED', 'POSMAIN_ENABLE_CLOUD_SYNC'], '0'), false),
-                'worker_enabled' => posmain_bool(posmain_env('POSMAIN_SYNC_WORKER_ENABLED', '1'), true),
-                'cloud_apply_enabled' => posmain_bool(posmain_env('POSMAIN_CLOUD_APPLY_ENABLED', '1'), true),
-                'legacy_pos_mirror_enabled' => posmain_bool(posmain_env('POSMAIN_CLOUD_LEGACY_POS_MIRROR_ENABLED', '0'), false),
-                'cloud_to_branch_publish_enabled' => posmain_bool(posmain_env('POSMAIN_CLOUD_TO_BRANCH_PUBLISH_ENABLED', '0'), false),
-                'cloud_pull_enabled' => posmain_bool(posmain_env('POSMAIN_CLOUD_PULL_ENABLED', '1'), true),
-                'shadow_mode' => posmain_bool(posmain_env('POSMAIN_SYNC_SHADOW_MODE', '0'), false),
-                'moova_poller_enabled' => posmain_bool(posmain_env('POSMAIN_MOOVA_POLLER_ENABLED', '1'), true),
+                'branch_secret' => (string) $branchEnv(['POSMAIN_BRANCH_SYNC_SECRET'], '', true),
+                'cloud_branch_secrets' => posmain_map($branchEnv(['POSMAIN_CLOUD_BRANCH_SECRETS'], '', true)),
+                'outbox_enabled' => posmain_bool($branchEnv(['POSMAIN_SYNC_OUTBOX_ENABLED', 'POSMAIN_ENABLE_SYNC_OUTBOX'], '1'), true),
+                'branch_sync_enabled' => posmain_bool($branchEnv(['POSMAIN_BRANCH_SYNC_ENABLED', 'POSMAIN_ENABLE_CLOUD_SYNC'], '0'), false),
+                'worker_enabled' => posmain_bool($branchEnv(['POSMAIN_SYNC_WORKER_ENABLED'], '1'), true),
+                'cloud_apply_enabled' => posmain_bool($branchEnv(['POSMAIN_CLOUD_APPLY_ENABLED'], '1'), true),
+                'legacy_pos_mirror_enabled' => posmain_bool($branchEnv(['POSMAIN_CLOUD_LEGACY_POS_MIRROR_ENABLED'], '0'), false),
+                'cloud_to_branch_publish_enabled' => posmain_bool($branchEnv(['POSMAIN_CLOUD_TO_BRANCH_PUBLISH_ENABLED'], '0'), false),
+                'cloud_pull_enabled' => posmain_bool($branchEnv(['POSMAIN_CLOUD_PULL_ENABLED'], '1'), true),
+                'shadow_mode' => posmain_bool($branchEnv(['POSMAIN_SYNC_SHADOW_MODE'], '0'), false),
+                'moova_poller_enabled' => posmain_bool($branchEnv(['POSMAIN_MOOVA_POLLER_ENABLED'], '1'), true),
                 'moova_apply_enabled' => $moovaWorkerApply,
-                'moova_apply_user_id' => posmain_int(posmain_env('POSMAIN_MOOVA_APPLY_USER_ID', null), 1),
-                'menu_sync_enabled' => posmain_bool(posmain_env('POSMAIN_MENU_SYNC_ENABLED', '0'), false),
-                'http_connect_timeout_ms' => posmain_int(posmain_env('POSMAIN_SYNC_HTTP_CONNECT_TIMEOUT_MS', null), 1000),
-                'http_timeout_ms' => posmain_int(posmain_env('POSMAIN_SYNC_HTTP_TIMEOUT_MS', null), 5000),
+                'moova_apply_user_id' => posmain_int($branchEnv(['POSMAIN_MOOVA_APPLY_USER_ID'], null), 1),
+                'menu_sync_enabled' => posmain_bool($branchEnv(['POSMAIN_MENU_SYNC_ENABLED'], '0'), false),
+                'http_connect_timeout_ms' => posmain_int($branchEnv(['POSMAIN_SYNC_HTTP_CONNECT_TIMEOUT_MS'], null), 1000),
+                'http_timeout_ms' => posmain_int($branchEnv(['POSMAIN_SYNC_HTTP_TIMEOUT_MS'], null), 5000),
             ],
         ];
 
