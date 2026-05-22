@@ -565,7 +565,7 @@ class CloudLegacyPosMirrorService
         $parentId = $this->intOrNull($this->firstExistingValue([$item], ['parent_item_id', 'parentItemId']));
         $variantLabel = $this->nullableString($this->firstExistingValue([$item], ['variant_label', 'variantLabel', 'label']), 120);
         if ($parentId && $parentId !== $itemId && $variantLabel !== null) {
-            $this->upsertItemVariantRelation($conn, $parentId, $itemId, $variantLabel, 0, true, false);
+            $this->upsertItemVariantRelation($conn, $parentId, $itemId, $variantLabel, 0, true, false, true);
         }
 
         $present = false;
@@ -648,11 +648,22 @@ class CloudLegacyPosMirrorService
         ");
     }
 
-    private function upsertItemVariantRelation(mysqli $conn, int $parentItemId, int $variantItemId, string $label, int $sortOrder, bool $active, bool $isDefault): void
+    private function upsertItemVariantRelation(
+        mysqli $conn,
+        int $parentItemId,
+        int $variantItemId,
+        string $label,
+        int $sortOrder,
+        bool $active,
+        bool $isDefault,
+        bool $preserveOrderingOnExisting = false
+    ): void
     {
         $activeInt = $active ? 1 : 0;
         $defaultInt = $isDefault ? 1 : 0;
         $nameEn = null;
+        $sortOrderUpdate = $preserveOrderingOnExisting ? 'sort_order = item_variants.sort_order' : 'sort_order = VALUES(sort_order)';
+        $defaultUpdate = $preserveOrderingOnExisting ? 'is_default = item_variants.is_default' : 'is_default = VALUES(is_default)';
         $stmt = $conn->prepare("
             INSERT INTO item_variants (
                 parent_item_id, variant_item_id, variant_label, variant_name_en, sort_order, is_default, is_active
@@ -661,8 +672,8 @@ class CloudLegacyPosMirrorService
                 parent_item_id = VALUES(parent_item_id),
                 variant_label = VALUES(variant_label),
                 variant_name_en = VALUES(variant_name_en),
-                sort_order = VALUES(sort_order),
-                is_default = VALUES(is_default),
+                {$sortOrderUpdate},
+                {$defaultUpdate},
                 is_active = VALUES(is_active),
                 updated_at = CURRENT_TIMESTAMP
         ");
