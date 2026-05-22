@@ -22,6 +22,7 @@ class PosOrderMutationService
     const SCOPE_TAKEAWAY_CREATE = 'pos.order.create.takeaway';
     const SCOPE_MOOVA_CONFIRM = 'moova.order.confirm';
     const SCOPE_MOOVA_CHANGE = 'moova.order.change';
+    const PAYMENT_ROUNDING_TOLERANCE = 0.01;
 
     private $paymentService;
     private $tableStateService;
@@ -722,7 +723,7 @@ class PosOrderMutationService
         if ($childTotal <= 0) {
             throw new RuntimeException('قيمة الأصناف المختارة غير صحيحة');
         }
-        if ($paidAmount + 0.0001 < $childTotal) {
+        if ($paidAmount + self::PAYMENT_ROUNDING_TOLERANCE < $childTotal) {
             throw new RuntimeException('المبلغ المدفوع أقل من قيمة الأصناف المختارة');
         }
 

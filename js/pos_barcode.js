@@ -321,7 +321,7 @@ $(document).ready(function() {
 
         setTimeout(loadNextPage, 250);
     }
-    
+
     // ========================================
     // Category Filter
     // ========================================
@@ -332,14 +332,14 @@ $(document).ready(function() {
             .split(',')
             .map(keyword => keyword.trim().toLowerCase())
             .filter(Boolean);
-        
+
         // تحديث الأزرار
         $('.category-btn').removeClass('active btn-primary').addClass('btn-outline-primary');
         $this.removeClass('btn-outline-primary').addClass('btn-primary active');
-        
+
         // مسح البحث
         $filterInput.val('');
-        
+
         applyActiveItemFilter();
     });
 
@@ -356,42 +356,42 @@ $(document).ready(function() {
             }
         }
     });
-    
+
     $('#searchInput').on('keypress', function(e) {
         if (e.which === 13) {
             let search = $(this).val().trim();
             if (search) {
                 // Try barcode search first
                 searchItemByBarcode(search);
-                
+
                 // Also trigger the filter search
                 if (search.length >= 2) {
                     $filterInput.val(search).trigger('input');
                 }
-                
+
                 $(this).val('');
             }
         }
     });
-    
+
     // البحث البسيط مع Debouncing للأداء
     let searchTimeout;
     $filterInput.on('input', function() {
         clearTimeout(searchTimeout);
         const searchText = $(this).val().toLowerCase().trim();
-        
+
         // لو فاضي، اعرض الأصناف حسب التصنيف الحالي فوراً
         if (searchText === '') {
             applyActiveItemFilter();
             return;
         }
-        
+
         // انتظر 200ms قبل البحث (debouncing)
         searchTimeout = setTimeout(function() {
             applyActiveItemFilter();
         }, 200);
     });
-    
+
     $('#clearFilter').click(function() {
         $filterInput.val('');
         applyActiveItemFilter();
@@ -443,31 +443,31 @@ $(document).ready(function() {
     // Item Filtering Functions
     // ========================================
 
-    
 
-    
+
+
     // ========================================
     // Item Search & Add Functions
     // ========================================
     function searchItemByBarcode(barcode) {
         let qty = 1;
         let searchCode = barcode;
-        
+
         // Check if it's a scale barcode using config
         if (posConfig && posConfig.scale_barcode && posConfig.scale_barcode.enabled) {
             const cfg = posConfig.scale_barcode;
-            
-            if (barcode.length === cfg.barcode_length && 
+
+            if (barcode.length === cfg.barcode_length &&
                 barcode.substring(0, cfg.prefix.length) === cfg.prefix) {
-                
-                searchCode = barcode.substring(cfg.item_code_start, 
+
+                searchCode = barcode.substring(cfg.item_code_start,
                                                cfg.item_code_start + cfg.item_code_length);
-                
-                let weightStr = barcode.substring(cfg.weight_start, 
+
+                let weightStr = barcode.substring(cfg.weight_start,
                                                   cfg.weight_start + cfg.weight_length);
                 qty = parseFloat(weightStr) / cfg.weight_divisor;
                 searchCode = parseInt(searchCode).toString();
-                
+
                 console.log('🔢 Scale Barcode Detected:', {
                     original: barcode,
                     itemCode: searchCode,
@@ -475,7 +475,7 @@ $(document).ready(function() {
                 });
             }
         }
-        
+
         $.ajax({
             url: 'ajax/search_item.php',
             type: 'POST',
@@ -503,36 +503,36 @@ $(document).ready(function() {
         }
         e.preventDefault();
         e.stopPropagation();
-        
+
         let card = $(this);
         let itemId = card.data('item-id');
         let itemName = card.data('item-name');
         let itemPrice = parseFloat(card.data('item-price')) || 0;
         let itemBarcode = card.data('item-barcode');
         let imageHtml = card.find('.item-image-container').html();
-        
+
         addItemToOrder(itemId, itemName, itemPrice, itemBarcode, 1, imageHtml);
     });
 
     $('#itemsGrid').on('click', '.item-details-btn', function(e) {
         e.preventDefault();
         e.stopPropagation();
-        
+
         let card = $(this).closest('.item-card');
         let itemId = card.data('item-id');
         let itemName = card.data('item-name');
         let itemPrice = card.data('item-price');
         let itemBarcode = card.data('item-barcode');
         let itemDesc = card.data('item-desc') || 'لا يوجد وصف';
-        
+
         let imageHtml = card.find('.item-image-container').html();
-        
+
         $('#modal_item_name').text(itemName);
         $('#modal_item_barcode').text(itemBarcode || '-');
         $('#modal_item_price').text(itemPrice.toFixed(2) + ' ج.م');
         $('#modal_item_desc').text(itemDesc);
         $('#modal_item_image').html(imageHtml);
-        
+
         $('#modal_add_item').data({
             'id': itemId,
             'name': itemName,
@@ -540,7 +540,7 @@ $(document).ready(function() {
             'barcode': itemBarcode,
             'image': imageHtml
         });
-        
+
         $('#itemDetailsModal').modal('show');
     });
 
@@ -695,23 +695,23 @@ $(document).ready(function() {
 
     function addItemToOrder(id, name, price, barcode, qty = 1, imageHtml = '', lineNote = '') {
         let existingItem = $(`.item-card-order[data-itemid="${barcode}"]`);
-        
+
         if (existingItem.length > 0) {
             let qtyInput = existingItem.find('.quantityInput');
             let currentQty = parseFloat(qtyInput.val()) || 0;
             let newQty = currentQty + qty;
             qtyInput.val(newQty);
-            
+
             let priceInput = existingItem.find('.priceInput');
             let itemPrice = parseFloat(priceInput.val()) || 0;
             let subtotal = newQty * itemPrice;
             existingItem.find('.subtotal').val(subtotal.toFixed(2));
-            
+
             updateTotal();
             $('#barcodeInput').val('').focus();
             return;
         }
-        
+
         let subtotal = price * qty;
         let itemNumber = $('#itemData .item-card-order').length + 1;
         const thumbHtml = imageHtml
@@ -720,7 +720,7 @@ $(document).ready(function() {
         const noteValue = String(lineNote || '').trim() || getLineNoteDraft(id, barcode);
         const safeName = escapeHtml(name);
         const safeLineNote = escapeHtml(noteValue);
-        
+
         let itemCard = `
             <div class="card mb-1 item-card-order pos-cart-row shadow-sm" data-itemid="${barcode}">
                 <div class="card-body p-1">
@@ -736,11 +736,11 @@ $(document).ready(function() {
                         </div>
                         <div class="pos-cart-qty">
                             <button type="button" class="btn qty-step qty-decrease" title="تقليل">−</button>
-                            <input type="number" 
-                                   class="form-control form-control-sm text-center quantityInput nozero fw-bold" 
-                                   value="${qty}" 
+                            <input type="number"
+                                   class="form-control form-control-sm text-center quantityInput nozero fw-bold"
+                                   value="${qty}"
                                    name="itmqty[]"
-                                   min="1" 
+                                   min="1"
                                    step="1"
                                    title="الكمية">
                             <button type="button" class="btn qty-step qty-increase" title="زيادة">+</button>
@@ -766,10 +766,10 @@ $(document).ready(function() {
                             <i class="fas fa-trash-alt"></i>
                         </button>
                         <div class="pos-cart-price">
-                            <input type="number" 
-                                   class="form-control form-control-sm text-center priceInput nozero" 
-                                   value="${price.toFixed(2)}" 
-                                   name="itmprice[]" 
+                            <input type="number"
+                                   class="form-control form-control-sm text-center priceInput nozero"
+                                   value="${price.toFixed(2)}"
+                                   name="itmprice[]"
                                    step="0.01"
                                    title="السعر">
                         </div>
@@ -777,22 +777,23 @@ $(document).ready(function() {
                 </div>
             </div>
         `;
-        
+
         $('#itemData').append(itemCard);
         initializeLineNoteButtons($('#itemData .item-card-order').last());
         updateItemCount();
         updateTotal();
         $('#barcodeInput').val('').focus();
     }
-    
+
     // ========================================
     // Update Functions
     // ========================================
     function updateItemCount() {
         let count = $('#itemData .item-card-order').length;
         $('#itemCount').text(count);
+        updatePayOrderButtonState();
     }
-    
+
     window.clearAllItems = function() {
         if (confirm('مسح كل الأصناف؟')) {
             $('#itemData').empty();
@@ -815,21 +816,29 @@ $(document).ready(function() {
         $('#total_display').text(total.toFixed(2) + ' ج.م');
         $('#total_display_btn').text(total.toFixed(2) + ' ج.م');
         $('#modal_total').text(total.toFixed(2) + ' ج.م');
-        
+
         let discount = parseFloat($('#discount').val()) || 0;
         let net = total - discount;
         $('#net_val').val(net.toFixed(2));
         $('#net_display').text(net.toFixed(2) + ' ج.م');
         $('#modal_net').text(net.toFixed(2) + ' ج.م');
-        
-        // تعبئة المدفوع كاش تلقائياً بقيمة الصافي
-        $('#modal_paid_cash').val(net.toFixed(2));
-        // مسح المدفوع صرافة
-        $('#modal_paid_bank').val('0.00');
-        // حساب الباقي (سيكون صفر لأن المدفوع = الصافي)
-        $('#modal_change').text('0.00 ج.م');
+
+        setDefaultCashPaymentToNet(net);
+        updatePayOrderButtonState();
     }
-    
+
+    function setDefaultCashPaymentToNet(netAmount) {
+        if ($('#pos_split_payment_enabled').prop('checked')) {
+            refreshSplitPaymentLineAmounts();
+            return;
+        }
+
+        const net = Math.max(0, parseFloat(netAmount) || 0);
+        $('#modal_paid_cash').val(net.toFixed(2));
+        $('#modal_paid_bank').val('0.00');
+        calculateChange();
+    }
+
     // ========================================
     // Tables System
     // ========================================
@@ -854,10 +863,231 @@ $(document).ready(function() {
         return String($('#selected_order_id').val() || $('#edit_order_id').val() || '').trim();
     }
 
+    function isHeldTableWithoutActiveOrder() {
+        return getSelectedTableId() > 0
+            && String($('#selected_table_case').val() || '0') === '1'
+            && getActiveTableOrderId() === ''
+            && $('#itemData .item-card-order').length === 0;
+    }
+    window.POSMainIsHeldTableWithoutActiveOrder = isHeldTableWithoutActiveOrder;
+
+    function updatePayOrderButtonState() {
+        const $button = $('.pos-pay-order-btn');
+        if (!$button.length) {
+            return;
+        }
+
+        const shouldFreeOnly = isHeldTableWithoutActiveOrder();
+        const $label = $button.find('span');
+        const $amount = $('#total_display_btn');
+        if (shouldFreeOnly) {
+            $button.removeAttr('data-bs-toggle data-bs-target');
+            $label.html('<i class="fas fa-chair me-1"></i>أفرغ الطاولة');
+            $amount.hide();
+            return;
+        }
+
+        $button.attr('data-bs-toggle', 'modal');
+        $button.attr('data-bs-target', '#paymentModal');
+        $label.html('<i class="fas fa-money-bill-wave me-1"></i>دفع');
+        $amount.show();
+    }
+
+    function currentOrderDiscountRate() {
+        const total = Math.max(0, parseFloat($('#total').val()) || 0);
+        const discount = Math.min(total, Math.max(0, parseFloat($('#discount').val()) || 0));
+        return total > 0 ? discount / total : 0;
+    }
+
     function updateTransferTableButton() {
         const hasActiveTableOrder = getSelectedTableId() > 0 && getActiveTableOrderId() !== '';
         $('#transferTableBtn').toggle(hasActiveTableOrder);
     }
+
+    function selectedSplitPaymentRows() {
+        const rows = [];
+        const discountRate = currentOrderDiscountRate();
+        $('#itemData .item-card-order').each(function(index) {
+            const $row = $(this);
+            const qty = parseFloat($row.find('.quantityInput').val()) || 0;
+            const subtotal = parseFloat($row.find('.subtotal').val()) || 0;
+            const discountedAmount = Math.max(0, subtotal * (1 - discountRate));
+            const unitAmount = qty > 0 ? discountedAmount / qty : 0;
+            rows.push({
+                row_index: index,
+                name: String($row.find('.pos-cart-name').text() || '').trim() || 'صنف',
+                qty: qty,
+                unit_amount: unitAmount,
+                amount: discountedAmount
+            });
+        });
+
+        return rows;
+    }
+
+    function renderSplitPaymentRows() {
+        const $body = $('#pos_split_payment_rows');
+        if (!$body.length) {
+            return;
+        }
+
+        const rows = selectedSplitPaymentRows();
+        if (!rows.length) {
+            $body.html('<tr><td colspan="4" class="text-center text-muted">لا توجد أصناف في الطلب</td></tr>');
+            updateSplitPaymentTotal();
+            return;
+        }
+
+        const html = rows.map(function(row) {
+            const qty = Number(row.qty || 0);
+            const amount = Number(row.amount || 0);
+            return `
+                <tr data-row-index="${row.row_index}" data-unit-amount="${row.unit_amount}">
+                    <td>
+                        <input type="checkbox" class="form-check-input pos-split-line-check">
+                    </td>
+                    <td class="fw-bold">${escapeHtml(row.name)}</td>
+                    <td>
+                        <input type="number"
+                               class="form-control form-control-sm text-center pos-split-line-qty"
+                               value="${qty}"
+                               min="0"
+                               max="${qty}"
+                               step="1"
+                               data-max-qty="${qty}">
+                    </td>
+                    <td class="text-end">
+                        <span class="pos-split-line-total">${amount.toFixed(2)}</span>
+                    </td>
+                </tr>
+            `;
+        }).join('');
+
+        $body.html(html);
+        updateSplitPaymentTotal();
+    }
+
+    function refreshSplitPaymentLineAmounts() {
+        const rowsByIndex = {};
+        selectedSplitPaymentRows().forEach(function(row) {
+            rowsByIndex[row.row_index] = row;
+        });
+
+        $('#pos_split_payment_rows tr').each(function() {
+            const $row = $(this);
+            const rowIndex = parseInt($row.data('row-index'), 10);
+            const sourceRow = rowsByIndex[rowIndex];
+            if (!sourceRow) {
+                return;
+            }
+
+            $row.data('unit-amount', sourceRow.unit_amount);
+            $row.attr('data-unit-amount', sourceRow.unit_amount);
+        });
+
+        updateSplitPaymentTotal();
+    }
+
+    function updateSplitPaymentTotal() {
+        let selectedTotal = 0;
+        $('#pos_split_payment_rows tr').each(function() {
+            const $row = $(this);
+            const checked = $row.find('.pos-split-line-check').prop('checked');
+            const maxQty = parseFloat($row.find('.pos-split-line-qty').data('max-qty')) || 0;
+            let qty = parseFloat($row.find('.pos-split-line-qty').val()) || 0;
+            qty = Math.max(0, Math.min(qty, maxQty));
+            $row.find('.pos-split-line-qty').val(qty || '');
+            const unitAmount = parseFloat($row.data('unit-amount')) || 0;
+            const lineTotal = qty * unitAmount;
+            $row.find('.pos-split-line-total').text(lineTotal.toFixed(2));
+            if (checked) {
+                selectedTotal += lineTotal;
+            }
+        });
+
+        $('#pos_split_payment_total').text(selectedTotal.toFixed(2) + ' ج.م');
+        if ($('#pos_split_payment_enabled').prop('checked')) {
+            $('#modal_paid_cash').val(selectedTotal.toFixed(2));
+            $('#modal_paid_bank').val('0.00');
+            calculateChange();
+        }
+    }
+
+    function updateSplitPaymentButtons() {
+        const splitEnabled = $('#pos_split_payment_enabled').prop('checked');
+        $('.pos-pay-confirm-btn').toggle(!splitEnabled);
+        $('.pos-split-pay-confirm-btn').toggle(splitEnabled);
+    }
+
+    function splitPaymentPayloadFromModal() {
+        const rows = [];
+        let selectedTotal = 0;
+        $('#pos_split_payment_rows tr').each(function() {
+            const $row = $(this);
+            if (!$row.find('.pos-split-line-check').prop('checked')) {
+                return;
+            }
+            const rowIndex = parseInt($row.data('row-index'), 10);
+            const maxQty = parseFloat($row.find('.pos-split-line-qty').data('max-qty')) || 0;
+            const qty = parseFloat($row.find('.pos-split-line-qty').val()) || 0;
+            const unitAmount = parseFloat($row.data('unit-amount')) || 0;
+            if (Number.isNaN(rowIndex) || qty <= 0 || qty > maxQty + 0.0001) {
+                return;
+            }
+            rows.push({ row_index: rowIndex, qty: qty });
+            selectedTotal += qty * unitAmount;
+        });
+
+        return { rows: rows, total: selectedTotal };
+    }
+
+    function ensureHiddenFormInput(form, name) {
+        let input = form.querySelector(`input[name="${name}"]`);
+        if (!input) {
+            input = document.createElement('input');
+            input.type = 'hidden';
+            input.name = name;
+            form.appendChild(input);
+        }
+
+        return input;
+    }
+
+    window.POSMainPrepareSplitPaymentFields = function(form, paymentState) {
+        if (!$('#pos_split_payment_enabled').prop('checked')) {
+            $('#pos_split_payment_enabled').prop('checked', true);
+            $('#pos_split_payment_panel').show();
+        }
+
+        if (getSelectedTableId() <= 0) {
+            alert('سداد أصناف محددة متاح لطلبات الطاولات فقط');
+            return false;
+        }
+
+        const payload = splitPaymentPayloadFromModal();
+        if (!payload.rows.length || payload.total <= 0) {
+            alert('اختر صنف واحد على الأقل وكمية صحيحة للسداد');
+            return false;
+        }
+
+        const paidCash = parseFloat(paymentState.paidCash) || 0;
+        const paidBank = parseFloat(paymentState.paidBank) || 0;
+        if (paidCash > 0 && paidBank > 0) {
+            alert('سداد الأصناف المحددة يستخدم طريقة دفع واحدة في كل مرة');
+            return false;
+        }
+
+        const totalPaid = paidCash + paidBank;
+        if (Math.abs(totalPaid - payload.total) > 0.01) {
+            alert('مبلغ الدفع يجب أن يساوي إجمالي الأصناف المحددة');
+            return false;
+        }
+
+        ensureHiddenFormInput(form, 'pos_split_payment_payload').value = JSON.stringify(payload.rows);
+        ensureHiddenFormInput(form, 'pos_split_payment_total').value = payload.total.toFixed(2);
+        ensureHiddenFormInput(form, 'pos_split_payment_method').value = paidBank > 0 ? 'bank' : 'cash';
+        return true;
+    };
 
     function showPOSNotice(message, type) {
         type = type || 'success';
@@ -1094,11 +1324,13 @@ $(document).ready(function() {
             // تيك أواي أو دليفري - امسح الطاولة المختارة
             $('#selected_table_id').val('');
             $('#selected_table_name').val('');
+            $('#selected_table_case').val('0');
             $('#selected_order_id').val('');
             $('#edit_order_id').val('');
             $('#selected_table_display').html('اختر طاولة');
             restoreInitialCustomer();
             updateTransferTableButton();
+            updatePayOrderButtonState();
         }
     });
 
@@ -1112,9 +1344,10 @@ $(document).ready(function() {
         const tableName = $(this).data('table-name');
         const tableCase = $(this).data('table-case');
         const orderId = $(this).data('order-id');
-        
+
         $('#selected_table_id').val(tableId);
         $('#selected_table_name').val(tableName);
+        $('#selected_table_case').val(tableCase ? '1' : '0');
         $('#selected_table_display').html('<i class="fas fa-chair me-1"></i>' + tableName);
         $('#age2').prop('checked', true);
         syncModeTabs();
@@ -1134,13 +1367,15 @@ $(document).ready(function() {
             updateItemCount();
             updateTotal();
             updateTransferTableButton();
+            updatePayOrderButtonState();
             console.log('طاولة فاضية: ' + tableName + ' - طلب جديد');
         }
     });
-    
+
     window.selectNoTable = function() {
         $('#selected_table_id').val('');
         $('#selected_table_name').val('');
+        $('#selected_table_case').val('0');
         $('#selected_order_id').val('');
         $('#edit_order_id').val('');
         $('#selected_table_display').html('بدون طاولة');
@@ -1150,6 +1385,7 @@ $(document).ready(function() {
         $('#tablesModal').modal('hide');
         clearAllItems();
         updateTransferTableButton();
+        updatePayOrderButtonState();
     };
 
     function handleTableTransferDestination($button) {
@@ -1231,10 +1467,11 @@ $(document).ready(function() {
                     ? (response.destination_order_id || transferData.destinationOrderId)
                     : (response.order_id || transferData.sourceOrderId);
 
-                $('#selected_table_id').val(transferData.destinationTableId);
-                $('#selected_table_name').val(transferData.destinationTableName);
-                $('#selected_order_id').val(nextOrderId);
-                $('#edit_order_id').val(nextOrderId);
+                    $('#selected_table_id').val(transferData.destinationTableId);
+                    $('#selected_table_name').val(transferData.destinationTableName);
+                    $('#selected_table_case').val('1');
+                    $('#selected_order_id').val(nextOrderId);
+                    $('#edit_order_id').val(nextOrderId);
                 $('#selected_table_display').html('<i class="fas fa-chair me-1"></i>' + escapeHtml(transferData.destinationTableName));
                 $('#age2').prop('checked', true);
                 syncModeTabs();
@@ -1255,11 +1492,11 @@ $(document).ready(function() {
             }
         });
     }
-    
+
     function loadExistingOrder(orderId, tableName, options) {
         options = options || {};
         console.log('🔄 Loading existing order:', orderId, 'Table:', tableName);
-        
+
         $.ajax({
             url: 'ajax/load_order.php',
             method: 'POST',
@@ -1267,10 +1504,10 @@ $(document).ready(function() {
             dataType: 'json',
             success: function(response) {
                 console.log('📥 Load Order Response:', response);
-                
+
                 if (response.success) {
                     $('#itemData').empty();
-                    
+
                     if (response.items && response.items.length > 0) {
                         console.log('📦 Found items:', response.items.length);
                         response.items.forEach(function(item) {
@@ -1288,7 +1525,7 @@ $(document).ready(function() {
                     } else {
                         console.warn('⚠️ No items found in order');
                     }
-                    
+
                     if (response.order) {
                         $('#discount').val(response.order.discount || 0);
                         if (response.order.emp_id) $('select[name="emp_id"]').val(response.order.emp_id);
@@ -1340,9 +1577,8 @@ $(document).ready(function() {
         $('#modal_net').text(net + ' ج.م');
         $('#net_val').val(net);
         $('#net_display').text(net + ' ج.م');
-        
-        // حساب الباقي
-        calculateChange();
+
+        setDefaultCashPaymentToNet(net);
     });
 
     $('#modal_discount').on('input', function() {
@@ -1355,9 +1591,8 @@ $(document).ready(function() {
         $('#modal_net').text(net + ' ج.م');
         $('#net_val').val(net);
         $('#net_display').text(net + ' ج.م');
-        
-        // حساب الباقي
-        calculateChange();
+
+        setDefaultCashPaymentToNet(net);
     });
 
     // حساب الباقي عند تغيير المدفوع كاش أو صرافة
@@ -1368,6 +1603,34 @@ $(document).ready(function() {
     $('#paymentModal').on('shown.bs.modal', function() {
         syncPaymentFundOptions();
         loadBankOptions();
+        const isTableOrder = getSelectedTableId() > 0 && $('#age2').prop('checked');
+        $('.pos-empty-table-option').toggle(isTableOrder);
+        $('#pos_empty_table_after_payment').prop('checked', true);
+        renderSplitPaymentRows();
+    });
+
+    $(document).on('change', '#pos_split_payment_enabled', function() {
+        const enabled = $(this).prop('checked');
+        $('#pos_split_payment_panel').toggle(enabled);
+        updateSplitPaymentButtons();
+        if (enabled) {
+            renderSplitPaymentRows();
+        } else {
+            $('#pos_split_payment_total').text('0.00 ج.م');
+            updateTotal();
+        }
+    });
+
+    $(document).on('change input', '.pos-split-line-check, .pos-split-line-qty', updateSplitPaymentTotal);
+
+    $(document).on('click', '.pos-pay-order-btn', function(event) {
+        if (!isHeldTableWithoutActiveOrder()) {
+            return;
+        }
+
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        submitPOS('free_table');
     });
 
     function calculateChange() {
@@ -1375,9 +1638,9 @@ $(document).ready(function() {
         let paidCash = parseFloat($('#modal_paid_cash').val()) || 0;
         let paidBank = parseFloat($('#modal_paid_bank').val()) || 0;
         let totalPaid = paidCash + paidBank;
-        
+
         let change = totalPaid - net;
-        
+
         // الباقي للحساب فقط - لا يؤثر على السند
         $('#modal_change').text(change.toFixed(2) + ' ج.م');
     }
@@ -1398,7 +1661,7 @@ $(document).ready(function() {
         let nextQty = $(this).hasClass('qty-increase') ? currentQty + 1 : currentQty - 1;
         qtyInput.val(Math.max(1, Math.round(nextQty))).trigger('input');
     });
-    
+
     $(document).on('input', '.quantityInput, .priceInput', function() {
         let card = $(this).closest('.item-card-order');
         let qty = parseFloat(card.find('.quantityInput').val()) || 0;
@@ -1455,7 +1718,7 @@ $(document).ready(function() {
     }
 
     function ensureFormIdempotencyKey(form, action) {
-        const scope = action === 'save' ? 'pos.order.save' : 'pos.order.pay';
+        const scope = action === 'save' ? 'pos.order.save' : (action === 'free_table' ? 'pos.table.free' : 'pos.order.pay');
         let keyInput = form.querySelector('input[name="idempotency_key"]');
         if (!keyInput) {
             keyInput = document.createElement('input');
@@ -1474,26 +1737,37 @@ $(document).ready(function() {
 
     window.submitPOS = function(action) {
         console.log('✅ submitPOS called with action:', action);
-        
+
         const form = document.getElementById('posForm');
         if (!form) {
             console.error('❌ Form with id "posForm" not found!');
             alert('حدث خطأ في النظام. يرجى إعادة تحميل الصفحة.');
             return false;
         }
-        
+
+        const isFreeTableOnly = action === 'free_table';
+        if (isFreeTableOnly && !isHeldTableWithoutActiveOrder()) {
+            alert('إفراغ الطاولة متاح فقط لطاولة مشغولة بدون طلب مفتوح');
+            return false;
+        }
+
         console.log('🔍 Validating form...');
-        if (!validatePOSForm()) {
+        if (!isFreeTableOnly && !validatePOSForm()) {
             console.log('❌ Validation failed, form not submitted');
             return false;
         }
         console.log('✅ Validation passed');
-        
+
+        if (action === 'cash' && $('#pos_split_payment_enabled').prop('checked')) {
+            action = 'split_cash';
+        }
+
         // جمع بيانات الدفع
         const isSaveOnly = action === 'save';
+        const isSplitLinePayment = action === 'split_cash';
         let paidCash = parseFloat($('#modal_paid_cash').val()) || 0;
         let paidBank = parseFloat($('#modal_paid_bank').val()) || 0;
-        if (isSaveOnly) {
+        if (isSaveOnly || isFreeTableOnly) {
             paidCash = 0;
             paidBank = 0;
         }
@@ -1501,7 +1775,7 @@ $(document).ready(function() {
         let fundId = $('#payment_fund_id').val();
         let bankId = $('#payment_bank_id').val();
         let net = parseFloat($('#net_val').val()) || 0;
-        
+
         console.log('=== PAYMENT DATA DEBUG ===');
         console.log('modal_paid_cash value:', $('#modal_paid_cash').val());
         console.log('modal_paid_bank value:', $('#modal_paid_bank').val());
@@ -1515,23 +1789,36 @@ $(document).ready(function() {
             net: net
         });
         console.log('==========================');
-        
+
         // التحقق من صحة البيانات
-        if (!isSaveOnly && net > 0 && paidCash + paidBank <= 0) {
+        if (!isSaveOnly && !isFreeTableOnly && !isSplitLinePayment && net > 0 && paidCash + paidBank <= 0) {
             alert('يجب إدخال مبلغ الدفع قبل تأكيد الدفع');
             return false;
         }
 
-        if (!isSaveOnly && paidCash > 0 && (!fundId || fundId == '0')) {
+        if (!isSaveOnly && !isFreeTableOnly && paidCash > 0 && (!fundId || fundId == '0')) {
             alert('يجب اختيار الصندوق عند الدفع كاش');
             return false;
         }
-        
-        if (!isSaveOnly && paidBank > 0 && (!bankId || bankId == '0' || bankId == '')) {
+
+        if (!isSaveOnly && !isFreeTableOnly && paidBank > 0 && (!bankId || bankId == '0' || bankId == '')) {
             alert('يجب اختيار البنك عند الدفع صرافة');
             return false;
         }
-        
+
+        if (isSplitLinePayment && typeof window.POSMainPrepareSplitPaymentFields === 'function') {
+            if (!window.POSMainPrepareSplitPaymentFields(form, {
+                paidCash: paidCash,
+                paidBank: paidBank,
+                fundId: fundId,
+                bankId: bankId
+            })) {
+                return false;
+            }
+            paidCash = parseFloat($('#modal_paid_cash').val()) || 0;
+            paidBank = parseFloat($('#modal_paid_bank').val()) || 0;
+        }
+
         // إضافة حقول الدفع المخفية
         let paidCashInput = form.querySelector('input[name="paid_cash"]');
         if (!paidCashInput) {
@@ -1587,6 +1874,7 @@ $(document).ready(function() {
             form.appendChild(paidInput);
         }
         paidInput.value = totalPaid;
+        ensureHiddenFormInput(form, 'empty_table_after_payment').value = $('#pos_empty_table_after_payment').prop('checked') ? '1' : '0';
 
         // Check for Edit ID
         let editId = $('#edit_order_id').val() || $('#selected_order_id').val();
@@ -1606,50 +1894,50 @@ $(document).ready(function() {
                 editIdInput.remove();
             }
         }
-        
+
         const existingSubmits = form.querySelectorAll('input[name="submit"]');
         existingSubmits.forEach(input => input.remove());
-        
+
         const submitInput = document.createElement('input');
         submitInput.type = 'hidden';
         submitInput.name = 'submit';
         submitInput.value = action;
         form.appendChild(submitInput);
         ensureFormIdempotencyKey(form, action);
-        
+
         console.log('➕ Added submit input with value:', action);
-        
+
         let saveBtn = $(".pos-save-order-btn");
         let printBtn = $(".pos-pay-confirm-btn");
-        
+
         if (saveBtn.length > 0) {
             saveBtn.prop('disabled', true).html('<i class="fas fa-spinner fa-spin"></i> جاري الحفظ...');
         }
         if (printBtn.length > 0) {
             printBtn.prop('disabled', true).html('<i class="fas fa-spinner fa-spin"></i> جاري الدفع...');
         }
-        
+
         $('#paymentModal').modal('hide');
-        
+
         console.log('📤 Submitting form to:', form.action);
         console.log('📊 Form method:', form.method);
-        
+
         const formData = new FormData(form);
         console.log('📋 Form data:');
         for (let [key, value] of formData.entries()) {
             console.log(`  ${key}: ${value}`);
         }
-        
+
         setTimeout(function() {
             try {
                 // إرسال الفورم مباشرة بدون تأكيد
                 HTMLFormElement.prototype.submit.call(form);
                 console.log('✅ Form submitted successfully!');
-                
+
             } catch (error) {
                 console.error('❌ Error submitting form:', error);
                 alert('حدث خطأ أثناء إرسال البيانات: ' + error.message);
-                
+
                 if (saveBtn.length > 0) {
                     saveBtn.prop('disabled', false).html('<i class="fas fa-save me-1"></i>حفظ الطلب');
                 }
@@ -1658,12 +1946,12 @@ $(document).ready(function() {
                 }
             }
         }, 100);
-        
+
         return true;
     };
-    
+
     $('#barcodeInput').focus();
-    
+
     // Keyboard shortcuts
     $(document).on('keydown', function(e) {
         // Ctrl + F or F3 for search focus
@@ -1671,27 +1959,27 @@ $(document).ready(function() {
             e.preventDefault();
             $filterInput.focus().select();
         }
-        
+
         // Escape to clear search
         if (e.key === 'Escape') {
             if ($filterInput.is(':focus') && $filterInput.val() !== '') {
                 $('#clearFilter').click();
             }
         }
-        
+
         // Alt + B for barcode input focus
         if (e.altKey && e.key === 'b') {
             e.preventDefault();
             $('#barcodeInput').focus().select();
         }
-        
-        // Alt + S for search input focus  
+
+        // Alt + S for search input focus
         if (e.altKey && e.key === 's') {
             e.preventDefault();
             $filterInput.focus().select();
         }
     });
-    
+
     window.handleFormSubmit = function(form) {
         console.log('Form submit handler called');
         return true;
@@ -1703,66 +1991,66 @@ $(document).ready(function() {
 // ========================================
 function validatePOSForm() {
     console.log('=== validatePOSForm() called ===');
-    
+
     let items = $('#itemData .item-card-order');
     console.log('📊 Items in order:', items.length);
-    
+
     if (items.length === 0) {
         console.log('⚠️ No items found in order');
         alert('يجب إضافة صنف واحد على الأقل للطلب');
         return false;
     }
-    
+
     let itmnames = $('input[name="itmname[]"]');
     let itmqtys = $('input[name="itmqty[]"]');
     let itmprices = $('input[name="itmprice[]"]');
-    
+
     console.log('📋 Form fields check:');
     console.log('  - Items names:', itmnames.length);
     console.log('  - Items quantities:', itmqtys.length);
     console.log('  - Items prices:', itmprices.length);
-    
+
     if (itmnames.length === 0) {
         console.error('❌ No item names found!');
         alert('خطأ: لا توجد أصناف في النموذج');
         return false;
     }
-    
+
     let pro_tybe = $('input[name="pro_tybe"]').val();
     let store_id = $('select[name="store_id"]').val();
     let acc2_id = $('select[name="acc2_id"]').val();
     let emp_id = $('select[name="emp_id"]').val();
-    
+
     console.log('🔍 Required fields check:');
     console.log('  - pro_tybe:', pro_tybe);
     console.log('  - store_id:', store_id);
     console.log('  - acc2_id:', acc2_id);
     console.log('  - emp_id:', emp_id);
-    
+
     if (!pro_tybe || pro_tybe == '0') {
         console.error('❌ pro_tybe is missing or zero');
         alert('خطأ: نوع الفاتورة غير محدد');
         return false;
     }
-    
+
     if (!store_id || store_id == '0') {
         console.error('❌ store_id is missing or zero');
         alert('خطأ: يجب اختيار المخزن');
         return false;
     }
-    
+
     if (!acc2_id || acc2_id == '0') {
         console.error('❌ acc2_id is missing or zero');
         alert('خطأ: يجب اختيار العميل');
         return false;
     }
-    
+
     if (!emp_id || emp_id == '0') {
         console.error('❌ emp_id is missing or zero');
         alert('خطأ: يجب اختيار الموظف');
         return false;
     }
-    
+
     console.log('✅ Validation passed - Items found:', items.length);
     return true;
 }
@@ -1831,7 +2119,7 @@ function loadRecentOrders() {
         dataType: 'json',
         success: function(response) {
             console.log('AJAX Response:', response);
-            
+
             if (response.success && response.orders && response.orders.length > 0) {
                 let html = '';
                 response.orders.forEach((order, index) => {
@@ -1896,7 +2184,7 @@ function loadRecentOrders() {
             console.error('Error loading recent orders:', error);
             console.error('XHR status:', xhr.status);
             console.error('Response text:', xhr.responseText);
-            
+
             $('#recentOrdersList').html(`
                 <tr>
                     <td colspan="8" class="text-center py-5 text-danger">

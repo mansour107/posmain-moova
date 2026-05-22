@@ -37,10 +37,12 @@ try {
     $tables = [];
     if ($result) {
         while ($row = $result->fetch_assoc()) {
-            $tableCase = (int) ($row['has_active_order'] ?? 0);
+            $activeOrderCase = (int) ($row['has_active_order'] ?? 0);
+            $storedTableCase = (int) ($row['table_case'] ?? 0);
+            $tableCase = $activeOrderCase || $storedTableCase ? 1 : 0;
             $tableId = (int) ($row['id'] ?? 0);
 
-            if ($tableId > 0 && $tableCase !== (int) ($row['table_case'] ?? 0)) {
+            if ($tableId > 0 && $activeOrderCase === 1 && $storedTableCase !== 1) {
                 $updateStmt = $conn->prepare("UPDATE tables SET table_case = ? WHERE id = ?");
                 $updateStmt->bind_param("ii", $tableCase, $tableId);
                 $updateStmt->execute();
@@ -59,7 +61,7 @@ try {
             $row['table_case'] = $tableCase;
             $row['order_id'] = isset($row['order_id']) ? (int) $row['order_id'] : null;
             $row['fat_net'] = isset($row['fat_net']) ? (float) $row['fat_net'] : 0;
-            $row['has_active_order'] = $tableCase;
+            $row['has_active_order'] = $activeOrderCase;
             $tables[] = $row;
         }
     }

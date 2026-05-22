@@ -102,6 +102,7 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                                 </button>
                                 <input type="hidden" id="selected_table_id" name="table_id" value="0">
                                 <input type="hidden" id="selected_table_name" name="table_name" value="">
+                                <input type="hidden" id="selected_table_case" name="selected_table_case" value="0">
                                 <input type="hidden" id="selected_order_id" name="selected_order_id" value="">
                             </div>
 
@@ -278,9 +279,9 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                                         <?php
                                         if (isset($_GET['edit'])){
                                             $id = $_GET['edit'];
-                                            $sqldet = "SELECT fd.*, m.iname as item_name, m.barcode 
-                                                      FROM fat_details fd 
-                                                      LEFT JOIN myitems m ON m.id = fd.item_id 
+                                            $sqldet = "SELECT fd.*, m.iname as item_name, m.barcode
+                                                      FROM fat_details fd
+                                                      LEFT JOIN myitems m ON m.id = fd.item_id
 	                                                      WHERE fd.fatid = $id AND fd.isdeleted = 0";
                                             $resdet = $conn->query($sqldet);
                                             $x = 0;
@@ -484,7 +485,7 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                                     echo '<button type="button" class="btn btn-primary btn-sm category-btn active" data-category="all">
                                             <i class="fas fa-th me-1"></i>الكل
                                           </button>';
-                                    
+
                                     while ($rowcategory = $rescategories->fetch_assoc()) {
                                         $categoryId = isset($rowcategory['id']) ? $rowcategory['id'] : '';
                                         $categoryName = isset($rowcategory['gname']) ? htmlspecialchars($rowcategory['gname']) : '';
@@ -525,7 +526,7 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                                 <?php
                             // استعلام مع join للحصول على الصورة من جدول imgs
                             $sqlitems = "SELECT m.*, i.iname as img_filename
-                                        FROM myitems m 
+                                        FROM myitems m
                                         LEFT JOIN (
                                             SELECT itemid, MIN(id) AS image_id
                                             FROM imgs
@@ -533,11 +534,11 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                                             GROUP BY itemid
                                         ) image_pick ON image_pick.itemid = m.id
                                         LEFT JOIN imgs i ON i.id = image_pick.image_id
-                                        WHERE m.isdeleted = 0 
+                                        WHERE m.isdeleted = 0
                                         ORDER BY COALESCE(m.salesqty, 0) DESC, m.iname
                                         LIMIT {$initialPosItemsLimit}";
                             $resitems = $conn->query($sqlitems);
-                            
+
                             if ($resitems && $resitems->num_rows > 0) {
                                 while ($rowitem = $resitems->fetch_assoc()) {
                                     echo pos_render_item_card($rowitem);
@@ -571,6 +572,18 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                 </div>
                 <div class="modal-body pos-payment-modal-body">
                     <div class="row g-3 pos-payment-grid">
+                        <div class="col-12 pos-empty-table-option">
+                            <div class="card border-secondary">
+                                <div class="card-body py-2">
+                                    <div class="form-check form-switch mb-0">
+                                        <input class="form-check-input" type="checkbox" id="pos_empty_table_after_payment" checked>
+                                        <label class="form-check-label fw-bold" for="pos_empty_table_after_payment">
+                                            إفراغ الطاولة
+                                        </label>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
                         <!-- الإجمالي -->
                         <div class="col-12 pos-payment-total-section">
                             <div class="card bg-light">
@@ -604,7 +617,7 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                                             <div class="input-group">
                                                 <input class="form-control text-center" type="number"
                                                     id="modal_discperc" value="0" min="0" max="100" step="0.1">
-                                              
+
                                             </div>
                                         </div>
                                         <div class="col-6">
@@ -612,7 +625,7 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                                             <div class="input-group">
                                                 <input class="form-control text-center" type="number"
                                                     id="modal_discount" value="0" step="0.01">
-                                                
+
                                             </div>
                                         </div>
                                     </div>
@@ -664,7 +677,7 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                                                     <div>
                                                         <label class="form-label fw-bold">المبلغ المدفوع كاش</label>
                                                         <div class="input-group input-group-lg">
-                                                            <input class="form-control text-center fw-bold" type="number" 
+                                                            <input class="form-control text-center fw-bold" type="number"
                                                                    id="modal_paid_cash" value="0.00" step="0.01" min="0">
                                                             <span class="input-group-text">ج.م</span>
                                                         </div>
@@ -691,7 +704,7 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                                                     <div>
                                                         <label class="form-label fw-bold">المبلغ المدفوع صرافة</label>
                                                         <div class="input-group input-group-lg">
-                                                            <input class="form-control text-center fw-bold" type="number" 
+                                                            <input class="form-control text-center fw-bold" type="number"
                                                                    id="modal_paid_bank" value="0.00" step="0.01" min="0">
                                                             <span class="input-group-text">ج.م</span>
                                                         </div>
@@ -706,7 +719,7 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                                                 <div class="row align-items-center">
                                                     <div class="col-6">
                                                         <h6 class="mb-0">
-                                                            <i class="fas fa-exclamation-triangle me-2"></i>الباقي 
+                                                            <i class="fas fa-exclamation-triangle me-2"></i>الباقي
                                                         </h6>
                                                     </div>
                                                     <div class="col-6 text-end">
@@ -719,11 +732,45 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                                 </div>
                             </div>
                         </div>
+                        <div class="col-12 pos-payment-split-section">
+                            <div class="card border-warning">
+                                <div class="card-header bg-warning bg-opacity-10">
+                                    <div class="form-check form-switch mb-0">
+                                        <input class="form-check-input" type="checkbox" id="pos_split_payment_enabled">
+                                        <label class="form-check-label fw-bold text-warning-emphasis" for="pos_split_payment_enabled">
+                                            سداد أصناف محددة
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="card-body p-2" id="pos_split_payment_panel" style="display: none;">
+                                    <div class="table-responsive">
+                                        <table class="table table-sm align-middle mb-2">
+                                            <thead>
+                                                <tr>
+                                                    <th style="width: 42px;"></th>
+                                                    <th>الصنف</th>
+                                                    <th style="width: 110px;">الكمية</th>
+                                                    <th style="width: 110px;">القيمة</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody id="pos_split_payment_rows"></tbody>
+                                        </table>
+                                    </div>
+                                    <div class="d-flex justify-content-between align-items-center border-top pt-2">
+                                        <span class="fw-bold">إجمالي المحدد</span>
+                                        <strong class="text-success" id="pos_split_payment_total">0.00 ج.م</strong>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
                         <i class="fas fa-times me-1"></i>إلغاء
+                    </button>
+                    <button type="button" class="btn btn-warning pos-split-pay-confirm-btn" onclick="submitPOS('split_cash');" style="display: none;">
+                        <i class="fas fa-receipt me-1"></i>دفع المحدد وطباعة
                     </button>
                     <button type="button" class="btn btn-primary pos-pay-confirm-btn" onclick="submitPOS('cash');">
                         <i class="fas fa-receipt me-1"></i>دفع وطباعة
@@ -840,7 +887,7 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                         <h5>هل أنت متأكد من إغلاق الشيفت؟</h5>
                         <p class="text-muted">سيتم حساب إجمالي مبيعاتك وإغلاق الشيفت نهائياً</p>
                     </div>
-                    
+
                     <!-- معاينة سريعة للمبيعات -->
                     <div class="card border-primary mb-3">
                         <div class="card-header bg-primary text-white">
@@ -855,7 +902,7 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                             </div>
                         </div>
                     </div>
-                    
+
                     <!-- بيانات إغلاق الشيفت -->
                     <div class="card border-secondary mb-3">
                         <div class="card-header bg-secondary text-white">
@@ -886,7 +933,7 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                             </div>
                         </div>
                     </div>
-                    
+
 
                 </div>
                 <div class="modal-footer">
@@ -899,7 +946,7 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                     <button type="button" class="btn btn-success" onclick="printShiftSalesReport()">
                         <i class="fas fa-user me-1"></i> طباعة  مبيعاتي
                     </button>
-                   
+
                     <button type="button" class="btn btn-warning" onclick="closeShift()">
                         <i class="fas fa-power-off me-1"></i>إغلاق الشيفت
                     </button>
@@ -965,13 +1012,13 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
     <script src="js/pos_offline_adapter.js?v=<?= (int) (@filemtime(__DIR__ . '/../js/pos_offline_adapter.js') ?: 1) ?>"></script>
     <?php endif; ?>
     <script src="js/pos_barcode.js?v=<?= (int) (@filemtime(__DIR__ . '/../js/pos_barcode.js') ?: 1) ?>"></script>
-    
+
     <?php if ($legacyOfflinePrototypeEnabled): ?>
     <script>
         // تفعيل النظام الأوفلاين فور تحميل الصفحة
         $(document).ready(function() {
             console.log('🚀 Starting POS Offline System...');
-            
+
             // التحقق من حالة الاتصال
             if (!navigator.onLine) {
                 console.log('📴 Device is offline - Offline mode activated');
@@ -988,13 +1035,13 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
             console.log('Opening daily sales report...');
             window.open('print/daily_sales_receipt.php', '_blank');
         }
-        
+
         // دالة طباعة تقرير مبيعات الشيفت الشخصية
         function printShiftSalesReport() {
             console.log('Opening shift sales report...');
             window.open('print/shift_sales_receipt.php', '_blank');
         }
-        
+
         // كود البحث المباشر
         $(document).ready(function () {
             console.log('Search script loaded');
@@ -1022,15 +1069,15 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                 const cash = $('#shift_cash').val() || 0;
                 const fundAfter = $('#shift_fund_after').val() || 0;
                 const notes = $('#shift_notes').val() || '';
-                
+
                 console.log('Shift data:', { expenses, expNotes, cash, fundAfter, notes });
-                
+
                 // إنشاء form وإرسال البيانات
                 const form = $('<form>', {
                     method: 'POST',
                     action: 'close_shift.php'
                 });
-                
+
                 form.append($('<input>', { type: 'hidden', name: 'expenses', value: expenses }));
                 form.append($('<input>', { type: 'hidden', name: 'exp_notes', value: expNotes }));
                 form.append($('<input>', { type: 'hidden', name: 'cash', value: cash }));
@@ -1039,16 +1086,16 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                 if (window.POSMAIN_SHIFT_CSRF_TOKEN) {
                     form.append($('<input>', { type: 'hidden', name: 'csrf_token', value: window.POSMAIN_SHIFT_CSRF_TOKEN }));
                 }
-                
+
                 $('body').append(form);
                 form.submit();
             };
-            
+
             // تحميل معاينة المبيعات عند فتح modal إغلاق الشيفت
             $('#closeShiftModal').on('show.bs.modal', function () {
                 loadShiftPreview();
             });
-            
+
             function loadShiftPreview() {
                 $.ajax({
                     url: 'do/get_shift_preview.php',
@@ -1057,7 +1104,7 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                         try {
                             // If data is object, use it directly, otherwise parse it
                             var response = (typeof data === 'object') ? data : JSON.parse(data);
-                            
+
                             if (response.success) {
                                 var html = `
                                     <div class="row">
@@ -1085,7 +1132,7 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                         } catch (e) {
                             console.error('Error parsing shift preview:', e);
                             console.error('Raw response:', data);
-                            
+
                             // Show a snippet of the raw response to help debugging
                             var snippet = (typeof data === 'string') ? data.substring(0, 100) : 'Invalid Data';
                             $('#shiftPreview').html(`
@@ -1119,13 +1166,13 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
             // البحث الديناميكي عن العملاء
             let searchTimeout;
             let lastSearchedPhone = '';
-            
+
             $('#customer_phone').on('input', function() {
                 const phone = $(this).val().trim();
-                
+
                 // إزالة الألوان عند بدء الكتابة
                 $(this).removeClass('border-success border-info border-danger border-warning');
-                
+
                 // مسح النتائج السابقة إذا كان الرقم أقل من 3 أرقام
                 if (phone.length < 3) {
                     $('#customer_result').html('');
@@ -1134,15 +1181,15 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                     lastSearchedPhone = '';
                     return;
                 }
-                
+
                 // تجنب البحث المتكرر عن نفس الرقم
                 if (phone === lastSearchedPhone) {
                     return;
                 }
-                
+
                 // إلغاء البحث السابق
                 clearTimeout(searchTimeout);
-                
+
                 // بدء البحث بعد 500ms من التوقف عن الكتابة
                 searchTimeout = setTimeout(function() {
                     if (phone.length >= 3 && phone !== lastSearchedPhone) {
@@ -1155,7 +1202,7 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
             function searchCustomerDynamic(phone) {
                 // إضافة مؤشر بصري لحقل الإدخال
                 $('#customer_phone').addClass('border-warning').attr('placeholder', 'جاري البحث...');
-                
+
                 // عرض مؤشر التحميل
                 $('#customer_result').html(`
                     <div class="text-center py-2">
@@ -1172,10 +1219,10 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                     data: { phone: phone },
                     success: function (data) {
                         console.log('Dynamic search response:', data);
-                        
+
                         // إزالة مؤشر البحث
                         $('#customer_phone').removeClass('border-warning').attr('placeholder', 'أدخل رقم العميل (البحث يبدأ بعد 3 أرقام)');
-                        
+
                         try {
                             var response = JSON.parse(data);
                             if (response.found) {
@@ -1229,7 +1276,7 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                     });
                     return;
                 }
-                
+
                 if (phone.length < 3) {
                     Swal.fire({
                         icon: 'warning',
@@ -1238,7 +1285,7 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                     });
                     return;
                 }
-                
+
                 searchCustomerDynamic(phone);
             };
 
@@ -1433,7 +1480,7 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
     }
 
     function ensureFormIdempotencyKey(form, action) {
-        const scope = action === 'save' ? 'pos.order.save' : 'pos.order.pay';
+        const scope = action === 'save' ? 'pos.order.save' : (action === 'free_table' ? 'pos.table.free' : 'pos.order.pay');
         let keyInput = form.querySelector('input[name="idempotency_key"]');
         if (!keyInput) {
             keyInput = document.createElement('input');
@@ -1452,7 +1499,7 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
 
     window.submitPOS = function(action) {
         console.log('✅ submitPOS (Inline Override) called with action:', action);
-        
+
         const form = document.getElementById('posForm');
         if (!form) {
             console.error('❌ Form with id "posForm" not found!');
@@ -1463,16 +1510,31 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
             });
             return false;
         }
-        
-        if (typeof validatePOSForm === 'function' && !validatePOSForm()) {
+
+        const isFreeTableOnly = action === 'free_table';
+        if (isFreeTableOnly && typeof window.POSMainIsHeldTableWithoutActiveOrder === 'function' && !window.POSMainIsHeldTableWithoutActiveOrder()) {
+            Swal.fire({
+                icon: 'warning',
+                title: 'تنبيه',
+                text: 'إفراغ الطاولة متاح فقط لطاولة مشغولة بدون طلب مفتوح'
+            });
             return false;
         }
-        
+
+	        if (!isFreeTableOnly && typeof validatePOSForm === 'function' && !validatePOSForm()) {
+	            return false;
+	        }
+
+        if (action === 'cash' && $('#pos_split_payment_enabled').prop('checked')) {
+            action = 'split_cash';
+        }
+
         // جمع بيانات الدفع
         const isSaveOnly = action === 'save';
+        const isSplitLinePayment = action === 'split_cash';
         let paidCash = parseFloat($('#modal_paid_cash').val()) || 0;
         let paidBank = parseFloat($('#modal_paid_bank').val()) || 0;
-        if (isSaveOnly) {
+        if (isSaveOnly || isFreeTableOnly) {
             paidCash = 0;
             paidBank = 0;
         }
@@ -1482,7 +1544,7 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
         let fundId = $('#payment_fund_id').val();
         let bankId = $('#payment_bank_id').val();
         let net = parseFloat($('#net_val').val()) || 0;
-        
+
         console.log('=== INLINE PAYMENT DATA DEBUG ===');
         console.log('modal_paid_cash value:', $('#modal_paid_cash').val());
         console.log('modal_paid_bank value:', $('#modal_paid_bank').val());
@@ -1496,9 +1558,9 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
             net: net
         });
         console.log('==================================');
-        
+
         // التحقق من صحة البيانات
-        if (!isSaveOnly && net > 0 && paidCash + paidBank <= 0) {
+        if (!isSaveOnly && !isFreeTableOnly && !isSplitLinePayment && net > 0 && paidCash + paidBank <= 0) {
             Swal.fire({
                 icon: 'warning',
                 title: 'تنبيه',
@@ -1507,7 +1569,7 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
             return false;
         }
 
-        if (!isSaveOnly && paidCash > 0 && (!fundId || fundId == '0')) {
+        if (!isSaveOnly && !isFreeTableOnly && paidCash > 0 && (!fundId || fundId == '0')) {
             Swal.fire({
                 icon: 'warning',
                 title: 'تنبيه',
@@ -1515,8 +1577,8 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
             });
             return false;
         }
-        
-        if (!isSaveOnly && paidBank > 0 && (!bankId || bankId == '0' || bankId == '')) {
+
+        if (!isSaveOnly && !isFreeTableOnly && paidBank > 0 && (!bankId || bankId == '0' || bankId == '')) {
             Swal.fire({
                 icon: 'warning',
                 title: 'تنبيه',
@@ -1524,7 +1586,20 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
             });
             return false;
         }
-        
+
+        if (isSplitLinePayment && typeof window.POSMainPrepareSplitPaymentFields === 'function') {
+            if (!window.POSMainPrepareSplitPaymentFields(form, {
+                paidCash: paidCash,
+                paidBank: paidBank,
+                fundId: fundId,
+                bankId: bankId
+            })) {
+                return false;
+            }
+            paidCash = parseFloat($('#modal_paid_cash').val()) || 0;
+            paidBank = parseFloat($('#modal_paid_bank').val()) || 0;
+        }
+
         // إضافة حقول الدفع المخفية
         let paidCashInput = form.querySelector('input[name="paid_cash"]');
         if (!paidCashInput) {
@@ -1573,6 +1648,15 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
         }
         paidInput.value = totalPaid;
 
+        let emptyTableInput = form.querySelector('input[name="empty_table_after_payment"]');
+        if (!emptyTableInput) {
+            emptyTableInput = document.createElement('input');
+            emptyTableInput.type = 'hidden';
+            emptyTableInput.name = 'empty_table_after_payment';
+            form.appendChild(emptyTableInput);
+        }
+        emptyTableInput.value = $('#pos_empty_table_after_payment').prop('checked') ? '1' : '0';
+
         // Check for Edit ID
         let editId = $('#edit_order_id').val() || $('#selected_order_id').val();
         if (editId) {
@@ -1594,20 +1678,20 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
 
         const existingSubmits = form.querySelectorAll('input[name="submit"]');
         existingSubmits.forEach(input => input.remove());
-        
+
         const submitInput = document.createElement('input');
         submitInput.type = 'hidden';
         submitInput.name = 'submit';
         submitInput.value = action;
         form.appendChild(submitInput);
         ensureFormIdempotencyKey(form, action);
-        
+
         let saveBtn = $(".pos-save-order-btn");
         let printBtn = $(".pos-pay-confirm-btn");
-        
+
         if (saveBtn.length > 0) saveBtn.prop('disabled', true).html('<i class="fas fa-spinner fa-spin"></i> جاري الحفظ...');
         if (printBtn.length > 0) printBtn.prop('disabled', true).html('<i class="fas fa-spinner fa-spin"></i> جاري الدفع...');
-        
+
         $('#paymentModal').modal('hide');
         HTMLFormElement.prototype.submit.call(form);
         return true;
@@ -1731,7 +1815,7 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
 
             function loadRecentOrders() {
                 $('#recentOrdersList').html('<tr><td colspan="8" class="text-center py-5"><div class="spinner-border text-primary" role="status"></div><p class="mt-2">جاري تحميل الطلبات...</p></td></tr>');
-                
+
 	                $.ajax({
 	                    url: 'ajax/get_recent_orders.php',
 	                    method: 'GET',
@@ -1758,7 +1842,7 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                                     response.orders.forEach(function(order, index) {
                                         var statusBadge = order.status === 'ملغى' ? 'bg-danger' : 'bg-success';
                                         var typeBadge = order.type === 'دليفري' ? 'bg-info text-dark' : (order.type === 'طاولة' ? 'bg-warning text-dark' : 'bg-secondary');
-                                        
+
                                         html += `
                                             <tr>
                                                 <td>${index + 1}</td>

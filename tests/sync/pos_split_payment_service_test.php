@@ -89,6 +89,40 @@ try {
     $payment = $conn->query("SELECT * FROM order_payments WHERE order_id = {$newOrderId}")->fetch_assoc();
     posSplitPaymentAssert(abs((float) $payment['amount'] - 30.0) < 0.0001, 'child payment row should be inserted');
 
+    $conn->query("INSERT INTO tables (id, tname, table_case, isdeleted) VALUES (2, 'T2', 1, 0)");
+    $conn->query("
+        INSERT INTO ot_head (
+            id, pro_id, branch_id, table_id, order_type, pro_tybe, pro_date, accural_date,
+            store_id, emp_id, emp2_id, acc1, acc2, pro_value, fat_total, fat_disc,
+            fat_net, paid_amount, remaining_amount, payment_status, invoice_status,
+            order_status, isdeleted, tenant, branch
+        ) VALUES (
+            200, 12, 0, 2, 'table', 9, '2026-05-12', '2026-05-12',
+            3, 4, 4, 51, 501, 10, 10, 0,
+            10, 0, 10, 'unpaid', 'draft',
+            'active', 0, 0, 0
+        )
+    ");
+    $conn->query("
+        INSERT INTO fat_details (
+            id, pro_tybe, det_store, pro_id, item_id, u_val, qty_in, qty_out,
+            price, cost_price, stock_value, discount, plus, det_value,
+            profit, fatid, fat_tybe, tenant, branch, isdeleted
+        ) VALUES
+            (2000, 9, 3, 200, 12, 1, 0, 3, 3.3333, 1, 0, 0, 0, 10, 7, 200, 9, 0, 0, 0)
+    ");
+
+    $roundingSplit = $service->splitTablePayment($conn, [
+        'order_id' => 200,
+        'table_id' => 2,
+        'items' => [
+            ['detail_id' => 2000, 'qty' => 1],
+        ],
+        'paid_amount' => 3.33,
+        'payment_method' => 'cash',
+    ], ['user_id' => 7]);
+    posSplitPaymentAssert($roundingSplit['success'] === true, 'split should accept cashier cent-rounded partial item amounts');
+
     echo "pos-split-payment-service-ok db={$db}\n";
 } finally {
     $conn->query("DROP DATABASE IF EXISTS `{$db}`");

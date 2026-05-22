@@ -71,10 +71,17 @@ $fund_id = isset($_POST['fund_id']) ? intval($_POST['fund_id']) : 0;
 $info = isset($_POST['info']) ? htmlspecialchars(trim($_POST['info']), ENT_QUOTES, 'UTF-8') : '';
 $submit = isset($_POST['submit_action']) ? htmlspecialchars($_POST['submit_action'], ENT_QUOTES, 'UTF-8') : (isset($_POST['submit']) ? htmlspecialchars($_POST['submit'], ENT_QUOTES, 'UTF-8') : 'save');
 $is_save_only = ($submit === 'save');
+$is_split_line_payment = ($submit === 'split_cash');
+$is_free_table_only = ($submit === 'free_table');
+$empty_table_after_payment = !isset($_POST['empty_table_after_payment']) || (string) $_POST['empty_table_after_payment'] !== '0';
+$split_receipt_order_id = 0;
 $jal_name = isset($_POST['jal_name']) ? htmlspecialchars(trim($_POST['jal_name']), ENT_QUOTES, 'UTF-8') : NULL;
 $jal_notes = isset($_POST['jal_notes']) ? htmlspecialchars(trim($_POST['jal_notes']), ENT_QUOTES, 'UTF-8') : NULL;
 $jal_amount = isset($_POST['jal_amount']) ? floatval($_POST['jal_amount']) : 0;
 $tableOrderService = new TableOrderService();
+$pos_split_payment_rows = $is_split_line_payment
+    ? posmainInvoiceDecodeSplitRows($_POST['pos_split_payment_payload'] ?? '')
+    : [];
 
 // معالجة الدفع المقسم (كاش + صرافة)
 $paid_cash = isset($_POST['paid_cash']) ? floatval($_POST['paid_cash']) : 0;
@@ -128,6 +135,38 @@ if ($order_type_db === 'table') {
     }
 }
 
+if ($is_free_table_only) {
+    if ($order_type_db !== 'table' || $table_id <= 0) {
+        die('خطأ: يجب اختيار طاولة لإفراغها');
+    }
+
+    try {
+        if (!$tableOrderService->setTableFreeIfNoActiveOrder($conn, $table_id)) {
+            die('خطأ: لا يمكن إفراغ الطاولة لأن عليها طلب مفتوح');
+        }
+        try {
+            $syncOutbox = new SyncOutboxEventService();
+            $syncOutbox->recordTableSnapshot($conn, $table_id, [
+                'event_type' => 'table.updated',
+                'source_system' => 'pos_cashier_empty_table',
+                'active_order_id' => null,
+            ]);
+        } catch (Throwable $syncException) {
+            error_log('POS empty table sync snapshot failed: ' . $syncException->getMessage());
+        }
+        header('Location: ../pos_barcode.php');
+        exit;
+    } catch (Throwable $exception) {
+        posmain_browser_exception_response(
+            $exception,
+            'حدث خطأ أثناء إفراغ الطاولة، يرجى المحاولة مرة أخرى أو التواصل مع الدعم',
+            500,
+            true,
+            'invoice_empty_table'
+        );
+    }
+}
+
 // إضافة بيانات العميل للدليفري
 if ($order_type_db === 'delivery') { // دليفري
     $delivery_name = isset($_POST['delivery_customer_name']) ? htmlspecialchars(trim($_POST['delivery_customer_name']), ENT_QUOTES, 'UTF-8') : '';
@@ -162,6 +201,8 @@ if ($is_save_only) {
     $paid = 0;
     $paid_cash = 0;
     $paid_bank = 0;
+} elseif ($is_split_line_payment) {
+    $paid = 0;
 }
 
 // التحقق من صحة البيانات الأساسية
@@ -187,6 +228,21 @@ if (isset($_POST['itmname'])) {
 if (!isset($_POST['itmname']) || !is_array($_POST['itmname']) || empty(array_filter($_POST['itmname']))) {
     error_log('VALIDATION FAILED: No items in order');
     die('خطأ: يجب إضافة صنف واحد على الأقل');
+}
+
+if ($is_split_line_payment) {
+    if ($order_type_db !== 'table') {
+        die('خطأ: سداد أصناف محددة متاح لطلبات الطاولات فقط');
+    }
+    if (!$pos_split_payment_rows) {
+        die('خطأ: يجب اختيار صنف واحد على الأقل للسداد');
+    }
+    if ($paid_cash > 0 && $paid_bank > 0) {
+        die('خطأ: سداد الأصناف المحددة يستخدم طريقة دفع واحدة في كل مرة');
+    }
+    if (($paid_cash + $paid_bank) <= 0) {
+        die('خطأ: يجب إدخال مبلغ الدفع قبل تأكيد الدفع');
+    }
 }
 
 /**
@@ -425,6 +481,138 @@ function posmainInvoiceTableExists(mysqli $conn, string $tableName): bool
     return $result && $result->num_rows > 0;
 }
 
+function posmainInvoiceDecodeSplitRows($rawPayload): array
+{
+    $decoded = is_string($rawPayload) && trim($rawPayload) !== ''
+        ? json_decode($rawPayload, true)
+        : [];
+    if (!is_array($decoded)) {
+        return [];
+    }
+
+    $rows = [];
+    foreach ($decoded as $row) {
+        if (!is_array($row)) {
+            continue;
+        }
+        $rowIndex = isset($row['row_index']) ? (int) $row['row_index'] : -1;
+        $qty = isset($row['qty']) ? (float) $row['qty'] : 0.0;
+        if ($rowIndex < 0 || $qty <= 0) {
+            continue;
+        }
+        if (!isset($rows[$rowIndex])) {
+            $rows[$rowIndex] = 0.0;
+        }
+        $rows[$rowIndex] += $qty;
+    }
+
+    return $rows;
+}
+
+function posmainInvoiceDistributeHeaderDiscountAcrossDetails(mysqli $conn, int $orderId, float $discount): array
+{
+    if ($orderId <= 0 || $discount <= 0) {
+        return ['total' => 0.0, 'net' => 0.0, 'discount' => 0.0, 'profit' => 0.0];
+    }
+
+    $stmt = $conn->prepare("
+        SELECT id, qty_in, qty_out, discount, det_value, profit
+        FROM fat_details
+        WHERE fatid = ?
+          AND isdeleted = 0
+        ORDER BY id ASC
+        FOR UPDATE
+    ");
+    $stmt->bind_param('i', $orderId);
+    $stmt->execute();
+    $result = $stmt->get_result();
+
+    $details = [];
+    $grossTotal = 0.0;
+    while ($row = $result->fetch_assoc()) {
+        $row['det_value'] = (float) ($row['det_value'] ?? 0);
+        $grossTotal += max(0, $row['det_value']);
+        $details[] = $row;
+    }
+    $stmt->close();
+
+    if (!$details || $grossTotal <= 0) {
+        return ['total' => $grossTotal, 'net' => $grossTotal, 'discount' => 0.0, 'profit' => 0.0];
+    }
+
+    $discount = min(max(0, $discount), $grossTotal);
+    if ($discount <= 0) {
+        return ['total' => $grossTotal, 'net' => $grossTotal, 'discount' => 0.0, 'profit' => 0.0];
+    }
+
+    $update = $conn->prepare("
+        UPDATE fat_details
+        SET discount = ?,
+            det_value = ?,
+            profit = ?
+        WHERE id = ?
+          AND fatid = ?
+    ");
+
+    $remainingDiscount = $discount;
+    $lastIndex = count($details) - 1;
+    $netTotal = 0.0;
+    $profitTotal = 0.0;
+    foreach ($details as $index => $detail) {
+        $lineGross = max(0, (float) $detail['det_value']);
+        if ($index === $lastIndex) {
+            $lineDiscount = $remainingDiscount;
+        } else {
+            $lineDiscount = round($discount * ($lineGross / $grossTotal), 4);
+            $lineDiscount = min($lineDiscount, $remainingDiscount);
+        }
+        $remainingDiscount = max(0, $remainingDiscount - $lineDiscount);
+
+        $qtyBasis = abs((float) ($detail['qty_out'] ?? 0) - (float) ($detail['qty_in'] ?? 0));
+        if ($qtyBasis <= 0) {
+            $qtyBasis = max(1.0, abs((float) ($detail['qty_out'] ?? 0)), abs((float) ($detail['qty_in'] ?? 0)));
+        }
+
+        $newLineDiscount = (float) ($detail['discount'] ?? 0) + ($lineDiscount / $qtyBasis);
+        $newValue = max(0, $lineGross - $lineDiscount);
+        $newProfit = (float) ($detail['profit'] ?? 0) - $lineDiscount;
+        $detailId = (int) $detail['id'];
+
+        $update->bind_param('dddii', $newLineDiscount, $newValue, $newProfit, $detailId, $orderId);
+        if (!$update->execute()) {
+            throw new Exception('فشل في توزيع الخصم على تفاصيل الطلب');
+        }
+
+        $netTotal += $newValue;
+        $profitTotal += $newProfit;
+    }
+    $update->close();
+
+    $stmt = $conn->prepare("
+        UPDATE ot_head
+        SET pro_value = ?,
+            fat_total = ?,
+            fat_disc = 0,
+            fat_disc_per = 0,
+            fat_net = ?,
+            profit = ?,
+            remaining_amount = GREATEST(0, ? - paid_amount)
+        WHERE id = ?
+    ");
+    $stmt->bind_param('dddddi', $netTotal, $netTotal, $netTotal, $profitTotal, $netTotal, $orderId);
+    if (!$stmt->execute()) {
+        throw new Exception('فشل في تحديث إجمالي الطلب بعد توزيع الخصم');
+    }
+    $stmt->close();
+
+    return [
+        'total' => $grossTotal,
+        'net' => $netTotal,
+        'discount' => $discount,
+        'profit' => $profitTotal,
+    ];
+}
+
 function posmainInvoiceLineNoteServiceTablesAvailable(mysqli $conn): bool
 {
     foreach (['order_line_notes', 'order_line_modifiers', 'item_modifier_groups', 'modifier_groups', 'modifier_options'] as $tableName) {
@@ -509,6 +697,8 @@ try {
     $counterService = new DocumentCounterService();
     $lineNoteService = new ModifierLineNoteService();
     $pro_id = null;
+    $insertedDetailIdsByPostIndex = [];
+    $splitPaymentResult = null;
 
     $edit_id = isset($_REQUEST['edit_id']) ? intval($_REQUEST['edit_id']) : 0;
     if ($order_type_db === 'table' && $selected_order_id > 0) {
@@ -640,7 +830,7 @@ try {
 	    }
 
         $statusPaidAmount = max(0, $paid_cash + $paid_bank);
-        if ($order_type_db === 'table' && $submit === 'save') {
+        if ($order_type_db === 'table' && ($submit === 'save' || $is_split_line_payment)) {
             $statusPaidAmount = $lockedTableOrder ? (float) ($lockedTableOrder['paid_amount'] ?? 0) : 0;
         }
         $statusPaidAmount = min($statusPaidAmount, max(0, $headnet));
@@ -721,7 +911,7 @@ try {
         $stmt_structured->close();
 
     // إنشاء القيود المحاسبية (فقط للفواتير الفعلية، ليس للأوامر أو العروض)
-    $should_create_payment_vouchers = !$is_save_only;
+    $should_create_payment_vouchers = !$is_save_only && !$is_split_line_payment;
     if ($should_create_payment_vouchers && !in_array($pro_tybe, [INVOICE_TYPES['PURCHASE_ORDER'], INVOICE_TYPES['SALES_ORDER'], INVOICE_TYPES['OFFER']])) {
         $journal_id = nextLegacyInvoiceJournalId($conn, $counterService);
 
@@ -1068,12 +1258,14 @@ try {
             if (!$stmt_details->execute()) {
                 throw new Exception('فشل في إدخال تفاصيل الصنف ' . $itmname);
             }
+            $insertedDetailId = (int) $conn->insert_id;
+            $insertedDetailIdsByPostIndex[(int) $index] = $insertedDetailId;
 
             posmainInvoicePersistKitchenLineNote(
                 $conn,
                 $lineNoteService,
                 (int) $last_op,
-                (int) $conn->insert_id,
+                $insertedDetailId,
                 (int) $itmname,
                 $line_note,
                 (int) $usid
@@ -1086,8 +1278,8 @@ try {
         $stmt_update->close();
     }
     // تحديث إجمالي الأرباح للمبيعات
-	    if(in_array($pro_tybe, [INVOICE_TYPES['SALES'], INVOICE_TYPES['POS'], INVOICE_TYPES['OFFER']])) {
-	        $stmt = $conn->prepare("SELECT SUM(profit) AS tprofit FROM fat_details WHERE fatid = ?");
+    if(in_array($pro_tybe, [INVOICE_TYPES['SALES'], INVOICE_TYPES['POS'], INVOICE_TYPES['OFFER']])) {
+        $stmt = $conn->prepare("SELECT SUM(profit) AS tprofit FROM fat_details WHERE fatid = ?");
         $stmt->bind_param("i", $last_op);
         $stmt->execute();
         $result = $stmt->get_result();
@@ -1098,32 +1290,90 @@ try {
         // تحديث رقم الربح في رأس الفاتورة
         $stmt = $conn->prepare("UPDATE ot_head SET profit = ? WHERE id = ?");
         $stmt->bind_param("ss", $ot_profit, $last_op);
-	        $stmt->execute();
-	        $stmt->close();
-	    }
+        $stmt->execute();
+        $stmt->close();
+    }
 
-        if ($order_type_db === 'table') {
-            if ($order_status_db === 'active' && in_array($payment_status_db, ['unpaid', 'partial'], true)) {
-                $tableOrderService->markTableOccupied($conn, $table_id);
-            } else {
-                $tableOrderService->setTableFreeIfNoActiveOrder($conn, $table_id);
+    if ($is_split_line_payment && $headdisc > 0) {
+        $discountedTotals = posmainInvoiceDistributeHeaderDiscountAcrossDetails(
+            $conn,
+            (int) $last_op,
+            (float) $headdisc
+        );
+        $headdisc = 0;
+        $fat_disc_per = 0;
+        $headtotal = (float) ($discountedTotals['net'] ?? $headtotal);
+        $headnet = (float) ($discountedTotals['net'] ?? $headnet);
+    }
+
+    if ($order_type_db === 'table') {
+        if ($order_status_db === 'active' && in_array($payment_status_db, ['unpaid', 'partial'], true)) {
+            $tableOrderService->markTableOccupied($conn, $table_id);
+        } elseif (!$empty_table_after_payment) {
+            $tableOrderService->markTableOccupied($conn, $table_id);
+        } else {
+            $tableOrderService->setTableFreeIfNoActiveOrder($conn, $table_id);
+        }
+    }
+
+    if ($is_split_line_payment) {
+        $splitItems = [];
+        foreach ($pos_split_payment_rows as $rowIndex => $qty) {
+            $detailId = $insertedDetailIdsByPostIndex[(int) $rowIndex] ?? 0;
+            if ($detailId <= 0) {
+                throw new Exception('تعذر ربط الأصناف المحددة بتفاصيل الطلب');
             }
+            $splitItems[] = [
+                'detail_id' => $detailId,
+                'qty' => (float) $qty,
+            ];
         }
 
-        if ((int) $pro_tybe === INVOICE_TYPES['POS']) {
-            $syncOutbox = new SyncOutboxEventService();
-            $syncOutbox->recordOrderSnapshot($conn, (int) $last_op, [
-                'event_type' => $edit_id > 0 ? 'order.updated' : 'order.saved',
-                'source_system' => 'pos_cashier',
+        $splitPaymentMethod = trim((string) ($_POST['pos_split_payment_method'] ?? ''));
+        if ($splitPaymentMethod === '') {
+            $splitPaymentMethod = $paid_bank > 0 ? 'bank' : 'cash';
+        }
+        $splitPaidAmount = (float) ($paid_cash + $paid_bank);
+        $mutationService = new PosOrderMutationService();
+        $splitPaymentResult = $mutationService->splitTablePayment($conn, [
+            'order_id' => (int) $last_op,
+            'table_id' => (int) $table_id,
+            'items' => $splitItems,
+            'paid_amount' => $splitPaidAmount,
+            'payment_method' => $splitPaymentMethod,
+            'user_id' => (int) $usid,
+        ], [
+            'user_id' => (int) $usid,
+            'in_transaction' => true,
+            'event_source' => 'pos_cashier_split_payment',
+        ]);
+        $split_receipt_order_id = (int) ($splitPaymentResult['data']['new_invoice_id'] ?? 0);
+    }
+
+    if ((int) $pro_tybe === INVOICE_TYPES['POS']) {
+        $syncOutbox = new SyncOutboxEventService();
+        $syncOutbox->recordOrderSnapshot($conn, (int) $last_op, [
+            'event_type' => $is_split_line_payment ? 'order.updated' : ($edit_id > 0 ? 'order.updated' : 'order.saved'),
+            'source_system' => $is_split_line_payment ? 'pos_cashier_split_payment' : 'pos_cashier',
+        ]);
+        if ($is_split_line_payment && $split_receipt_order_id > 0) {
+            $syncOutbox->recordOrderSnapshot($conn, $split_receipt_order_id, [
+                'event_type' => 'order.split_paid',
+                'source_system' => 'pos_cashier_split_payment',
             ]);
-            if ($order_type_db === 'table' && $table_id > 0) {
-                $syncOutbox->recordTableSnapshot($conn, $table_id, [
-                    'event_type' => 'table.updated',
-                    'source_system' => 'pos_cashier',
-                    'active_order_id' => $order_status_db === 'active' ? (int) $last_op : null,
-                ]);
-            }
         }
+        if ($order_type_db === 'table' && $table_id > 0) {
+            $activeOrderId = $order_status_db === 'active' ? (int) $last_op : null;
+            if ($is_split_line_payment && is_array($splitPaymentResult)) {
+                $activeOrderId = $splitPaymentResult['data']['active_order_id'] ?? null;
+            }
+            $syncOutbox->recordTableSnapshot($conn, $table_id, [
+                'event_type' => 'table.updated',
+                'source_system' => $is_split_line_payment ? 'pos_cashier_split_payment' : 'pos_cashier',
+                'active_order_id' => $activeOrderId,
+            ]);
+        }
+    }
 
 	    // إتمام المعاملة
 	    error_log('Committing transaction');
@@ -1189,6 +1439,13 @@ if ($submit == 'print') {
 
     header("Location: $redirect_url");
     error_log('Header sent - this should not appear if redirect works');
+    exit;
+} elseif ($submit == 'split_cash') {
+    error_log('CONDITION MATCHED: submit == split_cash');
+    $receipt_id = $split_receipt_order_id > 0 ? $split_receipt_order_id : $last_op;
+    $redirect_url = "../print/receipt.php?id=$receipt_id";
+    error_log('Redirecting to split receipt: ' . $redirect_url);
+    header("Location: $redirect_url");
     exit;
 } elseif ($submit == 'save') {
     error_log('Redirecting with save action');
