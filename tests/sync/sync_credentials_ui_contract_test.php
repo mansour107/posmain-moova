@@ -16,6 +16,9 @@ syncCredentialsUiAssert(is_string($moovaIntegration), 'moova_integration.php sho
 
 foreach ([
     'إعدادات المزامنة',
+    'data-sync-role="<?= htmlspecialchars($syncRole',
+    '$syncIsHosted = $syncRole === \'cloud\'',
+    '$syncIsLocal = $syncRole === \'branch\'',
     "csrf_input('sync_credentials')",
     'find(\':input\').serializeArray()',
     'loadForUi($conn, true)',
@@ -90,6 +93,10 @@ foreach ([
     'initialLocalSyncSignature',
     'initialCloudSyncSignature',
     'submittingAfterSyncSave',
+    'syncRuntimeRole',
+    'initialBranchRegistrationSignature',
+    "syncRuntimeRole === 'branch'",
+    "syncRuntimeRole === 'cloud'",
     'Sync changes saved. Saving page settings...',
     'Build hosting env values',
     'Enable hosted sync',
@@ -128,6 +135,8 @@ syncCredentialsUiAssert(strpos($setting, "syncSharedIdentityPayload(),") !== fal
 syncCredentialsUiAssert(strpos($setting, "Object.assign(payload, syncConfigKeyPayload())") !== false, 'hosted save/register actions should include the config encryption key');
 syncCredentialsUiAssert(strpos($setting, '#sync-local-section [name="POSMAIN_CLOUD_BASE_URL"]') !== false, 'hosted branch registration should include the existing POSMAIN_CLOUD_BASE_URL value');
 syncCredentialsUiAssert(strpos($setting, "Object.assign(payload, syncDebugPayload())") !== false, 'local save should include hidden debug database credentials');
+syncCredentialsUiAssert(strpos($setting, '<?php if ($syncIsLocal): ?>') !== false, 'local-only sync section should render only on branch/local role');
+syncCredentialsUiAssert(strpos($setting, '<?php if ($syncIsHosted): ?>') !== false, 'hosted-only sync section should render only on cloud/hosted role');
 syncCredentialsUiAssert(strpos($setting, '<div id="sync-debug-panel" class="mt-3" style="display:none;">') !== false, 'debug database tools should be minimized by default');
 syncCredentialsUiAssert(strpos($setting, 'setLocalSyncCoreToggles(localSyncMaster.checked)') !== false, 'local branch sync master should toggle core sync settings together');
 syncCredentialsUiAssert(strpos($setting, 'localSyncAdvanced.style.display') !== false, 'advanced local sync settings should stay hidden until opened');

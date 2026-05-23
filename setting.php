@@ -198,6 +198,12 @@ $syncBranchUuidEffective = $syncEffectiveValue('POSMAIN_BRANCH_UUID', $syncBranc
 $syncCloudBaseUrlEffective = $syncEffectiveValue('POSMAIN_CLOUD_BASE_URL', $syncCloudBaseUrlFallback);
 $syncBranchSecretEffective = $syncSecretEffectiveValue('POSMAIN_BRANCH_SYNC_SECRET', $syncBranchSecretFallback);
 $syncBranchSecretEffectiveConfigured = $syncBranchSecretEffective !== '';
+$syncRole = strtolower(trim($syncEffectiveValue('POSMAIN_ROLE', (string)($appConfig['role'] ?? 'branch'))));
+if (!in_array($syncRole, ['branch', 'cloud'], true)) {
+    $syncRole = 'branch';
+}
+$syncIsHosted = $syncRole === 'cloud';
+$syncIsLocal = $syncRole === 'branch';
 $syncBranches = (new CloudBranchRegistryService())->listBranches($conn);
 $syncCrypto = new SyncRuntimeCrypto();
 $syncConfigEncryptionKeyEffective = $syncCrypto->currentKeyMaterial();
@@ -394,7 +400,7 @@ if ($syncDefaultCloudUrl === '' && !empty($_SERVER['HTTP_HOST'])) {
           </div>
         </div>
 
-        <div class="card card-outline card-teal shadow-sm mb-4" id="sync-credentials-card">
+        <div class="card card-outline card-teal shadow-sm mb-4" id="sync-credentials-card" data-sync-role="<?= htmlspecialchars($syncRole, ENT_QUOTES, 'UTF-8') ?>">
           <div class="card-header">
             <h3 class="card-title"><i class="fas fa-sync-alt ml-2"></i> إعدادات المزامنة</h3>
             <div class="card-tools">
@@ -534,6 +540,7 @@ if ($syncDefaultCloudUrl === '' && !empty($_SERVER['HTTP_HOST'])) {
                 </div>
               </section>
 
+              <?php if ($syncIsLocal): ?>
               <section class="sync-section sync-section-local" id="sync-local-section">
                 <div class="sync-section-header">
                   <div>
@@ -610,8 +617,10 @@ if ($syncDefaultCloudUrl === '' && !empty($_SERVER['HTTP_HOST'])) {
 
                 <span class="sync-action-result text-muted"></span>
               </section>
+              <?php endif; ?>
             </div>
 
+            <?php if ($syncIsHosted): ?>
             <section class="sync-section sync-section-hosted" id="sync-hosted-section">
               <div class="sync-section-header">
                 <div>
@@ -670,6 +679,7 @@ if ($syncDefaultCloudUrl === '' && !empty($_SERVER['HTTP_HOST'])) {
                 </div>
               </div>
             </section>
+            <?php endif; ?>
 
             <section class="sync-section sync-section-debug" id="sync-debug-section">
               <button type="button" class="btn btn-outline-secondary btn-block text-left js-toggle-sync-debug" aria-expanded="false" aria-controls="sync-debug-panel" dir="ltr">
@@ -1129,8 +1139,10 @@ document.addEventListener('DOMContentLoaded', function () {
   const settingsMainForm = document.getElementById('settings-main-form');
   const $syncLocalForm = $('#sync-local-form');
   const $syncCloudForm = $('#sync-cloud-form');
+  const syncRuntimeRole = syncCard.getAttribute('data-sync-role') || 'branch';
   const initialLocalSyncSignature = $syncLocalForm.length ? payloadSignature(formData($syncLocalForm)) : '';
   const initialCloudSyncSignature = $syncCloudForm.length ? payloadSignature(formData($syncCloudForm)) : '';
+  const initialBranchRegistrationSignature = syncBranchRegistrationPayload() ? payloadSignature(syncBranchRegistrationPayload()) : '';
   let submittingAfterSyncSave = false;
 
   if (settingsMainForm) {
@@ -1140,14 +1152,18 @@ document.addEventListener('DOMContentLoaded', function () {
       }
 
       const syncSaves = [];
-      if ($syncLocalForm.length && payloadSignature(formData($syncLocalForm)) !== initialLocalSyncSignature) {
+      if (syncRuntimeRole === 'branch' && $syncLocalForm.length && payloadSignature(formData($syncLocalForm)) !== initialLocalSyncSignature) {
         syncSaves.push({ $form: $syncLocalForm, payload: formData($syncLocalForm), label: 'Local sync settings were saved.' });
       }
-      if ($syncCloudForm.length && payloadSignature(formData($syncCloudForm)) !== initialCloudSyncSignature) {
+      if (syncRuntimeRole === 'cloud' && $syncCloudForm.length && payloadSignature(formData($syncCloudForm)) !== initialCloudSyncSignature) {
         syncSaves.push({ $form: $syncCloudForm, payload: formData($syncCloudForm), label: 'Hosted sync settings were saved.' });
       }
       const branchRegistrationPayload = syncBranchRegistrationPayload();
-      if (syncSaves.length && branchRegistrationPayload) {
+      if (
+        syncRuntimeRole === 'cloud'
+        && branchRegistrationPayload
+        && payloadSignature(branchRegistrationPayload) !== initialBranchRegistrationSignature
+      ) {
         syncSaves.push({
           $form: $syncCloudForm.length ? $syncCloudForm : $syncLocalForm,
           payload: branchRegistrationPayload,
