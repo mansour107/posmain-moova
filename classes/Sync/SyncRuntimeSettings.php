@@ -118,6 +118,29 @@ class SyncRuntimeSettings
         ];
     }
 
+    public function savePartial(mysqli $conn, array $input, array $allowedKeys): array
+    {
+        (new SyncSchemaManager())->apply($conn);
+
+        $allowed = array_flip($allowedKeys);
+        $values = [];
+        foreach (self::BOOL_KEYS as $key) {
+            if (!isset($allowed[$key]) || !array_key_exists($key, $input)) {
+                continue;
+            }
+
+            $values[$key] = $this->boolString($input[$key]);
+        }
+
+        if ($values) {
+            $this->upsert($conn, $values);
+        }
+
+        return [
+            'saved_keys' => array_keys($values),
+        ];
+    }
+
     public function fetchConfigOverrides(mysqli $conn): array
     {
         $rows = $this->fetchRows($conn, false);

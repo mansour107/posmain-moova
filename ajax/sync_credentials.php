@@ -15,8 +15,6 @@ require_once __DIR__ . '/../classes/Sync/SyncRuntimeSettings.php';
 
 header('Content-Type: application/json; charset=utf-8');
 
-require_admin_or_permission('system.tools.run', $conn);
-
 try {
     if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
         throw new InvalidArgumentException('Invalid request method.');
@@ -24,6 +22,8 @@ try {
     require_csrf('sync_credentials');
 
     $action = trim((string) ($_POST['action'] ?? ''));
+    require_admin_or_permission($action === 'save_moova' ? 'moova.manage' : 'system.tools.run', $conn);
+
     switch ($action) {
         case 'generate_uuid':
             syncCredentialsJson(['ok' => true, 'uuid' => SyncBranchIdentity::generateUuidV4()]);
@@ -73,12 +73,24 @@ try {
             ]);
             break;
 
+        case 'save_moova':
+            (new SyncRuntimeSettings())->savePartial($conn, syncCredentialsSettingsInput($_POST, 'current'), [
+                'POSMAIN_MOOVA_POLLER_ENABLED',
+                'POSMAIN_MOOVA_APPLY_ENABLED',
+            ]);
+            syncCredentialsAudit($conn, 'sync_credentials_moova_saved', ['section' => 'moova']);
+            syncCredentialsJson([
+                'ok' => true,
+                'message' => 'Moova sync settings were saved successfully.',
+            ]);
+            break;
+
         case 'register_cloud_branch':
             syncCredentialsRequireEncryption();
             $cloudBaseUrl = syncCredentialsCloudBaseUrl($_POST);
             $result = (new CloudBranchRegistryService())->register($conn, [
-                'branch_uuid' => $_POST['branch_uuid'] ?? '',
-                'secret' => $_POST['branch_secret'] ?? '',
+                'branch_uuid' => $_POST['branch_uuid'] ?? $_POST['POSMAIN_BRANCH_UUID'] ?? '',
+                'secret' => $_POST['branch_secret'] ?? $_POST['POSMAIN_BRANCH_SYNC_SECRET'] ?? '',
                 'status' => $_POST['branch_status'] ?? 'active',
                 'cloud_base_url' => $cloudBaseUrl,
                 'require_encryption' => true,

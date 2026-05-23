@@ -6,6 +6,7 @@ require_once('classes/MoovaPosIntegration.php');
 require_once('includes/auth_guard.php');
 require_once('includes/csrf.php');
 require_once('classes/Security/SecurityAuditLogger.php');
+require_once('classes/Sync/SyncRuntimeSettings.php');
 
 MoovaPosIntegration::ensureSchema($conn);
 
@@ -16,9 +17,34 @@ $canManageMoova = MoovaPosIntegration::userCanManageIntegration($conn, $moovaUse
 $activeMoovaLink = $moovaScope ? MoovaPosIntegration::findActiveLinkForScope($conn, $moovaScope) : null;
 
 $moovaCsrf = csrf_token('moova_integration');
+$moovaSyncCsrf = csrf_token('sync_credentials');
 
 $defaultWidgetUrl = $activeMoovaLink['widget_url'] ?? 'https://withmoova.com/pos-widget';
 $visibleDeviceToken = ($canManageMoova && $activeMoovaLink) ? (string) ($activeMoovaLink['moova_device_token'] ?? '') : '';
+$moovaSyncSettings = (new SyncRuntimeSettings())->loadForUi($conn, true);
+$moovaSyncBool = static function (string $key, bool $default = false) use ($moovaSyncSettings): bool {
+    if (isset($moovaSyncSettings[$key]) && !empty($moovaSyncSettings[$key]['configured'])) {
+        return in_array(strtolower(trim((string) $moovaSyncSettings[$key]['value'])), ['1', 'true', 'yes', 'on'], true);
+    }
+
+    $envNames = [$key];
+    if ($key === 'POSMAIN_MOOVA_APPLY_ENABLED') {
+        $envNames[] = 'POSMAIN_ENABLE_MOOVA_QUEUED_APPLY';
+        $envNames[] = 'POSMAIN_MOOVA_QUEUED_APPLY_ENABLED';
+    }
+
+    $envFiles = function_exists('posmain_branch_env_file_fallbacks') ? posmain_branch_env_file_fallbacks() : [];
+    $envValue = function_exists('posmain_first_env_or_file')
+        ? posmain_first_env_or_file($envNames, null, true, $envFiles)
+        : getenv($key);
+    if ($envValue !== false && $envValue !== null && trim((string) $envValue) !== '') {
+        return function_exists('posmain_bool')
+            ? posmain_bool($envValue, $default)
+            : in_array(strtolower(trim((string) $envValue)), ['1', 'true', 'yes', 'on'], true);
+    }
+
+    return $default;
+};
 
 if ($visibleDeviceToken !== '') {
     try {
@@ -127,6 +153,33 @@ if ($visibleDeviceToken !== '') {
                 </form>
               </div>
             </div>
+
+            <div class="card card-secondary card-outline shadow-sm">
+              <div class="card-header">
+                <h3 class="card-title"><i class="fas fa-sync-alt ml-2"></i> إعدادات مزامنة Moova</h3>
+              </div>
+              <div class="card-body">
+                <form id="moovaSyncSettingsForm" autocomplete="off">
+                  <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($moovaSyncCsrf, ENT_QUOTES, 'UTF-8') ?>">
+                  <input type="hidden" name="action" value="save_moova">
+                  <div class="custom-control custom-switch mb-3">
+                    <input type="hidden" name="POSMAIN_MOOVA_POLLER_ENABLED" value="0">
+                    <input type="checkbox" class="custom-control-input" id="moovaPollerEnabled" name="POSMAIN_MOOVA_POLLER_ENABLED" value="1" <?= $moovaSyncBool('POSMAIN_MOOVA_POLLER_ENABLED', true) ? 'checked' : '' ?>>
+                    <label class="custom-control-label" for="moovaPollerEnabled">Poll Moova events from cloud</label>
+                    <small class="form-text text-muted">خاص بمتابعة أحداث Moova عندما تكون المزامنة السحابية مفعلة.</small>
+                  </div>
+                  <div class="custom-control custom-switch mb-3">
+                    <input type="hidden" name="POSMAIN_MOOVA_APPLY_ENABLED" value="0">
+                    <input type="checkbox" class="custom-control-input" id="moovaApplyEnabled" name="POSMAIN_MOOVA_APPLY_ENABLED" value="1" <?= $moovaSyncBool('POSMAIN_MOOVA_APPLY_ENABLED', true) ? 'checked' : '' ?>>
+                    <label class="custom-control-label" for="moovaApplyEnabled">Apply Moova through worker</label>
+                    <small class="form-text text-muted">فعله فقط إذا كان هذا الـ POS هو المكان الذي سيطبق أوامر Moova داخل شاشة الكاشير.</small>
+                  </div>
+                  <button type="submit" class="btn btn-success px-4" id="moovaSyncSaveBtn">
+                    <i class="fas fa-save ml-1"></i> حفظ إعدادات Moova
+                  </button>
+                </form>
+              </div>
+            </div>
           </div>
 
           <div class="col-lg-4">
@@ -172,8 +225,10 @@ if ($visibleDeviceToken !== '') {
 <script>
 document.addEventListener('DOMContentLoaded', function () {
   const form = document.getElementById('moovaIntegrationForm');
+  const syncForm = document.getElementById('moovaSyncSettingsForm');
   const alertBox = document.getElementById('moovaIntegrationAlert');
   const saveBtn = document.getElementById('moovaSaveBtn');
+  const syncSaveBtn = document.getElementById('moovaSyncSaveBtn');
   const disconnectBtn = document.getElementById('moovaDisconnectBtn');
 
   function showAlert(type, message) {
@@ -183,12 +238,12 @@ document.addEventListener('DOMContentLoaded', function () {
     alertBox.classList.remove('d-none');
   }
 
-	  function payload() {
-	    return {
-	      csrf: document.getElementById('moovaCsrf').value,
-	      deviceToken: document.getElementById('moovaDeviceToken').value.trim(),
-	      widgetUrl: document.getElementById('moovaWidgetUrl').value.trim(),
-	      locale: document.getElementById('moovaLocale').value
+  function payload() {
+    return {
+      csrf: document.getElementById('moovaCsrf').value,
+      deviceToken: document.getElementById('moovaDeviceToken').value.trim(),
+      widgetUrl: document.getElementById('moovaWidgetUrl').value.trim(),
+      locale: document.getElementById('moovaLocale').value
     };
   }
 
@@ -203,7 +258,23 @@ document.addEventListener('DOMContentLoaded', function () {
       body: JSON.stringify(body)
     });
     const data = await response.json().catch(function () { return {}; });
-    if (!response.ok || !data.success) {
+    if (!response.ok || !(data.success || data.ok)) {
+      throw new Error(data.message || 'حدث خطأ أثناء الحفظ');
+    }
+    return data;
+  }
+
+  async function postFormJson(url, formElement) {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Accept': 'application/json',
+        'X-Requested-With': 'XMLHttpRequest'
+      },
+      body: new URLSearchParams(new FormData(formElement))
+    });
+    const data = await response.json().catch(function () { return {}; });
+    if (!response.ok || !data.ok) {
       throw new Error(data.message || 'حدث خطأ أثناء الحفظ');
     }
     return data;
@@ -224,6 +295,21 @@ document.addEventListener('DOMContentLoaded', function () {
         showAlert('danger', error.message);
       } finally {
         saveBtn.disabled = false;
+      }
+    });
+  }
+
+  if (syncForm) {
+    syncForm.addEventListener('submit', async function (event) {
+      event.preventDefault();
+      syncSaveBtn.disabled = true;
+      try {
+        const result = await postFormJson('ajax/sync_credentials.php', syncForm);
+        showAlert('success', result.message || 'تم حفظ إعدادات Moova.');
+      } catch (error) {
+        showAlert('danger', error.message);
+      } finally {
+        syncSaveBtn.disabled = false;
       }
     });
   }

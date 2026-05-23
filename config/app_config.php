@@ -358,11 +358,11 @@ if (!function_exists('posmain_app_config')) {
         );
         $rawMoovaQueuedApply = posmain_bool(
             $branchEnv(['POSMAIN_ENABLE_MOOVA_QUEUED_APPLY', 'POSMAIN_MOOVA_QUEUED_APPLY_ENABLED'], null),
-            false
+            true
         );
         $rawMoovaWorkerApply = posmain_bool(
             $branchEnv(['POSMAIN_MOOVA_APPLY_ENABLED', 'POSMAIN_ENABLE_MOOVA_QUEUED_APPLY'], null),
-            false
+            true
         );
 
         if (!in_array($moovaMode, ['disabled', 'direct_widget', 'queued_worker', 'hybrid'], true)) {
