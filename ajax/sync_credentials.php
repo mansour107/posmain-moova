@@ -33,6 +33,10 @@ try {
             syncCredentialsJson(['ok' => true, 'secret' => syncCredentialsGenerateSecret()]);
             break;
 
+        case 'generate_config_key':
+            syncCredentialsJson(['ok' => true, 'key' => SyncRuntimeCrypto::generateKeyMaterial()]);
+            break;
+
         case 'test_db':
             syncCredentialsJson((new SyncRuntimeDbConfigFile())->testDatabase(syncCredentialsDbInput($_POST)));
             break;
@@ -45,12 +49,13 @@ try {
             break;
 
         case 'save_local':
-            syncCredentialsRequireEncryption();
             $db = syncCredentialsDbInput($_POST, true);
             $dbTest = (new SyncRuntimeDbConfigFile())->testDatabase($db);
             if (empty($dbTest['ok'])) {
                 throw new InvalidArgumentException('Settings cannot be saved before the database connection test succeeds: ' . ($dbTest['message'] ?? ''));
             }
+            $savedKeyPath = syncCredentialsSaveEncryptionKey($_POST);
+            syncCredentialsRequireEncryption();
             $targetConn = syncCredentialsConnectToTargetDb($db);
             (new SyncRuntimeSettings())->save($targetConn, syncCredentialsSettingsInput($_POST, 'branch'));
             $targetConn->close();
@@ -60,16 +65,19 @@ try {
                 'ok' => true,
                 'message' => 'Local sync settings were saved successfully.',
                 'runtime_config_file' => SyncRuntimeDbConfigFile::defaultPath(),
+                'config_key_file' => $savedKeyPath,
             ]);
             break;
 
         case 'save_cloud':
+            $savedKeyPath = syncCredentialsSaveEncryptionKey($_POST);
             syncCredentialsRequireEncryption();
             (new SyncRuntimeSettings())->save($conn, syncCredentialsSettingsInput($_POST, 'cloud'));
             syncCredentialsAudit($conn, 'sync_credentials_cloud_saved', ['role' => 'cloud']);
             syncCredentialsJson([
                 'ok' => true,
                 'message' => 'Hosted sync settings were saved successfully.',
+                'config_key_file' => $savedKeyPath,
             ]);
             break;
 
@@ -86,6 +94,7 @@ try {
             break;
 
         case 'register_cloud_branch':
+            syncCredentialsSaveEncryptionKey($_POST);
             syncCredentialsRequireEncryption();
             $cloudBaseUrl = syncCredentialsCloudBaseUrl($_POST);
             $result = (new CloudBranchRegistryService())->register($conn, [
@@ -143,6 +152,20 @@ function syncCredentialsRequireEncryption(): void
 function syncCredentialsGenerateSecret(): string
 {
     return rtrim(strtr(base64_encode(random_bytes(32)), '+/', '-_'), '=');
+}
+
+function syncCredentialsSaveEncryptionKey(array $input): ?string
+{
+    if (!array_key_exists(SyncRuntimeCrypto::ENV_KEY, $input)) {
+        return null;
+    }
+
+    $key = trim((string) $input[SyncRuntimeCrypto::ENV_KEY]);
+    if ($key === '') {
+        return null;
+    }
+
+    return (new SyncRuntimeCrypto())->saveKeyMaterial($key);
 }
 
 function syncCredentialsDbInput(array $input, bool $preserveBlankPassword = false): array
@@ -222,7 +245,7 @@ function syncCredentialsConnectToTargetDb(array $db): mysqli
 
 function syncCredentialsCloudBaseUrl(array $input): string
 {
-    $baseUrl = rtrim(trim((string) ($input['cloud_base_url'] ?? '')), '/');
+    $baseUrl = rtrim(trim((string) ($input['cloud_base_url'] ?? $input['POSMAIN_CLOUD_BASE_URL'] ?? '')), '/');
     if ($baseUrl === '') {
         $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
         $host = trim((string) ($_SERVER['HTTP_HOST'] ?? ''));

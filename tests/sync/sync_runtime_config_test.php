@@ -8,21 +8,28 @@ require_once __DIR__ . '/../../classes/Sync/SyncRuntimeDbConfigFile.php';
 class SyncRuntimeConfigTest extends TestCase
 {
     private $oldKey;
+    private $oldKeyFile;
     private $oldFile;
     private $oldDisabled;
+    private string $testKeyFile;
 
     protected function setUp(): void
     {
         $this->oldKey = getenv(SyncRuntimeCrypto::ENV_KEY);
+        $this->oldKeyFile = getenv(SyncRuntimeCrypto::KEY_FILE_ENV);
         $this->oldFile = getenv('POSMAIN_RUNTIME_CONFIG_FILE');
         $this->oldDisabled = getenv('POSMAIN_DISABLE_UI_RUNTIME_CONFIG');
+        $this->testKeyFile = sys_get_temp_dir() . '/posmain-runtime-key-' . bin2hex(random_bytes(4)) . '.key';
+        putenv(SyncRuntimeCrypto::KEY_FILE_ENV . '=' . $this->testKeyFile);
         putenv(SyncRuntimeCrypto::ENV_KEY . '=phpunit-runtime-config-key');
         putenv('POSMAIN_DISABLE_UI_RUNTIME_CONFIG');
     }
 
     protected function tearDown(): void
     {
+        @unlink($this->testKeyFile);
         $this->restoreEnv(SyncRuntimeCrypto::ENV_KEY, $this->oldKey);
+        $this->restoreEnv(SyncRuntimeCrypto::KEY_FILE_ENV, $this->oldKeyFile);
         $this->restoreEnv('POSMAIN_RUNTIME_CONFIG_FILE', $this->oldFile);
         $this->restoreEnv('POSMAIN_DISABLE_UI_RUNTIME_CONFIG', $this->oldDisabled);
     }
@@ -36,6 +43,29 @@ class SyncRuntimeConfigTest extends TestCase
         $this->assertNotSame('branch-secret-value', $encrypted);
         $this->assertSame('branch-secret-value', $crypto->decrypt($encrypted));
         $this->assertSame('', $crypto->decrypt($crypto->encrypt('')));
+    }
+
+    public function testRuntimeEncryptionKeyFileCanBootstrapCrypto(): void
+    {
+        putenv(SyncRuntimeCrypto::ENV_KEY);
+        unset($_ENV[SyncRuntimeCrypto::ENV_KEY]);
+
+        $crypto = new SyncRuntimeCrypto();
+        $path = $crypto->saveKeyMaterial(SyncRuntimeCrypto::generateKeyMaterial(), $this->testKeyFile);
+
+        $this->assertSame($this->testKeyFile, $path);
+        $this->assertFileExists($this->testKeyFile);
+        $this->assertSame($this->testKeyFile, $crypto->keySource());
+
+        putenv(SyncRuntimeCrypto::ENV_KEY);
+        unset($_ENV[SyncRuntimeCrypto::ENV_KEY]);
+
+        $fromFile = new SyncRuntimeCrypto();
+        $encrypted = $fromFile->encrypt('secret from ui key');
+
+        $this->assertStringStartsWith('v1:', $encrypted);
+        $this->assertSame('secret from ui key', $fromFile->decrypt($encrypted));
+        $this->assertSame($this->testKeyFile, $fromFile->keySource());
     }
 
     public function testRuntimeDbConfigFileStoresEncryptedPasswordAndCanBeBypassed(): void
@@ -68,10 +98,12 @@ class SyncRuntimeConfigTest extends TestCase
     {
         if ($value === false) {
             putenv($name);
+            unset($_ENV[$name]);
             return;
         }
 
         putenv($name . '=' . $value);
+        $_ENV[$name] = $value;
     }
 }
 

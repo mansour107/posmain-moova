@@ -199,7 +199,11 @@ $syncCloudBaseUrlEffective = $syncEffectiveValue('POSMAIN_CLOUD_BASE_URL', $sync
 $syncBranchSecretEffective = $syncSecretEffectiveValue('POSMAIN_BRANCH_SYNC_SECRET', $syncBranchSecretFallback);
 $syncBranchSecretEffectiveConfigured = $syncBranchSecretEffective !== '';
 $syncBranches = (new CloudBranchRegistryService())->listBranches($conn);
-$syncCryptoAvailable = (new SyncRuntimeCrypto())->available();
+$syncCrypto = new SyncRuntimeCrypto();
+$syncConfigEncryptionKeyEffective = $syncCrypto->currentKeyMaterial();
+$syncConfigEncryptionKeyConfigured = $syncConfigEncryptionKeyEffective !== '';
+$syncConfigEncryptionKeySource = $syncCrypto->keySource();
+$syncCryptoAvailable = $syncCrypto->available();
 $syncDefaultCloudUrl = (string) ($appConfig['public_base_url'] ?? '');
 if ($syncDefaultCloudUrl === '' && !empty($_SERVER['HTTP_HOST'])) {
     $syncDefaultCloudUrl = ((!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https://' : 'http://') . $_SERVER['HTTP_HOST'];
@@ -399,305 +403,351 @@ if ($syncDefaultCloudUrl === '' && !empty($_SERVER['HTTP_HOST'])) {
           </div>
           <div class="card-body">
             <?= csrf_input('sync_credentials') ?>
-            <?php if (!$syncCryptoAvailable): ?>
-              <div class="alert alert-danger">
-                <i class="fas fa-key ml-2"></i>
-                يجب إضافة <code>POSMAIN_CONFIG_ENCRYPTION_KEY</code> في بيئة التشغيل قبل حفظ كلمات المرور أو أسرار المزامنة من الواجهة.
-              </div>
-            <?php else: ?>
+            <?php if ($syncCryptoAvailable): ?>
               <div class="alert alert-success py-2">
                 <i class="fas fa-key ml-2"></i>
                 <code>POSMAIN_CONFIG_ENCRYPTION_KEY</code> مفعّل، ويمكن حفظ الأسرار مشفرة.
-                <?= $syncHelp('Bootstrap encryption key from env. It is not edited in this screen. If it changes after secrets are saved, stored secrets cannot be decrypted.') ?>
+                <?= $syncHelp('This instance encryption key can come from env or the protected runtime key file. If it changes after secrets are saved, stored secrets cannot be decrypted until they are re-saved with the new key.') ?>
               </div>
             <?php endif; ?>
 
-            <div class="alert alert-warning py-2">
-              <i class="fas fa-eye ml-2"></i>
-              كلمات المرور والأسرار تبقى مخفية افتراضياً، ويمكن عرضها مؤقتاً بزر العين داخل هذه الصفحة المحمية.
-            </div>
+            <style>
+              #sync-credentials-card .sync-section {
+                border: 1px solid rgba(33, 37, 41, 0.10);
+                border-radius: 8px;
+                padding: 1rem;
+                margin-bottom: 1rem;
+              }
+              #sync-credentials-card .sync-section-shared { background-color: rgba(23, 162, 184, 0.10); }
+              #sync-credentials-card .sync-section-local { background-color: rgba(40, 167, 69, 0.10); }
+              #sync-credentials-card .sync-section-hosted { background-color: rgba(0, 123, 255, 0.10); }
+              #sync-credentials-card .sync-section-debug { background-color: rgba(108, 117, 125, 0.10); }
+              #sync-credentials-card .sync-section-header {
+                display: flex;
+                align-items: flex-start;
+                justify-content: space-between;
+                gap: 0.75rem;
+                border-bottom: 1px solid rgba(33, 37, 41, 0.08);
+                padding-bottom: 0.75rem;
+                margin-bottom: 1rem;
+              }
+              #sync-credentials-card .sync-section-kicker {
+                display: inline-block;
+                font-size: 1rem;
+                font-weight: 800;
+                letter-spacing: 0;
+                color: rgba(33, 37, 41, 0.86);
+                margin-bottom: 0.25rem;
+              }
+              #sync-credentials-card .sync-subsection {
+                background: rgba(255, 255, 255, 0.72);
+                border: 1px solid rgba(33, 37, 41, 0.08);
+                border-radius: 6px;
+                padding: 0.9rem;
+                margin-bottom: 0.9rem;
+              }
+              #sync-credentials-card .sync-subsection:last-child { margin-bottom: 0; }
+              #sync-credentials-card .sync-switch-lg .custom-control-label::before {
+                width: 2.75rem;
+                height: 1.45rem;
+                border-radius: 1rem;
+              }
+              #sync-credentials-card .sync-switch-lg .custom-control-label::after {
+                width: calc(1.45rem - 4px);
+                height: calc(1.45rem - 4px);
+                border-radius: 50%;
+              }
+              #sync-credentials-card .sync-switch-lg .custom-control-input:checked ~ .custom-control-label::after {
+                transform: translateX(-1.3rem);
+              }
+            </style>
 
             <div id="sync-local-form">
               <input type="hidden" name="action" value="save_local">
-              <div class="row">
-                <div class="col-12">
-                  <div class="border rounded bg-light px-3 py-2 mb-3">
-                    <h5 class="mb-1"><i class="fas fa-database text-secondary ml-2"></i> قاعدة بيانات هذه النسخة</h5>
-                    <p class="text-muted small mb-0">تُستخدم في المحلي كقاعدة بيانات الفرع، وتُستخدم على Railway/الاستضافة كقاعدة بيانات النسخة المستضافة.</p>
+
+              <section class="sync-section sync-section-shared" id="sync-shared-section">
+                <div class="sync-section-header">
+                  <div>
+                    <span class="sync-section-kicker">Shared data</span>
+                    <h5 class="mb-1"><i class="fas fa-layer-group text-info ml-2"></i> البيانات المشتركة بين المحلي والمستضاف</h5>
                   </div>
                 </div>
-                <div class="col-md-4">
-                  <div class="form-group">
-                    <label>Host <?= $syncHelp('Database host used by this running POS instance. On a local branch this is usually 127.0.0.1; on Railway it can be the Railway internal MySQL host.') ?></label>
-                    <input type="text" class="form-control" name="db_host" value="<?= htmlspecialchars((string)($syncDb['host'] ?? '127.0.0.1'), ENT_QUOTES, 'UTF-8') ?>" required>
-                  </div>
-                </div>
-                <div class="col-md-2">
-                  <div class="form-group">
-                    <label>Port <?= $syncHelp('MySQL/MariaDB port. Default is 3306; local test stacks may use 3307.') ?></label>
-                    <input type="number" class="form-control" name="db_port" value="<?= htmlspecialchars((string)($syncDb['port'] ?? '3306'), ENT_QUOTES, 'UTF-8') ?>" min="1" max="65535" required>
-                  </div>
-                </div>
-                <div class="col-md-3">
-                  <div class="form-group">
-                    <label>Database <?= $syncHelp('Database name used by this POS instance.') ?></label>
-                    <input type="text" class="form-control" name="db_name" value="<?= htmlspecialchars((string)($syncDb['name'] ?? 'kody2'), ENT_QUOTES, 'UTF-8') ?>" required>
-                  </div>
-                </div>
-                <div class="col-md-3">
-                  <div class="form-group">
-                    <label>User <?= $syncHelp('Database user. It needs read and write access to POS and sync tables.') ?></label>
-                    <input type="text" class="form-control" name="db_user" value="<?= htmlspecialchars((string)($syncDb['user'] ?? 'root'), ENT_QUOTES, 'UTF-8') ?>" required>
-                  </div>
-                </div>
-                <div class="col-md-4">
-                  <div class="form-group">
-                    <label>Password <?= $syncHelp('Database password for this running POS instance. It is filled when the server can read it from env or the encrypted runtime file.') ?></label>
-                    <div class="input-group">
-                      <input type="password" class="form-control" name="db_pass" value="<?= htmlspecialchars((string)($syncDb['pass'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" autocomplete="off" placeholder="<?= !empty($syncDb['pass']) ? 'Current password is hidden' : 'اتركها فارغة فقط إذا كان المستخدم بدون كلمة مرور' ?>">
-                      <div class="input-group-append">
-                        <button type="button" class="btn btn-outline-secondary js-toggle-secret-visibility" data-target="#sync-local-form [name='db_pass']" aria-label="Show database password">
-                          <i class="fas fa-eye"></i>
-                        </button>
+
+                <div class="sync-subsection">
+                  <div class="row">
+                    <div class="col-12" id="sync-config-encryption-fields">
+                      <div class="form-group">
+                        <label>POSMAIN_CONFIG_ENCRYPTION_KEY <?= $syncHelp('Local bootstrap key for this running instance. Local and hosted do not need the same key. Keep it stable on the same instance; changing it makes previously encrypted values unreadable until they are saved again.') ?></label>
+                        <div class="input-group">
+                          <input type="password" class="form-control" name="POSMAIN_CONFIG_ENCRYPTION_KEY" value="<?= htmlspecialchars($syncConfigEncryptionKeyEffective, ENT_QUOTES, 'UTF-8') ?>" autocomplete="off" placeholder="<?= $syncConfigEncryptionKeyConfigured ? 'Current encryption key is hidden' : 'Generate or enter a key before saving secrets' ?>">
+                          <div class="input-group-append">
+                            <button type="button"
+                                    class="btn btn-outline-secondary js-generate-config-key"
+                                    data-target="#sync-config-encryption-fields [name='POSMAIN_CONFIG_ENCRYPTION_KEY']"
+                                    data-confirm-if-filled="1"
+                                    data-confirm-message="Regenerating the encryption key can make previously encrypted database passwords and sync secrets unreadable until they are saved again with the new key. Continue?"
+                                    dir="ltr">Generate key</button>
+                            <button type="button" class="btn btn-outline-secondary js-toggle-secret-visibility" data-target="#sync-config-encryption-fields [name='POSMAIN_CONFIG_ENCRYPTION_KEY']" aria-label="Show encryption key">
+                              <i class="fas fa-eye"></i>
+                            </button>
+                          </div>
+                        </div>
+                        <small class="form-text text-muted sync-source-hint">
+                          <?php if ($syncConfigEncryptionKeySource === 'env'): ?>
+                            القيمة الحالية من env/.env.
+                          <?php elseif ($syncConfigEncryptionKeySource !== ''): ?>
+                            القيمة الحالية من ملف مفتاح التشغيل: <code><?= htmlspecialchars($syncConfigEncryptionKeySource, ENT_QUOTES, 'UTF-8') ?></code>
+                          <?php else: ?>
+                            لا توجد قيمة حالية لهذا المتغير.
+                          <?php endif; ?>
+                        </small>
                       </div>
                     </div>
-                    <small class="form-text text-muted">خاص بهذه النسخة: محلياً تكون كلمة مرور قاعدة الفرع، وعلى الاستضافة تكون كلمة مرور قاعدة Railway/الاستضافة.</small>
-                  </div>
-                </div>
-                <div class="col-md-2">
-                  <div class="form-group">
-                    <label>Charset <?= $syncHelp('Database connection charset. Use utf8mb4 for Arabic text and symbols.') ?></label>
-                    <input type="text" class="form-control" name="db_charset" value="<?= htmlspecialchars((string)($syncDb['charset'] ?? 'utf8mb4'), ENT_QUOTES, 'UTF-8') ?>" required>
-                  </div>
-                </div>
-                <div class="col-md-6 d-flex align-items-end flex-wrap">
-                  <button type="button" class="btn btn-outline-primary mb-3 mr-2 js-sync-test-db" data-form="#sync-local-form" dir="ltr">
-                    <i class="fas fa-plug mr-1"></i> Test database connection
-                  </button>
-                </div>
-              </div>
-
-              <div class="border rounded bg-light px-3 py-2 mb-3">
-                <h5 class="mb-1"><i class="fas fa-server text-primary ml-2"></i> خاص بالنسخة المستضافة: قيم بيئة التشغيل</h5>
-                <p class="text-muted small mb-0">استخدم هذا الجزء فقط عند تجهيز Railway/الاستضافة من قيم قاعدة البيانات أعلاه.</p>
-              </div>
-              <button type="button" class="btn btn-outline-secondary mb-3 js-export-hosted-env" data-form="#sync-local-form" dir="ltr">
-                <i class="fas fa-server mr-1"></i> Build hosting env values
-              </button>
-              <div class="form-group">
-                <label>Generated hosting env block <?= $syncHelp('This uses the same database fields above. Copy it into Railway or the hosting provider when configuring the hosted POS.') ?></label>
-                <textarea class="form-control" id="hosted-env-output" rows="7" readonly></textarea>
-              </div>
-
-              <hr>
-              <div class="row">
-                <div class="col-12">
-                  <div class="border rounded bg-light px-3 py-2 mb-3">
-                    <h5 class="mb-1"><i class="fas fa-store text-success ml-2"></i> خاص بالنسخة المحلية: هوية الفرع والاتصال بالسحابة</h5>
-                    <p class="text-muted small mb-0">هذه القيم تخص الفرع المحلي الذي يرسل البيانات إلى النسخة المستضافة.</p>
-                  </div>
-                </div>
-                <div class="col-md-6">
-                  <div class="form-group">
-                    <label>POSMAIN_BRANCH_UUID <?= $syncHelp('Stable unique ID for this branch only. Never reuse one UUID for two shops. Generate a new value when creating a new branch.') ?></label>
-                    <div class="input-group">
-                      <input type="text" class="form-control" name="POSMAIN_BRANCH_UUID" value="<?= htmlspecialchars($syncBranchUuidEffective, ENT_QUOTES, 'UTF-8') ?>" required>
-                      <div class="input-group-append">
-                        <button type="button" class="btn btn-outline-secondary js-generate-uuid" data-target="#sync-local-form [name='POSMAIN_BRANCH_UUID']" data-confirm-if-filled="1" dir="ltr"><?= trim($syncBranchUuidEffective) !== '' ? 'Regenerate' : 'Generate UUID' ?></button>
+                    <div class="col-12" id="sync-shared-identity-fields">
+                      <div class="form-group">
+                        <label>POSMAIN_BRANCH_UUID <?= $syncHelp('Stable unique ID for this branch only. The same value must be used by the local branch and allowed on the hosted POS.') ?></label>
+                        <div class="input-group">
+                          <input type="text" class="form-control" name="POSMAIN_BRANCH_UUID" value="<?= htmlspecialchars($syncBranchUuidEffective, ENT_QUOTES, 'UTF-8') ?>" required>
+                          <div class="input-group-append">
+                            <button type="button" class="btn btn-outline-secondary js-generate-uuid" data-target="#sync-shared-identity-fields [name='POSMAIN_BRANCH_UUID']" data-confirm-if-filled="1" dir="ltr"><?= trim($syncBranchUuidEffective) !== '' ? 'Regenerate' : 'Generate UUID' ?></button>
+                          </div>
+                        </div>
+                        <?= $syncSourceHint('POSMAIN_BRANCH_UUID', $syncBranchUuidEffective) ?>
                       </div>
                     </div>
-                    <?= $syncSourceHint('POSMAIN_BRANCH_UUID', $syncBranchUuidEffective) ?>
-                  </div>
-                </div>
-                <div class="col-md-6">
-                  <div class="form-group">
-                    <label>POSMAIN_CLOUD_BASE_URL <?= $syncHelp('Hosted POS base URL for this shop, for example https://shop1.example.com.') ?></label>
-                    <input type="url" class="form-control" name="POSMAIN_CLOUD_BASE_URL" value="<?= htmlspecialchars($syncCloudBaseUrlEffective, ENT_QUOTES, 'UTF-8') ?>" required>
-                    <?= $syncSourceHint('POSMAIN_CLOUD_BASE_URL', $syncCloudBaseUrlEffective) ?>
-                  </div>
-                </div>
-                <div class="col-md-8">
-                  <div class="form-group">
-                    <label>POSMAIN_BRANCH_SYNC_SECRET <?= $syncHelp('HMAC signing secret shared by this local branch and its hosted POS. It must be unique per shop and never shared between shops.') ?></label>
-                    <div class="input-group">
-                      <input type="password" class="form-control" name="POSMAIN_BRANCH_SYNC_SECRET" value="<?= htmlspecialchars($syncBranchSecretEffective, ENT_QUOTES, 'UTF-8') ?>" autocomplete="off" placeholder="<?= $syncBranchSecretEffectiveConfigured ? 'Current secret is hidden' : 'Required before saving' ?>">
-                      <div class="input-group-append">
-                        <button type="button" class="btn btn-outline-secondary js-toggle-secret-visibility" data-target="#sync-local-form [name='POSMAIN_BRANCH_SYNC_SECRET']" aria-label="Show sync secret">
-                          <i class="fas fa-eye"></i>
-                        </button>
+                    <div class="col-12">
+                      <div class="form-group mb-0">
+                        <label>POSMAIN_BRANCH_SYNC_SECRET <?= $syncHelp('HMAC signing secret shared by this local branch and its hosted POS. It must be unique per shop and never shared between shops.') ?></label>
+                        <div class="input-group">
+                          <input type="password" class="form-control" name="POSMAIN_BRANCH_SYNC_SECRET" value="<?= htmlspecialchars($syncBranchSecretEffective, ENT_QUOTES, 'UTF-8') ?>" autocomplete="off" placeholder="<?= $syncBranchSecretEffectiveConfigured ? 'Current secret is hidden' : 'Required before saving' ?>">
+                          <div class="input-group-append">
+                            <button type="button" class="btn btn-outline-secondary js-generate-secret" data-target="#sync-shared-section [name='POSMAIN_BRANCH_SYNC_SECRET']" dir="ltr">Generate secret</button>
+                            <button type="button" class="btn btn-outline-secondary js-toggle-secret-visibility" data-target="#sync-shared-section [name='POSMAIN_BRANCH_SYNC_SECRET']" aria-label="Show sync secret">
+                              <i class="fas fa-eye"></i>
+                            </button>
+                          </div>
+                        </div>
+                        <?= $syncSourceHint('POSMAIN_BRANCH_SYNC_SECRET', $syncBranchSecretEffective, $syncBranchSecretFallback !== '') ?>
                       </div>
                     </div>
-                    <?= $syncSourceHint('POSMAIN_BRANCH_SYNC_SECRET', $syncBranchSecretEffective, $syncBranchSecretFallback !== '') ?>
                   </div>
                 </div>
-                <div class="col-md-4 d-flex align-items-end">
-                  <button type="button" class="btn btn-outline-info mb-3 js-sync-test-cloud" data-form="#sync-local-form" dir="ltr">
-                    <i class="fas fa-cloud mr-1"></i> Test cloud connection
-                  </button>
-                </div>
-              </div>
+              </section>
 
-              <?php
-              $localCoreToggleKeys = [
-                  'POSMAIN_SYNC_OUTBOX_ENABLED',
-                  'POSMAIN_BRANCH_SYNC_ENABLED',
-                  'POSMAIN_SYNC_WORKER_ENABLED',
-                  'POSMAIN_MENU_SYNC_ENABLED',
-              ];
-              $localCoreSyncEnabled = true;
-              foreach ($localCoreToggleKeys as $toggleKey) {
-                  $localCoreSyncEnabled = $localCoreSyncEnabled && $syncBool($toggleKey, true);
-              }
-              ?>
-              <div class="border rounded px-3 py-3 mb-3">
-                <div class="d-flex flex-wrap align-items-center justify-content-between">
-                  <div class="mb-2 mb-md-0">
-                    <strong>Enable local branch sync</strong>
-                    <span class="text-muted d-block small">يشغّل الإعدادات المطلوبة لإرسال بيانات هذا الفرع إلى النسخة المستضافة.</span>
-                  </div>
-                  <div class="custom-control custom-switch mb-0">
-                    <input type="checkbox" class="custom-control-input js-local-sync-master" id="local-branch-sync-master" <?= $localCoreSyncEnabled ? 'checked' : '' ?>>
-                    <label class="custom-control-label" for="local-branch-sync-master"></label>
+              <section class="sync-section sync-section-local" id="sync-local-section">
+                <div class="sync-section-header">
+                  <div>
+                    <span class="sync-section-kicker">Local data</span>
                   </div>
                 </div>
-                <button type="button" class="btn btn-link px-0 mt-2 js-toggle-local-sync-advanced" aria-expanded="false" aria-controls="local-sync-advanced-settings" dir="ltr">
-                  Advanced settings
-                </button>
-              </div>
 
-              <div id="local-sync-advanced-settings" class="border rounded bg-light px-3 py-3 mb-3" style="display:none;">
-                <h6 class="font-weight-bold mb-3">Advanced local sync settings</h6>
-                <div class="row">
-                  <?php
-                  $localToggles = [
-                      'POSMAIN_SYNC_OUTBOX_ENABLED' => ['تسجيل أحداث outbox', true, 'Records POS changes into the local sync outbox so they can be sent to the cloud.', true],
-                      'POSMAIN_BRANCH_SYNC_ENABLED' => ['تفعيل مزامنة الفرع', true, 'Enables sending local branch events to the hosted POS.', true],
-                      'POSMAIN_SYNC_WORKER_ENABLED' => ['تشغيل عامل المزامنة', true, 'Enables the background sync worker on the local machine.', true],
-                      'POSMAIN_MENU_SYNC_ENABLED' => ['مزامنة المنيو', true, 'Sends menu item and price changes through sync when enabled.', true],
-                      'POSMAIN_CLOUD_PULL_ENABLED' => ['سحب أحداث السحابة', true, 'Allows the local branch to receive cloud-to-branch updates.', false],
-                  ];
-                  foreach ($localToggles as $toggleKey => [$label, $default, $help, $controlledByMaster]):
-                  ?>
-                  <div class="col-md-4">
-                    <div class="custom-control custom-switch mb-3">
-                      <input type="hidden" name="<?= htmlspecialchars($toggleKey, ENT_QUOTES, 'UTF-8') ?>" value="0">
-                      <input type="checkbox" class="custom-control-input <?= $controlledByMaster ? 'js-local-sync-core-toggle' : '' ?>" id="local-<?= htmlspecialchars(strtolower($toggleKey), ENT_QUOTES, 'UTF-8') ?>" name="<?= htmlspecialchars($toggleKey, ENT_QUOTES, 'UTF-8') ?>" value="1" <?= $syncBool($toggleKey, $default) ? 'checked' : '' ?>>
-                      <label class="custom-control-label" for="local-<?= htmlspecialchars(strtolower($toggleKey), ENT_QUOTES, 'UTF-8') ?>"><?= htmlspecialchars($label, ENT_QUOTES, 'UTF-8') ?> <?= $syncHelp($help) ?></label>
+                <div class="sync-subsection">
+                  <h6 class="font-weight-bold mb-2">الاتصال بالسحابة</h6>
+                  <div class="row">
+                    <div class="col-md-8 mb-4">
+                      <div class="form-group">
+                        <label>POSMAIN_CLOUD_BASE_URL <?= $syncHelp('Hosted POS base URL for this shop, for example https://shop1.example.com.') ?></label>
+                        <input type="url" class="form-control" name="POSMAIN_CLOUD_BASE_URL" value="<?= htmlspecialchars($syncCloudBaseUrlEffective, ENT_QUOTES, 'UTF-8') ?>" required>
+                        <?= $syncSourceHint('POSMAIN_CLOUD_BASE_URL', $syncCloudBaseUrlEffective) ?>
+                      </div>
                     </div>
-                  </div>
-                  <?php endforeach; ?>
-                </div>
-              </div>
-
-              <div class="d-flex flex-wrap align-items-center">
-                <button type="button" class="btn btn-success js-save-sync" data-form="#sync-local-form" dir="ltr">
-                  <i class="fas fa-save mr-1"></i> Save current instance settings
-                </button>
-                <span class="sync-action-result text-muted mr-3"></span>
-              </div>
-            </div>
-
-            <hr>
-            <div id="sync-cloud-form">
-              <input type="hidden" name="action" value="save_cloud">
-              <div class="border rounded bg-light px-3 py-2 mb-3">
-                <h5 class="mb-1" dir="ltr"><i class="fas fa-cloud text-primary mr-2"></i> خاص بالنسخة المستضافة: سلوك المزامنة السحابية</h5>
-                <p class="text-muted small mb-0">هذه الإعدادات تتحكم في استقبال أحداث الفروع ونشر أوامر السحابة، ولا يحتاجها الفرع المحلي العادي.</p>
-              </div>
-              <?php
-              $hostedSyncToggleKeys = [
-                  'POSMAIN_CLOUD_APPLY_ENABLED',
-                  'POSMAIN_CLOUD_PULL_ENABLED',
-                  'POSMAIN_CLOUD_TO_BRANCH_PUBLISH_ENABLED',
-              ];
-              $hostedSyncEnabled = true;
-              foreach ($hostedSyncToggleKeys as $toggleKey) {
-                  $hostedSyncEnabled = $hostedSyncEnabled && $syncBool($toggleKey, true);
-              }
-              ?>
-              <div class="border rounded px-3 py-3 mb-3">
-                <div class="d-flex flex-wrap align-items-center justify-content-between">
-                  <div class="mb-2 mb-md-0">
-                    <strong>Enable hosted sync</strong>
-                    <span class="text-muted d-block small">يشغّل استقبال أحداث الفروع والسماح بتبادل التحديثات من النسخة المستضافة.</span>
-                  </div>
-                  <div class="custom-control custom-switch mb-0">
-                    <input type="checkbox" class="custom-control-input js-hosted-sync-master" id="hosted-sync-master" <?= $hostedSyncEnabled ? 'checked' : '' ?>>
-                    <label class="custom-control-label" for="hosted-sync-master"></label>
-                  </div>
-                </div>
-                <?php foreach ($hostedSyncToggleKeys as $toggleKey): ?>
-                  <input type="hidden" class="js-hosted-sync-core-toggle" name="<?= htmlspecialchars($toggleKey, ENT_QUOTES, 'UTF-8') ?>" value="<?= $hostedSyncEnabled ? '1' : '0' ?>">
-                <?php endforeach; ?>
-              </div>
-              <button type="button" class="btn btn-success js-save-sync" data-form="#sync-cloud-form" dir="ltr">
-                <i class="fas fa-save mr-1"></i> Save hosted-only settings
-              </button>
-              <span class="sync-action-result text-muted mr-3"></span>
-            </div>
-
-            <hr>
-            <div id="sync-branch-register-form">
-              <input type="hidden" name="action" value="register_cloud_branch">
-              <div class="border rounded bg-light px-3 py-2 mb-3">
-                <h5 class="mb-1"><i class="fas fa-store-alt text-primary ml-2"></i> خاص بالنسخة المستضافة: الفرع المحلي المسموح له بالمزامنة</h5>
-                <p class="text-muted small mb-0">أدخل هنا نفس <code>POSMAIN_BRANCH_UUID</code> و <code>POSMAIN_BRANCH_SYNC_SECRET</code> الموجودة في النسخة المحلية حتى تقبل النسخة المستضافة مزامنتها.</p>
-              </div>
-              <div class="row">
-                <div class="col-md-4">
-                  <label>رابط النسخة المستضافة <?= $syncHelp('Hosted POS URL that the local branch will use to connect to this cloud instance.') ?></label>
-                  <input type="url" class="form-control" name="cloud_base_url" value="<?= htmlspecialchars($syncDefaultCloudUrl, ENT_QUOTES, 'UTF-8') ?>" required>
-                </div>
-                <div class="col-md-4">
-                  <label>POSMAIN_BRANCH_UUID <?= $syncHelp('Allowed local branch UUID. This must match the POSMAIN_BRANCH_UUID configured on the local POS that will sync to this hosted version.') ?></label>
-                  <div class="input-group">
-                    <input type="text" class="form-control" name="POSMAIN_BRANCH_UUID" value="<?= htmlspecialchars((string)($syncBranches[0]['branch_uuid'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" required>
-                    <div class="input-group-append"><button type="button" class="btn btn-outline-secondary js-generate-uuid" data-target="#sync-branch-register-form [name='POSMAIN_BRANCH_UUID']" dir="ltr">Generate UUID</button></div>
-                  </div>
-                </div>
-                <div class="col-md-3">
-                  <label>POSMAIN_BRANCH_SYNC_SECRET <?= $syncHelp('Allowed local branch sync secret. This must match the POSMAIN_BRANCH_SYNC_SECRET configured on the local POS.') ?></label>
-                  <div class="input-group">
-                    <input type="password" class="form-control" name="POSMAIN_BRANCH_SYNC_SECRET" placeholder="<?= !empty($syncBranches[0]['has_encrypted_secret'] ?? false) ? 'Current hosted secret is saved - enter to replace' : 'Required before saving' ?>" required>
-                    <div class="input-group-append">
-                      <button type="button" class="btn btn-outline-secondary js-generate-secret" data-target="#sync-branch-register-form [name='POSMAIN_BRANCH_SYNC_SECRET']" dir="ltr">Generate secret</button>
-                      <button type="button" class="btn btn-outline-secondary js-toggle-secret-visibility" data-target="#sync-branch-register-form [name='POSMAIN_BRANCH_SYNC_SECRET']" aria-label="Show hosted branch sync secret">
-                        <i class="fas fa-eye"></i>
+                    <div class="col-md-4 d-flex align-items-end mb-4">
+                      <button type="button" class="btn btn-outline-info mb-3 js-sync-test-cloud" data-form="#sync-local-form" dir="ltr">
+                        <i class="fas fa-cloud mr-1"></i> Test cloud connection
                       </button>
                     </div>
                   </div>
+
+                  <?php
+                  $localCoreToggleKeys = [
+                      'POSMAIN_SYNC_OUTBOX_ENABLED',
+                      'POSMAIN_BRANCH_SYNC_ENABLED',
+                      'POSMAIN_SYNC_WORKER_ENABLED',
+                      'POSMAIN_MENU_SYNC_ENABLED',
+                  ];
+                  $localCoreSyncEnabled = true;
+                  foreach ($localCoreToggleKeys as $toggleKey) {
+                      $localCoreSyncEnabled = $localCoreSyncEnabled && $syncBool($toggleKey, true);
+                  }
+                  ?>
+                  <div class="d-flex flex-wrap align-items-center justify-content-between pt-3 border-top">
+                    <div class="mb-3 mb-md-0">
+                      <strong>Enable local branch sync</strong>
+                    </div>
+                    <div class="custom-control custom-switch sync-switch-lg mb-0">
+                      <input type="checkbox" class="custom-control-input js-local-sync-master" id="local-branch-sync-master" <?= $localCoreSyncEnabled ? 'checked' : '' ?>>
+                      <label class="custom-control-label" for="local-branch-sync-master"></label>
+                    </div>
+                  </div>
+                  <button type="button" class="btn btn-link px-0 mt-3 js-toggle-local-sync-advanced" aria-expanded="false" aria-controls="local-sync-advanced-settings" dir="ltr">
+                    Advanced settings
+                  </button>
                 </div>
-                <div class="col-md-1">
-                  <label>الحالة</label>
-                  <select class="form-control" name="branch_status"><option value="active">مفعل</option><option value="disabled">معطل</option></select>
+
+                <div id="local-sync-advanced-settings" class="sync-subsection" style="display:none;">
+                  <h6 class="font-weight-bold mb-3">Advanced local sync settings</h6>
+                  <div class="row">
+                    <?php
+                    $localToggles = [
+                        'POSMAIN_SYNC_OUTBOX_ENABLED' => ['تسجيل أحداث outbox', true, 'Records POS changes into the local sync outbox so they can be sent to the cloud.', true],
+                        'POSMAIN_BRANCH_SYNC_ENABLED' => ['تفعيل مزامنة الفرع', true, 'Enables sending local branch events to the hosted POS.', true],
+                        'POSMAIN_SYNC_WORKER_ENABLED' => ['تشغيل عامل المزامنة', true, 'Enables the background sync worker on the local machine.', true],
+                        'POSMAIN_MENU_SYNC_ENABLED' => ['مزامنة المنيو', true, 'Sends menu item and price changes through sync when enabled.', true],
+                        'POSMAIN_CLOUD_PULL_ENABLED' => ['سحب أحداث السحابة', true, 'Allows the local branch to receive cloud-to-branch updates.', false],
+                    ];
+                    foreach ($localToggles as $toggleKey => [$label, $default, $help, $controlledByMaster]):
+                    ?>
+                    <div class="col-md-4">
+                      <div class="custom-control custom-switch mb-3">
+                        <input type="hidden" name="<?= htmlspecialchars($toggleKey, ENT_QUOTES, 'UTF-8') ?>" value="0">
+                        <input type="checkbox" class="custom-control-input <?= $controlledByMaster ? 'js-local-sync-core-toggle' : '' ?>" id="local-<?= htmlspecialchars(strtolower($toggleKey), ENT_QUOTES, 'UTF-8') ?>" name="<?= htmlspecialchars($toggleKey, ENT_QUOTES, 'UTF-8') ?>" value="1" <?= $syncBool($toggleKey, $default) ? 'checked' : '' ?>>
+                        <label class="custom-control-label" for="local-<?= htmlspecialchars(strtolower($toggleKey), ENT_QUOTES, 'UTF-8') ?>"><?= htmlspecialchars($label, ENT_QUOTES, 'UTF-8') ?> <?= $syncHelp($help) ?></label>
+                      </div>
+                    </div>
+                    <?php endforeach; ?>
+                  </div>
                 </div>
-              </div>
-              <button type="button" class="btn btn-primary mt-3 js-register-cloud-branch" dir="ltr">
-                <i class="fas fa-save mr-1"></i> Save allowed branch on hosted POS
-              </button>
-              <span class="sync-action-result text-muted mr-3"></span>
-              <textarea class="form-control mt-3" id="local-install-env-output" rows="8" readonly placeholder="بعد التسجيل ستظهر هنا القيم التي توضع في إعدادات الفرع المحلي"></textarea>
-              <button type="button" class="btn btn-outline-secondary mt-2 js-copy-local-install-env" dir="ltr">
-                <i class="fas fa-copy mr-1"></i> Copy local settings
-              </button>
+
+                <span class="sync-action-result text-muted"></span>
+              </section>
             </div>
 
-            <div class="table-responsive mt-3">
-              <table class="table table-sm table-striped" id="sync-cloud-branches-table">
-                <thead><tr><th>Branch UUID</th><th>الحالة</th><th>سر مشفر</th><th>آخر ظهور</th><th>آخر تحديث</th></tr></thead>
-                <tbody>
-                  <?php foreach ($syncBranches as $branchRow): ?>
-                    <tr>
-                      <td><code><?= htmlspecialchars($branchRow['branch_uuid'], ENT_QUOTES, 'UTF-8') ?></code></td>
-                      <td><?= htmlspecialchars($branchRow['status'], ENT_QUOTES, 'UTF-8') ?></td>
-                      <td><?= !empty($branchRow['has_encrypted_secret']) ? 'نعم' : 'لا' ?></td>
-                      <td><?= htmlspecialchars($branchRow['last_seen_at'], ENT_QUOTES, 'UTF-8') ?></td>
-                      <td><?= htmlspecialchars($branchRow['updated_at'], ENT_QUOTES, 'UTF-8') ?></td>
-                    </tr>
+            <section class="sync-section sync-section-hosted" id="sync-hosted-section">
+              <div class="sync-section-header">
+                <div>
+                  <span class="sync-section-kicker">Hosted data</span>
+                </div>
+              </div>
+
+              <div id="sync-cloud-form" class="sync-subsection">
+                <input type="hidden" name="action" value="save_cloud">
+                <?php
+                $hostedSyncToggleKeys = [
+                    'POSMAIN_CLOUD_APPLY_ENABLED',
+                    'POSMAIN_CLOUD_PULL_ENABLED',
+                    'POSMAIN_CLOUD_TO_BRANCH_PUBLISH_ENABLED',
+                ];
+                $hostedSyncEnabled = true;
+                foreach ($hostedSyncToggleKeys as $toggleKey) {
+                    $hostedSyncEnabled = $hostedSyncEnabled && $syncBool($toggleKey, true);
+                }
+                ?>
+                <div class="border rounded px-3 py-3 mb-3 bg-white">
+                  <div class="d-flex flex-wrap align-items-center justify-content-between">
+                    <div class="mb-2 mb-md-0">
+                      <strong>Enable hosted sync</strong>
+                      <span class="text-muted d-block small">يشغّل استقبال أحداث الفروع والسماح بتبادل التحديثات من النسخة المستضافة.</span>
+                    </div>
+                    <div class="custom-control custom-switch sync-switch-lg mb-0">
+                      <input type="checkbox" class="custom-control-input js-hosted-sync-master" id="hosted-sync-master" <?= $hostedSyncEnabled ? 'checked' : '' ?>>
+                      <label class="custom-control-label" for="hosted-sync-master"></label>
+                    </div>
+                  </div>
+                  <?php foreach ($hostedSyncToggleKeys as $toggleKey): ?>
+                    <input type="hidden" class="js-hosted-sync-core-toggle" name="<?= htmlspecialchars($toggleKey, ENT_QUOTES, 'UTF-8') ?>" value="<?= $hostedSyncEnabled ? '1' : '0' ?>">
                   <?php endforeach; ?>
-                </tbody>
-              </table>
-            </div>
+                </div>
+                <span class="sync-action-result text-muted"></span>
+              </div>
+
+              <div class="sync-subsection">
+                <h6 class="font-weight-bold mb-3">الفروع المسجلة على النسخة المستضافة</h6>
+                <div class="table-responsive">
+                  <table class="table table-sm table-striped mb-0" id="sync-cloud-branches-table">
+                    <thead><tr><th>Branch UUID</th><th>الحالة</th><th>سر مشفر</th><th>آخر ظهور</th><th>آخر تحديث</th></tr></thead>
+                    <tbody>
+                      <?php foreach ($syncBranches as $branchRow): ?>
+                        <tr>
+                          <td><code><?= htmlspecialchars($branchRow['branch_uuid'], ENT_QUOTES, 'UTF-8') ?></code></td>
+                          <td><?= htmlspecialchars($branchRow['status'], ENT_QUOTES, 'UTF-8') ?></td>
+                          <td><?= !empty($branchRow['has_encrypted_secret']) ? 'نعم' : 'لا' ?></td>
+                          <td><?= htmlspecialchars($branchRow['last_seen_at'], ENT_QUOTES, 'UTF-8') ?></td>
+                          <td><?= htmlspecialchars($branchRow['updated_at'], ENT_QUOTES, 'UTF-8') ?></td>
+                        </tr>
+                      <?php endforeach; ?>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </section>
+
+            <section class="sync-section sync-section-debug" id="sync-debug-section">
+              <button type="button" class="btn btn-outline-secondary btn-block text-left js-toggle-sync-debug" aria-expanded="false" aria-controls="sync-debug-panel" dir="ltr">
+                <i class="fas fa-tools mr-1"></i> Debug
+              </button>
+              <div id="sync-debug-panel" class="mt-3" style="display:none;">
+                <div id="sync-debug-form">
+                  <div class="sync-subsection">
+                    <h6 class="font-weight-bold mb-2"><i class="fas fa-database text-secondary ml-2"></i> قاعدة بيانات هذه النسخة</h6>
+                    <p class="text-muted small mb-3">هذه قيم تشغيل متقدمة تُقرأ تلقائياً عادةً من السيرفر. افتحها فقط للاختبار أو تغيير الإعدادات.</p>
+                    <div class="row">
+                      <div class="col-md-4">
+                        <div class="form-group">
+                          <label>Host <?= $syncHelp('Database host used by this running POS instance. On a local branch this is usually 127.0.0.1; on Railway it can be the Railway internal MySQL host.') ?></label>
+                          <input type="text" class="form-control" name="db_host" value="<?= htmlspecialchars((string)($syncDb['host'] ?? '127.0.0.1'), ENT_QUOTES, 'UTF-8') ?>" required>
+                        </div>
+                      </div>
+                      <div class="col-md-2">
+                        <div class="form-group">
+                          <label>Port <?= $syncHelp('MySQL/MariaDB port. Default is 3306; local test stacks may use 3307.') ?></label>
+                          <input type="number" class="form-control" name="db_port" value="<?= htmlspecialchars((string)($syncDb['port'] ?? '3306'), ENT_QUOTES, 'UTF-8') ?>" min="1" max="65535" required>
+                        </div>
+                      </div>
+                      <div class="col-md-3">
+                        <div class="form-group">
+                          <label>Database <?= $syncHelp('Database name used by this POS instance.') ?></label>
+                          <input type="text" class="form-control" name="db_name" value="<?= htmlspecialchars((string)($syncDb['name'] ?? 'kody2'), ENT_QUOTES, 'UTF-8') ?>" required>
+                        </div>
+                      </div>
+                      <div class="col-md-3">
+                        <div class="form-group">
+                          <label>User <?= $syncHelp('Database user. It needs read and write access to POS and sync tables.') ?></label>
+                          <input type="text" class="form-control" name="db_user" value="<?= htmlspecialchars((string)($syncDb['user'] ?? 'root'), ENT_QUOTES, 'UTF-8') ?>" required>
+                        </div>
+                      </div>
+                      <div class="col-md-4">
+                        <div class="form-group">
+                          <label>Password <?= $syncHelp('Database password for this running POS instance. It is filled when the server can read it from env or the encrypted runtime file.') ?></label>
+                          <div class="input-group">
+                            <input type="password" class="form-control" name="db_pass" value="<?= htmlspecialchars((string)($syncDb['pass'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" autocomplete="off" placeholder="<?= !empty($syncDb['pass']) ? 'Current password is hidden' : 'اتركها فارغة فقط إذا كان المستخدم بدون كلمة مرور' ?>">
+                            <div class="input-group-append">
+                              <button type="button" class="btn btn-outline-secondary js-toggle-secret-visibility" data-target="#sync-debug-form [name='db_pass']" aria-label="Show database password">
+                                <i class="fas fa-eye"></i>
+                              </button>
+                            </div>
+                          </div>
+                          <small class="form-text text-muted">محلياً تكون كلمة مرور قاعدة الفرع، وعلى الاستضافة تكون كلمة مرور قاعدة Railway/الاستضافة.</small>
+                        </div>
+                      </div>
+                      <div class="col-md-2">
+                        <div class="form-group">
+                          <label>Charset <?= $syncHelp('Database connection charset. Use utf8mb4 for Arabic text and symbols.') ?></label>
+                          <input type="text" class="form-control" name="db_charset" value="<?= htmlspecialchars((string)($syncDb['charset'] ?? 'utf8mb4'), ENT_QUOTES, 'UTF-8') ?>" required>
+                        </div>
+                      </div>
+                      <div class="col-md-6 d-flex align-items-end">
+                        <button type="button" class="btn btn-outline-primary mb-3 js-sync-test-db" data-form="#sync-debug-form" dir="ltr">
+                          <i class="fas fa-plug mr-1"></i> Test database connection
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="sync-subsection">
+                    <h6 class="font-weight-bold mb-2"><i class="fas fa-server text-secondary ml-2"></i> Build hosting env values</h6>
+                    <p class="text-muted small mb-3">اختياري: يحول قيم قاعدة البيانات أعلاه إلى متغيرات بيئة يمكن نسخها عند تجهيز Railway/الاستضافة.</p>
+                    <button type="button" class="btn btn-outline-secondary mb-3 js-export-hosted-env" data-form="#sync-debug-form" dir="ltr">
+                      <i class="fas fa-server mr-1"></i> Build hosting env values
+                    </button>
+                    <div class="form-group mb-0">
+                      <label>Generated hosting env block <?= $syncHelp('This uses the database fields in Debug. Copy it into Railway or the hosting provider only when configuring the hosted POS.') ?></label>
+                      <textarea class="form-control" id="hosted-env-output" rows="7" readonly></textarea>
+                    </div>
+                  </div>
+                  <span class="sync-action-result text-muted"></span>
+                </div>
+              </div>
+            </section>
           </div>
         </div>
 
@@ -754,6 +804,7 @@ if ($syncDefaultCloudUrl === '' && !empty($_SERVER['HTTP_HOST'])) {
             <div class="mb-2 mb-md-0">
               <strong><i class="fas fa-save ml-2"></i> حفظ جميع التغييرات</strong>
               <span class="text-muted d-block small">بعد الحفظ ستنتقل إلى لوحة التحكم.</span>
+              <span class="text-muted d-block small" id="settings-global-save-result"></span>
             </div>
             <button type="submit" class="btn btn-success btn-lg px-5">
               <i class="fas fa-check ml-2"></i> تأكيد الحفظ
@@ -829,6 +880,8 @@ document.addEventListener('DOMContentLoaded', function () {
   const localSyncAdvanced = syncCard.querySelector('#local-sync-advanced-settings');
   const localSyncAdvancedButton = syncCard.querySelector('.js-toggle-local-sync-advanced');
   const localSyncCoreToggles = Array.prototype.slice.call(syncCard.querySelectorAll('.js-local-sync-core-toggle'));
+  const syncDebugPanel = syncCard.querySelector('#sync-debug-panel');
+  const syncDebugButton = syncCard.querySelector('.js-toggle-sync-debug');
 
   function setLocalSyncCoreToggles(enabled) {
     localSyncCoreToggles.forEach(function (input) {
@@ -863,6 +916,14 @@ document.addEventListener('DOMContentLoaded', function () {
     });
   }
 
+  if (syncDebugButton && syncDebugPanel) {
+    syncDebugButton.addEventListener('click', function () {
+      const isOpen = syncDebugPanel.style.display !== 'none';
+      syncDebugPanel.style.display = isOpen ? 'none' : '';
+      syncDebugButton.setAttribute('aria-expanded', isOpen ? 'false' : 'true');
+    });
+  }
+
   const hostedSyncMaster = syncCard.querySelector('.js-hosted-sync-master');
   const hostedSyncCoreToggles = Array.prototype.slice.call(syncCard.querySelectorAll('.js-hosted-sync-core-toggle'));
 
@@ -884,13 +945,56 @@ document.addEventListener('DOMContentLoaded', function () {
     return token ? { csrf_token: token.value } : {};
   }
 
-  function formData($form, actionOverride) {
-    const data = $form.find(':input').serializeArray();
-    const payload = {};
-    data.forEach(function (entry) { payload[entry.name] = entry.value; });
-    Object.assign(payload, csrfPayload());
-    if (actionOverride) {
-      payload.action = actionOverride;
+	  function formData($form, actionOverride) {
+	    const data = $form.find(':input').serializeArray();
+	    const payload = {};
+	    data.forEach(function (entry) { payload[entry.name] = entry.value; });
+	    if ($form.attr('id') === 'sync-local-form') {
+	      Object.assign(payload, syncDebugPayload());
+	    }
+	    if ($form.attr('id') === 'sync-cloud-form') {
+	      Object.assign(payload, syncConfigKeyPayload());
+	    }
+	    Object.assign(payload, csrfPayload());
+	    if (actionOverride) {
+	      payload.action = actionOverride;
+	    }
+	    return payload;
+	  }
+
+	  function syncConfigKeyPayload() {
+	    const payload = {};
+	    $('#sync-config-encryption-fields :input').serializeArray().forEach(function (entry) {
+	      payload[entry.name] = entry.value;
+	    });
+	    return payload;
+	  }
+
+	  function syncDebugPayload() {
+	    const payload = {};
+	    $('#sync-debug-form :input').serializeArray().forEach(function (entry) {
+	      payload[entry.name] = entry.value;
+	    });
+	    return payload;
+	  }
+
+	  function syncSharedIdentityPayload() {
+	    const payload = {};
+	    $('#sync-shared-section [name="POSMAIN_BRANCH_UUID"], #sync-shared-section [name="POSMAIN_BRANCH_SYNC_SECRET"], #sync-local-section [name="POSMAIN_CLOUD_BASE_URL"]').serializeArray().forEach(function (entry) {
+	      payload[entry.name] = entry.value;
+	    });
+	    return payload;
+	  }
+
+  function syncBranchRegistrationPayload() {
+    const payload = Object.assign(
+      { action: 'register_cloud_branch', branch_status: 'active' },
+      syncConfigKeyPayload(),
+      syncSharedIdentityPayload(),
+      csrfPayload()
+    );
+    if (!payload.POSMAIN_BRANCH_UUID || !payload.POSMAIN_BRANCH_SYNC_SECRET) {
+      return null;
     }
     return payload;
   }
@@ -910,6 +1014,28 @@ document.addEventListener('DOMContentLoaded', function () {
       data: payload,
       dataType: 'json'
     });
+  }
+
+  function ajaxSyncPromise(payload) {
+    return new Promise(function (resolve, reject) {
+      ajaxSync(payload).done(function (response) {
+        if (response && response.ok === false) {
+          reject({ responseJSON: response });
+          return;
+        }
+        resolve(response || {});
+      }).fail(function (xhr) {
+        reject(xhr);
+      });
+    });
+  }
+
+  function payloadSignature(payload) {
+    return JSON.stringify(Object.keys(payload).filter(function (key) {
+      return key !== 'csrf_token';
+    }).sort().map(function (key) {
+      return [key, payload[key]];
+    }));
   }
 
   function targetInput(button) {
@@ -942,6 +1068,22 @@ document.addEventListener('DOMContentLoaded', function () {
     });
   });
 
+  $('.js-generate-config-key').on('click', function () {
+    const input = targetInput(this);
+    const message = this.getAttribute('data-confirm-message') || 'Regenerating the encryption key can make previously encrypted secrets unreadable. Continue?';
+    if (
+      input
+      && this.getAttribute('data-confirm-if-filled') === '1'
+      && input.value.trim() !== ''
+      && !window.confirm(message)
+    ) {
+      return;
+    }
+    ajaxSync(Object.assign({ action: 'generate_config_key' }, csrfPayload())).done(function (response) {
+      if (response.ok && input) input.value = response.key;
+    });
+  });
+
   $('.js-sync-test-db').on('click', function () {
     const $form = $($(this).data('form'));
     ajaxSync(formData($form, 'test_db')).done(function (response) {
@@ -960,15 +1102,6 @@ document.addEventListener('DOMContentLoaded', function () {
     });
   });
 
-  $('.js-save-sync').on('click', function () {
-    const $form = $($(this).data('form'));
-    ajaxSync(formData($form)).done(function (response) {
-      showResult($form, response.message || 'Settings were saved.', !!response.ok);
-    }).fail(function (xhr) {
-      showResult($form, (xhr.responseJSON && xhr.responseJSON.message) || 'Unable to save sync settings.', false);
-    });
-  });
-
   $('.js-export-hosted-env').on('click', function () {
     const $form = $($(this).data('form'));
     ajaxSync(formData($form, 'export_hosted_env')).done(function (response) {
@@ -977,34 +1110,6 @@ document.addEventListener('DOMContentLoaded', function () {
     }).fail(function (xhr) {
       showResult($form, (xhr.responseJSON && xhr.responseJSON.message) || 'Unable to build hosting env values.', false);
     });
-  });
-
-  $('.js-register-cloud-branch').on('click', function () {
-    const $form = $('#sync-branch-register-form');
-    ajaxSync(formData($form, 'register_cloud_branch')).done(function (response) {
-      $('#local-install-env-output').val(response.local_env_block || '');
-      renderBranches(response.branches || []);
-      showResult($form, response.message || 'Branch was registered.', !!response.ok);
-    }).fail(function (xhr) {
-      showResult($form, (xhr.responseJSON && xhr.responseJSON.message) || 'Unable to register branch.', false);
-    });
-  });
-
-  $('.js-copy-local-install-env').on('click', function () {
-    const $form = $('#sync-branch-register-form');
-    const output = document.getElementById('local-install-env-output');
-    if (!output || !output.value) {
-      showResult($form, 'There are no local settings to copy yet.', false);
-      return;
-    }
-    output.focus();
-    output.select();
-    try {
-      document.execCommand('copy');
-      showResult($form, 'Local settings were copied.', true);
-    } catch (e) {
-      showResult($form, 'Automatic copy failed. Select the text and copy it manually.', false);
-    }
   });
 
   function renderBranches(branches) {
@@ -1018,6 +1123,86 @@ document.addEventListener('DOMContentLoaded', function () {
         .append($('<td>').text(branch.last_seen_at || ''))
         .append($('<td>').text(branch.updated_at || ''))
         .appendTo($tbody);
+    });
+  }
+
+  const settingsMainForm = document.getElementById('settings-main-form');
+  const $syncLocalForm = $('#sync-local-form');
+  const $syncCloudForm = $('#sync-cloud-form');
+  const initialLocalSyncSignature = $syncLocalForm.length ? payloadSignature(formData($syncLocalForm)) : '';
+  const initialCloudSyncSignature = $syncCloudForm.length ? payloadSignature(formData($syncCloudForm)) : '';
+  let submittingAfterSyncSave = false;
+
+  if (settingsMainForm) {
+    settingsMainForm.addEventListener('submit', async function (event) {
+      if (submittingAfterSyncSave) {
+        return;
+      }
+
+      const syncSaves = [];
+      if ($syncLocalForm.length && payloadSignature(formData($syncLocalForm)) !== initialLocalSyncSignature) {
+        syncSaves.push({ $form: $syncLocalForm, payload: formData($syncLocalForm), label: 'Local sync settings were saved.' });
+      }
+      if ($syncCloudForm.length && payloadSignature(formData($syncCloudForm)) !== initialCloudSyncSignature) {
+        syncSaves.push({ $form: $syncCloudForm, payload: formData($syncCloudForm), label: 'Hosted sync settings were saved.' });
+      }
+      const branchRegistrationPayload = syncBranchRegistrationPayload();
+      if (syncSaves.length && branchRegistrationPayload) {
+        syncSaves.push({
+          $form: $syncCloudForm.length ? $syncCloudForm : $syncLocalForm,
+          payload: branchRegistrationPayload,
+          label: 'Allowed branch was registered on hosted POS.',
+          afterSave: function (response) {
+            renderBranches(response.branches || []);
+          }
+        });
+      }
+
+      if (!syncSaves.length) {
+        return;
+      }
+
+      event.preventDefault();
+      const submitButton = settingsMainForm.querySelector('button[type="submit"]');
+      const globalResult = document.getElementById('settings-global-save-result');
+      if (submitButton) {
+        submitButton.disabled = true;
+      }
+      if (globalResult) {
+        globalResult.className = 'text-muted d-block small';
+        globalResult.textContent = 'Saving sync changes...';
+      }
+
+      let failedSave = null;
+      try {
+        for (const save of syncSaves) {
+          failedSave = save;
+          const response = await ajaxSyncPromise(save.payload);
+          if (save.afterSave) {
+            save.afterSave(response);
+          }
+          showResult(save.$form, response.message || save.label, true);
+        }
+        failedSave = null;
+        if (globalResult) {
+          globalResult.className = 'text-success d-block small';
+          globalResult.textContent = 'Sync changes saved. Saving page settings...';
+        }
+        submittingAfterSyncSave = true;
+        settingsMainForm.submit();
+      } catch (xhr) {
+        const message = (xhr.responseJSON && xhr.responseJSON.message) || 'Unable to save sync settings.';
+        if (globalResult) {
+          globalResult.className = 'text-danger d-block small';
+          globalResult.textContent = message;
+        }
+        if (failedSave) {
+          showResult(failedSave.$form, message, false);
+        }
+        if (submitButton) {
+          submitButton.disabled = false;
+        }
+      }
     });
   }
 });
