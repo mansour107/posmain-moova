@@ -1,17 +1,13 @@
 <?php
 if ($_SERVER["REQUEST_METHOD"] == "POST") {
-    // Database connection details
-    $servername = "localhost"; // Change this to your database server
-    $username = "username"; // Change this to your database username
-    $password = "password"; // Change this to your database password
-    $dbname = "hrms"; // Change this to your database name
+    require_once __DIR__ . '/../includes/db_bootstrap.php';
 
-    // Create connection
-    $conn = new mysqli($servername, $username, $password, $dbname);
-
-    // Check connection
-    if ($conn->connect_error) {
-        die("Connection failed: " . $conn->connect_error);
+    try {
+        $conn = posmain_db_connect();
+    } catch (Throwable $e) {
+        http_response_code(500);
+        echo json_encode(['exists' => false, 'error' => 'Database connection failed']);
+        exit;
     }
 
     // Retrieve the value from the POST request

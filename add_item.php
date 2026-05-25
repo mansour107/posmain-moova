@@ -38,6 +38,10 @@ function posmain_add_item_unit_options(mysqli $conn): array
 }
 
 $unitOptions = posmain_add_item_unit_options($conn);
+$itemType = $isEdit ? (string) ($rowitm['item_type'] ?? 'sellable') : 'sellable';
+$itemType = in_array($itemType, ['sellable', 'ingredient', 'packaging', 'service'], true) ? $itemType : 'sellable';
+$trackStock = $itemType === 'service' ? 0 : ($isEdit ? (int) ($rowitm['track_stock'] ?? 1) : 1);
+$preferredUnitId = $isEdit ? (int) ($rowitm['preferred_unit_id'] ?? 0) : 0;
 $itemVariants = [];
 try {
     $itemVariantService = new ItemVariantService();
@@ -219,6 +223,58 @@ try {
                             </div>
                         </div>
 
+                    </div>
+                </div>
+
+                <div class="card card-outline card-warning shadow-sm mt-4">
+                    <div class="card-header border-warning">
+                        <h3 class="card-title font-weight-bold mb-0">
+                            <i class="fas fa-boxes ml-2"></i> إعدادات المخزون والوصفات
+                        </h3>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-4">
+                                <div class="form-group mb-md-0">
+                                    <label for="item_type">نوع الصنف</label>
+                                    <select id="item_type" name="item_type" class="form-control">
+                                        <option value="sellable" <?= $itemType === 'sellable' ? 'selected' : '' ?>>Sellable</option>
+                                        <option value="ingredient" <?= $itemType === 'ingredient' ? 'selected' : '' ?>>Ingredient</option>
+                                        <option value="packaging" <?= $itemType === 'packaging' ? 'selected' : '' ?>>Packaging</option>
+                                        <option value="service" <?= $itemType === 'service' ? 'selected' : '' ?>>Service</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="form-group mb-md-0">
+                                    <label for="preferred_unit_id">الوحدة المفضلة</label>
+                                    <select id="preferred_unit_id" name="preferred_unit_id" class="form-control">
+                                        <option value="">— من أول وحدة —</option>
+                                        <?php foreach ($unitOptions as $rowunit): ?>
+                                            <option value="<?= (int) $rowunit['id'] ?>" <?= (int) $rowunit['id'] === $preferredUnitId ? 'selected' : '' ?>><?= htmlspecialchars($rowunit['uname'], ENT_QUOTES, 'UTF-8') ?></option>
+                                        <?php endforeach; ?>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="form-group mb-md-0">
+                                    <label class="d-block">Track stock</label>
+                                    <input type="hidden" name="track_stock" value="0">
+                                    <div class="custom-control custom-switch">
+                                        <input type="checkbox" class="custom-control-input" id="track_stock" name="track_stock" value="1" <?= $trackStock ? 'checked' : '' ?>>
+                                        <label class="custom-control-label" for="track_stock">خصم/متابعة الرصيد</label>
+                                    </div>
+                                    <small class="form-text text-muted">Service items are saved as non-stock even if this is enabled.</small>
+                                </div>
+                            </div>
+                        </div>
+                        <?php if ($isEdit): ?>
+                            <div class="mt-3">
+                                <a class="btn btn-sm btn-outline-primary" href="recipe_manage.php?item_id=<?= (int) $editId ?>">
+                                    <i class="fas fa-utensils ml-1"></i> فتح إدارة الوصفات لهذا الصنف
+                                </a>
+                            </div>
+                        <?php endif; ?>
                     </div>
                 </div>
 

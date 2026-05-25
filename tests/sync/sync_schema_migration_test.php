@@ -7,6 +7,7 @@ require_once __DIR__ . '/../../classes/Sync/SchemaManager.php';
 class SyncSchemaMigrationTest extends TestCase
 {
     private static $conn;
+    private static $dbName;
 
     public static function setUpBeforeClass(): void
     {
@@ -16,16 +17,27 @@ class SyncSchemaMigrationTest extends TestCase
         $port = (int) (getenv('POSMAIN_TEST_MYSQL_PORT') ?: 3307);
         $user = getenv('POSMAIN_TEST_MYSQL_USER') ?: 'root';
         $pass = getenv('POSMAIN_TEST_MYSQL_PASS') ?: '';
-        $db = getenv('POSMAIN_TEST_MYSQL_DB') ?: 'kody2';
 
-        self::$conn = @new mysqli($host, $user, $pass, $db, $port);
+        self::$conn = @new mysqli($host, $user, $pass, '', $port);
         if (self::$conn->connect_error) {
             self::$conn = null;
             return;
         }
 
-        self::$conn->set_charset('utf8mb4');
         mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
+        self::$dbName = 'posmain_sync_schema_' . getmypid();
+        self::$conn->query("DROP DATABASE IF EXISTS `" . self::$dbName . "`");
+        self::$conn->query("CREATE DATABASE `" . self::$dbName . "` CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci");
+        self::$conn->select_db(self::$dbName);
+        self::$conn->set_charset('utf8mb4');
+    }
+
+    public static function tearDownAfterClass(): void
+    {
+        if (self::$conn && self::$dbName) {
+            self::$conn->query("DROP DATABASE IF EXISTS `" . self::$dbName . "`");
+            self::$conn->close();
+        }
     }
 
     protected function setUp(): void
@@ -239,6 +251,54 @@ class SyncSchemaMigrationTest extends TestCase
         }
     }
 
+    public function testLegacyIntegerJournalEntriesArePlannedForDecimalPrecisionUpgrade(): void
+    {
+        $this->dropJournalEntries();
+        self::$conn->query("
+            CREATE TABLE journal_entries (
+                id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                journal_id INT NOT NULL,
+                account_id INT NOT NULL,
+                debit INT NOT NULL DEFAULT 0,
+                credit INT NOT NULL DEFAULT 0,
+                tybe INT NOT NULL DEFAULT 0
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        ");
+
+        $manager = new SyncSchemaManager();
+        $pending = $this->journalPrecisionPending($manager);
+
+        $this->assertArrayHasKey('journal_entries.modify_debit_decimal', $pending);
+        $this->assertArrayHasKey('journal_entries.modify_credit_decimal', $pending);
+        $this->assertStringContainsString('MODIFY COLUMN debit DECIMAL(18,6)', $pending['journal_entries.modify_debit_decimal']);
+        $this->assertStringContainsString('MODIFY COLUMN credit DECIMAL(18,6)', $pending['journal_entries.modify_credit_decimal']);
+
+        foreach ($pending as $sql) {
+            self::$conn->query($sql);
+        }
+
+        $this->assertSame('decimal(18,6)', strtolower($this->columnType('journal_entries', 'debit')));
+        $this->assertSame('decimal(18,6)', strtolower($this->columnType('journal_entries', 'credit')));
+        $this->assertSame([], $this->journalPrecisionPending($manager));
+    }
+
+    public function testDecimalSafeJournalEntriesDoNotNeedPrecisionUpgrade(): void
+    {
+        $this->dropJournalEntries();
+        self::$conn->query("
+            CREATE TABLE journal_entries (
+                id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                journal_id INT NOT NULL,
+                account_id INT NOT NULL,
+                debit DECIMAL(18,6) NOT NULL DEFAULT 0.000000,
+                credit DECIMAL(18,6) NOT NULL DEFAULT 0.000000,
+                tybe INT NOT NULL DEFAULT 0
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        ");
+
+        $this->assertSame([], $this->journalPrecisionPending(new SyncSchemaManager()));
+    }
+
     private function tableExists(string $table): bool
     {
         $stmt = self::$conn->prepare("
@@ -294,6 +354,41 @@ class SyncSchemaMigrationTest extends TestCase
         $stmt->close();
 
         return $indexes;
+    }
+
+    private function journalPrecisionPending(SyncSchemaManager $manager): array
+    {
+        $pending = [];
+        foreach ($manager->pendingStatements(self::$conn) as $label => $sql) {
+            if (strpos($label, 'journal_entries.') === 0) {
+                $pending[$label] = $sql;
+            }
+        }
+
+        return $pending;
+    }
+
+    private function columnType(string $table, string $column): string
+    {
+        $stmt = self::$conn->prepare("
+            SELECT COLUMN_TYPE
+            FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE()
+              AND TABLE_NAME = ?
+              AND COLUMN_NAME = ?
+            LIMIT 1
+        ");
+        $stmt->bind_param('ss', $table, $column);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        return (string) ($row['COLUMN_TYPE'] ?? '');
+    }
+
+    private function dropJournalEntries(): void
+    {
+        self::$conn->query('DROP TABLE IF EXISTS journal_entries');
     }
 }
 

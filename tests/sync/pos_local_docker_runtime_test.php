@@ -21,6 +21,10 @@ posLocalDockerAssert(
     'Local POS container should create writable runtime directories before starting PHP'
 );
 posLocalDockerAssert(
+    strpos($dockerfile, 'docker-php-ext-install mysqli bcmath') !== false,
+    'Local POS PHP container should install bcmath because active recipe decimal math requires it'
+);
+posLocalDockerAssert(
     strpos($compose, 'PHP_CLI_SERVER_WORKERS: "4"') !== false,
     'Local POS PHP server should use multiple workers so offline sync calls cannot block local AJAX'
 );

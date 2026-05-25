@@ -15,6 +15,9 @@ phase4PrintTemplateAssert(strpos($receipt, '$line_modifiers') !== false, 'receip
 phase4PrintTemplateAssert(strpos($receipt, '$line_notes') !== false, 'receipt should render line notes');
 phase4PrintTemplateAssert(strpos($receipt, '$receipt_totals') !== false, 'receipt should render payload totals');
 phase4PrintTemplateAssert(strpos($receipt, 'window.print();') !== false, 'receipt should keep browser print button behavior');
+phase4PrintTemplateAssert(strpos($receipt, '@page') !== false, 'receipt should define receipt-sized print page');
+phase4PrintTemplateAssert(strpos($receipt, 'size: 72mm 210mm;') !== false, 'receipt print page should use thermal receipt dimensions');
+phase4PrintTemplateAssert(strpos($receipt, 'body > *:not(#printed)') !== false, 'receipt print mode should hide non-receipt page chrome');
 
 phase4PrintTemplateAssert(strpos($preparation, "require_once __DIR__ . '/../classes/Pos/Service/OrderPrintPayloadService.php';") !== false, 'preparation should require OrderPrintPayloadService');
 phase4PrintTemplateAssert(strpos($preparation, 'buildKotPayloadByOrderId($conn, $order_id)') !== false, 'preparation should build KOT payload by order id');

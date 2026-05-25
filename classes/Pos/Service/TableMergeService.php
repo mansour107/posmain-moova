@@ -1,17 +1,25 @@
 <?php
 
 require_once __DIR__ . '/../../TableOrderService.php';
+require_once __DIR__ . '/../../Recipe/RecipeDecimal.php';
+require_once __DIR__ . '/../../Recipe/RecipeOrderLifecycleService.php';
 require_once __DIR__ . '/OrderEventService.php';
 
 class TableMergeService
 {
     private $tableOrderService;
     private $orderEventService;
+    private $recipeLifecycleService;
 
-    public function __construct(?TableOrderService $tableOrderService = null, ?OrderEventService $orderEventService = null)
+    public function __construct(
+        ?TableOrderService $tableOrderService = null,
+        ?OrderEventService $orderEventService = null,
+        ?RecipeOrderLifecycleService $recipeLifecycleService = null
+    )
     {
         $this->tableOrderService = $tableOrderService ?: new TableOrderService();
         $this->orderEventService = $orderEventService ?: new OrderEventService();
+        $this->recipeLifecycleService = $recipeLifecycleService ?: new RecipeOrderLifecycleService();
     }
 
     public function mergeOrders(mysqli $conn, array $request, array $context = []): array
@@ -66,6 +74,7 @@ class TableMergeService
         if ($detailCount < 1) {
             throw new RuntimeException('SOURCE_ORDER_EMPTY');
         }
+        $movedRecipeLines = $this->recipeLineContextsForOrder($conn, $sourceOrderId, $sourceOrder, 'table', 'dine_in', $context);
 
         $beforeState = [
             'source_table_id' => $sourceTableId,
@@ -81,8 +90,9 @@ class TableMergeService
             SET fatid = ?,
                 pro_id = ?
             WHERE fatid = ?
-              AND isdeleted = 0
+                AND isdeleted = 0
         ", [$destinationOrderId, $destinationOrderId, $sourceOrderId]);
+        $this->recordRecipeMergedLines($conn, $movedRecipeLines, $destinationOrder, $destinationOrderId);
 
         $totals = $this->tableOrderService->recalculateOrderTotals($conn, $destinationOrderId);
         $combinedPaid = min((float) $totals['net'], max(0, (float) ($sourceOrder['paid_amount'] ?? 0) + (float) ($destinationOrder['paid_amount'] ?? 0)));
@@ -213,6 +223,114 @@ class TableMergeService
         ", [$orderId]);
 
         return (int) ($row['c'] ?? 0);
+    }
+
+    private function recipeLineContextsForOrder(
+        mysqli $conn,
+        int $orderId,
+        array $order,
+        string $channel,
+        string $orderType,
+        array $context
+    ): array {
+        $rows = $this->tableOrderService->queryAll($conn, "
+            SELECT *
+            FROM fat_details
+            WHERE fatid = ?
+              AND isdeleted = 0
+            ORDER BY id ASC
+        ", [$orderId]);
+
+        $lines = [];
+        foreach ($rows as $row) {
+            $itemId = (int) ($row['item_id'] ?? 0);
+            $quantity = $this->recipeLineQuantity($row);
+            if ($itemId < 1 || RecipeDecimal::compare($quantity, '0') <= 0) {
+                continue;
+            }
+
+            $lines[] = [
+                'conn' => $conn,
+                'tenant' => (int) ($context['tenant'] ?? $context['pos_tenant'] ?? $order['tenant'] ?? 0),
+                'branch' => (int) ($context['branch'] ?? $context['pos_branch'] ?? $order['branch'] ?? 0),
+                'store_id' => max(0, (int) ($row['det_store'] ?? $order['store_id'] ?? 0)),
+                'order_id' => $orderId,
+                'fat_detail_id' => (int) ($row['id'] ?? 0),
+                'order_line_uuid' => $this->nullableString($row['uuid'] ?? null),
+                'sellable_item_id' => $itemId,
+                'item_id' => $itemId,
+                'quantity' => $quantity,
+                'qty' => $quantity,
+                'channel' => $channel,
+                'order_type' => $orderType,
+            ];
+        }
+
+        return $lines;
+    }
+
+    private function recordRecipeMergedLines(mysqli $conn, array $sourceLines, array $destinationOrder, int $destinationOrderId): void
+    {
+        $destinationLines = [];
+        $normalizedSourceLines = [];
+        foreach ($sourceLines as $sourceLine) {
+            if (!is_array($sourceLine)) {
+                continue;
+            }
+
+            $sourceLine['conn'] = $conn;
+            $normalizedSourceLines[] = $sourceLine;
+
+            $destinationLine = $sourceLine;
+            $destinationLine['conn'] = $conn;
+            $destinationLine['order_id'] = $destinationOrderId;
+            $destinationLine['tenant'] = (int) ($destinationOrder['tenant'] ?? $sourceLine['tenant'] ?? 0);
+            $destinationLine['branch'] = (int) ($destinationOrder['branch'] ?? $sourceLine['branch'] ?? 0);
+            $destinationLines[] = $destinationLine;
+        }
+
+        if (!$normalizedSourceLines && !$destinationLines) {
+            return;
+        }
+
+        $this->recipeLifecycleService->onOrderMerged([
+            'conn' => $conn,
+            'tenant' => (int) ($destinationOrder['tenant'] ?? $normalizedSourceLines[0]['tenant'] ?? 0),
+            'branch' => (int) ($destinationOrder['branch'] ?? $normalizedSourceLines[0]['branch'] ?? 0),
+            'store_id' => max(0, (int) ($destinationOrder['store_id'] ?? 0)),
+            'channel' => 'table',
+            'order_type' => 'dine_in',
+            'reason' => 'table_merged',
+            'source_lines' => $normalizedSourceLines,
+            'destination_lines' => $destinationLines,
+        ]);
+    }
+
+    private function recipeLineQuantity(array $row): string
+    {
+        $uVal = RecipeDecimal::normalize($row['u_val'] ?? '1');
+        if (RecipeDecimal::compare($uVal, '0') <= 0) {
+            $uVal = '1.000000';
+        }
+
+        if (array_key_exists('qty_out', $row) || array_key_exists('qty_in', $row)) {
+            $qtyOut = RecipeDecimal::normalize($row['qty_out'] ?? '0');
+            $qtyIn = RecipeDecimal::normalize($row['qty_in'] ?? '0');
+            $difference = RecipeDecimal::compare($qtyOut, $qtyIn) >= 0
+                ? RecipeDecimal::subtract($qtyOut, $qtyIn)
+                : RecipeDecimal::subtract($qtyIn, $qtyOut);
+
+            return RecipeDecimal::divide($difference, $uVal);
+        }
+
+        return '1.000000';
+    }
+
+    private function nullableString($value): ?string
+    {
+        $text = trim((string) $value);
+
+        return $text === '' ? null : $text;
     }
 
     private function paidStatus(float $net, float $paid): array

@@ -2,14 +2,14 @@
 error_reporting(E_ALL);
 ini_set('display_errors', 1);
 
-$conn = new mysqli("localhost", "root", "", "focus");
+require_once __DIR__ . '/../includes/db_bootstrap.php';
 
-if ($conn->connect_error) {
-    error_log("Database connection failed: " . $conn->connect_error);
+try {
+    $conn = posmain_db_connect();
+} catch (Throwable $e) {
+    error_log("Database connection failed: " . $e->getMessage());
     die('{"success":false,"error":"Database connection failed"}');
 }
-
-$conn->set_charset("utf8");
 
 $phone = $_POST['phone'] ?? '';
 $name = $_POST['name'] ?? '';

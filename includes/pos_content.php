@@ -1,9 +1,12 @@
 <?php
 require_once __DIR__ . '/production_guard.php';
+require_once __DIR__ . '/../classes/Pos/Service/LegacyOrderLinePresentationService.php';
 
 if (!isset($action_url)) {
     $action_url = "do/doadd_invoice.php";
 }
+
+$posmainLegacyLinePresentation = new LegacyOrderLinePresentationService();
 
 $legacyOfflinePrototypeEnabled = !production_guard_is_production()
     || production_guard_env_bool('POSMAIN_ENABLE_LEGACY_OFFLINE_PROTOTYPE', false);
@@ -14,6 +17,7 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
         <?php if (function_exists('csrf_token')): ?>
         <script>
             window.POSMAIN_SHIFT_CSRF_TOKEN = <?= json_encode(csrf_token('shift_close'), JSON_UNESCAPED_SLASHES) ?>;
+            window.POSMAIN_CAN_RECIPE_STOCK_OVERRIDE = <?= (function_exists('auth_guard_has_permission') && isset($conn) && $conn instanceof mysqli && auth_guard_has_permission('pos.recipe_stock_override', $conn)) ? 'true' : 'false' ?>;
         </script>
         <?php endif; ?>
         <div class="container-fluid h-100 pos-shell" style="height: calc(100vh - 60px);">
@@ -288,10 +292,10 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                                             while ($rowdet = $resdet->fetch_assoc()) {
                                                 $x++;
                                                 $item_name = $rowdet['item_name'] ?: 'صنف غير معروف';
-                                                // Fix: Use correct column names from database schema
-                                                // qty should be qty_out (for sales) or qty_in - qty_out
-                                                $qty = floatval($rowdet['qty_out']) - floatval($rowdet['qty_in']);
-                                                $price = floatval($rowdet['price']);
+                                                $presentedLine = $posmainLegacyLinePresentation->presentSaleLine($rowdet);
+                                                $qty = $posmainLegacyLinePresentation->inputValue($presentedLine['qty']);
+                                                $price = floatval($presentedLine['price']);
+                                                $u_val = $posmainLegacyLinePresentation->inputValue($presentedLine['u_val']);
                                                 // Fix: Use det_value instead of val
                                                 $subtotal = floatval($rowdet['det_value']);
                                                 $barcode = $rowdet['barcode'] ?: $rowdet['item_id'];
@@ -339,7 +343,7 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                                                             title="الكمية">
                                                         <button type="button" class="btn qty-step qty-increase"
                                                             title="زيادة">+</button>
-                                                        <input type="hidden" name="u_val[]" value="1">
+                                                        <input type="hidden" name="u_val[]" value="<?= htmlspecialchars($u_val, ENT_QUOTES, 'UTF-8') ?>">
                                                     </div>
 
                                                     <div class="pos-cart-price" style="width: 55px;">
@@ -517,6 +521,7 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                             <!-- شبكة الأصناف -->
                             <?php
                             require_once __DIR__ . '/pos_item_card.php';
+                            require_once __DIR__ . '/../classes/Pos/Service/ItemAvailabilityService.php';
                             require_once __DIR__ . '/../classes/Pos/Service/ItemVariantService.php';
                             $initialPosItemsLimit = 48;
                             $initialPosItemsPage = 1;
@@ -568,6 +573,16 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                                     }
                                     unset($rowitem);
                                 }
+                                $branchConfig = function_exists('posmain_app_config')
+                                    ? (posmain_app_config()['branch'] ?? [])
+                                    : [];
+                                $availabilityScope = [
+                                    'tenant' => (int)($branchConfig['pos_tenant'] ?? 0),
+                                    'branch' => (int)($branchConfig['pos_branch'] ?? 0),
+                                    'channel' => 'pos',
+                                    'order_type' => 'takeaway',
+                                ];
+                                $posInitialItems = (new ItemAvailabilityService())->decorateItems($conn, $posInitialItems, $availabilityScope);
                                 foreach ($posInitialItems as $rowitem) {
                                     echo pos_render_item_card($rowitem);
                                 }
@@ -1868,8 +1883,10 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                                     html = '<tr><td colspan="8" class="text-center py-4">لا توجد طلبات حديثة</td></tr>';
                                 } else {
                                     response.orders.forEach(function(order, index) {
-                                        var statusBadge = order.status === 'ملغى' ? 'bg-danger' : 'bg-success';
+                                        var statusBadge = (order.status === 'ملغى' || order.status === 'مسترد') ? 'bg-danger' : 'bg-success';
                                         var typeBadge = order.type === 'دليفري' ? 'bg-info text-dark' : (order.type === 'طاولة' ? 'bg-warning text-dark' : 'bg-secondary');
+                                        var canRefund = !!order.can_refund;
+                                        var canVoid = !!order.can_void;
 
                                         html += `
                                             <tr>
@@ -1892,9 +1909,13 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
 	                                                        <button type="button" class="btn btn-danger" onclick="deleteOrder(${order.id}, ${parseInt(order.table_id || 0, 10)})" title="حذف">
 	                                                            <i class="fas fa-trash"></i>
 	                                                        </button>` : `
-	                                                        <button type="button" class="btn btn-outline-secondary" disabled title="لا يمكن حذف طلب مكتمل أو مدفوع من هنا">
+		                                                        <button type="button" class="btn btn-outline-secondary" disabled title="لا يمكن حذف طلب مكتمل أو مدفوع من هنا">
 	                                                            <i class="fas fa-trash"></i>
 		                                                        </button>`}
+                                                        ${(canRefund || canVoid) ? `
+                                                        <button type="button" class="btn btn-outline-danger" onclick="reversePaidOrder(${order.id}, ${canRefund ? 'true' : 'false'}, ${canVoid ? 'true' : 'false'})" title="استرداد أو إلغاء مدفوع">
+                                                            <i class="fas fa-undo"></i>
+                                                        </button>` : ''}
                                                     </div>
                                                 </td>
                                             </tr>
@@ -1980,6 +2001,78 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                             }
                         });
                     }
+                });
+            };
+
+            window.reversePaidOrder = function(orderId, canRefund, canVoid) {
+                var actionOptions = '';
+                if (canRefund) {
+                    actionOptions += '<option value="refund">استرداد</option>';
+                }
+                if (canVoid) {
+                    actionOptions += '<option value="void">إلغاء مدفوع</option>';
+                }
+
+                Swal.fire({
+                    title: 'استرداد أو إلغاء طلب مدفوع',
+                    html:
+                        '<div class="text-start" dir="rtl">' +
+                        '<label class="form-label">نوع العملية</label>' +
+                        '<select id="paid-reversal-action" class="form-select mb-3">' + actionOptions + '</select>' +
+                        '<label class="form-label">سياسة المخزون</label>' +
+                        '<select id="paid-reversal-policy" class="form-select mb-3">' +
+                        '<option value="waste">لا يرجع المكونات للمخزون</option>' +
+                        '<option value="return_to_stock">يرجع المكونات للمخزون</option>' +
+                        '</select>' +
+                        '<label class="form-label">السبب</label>' +
+                        '<textarea id="paid-reversal-reason" class="form-control" rows="2" maxlength="255"></textarea>' +
+                        '</div>',
+                    icon: 'warning',
+                    showCancelButton: true,
+                    confirmButtonColor: '#d33',
+                    cancelButtonColor: '#3085d6',
+                    confirmButtonText: 'تنفيذ',
+                    cancelButtonText: 'إلغاء',
+                    preConfirm: function() {
+                        return {
+                            action: $('#paid-reversal-action').val(),
+                            policy: $('#paid-reversal-policy').val(),
+                            reason: ($('#paid-reversal-reason').val() || '').trim()
+                        };
+                    }
+                }).then((result) => {
+                    if (!result.isConfirmed || !result.value) {
+                        return;
+                    }
+
+                    var action = result.value.action === 'void' ? 'void' : 'refund';
+                    $.ajax({
+                        url: 'ajax/refund_order.php',
+                        method: 'POST',
+                        data: {
+                            order_id: orderId,
+                            action: action,
+                            refund_stock_policy: result.value.policy,
+                            reason: result.value.reason,
+                            idempotency_key: createPOSIdempotencyKey(action === 'void' ? 'pos.order.void' : 'pos.order.refund')
+                        },
+                        success: function(response) {
+                            try {
+                                if (typeof response === 'string') response = JSON.parse(response);
+                                if (response.success) {
+                                    Swal.fire('تم التنفيذ', action === 'void' ? 'تم إلغاء الطلب المدفوع.' : 'تم استرداد الطلب.', 'success');
+                                    loadRecentOrders();
+                                } else {
+                                    Swal.fire('خطأ!', response.message || response.error || 'خطأ غير معروف', 'error');
+                                }
+                            } catch (e) {
+                                Swal.fire('خطأ!', 'خطأ في استجابة الخادم', 'error');
+                            }
+                        },
+                        error: function() {
+                            Swal.fire('خطأ!', 'خطأ في الاتصال', 'error');
+                        }
+                    });
                 });
             };
         });

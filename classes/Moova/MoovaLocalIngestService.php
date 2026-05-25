@@ -328,10 +328,30 @@ class MoovaLocalIngestService
                 continue;
             }
 
-            $normalized[] = [
+            $line = [
                 'itemId' => (string) $itemId,
                 'qty' => (float) $qty,
             ];
+
+            foreach ([
+                'externalLineId' => ['externalLineId', 'external_line_id', 'lineId', 'line_id', 'providerLineId', 'provider_line_id', 'cartLineId', 'cart_line_id'],
+                'variantId' => ['variantId', 'variant_id', 'variantItemId', 'variant_item_id'],
+                'eventUuid' => ['eventUuid', 'event_uuid', 'sourceEventUuid', 'source_event_uuid'],
+            ] as $target => $aliases) {
+                $value = $this->firstNonEmpty($item, $aliases);
+                if ($value !== null) {
+                    $line[$target] = (string) $value;
+                }
+            }
+
+            foreach (['modifiers', 'modifier_options', 'selected_modifiers', 'options'] as $modifierKey) {
+                if (isset($item[$modifierKey]) && is_array($item[$modifierKey])) {
+                    $line[$modifierKey] = $item[$modifierKey];
+                    break;
+                }
+            }
+
+            $normalized[] = $line;
         }
 
         if (!$normalized) {

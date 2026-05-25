@@ -22,7 +22,11 @@ try {
     require_csrf('sync_credentials');
 
     $action = trim((string) ($_POST['action'] ?? ''));
-    require_admin_or_permission($action === 'save_moova' ? 'moova.manage' : 'system.tools.run', $conn);
+    if ($action === 'save_moova') {
+        require_admin_or_permission('moova.manage', $conn);
+    } else {
+        require_admin_or_permission('system.tools.run', $conn);
+    }
 
     switch ($action) {
         case 'generate_uuid':
@@ -49,17 +53,24 @@ try {
             break;
 
         case 'save_local':
+            $dbConfigDirty = !empty($_POST['POSMAIN_DB_CONFIG_DIRTY']);
             $db = syncCredentialsDbInput($_POST, true);
-            $dbTest = (new SyncRuntimeDbConfigFile())->testDatabase($db);
-            if (empty($dbTest['ok'])) {
-                throw new InvalidArgumentException('Settings cannot be saved before the database connection test succeeds: ' . ($dbTest['message'] ?? ''));
-            }
             $savedKeyPath = syncCredentialsSaveEncryptionKey($_POST);
-            syncCredentialsRequireEncryption();
-            $targetConn = syncCredentialsConnectToTargetDb($db);
-            (new SyncRuntimeSettings())->save($targetConn, syncCredentialsSettingsInput($_POST, 'branch'));
-            $targetConn->close();
-            (new SyncRuntimeDbConfigFile())->save($db);
+            if ($dbConfigDirty || !empty($_POST['POSMAIN_BRANCH_SYNC_SECRET_DIRTY'])) {
+                syncCredentialsRequireEncryption();
+            }
+            if ($dbConfigDirty) {
+                $dbTest = (new SyncRuntimeDbConfigFile())->testDatabase($db);
+                if (empty($dbTest['ok'])) {
+                    throw new InvalidArgumentException('Settings cannot be saved before the database connection test succeeds: ' . ($dbTest['message'] ?? ''));
+                }
+                $targetConn = syncCredentialsConnectToTargetDb($db);
+                (new SyncRuntimeSettings())->save($targetConn, syncCredentialsSettingsInput($_POST, 'branch'));
+                $targetConn->close();
+                (new SyncRuntimeDbConfigFile())->save($db);
+            } else {
+                (new SyncRuntimeSettings())->save($conn, syncCredentialsSettingsInput($_POST, 'branch'));
+            }
             syncCredentialsAudit($conn, 'sync_credentials_local_saved', ['role' => 'branch']);
             syncCredentialsJson([
                 'ok' => true,
@@ -71,7 +82,6 @@ try {
 
         case 'save_cloud':
             $savedKeyPath = syncCredentialsSaveEncryptionKey($_POST);
-            syncCredentialsRequireEncryption();
             (new SyncRuntimeSettings())->save($conn, syncCredentialsSettingsInput($_POST, 'cloud'));
             syncCredentialsAudit($conn, 'sync_credentials_cloud_saved', ['role' => 'cloud']);
             syncCredentialsJson([
@@ -189,6 +199,7 @@ function syncCredentialsDbInput(array $input, bool $preserveBlankPassword = fals
 
 function syncCredentialsSettingsInput(array $input, string $role): array
 {
+    $branchSecretDirty = !empty($input['POSMAIN_BRANCH_SYNC_SECRET_DIRTY']);
     $localEnvFiles = function_exists('posmain_sync_local_env_files') ? posmain_sync_local_env_files() : [];
     $envFallback = static function (array $names, $default = '', bool $allowEmpty = false) use ($localEnvFiles) {
         if (function_exists('posmain_first_env_or_file')) {
@@ -214,16 +225,20 @@ function syncCredentialsSettingsInput(array $input, string $role): array
 
     $settings = ['role' => $role];
     foreach ($keys as $key) {
+        if ($key === 'POSMAIN_BRANCH_SYNC_SECRET' && !$branchSecretDirty) {
+            continue;
+        }
         if (array_key_exists($key, $input)) {
             $settings[$key] = $input[$key];
         }
     }
     if (
         $role === 'branch'
+        && !$branchSecretDirty
         && trim((string) ($settings['POSMAIN_BRANCH_SYNC_SECRET'] ?? '')) === ''
         && trim((string) $envFallback(['POSMAIN_BRANCH_SYNC_SECRET'], (string) ($GLOBALS['appConfig']['sync']['branch_secret'] ?? ''), true)) !== ''
     ) {
-        $settings['POSMAIN_BRANCH_SYNC_SECRET'] = (string) $envFallback(['POSMAIN_BRANCH_SYNC_SECRET'], (string) ($GLOBALS['appConfig']['sync']['branch_secret'] ?? ''), true);
+        $settings['POSMAIN_BRANCH_SYNC_SECRET_EXTERNAL'] = '1';
     }
 
     return $settings;

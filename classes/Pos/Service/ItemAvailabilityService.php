@@ -1,7 +1,29 @@
 <?php
 
+require_once __DIR__ . '/../../Recipe/RecipeAvailabilityService.php';
+require_once __DIR__ . '/../../Recipe/RecipeFeatureFlags.php';
+require_once __DIR__ . '/../../Recipe/RecipeSettingsService.php';
+
 class ItemAvailabilityService
 {
+    private ?RecipeFeatureFlags $recipeFlags;
+    private ?RecipeAvailabilityService $recipeAvailabilityService;
+    private RecipeSettingsService $recipeSettingsService;
+    private array $itemCategoryCache = [];
+
+    public function __construct(
+        ?RecipeFeatureFlags $recipeFlags = null,
+        ?RecipeAvailabilityService $recipeAvailabilityService = null,
+        ?RecipeSettingsService $recipeSettingsService = null
+    )
+    {
+        $this->recipeFlags = $recipeFlags ?: new RecipeFeatureFlags();
+        $this->recipeAvailabilityService = $recipeAvailabilityService ?: new RecipeAvailabilityService($this->recipeFlags);
+        $this->recipeSettingsService = $recipeSettingsService ?: new RecipeSettingsService(
+            method_exists($this->recipeFlags, 'appConfig') ? $this->recipeFlags->appConfig() : null
+        );
+    }
+
     public function setAvailability(
         mysqli $conn,
         int $itemId,
@@ -51,16 +73,27 @@ class ItemAvailabilityService
             ?: $this->fetchAvailabilityRow($conn, $itemId, $tenant, $branch, 'all');
 
         if (!$row) {
-            return $this->defaultAvailability($itemId, $tenant, $branch, $channel);
+            return $this->withCashierPresentation($this->withRecipeAvailability(
+                $conn,
+                $this->defaultAvailability($itemId, $tenant, $branch, $channel),
+                $scope
+            ));
         }
 
-        return $this->formatAvailability($row, $tenant, $branch, $channel);
+        return $this->withCashierPresentation($this->withRecipeAvailability($conn, $this->formatAvailability($row, $tenant, $branch, $channel), $scope));
     }
 
     public function assertSellable(mysqli $conn, int $itemId, array $scope = []): array
     {
         $availability = $this->availabilityForItem($conn, $itemId, $scope);
-        if (!$availability['is_available']) {
+        $this->assertAvailabilityCanAdd($availability);
+
+        return $availability;
+    }
+
+    public function assertAvailabilityCanAdd(array $availability): array
+    {
+        if (empty($availability['is_available']) && empty($availability['availability_can_add'])) {
             throw new RuntimeException('ITEM_UNAVAILABLE');
         }
 
@@ -74,6 +107,7 @@ class ItemAvailabilityService
         }
 
         $decorated = [];
+        $scope = $this->scopeWithItemCategories($scope, $items);
         $availabilityByItem = $this->availabilityForItems($conn, $this->itemIds($items), $scope);
         foreach ($items as $item) {
             $itemId = (int) ($item['id'] ?? $item['item_id'] ?? 0);
@@ -81,6 +115,26 @@ class ItemAvailabilityService
             $item['is_available'] = $availability['is_available'] ? 1 : 0;
             $item['unavailable_reason'] = $availability['unavailable_reason'];
             $item['availability_channel'] = $availability['channel'];
+            foreach ([
+                'manual_is_available',
+                'availability_status',
+                'availability_can_add',
+                'availability_low_stock',
+                'availability_requires_manager_override',
+                'availability_override_allowed',
+                'availability_override_permission',
+                'recipe_enabled',
+                'recipe_id',
+                'recipe_computed_available_qty',
+                'recipe_effective_available_qty',
+                'recipe_effective_is_available',
+                'recipe_unavailable_reason',
+                'recipe_availability_revision',
+            ] as $recipeKey) {
+                if (array_key_exists($recipeKey, $availability)) {
+                    $item[$recipeKey] = $availability[$recipeKey];
+                }
+            }
             $decorated[] = $item;
         }
 
@@ -147,6 +201,109 @@ class ItemAvailabilityService
         }
         $stmt->close();
 
+        foreach ($availability as $itemId => $itemAvailability) {
+            $availability[$itemId] = $this->withCashierPresentation($this->withRecipeAvailability($conn, $itemAvailability, $scope));
+        }
+
+        return $availability;
+    }
+
+    private function withCashierPresentation(array $availability): array
+    {
+        $availability['availability_can_add'] = (bool) ($availability['is_available'] ?? false);
+        $availability['availability_low_stock'] = false;
+        $availability['availability_requires_manager_override'] = false;
+        $availability['availability_override_allowed'] = false;
+        $availability['availability_override_permission'] = '';
+
+        if (!$availability['availability_can_add']) {
+            $manualAvailable = array_key_exists('manual_is_available', $availability)
+                ? (bool) $availability['manual_is_available']
+                : false;
+            if ($manualAvailable && !empty($availability['recipe_enabled'])) {
+                $overrideAllowed = !$this->recipeFlags->isStrictStockEnabled()
+                    && $this->recipeSettingsService->allowNegativeStockWithApproval();
+                $availability['availability_status'] = 'recipe_unavailable';
+                $availability['availability_requires_manager_override'] = true;
+                $availability['availability_override_allowed'] = $overrideAllowed;
+                $availability['availability_can_add'] = $overrideAllowed;
+                $availability['availability_override_permission'] = 'pos.recipe_stock_override';
+
+                return $availability;
+            }
+
+            $availability['availability_status'] = 'manual_unavailable';
+
+            return $availability;
+        }
+
+        if (!empty($availability['recipe_enabled'])) {
+            $effectiveQty = (float) ($availability['recipe_effective_available_qty'] ?? 0);
+            if ($effectiveQty > 0 && $effectiveQty <= 5) {
+                $availability['availability_status'] = 'recipe_low';
+                $availability['availability_low_stock'] = true;
+
+                return $availability;
+            }
+        }
+
+        $availability['availability_status'] = 'available';
+
+        return $availability;
+    }
+
+    private function withRecipeAvailability(mysqli $conn, array $availability, array $scope): array
+    {
+        $itemId = (int) ($availability['item_id'] ?? 0);
+        $tenant = (int) ($availability['tenant'] ?? $scope['tenant'] ?? $scope['pos_tenant'] ?? 0);
+        $branch = (int) ($availability['branch'] ?? $scope['branch'] ?? $scope['pos_branch'] ?? 0);
+        $channel = (string) ($availability['requested_channel'] ?? $availability['channel'] ?? $scope['channel'] ?? 'all');
+        $orderType = (string) ($scope['order_type'] ?? 'takeaway');
+        $storeId = (int) ($scope['store_id'] ?? 0);
+        $itemCategoryId = $this->itemCategoryId($conn, $itemId, $this->itemCategoryIdFromScope($scope, $itemId));
+
+        if (
+            $itemId < 1
+            || !$this->recipeFlags->isAvailabilityEnabledForItem(
+                new RecipeScope($tenant, $branch, $scope['branch_uuid'] ?? null, $storeId, $channel, $orderType, 'recipe'),
+                $itemId,
+                $itemCategoryId
+            )
+        ) {
+            return $availability;
+        }
+
+        $availability['manual_is_available'] = (bool) $availability['is_available'];
+        if (!$availability['is_available']) {
+            return $availability;
+        }
+
+        if (!$this->hasActiveRecipe($conn, $itemId, $tenant, $branch)) {
+            return $availability;
+        }
+
+        $recipe = $this->recipeAvailabilityService->calculateForItem($conn, $itemId, array_merge($scope, [
+            'pos_tenant' => $tenant,
+            'pos_branch' => $branch,
+            'store_id' => $storeId,
+            'channel' => $channel,
+            'order_type' => $orderType,
+            'item_category_id' => $itemCategoryId,
+        ]));
+
+        $availability['recipe_enabled'] = true;
+        $availability['recipe_id'] = $recipe->recipeId;
+        $availability['recipe_computed_available_qty'] = $recipe->computedAvailableQty;
+        $availability['recipe_effective_available_qty'] = $recipe->effectiveAvailableQty;
+        $availability['recipe_effective_is_available'] = $recipe->effectiveIsAvailable;
+        $availability['recipe_unavailable_reason'] = $recipe->unavailableReason;
+        $availability['recipe_availability_revision'] = $recipe->availabilityRevision;
+
+        if (!$recipe->effectiveIsAvailable) {
+            $availability['is_available'] = false;
+            $availability['unavailable_reason'] = $recipe->unavailableReason;
+        }
+
         return $availability;
     }
 
@@ -209,6 +366,93 @@ class ItemAvailabilityService
         return $ids;
     }
 
+    private function scopeWithItemCategories(array $scope, array $items): array
+    {
+        $map = is_array($scope['item_category_map'] ?? null) ? $scope['item_category_map'] : [];
+        foreach ($items as $item) {
+            $itemId = (int) ($item['id'] ?? $item['item_id'] ?? 0);
+            $categoryId = (int) (
+                $item['item_category_id']
+                ?? $item['sellable_item_category_id']
+                ?? $item['category_id']
+                ?? $item['group1']
+                ?? 0
+            );
+            if ($itemId > 0 && $categoryId > 0) {
+                $map[$itemId] = $categoryId;
+            }
+        }
+
+        $scope['item_category_map'] = $map;
+
+        return $scope;
+    }
+
+    private function itemCategoryIdFromScope(array $scope, int $itemId): ?int
+    {
+        $categoryId = (int) (
+            $scope['item_category_id']
+            ?? $scope['sellable_item_category_id']
+            ?? $scope['category_id']
+            ?? $scope['group1']
+            ?? 0
+        );
+        if ($categoryId <= 0 && isset($scope['item_category_map']) && is_array($scope['item_category_map'])) {
+            $categoryId = (int) ($scope['item_category_map'][$itemId] ?? 0);
+        }
+
+        return $categoryId > 0 ? $categoryId : null;
+    }
+
+    private function itemCategoryId(mysqli $conn, int $itemId, ?int $contextCategoryId = null): ?int
+    {
+        if ($contextCategoryId !== null && $contextCategoryId > 0) {
+            return $contextCategoryId;
+        }
+        if ($itemId < 1) {
+            return null;
+        }
+
+        $databaseRow = $conn->query('SELECT DATABASE() AS db_name')->fetch_assoc();
+        $database = (string) ($databaseRow['db_name'] ?? '');
+        $cacheKey = $database . ':' . $itemId;
+        if (array_key_exists($cacheKey, $this->itemCategoryCache)) {
+            return $this->itemCategoryCache[$cacheKey];
+        }
+        if (!$this->columnExists($conn, 'myitems', 'group1')) {
+            $this->itemCategoryCache[$cacheKey] = null;
+
+            return null;
+        }
+
+        $stmt = $conn->prepare('SELECT group1 FROM myitems WHERE id = ? LIMIT 1');
+        $stmt->bind_param('i', $itemId);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        $categoryId = (int) ($row['group1'] ?? 0);
+        $this->itemCategoryCache[$cacheKey] = $categoryId > 0 ? $categoryId : null;
+
+        return $this->itemCategoryCache[$cacheKey];
+    }
+
+    private function columnExists(mysqli $conn, string $table, string $column): bool
+    {
+        $stmt = $conn->prepare("
+SELECT COUNT(*) AS column_count
+FROM INFORMATION_SCHEMA.COLUMNS
+WHERE TABLE_SCHEMA = DATABASE()
+  AND TABLE_NAME = ?
+  AND COLUMN_NAME = ?");
+        $stmt->bind_param('ss', $table, $column);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        return (int) ($row['column_count'] ?? 0) > 0;
+    }
+
     private function positiveInt($value, string $code): int
     {
         $value = (int) $value;
@@ -255,5 +499,44 @@ class ItemAvailabilityService
         }
 
         return substr($text, 0, $maxLength);
+    }
+
+    private function hasActiveRecipe(mysqli $conn, int $itemId, int $tenant, int $branch): bool
+    {
+        if (!$this->tableExists($conn, 'recipe_headers')) {
+            return false;
+        }
+
+        $stmt = $conn->prepare("
+            SELECT id
+            FROM recipe_headers
+            WHERE sellable_item_id = ?
+              AND pos_tenant = ?
+              AND pos_branch = ?
+              AND status = 'active'
+            LIMIT 1
+        ");
+        $stmt->bind_param('iii', $itemId, $tenant, $branch);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        return (bool) $row;
+    }
+
+    private function tableExists(mysqli $conn, string $table): bool
+    {
+        $stmt = $conn->prepare("
+            SELECT COUNT(*) AS table_count
+            FROM INFORMATION_SCHEMA.TABLES
+            WHERE TABLE_SCHEMA = DATABASE()
+              AND TABLE_NAME = ?
+        ");
+        $stmt->bind_param('s', $table);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        return (int) ($row['table_count'] ?? 0) > 0;
     }
 }

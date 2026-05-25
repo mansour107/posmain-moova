@@ -9,6 +9,7 @@ $root_path = dirname(__DIR__);
 include($root_path . '/includes/connect.php');
 require_once($root_path . '/classes/TableOrderService.php');
 require_once($root_path . '/classes/Pos/Service/ModifierLineNoteService.php');
+require_once($root_path . '/classes/Pos/Service/LegacyOrderLinePresentationService.php');
 
 try {
     if (!isset($_POST['order_id']) || empty($_POST['order_id'])) {
@@ -29,9 +30,11 @@ try {
     $order = $loaded['order'];
     $items = [];
     $customizationService = new ModifierLineNoteService();
+    $linePresentation = new LegacyOrderLinePresentationService();
 
     foreach ($loaded['items'] as $item) {
-        $qty = floatval($item['qty_out']) - floatval($item['qty_in']);
+        $presentedLine = $linePresentation->presentSaleLine($item);
+        $qty = (float) $presentedLine['qty'];
         $customizations = ['modifiers' => [], 'notes' => []];
         try {
             $customizations = $customizationService->fetchLineCustomizations($conn, (int) $order['id'], (int) $item['id']);
@@ -48,7 +51,8 @@ try {
         foreach ($customizations['modifiers'] as $modifier) {
             $modifierLineTotal += (float) ($modifier['line_delta'] ?? 0);
         }
-        $basePrice = (float) $item['price'];
+        $price = (float) $presentedLine['price'];
+        $basePrice = $price;
         if ($qty > 0 && $modifierLineTotal > 0) {
             $basePrice = max(0, $basePrice - ($modifierLineTotal / $qty));
         }
@@ -58,8 +62,9 @@ try {
             'item_desc' => $item['item_desc'] ?: '',
             'barcode' => $item['barcode'] ?: $item['item_id'],
             'qty' => $qty,
-            'price' => floatval($item['price']),
+            'price' => $price,
             'base_price' => $basePrice,
+            'u_val' => (float) $presentedLine['u_val'],
             'subtotal' => floatval($item['det_value']),
             'note' => $lineNote,
             'kitchen_note' => $lineNote,

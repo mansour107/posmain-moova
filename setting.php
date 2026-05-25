@@ -408,7 +408,7 @@ if ($syncDefaultCloudUrl === '' && !empty($_SERVER['HTTP_HOST'])) {
             </div>
           </div>
           <div class="card-body">
-            <?= csrf_input('sync_credentials') ?>
+            <?= csrf_input('sync_credentials', 'sync_csrf_token') ?>
             <?php if ($syncCryptoAvailable): ?>
               <div class="alert alert-success py-2">
                 <i class="fas fa-key ml-2"></i>
@@ -950,8 +950,11 @@ document.addEventListener('DOMContentLoaded', function () {
     });
   }
 
+  let initialDebugSignature = null;
+  let initialBranchSyncSecretValue = null;
+
   function csrfPayload() {
-    const token = syncCard.querySelector('input[name="csrf_token"]');
+    const token = syncCard.querySelector('input[name="sync_csrf_token"]');
     return token ? { csrf_token: token.value } : {};
   }
 
@@ -960,10 +963,22 @@ document.addEventListener('DOMContentLoaded', function () {
 	    const payload = {};
 	    data.forEach(function (entry) { payload[entry.name] = entry.value; });
 	    if ($form.attr('id') === 'sync-local-form') {
-	      Object.assign(payload, syncDebugPayload());
+	      const debugPayload = syncDebugPayload();
+	      Object.assign(payload, debugPayload);
+	      if (initialDebugSignature !== null && payloadSignature(debugPayload) !== initialDebugSignature) {
+	        payload.POSMAIN_DB_CONFIG_DIRTY = '1';
+	      }
 	    }
 	    if ($form.attr('id') === 'sync-cloud-form') {
 	      Object.assign(payload, syncConfigKeyPayload());
+	    }
+	    const branchSecretInput = syncCard.querySelector('#sync-shared-section [name="POSMAIN_BRANCH_SYNC_SECRET"]');
+	    if (
+	      branchSecretInput
+	      && initialBranchSyncSecretValue !== null
+	      && branchSecretInput.value !== initialBranchSyncSecretValue
+	    ) {
+	      payload.POSMAIN_BRANCH_SYNC_SECRET_DIRTY = '1';
 	    }
 	    Object.assign(payload, csrfPayload());
 	    if (actionOverride) {
@@ -1140,6 +1155,9 @@ document.addEventListener('DOMContentLoaded', function () {
   const $syncLocalForm = $('#sync-local-form');
   const $syncCloudForm = $('#sync-cloud-form');
   const syncRuntimeRole = syncCard.getAttribute('data-sync-role') || 'branch';
+  const branchSecretInput = syncCard.querySelector('#sync-shared-section [name="POSMAIN_BRANCH_SYNC_SECRET"]');
+  initialDebugSignature = payloadSignature(syncDebugPayload());
+  initialBranchSyncSecretValue = branchSecretInput ? branchSecretInput.value : '';
   const initialLocalSyncSignature = $syncLocalForm.length ? payloadSignature(formData($syncLocalForm)) : '';
   const initialCloudSyncSignature = $syncCloudForm.length ? payloadSignature(formData($syncCloudForm)) : '';
   const initialBranchRegistrationSignature = syncBranchRegistrationPayload() ? payloadSignature(syncBranchRegistrationPayload()) : '';

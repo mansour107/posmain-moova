@@ -8,6 +8,7 @@ require_once __DIR__ . '/../includes/session_bootstrap.php';
 include('../includes/connect.php');
 require_once('../classes/Sync/DocumentCounterService.php');
 require_once('../classes/Sync/SyncOutboxEventService.php');
+require_once('../classes/Recipe/LegacyInvoiceRecipeLifecycleBridge.php');
 
 // امسح أي output جاي من connect.php (warnings, notices, etc.)
 ob_clean();
@@ -114,7 +115,7 @@ if ($store_id == 0 || $emp_id == 0 || $acc2_id == 0 || $fund_id == 0) {
 $orderItems = [];
 $headtotal  = 0.0;
 
-foreach ($cofeItems as $cofeItem) {
+foreach ($cofeItems as $cofeItemIndex => $cofeItem) {
     $cofeItemId = (string)($cofeItem['itemId'] ?? '');
     $qty        = floatval($cofeItem['qty'] ?? 1);
     if ($qty <= 0) continue;
@@ -153,6 +154,8 @@ foreach ($cofeItems as $cofeItem) {
         'price'      => $price,
         'cost_price' => floatval($item['cost_price']),
         'old_qty'    => intval($item['itmqty']),
+        'source_line' => is_array($cofeItem) ? $cofeItem : [],
+        'source_line_index' => (int) $cofeItemIndex,
     ];
 }
 
@@ -179,6 +182,7 @@ $conn->begin_transaction();
 
 try {
     $counterService = new DocumentCounterService();
+    $recipeLifecycleBridge = new LegacyInvoiceRecipeLifecycleBridge();
     $pro_id = nextCofeProId($conn, $counterService, $pro_tybe);
 
     // ===== إدراج رأس الفاتورة =====
@@ -205,7 +209,7 @@ try {
     );
     // types: s s s s s  s i i  i i i d  d d  d i
     $stmt->bind_param(
-        "ssssssiiiiiddddis",
+        "ssssssiiiiiddddi",
         $pro_id,    // 1  s
         $pro_tybe,  // 2  s
         $pro_tybe,  // 3  s  (journal_tybe = pro_tybe)
@@ -229,6 +233,7 @@ try {
     }
     $last_op = $conn->insert_id;
     $stmt->close();
+    persistCofeIdempotencyKey($conn, (int) $last_op, (string) $idempotencyKey);
 
     // ===== القيود المحاسبية =====
     // رقم القيد التالي
@@ -335,7 +340,7 @@ try {
         )"
     );
     // types: i i i  d d  d i i i  d d
-    foreach ($orderItems as $item) {
+    foreach ($orderItems as $itemIndex => $item) {
         $qty_out    = $item['qty'];
         $det_value  = $item['qty'] * $item['price'];
         $unit_price = $item['price'];
@@ -358,8 +363,20 @@ try {
         if (!$stmt_details->execute()) {
             throw new Exception('فشل في إدخال الصنف: ' . $item['id'] . ' - ' . $stmt_details->error);
         }
+        $orderItems[$itemIndex]['fat_detail_id'] = (int) $conn->insert_id;
+        $orderItems[$itemIndex]['det_store'] = (int) $store_id;
     }
     $stmt_details->close();
+
+    $recipeOrderType = !empty($tableNumber) && intval($tableNumber) > 0 ? 'dine_in' : 'takeaway';
+    $recipeExternalOrderId = (string) ($cofeOrderId ?: $idempotencyKey ?: $last_op);
+    $recipeContext = [
+        'user_id' => (int) $usid,
+        'store_id' => (int) $store_id,
+        'source_order_uuid' => $recipeExternalOrderId,
+    ];
+    $recipeLifecycleBridge->recordExternalLinesAdded($conn, (int) $last_op, 'cofe', $recipeOrderType, $recipeExternalOrderId, $orderItems, $recipeContext);
+    $recipeLifecycleBridge->recordExternalOrderPaid($conn, (int) $last_op, 'cofe', $recipeOrderType, $recipeExternalOrderId, $orderItems, $recipeContext);
 
     // ===== تحديث الربح الإجمالي =====
     $r = $conn->prepare("SELECT SUM(profit) AS tprofit FROM fat_details WHERE fatid = ?");
@@ -444,4 +461,50 @@ function nextCofeJournalId(mysqli $conn, DocumentCounterService $counterService)
     $counterService->ensureCounterRow($conn, 0, 0, 'journal_id', 'journal:default', $row && $row['max_id'] ? (int) $row['max_id'] : 0);
 
     return $counterService->nextJournalId($conn, 0, 0);
+}
+
+function persistCofeIdempotencyKey(mysqli $conn, int $orderId, string $idempotencyKey): void
+{
+    $idempotencyKey = trim($idempotencyKey);
+    if ($orderId <= 0 || $idempotencyKey === '') {
+        return;
+    }
+
+    if (!cofeColumnExists($conn, 'ot_head', 'cofe_idempotency_key')) {
+        return;
+    }
+
+    $stmt = $conn->prepare("UPDATE ot_head SET cofe_idempotency_key = ? WHERE id = ?");
+    if (!$stmt) {
+        throw new RuntimeException('فشل في تجهيز مفتاح منع تكرار Cofe: ' . $conn->error);
+    }
+
+    $stmt->bind_param('si', $idempotencyKey, $orderId);
+    if (!$stmt->execute()) {
+        $error = $stmt->error;
+        $stmt->close();
+        throw new RuntimeException('فشل في حفظ مفتاح منع تكرار Cofe: ' . $error);
+    }
+    $stmt->close();
+}
+
+function cofeColumnExists(mysqli $conn, string $table, string $column): bool
+{
+    $stmt = $conn->prepare("
+        SELECT COUNT(*) AS column_count
+        FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = ?
+          AND COLUMN_NAME = ?
+    ");
+    if (!$stmt) {
+        return false;
+    }
+
+    $stmt->bind_param('ss', $table, $column);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+
+    return ((int) ($row['column_count'] ?? 0)) > 0;
 }

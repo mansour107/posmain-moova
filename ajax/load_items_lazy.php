@@ -105,11 +105,6 @@ try {
         unset($item);
     }
 
-    foreach ($items as &$item) {
-        $item['html'] = pos_render_item_card($item);
-    }
-    unset($item);
-
     $branchConfig = function_exists('posmain_app_config')
         ? (posmain_app_config()['branch'] ?? [])
         : [];
@@ -117,8 +112,14 @@ try {
         'tenant' => (int)($branchConfig['pos_tenant'] ?? 0),
         'branch' => (int)($branchConfig['pos_branch'] ?? 0),
         'channel' => 'pos',
+        'order_type' => 'takeaway',
     ];
     $items = (new ItemAvailabilityService())->decorateItems($conn, $items, $availabilityScope);
+
+    foreach ($items as &$item) {
+        $item['html'] = pos_render_item_card($item);
+    }
+    unset($item);
     
     // حساب إجمالي العدد
     $count_query = "SELECT COUNT(*) as total FROM myitems m WHERE {$where}";

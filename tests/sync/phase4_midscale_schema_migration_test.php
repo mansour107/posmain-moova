@@ -60,6 +60,8 @@ try {
     $pendingBefore = $manager->pendingStatements($conn);
     phase4Assert(isset($pendingBefore['tables.add_area_id']), 'tables area_id migration missing');
     phase4Assert(isset($pendingBefore['tables.add_idx_tables_area_order']), 'tables area index migration missing');
+    phase4Assert(isset($pendingBefore['ot_head.add_cofe_idempotency_key']), 'ot_head Cofe idempotency column migration missing');
+    phase4Assert(isset($pendingBefore['ot_head.add_uq_ot_head_cofe_idempotency']), 'ot_head Cofe idempotency unique index migration missing');
     phase4Assert(isset($pendingBefore['ot_head.add_guest_count']), 'ot_head guest_count migration missing');
     phase4Assert(isset($pendingBefore['ot_head.add_waiter_id']), 'ot_head waiter_id migration missing');
     phase4Assert(isset($pendingBefore['ot_head.add_idx_ot_head_waiter']), 'ot_head waiter index migration missing');
@@ -87,10 +89,10 @@ try {
     phase4Assert(in_array('uq_item_nutrition', $inspect['item_nutrition_profiles']['indexes'], true), 'nutrition unique index not found');
 
     phase4AssertColumns($conn, 'tables', ['area_id', 'capacity', 'pos_x', 'pos_y', 'shape', 'display_order']);
-    phase4AssertColumns($conn, 'ot_head', ['guest_count', 'waiter_id']);
+    phase4AssertColumns($conn, 'ot_head', ['cofe_idempotency_key', 'guest_count', 'waiter_id']);
     phase4AssertColumns($conn, 'myitems', ['item_type', 'track_stock', 'preferred_unit_id']);
     phase4AssertIndexes($conn, 'tables', ['idx_tables_area_order']);
-    phase4AssertIndexes($conn, 'ot_head', ['idx_ot_head_waiter']);
+    phase4AssertIndexes($conn, 'ot_head', ['uq_ot_head_cofe_idempotency', 'idx_ot_head_waiter']);
     phase4AssertIndexes($conn, 'myitems', ['idx_myitems_type_stock', 'idx_myitems_barcode_deleted', 'idx_myitems_group_deleted']);
     phase4AssertIndexes($conn, 'fat_details', ['idx_fat_details_stock_item', 'idx_fat_details_fatid_deleted']);
     phase4Assert($manager->pendingStatements($conn) === [], 'Phase 4 schema apply should be idempotent');

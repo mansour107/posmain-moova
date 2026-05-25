@@ -19,9 +19,12 @@ loginSecurityAssert(strpos($source, "'login_throttled'") !== false, 'index shoul
 loginSecurityAssert(strpos($source, 'posmain_session_regenerate();') !== false, 'index should preserve secure session regeneration');
 loginSecurityAssert(strpos($source, "\$_SESSION['userid']") !== false, 'index should preserve userid session key');
 loginSecurityAssert(strpos($source, "\$_SESSION['login']") !== false, 'index should preserve login session key');
+loginSecurityAssert(strpos($source, "\$_SESSION['posmain_shop_id']") !== false, 'router login should store selected shop id');
+loginSecurityAssert(strpos($source, 'login_user_from_router_alias') !== false, 'router login should verify users inside the routed shop DB');
+loginSecurityAssert(strpos($source, 'اسم المستخدم أو البريد أو الهاتف') !== false, 'login should use unified username/email/phone label');
 
 loginSecurityAssert(
-    strpos($source, 'login_throttle_blocked($conn, $loginThrottle, $user, $clientIp)') < strpos($source, '$stmt = $conn->prepare("SELECT id, uname, password, userrole, usertype FROM users WHERE uname = ?'),
+    strpos($source, 'login_throttle_blocked($conn, $loginThrottle, $user, $clientIp)') < strpos($source, 'login_user_by_uname($shopConn, $user)'),
     'throttle check should happen before credential lookup'
 );
 

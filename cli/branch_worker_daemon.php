@@ -41,6 +41,16 @@ if (isset($options['list'])) {
 }
 
 $config = posmain_app_config();
+foreach ([
+    'POSMAIN_BRANCH_UUID' => ['branch', 'uuid'],
+    'POSMAIN_CLOUD_BASE_URL' => ['branch', 'cloud_base_url'],
+    'POSMAIN_BRANCH_SYNC_SECRET' => ['sync', 'branch_secret'],
+] as $envName => $path) {
+    $envValue = getenv($envName);
+    if ($envValue !== false && trim((string) $envValue) === '') {
+        $config[$path[0]][$path[1]] = '';
+    }
+}
 
 if (isset($options['preflight'])) {
     $strict = isset($options['strict']);

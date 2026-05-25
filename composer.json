@@ -19,11 +19,11 @@
     ],
     "require": {
         "php": "^8.2",
+        "ext-bcmath": "*",
         "ext-mbstring": "*",
         "ext-mysqli": "*"
     },
     "suggest": {
-        "ext-bcmath": "Barcode IMB (Intelligent Mail Barcode) needs bcmath extension",
         "ext-gd": "For JPG and PNG generators, GD or Imagick is required",
         "ext-imagick": "For JPG and PNG generators, GD or Imagick is required"
     },

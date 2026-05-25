@@ -85,10 +85,10 @@ class MoovaWidgetBridgeContractTest extends TestCase
     {
         $source = $this->source('do/dodel_item.php');
 
-        $this->assertStringContainsString("require_once('../classes/Sync/SyncOutboxEventService.php')", $source);
+        $this->assertStringContainsString("require_once('../classes/Sync/MenuItemSyncRecorder.php')", $source);
         $this->assertStringContainsString('UPDATE myitems SET isdeleted = 1 WHERE id = ?', $source);
-        $this->assertStringContainsString('SyncOutboxEventService::recordMenuItemSnapshot($conn, $id', $source);
-        $this->assertStringContainsString("'source_system' => 'item_delete'", $source);
+        $this->assertStringContainsString('posmain_record_menu_item_sync($conn, $id', $source);
+        $this->assertStringContainsString("'item_delete'", $source);
     }
 
     private function source(string $path): string

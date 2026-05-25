@@ -13,6 +13,9 @@ final class ItemFormInput
             'code' => self::intValue($post['code'] ?? null),
             'barcode' => self::text($post, 'barcode'),
             'info' => self::text($post, 'info'),
+            'item_type' => self::itemType($post['item_type'] ?? null),
+            'track_stock' => self::trackStock($post),
+            'preferred_unit_id' => self::intValue($post['preferred_unit_id'] ?? null),
             'market_price' => $marketPrice,
             'cost_price' => self::decimalArrayValue($post, 'cost_price', 0),
             'price1' => self::decimalArrayValue($post, 'price1', 0),
@@ -23,6 +26,25 @@ final class ItemFormInput
             'user' => $userId > 0 ? $userId : 1,
             'units' => self::unitRows($post, $defaultUnitId),
         ];
+    }
+
+    private static function itemType($value): string
+    {
+        $type = strtolower(trim((string) $value));
+
+        return in_array($type, ['sellable', 'ingredient', 'packaging', 'service'], true) ? $type : 'sellable';
+    }
+
+    private static function trackStock(array $post): int
+    {
+        if (self::itemType($post['item_type'] ?? null) === 'service') {
+            return 0;
+        }
+
+        $value = $post['track_stock'] ?? '1';
+        $normalized = strtolower(trim((string) $value));
+
+        return in_array($normalized, ['1', 'true', 'yes', 'on'], true) ? 1 : 0;
     }
 
     private static function unitRows(array $post, int $defaultUnitId): array

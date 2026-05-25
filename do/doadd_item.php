@@ -2,6 +2,7 @@
 require_once __DIR__ . '/../includes/session_bootstrap.php';
 include('../includes/connect.php');
 require_once __DIR__ . '/../classes/Items/ItemFormInput.php';
+require_once __DIR__ . '/../classes/Items/ItemRecipeCatalogService.php';
 require_once __DIR__ . '/../classes/Pos/Service/ItemVariantService.php';
 require_once __DIR__ . '/../classes/Sync/MenuItemSyncRecorder.php';
 
@@ -84,6 +85,7 @@ try {
     $stmt->execute();
     $last_id = $conn->insert_id;
     $stmt->close();
+    (new ItemRecipeCatalogService())->saveMetadata($conn, (int) $last_id, $payload);
 
     // إدخال بيانات الوحدات إلى جدول item_units
     $unitStmt = $conn->prepare(

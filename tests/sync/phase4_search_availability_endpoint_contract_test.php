@@ -13,6 +13,10 @@ phase4SearchAvailabilityEndpointAssert($lazyItems, 'load_items_lazy');
 phase4SearchAvailabilityAssert(strpos($lazyItems, 'bind_param($types, ...$params)') !== false, 'load_items_lazy should keep dynamic prepared parameters');
 phase4SearchAvailabilityAssert(strpos($lazyItems, "'total' => \$total") !== false, 'load_items_lazy should preserve total response contract');
 phase4SearchAvailabilityAssert(strpos($lazyItems, "'has_more' => (\$offset + \$limit) < \$total") !== false, 'load_items_lazy should preserve pagination contract');
+phase4SearchAvailabilityAssert(
+    strpos($lazyItems, 'decorateItems($conn, $items, $availabilityScope)') < strpos($lazyItems, "pos_render_item_card(\$item)"),
+    'load_items_lazy should render item cards after availability decoration'
+);
 
 echo "phase4-search-availability-endpoint-contract-ok\n";
 

@@ -294,6 +294,123 @@ $(document).ready(function() {
         }
     }
 
+    function itemAvailabilityContext($card) {
+        const isAvailable = String($card.attr('data-is-available') || '1') !== '0';
+        const canAdd = String($card.attr('data-availability-can-add') || (isAvailable ? '1' : '0')) !== '0';
+        return {
+            isAvailable: isAvailable,
+            canAdd: canAdd,
+            status: String($card.attr('data-availability-status') || (isAvailable ? 'available' : 'manual_unavailable')),
+            reason: String($card.attr('data-unavailable-reason') || '').trim(),
+            requiresManagerOverride: String($card.attr('data-requires-manager-override') || '0') === '1',
+            overrideAllowed: String($card.attr('data-override-allowed') || '0') === '1',
+            overridePermission: String($card.attr('data-override-permission') || '').trim(),
+            recipeEnabled: String($card.attr('data-recipe-enabled') || '0') === '1',
+            recipeQty: String($card.attr('data-recipe-effective-available-qty') || '').trim()
+        };
+    }
+
+    function itemUnavailableMessage(context, itemName) {
+        if (context.reason) {
+            return context.reason;
+        }
+
+        if (context.status === 'recipe_unavailable') {
+            return 'هذا الصنف غير متاح حالياً بسبب مخزون المكونات.';
+        }
+
+        return 'هذا الصنف غير متاح حالياً.';
+    }
+
+    function showUnavailableItemMessage(context, itemName) {
+        const message = itemUnavailableMessage(context, itemName);
+        if (window.Swal && typeof Swal.fire === 'function') {
+            Swal.fire({
+                icon: 'warning',
+                title: 'الصنف غير متاح',
+                text: message
+            });
+            return;
+        }
+
+        alert(message);
+    }
+
+    function requestRecipeStockOverride(context, itemName, itemId) {
+        if (!context.requiresManagerOverride) {
+            return $.Deferred().resolve(null).promise();
+        }
+
+        if (!context.overrideAllowed || window.POSMAIN_CAN_RECIPE_STOCK_OVERRIDE !== true) {
+            showUnavailableItemMessage(context, itemName);
+            return $.Deferred().reject().promise();
+        }
+
+        const message = itemUnavailableMessage(context, itemName);
+        const prompt = window.Swal && typeof Swal.fire === 'function'
+            ? Swal.fire({
+                icon: 'warning',
+                title: 'اعتماد مدير',
+                text: message,
+                input: 'text',
+                inputLabel: 'سبب السماح بالبيع',
+                inputPlaceholder: 'اكتب السبب',
+                showCancelButton: true,
+                confirmButtonText: 'اعتماد وإضافة',
+                cancelButtonText: 'إلغاء',
+                preConfirm: function(value) {
+                    return String(value || '').trim();
+                }
+            })
+            : $.Deferred().resolve({
+                isConfirmed: window.confirm(message + '\n\nاعتماد وإضافة؟'),
+                value: 'recipe stock override'
+            }).promise();
+
+        return $.when(prompt).then(function(result) {
+            if (!result || !result.isConfirmed) {
+                return $.Deferred().reject().promise();
+            }
+
+            return $.ajax({
+                url: 'ajax/manager_approval.php',
+                method: 'POST',
+                dataType: 'json',
+                data: {
+                    action: 'approve_recipe_stock_override',
+                    item_id: itemId,
+                    reason: String(result.value || 'recipe stock override').trim(),
+                    unavailable_reason: context.reason || message
+                },
+                beforeSend: window.POSMAIN_ATTACH_CSRF_HEADER
+            }).then(function(response) {
+                if (!response || response.success !== true || !response.approval_id) {
+                    const errorMessage = response && (response.message || response.code)
+                        ? (response.message || response.code)
+                        : 'تعذر اعتماد المدير';
+                    if (window.Swal && typeof Swal.fire === 'function') {
+                        Swal.fire({ icon: 'error', title: 'تعذر الاعتماد', text: errorMessage });
+                    } else {
+                        alert(errorMessage);
+                    }
+                    return $.Deferred().reject().promise();
+                }
+
+                return response.approval_id;
+            }, function(xhr) {
+                const message = xhr && xhr.responseJSON && (xhr.responseJSON.message || xhr.responseJSON.code)
+                    ? (xhr.responseJSON.message || xhr.responseJSON.code)
+                    : 'تعذر اعتماد المدير';
+                if (window.Swal && typeof Swal.fire === 'function') {
+                    Swal.fire({ icon: 'error', title: 'تعذر الاعتماد', text: message });
+                } else {
+                    alert(message);
+                }
+                return $.Deferred().reject().promise();
+            });
+        });
+    }
+
     function applyActiveItemFilter() {
         const searchText = String($filterInput.val() || '').toLowerCase().trim();
         const categoryFilter = activeCategoryFilter();
@@ -560,10 +677,19 @@ $(document).ready(function() {
         let itemBarcode = card.data('item-barcode');
         let imageHtml = card.find('.item-image-container').html();
         let hasVariants = itemHasVariantsValue(card.attr('data-has-variants'));
+        let availability = itemAvailabilityContext(card);
         registerVariantCacheFromCard(card);
 
-        beginAddItemToOrder(itemId, itemName, itemPrice, itemBarcode, 1, imageHtml, '', {
-            hasVariants: hasVariants
+        if (!availability.canAdd) {
+            showUnavailableItemMessage(availability, itemName);
+            return;
+        }
+
+        requestRecipeStockOverride(availability, itemName, itemId).then(function(managerApprovalId) {
+            beginAddItemToOrder(itemId, itemName, itemPrice, itemBarcode, 1, imageHtml, '', {
+                hasVariants: hasVariants,
+                managerApprovalId: managerApprovalId
+            });
         });
     });
 
@@ -578,6 +704,7 @@ $(document).ready(function() {
         let itemBarcode = card.data('item-barcode');
         let itemDesc = card.data('item-desc') || 'لا يوجد وصف';
         let hasVariants = itemHasVariantsValue(card.attr('data-has-variants'));
+        let availability = itemAvailabilityContext(card);
 
         let imageHtml = card.find('.item-image-container').html();
         registerVariantCacheFromCard(card);
@@ -587,6 +714,10 @@ $(document).ready(function() {
         $('#modal_item_price').text(itemPrice.toFixed(2) + ' ج.م');
         $('#modal_item_desc').text(itemDesc);
         $('#modal_item_image').html(imageHtml);
+        $('#modal_add_item')
+            .prop('disabled', !availability.canAdd)
+            .toggleClass('disabled', !availability.canAdd)
+            .attr('title', availability.canAdd ? 'إضافة للطلب' : itemUnavailableMessage(availability, itemName));
 
         $('#modal_add_item').data({
             'id': itemId,
@@ -594,7 +725,14 @@ $(document).ready(function() {
             'price': itemPrice,
             'barcode': itemBarcode,
             'image': imageHtml,
-            'hasVariants': hasVariants
+            'hasVariants': hasVariants,
+            'isAvailable': availability.isAvailable,
+            'canAdd': availability.canAdd,
+            'availabilityStatus': availability.status,
+            'unavailableReason': availability.reason,
+            'requiresManagerOverride': availability.requiresManagerOverride,
+            'overrideAllowed': availability.overrideAllowed,
+            'overridePermission': availability.overridePermission
         });
 
         $('#itemDetailsModal').modal('show');
@@ -602,11 +740,32 @@ $(document).ready(function() {
 
     $(document).on('click', '#modal_add_item', function() {
         let data = $(this).data();
+        if (data.canAdd === false || String(data.canAdd) === 'false') {
+            showUnavailableItemMessage({
+                isAvailable: false,
+                canAdd: false,
+                status: String(data.availabilityStatus || 'manual_unavailable'),
+                reason: String(data.unavailableReason || '')
+            }, data.name);
+            return;
+        }
         let itemPrice = parseFloat(data.price) || 0;
-        beginAddItemToOrder(data.id, data.name, itemPrice, data.barcode, 1, data.image, '', {
-            hasVariants: itemHasVariantsValue(data.hasVariants)
+        const availability = {
+            isAvailable: data.isAvailable === true || String(data.isAvailable) === 'true',
+            canAdd: true,
+            status: String(data.availabilityStatus || 'available'),
+            reason: String(data.unavailableReason || ''),
+            requiresManagerOverride: data.requiresManagerOverride === true || String(data.requiresManagerOverride) === 'true',
+            overrideAllowed: data.overrideAllowed === true || String(data.overrideAllowed) === 'true',
+            overridePermission: String(data.overridePermission || '')
+        };
+        requestRecipeStockOverride(availability, data.name, data.id).then(function(managerApprovalId) {
+            beginAddItemToOrder(data.id, data.name, itemPrice, data.barcode, 1, data.image, '', {
+                hasVariants: itemHasVariantsValue(data.hasVariants),
+                managerApprovalId: managerApprovalId
+            });
+            $('#itemDetailsModal').modal('hide');
         });
-        $('#itemDetailsModal').modal('hide');
     });
 
     // ========================================
@@ -774,7 +933,7 @@ $(document).ready(function() {
             : null;
 
         if (hasVariantHint === false) {
-            addItemToOrder(id, name, price, barcode, qty, imageHtml || '', lineNote || '');
+            addItemToOrder(id, name, price, barcode, qty, imageHtml || '', lineNote || '', options || {});
             return;
         }
 
@@ -788,6 +947,7 @@ $(document).ready(function() {
                 qty: parseFloat(qty) || 1,
                 imageHtml: imageHtml || '',
                 lineNote: lineNote || '',
+                managerApprovalId: options && options.managerApprovalId ? options.managerApprovalId : null,
                 variants: cachedVariants
             });
             return;
@@ -795,7 +955,7 @@ $(document).ready(function() {
 
         fetchItemVariants(id).then(function(variants) {
             if (!variants.length) {
-                addItemToOrder(id, name, price, barcode, qty, imageHtml || '', lineNote || '');
+                addItemToOrder(id, name, price, barcode, qty, imageHtml || '', lineNote || '', options || {});
                 return;
             }
 
@@ -807,6 +967,7 @@ $(document).ready(function() {
                 qty: parseFloat(qty) || 1,
                 imageHtml: imageHtml || '',
                 lineNote: lineNote || '',
+                managerApprovalId: options && options.managerApprovalId ? options.managerApprovalId : null,
                 variants: variants
             });
         });
@@ -889,7 +1050,10 @@ $(document).ready(function() {
         toggleVariantModal(true);
     }
 
-    function addItemToOrder(id, name, price, barcode, qty = 1, imageHtml = '', lineNote = '') {
+    // Compatibility call form: addItemToOrder(id, name, price, barcode, qty = 1, imageHtml = '', lineNote = '')
+    function addItemToOrder(id, name, price, barcode, qty = 1, imageHtml = '', lineNote = '', options = {}) {
+        const managerApprovalId = parseInt(options && options.managerApprovalId ? options.managerApprovalId : 0, 10) || 0;
+        const unitValue = parseFloat(options && options.uVal ? options.uVal : 1) || 1;
         let existingItem = $('.item-card-order').filter(function() {
             return String($(this).find('input[name="itmname[]"]').val()) === String(id);
         });
@@ -904,6 +1068,9 @@ $(document).ready(function() {
             let itemPrice = parseFloat(priceInput.val()) || 0;
             let subtotal = newQty * itemPrice;
             existingItem.find('.subtotal').val(subtotal.toFixed(2));
+            if (managerApprovalId > 0) {
+                existingItem.find('.managerApprovalInput').val(managerApprovalId);
+            }
 
             updateTotal();
             $('#barcodeInput').val('').focus();
@@ -943,7 +1110,7 @@ $(document).ready(function() {
                                    step="1"
                                    title="الكمية">
                             <button type="button" class="btn qty-step qty-increase" title="زيادة">+</button>
-                            <input type="hidden" name="u_val[]" value="1">
+                            <input type="hidden" name="u_val[]" value="${escapeHtml(String(unitValue))}">
                         </div>
                         <div class="pos-cart-main">
                             <input type="hidden" value='${id}' name="itmname[]">
@@ -954,6 +1121,10 @@ $(document).ready(function() {
                                    class="lineNoteInput"
                                    name="itmnote[]"
                                    value="${safeLineNote}">
+                            <input type="hidden"
+                                   class="managerApprovalInput"
+                                   name="itmmanagerapproval[]"
+                                   value="${managerApprovalId > 0 ? managerApprovalId : ''}">
                         </div>
                         <div class="pos-cart-note">
                             <button type="button" class="btn lineNoteButton line-note-empty" title="إضافة ملاحظة للمطبخ" aria-label="إضافة ملاحظة للمطبخ">
@@ -1718,7 +1889,8 @@ $(document).ready(function() {
                                 item.barcode || item.item_desc || item.item_id, // Use explicit barcode first
                                 parseFloat(item.qty) || 1,
                                 '',
-                                item.note || item.kitchen_note || item.notes || ''
+                                item.note || item.kitchen_note || item.notes || '',
+                                { uVal: item.u_val || 1 }
                             );
                         });
                     } else {
@@ -1883,7 +2055,10 @@ $(document).ready(function() {
             String($choice.data('item-barcode') || ''),
             activeVariantContext.qty || 1,
             activeVariantContext.imageHtml || '',
-            activeVariantContext.lineNote || ''
+            activeVariantContext.lineNote || '',
+            {
+                managerApprovalId: activeVariantContext.managerApprovalId || null
+            }
         );
         toggleVariantModal(false);
     });
@@ -2345,6 +2520,8 @@ function loadRecentOrders() {
                 let html = '';
                 response.orders.forEach((order, index) => {
                     const tableId = parseInt(order.table_id || 0, 10);
+                    const canRefund = order.can_refund === true || order.can_refund === 1 || order.can_refund === '1';
+                    const canVoid = order.can_void === true || order.can_void === 1 || order.can_void === '1';
                     const canDelete = order.can_delete === true || order.can_delete === 1 || order.can_delete === '1';
                     const deleteButton = canDelete
                         ? `<button class="btn btn-danger delete-order" data-id="${order.id}" data-table-id="${tableId}" title="حذف">
@@ -2353,6 +2530,11 @@ function loadRecentOrders() {
                         : `<button class="btn btn-outline-secondary" disabled title="لا يمكن حذف طلب مكتمل أو مدفوع من هنا">
                                 <i class="fas fa-trash"></i>
                            </button>`;
+                    const paidReversalButton = (canRefund || canVoid)
+                        ? `<button type="button" class="btn btn-outline-danger reverse-paid-order" data-id="${order.id}" data-can-refund="${canRefund ? '1' : '0'}" data-can-void="${canVoid ? '1' : '0'}" onclick="reversePaidOrder(${order.id}, ${canRefund ? 'true' : 'false'}, ${canVoid ? 'true' : 'false'})" title="استرداد أو إلغاء مدفوع">
+                                <i class="fas fa-undo"></i>
+                           </button>`
+                        : '';
 
                     html += `
                         <tr>
@@ -2380,6 +2562,7 @@ function loadRecentOrders() {
                                         <i class="fas fa-print"></i>
                                     </button>
                                     ${deleteButton}
+                                    ${paidReversalButton}
                                 </div>
                                 ${order.notes ? `<span class="text-muted ms-2" title="${order.notes}"><i class="fas fa-sticky-note"></i></span>` : ''}
                             </td>

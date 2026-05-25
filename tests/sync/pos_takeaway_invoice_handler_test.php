@@ -1,51 +1,108 @@
 <?php
 
 require_once __DIR__ . '/../../classes/Sync/SchemaManager.php';
+require_once __DIR__ . '/../../classes/Recipe/DTO/RecipeActorContext.php';
+require_once __DIR__ . '/../../classes/Recipe/RecipeDefinitionService.php';
+require_once __DIR__ . '/../../classes/Recipe/Repository/InventoryBalanceRepository.php';
 
 mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
 
 const POS_TAKEAWAY_BRANCH_UUID = '11111111-1111-4111-8111-111111111111';
 
-$host = getenv('POSMAIN_TEST_MYSQL_HOST') ?: '127.0.0.1';
-$port = (int) (getenv('POSMAIN_TEST_MYSQL_PORT') ?: 3307);
-$user = getenv('POSMAIN_TEST_MYSQL_USER') ?: 'root';
-$pass = getenv('POSMAIN_TEST_MYSQL_PASS') ?: '';
-$db = 'posmain_takeaway_handler_' . getmypid();
-$conn = new mysqli($host, $user, $pass, '', $port);
+if (realpath($_SERVER['SCRIPT_FILENAME'] ?? '') === __FILE__) {
+    posTakeawayInvoiceHandlerTestMain();
+}
 
-try {
-    $conn->query("CREATE DATABASE `{$db}` CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci");
-    $conn->select_db($db);
-    posTakeawayInvoiceCreateSchema($conn);
-    posTakeawayInvoiceSeedFixtures($conn);
+function posTakeawayInvoiceHandlerTestMain(): void
+{
+    $host = getenv('POSMAIN_TEST_MYSQL_HOST') ?: '127.0.0.1';
+    $port = (int) (getenv('POSMAIN_TEST_MYSQL_PORT') ?: 3307);
+    $user = getenv('POSMAIN_TEST_MYSQL_USER') ?: 'root';
+    $pass = getenv('POSMAIN_TEST_MYSQL_PASS') ?: '';
+    $db = 'posmain_takeaway_handler_' . getmypid();
+    $root = dirname(__DIR__, 2);
+    $sessionDir = sys_get_temp_dir() . '/posmain-takeaway-http-session-' . getmypid();
+    $conn = new mysqli($host, $user, $pass, '', $port);
+    $server = null;
 
-    $runner = posTakeawayInvoiceCreateRunner($db, $host, $port, $user, $pass, posTakeawayInvoiceCashPost());
     try {
-        $command = escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg($runner) . ' 2>&1';
-        $lines = [];
-        exec($command, $lines, $exitCode);
-        posTakeawayInvoiceAssert($exitCode === 0, "handler runner failed:\n" . implode("\n", $lines));
+        $conn->query("CREATE DATABASE `{$db}` CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci");
+        $conn->select_db($db);
+        posTakeawayInvoiceCreateSchema($conn);
+        posTakeawayInvoiceSeedFixtures($conn);
+        posTakeawayInvoiceSeedRecipe($conn);
+
+        $runner = posTakeawayInvoiceCreateRunner($db, $host, $port, $user, $pass, posTakeawayInvoiceCashPost());
+        try {
+            $command = escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg($runner) . ' 2>&1';
+            $lines = [];
+            exec($command, $lines, $exitCode);
+            posTakeawayInvoiceAssert($exitCode === 0, "handler runner failed:\n" . implode("\n", $lines));
+        } finally {
+            @unlink($runner);
+        }
+
+        posTakeawayInvoiceAssertCommittedTakeawaySale($conn);
+        $firstOrderId = (int) $conn->query("SELECT id FROM ot_head WHERE pro_tybe = 9 AND op2 IS NULL ORDER BY id ASC LIMIT 1")->fetch_assoc()['id'];
+        posTakeawayInvoiceAssertRecipeConsumedOnce($conn, $firstOrderId, '8.000000');
+
+        $runner = posTakeawayInvoiceCreateRunner($db, $host, $port, $user, $pass, posTakeawayInvoiceCashPost());
+        try {
+            $command = escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg($runner) . ' 2>&1';
+            $lines = [];
+            exec($command, $lines, $exitCode);
+            posTakeawayInvoiceAssert($exitCode === 0, "handler replay runner failed:\n" . implode("\n", $lines));
+        } finally {
+            @unlink($runner);
+        }
+
+        posTakeawayInvoiceAssert((int) $conn->query("SELECT COUNT(*) AS c FROM ot_head WHERE pro_tybe = 9 AND op2 IS NULL")->fetch_assoc()['c'] === 1, 'handler replay should not create a second POS order');
+        posTakeawayInvoiceAssert((int) $conn->query("SELECT COUNT(*) AS c FROM process WHERE type = 'add cash'")->fetch_assoc()['c'] === 1, 'handler replay should not create a second process row');
+        posTakeawayInvoiceAssertRecipeConsumedOnce($conn, $firstOrderId, '8.000000');
+
+        $runner = posTakeawayInvoiceCreateRunner($db, $host, $port, $user, $pass, posTakeawayInvoiceMixedPost());
+        try {
+            $command = escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg($runner) . ' 2>&1';
+            $lines = [];
+            exec($command, $lines, $exitCode);
+            posTakeawayInvoiceAssert($exitCode === 0, "mixed handler runner failed:\n" . implode("\n", $lines));
+        } finally {
+            @unlink($runner);
+        }
+
+        posTakeawayInvoiceAssertCommittedMixedTakeawaySale($conn);
+        $mixedOrderId = (int) $conn->query("SELECT id FROM ot_head WHERE pro_tybe = 9 AND pro_serial = 'TAKEAWAY-FIXTURE-MIXED-1' AND op2 IS NULL ORDER BY id ASC LIMIT 1")->fetch_assoc()['id'];
+        posTakeawayInvoiceAssertRecipeConsumedOnce($conn, $mixedOrderId, '6.000000');
+
+        if (!is_dir($sessionDir) && !mkdir($sessionDir, 0700, true) && !is_dir($sessionDir)) {
+            throw new RuntimeException('Unable to create temp session directory.');
+        }
+        $server = posTakeawayInvoiceStartServer($root, $db, $sessionDir, $host, $port, $user, $pass);
+        $httpPost = posTakeawayInvoiceCashPost();
+        $httpPost['idempotency_key'] = 'phpunit:takeaway-handler:http:create:1';
+        $httpPost['pro_serial'] = 'TAKEAWAY-FIXTURE-HTTP-1';
+        $httpPost['csrf_token'] = 'takeaway-http-csrf-fixed';
+        $httpResponse = posTakeawayInvoiceHttpPost($server['url'], $server['session_id'], $httpPost);
+        posTakeawayInvoiceAssert($httpResponse['status'] === 302, 'HTTP handler should redirect to receipt after paid takeaway: ' . $httpResponse['raw']);
+        posTakeawayInvoiceAssert(strpos((string) ($httpResponse['location'] ?? ''), '/print/receipt.php?id=') !== false || strpos((string) ($httpResponse['location'] ?? ''), '../print/receipt.php?id=') !== false, 'HTTP handler should redirect to receipt');
+        $httpOrderId = (int) $conn->query("SELECT id FROM ot_head WHERE pro_tybe = 9 AND pro_serial = 'TAKEAWAY-FIXTURE-HTTP-1' AND op2 IS NULL ORDER BY id ASC LIMIT 1")->fetch_assoc()['id'];
+        posTakeawayInvoiceAssert($httpOrderId > 0, 'HTTP handler should create a paid takeaway order in the temp DB');
+        posTakeawayInvoiceAssertRecipeConsumedOnce($conn, $httpOrderId, '4.000000');
+
+        $httpReplay = posTakeawayInvoiceHttpPost($server['url'], $server['session_id'], $httpPost);
+        posTakeawayInvoiceAssert($httpReplay['status'] === 302, 'HTTP handler replay should redirect to receipt after idempotency replay: ' . $httpReplay['raw']);
+        posTakeawayInvoiceAssert((int) $conn->query("SELECT COUNT(*) AS c FROM ot_head WHERE pro_tybe = 9 AND pro_serial = 'TAKEAWAY-FIXTURE-HTTP-1' AND op2 IS NULL")->fetch_assoc()['c'] === 1, 'HTTP handler replay should not create a second POS order');
+        posTakeawayInvoiceAssertRecipeConsumedOnce($conn, $httpOrderId, '4.000000');
+
+        echo "pos-takeaway-invoice-handler-ok db={$db}\n";
     } finally {
-        @unlink($runner);
+        if (is_array($server)) {
+            posTakeawayInvoiceStopServer($server);
+        }
+        $conn->query("DROP DATABASE IF EXISTS `{$db}`");
+        $conn->close();
+        posTakeawayInvoiceRemoveDir($sessionDir);
     }
-
-    posTakeawayInvoiceAssertCommittedTakeawaySale($conn);
-
-    $runner = posTakeawayInvoiceCreateRunner($db, $host, $port, $user, $pass, posTakeawayInvoiceMixedPost());
-    try {
-        $command = escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg($runner) . ' 2>&1';
-        $lines = [];
-        exec($command, $lines, $exitCode);
-        posTakeawayInvoiceAssert($exitCode === 0, "mixed handler runner failed:\n" . implode("\n", $lines));
-    } finally {
-        @unlink($runner);
-    }
-
-    posTakeawayInvoiceAssertCommittedMixedTakeawaySale($conn);
-    echo "pos-takeaway-invoice-handler-ok db={$db}\n";
-} finally {
-    $conn->query("DROP DATABASE IF EXISTS `{$db}`");
-    $conn->close();
 }
 
 function posTakeawayInvoiceCreateSchema(mysqli $conn): void
@@ -251,8 +308,40 @@ function posTakeawayInvoiceSeedFixtures(mysqli $conn): void
     $conn->query("
         INSERT INTO myitems (id, iname, barcode, itmqty, cost_price, price1, isdeleted) VALUES
             (10, 'Coffee', 'COF10', 20, 4, 10, 0),
-            (11, 'Cake', 'CAK11', 15, 2, 8, 0)
+            (11, 'Cake', 'CAK11', 15, 2, 8, 0),
+            (12, 'Coffee Beans', 'BEAN12', 10, 3, 0, 0)
     ");
+}
+
+function posTakeawayInvoiceSeedRecipe(mysqli $conn): void
+{
+    (new InventoryBalanceRepository())->putBalance($conn, [
+        'pos_tenant' => 0,
+        'pos_branch' => 0,
+        'store_id' => 3,
+        'item_id' => 12,
+        'qty_on_hand' => '10.000000',
+        'qty_reserved' => '0.000000',
+        'qty_available' => '10.000000',
+        'moving_average_cost' => '3.000000',
+    ]);
+
+    $definition = new RecipeDefinitionService(new RecipeFeatureFlags([
+        'recipe' => [
+            'enabled' => true,
+            'mode' => 'shadow',
+        ],
+    ]));
+    $actor = new RecipeActorContext(7, 0, 0, null, ['recipe.manage', 'recipe.approve']);
+    $recipe = $definition->createDraft($conn, [
+        'sellable_item_id' => 10,
+        'recipe_name' => 'Takeaway invoice handler coffee recipe',
+    ], $actor);
+    $definition->addLine($conn, (int) $recipe['id'], [
+        'ingredient_item_id' => 12,
+        'qty_per_yield' => '1.000000',
+    ], $actor);
+    $definition->activate($conn, (int) $recipe['id'], $actor);
 }
 
 function posTakeawayInvoiceCashPost(): array
@@ -330,6 +419,16 @@ $env = [
     'POSMAIN_POS_TENANT' => '0',
     'POSMAIN_POS_BRANCH' => '0',
     'POSMAIN_CLOUD_BASE_URL' => 'http://127.0.0.1/cloud-fixture',
+    'POSMAIN_ENABLE_RECIPES' => '1',
+    'POSMAIN_RECIPE_MODE' => 'consume_pilot',
+    'POSMAIN_RECIPE_RESERVATIONS' => '1',
+    'POSMAIN_RECIPE_CONSUMPTION' => '1',
+    'POSMAIN_RECIPE_ACCOUNTING' => '0',
+    'POSMAIN_RECIPE_AVAILABILITY' => '0',
+    'POSMAIN_RECIPE_MOOVA_SYNC' => '0',
+    'POSMAIN_RECIPE_STRICT_STOCK' => '0',
+    'POSMAIN_RECIPE_PILOT_POS_BRANCH' => '0',
+    'POSMAIN_RECIPE_PILOT_ITEM_IDS' => '10',
 ];
 
 foreach ($env as $name => $value) {
@@ -347,7 +446,6 @@ session_id('posmain-takeaway-' . getmypid());
 session_start();
 $_SESSION['userid'] = 7;
 $_SESSION['usname'] = 'fixture-cashier';
-session_write_close();
 
 $_POST = __POST__;
 $_REQUEST = $_POST;
@@ -368,6 +466,195 @@ PHP;
     file_put_contents($runner, strtr($code, $replacements));
 
     return $runner;
+}
+
+function posTakeawayInvoiceStartServer(string $root, string $db, string $sessionDir, string $host, int $port, string $user, string $pass): array
+{
+    $httpPort = posTakeawayInvoiceFreePort();
+    $sessionId = 'takeawayhttp' . getmypid();
+    posTakeawayInvoiceSeedSession($sessionDir, $sessionId);
+    $env = array_merge(getenv() ?: [], [
+        'POSMAIN_DB_HOST' => $host,
+        'POSMAIN_DB_PORT' => (string) $port,
+        'POSMAIN_DB_USER' => $user,
+        'POSMAIN_DB_PASS' => $pass,
+        'POSMAIN_DB_NAME' => $db,
+        'POSMAIN_TEST_MYSQL_DB' => $db,
+        'POSMAIN_SESSION_DRIVER' => 'file',
+        'POSMAIN_SESSION_SAVE_PATH' => $sessionDir,
+        'POSMAIN_ENV' => 'test',
+        'POSMAIN_PRODUCTION_MODE' => '0',
+        'POSMAIN_ENABLE_SYNC_OUTBOX' => '1',
+        'POSMAIN_SYNC_OUTBOX_ENABLED' => '1',
+        'POSMAIN_BRANCH_UUID' => POS_TAKEAWAY_BRANCH_UUID,
+        'POSMAIN_BRANCH_NAME' => 'Takeaway Handler HTTP Fixture',
+        'POSMAIN_POS_TENANT' => '0',
+        'POSMAIN_POS_BRANCH' => '0',
+        'POSMAIN_CLOUD_BASE_URL' => 'http://127.0.0.1/cloud-fixture',
+        'POSMAIN_ENABLE_RECIPES' => '1',
+        'POSMAIN_RECIPE_MODE' => 'consume_pilot',
+        'POSMAIN_RECIPE_RESERVATIONS' => '1',
+        'POSMAIN_RECIPE_CONSUMPTION' => '1',
+        'POSMAIN_RECIPE_ACCOUNTING' => '0',
+        'POSMAIN_RECIPE_AVAILABILITY' => '0',
+        'POSMAIN_RECIPE_MOOVA_SYNC' => '0',
+        'POSMAIN_RECIPE_STRICT_STOCK' => '0',
+        'POSMAIN_RECIPE_PILOT_POS_BRANCH' => '0',
+        'POSMAIN_RECIPE_PILOT_ITEM_IDS' => '10',
+    ]);
+
+    $process = proc_open([
+        PHP_BINARY,
+        '-S',
+        '127.0.0.1:' . $httpPort,
+        '-t',
+        $root,
+    ], [
+        0 => ['pipe', 'r'],
+        1 => ['pipe', 'w'],
+        2 => ['pipe', 'w'],
+    ], $pipes, $root, $env);
+    if (!is_resource($process)) {
+        throw new RuntimeException('Unable to start PHP built-in server for POS takeaway handler test.');
+    }
+    fclose($pipes[0]);
+    stream_set_blocking($pipes[1], false);
+    stream_set_blocking($pipes[2], false);
+    posTakeawayInvoiceWaitForServer($httpPort, $process, $pipes);
+
+    return [
+        'process' => $process,
+        'pipes' => $pipes,
+        'session_id' => $sessionId,
+        'url' => 'http://127.0.0.1:' . $httpPort . '/do/doadd_invoice.php',
+    ];
+}
+
+function posTakeawayInvoiceSeedSession(string $sessionDir, string $sessionId): void
+{
+    if (!is_dir($sessionDir) && !mkdir($sessionDir, 0700, true) && !is_dir($sessionDir)) {
+        throw new RuntimeException('Unable to create session directory.');
+    }
+    $previousSavePath = session_save_path();
+    $previousId = session_id();
+    if (session_status() === PHP_SESSION_ACTIVE) {
+        throw new RuntimeException('Unexpected active session in POS takeaway HTTP test.');
+    }
+    session_save_path($sessionDir);
+    session_id($sessionId);
+    session_start();
+    $_SESSION['login'] = 'fixture-cashier';
+    $_SESSION['userid'] = 7;
+    $_SESSION['user_id'] = 7;
+    $_SESSION['usname'] = 'fixture-cashier';
+    $_SESSION['usrole'] = 1;
+    $_SESSION['userrole'] = 1;
+    $_SESSION['usty'] = 2;
+    $_SESSION['pos_authenticated'] = true;
+    $_SESSION['pos_user_id'] = 7;
+    $_SESSION['pos_user_name'] = 'fixture-cashier';
+    $_SESSION['posmain_csrf_tokens'] = [
+        'pos_browser' => 'takeaway-http-csrf-fixed',
+    ];
+    session_write_close();
+    session_id($previousId);
+    session_save_path($previousSavePath);
+}
+
+function posTakeawayInvoiceStopServer(array $server): void
+{
+    foreach (($server['pipes'] ?? []) as $pipe) {
+        if (is_resource($pipe)) {
+            fclose($pipe);
+        }
+    }
+    if (is_resource($server['process'] ?? null)) {
+        proc_terminate($server['process']);
+        proc_close($server['process']);
+    }
+}
+
+function posTakeawayInvoiceFreePort(): int
+{
+    $socket = stream_socket_server('tcp://127.0.0.1:0', $errno, $errstr);
+    if (!$socket) {
+        throw new RuntimeException('Unable to reserve local test port: ' . $errstr);
+    }
+    $name = stream_socket_get_name($socket, false);
+    fclose($socket);
+    $parts = explode(':', (string) $name);
+
+    return (int) end($parts);
+}
+
+function posTakeawayInvoiceWaitForServer(int $port, $process, array $pipes): void
+{
+    $deadline = microtime(true) + 5.0;
+    while (microtime(true) < $deadline) {
+        $status = proc_get_status($process);
+        if (!$status['running']) {
+            $stderr = isset($pipes[2]) && is_resource($pipes[2]) ? stream_get_contents($pipes[2]) : '';
+            throw new RuntimeException('POS takeaway handler HTTP test server exited early: ' . $stderr);
+        }
+        $fp = @fsockopen('127.0.0.1', $port, $errno, $errstr, 0.1);
+        if ($fp) {
+            fclose($fp);
+            return;
+        }
+        usleep(100000);
+    }
+
+    throw new RuntimeException('POS takeaway handler HTTP test server did not become ready.');
+}
+
+function posTakeawayInvoiceHttpPost(string $url, string $sessionId, array $post): array
+{
+    $body = http_build_query($post);
+    $context = stream_context_create([
+        'http' => [
+            'method' => 'POST',
+            'header' => implode("\r\n", [
+                'Content-Type: application/x-www-form-urlencoded',
+                'Accept: text/html',
+                'Cookie: PHPSESSID=' . $sessionId,
+                'X-CSRF-Token: ' . (string) ($post['csrf_token'] ?? ''),
+                'X-POSMAIN-CSRF-Token: ' . (string) ($post['csrf_token'] ?? ''),
+            ]) . "\r\n",
+            'content' => $body,
+            'ignore_errors' => true,
+            'timeout' => 10,
+            'follow_location' => 0,
+        ],
+    ]);
+    $raw = @file_get_contents($url, false, $context);
+    $status = 0;
+    $location = null;
+    foreach (($http_response_header ?? []) as $header) {
+        if (preg_match('/^HTTP\/\S+\s+(\d{3})\b/', (string) $header, $matches)) {
+            $status = (int) $matches[1];
+        } elseif (stripos((string) $header, 'Location:') === 0) {
+            $location = trim(substr((string) $header, strlen('Location:')));
+        }
+    }
+
+    return [
+        'status' => $status,
+        'location' => $location,
+        'raw' => is_string($raw) ? $raw : '',
+    ];
+}
+
+function posTakeawayInvoiceRemoveDir(string $dir): void
+{
+    if (!is_dir($dir)) {
+        return;
+    }
+    foreach (glob($dir . '/*') ?: [] as $file) {
+        if (is_file($file)) {
+            unlink($file);
+        }
+    }
+    rmdir($dir);
 }
 
 function posTakeawayInvoiceAssertCommittedTakeawaySale(mysqli $conn): void
@@ -559,6 +846,27 @@ function posTakeawayInvoiceAssertCommittedMixedTakeawaySale(mysqli $conn): void
     posTakeawayInvoiceAssert(count($payload['receipts']) === 2, 'mixed payload should include cash and bank receipts');
     posTakeawayInvoiceAssert($payload['payments'][0]['payment_method'] === 'cash', 'mixed payload first payment method expected');
     posTakeawayInvoiceAssert($payload['payments'][1]['payment_method'] === 'bank', 'mixed payload second payment method expected');
+}
+
+function posTakeawayInvoiceAssertRecipeConsumedOnce(mysqli $conn, int $orderId, string $expectedIngredientOnHand): void
+{
+    $usages = $conn->query("SELECT * FROM recipe_order_line_usage WHERE order_id = {$orderId} ORDER BY id")->fetch_all(MYSQLI_ASSOC);
+    posTakeawayInvoiceAssert(count($usages) === 1, 'paid takeaway handler should create one recipe usage row');
+    posTakeawayInvoiceAssert((string) $usages[0]['status'] === 'consumed', 'paid takeaway handler recipe usage should be consumed');
+    posTakeawayInvoiceAssert((int) $usages[0]['sellable_item_id'] === 10, 'handler recipe usage should belong to the pilot sellable item');
+    posTakeawayInvoiceAssert((int) $usages[0]['fat_detail_id'] > 0, 'handler recipe usage should reference the cashier fat_details line');
+
+    $movements = $conn->query("SELECT * FROM inventory_movements WHERE order_id = {$orderId} AND movement_type = 'recipe_consumption' ORDER BY id")->fetch_all(MYSQLI_ASSOC);
+    posTakeawayInvoiceAssert(count($movements) === 1, 'paid takeaway handler should write one recipe consumption movement');
+    posTakeawayInvoiceAssert((int) $movements[0]['item_id'] === 12, 'handler recipe movement should consume the ingredient item');
+    posTakeawayInvoiceAssert((string) $movements[0]['qty_out'] === '2.000000', 'handler recipe movement should consume ingredient quantity once per paid line quantity');
+    posTakeawayInvoiceAssert((string) $movements[0]['source_type'] === 'recipe_order_line_usage', 'handler recipe movement should be sourced from recipe usage');
+    posTakeawayInvoiceAssert((int) $movements[0]['recipe_order_line_usage_id'] === (int) $usages[0]['id'], 'handler recipe movement should link to usage row');
+    posTakeawayInvoiceAssert($movements[0]['accounting_journal_id'] === null || (string) $movements[0]['accounting_journal_id'] === '', 'recipe accounting should stay disabled in this handler proof');
+
+    $balance = (new InventoryBalanceRepository())->findBalance($conn, 0, 0, 3, 12);
+    posTakeawayInvoiceAssert(is_array($balance), 'ingredient balance should exist after handler recipe consumption');
+    posTakeawayInvoiceAssert((string) $balance['qty_on_hand'] === $expectedIngredientOnHand, 'ingredient stock should be deducted exactly once for this paid takeaway handler order');
 }
 
 function posTakeawayInvoiceAssertLine(array $line, int $itemId, float $qtyOut, float $price, float $cost, float $value, float $profit): void

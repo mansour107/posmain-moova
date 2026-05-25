@@ -1,13 +1,26 @@
 <?php
+require_once __DIR__ . '/../config/app_config.php';
 require_once __DIR__ . '/../includes/session_bootstrap.php';
 require_once __DIR__ . '/../classes/MoovaPosIntegration.php';
+require_once __DIR__ . '/../classes/Recipe/RecipeScopeResolver.php';
+require_once __DIR__ . '/../classes/Recipe/RecipeCostLeakAuditService.php';
+require_once __DIR__ . '/../classes/Recipe/RecipeSyncPayloadService.php';
 
 header('Content-Type: application/json; charset=UTF-8');
 header('Cache-Control: no-store, max-age=0');
 
+function moova_menu_sync_sanitize_public_payload(array $payload): array
+{
+    $config = function_exists('posmain_app_config') ? posmain_app_config() : [];
+    $flags = new RecipeFeatureFlags($config);
+
+    return (new RecipeCostLeakAuditService())->sanitizePayload($payload, 'moova-facing api', $flags);
+}
+
 function moova_menu_sync_json(int $statusCode, array $payload): void
 {
     http_response_code($statusCode);
+    $payload = moova_menu_sync_sanitize_public_payload($payload);
     echo json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     exit;
 }
@@ -46,6 +59,75 @@ function moova_menu_sync_device_token(): string
 function moova_menu_sync_decimal($value): float
 {
     return is_numeric($value) ? (float) $value : 0.0;
+}
+
+function moova_menu_sync_recipe_scope(array $config, ?array $link): RecipeScope
+{
+    return (new RecipeScopeResolver($config))->resolve([
+        'pos_tenant' => $link !== null ? ($link['pos_tenant'] ?? null) : null,
+        'pos_branch' => $link !== null ? ($link['pos_branch'] ?? null) : null,
+        'store_id' => 0,
+        'channel' => 'moova',
+        'order_type' => 'delivery',
+        'source_system' => 'moova_menu_sync',
+    ]);
+}
+
+function moova_menu_sync_apply_recipe_availability(
+    mysqli $conn,
+    RecipeSyncPayloadService $recipeSync,
+    RecipeScope $scope,
+    array $menuItem,
+    array $itemRow
+): array {
+    $recipePayload = $recipeSync->menuItemSnapshotPayload(
+        $conn,
+        $scope,
+        $itemRow,
+        'delivery',
+        'moova'
+    );
+    if ($recipePayload === null) {
+        return $menuItem;
+    }
+
+    $menuItem['recipe_availability'] = $recipePayload;
+    foreach ([
+        'recipe_enabled',
+        'active_recipe_version',
+        'computed_available_qty',
+        'effective_available_qty',
+        'effective_is_available',
+        'unavailable_reason',
+        'availability_revision',
+    ] as $key) {
+        if (array_key_exists($key, $recipePayload)) {
+            $menuItem[$key] = $recipePayload[$key];
+        }
+    }
+
+    if (array_key_exists('computed_available_qty', $recipePayload)) {
+        $menuItem['computedAvailableQty'] = $recipePayload['computed_available_qty'];
+    }
+    if (array_key_exists('effective_available_qty', $recipePayload)) {
+        $menuItem['effectiveAvailableQty'] = $recipePayload['effective_available_qty'];
+    }
+    if (array_key_exists('availability_revision', $recipePayload)) {
+        $menuItem['availabilityRevision'] = $recipePayload['availability_revision'];
+    }
+
+    $effectiveAvailable = (bool) ($recipePayload['effective_is_available'] ?? true);
+    $menuItem['effectiveIsAvailable'] = $effectiveAvailable;
+    if (!$effectiveAvailable) {
+        $reason = trim((string) ($recipePayload['unavailable_reason'] ?? ''));
+        $menuItem['available'] = false;
+        $menuItem['deliveryAvailable'] = false;
+        $menuItem['isOrderable'] = false;
+        $menuItem['unavailableReason'] = $reason !== '' ? $reason : 'Recipe availability is unavailable.';
+        $menuItem['availabilityReason'] = $menuItem['unavailableReason'];
+    }
+
+    return $menuItem;
 }
 
 function moova_menu_sync_column_exists(mysqli $conn, string $table, string $column): bool
@@ -291,8 +373,17 @@ function moova_menu_sync_item_modifier_groups(mysqli $conn, int $itemId): array
     return array_values($groups);
 }
 
-function moova_menu_sync_build_menu(mysqli $conn, string $catalogVersion): array
+function moova_menu_sync_build_menu(mysqli $conn, string $catalogVersion, ?array $link = null): array
 {
+    $config = function_exists('posmain_app_config') ? posmain_app_config() : [];
+    $recipeFlags = new RecipeFeatureFlags($config);
+    $recipeSync = null;
+    $recipeScope = null;
+    if ($recipeFlags->isMoovaSyncEnabled()) {
+        $recipeSync = new RecipeSyncPayloadService($recipeFlags);
+        $recipeScope = moova_menu_sync_recipe_scope($config, $link);
+    }
+
     $categoryInfoSelect = moova_menu_sync_optional_expr($conn, 'item_group', 'info', 'info', "''");
     $categoryWhere = moova_menu_sync_column_exists($conn, 'item_group', 'isdeleted')
         ? 'WHERE COALESCE(isdeleted, 0) = 0'
@@ -327,6 +418,9 @@ function moova_menu_sync_build_menu(mysqli $conn, string $catalogVersion): array
     $itemPrice3Select = moova_menu_sync_optional_expr($conn, 'myitems', 'price3', 'price3', '0', 'i.');
     $itemGroup1Select = moova_menu_sync_optional_expr($conn, 'myitems', 'group1', 'group1', '0', 'i.');
     $itemGroup2Select = moova_menu_sync_optional_expr($conn, 'myitems', 'group2', 'group2', '0', 'i.');
+    $itemUuidSelect = moova_menu_sync_optional_expr($conn, 'myitems', 'uuid', 'item_uuid', 'NULL', 'i.');
+    $itemTypeSelect = moova_menu_sync_optional_expr($conn, 'myitems', 'item_type', 'item_type', "'sellable'", 'i.');
+    $itemTrackStockSelect = moova_menu_sync_optional_expr($conn, 'myitems', 'track_stock', 'track_stock', '1', 'i.');
     $itemDeletedWhere = moova_menu_sync_column_exists($conn, 'myitems', 'isdeleted')
         ? 'WHERE COALESCE(i.isdeleted, 0) = 0'
         : 'WHERE 1 = 1';
@@ -370,6 +464,9 @@ function moova_menu_sync_build_menu(mysqli $conn, string $catalogVersion): array
                i.cost_price,
                {$itemGroup1Select},
                {$itemGroup2Select},
+               {$itemUuidSelect},
+               {$itemTypeSelect},
+               {$itemTrackStockSelect},
                {$itemCategoryNameSelect},
                {$variantSelect}
         FROM myitems i
@@ -390,7 +487,7 @@ function moova_menu_sync_build_menu(mysqli $conn, string $catalogVersion): array
         $providerItemId = 'pos-item-' . $itemId;
         $categoryId = (int) ($row['group1'] ?? 0);
         $categoryKey = $categoryId > 0 ? 'pos-cat-' . $categoryId : null;
-        $items[] = [
+        $menuItem = [
             'id' => $providerItemId,
             'providerItemId' => $providerItemId,
             'name' => $name,
@@ -411,6 +508,25 @@ function moova_menu_sync_build_menu(mysqli $conn, string $catalogVersion): array
             'parentItemId' => !empty($row['parent_item_id']) ? 'pos-item-' . (int) $row['parent_item_id'] : null,
             'variantLabel' => trim((string) ($row['variant_label'] ?? '')) ?: null,
         ];
+        if ($recipeSync !== null && $recipeScope !== null) {
+            $menuItem = moova_menu_sync_apply_recipe_availability(
+                $conn,
+                $recipeSync,
+                $recipeScope,
+                $menuItem,
+                [
+                    'id' => $itemId,
+                    'item_id' => $itemId,
+                    'uuid' => $row['item_uuid'] ?? null,
+                    'item_type' => $row['item_type'] ?? 'sellable',
+                    'track_stock' => $row['track_stock'] ?? 1,
+                    'group1' => $categoryId,
+                    'category_id' => $categoryId,
+                    'updated_at' => $row['mdtime'] ?? null,
+                ]
+            );
+        }
+        $items[] = $menuItem;
     }
 
     return [
@@ -475,7 +591,7 @@ try {
         ]);
     }
 
-    $menu = moova_menu_sync_build_menu($conn, $fingerprint['fingerprint']);
+    $menu = moova_menu_sync_build_menu($conn, $fingerprint['fingerprint'], $link);
     moova_menu_sync_json(200, [
         'success' => true,
         'catalogVersion' => $menu['catalogVersion'],

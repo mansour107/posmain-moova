@@ -1,6 +1,8 @@
 <?php
 require_once __DIR__ . '/../includes/session_bootstrap.php';
 include('../includes/connect.php');
+require_once __DIR__ . '/../classes/Items/ItemFormInput.php';
+require_once __DIR__ . '/../classes/Items/ItemRecipeCatalogService.php';
 require_once __DIR__ . '/../classes/Pos/Service/ItemVariantService.php';
 require_once __DIR__ . '/../classes/Sync/MenuItemSyncRecorder.php';
 
@@ -46,14 +48,22 @@ if ($chkname !== null) {
 }
 
 // Prepare to update the main item
-$code = (int) ($_POST['code'] ?? 0);
-$name2 = (string) ($_POST['name2'] ?? '');
-$group1 = (int) ($_POST['group1'] ?? 0);
-$group2 = (int) ($_POST['group2'] ?? 0);
-$info = (string) ($_POST['info'] ?? '');
-$cost_price = (float) ($_POST['cost_price'][0] ?? 0);
-$price1 = (float) ($_POST['price1'][0] ?? 0);
-$price2 = (float) ($_POST['price2'][0] ?? 0);
+$defaultUnitId = posmain_edit_item_needs_default_unit($_POST) ? posmain_edit_item_default_unit_id($conn) : 0;
+try {
+    $payload = ItemFormInput::normalizeAddPayload($_POST, $usid, $defaultUnitId);
+} catch (InvalidArgumentException $exception) {
+    header('Location: ../add_item.php?edit=' . $item_id . '&error=save_failed');
+    exit;
+}
+
+$code = $payload['code'];
+$name2 = $payload['name2'];
+$group1 = $payload['group1'];
+$group2 = $payload['group2'];
+$info = $payload['info'];
+$cost_price = $payload['cost_price'];
+$price1 = $payload['price1'];
+$price2 = $payload['price2'];
 
 
 
@@ -122,6 +132,7 @@ try {
         throw new RuntimeException('Unable to update item');
     }
     $stmt->close();
+    (new ItemRecipeCatalogService())->saveMetadata($conn, $item_id, $payload);
 
     // تحديث وحدات الصنف
     $unitStmt = $conn->prepare("
@@ -166,6 +177,38 @@ try {
     exit;
 }
 
-    header('Location: ../add_item.php?edit=' . (int) $item_id . '&saved=1');
-    exit;
-?>
+header('Location: ../add_item.php?edit=' . (int) $item_id . '&saved=1');
+exit;
+
+function posmain_edit_item_needs_default_unit(array $post): bool
+{
+    $unitIds = isset($post['unit_id']) && is_array($post['unit_id']) ? $post['unit_id'] : [];
+    if (!$unitIds) {
+        return true;
+    }
+
+    foreach ($unitIds as $unitId) {
+        if ((int) $unitId > 0) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+function posmain_edit_item_default_unit_id(mysqli $conn): int
+{
+    $row = $conn->query("SELECT id FROM myunits WHERE COALESCE(isdeleted, 0) = 0 ORDER BY id LIMIT 1")->fetch_assoc();
+    if ($row !== null) {
+        return (int) $row['id'];
+    }
+
+    $unitName = 'قطعة';
+    $stmt = $conn->prepare('INSERT INTO myunits (uname) VALUES (?)');
+    $stmt->bind_param('s', $unitName);
+    $stmt->execute();
+    $unitId = (int) $conn->insert_id;
+    $stmt->close();
+
+    return $unitId;
+}

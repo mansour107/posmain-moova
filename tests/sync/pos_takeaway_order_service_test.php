@@ -2,6 +2,9 @@
 
 require_once __DIR__ . '/../../classes/Pos/Service/PosOrderMutationService.php';
 require_once __DIR__ . '/../../classes/Sync/SchemaManager.php';
+require_once __DIR__ . '/../../classes/Recipe/DTO/RecipeActorContext.php';
+require_once __DIR__ . '/../../classes/Recipe/RecipeDefinitionService.php';
+require_once __DIR__ . '/../../classes/Recipe/Repository/InventoryBalanceRepository.php';
 
 mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
 
@@ -16,6 +19,16 @@ putenv('POSMAIN_BRANCH_NAME=Takeaway Service Fixture');
 putenv('POSMAIN_POS_TENANT=0');
 putenv('POSMAIN_POS_BRANCH=0');
 putenv('POSMAIN_CLOUD_BASE_URL=http://127.0.0.1/cloud-fixture');
+putenv('POSMAIN_ENABLE_RECIPES=1');
+putenv('POSMAIN_RECIPE_MODE=consume_pilot');
+putenv('POSMAIN_RECIPE_RESERVATIONS=1');
+putenv('POSMAIN_RECIPE_CONSUMPTION=1');
+putenv('POSMAIN_RECIPE_ACCOUNTING=0');
+putenv('POSMAIN_RECIPE_AVAILABILITY=0');
+putenv('POSMAIN_RECIPE_MOOVA_SYNC=0');
+putenv('POSMAIN_RECIPE_STRICT_STOCK=0');
+putenv('POSMAIN_RECIPE_PILOT_POS_BRANCH=0');
+putenv('POSMAIN_RECIPE_PILOT_ITEM_IDS=10');
 
 $host = getenv('POSMAIN_TEST_MYSQL_HOST') ?: '127.0.0.1';
 $port = (int) (getenv('POSMAIN_TEST_MYSQL_PORT') ?: 3307);
@@ -29,6 +42,7 @@ try {
     $conn->select_db($db);
     posTakeawayServiceCreateSchema($conn);
     posTakeawayServiceSeedFixtures($conn);
+    posTakeawayServiceSeedRecipe($conn);
 
     $service = new PosOrderMutationService();
     $request = [
@@ -71,6 +85,7 @@ try {
     posTakeawayServiceAssert((int) $replay['data']['order_id'] === (int) $result['data']['order_id'], 'replay should return same order id');
     posTakeawayServiceAssert((int) $conn->query("SELECT COUNT(*) AS c FROM ot_head WHERE pro_tybe = 9 AND op2 IS NULL")->fetch_assoc()['c'] === 1, 'replay should not create a second POS order');
     posTakeawayServiceAssert((int) $conn->query("SELECT COUNT(*) AS c FROM process WHERE type = 'add cash'")->fetch_assoc()['c'] === 1, 'replay should not create a second process row');
+    posTakeawayServiceAssertRecipeConsumedOnce($conn, (int) $result['data']['order_id'], '8.000000');
 
     $conflictingRequest = $request;
     $conflictingRequest['headnet'] = 29;
@@ -96,6 +111,7 @@ try {
     posTakeawayServiceAssert((int) $mixed['data']['pro_id'] === 2, 'mixed service should allocate next POS pro_id');
     posTakeawayServiceAssert(count($mixed['data']['receipt_ids']) === 2, 'mixed service should create cash and bank receipts');
     posTakeawayServiceAssertCommittedMixedSale($conn, (int) $mixed['data']['order_id']);
+    posTakeawayServiceAssertRecipeConsumedOnce($conn, (int) $mixed['data']['order_id'], '6.000000');
     echo "pos-takeaway-order-service-ok db={$db}\n";
 } finally {
     $conn->query("DROP DATABASE IF EXISTS `{$db}`");
@@ -298,8 +314,40 @@ function posTakeawayServiceSeedFixtures(mysqli $conn): void
     $conn->query("
         INSERT INTO myitems (id, iname, barcode, itmqty, cost_price, price1, isdeleted) VALUES
             (10, 'Coffee', 'COF10', 20, 4, 10, 0),
-            (11, 'Cake', 'CAK11', 15, 2, 8, 0)
+            (11, 'Cake', 'CAK11', 15, 2, 8, 0),
+            (12, 'Coffee Beans', 'BEAN12', 10, 3, 0, 0)
     ");
+}
+
+function posTakeawayServiceSeedRecipe(mysqli $conn): void
+{
+    (new InventoryBalanceRepository())->putBalance($conn, [
+        'pos_tenant' => 0,
+        'pos_branch' => 0,
+        'store_id' => 3,
+        'item_id' => 12,
+        'qty_on_hand' => '10.000000',
+        'qty_reserved' => '0.000000',
+        'qty_available' => '10.000000',
+        'moving_average_cost' => '3.000000',
+    ]);
+
+    $definition = new RecipeDefinitionService(new RecipeFeatureFlags([
+        'recipe' => [
+            'enabled' => true,
+            'mode' => 'shadow',
+        ],
+    ]));
+    $actor = new RecipeActorContext(7, 0, 0, null, ['recipe.manage', 'recipe.approve']);
+    $recipe = $definition->createDraft($conn, [
+        'sellable_item_id' => 10,
+        'recipe_name' => 'Takeaway coffee recipe',
+    ], $actor);
+    $definition->addLine($conn, (int) $recipe['id'], [
+        'ingredient_item_id' => 12,
+        'qty_per_yield' => '1.000000',
+    ], $actor);
+    $definition->activate($conn, (int) $recipe['id'], $actor);
 }
 
 function posTakeawayServiceAssertCommittedSale(mysqli $conn, int $orderId): void
@@ -403,6 +451,27 @@ function posTakeawayServiceAssertCommittedMixedSale(mysqli $conn, int $orderId):
     posTakeawayServiceAssert(count($payload['receipts']) === 2, 'mixed payload should include two receipts');
     posTakeawayServiceAssert($payload['payments'][0]['payment_method'] === 'cash', 'mixed payload first payment method expected');
     posTakeawayServiceAssert($payload['payments'][1]['payment_method'] === 'bank', 'mixed payload second payment method expected');
+}
+
+function posTakeawayServiceAssertRecipeConsumedOnce(mysqli $conn, int $orderId, string $expectedIngredientOnHand): void
+{
+    $usages = $conn->query("SELECT * FROM recipe_order_line_usage WHERE order_id = {$orderId} ORDER BY id")->fetch_all(MYSQLI_ASSOC);
+    posTakeawayServiceAssert(count($usages) === 1, 'paid takeaway order should create one recipe usage row');
+    posTakeawayServiceAssert((string) $usages[0]['status'] === 'consumed', 'paid takeaway recipe usage should be consumed');
+    posTakeawayServiceAssert((int) $usages[0]['sellable_item_id'] === 10, 'recipe usage should belong to the pilot sellable item');
+    posTakeawayServiceAssert((int) $usages[0]['fat_detail_id'] > 0, 'recipe usage should reference the cashier fat_details line');
+
+    $movements = $conn->query("SELECT * FROM inventory_movements WHERE order_id = {$orderId} AND movement_type = 'recipe_consumption' ORDER BY id")->fetch_all(MYSQLI_ASSOC);
+    posTakeawayServiceAssert(count($movements) === 1, 'paid takeaway order should write one recipe consumption movement');
+    posTakeawayServiceAssert((int) $movements[0]['item_id'] === 12, 'recipe movement should consume the ingredient item');
+    posTakeawayServiceAssert((string) $movements[0]['qty_out'] === '2.000000', 'recipe movement should consume ingredient quantity once per paid line quantity');
+    posTakeawayServiceAssert((string) $movements[0]['source_type'] === 'recipe_order_line_usage', 'recipe movement should be sourced from recipe usage');
+    posTakeawayServiceAssert((int) $movements[0]['recipe_order_line_usage_id'] === (int) $usages[0]['id'], 'recipe movement should link to usage row');
+    posTakeawayServiceAssert((string) $movements[0]['accounting_journal_id'] === '' || $movements[0]['accounting_journal_id'] === null, 'recipe accounting should stay disabled in this isolated proof');
+
+    $balance = (new InventoryBalanceRepository())->findBalance($conn, 0, 0, 3, 12);
+    posTakeawayServiceAssert(is_array($balance), 'ingredient balance should exist after recipe consumption');
+    posTakeawayServiceAssert((string) $balance['qty_on_hand'] === $expectedIngredientOnHand, 'ingredient stock should be deducted exactly once for this paid takeaway order');
 }
 
 function posTakeawayServiceAssertLine(array $line, int $itemId, float $qtyOut, float $price, float $cost, float $value, float $profit): void

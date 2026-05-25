@@ -6,6 +6,15 @@ header('Access-Control-Allow-Methods: GET');
 require_once __DIR__ . '/../includes/db_bootstrap.php';
 require_once __DIR__ . '/moova_menu_api_auth.php';
 require_once __DIR__ . '/../classes/Pos/Service/ItemVariantService.php';
+require_once __DIR__ . '/../classes/Recipe/RecipeCostLeakAuditService.php';
+
+function posmain_items_api_sanitize_public_payload(array $payload): array
+{
+    $config = function_exists('posmain_app_config') ? posmain_app_config() : [];
+    $flags = new RecipeFeatureFlags($config);
+
+    return (new RecipeCostLeakAuditService())->sanitizePayload($payload, 'moova-facing api', $flags);
+}
 
 try {
     $conn = posmain_db_connect();
@@ -182,10 +191,10 @@ try {
     $conn->close();
     
     // Return success response
-    echo json_encode([
+    echo json_encode(posmain_items_api_sanitize_public_payload([
         'status' => 'success',
         'data' => $items
-    ], JSON_PRETTY_PRINT);
+    ]), JSON_PRETTY_PRINT);
     
 } catch (Exception $e) {
     http_response_code(500);

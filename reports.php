@@ -1,6 +1,7 @@
 <?php include('includes/header.php') ?>
 <?php include('includes/navbar.php') ?>
 <?php include('includes/sidebar.php') ?>
+<?php require_once __DIR__ . '/includes/recipe_report_permissions.php'; ?>
 
 <?php 
 $t = "الكل";
@@ -13,6 +14,7 @@ if (isset($_GET['t'])) {
         $t = 'الحسابات';
     }
 }
+$recipeReportLinks = posmain_recipe_report_link_permissions($conn);
 ?>
 
 <!-- Content Wrapper. Contains page content -->
@@ -82,6 +84,13 @@ if (isset($_GET['t'])) {
                                     📊 تقرير الأصناف الأكثر مبيعًا
                                 </a>
                             </div>
+                            <?php if ($recipeReportLinks['stock_reconciliation']): ?>
+                                <div class="col-md-4 col-lg-3 report-item">
+                                    <a class="btn btn-outline-warning btn-block btn-sm w-100" href="recipe_stock_reconciliation.php">
+                                        Recipe Stock Reconciliation
+                                    </a>
+                                </div>
+                            <?php endif; ?>
                         </div>
                     </div>
 
@@ -103,6 +112,55 @@ if (isset($_GET['t'])) {
                                     👨‍💼 تقرير الموظفين
                                 </a>
                             </div>
+                            <?php if ($recipeReportLinks['audit']): ?>
+                                <div class="col-md-4 col-lg-3 report-item">
+                                    <a class="btn btn-outline-dark btn-block btn-sm w-100" href="recipe_audit_report.php">
+                                        Recipe Audit Log
+                                    </a>
+                                </div>
+                            <?php endif; ?>
+                            <?php if ($recipeReportLinks['editor']): ?>
+                                <div class="col-md-4 col-lg-3 report-item">
+                                    <a class="btn btn-outline-primary btn-block btn-sm w-100" href="recipe_editor.php">
+                                        Recipe Editor - Read Only
+                                    </a>
+                                </div>
+                            <?php endif; ?>
+                            <?php if ($recipeReportLinks['manage']): ?>
+                                <div class="col-md-4 col-lg-3 report-item">
+                                    <a class="btn btn-outline-success btn-block btn-sm w-100" href="recipe_manage.php">
+                                        Recipe Draft Management
+                                    </a>
+                                </div>
+                            <?php endif; ?>
+                            <?php if ($recipeReportLinks['production']): ?>
+                                <div class="col-md-4 col-lg-3 report-item">
+                                    <a class="btn btn-outline-secondary btn-block btn-sm w-100" href="recipe_production.php">
+                                        Recipe Production Batches
+                                    </a>
+                                </div>
+                            <?php endif; ?>
+                            <?php if ($recipeReportLinks['waste']): ?>
+                                <div class="col-md-4 col-lg-3 report-item">
+                                    <a class="btn btn-outline-danger btn-block btn-sm w-100" href="recipe_waste.php">
+                                        Recipe Waste and Adjustments
+                                    </a>
+                                </div>
+                            <?php endif; ?>
+                            <?php if ($recipeReportLinks['operations']): ?>
+                                <div class="col-md-4 col-lg-3 report-item">
+                                    <a class="btn btn-outline-info btn-block btn-sm w-100" href="recipe_operations_report.php">
+                                        Recipe Operations Reports
+                                    </a>
+                                </div>
+                            <?php endif; ?>
+                            <?php if ($recipeReportLinks['dashboard']): ?>
+                                <div class="col-md-4 col-lg-3 report-item">
+                                    <a class="btn btn-outline-danger btn-block btn-sm w-100" href="recipe_operational_dashboard.php">
+                                        Recipe Operational Dashboard
+                                    </a>
+                                </div>
+                            <?php endif; ?>
                         </div>
                     </div>
                 </div>

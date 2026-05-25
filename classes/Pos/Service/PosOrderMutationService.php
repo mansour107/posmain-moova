@@ -12,6 +12,11 @@ require_once __DIR__ . '/ModifierLineNoteService.php';
 require_once __DIR__ . '/../../Sync/SyncOutboxEventService.php';
 require_once __DIR__ . '/../../Moova/MoovaNewOrderApplyService.php';
 require_once __DIR__ . '/../../Moova/MoovaChangeOrderApplyService.php';
+require_once __DIR__ . '/../../Recipe/RecipeDecimal.php';
+require_once __DIR__ . '/../../Recipe/RecipeOrderLifecycleService.php';
+require_once __DIR__ . '/../../Recipe/RecipeSettingsService.php';
+require_once __DIR__ . '/../../Recipe/RecipeAuditService.php';
+require_once __DIR__ . '/../../Recipe/DTO/RecipeActorContext.php';
 
 class PosOrderMutationService
 {
@@ -19,6 +24,8 @@ class PosOrderMutationService
     const SCOPE_TABLE_PAYMENT = 'pos.payment.table';
     const SCOPE_SPLIT_PAYMENT = 'pos.payment.split';
     const SCOPE_ORDER_CANCEL = 'pos.order.cancel';
+    const SCOPE_ORDER_REFUND = 'pos.order.refund';
+    const SCOPE_ORDER_VOID = 'pos.order.void';
     const SCOPE_TAKEAWAY_CREATE = 'pos.order.create.takeaway';
     const SCOPE_MOOVA_CONFIRM = 'moova.order.confirm';
     const SCOPE_MOOVA_CHANGE = 'moova.order.change';
@@ -33,8 +40,11 @@ class PosOrderMutationService
     private $itemAvailabilityService;
     private $managerApprovalService;
     private $modifierLineNoteService;
+    private $recipeLifecycleService;
+    private $recipeSettingsService;
+    private $recipeAuditService;
 
-    public function __construct(?PaymentService $paymentService = null, ?TableStateService $tableStateService = null, ?TableOrderService $tableOrderService = null, ?InventoryMovementService $inventoryMovementService = null, ?OrderEventService $orderEventService = null, ?IdempotencyService $idempotencyService = null, ?ItemAvailabilityService $itemAvailabilityService = null, ?ManagerApprovalService $managerApprovalService = null, ?ModifierLineNoteService $modifierLineNoteService = null)
+    public function __construct(?PaymentService $paymentService = null, ?TableStateService $tableStateService = null, ?TableOrderService $tableOrderService = null, ?InventoryMovementService $inventoryMovementService = null, ?OrderEventService $orderEventService = null, ?IdempotencyService $idempotencyService = null, ?ItemAvailabilityService $itemAvailabilityService = null, ?ManagerApprovalService $managerApprovalService = null, ?ModifierLineNoteService $modifierLineNoteService = null, ?RecipeOrderLifecycleService $recipeLifecycleService = null, ?RecipeSettingsService $recipeSettingsService = null, ?RecipeAuditService $recipeAuditService = null)
     {
         $this->paymentService = $paymentService ?: new PaymentService();
         $this->tableStateService = $tableStateService ?: new TableStateService();
@@ -45,12 +55,19 @@ class PosOrderMutationService
         $this->itemAvailabilityService = $itemAvailabilityService ?: new ItemAvailabilityService();
         $this->managerApprovalService = $managerApprovalService ?: new ManagerApprovalService();
         $this->modifierLineNoteService = $modifierLineNoteService ?: new ModifierLineNoteService();
+        $this->recipeLifecycleService = $recipeLifecycleService ?: new RecipeOrderLifecycleService();
+        $this->recipeSettingsService = $recipeSettingsService ?: new RecipeSettingsService();
+        $this->recipeAuditService = $recipeAuditService ?: new RecipeAuditService();
     }
 
     public function payTableOrder(mysqli $conn, array $request, array $context = []): array
     {
         $result = $this->paymentService->payTableOrder($conn, $request, $context);
         $orderId = (int) ($result['data']['order_id'] ?? 0);
+        if ($orderId > 0 && !empty($result['data']['fully_paid'])) {
+            $lines = $this->loadRecipeOrderLineContexts($conn, $orderId, 'table', 'dine_in', $request, $context);
+            $this->recordRecipeOrderPaid($conn, $orderId, $lines, 'table', 'dine_in', $request, $context);
+        }
         if ($orderId > 0) {
             $this->recordOrderEvent($conn, $orderId, 'order.payment_recorded', $context['event_source'] ?? 'pos_table_payment', $context, [
                 'payment_status' => $result['data']['payment_status'] ?? null,
@@ -66,6 +83,11 @@ class PosOrderMutationService
 
     public function cancelTableOrder(mysqli $conn, array $request, array $context = []): array
     {
+        $orderId = (int) ($request['order_id'] ?? 0);
+        $lines = $orderId > 0
+            ? $this->loadRecipeOrderLineContexts($conn, $orderId, 'table', 'dine_in', $request, $context)
+            : [];
+        $this->recordRecipeOrderLinesCancelled($conn, $lines, 'order_cancelled');
         $result = $this->tableStateService->cancelActiveOrder($conn, $request, $context);
         $orderId = (int) ($result['data']['order_id'] ?? 0);
         if ($orderId > 0) {
@@ -77,6 +99,130 @@ class PosOrderMutationService
         }
 
         return $result;
+    }
+
+    public function reversePaidOrder(mysqli $conn, array $request, array $context = []): array
+    {
+        $ownsTransaction = empty($context['in_transaction']) && empty($context['transaction_started']);
+        if ($ownsTransaction) {
+            $conn->begin_transaction();
+        }
+
+        try {
+            $orderId = $this->requiredPositiveInt($request, 'order_id', 'ORDER_ID_REQUIRED');
+            $action = strtolower(trim((string) ($request['action'] ?? 'refund')));
+            if (!in_array($action, ['refund', 'void'], true)) {
+                throw new InvalidArgumentException('ORDER_REVERSAL_ACTION_INVALID');
+            }
+
+            $order = $this->tableOrderService->queryOne($conn, "
+                SELECT id, table_id, pro_tybe, order_type, payment_status, invoice_status,
+                       order_status, fat_net, paid_amount, remaining_amount, isdeleted
+                FROM ot_head
+                WHERE id = ?
+                  AND pro_tybe = 9
+                LIMIT 1
+                FOR UPDATE
+            ", [$orderId]);
+            if (!$order || (int) ($order['isdeleted'] ?? 0) === 1) {
+                throw new RuntimeException('ORDER_NOT_FOUND');
+            }
+
+            $paymentStatus = strtolower(trim((string) ($order['payment_status'] ?? 'unpaid')));
+            if (in_array($paymentStatus, ['refunded', 'voided'], true)) {
+                throw new RuntimeException('ORDER_ALREADY_REVERSED');
+            }
+            if ($paymentStatus !== 'paid') {
+                throw new RuntimeException('ORDER_NOT_PAID');
+            }
+
+            $userId = $this->contextUserId($request, $context);
+            $amount = max(0.0, (float) ($order['paid_amount'] ?? $order['fat_net'] ?? 0));
+            $this->managerApprovalService->requireApprovedIfNeeded(
+                $conn,
+                $action === 'void' ? 'pos.void.paid' : 'pos.refund',
+                'order',
+                $orderId,
+                $amount,
+                $request,
+                $context
+            );
+
+            [$channel, $orderType] = $this->recipeChannelAndOrderType((string) ($order['order_type'] ?? ''));
+            $lines = $this->loadRecipeOrderLineContexts($conn, $orderId, $channel, $orderType, $request, $context);
+            $recipeResult = $this->recordRecipePaidOrderReversal(
+                $conn,
+                $orderId,
+                $lines,
+                $channel,
+                $orderType,
+                $action,
+                $request,
+                $context
+            );
+
+            $newPaymentStatus = $action === 'void' ? 'voided' : 'refunded';
+            $reason = trim((string) ($request['reason'] ?? $request['refund_reason'] ?? $request['void_reason'] ?? ''));
+            if ($reason === '') {
+                $reason = $action === 'void' ? 'paid_order_voided' : 'paid_order_refunded';
+            }
+
+            $this->tableOrderService->execute($conn, "
+                UPDATE ot_head
+                SET payment_status = ?,
+                    invoice_status = 'cancelled',
+                    order_status = 'cancelled',
+                    remaining_amount = 0,
+                    isdeleted = CASE WHEN ? = 'void' THEN 1 ELSE isdeleted END,
+                    cancelled_at = NOW(),
+                    cancelled_by = ?,
+                    cancellation_reason = ?,
+                    updated_by = ?,
+                    mdtime = NOW()
+                WHERE id = ?
+            ", [$newPaymentStatus, $action, $userId, $reason, $userId, $orderId]);
+
+            $tableId = (int) ($order['table_id'] ?? 0);
+            if ($tableId > 0) {
+                $this->tableOrderService->setTableFreeIfNoActiveOrder($conn, $tableId);
+            }
+
+            $eventType = $action === 'void' ? 'order.voided' : 'order.refunded';
+            $policy = $this->resolveRecipeRefundPolicy($request, $context);
+            $this->recordOrderEvent($conn, $orderId, $eventType, $context['event_source'] ?? 'pos_paid_reversal', $context, [
+                'payment_status_before' => $paymentStatus,
+                'payment_status_after' => $newPaymentStatus,
+                'refund_stock_policy' => $policy,
+                'reason' => $reason,
+                'amount' => $amount,
+            ]);
+
+            if ($ownsTransaction) {
+                $conn->commit();
+            }
+
+            return [
+                'success' => true,
+                'code' => 'OK',
+                'message' => $action === 'void' ? 'ORDER_VOIDED' : 'ORDER_REFUNDED',
+                'data' => [
+                    'order_id' => $orderId,
+                    'table_id' => $tableId,
+                    'action' => $action,
+                    'payment_status' => $newPaymentStatus,
+                    'invoice_status' => 'cancelled',
+                    'order_status' => 'cancelled',
+                    'refund_stock_policy' => $policy,
+                    'recipe' => $recipeResult,
+                ],
+            ];
+        } catch (Throwable $exception) {
+            if ($ownsTransaction) {
+                $conn->rollback();
+            }
+
+            throw $exception;
+        }
     }
 
     public function saveTableOrder(mysqli $conn, array $request, array $context = []): array
@@ -328,10 +474,15 @@ class PosOrderMutationService
         $lineResult = $this->inventoryMovementService->normalizeInvoiceLines($conn, InventoryMovementService::TYPE_POS, $items, [
             'store_id' => $storeId,
         ]);
+        $recipeLines = [];
         foreach ($lineResult['lines'] as $index => $line) {
             $line['_source_item'] = $items[$index] ?? [];
             $line['note'] = $this->lineNoteFromItem($line['_source_item']);
-            $this->insertTakeawayDetailLine($conn, $orderId, $storeId, $line, $context);
+            $recipeLines[] = $this->insertTakeawayDetailLine($conn, $orderId, $storeId, $line, $context);
+        }
+        $this->recordRecipeOrderLinesAdded($conn, $recipeLines);
+        if ($status['order_status'] === 'completed') {
+            $this->recordRecipeOrderPaid($conn, $orderId, $recipeLines, 'pos', 'takeaway', $request, $context);
         }
         $this->tableOrderService->execute($conn, "UPDATE ot_head SET profit = ? WHERE id = ?", [
             (float) $lineResult['totals']['profit'],
@@ -408,6 +559,7 @@ class PosOrderMutationService
                 'note' => (string) ($request['itmnote'][$index] ?? ''),
                 'modifiers' => $this->decodeLineModifiers($request['itmmodifiers'][$index] ?? []),
                 'base_price' => (float) ($request['itmbaseprice'][$index] ?? $request['itmprice'][$index] ?? 0),
+                'manager_approval_id' => (int) ($request['itmmanagerapproval'][$index] ?? $request['manager_approval_id'][$index] ?? 0),
             ];
         }
 
@@ -532,7 +684,7 @@ class PosOrderMutationService
         ];
     }
 
-    private function insertTakeawayDetailLine(mysqli $conn, int $orderId, int $storeId, array $line, array $context = []): void
+    private function insertTakeawayDetailLine(mysqli $conn, int $orderId, int $storeId, array $line, array $context = []): array
     {
         $this->tableOrderService->execute($conn, "
             INSERT INTO fat_details (
@@ -554,7 +706,7 @@ class PosOrderMutationService
             (float) $line['profit'],
         ]);
         $detailId = (int) $conn->insert_id;
-        $this->tableOrderService->assignUuidIfPresent($conn, 'fat_details', $detailId);
+        $detailUuid = $this->tableOrderService->assignUuidIfPresent($conn, 'fat_details', $detailId);
         $sourceItem = is_array($line['_source_item'] ?? null) ? $line['_source_item'] : $line;
         $this->persistLineCustomizationsIfAvailable(
             $conn,
@@ -563,6 +715,27 @@ class PosOrderMutationService
             (int) $line['item_id'],
             $sourceItem,
             abs((float) ($line['qty_out'] ?? 0) - (float) ($line['qty_in'] ?? 0)),
+            $context
+        );
+
+        $quantity = $this->recipeQuantityFromLegacyStockValues(
+            $line['qty_in'] ?? '0',
+            $line['qty_out'] ?? '0',
+            $line['u_val'] ?? '1'
+        );
+
+        return $this->recipeLineContext(
+            $conn,
+            $orderId,
+            $detailId,
+            $detailUuid,
+            (int) $line['item_id'],
+            $quantity,
+            $storeId,
+            'pos',
+            'takeaway',
+            $sourceItem,
+            [],
             $context
         );
     }
@@ -628,6 +801,9 @@ class PosOrderMutationService
 
         $clientId = $this->resolveDefaultClientId($conn);
         $info = $this->tableOrderService->buildInfo('table', $table['tname'] ?? '', '');
+        $oldRecipeLines = $isUpdate
+            ? $this->loadRecipeOrderLineContexts($conn, $orderId, 'table', 'dine_in', $request, $context)
+            : [];
         if ($orderId > 0) {
             $this->updateTableOrderHeader(
                 $conn,
@@ -643,6 +819,7 @@ class PosOrderMutationService
                 $net,
                 $info
             );
+            $this->recordRecipeOrderLinesCancelled($conn, $oldRecipeLines, 'order_updated');
             $this->tableOrderService->execute($conn, "UPDATE fat_details SET isdeleted = 1 WHERE fatid = ?", [$orderId]);
         } else {
             $orderId = $this->insertTableOrderHeader(
@@ -662,9 +839,13 @@ class PosOrderMutationService
         }
         $this->tableOrderService->assignUuidIfPresent($conn, 'ot_head', $orderId);
 
-        $this->insertTableOrderItems($conn, $orderId, $storeId, $items, $context);
+        $recipeLines = $this->insertTableOrderItems($conn, $orderId, $storeId, $items, $context);
+        $this->recordRecipeOrderLinesAdded($conn, $recipeLines);
         $totals = $this->tableOrderService->recalculateOrderTotals($conn, $orderId);
         $status = $this->applyPaidState($conn, $orderId, $tableId, $existingPaid, (float) $totals['net']);
+        if ($status['order_status'] === 'completed') {
+            $this->recordRecipeOrderPaid($conn, $orderId, $recipeLines, 'table', 'dine_in', $request, $context);
+        }
 
         if ($status['order_status'] === 'completed') {
             $this->tableOrderService->setTableFreeIfNoActiveOrder($conn, $tableId);
@@ -746,10 +927,24 @@ class PosOrderMutationService
             $this->moveOrCopySplitLine($conn, $newHeadId, $line);
         }
 
+        $recipeSplitAdjustments = $this->recipeSplitOriginalAdjustments($conn, $originalOrderId, $splitLines, 'table', 'dine_in', $request, $context);
         $remainingTotals = $this->tableOrderService->recalculateOrderTotals($conn, $originalOrderId);
         $activeTableOrderId = $this->refreshOriginalAfterSplit($conn, $originalOrder, $originalOrderId, $tableId, (float) $remainingTotals['net']);
         $paymentId = $this->insertSplitPaymentRecordIfAvailable($conn, $newHeadId, $childTotal, $paymentMethod, $userId);
         $this->paymentService->recordCashDrawerMovementForPayment($conn, $paymentMethod, $childTotal, $newHeadId, $userId, $drawerContext, $drawerSession, $paymentId);
+        $splitRecipeLines = $this->loadRecipeOrderLineContexts($conn, $newHeadId, 'table', 'dine_in', $request, $context);
+        $this->recordRecipeOrderSplit(
+            $conn,
+            $originalOrderId,
+            $newHeadId,
+            $recipeSplitAdjustments['source_lines'],
+            $recipeSplitAdjustments['remaining_lines'],
+            $splitRecipeLines,
+            'table',
+            'dine_in',
+            $request,
+            $context
+        );
         $this->recordOrderEvent($conn, $originalOrderId, 'order.updated', $context['event_source'] ?? 'pos_split_payment', $context, [
             'table_id' => $tableId,
             'split_child_order_id' => $newHeadId,
@@ -1147,8 +1342,9 @@ class PosOrderMutationService
         return (int) $conn->insert_id;
     }
 
-    private function insertTableOrderItems(mysqli $conn, int $orderId, int $storeId, array $items, array $context = []): void
+    private function insertTableOrderItems(mysqli $conn, int $orderId, int $storeId, array $items, array $context = []): array
     {
+        $recipeLines = [];
         foreach ($items as $item) {
             $itemId = (int) ($item['id'] ?? $item['item_id'] ?? 0);
             $qty = (float) ($item['qty'] ?? 0);
@@ -1165,9 +1361,415 @@ class PosOrderMutationService
                 ) VALUES (9, ?, ?, 1, 0, ?, ?, 0, ?, ?, 9, ?)
             ", [$orderId, $itemId, $qty, $price, $detValue, $orderId, $storeId]);
             $detailId = (int) $conn->insert_id;
-            $this->tableOrderService->assignUuidIfPresent($conn, 'fat_details', $detailId);
+            $detailUuid = $this->tableOrderService->assignUuidIfPresent($conn, 'fat_details', $detailId);
             $this->persistLineCustomizationsIfAvailable($conn, $orderId, $detailId, $itemId, $item, $qty, $context);
+            $recipeLines[] = $this->recipeLineContext(
+                $conn,
+                $orderId,
+                $detailId,
+                $detailUuid,
+                $itemId,
+                $qty,
+                $storeId,
+                'table',
+                'dine_in',
+                $item,
+                [],
+                $context
+            );
         }
+
+        return $recipeLines;
+    }
+
+    private function loadRecipeOrderLineContexts(
+        mysqli $conn,
+        int $orderId,
+        string $channel,
+        string $orderType,
+        array $request = [],
+        array $context = []
+    ): array {
+        if ($orderId < 1) {
+            return [];
+        }
+        foreach (['id', 'item_id', 'qty_in', 'qty_out', 'u_val', 'det_store', 'fatid', 'isdeleted'] as $column) {
+            if (!$this->columnExists($conn, 'fat_details', $column)) {
+                return [];
+            }
+        }
+
+        $rows = $this->tableOrderService->queryAll($conn, "
+            SELECT id, item_id, qty_in, qty_out, u_val, det_store
+            FROM fat_details
+            WHERE fatid = ?
+              AND isdeleted = 0
+              AND qty_out > qty_in
+            ORDER BY id ASC
+        ", [$orderId]);
+
+        $lines = [];
+        foreach ($rows as $row) {
+            $quantity = $this->recipeQuantityFromLegacyStockValues(
+                $row['qty_in'] ?? '0',
+                $row['qty_out'] ?? '0',
+                $row['u_val'] ?? '1'
+            );
+            if (RecipeDecimal::compare($quantity, '0') <= 0) {
+                continue;
+            }
+
+            $lines[] = $this->recipeLineContext(
+                $conn,
+                $orderId,
+                (int) $row['id'],
+                null,
+                (int) $row['item_id'],
+                $quantity,
+                (int) ($row['det_store'] ?? 0),
+                $channel,
+                $orderType,
+                [],
+                $request,
+                $context
+            );
+        }
+
+        return $lines;
+    }
+
+    private function recipeSplitOriginalAdjustments(
+        mysqli $conn,
+        int $originalOrderId,
+        array $splitLines,
+        string $channel,
+        string $orderType,
+        array $request = [],
+        array $context = []
+    ): array {
+        $sourceLines = [];
+        $remainingLines = [];
+        if ($originalOrderId < 1 || !$splitLines) {
+            return [
+                'source_lines' => $sourceLines,
+                'remaining_lines' => $remainingLines,
+            ];
+        }
+
+        foreach ($splitLines as $splitLine) {
+            if (!is_array($splitLine) || !is_array($splitLine['detail'] ?? null)) {
+                continue;
+            }
+
+            $detail = $splitLine['detail'];
+            $detailId = (int) ($detail['id'] ?? 0);
+            $itemId = (int) ($detail['item_id'] ?? 0);
+            if ($detailId < 1 || $itemId < 1) {
+                continue;
+            }
+            $uVal = RecipeDecimal::normalize($detail['u_val'] ?? '1');
+            if (RecipeDecimal::compare($uVal, '0') <= 0) {
+                $uVal = '1.000000';
+            }
+
+            $qtyOut = RecipeDecimal::normalize($detail['qty_out'] ?? '0');
+            $qtyIn = RecipeDecimal::normalize($detail['qty_in'] ?? '0');
+            $oldRawQty = RecipeDecimal::compare($qtyOut, $qtyIn) > 0
+                ? RecipeDecimal::subtract($qtyOut, $qtyIn)
+                : '0.000000';
+            $splitRawQty = RecipeDecimal::normalize($splitLine['qty'] ?? '0');
+            if (RecipeDecimal::compare($oldRawQty, '0') <= 0 || RecipeDecimal::compare($splitRawQty, '0') <= 0) {
+                continue;
+            }
+
+            $oldQty = RecipeDecimal::divide($oldRawQty, $uVal);
+            $remainingRawQty = RecipeDecimal::compare($oldRawQty, $splitRawQty) > 0
+                ? RecipeDecimal::subtract($oldRawQty, $splitRawQty)
+                : '0.000000';
+            $oldContext = $this->recipeLineContext(
+                $conn,
+                $originalOrderId,
+                $detailId,
+                $this->nullableString($detail['uuid'] ?? null),
+                $itemId,
+                $oldQty,
+                (int) ($detail['det_store'] ?? 0),
+                $channel,
+                $orderType,
+                [],
+                $request,
+                $context
+            );
+            $sourceLines[] = $oldContext;
+
+            if (!empty($splitLine['is_full']) || RecipeDecimal::compare($remainingRawQty, '0.000100') <= 0) {
+                continue;
+            }
+
+            $newContext = $this->recipeLineContext(
+                $conn,
+                $originalOrderId,
+                $detailId,
+                $this->nullableString($detail['uuid'] ?? null),
+                $itemId,
+                RecipeDecimal::divide($remainingRawQty, $uVal),
+                (int) ($detail['det_store'] ?? 0),
+                $channel,
+                $orderType,
+                [],
+                $request,
+                $context
+            );
+            $remainingLines[] = $newContext;
+        }
+
+        return [
+            'source_lines' => $sourceLines,
+            'remaining_lines' => $remainingLines,
+        ];
+    }
+
+    private function recordRecipeOrderSplit(
+        mysqli $conn,
+        int $originalOrderId,
+        int $childOrderId,
+        array $sourceLines,
+        array $remainingLines,
+        array $paidLines,
+        string $channel,
+        string $orderType,
+        array $request = [],
+        array $context = []
+    ): void {
+        if ($originalOrderId < 1 || $childOrderId < 1) {
+            return;
+        }
+
+        $sourceLines = array_values(array_filter($sourceLines, 'is_array'));
+        $remainingLines = array_values(array_filter($remainingLines, 'is_array'));
+        $paidLines = array_values(array_filter($paidLines, 'is_array'));
+        if (!$sourceLines && !$remainingLines && !$paidLines) {
+            return;
+        }
+
+        $base = $this->recipeBaseContext($conn, $originalOrderId, 0, $channel, $orderType, $request, $context);
+        $base['reason'] = 'split_payment';
+        $base['source_lines'] = $sourceLines;
+        $base['remaining_lines'] = $remainingLines;
+        $base['paid_order_id'] = $childOrderId;
+        $base['paid_lines'] = $paidLines;
+        $this->recipeLifecycleService->onOrderSplit($base);
+    }
+
+    private function recordRecipeOrderLinesAdded(mysqli $conn, array $lines): void
+    {
+        foreach ($lines as $line) {
+            if (is_array($line)) {
+                $line['conn'] = $conn;
+                $this->recipeLifecycleService->onOrderLineAdded($line);
+            }
+        }
+    }
+
+    private function recordRecipeOrderLinesCancelled(mysqli $conn, array $lines, string $reason): void
+    {
+        foreach ($lines as $line) {
+            if (is_array($line)) {
+                $line['conn'] = $conn;
+                $this->recipeLifecycleService->onOrderLineCancelled($line, $reason);
+            }
+        }
+    }
+
+    private function recordRecipeOrderPaid(
+        mysqli $conn,
+        int $orderId,
+        array $lines,
+        string $channel,
+        string $orderType,
+        array $request = [],
+        array $context = []
+    ): void {
+        if ($orderId < 1 || !$lines) {
+            return;
+        }
+
+        $base = $this->recipeBaseContext($conn, $orderId, 0, $channel, $orderType, $request, $context);
+        $base['lines'] = array_values(array_filter($lines, 'is_array'));
+        if (!$base['lines']) {
+            return;
+        }
+
+        $this->recipeLifecycleService->onOrderPaid($base);
+    }
+
+    private function recordRecipePaidOrderReversal(
+        mysqli $conn,
+        int $orderId,
+        array $lines,
+        string $channel,
+        string $orderType,
+        string $action,
+        array $request = [],
+        array $context = []
+    ): ?array {
+        if ($orderId < 1 || !$lines) {
+            return null;
+        }
+
+        $base = $this->recipeBaseContext($conn, $orderId, 0, $channel, $orderType, $request, $context);
+        $base['lines'] = array_values(array_filter($lines, 'is_array'));
+        if (!$base['lines']) {
+            return null;
+        }
+
+        $reverseContext = array_merge($context, [
+            'created_by' => $this->contextUserId($request, $context),
+            'policy' => $this->resolveRecipeRefundPolicy($request, $context),
+            'refund_uuid' => $this->nullableString(
+                $request['refund_uuid']
+                ?? $request['void_uuid']
+                ?? ($action === 'void' ? 'pos-order-void:' . $orderId : 'pos-order-refund:' . $orderId)
+            ),
+        ]);
+
+        return $action === 'void'
+            ? $this->recipeLifecycleService->onOrderVoided($base, $reverseContext)
+            : $this->recipeLifecycleService->onOrderRefunded($base, $reverseContext);
+    }
+
+    private function resolveRecipeRefundPolicy(array $request = [], array $context = []): string
+    {
+        $configured = $this->recipeSettingsService->refundStockPolicy($context);
+        if ($configured !== 'manager_choice') {
+            return $configured;
+        }
+
+        $requested = strtolower(trim((string) (
+            $request['refund_stock_policy']
+            ?? $request['policy']
+            ?? $context['refund_stock_policy']
+            ?? $context['policy']
+            ?? ''
+        )));
+
+        return in_array($requested, ['waste', 'return_to_stock'], true) ? $requested : 'waste';
+    }
+
+    private function recipeChannelAndOrderType(string $storedOrderType): array
+    {
+        $storedOrderType = strtolower(trim($storedOrderType));
+        if ($storedOrderType === 'table') {
+            return ['table', 'dine_in'];
+        }
+        if ($storedOrderType === 'delivery') {
+            return ['pos', 'delivery'];
+        }
+
+        return ['pos', 'takeaway'];
+    }
+
+    private function recipeLineContext(
+        mysqli $conn,
+        int $orderId,
+        int $detailId,
+        ?string $detailUuid,
+        int $itemId,
+        $quantity,
+        int $storeId,
+        string $channel,
+        string $orderType,
+        array $sourceItem = [],
+        array $request = [],
+        array $context = []
+    ): array {
+        $line = $this->recipeBaseContext($conn, $orderId, $storeId, $channel, $orderType, $request, $context);
+        $line['fat_detail_id'] = $detailId > 0 ? $detailId : null;
+        $line['order_line_uuid'] = $this->nullableString($detailUuid);
+        $line['sellable_item_id'] = $itemId;
+        $line['item_id'] = $itemId;
+        $line['quantity'] = $this->decimalString($quantity);
+        $line['qty'] = $this->decimalString($quantity);
+
+        $variantId = (int) ($sourceItem['variant_id'] ?? $sourceItem['variantId'] ?? 0);
+        if ($variantId > 0) {
+            $line['variant_id'] = $variantId;
+        }
+
+        foreach (['modifiers', 'modifier_options', 'selected_modifiers', 'options'] as $modifierKey) {
+            if (isset($sourceItem[$modifierKey]) && is_array($sourceItem[$modifierKey])) {
+                $line['modifiers'] = $sourceItem[$modifierKey];
+                break;
+            }
+        }
+        $managerApprovalId = (int) (
+            $sourceItem['manager_approval_id']
+            ?? $sourceItem['recipe_stock_manager_approval_id']
+            ?? $request['manager_approval_id']
+            ?? $context['manager_approval_id']
+            ?? 0
+        );
+        if ($managerApprovalId > 0) {
+            $line['manager_approval_id'] = $managerApprovalId;
+        }
+
+        return $line;
+    }
+
+    private function recipeQuantityFromLegacyStockValues($qtyIn, $qtyOut, $uVal): string
+    {
+        $qtyIn = RecipeDecimal::normalize($qtyIn);
+        $qtyOut = RecipeDecimal::normalize($qtyOut);
+        $unitValue = RecipeDecimal::normalize($uVal);
+        if (RecipeDecimal::compare($unitValue, '0') <= 0) {
+            $unitValue = '1.000000';
+        }
+
+        $difference = RecipeDecimal::compare($qtyOut, $qtyIn) >= 0
+            ? RecipeDecimal::subtract($qtyOut, $qtyIn)
+            : RecipeDecimal::subtract($qtyIn, $qtyOut);
+
+        if (RecipeDecimal::compare($difference, '0') <= 0) {
+            return '0.000000';
+        }
+
+        return RecipeDecimal::divide($difference, $unitValue);
+    }
+
+    private function recipeBaseContext(
+        mysqli $conn,
+        int $orderId,
+        int $storeId,
+        string $channel,
+        string $orderType,
+        array $request = [],
+        array $context = []
+    ): array {
+        $config = is_array($context['config'] ?? null) ? $context['config'] : [];
+        $branchUuid = $this->nullableString(
+            $context['branch_uuid']
+            ?? $request['branch_uuid']
+            ?? ($config['sync']['branch_uuid'] ?? null)
+            ?? getenv('POSMAIN_BRANCH_UUID')
+            ?: null
+        );
+
+        return [
+            'conn' => $conn,
+            'tenant' => (int) ($context['tenant'] ?? $context['pos_tenant'] ?? $request['tenant'] ?? $request['pos_tenant'] ?? 0),
+            'branch' => (int) ($context['branch'] ?? $context['pos_branch'] ?? $request['branch'] ?? $request['pos_branch'] ?? 0),
+            'branch_uuid' => $branchUuid,
+            'store_id' => max(0, $storeId),
+            'order_id' => $orderId,
+            'channel' => $channel,
+            'order_type' => $orderType,
+            'requested_at' => date('Y-m-d H:i:s'),
+        ];
+    }
+
+    private function decimalString($value): string
+    {
+        return RecipeDecimal::normalize($value);
     }
 
     private function applyPaidState(mysqli $conn, int $orderId, int $tableId, float $existingPaid, float $net): array
@@ -1446,9 +2048,86 @@ class PosOrderMutationService
             'tenant' => $this->scopeNonNegativeInt($request, $context, ['tenant', 'pos_tenant']),
             'branch' => $this->scopeNonNegativeInt($request, $context, ['branch', 'pos_branch']),
             'channel' => $request['availability_channel'] ?? $request['channel'] ?? $context['availability_channel'] ?? $context['channel'] ?? 'pos',
+            'order_type' => $request['order_type'] ?? $context['order_type'] ?? 'takeaway',
+            'store_id' => $request['store_id'] ?? $context['store_id'] ?? 0,
         ];
-        foreach ($this->itemIdsFromLines($items) as $itemId) {
-            $this->itemAvailabilityService->assertSellable($conn, $itemId, $scope);
+        foreach ($items as $item) {
+            if (!is_array($item)) {
+                continue;
+            }
+            $itemId = (int) ($item['id'] ?? $item['item_id'] ?? 0);
+            if ($itemId <= 0) {
+                continue;
+            }
+
+            $availability = $this->itemAvailabilityService->availabilityForItem($conn, $itemId, $scope);
+            if (!empty($availability['is_available'])) {
+                continue;
+            }
+
+            $this->itemAvailabilityService->assertAvailabilityCanAdd($availability);
+            $isRecipeUnavailable = !empty($availability['manual_is_available'])
+                && !empty($availability['recipe_enabled'])
+                && (string) ($availability['availability_status'] ?? '') === 'recipe_unavailable';
+            if ($isRecipeUnavailable) {
+                $approval = $this->managerApprovalService->requireApprovedIfNeeded(
+                    $conn,
+                    'recipe.stock_override',
+                    'item',
+                    $itemId,
+                    1.0,
+                    [
+                        'manager_approval_id' => $item['manager_approval_id']
+                            ?? $item['recipe_stock_manager_approval_id']
+                            ?? $request['manager_approval_id']
+                            ?? null,
+                    ],
+                    ['require_manager_approval' => true]
+                );
+                $this->recordRecipeStockOverrideAudit($conn, $itemId, $availability, $approval, $request, $context);
+            }
+        }
+    }
+
+    private function recordRecipeStockOverrideAudit(
+        mysqli $conn,
+        int $itemId,
+        array $availability,
+        ?array $approval,
+        array $request,
+        array $context
+    ): void {
+        if (!$approval || !$this->tableExists($conn, 'recipe_audit_log')) {
+            return;
+        }
+
+        try {
+            $actor = new RecipeActorContext(
+                (int) ($approval['approved_by'] ?? $this->contextUserId($request, $context)),
+                (int) ($context['tenant'] ?? $context['pos_tenant'] ?? $request['tenant'] ?? $request['pos_tenant'] ?? 0),
+                (int) ($context['branch'] ?? $context['pos_branch'] ?? $request['branch'] ?? $request['pos_branch'] ?? 0),
+                $context['branch_uuid'] ?? $request['branch_uuid'] ?? null,
+                ['pos.recipe_stock_override'],
+                $_SERVER['REMOTE_ADDR'] ?? null,
+                $_SERVER['HTTP_USER_AGENT'] ?? null
+            );
+            $this->recipeAuditService->record(
+                $conn,
+                $actor,
+                'availability_override',
+                'item',
+                $itemId,
+                isset($availability['recipe_id']) ? (int) $availability['recipe_id'] : null,
+                null,
+                [
+                    'manager_approval_id' => (int) $approval['id'],
+                    'unavailable_reason' => $availability['unavailable_reason'] ?? $availability['recipe_unavailable_reason'] ?? null,
+                    'effective_available_qty' => $availability['recipe_effective_available_qty'] ?? null,
+                    'source' => $context['event_source'] ?? 'pos_order',
+                ]
+            );
+        } catch (Throwable $exception) {
+            error_log('Recipe stock override audit skipped: ' . $exception->getMessage());
         }
     }
 
@@ -1496,6 +2175,15 @@ class PosOrderMutationService
     {
         $tableName = $conn->real_escape_string($tableName);
         $result = $conn->query("SHOW TABLES LIKE '{$tableName}'");
+
+        return $result && $result->num_rows > 0;
+    }
+
+    private function columnExists(mysqli $conn, string $tableName, string $columnName): bool
+    {
+        $tableName = $conn->real_escape_string($tableName);
+        $columnName = $conn->real_escape_string($columnName);
+        $result = $conn->query("SHOW COLUMNS FROM `{$tableName}` LIKE '{$columnName}'");
 
         return $result && $result->num_rows > 0;
     }

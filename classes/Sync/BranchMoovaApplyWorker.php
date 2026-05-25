@@ -138,6 +138,7 @@ class BranchMoovaApplyWorker
                     'branch' => $branch,
                     'pos_tenant' => $tenant,
                     'pos_branch' => $branch,
+                    'branch_uuid' => (string) ($identity['branch_uuid'] ?? ''),
                     'moova_branch_id' => $moovaBranchId,
                 ], $posPayload, [
                     'user_id' => $userId,
@@ -146,7 +147,9 @@ class BranchMoovaApplyWorker
                     'request_json' => $requestJson,
                     'moova_order_id' => $moovaOrderId,
                     'moova_branch_id' => $moovaBranchId,
+                    'branch_uuid' => (string) ($identity['branch_uuid'] ?? ''),
                     'response_mode' => 'queued',
+                    'config' => $config,
                 ]);
                 $response = $result['response'];
                 $this->inboundQueue->markProcessingResultInTransaction($conn, (int) $row['id'], 'applied', $response, [
@@ -208,6 +211,7 @@ class BranchMoovaApplyWorker
                     'branch' => $branch,
                     'pos_tenant' => $tenant,
                     'pos_branch' => $branch,
+                    'branch_uuid' => (string) ($identity['branch_uuid'] ?? ''),
                     'moova_branch_id' => $moovaBranchId,
                 ], $posPayload, [
                     'user_id' => $userId,
@@ -216,9 +220,11 @@ class BranchMoovaApplyWorker
                     'request_json' => $requestJson,
                     'moova_order_id' => $moovaOrderId,
                     'moova_branch_id' => $moovaBranchId,
+                    'branch_uuid' => (string) ($identity['branch_uuid'] ?? ''),
                     'request_event_id' => (string) (($posPayload['requestEventId'] ?? '') ?: ($payload['request_event_id'] ?? '')),
                     'action' => $expectedAction,
                     'response_mode' => 'queued',
+                    'config' => $config,
                 ]);
                 $resultOptions = [];
                 if ((int) ($result['pos_order_id'] ?? 0) > 0) {

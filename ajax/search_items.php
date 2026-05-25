@@ -59,6 +59,7 @@ try {
         'tenant' => (int)($branchConfig['pos_tenant'] ?? 0),
         'branch' => (int)($branchConfig['pos_branch'] ?? 0),
         'channel' => 'pos',
+        'order_type' => 'takeaway',
     ];
     $items = (new ItemAvailabilityService())->decorateItems($conn, $items, $availabilityScope);
     

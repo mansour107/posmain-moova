@@ -121,13 +121,73 @@ function login_audit(mysqli $conn, SecurityAuditLogger $auditLogger, string $eve
     }
 }
 
+function login_user_by_uname(mysqli $conn, string $user): ?array
+{
+    $stmt = $conn->prepare("SELECT id, uname, password, userrole, usertype FROM users WHERE uname = ? AND isdeleted != 1 LIMIT 1");
+    $stmt->bind_param("s", $user);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+
+    return $row ?: null;
+}
+
+function login_user_from_router_alias(mysqli $shopConn, array $route, string $identifier): ?array
+{
+    $targetUserId = isset($route['target_user_id']) && $route['target_user_id'] !== null
+        ? (int) $route['target_user_id']
+        : 0;
+    if ($targetUserId > 0) {
+        $stmt = $shopConn->prepare("SELECT id, uname, password, userrole, usertype FROM users WHERE id = ? AND isdeleted != 1 LIMIT 1");
+        $stmt->bind_param('i', $targetUserId);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        return $row ?: null;
+    }
+
+    $targetUname = trim((string) ($route['target_uname'] ?? ''));
+    return login_user_by_uname($shopConn, $targetUname !== '' ? $targetUname : $identifier);
+}
+
+function login_upgrade_password_if_needed(mysqli $conn, int $userId, string $password, string $storedHash): void
+{
+    if (!PasswordService::needsRehash($storedHash)) {
+        return;
+    }
+
+    $newHash = PasswordService::hashPassword($password);
+    $u = $conn->prepare("UPDATE users SET password = ? WHERE id = ?");
+    if ($u) {
+        $u->bind_param("si", $newHash, $userId);
+        $u->execute();
+        $u->close();
+    }
+}
+
+function login_insert_session_time(mysqli $conn, int $userId): void
+{
+    $session_stmt = $conn->prepare("INSERT INTO session_time(user) VALUES (?)");
+    if ($session_stmt) {
+        $session_stmt->bind_param("i", $userId);
+        $session_stmt->execute();
+        $session_stmt->close();
+    }
+}
+
 // generate CSRF token
 if (empty($_SESSION['csrf_token'])) {
     $_SESSION['csrf_token'] = bin2hex(random_bytes(24));
 }
 
 // لو المستخدم مسجل بالفعل => اذهب للداشبورد
-if (isset($_SESSION['login']) && isset($_SESSION['userid'])) {
+$routerEnabled = function_exists('posmain_router_enabled') && posmain_router_enabled();
+if (
+    isset($_SESSION['login'])
+    && isset($_SESSION['userid'])
+    && (!$routerEnabled || PosmainShopRouter::activeSessionShopId() > 0)
+) {
     header("Location: dashboard.php");
     exit();
 }
@@ -158,102 +218,126 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     'metadata' => ['username' => $user],
                 ]);
             } else {
-            // استعلام مستخدم بواسطة prepared statement
-            $stmt = $conn->prepare("SELECT id, uname, password, userrole, usertype FROM users WHERE uname = ? AND isdeleted != 1 LIMIT 1");
-            if ($stmt === false) {
-                $error_message = "خطأ في إعداد الاستعلام";
-            } else {
-                $stmt->bind_param("s", $user);
-                $stmt->execute();
-                $result = $stmt->get_result();
-
-                if ($row = $result->fetch_assoc()) {
-                    $storedHash = $row['password'];
-                    $userId = (int)$row['id'];
-
-                    $password_ok = false;
-
-                    if (PasswordService::verifyPassword($password, $storedHash)) {
-                        $password_ok = true;
-                        if (PasswordService::needsRehash($storedHash)) {
-                            $newHash = PasswordService::hashPassword($password);
-                            $u = $conn->prepare("UPDATE users SET password = ? WHERE id = ?");
-                            if ($u) {
-                                $u->bind_param("si", $newHash, $userId);
-                                $u->execute();
-                                $u->close();
-                            }
+                $shopConn = $conn;
+                $route = null;
+                $router = null;
+                try {
+                    if ($routerEnabled) {
+                        $router = new PosmainShopRouter();
+                        $route = $router->resolveLoginAlias($conn, $user);
+                        if (!$route) {
+                            $error_message = "اسم المستخدم أو كلمة المرور غير صحيحة";
+                            login_throttle_failure($conn, $loginThrottle, $user, $clientIp);
+                            login_audit($conn, $securityAuditLogger, 'login_failure', [
+                                'ip' => $clientIp,
+                                'target_type' => 'user',
+                                'metadata' => ['username' => $user, 'reason' => 'router_alias_not_found'],
+                            ]);
+                            throw new RuntimeException('LOGIN_HANDLED');
                         }
+                        $shopConn = $router->connectShopFromRoute($route);
                     }
 
-                    if ($password_ok) {
-                        login_throttle_success($conn, $loginThrottle, $user, $clientIp);
-                        login_audit($conn, $securityAuditLogger, 'login_success', [
-                            'user_id' => $userId,
-                            'ip' => $clientIp,
-                            'target_type' => 'user',
-                            'target_id' => $userId,
-                            'metadata' => ['username' => $row['uname']],
-                        ]);
+                    $row = $routerEnabled && $route
+                        ? login_user_from_router_alias($shopConn, $route, $user)
+                        : login_user_by_uname($shopConn, $user);
 
-                        // تسجيل جلسة آمن
-                        posmain_session_regenerate();
-                        $_SESSION['userid'] = $row['id'];
-                        $_SESSION['usrole'] = $row['userrole'];
-                        $_SESSION['usty'] = $row['usertype'];
-                        $_SESSION['login'] = $row['uname'];
+                    if ($row) {
+                        $storedHash = $row['password'];
+                        $userId = (int) $row['id'];
 
-                        // تسجيل وقت الجلسة (prepared)
-                        $session_stmt = $conn->prepare("INSERT INTO session_time(user) VALUES (?)");
-                        if ($session_stmt) {
-                            $session_stmt->bind_param("i", $userId);
-                            $session_stmt->execute();
-                            $session_stmt->close();
+                        $password_ok = false;
+
+                        if (PasswordService::verifyPassword($password, $storedHash)) {
+                            $password_ok = true;
+                            login_upgrade_password_if_needed($shopConn, $userId, $password, $storedHash);
                         }
 
-                        // هنا ممكن تستدعي logger لو معرف
-                        // if (isset($logger)) { $logger->logLogin($row['uname'], true); }
+                        if ($password_ok) {
+                            login_throttle_success($conn, $loginThrottle, $user, $clientIp);
+                            login_audit($conn, $securityAuditLogger, 'login_success', [
+                                'user_id' => $userId,
+                                'ip' => $clientIp,
+                                'target_type' => 'user',
+                                'target_id' => $userId,
+                                'metadata' => [
+                                    'username' => $row['uname'],
+                                    'router_identifier' => $user,
+                                    'shop_id' => $route ? (int) $route['id'] : null,
+                                    'shop_slug' => $route ? (string) $route['slug'] : null,
+                                ],
+                            ]);
 
-                        header("Location: dashboard.php");
-                        exit();
+                            // تسجيل جلسة آمن
+                            posmain_session_regenerate();
+                            $_SESSION['userid'] = $row['id'];
+                            $_SESSION['usrole'] = $row['userrole'];
+                            $_SESSION['usty'] = $row['usertype'];
+                            $_SESSION['login'] = $row['uname'];
+                            if ($routerEnabled && $route) {
+                                $_SESSION['posmain_shop_id'] = (int) $route['id'];
+                                $_SESSION['posmain_shop_slug'] = (string) $route['slug'];
+                                $_SESSION['posmain_shop_user_id'] = $userId;
+                            }
+
+                            // تسجيل وقت الجلسة (prepared)
+                            login_insert_session_time($shopConn, $userId);
+
+                            // هنا ممكن تستدعي logger لو معرف
+                            // if (isset($logger)) { $logger->logLogin($row['uname'], true); }
+
+                            header("Location: dashboard.php");
+                            exit();
+                        } else {
+                            // رسالة عامة لا تكشف إن اليوزر غير موجود أو الباسورد خاطئ
+                            $error_message = "اسم المستخدم أو كلمة المرور غير صحيحة";
+                            login_throttle_failure($conn, $loginThrottle, $user, $clientIp);
+                            login_audit($conn, $securityAuditLogger, 'login_failure', [
+                                'ip' => $clientIp,
+                                'target_type' => 'user',
+                                'metadata' => [
+                                    'username' => $user,
+                                    'reason' => 'invalid_credentials',
+                                    'shop_id' => $route ? (int) $route['id'] : null,
+                                ],
+                            ]);
+                            // if (isset($logger)) { $logger->logLogin($user, false, "Invalid credentials"); }
+                        }
                     } else {
-                        // رسالة عامة لا تكشف إن اليوزر غير موجود أو الباسورد خاطئ
+                        // مستخدم غير موجود
                         $error_message = "اسم المستخدم أو كلمة المرور غير صحيحة";
                         login_throttle_failure($conn, $loginThrottle, $user, $clientIp);
                         login_audit($conn, $securityAuditLogger, 'login_failure', [
                             'ip' => $clientIp,
                             'target_type' => 'user',
-                            'metadata' => ['username' => $user, 'reason' => 'invalid_credentials'],
+                            'metadata' => [
+                                'username' => $user,
+                                'reason' => 'user_not_found',
+                                'shop_id' => $route ? (int) $route['id'] : null,
+                            ],
                         ]);
-                        // if (isset($logger)) { $logger->logLogin($user, false, "Invalid credentials"); }
+                        // if (isset($logger)) { $logger->logLogin($user, false, "User not found"); }
                     }
-                } else {
-                    // مستخدم غير موجود
-                    $error_message = "اسم المستخدم أو كلمة المرور غير صحيحة";
-                    login_throttle_failure($conn, $loginThrottle, $user, $clientIp);
+                } catch (RuntimeException $e) {
+                    if ($e->getMessage() !== 'LOGIN_HANDLED') {
+                        throw $e;
+                    }
+                } catch (Throwable $e) {
+                    error_log('Router login failed: ' . $e->getMessage());
+                    $error_message = "تعذر فتح بيانات المتجر. يرجى التواصل مع الدعم الفني.";
                     login_audit($conn, $securityAuditLogger, 'login_failure', [
                         'ip' => $clientIp,
                         'target_type' => 'user',
-                        'metadata' => ['username' => $user, 'reason' => 'user_not_found'],
+                        'metadata' => ['username' => $user, 'reason' => 'shop_route_error'],
                     ]);
-                    // if (isset($logger)) { $logger->logLogin($user, false, "User not found"); }
+                } finally {
+                    if ($routerEnabled && $shopConn instanceof mysqli && $shopConn !== $conn) {
+                        $shopConn->close();
+                    }
                 }
-
-                $stmt->close();
-            }
             }
         }
     }
-}
-
-// -------------------- جلب قائمة المستخدمين للـ <select> --------------------
-$users = [];
-$resuser = $conn->query("SELECT id, uname FROM users WHERE isdeleted != '1' ORDER BY id ASC");
-if ($resuser) {
-    while ($r = $resuser->fetch_assoc()) {
-        $users[] = $r;
-    }
-    $resuser->close();
 }
 
 // إغلاق الاتصال بعد العرض (اتركه مفتوحًا للعمليات إذا لزم)
@@ -509,18 +593,10 @@ if ($resuser) {
             <input type="hidden" name="csrf_token" value="<?= e($_SESSION['csrf_token']) ?>">
 
             <div class="mb-4 text-end">
-                <label for="uname" class="form-label">اسم المستخدم</label>
+                <label for="uname" class="form-label">اسم المستخدم أو البريد أو الهاتف</label>
                 <div class="input-group">
                     <!-- <span class="input-group-text bg-white border-0 ps-3"><i class="fas fa-user text-muted"></i></span> -->
-                    <select name="uname" id="uname" class="form-select border-start-0 ps-0" required style="border-radius: 0 12px 12px 0;">
-                        <option value="" selected disabled>اختر المستخدم...</option>
-                        <?php foreach ($users as $u): ?>
-                            <option value="<?= e($u['uname']) ?>"
-                                <?= (isset($_POST['uname']) && $_POST['uname'] === $u['uname']) ? 'selected' : '' ?>>
-                                <?= e($u['uname']) ?>
-                            </option>
-                        <?php endforeach; ?>
-                    </select>
+                    <input type="text" name="uname" id="uname" class="form-control border-start-0 ps-0" value="<?= e($_POST['uname'] ?? '') ?>" placeholder="أدخل اسم المستخدم أو البريد أو الهاتف" required autocomplete="username" style="border-radius: 0 12px 12px 0;">
                 </div>
             </div>
 
@@ -555,14 +631,5 @@ if ($resuser) {
 
 <!-- Scripts -->
 <script src="assets/libs/bootstrap5/js/bootstrap.bundle.min.js"></script>
-<script>
-    // Simple script to auto-focus password if user logic is dynamic (optional)
-    document.getElementById('uname').addEventListener('change', function() {
-        if(this.value) {
-            document.getElementById('password').focus();
-        }
-    });
-</script>
-
 </body>
 </html>

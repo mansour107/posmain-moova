@@ -229,14 +229,18 @@ if ($method !== 'GET' && $method !== 'HEAD') {
 $response = curl_exec($ch);
 if ($response === false) {
     $error = curl_error($ch);
-    curl_close($ch);
+    if (PHP_VERSION_ID < 80500) {
+        curl_close($ch);
+    }
     moova_proxy_json(502, moova_proxy_reachability_error($error));
 }
 
 $headerSize = curl_getinfo($ch, CURLINFO_HEADER_SIZE);
 $statusCode = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
 $responseBody = substr($response, $headerSize);
-curl_close($ch);
+if (PHP_VERSION_ID < 80500) {
+    curl_close($ch);
+}
 
 $responseBody = moova_proxy_rewrite_browser_moova_urls($responseBody, $widgetOrigin);
 

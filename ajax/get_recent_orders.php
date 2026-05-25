@@ -1,10 +1,14 @@
 <?php
 // Use AJAX header (no HTML output) instead of pos_simple_header
 include(__DIR__ . '/../includes/ajax_header.php');
+require_once(__DIR__ . '/../includes/auth_guard.php');
 
 header('Content-Type: application/json; charset=utf-8');
 
 try {
+    $canRefundPaidOrders = auth_guard_has_permission('pos.refund', $conn);
+    $canVoidPaidOrders = auth_guard_has_permission('pos.void.paid', $conn);
+
     // استعلام لجلب آخر 10 طلبات
     $sql = "SELECT
                 o.id,
@@ -30,6 +34,8 @@ try {
 	                END as type,
 	                o.fat_net as total,
 	                CASE
+	                    WHEN o.payment_status = 'refunded' THEN 'مسترد'
+	                    WHEN o.payment_status = 'voided' THEN 'ملغى'
 	                    WHEN o.isdeleted = 1 THEN 'ملغى'
 	                    WHEN o.order_status = 'active' THEN 'نشط'
 	                    WHEN o.payment_status = 'partial' THEN 'مدفوع جزئياً'
@@ -53,6 +59,14 @@ try {
                 'invoice_number' => $row['invoice_number'] ?: 'ORD-' . $row['id'],
                 'table_id' => intval($row['table_id'] ?? 0),
                 'can_delete' => intval($row['can_delete'] ?? 0) === 1,
+                'can_refund' => $canRefundPaidOrders
+                    && (string) ($row['payment_status'] ?? '') === 'paid'
+                    && (string) ($row['order_status'] ?? '') === 'completed',
+                'can_void' => $canVoidPaidOrders
+                    && (string) ($row['payment_status'] ?? '') === 'paid'
+                    && (string) ($row['order_status'] ?? '') === 'completed',
+                'payment_status' => (string) ($row['payment_status'] ?? ''),
+                'order_status' => (string) ($row['order_status'] ?? ''),
                 'date' => $row['date'],
                 'customer_name' => $row['customer_name'] ?: 'عميل نقدي',
                 'type' => $row['type'],

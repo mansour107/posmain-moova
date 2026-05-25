@@ -264,6 +264,29 @@ if (!function_exists('posmain_map')) {
     }
 }
 
+if (!function_exists('posmain_csv_int_list')) {
+    function posmain_csv_int_list($value): array
+    {
+        if (is_array($value)) {
+            $parts = $value;
+        } elseif ($value === null || $value === false || trim((string) $value) === '') {
+            return [];
+        } else {
+            $parts = explode(',', (string) $value);
+        }
+
+        $ints = [];
+        foreach ($parts as $part) {
+            $int = (int) trim((string) $part);
+            if ($int > 0) {
+                $ints[$int] = $int;
+            }
+        }
+
+        return array_values($ints);
+    }
+}
+
 if (!function_exists('posmain_merge_config')) {
     function posmain_merge_config(array $base, array $overrides): array
     {
@@ -382,6 +405,12 @@ if (!function_exists('posmain_app_config')) {
         $moovaDirectApply = $moovaModeAllowsDirect && ($rawMoovaDirectApply || $branchEnv(['POSMAIN_MOOVA_MODE'], '') !== '');
         $moovaQueuedApply = $moovaModeAllowsQueued && $rawMoovaQueuedApply;
         $moovaWorkerApply = $moovaModeAllowsQueued && $rawMoovaWorkerApply;
+        $recipeMode = strtolower(trim((string) $branchEnv(['POSMAIN_RECIPE_MODE'], 'off')));
+        $recipeMode = str_replace(['-', ' '], '_', $recipeMode);
+        $recipeModes = ['off', 'schema_only', 'read_only', 'shadow', 'reserve_only', 'consume_pilot', 'accounting_pilot', 'availability_pilot', 'full'];
+        if (!in_array($recipeMode, $recipeModes, true)) {
+            $recipeMode = 'off';
+        }
 
         $config = [
             'env' => $env,
@@ -394,6 +423,48 @@ if (!function_exists('posmain_app_config')) {
                 'queued_apply_enabled' => $moovaQueuedApply,
                 'worker_apply_enabled' => $moovaWorkerApply,
                 'queued_worker_requires_acceptance' => true,
+            ],
+            'router' => [
+                'enabled' => posmain_bool(posmain_env('POSMAIN_ROUTER_ENABLED', '0'), false),
+                'require_encryption' => posmain_bool(posmain_env('POSMAIN_ROUTER_REQUIRE_ENCRYPTION', '1'), true),
+                'database' => [
+                    'host' => (string) posmain_first_env(['POSMAIN_ROUTER_DB_HOST'], ''),
+                    'port' => posmain_int(posmain_first_env(['POSMAIN_ROUTER_DB_PORT'], 3306), 3306),
+                    'name' => (string) posmain_first_env(['POSMAIN_ROUTER_DB_NAME'], ''),
+                    'user' => (string) posmain_first_env(['POSMAIN_ROUTER_DB_USER'], ''),
+                    'pass' => (string) posmain_first_env(['POSMAIN_ROUTER_DB_PASS'], '', true),
+                    'charset' => (string) posmain_first_env(['POSMAIN_ROUTER_DB_CHARSET'], 'utf8mb4'),
+                ],
+            ],
+            'recipe' => [
+                'enabled' => posmain_bool($branchEnv(['POSMAIN_ENABLE_RECIPES'], '0'), false),
+                'mode' => $recipeMode,
+                'shadow_ledger' => posmain_bool($branchEnv(['POSMAIN_RECIPE_SHADOW_LEDGER'], '0'), false),
+                'reservations' => posmain_bool($branchEnv(['POSMAIN_RECIPE_RESERVATIONS'], '0'), false),
+                'consumption' => posmain_bool($branchEnv(['POSMAIN_RECIPE_CONSUMPTION'], '0'), false),
+                'accounting' => posmain_bool($branchEnv(['POSMAIN_RECIPE_ACCOUNTING'], '0'), false),
+                'availability' => posmain_bool($branchEnv(['POSMAIN_RECIPE_AVAILABILITY'], '0'), false),
+                'moova_sync' => posmain_bool($branchEnv(['POSMAIN_RECIPE_MOOVA_SYNC'], '0'), false),
+                'strict_stock' => posmain_bool($branchEnv(['POSMAIN_RECIPE_STRICT_STOCK'], '0'), false),
+                'cost_public_payloads' => posmain_bool($branchEnv(['POSMAIN_RECIPE_COST_PUBLIC_PAYLOADS'], '0'), false),
+                'default_reservation_minutes' => posmain_int($branchEnv(['POSMAIN_RECIPE_DEFAULT_RESERVATION_MINUTES'], 90), 90),
+                'default_safety_stock_qty' => (string) $branchEnv(['POSMAIN_RECIPE_DEFAULT_SAFETY_STOCK_QTY'], '0', true),
+                'refund_stock_policy' => (string) $branchEnv(['POSMAIN_RECIPE_REFUND_STOCK_POLICY'], 'waste'),
+                'allow_negative_stock_with_approval' => posmain_bool($branchEnv(['POSMAIN_RECIPE_ALLOW_NEGATIVE_STOCK_WITH_APPROVAL'], '0'), false),
+                'production_variance_policy' => (string) $branchEnv(['POSMAIN_RECIPE_PRODUCTION_VARIANCE_POLICY'], 'adjust_unit_cost'),
+                'accounts' => [
+                    'cogs_account_id' => posmain_int($branchEnv(['POSMAIN_RECIPE_DEFAULT_COGS_ACCOUNT_ID'], 0), 0),
+                    'raw_inventory_account_id' => posmain_int($branchEnv(['POSMAIN_RECIPE_RAW_INVENTORY_ACCOUNT_ID'], 0), 0),
+                    'prepared_inventory_account_id' => posmain_int($branchEnv(['POSMAIN_RECIPE_PREPARED_INVENTORY_ACCOUNT_ID'], 0), 0),
+                    'packaging_inventory_account_id' => posmain_int($branchEnv(['POSMAIN_RECIPE_PACKAGING_INVENTORY_ACCOUNT_ID'], 0), 0),
+                    'waste_expense_account_id' => posmain_int($branchEnv(['POSMAIN_RECIPE_WASTE_EXPENSE_ACCOUNT_ID'], 0), 0),
+                    'production_variance_account_id' => posmain_int($branchEnv(['POSMAIN_RECIPE_PRODUCTION_VARIANCE_ACCOUNT_ID'], 0), 0),
+                ],
+                'pilot' => [
+                    'pos_branch' => (string) $branchEnv(['POSMAIN_RECIPE_PILOT_POS_BRANCH'], '', true),
+                    'item_ids' => posmain_csv_int_list($branchEnv(['POSMAIN_RECIPE_PILOT_ITEM_IDS'], '', true)),
+                    'category_ids' => posmain_csv_int_list($branchEnv(['POSMAIN_RECIPE_PILOT_CATEGORY_IDS'], '', true)),
+                ],
             ],
             'public_base_url' => (string) posmain_env('POSMAIN_PUBLIC_BASE_URL', ''),
             'status_token' => (string) $branchEnv(['POSMAIN_STATUS_TOKEN', 'POSMAIN_SYNC_STATUS_TOKEN'], '', true),
@@ -440,6 +511,7 @@ if (!function_exists('posmain_app_config')) {
                 'nutrition' => posmain_bool($branchEnv(['POSMAIN_ENABLE_NUTRITION'], '0'), false),
                 'ai_analytics' => posmain_bool($branchEnv(['POSMAIN_ENABLE_AI_ANALYTICS'], '0'), false),
                 'eta_ereceipt' => posmain_bool($branchEnv(['POSMAIN_ENABLE_ETA_ERECEIPT', 'POSMAIN_ETA_ERECEIPT_ENABLED'], '0'), false),
+                'recipes' => posmain_bool($branchEnv(['POSMAIN_ENABLE_RECIPES'], '0'), false) && $recipeMode !== 'off',
             ],
             'sync' => [
                 'branch_secret' => (string) $branchEnv(['POSMAIN_BRANCH_SYNC_SECRET'], '', true),

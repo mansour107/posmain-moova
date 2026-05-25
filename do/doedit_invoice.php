@@ -24,6 +24,7 @@ $usid = $_SESSION['userid'];
 
 // تضمين فئات النظام الجديد
 require_once('../classes/InvoiceElementFactory.php');
+require_once('../classes/Recipe/LegacyInvoiceRecipeLifecycleBridge.php');
 
 // تعريف ثوابت أنواع الفواتير
 define('INVOICE_TYPES', [
@@ -57,14 +58,8 @@ $headdisc = isset($_POST['headdisc']) ? floatval($_POST['headdisc']) : 0;
 $headplus = isset($_POST['headplus']) ? floatval($_POST['headplus']) : 0;
 $headnet = isset($_POST['headnet']) ? floatval($_POST['headnet']) : 0;
 
-// تحديد المبلغ المدفوع - أوامر الشراء والبيع وعروض الأسعار لا تحتاج مدفوعات
-if(in_array($pro_tybe, [INVOICE_TYPES['PURCHASE_ORDER'], INVOICE_TYPES['SALES_ORDER'], INVOICE_TYPES['OFFER']])) {
-    $paid = 0;
-} else {
-    $paid = isset($_POST['paid']) ? floatval($_POST['paid']) : 0;
-}
-
 $fund_id = isset($_POST['fund_id']) ? intval($_POST['fund_id']) : 0;
+$paid = isset($_POST['paid']) ? floatval($_POST['paid']) : 0;
 $submit = isset($_POST['submit']) ? htmlspecialchars($_POST['submit'], ENT_QUOTES, 'UTF-8') : 'save';
 $info = isset($_POST['info']) ? htmlspecialchars(trim($_POST['info']), ENT_QUOTES, 'UTF-8') : '';
 
@@ -189,6 +184,19 @@ $accounts = getAccountingAccounts($pro_tybe, $store_id, $acc2_id, $fund_id);
 // بدء المعاملة لضمان تماسك البيانات
 try {
     $conn->begin_transaction();
+    $recipeLifecycleBridge = new LegacyInvoiceRecipeLifecycleBridge();
+    $recipeEditChannel = 'pos';
+    $recipeEditOrderType = 'takeaway';
+    if ((int) $pro_tybe === INVOICE_TYPES['POS']) {
+        $existingOrderType = strtolower(trim((string) ($rowop['order_type'] ?? '')));
+        if ($existingOrderType === 'table') {
+            $recipeEditChannel = 'table';
+            $recipeEditOrderType = 'dine_in';
+        } elseif ($existingOrderType === 'delivery') {
+            $recipeEditOrderType = 'delivery';
+        }
+        $recipeLifecycleBridge->assertLegacyEditAllowed($conn, (int) $ot_id);
+    }
     
     // حساب النسب المئوية
     $fat_disc_per = ($headtotal > 0 && $headdisc > 0) ? number_format($headdisc/$headtotal*100, 2) : 0;
@@ -418,6 +426,16 @@ try {
     }
 
     // تحديث تفاصيل الفاتورة
+    if ((int) $pro_tybe === INVOICE_TYPES['POS']) {
+        $recipeLifecycleBridge->recordExistingLinesCancelled(
+            $conn,
+            (int) $ot_id,
+            $recipeEditChannel,
+            $recipeEditOrderType,
+            'legacy_invoice_edit_replaced',
+            ['user_id' => (int) $usid]
+        );
+    }
     $stmt = $conn->prepare("UPDATE fat_details SET isdeleted = 1 WHERE fatid = ?");
     $stmt->bind_param("i", $ot_id);
     $stmt->execute();
@@ -540,6 +558,16 @@ try {
         $stmt_details->close();
         $stmt_item->close();
         $stmt_update->close();
+    }
+
+    if ((int) $pro_tybe === INVOICE_TYPES['POS']) {
+        $recipeLifecycleBridge->recordCurrentLinesAdded(
+            $conn,
+            (int) $ot_id,
+            $recipeEditChannel,
+            $recipeEditOrderType,
+            ['user_id' => (int) $usid]
+        );
     }
     
     // تحديث إجمالي الأرباح للمبيعات

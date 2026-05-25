@@ -87,7 +87,9 @@ if (!function_exists('posmain_session_register_database_handler')) {
             $tableName = trim((string) posmain_env('POSMAIN_SESSION_TABLE', 'app_sessions'));
             $handler = new DatabaseSessionHandler(
                 static function (): mysqli {
-                    return posmain_db_connect();
+                    return function_exists('posmain_session_db_connect')
+                        ? posmain_session_db_connect()
+                        : posmain_db_connect();
                 },
                 $tableName !== '' ? $tableName : 'app_sessions',
                 posmain_session_lifetime_seconds()

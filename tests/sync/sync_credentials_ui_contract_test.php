@@ -19,7 +19,8 @@ foreach ([
     'data-sync-role="<?= htmlspecialchars($syncRole',
     '$syncIsHosted = $syncRole === \'cloud\'',
     '$syncIsLocal = $syncRole === \'branch\'',
-    "csrf_input('sync_credentials')",
+    "csrf_input('sync_credentials', 'sync_csrf_token')",
+    'input[name="sync_csrf_token"]',
     'find(\':input\').serializeArray()',
     'loadForUi($conn, true)',
     'syncEffectiveValue',
@@ -56,6 +57,10 @@ foreach ([
     'syncSharedIdentityPayload',
     'syncBranchRegistrationPayload',
     'syncDebugPayload',
+    'initialDebugSignature',
+    'POSMAIN_DB_CONFIG_DIRTY',
+    'initialBranchSyncSecretValue',
+    'POSMAIN_BRANCH_SYNC_SECRET_DIRTY',
     'sync-debug-panel',
     'sync-debug-form',
     'js-toggle-sync-debug',
@@ -134,7 +139,8 @@ syncCredentialsUiAssert(strpos($setting, 'name="cloud_base_url"') === false, 'ho
 syncCredentialsUiAssert(strpos($setting, "syncSharedIdentityPayload(),") !== false, 'automatic hosted branch registration should read shared identity values');
 syncCredentialsUiAssert(strpos($setting, "Object.assign(payload, syncConfigKeyPayload())") !== false, 'hosted save/register actions should include the config encryption key');
 syncCredentialsUiAssert(strpos($setting, '#sync-local-section [name="POSMAIN_CLOUD_BASE_URL"]') !== false, 'hosted branch registration should include the existing POSMAIN_CLOUD_BASE_URL value');
-syncCredentialsUiAssert(strpos($setting, "Object.assign(payload, syncDebugPayload())") !== false, 'local save should include hidden debug database credentials');
+syncCredentialsUiAssert(strpos($setting, "Object.assign(payload, debugPayload)") !== false, 'local save should include hidden debug database credentials');
+syncCredentialsUiAssert(strpos($setting, "querySelector('input[name=\"csrf_token\"]')") === false, 'sync AJAX token lookup must not collide with the main settings CSRF token');
 syncCredentialsUiAssert(strpos($setting, '<?php if ($syncIsLocal): ?>') !== false, 'local-only sync section should render only on branch/local role');
 syncCredentialsUiAssert(strpos($setting, '<?php if ($syncIsHosted): ?>') !== false, 'hosted-only sync section should render only on cloud/hosted role');
 syncCredentialsUiAssert(strpos($setting, '<div id="sync-debug-panel" class="mt-3" style="display:none;">') !== false, 'debug database tools should be minimized by default');
@@ -190,8 +196,15 @@ foreach ([
 }
 
 foreach ([
-    "require_admin_or_permission(\$action === 'save_moova' ? 'moova.manage' : 'system.tools.run', \$conn)",
+    "if (\$action === 'save_moova')",
+    "require_admin_or_permission('moova.manage', \$conn)",
+    "require_admin_or_permission('system.tools.run', \$conn)",
     "require_csrf('sync_credentials')",
+    'POSMAIN_DB_CONFIG_DIRTY',
+    'POSMAIN_BRANCH_SYNC_SECRET_DIRTY',
+    'POSMAIN_BRANCH_SYNC_SECRET_EXTERNAL',
+    "\$branchSecretDirty = !empty(\$input['POSMAIN_BRANCH_SYNC_SECRET_DIRTY'])",
+    "if (\$key === 'POSMAIN_BRANCH_SYNC_SECRET' && !\$branchSecretDirty)",
     'SyncRuntimeCrypto::ENV_KEY',
     'syncCredentialsSaveEncryptionKey($_POST)',
     'SyncRuntimeCrypto::generateKeyMaterial()',
@@ -213,6 +226,12 @@ foreach ([
     syncCredentialsUiAssert(strpos($ajax, $snippet) !== false, 'sync AJAX endpoint missing snippet: ' . $snippet);
 }
 
+$saveCloudStart = strpos($ajax, "case 'save_cloud':");
+$saveMoovaStart = strpos($ajax, "case 'save_moova':");
+syncCredentialsUiAssert($saveCloudStart !== false && $saveMoovaStart !== false && $saveMoovaStart > $saveCloudStart, 'sync AJAX endpoint should keep a clear save_cloud block');
+$saveCloudBlock = substr($ajax, $saveCloudStart, $saveMoovaStart - $saveCloudStart);
+syncCredentialsUiAssert(strpos($saveCloudBlock, 'syncCredentialsRequireEncryption()') === false, 'hosted sync toggles should save without requiring an encryption key');
+
 foreach ([
     "public const KEY_FILE_ENV = 'POSMAIN_CONFIG_ENCRYPTION_KEY_FILE'",
     'function saveKeyMaterial',
@@ -225,6 +244,7 @@ foreach ([
 
 syncCredentialsUiAssert(strpos($runtimeSettings, 'function savePartial') !== false, 'SyncRuntimeSettings should support partial saves for Moova switches');
 syncCredentialsUiAssert(strpos($runtimeSettings, "'POSMAIN_ROLE' =>") !== false, 'full sync saves should keep role handling');
+syncCredentialsUiAssert(strpos($runtimeSettings, 'POSMAIN_BRANCH_SYNC_SECRET_EXTERNAL') !== false, 'branch saves should accept a sync secret configured outside runtime DB');
 syncCredentialsUiAssert(strpos($runtimeSettings, 'savePartial') < strpos($runtimeSettings, 'fetchConfigOverrides'), 'partial save should stay separate from config loading');
 
 foreach ([

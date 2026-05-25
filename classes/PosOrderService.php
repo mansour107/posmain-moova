@@ -1,12 +1,22 @@
 <?php
 
 require_once __DIR__ . '/Sync/DocumentCounterService.php';
+require_once __DIR__ . '/Recipe/ExternalOrderLineIdentityService.php';
+require_once __DIR__ . '/Recipe/RecipeDecimal.php';
+require_once __DIR__ . '/Recipe/RecipeOrderLifecycleService.php';
 
 class PosOrderService
 {
     const TYPE_POS = 9;
     const TYPE_RECEIPT = 1;
     const SALES_ACCOUNT = 91;
+
+    private RecipeOrderLifecycleService $recipeLifecycleService;
+
+    public function __construct(?RecipeOrderLifecycleService $recipeLifecycleService = null)
+    {
+        $this->recipeLifecycleService = $recipeLifecycleService ?: new RecipeOrderLifecycleService();
+    }
 
     public function createOrMergeMoovaTableOrder(mysqli $conn, array $scope, array $payload)
     {
@@ -73,8 +83,35 @@ class PosOrderService
         }
 
         $insertedLines = $this->upsertOrderDetails($conn, $tenant, $branch, $orderId, $lines, $defaults['store_id']);
+        $moovaMappedLines = [];
         if ($moovaOrderId !== '') {
-            $this->insertMoovaLineMappings($conn, $tenant, $branch, $moovaOrderId, $orderId, $insertedLines);
+            $moovaMappedLines = $this->insertMoovaLineMappings($conn, $tenant, $branch, $moovaOrderId, $orderId, $insertedLines);
+            $this->registerExternalLineIdentities(
+                $conn,
+                $tenant,
+                $branch,
+                $scope,
+                $payload,
+                $moovaOrderId,
+                $orderId,
+                $incomingItems,
+                $insertedLines,
+                (int) $defaults['store_id']
+            );
+            $this->recordRecipeOrderLinesAdded(
+                $conn,
+                $this->recipeContextsFromMoovaIncomingItems(
+                    $conn,
+                    $tenant,
+                    $branch,
+                    $scope,
+                    $payload,
+                    $moovaOrderId,
+                    $orderId,
+                    $incomingItems,
+                    $insertedLines
+                )
+            );
         }
         $receiptState = $this->refreshReceiptTotalsAndAccounting($conn, $tenant, $branch, $orderId, $defaults, $proDate, $userId);
         $this->markTableBusy($conn, (int) $table['id']);
@@ -282,9 +319,49 @@ class PosOrderService
         $proDate = date('Y-m-d');
         $proId = (int) ($order['pro_id'] ?: $order['id']);
 
+        $this->recordRecipeOrderLinesCancelled(
+            $conn,
+            $this->recipeContextsFromMoovaMappedLines(
+                $conn,
+                $tenant,
+                $branch,
+                $scope,
+                $payload,
+                $moovaOrderId,
+                (int) $order['id'],
+                $existingLines['lines'] ?? []
+            ),
+            'moova_order_replaced'
+        );
         $this->deactivateMoovaMappedLines($conn, $tenant, $branch, (int) $order['id'], $moovaOrderId, 'replaced');
         $insertedLines = $this->upsertOrderDetails($conn, $tenant, $branch, (int) $order['id'], $lines, $defaults['store_id']);
-        $this->insertMoovaLineMappings($conn, $tenant, $branch, $moovaOrderId, (int) $order['id'], $insertedLines);
+        $moovaMappedLines = $this->insertMoovaLineMappings($conn, $tenant, $branch, $moovaOrderId, (int) $order['id'], $insertedLines);
+        $this->registerExternalLineIdentities(
+            $conn,
+            $tenant,
+            $branch,
+            $scope,
+            $payload,
+            $moovaOrderId,
+            (int) $order['id'],
+            $incomingItems,
+            $insertedLines,
+            (int) $defaults['store_id']
+        );
+        $this->recordRecipeOrderLinesAdded(
+            $conn,
+            $this->recipeContextsFromMoovaIncomingItems(
+                $conn,
+                $tenant,
+                $branch,
+                $scope,
+                $payload,
+                $moovaOrderId,
+                (int) $order['id'],
+                $incomingItems,
+                $insertedLines
+            )
+        );
         $receiptState = $this->refreshReceiptTotalsAndAccounting($conn, $tenant, $branch, (int) $order['id'], $defaults, $proDate, $userId);
         $this->logProcess($conn, 'edit moova pos order');
         $snapshot = $this->getMoovaOrderLineStateSnapshot($conn, $tenant, $branch, (int) $order['id'], $moovaOrderId);
@@ -330,6 +407,20 @@ class PosOrderService
 
         $tableId = (int) ($order['table_id'] ?? 0);
         $defaults = $this->loadTenantDefaults($conn, $tenant, $branch);
+        $this->recordRecipeOrderLinesCancelled(
+            $conn,
+            $this->recipeContextsFromMoovaMappedLines(
+                $conn,
+                $tenant,
+                $branch,
+                $scope,
+                ['moovaOrderId' => $moovaOrderId],
+                $moovaOrderId,
+                (int) $order['id'],
+                $existingLines['lines'] ?? []
+            ),
+            'moova_order_cancelled'
+        );
         $this->deactivateMoovaMappedLines($conn, $tenant, $branch, (int) $order['id'], $moovaOrderId, 'cancelled');
         $receiptState = $this->refreshReceiptTotalsAndAccounting($conn, $tenant, $branch, (int) $order['id'], $defaults, date('Y-m-d'), $userId);
         if ($tableId > 0) {
@@ -497,7 +588,7 @@ class PosOrderService
     {
         $resolved = [];
 
-        foreach ($items as $item) {
+        foreach ($items as $itemIndex => $item) {
             $providerItemId = trim((string) ($item['itemId'] ?? ''));
             $qty = (float) ($item['qty'] ?? 0);
             if ($providerItemId === '' || $qty <= 0) {
@@ -527,6 +618,8 @@ class PosOrderService
                 'price' => (float) $row['price1'],
                 'cost_price' => (float) $row['cost_price'],
                 'itmqty' => (float) $row['itmqty'],
+                'source_line' => $item,
+                'source_line_index' => (int) $itemIndex,
             ];
         }
 
@@ -1084,9 +1177,10 @@ class PosOrderService
     {
         $moovaOrderId = trim((string) $moovaOrderId);
         if ($moovaOrderId === '' || !$insertedLines) {
-            return;
+            return [];
         }
 
+        $mappedLines = [];
         foreach ($insertedLines as $line) {
             $lineHash = $this->hashMappedLineState($line);
             $status = 'active';
@@ -1110,7 +1204,388 @@ class PosOrderService
                 (int) $tenant,
                 (int) $branch,
             ]);
+            $mappedLines[] = array_merge($line, [
+                'mapping_id' => (int) $conn->insert_id,
+                'moova_order_id' => $moovaOrderId,
+                'pos_order_id' => (int) $orderId,
+                'mapping_status' => $status,
+            ]);
         }
+
+        return $mappedLines;
+    }
+
+    private function recipeContextsFromMoovaMappedLines(
+        mysqli $conn,
+        $tenant,
+        $branch,
+        array $scope,
+        array $payload,
+        string $moovaOrderId,
+        int $orderId,
+        array $mappedLines
+    ): array {
+        $contexts = [];
+        foreach ($mappedLines as $line) {
+            $itemId = (int) ($line['item_id'] ?? 0);
+            $fatDetailId = (int) ($line['fat_detail_id'] ?? 0);
+            $quantity = $this->recipeQuantityFromLegacyStockValues(
+                $line['qty_in'] ?? '0',
+                $line['qty_out'] ?? '0',
+                $line['u_val'] ?? '1'
+            );
+            if ($itemId < 1 || RecipeDecimal::compare($quantity, '0') <= 0) {
+                continue;
+            }
+
+            $externalContexts = $this->recipeContextsFromExternalLineMap(
+                $conn,
+                $tenant,
+                $branch,
+                $scope,
+                $payload,
+                $moovaOrderId,
+                $orderId,
+                $line,
+                $quantity
+            );
+            if ($externalContexts) {
+                foreach ($externalContexts as $externalContext) {
+                    $contexts[] = $externalContext;
+                }
+                continue;
+            }
+
+            $contexts[] = [
+                'conn' => $conn,
+                'tenant' => (int) $tenant,
+                'branch' => (int) $branch,
+                'branch_uuid' => $this->nullableString($scope['branch_uuid'] ?? $payload['branchUuid'] ?? $payload['branch_uuid'] ?? null),
+                'store_id' => (int) ($line['det_store'] ?? 0),
+                'order_id' => $orderId,
+                'fat_detail_id' => $fatDetailId > 0 ? $fatDetailId : null,
+                'sellable_item_id' => $itemId,
+                'item_id' => $itemId,
+                'quantity' => $quantity,
+                'qty' => $quantity,
+                'channel' => $this->externalLineSourceChannel($payload),
+                'order_type' => $this->externalLineOrderType($payload),
+                'source_order_uuid' => $moovaOrderId,
+                'source_line_uuid' => isset($line['mapping_id']) ? 'moova_pos_order_lines:' . (int) $line['mapping_id'] : null,
+                'requested_at' => date('Y-m-d H:i:s'),
+            ];
+        }
+
+        return $contexts;
+    }
+
+    private function recipeContextsFromExternalLineMap(
+        mysqli $conn,
+        $tenant,
+        $branch,
+        array $scope,
+        array $payload,
+        string $moovaOrderId,
+        int $orderId,
+        array $mappedLine,
+        string $quantity
+    ): array {
+        if (!$this->tableExists($conn, 'external_order_line_map')) {
+            return [];
+        }
+
+        $fatDetailId = (int) ($mappedLine['fat_detail_id'] ?? 0);
+        $itemId = (int) ($mappedLine['item_id'] ?? 0);
+        if ($fatDetailId < 1 || $itemId < 1) {
+            return [];
+        }
+
+        $sourceChannel = $this->externalLineSourceChannel($payload);
+        $rows = $this->queryAll($conn, "
+            SELECT external_line_id, variant_id, modifiers_json
+            FROM external_order_line_map
+            WHERE pos_tenant = ?
+              AND pos_branch = ?
+              AND source_channel = ?
+              AND external_order_id = ?
+              AND fat_detail_id = ?
+              AND item_id = ?
+              AND line_status IN ('active', 'merged')
+            ORDER BY id ASC
+        ", [(int) $tenant, (int) $branch, $sourceChannel, $moovaOrderId, $fatDetailId, $itemId]);
+        if (!$rows) {
+            return [];
+        }
+
+        $contexts = [];
+        foreach ($rows as $row) {
+            $modifiers = json_decode((string) ($row['modifiers_json'] ?? '[]'), true);
+            if (!is_array($modifiers)) {
+                $modifiers = [];
+            }
+
+            $context = [
+                'conn' => $conn,
+                'tenant' => (int) $tenant,
+                'branch' => (int) $branch,
+                'branch_uuid' => $this->nullableString($scope['branch_uuid'] ?? $payload['branchUuid'] ?? $payload['branch_uuid'] ?? null),
+                'store_id' => (int) ($mappedLine['det_store'] ?? 0),
+                'order_id' => $orderId,
+                'fat_detail_id' => $fatDetailId,
+                'sellable_item_id' => $itemId,
+                'item_id' => $itemId,
+                'quantity' => $quantity,
+                'qty' => $quantity,
+                'channel' => $sourceChannel,
+                'order_type' => $this->externalLineOrderType($payload),
+                'source_order_uuid' => $moovaOrderId,
+                'source_line_uuid' => substr($sourceChannel . ':' . (string) $row['external_line_id'], 0, 128),
+                'requested_at' => date('Y-m-d H:i:s'),
+            ];
+
+            $variantId = (int) ($row['variant_id'] ?? 0);
+            if ($variantId > 0) {
+                $context['variant_id'] = $variantId;
+            }
+            if ($modifiers) {
+                $context['modifiers'] = $modifiers;
+            }
+            $contexts[] = $context;
+        }
+
+        return $contexts;
+    }
+
+    private function recipeContextsFromMoovaIncomingItems(
+        mysqli $conn,
+        $tenant,
+        $branch,
+        array $scope,
+        array $payload,
+        string $moovaOrderId,
+        int $orderId,
+        array $incomingItems,
+        array $insertedLines
+    ): array {
+        $contexts = [];
+        $sourceChannel = $this->externalLineSourceChannel($payload);
+        $identity = new ExternalOrderLineIdentityService();
+        $insertedByItem = [];
+        foreach ($insertedLines as $line) {
+            $itemId = (int) ($line['item_id'] ?? 0);
+            if ($itemId > 0) {
+                $insertedByItem[$itemId][] = $line;
+            }
+        }
+
+        foreach ($incomingItems as $fallbackIndex => $item) {
+            $itemId = (int) ($item['id'] ?? 0);
+            $qty = RecipeDecimal::normalize($item['qty'] ?? '0');
+            if ($itemId < 1 || RecipeDecimal::compare($qty, '0') <= 0) {
+                continue;
+            }
+
+            $sourceLine = $this->externalIdentityLineFromIncomingItem($item);
+            $variantId = (int) ($sourceLine['variant_id'] ?? $sourceLine['variantId'] ?? $sourceLine['variant_item_id'] ?? $sourceLine['variantItemId'] ?? 0);
+            $modifiers = $this->externalLineModifiers($sourceLine);
+            $candidateLines = $insertedByItem[$itemId] ?? [];
+            $localLine = count($candidateLines) === 1 ? $candidateLines[0] : [];
+            $fatDetailId = (int) ($localLine['fat_detail_id'] ?? 0);
+            $externalLineId = $identity->externalLineId(
+                $sourceLine,
+                (int) ($item['source_line_index'] ?? $fallbackIndex),
+                $itemId,
+                $variantId > 0 ? $variantId : null,
+                $identity->modifiersHash($modifiers)
+            );
+
+            $context = [
+                'conn' => $conn,
+                'tenant' => (int) $tenant,
+                'branch' => (int) $branch,
+                'branch_uuid' => $this->nullableString($scope['branch_uuid'] ?? $payload['branchUuid'] ?? $payload['branch_uuid'] ?? null),
+                'store_id' => (int) ($localLine['det_store'] ?? 0),
+                'order_id' => $orderId,
+                'fat_detail_id' => $fatDetailId > 0 ? $fatDetailId : null,
+                'sellable_item_id' => $itemId,
+                'item_id' => $itemId,
+                'quantity' => $qty,
+                'qty' => $qty,
+                'channel' => $sourceChannel,
+                'order_type' => $this->externalLineOrderType($payload),
+                'source_order_uuid' => $moovaOrderId,
+                'source_line_uuid' => substr($sourceChannel . ':' . $externalLineId, 0, 128),
+                'requested_at' => date('Y-m-d H:i:s'),
+            ];
+            if ($variantId > 0) {
+                $context['variant_id'] = $variantId;
+            }
+            if ($modifiers) {
+                $context['modifiers'] = $modifiers;
+            }
+            $contexts[] = $context;
+        }
+
+        return $contexts;
+    }
+
+    private function externalLineModifiers(array $line): array
+    {
+        foreach (['modifiers', 'modifier_options', 'selected_modifiers', 'options'] as $modifierKey) {
+            if (isset($line[$modifierKey]) && is_array($line[$modifierKey])) {
+                return $line[$modifierKey];
+            }
+        }
+
+        return [];
+    }
+
+    private function recordRecipeOrderLinesAdded(mysqli $conn, array $lines): void
+    {
+        foreach ($lines as $line) {
+            if (is_array($line)) {
+                $line['conn'] = $conn;
+                $this->recipeLifecycleService->onOrderLineAdded($line);
+            }
+        }
+    }
+
+    private function recordRecipeOrderLinesCancelled(mysqli $conn, array $lines, string $reason): void
+    {
+        foreach ($lines as $line) {
+            if (is_array($line)) {
+                $line['conn'] = $conn;
+                $this->recipeLifecycleService->onOrderLineCancelled($line, $reason);
+            }
+        }
+    }
+
+    private function registerExternalLineIdentities(
+        mysqli $conn,
+        $tenant,
+        $branch,
+        array $scope,
+        array $payload,
+        $moovaOrderId,
+        $orderId,
+        array $incomingItems,
+        array $insertedLines,
+        $storeId
+    ) {
+        $moovaOrderId = trim((string) $moovaOrderId);
+        if ($moovaOrderId === '' || !$incomingItems || !$this->tableExists($conn, 'external_order_line_map')) {
+            return;
+        }
+
+        $sourceChannel = $this->externalLineSourceChannel($payload);
+        $recipeScope = new RecipeScope(
+            (int) $tenant,
+            (int) $branch,
+            $this->nullableString($scope['branch_uuid'] ?? $payload['branchUuid'] ?? $payload['branch_uuid'] ?? null),
+            (int) $storeId,
+            $sourceChannel,
+            $this->externalLineOrderType($payload),
+            $sourceChannel
+        );
+        $identity = new ExternalOrderLineIdentityService();
+        $incomingByItem = [];
+        foreach ($incomingItems as $item) {
+            $itemId = (int) ($item['id'] ?? 0);
+            if ($itemId > 0) {
+                $incomingByItem[$itemId][] = $item;
+            }
+        }
+
+        $insertedByItem = [];
+        foreach ($insertedLines as $line) {
+            $itemId = (int) ($line['item_id'] ?? 0);
+            if ($itemId > 0) {
+                $insertedByItem[$itemId][] = $line;
+            }
+        }
+
+        foreach ($incomingItems as $fallbackIndex => $item) {
+            $itemId = (int) ($item['id'] ?? 0);
+            if ($itemId < 1) {
+                continue;
+            }
+
+            $candidateLines = $insertedByItem[$itemId] ?? [];
+            $isOneToOne = count($incomingByItem[$itemId] ?? []) === 1 && count($candidateLines) === 1;
+            $localLine = [
+                'order_id' => (int) $orderId,
+                'line_status' => $isOneToOne ? 'active' : 'merged',
+            ];
+            if (count($candidateLines) === 1) {
+                $localLine['fat_detail_id'] = (int) ($candidateLines[0]['fat_detail_id'] ?? 0);
+            }
+
+            $identity->registerLine(
+                $conn,
+                $recipeScope,
+                $sourceChannel,
+                $moovaOrderId,
+                $this->externalIdentityLineFromIncomingItem($item),
+                (int) ($item['source_line_index'] ?? $fallbackIndex),
+                $localLine
+            );
+        }
+    }
+
+    private function externalIdentityLineFromIncomingItem(array $item): array
+    {
+        $sourceLine = is_array($item['source_line'] ?? null) ? $item['source_line'] : [];
+        $line = $sourceLine;
+        $line['item_id'] = (int) ($item['id'] ?? 0);
+
+        if (!isset($line['itemId']) && isset($sourceLine['item_id'])) {
+            $line['itemId'] = $sourceLine['item_id'];
+        }
+
+        return $line;
+    }
+
+    private function externalLineSourceChannel(array $payload): string
+    {
+        foreach (['sourceChannel', 'source_channel', 'externalProvider', 'external_provider', 'provider', 'sourceSystem', 'source_system'] as $key) {
+            if (!isset($payload[$key])) {
+                continue;
+            }
+
+            $value = strtolower(trim((string) $payload[$key]));
+            $value = str_replace(['-', ' '], '_', $value);
+            if (in_array($value, ['moova', 'cofe', 'api', 'sync'], true)) {
+                return $value;
+            }
+        }
+
+        return 'moova';
+    }
+
+    private function externalLineOrderType(array $payload): string
+    {
+        foreach (['fulfillmentType', 'fulfillment_type', 'orderType', 'order_type', 'type', 'orderChannel', 'order_channel'] as $key) {
+            if (!isset($payload[$key])) {
+                continue;
+            }
+
+            $value = strtolower(trim((string) $payload[$key]));
+            $value = str_replace(['-', ' '], '_', $value);
+            if (in_array($value, ['dine_in', 'takeaway', 'delivery'], true)) {
+                return $value;
+            }
+            if (strpos($value, 'delivery') !== false) {
+                return 'delivery';
+            }
+            if (strpos($value, 'take') !== false || strpos($value, 'pickup') !== false) {
+                return 'takeaway';
+            }
+            if (strpos($value, 'table') !== false || strpos($value, 'dine') !== false) {
+                return 'dine_in';
+            }
+        }
+
+        return 'delivery';
     }
 
     private function deactivateMoovaMappedLines(mysqli $conn, $tenant, $branch, $orderId, $moovaOrderId, $status)
@@ -1370,6 +1845,25 @@ class PosOrderService
         ];
     }
 
+    private function recipeQuantityFromLegacyStockValues($qtyIn, $qtyOut, $uVal): string
+    {
+        $qtyIn = RecipeDecimal::normalize($qtyIn);
+        $qtyOut = RecipeDecimal::normalize($qtyOut);
+        $unitValue = RecipeDecimal::normalize($uVal);
+        if (RecipeDecimal::compare($unitValue, '0') <= 0) {
+            $unitValue = '1.000000';
+        }
+
+        $difference = RecipeDecimal::compare($qtyOut, $qtyIn) >= 0
+            ? RecipeDecimal::subtract($qtyOut, $qtyIn)
+            : RecipeDecimal::subtract($qtyIn, $qtyOut);
+        if (RecipeDecimal::compare($difference, '0') <= 0) {
+            return '0.000000';
+        }
+
+        return RecipeDecimal::divide($difference, $unitValue);
+    }
+
     private function isMappedDetailConsistent(mysqli $conn, $tenant, $branch, $detailId, array $detailRow)
     {
         $sum = $this->queryOne($conn, "
@@ -1470,6 +1964,25 @@ class PosOrderService
         );
 
         return $counter->nextJournalId($conn, (int) $tenant, (int) $branch);
+    }
+
+    private function tableExists(mysqli $conn, string $table): bool
+    {
+        $table = $conn->real_escape_string($table);
+        $result = $conn->query("SHOW TABLES LIKE '{$table}'");
+
+        return $result && $result->num_rows > 0;
+    }
+
+    private function nullableString($value): ?string
+    {
+        if ($value === null || $value === false) {
+            return null;
+        }
+
+        $value = trim((string) $value);
+
+        return $value === '' ? null : $value;
     }
 
     private function queryOne(mysqli $conn, $sql, array $params = [])

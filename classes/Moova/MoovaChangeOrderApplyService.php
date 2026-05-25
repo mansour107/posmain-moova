@@ -49,6 +49,8 @@ class MoovaChangeOrderApplyService
         $requestEventId = trim((string) ($options['request_event_id'] ?? ($payload['requestEventId'] ?? $payload['request_event_id'] ?? '')));
         $moovaBranchId = trim((string) ($options['moova_branch_id'] ?? ($payload['branchId'] ?? ($link['moova_branch_id'] ?? ''))));
         $responseMode = (string) ($options['response_mode'] ?? 'direct');
+        $syncConfig = is_array($options['config'] ?? null) ? $options['config'] : [];
+        $branchUuid = trim((string) ($link['branch_uuid'] ?? $options['branch_uuid'] ?? ($syncConfig['sync']['branch_uuid'] ?? '')));
 
         $changeLink = $this->fetchChangeLinkForUpdate($conn, $tenant, $branch, $idempotencyKey);
         if ($changeLink && !hash_equals((string) $changeLink['request_hash'], $requestHash)) {
@@ -112,6 +114,7 @@ class MoovaChangeOrderApplyService
                     'tenant' => $tenant,
                     'branch' => $branch,
                     'user_id' => $userId,
+                    'branch_uuid' => $branchUuid,
                 ], (int) $orderLink['pos_order_id'], $payload);
                 $providerStatus = 'edited';
                 $response = $this->editResponse($result, $moovaOrderId, $idempotencyKey, $providerStatus);
@@ -121,6 +124,7 @@ class MoovaChangeOrderApplyService
                     'tenant' => $tenant,
                     'branch' => $branch,
                     'user_id' => $userId,
+                    'branch_uuid' => $branchUuid,
                 ], (int) $orderLink['pos_order_id'], $moovaOrderId, (string) $orderLink['last_pos_state_hash']);
                 $providerStatus = 'cancelled';
                 $response = $this->cancelResponse($result, $moovaOrderId, $idempotencyKey, $providerStatus);
@@ -152,12 +156,14 @@ class MoovaChangeOrderApplyService
         $this->syncOutbox->recordOrderSnapshot($conn, $orderId, [
             'event_type' => $action === 'cancel' ? 'order.cancelled' : 'order.updated',
             'source_system' => 'moova_pos',
+            'config' => $syncConfig,
         ]);
         if ((int) ($result['table_id'] ?? 0) > 0) {
             $this->syncOutbox->recordTableSnapshot($conn, (int) $result['table_id'], [
                 'event_type' => 'table.updated',
                 'source_system' => 'moova_pos',
                 'active_order_id' => $action === 'cancel' ? null : $orderId,
+                'config' => $syncConfig,
             ]);
         }
 

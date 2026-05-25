@@ -25,6 +25,8 @@ class LocalSyncWorkerSupervisorTest extends TestCase
         $this->assertStringContainsString('new BranchWorkerDaemon()', $source);
         $this->assertStringContainsString('preflight($conn, $config)', $source);
         $this->assertStringContainsString('runCycle($conn, $config, $runOptions)', $source);
+        $this->assertStringContainsString('supervisorLoadConfig($config)', $source);
+        $this->assertStringContainsString('supervisorPreflight($daemon, $config, $strict)', $source);
         $this->assertStringContainsString('writePidFile($pidFile)', $source);
         $this->assertStringContainsString('writeSupervisorStatus($statusFile', $source);
         $this->assertStringContainsString('strict_blockers', $source);

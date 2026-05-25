@@ -37,33 +37,14 @@ if (!empty($options['env-file'])) {
 }
 
 $daemon = new BranchWorkerDaemon();
-$config = posmain_app_config();
+$config = supervisorLoadConfig();
 $strict = isset($options['strict']);
 $pidFile = (string) ($options['pid-file'] ?? (sys_get_temp_dir() . '/posmain-branch-worker-supervisor.pid'));
 $statusFile = (string) ($options['status-file'] ?? (sys_get_temp_dir() . '/posmain-branch-worker-status.json'));
 $runOptions = supervisorRunOptions($options);
 
-try {
-    $conn = posmain_db_connect();
-    $preflight = $daemon->preflight($conn, $config);
-    $conn->close();
-} catch (Throwable $e) {
-    $preflight = [
-        'ok' => false,
-        'error' => 'db_connect_failed',
-        'message' => $e->getMessage(),
-        'warnings' => ['db_connect_failed'],
-        'schema_pending' => [],
-        'jobs' => $daemon->describeJobs(),
-    ];
-}
-
-$strictBlockers = $strict
-    ? array_values(array_unique(array_merge($preflight['schema_pending'] ?? [], $preflight['warnings'] ?? [])))
-    : [];
-$preflight['strict'] = $strict;
-$preflight['strict_blockers'] = $strictBlockers;
-$preflightOk = !empty($preflight['ok']) && (!$strict || empty($strictBlockers));
+$preflight = supervisorPreflight($daemon, $config, $strict);
+$preflightOk = supervisorPreflightOk($preflight, $strict);
 
 if (isset($options['check'])) {
     writeSupervisorStatus($statusFile, [
@@ -111,6 +92,8 @@ $hadFailure = false;
 
 do {
     $cycleNo++;
+    $config = supervisorLoadConfig($config);
+    $preflight = supervisorPreflight($daemon, $config, $strict);
     $metrics = runSupervisorCycle($daemon, $config, $runOptions);
     $hadFailure = $hadFailure || empty($metrics['ok']);
 
@@ -137,6 +120,51 @@ do {
 } while (true);
 
 exit($hadFailure ? 1 : 0);
+
+function supervisorLoadConfig(array $fallback = []): array
+{
+    if (!function_exists('posmain_app_config')) {
+        return $fallback;
+    }
+
+    try {
+        return posmain_app_config();
+    } catch (Throwable $e) {
+        error_log('POSMAIN supervisor config reload failed: ' . $e->getMessage());
+        return $fallback;
+    }
+}
+
+function supervisorPreflight(BranchWorkerDaemon $daemon, array $config, bool $strict): array
+{
+    try {
+        $conn = posmain_db_connect();
+        $preflight = $daemon->preflight($conn, $config);
+        $conn->close();
+    } catch (Throwable $e) {
+        $preflight = [
+            'ok' => false,
+            'error' => 'db_connect_failed',
+            'message' => $e->getMessage(),
+            'warnings' => ['db_connect_failed'],
+            'schema_pending' => [],
+            'jobs' => $daemon->describeJobs(),
+        ];
+    }
+
+    $strictBlockers = $strict
+        ? array_values(array_unique(array_merge($preflight['schema_pending'] ?? [], $preflight['warnings'] ?? [])))
+        : [];
+    $preflight['strict'] = $strict;
+    $preflight['strict_blockers'] = $strictBlockers;
+
+    return $preflight;
+}
+
+function supervisorPreflightOk(array $preflight, bool $strict): bool
+{
+    return !empty($preflight['ok']) && (!$strict || empty($preflight['strict_blockers']));
+}
 
 function runSupervisorCycle(BranchWorkerDaemon $daemon, array $config, array $runOptions): array
 {

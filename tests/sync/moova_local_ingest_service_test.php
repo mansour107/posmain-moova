@@ -157,6 +157,33 @@ class MoovaLocalIngestServiceTest extends TestCase
         ], $normalized['items']);
     }
 
+    public function testNormalizesNewOrderPayloadWithoutDroppingLineIdentityOrModifiers(): void
+    {
+        $service = new MoovaLocalIngestService();
+        $normalized = $service->normalizeNewOrderForPos([
+            'moova_order_id' => 'order-lines-777',
+            'moova_branch_id' => 'branch-777',
+            'table_id' => 'table-provider-1',
+            'items' => [
+                [
+                    'item_id' => 'coffee-1',
+                    'quantity' => '2',
+                    'line_id' => 'provider-line-1',
+                    'variant_id' => 'variant-3',
+                    'modifiers' => [
+                        ['option_id' => 10, 'qty' => 1],
+                    ],
+                ],
+            ],
+        ]);
+
+        $this->assertSame('provider-line-1', $normalized['items'][0]['externalLineId']);
+        $this->assertSame('variant-3', $normalized['items'][0]['variantId']);
+        $this->assertSame([
+            ['option_id' => 10, 'qty' => 1],
+        ], $normalized['items'][0]['modifiers']);
+    }
+
     public function testNewOrderPosNormalizationRejectsMissingTableBeforeApply(): void
     {
         $service = new MoovaLocalIngestService();

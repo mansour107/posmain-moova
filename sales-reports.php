@@ -1,6 +1,8 @@
 <?php include 'includes/header.php'; ?>
 <?php include 'includes/navbar.php'; ?>
 <?php include 'includes/sidebar.php'; ?>
+<?php require_once __DIR__ . '/includes/recipe_report_permissions.php'; ?>
+<?php $canViewRecipeSalesReconciliation = posmain_recipe_report_can_view_sales_reconciliation($conn); ?>
 
 <div class="content-wrapper">
     <section class="content-header">
@@ -75,6 +77,16 @@
                                 <i class="fa fa-exclamation-triangle" style="font-size:60px;"></i>
                             </a>
                         </div>
+
+                        <?php if ($canViewRecipeSalesReconciliation): ?>
+                            <div class="col-md-3">
+                                <a href="recipe_stock_reconciliation.php" class="btn btn-block btn-lg btn-outline-warning">
+                                    <h2>Recipe Reconciliation</h2>
+                                    <br>
+                                    <i class="fa fa-balance-scale" style="font-size:60px;"></i>
+                                </a>
+                            </div>
+                        <?php endif; ?>
 
                     </div>
                 </div>

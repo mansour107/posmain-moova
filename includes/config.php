@@ -28,15 +28,14 @@ function getDBConnection() {
     static $conn = null;
     
     if ($conn === null) {
-        $conn = new mysqli(DB_HOST, DB_USER, DB_PASS, DB_NAME);
-        
-        if ($conn->connect_error) {
-            error_log("Database connection failed: " . $conn->connect_error);
+        require_once __DIR__ . '/db_bootstrap.php';
+
+        try {
+            $conn = posmain_db_connect();
+        } catch (Throwable $e) {
+            error_log("Database connection failed: " . $e->getMessage());
             die("Database connection failed");
         }
-        
-        // تعيين charset
-        $conn->set_charset("utf8");
     }
     
     return $conn;

@@ -18,11 +18,11 @@ phase4CashierTransferAssert(strpos($content, 'id="tableTransferHint"') !== false
 phase4CashierTransferAssert(strpos($content, 'الطاولة الفارغة تنقل الطلب المحفوظ بالكامل') !== false, 'transfer hint should explain empty-table move behavior');
 phase4CashierTransferAssert(strpos($content, 'الطاولة المشغولة تدمج الطلبين') !== false, 'transfer hint should explain occupied-table merge behavior');
 phase4CashierTransferAssert(strpos($content, 'احفظ أي تعديل قبل النقل') !== false, 'transfer hint should warn about unsaved cashier edits');
-phase4CashierTransferAssert(strpos($content, 'https://code.jquery.com/jquery-3.6.0.min.js') !== false, 'cashier page should keep its late jQuery include visible to this contract');
+phase4CashierTransferAssert(strpos($content, 'POS scripts stay local-first') !== false, 'cashier page should keep POS scripts local-first');
 phase4CashierTransferAssert(strpos($content, 'window.jQuery.ajaxSetup({ beforeSend: window.POSMAIN_ATTACH_CSRF_HEADER });') !== false, 'cashier page should attach CSRF headers after the final jQuery load');
 phase4CashierTransferAssert(
-    strpos($content, 'window.jQuery.ajaxSetup({ beforeSend: window.POSMAIN_ATTACH_CSRF_HEADER });') > strpos($content, 'https://code.jquery.com/jquery-3.6.0.min.js'),
-    'cashier CSRF AJAX setup must run after the late jQuery include'
+    strpos($content, 'window.jQuery.ajaxSetup({ beforeSend: window.POSMAIN_ATTACH_CSRF_HEADER });') > strpos($content, 'POS scripts stay local-first'),
+    'cashier CSRF AJAX setup must stay with the local POS script block'
 );
 
 phase4CashierTransferAssert(strpos($script, 'let tableTransferMode = false;') !== false, 'cashier JS should track table transfer mode');

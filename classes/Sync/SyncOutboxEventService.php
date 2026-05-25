@@ -5,6 +5,9 @@ require_once __DIR__ . '/BranchIdentity.php';
 require_once __DIR__ . '/CloudBranchSyncPublisher.php';
 require_once __DIR__ . '/PosOrderSnapshotBuilder.php';
 require_once __DIR__ . '/../Pos/Service/ItemVariantService.php';
+require_once __DIR__ . '/../Recipe/RecipeFeatureFlags.php';
+require_once __DIR__ . '/../Recipe/RecipeScopeResolver.php';
+require_once __DIR__ . '/../Recipe/RecipeSyncPayloadService.php';
 
 class SyncOutboxEventService
 {
@@ -271,6 +274,9 @@ class SyncOutboxEventService
 
         $payload = $this->buildMenuItemPayload($conn, $branchUuid, $itemId, [
             'source_system' => $sourceSystem,
+            'config' => $config,
+            'pos_tenant' => $posTenant,
+            'pos_branch' => $posBranch,
         ]);
         $payloadJson = $this->encodeJson($payload);
         $payloadHash = hash('sha256', $payloadJson);
@@ -495,6 +501,29 @@ class SyncOutboxEventService
             ];
         }, $variants);
 
+        $recipeAvailability = $this->recipeMenuAvailabilityPayload($conn, $branchUuid, $menuItem, $options);
+        if ($recipeAvailability !== null) {
+            $menuItem['recipe_availability'] = $recipeAvailability;
+            foreach ([
+                'recipe_enabled',
+                'active_recipe_version',
+                'computed_available_qty',
+                'effective_available_qty',
+                'effective_is_available',
+                'unavailable_reason',
+                'availability_revision',
+            ] as $key) {
+                if (array_key_exists($key, $recipeAvailability)) {
+                    $menuItem[$key] = $recipeAvailability[$key];
+                }
+            }
+
+            if (!empty($recipeAvailability['recipe_enabled']) && empty($recipeAvailability['effective_is_available'])) {
+                $menuItem['available_online'] = false;
+                $menuItem['is_orderable'] = false;
+            }
+        }
+
         $payload = [
             'schema_version' => 1,
             'snapshot_type' => 'pos_menu_item',
@@ -508,6 +537,33 @@ class SyncOutboxEventService
         $payload['payload_hash'] = hash('sha256', $this->encodeJson($payload));
 
         return $payload;
+    }
+
+    private function recipeMenuAvailabilityPayload(mysqli $conn, string $branchUuid, array $menuItem, array $options): ?array
+    {
+        $config = is_array($options['config'] ?? null) ? $options['config'] : [];
+        $flags = new RecipeFeatureFlags($config);
+        if (!$flags->isMoovaSyncEnabled()) {
+            return null;
+        }
+
+        $scope = (new RecipeScopeResolver($config))->resolve([
+            'pos_tenant' => $options['pos_tenant'] ?? null,
+            'pos_branch' => $options['pos_branch'] ?? null,
+            'branch_uuid' => $branchUuid,
+            'store_id' => $options['store_id'] ?? 0,
+            'channel' => 'moova',
+            'order_type' => 'delivery',
+            'source_system' => $options['source_system'] ?? 'pos',
+        ]);
+
+        return (new RecipeSyncPayloadService($flags))->menuItemSnapshotPayload(
+            $conn,
+            $scope,
+            $menuItem,
+            'delivery',
+            'moova'
+        );
     }
 
     private function buildTablePayload(mysqli $conn, string $branchUuid, int $tableId, array $options): array

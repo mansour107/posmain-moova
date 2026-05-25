@@ -33,6 +33,7 @@ railpackRuntimeAssert(($railpackConfig['provider'] ?? null) === 'php', 'Railpack
 
 $composerConfig = json_decode(file_get_contents($root . '/composer.json'), true);
 railpackRuntimeAssert(($composerConfig['require']['php'] ?? null) === '^8.2', 'Railpack PHP runtime should stay on PHP 8.2');
+railpackRuntimeAssert(isset($composerConfig['require']['ext-bcmath']), 'Railpack must install bcmath for active recipe decimal math');
 railpackRuntimeAssert(isset($composerConfig['require']['ext-mysqli']), 'Railpack must install mysqli for POS database access');
 railpackRuntimeAssert(isset($composerConfig['require']['ext-mbstring']), 'Railpack must keep mbstring for existing string handling');
 railpackRuntimeAssert(!isset($composerConfig['require-dev']), 'Production Composer config should not make Railway install dev tools');

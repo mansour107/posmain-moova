@@ -18,6 +18,7 @@ $usid = $_SESSION['userid'];
 
 // تضمين فئات النظام الجديد
 require_once('../classes/InvoiceElementFactory.php');
+require_once('../classes/Recipe/LegacyInvoiceRecipeLifecycleBridge.php');
 
 // تعريف ثوابت أنواع الفواتير
 define('INVOICE_TYPES', [
@@ -125,6 +126,24 @@ $config = getInvoiceConfig($pro_tybe);
 // بدء المعاملة لضمان تماسك البيانات
 try {
     $conn->begin_transaction();
+    if ($pro_tybe === INVOICE_TYPES['POS']) {
+        $recipeLifecycleBridge = new LegacyInvoiceRecipeLifecycleBridge();
+        $recipeDeleteChannel = 'pos';
+        $recipeDeleteOrderType = 'takeaway';
+        $existingOrderType = strtolower(trim((string) ($invoice['order_type'] ?? '')));
+        if ($existingOrderType === 'table') {
+            $recipeDeleteChannel = 'table';
+            $recipeDeleteOrderType = 'dine_in';
+        } elseif ($existingOrderType === 'delivery') {
+            $recipeDeleteOrderType = 'delivery';
+        }
+
+        $recipeLifecycleBridge->recordCurrentOrderDeleted($conn, $id, $recipeDeleteChannel, $recipeDeleteOrderType, [
+            'user_id' => (int) $usid,
+            'created_by' => (int) $usid,
+            'refund_uuid' => 'legacy-invoice-delete:' . $id,
+        ]);
+    }
     
     // حذف تفاصيل الفاتورة
 	    $conn->query("UPDATE fat_details SET isdeleted = 1 WHERE fatid = $id");

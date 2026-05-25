@@ -1,6 +1,12 @@
 <?php
 
 require_once __DIR__ . '/../../classes/Pos/Service/PosOrderMutationService.php';
+require_once __DIR__ . '/../../classes/Sync/SchemaManager.php';
+require_once __DIR__ . '/../../classes/Recipe/DTO/RecipeActorContext.php';
+require_once __DIR__ . '/../../classes/Recipe/RecipeDefinitionService.php';
+require_once __DIR__ . '/../../classes/Recipe/RecipeFeatureFlags.php';
+require_once __DIR__ . '/../../classes/Recipe/RecipeOrderLifecycleService.php';
+require_once __DIR__ . '/../../classes/Recipe/Repository/InventoryBalanceRepository.php';
 
 mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
 
@@ -123,6 +129,87 @@ try {
     ], ['user_id' => 7]);
     posSplitPaymentAssert($roundingSplit['success'] === true, 'split should accept cashier cent-rounded partial item amounts');
 
+    $recipeFlags = posSplitPaymentRecipeFlags();
+    $recipeLifecycle = new RecipeOrderLifecycleService($recipeFlags);
+    $recipeAwareService = new PosOrderMutationService(null, null, null, null, null, null, null, null, null, $recipeLifecycle);
+    posSplitPaymentCreateRecipeFixture($conn, 30010, 30011, '10.000000', 3);
+    $conn->query("INSERT INTO tables (id, tname, table_case, isdeleted) VALUES (3, 'T3', 1, 0)");
+    $conn->query("
+        INSERT INTO ot_head (
+            id, pro_id, branch_id, table_id, order_type, pro_tybe, pro_date, accural_date,
+            store_id, emp_id, emp2_id, acc1, acc2, pro_value, fat_total, fat_disc,
+            fat_net, paid_amount, remaining_amount, payment_status, invoice_status,
+            order_status, isdeleted, tenant, branch
+        ) VALUES (
+            300, 13, 0, 3, 'table', 9, '2026-05-12', '2026-05-12',
+            3, 4, 4, 51, 501, 30, 30, 0,
+            30, 0, 30, 'unpaid', 'draft',
+            'active', 0, 0, 0
+        )
+    ");
+    $conn->query("
+        INSERT INTO fat_details (
+            id, pro_tybe, det_store, pro_id, item_id, u_val, qty_in, qty_out,
+            price, cost_price, stock_value, discount, plus, det_value,
+            profit, fatid, fat_tybe, tenant, branch, isdeleted
+        ) VALUES
+            (3000, 9, 3, 300, 30010, 2, 0, 6, 5, 4, 0, 0, 0, 30, 18, 300, 9, 0, 0, 0)
+    ");
+    $recipeLifecycle->onOrderLineAdded([
+        'conn' => $conn,
+        'order_id' => 300,
+        'fat_detail_id' => 3000,
+        'store_id' => 3,
+        'channel' => 'table',
+        'order_type' => 'dine_in',
+        'sellable_item_id' => 30010,
+        'quantity' => '3.000000',
+    ]);
+
+    $recipeSplit = $recipeAwareService->splitTablePayment($conn, [
+        'order_id' => 300,
+        'table_id' => 3,
+        'items' => [
+            ['detail_id' => 3000, 'qty' => 2],
+        ],
+        'paid_amount' => 10,
+        'payment_method' => 'cash',
+    ], ['user_id' => 7]);
+    $recipeChildOrderId = (int) $recipeSplit['data']['new_invoice_id'];
+    $afterSplitBalance = (new InventoryBalanceRepository())->findBalance($conn, 0, 0, 3, 30011);
+    $originalUsages = posSplitPaymentRows($conn, 'recipe_order_line_usage', 'order_id = 300');
+    $childUsages = posSplitPaymentRows($conn, 'recipe_order_line_usage', 'order_id = ' . $recipeChildOrderId);
+    $originalReservations = posSplitPaymentRows($conn, 'stock_reservations', 'order_id = 300');
+
+    posSplitPaymentAssert($recipeSplit['success'] === true, 'recipe split should still create a paid child order');
+    posSplitPaymentAssert($afterSplitBalance['qty_on_hand'] === '9.000000', 'split child payment should consume only paid split quantity');
+    posSplitPaymentAssert($afterSplitBalance['qty_reserved'] === '2.000000', 'original reservation should be rebuilt for remaining quantity only');
+    posSplitPaymentAssert(array_column($originalUsages, 'status') === ['released', 'reserved'], 'original recipe usage should release old qty and reserve remaining qty');
+    posSplitPaymentAssert(array_column($originalUsages, 'order_qty') === ['3.000000', '2.000000'], 'original recipe usage quantities should track old and remaining qty');
+    posSplitPaymentAssert(array_column($originalReservations, 'status') === ['released', 'reserved'], 'original stock reservations should release old qty and reserve remaining qty');
+    posSplitPaymentAssert(array_column($originalReservations, 'qty_reserved') === ['3.000000', '2.000000'], 'reservation quantities should track old and remaining qty');
+    posSplitPaymentAssert(count($childUsages) === 1 && $childUsages[0]['status'] === 'consumed', 'child split order should have exactly one consumed recipe usage');
+
+    $recipeLifecycle->onOrderPaid([
+        'conn' => $conn,
+        'order_id' => 300,
+        'store_id' => 3,
+        'channel' => 'table',
+        'order_type' => 'dine_in',
+        'lines' => [
+            [
+                'fat_detail_id' => 3000,
+                'sellable_item_id' => 30010,
+                'quantity' => '2.000000',
+            ],
+        ],
+    ]);
+    $afterFinalPaymentBalance = (new InventoryBalanceRepository())->findBalance($conn, 0, 0, 3, 30011);
+    $consumedQty = $conn->query("SELECT COALESCE(SUM(qty_out), 0) AS qty FROM inventory_movements WHERE item_id = 30011 AND movement_type = 'recipe_consumption'")->fetch_assoc();
+    posSplitPaymentAssert($afterFinalPaymentBalance['qty_on_hand'] === '7.000000', 'final original payment should consume remaining two units only');
+    posSplitPaymentAssert($afterFinalPaymentBalance['qty_reserved'] === '0.000000', 'final original payment should consume remaining reservation');
+    posSplitPaymentAssert(abs((float) $consumedQty['qty'] - 3.0) < 0.0001, 'split plus final payment should consume exactly original quantity, not double-consume');
+
     echo "pos-split-payment-service-ok db={$db}\n";
 } finally {
     $conn->query("DROP DATABASE IF EXISTS `{$db}`");
@@ -131,8 +218,10 @@ try {
 
 function posSplitPaymentCreateSchema(mysqli $conn): void
 {
+    (new SyncSchemaManager())->apply($conn);
+
     $conn->query("
-        CREATE TABLE tables (
+        CREATE TABLE IF NOT EXISTS tables (
             id INT NOT NULL PRIMARY KEY,
             tname VARCHAR(255) NULL,
             table_case INT NOT NULL DEFAULT 0,
@@ -140,7 +229,7 @@ function posSplitPaymentCreateSchema(mysqli $conn): void
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
     ");
     $conn->query("
-        CREATE TABLE document_counters (
+        CREATE TABLE IF NOT EXISTS document_counters (
             id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
             pos_tenant INT NOT NULL DEFAULT 0,
             pos_branch INT NOT NULL DEFAULT 0,
@@ -154,7 +243,7 @@ function posSplitPaymentCreateSchema(mysqli $conn): void
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
     ");
     $conn->query("
-        CREATE TABLE ot_head (
+        CREATE TABLE IF NOT EXISTS ot_head (
             id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
             pro_id INT NULL,
             branch_id INT NULL,
@@ -191,7 +280,7 @@ function posSplitPaymentCreateSchema(mysqli $conn): void
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
     ");
     $conn->query("
-        CREATE TABLE fat_details (
+        CREATE TABLE IF NOT EXISTS fat_details (
             id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
             pro_tybe INT NULL,
             det_store INT NULL,
@@ -215,13 +304,23 @@ function posSplitPaymentCreateSchema(mysqli $conn): void
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
     ");
     $conn->query("
-        CREATE TABLE order_payments (
+        CREATE TABLE IF NOT EXISTS order_payments (
             id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
             order_id INT NOT NULL,
             amount DECIMAL(15,4) NOT NULL DEFAULT 0,
             payment_method VARCHAR(50) NULL,
             created_by INT NULL,
             created_at DATETIME NULL
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+    ");
+    $conn->query("
+        CREATE TABLE IF NOT EXISTS myitems (
+            id BIGINT UNSIGNED NOT NULL PRIMARY KEY,
+            iname VARCHAR(255) NULL,
+            cost_price DECIMAL(18,6) NOT NULL DEFAULT 0.000000,
+            group1 BIGINT UNSIGNED NOT NULL DEFAULT 7,
+            item_type VARCHAR(64) NOT NULL DEFAULT 'sellable',
+            track_stock TINYINT(1) NOT NULL DEFAULT 1
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
     ");
 }
@@ -231,4 +330,66 @@ function posSplitPaymentAssert(bool $condition, string $message): void
     if (!$condition) {
         throw new RuntimeException($message);
     }
+}
+
+function posSplitPaymentRecipeFlags(): RecipeFeatureFlags
+{
+    return new RecipeFeatureFlags([
+        'recipe' => [
+            'enabled' => true,
+            'mode' => 'consume_pilot',
+            'reservations' => true,
+            'consumption' => true,
+            'pilot' => [
+                'pos_branch' => '0',
+                'item_ids' => [],
+                'category_ids' => [],
+            ],
+        ],
+    ]);
+}
+
+function posSplitPaymentCreateRecipeFixture(mysqli $conn, int $sellableItemId, int $ingredientItemId, string $stock, int $storeId): void
+{
+    $conn->query("
+        INSERT INTO myitems (id, iname, cost_price, group1, item_type, track_stock)
+        VALUES
+            ({$sellableItemId}, 'Split recipe item', 0.000000, 7, 'sellable', 1),
+            ({$ingredientItemId}, 'Split recipe ingredient', 4.000000, 7, 'ingredient', 1)
+    ");
+    (new InventoryBalanceRepository())->putBalance($conn, [
+        'store_id' => $storeId,
+        'item_id' => $ingredientItemId,
+        'qty_on_hand' => $stock,
+        'qty_reserved' => '0.000000',
+        'qty_available' => $stock,
+    ]);
+
+    $definition = new RecipeDefinitionService(new RecipeFeatureFlags([
+        'recipe' => [
+            'enabled' => true,
+            'mode' => 'shadow',
+        ],
+    ]));
+    $actor = new RecipeActorContext(7, 0, 0, null, ['recipe.manage', 'recipe.approve']);
+    $recipe = $definition->createDraft($conn, [
+        'sellable_item_id' => $sellableItemId,
+        'recipe_name' => 'Split payment recipe',
+    ], $actor);
+    $definition->addLine($conn, (int) $recipe['id'], [
+        'ingredient_item_id' => $ingredientItemId,
+        'qty_per_yield' => '1.000000',
+    ], $actor);
+    $definition->activate($conn, (int) $recipe['id'], $actor);
+}
+
+function posSplitPaymentRows(mysqli $conn, string $table, string $where): array
+{
+    $result = $conn->query("SELECT * FROM {$table} WHERE {$where} ORDER BY id");
+    $rows = [];
+    while ($row = $result->fetch_assoc()) {
+        $rows[] = $row;
+    }
+
+    return $rows;
 }

@@ -86,6 +86,7 @@ if (!function_exists('auth_guard_permission_map')) {
             'pos.payment.take' => ['add_payment', 'show_payment', 'add_sales'],
             'pos.discount.apply' => ['edit_sales', 'add_sales'],
             'pos.discount.manager_override' => ['edit_sales'],
+            'pos.recipe_stock_override' => ['edit_sales', 'edit_stock'],
             'pos.cancel.unpaid' => ['delete_sales', 'edit_sales'],
             'pos.void.paid' => ['delete_payment', 'edit_payment'],
             'pos.refund' => ['delete_payment', 'edit_payment'],

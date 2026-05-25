@@ -40,6 +40,7 @@ This matrix defines named permissions for POSMAIN's restaurant/cafe rollout whil
 | `pos.payment.take` | `add_payment`, `show_payment`, `add_sales` | admin, manager, cashier | Take table/takeaway payment. |
 | `pos.discount.apply` | `edit_sales`, `add_sales` | admin, manager, cashier | Ordinary discount within policy. |
 | `pos.discount.manager_override` | `edit_sales` | admin, manager | Discount beyond cashier policy. |
+| `pos.recipe_stock_override` | `edit_sales`, `edit_stock` | admin, manager, inventory manager | Allow a recipe-backed item sale when computed ingredient availability is unavailable and strict stock is off. |
 | `pos.cancel.unpaid` | `delete_sales`, `edit_sales` | admin, manager, cashier | Cancel unpaid active order with reason. |
 | `pos.void.paid` | `delete_payment`, `edit_payment` | admin, manager | Paid void requires manager approval. |
 | `pos.refund` | `delete_payment`, `edit_payment` | admin, manager | Refund path; must be audited. |

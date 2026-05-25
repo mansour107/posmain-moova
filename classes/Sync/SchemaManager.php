@@ -28,6 +28,18 @@ class SyncSchemaManager
             'printers' => $this->printersSql(),
             'print_jobs' => $this->printJobsSql(),
             'item_nutrition_profiles' => $this->itemNutritionProfilesSql(),
+            'recipe_headers' => $this->recipeHeadersSql(),
+            'recipe_lines' => $this->recipeLinesSql(),
+            'recipe_cost_snapshots' => $this->recipeCostSnapshotsSql(),
+            'recipe_order_line_usage' => $this->recipeOrderLineUsageSql(),
+            'inventory_movements' => $this->inventoryMovementsSql(),
+            'inventory_item_balances' => $this->inventoryItemBalancesSql(),
+            'stock_reservations' => $this->stockReservationsSql(),
+            'production_batches' => $this->productionBatchesSql(),
+            'production_batch_lines' => $this->productionBatchLinesSql(),
+            'recipe_audit_log' => $this->recipeAuditLogSql(),
+            'recipe_availability_cache' => $this->recipeAvailabilityCacheSql(),
+            'external_order_line_map' => $this->externalOrderLineMapSql(),
             'sync_outbox' => $this->syncOutboxSql(),
             'sync_inbox' => $this->syncInboxSql(),
             'sync_checkpoints' => $this->syncCheckpointsSql(),
@@ -69,10 +81,15 @@ class SyncSchemaManager
             ],
             'ot_head' => [
                 'columns' => [
+                    'cofe_idempotency_key' => "ALTER TABLE ot_head ADD COLUMN cofe_idempotency_key VARCHAR(191) NULL AFTER uuid",
                     'guest_count' => "ALTER TABLE ot_head ADD COLUMN guest_count INT NULL AFTER table_id",
                     'waiter_id' => "ALTER TABLE ot_head ADD COLUMN waiter_id BIGINT NULL AFTER guest_count",
                 ],
                 'indexes' => [
+                    'uq_ot_head_cofe_idempotency' => [
+                        'columns' => ['cofe_idempotency_key'],
+                        'sql' => "ALTER TABLE ot_head ADD UNIQUE KEY uq_ot_head_cofe_idempotency (cofe_idempotency_key)",
+                    ],
                     'idx_ot_head_waiter' => [
                         'columns' => ['waiter_id'],
                         'sql' => "ALTER TABLE ot_head ADD KEY idx_ot_head_waiter (waiter_id)",
@@ -175,6 +192,10 @@ class SyncSchemaManager
         }
 
         foreach ($this->phase4LegacyUpgradeStatements($conn) as $label => $statement) {
+            $pending[$label] = $statement;
+        }
+
+        foreach ($this->journalPrecisionUpgradeStatements($conn) as $label => $statement) {
             $pending[$label] = $statement;
         }
 
@@ -521,6 +542,26 @@ ALTER TABLE {$quotedTable}
         return $statements;
     }
 
+    private function journalPrecisionUpgradeStatements(mysqli $conn)
+    {
+        $statements = [];
+        if (!$this->tableExists($conn, 'journal_entries')) {
+            return $statements;
+        }
+
+        foreach (['debit', 'credit'] as $column) {
+            if (!$this->columnNeedsRecipeDecimalPrecision($conn, 'journal_entries', $column)) {
+                continue;
+            }
+
+            $statements['journal_entries.modify_' . $column . '_decimal'] = "
+ALTER TABLE journal_entries
+  MODIFY COLUMN {$column} DECIMAL(18,6) NOT NULL DEFAULT 0.000000";
+        }
+
+        return $statements;
+    }
+
     private function sqlWithAvailableAfterAnchor($sql, array $availableColumns)
     {
         if (!preg_match('/\s+AFTER\s+`?([a-zA-Z0-9_]+)`?\s*$/i', $sql, $matches)) {
@@ -643,6 +684,25 @@ ALTER TABLE {$quotedTable}
         $stmt->close();
 
         return $row ?: null;
+    }
+
+    private function columnNeedsRecipeDecimalPrecision(mysqli $conn, $table, $column)
+    {
+        $info = $this->columnInfo($conn, $table, $column);
+        if (!$info) {
+            return false;
+        }
+
+        $type = strtolower((string) ($info['COLUMN_TYPE'] ?? ''));
+        if (preg_match('/^(decimal|numeric)\((\d+),(\d+)\)/', $type, $matches)) {
+            return (int) $matches[2] < 18 || (int) $matches[3] < 6;
+        }
+
+        if (preg_match('/^(tinyint|smallint|mediumint|int|bigint|float|double)\b/', $type)) {
+            return true;
+        }
+
+        return false;
     }
 
     private function existingColumns(mysqli $conn, $table)
@@ -1148,6 +1208,400 @@ CREATE TABLE IF NOT EXISTS item_nutrition_profiles (
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   UNIQUE KEY uq_item_nutrition (item_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
+    private function recipeHeadersSql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS recipe_headers (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  recipe_uuid CHAR(36) NOT NULL,
+  pos_tenant INT NOT NULL DEFAULT 0,
+  pos_branch INT NOT NULL DEFAULT 0,
+  branch_uuid CHAR(36) NULL,
+  sellable_item_id BIGINT UNSIGNED NOT NULL,
+  recipe_name VARCHAR(255) NOT NULL,
+  recipe_type ENUM('make_to_order','batch_prepared','hybrid','packaging_bundle','modifier_only','sub_recipe') NOT NULL DEFAULT 'make_to_order',
+  status ENUM('draft','active','archived') NOT NULL DEFAULT 'draft',
+  version_number INT UNSIGNED NOT NULL DEFAULT 1,
+  yield_qty DECIMAL(18,6) NOT NULL DEFAULT 1.000000,
+  yield_unit_id BIGINT UNSIGNED NULL,
+  default_wastage_percent DECIMAL(9,4) NOT NULL DEFAULT 0.0000,
+  effective_from DATETIME NULL,
+  effective_to DATETIME NULL,
+  costing_method ENUM('item_cost_price','moving_average','last_purchase','manual_snapshot') NOT NULL DEFAULT 'item_cost_price',
+  requires_recipe_for_sale TINYINT(1) NOT NULL DEFAULT 0,
+  allow_sale_without_stock TINYINT(1) NOT NULL DEFAULT 0,
+  created_by BIGINT UNSIGNED NULL,
+  approved_by BIGINT UNSIGNED NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  approved_at DATETIME NULL,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_recipe_uuid (recipe_uuid),
+  UNIQUE KEY uq_recipe_item_version (pos_tenant, pos_branch, sellable_item_id, version_number),
+  KEY idx_recipe_active_lookup (pos_tenant, pos_branch, sellable_item_id, status, effective_from, effective_to),
+  KEY idx_recipe_status (pos_tenant, pos_branch, status),
+  KEY idx_recipe_branch_uuid (branch_uuid)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
+    private function recipeLinesSql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS recipe_lines (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  recipe_id BIGINT UNSIGNED NOT NULL,
+  line_uuid CHAR(36) NOT NULL,
+  ingredient_item_id BIGINT UNSIGNED NULL,
+  sub_recipe_id BIGINT UNSIGNED NULL,
+  line_type ENUM('ingredient','packaging','sub_recipe','modifier_ingredient','labor_placeholder') NOT NULL DEFAULT 'ingredient',
+  ingredient_item_type_snapshot VARCHAR(64) NULL,
+  qty_per_yield DECIMAL(18,6) NOT NULL,
+  unit_id BIGINT UNSIGNED NULL,
+  unit_conversion_to_base DECIMAL(18,8) NOT NULL DEFAULT 1.00000000,
+  wastage_percent DECIMAL(9,4) NOT NULL DEFAULT 0.0000,
+  is_required TINYINT(1) NOT NULL DEFAULT 1,
+  modifier_group_id BIGINT UNSIGNED NULL,
+  modifier_option_id BIGINT UNSIGNED NULL,
+  modifier_behavior ENUM('additive','substitution_remove','substitution_add') NOT NULL DEFAULT 'additive',
+  substitution_group VARCHAR(64) NULL,
+  order_type ENUM('any','dine_in','takeaway','delivery') NOT NULL DEFAULT 'any',
+  channel ENUM('any','pos','table','moova','cofe','api') NOT NULL DEFAULT 'any',
+  sort_order INT NOT NULL DEFAULT 0,
+  notes TEXT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_recipe_line_uuid (line_uuid),
+  KEY idx_recipe_lines_recipe (recipe_id, sort_order),
+  KEY idx_recipe_lines_ingredient (ingredient_item_id),
+  KEY idx_recipe_lines_sub_recipe (sub_recipe_id),
+  KEY idx_recipe_lines_modifier (modifier_group_id, modifier_option_id),
+  KEY idx_recipe_lines_order_channel (order_type, channel)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
+    private function recipeCostSnapshotsSql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS recipe_cost_snapshots (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  snapshot_uuid CHAR(36) NOT NULL,
+  pos_tenant INT NOT NULL DEFAULT 0,
+  pos_branch INT NOT NULL DEFAULT 0,
+  branch_uuid CHAR(36) NULL,
+  recipe_id BIGINT UNSIGNED NOT NULL,
+  sellable_item_id BIGINT UNSIGNED NOT NULL,
+  version_number INT UNSIGNED NOT NULL,
+  cost_per_yield DECIMAL(18,6) NOT NULL DEFAULT 0.000000,
+  cost_per_sell_unit DECIMAL(18,6) NOT NULL DEFAULT 0.000000,
+  ingredient_cost_json JSON NULL,
+  calculated_at DATETIME NOT NULL,
+  based_on_stock_cost_at DATETIME NULL,
+  created_by BIGINT UNSIGNED NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_recipe_cost_snapshot_uuid (snapshot_uuid),
+  KEY idx_recipe_cost_latest (pos_tenant, pos_branch, sellable_item_id, recipe_id, calculated_at),
+  KEY idx_recipe_cost_version (recipe_id, version_number),
+  KEY idx_recipe_cost_branch_uuid (branch_uuid)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
+    private function recipeOrderLineUsageSql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS recipe_order_line_usage (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  usage_uuid CHAR(36) NOT NULL,
+  pos_tenant INT NOT NULL DEFAULT 0,
+  pos_branch INT NOT NULL DEFAULT 0,
+  branch_uuid CHAR(36) NULL,
+  store_id BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  order_id BIGINT UNSIGNED NOT NULL,
+  fat_detail_id BIGINT UNSIGNED NULL,
+  order_line_uuid CHAR(36) NULL,
+  source_channel ENUM('pos','table','moova','cofe','api','sync') NOT NULL DEFAULT 'pos',
+  source_order_uuid VARCHAR(128) NULL,
+  source_line_uuid VARCHAR(128) NULL,
+  source_event_uuid VARCHAR(128) NULL,
+  sellable_item_id BIGINT UNSIGNED NOT NULL,
+  variant_id BIGINT UNSIGNED NULL,
+  modifiers_hash CHAR(64) NULL,
+  modifiers_json JSON NULL,
+  order_qty DECIMAL(18,6) NOT NULL,
+  order_unit_id BIGINT UNSIGNED NULL,
+  recipe_id BIGINT UNSIGNED NULL,
+  recipe_version_number INT UNSIGNED NULL,
+  recipe_cost_snapshot_id BIGINT UNSIGNED NULL,
+  explosion_json JSON NULL,
+  cost_total DECIMAL(18,6) NOT NULL DEFAULT 0.000000,
+  status ENUM('previewed','reserved','consumed','released','voided','refunded','wasted') NOT NULL DEFAULT 'previewed',
+  idempotency_key VARCHAR(191) NOT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  consumed_at DATETIME NULL,
+  released_at DATETIME NULL,
+  voided_at DATETIME NULL,
+  refunded_at DATETIME NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_recipe_usage_uuid (usage_uuid),
+  UNIQUE KEY uq_recipe_usage_idem (pos_tenant, pos_branch, store_id, idempotency_key),
+  KEY idx_recipe_usage_order (pos_tenant, pos_branch, order_id, fat_detail_id),
+  KEY idx_recipe_usage_line_uuid (order_line_uuid),
+  KEY idx_recipe_usage_source_line (source_channel, source_order_uuid, source_line_uuid),
+  KEY idx_recipe_usage_recipe (recipe_id, recipe_version_number),
+  KEY idx_recipe_usage_snapshot (recipe_cost_snapshot_id),
+  KEY idx_recipe_usage_status (pos_tenant, pos_branch, status),
+  KEY idx_recipe_usage_branch_uuid (branch_uuid)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
+    private function inventoryMovementsSql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS inventory_movements (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  movement_uuid CHAR(36) NOT NULL,
+  movement_group_uuid CHAR(36) NULL,
+  pos_tenant INT NOT NULL DEFAULT 0,
+  pos_branch INT NOT NULL DEFAULT 0,
+  branch_uuid CHAR(36) NULL,
+  store_id BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  item_id BIGINT UNSIGNED NOT NULL,
+  movement_type ENUM('purchase','sale_direct','recipe_consumption','production_input','production_output','waste','adjustment','transfer_in','transfer_out','reservation','reservation_release','refund_reversal','sync_replay','opening_balance') NOT NULL,
+  source_type ENUM('order','order_line','invoice','fat_details','recipe','recipe_order_line_usage','production_batch','purchase_invoice','adjustment','reservation','sync_event','manual') NOT NULL,
+  source_id BIGINT UNSIGNED NULL,
+  source_uuid VARCHAR(128) NULL,
+  order_id BIGINT UNSIGNED NULL,
+  fat_detail_id BIGINT UNSIGNED NULL,
+  order_line_uuid CHAR(36) NULL,
+  recipe_order_line_usage_id BIGINT UNSIGNED NULL,
+  recipe_id BIGINT UNSIGNED NULL,
+  recipe_cost_snapshot_id BIGINT UNSIGNED NULL,
+  production_batch_id BIGINT UNSIGNED NULL,
+  qty_in DECIMAL(18,6) NOT NULL DEFAULT 0.000000,
+  qty_out DECIMAL(18,6) NOT NULL DEFAULT 0.000000,
+  unit_id BIGINT UNSIGNED NULL,
+  unit_conversion_to_base DECIMAL(18,8) NOT NULL DEFAULT 1.00000000,
+  unit_cost DECIMAL(18,6) NOT NULL DEFAULT 0.000000,
+  total_cost DECIMAL(18,6) NOT NULL DEFAULT 0.000000,
+  accounting_journal_id BIGINT UNSIGNED NULL,
+  idempotency_key VARCHAR(191) NOT NULL,
+  reversed_movement_id BIGINT UNSIGNED NULL,
+  created_by BIGINT UNSIGNED NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_inventory_movement_uuid (movement_uuid),
+  UNIQUE KEY uq_inventory_idempotency (pos_tenant, pos_branch, store_id, idempotency_key),
+  KEY idx_inventory_item_time (pos_tenant, pos_branch, store_id, item_id, created_at),
+  KEY idx_inventory_source (source_type, source_id),
+  KEY idx_inventory_order_line (order_id, fat_detail_id, order_line_uuid),
+  KEY idx_inventory_recipe_usage (recipe_order_line_usage_id),
+  KEY idx_inventory_recipe (recipe_id),
+  KEY idx_inventory_journal (accounting_journal_id),
+  KEY idx_inventory_group (movement_group_uuid),
+  KEY idx_inventory_branch_uuid (branch_uuid)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
+    private function inventoryItemBalancesSql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS inventory_item_balances (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  pos_tenant INT NOT NULL DEFAULT 0,
+  pos_branch INT NOT NULL DEFAULT 0,
+  branch_uuid CHAR(36) NULL,
+  store_id BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  item_id BIGINT UNSIGNED NOT NULL,
+  qty_on_hand DECIMAL(18,6) NOT NULL DEFAULT 0.000000,
+  qty_reserved DECIMAL(18,6) NOT NULL DEFAULT 0.000000,
+  qty_available DECIMAL(18,6) NOT NULL DEFAULT 0.000000,
+  moving_average_cost DECIMAL(18,6) NOT NULL DEFAULT 0.000000,
+  last_movement_id BIGINT UNSIGNED NULL,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_inventory_balance_item (pos_tenant, pos_branch, store_id, item_id),
+  KEY idx_inventory_balance_branch (pos_tenant, pos_branch),
+  KEY idx_inventory_balance_available (pos_tenant, pos_branch, store_id, item_id, qty_available),
+  KEY idx_inventory_balance_branch_uuid (branch_uuid)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
+    private function stockReservationsSql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS stock_reservations (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  reservation_uuid CHAR(36) NOT NULL,
+  pos_tenant INT NOT NULL DEFAULT 0,
+  pos_branch INT NOT NULL DEFAULT 0,
+  branch_uuid CHAR(36) NULL,
+  store_id BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  order_id BIGINT UNSIGNED NOT NULL,
+  fat_detail_id BIGINT UNSIGNED NULL,
+  order_line_uuid CHAR(36) NULL,
+  recipe_order_line_usage_id BIGINT UNSIGNED NULL,
+  sellable_item_id BIGINT UNSIGNED NOT NULL,
+  recipe_id BIGINT UNSIGNED NULL,
+  ingredient_item_id BIGINT UNSIGNED NOT NULL,
+  qty_reserved DECIMAL(18,6) NOT NULL,
+  status ENUM('reserved','consumed','released','expired') NOT NULL DEFAULT 'reserved',
+  expires_at DATETIME NULL,
+  consumed_at DATETIME NULL,
+  released_at DATETIME NULL,
+  idempotency_key VARCHAR(191) NOT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_stock_reservation_uuid (reservation_uuid),
+  UNIQUE KEY uq_stock_reservation_idem (pos_tenant, pos_branch, store_id, idempotency_key),
+  KEY idx_stock_reservation_order (order_id, fat_detail_id, order_line_uuid),
+  KEY idx_stock_reservation_usage (recipe_order_line_usage_id),
+  KEY idx_stock_reservation_item_status (pos_tenant, pos_branch, store_id, ingredient_item_id, status),
+  KEY idx_stock_reservation_expiry (status, expires_at),
+  KEY idx_stock_reservation_branch_uuid (branch_uuid)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
+    private function productionBatchesSql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS production_batches (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  batch_uuid CHAR(36) NOT NULL,
+  pos_tenant INT NOT NULL DEFAULT 0,
+  pos_branch INT NOT NULL DEFAULT 0,
+  branch_uuid CHAR(36) NULL,
+  store_id BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  recipe_id BIGINT UNSIGNED NOT NULL,
+  output_item_id BIGINT UNSIGNED NOT NULL,
+  planned_output_qty DECIMAL(18,6) NOT NULL,
+  actual_output_qty DECIMAL(18,6) NULL,
+  status ENUM('draft','committed','cancelled') NOT NULL DEFAULT 'draft',
+  started_at DATETIME NULL,
+  committed_at DATETIME NULL,
+  created_by BIGINT UNSIGNED NULL,
+  committed_by BIGINT UNSIGNED NULL,
+  variance_reason VARCHAR(255) NULL,
+  notes TEXT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_production_batch_uuid (batch_uuid),
+  KEY idx_production_recipe (pos_tenant, pos_branch, store_id, recipe_id, status),
+  KEY idx_production_output (pos_tenant, pos_branch, store_id, output_item_id, committed_at),
+  KEY idx_production_branch_uuid (branch_uuid)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
+    private function productionBatchLinesSql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS production_batch_lines (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  batch_id BIGINT UNSIGNED NOT NULL,
+  line_type ENUM('input','output','variance') NOT NULL,
+  item_id BIGINT UNSIGNED NOT NULL,
+  planned_qty DECIMAL(18,6) NOT NULL DEFAULT 0.000000,
+  actual_qty DECIMAL(18,6) NOT NULL DEFAULT 0.000000,
+  unit_id BIGINT UNSIGNED NULL,
+  unit_cost DECIMAL(18,6) NOT NULL DEFAULT 0.000000,
+  total_cost DECIMAL(18,6) NOT NULL DEFAULT 0.000000,
+  inventory_movement_id BIGINT UNSIGNED NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_production_batch_lines_batch (batch_id),
+  KEY idx_production_batch_lines_item (item_id),
+  KEY idx_production_batch_lines_movement (inventory_movement_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
+    private function recipeAuditLogSql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS recipe_audit_log (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  pos_tenant INT NOT NULL DEFAULT 0,
+  pos_branch INT NOT NULL DEFAULT 0,
+  branch_uuid CHAR(36) NULL,
+  recipe_id BIGINT UNSIGNED NULL,
+  entity_type VARCHAR(64) NOT NULL,
+  entity_id BIGINT UNSIGNED NULL,
+  action VARCHAR(64) NOT NULL,
+  before_json JSON NULL,
+  after_json JSON NULL,
+  actor_user_id BIGINT UNSIGNED NULL,
+  ip_address VARCHAR(64) NULL,
+  user_agent VARCHAR(255) NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_recipe_audit_recipe (pos_tenant, pos_branch, recipe_id, created_at),
+  KEY idx_recipe_audit_entity (entity_type, entity_id),
+  KEY idx_recipe_audit_actor (actor_user_id, created_at),
+  KEY idx_recipe_audit_branch_uuid (branch_uuid)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
+    private function recipeAvailabilityCacheSql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS recipe_availability_cache (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  pos_tenant INT NOT NULL DEFAULT 0,
+  pos_branch INT NOT NULL DEFAULT 0,
+  branch_uuid CHAR(36) NULL,
+  store_id BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  sellable_item_id BIGINT UNSIGNED NOT NULL,
+  recipe_id BIGINT UNSIGNED NULL,
+  order_type ENUM('any','dine_in','takeaway','delivery') NOT NULL DEFAULT 'any',
+  channel ENUM('any','pos','table','moova','cofe','api') NOT NULL DEFAULT 'any',
+  computed_available_qty DECIMAL(18,6) NOT NULL DEFAULT 0.000000,
+  effective_available_qty DECIMAL(18,6) NOT NULL DEFAULT 0.000000,
+  effective_is_available TINYINT(1) NOT NULL DEFAULT 1,
+  blocking_item_id BIGINT UNSIGNED NULL,
+  unavailable_reason VARCHAR(255) NULL,
+  availability_revision BIGINT UNSIGNED NOT NULL DEFAULT 1,
+  calculated_at DATETIME NOT NULL,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_recipe_availability_item (pos_tenant, pos_branch, store_id, sellable_item_id, order_type, channel),
+  KEY idx_recipe_availability_available (pos_tenant, pos_branch, store_id, effective_is_available),
+  KEY idx_recipe_availability_revision (pos_tenant, pos_branch, availability_revision),
+  KEY idx_recipe_availability_branch_uuid (branch_uuid)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
+    private function externalOrderLineMapSql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS external_order_line_map (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  pos_tenant INT NOT NULL DEFAULT 0,
+  pos_branch INT NOT NULL DEFAULT 0,
+  branch_uuid CHAR(36) NULL,
+  source_channel ENUM('moova','cofe','api','sync') NOT NULL,
+  external_order_id VARCHAR(128) NOT NULL,
+  external_line_id VARCHAR(128) NOT NULL,
+  external_event_uuid VARCHAR(128) NULL,
+  order_id BIGINT UNSIGNED NULL,
+  fat_detail_id BIGINT UNSIGNED NULL,
+  order_line_uuid CHAR(36) NULL,
+  item_id BIGINT UNSIGNED NOT NULL,
+  variant_id BIGINT UNSIGNED NULL,
+  modifiers_hash CHAR(64) NULL,
+  modifiers_json JSON NULL,
+  line_status ENUM('active','cancelled','changed','merged','split') NOT NULL DEFAULT 'active',
+  idempotency_key VARCHAR(191) NOT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_external_line (pos_tenant, pos_branch, source_channel, external_order_id, external_line_id),
+  UNIQUE KEY uq_external_line_idem (pos_tenant, pos_branch, idempotency_key),
+  KEY idx_external_line_order (order_id, fat_detail_id, order_line_uuid),
+  KEY idx_external_line_branch_uuid (branch_uuid)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
     }
 

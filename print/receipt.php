@@ -235,6 +235,71 @@ if ($is_delivery) {
 </div>
 
 <?php }?>
+<style>
+@media print {
+    @page {
+        size: 72mm 210mm;
+        margin: 0;
+    }
+
+    html,
+    body {
+        width: 72mm !important;
+        min-width: 72mm !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        background: #fff !important;
+    }
+
+    body {
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+    }
+
+    body > *:not(#printed) {
+        display: none !important;
+    }
+
+    #printed {
+        display: block !important;
+        width: 72mm !important;
+        max-width: 72mm !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        border: 0 !important;
+        box-shadow: none !important;
+        position: static !important;
+    }
+
+    #printed .card-body {
+        width: 72mm !important;
+        margin: 0 !important;
+        padding: 2mm !important;
+        box-sizing: border-box !important;
+    }
+
+    #printed .row,
+    #printed [class^="col"],
+    #printed [class*=" col"] {
+        display: block !important;
+        width: 100% !important;
+        max-width: 100% !important;
+        margin: 0 !important;
+        padding: 0 !important;
+    }
+
+    #printed .table {
+        width: 100% !important;
+        margin-bottom: 2mm !important;
+    }
+
+    #printed th,
+    #printed td {
+        padding: 1.2mm !important;
+        word-break: break-word !important;
+    }
+}
+</style>
 <script>
 // استخدام JavaScript عادي بدلاً من jQuery
 document.addEventListener('DOMContentLoaded', function() {

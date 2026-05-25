@@ -31,6 +31,23 @@ class LegacyCofeCounterTest extends TestCase
         $this->assertStringNotContainsString("SELECT MAX(journal_id) as max_id FROM journal_heads", $source);
         $this->assertStringNotContainsString('$row[\'max_id\'] + 1', $source);
     }
+
+    public function testCofeEndpointPersistsIdempotencyKeyForReplayGuard(): void
+    {
+        $source = file_get_contents(__DIR__ . '/../../ajax/cofe_create_order.php');
+
+        $this->assertStringContainsString('persistCofeIdempotencyKey($conn, (int) $last_op, (string) $idempotencyKey);', $source);
+        $this->assertStringContainsString('UPDATE ot_head SET cofe_idempotency_key = ? WHERE id = ?', $source);
+        $this->assertStringContainsString('function cofeColumnExists', $source);
+    }
+
+    public function testCofeEndpointHeaderInsertBindTypeCountStaysAligned(): void
+    {
+        $source = file_get_contents(__DIR__ . '/../../ajax/cofe_create_order.php');
+
+        $this->assertStringContainsString('"ssssssiiiiiddddi"', $source);
+        $this->assertStringNotContainsString('"ssssssiiiiiddddis"', $source);
+    }
 }
 
 class legacy_cofe_counter_test extends LegacyCofeCounterTest

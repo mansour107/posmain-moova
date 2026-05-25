@@ -34,6 +34,7 @@ require_once('../classes/Sync/DocumentCounterService.php');
 require_once('../classes/Sync/SyncOutboxEventService.php');
 require_once('../classes/Pos/Service/PosOrderMutationService.php');
 require_once('../classes/Pos/Service/ModifierLineNoteService.php');
+require_once('../classes/Recipe/LegacyInvoiceRecipeLifecycleBridge.php');
 
 // تعريف ثوابت أنواع الفواتير
 define('INVOICE_TYPES', [
@@ -774,6 +775,7 @@ try {
     $lockedTableOrder = null;
     $counterService = new DocumentCounterService();
     $lineNoteService = new ModifierLineNoteService();
+    $recipeLifecycleBridge = new LegacyInvoiceRecipeLifecycleBridge();
     $pro_id = null;
     $insertedDetailIdsByPostIndex = [];
     $splitPaymentResult = null;
@@ -841,6 +843,16 @@ try {
         if ($row_pro_id) {
             $original_pro_id = $row_pro_id['pro_id'];
             if ($order_type_db === 'table') {
+                if ((int) $pro_tybe === INVOICE_TYPES['POS']) {
+                    $recipeLifecycleBridge->recordExistingLinesCancelled(
+                        $conn,
+                        (int) $edit_id,
+                        'table',
+                        'dine_in',
+                        'legacy_invoice_updated',
+                        ['user_id' => (int) $usid]
+                    );
+                }
                 $stmt_soft_delete_details = $conn->prepare("UPDATE fat_details SET isdeleted = 1 WHERE fatid = ?");
                 $stmt_soft_delete_details->bind_param("i", $edit_id);
                 $stmt_soft_delete_details->execute();
@@ -1357,6 +1369,31 @@ try {
         $stmt_details->close();
         $stmt_item->close();
         $stmt_update->close();
+    }
+
+    if ((int) $pro_tybe === INVOICE_TYPES['POS'] && !$is_split_line_payment) {
+        $recipeChannel = $order_type_db === 'table' ? 'table' : 'pos';
+        $recipeOrderType = $order_type_db === 'table'
+            ? 'dine_in'
+            : ($order_type_db === 'delivery' ? 'delivery' : 'takeaway');
+        $recipeContext = ['user_id' => (int) $usid];
+        $recipeLifecycleBridge->recordCurrentLinesAdded(
+            $conn,
+            (int) $last_op,
+            $recipeChannel,
+            $recipeOrderType,
+            $recipeContext
+        );
+
+        if ($payment_status_db === 'paid' && $order_status_db === 'completed') {
+            $recipeLifecycleBridge->recordCurrentOrderPaid(
+                $conn,
+                (int) $last_op,
+                $recipeChannel,
+                $recipeOrderType,
+                $recipeContext
+            );
+        }
     }
     // تحديث إجمالي الأرباح للمبيعات
     if(in_array($pro_tybe, [INVOICE_TYPES['SALES'], INVOICE_TYPES['POS'], INVOICE_TYPES['OFFER']])) {

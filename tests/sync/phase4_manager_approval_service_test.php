@@ -59,6 +59,25 @@ try {
     ]);
     phase4ManagerApprovalAssert((int) $passed['id'] === (int) $request['id'], 'approved row should pass');
 
+    $recipeOverride = $service->requestApproval($conn, [
+        'action_type' => 'recipe.stock_override',
+        'target_type' => 'item',
+        'target_id' => 501,
+        'requested_by' => 7,
+        'reason' => 'ingredient stock override',
+        'metadata' => ['unavailable_reason' => 'Required ingredient out of stock.'],
+    ]);
+    $service->decide($conn, (int) $recipeOverride['id'], [
+        'approved_by' => 2,
+        'status' => 'approved',
+    ]);
+    $recipePassed = $service->requireApprovedIfNeeded($conn, 'recipe.stock_override', 'item', 501, 1.0, [
+        'manager_approval_id' => $recipeOverride['id'],
+    ], [
+        'require_manager_approval' => true,
+    ]);
+    phase4ManagerApprovalAssert((int) $recipePassed['id'] === (int) $recipeOverride['id'], 'recipe stock override approval should pass');
+
     $declined = $service->requestApproval($conn, [
         'action_type' => 'discount.override',
         'target_type' => 'pos_order',

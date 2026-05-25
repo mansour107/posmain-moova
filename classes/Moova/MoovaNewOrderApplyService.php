@@ -48,6 +48,8 @@ class MoovaNewOrderApplyService
         $moovaOrderId = trim((string) ($options['moova_order_id'] ?? ($payload['cofeOrderId'] ?? '')));
         $moovaBranchId = trim((string) ($options['moova_branch_id'] ?? ($payload['branchId'] ?? ($link['moova_branch_id'] ?? ''))));
         $responseMode = (string) ($options['response_mode'] ?? 'direct');
+        $syncConfig = is_array($options['config'] ?? null) ? $options['config'] : [];
+        $branchUuid = trim((string) ($link['branch_uuid'] ?? $options['branch_uuid'] ?? ($syncConfig['sync']['branch_uuid'] ?? '')));
 
         $orderLink = $this->fetchOrderLinkForUpdate($conn, $tenant, $branch, $idempotencyKey);
         if ($orderLink && !hash_equals((string) $orderLink['request_hash'], $requestHash)) {
@@ -79,6 +81,7 @@ class MoovaNewOrderApplyService
             'tenant' => $tenant,
             'branch' => $branch,
             'user_id' => $userId,
+            'branch_uuid' => $branchUuid,
         ], $payload);
         $this->fulfillment->upsertMoovaFulfillment($conn, (int) $order['order_id'], $payload);
 
@@ -100,12 +103,14 @@ class MoovaNewOrderApplyService
         $this->syncOutbox->recordOrderSnapshot($conn, $orderId, [
             'event_type' => !empty($order['merged']) ? 'order.updated' : 'order.saved',
             'source_system' => 'moova_pos',
+            'config' => $syncConfig,
         ]);
         if ((int) ($order['table_id'] ?? 0) > 0) {
             $this->syncOutbox->recordTableSnapshot($conn, (int) $order['table_id'], [
                 'event_type' => 'table.updated',
                 'source_system' => 'moova_pos',
                 'active_order_id' => $orderId,
+                'config' => $syncConfig,
             ]);
         }
 

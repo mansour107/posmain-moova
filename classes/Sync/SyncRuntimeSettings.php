@@ -84,7 +84,8 @@ class SyncRuntimeSettings
 
             $secret = (string) ($input['POSMAIN_BRANCH_SYNC_SECRET'] ?? '');
             $hasExistingSecret = $this->secretConfigured($conn, 'POSMAIN_BRANCH_SYNC_SECRET');
-            if ($secret === '' && !$hasExistingSecret) {
+            $hasExternalSecret = !empty($input['POSMAIN_BRANCH_SYNC_SECRET_EXTERNAL']);
+            if ($secret === '' && !$hasExistingSecret && !$hasExternalSecret) {
                 throw new InvalidArgumentException('Branch sync secret is required.');
             }
 
