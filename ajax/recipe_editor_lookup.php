@@ -33,7 +33,16 @@ try {
     $query = trim((string) ($_GET['q'] ?? ''));
     $limit = max(1, min(50, (int) ($_GET['limit'] ?? 20)));
 
-    if ($type === 'sub_recipes') {
+    if ($type === 'components') {
+        $items = $lookup->searchComponents(
+            $conn,
+            $query,
+            max(0, (int) ($_GET['pos_tenant'] ?? 0)),
+            max(0, (int) ($_GET['pos_branch'] ?? 0)),
+            max(0, (int) ($_GET['exclude_recipe_id'] ?? 0)),
+            $limit
+        );
+    } elseif ($type === 'sub_recipes') {
         $items = $lookup->searchSubRecipes(
             $conn,
             $query,

@@ -138,6 +138,77 @@ class RecipeEditorReadServiceTest extends TestCase
         $this->assertNotEmpty($detail['audit']);
     }
 
+    public function testReadModelDisplaysMainItemAndLoadsVariationsWhenRecipeWasLinkedToVariation(): void
+    {
+        $mainItemId = $this->insertItem('Read model crepe', 'CREPE', 'Crepes', 'sellable');
+        $variantItemId = $this->insertItem('Read model crepe large', 'CREPE-L', 'Crepes', 'sellable');
+        self::$conn->query("
+            INSERT INTO item_variants (parent_item_id, variant_item_id, variant_label, is_default, is_active, sort_order)
+            VALUES ({$mainItemId}, {$variantItemId}, 'Large', 1, 1, 1)
+        ");
+
+        $definition = new RecipeDefinitionService(new RecipeFeatureFlags([
+            'recipe' => [
+                'enabled' => true,
+                'mode' => 'shadow',
+            ],
+        ]));
+        $actor = new RecipeActorContext(77, 0, 0, null, ['recipe.manage']);
+        $recipe = $definition->createDraft(self::$conn, [
+            'sellable_item_id' => $variantItemId,
+            'recipe_name' => 'Read Model Crepe',
+            'recipe_type' => 'make_to_order',
+        ], $actor);
+
+        $detail = (new RecipeEditorReadService())->recipeDetail(self::$conn, (int) $recipe['id']);
+
+        $this->assertIsArray($detail);
+        $this->assertSame($mainItemId, (int) $detail['header']['main_sellable_item_id']);
+        $this->assertSame('Read model crepe', $detail['header']['main_sellable_item_name']);
+        $this->assertSame($variantItemId, (int) $detail['header']['recipe_linked_variant_item_id']);
+        $this->assertSame('Large', $detail['header']['recipe_linked_variant_label']);
+        $this->assertCount(1, $detail['variants']);
+        $this->assertSame('Large', $detail['variants'][0]['variant_label']);
+    }
+
+    public function testReadModelLoadsEditableVariationRecipeRowsAndInheritanceState(): void
+    {
+        $mainItemId = $this->insertItem('Read model waffle', 'WAFFLE', 'Waffles', 'sellable');
+        $variantItemId = $this->insertItem('Read model waffle large', 'WAFFLE-L', 'Waffles', 'sellable');
+        $flourId = $this->insertItem('Read model waffle flour', 'WFLOUR', 'Ingredients', 'ingredient');
+        self::$conn->query("
+            INSERT INTO item_variants (parent_item_id, variant_item_id, variant_label, is_default, is_active, sort_order)
+            VALUES ({$mainItemId}, {$variantItemId}, 'Large', 1, 1, 1)
+        ");
+
+        $definition = new RecipeDefinitionService(new RecipeFeatureFlags([
+            'recipe' => [
+                'enabled' => true,
+                'mode' => 'shadow',
+            ],
+        ]));
+        $actor = new RecipeActorContext(77, 0, 0, null, ['recipe.manage']);
+        $recipe = $definition->createDraft(self::$conn, [
+            'sellable_item_id' => $mainItemId,
+            'recipe_name' => 'Read Model Waffle',
+            'recipe_type' => 'make_to_order',
+        ], $actor);
+        self::$conn->query("
+            INSERT INTO recipe_variant_lines
+                (recipe_id, variant_item_id, line_uuid, ingredient_item_id, line_type, qty_per_yield, unit_conversion_to_base, wastage_percent, is_required, sort_order)
+            VALUES
+                ({$recipe['id']}, {$variantItemId}, '00000000-0000-4000-8000-000000056888', {$flourId}, 'ingredient', 175.000000, 1.00000000, 0.0000, 1, 1)
+        ");
+
+        $detail = (new RecipeEditorReadService())->recipeDetail(self::$conn, (int) $recipe['id']);
+
+        $this->assertIsArray($detail);
+        $this->assertCount(1, $detail['variants']);
+        $this->assertFalse($detail['variants'][0]['inherits_base_recipe']);
+        $this->assertSame('175.000000', $detail['variants'][0]['editable_recipe_lines'][0]['qty_per_yield']);
+        $this->assertSame('Read model waffle flour', $detail['variants'][0]['editable_recipe_lines'][0]['ingredient_item_name']);
+    }
+
     private function insertItem(string $name, string $barcode, string $group, string $type): int
     {
         $id = ++self::$itemCounter;

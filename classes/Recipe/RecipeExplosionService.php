@@ -7,22 +7,26 @@ require_once __DIR__ . '/RecipeDecimal.php';
 require_once __DIR__ . '/RecipeFeatureFlags.php';
 require_once __DIR__ . '/Repository/RecipeLineRepository.php';
 require_once __DIR__ . '/Repository/RecipeRepository.php';
+require_once __DIR__ . '/Repository/RecipeVariantLineRepository.php';
 
 class RecipeExplosionService
 {
     private $flags;
     private $recipes;
     private $lines;
+    private $variantLines;
     private $warnings = [];
 
     public function __construct(
         ?RecipeFeatureFlags $flags = null,
         ?RecipeRepository $recipes = null,
-        ?RecipeLineRepository $lines = null
+        ?RecipeLineRepository $lines = null,
+        ?RecipeVariantLineRepository $variantLines = null
     ) {
         $this->flags = $flags ?: new RecipeFeatureFlags();
         $this->recipes = $recipes ?: new RecipeRepository();
         $this->lines = $lines ?: new RecipeLineRepository();
+        $this->variantLines = $variantLines ?: new RecipeVariantLineRepository();
     }
 
     public function explodeOrderLine(mysqli $conn, RecipeOrderLineContext $context): RecipeExplosionResult
@@ -32,12 +36,26 @@ class RecipeExplosionService
             return $this->fallback($context, 'recipes_disabled');
         }
 
+        $sellableItemId = $context->sellableItemId;
+        $variantItemId = (int) ($context->variantId ?? 0);
         $recipe = $this->recipes->findActiveHeaderForItem(
             $conn,
             $context->posTenant,
             $context->posBranch,
-            $context->sellableItemId
+            $sellableItemId
         );
+        if (!$recipe) {
+            $parent = $this->variantParentForChild($conn, $sellableItemId);
+            if ($parent) {
+                $variantItemId = (int) $parent['variant_item_id'];
+                $recipe = $this->recipes->findActiveHeaderForItem(
+                    $conn,
+                    $context->posTenant,
+                    $context->posBranch,
+                    (int) $parent['parent_item_id']
+                );
+            }
+        }
         if (!$recipe) {
             return $this->fallback($context, 'no_active_recipe');
         }
@@ -45,7 +63,7 @@ class RecipeExplosionService
         $orderQty = RecipeDecimal::normalize($context->quantity);
         $requirements = (string) ($recipe['recipe_type'] ?? '') === 'batch_prepared'
             ? [$this->preparedStockRequirement($recipe, $orderQty)]
-            : $this->explodeRecipe($conn, $recipe, $orderQty, $context, []);
+            : $this->explodeRecipe($conn, $recipe, $orderQty, $context, [], $variantItemId);
 
         return new RecipeExplosionResult([
             'sellable_item_id' => $context->sellableItemId,
@@ -75,7 +93,8 @@ class RecipeExplosionService
             $recipe,
             RecipeDecimal::normalize($orderQty ?? $context->quantity),
             $context,
-            []
+            [],
+            (int) ($context->variantId ?? 0)
         );
 
         return new RecipeExplosionResult([
@@ -126,7 +145,8 @@ class RecipeExplosionService
         array $recipe,
         string $orderQty,
         RecipeOrderLineContext $context,
-        array $visitedRecipeIds
+        array $visitedRecipeIds,
+        int $variantItemId = 0
     ): array {
         $recipeId = (int) $recipe['id'];
         if (isset($visitedRecipeIds[$recipeId])) {
@@ -140,7 +160,9 @@ class RecipeExplosionService
             throw new RuntimeException('Recipe yield quantity must be positive.');
         }
 
-        $recipeLines = $this->lines->findLinesByRecipeId($conn, $recipeId);
+        $recipeLines = $variantItemId > 0
+            ? $this->variantLinesForRecipe($conn, $recipeId, $variantItemId)
+            : $this->lines->findLinesByRecipeId($conn, $recipeId);
         $substitutionRemovals = $this->selectedSubstitutionRemovals($recipeLines, $context);
 
         foreach ($recipeLines as $line) {
@@ -200,6 +222,38 @@ class RecipeExplosionService
         }
 
         return $requirements;
+    }
+
+    private function variantLinesForRecipe(mysqli $conn, int $recipeId, int $variantItemId): array
+    {
+        $lines = $this->variantLines->findLinesForVariant($conn, $recipeId, $variantItemId);
+        return $lines ?: $this->lines->findLinesByRecipeId($conn, $recipeId);
+    }
+
+    private function variantParentForChild(mysqli $conn, int $itemId): ?array
+    {
+        if ($itemId < 1 || !$this->tableExists($conn, 'item_variants')) {
+            return null;
+        }
+
+        $stmt = $conn->prepare('SELECT parent_item_id, variant_item_id FROM item_variants WHERE variant_item_id = ? AND is_active = 1 LIMIT 1');
+        $stmt->bind_param('i', $itemId);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        return $row ?: null;
+    }
+
+    private function tableExists(mysqli $conn, string $table): bool
+    {
+        $stmt = $conn->prepare('SELECT COUNT(*) AS c FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?');
+        $stmt->bind_param('s', $table);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        return (int) ($row['c'] ?? 0) > 0;
     }
 
     private function selectedSubstitutionRemovals(array $recipeLines, RecipeOrderLineContext $context): array

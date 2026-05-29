@@ -10,6 +10,7 @@ class RecipeRolloutReadinessService
     private const REQUIRED_SCHEMA_TABLES = [
         'recipe_headers',
         'recipe_lines',
+        'recipe_variant_lines',
         'recipe_cost_snapshots',
         'recipe_order_line_usage',
         'inventory_movements',

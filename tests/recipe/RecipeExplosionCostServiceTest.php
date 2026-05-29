@@ -342,6 +342,44 @@ class RecipeExplosionCostServiceTest extends TestCase
         $this->assertSame('18.000000', $manual->costPerYield);
     }
 
+    public function testVariationRecipeOverridesBaseAmountsWhenVariationIsSold(): void
+    {
+        $mainItemId = $this->nextItemId();
+        $variantItemId = $this->nextItemId();
+        $flourId = $this->ingredient('Variation flour', '1.000000');
+        self::$conn->query("INSERT INTO myitems (id, iname, cost_price) VALUES ({$mainItemId}, 'Variation crepe', 0)");
+        self::$conn->query("INSERT INTO myitems (id, iname, cost_price) VALUES ({$variantItemId}, 'Large variation crepe', 0)");
+        self::$conn->query("
+            INSERT INTO item_variants (parent_item_id, variant_item_id, variant_label, is_active, sort_order)
+            VALUES ({$mainItemId}, {$variantItemId}, 'Large', 1, 1)
+        ");
+        $recipe = $this->createActiveRecipe($mainItemId, ['recipe_name' => 'Variation override recipe'], [
+            [
+                'ingredient_item_id' => $flourId,
+                'qty_per_yield' => '100.000000',
+            ],
+        ]);
+        self::$conn->query("
+            INSERT INTO recipe_variant_lines
+                (recipe_id, variant_item_id, line_uuid, ingredient_item_id, line_type, qty_per_yield, unit_conversion_to_base, wastage_percent, is_required, sort_order)
+            VALUES
+                ({$recipe['id']}, {$variantItemId}, '00000000-0000-4000-8000-000000012888', {$flourId}, 'ingredient', 150.000000, 1.00000000, 0.0000, 1, 1)
+        ");
+
+        $base = $this->explosionService()->explodeOrderLine(self::$conn, new RecipeOrderLineContext([
+            'sellable_item_id' => $mainItemId,
+            'quantity' => '1.000000',
+        ]));
+        $large = $this->explosionService()->explodeOrderLine(self::$conn, new RecipeOrderLineContext([
+            'sellable_item_id' => $variantItemId,
+            'quantity' => '1.000000',
+        ]));
+
+        $this->assertSame('100.000000', $base->requirements[0]->requiredQtyBase);
+        $this->assertSame('150.000000', $large->requirements[0]->requiredQtyBase);
+        $this->assertSame((int) $recipe['id'], $large->recipeId);
+    }
+
     public function testDisabledExplosionFallsBackWithoutWrites(): void
     {
         $service = new RecipeExplosionService(new RecipeFeatureFlags([

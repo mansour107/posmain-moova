@@ -114,6 +114,25 @@ class RecipeEditorLookupServiceTest extends TestCase
         $this->assertSame(62001, $modifiers[0]['group_id']);
         $this->assertArrayNotHasKey('price_delta', $modifiers[0]);
     }
+
+    public function testComponentLookupCombinesItemsAndPreparedRecipesWithoutCosts(): void
+    {
+        $service = new RecipeEditorLookupService();
+
+        $components = $service->searchComponents(self::$conn, 'Lookup', 0, 0, 0, 10);
+        $byId = [];
+        foreach ($components as $component) {
+            $byId[(int) $component['id']] = $component;
+            $this->assertArrayNotHasKey('cost_price', $component);
+        }
+
+        $this->assertSame('ingredient', $byId[61002]['line_type']);
+        $this->assertSame('Ingredient', $byId[61002]['component_type']);
+        $this->assertSame('packaging', $byId[61003]['line_type']);
+        $this->assertSame('Packaging', $byId[61003]['component_type']);
+        $this->assertSame('sub_recipe', $byId[1]['line_type']);
+        $this->assertSame('Prepared recipe', $byId[1]['component_type']);
+    }
 }
 
 function array_sort(array $values): array

@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__ . '/../Pos/Service/ItemVariantService.php';
 
 class RecipeEditorReadService
 {
@@ -100,14 +101,125 @@ LIMIT 1",
             return null;
         }
 
+        $header = $this->withMainItemFields($conn, $header);
+
+        $baseLines = $this->recipeLines($conn, $recipeId);
+        $variants = $this->variantRows($conn, (int) ($header['main_sellable_item_id'] ?? $header['sellable_item_id']));
+        $variantLines = $this->variantRecipeLines($conn, $recipeId);
+        foreach ($variants as &$variant) {
+            $variantItemId = (int) ($variant['variant_item_id'] ?? 0);
+            $variant['recipe_lines'] = $variantLines[$variantItemId] ?? [];
+            $variant['inherits_base_recipe'] = count($variant['recipe_lines']) === 0;
+            $variant['editable_recipe_lines'] = count($variant['recipe_lines']) > 0 ? $variant['recipe_lines'] : $baseLines;
+        }
+        unset($variant);
+
         return [
             'header' => $header,
-            'lines' => $this->recipeLines($conn, $recipeId),
+            'lines' => $baseLines,
             'latest_cost' => $this->latestCostSnapshot($conn, $recipeId),
             'availability' => $this->availabilityRows($conn, (int) $header['pos_tenant'], (int) $header['pos_branch'], (int) $header['sellable_item_id']),
             'versions' => $this->versionRows($conn, (int) $header['pos_tenant'], (int) $header['pos_branch'], (int) $header['sellable_item_id']),
+            'variants' => $variants,
+            'variant_recipe_lines' => $variantLines,
             'audit' => $this->auditRows($conn, $recipeId),
         ];
+    }
+
+    private function withMainItemFields(mysqli $conn, array $header): array
+    {
+        $sellableItemId = (int) ($header['sellable_item_id'] ?? 0);
+        $header['main_sellable_item_id'] = $sellableItemId;
+        $header['main_sellable_item_name'] = $header['sellable_item_name'] ?? null;
+        $header['main_sellable_item_barcode'] = $header['sellable_item_barcode'] ?? null;
+        $header['recipe_linked_variant_item_id'] = null;
+        $header['recipe_linked_variant_label'] = null;
+
+        if ($sellableItemId < 1 || !$this->tableExists($conn, 'item_variants')) {
+            return $header;
+        }
+
+        $parent = $this->fetchOne(
+            $conn,
+            "
+SELECT
+  iv.parent_item_id,
+  iv.variant_item_id,
+  iv.variant_label,
+  parent.iname AS parent_item_name,
+  parent.barcode AS parent_item_barcode
+FROM item_variants iv
+LEFT JOIN myitems parent ON parent.id = iv.parent_item_id
+WHERE iv.variant_item_id = ?
+LIMIT 1",
+            [$sellableItemId]
+        );
+        if (!$parent || (int) ($parent['parent_item_id'] ?? 0) < 1) {
+            return $header;
+        }
+
+        $header['main_sellable_item_id'] = (int) $parent['parent_item_id'];
+        $header['main_sellable_item_name'] = $parent['parent_item_name'] ?? $header['sellable_item_name'] ?? null;
+        $header['main_sellable_item_barcode'] = $parent['parent_item_barcode'] ?? $header['sellable_item_barcode'] ?? null;
+        $header['recipe_linked_variant_item_id'] = (int) $parent['variant_item_id'];
+        $header['recipe_linked_variant_label'] = (string) ($parent['variant_label'] ?? '');
+
+        return $header;
+    }
+
+    private function variantRows(mysqli $conn, int $mainItemId): array
+    {
+        if ($mainItemId < 1 || !$this->tableExists($conn, 'item_variants')) {
+            return [];
+        }
+        $itemColumns = $this->columns($conn, 'myitems');
+
+        return $this->fetchAll(
+            $conn,
+            "
+SELECT
+  iv.id AS relation_id,
+  iv.parent_item_id,
+  iv.variant_item_id,
+  iv.variant_label,
+  iv.variant_name_en,
+  iv.sort_order,
+  iv.is_default,
+  iv.is_active,
+  " . (isset($itemColumns['iname']) ? 'child.iname' : "NULL") . " AS iname,
+  " . (isset($itemColumns['name2']) ? 'child.name2' : "NULL") . " AS name2,
+  " . (isset($itemColumns['code']) ? 'child.code' : "NULL") . " AS code,
+  " . (isset($itemColumns['barcode']) ? 'child.barcode' : "NULL") . " AS barcode,
+  " . (isset($itemColumns['cost_price']) ? 'child.cost_price' : "0") . " AS cost_price,
+  " . (isset($itemColumns['price1']) ? 'child.price1' : "0") . " AS price1,
+  " . (isset($itemColumns['price2']) ? 'child.price2' : "0") . " AS price2,
+  " . (isset($itemColumns['price3']) ? 'child.price3' : "0") . " AS price3,
+  " . (isset($itemColumns['market_price']) ? 'child.market_price' : "0") . " AS market_price
+FROM item_variants iv
+JOIN myitems child ON child.id = iv.variant_item_id
+WHERE iv.parent_item_id = ?
+ORDER BY iv.sort_order ASC, iv.id ASC",
+            [$mainItemId]
+        );
+    }
+
+    private function columns(mysqli $conn, string $table): array
+    {
+        $rows = $this->fetchAll(
+            $conn,
+            "
+SELECT COLUMN_NAME
+FROM INFORMATION_SCHEMA.COLUMNS
+WHERE TABLE_SCHEMA = DATABASE()
+  AND TABLE_NAME = ?",
+            [$table]
+        );
+        $columns = [];
+        foreach ($rows as $row) {
+            $columns[(string) $row['COLUMN_NAME']] = true;
+        }
+
+        return $columns;
     }
 
     private function recipeLines(mysqli $conn, int $recipeId): array
@@ -115,6 +227,7 @@ LIMIT 1",
         if (!$this->tableExists($conn, 'recipe_lines')) {
             return [];
         }
+        $hasUnits = $this->tableExists($conn, 'myunits');
 
         return $this->fetchAll(
             $conn,
@@ -123,15 +236,58 @@ SELECT
   rl.*,
   ingredient.iname AS ingredient_item_name,
   ingredient.barcode AS ingredient_item_barcode,
+  " . ($hasUnits ? 'unit.uname' : 'NULL') . " AS unit_name,
   sub.recipe_name AS sub_recipe_name,
   sub.version_number AS sub_recipe_version
 FROM recipe_lines rl
 LEFT JOIN myitems ingredient ON ingredient.id = rl.ingredient_item_id
+" . ($hasUnits ? 'LEFT JOIN myunits unit ON unit.id = rl.unit_id' : '') . "
 LEFT JOIN recipe_headers sub ON sub.id = rl.sub_recipe_id
 WHERE rl.recipe_id = ?
 ORDER BY rl.sort_order ASC, rl.id ASC",
             [$recipeId]
         );
+    }
+
+    private function variantRecipeLines(mysqli $conn, int $recipeId): array
+    {
+        if (!$this->tableExists($conn, 'recipe_variant_lines')) {
+            return [];
+        }
+        $hasUnits = $this->tableExists($conn, 'myunits');
+
+        $rows = $this->fetchAll(
+            $conn,
+            "
+SELECT
+  rvl.*,
+  ingredient.iname AS ingredient_item_name,
+  ingredient.barcode AS ingredient_item_barcode,
+  " . ($hasUnits ? 'unit.uname' : 'NULL') . " AS unit_name,
+  sub.recipe_name AS sub_recipe_name,
+  sub.version_number AS sub_recipe_version
+FROM recipe_variant_lines rvl
+LEFT JOIN myitems ingredient ON ingredient.id = rvl.ingredient_item_id
+" . ($hasUnits ? 'LEFT JOIN myunits unit ON unit.id = rvl.unit_id' : '') . "
+LEFT JOIN recipe_headers sub ON sub.id = rvl.sub_recipe_id
+WHERE rvl.recipe_id = ?
+ORDER BY rvl.variant_item_id ASC, rvl.sort_order ASC, rvl.id ASC",
+            [$recipeId]
+        );
+
+        $grouped = [];
+        foreach ($rows as $row) {
+            $variantItemId = (int) ($row['variant_item_id'] ?? 0);
+            if ($variantItemId < 1) {
+                continue;
+            }
+            if (!isset($grouped[$variantItemId])) {
+                $grouped[$variantItemId] = [];
+            }
+            $grouped[$variantItemId][] = $row;
+        }
+
+        return $grouped;
     }
 
     private function latestCostSnapshot(mysqli $conn, int $recipeId): ?array

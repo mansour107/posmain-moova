@@ -208,6 +208,13 @@
                 </a>
               </li>
 
+              <li class="nav-item">
+                <a href="recipe_manage.php" class="nav-link">
+                  <i class="nav-icon fas fa-utensils"></i>
+                  <p>الوصفات</p>
+                </a>
+              </li>
+
 
               <li class="nav-item">
                 <a href="myunits.php" class="nav-link">

@@ -30,6 +30,7 @@ class SyncSchemaManager
             'item_nutrition_profiles' => $this->itemNutritionProfilesSql(),
             'recipe_headers' => $this->recipeHeadersSql(),
             'recipe_lines' => $this->recipeLinesSql(),
+            'recipe_variant_lines' => $this->recipeVariantLinesSql(),
             'recipe_cost_snapshots' => $this->recipeCostSnapshotsSql(),
             'recipe_order_line_usage' => $this->recipeOrderLineUsageSql(),
             'inventory_movements' => $this->inventoryMovementsSql(),
@@ -1306,6 +1307,40 @@ CREATE TABLE IF NOT EXISTS recipe_cost_snapshots (
   KEY idx_recipe_cost_latest (pos_tenant, pos_branch, sellable_item_id, recipe_id, calculated_at),
   KEY idx_recipe_cost_version (recipe_id, version_number),
   KEY idx_recipe_cost_branch_uuid (branch_uuid)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
+    private function recipeVariantLinesSql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS recipe_variant_lines (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  recipe_id BIGINT UNSIGNED NOT NULL,
+  variant_item_id BIGINT UNSIGNED NOT NULL,
+  base_line_id BIGINT UNSIGNED NULL,
+  line_uuid CHAR(36) NOT NULL,
+  ingredient_item_id BIGINT UNSIGNED NULL,
+  sub_recipe_id BIGINT UNSIGNED NULL,
+  line_type ENUM('ingredient','packaging','sub_recipe','labor_placeholder') NOT NULL DEFAULT 'ingredient',
+  ingredient_item_type_snapshot VARCHAR(64) NULL,
+  qty_per_yield DECIMAL(18,6) NOT NULL,
+  unit_id BIGINT UNSIGNED NULL,
+  unit_conversion_to_base DECIMAL(18,8) NOT NULL DEFAULT 1.00000000,
+  wastage_percent DECIMAL(9,4) NOT NULL DEFAULT 0.0000,
+  is_required TINYINT(1) NOT NULL DEFAULT 1,
+  order_type ENUM('any','dine_in','takeaway','delivery') NOT NULL DEFAULT 'any',
+  channel ENUM('any','pos','table','moova','cofe','api') NOT NULL DEFAULT 'any',
+  sort_order INT NOT NULL DEFAULT 0,
+  notes TEXT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_recipe_variant_line_uuid (line_uuid),
+  KEY idx_recipe_variant_lines_variant (recipe_id, variant_item_id, sort_order),
+  KEY idx_recipe_variant_lines_base (base_line_id),
+  KEY idx_recipe_variant_lines_ingredient (ingredient_item_id),
+  KEY idx_recipe_variant_lines_sub_recipe (sub_recipe_id),
+  KEY idx_recipe_variant_lines_order_channel (order_type, channel)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
     }
 

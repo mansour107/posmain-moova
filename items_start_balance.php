@@ -1,6 +1,77 @@
 <?php include('includes/header.php') ?>
 <?php include('includes/navbar.php') ?>
 <?php include('includes/sidebar.php') ?>
+<?php
+if (!function_exists('items_start_balance_default_store_id')) {
+    function items_start_balance_default_store_id(mysqli $conn): int
+    {
+        $row = $conn->query("SELECT cur_value FROM myoptions WHERE oname = 'def_store' LIMIT 1");
+        if ($row && $row->num_rows > 0) {
+            $store_id = (int) ($row->fetch_assoc()['cur_value'] ?? 0);
+            if ($store_id > 0) {
+                return $store_id;
+            }
+        }
+
+        $row = $conn->query('SELECT id FROM acc_head WHERE is_stock = 1 AND isdeleted = 0 ORDER BY id LIMIT 1');
+        if ($row && $row->num_rows > 0) {
+            $store_id = (int) ($row->fetch_assoc()['id'] ?? 0);
+            if ($store_id > 0) {
+                return $store_id;
+            }
+        }
+
+        return 1;
+    }
+}
+
+if (!function_exists('items_start_balance_table_exists')) {
+    function items_start_balance_table_exists(mysqli $conn, string $table): bool
+    {
+        $stmt = $conn->prepare('
+            SELECT 1
+            FROM information_schema.TABLES
+            WHERE TABLE_SCHEMA = DATABASE()
+              AND TABLE_NAME = ?
+            LIMIT 1
+        ');
+        $stmt->bind_param('s', $table);
+        $stmt->execute();
+        $exists = $stmt->get_result()->num_rows > 0;
+        $stmt->close();
+
+        return $exists;
+    }
+}
+
+if (!function_exists('items_start_balance_recipe_balance')) {
+    function items_start_balance_recipe_balance(mysqli $conn, int $pos_tenant, int $pos_branch, int $store_id, int $item_id): ?array
+    {
+        $stmt = $conn->prepare('
+            SELECT qty_on_hand, moving_average_cost
+            FROM inventory_item_balances
+            WHERE pos_tenant = ?
+              AND pos_branch = ?
+              AND store_id = ?
+              AND item_id = ?
+            LIMIT 1
+        ');
+        $stmt->bind_param('iiii', $pos_tenant, $pos_branch, $store_id, $item_id);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        return is_array($row) ? $row : null;
+    }
+}
+
+$items_start_balance_store_id = items_start_balance_default_store_id($conn);
+$items_start_balance_config = function_exists('posmain_app_config') ? posmain_app_config() : [];
+$items_start_balance_branch = is_array($items_start_balance_config['branch'] ?? null) ? $items_start_balance_config['branch'] : [];
+$items_start_balance_pos_tenant = (int) ($items_start_balance_branch['pos_tenant'] ?? 0);
+$items_start_balance_pos_branch = (int) ($items_start_balance_branch['pos_branch'] ?? 0);
+$items_start_balance_recipe_balance_available = items_start_balance_table_exists($conn, 'inventory_item_balances');
+?>
 
 <div class="content-wrapper">
     <section class="content-header">
@@ -63,6 +134,26 @@
                                 // الرصيد الحالي من جدول myitems
                                 $current_qty = isset($row['itmqty']) ? floatval($row['itmqty']) : 0;
                                 $current_price = isset($row['cost_price']) ? floatval($row['cost_price']) : 0;
+                                $item_type = (string) ($row['item_type'] ?? 'sellable');
+                                if (
+                                    $items_start_balance_recipe_balance_available
+                                    && in_array($item_type, ['ingredient', 'packaging'], true)
+                                ) {
+                                    $recipe_balance = items_start_balance_recipe_balance(
+                                        $conn,
+                                        $items_start_balance_pos_tenant,
+                                        $items_start_balance_pos_branch,
+                                        $items_start_balance_store_id,
+                                        (int) $itmid
+                                    );
+                                    if ($recipe_balance !== null) {
+                                        $current_qty = (float) ($recipe_balance['qty_on_hand'] ?? $current_qty);
+                                        $recipe_cost = (float) ($recipe_balance['moving_average_cost'] ?? 0);
+                                        if ($recipe_cost > 0) {
+                                            $current_price = $recipe_cost;
+                                        }
+                                    }
+                                }
                                 
                                 $count++;
                             ?>
@@ -214,4 +305,3 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 });
 </script>
-

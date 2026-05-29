@@ -35,6 +35,14 @@ class RecipeEditorLookupService
                 $params[] = $itemType;
             }
         }
+        if ($kind === 'sellable' && $this->tableExists($conn, 'item_variants')) {
+            $where[] = 'NOT EXISTS (
+                SELECT 1
+                FROM item_variants iv_child
+                WHERE iv_child.variant_item_id = myitems.id
+                  AND iv_child.is_active = 1
+            )';
+        }
 
         $search = [];
         $like = '%' . $query . '%';
@@ -134,6 +142,48 @@ LIMIT ' . $this->limit($limit);
         return array_map([$this, 'modifierOptionRow'], $this->fetchAll($conn, $sql, $params));
     }
 
+    public function searchComponents(mysqli $conn, string $query, int $posTenant = 0, int $posBranch = 0, int $excludeRecipeId = 0, int $limit = 20): array
+    {
+        $limit = $this->limit($limit);
+        $items = $this->searchItems($conn, $query, 'component', $limit);
+        $recipes = $this->searchSubRecipes($conn, $query, $posTenant, $posBranch, $excludeRecipeId, $limit);
+
+        $components = [];
+        foreach ($items as $item) {
+            $itemType = strtolower((string) ($item['item_type'] ?? 'unknown'));
+            $lineType = $itemType === 'packaging' ? 'packaging' : 'ingredient';
+            $components[] = array_merge($item, [
+                'component_kind' => 'item',
+                'component_type' => $this->componentTypeLabel($itemType),
+                'line_type' => $lineType,
+            ]);
+        }
+        foreach ($recipes as $recipe) {
+            $components[] = array_merge($recipe, [
+                'component_kind' => 'prepared_recipe',
+                'component_type' => 'Prepared recipe',
+                'line_type' => 'sub_recipe',
+            ]);
+        }
+
+        return array_slice($components, 0, $limit);
+    }
+
+    private function componentTypeLabel(string $itemType): string
+    {
+        if ($itemType === 'ingredient') {
+            return 'Ingredient';
+        }
+        if ($itemType === 'packaging') {
+            return 'Packaging';
+        }
+        if ($itemType === 'sellable') {
+            return 'Item';
+        }
+
+        return 'Component';
+    }
+
     private function itemRow(array $row): array
     {
         $name = (string) ($row['iname'] ?? '');
@@ -230,6 +280,9 @@ WHERE TABLE_SCHEMA = DATABASE()
         }
         if ($kind === 'stock_component') {
             return ['ingredient', 'packaging'];
+        }
+        if ($kind === 'component') {
+            return ['ingredient', 'packaging', 'sellable'];
         }
 
         return [];

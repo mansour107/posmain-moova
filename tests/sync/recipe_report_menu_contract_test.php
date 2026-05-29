@@ -3,6 +3,7 @@
 $root = dirname(__DIR__, 2);
 $reports = recipeReportMenuSource($root . '/reports.php');
 $salesReports = recipeReportMenuSource($root . '/sales-reports.php');
+$sidebar = recipeReportMenuSource($root . '/includes/sidebar.php');
 $permissions = recipeReportMenuSource($root . '/includes/recipe_report_permissions.php');
 require_once $root . '/includes/recipe_report_permissions.php';
 
@@ -31,6 +32,9 @@ foreach ([
 recipeReportMenuAssert(strpos($salesReports, "require_once __DIR__ . '/includes/recipe_report_permissions.php'") !== false, 'sales reports should load shared recipe link permissions');
 recipeReportMenuAssert(strpos($salesReports, 'posmain_recipe_report_can_view_sales_reconciliation($conn)') !== false, 'sales reports should calculate recipe reconciliation visibility');
 recipeReportMenuAssert(strpos($salesReports, '$canViewRecipeSalesReconciliation') !== false, 'sales reports should gate recipe reconciliation link');
+recipeReportMenuAssert(strpos($sidebar, 'recipe_manage.php') !== false, 'sidebar inventory menu should link recipe management');
+recipeReportMenuAssert(strpos($sidebar, 'الوصفات') !== false, 'sidebar inventory menu should show Arabic recipe management label');
+recipeReportMenuAssert(strpos($sidebar, '$lang_inventory_management') < strpos($sidebar, 'الوصفات'), 'recipe management should be under inventory management in the sidebar');
 
 $adminLinks = posmain_recipe_report_link_permissions(null, ['login' => 1, 'userid' => 1, 'usrole' => 1], []);
 recipeReportMenuAssert(!in_array(false, $adminLinks, true), 'admin should see every recipe report menu link');
