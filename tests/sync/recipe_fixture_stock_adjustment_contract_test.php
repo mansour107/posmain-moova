@@ -11,20 +11,21 @@ exec('php ' . escapeshellarg($toolPath) . ' --help', $helpLines, $helpCode);
 $help = implode("\n", $helpLines);
 
 recipeFixtureStockAdjustmentContractAssert($helpCode === 0, 'fixture stock adjustment help should exit cleanly');
-recipeFixtureStockAdjustmentContractAssert(strpos($help, 'RecipeWasteAdjustmentService') !== false, 'help should state the shared service write path');
+recipeFixtureStockAdjustmentContractAssert(strpos($help, 'InventoryAdjustmentService') !== false, 'help should state the shared inventory service write path');
 recipeFixtureStockAdjustmentContractAssert(strpos($help, 'Dry-run is the default') !== false, 'help should state dry-run default');
 
 foreach ([
-    'RecipeWasteAdjustmentService',
+    'InventoryAdjustmentService',
     'recordAdjustment',
     'recipe_fixture_stock_adjustment_refuses_production_runtime',
     'recipe_fixture_stock_adjustment_hosted_staging_requires_explicit_allow',
     'recipe_fixture_stock_adjustment_requires_writable_recipe_mode',
+    'recipe_fixture_stock_adjustment_requires_writable_inventory_ledger',
     'recipe_fixture_stock_adjustment_refuses_non_fixture_item',
     'Recipe QA',
     'RQA-',
     'idempotency_replayed',
-    "!empty(\$first['existing'])",
+    "!empty(\$first['idempotent_replay'])",
     'recipe_fixture_stock_adjustment_replay_not_idempotent',
     'recipe_fixture_stock_adjustment_balance_not_increased',
 ] as $needle) {
@@ -37,6 +38,7 @@ foreach ([
     'DELETE FROM inventory_item_balances',
     'new PosOrderMutationService',
     'record_outbox',
+    'new RecipeWasteAdjustmentService',
 ] as $forbidden) {
     recipeFixtureStockAdjustmentContractAssert(strpos($tool, $forbidden) === false, 'fixture stock adjustment tool must not bypass service/write unrelated surfaces: ' . $forbidden);
 }

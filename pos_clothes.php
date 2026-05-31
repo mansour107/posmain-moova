@@ -1,4 +1,5 @@
-<?php 
+<?php
+require_once __DIR__ . '/includes/csrf.php';
 include('includes/pos_simple_header.php');
 
 $posdate = date('Y-m-d', strtotime('-4 hours'));
@@ -17,6 +18,7 @@ if(isset($_SESSION['success_message'])){
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>نظام نقاط البيع - الملابس</title>
+    <?= csrf_meta_tag('pos_browser', 'posmain-csrf-token') ?>
     
     <link href="assets/libs/bootstrap.min.css" rel="stylesheet">
     <link href="assets/libs/fontawesome.min.css" rel="stylesheet">

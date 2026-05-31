@@ -102,7 +102,7 @@ recipePilotEvidenceAssert(strpos($service, 'recipe_consumption') !== false, 'pil
 recipePilotEvidenceAssert(strpos($service, 'Migrated runtime write smoke') !== false, 'pilot evidence service should require migrated write smoke QA checklist');
 recipePilotEvidenceAssert(strpos($service, 'tools/recipe_pos_grid_availability_surface_smoke.php') !== false, 'pilot evidence service should accept POS grid availability surface smoke evidence command');
 recipePilotEvidenceAssert(strpos($service, 'recipe_production.php') !== false, 'pilot evidence service should require production batch proof token');
-recipePilotEvidenceAssert(strpos($service, 'recipe_waste.php') !== false, 'pilot evidence service should require waste/adjustment proof token');
+recipePilotEvidenceAssert(strpos($service, 'inventory_adjustments.php') !== false, 'pilot evidence service should require Inventory module waste/adjustment proof token');
 recipePilotEvidenceAssert(strpos($service, 'ajax/refund_order.php') !== false, 'pilot evidence service should require paid reversal proof token');
 recipePilotEvidenceAssert(strpos($service, 'tools/recipe_hosted_schema_preflight.php') !== false, 'pilot evidence service should require hosted schema proof token');
 recipePilotEvidenceAssert(strpos($service, 'recipe_pilot_evidence_mode_mismatch') !== false, 'pilot evidence service should reject evidence from a different recipe mode');

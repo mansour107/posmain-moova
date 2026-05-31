@@ -226,9 +226,9 @@ function recipeOperatorSurfaceSmokePages(): array
         ],
         [
             'name' => 'waste',
-            'path' => 'recipe_waste.php',
-            'heading' => 'Recipe Waste and Stock Adjustments',
-            'mode_off_message' => 'Recipe waste and stock adjustment writes are disabled by the current feature flags. Mode: off.',
+            'path' => 'inventory_adjustments.php',
+            'heading' => 'الهالك والتسويات',
+            'mode_off_message' => 'هذه الشاشة جاهزة، لكن التسجيل يحتاج وضع bridge أو live للمخزون.',
         ],
         [
             'name' => 'audit',

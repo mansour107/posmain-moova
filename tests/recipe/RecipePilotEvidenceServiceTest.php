@@ -129,6 +129,7 @@ class RecipePilotEvidenceServiceTest extends TestCase
         $this->assertStringContainsString('Modifier substitution recipe evidence: php tools/recipe_management_surface_smoke.php', $template);
         $this->assertStringContainsString('Production batch evidence: php tools/recipe_stock_operations_surface_smoke.php', $template);
         $this->assertStringContainsString('Waste and stock adjustment evidence: php tools/recipe_stock_operations_surface_smoke.php', $template);
+        $this->assertStringContainsString('inventory_adjustments.php operator review', $template);
         $this->assertStringContainsString('Isolated runtime proofs: php tools/recipe_runtime_proof_suite.php --include-availability --json', $template);
         $this->assertStringContainsString('- [ ] Recipe management UI smoke', $template);
         $this->assertStringContainsString('Modifier substitution recipe evidence: pending', $template);
@@ -410,6 +411,7 @@ class RecipePilotEvidenceServiceTest extends TestCase
         $this->assertStringContainsString('tools/recipe_management_surface_smoke.php', $hints['Modifier substitution recipe evidence']);
         $this->assertStringContainsString('tools/recipe_stock_operations_surface_smoke.php', $hints['Production batch evidence']);
         $this->assertStringContainsString('tools/recipe_stock_operations_surface_smoke.php', $hints['Waste and stock adjustment evidence']);
+        $this->assertStringContainsString('inventory_adjustments.php', $hints['Waste and stock adjustment evidence']);
         $this->assertArrayHasKey('Recipe availability and menu sync evidence', $hints);
         $this->assertArrayHasKey('Manager recipe stock override evidence', $hints);
         $this->assertArrayHasKey('Moova/Cofe recipe replay evidence', $hints);
@@ -719,7 +721,7 @@ class RecipePilotEvidenceServiceTest extends TestCase
             'Recipe report export and role QA evidence' => 'tools/recipe_report_export_smoke.php -> recipe-report-export-smoke-contract-ok with CSV export reviewed',
             'Modifier substitution recipe evidence' => 'recipe_manage.php modifier substitution oat milk recipe v4 activated and previewed',
             'Production batch evidence' => 'recipe_production.php production batch 501 previewed and committed by operator QA',
-            'Waste and stock adjustment evidence' => 'recipe_waste.php waste movement 601 and stock adjustment 602 reviewed',
+            'Waste and stock adjustment evidence' => 'inventory_adjustments.php waste movement 601 and stock adjustment 602 reviewed',
             'Paid refund/void evidence' => 'ajax/refund_order.php paid order 1003 refund and void dialogs exercised with policy selection',
             'Recipe rollback evidence' => 'POSMAIN_RECIPE_MODE=off rollback path documented',
             'Recipe COGS accountant evidence' => 'accountant reviewed COGS journal sample 2001',

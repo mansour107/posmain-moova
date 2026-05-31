@@ -2,6 +2,11 @@
 
 use PHPUnit\Framework\TestCase;
 
+if (PHP_SAPI === 'cli' && realpath($_SERVER['SCRIPT_FILENAME'] ?? '') === __FILE__ && !class_exists(TestCase::class)) {
+    echo "pos-order-outbox-event-service-skipped-phpunit-unavailable\n";
+    exit(0);
+}
+
 require_once __DIR__ . '/../../config/app_config.php';
 require_once __DIR__ . '/../../classes/Sync/BranchIdentity.php';
 require_once __DIR__ . '/../../classes/Sync/BranchSecretProvider.php';

@@ -157,22 +157,24 @@ function recipeStockOperationsSurfaceSmokeProductionPage(string $baseUrl, string
     $warnings = [];
 
     $baseSnippets = [
-        'Recipe Production Batches',
-        'Create Draft Batch',
+        'تشغيل الإنتاج',
+        'مسودة إنتاج جديدة',
         'name="action" value="create_draft"',
         'name="planned_output_qty"',
     ];
-    $modeOffSnippet = 'Production batch writes are disabled by the current recipe feature flags';
+    $modeOffSnippet = 'أوامر الإنتاج متوقفة من إعدادات الوصفات الحالية';
     $selectedBatchSnippets = [
-        'Commit Batch',
-        'Cancel Draft',
+        'تأكيد الإنتاج',
+        'إلغاء المسودة',
         'name="action" value="commit"',
         'name="actual_output_qty"',
         'name="variance_reason"',
         'name="action" value="cancel"',
         'name="cancel_reason"',
-        'Input Preview',
-        'Committed Lines',
+        'معاينة المدخلات',
+        'حركات الإنتاج المثبتة',
+        'المتاح',
+        'العجز',
     ];
 
     $missingBaseSnippets = [];
@@ -226,23 +228,25 @@ function recipeStockOperationsSurfaceSmokeProductionPage(string $baseUrl, string
 
 function recipeStockOperationsSurfaceSmokeWastePage(string $baseUrl, string $cookie, int $timeout): array
 {
-    $url = $baseUrl . '/recipe_waste.php';
+    $url = $baseUrl . '/inventory_adjustments.php?from=recipe_stock_smoke';
     $fetch = recipeStockOperationsSurfaceSmokeFetch($url, $cookie, $timeout);
     $body = (string) ($fetch['body'] ?? '');
     $blockers = recipeStockOperationsSurfaceSmokeCommonBlockers($fetch, $body);
     $warnings = [];
     $expectedSnippets = [
-        'Recipe Waste and Stock Adjustments',
-        'name="action" value="record_waste"',
-        'name="waste_uuid"',
-        'name="action" value="record_adjustment"',
-        'name="adjustment_uuid"',
-        'Search ingredient, packaging, or prepared item',
-        'Search stock item',
-        'Source',
-        'recipe-lookup-input',
+        'الهالك والتسويات',
+        'data-adjustment-action="waste"',
+        'data-adjustment-action="increase"',
+        'data-adjustment-action="decrease"',
+        'inventory-adjustment-csrf',
+        'inventoryAdjustmentReasonCode',
+        'inventoryAdjustmentPhoto',
+        'ajax/inventory_adjustment.php',
+        'آخر العمليات',
+        'المتوفر',
+        'على اليد',
     ];
-    $modeOffSnippet = 'Recipe waste and stock adjustment writes are disabled by the current feature flags';
+    $modeOffSnippet = 'هذه الشاشة جاهزة، لكن التسجيل يحتاج وضع bridge أو live للمخزون';
     $missingSnippets = [];
 
     if ($blockers === []) {

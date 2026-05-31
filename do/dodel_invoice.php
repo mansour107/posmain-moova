@@ -19,6 +19,7 @@ $usid = $_SESSION['userid'];
 // تضمين فئات النظام الجديد
 require_once('../classes/InvoiceElementFactory.php');
 require_once('../classes/Recipe/LegacyInvoiceRecipeLifecycleBridge.php');
+require_once('../classes/Inventory/InventoryInvoiceBridge.php');
 
 // تعريف ثوابت أنواع الفواتير
 define('INVOICE_TYPES', [
@@ -126,6 +127,22 @@ $config = getInvoiceConfig($pro_tybe);
 // بدء المعاملة لضمان تماسك البيانات
 try {
     $conn->begin_transaction();
+    $inventoryInvoiceBridge = new InventoryInvoiceBridge();
+    $inventoryDeleteBridgeLines = [];
+    $stmt = $conn->prepare("
+        SELECT id, item_id, u_val, qty_in, qty_out, cost_price, det_store
+        FROM fat_details
+        WHERE fatid = ?
+          AND isdeleted = 0
+    ");
+    $stmt->bind_param('i', $id);
+    $stmt->execute();
+    $detailResult = $stmt->get_result();
+    while ($detailRow = $detailResult->fetch_assoc()) {
+        $inventoryDeleteBridgeLines[] = $detailRow;
+    }
+    $stmt->close();
+
     if ($pro_tybe === INVOICE_TYPES['POS']) {
         $recipeLifecycleBridge = new LegacyInvoiceRecipeLifecycleBridge();
         $recipeDeleteChannel = 'pos';
@@ -143,6 +160,30 @@ try {
             'created_by' => (int) $usid,
             'refund_uuid' => 'legacy-invoice-delete:' . $id,
         ]);
+    }
+
+    if ($inventoryDeleteBridgeLines) {
+        try {
+            $inventoryBridgeResult = $inventoryInvoiceBridge->recordInvoiceReversalLines(
+                $conn,
+                (int) $pro_tybe,
+                (int) $id,
+                $inventoryDeleteBridgeLines,
+                'invoice_deleted',
+                [
+                    'store_id' => (int) ($invoice['store_id'] ?? 0),
+                    'user_id' => (int) $usid,
+                    'channel' => (int) $pro_tybe === INVOICE_TYPES['POS'] ? 'pos' : 'invoice',
+                    'order_type' => strtolower(trim((string) ($invoice['order_type'] ?? 'takeaway'))),
+                    'source_system' => 'legacy_dodel_invoice',
+                ]
+            );
+            if (!empty($inventoryBridgeResult['errors'])) {
+                error_log('Inventory invoice delete bridge shadow errors: ' . json_encode($inventoryBridgeResult['errors'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+            }
+        } catch (Throwable $inventoryBridgeException) {
+            error_log('Inventory invoice delete bridge shadow failed: ' . $inventoryBridgeException->getMessage());
+        }
     }
     
     // حذف تفاصيل الفاتورة

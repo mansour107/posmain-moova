@@ -2,6 +2,11 @@
 
 use PHPUnit\Framework\TestCase;
 
+if (PHP_SAPI === 'cli' && realpath($_SERVER['SCRIPT_FILENAME'] ?? '') === __FILE__ && !class_exists(TestCase::class)) {
+    echo "pos-order-service-counter-skipped-phpunit-unavailable\n";
+    exit(0);
+}
+
 require_once __DIR__ . '/../../classes/PosOrderService.php';
 require_once __DIR__ . '/../../classes/Sync/SchemaManager.php';
 

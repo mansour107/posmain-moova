@@ -96,6 +96,7 @@ if (!function_exists('auth_guard_permission_map')) {
             'pos.cashdrawer.count' => ['edit_payment', 'show_payment'],
             'menu.edit' => ['add_items', 'edit_items', 'add_item_groups', 'edit_item_groups'],
             'inventory.edit' => ['add_stock', 'edit_stock', 'add_items', 'edit_items'],
+            'inventory.approve' => ['delete_stock'],
             'reports.view' => ['sid_reports', 'show_gl_reports', 'show_hr_report', 'show_payroll_report'],
             'accounting.view' => ['sid_accounts', 'show_gl_reports', 'show_journals'],
             'users.manage' => ['add_users', 'edit_users', 'delete_users'],

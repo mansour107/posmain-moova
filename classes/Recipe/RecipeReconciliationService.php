@@ -13,9 +13,19 @@ class RecipeReconciliationService
         $legacyVsFat = $this->decimalSubtract($legacyQty, $fatBalance);
         $ledgerVsBalance = $this->decimalSubtract($ledgerBalance, $balanceQty);
         $legacyVsLedger = $this->decimalSubtract($legacyQty, $ledgerBalance);
-        $hasDifference = $this->decimalCompare($legacyVsFat, '0') !== 0
-            || $this->decimalCompare($ledgerVsBalance, '0') !== 0
-            || $this->decimalCompare($legacyVsLedger, '0') !== 0;
+        $differenceReasons = $this->differenceReasons(
+            $item,
+            $storeId,
+            $legacyQty,
+            $fatBalance,
+            $ledgerBalance,
+            $balanceQty,
+            $legacyVsFat,
+            $ledgerVsBalance,
+            $legacyVsLedger,
+            $balanceRow
+        );
+        $hasDifference = !empty($differenceReasons);
 
         return [
             'pos_tenant' => $posTenant,
@@ -24,6 +34,8 @@ class RecipeReconciliationService
             'item_id' => $itemId,
             'item_code' => (string) ($item['code'] ?? ''),
             'item_name' => (string) ($item['iname'] ?? ''),
+            'item_type' => (string) ($item['item_type'] ?? ''),
+            'track_stock' => array_key_exists('track_stock', $item) ? (int) $item['track_stock'] : null,
             'legacy_qty' => $legacyQty,
             'fat_details_qty' => $fatBalance,
             'ledger_qty' => $ledgerBalance,
@@ -32,7 +44,9 @@ class RecipeReconciliationService
             'ledger_vs_balance_difference' => $ledgerVsBalance,
             'legacy_vs_ledger_difference' => $legacyVsLedger,
             'has_difference' => $hasDifference,
-            'recommended_action' => $this->recommendedAction($legacyVsFat, $ledgerVsBalance, $legacyVsLedger),
+            'difference_reasons' => $differenceReasons,
+            'difference_reason' => implode(',', $differenceReasons),
+            'recommended_action' => $this->recommendedAction($legacyVsFat, $ledgerVsBalance, $legacyVsLedger, $differenceReasons),
             'last_movement_id' => isset($balanceRow['last_movement_id']) ? (int) $balanceRow['last_movement_id'] : null,
         ];
     }
@@ -41,7 +55,7 @@ class RecipeReconciliationService
     {
         $posTenant = (int) ($filters['pos_tenant'] ?? 0);
         $posBranch = (int) ($filters['pos_branch'] ?? 0);
-        $storeId = (int) ($filters['store_id'] ?? 0);
+        $storeId = $this->requestedStoreId($filters);
         $itemIds = $filters['item_ids'] ?? [];
         if (!$itemIds) {
             $itemIds = $this->candidateItemIds($conn, $posTenant, $posBranch, $storeId);
@@ -70,14 +84,18 @@ class RecipeReconciliationService
         foreach ([
             ['myitems', 'SELECT id AS item_id FROM myitems'],
             ['fat_details', 'SELECT DISTINCT item_id FROM fat_details WHERE item_id IS NOT NULL'],
-            ['inventory_movements', 'SELECT DISTINCT item_id FROM inventory_movements WHERE pos_tenant = ? AND pos_branch = ? AND store_id = ?'],
-            ['inventory_item_balances', 'SELECT DISTINCT item_id FROM inventory_item_balances WHERE pos_tenant = ? AND pos_branch = ? AND store_id = ?'],
+            ['inventory_movements', $storeId > 0
+                ? 'SELECT DISTINCT item_id FROM inventory_movements WHERE pos_tenant = ? AND pos_branch = ? AND store_id = ?'
+                : 'SELECT DISTINCT item_id FROM inventory_movements WHERE pos_tenant = ? AND pos_branch = ?'],
+            ['inventory_item_balances', $storeId > 0
+                ? 'SELECT DISTINCT item_id FROM inventory_item_balances WHERE pos_tenant = ? AND pos_branch = ? AND store_id = ?'
+                : 'SELECT DISTINCT item_id FROM inventory_item_balances WHERE pos_tenant = ? AND pos_branch = ?'],
         ] as $source) {
             [$table, $sql] = $source;
             if (!$this->tableExists($conn, $table)) {
                 continue;
             }
-            $params = strpos($sql, '?') !== false ? [$posTenant, $posBranch, $storeId] : [];
+            $params = strpos($sql, '?') !== false ? ($storeId > 0 ? [$posTenant, $posBranch, $storeId] : [$posTenant, $posBranch]) : [];
             foreach ($this->fetchAll($conn, $sql, $params) as $row) {
                 $id = (int) ($row['item_id'] ?? 0);
                 if ($id > 0) {
@@ -96,7 +114,7 @@ class RecipeReconciliationService
         }
 
         $columns = ['id'];
-        foreach (['code', 'iname'] as $column) {
+        foreach (['code', 'iname', 'item_type', 'track_stock'] as $column) {
             if ($this->columnExists($conn, 'myitems', $column)) {
                 $columns[] = $column;
             }
@@ -135,7 +153,7 @@ class RecipeReconciliationService
             $conditions[] = 'branch = ?';
             $params[] = $posBranch;
         }
-        if ($this->columnExists($conn, 'fat_details', 'det_store')) {
+        if ($storeId > 0 && $this->columnExists($conn, 'fat_details', 'det_store')) {
             $conditions[] = 'det_store = ?';
             $params[] = $storeId;
         }
@@ -170,10 +188,13 @@ class RecipeReconciliationService
         $conditions = [
             'pos_tenant = ?',
             'pos_branch = ?',
-            'store_id = ?',
             'item_id = ?',
         ];
-        $params = [$posTenant, $posBranch, $storeId, $itemId];
+        $params = [$posTenant, $posBranch, $itemId];
+        if ($storeId > 0) {
+            $conditions[] = 'store_id = ?';
+            $params[] = $storeId;
+        }
         $dateFilter = $this->dateFilter($filters);
         if ($dateFilter['from'] !== null) {
             $conditions[] = 'created_at >= ?';
@@ -205,6 +226,10 @@ class RecipeReconciliationService
         if (!$this->tableExists($conn, 'inventory_item_balances')) {
             return [];
         }
+        if ($storeId <= 0) {
+            return $this->aggregateBalanceRow($conn, $posTenant, $posBranch, $itemId);
+        }
+
         return $this->fetchOne(
             $conn,
             "
@@ -217,6 +242,36 @@ WHERE pos_tenant = ?
 LIMIT 1",
             [$posTenant, $posBranch, $storeId, $itemId]
         ) ?: [];
+    }
+
+    private function aggregateBalanceRow(mysqli $conn, int $posTenant, int $posBranch, int $itemId): array
+    {
+        $row = $this->fetchOne(
+            $conn,
+            "
+SELECT
+  COALESCE(SUM(qty_on_hand), 0) AS qty_on_hand,
+  COALESCE(SUM(qty_reserved), 0) AS qty_reserved,
+  COALESCE(SUM(qty_available), 0) AS qty_available,
+  MAX(last_movement_id) AS last_movement_id,
+  COUNT(*) AS balance_scope_count
+FROM inventory_item_balances
+WHERE pos_tenant = ?
+  AND pos_branch = ?
+  AND item_id = ?",
+            [$posTenant, $posBranch, $itemId]
+        );
+
+        return $row ?: [];
+    }
+
+    private function requestedStoreId(array $filters): int
+    {
+        if (!array_key_exists('store_id', $filters) && !array_key_exists('store', $filters)) {
+            return 0;
+        }
+
+        return max(0, (int) ($filters['store_id'] ?? $filters['store'] ?? 0));
     }
 
     private function tableExists(mysqli $conn, string $table): bool
@@ -268,8 +323,59 @@ WHERE TABLE_SCHEMA = DATABASE()
         return $text;
     }
 
-    private function recommendedAction(string $legacyVsFat, string $ledgerVsBalance, string $legacyVsLedger): string
+    private function differenceReasons(
+        array $item,
+        int $storeId,
+        string $legacyQty,
+        string $fatBalance,
+        string $ledgerBalance,
+        string $balanceQty,
+        string $legacyVsFat,
+        string $ledgerVsBalance,
+        string $legacyVsLedger,
+        array $balanceRow
+    ): array {
+        $reasons = [];
+        $itemType = strtolower(trim((string) ($item['item_type'] ?? '')));
+        $trackStock = array_key_exists('track_stock', $item) ? (int) $item['track_stock'] : 1;
+        $nonStockItem = $trackStock === 0 || $itemType === 'service';
+
+        if ($nonStockItem && ($this->isNonZero($fatBalance) || $this->isNonZero($ledgerBalance) || $this->isNonZero($balanceQty))) {
+            $reasons[] = 'non_stock_item_has_stock_movement';
+        }
+        if ($storeId <= 0 && $this->decimalCompare($legacyVsFat, '0') !== 0) {
+            $reasons[] = 'legacy_summary_mismatch';
+        }
+        if ($this->decimalCompare($ledgerVsBalance, '0') !== 0) {
+            $reasons[] = empty($balanceRow) ? 'missing_balance_row' : 'ledger_balance_mismatch';
+        }
+        $stockTruthDifference = $storeId > 0
+            ? $this->decimalSubtract($fatBalance, $ledgerBalance)
+            : $legacyVsLedger;
+        if (!$nonStockItem && $this->decimalCompare($stockTruthDifference, '0') !== 0) {
+            if ($this->isNonZero($fatBalance) && !$this->isNonZero($ledgerBalance)) {
+                $reasons[] = 'missing_bridge_movement';
+            } elseif (!$this->isNonZero($fatBalance) && $this->isNonZero($ledgerBalance)) {
+                $reasons[] = 'deleted_fat_detail_or_ledger_only';
+            } else {
+                $reasons[] = 'movement_scope_or_quantity_mismatch';
+            }
+        }
+
+        return array_values(array_unique($reasons));
+    }
+
+    private function recommendedAction(string $legacyVsFat, string $ledgerVsBalance, string $legacyVsLedger, array $reasons = []): string
     {
+        if (in_array('non_stock_item_has_stock_movement', $reasons, true)) {
+            return 'Review item stock policy; service or non-stock items should not carry stock movements.';
+        }
+        if (in_array('missing_bridge_movement', $reasons, true)) {
+            return 'Find the legacy stock path that has not been bridged before enabling bridge/live mode.';
+        }
+        if (in_array('deleted_fat_detail_or_ledger_only', $reasons, true)) {
+            return 'Review deleted legacy details and ledger-only movements before cutover.';
+        }
         if ($this->decimalCompare($ledgerVsBalance, '0') !== 0) {
             return 'Review inventory_item_balances against inventory_movements before enabling recipe stock.';
         }
@@ -281,6 +387,11 @@ WHERE TABLE_SCHEMA = DATABASE()
         }
 
         return 'No action required.';
+    }
+
+    private function isNonZero(string $value): bool
+    {
+        return $this->decimalCompare($value, '0') !== 0;
     }
 
     private function decimalZero(int $scale = 6): string

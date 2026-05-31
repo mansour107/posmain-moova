@@ -1,12 +1,4 @@
 <?php
-include('../../includes/connect.php');
-// Get the row ID from the request
-$rowId = $_GET['id'];
+require_once __DIR__ . '/../../classes/Inventory/InventoryRetiredLegacyEndpoint.php';
 
-$sql = "DELETE FROM fat_details WHERE id = $rowId";
-$conn->query($sql);
-if ($conn->query($sql) === TRUE) {
-    echo "Row deleted successfully";
-} else {
-    echo "Error deleting row: " . $conn->error;
-}
+InventoryRetiredLegacyEndpoint::respond('hard_delete_fat_details_retired');

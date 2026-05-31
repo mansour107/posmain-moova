@@ -1,5 +1,7 @@
 <?php
 require_once __DIR__ . '/includes/session_bootstrap.php';
+require_once __DIR__ . '/config/app_config.php';
+require_once __DIR__ . '/classes/Inventory/InventoryLegacyMirrorService.php';
 if (!isset($_SESSION['login'])) {
     echo json_encode(['success' => false, 'message' => 'غير مصرح']);
     exit;
@@ -7,6 +9,16 @@ if (!isset($_SESSION['login'])) {
 
 include('includes/connect.php');
 header('Content-Type: application/json');
+
+$save_start_balance_config_for_guard = function_exists('posmain_app_config') ? posmain_app_config() : [];
+if (strtolower((string) ($save_start_balance_config_for_guard['inventory']['ledger_mode'] ?? 'off')) === 'live') {
+    echo json_encode([
+        'success' => false,
+        'message' => 'تم إيقاف شاشة الرصيد الافتتاحي القديمة بعد تفعيل نظام المخزون الجديد',
+        'code' => 'opening_balance_legacy_workflow_retired_in_live_inventory_mode',
+    ], JSON_UNESCAPED_UNICODE);
+    exit;
+}
 
 const POSMAIN_OPENING_BALANCE_PRO_TYPE = 14;
 
@@ -282,12 +294,12 @@ function posmain_start_balance_create_header(mysqli $conn, int $store_id): int
 
 function posmain_start_balance_update_item_summary(mysqli $conn, int $item_id, float $qty, float $price): bool
 {
-    $stmt = $conn->prepare('UPDATE myitems SET itmqty = ?, cost_price = ? WHERE id = ? AND isdeleted = 0');
-    $stmt->bind_param('ddi', $qty, $price, $item_id);
-    $ok = $stmt->execute();
-    $stmt->close();
-
-    return $ok;
+    return (new InventoryLegacyMirrorService())->refreshItemOpeningBalanceSummary(
+        $conn,
+        $item_id,
+        number_format($qty, 6, '.', ''),
+        number_format($price, 6, '.', '')
+    );
 }
 
 function posmain_start_balance_save_recipe_ledger(mysqli $conn, int $item_id, int $store_id, float $desired_qty, float $price): bool
@@ -313,10 +325,41 @@ function posmain_start_balance_save_recipe_ledger(mysqli $conn, int $item_id, in
     $total_cost = $movement_qty * $price;
     $idempotency_key = "items-start-balance:tenant:$pos_tenant:branch:$pos_branch:store:$store_id:item:$item_id";
     $source_uuid = "items-start-balance:$pos_tenant:$pos_branch:$store_id:$item_id";
+    $movement_integrity = posmain_start_balance_recipe_movement_integrity(
+        $pos_tenant,
+        $pos_branch,
+        $store_id,
+        $item_id,
+        $source_uuid,
+        $qty_in,
+        $qty_out,
+        $price,
+        $total_cost,
+        $desired_qty,
+        $non_opening_qty,
+        $opening_qty
+    );
+    $has_integrity_columns = posmain_start_balance_column_exists($conn, 'inventory_movements', 'payload_hash')
+        && posmain_start_balance_column_exists($conn, 'inventory_movements', 'metadata_json');
 
     $movement_id = posmain_start_balance_find_recipe_opening_movement($conn, $pos_tenant, $pos_branch, $store_id, $idempotency_key);
     if ($movement_id > 0) {
-        $stmt = $conn->prepare('
+        if ($has_integrity_columns) {
+            $stmt = $conn->prepare('
+            UPDATE inventory_movements
+            SET branch_uuid = ?,
+                qty_in = ?,
+                qty_out = ?,
+                unit_cost = ?,
+                total_cost = ?,
+                source_uuid = ?,
+                payload_hash = ?,
+                metadata_json = ?,
+                created_by = ?
+            WHERE id = ?
+        ');
+        } else {
+            $stmt = $conn->prepare('
             UPDATE inventory_movements
             SET branch_uuid = ?,
                 qty_in = ?,
@@ -327,21 +370,38 @@ function posmain_start_balance_save_recipe_ledger(mysqli $conn, int $item_id, in
                 created_by = ?
             WHERE id = ?
         ');
+        }
         $qty_in_text = posmain_start_balance_decimal($qty_in);
         $qty_out_text = posmain_start_balance_decimal($qty_out);
         $price_text = posmain_start_balance_decimal($price);
         $total_cost_text = posmain_start_balance_decimal($total_cost);
-        $stmt->bind_param(
-            'ssssssii',
-            $branch_uuid_value,
-            $qty_in_text,
-            $qty_out_text,
-            $price_text,
-            $total_cost_text,
-            $source_uuid,
-            $created_by,
-            $movement_id
-        );
+        if ($has_integrity_columns) {
+            $stmt->bind_param(
+                'ssssssssii',
+                $branch_uuid_value,
+                $qty_in_text,
+                $qty_out_text,
+                $price_text,
+                $total_cost_text,
+                $source_uuid,
+                $movement_integrity['payload_hash'],
+                $movement_integrity['metadata_json'],
+                $created_by,
+                $movement_id
+            );
+        } else {
+            $stmt->bind_param(
+                'ssssssii',
+                $branch_uuid_value,
+                $qty_in_text,
+                $qty_out_text,
+                $price_text,
+                $total_cost_text,
+                $source_uuid,
+                $created_by,
+                $movement_id
+            );
+        }
         $ok = $stmt->execute();
         $stmt->close();
         if (!$ok) {
@@ -353,32 +413,64 @@ function posmain_start_balance_save_recipe_ledger(mysqli $conn, int $item_id, in
         $qty_out_text = posmain_start_balance_decimal($qty_out);
         $price_text = posmain_start_balance_decimal($price);
         $total_cost_text = posmain_start_balance_decimal($total_cost);
-        $stmt = $conn->prepare('
+        if ($has_integrity_columns) {
+            $stmt = $conn->prepare('
+            INSERT INTO inventory_movements
+                (movement_uuid, pos_tenant, pos_branch, branch_uuid, store_id, item_id, movement_type, source_type, source_uuid, qty_in, qty_out, unit_cost, total_cost, idempotency_key, payload_hash, metadata_json, created_by)
+            VALUES
+                (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ');
+        } else {
+            $stmt = $conn->prepare('
             INSERT INTO inventory_movements
                 (movement_uuid, pos_tenant, pos_branch, branch_uuid, store_id, item_id, movement_type, source_type, source_uuid, qty_in, qty_out, unit_cost, total_cost, idempotency_key, created_by)
             VALUES
                 (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ');
+        }
         $movement_type = 'opening_balance';
         $source_type = 'manual';
-        $stmt->bind_param(
-            'siisiissssssssi',
-            $movement_uuid,
-            $pos_tenant,
-            $pos_branch,
-            $branch_uuid_value,
-            $store_id,
-            $item_id,
-            $movement_type,
-            $source_type,
-            $source_uuid,
-            $qty_in_text,
-            $qty_out_text,
-            $price_text,
-            $total_cost_text,
-            $idempotency_key,
-            $created_by
-        );
+        if ($has_integrity_columns) {
+            $stmt->bind_param(
+                'siisiissssssssssi',
+                $movement_uuid,
+                $pos_tenant,
+                $pos_branch,
+                $branch_uuid_value,
+                $store_id,
+                $item_id,
+                $movement_type,
+                $source_type,
+                $source_uuid,
+                $qty_in_text,
+                $qty_out_text,
+                $price_text,
+                $total_cost_text,
+                $idempotency_key,
+                $movement_integrity['payload_hash'],
+                $movement_integrity['metadata_json'],
+                $created_by
+            );
+        } else {
+            $stmt->bind_param(
+                'siisiissssssssi',
+                $movement_uuid,
+                $pos_tenant,
+                $pos_branch,
+                $branch_uuid_value,
+                $store_id,
+                $item_id,
+                $movement_type,
+                $source_type,
+                $source_uuid,
+                $qty_in_text,
+                $qty_out_text,
+                $price_text,
+                $total_cost_text,
+                $idempotency_key,
+                $created_by
+            );
+        }
         $ok = $stmt->execute();
         $movement_id = (int) $conn->insert_id;
         $stmt->close();
@@ -415,6 +507,71 @@ function posmain_start_balance_table_exists(mysqli $conn, string $table): bool
     $stmt->close();
 
     return $exists;
+}
+
+function posmain_start_balance_column_exists(mysqli $conn, string $table, string $column): bool
+{
+    $stmt = $conn->prepare('
+        SELECT 1
+        FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = ?
+          AND COLUMN_NAME = ?
+        LIMIT 1
+    ');
+    $stmt->bind_param('ss', $table, $column);
+    $stmt->execute();
+    $exists = $stmt->get_result()->num_rows > 0;
+    $stmt->close();
+
+    return $exists;
+}
+
+function posmain_start_balance_recipe_movement_integrity(
+    int $pos_tenant,
+    int $pos_branch,
+    int $store_id,
+    int $item_id,
+    string $source_uuid,
+    float $qty_in,
+    float $qty_out,
+    float $unit_cost,
+    float $total_cost,
+    float $desired_qty,
+    float $non_opening_qty,
+    float $opening_qty
+): array {
+    $payload = [
+        'scope' => [
+            'pos_tenant' => $pos_tenant,
+            'pos_branch' => $pos_branch,
+            'store_id' => $store_id,
+        ],
+        'item_id' => $item_id,
+        'movement_type' => 'opening_balance',
+        'source_type' => 'manual',
+        'source_uuid' => $source_uuid,
+        'qty_in' => posmain_start_balance_decimal($qty_in),
+        'qty_out' => posmain_start_balance_decimal($qty_out),
+        'unit_cost' => posmain_start_balance_decimal($unit_cost),
+        'total_cost' => posmain_start_balance_decimal($total_cost),
+        'metadata' => [
+            'source' => 'items_start_balance',
+            'desired_qty' => posmain_start_balance_decimal($desired_qty),
+            'non_opening_qty' => posmain_start_balance_decimal($non_opening_qty),
+            'opening_qty' => posmain_start_balance_decimal($opening_qty),
+        ],
+    ];
+
+    $metadata_json = json_encode($payload['metadata'], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    if (!is_string($metadata_json)) {
+        throw new RuntimeException('Failed to encode opening balance metadata: ' . json_last_error_msg());
+    }
+
+    return [
+        'payload_hash' => hash('sha256', json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)),
+        'metadata_json' => $metadata_json,
+    ];
 }
 
 function posmain_start_balance_recipe_non_opening_qty(

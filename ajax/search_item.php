@@ -4,6 +4,7 @@ error_reporting(0);
 ini_set('display_errors', 0);
 
 require_once __DIR__ . '/../includes/session_bootstrap.php';
+require_once __DIR__ . '/../classes/Pos/Service/ItemAvailabilityService.php';
 
 // استخدام dirname للحصول على المسار الصحيح
 $root_path = dirname(__DIR__);
@@ -48,16 +49,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['barcode'])) {
             $price = floatval($item['price1']);
         }
         
+        $barcodeItem = [
+            'id' => (int) $item['id'],
+            'name' => $item['iname'],
+            'price' => $price,
+            'barcode' => $item['barcode'],
+            'has_variants' => (int) ($item['has_variants'] ?? 0) === 1
+        ];
+        $branchConfig = function_exists('posmain_app_config')
+            ? (posmain_app_config()['branch'] ?? [])
+            : [];
+        $decoratedItems = (new ItemAvailabilityService())->decorateItems($conn, [$barcodeItem], [
+            'tenant' => (int)($branchConfig['pos_tenant'] ?? 0),
+            'branch' => (int)($branchConfig['pos_branch'] ?? 0),
+            'channel' => 'pos',
+            'order_type' => 'takeaway',
+        ]);
+
         echo json_encode([
             'success' => true,
-            'item' => [
-                'id' => $item['id'],
-                'name' => $item['iname'],
-                'price' => $price,
-                'barcode' => $item['barcode'],
-                'has_variants' => (int) ($item['has_variants'] ?? 0) === 1
-            ]
-        ]);
+            'item' => $decoratedItems[0] ?? $barcodeItem
+        ], JSON_UNESCAPED_UNICODE);
     } else {
         echo json_encode(['success' => false, 'message' => 'الصنف غير موجود']);
     }

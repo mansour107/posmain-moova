@@ -171,7 +171,7 @@ recipeRolloutReadinessAssert(strpos(recipeRolloutReadinessSource($root . '/tools
 recipeRolloutReadinessAssert(strpos(recipeRolloutReadinessSource($root . '/tools/recipe_cashier_browser_fixture.php'), 'void_mutation_ok') !== false, 'cashier-browser fixture should assert the temp void mutation proof');
 recipeRolloutReadinessAssert(strpos($doc, 'does not use real cashier orders') !== false, 'rollout doc should distinguish POS takeaway payment test from live cashier QA');
 recipeRolloutReadinessAssert(strpos($doc, 'one consumed recipe usage, one recipe consumption movement, and one ingredient stock deduction') !== false, 'rollout doc should state the POS takeaway payment idempotency proof');
-recipeRolloutReadinessAssert(strpos($doc, 'tests/sync/recipe_waste_adjustment_endpoint_runtime_test.php') !== false, 'rollout doc should document isolated waste/adjustment endpoint runtime test');
+recipeRolloutReadinessAssert(strpos($doc, 'tests/sync/inventory_adjustment_endpoint_runtime_test.php') !== false, 'rollout doc should document isolated Inventory module waste/adjustment endpoint runtime test');
 recipeRolloutReadinessAssert(strpos($doc, 'does not use real operator stock') !== false, 'rollout doc should distinguish waste endpoint runtime test from live operator stock QA');
 recipeRolloutReadinessAssert(strpos($doc, 'tests/sync/recipe_production_endpoint_runtime_test.php') !== false, 'rollout doc should document isolated production endpoint runtime test');
 recipeRolloutReadinessAssert(strpos($doc, 'does not use real production stock') !== false, 'rollout doc should distinguish production endpoint runtime test from live production QA');

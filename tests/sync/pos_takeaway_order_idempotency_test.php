@@ -9,6 +9,10 @@ if ($exitCode !== 0) {
 }
 
 $output = implode("\n", $lines);
+if (strpos($output, 'pos-takeaway-order-service-skipped-db-unavailable') !== false) {
+    echo "pos-takeaway-order-idempotency-skipped-db-unavailable\n";
+    exit(0);
+}
 if (strpos($output, 'pos-takeaway-order-service-ok') === false) {
     throw new RuntimeException("takeaway idempotency service regression did not report success:\n" . $output);
 }

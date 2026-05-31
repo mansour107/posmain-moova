@@ -7,6 +7,7 @@ class InventoryMovementRepository extends RecipeRepositoryBase
 {
     private const MOVEMENT_TYPES = [
         'purchase',
+        'purchase_return',
         'sale_direct',
         'recipe_consumption',
         'production_input',
@@ -31,6 +32,10 @@ class InventoryMovementRepository extends RecipeRepositoryBase
         'recipe_order_line_usage',
         'production_batch',
         'purchase_invoice',
+        'purchase_order',
+        'purchase_receipt',
+        'inventory_count',
+        'inventory_transfer',
         'adjustment',
         'reservation',
         'sync_event',

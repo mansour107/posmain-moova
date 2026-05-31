@@ -28,6 +28,18 @@ phase3SecurityAssertTrue(auth_guard_session_has_permission('pos.payment.take', $
 phase3SecurityAssertFalse(auth_guard_session_has_permission('users.manage', $cashierFlags, $_SESSION), 'cashier bridge does not allow user management');
 phase3SecurityAssertFalse(auth_guard_session_has_permission('system.tools.run', $cashierFlags, $_SESSION), 'cashier bridge does not allow tools');
 
+$inventoryEditorFlags = [
+    'edit_stock' => 1,
+    'add_stock' => 1,
+];
+phase3SecurityAssertTrue(auth_guard_session_has_permission('inventory.edit', $inventoryEditorFlags, $_SESSION), 'inventory editor bridge allows ordinary inventory edits');
+phase3SecurityAssertFalse(auth_guard_session_has_permission('inventory.approve', $inventoryEditorFlags, $_SESSION), 'ordinary inventory editor bridge does not allow sensitive inventory approvals');
+
+$inventoryApproverFlags = [
+    'delete_stock' => 1,
+];
+phase3SecurityAssertTrue(auth_guard_session_has_permission('inventory.approve', $inventoryApproverFlags, $_SESSION), 'senior inventory bridge allows sensitive inventory approvals');
+
 $adminSession = [
     'userid' => 1,
     'login' => 'admin',

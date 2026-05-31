@@ -1,10 +1,10 @@
 <?php
 
 require_once __DIR__ . '/../includes/db_bootstrap.php';
-require_once __DIR__ . '/../classes/Recipe/DTO/RecipeActorContext.php';
-require_once __DIR__ . '/../classes/Recipe/RecipeDecimal.php';
+require_once __DIR__ . '/../classes/Inventory/InventoryAdjustmentService.php';
+require_once __DIR__ . '/../classes/Inventory/InventoryDecimal.php';
+require_once __DIR__ . '/../classes/Inventory/InventoryFeatureFlags.php';
 require_once __DIR__ . '/../classes/Recipe/RecipeFeatureFlags.php';
-require_once __DIR__ . '/../classes/Recipe/RecipeWasteAdjustmentService.php';
 
 if (PHP_SAPI !== 'cli') {
     fwrite(STDERR, "This tool must be run from the command line.\n");
@@ -62,7 +62,7 @@ function recipeFixtureStockAdjustmentUsage(): void
 {
     fwrite(STDOUT, "Usage: php tools/recipe_fixture_stock_adjustment.php [--json] [--apply] [--allow-hosted-staging] [--run-id=qa-cup-001] [--barcode=RQA-CUP] [--qty=3] [--unit-cost=0.15] [--store-id=27] [--pos-tenant=0] [--pos-branch=0]\n");
     fwrite(STDOUT, "\n");
-    fwrite(STDOUT, "Runs a guarded increase stock adjustment for named Recipe QA fixture stock through RecipeWasteAdjustmentService.\n");
+    fwrite(STDOUT, "Runs a guarded increase stock adjustment for named Recipe QA fixture stock through InventoryAdjustmentService.\n");
     fwrite(STDOUT, "Dry-run is the default. Apply mode writes one idempotent adjustment movement and replays the same source UUID to prove no duplicate adjustment is created.\n");
     fwrite(STDOUT, "The tool refuses production and hosted/router runtimes unless explicitly allowed, refuses non-Recipe-QA items, and never updates inventory_item_balances directly.\n");
 }
@@ -102,15 +102,18 @@ function recipeFixtureStockAdjustmentOptions(mysqli $conn, array $options): arra
 
 function recipeFixtureStockAdjustmentRun(mysqli $conn, array $config, array $options): array
 {
-    $flags = new RecipeFeatureFlags($config);
-    $safety = recipeFixtureStockAdjustmentSafety($config, $flags, $options);
+    $recipeFlags = new RecipeFeatureFlags($config);
+    $inventoryFlags = new InventoryFeatureFlags($config);
+    $safety = recipeFixtureStockAdjustmentSafety($config, $recipeFlags, $inventoryFlags, $options);
     $before = recipeFixtureStockAdjustmentBalance($conn, $options);
     $result = [
         'ok' => false,
         'applied' => false,
         'dry_run' => empty($options['apply']),
         'checked_at_utc' => gmdate('Y-m-d\TH:i:s\Z'),
-        'mode' => $flags->mode(),
+        'mode' => $recipeFlags->mode(),
+        'recipe_mode' => $recipeFlags->mode(),
+        'inventory_mode' => $inventoryFlags->mode(),
         'run_id' => $options['run_id'],
         'adjustment_uuid' => $options['adjustment_uuid'],
         'scope' => [
@@ -123,9 +126,9 @@ function recipeFixtureStockAdjustmentRun(mysqli $conn, array $config, array $opt
         'runtime_safety' => $safety['summary'],
         'before' => $before,
         'would_write_on_apply' => [
-            'one inventory_movements adjustment row through RecipeWasteAdjustmentService',
+            'one inventory_movements adjustment row through InventoryAdjustmentService',
             'one inventory_item_balances increase for the selected Recipe QA fixture item',
-            'one recipe_audit_log record_stock_adjustment row when the movement is new',
+            'optional inventory accounting journals only when inventory accounting flags/accounts are enabled',
         ],
         'does_not_write' => [
             'feature flags',
@@ -147,29 +150,26 @@ function recipeFixtureStockAdjustmentRun(mysqli $conn, array $config, array $opt
         return $result;
     }
 
-    $actor = new RecipeActorContext(
-        $options['user_id'],
-        $options['pos_tenant'],
-        $options['pos_branch'],
-        null,
-        ['admin', 'inventory.manage', 'recipe.manage', 'recipe.approve']
-    );
     $input = [
         'pos_tenant' => $options['pos_tenant'],
         'pos_branch' => $options['pos_branch'],
         'store_id' => $options['store_id'],
         'item_id' => $options['item_id'],
-        'item_category_id' => (int) ($options['item']['group1'] ?? 0),
         'direction' => 'increase',
-        'qty' => RecipeDecimal::normalize($options['qty']),
-        'unit_cost' => RecipeDecimal::normalize($options['unit_cost']),
-        'unit_conversion_to_base' => '1.00000000',
-        'adjustment_uuid' => $options['adjustment_uuid'],
+        'qty' => InventoryDecimal::normalize($options['qty']),
+        'unit_cost' => InventoryDecimal::normalize($options['unit_cost']),
+        'operation_uuid' => $options['adjustment_uuid'],
         'reason' => $options['reason'],
     ];
-    $service = new RecipeWasteAdjustmentService($flags);
-    $first = $service->recordAdjustment($conn, $input, $actor);
-    $replay = $service->recordAdjustment($conn, $input, $actor);
+    $context = [
+        'user_id' => $options['user_id'],
+        'pos_tenant' => $options['pos_tenant'],
+        'pos_branch' => $options['pos_branch'],
+        'allow_reason_code_approval' => true,
+    ];
+    $service = new InventoryAdjustmentService($inventoryFlags);
+    $first = $service->recordAdjustment($conn, $input, $context);
+    $replay = $service->recordAdjustment($conn, $input, $context);
     $after = recipeFixtureStockAdjustmentBalance($conn, $options);
     $proof = recipeFixtureStockAdjustmentProof($conn, $options, $first, $replay, $before, $after);
 
@@ -185,7 +185,7 @@ function recipeFixtureStockAdjustmentRun(mysqli $conn, array $config, array $opt
     return $result;
 }
 
-function recipeFixtureStockAdjustmentSafety(array $config, RecipeFeatureFlags $flags, array $options): array
+function recipeFixtureStockAdjustmentSafety(array $config, RecipeFeatureFlags $recipeFlags, InventoryFeatureFlags $inventoryFlags, array $options): array
 {
     $summary = recipeFixtureStockAdjustmentSafetySummary($config, $options);
     $blockers = [];
@@ -196,8 +196,11 @@ function recipeFixtureStockAdjustmentSafety(array $config, RecipeFeatureFlags $f
     if (!empty($summary['hosted_or_router_runtime']) && empty($options['allow_hosted_staging'])) {
         $blockers[] = 'recipe_fixture_stock_adjustment_hosted_staging_requires_explicit_allow';
     }
-    if (!$flags->isEnabled() || in_array($flags->mode(), ['schema_only', 'read_only'], true)) {
+    if (!$recipeFlags->isEnabled() || in_array($recipeFlags->mode(), ['schema_only', 'read_only'], true)) {
         $blockers[] = 'recipe_fixture_stock_adjustment_requires_writable_recipe_mode';
+    }
+    if (!$inventoryFlags->canWriteLedger()) {
+        $blockers[] = 'recipe_fixture_stock_adjustment_requires_writable_inventory_ledger';
     }
     if ($options['store_id'] < 1 || $options['item_id'] < 1 || $options['user_id'] < 1) {
         $blockers[] = 'recipe_fixture_stock_adjustment_missing_defaults';
@@ -207,10 +210,10 @@ function recipeFixtureStockAdjustmentSafety(array $config, RecipeFeatureFlags $f
     if (strpos($name, 'Recipe QA') !== 0 || strpos($barcode, 'RQA-') !== 0) {
         $blockers[] = 'recipe_fixture_stock_adjustment_refuses_non_fixture_item';
     }
-    if (!RecipeDecimal::isPositive($options['qty'])) {
+    if (!InventoryDecimal::isPositive($options['qty'])) {
         $blockers[] = 'recipe_fixture_stock_adjustment_qty_must_be_positive';
     }
-    if (RecipeDecimal::compare($options['unit_cost'], '0') < 0) {
+    if (InventoryDecimal::compare($options['unit_cost'], '0') < 0) {
         $blockers[] = 'recipe_fixture_stock_adjustment_unit_cost_must_not_be_negative';
     }
 
@@ -234,6 +237,7 @@ function recipeFixtureStockAdjustmentSafetySummary(array $config, array $options
         'router_enabled' => $routerEnabled,
         'hosted_or_router_runtime' => in_array($role, ['cloud', 'fake_cloud'], true) || $routerEnabled,
         'allow_hosted_staging' => !empty($options['allow_hosted_staging']),
+        'inventory_ledger_mode' => strtolower(trim((string) ($config['inventory']['ledger_mode'] ?? 'off'))),
     ];
 }
 
@@ -269,11 +273,11 @@ LIMIT 1', [
 function recipeFixtureStockAdjustmentProof(mysqli $conn, array $options, array $first, array $replay, array $before, array $after): array
 {
     $blockers = [];
-    $movementIds = array_values(array_unique(array_map('intval', array_merge($first['movement_ids'] ?? [], $replay['movement_ids'] ?? []))));
+    $movementIds = recipeFixtureStockAdjustmentMovementIds($first, $replay);
     if (count($movementIds) !== 1) {
         $blockers[] = 'recipe_fixture_stock_adjustment_expected_one_idempotent_movement';
     }
-    if (empty($replay['existing'])) {
+    if (empty($replay['idempotent_replay'])) {
         $blockers[] = 'recipe_fixture_stock_adjustment_replay_not_idempotent';
     }
     $movement = $movementIds
@@ -282,13 +286,13 @@ function recipeFixtureStockAdjustmentProof(mysqli $conn, array $options, array $
     if (!$movement || (string) ($movement['movement_type'] ?? '') !== 'adjustment') {
         $blockers[] = 'recipe_fixture_stock_adjustment_missing_adjustment_movement';
     }
-    if ($movement && RecipeDecimal::compare($movement['qty_in'] ?? '0', $options['qty']) !== 0) {
+    if ($movement && InventoryDecimal::compare($movement['qty_in'] ?? '0', $options['qty']) !== 0) {
         $blockers[] = 'recipe_fixture_stock_adjustment_unexpected_qty_in';
     }
-    $expectedAvailable = !empty($first['existing'])
-        ? RecipeDecimal::normalize($before['qty_available'])
-        : RecipeDecimal::add($before['qty_available'], $options['qty']);
-    if (RecipeDecimal::compare($after['qty_available'], $expectedAvailable) !== 0) {
+    $expectedAvailable = !empty($first['idempotent_replay'])
+        ? InventoryDecimal::normalize($before['qty_available'])
+        : InventoryDecimal::add($before['qty_available'], $options['qty']);
+    if (InventoryDecimal::compare($after['qty_available'], $expectedAvailable) !== 0) {
         $blockers[] = 'recipe_fixture_stock_adjustment_balance_not_increased';
     }
 
@@ -297,9 +301,26 @@ function recipeFixtureStockAdjustmentProof(mysqli $conn, array $options, array $
         'blockers' => array_values(array_unique($blockers)),
         'movement_ids' => $movementIds,
         'movement_row' => $movement,
-        'idempotency_replayed' => empty($blockers) && !empty($replay['existing']),
+        'idempotency_replayed' => empty($blockers) && !empty($replay['idempotent_replay']),
         'cleanup_guidance' => 'This adjustment intentionally replenishes named local/staging Recipe QA fixture stock. Preserve it as pilot evidence or reverse through the normal stock adjustment flow; do not delete rows directly.',
     ];
+}
+
+function recipeFixtureStockAdjustmentMovementIds(array $first, array $replay): array
+{
+    $ids = [];
+    foreach ([$first, $replay] as $response) {
+        if (!empty($response['movement_ids']) && is_array($response['movement_ids'])) {
+            foreach ($response['movement_ids'] as $movementId) {
+                $ids[] = (int) $movementId;
+            }
+        }
+        if (!empty($response['movement_id'])) {
+            $ids[] = (int) $response['movement_id'];
+        }
+    }
+
+    return array_values(array_unique(array_filter($ids, static fn ($movementId) => $movementId > 0)));
 }
 
 function recipeFixtureStockAdjustmentUuidFromRunId(string $runId): string

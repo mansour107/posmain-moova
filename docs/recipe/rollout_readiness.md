@@ -58,7 +58,7 @@ The bundle tool is draft-only and not valid for rollout by itself. It runs only 
 
 The base proof suite now includes `Isolated cashier browser fixture smoke proof`, which runs `php tests/sync/recipe_cashier_browser_fixture_smoke_test.php` and verifies that `tools/recipe_cashier_browser_fixture.php --smoke --json` can render the real POS cashier page against a temporary browser fixture database. The same fixture also seeds paid reversible refund/void orders, verifies `ajax/get_recent_orders.php` exposes `can_refund`/`can_void`, verifies `ajax/refund_order.php` still rejects GET with `METHOD_NOT_ALLOWED`, POSTs one refund against the temporary order with idempotency replay so the temp database has `payment_status=refunded`, one `order.refunded` event, and one completed `pos_request_keys` row, then POSTs one void against a temporary paid table order with idempotency replay so the order is hidden, one `order.voided` event is recorded, and the table is released. Use `--include-availability`, `--include-manager-override`, `--include-moova-sync`, or `--all` when the pilot evidence needs the optional availability, manager override, and Moova/Cofe proof lines before those flags are active in the current environment. The suite does not accept arbitrary commands, apply migrations, change flags, use live orders, post accounting, or enqueue sync. It only invokes the fixed proof scripts listed below; each proof creates and drops its own temporary test database.
 
-Operator QA should include `recipe_waste.php` before active rollout. That page is the guarded waste/stock-adjustment entry point; it writes only through `RecipeWasteAdjustmentService`, requires CSRF and recipe stock-sensitive permission (`add_stock`/`edit_stock` or admin), audits every new movement, and posts accounting only when recipe accounting flags/accounts are enabled.
+Operator QA should include the Inventory module waste/adjustment screen `inventory_adjustments.php` before active rollout. That page is the guarded Arabic storekeeper entry point for waste, manual increases, and manual decreases; it writes through `InventoryAdjustmentService`, requires `inventory.edit`, uses the `inventory_adjustment` CSRF boundary and `ajax/inventory_adjustment.php`, audits each ledger movement, supports optional waste photo evidence, and posts accounting only when inventory accounting flags/accounts are enabled.
 
 For endpoint-level recipe management substitution proof without touching live recipes, run the isolated runtime test:
 
@@ -71,10 +71,10 @@ This test creates a temporary database, seeds only the minimal settings/user/rol
 For endpoint-level waste/stock-adjustment regression proof without touching live stock, run the isolated runtime test:
 
 ```sh
-php tests/sync/recipe_waste_adjustment_endpoint_runtime_test.php
+php tests/sync/inventory_adjustment_endpoint_runtime_test.php
 ```
 
-This test creates a temporary database, seeds only the minimal settings/user/role/ledger/balance/audit schema needed by the page, executes the real `recipe_waste.php` page in child PHP processes with a prepared admin session and `recipe_waste_adjustment` CSRF token, verifies waste, idempotency replay, stock adjustment, balance updates, and audit rows, then drops the temporary database. It forces recipe mode to `shadow`, keeps accounting disabled, and does not use real operator stock. It still does not replace the required browser/operator waste and stock-adjustment pilot against prepared test data on the migrated runtime.
+This test creates a temporary database, seeds only the minimal settings/user/role/item/ledger/balance schema needed by the Inventory module endpoint, executes the real `ajax/inventory_adjustment.php` endpoint in child PHP processes with a prepared admin session and `inventory_adjustment` CSRF token, verifies waste, idempotency replay, stock adjustment, balance updates, and service JSON responses, then drops the temporary database. It forces inventory ledger mode to `bridge`, keeps inventory accounting disabled, and does not use real operator stock. It still does not replace the required browser/operator waste and stock-adjustment pilot against prepared test data on the migrated runtime.
 
 For endpoint-level production batch regression proof without touching live production stock, run the isolated runtime test:
 
@@ -263,7 +263,7 @@ php tools/recipe_stock_operations_surface_smoke.php \
   --json
 ```
 
-This smoke only performs authenticated GET requests against `recipe_production.php` and `recipe_waste.php`. It checks production draft controls, optional selected-batch commit/cancel controls, waste and adjustment controls, mode-off messaging when present, and fatal/SQL/access-denied text. If `--batch-id` is omitted and selected-batch controls are not rendered, it records a fixture-selection warning instead of pretending production commit UI was inspected. It does not log in, submit forms, create batches, commit batches, cancel batches, record waste, record adjustments, apply migrations, change feature flags, write recipe rows, write stock, post accounting, enqueue sync, inspect browser console logs, or capture screenshots. Use its JSON output as supporting evidence for production and waste surface readiness; it still complements, but does not replace, required browser/operator production batch and waste/adjustment pilots against prepared test data.
+This smoke only performs authenticated GET requests against `recipe_production.php` and the Inventory module waste/adjustment screen `inventory_adjustments.php`. It checks production draft controls, optional selected-batch commit/cancel controls, the Arabic waste/adjustment controls, mode-off messaging when present, and fatal/SQL/access-denied text. If `--batch-id` is omitted and selected-batch controls are not rendered, it records a fixture-selection warning instead of pretending production commit UI was inspected. It does not log in, submit forms, create batches, commit batches, cancel batches, record waste, record adjustments, apply migrations, change feature flags, write recipe rows, write stock, post accounting, enqueue sync, inspect browser console logs, or capture screenshots. Use its JSON output as supporting evidence for production and waste surface readiness; it still complements, but does not replace, required browser/operator production batch and waste/adjustment pilots against prepared test data.
 
 For repeatable read-only recipe report export evidence, run the CSV export smoke with the same authenticated session:
 
@@ -491,7 +491,7 @@ The same file must include non-placeholder isolated runtime proof command result
 - `Isolated cashier browser fixture smoke proof`: `php tests/sync/recipe_cashier_browser_fixture_smoke_test.php`
 - `Modifier substitution management endpoint runtime proof`: `php tests/sync/recipe_modifier_substitution_management_endpoint_runtime_test.php`
 - `Production endpoint runtime proof`: `php tests/sync/recipe_production_endpoint_runtime_test.php`
-- `Waste and stock adjustment endpoint runtime proof`: `php tests/sync/recipe_waste_adjustment_endpoint_runtime_test.php`
+- `Waste and stock adjustment endpoint runtime proof`: `php tests/sync/inventory_adjustment_endpoint_runtime_test.php`
 - `Paid refund/void endpoint runtime proof`: `php tests/sync/recipe_paid_reversal_endpoint_runtime_test.php`
 
 For `reserve_only`, the required isolated proof is intentionally narrower:
@@ -541,10 +541,11 @@ POSMAIN_ENABLE_RECIPES=1 \
 POSMAIN_RECIPE_MODE=consume_pilot \
 POSMAIN_RECIPE_CONSUMPTION=1 \
 POSMAIN_RECIPE_ACCOUNTING=0 \
+POSMAIN_INVENTORY_LEDGER_MODE=bridge \
 php tools/recipe_fixture_stock_adjustment.php --json --apply --run-id=<unique-local-run-id> --barcode=RQA-CUP --qty=3 --store-id=<pilot-store-id>
 ```
 
-This tool is dry-run by default, refuses production/hosted runtimes unless explicitly allowed, refuses non-Recipe-QA items, writes only through `RecipeWasteAdjustmentService`, replays the same adjustment UUID to prove idempotency, and does not update balances directly.
+This tool is dry-run by default, refuses production/hosted runtimes unless explicitly allowed, refuses non-Recipe-QA items, requires a writable inventory ledger mode, writes only through `InventoryAdjustmentService`, replays the same adjustment UUID to prove idempotency, and does not update balances directly.
 
 ## Blocks Rollout
 

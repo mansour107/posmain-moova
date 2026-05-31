@@ -8,14 +8,19 @@ require_once __DIR__ . '/../../classes/Recipe/RecipeFeatureFlags.php';
 require_once __DIR__ . '/../../classes/Recipe/RecipeOrderLifecycleService.php';
 require_once __DIR__ . '/../../classes/Recipe/Repository/InventoryBalanceRepository.php';
 
-mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
+mysqli_report(MYSQLI_REPORT_OFF);
 
 $host = getenv('POSMAIN_TEST_MYSQL_HOST') ?: '127.0.0.1';
 $port = (int) (getenv('POSMAIN_TEST_MYSQL_PORT') ?: 3307);
 $user = getenv('POSMAIN_TEST_MYSQL_USER') ?: 'root';
 $pass = getenv('POSMAIN_TEST_MYSQL_PASS') ?: '';
 $db = 'posmain_split_payment_service_' . getmypid();
-$conn = new mysqli($host, $user, $pass, '', $port);
+$conn = @new mysqli($host, $user, $pass, '', $port);
+if ($conn->connect_errno) {
+    echo "pos-split-payment-service-skipped-db-unavailable\n";
+    exit(0);
+}
+mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
 
 try {
     $conn->query("CREATE DATABASE `{$db}` CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci");
@@ -128,6 +133,82 @@ try {
         'payment_method' => 'cash',
     ], ['user_id' => 7]);
     posSplitPaymentAssert($roundingSplit['success'] === true, 'split should accept cashier cent-rounded partial item amounts');
+
+    $shadowBridge = new InventoryInvoiceBridge(new InventoryFeatureFlags([
+        'inventory' => [
+            'ledger_mode' => 'shadow',
+            'strict_stock' => '1',
+        ],
+        'branch' => [
+            'pos_tenant' => 0,
+            'pos_branch' => 0,
+        ],
+    ]));
+    $shadowSplitService = new PosOrderMutationService(null, null, null, null, null, null, null, null, null, null, null, null, $shadowBridge);
+    $conn->query("INSERT INTO myitems (id, iname, cost_price, group1, item_type, track_stock) VALUES (4010, 'Split bridge A', 5.000000, 7, 'sellable', 1), (4011, 'Split bridge B', 5.000000, 7, 'sellable', 1)");
+    $conn->query("INSERT INTO tables (id, tname, table_case, isdeleted) VALUES (4, 'T4', 1, 0)");
+    $conn->query("
+        INSERT INTO ot_head (
+            id, pro_id, branch_id, table_id, order_type, pro_tybe, pro_date, accural_date,
+            store_id, emp_id, emp2_id, acc1, acc2, pro_value, fat_total, fat_disc,
+            fat_net, paid_amount, remaining_amount, payment_status, invoice_status,
+            order_status, isdeleted, tenant, branch
+        ) VALUES (
+            400, 14, 0, 4, 'table', 9, '2026-05-12', '2026-05-12',
+            3, 4, 4, 51, 501, 50, 50, 0,
+            50, 0, 50, 'unpaid', 'draft',
+            'active', 0, 0, 0
+        )
+    ");
+    $conn->query("
+        INSERT INTO fat_details (
+            id, pro_tybe, det_store, pro_id, item_id, u_val, qty_in, qty_out,
+            price, cost_price, stock_value, discount, plus, det_value,
+            profit, fatid, fat_tybe, tenant, branch, isdeleted
+        ) VALUES
+            (4000, 9, 3, 400, 4010, 1, 0, 2, 10, 5, 0, 0, 0, 20, 10, 400, 9, 0, 0, 0),
+            (4001, 9, 3, 400, 4011, 1, 0, 3, 10, 5, 0, 0, 0, 30, 15, 400, 9, 0, 0, 0)
+    ");
+    $conn->begin_transaction();
+    $shadowBridge->recordInvoiceLines($conn, InventoryInvoiceBridge::TYPE_POS, 400, [
+        [
+            'id' => 4000,
+            'item_id' => 4010,
+            'qty_in' => '0.000000',
+            'qty_out' => '2.000000',
+            'u_val' => '1.000000',
+            'cost_price' => '5.000000',
+            'det_store' => 3,
+        ],
+        [
+            'id' => 4001,
+            'item_id' => 4011,
+            'qty_in' => '0.000000',
+            'qty_out' => '3.000000',
+            'u_val' => '1.000000',
+            'cost_price' => '5.000000',
+            'det_store' => 3,
+        ],
+    ], ['user_id' => 7]);
+    $conn->commit();
+    $beforeSplitDirectMovements = (int) $conn->query("SELECT COUNT(*) AS c FROM inventory_movements WHERE movement_type = 'sale_direct' AND item_id IN (4010, 4011)")->fetch_assoc()['c'];
+    $shadowSplit = $shadowSplitService->splitTablePayment($conn, [
+        'order_id' => 400,
+        'table_id' => 4,
+        'items' => [
+            ['detail_id' => 4000],
+            ['detail_id' => 4001, 'qty' => 1],
+        ],
+        'paid_amount' => 30,
+        'payment_method' => 'cash',
+    ], ['user_id' => 7]);
+    $afterSplitDirectMovements = (int) $conn->query("SELECT COUNT(*) AS c FROM inventory_movements WHERE movement_type = 'sale_direct' AND item_id IN (4010, 4011)")->fetch_assoc()['c'];
+    $splitBridgeBalanceA = (new InventoryBalanceRepository())->findBalance($conn, 0, 0, 3, 4010);
+    $splitBridgeBalanceB = (new InventoryBalanceRepository())->findBalance($conn, 0, 0, 3, 4011);
+    posSplitPaymentAssert($shadowSplit['success'] === true, 'shadow-aware split should still create paid child order');
+    posSplitPaymentAssert($beforeSplitDirectMovements === 2 && $afterSplitDirectMovements === 2, 'split payment should not create duplicate sale_direct shadow movements');
+    posSplitPaymentAssert($splitBridgeBalanceA['qty_on_hand'] === '-2.000000', 'full moved split line should keep original shadow quantity only');
+    posSplitPaymentAssert($splitBridgeBalanceB['qty_on_hand'] === '-3.000000', 'partial split line should keep original total shadow quantity only');
 
     $recipeFlags = posSplitPaymentRecipeFlags();
     $recipeLifecycle = new RecipeOrderLifecycleService($recipeFlags);

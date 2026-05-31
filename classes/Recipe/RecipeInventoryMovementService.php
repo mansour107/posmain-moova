@@ -7,21 +7,29 @@ require_once __DIR__ . '/RecipeDecimal.php';
 require_once __DIR__ . '/RecipeFeatureFlags.php';
 require_once __DIR__ . '/Repository/InventoryBalanceRepository.php';
 require_once __DIR__ . '/Repository/InventoryMovementRepository.php';
+require_once dirname(__DIR__) . '/Inventory/InventoryFeatureFlags.php';
+require_once dirname(__DIR__) . '/Inventory/InventoryLedgerService.php';
 
 class RecipeInventoryMovementService
 {
     private $flags;
     private $movements;
     private $balances;
+    private InventoryFeatureFlags $inventoryFlags;
+    private InventoryLedgerService $inventoryLedger;
 
     public function __construct(
         ?RecipeFeatureFlags $flags = null,
         ?InventoryMovementRepository $movements = null,
-        ?InventoryBalanceRepository $balances = null
+        ?InventoryBalanceRepository $balances = null,
+        ?InventoryFeatureFlags $inventoryFlags = null,
+        ?InventoryLedgerService $inventoryLedger = null
     ) {
         $this->flags = $flags ?: new RecipeFeatureFlags();
         $this->movements = $movements ?: new InventoryMovementRepository();
         $this->balances = $balances ?: new InventoryBalanceRepository();
+        $this->inventoryFlags = $inventoryFlags ?: new InventoryFeatureFlags();
+        $this->inventoryLedger = $inventoryLedger ?: new InventoryLedgerService($this->inventoryFlags);
     }
 
     public function recordRecipeConsumption(mysqli $conn, RecipeExplosionResult $explosion, array $orderContext): RecipeMovementResult
@@ -234,6 +242,10 @@ class RecipeInventoryMovementService
         }
 
         $scope = $this->scopeFromOrderContext($batchContext);
+        if ($this->inventoryFlags->canWriteLedger()) {
+            return $this->recordProductionInputThroughInventoryLedger($conn, $scope, $explosion, $batchContext);
+        }
+
         $movementIds = [];
         $lockedBalances = $this->lockRequirementBalances($conn, $scope, $explosion->requirements);
         foreach ($explosion->requirements as $requirement) {
@@ -306,6 +318,10 @@ class RecipeInventoryMovementService
         }
 
         $scope = $this->scopeFromOrderContext($batchContext);
+        if ($this->inventoryFlags->canWriteLedger()) {
+            return $this->recordProductionOutputThroughInventoryLedger($conn, $scope, $batchContext, $outputItemId, $outputQty, $totalCost);
+        }
+
         $idempotencyKey = 'production-output'
             . ':' . $scope->posTenant
             . ':' . $scope->posBranch
@@ -614,6 +630,111 @@ class RecipeInventoryMovementService
         ]);
 
         return new RecipeMovementResult(['movement_ids' => [$movementId]]);
+    }
+
+    private function recordProductionInputThroughInventoryLedger(
+        mysqli $conn,
+        RecipeScope $scope,
+        RecipeExplosionResult $explosion,
+        array $batchContext
+    ): RecipeMovementResult {
+        $movementIds = [];
+        foreach ($explosion->requirements as $requirement) {
+            if (!$requirement instanceof IngredientRequirement) {
+                continue;
+            }
+
+            $movement = $this->inventoryLedger->recordMovement($conn, [
+                'scope' => $this->ledgerScope($scope),
+                'movement_group_uuid' => $batchContext['batch_uuid'] ?? null,
+                'item_id' => $requirement->ingredientItemId,
+                'movement_type' => 'production_input',
+                'source_type' => 'production_batch',
+                'source_id' => $batchContext['batch_id'] ?? null,
+                'source_uuid' => $batchContext['batch_uuid'] ?? null,
+                'recipe_id' => $explosion->recipeId,
+                'production_batch_id' => $batchContext['batch_id'] ?? null,
+                'qty_out' => $requirement->requiredQtyBase,
+                'unit_id' => $requirement->unitId,
+                'unit_conversion_to_base' => $requirement->unitConversionToBase,
+                'unit_cost' => $requirement->unitCost,
+                'total_cost' => $requirement->totalCost,
+                'idempotency_key' => $this->productionIdempotencyKey('production-input', $scope, $requirement, $batchContext),
+                'metadata' => [
+                    'source' => 'recipe_production',
+                    'batch_uuid' => $batchContext['batch_uuid'] ?? null,
+                    'recipe_id' => $explosion->recipeId,
+                    'output_item_id' => $batchContext['output_item_id'] ?? null,
+                ],
+                'created_by' => $batchContext['created_by'] ?? null,
+            ], null, ['manage_transaction' => false]);
+            if (empty($movement['noop'])) {
+                $movementIds[] = (int) ($movement['movement_id'] ?? 0);
+            }
+        }
+
+        return new RecipeMovementResult([
+            'movement_ids' => array_values(array_filter($movementIds)),
+            'noop' => $movementIds === [],
+        ]);
+    }
+
+    private function recordProductionOutputThroughInventoryLedger(
+        mysqli $conn,
+        RecipeScope $scope,
+        array $batchContext,
+        int $outputItemId,
+        string $outputQty,
+        string $totalCost
+    ): RecipeMovementResult {
+        $unitCost = RecipeDecimal::compare($outputQty, '0') > 0
+            ? RecipeDecimal::divide($totalCost, $outputQty)
+            : RecipeDecimal::zero();
+        $idempotencyKey = 'production-output'
+            . ':' . $scope->posTenant
+            . ':' . $scope->posBranch
+            . ':store:' . $scope->storeId
+            . ':batch:' . (string) ($batchContext['batch_uuid'] ?? $batchContext['batch_id'] ?? '0')
+            . ':item:' . $outputItemId;
+
+        $movement = $this->inventoryLedger->recordMovement($conn, [
+            'scope' => $this->ledgerScope($scope),
+            'movement_group_uuid' => $batchContext['batch_uuid'] ?? null,
+            'item_id' => $outputItemId,
+            'movement_type' => 'production_output',
+            'source_type' => 'production_batch',
+            'source_id' => $batchContext['batch_id'] ?? null,
+            'source_uuid' => $batchContext['batch_uuid'] ?? null,
+            'recipe_id' => $batchContext['recipe_id'] ?? null,
+            'production_batch_id' => $batchContext['batch_id'] ?? null,
+            'qty_in' => $outputQty,
+            'unit_cost' => $unitCost,
+            'total_cost' => $totalCost,
+            'idempotency_key' => $idempotencyKey,
+            'metadata' => [
+                'source' => 'recipe_production',
+                'batch_uuid' => $batchContext['batch_uuid'] ?? null,
+                'recipe_id' => $batchContext['recipe_id'] ?? null,
+                'output_item_id' => $outputItemId,
+            ],
+            'created_by' => $batchContext['created_by'] ?? null,
+        ], null, ['manage_transaction' => false]);
+
+        if (!empty($movement['noop'])) {
+            return new RecipeMovementResult(['noop' => true]);
+        }
+
+        return new RecipeMovementResult(['movement_ids' => [(int) ($movement['movement_id'] ?? 0)]]);
+    }
+
+    private function ledgerScope(RecipeScope $scope): array
+    {
+        return [
+            'pos_tenant' => $scope->posTenant,
+            'pos_branch' => $scope->posBranch,
+            'branch_uuid' => $scope->branchUuid,
+            'store_id' => $scope->storeId,
+        ];
     }
 
     private function lockBalance(mysqli $conn, RecipeScope $scope, int $itemId): array

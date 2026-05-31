@@ -11,7 +11,14 @@ $port = (int) (getenv('POSMAIN_TEST_MYSQL_PORT') ?: 3307);
 $user = getenv('POSMAIN_TEST_MYSQL_USER') ?: 'root';
 $pass = getenv('POSMAIN_TEST_MYSQL_PASS') ?: '';
 $db = 'posmain_recipe_manager_override_' . getmypid();
-$conn = new mysqli($host, $user, $pass, '', $port);
+mysqli_report(MYSQLI_REPORT_OFF);
+$conn = @new mysqli($host, $user, $pass, '', $port);
+if ($conn->connect_error) {
+    echo "recipe-manager-override-endpoint-runtime-skipped-db-unavailable\n";
+    exit(0);
+}
+
+mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
 
 try {
     $conn->query("CREATE DATABASE `{$db}` CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci");

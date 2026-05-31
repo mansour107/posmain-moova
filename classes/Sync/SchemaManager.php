@@ -35,6 +35,16 @@ class SyncSchemaManager
             'recipe_order_line_usage' => $this->recipeOrderLineUsageSql(),
             'inventory_movements' => $this->inventoryMovementsSql(),
             'inventory_item_balances' => $this->inventoryItemBalancesSql(),
+            'inventory_item_stock_levels' => $this->inventoryItemStockLevelsSql(),
+            'inventory_reason_codes' => $this->inventoryReasonCodesSql(),
+            'inventory_counts' => $this->inventoryCountsSql(),
+            'inventory_count_lines' => $this->inventoryCountLinesSql(),
+            'inventory_transfers' => $this->inventoryTransfersSql(),
+            'inventory_transfer_lines' => $this->inventoryTransferLinesSql(),
+            'inventory_purchase_orders' => $this->inventoryPurchaseOrdersSql(),
+            'inventory_purchase_order_lines' => $this->inventoryPurchaseOrderLinesSql(),
+            'inventory_purchase_receipts' => $this->inventoryPurchaseReceiptsSql(),
+            'inventory_purchase_receipt_lines' => $this->inventoryPurchaseReceiptLinesSql(),
             'stock_reservations' => $this->stockReservationsSql(),
             'production_batches' => $this->productionBatchesSql(),
             'production_batch_lines' => $this->productionBatchLinesSql(),
@@ -244,6 +254,26 @@ class SyncSchemaManager
             return $this->syncOutboxUpgradeStatements($conn);
         }
 
+        if ($table === 'inventory_movements') {
+            return $this->inventoryMovementsUpgradeStatements($conn);
+        }
+
+        if ($table === 'inventory_count_lines') {
+            return $this->inventoryCountLinesUpgradeStatements($conn);
+        }
+
+        if ($table === 'inventory_transfers') {
+            return $this->inventoryTransfersUpgradeStatements($conn);
+        }
+
+        if ($table === 'inventory_item_stock_levels') {
+            return $this->inventoryItemStockLevelsUpgradeStatements($conn);
+        }
+
+        if ($table === 'stock_reservations') {
+            return $this->stockReservationsUpgradeStatements($conn);
+        }
+
         if ($table === 'cloud_moova_branch_events') {
             return $this->cloudMoovaBranchEventUpgradeStatements($conn);
         }
@@ -392,6 +422,126 @@ ALTER TABLE sync_outbox
             if (!$this->indexExists($conn, 'sync_outbox', $index)) {
                 $statements['sync_outbox.add_' . $index] = "ALTER TABLE sync_outbox {$clause}";
             }
+        }
+
+        return $statements;
+    }
+
+    private function inventoryMovementsUpgradeStatements(mysqli $conn)
+    {
+        $statements = [];
+
+        $columns = [
+            'payload_hash' => "ALTER TABLE inventory_movements ADD COLUMN payload_hash CHAR(64) NOT NULL DEFAULT '' AFTER idempotency_key",
+            'metadata_json' => "ALTER TABLE inventory_movements ADD COLUMN metadata_json JSON NULL AFTER payload_hash",
+        ];
+
+        foreach ($columns as $column => $sql) {
+            if (!$this->columnExists($conn, 'inventory_movements', $column)) {
+                $statements['inventory_movements.add_' . $column] = $sql;
+            }
+        }
+
+        $sourceType = $this->columnInfo($conn, 'inventory_movements', 'source_type');
+        if ($sourceType && strpos((string) $sourceType['COLUMN_TYPE'], "'purchase_receipt'") === false) {
+            $statements['inventory_movements.modify_source_type_workflow_enum'] = "
+ALTER TABLE inventory_movements
+  MODIFY COLUMN source_type ENUM('order','order_line','invoice','fat_details','recipe','recipe_order_line_usage','production_batch','purchase_invoice','purchase_order','purchase_receipt','inventory_count','inventory_transfer','adjustment','reservation','sync_event','manual') NOT NULL";
+        }
+
+        $movementType = $this->columnInfo($conn, 'inventory_movements', 'movement_type');
+        if ($movementType && strpos((string) $movementType['COLUMN_TYPE'], "'purchase_return'") === false) {
+            $statements['inventory_movements.modify_movement_type_purchase_return_enum'] = "
+ALTER TABLE inventory_movements
+  MODIFY COLUMN movement_type ENUM('purchase','purchase_return','sale_direct','recipe_consumption','production_input','production_output','waste','adjustment','transfer_in','transfer_out','reservation','reservation_release','refund_reversal','sync_replay','opening_balance') NOT NULL";
+        }
+
+        if (!$this->indexExists($conn, 'inventory_movements', 'idx_inventory_movement_type_time')) {
+            $statements['inventory_movements.add_idx_inventory_movement_type_time'] = "
+ALTER TABLE inventory_movements
+  ADD KEY idx_inventory_movement_type_time (movement_type, created_at)";
+        }
+
+        return $statements;
+    }
+
+    private function inventoryCountLinesUpgradeStatements(mysqli $conn)
+    {
+        $statements = [];
+
+        if (!$this->columnExists($conn, 'inventory_count_lines', 'unit_conversion_to_base')) {
+            $statements['inventory_count_lines.add_unit_conversion_to_base'] = "
+ALTER TABLE inventory_count_lines
+  ADD COLUMN unit_conversion_to_base DECIMAL(18,8) NOT NULL DEFAULT 1.00000000 AFTER unit_id";
+            if ($this->tableExists($conn, 'item_units')) {
+                $statements['inventory_count_lines.backfill_unit_conversion_to_base'] = "
+UPDATE inventory_count_lines l
+INNER JOIN item_units iu
+        ON iu.item_id = l.item_id
+       AND iu.unit_id = l.unit_id
+   SET l.unit_conversion_to_base = iu.u_val
+ WHERE l.unit_id IS NOT NULL
+   AND iu.u_val > 0";
+            }
+        }
+
+        return $statements;
+    }
+
+    private function inventoryTransfersUpgradeStatements(mysqli $conn)
+    {
+        $statements = [];
+
+        if (!$this->columnExists($conn, 'inventory_transfers', 'destination_pos_branch')) {
+            $statements['inventory_transfers.add_destination_pos_branch'] = "
+ALTER TABLE inventory_transfers
+  ADD COLUMN destination_pos_branch INT NULL AFTER destination_store_id";
+        }
+        if (!$this->columnExists($conn, 'inventory_transfers', 'destination_branch_uuid')) {
+            $statements['inventory_transfers.add_destination_branch_uuid'] = "
+ALTER TABLE inventory_transfers
+  ADD COLUMN destination_branch_uuid CHAR(36) NULL AFTER destination_pos_branch";
+        }
+        if (!$this->indexExists($conn, 'inventory_transfers', 'idx_inventory_transfer_destination_branch')) {
+            $statements['inventory_transfers.add_idx_inventory_transfer_destination_branch'] = "
+ALTER TABLE inventory_transfers
+  ADD KEY idx_inventory_transfer_destination_branch (pos_tenant, destination_pos_branch, destination_store_id, status)";
+        }
+
+        return $statements;
+    }
+
+    private function inventoryItemStockLevelsUpgradeStatements(mysqli $conn)
+    {
+        $statements = [];
+
+        if (!$this->columnExists($conn, 'inventory_item_stock_levels', 'preferred_count_unit_id')) {
+            $statements['inventory_item_stock_levels.add_preferred_count_unit_id'] = "
+ALTER TABLE inventory_item_stock_levels
+  ADD COLUMN preferred_count_unit_id BIGINT UNSIGNED NULL AFTER safety_stock_qty";
+        }
+        if (!$this->columnExists($conn, 'inventory_item_stock_levels', 'preferred_purchase_unit_id')) {
+            $statements['inventory_item_stock_levels.add_preferred_purchase_unit_id'] = "
+ALTER TABLE inventory_item_stock_levels
+  ADD COLUMN preferred_purchase_unit_id BIGINT UNSIGNED NULL AFTER preferred_count_unit_id";
+        }
+        if (!$this->columnExists($conn, 'inventory_item_stock_levels', 'default_supplier_account_id')) {
+            $statements['inventory_item_stock_levels.add_default_supplier_account_id'] = "
+ALTER TABLE inventory_item_stock_levels
+  ADD COLUMN default_supplier_account_id BIGINT UNSIGNED NULL AFTER preferred_purchase_unit_id";
+        }
+
+        return $statements;
+    }
+
+    private function stockReservationsUpgradeStatements(mysqli $conn)
+    {
+        $statements = [];
+
+        if (!$this->indexExists($conn, 'stock_reservations', 'idx_stock_reservation_order_line')) {
+            $statements['stock_reservations.add_idx_stock_reservation_order_line'] = "
+ALTER TABLE stock_reservations
+  ADD KEY idx_stock_reservation_order_line (order_id, order_line_uuid)";
         }
 
         return $statements;
@@ -1405,8 +1555,8 @@ CREATE TABLE IF NOT EXISTS inventory_movements (
   branch_uuid CHAR(36) NULL,
   store_id BIGINT UNSIGNED NOT NULL DEFAULT 0,
   item_id BIGINT UNSIGNED NOT NULL,
-  movement_type ENUM('purchase','sale_direct','recipe_consumption','production_input','production_output','waste','adjustment','transfer_in','transfer_out','reservation','reservation_release','refund_reversal','sync_replay','opening_balance') NOT NULL,
-  source_type ENUM('order','order_line','invoice','fat_details','recipe','recipe_order_line_usage','production_batch','purchase_invoice','adjustment','reservation','sync_event','manual') NOT NULL,
+  movement_type ENUM('purchase','purchase_return','sale_direct','recipe_consumption','production_input','production_output','waste','adjustment','transfer_in','transfer_out','reservation','reservation_release','refund_reversal','sync_replay','opening_balance') NOT NULL,
+  source_type ENUM('order','order_line','invoice','fat_details','recipe','recipe_order_line_usage','production_batch','purchase_invoice','purchase_order','purchase_receipt','inventory_count','inventory_transfer','adjustment','reservation','sync_event','manual') NOT NULL,
   source_id BIGINT UNSIGNED NULL,
   source_uuid VARCHAR(128) NULL,
   order_id BIGINT UNSIGNED NULL,
@@ -1424,6 +1574,8 @@ CREATE TABLE IF NOT EXISTS inventory_movements (
   total_cost DECIMAL(18,6) NOT NULL DEFAULT 0.000000,
   accounting_journal_id BIGINT UNSIGNED NULL,
   idempotency_key VARCHAR(191) NOT NULL,
+  payload_hash CHAR(64) NOT NULL DEFAULT '',
+  metadata_json JSON NULL,
   reversed_movement_id BIGINT UNSIGNED NULL,
   created_by BIGINT UNSIGNED NULL,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -1437,6 +1589,7 @@ CREATE TABLE IF NOT EXISTS inventory_movements (
   KEY idx_inventory_recipe (recipe_id),
   KEY idx_inventory_journal (accounting_journal_id),
   KEY idx_inventory_group (movement_group_uuid),
+  KEY idx_inventory_movement_type_time (movement_type, created_at),
   KEY idx_inventory_branch_uuid (branch_uuid)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
     }
@@ -1462,6 +1615,297 @@ CREATE TABLE IF NOT EXISTS inventory_item_balances (
   KEY idx_inventory_balance_branch (pos_tenant, pos_branch),
   KEY idx_inventory_balance_available (pos_tenant, pos_branch, store_id, item_id, qty_available),
   KEY idx_inventory_balance_branch_uuid (branch_uuid)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
+    private function inventoryItemStockLevelsSql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS inventory_item_stock_levels (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  pos_tenant INT NOT NULL DEFAULT 0,
+  pos_branch INT NOT NULL DEFAULT 0,
+  branch_uuid CHAR(36) NULL,
+  store_id BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  item_id BIGINT UNSIGNED NOT NULL,
+  minimum_level DECIMAL(18,6) NOT NULL DEFAULT 0.000000,
+  reorder_level DECIMAL(18,6) NOT NULL DEFAULT 0.000000,
+  par_level DECIMAL(18,6) NOT NULL DEFAULT 0.000000,
+  maximum_level DECIMAL(18,6) NOT NULL DEFAULT 0.000000,
+  safety_stock_qty DECIMAL(18,6) NOT NULL DEFAULT 0.000000,
+  preferred_count_unit_id BIGINT UNSIGNED NULL,
+  preferred_purchase_unit_id BIGINT UNSIGNED NULL,
+  default_supplier_account_id BIGINT UNSIGNED NULL,
+  is_active TINYINT(1) NOT NULL DEFAULT 1,
+  created_by BIGINT UNSIGNED NULL,
+  updated_by BIGINT UNSIGNED NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_inventory_stock_level_item (pos_tenant, pos_branch, store_id, item_id),
+  KEY idx_inventory_stock_level_branch (pos_tenant, pos_branch, store_id, is_active),
+  KEY idx_inventory_stock_level_branch_uuid (branch_uuid)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
+    private function inventoryReasonCodesSql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS inventory_reason_codes (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  pos_tenant INT NOT NULL DEFAULT 0,
+  pos_branch INT NOT NULL DEFAULT 0,
+  reason_code VARCHAR(64) NOT NULL,
+  reason_name VARCHAR(255) NOT NULL,
+  reason_group ENUM('count','waste','adjustment','transfer_variance','purchase_return','production_variance','manual') NOT NULL DEFAULT 'manual',
+  direction ENUM('in','out','both','none') NOT NULL DEFAULT 'both',
+  requires_approval TINYINT(1) NOT NULL DEFAULT 0,
+  is_system TINYINT(1) NOT NULL DEFAULT 0,
+  is_active TINYINT(1) NOT NULL DEFAULT 1,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_inventory_reason_scope_code (pos_tenant, pos_branch, reason_code),
+  KEY idx_inventory_reason_group_active (pos_tenant, pos_branch, reason_group, is_active)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
+    private function inventoryCountsSql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS inventory_counts (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  count_uuid CHAR(36) NOT NULL,
+  pos_tenant INT NOT NULL DEFAULT 0,
+  pos_branch INT NOT NULL DEFAULT 0,
+  branch_uuid CHAR(36) NULL,
+  store_id BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  status ENUM('draft','submitted','approved','rejected','closed','cancelled') NOT NULL DEFAULT 'draft',
+  count_type ENUM('full','category','selected','spot') NOT NULL DEFAULT 'selected',
+  hide_expected_qty TINYINT(1) NOT NULL DEFAULT 0,
+  include_zero_stock TINYINT(1) NOT NULL DEFAULT 0,
+  assigned_user_id BIGINT UNSIGNED NULL,
+  created_by BIGINT UNSIGNED NULL,
+  submitted_by BIGINT UNSIGNED NULL,
+  approved_by BIGINT UNSIGNED NULL,
+  closed_by BIGINT UNSIGNED NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  submitted_at DATETIME NULL,
+  approved_at DATETIME NULL,
+  closed_at DATETIME NULL,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  notes TEXT NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_inventory_count_uuid (count_uuid),
+  KEY idx_inventory_count_scope_status (pos_tenant, pos_branch, store_id, status, created_at),
+  KEY idx_inventory_count_branch_uuid (branch_uuid)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
+    private function inventoryCountLinesSql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS inventory_count_lines (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  count_id BIGINT UNSIGNED NOT NULL,
+  item_id BIGINT UNSIGNED NOT NULL,
+  unit_id BIGINT UNSIGNED NULL,
+  unit_conversion_to_base DECIMAL(18,8) NOT NULL DEFAULT 1.00000000,
+  snapshot_qty DECIMAL(18,6) NOT NULL DEFAULT 0.000000,
+  counted_qty DECIMAL(18,6) NULL,
+  variance_qty DECIMAL(18,6) NOT NULL DEFAULT 0.000000,
+  variance_percent DECIMAL(18,6) NOT NULL DEFAULT 0.000000,
+  variance_cost DECIMAL(18,6) NOT NULL DEFAULT 0.000000,
+  snapshot_last_movement_id BIGINT UNSIGNED NULL,
+  stale_count_conflict TINYINT(1) NOT NULL DEFAULT 0,
+  reason_code_id BIGINT UNSIGNED NULL,
+  counted_by BIGINT UNSIGNED NULL,
+  counted_at DATETIME NULL,
+  notes TEXT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_inventory_count_line_item (count_id, item_id),
+  KEY idx_inventory_count_line_item (item_id),
+  KEY idx_inventory_count_line_snapshot_movement (snapshot_last_movement_id),
+  KEY idx_inventory_count_line_reason (reason_code_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
+    private function inventoryTransfersSql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS inventory_transfers (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  transfer_uuid CHAR(36) NOT NULL,
+  pos_tenant INT NOT NULL DEFAULT 0,
+  pos_branch INT NOT NULL DEFAULT 0,
+  branch_uuid CHAR(36) NULL,
+  source_store_id BIGINT UNSIGNED NOT NULL,
+  destination_store_id BIGINT UNSIGNED NOT NULL,
+  destination_pos_branch INT NULL,
+  destination_branch_uuid CHAR(36) NULL,
+  status ENUM('draft','submitted','sent','partially_received','received','closed','cancelled','returned','variance_closed') NOT NULL DEFAULT 'draft',
+  created_by BIGINT UNSIGNED NULL,
+  submitted_by BIGINT UNSIGNED NULL,
+  sent_by BIGINT UNSIGNED NULL,
+  received_by BIGINT UNSIGNED NULL,
+  cancelled_by BIGINT UNSIGNED NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  submitted_at DATETIME NULL,
+  sent_at DATETIME NULL,
+  received_at DATETIME NULL,
+  closed_at DATETIME NULL,
+  cancelled_at DATETIME NULL,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  notes TEXT NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_inventory_transfer_uuid (transfer_uuid),
+  KEY idx_inventory_transfer_scope_status (pos_tenant, pos_branch, status, created_at),
+  KEY idx_inventory_transfer_stores (pos_tenant, pos_branch, source_store_id, destination_store_id, status),
+  KEY idx_inventory_transfer_destination_branch (pos_tenant, destination_pos_branch, destination_store_id, status),
+  KEY idx_inventory_transfer_branch_uuid (branch_uuid)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
+    private function inventoryTransferLinesSql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS inventory_transfer_lines (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  transfer_id BIGINT UNSIGNED NOT NULL,
+  item_id BIGINT UNSIGNED NOT NULL,
+  unit_id BIGINT UNSIGNED NULL,
+  requested_qty DECIMAL(18,6) NOT NULL DEFAULT 0.000000,
+  sent_qty DECIMAL(18,6) NOT NULL DEFAULT 0.000000,
+  received_qty DECIMAL(18,6) NOT NULL DEFAULT 0.000000,
+  variance_qty DECIMAL(18,6) NOT NULL DEFAULT 0.000000,
+  unit_cost DECIMAL(18,6) NOT NULL DEFAULT 0.000000,
+  transfer_out_movement_id BIGINT UNSIGNED NULL,
+  transfer_in_movement_id BIGINT UNSIGNED NULL,
+  reason_code_id BIGINT UNSIGNED NULL,
+  notes TEXT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_inventory_transfer_line_item (transfer_id, item_id),
+  KEY idx_inventory_transfer_line_item (item_id),
+  KEY idx_inventory_transfer_line_out_movement (transfer_out_movement_id),
+  KEY idx_inventory_transfer_line_in_movement (transfer_in_movement_id),
+  KEY idx_inventory_transfer_line_reason (reason_code_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
+    private function inventoryPurchaseOrdersSql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS inventory_purchase_orders (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  purchase_order_uuid CHAR(36) NOT NULL,
+  pos_tenant INT NOT NULL DEFAULT 0,
+  pos_branch INT NOT NULL DEFAULT 0,
+  branch_uuid CHAR(36) NULL,
+  supplier_account_id BIGINT UNSIGNED NULL,
+  destination_store_id BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  status ENUM('draft','submitted','approved','rejected','partially_received','received','closed','cancelled') NOT NULL DEFAULT 'draft',
+  expected_at DATETIME NULL,
+  created_by BIGINT UNSIGNED NULL,
+  submitted_by BIGINT UNSIGNED NULL,
+  approved_by BIGINT UNSIGNED NULL,
+  closed_by BIGINT UNSIGNED NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  submitted_at DATETIME NULL,
+  approved_at DATETIME NULL,
+  closed_at DATETIME NULL,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  notes TEXT NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_inventory_purchase_order_uuid (purchase_order_uuid),
+  KEY idx_inventory_purchase_order_scope_status (pos_tenant, pos_branch, status, created_at),
+  KEY idx_inventory_purchase_order_supplier (supplier_account_id, status),
+  KEY idx_inventory_purchase_order_store (pos_tenant, pos_branch, destination_store_id, status),
+  KEY idx_inventory_purchase_order_branch_uuid (branch_uuid)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
+    private function inventoryPurchaseOrderLinesSql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS inventory_purchase_order_lines (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  purchase_order_id BIGINT UNSIGNED NOT NULL,
+  item_id BIGINT UNSIGNED NOT NULL,
+  unit_id BIGINT UNSIGNED NULL,
+  ordered_qty DECIMAL(18,6) NOT NULL DEFAULT 0.000000,
+  received_qty DECIMAL(18,6) NOT NULL DEFAULT 0.000000,
+  unit_cost DECIMAL(18,6) NOT NULL DEFAULT 0.000000,
+  total_cost DECIMAL(18,6) NOT NULL DEFAULT 0.000000,
+  notes TEXT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_inventory_purchase_order_line_item (purchase_order_id, item_id),
+  KEY idx_inventory_purchase_order_line_item (item_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
+    private function inventoryPurchaseReceiptsSql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS inventory_purchase_receipts (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  purchase_receipt_uuid CHAR(36) NOT NULL,
+  purchase_order_id BIGINT UNSIGNED NULL,
+  pos_tenant INT NOT NULL DEFAULT 0,
+  pos_branch INT NOT NULL DEFAULT 0,
+  branch_uuid CHAR(36) NULL,
+  supplier_account_id BIGINT UNSIGNED NULL,
+  destination_store_id BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  legacy_ot_head_id BIGINT UNSIGNED NULL,
+  supplier_invoice_no VARCHAR(128) NULL,
+  status ENUM('draft','received','posted','cancelled','returned') NOT NULL DEFAULT 'draft',
+  received_at DATETIME NULL,
+  posted_at DATETIME NULL,
+  created_by BIGINT UNSIGNED NULL,
+  posted_by BIGINT UNSIGNED NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  notes TEXT NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_inventory_purchase_receipt_uuid (purchase_receipt_uuid),
+  KEY idx_inventory_purchase_receipt_scope_status (pos_tenant, pos_branch, status, created_at),
+  KEY idx_inventory_purchase_receipt_order (purchase_order_id),
+  KEY idx_inventory_purchase_receipt_supplier (supplier_account_id, status),
+  KEY idx_inventory_purchase_receipt_store (pos_tenant, pos_branch, destination_store_id, status),
+  KEY idx_inventory_purchase_receipt_legacy (legacy_ot_head_id),
+  KEY idx_inventory_purchase_receipt_branch_uuid (branch_uuid)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
+    private function inventoryPurchaseReceiptLinesSql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS inventory_purchase_receipt_lines (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  purchase_receipt_id BIGINT UNSIGNED NOT NULL,
+  purchase_order_line_id BIGINT UNSIGNED NULL,
+  item_id BIGINT UNSIGNED NOT NULL,
+  unit_id BIGINT UNSIGNED NULL,
+  received_qty DECIMAL(18,6) NOT NULL DEFAULT 0.000000,
+  returned_qty DECIMAL(18,6) NOT NULL DEFAULT 0.000000,
+  unit_cost DECIMAL(18,6) NOT NULL DEFAULT 0.000000,
+  total_cost DECIMAL(18,6) NOT NULL DEFAULT 0.000000,
+  inventory_movement_id BIGINT UNSIGNED NULL,
+  reason_code_id BIGINT UNSIGNED NULL,
+  notes TEXT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_inventory_purchase_receipt_line_receipt (purchase_receipt_id),
+  KEY idx_inventory_purchase_receipt_line_po_line (purchase_order_line_id),
+  KEY idx_inventory_purchase_receipt_line_item (item_id),
+  KEY idx_inventory_purchase_receipt_line_movement (inventory_movement_id),
+  KEY idx_inventory_purchase_receipt_line_reason (reason_code_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
     }
 
@@ -1494,6 +1938,7 @@ CREATE TABLE IF NOT EXISTS stock_reservations (
   UNIQUE KEY uq_stock_reservation_uuid (reservation_uuid),
   UNIQUE KEY uq_stock_reservation_idem (pos_tenant, pos_branch, store_id, idempotency_key),
   KEY idx_stock_reservation_order (order_id, fat_detail_id, order_line_uuid),
+  KEY idx_stock_reservation_order_line (order_id, order_line_uuid),
   KEY idx_stock_reservation_usage (recipe_order_line_usage_id),
   KEY idx_stock_reservation_item_status (pos_tenant, pos_branch, store_id, ingredient_item_id, status),
   KEY idx_stock_reservation_expiry (status, expires_at),

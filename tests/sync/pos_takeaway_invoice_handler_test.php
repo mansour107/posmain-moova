@@ -5,7 +5,7 @@ require_once __DIR__ . '/../../classes/Recipe/DTO/RecipeActorContext.php';
 require_once __DIR__ . '/../../classes/Recipe/RecipeDefinitionService.php';
 require_once __DIR__ . '/../../classes/Recipe/Repository/InventoryBalanceRepository.php';
 
-mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
+mysqli_report(MYSQLI_REPORT_OFF);
 
 const POS_TAKEAWAY_BRANCH_UUID = '11111111-1111-4111-8111-111111111111';
 
@@ -22,7 +22,12 @@ function posTakeawayInvoiceHandlerTestMain(): void
     $db = 'posmain_takeaway_handler_' . getmypid();
     $root = dirname(__DIR__, 2);
     $sessionDir = sys_get_temp_dir() . '/posmain-takeaway-http-session-' . getmypid();
-    $conn = new mysqli($host, $user, $pass, '', $port);
+    $conn = @new mysqli($host, $user, $pass, '', $port);
+    if ($conn->connect_errno) {
+        echo "pos-takeaway-invoice-handler-skipped-db-unavailable\n";
+        return;
+    }
+    mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
     $server = null;
 
     try {

@@ -5,6 +5,7 @@ header('Access-Control-Allow-Origin: *');
 header('Access-Control-Allow-Methods: GET, POST, PUT, DELETE');
 header('Access-Control-Allow-Headers: Content-Type');
 
+require_once __DIR__ . '/../classes/Inventory/InventoryRetiredLegacyEndpoint.php';
 include('../includes/connect.php');
 
 $method = $_SERVER['REQUEST_METHOD'];
@@ -27,7 +28,7 @@ function handleOfflineSync($data) {
     
     switch ($action) {
         case 'sync_orders':
-            syncOfflineOrders($data['orders']);
+            InventoryRetiredLegacyEndpoint::respond('offline_stock_replay_retired');
             break;
         case 'sync_customers':
             syncOfflineCustomers($data['customers']);
@@ -39,76 +40,6 @@ function handleOfflineSync($data) {
             echo json_encode(['error' => 'Invalid action']);
             break;
     }
-}
-
-function syncOfflineOrders($orders) {
-    global $conn;
-    
-    $syncedCount = 0;
-    $errors = [];
-    
-    foreach ($orders as $order) {
-        if ($order['synced']) continue; // تخطي الطلبات المتزامنة
-        
-        try {
-            $conn->begin_transaction();
-            
-            // محاكاة معالجة بيانات النموذج
-            parse_str($order['data'], $formData);
-            
-            // إدراج رأس الطلب
-            $sql = "INSERT INTO ot_head (pro_tybe, pro_date, fat_net, info, emp_id, acc1, acc_fund, store_id, accural_date) 
-                    VALUES (?, NOW(), ?, ?, ?, ?, ?, ?, ?)";
-            
-            $stmt = $conn->prepare($sql);
-            $proTybe = $formData['pro_tybe'] ?? 9;
-            $fatNet = $formData['headnet'] ?? 0;
-            $info = $formData['info'] ?? 'طلب أوفلاين';
-            $empId = $formData['emp_id'] ?? 1;
-            $acc1 = $formData['acc2_id'] ?? 1;
-            $accFund = $formData['fund_id'] ?? 1;
-            $storeId = $formData['store_id'] ?? 1;
-            $accuralDate = $formData['accural_date'] ?? date('Y-m-d');
-            
-            $stmt->bind_param('idsiiiiis', $proTybe, $fatNet, $info, $empId, $acc1, $accFund, $storeId, $accuralDate);
-            $stmt->execute();
-            
-            $orderId = $conn->insert_id;
-            
-            // إدراج تفاصيل الطلب
-            if (isset($formData['itmname']) && is_array($formData['itmname'])) {
-                for ($i = 0; $i < count($formData['itmname']); $i++) {
-                    $itemId = $formData['itmname'][$i];
-                    $qty = $formData['itmqty'][$i] ?? 1;
-                    $price = $formData['itmprice'][$i] ?? 0;
-                    $value = $formData['itmval'][$i] ?? ($qty * $price);
-                    
-                    $sql = "INSERT INTO fat_details (pro_id, item_id, qty_out, price, det_value) 
-                            VALUES (?, ?, ?, ?, ?)";
-                    
-                    $stmt = $conn->prepare($sql);
-                    $stmt->bind_param('iiddd', $orderId, $itemId, $qty, $price, $value);
-                    $stmt->execute();
-                }
-            }
-            
-            $conn->commit();
-            $syncedCount++;
-            
-        } catch (Exception $e) {
-            $conn->rollback();
-            $errors[] = [
-                'order_id' => $order['id'],
-                'error' => $e->getMessage()
-            ];
-        }
-    }
-    
-    echo json_encode([
-        'success' => true,
-        'synced_count' => $syncedCount,
-        'errors' => $errors
-    ]);
 }
 
 function syncOfflineCustomers($customers) {

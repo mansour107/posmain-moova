@@ -6,7 +6,7 @@ require_once __DIR__ . '/../../classes/Recipe/DTO/RecipeActorContext.php';
 require_once __DIR__ . '/../../classes/Recipe/RecipeDefinitionService.php';
 require_once __DIR__ . '/../../classes/Recipe/Repository/InventoryBalanceRepository.php';
 
-mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
+mysqli_report(MYSQLI_REPORT_OFF);
 
 const POS_TAKEAWAY_SERVICE_BRANCH_UUID = '22222222-2222-4222-8222-222222222222';
 
@@ -35,7 +35,12 @@ $port = (int) (getenv('POSMAIN_TEST_MYSQL_PORT') ?: 3307);
 $user = getenv('POSMAIN_TEST_MYSQL_USER') ?: 'root';
 $pass = getenv('POSMAIN_TEST_MYSQL_PASS') ?: '';
 $db = 'posmain_takeaway_service_' . getmypid();
-$conn = new mysqli($host, $user, $pass, '', $port);
+$conn = @new mysqli($host, $user, $pass, '', $port);
+if ($conn->connect_errno) {
+    echo "pos-takeaway-order-service-skipped-db-unavailable\n";
+    exit(0);
+}
+mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
 
 try {
     $conn->query("CREATE DATABASE `{$db}` CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci");

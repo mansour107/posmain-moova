@@ -103,8 +103,8 @@ class ProductionBatchService
             'recipe_id' => (int) $batch['recipe_id'],
             'output_item_id' => (int) $batch['output_item_id'],
             'planned_output_qty' => (string) $batch['planned_output_qty'],
-            'requirements' => array_map(static function (IngredientRequirement $requirement): array {
-                return $requirement->toArray();
+            'requirements' => array_map(function (IngredientRequirement $requirement) use ($conn, $batch): array {
+                return $this->previewRequirement($conn, $batch, $requirement);
             }, $requirements),
             'total_input_cost' => $totalInputCost,
         ];
@@ -266,6 +266,37 @@ class ProductionBatchService
         return $requirements;
     }
 
+    private function previewRequirement(mysqli $conn, array $batch, IngredientRequirement $requirement): array
+    {
+        $row = $requirement->toArray();
+        $balance = $this->balances->findBalance(
+            $conn,
+            (int) $batch['pos_tenant'],
+            (int) $batch['pos_branch'],
+            (int) $batch['store_id'],
+            $requirement->ingredientItemId
+        ) ?: [
+            'qty_on_hand' => RecipeDecimal::zero(),
+            'qty_reserved' => RecipeDecimal::zero(),
+        ];
+
+        $qtyOnHand = RecipeDecimal::normalize($balance['qty_on_hand'] ?? '0');
+        $qtyReserved = RecipeDecimal::normalize($balance['qty_reserved'] ?? '0');
+        $available = RecipeDecimal::subtract($qtyOnHand, $qtyReserved);
+        $shortQty = RecipeDecimal::compare($available, $requirement->requiredQtyBase) < 0
+            ? RecipeDecimal::subtract($requirement->requiredQtyBase, $available)
+            : RecipeDecimal::zero();
+
+        $row['item_name'] = $this->itemName($conn, $requirement->ingredientItemId);
+        $row['qty_on_hand'] = $qtyOnHand;
+        $row['qty_reserved'] = $qtyReserved;
+        $row['available_qty'] = $available;
+        $row['short_qty'] = $shortQty;
+        $row['has_shortage'] = RecipeDecimal::isPositive($shortQty);
+
+        return $row;
+    }
+
     private function assertInputsAvailable(mysqli $conn, array $batch, array $requirements): void
     {
         foreach ($requirements as $requirement) {
@@ -299,6 +330,21 @@ class ProductionBatchService
         $stmt->close();
 
         return RecipeDecimal::normalize($row['cost_price'] ?? '0');
+    }
+
+    private function itemName(mysqli $conn, int $itemId): string
+    {
+        if (!$this->tableExists($conn, 'myitems')) {
+            return '';
+        }
+
+        $stmt = $conn->prepare('SELECT iname FROM myitems WHERE id = ? LIMIT 1');
+        $stmt->bind_param('i', $itemId);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        return (string) ($row['iname'] ?? '');
     }
 
     private function batchContext(array $batch, RecipeActorContext $actor): array

@@ -1,7 +1,10 @@
 <?php
+require_once('../classes/Inventory/InventoryInvoiceBridge.php');
 include('../includes/connect.php');
-$id = $_GET['id'];
-$editpass = $_POST['editpass'];
+$id = (int) ($_GET['id'] ?? 0);
+$editpass = $_POST['editpass'] ?? '';
+$pro_tybe = 0;
+$op2 = 0;
 
 if ($editpass != $edit_pass) {
     echo "تأكد من كلمة المرور ";
@@ -29,6 +32,35 @@ if ($editpass != $edit_pass) {
             $conn->query($sqldelot1);
         }
 
+    $inventoryInvoiceBridgeLines = [];
+    if ($id > 0 && $pro_tybe > 0) {
+        $inventoryInvoiceBridgeLines = posmainDeleteOperationInventoryBridgeLines($conn, $id);
+        if ($inventoryInvoiceBridgeLines) {
+            try {
+                $conn->begin_transaction();
+                $inventoryInvoiceBridge = new InventoryInvoiceBridge();
+                $inventoryBridgeResult = $inventoryInvoiceBridge->recordInvoiceReversalLines(
+                    $conn,
+                    (int) $pro_tybe,
+                    $id,
+                    $inventoryInvoiceBridgeLines,
+                    'operation_deleted',
+                    [
+                        'user_id' => isset($user) ? (int) $user : null,
+                        'source_system' => 'legacy_dodel_pro',
+                    ]
+                );
+                $conn->commit();
+                if (!empty($inventoryBridgeResult['errors'])) {
+                    error_log('Inventory operation delete bridge shadow errors: ' . json_encode($inventoryBridgeResult['errors']));
+                }
+            } catch (Throwable $inventoryBridgeException) {
+                $conn->rollback();
+                error_log('Inventory operation delete bridge shadow failure: ' . $inventoryBridgeException->getMessage());
+            }
+        }
+    }
+
 // مسح تفاصيل العملية 
     $conn->query("DELETE FROM fat_details where fatid = '$id'");
 // مسح تفاصيل القيد
@@ -49,3 +81,24 @@ if ($pro_tybe == 2) {header('location:../operations_summary.php?q=payment');}
 if ($pro_tybe == 3) {header('location:../operations_summary.php?q=sale');}
 if ($pro_tybe == 4) {header('location:../operations_summary.php?q=buy');}
 if ($pro_tybe == 9) {header('location:../operations_summary.php?q=buy');}
+
+function posmainDeleteOperationInventoryBridgeLines(mysqli $conn, int $operationId): array
+{
+    $stmt = $conn->prepare('
+        SELECT id, item_id, qty_in, qty_out, u_val, cost_price, det_store
+        FROM fat_details
+        WHERE fatid = ?
+          AND (isdeleted = 0 OR isdeleted IS NULL)
+        ORDER BY id ASC
+    ');
+    $stmt->bind_param('i', $operationId);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    $lines = [];
+    while ($row = $result->fetch_assoc()) {
+        $lines[] = $row;
+    }
+    $stmt->close();
+
+    return $lines;
+}

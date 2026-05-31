@@ -4,14 +4,19 @@ if (($argv[1] ?? '') === '--child') {
     recipePosGridAvailabilityEndpointRuntimeChild($argv[2] ?? '');
 }
 
-mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
-
 $host = getenv('POSMAIN_TEST_MYSQL_HOST') ?: '127.0.0.1';
 $port = (int) (getenv('POSMAIN_TEST_MYSQL_PORT') ?: 3307);
 $user = getenv('POSMAIN_TEST_MYSQL_USER') ?: 'root';
 $pass = getenv('POSMAIN_TEST_MYSQL_PASS') ?: '';
 $db = 'posmain_recipe_pos_availability_' . getmypid();
-$conn = new mysqli($host, $user, $pass, '', $port);
+mysqli_report(MYSQLI_REPORT_OFF);
+$conn = @new mysqli($host, $user, $pass, '', $port);
+if ($conn->connect_error) {
+    echo "recipe-pos-grid-availability-endpoint-runtime-skipped-db-unavailable\n";
+    exit(0);
+}
+
+mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
 
 try {
     $conn->query("CREATE DATABASE `{$db}` CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci");
@@ -57,6 +62,21 @@ try {
         'category endpoint should refresh recipe availability cache for decorated items'
     );
 
+    $barcodePayload = recipePosGridAvailabilityEndpointRuntimeRunChild($db, [
+        'endpoint' => 'barcode_search',
+        'barcode' => '7001',
+    ]);
+    recipePosGridAvailabilityEndpointRuntimeAssert(($barcodePayload['success'] ?? false) === true, 'barcode endpoint should return success JSON');
+    $barcodeItem = $barcodePayload['item'] ?? [];
+    recipePosGridAvailabilityEndpointRuntimeAssert((int) ($barcodeItem['id'] ?? 0) === 7001, 'barcode endpoint should return the searched item');
+    recipePosGridAvailabilityEndpointRuntimeAssert(($barcodeItem['availability_status'] ?? '') === 'recipe_unavailable', 'barcode endpoint should expose recipe availability status');
+    recipePosGridAvailabilityEndpointRuntimeAssert(($barcodeItem['availability_can_add'] ?? true) === false, 'barcode endpoint should block unavailable recipe item');
+    recipePosGridAvailabilityEndpointRuntimeAssert(($barcodeItem['unavailable_reason'] ?? '') === 'Required ingredient out of stock.', 'barcode endpoint should expose cashier unavailable reason');
+    recipePosGridAvailabilityEndpointRuntimeAssert(recipePosGridAvailabilityEndpointRuntimeDecimalEquals($barcodeItem['recipe_effective_available_qty'] ?? '', '0.000000'), 'barcode endpoint should expose effective recipe quantity');
+    foreach (['cost_price', 'unit_cost', 'total_cost', 'ingredient_cost_json', 'internal_cost_per_sell_unit'] as $sensitiveKey) {
+        recipePosGridAvailabilityEndpointRuntimeAssert(!array_key_exists($sensitiveKey, $barcodeItem), 'barcode availability payload should not expose cost key ' . $sensitiveKey);
+    }
+
     echo "recipe-pos-grid-availability-endpoint-runtime-ok db={$db}\n";
 } finally {
     $conn->query("DROP DATABASE IF EXISTS `{$db}`");
@@ -71,18 +91,32 @@ function recipePosGridAvailabilityEndpointRuntimeChild(string $json): void
         exit(9);
     }
 
-    $_SERVER['REQUEST_METHOD'] = 'GET';
-    $_SERVER['PHP_SELF'] = 'ajax/get_category_items.php';
-    $_SERVER['SCRIPT_NAME'] = 'ajax/get_category_items.php';
     $_SERVER['HTTP_ACCEPT'] = 'application/json';
     $_SERVER['HTTP_X_REQUESTED_WITH'] = 'XMLHttpRequest';
-    $_GET = [
-        'category_id' => (int) ($payload['category_id'] ?? 0),
-    ];
 
     session_id('recipeposavailability' . getmypid());
     require_once dirname(__DIR__, 2) . '/includes/session_bootstrap.php';
     chdir(dirname(__DIR__, 2) . '/ajax');
+
+    if (($payload['endpoint'] ?? '') === 'barcode_search') {
+        $_SERVER['REQUEST_METHOD'] = 'POST';
+        $_SERVER['PHP_SELF'] = 'ajax/search_item.php';
+        $_SERVER['SCRIPT_NAME'] = 'ajax/search_item.php';
+        $_GET = [];
+        $_POST = [
+            'barcode' => (string) ($payload['barcode'] ?? ''),
+        ];
+        require dirname(__DIR__, 2) . '/ajax/search_item.php';
+        exit(0);
+    }
+
+    $_SERVER['REQUEST_METHOD'] = 'GET';
+    $_SERVER['PHP_SELF'] = 'ajax/get_category_items.php';
+    $_SERVER['SCRIPT_NAME'] = 'ajax/get_category_items.php';
+    $_GET = [
+        'category_id' => (int) ($payload['category_id'] ?? 0),
+    ];
+    $_POST = [];
     require dirname(__DIR__, 2) . '/ajax/get_category_items.php';
     exit(0);
 }
@@ -172,6 +206,7 @@ function recipePosGridAvailabilityEndpointRuntimeCreateSchema(mysqli $conn): voi
         CREATE TABLE myitems (
             id BIGINT UNSIGNED NOT NULL PRIMARY KEY,
             iname VARCHAR(191) NOT NULL,
+            barcode VARCHAR(191) NULL,
             price1 DECIMAL(18,6) NOT NULL DEFAULT 0.000000,
             group1 BIGINT UNSIGNED NOT NULL DEFAULT 0,
             isdeleted TINYINT(1) NOT NULL DEFAULT 0
@@ -278,10 +313,10 @@ function recipePosGridAvailabilityEndpointRuntimeCreateSchema(mysqli $conn): voi
 
 function recipePosGridAvailabilityEndpointRuntimeSeedRows(mysqli $conn): void
 {
-    $conn->query("INSERT INTO myitems (id, iname, price1, group1, isdeleted) VALUES (7001, 'Unavailable Burger', '90.000000', 7, 0)");
-    $conn->query("INSERT INTO myitems (id, iname, price1, group1, isdeleted) VALUES (7002, 'Low Stock Latte', '55.000000', 7, 0)");
-    $conn->query("INSERT INTO myitems (id, iname, price1, group1, isdeleted) VALUES (8001, 'Missing Patty', '0.000000', 8, 0)");
-    $conn->query("INSERT INTO myitems (id, iname, price1, group1, isdeleted) VALUES (8002, 'Oat Milk', '0.000000', 8, 0)");
+    $conn->query("INSERT INTO myitems (id, iname, barcode, price1, group1, isdeleted) VALUES (7001, 'Unavailable Burger', '7001', '90.000000', 7, 0)");
+    $conn->query("INSERT INTO myitems (id, iname, barcode, price1, group1, isdeleted) VALUES (7002, 'Low Stock Latte', '7002', '55.000000', 7, 0)");
+    $conn->query("INSERT INTO myitems (id, iname, barcode, price1, group1, isdeleted) VALUES (8001, 'Missing Patty', '8001', '0.000000', 8, 0)");
+    $conn->query("INSERT INTO myitems (id, iname, barcode, price1, group1, isdeleted) VALUES (8002, 'Oat Milk', '8002', '0.000000', 8, 0)");
     recipePosGridAvailabilityEndpointRuntimeSeedRecipe($conn, 101, 7001, 8001, 'Unavailable Burger Recipe');
     recipePosGridAvailabilityEndpointRuntimeSeedRecipe($conn, 102, 7002, 8002, 'Low Stock Latte Recipe');
     recipePosGridAvailabilityEndpointRuntimeSeedBalance($conn, 8001, '0.000000');

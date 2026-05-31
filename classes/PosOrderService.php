@@ -4,6 +4,7 @@ require_once __DIR__ . '/Sync/DocumentCounterService.php';
 require_once __DIR__ . '/Recipe/ExternalOrderLineIdentityService.php';
 require_once __DIR__ . '/Recipe/RecipeDecimal.php';
 require_once __DIR__ . '/Recipe/RecipeOrderLifecycleService.php';
+require_once __DIR__ . '/Inventory/InventoryInvoiceBridge.php';
 
 class PosOrderService
 {
@@ -12,10 +13,12 @@ class PosOrderService
     const SALES_ACCOUNT = 91;
 
     private RecipeOrderLifecycleService $recipeLifecycleService;
+    private InventoryInvoiceBridge $inventoryInvoiceBridge;
 
-    public function __construct(?RecipeOrderLifecycleService $recipeLifecycleService = null)
+    public function __construct(?RecipeOrderLifecycleService $recipeLifecycleService = null, ?InventoryInvoiceBridge $inventoryInvoiceBridge = null)
     {
         $this->recipeLifecycleService = $recipeLifecycleService ?: new RecipeOrderLifecycleService();
+        $this->inventoryInvoiceBridge = $inventoryInvoiceBridge ?: new InventoryInvoiceBridge();
     }
 
     public function createOrMergeMoovaTableOrder(mysqli $conn, array $scope, array $payload)
@@ -86,6 +89,7 @@ class PosOrderService
         $moovaMappedLines = [];
         if ($moovaOrderId !== '') {
             $moovaMappedLines = $this->insertMoovaLineMappings($conn, $tenant, $branch, $moovaOrderId, $orderId, $insertedLines);
+            $this->recordMoovaInventoryBridgeLines($conn, $tenant, $branch, $scope, $payload, $moovaOrderId, $orderId, $moovaMappedLines);
             $this->registerExternalLineIdentities(
                 $conn,
                 $tenant,
@@ -333,9 +337,11 @@ class PosOrderService
             ),
             'moova_order_replaced'
         );
+        $this->recordMoovaInventoryBridgeReversalLines($conn, $tenant, $branch, $scope, $payload, $moovaOrderId, (int) $order['id'], $existingLines['lines'] ?? [], 'moova_order_replaced');
         $this->deactivateMoovaMappedLines($conn, $tenant, $branch, (int) $order['id'], $moovaOrderId, 'replaced');
         $insertedLines = $this->upsertOrderDetails($conn, $tenant, $branch, (int) $order['id'], $lines, $defaults['store_id']);
         $moovaMappedLines = $this->insertMoovaLineMappings($conn, $tenant, $branch, $moovaOrderId, (int) $order['id'], $insertedLines);
+        $this->recordMoovaInventoryBridgeLines($conn, $tenant, $branch, $scope, $payload, $moovaOrderId, (int) $order['id'], $moovaMappedLines);
         $this->registerExternalLineIdentities(
             $conn,
             $tenant,
@@ -421,6 +427,7 @@ class PosOrderService
             ),
             'moova_order_cancelled'
         );
+        $this->recordMoovaInventoryBridgeReversalLines($conn, $tenant, $branch, $scope, ['moovaOrderId' => $moovaOrderId], $moovaOrderId, (int) $order['id'], $existingLines['lines'] ?? [], 'moova_order_cancelled');
         $this->deactivateMoovaMappedLines($conn, $tenant, $branch, (int) $order['id'], $moovaOrderId, 'cancelled');
         $receiptState = $this->refreshReceiptTotalsAndAccounting($conn, $tenant, $branch, (int) $order['id'], $defaults, date('Y-m-d'), $userId);
         if ($tableId > 0) {
@@ -1213,6 +1220,93 @@ class PosOrderService
         }
 
         return $mappedLines;
+    }
+
+    private function recordMoovaInventoryBridgeLines(mysqli $conn, $tenant, $branch, array $scope, array $payload, string $moovaOrderId, int $orderId, array $mappedLines): void
+    {
+        $lines = $this->inventoryBridgeLinesFromMoovaMappedLines($mappedLines);
+        if (!$lines) {
+            return;
+        }
+
+        try {
+            $result = $this->inventoryInvoiceBridge->recordInvoiceLines(
+                $conn,
+                self::TYPE_POS,
+                $orderId,
+                $lines,
+                $this->moovaInventoryBridgeContext($tenant, $branch, $scope, $payload, $moovaOrderId)
+            );
+            if (!empty($result['errors'])) {
+                error_log('Moova inventory invoice bridge shadow errors: ' . json_encode($result['errors'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+            }
+        } catch (Throwable $exception) {
+            error_log('Moova inventory invoice bridge shadow failed: ' . $exception->getMessage());
+        }
+    }
+
+    private function recordMoovaInventoryBridgeReversalLines(mysqli $conn, $tenant, $branch, array $scope, array $payload, string $moovaOrderId, int $orderId, array $mappedLines, string $reason): void
+    {
+        $lines = $this->inventoryBridgeLinesFromMoovaMappedLines($mappedLines);
+        if (!$lines) {
+            return;
+        }
+
+        try {
+            $result = $this->inventoryInvoiceBridge->recordInvoiceReversalLines(
+                $conn,
+                self::TYPE_POS,
+                $orderId,
+                $lines,
+                $reason,
+                $this->moovaInventoryBridgeContext($tenant, $branch, $scope, $payload, $moovaOrderId)
+            );
+            if (!empty($result['errors'])) {
+                error_log('Moova inventory invoice bridge reversal shadow errors: ' . json_encode($result['errors'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+            }
+        } catch (Throwable $exception) {
+            error_log('Moova inventory invoice bridge reversal shadow failed: ' . $exception->getMessage());
+        }
+    }
+
+    private function inventoryBridgeLinesFromMoovaMappedLines(array $mappedLines): array
+    {
+        $lines = [];
+        foreach ($mappedLines as $line) {
+            $mappingId = (int) ($line['mapping_id'] ?? 0);
+            $detailId = (int) ($line['fat_detail_id'] ?? 0);
+            $itemId = (int) ($line['item_id'] ?? 0);
+            if ($detailId < 1 || $itemId < 1) {
+                continue;
+            }
+
+            $lines[] = [
+                'id' => $detailId,
+                'item_id' => $itemId,
+                'qty_in' => (string) ($line['qty_in'] ?? '0'),
+                'qty_out' => (string) ($line['qty_out'] ?? '0'),
+                'u_val' => (string) ($line['u_val'] ?? '1'),
+                'cost_price' => (string) ($line['cost_price'] ?? '0'),
+                'det_store' => (int) ($line['det_store'] ?? 0),
+                'order_line_uuid' => $mappingId > 0 ? 'moova_pos_order_lines:' . $mappingId : null,
+            ];
+        }
+
+        return $lines;
+    }
+
+    private function moovaInventoryBridgeContext($tenant, $branch, array $scope, array $payload, string $moovaOrderId): array
+    {
+        return [
+            'tenant' => (int) $tenant,
+            'branch' => (int) $branch,
+            'branch_uuid' => $this->nullableString($scope['branch_uuid'] ?? $payload['branchUuid'] ?? $payload['branch_uuid'] ?? null),
+            'channel' => $this->externalLineSourceChannel($payload),
+            'order_type' => $this->externalLineOrderType($payload),
+            'source_system' => 'moova',
+            'user_id' => (int) ($scope['user_id'] ?? 1),
+            'source_order_uuid' => $moovaOrderId,
+        ];
     }
 
     private function recipeContextsFromMoovaMappedLines(

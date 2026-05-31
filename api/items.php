@@ -5,6 +5,7 @@ header('Access-Control-Allow-Methods: GET');
 
 require_once __DIR__ . '/../includes/db_bootstrap.php';
 require_once __DIR__ . '/moova_menu_api_auth.php';
+require_once __DIR__ . '/../classes/Inventory/InventoryStockReadService.php';
 require_once __DIR__ . '/../classes/Pos/Service/ItemVariantService.php';
 require_once __DIR__ . '/../classes/Recipe/RecipeCostLeakAuditService.php';
 
@@ -152,6 +153,8 @@ try {
     }
     
     $stmt->close();
+
+    $items = (new InventoryStockReadService())->decoratePublicItemPayload($conn, $items);
 
     $variantService = new ItemVariantService();
     $itemIds = array_map(static function (array $item): int {

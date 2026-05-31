@@ -1,3 +1,8 @@
+<?php
+$posmainInventoryConfig = function_exists('posmain_app_config') ? posmain_app_config() : [];
+$posmainInventoryLiveLedgerMode = strtolower((string) ($posmainInventoryConfig['inventory']['ledger_mode'] ?? 'off')) === 'live';
+$posmainInventoryLegacyOpeningBalanceVisible = !$posmainInventoryLiveLedgerMode;
+?>
 <!-- Main Sidebar Container -->
 <aside class="main-sidebar elevation-4 font-light">
   <!-- Brand Logo -->
@@ -254,14 +259,16 @@
               </li>
 
 
-              <li class="nav-item">
-                <a href="items_start_balance.php" class="nav-link">
-                  <i class="nav-icon fas fa-list"></i>
-                  <p>
-                    <?= $lang_opening_balances_stores ?>
-                  </p>
-                </a>
-              </li>
+              <?php if ($posmainInventoryLegacyOpeningBalanceVisible) { ?>
+                <li class="nav-item">
+                  <a href="items_start_balance.php" class="nav-link">
+                    <i class="nav-icon fas fa-list"></i>
+                    <p>
+                      <?= $lang_opening_balances_stores ?>
+                    </p>
+                  </a>
+                </li>
+              <?php } ?>
 
 
 
@@ -422,12 +429,56 @@
                 </a>
               </li>
 
+              <li class="nav-item">
+                <a href="inventory_dashboard.php" class="nav-link">
+                  <i class="nav-icon fas fa-tachometer-alt"></i>
+                  <p>لوحة المخزون</p>
+                </a>
+              </li>
+
 
               <li class="nav-item">
                 <a href="sales.php?q=po" class="nav-link">
                   <i class="nav-icon fas fa-list"></i>
                   <p><?= $lang_purchase_order ?>
                   </p>
+                </a>
+              </li>
+
+              <li class="nav-item">
+                <a href="inventory_purchasing.php" class="nav-link">
+                  <i class="nav-icon fas fa-dolly-flatbed"></i>
+                  <p>استلام المخزون</p>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a href="inventory_counts.php" class="nav-link">
+                  <i class="nav-icon fas fa-clipboard-check"></i>
+                  <p>جرد المخزون</p>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a href="inventory_transfers.php" class="nav-link">
+                  <i class="nav-icon fas fa-exchange-alt"></i>
+                  <p>تحويلات المخزون</p>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a href="inventory_adjustments.php" class="nav-link">
+                  <i class="nav-icon fas fa-sliders-h"></i>
+                  <p>الهالك والتسويات</p>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a href="inventory_reason_codes.php" class="nav-link">
+                  <i class="nav-icon fas fa-tags"></i>
+                  <p>أسباب عمليات المخزون</p>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a href="inventory_stock_levels.php" class="nav-link">
+                  <i class="nav-icon fas fa-layer-group"></i>
+                  <p>مستويات المخزون</p>
                 </a>
               </li>
             </ul>
@@ -1196,12 +1247,14 @@
               </li>
 
 
-              <li class="nav-item">
-                <a href="items_start_balance.php" class="nav-link">
-                  <i class="nav-icon fas fa-list "></i>
-                  <p><?= $lang_items_opening_balance ?></p>
-                </a>
-              </li>
+              <?php if ($posmainInventoryLegacyOpeningBalanceVisible) { ?>
+                <li class="nav-item">
+                  <a href="items_start_balance.php" class="nav-link">
+                    <i class="nav-icon fas fa-list "></i>
+                    <p><?= $lang_items_opening_balance ?></p>
+                  </a>
+                </li>
+              <?php } ?>
 
 
 
@@ -1321,6 +1374,20 @@
                   <p>
                     <?= $lang_sales_items_report ?>
                   </p>
+                </a>
+              </li>
+
+              <li class="nav-item">
+                <a href="inventory_dashboard.php" class="nav-link">
+                  <i class="nav-icon fas fa-tachometer-alt"></i>
+                  <p>لوحة المخزون</p>
+                </a>
+              </li>
+
+              <li class="nav-item">
+                <a href="inventory_reports.php" class="nav-link">
+                  <i class="nav-icon fas fa-chart-bar"></i>
+                  <p>تقارير المخزون</p>
                 </a>
               </li>
 

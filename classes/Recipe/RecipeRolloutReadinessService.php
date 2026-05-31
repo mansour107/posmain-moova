@@ -462,7 +462,7 @@ class RecipeRolloutReadinessService
             'fixture_stock_adjustment' => [
                 'command' => 'php tools/recipe_fixture_stock_adjustment.php --json --apply --run-id=<unique-local-run-id> --barcode=RQA-CUP --qty=3 --store-id=<pilot-store-id>',
                 'writes' => true,
-                'writes_only' => 'one guarded local/staging Recipe QA fixture stock adjustment through RecipeWasteAdjustmentService',
+                'writes_only' => 'one guarded local/staging Recipe QA fixture stock adjustment through InventoryAdjustmentService',
             ],
             'pilot_evidence_template' => [
                 'command' => 'php tools/recipe_pilot_evidence.php --template --output=/absolute/path/to/recipe-pilot-evidence.md',

@@ -36,6 +36,7 @@ $requiredPermissions = [
     'pos.cashdrawer.count',
     'menu.edit',
     'inventory.edit',
+    'inventory.approve',
     'reports.view',
     'accounting.view',
     'users.manage',

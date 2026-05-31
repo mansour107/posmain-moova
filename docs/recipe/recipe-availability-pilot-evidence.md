@@ -36,7 +36,7 @@ Recipe availability and menu sync smoke passed: pass
 - Recipe report export and role QA evidence: tools/recipe_report_export_smoke.php CSV export passed for stock reconciliation, audit, cost history, ingredient consumption, recipe COGS, production variance, low stock impact, COGS reconciliation, expected-vs-actual usage, and modifier revenue/cost; no access denied or unsafe CSV cells.
 - Modifier substitution recipe evidence: tools/recipe_management_surface_smoke.php modifier substitution smoke passed for recipe_manage.php recipe_id=1; modifier lookup found Recipe QA oat milk option and no sensitive cost keys.
 - Production batch evidence: tools/recipe_stock_operations_surface_smoke.php production batch surface passed for recipe_production.php batch_id=1 with selected batch controls, commit/cancel controls, Input Preview, and Committed Lines.
-- Waste and stock adjustment evidence: tools/recipe_stock_operations_surface_smoke.php waste and stock adjustment surface passed for recipe_waste.php; fixture stock adjustment movement 15 replenished Recipe QA Takeaway Cup through RecipeWasteAdjustmentService with idempotency_replayed=true.
+- Waste and stock adjustment evidence: tools/recipe_stock_operations_surface_smoke.php waste and stock adjustment surface passed for inventory_adjustments.php; fixture stock adjustment movement 15 replenished Recipe QA Takeaway Cup through InventoryAdjustmentService with idempotency_replayed=true.
 - Paid refund/void evidence: tools/recipe_paid_reversal_surface_smoke.php paid order surface passed; ajax/refund_order.php method guard passed and recent orders payload found a paid reversible order.
 - Recipe rollback evidence: POSMAIN_RECIPE_MODE=off rollback documented; disable recipe write flags to return to legacy behavior.
 - Recipe COGS accountant evidence: accountant reviewed balanced journal 747 for order 998863; journal debit account 16 = 0.154000 and journal credit account 20 = 0.154000; inventory movements 18/19 link to accounting_journal_id=747.
@@ -89,7 +89,7 @@ These lines are hints only. They do not count as completed evidence until the ma
 - Isolated cashier browser fixture smoke proof: php tests/sync/recipe_cashier_browser_fixture_smoke_test.php -> recipe-cashier-browser-fixture-smoke-ok
 - Modifier substitution management endpoint runtime proof: php tests/sync/recipe_modifier_substitution_management_endpoint_runtime_test.php -> recipe-modifier-substitution-management-endpoint-runtime-ok
 - Production endpoint runtime proof: php tests/sync/recipe_production_endpoint_runtime_test.php -> recipe-production-endpoint-runtime-ok
-- Waste and stock adjustment endpoint runtime proof: php tests/sync/recipe_waste_adjustment_endpoint_runtime_test.php -> recipe-waste-adjustment-endpoint-runtime-ok
+- Waste and stock adjustment endpoint runtime proof: php tests/sync/inventory_adjustment_endpoint_runtime_test.php -> inventory-adjustment-endpoint-runtime-ok
 - Paid refund/void endpoint runtime proof: php tests/sync/recipe_paid_reversal_endpoint_runtime_test.php -> recipe-paid-reversal-endpoint-runtime-ok
 - POS grid availability endpoint runtime proof: php tests/sync/recipe_pos_grid_availability_endpoint_runtime_test.php -> recipe-pos-grid-availability-endpoint-runtime-ok
 - Moova menu sync payload endpoint runtime proof: php tests/sync/recipe_moova_menu_sync_payload_endpoint_runtime_test.php -> recipe-moova-menu-sync-payload-endpoint-runtime-ok

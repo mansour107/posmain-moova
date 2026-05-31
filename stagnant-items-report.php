@@ -1,4 +1,6 @@
 <?php
+require_once __DIR__ . '/classes/Inventory/InventoryStockReadService.php';
+
 include('includes/header.php');
 include('includes/navbar.php');
 include('includes/sidebar.php');
@@ -15,6 +17,11 @@ $to_date = isset($_GET['to']) ? $_GET['to'] : date('Y-m-d');
 $days_period = isset($_GET['days']) ? intval($_GET['days']) : 30;
 $category_filter = isset($_GET['category']) ? intval($_GET['category']) : 0;
 $max_qty_filter = isset($_GET['max_qty']) ? intval($_GET['max_qty']) : null; // New filter
+$inventoryStockReadService = new InventoryStockReadService();
+$inventoryStockJoin = $inventoryStockReadService->itemListLedgerJoin($conn, 'mi');
+$inventoryStockQtyExpr = $inventoryStockJoin['qty_expr'];
+$inventoryStockCostExpr = $inventoryStockJoin['cost_expr'];
+$inventoryStockJoinSql = $inventoryStockJoin['join_sql'];
 
 // حساب التاريخ بناءً على عدد الأيام إذا تم تحديده
 if (isset($_GET['days']) && $_GET['days'] > 0) {
@@ -135,7 +142,7 @@ if (isset($_GET['days']) && $_GET['days'] > 0) {
                                 // بناء شرط الحد الأقصى للكمية
                                 $max_qty_condition = "";
                                 if ($max_qty_filter !== null && $max_qty_filter >= 0) {
-                                    $max_qty_condition = "AND mi.itmqty <= $max_qty_filter";
+                                    $max_qty_condition = "AND {$inventoryStockQtyExpr} <= $max_qty_filter";
                                 }
 
 
@@ -146,8 +153,10 @@ if (isset($_GET['days']) && $_GET['days'] > 0) {
                                         mi.code,
                                         mi.iname,
                                         mi.itmqty,
+                                        {$inventoryStockQtyExpr} AS current_qty,
                                         mi.price1,
                                         mi.cost_price,
+                                        {$inventoryStockCostExpr} AS current_cost,
                                         mi.group1,
                                         ig.gname as category_name,
                                         (
@@ -167,11 +176,12 @@ if (isset($_GET['days']) && $_GET['days'] > 0) {
                                         ) as sales_count
                                     FROM myitems mi
                                     LEFT JOIN item_group ig ON mi.group1 = ig.id
+                                    $inventoryStockJoinSql
                                     WHERE mi.isdeleted = 0
                                     $category_condition
                                     $max_qty_condition  -- Added condition
                                     HAVING sales_count = 0
-                                    ORDER BY mi.itmqty DESC, last_sale_date ASC
+                                    ORDER BY current_qty DESC, last_sale_date ASC
                                 ";
 
                                 $result = $conn->query($stagnant_query);
@@ -180,9 +190,11 @@ if (isset($_GET['days']) && $_GET['days'] > 0) {
                                         $x++;
 
                                         // حساب قيمة المخزون
-                                        $stock_value = $row['itmqty'] * $row['cost_price'];
+                                        $currentQty = (float) ($row['current_qty'] ?? $row['itmqty']);
+                                        $currentCost = (float) ($row['current_cost'] ?? $row['cost_price']);
+                                        $stock_value = $currentQty * $currentCost;
                                         $total_stagnant_value += $stock_value;
-                                        $total_stagnant_qty += $row['itmqty'];
+                                        $total_stagnant_qty += $currentQty;
 
                                         // حساب أيام الركود
                                         $days_stagnant = 0;
@@ -213,21 +225,21 @@ if (isset($_GET['days']) && $_GET['days'] > 0) {
                                         <tr>
                                             <td class="text-center"><?= $x ?></td>
                                             <td class="text-center">
-                                                <code><?= htmlspecialchars($row['code']) ?></code>
+                                                <code><?= htmlspecialchars((string) ($row['code'] ?? ''), ENT_QUOTES, 'UTF-8') ?></code>
                                             </td>
                                             <td>
                                                 <a href="item_summery.php?id=<?= $row['id'] ?>" class="btn btn-link btn-sm">
-                                                    <?= htmlspecialchars($row['iname']) ?>
+                                                    <?= htmlspecialchars((string) ($row['iname'] ?? ''), ENT_QUOTES, 'UTF-8') ?>
                                                 </a>
                                             </td>
                                             <td class="text-center">
                                                 <span class="badge badge-light">
-                                                    <?= htmlspecialchars($row['category_name'] ?: 'غير محدد') ?>
+                                                    <?= htmlspecialchars((string) ($row['category_name'] ?: 'غير محدد'), ENT_QUOTES, 'UTF-8') ?>
                                                 </span>
                                             </td>
                                             <td class="text-center">
-                                                <span class="badge <?= $row['itmqty'] > 0 ? 'badge-success' : 'badge-secondary' ?>">
-                                                    <?= number_format($row['itmqty'], 0) ?>
+                                                <span class="badge <?= $currentQty > 0 ? 'badge-success' : 'badge-secondary' ?>">
+                                                    <?= number_format($currentQty, 0) ?>
                                                 </span>
                                             </td>
                                             <td class="text-center">

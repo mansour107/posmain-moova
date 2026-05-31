@@ -1,3 +1,4 @@
+<?php require_once __DIR__ . '/../../classes/Inventory/InventoryStockReadService.php'; ?>
 <div class="dashboard-widgets">
     <div class="row g-4">
         <?php if($role['sid_accounts'] == 1){ ?>
@@ -182,9 +183,15 @@
                             <div class="table-body">
                                 <?php
                                 $resitm = $conn->query("SELECT * FROM myitems order by id desc limit 5");
+                                $recentItems = [];
+                                while ($resitm && ($rowitm = $resitm->fetch_assoc())) {
+                                    $recentItems[] = $rowitm;
+                                }
+                                $recentItems = (new InventoryStockReadService())->decorateItems($conn, $recentItems);
                                 $x = 0;
-                                while ($rowitm = $resitm->fetch_assoc()) {
+                                foreach ($recentItems as $rowitm) {
                                     $x++;
+                                    $stockQty = (string) ($rowitm['stock_qty_display'] ?? $rowitm['itmqty'] ?? '0');
                                 ?>
                                 <div class="table-row">
                                     <div class="table-cell">
@@ -197,8 +204,8 @@
                                         </div>
                                     </div>
                                     <div class="table-cell">
-                                        <div class="stock-indicator <?= $rowitm['itmqty'] > 0 ? 'in-stock' : 'out-of-stock' ?>">
-                                            <span class="stock-value"><?= $rowitm['itmqty'] ?></span>
+                                        <div class="stock-indicator <?= (float) $stockQty > 0 ? 'in-stock' : 'out-of-stock' ?>" data-stock-source="<?= htmlspecialchars((string) ($rowitm['stock_qty_source'] ?? 'legacy'), ENT_QUOTES, 'UTF-8') ?>">
+                                            <span class="stock-value"><?= htmlspecialchars($stockQty, ENT_QUOTES, 'UTF-8') ?></span>
                                             <span class="stock-label">وحدة</span>
                                         </div>
                                     </div>
@@ -474,5 +481,4 @@
         <?php } ?>
     </div>
 </div>
-
 

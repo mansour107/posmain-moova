@@ -14,7 +14,14 @@ $port = (int) (getenv('POSMAIN_TEST_MYSQL_PORT') ?: 3307);
 $user = getenv('POSMAIN_TEST_MYSQL_USER') ?: 'root';
 $pass = getenv('POSMAIN_TEST_MYSQL_PASS') ?: '';
 $db = 'posmain_recipe_reservation_lifecycle_' . getmypid();
-$conn = new mysqli($host, $user, $pass, '', $port);
+mysqli_report(MYSQLI_REPORT_OFF);
+$conn = @new mysqli($host, $user, $pass, '', $port);
+if ($conn->connect_error) {
+    echo "recipe-reservation-lifecycle-runtime-skipped-db-unavailable\n";
+    exit(0);
+}
+
+mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
 
 try {
     $conn->query("CREATE DATABASE `{$db}` CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci");
@@ -34,6 +41,7 @@ try {
     recipeReservationLifecycleAssert(empty($addedAgain['noop']), 'reserve_only duplicate add should return the existing reservation result');
     recipeReservationLifecycleAssert(count($reservationsAfterAdd) === 1, 'duplicate add should not create a second reservation row');
     recipeReservationLifecycleAssert($reservationsAfterAdd[0]['status'] === 'reserved', 'reservation should be active after add');
+    recipeReservationLifecycleAssert($reservationsAfterAdd[0]['expires_at'] === '2026-05-24 11:30:00', 'reservation should use configured default expiry window');
     recipeReservationLifecycleAssert($balanceAfterAdd['qty_on_hand'] === '12.000000', 'reservation should not consume stock on hand');
     recipeReservationLifecycleAssert($balanceAfterAdd['qty_reserved'] === '2.000000', 'reservation should increase qty_reserved');
 
@@ -61,6 +69,20 @@ try {
     recipeReservationLifecycleAssert(in_array('reservation', $movementTypes, true), 'reservation movement should be recorded');
     recipeReservationLifecycleAssert(in_array('reservation_release', $movementTypes, true), 'reservation release movement should be recorded');
     recipeReservationLifecycleAssert(!in_array('recipe_consumption', $movementTypes, true), 'reserve_only should not write consumption movements');
+
+    $expireCtx = recipeReservationLifecycleLineContext($conn, 7200, 7201, 51010, '2.000000', '2026-05-24 08:00:00');
+    $service->onOrderLineAdded($expireCtx);
+    $expired = (new RecipeReservationService(recipeReservationLifecycleFlags()))->expireReservations(
+        $conn,
+        new DateTimeImmutable('2026-05-24 10:00:00')
+    );
+    $expiredReservation = recipeReservationLifecycleRows($conn, 'stock_reservations', 'order_id = 7200');
+    $balanceAfterExpire = recipeReservationLifecycleBalance($conn, 51011);
+
+    recipeReservationLifecycleAssert(empty($expired->noop), 'reservation expiry should release expired open-order reservations');
+    recipeReservationLifecycleAssert($expiredReservation[0]['status'] === 'expired', 'expired reservation should be marked expired');
+    recipeReservationLifecycleAssert(trim((string) ($expiredReservation[0]['released_at'] ?? '')) !== '', 'expired reservation should stamp the release timestamp');
+    recipeReservationLifecycleAssert($balanceAfterExpire['qty_reserved'] === '0.000000', 'expiry should clear reserved stock');
 
     echo "recipe-reservation-lifecycle-runtime-ok db={$db}\n";
 } finally {
@@ -141,7 +163,7 @@ function recipeReservationLifecycleFlags(): RecipeFeatureFlags
     ]);
 }
 
-function recipeReservationLifecycleLineContext(mysqli $conn, int $orderId, int $lineId, int $itemId, string $qty): array
+function recipeReservationLifecycleLineContext(mysqli $conn, int $orderId, int $lineId, int $itemId, string $qty, string $requestedAt = '2026-05-24 10:00:00'): array
 {
     return [
         'conn' => $conn,
@@ -154,6 +176,7 @@ function recipeReservationLifecycleLineContext(mysqli $conn, int $orderId, int $
         'order_type' => 'dine_in',
         'sellable_item_id' => $itemId,
         'quantity' => $qty,
+        'requested_at' => $requestedAt,
     ];
 }
 

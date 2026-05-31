@@ -925,7 +925,21 @@ class RecipeOrderLifecycleService
             'item_category_id' => $context->itemCategoryId,
             'channel' => $context->channel,
             'order_type' => $context->orderType,
+            'expires_at' => $this->reservationExpiresAt($context),
         ];
+    }
+
+    private function reservationExpiresAt(RecipeOrderLineContext $context): string
+    {
+        try {
+            $requestedAt = new DateTimeImmutable((string) ($context->requestedAt ?: 'now'));
+        } catch (Throwable $exception) {
+            $requestedAt = new DateTimeImmutable('now');
+        }
+
+        return $requestedAt
+            ->modify('+' . $this->settings->defaultReservationMinutes() . ' minutes')
+            ->format('Y-m-d H:i:s');
     }
 
     private function orderLines(array $order): array

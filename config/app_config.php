@@ -411,6 +411,11 @@ if (!function_exists('posmain_app_config')) {
         if (!in_array($recipeMode, $recipeModes, true)) {
             $recipeMode = 'off';
         }
+        $inventoryLedgerMode = strtolower(trim((string) $branchEnv(['POSMAIN_INVENTORY_LEDGER_MODE'], 'off')));
+        $inventoryLedgerMode = str_replace(['-', ' '], '_', $inventoryLedgerMode);
+        if (!in_array($inventoryLedgerMode, ['off', 'shadow', 'bridge', 'live'], true)) {
+            $inventoryLedgerMode = 'off';
+        }
 
         $config = [
             'env' => $env,
@@ -440,12 +445,12 @@ if (!function_exists('posmain_app_config')) {
                 'enabled' => posmain_bool($branchEnv(['POSMAIN_ENABLE_RECIPES'], '0'), false),
                 'mode' => $recipeMode,
                 'shadow_ledger' => posmain_bool($branchEnv(['POSMAIN_RECIPE_SHADOW_LEDGER'], '0'), false),
-                'reservations' => posmain_bool($branchEnv(['POSMAIN_RECIPE_RESERVATIONS'], '0'), false),
+                'reservations' => posmain_bool($branchEnv(['POSMAIN_RECIPE_RESERVATIONS', 'POSMAIN_INVENTORY_RESERVATIONS'], '0'), false),
                 'consumption' => posmain_bool($branchEnv(['POSMAIN_RECIPE_CONSUMPTION'], '0'), false),
                 'accounting' => posmain_bool($branchEnv(['POSMAIN_RECIPE_ACCOUNTING'], '0'), false),
-                'availability' => posmain_bool($branchEnv(['POSMAIN_RECIPE_AVAILABILITY'], '0'), false),
+                'availability' => posmain_bool($branchEnv(['POSMAIN_RECIPE_AVAILABILITY', 'POSMAIN_INVENTORY_AVAILABILITY'], '0'), false),
                 'moova_sync' => posmain_bool($branchEnv(['POSMAIN_RECIPE_MOOVA_SYNC'], '0'), false),
-                'strict_stock' => posmain_bool($branchEnv(['POSMAIN_RECIPE_STRICT_STOCK'], '0'), false),
+                'strict_stock' => posmain_bool($branchEnv(['POSMAIN_RECIPE_STRICT_STOCK', 'POSMAIN_INVENTORY_STRICT_STOCK'], '0'), false),
                 'cost_public_payloads' => posmain_bool($branchEnv(['POSMAIN_RECIPE_COST_PUBLIC_PAYLOADS'], '0'), false),
                 'default_reservation_minutes' => posmain_int($branchEnv(['POSMAIN_RECIPE_DEFAULT_RESERVATION_MINUTES'], 90), 90),
                 'default_safety_stock_qty' => (string) $branchEnv(['POSMAIN_RECIPE_DEFAULT_SAFETY_STOCK_QTY'], '0', true),
@@ -464,6 +469,24 @@ if (!function_exists('posmain_app_config')) {
                     'pos_branch' => (string) $branchEnv(['POSMAIN_RECIPE_PILOT_POS_BRANCH'], '', true),
                     'item_ids' => posmain_csv_int_list($branchEnv(['POSMAIN_RECIPE_PILOT_ITEM_IDS'], '', true)),
                     'category_ids' => posmain_csv_int_list($branchEnv(['POSMAIN_RECIPE_PILOT_CATEGORY_IDS'], '', true)),
+                ],
+            ],
+            'inventory' => [
+                'ledger_mode' => $inventoryLedgerMode,
+                'legacy_mirror' => posmain_bool($branchEnv(['POSMAIN_INVENTORY_LEGACY_MIRROR'], '0'), false),
+                'strict_stock' => posmain_bool($branchEnv(['POSMAIN_INVENTORY_STRICT_STOCK'], '0'), false),
+                'reservations' => posmain_bool($branchEnv(['POSMAIN_INVENTORY_RESERVATIONS'], '0'), false),
+                'accounting' => posmain_bool($branchEnv(['POSMAIN_INVENTORY_ACCOUNTING'], '0'), false),
+                'availability' => posmain_bool($branchEnv(['POSMAIN_INVENTORY_AVAILABILITY'], '0'), false),
+                'sync' => posmain_bool($branchEnv(['POSMAIN_INVENTORY_SYNC'], '0'), false),
+                'cost_public_payloads' => posmain_bool($branchEnv(['POSMAIN_INVENTORY_COST_PUBLIC_PAYLOADS'], '0'), false),
+                'accounts' => [
+                    'inventory_asset_account_id' => posmain_int($branchEnv(['POSMAIN_INVENTORY_ASSET_ACCOUNT_ID'], 0), 0),
+                    'inventory_account_id' => posmain_int($branchEnv(['POSMAIN_INVENTORY_ACCOUNT_ID'], 0), 0),
+                    'purchase_clearing_account_id' => posmain_int($branchEnv(['POSMAIN_INVENTORY_PURCHASE_CLEARING_ACCOUNT_ID'], 0), 0),
+                    'cogs_account_id' => posmain_int($branchEnv(['POSMAIN_INVENTORY_COGS_ACCOUNT_ID'], 0), 0),
+                    'waste_expense_account_id' => posmain_int($branchEnv(['POSMAIN_INVENTORY_WASTE_EXPENSE_ACCOUNT_ID'], 0), 0),
+                    'adjustment_gain_loss_account_id' => posmain_int($branchEnv(['POSMAIN_INVENTORY_ADJUSTMENT_GAIN_LOSS_ACCOUNT_ID'], 0), 0),
                 ],
             ],
             'public_base_url' => (string) posmain_env('POSMAIN_PUBLIC_BASE_URL', ''),

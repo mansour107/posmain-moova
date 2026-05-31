@@ -1,52 +1,52 @@
 <?php
 
 $root = dirname(__DIR__, 2);
-$page = recipeWasteAdjustmentSource($root . '/recipe_waste.php');
-$service = recipeWasteAdjustmentSource($root . '/classes/Recipe/RecipeWasteAdjustmentService.php');
-$movementService = recipeWasteAdjustmentSource($root . '/classes/Recipe/RecipeInventoryMovementService.php');
-$accounting = recipeWasteAdjustmentSource($root . '/classes/Recipe/RecipeAccountingService.php');
-$runtimeTest = recipeWasteAdjustmentSource($root . '/tests/sync/recipe_waste_adjustment_endpoint_runtime_test.php');
-$reports = recipeWasteAdjustmentSource($root . '/reports.php');
-$preflight = recipeWasteAdjustmentSource($root . '/classes/Recipe/RecipeRuntimePreflightService.php');
+$inventoryPage = recipeWasteAdjustmentRetirementSource($root . '/inventory_adjustments.php');
+$inventoryEndpoint = recipeWasteAdjustmentRetirementSource($root . '/ajax/inventory_adjustment.php');
+$reports = recipeWasteAdjustmentRetirementSource($root . '/reports.php');
+$preflight = recipeWasteAdjustmentRetirementSource($root . '/classes/Recipe/RecipeRuntimePreflightService.php');
+$operatorSmoke = recipeWasteAdjustmentRetirementSource($root . '/tools/recipe_operator_surface_smoke.php');
+$phase9 = recipeWasteAdjustmentRetirementSource($root . '/docs/inventory/phase9_adjustment_contracts.md');
 
-recipeWasteAdjustmentAssert(strpos($page, 'require_login()') !== false, 'operator page should require login');
-recipeWasteAdjustmentAssert(strpos($page, 'posmain_recipe_waste_can_view') !== false, 'operator page should guard view permission');
-recipeWasteAdjustmentAssert(strpos($page, "require_csrf('recipe_waste_adjustment')") !== false, 'operator page should require CSRF for writes');
-recipeWasteAdjustmentAssert(strpos($page, 'RecipeWasteAdjustmentService') !== false, 'operator page should delegate writes to shared service');
-recipeWasteAdjustmentAssert(strpos($page, 'ajax/recipe_editor_lookup.php') !== false, 'operator page should reuse recipe item lookup');
-recipeWasteAdjustmentAssert(strpos($page, 'INSERT INTO inventory_movements') === false, 'operator page must not write inventory directly');
-recipeWasteAdjustmentAssert(strpos($page, 'UPDATE inventory_item_balances') === false, 'operator page must not update balances directly');
+foreach ([
+    'recipe_waste.php',
+    'classes/Recipe/RecipeWasteAdjustmentService.php',
+    'tests/sync/recipe_waste_adjustment_endpoint_runtime_test.php',
+] as $removed) {
+    recipeWasteAdjustmentRetirementAssert(!is_file($root . '/' . $removed), 'legacy recipe waste surface should be removed: ' . $removed);
+}
 
-recipeWasteAdjustmentAssert(strpos($service, 'recordWaste') !== false, 'shared service should expose waste mutation');
-recipeWasteAdjustmentAssert(strpos($service, 'recordAdjustment') !== false, 'shared service should expose stock adjustment mutation');
-recipeWasteAdjustmentAssert(strpos($service, 'RecipeAuditService') !== false, 'shared service should audit stock-sensitive writes');
-recipeWasteAdjustmentAssert(strpos($service, 'assertCanApprove') !== false, 'shared service should require stronger permission for backdated writes');
-recipeWasteAdjustmentAssert(strpos($service, 'begin_transaction') !== false, 'shared service should wrap movement/accounting/audit writes transactionally');
-recipeWasteAdjustmentAssert(strpos($service, 'idempotency_key') !== false, 'shared service should use deterministic idempotency');
+recipeWasteAdjustmentRetirementAssert(strpos($inventoryPage, 'الهالك والتسويات') !== false, 'Inventory adjustment page should be the Arabic waste/adjustment surface');
+recipeWasteAdjustmentRetirementAssert(strpos($inventoryPage, 'ajax/inventory_adjustment.php') !== false, 'Inventory adjustment page should post to the Inventory endpoint');
+recipeWasteAdjustmentRetirementAssert(strpos($inventoryPage, 'RecipeWasteAdjustmentService') === false, 'Inventory adjustment page must not use legacy recipe waste service');
+recipeWasteAdjustmentRetirementAssert(strpos($inventoryPage, 'INSERT INTO inventory_movements') === false, 'Inventory adjustment page must not write movements directly');
+recipeWasteAdjustmentRetirementAssert(strpos($inventoryPage, 'UPDATE inventory_item_balances') === false, 'Inventory adjustment page must not update balances directly');
 
-recipeWasteAdjustmentAssert(strpos($movementService, 'recordAdjustment') !== false, 'inventory service should record adjustment movements');
-recipeWasteAdjustmentAssert(strpos($movementService, "'movement_type' => 'adjustment'") !== false, 'adjustment movements should use adjustment type');
-recipeWasteAdjustmentAssert(strpos($accounting, 'postStockAdjustment') !== false, 'accounting service should post adjustment variance journals');
-recipeWasteAdjustmentAssert(strpos($accounting, 'Recipe accounting movement id is missing.') !== false, 'accounting service should fail closed on missing movement ids');
-recipeWasteAdjustmentAssert(strpos($accounting, 'Recipe accounting movement type is invalid for this posting.') !== false, 'accounting service should fail closed on wrong movement types');
-recipeWasteAdjustmentAssert(strpos($accounting, '/\b(decimal|numeric)\b/') !== false, 'accounting service should require decimal/numeric journal entry columns');
-recipeWasteAdjustmentAssert(strpos($runtimeTest, 'recipe_waste.php') !== false, 'runtime test should execute the real waste/adjustment page');
-recipeWasteAdjustmentAssert(strpos($runtimeTest, "CREATE DATABASE `{\$db}`") !== false, 'runtime test should use an isolated temporary database');
-recipeWasteAdjustmentAssert(strpos($runtimeTest, "DROP DATABASE IF EXISTS `{\$db}`") !== false, 'runtime test should drop the temporary database');
-recipeWasteAdjustmentAssert(strpos($runtimeTest, "recipe_waste_adjustment") !== false, 'runtime test should prepare the page CSRF namespace');
-recipeWasteAdjustmentAssert(strpos($runtimeTest, 'inventory_movements') !== false, 'runtime test should verify movement rows');
-recipeWasteAdjustmentAssert(strpos($runtimeTest, 'inventory_item_balances') !== false, 'runtime test should verify balance rows');
-recipeWasteAdjustmentAssert(strpos($runtimeTest, 'recipe_audit_log') !== false, 'runtime test should verify audit rows');
-recipeWasteAdjustmentAssert(strpos($runtimeTest, "'POSMAIN_ENABLE_RECIPES' => '1'") !== false, 'runtime test should enable recipe flags only inside the child process');
-recipeWasteAdjustmentAssert(strpos($runtimeTest, "'POSMAIN_RECIPE_MODE' => 'shadow'") !== false, 'runtime test should use a write-capable non-accounting recipe mode');
-recipeWasteAdjustmentAssert(strpos($runtimeTest, "'POSMAIN_RECIPE_ACCOUNTING' => '0'") !== false, 'runtime test should keep accounting disabled for the isolated smoke');
-recipeWasteAdjustmentAssert(strpos($runtimeTest, 'replay should not duplicate movement') !== false, 'runtime test should cover idempotency replay');
-recipeWasteAdjustmentAssert(strpos($reports, 'recipe_waste.php') !== false, 'reports page should link the operator page');
-recipeWasteAdjustmentAssert(strpos($preflight, 'recipe_waste.php') !== false, 'runtime preflight should check the operator page');
+foreach ([
+    'InventoryAdjustmentService.php',
+    "require_csrf('inventory_adjustment'",
+    "require_permission('inventory.edit'",
+    'recordWaste',
+    'recordAdjustment',
+    'allow_backdate',
+    'allow_negative_result',
+    'allow_reason_code_approval',
+] as $needle) {
+    recipeWasteAdjustmentRetirementAssert(strpos($inventoryEndpoint, $needle) !== false, 'Inventory adjustment endpoint should include: ' . $needle);
+}
+recipeWasteAdjustmentRetirementAssert(strpos($inventoryEndpoint, 'RecipeWasteAdjustmentService') === false, 'Inventory adjustment endpoint must not use legacy recipe waste service');
 
-echo "recipe-waste-adjustment-contract-ok\n";
+recipeWasteAdjustmentRetirementAssert(strpos($reports, 'inventory_adjustments.php?from=recipe_reports') !== false, 'reports page should link the Inventory adjustment operator page');
+recipeWasteAdjustmentRetirementAssert(strpos($preflight, 'inventory_adjustments.php') !== false, 'runtime preflight should check the Inventory adjustment operator page');
+recipeWasteAdjustmentRetirementAssert(strpos($preflight, 'ajax/inventory_adjustment.php') !== false, 'runtime preflight should check the Inventory adjustment endpoint');
+recipeWasteAdjustmentRetirementAssert(strpos($preflight, 'recipe_waste.php') === false, 'runtime preflight should not check the removed recipe waste page');
+recipeWasteAdjustmentRetirementAssert(strpos($operatorSmoke, 'inventory_adjustments.php') !== false, 'operator smoke should check the Inventory adjustment page');
+recipeWasteAdjustmentRetirementAssert(strpos($operatorSmoke, 'recipe_waste.php') === false, 'operator smoke should not check the removed recipe waste page');
+recipeWasteAdjustmentRetirementAssert(strpos($phase9, 'recipe_waste.php` and `RecipeWasteAdjustmentService` have been deleted') !== false, 'phase9 docs should record legacy deletion');
 
-function recipeWasteAdjustmentSource(string $path): string
+echo "recipe-waste-adjustment-retirement-contract-ok\n";
+
+function recipeWasteAdjustmentRetirementSource(string $path): string
 {
     $source = file_get_contents($path);
     if (!is_string($source)) {
@@ -56,7 +56,7 @@ function recipeWasteAdjustmentSource(string $path): string
     return $source;
 }
 
-function recipeWasteAdjustmentAssert(bool $condition, string $message): void
+function recipeWasteAdjustmentRetirementAssert(bool $condition, string $message): void
 {
     if (!$condition) {
         throw new RuntimeException($message);

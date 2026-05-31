@@ -5,6 +5,7 @@ $page = recipeProductionUiSource($root . '/recipe_production.php');
 $mutation = recipeProductionUiSource($root . '/classes/Recipe/ProductionBatchMutationService.php');
 $read = recipeProductionUiSource($root . '/classes/Recipe/ProductionBatchReadService.php');
 $service = recipeProductionUiSource($root . '/classes/Recipe/ProductionBatchService.php');
+$movementService = recipeProductionUiSource($root . '/classes/Recipe/RecipeInventoryMovementService.php');
 $repository = recipeProductionUiSource($root . '/classes/Recipe/Repository/ProductionBatchRepository.php');
 $runtimeTest = recipeProductionUiSource($root . '/tests/sync/recipe_production_endpoint_runtime_test.php');
 $reports = recipeProductionUiSource($root . '/reports.php');
@@ -20,7 +21,7 @@ recipeProductionUiAssert(strpos($page, 'posmain_recipe_production_can_view_cost'
 recipeProductionUiAssert(substr_count($page, 'if ($canViewProductionCost)') >= 4, 'production page should gate preview and committed-line costs');
 recipeProductionUiAssert(strpos($page, 'RecipeInventoryMovementService') === false, 'production page should not call movement service directly');
 recipeProductionUiAssert(strpos($page, 'RecipeAccountingService') === false, 'production page should not call accounting service directly');
-foreach (['Create Draft Batch', 'Input Preview', 'Commit Batch', 'Cancel Draft', 'Committed Lines'] as $label) {
+foreach (['مسودة إنتاج جديدة', 'معاينة المدخلات', 'تأكيد الإنتاج', 'إلغاء المسودة', 'حركات الإنتاج المثبتة'] as $label) {
     recipeProductionUiAssert(strpos($page, $label) !== false, 'production page missing operator surface: ' . $label);
 }
 foreach (['INSERT INTO', 'UPDATE ', 'DELETE FROM'] as $writeNeedle) {
@@ -53,6 +54,9 @@ recipeProductionUiAssert(strpos($service, 'postProductionBatch') !== false, 'pro
 recipeProductionUiAssert(strpos($service, 'RecipeAvailabilityService') !== false, 'production service should own production availability refresh');
 recipeProductionUiAssert(strpos($service, 'refreshForIngredient') !== false, 'production service should refresh availability for changed production items');
 recipeProductionUiAssert(strpos($service, 'availability_refreshes') !== false, 'production commit result should expose refreshed availability evidence');
+foreach (['InventoryLedgerService', 'canWriteLedger', 'recordProductionInputThroughInventoryLedger', 'recordProductionOutputThroughInventoryLedger'] as $needle) {
+    recipeProductionUiAssert(strpos($movementService, $needle) !== false, 'production movement service should delegate to shared inventory ledger: ' . $needle);
+}
 foreach (['Production batch status is invalid', 'Production batch planned_output_qty must be positive', 'Production batch line_type is invalid', 'actual_qty', 'cannot be negative'] as $guard) {
     recipeProductionUiAssert(strpos($repository, $guard) !== false, 'production repository missing invariant guard: ' . $guard);
 }

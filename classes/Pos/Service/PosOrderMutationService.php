@@ -17,6 +17,7 @@ require_once __DIR__ . '/../../Recipe/RecipeOrderLifecycleService.php';
 require_once __DIR__ . '/../../Recipe/RecipeSettingsService.php';
 require_once __DIR__ . '/../../Recipe/RecipeAuditService.php';
 require_once __DIR__ . '/../../Recipe/DTO/RecipeActorContext.php';
+require_once __DIR__ . '/../../Inventory/InventoryInvoiceBridge.php';
 
 class PosOrderMutationService
 {
@@ -43,8 +44,9 @@ class PosOrderMutationService
     private $recipeLifecycleService;
     private $recipeSettingsService;
     private $recipeAuditService;
+    private $inventoryInvoiceBridge;
 
-    public function __construct(?PaymentService $paymentService = null, ?TableStateService $tableStateService = null, ?TableOrderService $tableOrderService = null, ?InventoryMovementService $inventoryMovementService = null, ?OrderEventService $orderEventService = null, ?IdempotencyService $idempotencyService = null, ?ItemAvailabilityService $itemAvailabilityService = null, ?ManagerApprovalService $managerApprovalService = null, ?ModifierLineNoteService $modifierLineNoteService = null, ?RecipeOrderLifecycleService $recipeLifecycleService = null, ?RecipeSettingsService $recipeSettingsService = null, ?RecipeAuditService $recipeAuditService = null)
+    public function __construct(?PaymentService $paymentService = null, ?TableStateService $tableStateService = null, ?TableOrderService $tableOrderService = null, ?InventoryMovementService $inventoryMovementService = null, ?OrderEventService $orderEventService = null, ?IdempotencyService $idempotencyService = null, ?ItemAvailabilityService $itemAvailabilityService = null, ?ManagerApprovalService $managerApprovalService = null, ?ModifierLineNoteService $modifierLineNoteService = null, ?RecipeOrderLifecycleService $recipeLifecycleService = null, ?RecipeSettingsService $recipeSettingsService = null, ?RecipeAuditService $recipeAuditService = null, ?InventoryInvoiceBridge $inventoryInvoiceBridge = null)
     {
         $this->paymentService = $paymentService ?: new PaymentService();
         $this->tableStateService = $tableStateService ?: new TableStateService();
@@ -58,6 +60,7 @@ class PosOrderMutationService
         $this->recipeLifecycleService = $recipeLifecycleService ?: new RecipeOrderLifecycleService();
         $this->recipeSettingsService = $recipeSettingsService ?: new RecipeSettingsService();
         $this->recipeAuditService = $recipeAuditService ?: new RecipeAuditService();
+        $this->inventoryInvoiceBridge = $inventoryInvoiceBridge ?: new InventoryInvoiceBridge();
     }
 
     public function payTableOrder(mysqli $conn, array $request, array $context = []): array
@@ -475,11 +478,15 @@ class PosOrderMutationService
             'store_id' => $storeId,
         ]);
         $recipeLines = [];
+        $inventoryBridgeLines = [];
         foreach ($lineResult['lines'] as $index => $line) {
             $line['_source_item'] = $items[$index] ?? [];
             $line['note'] = $this->lineNoteFromItem($line['_source_item']);
-            $recipeLines[] = $this->insertTakeawayDetailLine($conn, $orderId, $storeId, $line, $context);
+            $recipeLine = $this->insertTakeawayDetailLine($conn, $orderId, $storeId, $line, $context);
+            $recipeLines[] = $recipeLine;
+            $inventoryBridgeLines[] = $this->inventoryBridgeLineFromLegacyLine($line, $recipeLine, $storeId);
         }
+        $this->recordInventoryInvoiceBridgeLines($conn, $orderId, $inventoryBridgeLines, 'pos', 'takeaway', $request, $context);
         $this->recordRecipeOrderLinesAdded($conn, $recipeLines);
         if ($status['order_status'] === 'completed') {
             $this->recordRecipeOrderPaid($conn, $orderId, $recipeLines, 'pos', 'takeaway', $request, $context);
@@ -804,6 +811,9 @@ class PosOrderMutationService
         $oldRecipeLines = $isUpdate
             ? $this->loadRecipeOrderLineContexts($conn, $orderId, 'table', 'dine_in', $request, $context)
             : [];
+        $oldInventoryBridgeLines = $isUpdate
+            ? $this->loadInventoryInvoiceBridgeLines($conn, $orderId)
+            : [];
         if ($orderId > 0) {
             $this->updateTableOrderHeader(
                 $conn,
@@ -820,6 +830,7 @@ class PosOrderMutationService
                 $info
             );
             $this->recordRecipeOrderLinesCancelled($conn, $oldRecipeLines, 'order_updated');
+            $this->recordInventoryInvoiceBridgeReversalLines($conn, $orderId, $oldInventoryBridgeLines, 'order_updated', 'table', 'dine_in', $request, $context);
             $this->tableOrderService->execute($conn, "UPDATE fat_details SET isdeleted = 1 WHERE fatid = ?", [$orderId]);
         } else {
             $orderId = $this->insertTableOrderHeader(
@@ -840,6 +851,7 @@ class PosOrderMutationService
         $this->tableOrderService->assignUuidIfPresent($conn, 'ot_head', $orderId);
 
         $recipeLines = $this->insertTableOrderItems($conn, $orderId, $storeId, $items, $context);
+        $this->recordInventoryInvoiceBridgeLines($conn, $orderId, $this->inventoryBridgeLinesFromRecipeLines($recipeLines), 'table', 'dine_in', $request, $context);
         $this->recordRecipeOrderLinesAdded($conn, $recipeLines);
         $totals = $this->tableOrderService->recalculateOrderTotals($conn, $orderId);
         $status = $this->applyPaidState($conn, $orderId, $tableId, $existingPaid, (float) $totals['net']);
@@ -1436,6 +1448,142 @@ class PosOrderMutationService
         }
 
         return $lines;
+    }
+
+    private function loadInventoryInvoiceBridgeLines(mysqli $conn, int $orderId): array
+    {
+        if ($orderId < 1 || !$this->columnExists($conn, 'fat_details', 'id')) {
+            return [];
+        }
+
+        $costSelect = $this->columnExists($conn, 'fat_details', 'cost_price')
+            ? 'COALESCE(cost_price, 0) AS cost_price'
+            : '0 AS cost_price';
+        $uuidSelect = $this->columnExists($conn, 'fat_details', 'uuid')
+            ? 'uuid AS order_line_uuid'
+            : 'NULL AS order_line_uuid';
+
+        return $this->tableOrderService->queryAll($conn, "
+            SELECT id, item_id, u_val, qty_in, qty_out, det_store, {$costSelect}, {$uuidSelect}
+            FROM fat_details
+            WHERE fatid = ?
+              AND isdeleted = 0
+              AND (qty_in > 0 OR qty_out > 0)
+            ORDER BY id ASC
+        ", [$orderId]);
+    }
+
+    private function inventoryBridgeLinesFromRecipeLines(array $recipeLines): array
+    {
+        $lines = [];
+        foreach ($recipeLines as $line) {
+            if (!is_array($line)) {
+                continue;
+            }
+            $detailId = (int) ($line['fat_detail_id'] ?? 0);
+            $itemId = (int) ($line['item_id'] ?? $line['sellable_item_id'] ?? 0);
+            $qty = (string) ($line['qty'] ?? $line['quantity'] ?? '0');
+            if ($detailId < 1 || $itemId < 1) {
+                continue;
+            }
+            $lines[] = [
+                'id' => $detailId,
+                'item_id' => $itemId,
+                'qty_in' => '0',
+                'qty_out' => $qty,
+                'u_val' => '1',
+                'cost_price' => '0',
+                'det_store' => (int) ($line['store_id'] ?? 0),
+                'order_line_uuid' => $this->nullableString($line['order_line_uuid'] ?? null),
+            ];
+        }
+
+        return $lines;
+    }
+
+    private function inventoryBridgeLineFromLegacyLine(array $legacyLine, array $recipeLine, int $storeId): array
+    {
+        return [
+            'id' => (int) ($recipeLine['fat_detail_id'] ?? 0),
+            'item_id' => (int) ($legacyLine['item_id'] ?? $recipeLine['item_id'] ?? 0),
+            'qty_in' => (string) ($legacyLine['qty_in'] ?? '0'),
+            'qty_out' => (string) ($legacyLine['qty_out'] ?? $recipeLine['qty'] ?? '0'),
+            'u_val' => (string) ($legacyLine['u_val'] ?? '1'),
+            'cost_price' => (string) ($legacyLine['cost_price'] ?? '0'),
+            'det_store' => (int) ($legacyLine['det_store'] ?? $storeId),
+            'order_line_uuid' => $this->nullableString($recipeLine['order_line_uuid'] ?? null),
+        ];
+    }
+
+    private function recordInventoryInvoiceBridgeLines(
+        mysqli $conn,
+        int $orderId,
+        array $lines,
+        string $channel,
+        string $orderType,
+        array $request,
+        array $context
+    ): void {
+        if ($orderId < 1 || !$lines) {
+            return;
+        }
+
+        try {
+            $result = $this->inventoryInvoiceBridge->recordInvoiceLines(
+                $conn,
+                InventoryInvoiceBridge::TYPE_POS,
+                $orderId,
+                $lines,
+                $this->inventoryInvoiceBridgeContext($request, $context, $channel, $orderType)
+            );
+            if (!empty($result['errors'])) {
+                error_log('POS inventory invoice bridge shadow errors: ' . json_encode($result['errors'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+            }
+        } catch (Throwable $exception) {
+            error_log('POS inventory invoice bridge shadow failed: ' . $exception->getMessage());
+        }
+    }
+
+    private function recordInventoryInvoiceBridgeReversalLines(
+        mysqli $conn,
+        int $orderId,
+        array $lines,
+        string $reason,
+        string $channel,
+        string $orderType,
+        array $request,
+        array $context
+    ): void {
+        if ($orderId < 1 || !$lines) {
+            return;
+        }
+
+        try {
+            $result = $this->inventoryInvoiceBridge->recordInvoiceReversalLines(
+                $conn,
+                InventoryInvoiceBridge::TYPE_POS,
+                $orderId,
+                $lines,
+                $reason,
+                $this->inventoryInvoiceBridgeContext($request, $context, $channel, $orderType)
+            );
+            if (!empty($result['errors'])) {
+                error_log('POS inventory invoice bridge reversal shadow errors: ' . json_encode($result['errors'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+            }
+        } catch (Throwable $exception) {
+            error_log('POS inventory invoice bridge reversal shadow failed: ' . $exception->getMessage());
+        }
+    }
+
+    private function inventoryInvoiceBridgeContext(array $request, array $context, string $channel, string $orderType): array
+    {
+        return [
+            'store_id' => (int) ($request['store_id'] ?? $context['store_id'] ?? 0),
+            'user_id' => $this->contextUserId($request, $context),
+            'channel' => $channel,
+            'order_type' => $orderType,
+            'source_system' => $context['event_source'] ?? $context['source_system'] ?? 'pos_order_mutation_service',
+        ];
     }
 
     private function recipeSplitOriginalAdjustments(

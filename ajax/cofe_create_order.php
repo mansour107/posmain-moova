@@ -9,6 +9,7 @@ include('../includes/connect.php');
 require_once('../classes/Sync/DocumentCounterService.php');
 require_once('../classes/Sync/SyncOutboxEventService.php');
 require_once('../classes/Recipe/LegacyInvoiceRecipeLifecycleBridge.php');
+require_once('../classes/Inventory/InventoryInvoiceBridge.php');
 
 // امسح أي output جاي من connect.php (warnings, notices, etc.)
 ob_clean();
@@ -183,6 +184,7 @@ $conn->begin_transaction();
 try {
     $counterService = new DocumentCounterService();
     $recipeLifecycleBridge = new LegacyInvoiceRecipeLifecycleBridge();
+    $inventoryInvoiceBridge = new InventoryInvoiceBridge();
     $pro_id = nextCofeProId($conn, $counterService, $pro_tybe);
 
     // ===== إدراج رأس الفاتورة =====
@@ -340,6 +342,7 @@ try {
         )"
     );
     // types: i i i  d d  d i i i  d d
+    $inventoryCofeBridgeLines = [];
     foreach ($orderItems as $itemIndex => $item) {
         $qty_out    = $item['qty'];
         $det_value  = $item['qty'] * $item['price'];
@@ -365,8 +368,43 @@ try {
         }
         $orderItems[$itemIndex]['fat_detail_id'] = (int) $conn->insert_id;
         $orderItems[$itemIndex]['det_store'] = (int) $store_id;
+        $inventoryCofeBridgeLines[] = [
+            'id' => (int) $conn->insert_id,
+            'item_id' => (int) $item['id'],
+            'qty_in' => '0',
+            'qty_out' => (string) $qty_out,
+            'u_val' => '1',
+            'cost_price' => (string) $item['cost_price'],
+            'det_store' => (int) $store_id,
+            'order_line_uuid' => isset($item['source_line']['externalLineId'])
+                ? 'cofe:' . (string) $item['source_line']['externalLineId']
+                : null,
+        ];
     }
     $stmt_details->close();
+
+    if ($inventoryCofeBridgeLines) {
+        try {
+            $inventoryBridgeResult = $inventoryInvoiceBridge->recordInvoiceLines(
+                $conn,
+                (int) $pro_tybe,
+                (int) $last_op,
+                $inventoryCofeBridgeLines,
+                [
+                    'store_id' => (int) $store_id,
+                    'user_id' => (int) $usid,
+                    'channel' => 'cofe',
+                    'order_type' => !empty($tableNumber) && intval($tableNumber) > 0 ? 'dine_in' : 'takeaway',
+                    'source_system' => 'cofe_widget',
+                ]
+            );
+            if (!empty($inventoryBridgeResult['errors'])) {
+                error_log('[Cofe] Inventory invoice bridge shadow errors: ' . json_encode($inventoryBridgeResult['errors'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+            }
+        } catch (Throwable $inventoryBridgeException) {
+            error_log('[Cofe] Inventory invoice bridge shadow failed: ' . $inventoryBridgeException->getMessage());
+        }
+    }
 
     $recipeOrderType = !empty($tableNumber) && intval($tableNumber) > 0 ? 'dine_in' : 'takeaway';
     $recipeExternalOrderId = (string) ($cofeOrderId ?: $idempotencyKey ?: $last_op);

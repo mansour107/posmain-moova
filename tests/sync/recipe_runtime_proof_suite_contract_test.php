@@ -41,7 +41,7 @@ foreach ([
     'recipe_cashier_browser_fixture_smoke_test.php',
     'recipe_modifier_substitution_management_endpoint_runtime_test.php',
     'recipe_production_endpoint_runtime_test.php',
-    'recipe_waste_adjustment_endpoint_runtime_test.php',
+    'inventory_adjustment_endpoint_runtime_test.php',
     'recipe_paid_reversal_endpoint_runtime_test.php',
     'recipe_pos_grid_availability_endpoint_runtime_test.php',
     'recipe_manager_override_endpoint_runtime_test.php',

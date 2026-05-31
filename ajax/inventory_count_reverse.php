@@ -1,0 +1,30 @@
+<?php
+require_once __DIR__ . '/../includes/session_bootstrap.php';
+require_once __DIR__ . '/../includes/connect.php';
+require_once __DIR__ . '/../includes/auth_guard.php';
+require_once __DIR__ . '/../includes/csrf.php';
+require_once __DIR__ . '/../classes/Inventory/InventoryCountService.php';
+require_once __DIR__ . '/inventory_count_common.php';
+
+header('Content-Type: application/json; charset=utf-8');
+inventoryCountRequirePost();
+require_csrf('inventory_count');
+require_permission('inventory.edit', $conn);
+
+try {
+    if (!auth_guard_has_permission('inventory.approve', $conn) && !auth_guard_has_permission('accounting.view', $conn)) {
+        throw new RuntimeException('COUNT_REVERSAL_APPROVAL_REQUIRED');
+    }
+
+    $payload = inventoryCountPayload();
+    $service = new InventoryCountService();
+    $result = $service->reverseClosed($conn, (int) ($payload['count_id'] ?? 0), [
+        'user_id' => current_user_id(),
+        'source_system' => 'inventory_count_ui',
+        'reason' => trim((string) ($payload['reason'] ?? '')),
+    ]);
+
+    echo json_encode(array_merge($result, ['message' => 'تم عكس أثر الجرد وإلغاء المستند']), JSON_UNESCAPED_UNICODE);
+} catch (Throwable $exception) {
+    inventoryCountJsonError($exception);
+}

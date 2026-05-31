@@ -13,7 +13,8 @@ if (!empty($rowstg['def_pos_store'])) {
 }
 ?>
 
-<form action="do/doadd_invoice_clothes.php" method="post" id="posForm">
+<form action="do/doadd_invoice.php" method="post" id="posForm">
+    <?= csrf_input('pos_browser') ?>
     <div class="order-section">
         <div class="order-header">
             <h6 class="mb-0">

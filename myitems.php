@@ -1,3 +1,6 @@
+<?php
+require_once __DIR__ . '/classes/Inventory/InventoryStockReadService.php';
+?>
 <?php include('includes/header.php') ?>
 <?php include('includes/navbar.php') ?>
 <?php include('includes/sidebar.php') ?>
@@ -29,7 +32,6 @@
                         <a href="add_item.php" id="addNewElement" class="btn btn-primary btn-sm"> f3 جديد</a>
                         <a href="do/recost.php" class="btn btn-secondary btn-sm">اعادة حساب</a>
                         <button id="reset-manual-prices" class="btn btn-warning btn-sm">إعادة تعيين الحماية</button>
-                        <button id="reindex" class="btn btn-secondary btn-sm">اعادة الفهرسة</button>
                     </div>
                 </div>
                 </div> 
@@ -57,9 +59,12 @@
                         </thead>
                         <tbody>
                         <?php
+                        $inventoryStockReadService = new InventoryStockReadService();
                         $resitm = $conn->query("SELECT * FROM myitems WHERE isdeleted = 0");
+                        $itemRows = $resitm ? $resitm->fetch_all(MYSQLI_ASSOC) : [];
+                        $itemRows = $inventoryStockReadService->decorateItems($conn, $itemRows);
                         $x = 1;
-                        while ($rowitm = $resitm->fetch_assoc()) {
+                        foreach ($itemRows as $rowitm) {
                         $x++;
                             $itemid = (int) $rowitm['id'];
                             $resunt = $conn->query("SELECT iu.*, u.uname FROM item_units iu LEFT JOIN myunits u ON u.id = iu.unit_id WHERE iu.item_id = $itemid");
@@ -86,25 +91,25 @@
                             <tr data-search="<?= $dataSearch ?>">
                                 <td><?= $x ?></td>
                                 <td><?= $rowitm['id'] ?></td>
-                                <td><?= isset($rowitm['barcode']) ? $rowitm['barcode'] : '' ?></td>
-                                <td><b><?= $rowitm['iname'] ?></b></td>
-                                <td class="qty" data-row-id="<?= $rowitm['id'] ?>" data-original-qty="<?= $rowitm['itmqty'] ?>">
-                                    <a class="btn btn-sm btn-light" id="item_qty_<?= $rowitm['id'] ?>" href="item_summery.php?id=<?= $rowitm['id'] ?>"><?= $rowitm['itmqty'] ?></a>
+                                <td><?= htmlspecialchars((string) ($rowitm['barcode'] ?? ''), ENT_QUOTES, 'UTF-8') ?></td>
+                                <td><b><?= htmlspecialchars((string) ($rowitm['iname'] ?? ''), ENT_QUOTES, 'UTF-8') ?></b></td>
+                                <td class="qty" data-row-id="<?= $rowitm['id'] ?>" data-original-qty="<?= htmlspecialchars((string) ($rowitm['legacy_itmqty'] ?? $rowitm['itmqty']), ENT_QUOTES, 'UTF-8') ?>">
+                                    <a class="btn btn-sm btn-light" id="item_qty_<?= $rowitm['id'] ?>" href="item_summery.php?id=<?= $rowitm['id'] ?>"><?= htmlspecialchars((string) ($rowitm['stock_qty_display'] ?? $rowitm['itmqty']), ENT_QUOTES, 'UTF-8') ?></a>
                                 </td>
                                 <td class="unit">
                                 <select name="" id="item_unit_<?= $rowitm['id'] ?>" class="form-control form-control-sm" data-row-id="<?= $rowitm['id'] ?>">
                                     <?php foreach ($unitRows as $rowunt) { ?>
                                     <option value="<?= $rowunt['u_val']?>">
-                                        <?= htmlspecialchars($rowunt['uname']) ?>
-                                        [<?= $rowunt['u_val'] ?>]
+                                        <?= htmlspecialchars((string) ($rowunt['uname'] ?? ''), ENT_QUOTES, 'UTF-8') ?>
+                                        [<?= htmlspecialchars((string) ($rowunt['u_val'] ?? ''), ENT_QUOTES, 'UTF-8') ?>]
                                     </option>
                                     <?php } ?>
                                 </select>
                                 </td>
-                                <td><?= $rowitm['info'] ?></td>
-                                <td><b><?= $rowitm['price1'] ?></b></td>
-                                <td><b><?= $rowitm['last_price'] ?></b></td>
-                                <td><b><?= $rowitm['cost_price'] ?></b></td>
+                                <td><?= htmlspecialchars((string) ($rowitm['info'] ?? ''), ENT_QUOTES, 'UTF-8') ?></td>
+                                <td><b><?= htmlspecialchars((string) ($rowitm['price1'] ?? ''), ENT_QUOTES, 'UTF-8') ?></b></td>
+                                <td><b><?= htmlspecialchars((string) ($rowitm['last_price'] ?? ''), ENT_QUOTES, 'UTF-8') ?></b></td>
+                                <td><b><?= htmlspecialchars((string) ($rowitm['cost_price'] ?? ''), ENT_QUOTES, 'UTF-8') ?></b></td>
                                
                                     <td>
                                         <a class="btn btn-warning btn-sm" href="add_item.php?edit=<?= $rowitm['id'] ?>"><i class="fa fa-pen"></i></a>
@@ -214,21 +219,7 @@ $(document).ready(function() {
 </script>
 <script>
     $(document).ready(function() {
-    $('#reindex').click(function() {
-        $.ajax({
-            url: 'js/ajax/reindex.php',
-            type: 'POST', // or 'GET' depending on your PHP handling
-            dataType: 'json', // change to 'text' if not returning JSON
-            success: function(response) {
-                // Handle success
-                $('#response-message').html('Reindexing successful: ' + response.message);
-            },
-            error: function(xhr, status, error) {
-                // Handle error
-                $('#response-message').html('An error occurred: ' + error);
-            }
-        });
-    });
+    $('#response-message').html('');
 });
 
 </script>

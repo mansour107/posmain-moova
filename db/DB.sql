@@ -901,30 +901,10 @@ CREATE TABLE `fat_details` (
 --
 -- Triggers `fat_details`
 --
-DELIMITER $$
-CREATE TRIGGER `update_after_update` AFTER UPDATE ON `fat_details` FOR EACH ROW BEGIN
-    UPDATE myitems
-    SET itmqty = (
-        SELECT COALESCE(SUM(qty_in), 0) - COALESCE(SUM(qty_out), 0)
-        FROM fat_details
-        WHERE item_id = NEW.item_id AND isdeleted = 0 
-    )
-    WHERE id = NEW.item_id AND isdeleted = 0 ;
-END
-$$
-DELIMITER ;
-DELIMITER $$
-CREATE TRIGGER `update_balance_trigger` AFTER INSERT ON `fat_details` FOR EACH ROW BEGIN
-    UPDATE myitems
-    SET itmqty = (
-        SELECT COALESCE(SUM(qty_in), 0)  - COALESCE(SUM(qty_out), 0)
-        FROM fat_details
-        WHERE item_id = NEW.item_id  AND isdeleted = 0
-    )
-    WHERE id = NEW.item_id ;
-END
-$$
-DELIMITER ;
+-- Retired: legacy `update_after_update` and `update_balance_trigger` stock
+-- summary triggers are intentionally no longer created by the base schema.
+-- Existing databases must remove them through
+-- `tools/inventory_retire_legacy_triggers.php` after reconciliation gates pass.
 
 -- --------------------------------------------------------
 

@@ -310,6 +310,23 @@ $(document).ready(function() {
         };
     }
 
+    function itemAvailabilityContextFromPayload(item) {
+        item = item || {};
+        const isAvailable = String(item.is_available !== undefined ? item.is_available : '1') !== '0';
+        const canAdd = String(item.availability_can_add !== undefined ? item.availability_can_add : (isAvailable ? '1' : '0')) !== '0';
+        return {
+            isAvailable: isAvailable,
+            canAdd: canAdd,
+            status: String(item.availability_status || (isAvailable ? 'available' : 'manual_unavailable')),
+            reason: String(item.unavailable_reason || item.recipe_unavailable_reason || '').trim(),
+            requiresManagerOverride: String(item.availability_requires_manager_override || '0') === '1',
+            overrideAllowed: String(item.availability_override_allowed || '0') === '1',
+            overridePermission: String(item.availability_override_permission || '').trim(),
+            recipeEnabled: String(item.recipe_enabled || '0') === '1',
+            recipeQty: String(item.recipe_effective_available_qty || '').trim()
+        };
+    }
+
     function itemUnavailableMessage(context, itemName) {
         if (context.reason) {
             return context.reason;
@@ -647,8 +664,18 @@ $(document).ready(function() {
             dataType: 'json',
             success: function(response) {
                 if (response.success) {
-                    beginAddItemToOrder(response.item.id, response.item.name, response.item.price, response.item.barcode, qty, '', '', {
-                        hasVariants: itemHasVariantsValue(response.item.has_variants)
+                    const item = response.item || {};
+                    const availability = itemAvailabilityContextFromPayload(item);
+                    if (!availability.canAdd && !availability.requiresManagerOverride) {
+                        showUnavailableItemMessage(availability, item.name || '');
+                        return;
+                    }
+
+                    requestRecipeStockOverride(availability, item.name || '', item.id).then(function(managerApprovalId) {
+                        beginAddItemToOrder(item.id, item.name, item.price, item.barcode, qty, '', '', {
+                            hasVariants: itemHasVariantsValue(item.has_variants),
+                            managerApprovalId: managerApprovalId
+                        });
                     });
                 } else {
                     alert('الصنف غير موجود');

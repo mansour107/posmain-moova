@@ -50,6 +50,7 @@ This matrix defines named permissions for POSMAIN's restaurant/cafe rollout whil
 | `pos.cashdrawer.count` | `edit_payment`, `show_payment` | admin, manager, cashier | Drawer count/close. |
 | `menu.edit` | `add_items`, `edit_items`, `add_item_groups`, `edit_item_groups` | admin, manager, inventory manager | Edit menu/catalog. |
 | `inventory.edit` | `add_stock`, `edit_stock`, `add_items`, `edit_items` | admin, inventory manager | Stock and item maintenance. |
+| `inventory.approve` | `delete_stock` | admin, senior inventory manager | Approve sensitive stock actions such as stale count close, closed count reversal, negative adjustments, backdated adjustments, transfer variances, and existing stock-level policy edits. This is intentionally narrower than `inventory.edit`. |
 | `reports.view` | `sid_reports`, `show_gl_reports`, `show_hr_report`, `show_payroll_report` | admin, manager, accountant, support | Reports. |
 | `accounting.view` | `sid_accounts`, `show_gl_reports`, `show_journals` | admin, accountant | Accounting views. |
 | `users.manage` | `add_users`, `edit_users`, `delete_users` | admin | User create/edit/delete. |

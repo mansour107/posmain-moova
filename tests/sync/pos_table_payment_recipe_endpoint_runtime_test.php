@@ -8,7 +8,7 @@ if (($argv[1] ?? '') === '--child') {
     posTableRecipePaymentEndpointChild($argv[2] ?? '');
 }
 
-mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
+mysqli_report(MYSQLI_REPORT_OFF);
 
 posTableRecipePaymentEndpointConfigureRecipeEnv();
 
@@ -17,7 +17,12 @@ $port = (int) (getenv('POSMAIN_TEST_MYSQL_PORT') ?: 3307);
 $user = getenv('POSMAIN_TEST_MYSQL_USER') ?: 'root';
 $pass = getenv('POSMAIN_TEST_MYSQL_PASS') ?: '';
 $db = 'posmain_table_recipe_payment_' . getmypid();
-$conn = new mysqli($host, $user, $pass, '', $port);
+$conn = @new mysqli($host, $user, $pass, '', $port);
+if ($conn->connect_errno) {
+    echo "pos-table-payment-recipe-endpoint-runtime-skipped-db-unavailable\n";
+    exit(0);
+}
+mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
 
 try {
     $conn->query("CREATE DATABASE `{$db}` CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci");

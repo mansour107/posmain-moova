@@ -122,7 +122,7 @@ FOR UPDATE",
         $timestampColumn = null;
         if ($status === 'consumed') {
             $timestampColumn = 'consumed_at';
-        } elseif ($status === 'released') {
+        } elseif ($status === 'released' || $status === 'expired') {
             $timestampColumn = 'released_at';
         }
 

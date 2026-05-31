@@ -29,7 +29,9 @@ recipeRuntimePreflightAssert(strpos($service, 'SyncSchemaManager') !== false, 's
 recipeRuntimePreflightAssert(strpos($service, 'recipe_manage.php') !== false, 'service should check recipe management surface');
 recipeRuntimePreflightAssert(strpos($service, 'recipe_production.php') !== false, 'service should check production surface');
 recipeRuntimePreflightAssert(strpos($service, 'posmain_recipe_production_can_view_cost') !== false, 'service should check production cost visibility guard');
-recipeRuntimePreflightAssert(strpos($service, 'recipe_waste.php') !== false, 'service should check waste/adjustment surface');
+recipeRuntimePreflightAssert(strpos($service, 'inventory_adjustments.php') !== false, 'service should check Inventory waste/adjustment surface');
+recipeRuntimePreflightAssert(strpos($service, "csrf_meta_tag('inventory_adjustment'") !== false, 'service should check Inventory adjustment CSRF surface');
+recipeRuntimePreflightAssert(strpos($service, 'ajax/inventory_adjustment.php') !== false, 'service should check Inventory adjustment endpoint wiring');
 recipeRuntimePreflightAssert(strpos($service, 'posmain_recipe_reconciliation_can_view') !== false, 'service should check stock reconciliation named permission guard');
 recipeRuntimePreflightAssert(strpos($service, 'posmain_recipe_audit_can_view') !== false, 'service should check audit named permission guard');
 recipeRuntimePreflightAssert(strpos($service, 'csv_export.php') !== false, 'service should check recipe report CSV sanitizer wiring');

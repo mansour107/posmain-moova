@@ -23,6 +23,7 @@ INSERT INTO inventory_item_balances
   (pos_tenant, pos_branch, branch_uuid, store_id, item_id, qty_on_hand, qty_reserved, qty_available, moving_average_cost, last_movement_id)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON DUPLICATE KEY UPDATE
+  id = LAST_INSERT_ID(id),
   branch_uuid = VALUES(branch_uuid),
   qty_on_hand = VALUES(qty_on_hand),
   qty_reserved = VALUES(qty_reserved),

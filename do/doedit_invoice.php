@@ -25,6 +25,7 @@ $usid = $_SESSION['userid'];
 // تضمين فئات النظام الجديد
 require_once('../classes/InvoiceElementFactory.php');
 require_once('../classes/Recipe/LegacyInvoiceRecipeLifecycleBridge.php');
+require_once('../classes/Inventory/InventoryInvoiceBridge.php');
 
 // تعريف ثوابت أنواع الفواتير
 define('INVOICE_TYPES', [
@@ -33,6 +34,8 @@ define('INVOICE_TYPES', [
     'POS' => 9,         // كاشير
     'PURCHASE_RETURN' => 10,  // مردود مشتريات
     'SALES_RETURN' => 11,     // مردود مبيعات
+    'PURCHASE_ORDER' => 12,   // أمر شراء
+    'SALES_ORDER' => 13,      // أمر بيع
     'OFFER' => 14             // عرض سعر
 ]);
 
@@ -185,6 +188,7 @@ $accounts = getAccountingAccounts($pro_tybe, $store_id, $acc2_id, $fund_id);
 try {
     $conn->begin_transaction();
     $recipeLifecycleBridge = new LegacyInvoiceRecipeLifecycleBridge();
+    $inventoryInvoiceBridge = new InventoryInvoiceBridge();
     $recipeEditChannel = 'pos';
     $recipeEditOrderType = 'takeaway';
     if ((int) $pro_tybe === INVOICE_TYPES['POS']) {
@@ -426,6 +430,21 @@ try {
     }
 
     // تحديث تفاصيل الفاتورة
+    $inventoryEditOldLines = [];
+    $stmt = $conn->prepare("
+        SELECT id, item_id, u_val, qty_in, qty_out, cost_price, det_store
+        FROM fat_details
+        WHERE fatid = ?
+          AND isdeleted = 0
+    ");
+    $stmt->bind_param('i', $ot_id);
+    $stmt->execute();
+    $oldDetailResult = $stmt->get_result();
+    while ($oldDetailRow = $oldDetailResult->fetch_assoc()) {
+        $inventoryEditOldLines[] = $oldDetailRow;
+    }
+    $stmt->close();
+
     if ((int) $pro_tybe === INVOICE_TYPES['POS']) {
         $recipeLifecycleBridge->recordExistingLinesCancelled(
             $conn,
@@ -435,6 +454,29 @@ try {
             'legacy_invoice_edit_replaced',
             ['user_id' => (int) $usid]
         );
+    }
+    if ($inventoryEditOldLines) {
+        try {
+            $inventoryBridgeResult = $inventoryInvoiceBridge->recordInvoiceReversalLines(
+                $conn,
+                (int) $pro_tybe,
+                (int) $ot_id,
+                $inventoryEditOldLines,
+                'invoice_edited',
+                [
+                    'store_id' => (int) $store_id,
+                    'user_id' => (int) $usid,
+                    'channel' => (int) $pro_tybe === INVOICE_TYPES['POS'] ? 'pos' : 'invoice',
+                    'order_type' => $recipeEditOrderType,
+                    'source_system' => 'legacy_doedit_invoice',
+                ]
+            );
+            if (!empty($inventoryBridgeResult['errors'])) {
+                error_log('Inventory invoice edit reversal bridge shadow errors: ' . json_encode($inventoryBridgeResult['errors'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+            }
+        } catch (Throwable $inventoryBridgeException) {
+            error_log('Inventory invoice edit reversal bridge shadow failed: ' . $inventoryBridgeException->getMessage());
+        }
     }
     $stmt = $conn->prepare("UPDATE fat_details SET isdeleted = 1 WHERE fatid = ?");
     $stmt->bind_param("i", $ot_id);
@@ -468,6 +510,7 @@ try {
         }
         
         // معالجة كل صنف
+        $inventoryEditNewLines = [];
         foreach ($_POST['itmname'] as $index => $itmname) {
             if (empty($itmname)) continue;
             
@@ -552,12 +595,45 @@ try {
             if (!$stmt_details->execute()) {
                 throw new Exception('فشل في إدخال تفاصيل الصنف ' . $itmname);
             }
+            $insertedDetailId = (int) $conn->insert_id;
+            $inventoryEditNewLines[] = [
+                'id' => $insertedDetailId,
+                'item_id' => (int) $itmname,
+                'qty_in' => (string) $qty_in,
+                'qty_out' => (string) $qty_out,
+                'u_val' => (string) $u_val,
+                'cost_price' => (string) $cost_price,
+                'det_store' => (int) $store_id,
+            ];
         }
         
         // إغلاق الاستعلامات
         $stmt_details->close();
         $stmt_item->close();
         $stmt_update->close();
+
+        if ($inventoryEditNewLines) {
+            try {
+                $inventoryBridgeResult = $inventoryInvoiceBridge->recordInvoiceLines(
+                    $conn,
+                    (int) $pro_tybe,
+                    (int) $ot_id,
+                    $inventoryEditNewLines,
+                    [
+                        'store_id' => (int) $store_id,
+                        'user_id' => (int) $usid,
+                        'channel' => (int) $pro_tybe === INVOICE_TYPES['POS'] ? 'pos' : 'invoice',
+                        'order_type' => $recipeEditOrderType,
+                        'source_system' => 'legacy_doedit_invoice',
+                    ]
+                );
+                if (!empty($inventoryBridgeResult['errors'])) {
+                    error_log('Inventory invoice edit add bridge shadow errors: ' . json_encode($inventoryBridgeResult['errors'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+                }
+            } catch (Throwable $inventoryBridgeException) {
+                error_log('Inventory invoice edit add bridge shadow failed: ' . $inventoryBridgeException->getMessage());
+            }
+        }
     }
 
     if ((int) $pro_tybe === INVOICE_TYPES['POS']) {

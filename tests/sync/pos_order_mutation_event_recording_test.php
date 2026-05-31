@@ -2,14 +2,19 @@
 
 require_once __DIR__ . '/../../classes/Pos/Service/PosOrderMutationService.php';
 
-mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
+mysqli_report(MYSQLI_REPORT_OFF);
 
 $host = getenv('POSMAIN_TEST_MYSQL_HOST') ?: '127.0.0.1';
 $port = (int) (getenv('POSMAIN_TEST_MYSQL_PORT') ?: 3307);
 $user = getenv('POSMAIN_TEST_MYSQL_USER') ?: 'root';
 $pass = getenv('POSMAIN_TEST_MYSQL_PASS') ?: '';
 $db = 'posmain_order_events_' . getmypid();
-$conn = new mysqli($host, $user, $pass, '', $port);
+$conn = @new mysqli($host, $user, $pass, '', $port);
+if ($conn->connect_errno) {
+    echo "pos-order-mutation-event-recording-skipped-db-unavailable\n";
+    exit(0);
+}
+mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
 
 try {
     $conn->query("CREATE DATABASE `{$db}` CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci");

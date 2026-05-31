@@ -91,6 +91,16 @@ $recipeReportLinks = posmain_recipe_report_link_permissions($conn);
                                     </a>
                                 </div>
                             <?php endif; ?>
+                            <div class="col-md-4 col-lg-3 report-item">
+                                <a class="btn btn-outline-primary btn-block btn-sm w-100" href="inventory_dashboard.php">
+                                    لوحة المخزون
+                                </a>
+                            </div>
+                            <div class="col-md-4 col-lg-3 report-item">
+                                <a class="btn btn-outline-success btn-block btn-sm w-100" href="inventory_reports.php">
+                                    تقارير المخزون
+                                </a>
+                            </div>
                         </div>
                     </div>
 
@@ -142,8 +152,8 @@ $recipeReportLinks = posmain_recipe_report_link_permissions($conn);
                             <?php endif; ?>
                             <?php if ($recipeReportLinks['waste']): ?>
                                 <div class="col-md-4 col-lg-3 report-item">
-                                    <a class="btn btn-outline-danger btn-block btn-sm w-100" href="recipe_waste.php">
-                                        Recipe Waste and Adjustments
+                                    <a class="btn btn-outline-danger btn-block btn-sm w-100" href="inventory_adjustments.php?from=recipe_reports">
+                                        Inventory Waste and Adjustments
                                     </a>
                                 </div>
                             <?php endif; ?>

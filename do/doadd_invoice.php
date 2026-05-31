@@ -35,6 +35,7 @@ require_once('../classes/Sync/SyncOutboxEventService.php');
 require_once('../classes/Pos/Service/PosOrderMutationService.php');
 require_once('../classes/Pos/Service/ModifierLineNoteService.php');
 require_once('../classes/Recipe/LegacyInvoiceRecipeLifecycleBridge.php');
+require_once('../classes/Inventory/InventoryInvoiceBridge.php');
 
 // تعريف ثوابت أنواع الفواتير
 define('INVOICE_TYPES', [
@@ -776,8 +777,10 @@ try {
     $counterService = new DocumentCounterService();
     $lineNoteService = new ModifierLineNoteService();
     $recipeLifecycleBridge = new LegacyInvoiceRecipeLifecycleBridge();
+    $inventoryInvoiceBridge = new InventoryInvoiceBridge();
     $pro_id = null;
     $insertedDetailIdsByPostIndex = [];
+    $inventoryInvoiceBridgeLines = [];
     $splitPaymentResult = null;
 
     $edit_id = isset($_REQUEST['edit_id']) ? intval($_REQUEST['edit_id']) : 0;
@@ -1351,6 +1354,15 @@ try {
             }
             $insertedDetailId = (int) $conn->insert_id;
             $insertedDetailIdsByPostIndex[(int) $index] = $insertedDetailId;
+            $inventoryInvoiceBridgeLines[] = [
+                'id' => $insertedDetailId,
+                'item_id' => (int) $itmname,
+                'qty_in' => (string) $qty_in,
+                'qty_out' => (string) $qty_out,
+                'u_val' => (string) $u_val,
+                'cost_price' => (string) $cost_price,
+                'det_store' => (int) $store_id,
+            ];
 
             posmainInvoicePersistLineCustomizations(
                 $conn,
@@ -1369,6 +1381,29 @@ try {
         $stmt_details->close();
         $stmt_item->close();
         $stmt_update->close();
+    }
+
+    if ($inventoryInvoiceBridgeLines && $edit_id <= 0 && !$is_split_line_payment) {
+        try {
+            $inventoryBridgeResult = $inventoryInvoiceBridge->recordInvoiceLines(
+                $conn,
+                (int) $pro_tybe,
+                (int) $last_op,
+                $inventoryInvoiceBridgeLines,
+                [
+                    'store_id' => (int) $store_id,
+                    'user_id' => (int) $usid,
+                    'channel' => (int) $pro_tybe === INVOICE_TYPES['POS'] ? 'pos' : 'invoice',
+                    'order_type' => $order_type_db,
+                    'source_system' => 'legacy_doadd_invoice',
+                ]
+            );
+            if (!empty($inventoryBridgeResult['errors'])) {
+                error_log('Inventory invoice bridge shadow errors: ' . json_encode($inventoryBridgeResult['errors'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+            }
+        } catch (Throwable $inventoryBridgeException) {
+            error_log('Inventory invoice bridge shadow failed: ' . $inventoryBridgeException->getMessage());
+        }
     }
 
     if ((int) $pro_tybe === INVOICE_TYPES['POS'] && !$is_split_line_payment) {

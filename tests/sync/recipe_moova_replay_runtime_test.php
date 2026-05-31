@@ -28,6 +28,8 @@ class RecipeMoovaReplayNoopOutbox extends SyncOutboxEventService
 }
 
 mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
+putenv('POSMAIN_INVENTORY_LEDGER_MODE=shadow');
+putenv('POSMAIN_INVENTORY_STRICT_STOCK=0');
 
 $host = getenv('POSMAIN_TEST_MYSQL_HOST') ?: '127.0.0.1';
 $port = (int) (getenv('POSMAIN_TEST_MYSQL_PORT') ?: 3307);
@@ -98,6 +100,12 @@ try {
     $detailRows = recipeMoovaReplayRows($conn, "SELECT id, qty_out FROM fat_details WHERE fatid = {$orderId} AND item_id = 7001 AND isdeleted = 0");
     recipeMoovaReplayAssert(count($detailRows) === 1, 'same item from multiple Moova orders should share the legacy detail row');
     recipeMoovaReplayAssert(recipeMoovaReplayDecimalEquals($detailRows[0]['qty_out'], '3.000000'), 'legacy detail row should contain both Moova quantities');
+    $directSaleRows = recipeMoovaReplayRows($conn, "SELECT id, qty_out, order_line_uuid FROM inventory_movements WHERE order_id = {$orderId} AND movement_type = 'sale_direct' ORDER BY id");
+    recipeMoovaReplayAssert(count($directSaleRows) === 2, 'two Moova source lines should create two direct sale shadow movements even when sharing a fat_detail row');
+    recipeMoovaReplayAssert(recipeMoovaReplayDecimalEquals($directSaleRows[0]['qty_out'], '1.000000'), 'first Moova shadow movement should keep first provider quantity');
+    recipeMoovaReplayAssert(recipeMoovaReplayDecimalEquals($directSaleRows[1]['qty_out'], '2.000000'), 'second Moova shadow movement should keep second provider quantity');
+    recipeMoovaReplayAssert(count(array_unique(array_column($directSaleRows, 'order_line_uuid'))) === 2, 'Moova shadow movements should use mapping line identity for idempotency');
+    recipeMoovaReplayAssert(recipeMoovaReplayBalance($conn, 7001)['qty_on_hand'] === '-3.000000', 'sellable shadow balance should reflect both Moova direct sale lines');
 
     $usageRows = recipeMoovaReplayRows($conn, "SELECT source_order_uuid, source_line_uuid, status, fat_detail_id FROM recipe_order_line_usage WHERE order_id = {$orderId} ORDER BY source_order_uuid");
     recipeMoovaReplayAssert(count($usageRows) === 2, 'two Moova source lines should create two recipe usage rows');
@@ -128,6 +136,11 @@ try {
         recipeMoovaReplayCount($conn, "SELECT COUNT(*) AS c FROM inventory_movements WHERE movement_type = 'reservation_release'") === 1,
         'cancel replay should not duplicate reservation release movement'
     );
+    recipeMoovaReplayAssert(
+        recipeMoovaReplayCount($conn, "SELECT COUNT(*) AS c FROM inventory_movements WHERE order_id = {$orderId} AND movement_type = 'refund_reversal' AND item_id = 7001") === 1,
+        'Moova cancel should create one direct-stock shadow reversal for the cancelled source line'
+    );
+    recipeMoovaReplayAssert(recipeMoovaReplayBalance($conn, 7001)['qty_on_hand'] === '-1.000000', 'sellable shadow balance should keep only the remaining Moova direct sale after cancel');
 
     $conn->begin_transaction();
     try {

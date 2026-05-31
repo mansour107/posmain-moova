@@ -22,7 +22,7 @@ foreach ([
     'recipe_operations_report.php' => 'Recipe Operations Reports',
     'recipe_manage.php' => 'Recipe Draft Management',
     'recipe_production.php' => 'Recipe Production Batches',
-    'recipe_waste.php' => 'Recipe Waste and Stock Adjustments',
+    'inventory_adjustments.php' => 'الهالك والتسويات',
     'recipe_audit_report.php' => 'Recipe Audit Log',
     'recipe_editor.php' => 'Recipe Editor - Read Only',
 ] as $path => $heading) {
@@ -33,7 +33,7 @@ foreach ([
 foreach ([
     'Recipe writes are disabled by the current feature flags. Mode: off.',
     'Production batch writes are disabled by the current recipe feature flags. Mode: off.',
-    'Recipe waste and stock adjustment writes are disabled by the current feature flags. Mode: off.',
+    'هذه الشاشة جاهزة، لكن التسجيل يحتاج وضع bridge أو live للمخزون.',
 ] as $modeOffMessage) {
     recipeOperatorSurfaceSmokeAssert(strpos($tool, $modeOffMessage) !== false, 'tool should check mode-off disabled message: ' . $modeOffMessage);
 }

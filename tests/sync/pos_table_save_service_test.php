@@ -1,15 +1,24 @@
 <?php
 
 require_once __DIR__ . '/../../classes/Pos/Service/PosOrderMutationService.php';
+require_once __DIR__ . '/../../classes/Sync/SchemaManager.php';
 
-mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
+mysqli_report(MYSQLI_REPORT_OFF);
 
 $host = getenv('POSMAIN_TEST_MYSQL_HOST') ?: '127.0.0.1';
 $port = (int) (getenv('POSMAIN_TEST_MYSQL_PORT') ?: 3307);
 $user = getenv('POSMAIN_TEST_MYSQL_USER') ?: 'root';
 $pass = getenv('POSMAIN_TEST_MYSQL_PASS') ?: '';
 $db = 'posmain_table_save_service_' . getmypid();
-$conn = new mysqli($host, $user, $pass, '', $port);
+$conn = @new mysqli($host, $user, $pass, '', $port);
+if ($conn->connect_errno) {
+    echo "pos-table-save-service-skipped-db-unavailable\n";
+    exit(0);
+}
+mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
+
+putenv('POSMAIN_INVENTORY_LEDGER_MODE=shadow');
+putenv('POSMAIN_INVENTORY_STRICT_STOCK=0');
 
 try {
     $conn->query("CREATE DATABASE `{$db}` CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci");
@@ -19,6 +28,13 @@ try {
     $service = new PosOrderMutationService();
     $conn->query("INSERT INTO settings (id, def_pos_client, isdeleted) VALUES (1, 501, 0)");
     $conn->query("INSERT INTO acc_head (id, code, isdeleted) VALUES (501, '122001', 0)");
+    $conn->query("
+        INSERT INTO myitems (id, iname, item_type, track_stock, isdeleted) VALUES
+            (10, 'Table item 10', 'sellable', 1, 0),
+            (11, 'Table item 11', 'sellable', 1, 0),
+            (12, 'Table item 12', 'sellable', 1, 0),
+            (13, 'Table item 13', 'sellable', 1, 0)
+    ");
     $conn->query("INSERT INTO tables (id, tname, table_case, isdeleted) VALUES (1, 'T1', 0, 0), (2, 'T2', 0, 0), (3, 'T3', 1, 0)");
 
     $new = $service->saveTableOrder($conn, [
@@ -44,6 +60,9 @@ try {
     posTableSaveAssert((int) $conn->query("SELECT table_case FROM tables WHERE id = 1")->fetch_assoc()['table_case'] === 1, 'new save should occupy table');
     posTableSaveAssert((int) $conn->query("SELECT COUNT(*) AS c FROM fat_details WHERE fatid = {$orderId} AND isdeleted = 0")->fetch_assoc()['c'] === 2, 'new save should insert detail rows');
     posTableSaveAssert((int) $conn->query("SELECT current_value FROM document_counters WHERE counter_type = 'pro_id' AND counter_key = 'pro_tybe:9'")->fetch_assoc()['current_value'] === 1, 'new save should allocate pro_id through document counter');
+    posTableSaveAssert((int) $conn->query("SELECT COUNT(*) AS c FROM inventory_movements WHERE order_id = {$orderId} AND movement_type = 'sale_direct'")->fetch_assoc()['c'] === 2, 'new save should shadow-write direct sale movements');
+    $item10Balance = $conn->query("SELECT qty_on_hand FROM inventory_item_balances WHERE item_id = 10 AND store_id = 3 LIMIT 1")->fetch_assoc();
+    posTableSaveAssert(is_array($item10Balance) && (string) $item10Balance['qty_on_hand'] === '-2.000000', 'new save should shadow-track item 10 balance');
 
     try {
         $service->saveTableOrder($conn, [
@@ -96,6 +115,7 @@ try {
     posTableSaveAssert(abs($updated['data']['remaining_amount'] - 14.0) < 0.0001, 'update should recompute remaining amount');
     posTableSaveAssert((int) $conn->query("SELECT isdeleted FROM fat_details WHERE id = 2000")->fetch_assoc()['isdeleted'] === 1, 'update should soft-delete replaced detail rows');
     posTableSaveAssert((int) $conn->query("SELECT table_case FROM tables WHERE id = 2")->fetch_assoc()['table_case'] === 1, 'partial updated order should keep table occupied');
+    posTableSaveAssert((int) $conn->query("SELECT COUNT(*) AS c FROM inventory_movements WHERE order_id = 200 AND movement_type = 'sale_direct'")->fetch_assoc()['c'] === 1, 'update should shadow-add replacement table line');
 
     $conn->query("
         INSERT INTO ot_head (
@@ -127,6 +147,7 @@ try {
 
     posTableSaveAssert($paidUpdate['data']['payment_status'] === 'paid', 'update should complete when preserved paid amount covers new net');
     posTableSaveAssert((int) $conn->query("SELECT table_case FROM tables WHERE id = 3")->fetch_assoc()['table_case'] === 0, 'paid updated order should free table');
+    posTableSaveAssert((int) $conn->query("SELECT COUNT(*) AS c FROM inventory_movements WHERE order_id = 300 AND movement_type = 'sale_direct'")->fetch_assoc()['c'] === 1, 'paid update should shadow-add replacement table line');
 
     echo "pos-table-save-service-ok db={$db}\n";
 } finally {
@@ -147,6 +168,15 @@ function posTableSaveCreateSchema(mysqli $conn): void
         CREATE TABLE acc_head (
             id INT NOT NULL PRIMARY KEY,
             code VARCHAR(40) NULL,
+            isdeleted TINYINT(1) NOT NULL DEFAULT 0
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+    ");
+    $conn->query("
+        CREATE TABLE myitems (
+            id INT NOT NULL PRIMARY KEY,
+            iname VARCHAR(255) NULL,
+            item_type ENUM('sellable','ingredient','packaging','service') NOT NULL DEFAULT 'sellable',
+            track_stock TINYINT(1) NOT NULL DEFAULT 1,
             isdeleted TINYINT(1) NOT NULL DEFAULT 0
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
     ");
@@ -225,6 +255,8 @@ function posTableSaveCreateSchema(mysqli $conn): void
             isdeleted TINYINT(1) NOT NULL DEFAULT 0
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
     ");
+
+    (new SyncSchemaManager())->apply($conn);
 }
 
 function posTableSaveAssert(bool $condition, string $message): void

@@ -49,6 +49,16 @@ itemsStartBalanceAssert(
     'recipe opening balance movements should be idempotent opening_balance rows'
 );
 itemsStartBalanceAssert(
+    strpos($source, 'posmain_start_balance_recipe_movement_integrity') !== false
+        && strpos($source, 'payload_hash') !== false
+        && strpos($source, 'metadata_json') !== false,
+    'recipe opening balance movements should store payload hash and metadata when the migrated columns exist'
+);
+itemsStartBalanceAssert(
+    strpos($source, 'posmain_start_balance_column_exists') !== false,
+    'opening balance save should keep compatibility with older recipe ledger schemas while writing new metadata columns when available'
+);
+itemsStartBalanceAssert(
     strpos($page, 'items_start_balance_recipe_balance') !== false
         && strpos($page, 'inventory_item_balances') !== false
         && strpos($page, "['ingredient', 'packaging']") !== false,

@@ -56,6 +56,15 @@ if (!function_exists('posmain_validate_image_upload')) {
 if (!function_exists('posmain_store_image_upload')) {
     function posmain_store_image_upload(array $file, string $targetDir, string $prefix = 'upload', int $maxBytes = 5242880): string
     {
+        $stored = posmain_store_image_upload_with_details($file, $targetDir, $prefix, $maxBytes);
+
+        return (string) $stored['server_name'];
+    }
+}
+
+if (!function_exists('posmain_store_image_upload_with_details')) {
+    function posmain_store_image_upload_with_details(array $file, string $targetDir, string $prefix = 'upload', int $maxBytes = 5242880): array
+    {
         $validated = posmain_validate_image_upload($file, $maxBytes);
         $tmpName = $validated['tmp_name'];
         if (!is_uploaded_file($tmpName)) {
@@ -68,11 +77,22 @@ if (!function_exists('posmain_store_image_upload')) {
 
         $newName = posmain_upload_server_filename($prefix, $validated['extension']);
         $target = rtrim($targetDir, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . $newName;
+        $sha256 = hash_file('sha256', $tmpName);
+        if (!is_string($sha256) || $sha256 === '') {
+            throw new RuntimeException('تعذر قراءة بصمة الملف');
+        }
         if (!move_uploaded_file($tmpName, $target)) {
             throw new RuntimeException('فشل في رفع الملف');
         }
 
-        return $newName;
+        return [
+            'server_name' => $newName,
+            'extension' => $validated['extension'],
+            'mime' => $validated['mime'],
+            'size' => (int) $validated['size'],
+            'sha256' => $sha256,
+            'target_path' => $target,
+        ];
     }
 }
 

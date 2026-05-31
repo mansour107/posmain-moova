@@ -1,3 +1,11 @@
+<?php
+require_once __DIR__ . '/config/app_config.php';
+$items_start_balance_config_for_guard = function_exists('posmain_app_config') ? posmain_app_config() : [];
+if (strtolower((string) ($items_start_balance_config_for_guard['inventory']['ledger_mode'] ?? 'off')) === 'live') {
+    header('Location: inventory_adjustments.php?legacy_opening_balance=retired');
+    exit;
+}
+?>
 <?php include('includes/header.php') ?>
 <?php include('includes/navbar.php') ?>
 <?php include('includes/sidebar.php') ?>

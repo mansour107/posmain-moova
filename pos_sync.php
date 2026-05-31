@@ -5,6 +5,7 @@ header('Access-Control-Allow-Origin: *');
 header('Access-Control-Allow-Methods: GET, POST, PUT, DELETE');
 header('Access-Control-Allow-Headers: Content-Type');
 
+require_once __DIR__ . '/classes/Inventory/InventoryRetiredLegacyEndpoint.php';
 include('includes/connect.php');
 
 $method = $_SERVER['REQUEST_METHOD'];
@@ -46,7 +47,7 @@ function handlePost($input) {
     
     switch ($action) {
         case 'sync_order':
-            syncOrder($input['order']);
+            InventoryRetiredLegacyEndpoint::respond('pos_sync_stock_replay_retired');
             break;
         case 'sync_items':
             syncItems($input['items']);
@@ -146,50 +147,6 @@ function getOrders() {
         ]);
         
     } catch (Exception $e) {
-        echo json_encode([
-            'success' => false,
-            'error' => $e->getMessage()
-        ]);
-    }
-}
-
-function syncOrder($orderData) {
-    global $conn;
-    
-    try {
-        $conn->begin_transaction();
-        
-        // إدراج رأس الطلب
-        $sql = "INSERT INTO ot_head (pro_tybe, pro_date, fat_net, info, emp_id, acc1, acc_fund, store_id) 
-                VALUES (9, NOW(), ?, 'طلب أوفلاين', 1, 1, 1, 1)";
-        
-        $stmt = $conn->prepare($sql);
-        $stmt->bind_param('d', $orderData['total']);
-        $stmt->execute();
-        
-        $orderId = $conn->insert_id;
-        
-        // إدراج تفاصيل الطلب
-        foreach ($orderData['items'] as $item) {
-            $sql = "INSERT INTO fat_details (pro_id, item_id, qty_out, price, det_value) 
-                    VALUES (?, ?, ?, ?, ?)";
-            
-            $itemValue = $item['quantity'] * $item['price'];
-            $stmt = $conn->prepare($sql);
-            $stmt->bind_param('iiddd', $orderId, $item['id'], $item['quantity'], $item['price'], $itemValue);
-            $stmt->execute();
-        }
-        
-        $conn->commit();
-        
-        echo json_encode([
-            'success' => true,
-            'order_id' => $orderId,
-            'message' => 'تم حفظ الطلب بنجاح'
-        ]);
-        
-    } catch (Exception $e) {
-        $conn->rollback();
         echo json_encode([
             'success' => false,
             'error' => $e->getMessage()

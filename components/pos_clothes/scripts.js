@@ -394,6 +394,15 @@ function submitPOS(action) {
         form.appendChild(paidInput);
     }
     paidInput.value = document.getElementById('modal_paid').value;
+
+    let paidCashInput = form.querySelector('input[name="paid_cash"]');
+    if (!paidCashInput) {
+        paidCashInput = document.createElement('input');
+        paidCashInput.type = 'hidden';
+        paidCashInput.name = 'paid_cash';
+        form.appendChild(paidCashInput);
+    }
+    paidCashInput.value = document.getElementById('modal_paid').value;
     
     // إضافة الصندوق من المودال
     let fundInput = form.querySelector('input[name="fund_id"]');
@@ -405,6 +414,15 @@ function submitPOS(action) {
     }
     const fundSelect = document.querySelector('#paymentModal select[name="fund_id"]');
     fundInput.value = fundSelect ? fundSelect.value : '';
+
+    let paymentFundInput = form.querySelector('input[name="payment_fund_id"]');
+    if (!paymentFundInput) {
+        paymentFundInput = document.createElement('input');
+        paymentFundInput.type = 'hidden';
+        paymentFundInput.name = 'payment_fund_id';
+        form.appendChild(paymentFundInput);
+    }
+    paymentFundInput.value = fundSelect ? fundSelect.value : '';
     
     $('#paymentModal').modal('hide');
     

@@ -103,8 +103,8 @@ class RecipePilotEvidenceService
             'recipe-production-endpoint-runtime-ok',
         ],
         'Waste and stock adjustment endpoint runtime proof' => [
-            'tests/sync/recipe_waste_adjustment_endpoint_runtime_test.php',
-            'recipe-waste-adjustment-endpoint-runtime-ok',
+            'tests/sync/inventory_adjustment_endpoint_runtime_test.php',
+            'inventory-adjustment-endpoint-runtime-ok',
         ],
         'Paid refund/void endpoint runtime proof' => [
             'tests/sync/recipe_paid_reversal_endpoint_runtime_test.php',
@@ -167,9 +167,9 @@ class RecipePilotEvidenceService
             ['production batch', 'batch'],
         ],
         'Waste and stock adjustment evidence' => [
-            ['tools/recipe_stock_operations_surface_smoke.php', 'waste', 'stock adjustment'],
-            ['recipe_waste.php', 'waste movement', 'stock adjustment'],
-            ['waste movement', 'stock adjustment'],
+            ['tools/recipe_stock_operations_surface_smoke.php', 'inventory_adjustments.php', 'waste', 'stock adjustment'],
+            ['inventory_adjustments.php', 'waste movement', 'stock adjustment'],
+            ['InventoryAdjustmentService', 'waste movement', 'stock adjustment'],
         ],
         'Paid refund/void evidence' => [
             ['tools/recipe_paid_reversal_surface_smoke.php', 'paid order'],
@@ -554,7 +554,7 @@ class RecipePilotEvidenceService
             'Recipe report export and role QA evidence' => 'php tools/recipe_report_export_smoke.php --base-url=http://127.0.0.1:8010 --cookie-file=/absolute/path/to/cookies.txt --json',
             'Modifier substitution recipe evidence' => 'php tools/recipe_management_surface_smoke.php --base-url=http://127.0.0.1:8010 --cookie-file=/absolute/path/to/cookies.txt --recipe-id=<fixture-recipe-id> --json, then record the Recipe QA oat milk modifier substitution browser result.',
             'Production batch evidence' => 'php tools/recipe_stock_operations_surface_smoke.php --base-url=http://127.0.0.1:8010 --cookie-file=/absolute/path/to/cookies.txt --batch-id=<draft-batch-id> --json, then record the reviewed Recipe QA batch result.',
-            'Waste and stock adjustment evidence' => 'php tools/recipe_stock_operations_surface_smoke.php --base-url=http://127.0.0.1:8010 --cookie-file=/absolute/path/to/cookies.txt --json, then record one reviewed waste movement plus one stock adjustment result.',
+            'Waste and stock adjustment evidence' => 'php tools/recipe_stock_operations_surface_smoke.php --base-url=http://127.0.0.1:8010 --cookie-file=/absolute/path/to/cookies.txt --json, then record the inventory_adjustments.php operator review plus one reviewed waste movement and one stock adjustment result.',
             'Paid refund/void evidence' => 'php tools/recipe_paid_reversal_surface_smoke.php --base-url=http://127.0.0.1:8010 --cookie-file=/absolute/path/to/cookies.txt --json, then record the paid order browser QA result.',
             'Recipe rollback evidence' => 'Document rollback by setting POSMAIN_RECIPE_MODE=off and disabling active recipe write flags.',
             'Isolated runtime proofs' => $this->runtimeProofSuiteCommandHint($flags),
