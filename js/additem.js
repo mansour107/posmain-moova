@@ -1,17 +1,44 @@
 $(document).ready(function() {
-    // Add new row
-    $('#addUnit').click(function() {
-        // Clone the first row
+    function usedUnitValues() {
+        var values = [];
+        $('select[name="unit_id[]"]').each(function() {
+            values.push($(this).val());
+        });
+        return values;
+    }
+
+    function chooseFirstUnusedUnit(select) {
+        var used = usedUnitValues();
+        var selected = select.val();
+        select.find('option').each(function() {
+            var value = $(this).attr('value');
+            if (used.indexOf(value) === -1) {
+                selected = value;
+                return false;
+            }
+        });
+        select.val(selected);
+    }
+
+    function refreshUnitsUi() {
+        if (typeof window.refreshItemUnitsUi === 'function') {
+            window.refreshItemUnitsUi();
+        }
+    }
+
+    $('#addUnit').on('click', function() {
+        if (!$('.urow').length) {
+            return;
+        }
+
         var clone = $('.urow').first().clone();
 
-        // Reset specific fields in the cloned row
-        clone.find('input[name="u_val[]"]').val('6').prop('readonly', false); // Reset u_val
-        clone.find('input[name="unit_barcode[]"]').val(''); // Clear barcode
+        clone.find('input[name="u_val[]"]').val('6').prop('readonly', false);
+        clone.find('input[name="unit_barcode[]"]').val('');
+        chooseFirstUnusedUnit(clone.find('select[name="unit_id[]"]'));
 
-        // Get the value of the 'u_val' field in the main row (the first row)
         var u_val_main = parseFloat($('.urow').first().find('input[name="u_val[]"]').val()) || 1;
 
-        // Multiply the values in the cloned row by u_val of the first row
         clone.find('input[name="cost_price[]"]').val(function() {
             return (parseFloat($('.urow').first().find('input[name="cost_price[]"]').val()) * u_val_main).toFixed(3);
         });
@@ -28,19 +55,13 @@ $(document).ready(function() {
             return (parseFloat($('.urow').first().find('input[name="market_price[]"]').val()) * u_val_main).toFixed(3);
         });
 
-        // Append the cloned row after the last row
         $('.urow').last().after(clone);
-
-        // Attach delete functionality to the newly added row
-        clone.find('.deleteRow').click(function() {
-            if ($('.urow').length > 1) clone.remove();
-            else alert('لا يمكن حذف الوحدة الاولي');
-        });
+        refreshUnitsUi();
     });
 
-    // Attach delete functionality to the existing rows
-    $('.deleteRow').click(function() {
+    $(document).on('click', '.deleteRow', function() {
         if ($('.urow').length > 1) $(this).closest('.urow').remove();
         else alert('لا يمكن حذف الوحدة الاولي');
+        refreshUnitsUi();
     });
 });

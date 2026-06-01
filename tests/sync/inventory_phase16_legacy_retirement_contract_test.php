@@ -3,6 +3,10 @@
 $root = dirname(__DIR__, 2);
 
 $sidebar = inventoryPhase16Source($root . '/includes/sidebar.php');
+$accountReport = inventoryPhase16Source($root . '/acc_report.php');
+$storeSetupPage = inventoryPhase16Source($root . '/inventory_stores.php');
+$addStorePage = inventoryPhase16Source($root . '/add_store.php');
+$roadmapOpeningCards = inventoryPhase16Source($root . '/elements/main/start_balance.php');
 $openingPage = inventoryPhase16Source($root . '/items_start_balance.php');
 $openingSave = inventoryPhase16Source($root . '/save_start_balance.php');
 $legacyMirror = inventoryPhase16Source($root . '/classes/Inventory/InventoryLegacyMirrorService.php');
@@ -14,6 +18,35 @@ $triggerTool = inventoryPhase16Source($root . '/tools/inventory_retire_legacy_tr
 $docs = inventoryPhase16Source($root . '/docs/inventory/phase16_legacy_retirement_contracts.md');
 
 inventoryPhase16Assert(strpos($sidebar, '$posmainInventoryLegacyOpeningBalanceVisible') !== false, 'sidebar should gate old item opening balance link');
+inventoryPhase16Assert(strpos($sidebar, '$posmainInventoryLiveLedgerMode ? \'inventory_stores.php\' : \'acc_report.php?acc=stores\'') !== false, 'sidebar should route store setup away from the old account inventory page in live mode');
+foreach ([
+    'inventory_dashboard.php',
+    'inventory_reports.php',
+    'inventory_purchasing.php',
+    'inventory_counts.php',
+    'inventory_transfers.php',
+    'inventory_adjustments.php',
+    'inventory_stock_levels.php',
+    'inventory_stores.php',
+    'inventory_reason_codes.php',
+] as $newInventoryLink) {
+    inventoryPhase16Assert(strpos($sidebar, $newInventoryLink) !== false, 'sidebar should expose new inventory UI link: ' . $newInventoryLink);
+}
+inventoryPhase16Assert(strpos($accountReport, "header('Location: inventory_stores.php?legacy_redirect=stores')") !== false, 'old store account report should redirect to inventory store setup in live mode');
+inventoryPhase16Assert(strpos($accountReport, "\$accReportScope === 'stores' && \$accReportLiveInventory") !== false, 'old store account report redirect should be scoped to live inventory mode only');
+foreach ([
+    'إعداد المخازن',
+    'دفتر المخزون الجديد',
+    'legacy_redirect',
+    'acc_head',
+    'inventory_stock_levels.php?store_id=',
+] as $needle) {
+    inventoryPhase16Assert(strpos($storeSetupPage, $needle) !== false, 'inventory store setup page should contain: ' . $needle);
+}
+inventoryPhase16Assert(strpos($storeSetupPage, '<th>الرصيد</th>') === false, 'inventory store setup should not present old account balance as stock quantity');
+inventoryPhase16Assert(strpos($addStorePage, 'أرصدة وكميات المخزون تدار من دفتر المخزون الجديد') !== false, 'old add-store setup page should clarify it is not a stock quantity screen');
+inventoryPhase16Assert(strpos($roadmapOpeningCards, '$posmainStartBalanceLiveInventory') !== false, 'roadmap opening-balance cards should detect live inventory mode');
+inventoryPhase16Assert(strpos($roadmapOpeningCards, 'inventory_adjustments.php?legacy_opening_balance=retired') !== false, 'roadmap item opening card should route to new adjustment path in live mode');
 inventoryPhase16Assert(strpos($openingPage, 'inventory_adjustments.php?legacy_opening_balance=retired') !== false, 'old opening balance page should redirect in live mode');
 inventoryPhase16Assert(strpos($openingSave, 'opening_balance_legacy_workflow_retired_in_live_inventory_mode') !== false, 'old opening balance save should be blocked in live mode');
 inventoryPhase16Assert(strpos($openingSave, 'InventoryLegacyMirrorService') !== false, 'old opening balance save should delegate compatibility mirror writes to inventory service');

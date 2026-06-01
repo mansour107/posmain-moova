@@ -275,6 +275,9 @@ function inventoryPhase2UnexpectedRuntimeReference(string $reference): bool
         'classes/Inventory/InventoryStockLevelService.php' => [
             'inventory_item_stock_levels',
         ],
+        'classes/Inventory/InventoryQuickItemCreateService.php' => [
+            'inventory_item_stock_levels',
+        ],
         'classes/Inventory/InventoryReasonCodeService.php' => [
             'inventory_reason_codes',
         ],

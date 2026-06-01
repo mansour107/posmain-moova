@@ -7,6 +7,18 @@ Phase 16 retires old inventory stock behavior only after proof. In the current r
 - The old item opening-balance menu link is hidden when `POSMAIN_INVENTORY_LEDGER_MODE=live`.
 - Direct visits to `items_start_balance.php` redirect to the new inventory adjustment surface in live mode.
 - `save_start_balance.php` rejects legacy opening-balance writes in live mode.
+- The preparation/roadmap opening-balance card links item opening work to the
+  new inventory adjustment surface in live mode instead of sending users back
+  to the retired item opening-balance page.
+- Direct visits to the old store/account inventory list `acc_report.php?acc=stores`
+  redirect to `inventory_stores.php` in live mode so operators do not land on
+  the old account-balance view as if it were inventory.
+- `inventory_stores.php` keeps the still-needed store/account setup reachable
+  from the Inventory module, but it labels the screen as store setup and links
+  stock work to the new dashboard/stock-level pages.
+- The Inventory sidebar exposes the new normal operator path directly:
+  dashboard, reports, receiving, counts, transfers, waste/adjustments, stock
+  levels, store setup, and reason codes.
 - `InventoryLedgerService` remains the only accepted owner of the `myitems.itmqty` compatibility mirror.
 - Non-live legacy opening-balance compatibility refreshes go through `InventoryLegacyMirrorService`, not through direct page SQL.
 - The detached `fat_details` insert/delete helpers and global `myitems.itmqty`

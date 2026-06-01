@@ -88,9 +88,9 @@ $posmainInventoryLegacyOpeningBalanceVisible = !$posmainInventoryLiveLedgerMode;
 
 
               <li class="nav-item">
-                <a href="acc_report.php?acc=stores" class="nav-link">
+                <a href="<?= $posmainInventoryLiveLedgerMode ? 'inventory_stores.php' : 'acc_report.php?acc=stores' ?>" class="nav-link">
                   <i class="far "> <i class="nav-icon fas fa-list"></i> </i>
-                  <p><?= $lang_stores ?></p>
+                  <p><?= $posmainInventoryLiveLedgerMode ? 'إعداد المخازن' : $lang_stores ?></p>
                 </a>
               </li>
 
@@ -192,17 +192,68 @@ $posmainInventoryLegacyOpeningBalanceVisible = !$posmainInventoryLiveLedgerMode;
               </li>
 
 
-
-
               <li class="nav-item">
-                <a href="acc_report.php?acc=stores" class="nav-link">
-                  <i class="nav-icon fas fa-list"></i>
-                  <p>
-                    <?= $lang_stores ?>
-                  </p>
+                <a href="inventory_dashboard.php" class="nav-link">
+                  <i class="nav-icon fas fa-tachometer-alt"></i>
+                  <p>لوحة المخزون</p>
                 </a>
               </li>
 
+              <li class="nav-item">
+                <a href="inventory_reports.php" class="nav-link">
+                  <i class="nav-icon fas fa-chart-bar"></i>
+                  <p>تقارير المخزون</p>
+                </a>
+              </li>
+
+              <li class="nav-item">
+                <a href="inventory_purchasing.php" class="nav-link">
+                  <i class="nav-icon fas fa-dolly-flatbed"></i>
+                  <p>استلام المخزون</p>
+                </a>
+              </li>
+
+              <li class="nav-item">
+                <a href="inventory_counts.php" class="nav-link">
+                  <i class="nav-icon fas fa-clipboard-check"></i>
+                  <p>جرد المخزون</p>
+                </a>
+              </li>
+
+              <li class="nav-item">
+                <a href="inventory_transfers.php" class="nav-link">
+                  <i class="nav-icon fas fa-exchange-alt"></i>
+                  <p>تحويلات المخزون</p>
+                </a>
+              </li>
+
+              <li class="nav-item">
+                <a href="inventory_adjustments.php" class="nav-link">
+                  <i class="nav-icon fas fa-sliders-h"></i>
+                  <p>الهالك والتسويات</p>
+                </a>
+              </li>
+
+              <li class="nav-item">
+                <a href="inventory_stock_levels.php" class="nav-link">
+                  <i class="nav-icon fas fa-layer-group"></i>
+                  <p>مستويات المخزون</p>
+                </a>
+              </li>
+
+              <li class="nav-item">
+                <a href="inventory_stores.php" class="nav-link">
+                  <i class="nav-icon fas fa-warehouse"></i>
+                  <p>إعداد المخازن</p>
+                </a>
+              </li>
+
+              <li class="nav-item">
+                <a href="inventory_reason_codes.php" class="nav-link">
+                  <i class="nav-icon fas fa-tags"></i>
+                  <p>أسباب عمليات المخزون</p>
+                </a>
+              </li>
 
               <li class="nav-item" id="myitems">
                 <a href="myitems.php" class="nav-link">

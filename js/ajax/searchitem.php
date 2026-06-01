@@ -1,5 +1,6 @@
 <?php
 include('../../includes/connect.php');
+require_once('../../classes/Items/ItemCatalogStatus.php');
 if ($conn->connect_error) {
     die("Connection failed: " . $conn->connect_error);
 }
@@ -7,7 +8,8 @@ if ($conn->connect_error) {
 $input = $_GET['input']; // Assuming you're using GET method
 
 // Prepare and execute SQL query
-$sql = "SELECT id, iname FROM myitems WHERE iname LIKE '%" . $conn->real_escape_string($input) . "%' AND isdeleted = 0 LIMIT 50";
+$activeFilter = ItemCatalogStatus::activeOnlySql($conn);
+$sql = "SELECT id, iname FROM myitems WHERE iname LIKE '%" . $conn->real_escape_string($input) . "%' AND isdeleted = 0 {$activeFilter} LIMIT 50";
 $result = $conn->query($sql);
 
 // Check if any rows were returned

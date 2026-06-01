@@ -523,6 +523,7 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                             require_once __DIR__ . '/pos_item_card.php';
                             require_once __DIR__ . '/../classes/Pos/Service/ItemAvailabilityService.php';
                             require_once __DIR__ . '/../classes/Pos/Service/ItemVariantService.php';
+                            require_once __DIR__ . '/../classes/Items/ItemCatalogStatus.php';
                             $initialPosItemsLimit = 48;
                             $initialPosItemsPage = 1;
                             $posHasVariantTable = false;
@@ -534,6 +535,7 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                             $posVariantChildFilter = $posHasVariantTable
                                 ? "AND NOT EXISTS (SELECT 1 FROM item_variants ivc WHERE ivc.variant_item_id = m.id AND ivc.is_active = 1)"
                                 : "";
+                            $posActiveFilter = ItemCatalogStatus::activeOnlySql($conn, 'm');
                             ?>
                             <div class="row g-3" id="itemsGrid"
                                 data-initial-page="<?= $initialPosItemsPage ?>"
@@ -550,6 +552,7 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                                         ) image_pick ON image_pick.itemid = m.id
                                         LEFT JOIN imgs i ON i.id = image_pick.image_id
                                         WHERE m.isdeleted = 0
+                                        {$posActiveFilter}
                                         {$posVariantChildFilter}
                                         ORDER BY COALESCE(m.salesqty, 0) DESC, m.iname
                                         LIMIT {$initialPosItemsLimit}";

@@ -1,9 +1,11 @@
 <?php
 include('../../includes/connect.php');
+require_once('../../classes/Items/ItemCatalogStatus.php');
 
 $search = isset($_GET['search']) ? $_GET['search'] : '';
 
-$sql = "SELECT id, iname FROM myitems WHERE iname LIKE ? AND isdeleted = 0 order by iname limit 50";
+$activeFilter = ItemCatalogStatus::activeOnlySql($conn);
+$sql = "SELECT id, iname FROM myitems WHERE iname LIKE ? AND isdeleted = 0 {$activeFilter} order by iname limit 50";
 $stmt = $conn->prepare($sql);
 $searchTerm = "%".$search."%";
 $stmt->bind_param("s", $searchTerm);

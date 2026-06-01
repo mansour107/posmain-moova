@@ -13,7 +13,7 @@ include('includes/sidebar.php');
 
       <div class="card-header">
         <div class="row">
-        <div class="col-lg-4"><h3>مخزن جديد</h3></div>
+        <div class="col-lg-4"><h3>إعداد مخزن جديد</h3></div>
         <div class="col-lg-4"></div>
         <div class="col-lg-4 text-right">
         </div>
@@ -22,6 +22,9 @@ include('includes/sidebar.php');
 
 
       <div class="card-body">
+<div class="alert alert-info">
+    هذه شاشة إعداد مخزن وربطه بالحسابات فقط. أرصدة وكميات المخزون تدار من دفتر المخزون الجديد.
+</div>
 <form action="do/doadd_store.php" method="post" id="myForm">
 
       <div class="row">

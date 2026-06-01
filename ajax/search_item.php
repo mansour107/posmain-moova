@@ -5,6 +5,7 @@ ini_set('display_errors', 0);
 
 require_once __DIR__ . '/../includes/session_bootstrap.php';
 require_once __DIR__ . '/../classes/Pos/Service/ItemAvailabilityService.php';
+require_once __DIR__ . '/../classes/Items/ItemCatalogStatus.php';
 
 // استخدام dirname للحصول على المسار الصحيح
 $root_path = dirname(__DIR__);
@@ -31,7 +32,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['barcode'])) {
         ? "(EXISTS (SELECT 1 FROM item_variants iv WHERE iv.parent_item_id = myitems.id AND iv.is_active = 1)) AS has_variants"
         : "0 AS has_variants";
 
-    $sql = "SELECT myitems.*, {$variantSelect} FROM myitems WHERE (barcode = ? OR id = ? OR iname LIKE ?) AND isdeleted = 0 LIMIT 1";
+    $activeFilter = ItemCatalogStatus::activeOnlySql($conn, 'myitems');
+    $sql = "SELECT myitems.*, {$variantSelect} FROM myitems WHERE (barcode = ? OR id = ? OR iname LIKE ?) AND isdeleted = 0 {$activeFilter} LIMIT 1";
     $stmt = $conn->prepare($sql);
     $searchLike = "%{$barcode}%";
     $stmt->bind_param("sis", $barcode, $numericBarcode, $searchLike);

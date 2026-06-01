@@ -112,6 +112,7 @@ class SyncSchemaManager
                     'item_type' => "ALTER TABLE myitems ADD COLUMN item_type ENUM('sellable','ingredient','packaging','service') NOT NULL DEFAULT 'sellable'",
                     'track_stock' => "ALTER TABLE myitems ADD COLUMN track_stock TINYINT(1) NOT NULL DEFAULT 1",
                     'preferred_unit_id' => "ALTER TABLE myitems ADD COLUMN preferred_unit_id BIGINT UNSIGNED NULL",
+                    'is_active' => "ALTER TABLE myitems ADD COLUMN is_active TINYINT(1) NOT NULL DEFAULT 1",
                 ],
                 'indexes' => [
                     'idx_myitems_type_stock' => [
@@ -125,6 +126,10 @@ class SyncSchemaManager
                     'idx_myitems_group_deleted' => [
                         'columns' => ['group1', 'isdeleted'],
                         'sql' => "ALTER TABLE myitems ADD KEY idx_myitems_group_deleted (group1, isdeleted)",
+                    ],
+                    'idx_myitems_active_deleted' => [
+                        'columns' => ['is_active', 'isdeleted'],
+                        'sql' => "ALTER TABLE myitems ADD KEY idx_myitems_active_deleted (is_active, isdeleted)",
                     ],
                 ],
             ],

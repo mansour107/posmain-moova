@@ -45,6 +45,20 @@ $inventoryPurchaseUnits = inventoryPurchasingRows($conn, "
     ORDER BY iu.item_id, u.uname, iu.unit_id
     LIMIT 1000
 ");
+$inventoryPurchaseBaseUnits = inventoryPurchasingRows($conn, "
+    SELECT id, uname
+    FROM myunits
+    WHERE COALESCE(isdeleted, 0) = 0
+    ORDER BY uname, id
+    LIMIT 200
+");
+$inventoryPurchaseItemGroups = inventoryPurchasingRows($conn, "
+    SELECT id, gname
+    FROM item_group
+    WHERE COALESCE(isdeleted, 0) = 0
+    ORDER BY gname, id
+    LIMIT 200
+");
 $inventoryPurchasePreferredUnits = inventoryPurchasingRows($conn, "
     SELECT
         item_id,
@@ -250,6 +264,13 @@ include __DIR__ . '/includes/sidebar.php';
         color: #64748b;
         font-size: 12px;
     }
+    .inventory-purchase-filter-note button {
+        border: 0;
+        background: transparent;
+        color: #0f766e;
+        font-weight: 800;
+        padding: 0 6px;
+    }
     .inventory-icon-btn {
         width: 36px;
         height: 36px;
@@ -354,6 +375,68 @@ include __DIR__ . '/includes/sidebar.php';
     .inventory-toast.error {
         background: #b91c1c;
     }
+    .inventory-modal-backdrop {
+        display: none;
+        position: fixed;
+        inset: 0;
+        z-index: 2100;
+        background: rgba(15, 23, 42, 0.42);
+        padding: 18px;
+        align-items: center;
+        justify-content: center;
+    }
+    .inventory-modal-backdrop.open {
+        display: flex;
+    }
+    .inventory-quick-item-modal {
+        width: min(620px, 100%);
+        max-height: calc(100vh - 36px);
+        overflow: auto;
+        background: #fff;
+        border-radius: 8px;
+        border: 1px solid #dbe5ef;
+        box-shadow: 0 24px 60px rgba(15, 23, 42, 0.28);
+    }
+    .inventory-quick-item-header,
+    .inventory-quick-item-footer {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        padding: 14px 16px;
+        border-bottom: 1px solid #e5ebf1;
+    }
+    .inventory-quick-item-footer {
+        border-top: 1px solid #e5ebf1;
+        border-bottom: 0;
+    }
+    .inventory-quick-item-title {
+        margin: 0;
+        font-size: 17px;
+        color: #102033;
+        font-weight: 800;
+    }
+    .inventory-quick-item-body {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+        padding: 16px;
+    }
+    .inventory-quick-item-body .inventory-field {
+        margin-bottom: 0;
+    }
+    .inventory-quick-item-wide {
+        grid-column: 1 / -1;
+    }
+    .inventory-secondary-btn {
+        min-height: 42px;
+        border-radius: 8px;
+        border: 1px solid #cfdae5;
+        background: #fff;
+        color: #102033;
+        font-weight: 800;
+        padding: 0 14px;
+    }
     @media (max-width: 992px) {
         .inventory-receiving-grid,
         .inventory-total-strip {
@@ -364,6 +447,9 @@ include __DIR__ . '/includes/sidebar.php';
             flex-direction: column;
         }
         .inventory-scan-panel {
+            grid-template-columns: 1fr;
+        }
+        .inventory-quick-item-body {
             grid-template-columns: 1fr;
         }
     }
@@ -514,6 +600,58 @@ include __DIR__ . '/includes/sidebar.php';
 
 <div class="inventory-toast" id="inventoryToast"></div>
 
+<div class="inventory-modal-backdrop" id="inventoryQuickItemModal" aria-hidden="true">
+    <div class="inventory-quick-item-modal" role="dialog" aria-modal="true" aria-labelledby="inventoryQuickItemTitle">
+        <div class="inventory-quick-item-header">
+            <h2 class="inventory-quick-item-title" id="inventoryQuickItemTitle">إنشاء صنف مخزني</h2>
+            <button type="button" class="inventory-icon-btn" id="closeInventoryQuickItem" title="إغلاق"><i class="fas fa-times"></i></button>
+        </div>
+        <div class="inventory-quick-item-body">
+            <div class="inventory-field inventory-quick-item-wide">
+                <label for="inventoryQuickItemName">اسم الصنف</label>
+                <input id="inventoryQuickItemName" class="form-control" type="text" maxlength="200" autocomplete="off">
+            </div>
+            <div class="inventory-field">
+                <label for="inventoryQuickItemBarcode">الباركود / SKU</label>
+                <input id="inventoryQuickItemBarcode" class="form-control" type="text" maxlength="100" autocomplete="off">
+            </div>
+            <div class="inventory-field">
+                <label for="inventoryQuickItemType">نوع الصنف</label>
+                <select id="inventoryQuickItemType" class="form-control">
+                    <option value="ingredient">مادة خام</option>
+                    <option value="packaging">تغليف</option>
+                    <option value="sellable">منتج مخزني</option>
+                </select>
+            </div>
+            <div class="inventory-field">
+                <label for="inventoryQuickItemUnit">الوحدة الأساسية</label>
+                <select id="inventoryQuickItemUnit" class="form-control">
+                    <?php foreach ($inventoryPurchaseBaseUnits as $unit): ?>
+                        <option value="<?= (int) $unit['id'] ?>"><?= htmlspecialchars($unit['uname'] ?? '', ENT_QUOTES, 'UTF-8') ?></option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+            <div class="inventory-field">
+                <label for="inventoryQuickItemCost">تكلفة الوحدة</label>
+                <input id="inventoryQuickItemCost" class="form-control" type="number" min="0" step="0.001" value="0.000">
+            </div>
+            <div class="inventory-field inventory-quick-item-wide">
+                <label for="inventoryQuickItemGroup">التصنيف</label>
+                <select id="inventoryQuickItemGroup" class="form-control">
+                    <option value="">بدون تصنيف</option>
+                    <?php foreach ($inventoryPurchaseItemGroups as $group): ?>
+                        <option value="<?= (int) $group['id'] ?>"><?= htmlspecialchars($group['gname'] ?? '', ENT_QUOTES, 'UTF-8') ?></option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+        </div>
+        <div class="inventory-quick-item-footer">
+            <button type="button" class="inventory-secondary-btn" id="cancelInventoryQuickItem">إلغاء</button>
+            <button type="button" class="inventory-primary-btn" id="saveInventoryQuickItem"><i class="fas fa-check"></i> إنشاء واستخدام</button>
+        </div>
+    </div>
+</div>
+
 <script>
 const inventoryItems = <?= json_encode($inventoryPurchaseItems, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>;
 const inventoryUnits = <?= json_encode($inventoryPurchaseUnits, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>;
@@ -524,6 +662,8 @@ const inventoryPurchaseOrderLines = <?= json_encode($inventoryPurchaseOrderLines
 const inventoryPurchaseHasDefaultSupplierColumn = <?= $inventoryPurchaseHasDefaultSupplierColumn ? 'true' : 'false' ?>;
 const inventoryPurchaseCanApproveOrders = <?= $inventoryPurchaseCanApproveOrders ? 'true' : 'false' ?>;
 let inventoryAction = 'receive';
+let inventoryQuickItemTargetRow = null;
+let inventoryQuickItemSaving = false;
 
 function inventoryEscapeHtml(value) {
     return String(value || '').replace(/[&<>"']/g, character => ({
@@ -656,6 +796,8 @@ function addInventoryLine(defaults = {}) {
     }
     bindInventoryLine(row);
     recalcInventoryTotals();
+
+    return row;
 }
 
 function applyInventoryPurchaseItemSearch(row) {
@@ -678,7 +820,18 @@ function applyInventoryPurchaseItemSearch(row) {
         }
     });
 
-    note.textContent = term === '' ? '' : 'نتائج مطابقة: ' + visibleCount;
+    if (term === '') {
+        note.textContent = '';
+    } else if (visibleCount === 0) {
+        note.innerHTML = `لا توجد نتائج. <button type="button" class="inventory-create-missing-item">إنشاء صنف جديد</button>`;
+        const createButton = note.querySelector('.inventory-create-missing-item');
+        createButton.addEventListener('click', () => openInventoryQuickItemModal({
+            row,
+            name: input.value
+        }));
+    } else {
+        note.textContent = 'نتائج مطابقة: ' + visibleCount;
+    }
 }
 
 function bindInventoryLine(row) {
@@ -768,6 +921,11 @@ function applyInventoryPurchaseScan(code) {
     if (!item) {
         setInventoryPurchaseScanResult('لم يتم العثور على الصنف', 'error');
         inventoryToast('لم يتم العثور على الصنف', true);
+        const row = findInventoryBlankLine() || addInventoryLine();
+        openInventoryQuickItemModal({
+            row,
+            barcode: code
+        });
         return;
     }
     if (!(scanQty > 0)) {
@@ -866,6 +1024,120 @@ function collectInventoryPayload() {
         notes: document.getElementById('inventoryNotes').value.trim(),
         lines
     };
+}
+
+function openInventoryQuickItemModal(defaults = {}) {
+    inventoryQuickItemTargetRow = defaults.row || null;
+    const modal = document.getElementById('inventoryQuickItemModal');
+    const nameInput = document.getElementById('inventoryQuickItemName');
+    const barcodeInput = document.getElementById('inventoryQuickItemBarcode');
+    const costInput = document.getElementById('inventoryQuickItemCost');
+    const unitSelect = document.getElementById('inventoryQuickItemUnit');
+
+    nameInput.value = defaults.name || '';
+    barcodeInput.value = defaults.barcode || '';
+    let defaultCost = 0;
+    if (inventoryQuickItemTargetRow) {
+        const rowCost = Number(inventoryQuickItemTargetRow.querySelector('.inventory-cost').value || 0);
+        if (rowCost > 0) {
+            defaultCost = rowCost;
+        }
+    }
+    costInput.value = defaultCost.toFixed(3);
+    if (!unitSelect.value && unitSelect.options.length) {
+        unitSelect.selectedIndex = 0;
+    }
+
+    modal.classList.add('open');
+    modal.setAttribute('aria-hidden', 'false');
+    setTimeout(() => nameInput.focus(), 0);
+}
+
+function closeInventoryQuickItemModal() {
+    const modal = document.getElementById('inventoryQuickItemModal');
+    modal.classList.remove('open');
+    modal.setAttribute('aria-hidden', 'true');
+}
+
+function refreshInventoryItemSelects() {
+    document.querySelectorAll('.inventory-item-select').forEach(select => {
+        const selectedValue = select.value;
+        select.innerHTML = `<option value="">اختر الصنف</option>${inventoryItemOptions()}`;
+        select.value = selectedValue;
+    });
+}
+
+function useQuickCreatedInventoryItem(item, unit) {
+    inventoryItems.push(item);
+    if (unit && Number(unit.unit_id || 0) > 0) {
+        inventoryUnits.push(unit);
+    }
+    refreshInventoryItemSelects();
+
+    const row = inventoryQuickItemTargetRow || findInventoryBlankLine() || addInventoryLine();
+    const itemId = Number(item.id || 0);
+    const unitId = Number(unit && unit.unit_id ? unit.unit_id : 0);
+    row.querySelector('.inventory-purchase-item-search').value = '';
+    row.querySelector('.inventory-item-select').value = String(itemId);
+    row.querySelector('.inventory-unit-select').innerHTML = inventoryUnitOptions(itemId, unitId);
+    row.querySelector('.inventory-unit-select').value = unitId > 0 ? String(unitId) : '';
+    if (!Number(row.querySelector('.inventory-qty').value || 0)) {
+        row.querySelector('.inventory-qty').value = '1.000';
+    }
+    row.querySelector('.inventory-cost').value = Number(item.cost_price || 0).toFixed(3);
+    applyInventoryDefaultSupplier(itemId);
+    recalcInventoryTotals();
+    highlightInventoryPurchaseLine(row);
+}
+
+async function saveInventoryQuickItem() {
+    if (inventoryQuickItemSaving) {
+        return;
+    }
+    const button = document.getElementById('saveInventoryQuickItem');
+    const payload = {
+        iname: document.getElementById('inventoryQuickItemName').value.trim(),
+        barcode: document.getElementById('inventoryQuickItemBarcode').value.trim(),
+        item_type: document.getElementById('inventoryQuickItemType').value,
+        unit_id: Number(document.getElementById('inventoryQuickItemUnit').value || 0),
+        cost_price: Number(document.getElementById('inventoryQuickItemCost').value || 0).toFixed(6),
+        group1: Number(document.getElementById('inventoryQuickItemGroup').value || 0),
+        supplier_account_id: Number(document.getElementById('inventorySupplier').value || 0),
+        store_id: Number(document.getElementById('inventoryStore').value || 0)
+    };
+
+    if (!payload.iname) {
+        inventoryToast('اكتب اسم الصنف', true);
+        document.getElementById('inventoryQuickItemName').focus();
+        return;
+    }
+
+    inventoryQuickItemSaving = true;
+    button.disabled = true;
+    try {
+        const response = await fetch('ajax/inventory_item_quick_create.php', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json',
+                'X-Requested-With': 'XMLHttpRequest',
+                'X-CSRF-Token': document.querySelector('meta[name="inventory-receiving-csrf"]').content
+            },
+            body: JSON.stringify(payload)
+        });
+        const result = await response.json();
+        if (!result.success) {
+            throw new Error(result.message || 'تعذر إنشاء الصنف');
+        }
+        useQuickCreatedInventoryItem(result.item, result.unit);
+        closeInventoryQuickItemModal();
+        inventoryToast(result.message || 'تم إنشاء الصنف');
+    } catch (error) {
+        inventoryToast(error.message || 'تعذر إنشاء الصنف', true);
+    } finally {
+        inventoryQuickItemSaving = false;
+        button.disabled = false;
+    }
 }
 
 function loadPurchaseOrderLines(purchaseOrderId) {
@@ -978,6 +1250,14 @@ document.getElementById('inventoryPurchaseOrder').addEventListener('change', eve
 document.getElementById('saveInventoryPurchaseOrder').addEventListener('click', () => postPurchaseOrder('create_draft'));
 document.getElementById('submitInventoryPurchaseOrder').addEventListener('click', () => postPurchaseOrder('create_submit'));
 document.getElementById('approveInventoryPurchaseOrder').addEventListener('click', approveSelectedPurchaseOrder);
+document.getElementById('saveInventoryQuickItem').addEventListener('click', saveInventoryQuickItem);
+document.getElementById('closeInventoryQuickItem').addEventListener('click', closeInventoryQuickItemModal);
+document.getElementById('cancelInventoryQuickItem').addEventListener('click', closeInventoryQuickItemModal);
+document.getElementById('inventoryQuickItemModal').addEventListener('click', event => {
+    if (event.target.id === 'inventoryQuickItemModal') {
+        closeInventoryQuickItemModal();
+    }
+});
 document.getElementById('inventoryPurchaseBarcodeScan').addEventListener('keydown', event => {
     if (event.key === 'Enter') {
         event.preventDefault();

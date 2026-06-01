@@ -134,29 +134,7 @@ try {
     $stmt->close();
     (new ItemRecipeCatalogService())->saveMetadata($conn, $item_id, $payload);
 
-    // تحديث وحدات الصنف
-    $unitStmt = $conn->prepare("
-        UPDATE item_units
-        SET cost_price = ?,
-            price1 = ?,
-            price2 = ?,
-            price3 = ?,
-            u_val = ?,
-            unit_barcode = ?
-        WHERE item_id = ? AND unit_id = ?
-    ");
-    foreach ($_POST['unit_id'] as $index => $unit_id) {
-        $unit_id = (int) $unit_id;
-        $u_val = (float) ($_POST['u_val'][$index] ?? 1);
-        $unit_barcode = !empty($_POST['unit_barcode'][$index]) ? (string) $_POST['unit_barcode'][$index] : "99" . $index . ($_POST['unit_barcode'][0] ?? '');
-        $cost_price_unit = (float) ($_POST['cost_price'][$index] ?? 0);
-        $price1_unit = (float) ($_POST['price1'][$index] ?? 0);
-        $price2_unit = (float) ($_POST['price2'][$index] ?? 0);
-        $market_price_unit = isset($_POST['price3'][$index]) ? (float) $_POST['price3'][$index] : (isset($_POST['market_price'][$index]) ? (float) $_POST['market_price'][$index] : 0);
-        $unitStmt->bind_param('dddddsii', $cost_price_unit, $price1_unit, $price2_unit, $market_price_unit, $u_val, $unit_barcode, $item_id, $unit_id);
-        $unitStmt->execute();
-    }
-    $unitStmt->close();
+    posmain_edit_item_save_units($conn, $item_id, $payload['units']);
 
     $changedItemIds = [$item_id];
     if (array_key_exists('item_variants_payload_present', $_POST)) {
@@ -177,7 +155,12 @@ try {
     exit;
 }
 
-header('Location: ../add_item.php?edit=' . (int) $item_id . '&saved=1');
+$saveIntent = (string) ($_POST['save_intent'] ?? 'stay');
+if ($saveIntent === 'close') {
+    header('Location: ../myitems.php?saved=1');
+} else {
+    header('Location: ../add_item.php?edit=' . (int) $item_id . '&saved=1');
+}
 exit;
 
 function posmain_edit_item_needs_default_unit(array $post): bool
@@ -211,4 +194,92 @@ function posmain_edit_item_default_unit_id(mysqli $conn): int
     $stmt->close();
 
     return $unitId;
+}
+
+function posmain_edit_item_save_units(mysqli $conn, int $itemId, array $units): void
+{
+    if ($itemId < 1 || !$units) {
+        throw new InvalidArgumentException('missing item units');
+    }
+
+    $submittedUnitIds = [];
+    $updateStmt = $conn->prepare("
+        UPDATE item_units
+        SET cost_price = ?,
+            price1 = ?,
+            price2 = ?,
+            price3 = ?,
+            u_val = ?,
+            unit_barcode = ?
+        WHERE item_id = ? AND unit_id = ?
+    ");
+    $insertStmt = $conn->prepare("
+        INSERT INTO item_units(item_id, unit_id, u_val, unit_barcode, cost_price, price1, price2, price3)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    ");
+
+    foreach ($units as $unit) {
+        $unitId = (int) ($unit['unit_id'] ?? 0);
+        if ($unitId < 1) {
+            continue;
+        }
+        $submittedUnitIds[] = $unitId;
+
+        $uVal = (float) ($unit['u_val'] ?? 1);
+        $unitBarcode = (string) ($unit['unit_barcode'] ?? '');
+        $costPrice = (float) ($unit['cost_price'] ?? 0);
+        $price1 = (float) ($unit['price1'] ?? 0);
+        $price2 = (float) ($unit['price2'] ?? 0);
+        $price3 = (float) ($unit['price3'] ?? 0);
+
+        $updateStmt->bind_param('dddddsii', $costPrice, $price1, $price2, $price3, $uVal, $unitBarcode, $itemId, $unitId);
+        $updateStmt->execute();
+        if ($updateStmt->affected_rows > 0 || posmain_edit_item_unit_exists($conn, $itemId, $unitId)) {
+            continue;
+        }
+
+        $insertStmt->bind_param('iidsdddd', $itemId, $unitId, $uVal, $unitBarcode, $costPrice, $price1, $price2, $price3);
+        $insertStmt->execute();
+    }
+
+    $updateStmt->close();
+    $insertStmt->close();
+
+    $submittedUnitIds = array_values(array_unique(array_filter($submittedUnitIds)));
+    if (!$submittedUnitIds) {
+        throw new InvalidArgumentException('missing item units');
+    }
+
+    $placeholders = implode(',', array_fill(0, count($submittedUnitIds), '?'));
+    $types = 'i' . str_repeat('i', count($submittedUnitIds));
+    $params = array_merge([$itemId], $submittedUnitIds);
+    $deleteStmt = $conn->prepare("DELETE FROM item_units WHERE item_id = ? AND unit_id NOT IN ({$placeholders})");
+    posmain_edit_item_bind_params($deleteStmt, $types, $params);
+    $deleteStmt->execute();
+    $deleteStmt->close();
+}
+
+function posmain_edit_item_unit_exists(mysqli $conn, int $itemId, int $unitId): bool
+{
+    $stmt = $conn->prepare('SELECT id FROM item_units WHERE item_id = ? AND unit_id = ? LIMIT 1');
+    $stmt->bind_param('ii', $itemId, $unitId);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+
+    return is_array($row);
+}
+
+function posmain_edit_item_bind_params(mysqli_stmt $stmt, string $types, array $params): void
+{
+    $refs = [];
+    foreach ($params as $index => $value) {
+        $refs[$index] = $value;
+    }
+
+    $bind = [$types];
+    foreach ($refs as $index => $_) {
+        $bind[] = &$refs[$index];
+    }
+    call_user_func_array([$stmt, 'bind_param'], $bind);
 }

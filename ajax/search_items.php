@@ -4,6 +4,7 @@ ob_start();
 
 include('../includes/connect.php');
 require_once('../classes/Pos/Service/ItemAvailabilityService.php');
+require_once('../classes/Items/ItemCatalogStatus.php');
 
 // مسح أي output buffer
 ob_end_clean();
@@ -28,10 +29,12 @@ try {
     $search_param = '%' . $search . '%';
     
     // استخدام الجدول الصحيح myitems والعمود الصحيح price1
+    $activeFilter = ItemCatalogStatus::activeOnlySql($conn);
     $query = "SELECT id, iname as name, price1 as price
               FROM myitems
               WHERE (iname LIKE ? OR name2 LIKE ? OR barcode LIKE ?)
                 AND isdeleted = 0
+                {$activeFilter}
               ORDER BY iname
               LIMIT 50";
     $stmt = $conn->prepare($query);

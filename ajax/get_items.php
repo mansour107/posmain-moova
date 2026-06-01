@@ -1,5 +1,6 @@
 <?php
 require_once __DIR__ . '/../includes/session_bootstrap.php';
+require_once __DIR__ . '/../classes/Items/ItemCatalogStatus.php';
 include('../includes/connect.php');
 
 header('Content-Type: application/json');
@@ -14,9 +15,11 @@ try {
     $variantChildFilter = $hasVariantTable
         ? "AND NOT EXISTS (SELECT 1 FROM item_variants ivc WHERE ivc.variant_item_id = myitems.id AND ivc.is_active = 1)"
         : "";
+    $activeFilter = ItemCatalogStatus::activeOnlySql($conn, 'myitems');
     $query = "SELECT myitems.*, {$variantSelect}
               FROM myitems
               WHERE isdeleted = 0
+              {$activeFilter}
               {$variantChildFilter}
               ORDER BY iname ASC";
     $result = $conn->query($query);

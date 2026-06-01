@@ -1,3 +1,15 @@
+<?php
+require_once __DIR__ . '/includes/session_bootstrap.php';
+require_once __DIR__ . '/includes/connect.php';
+
+$accReportScope = isset($_GET['acc']) ? (string) $_GET['acc'] : '';
+$accReportConfig = function_exists('posmain_app_config') ? posmain_app_config() : [];
+$accReportLiveInventory = strtolower((string) ($accReportConfig['inventory']['ledger_mode'] ?? 'off')) === 'live';
+if ($accReportScope === 'stores' && $accReportLiveInventory) {
+    header('Location: inventory_stores.php?legacy_redirect=stores');
+    exit;
+}
+?>
 <?php include('includes/header.php') ?>
 <?php include('includes/navbar.php') ?>
 <?php include('includes/sidebar.php') ?>

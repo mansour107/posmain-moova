@@ -68,6 +68,7 @@ try {
     phase4Assert(isset($pendingBefore['myitems.add_item_type']), 'myitems item_type migration missing');
     phase4Assert(isset($pendingBefore['myitems.add_track_stock']), 'myitems track_stock migration missing');
     phase4Assert(isset($pendingBefore['myitems.add_preferred_unit_id']), 'myitems preferred_unit_id migration missing');
+    phase4Assert(isset($pendingBefore['myitems.add_is_active']), 'myitems is_active migration missing');
     phase4Assert(isset($pendingBefore['fat_details.add_idx_fat_details_stock_item']), 'fat_details stock index migration missing');
     phase4AssertNoDestructiveStatements($pendingBefore);
 
@@ -90,10 +91,10 @@ try {
 
     phase4AssertColumns($conn, 'tables', ['area_id', 'capacity', 'pos_x', 'pos_y', 'shape', 'display_order']);
     phase4AssertColumns($conn, 'ot_head', ['cofe_idempotency_key', 'guest_count', 'waiter_id']);
-    phase4AssertColumns($conn, 'myitems', ['item_type', 'track_stock', 'preferred_unit_id']);
+    phase4AssertColumns($conn, 'myitems', ['item_type', 'track_stock', 'preferred_unit_id', 'is_active']);
     phase4AssertIndexes($conn, 'tables', ['idx_tables_area_order']);
     phase4AssertIndexes($conn, 'ot_head', ['uq_ot_head_cofe_idempotency', 'idx_ot_head_waiter']);
-    phase4AssertIndexes($conn, 'myitems', ['idx_myitems_type_stock', 'idx_myitems_barcode_deleted', 'idx_myitems_group_deleted']);
+    phase4AssertIndexes($conn, 'myitems', ['idx_myitems_type_stock', 'idx_myitems_barcode_deleted', 'idx_myitems_group_deleted', 'idx_myitems_active_deleted']);
     phase4AssertIndexes($conn, 'fat_details', ['idx_fat_details_stock_item', 'idx_fat_details_fatid_deleted']);
     phase4Assert($manager->pendingStatements($conn) === [], 'Phase 4 schema apply should be idempotent');
 

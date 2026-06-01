@@ -8,6 +8,7 @@ require_once __DIR__ . '/moova_menu_api_auth.php';
 require_once __DIR__ . '/../classes/Inventory/InventoryStockReadService.php';
 require_once __DIR__ . '/../classes/Pos/Service/ItemVariantService.php';
 require_once __DIR__ . '/../classes/Recipe/RecipeCostLeakAuditService.php';
+require_once __DIR__ . '/../classes/Items/ItemCatalogStatus.php';
 
 function posmain_items_api_sanitize_public_payload(array $payload): array
 {
@@ -36,6 +37,7 @@ try {
     $categoryId = isset($_GET['category_id']) ? intval($_GET['category_id']) : null;
     
     // Build query - all item fields with images
+    $activeFilter = ItemCatalogStatus::activeOnlySql($conn, 'i');
     $sql = "SELECT 
                 i.id,
                 i.iname as name,
@@ -65,7 +67,8 @@ try {
             LEFT JOIN item_group g2 ON i.group2 = g2.id
             LEFT JOIN item_group g3 ON i.group3 = g3.id
             LEFT JOIN imgs img ON i.id = img.itemid
-            WHERE i.isdeleted = 0";
+            WHERE i.isdeleted = 0
+            {$activeFilter}";
     
     // Add category filter if provided (searches in all 3 groups)
     if ($categoryId) {

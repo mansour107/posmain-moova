@@ -437,6 +437,8 @@ class SyncOutboxEventService
         $price2 = $this->decimalString($item['price2'] ?? null);
         $price3 = $this->decimalString($item['price3'] ?? null);
         $cost = $this->decimalString($item['cost_price'] ?? null);
+        $catalogActive = ((int) ($item['is_active'] ?? 1)) === 1;
+        $catalogNotDeleted = ((int) ($item['isdeleted'] ?? 0)) === 0;
 
         $variantService = new ItemVariantService();
         $variants = $variantService->variantsForParent($conn, $itemId, true);
@@ -461,13 +463,14 @@ class SyncOutboxEventService
             'price3' => $price3,
             'cost' => $cost,
             'cost_price' => $cost,
-            'available_online' => ((int) ($item['isdeleted'] ?? 0)) === 0,
-            'is_orderable' => !$hasVariants && ((int) ($item['isdeleted'] ?? 0)) === 0,
+            'available_online' => $catalogActive && $catalogNotDeleted,
+            'is_orderable' => !$hasVariants && $catalogActive && $catalogNotDeleted,
             'has_variants' => $hasVariants,
             'is_variant_child' => $isVariantChild,
             'parent_item_id' => $isVariantChild ? (int) ($variantParent['parent_item_id'] ?? 0) : null,
             'variant_label' => $isVariantChild ? (string) ($variantParent['variant_label'] ?? '') : null,
             'isdeleted' => (int) ($item['isdeleted'] ?? 0),
+            'is_active' => $catalogActive,
             'menu_version' => $revision,
             'legacy' => [
                 'code' => $this->intOrNull($item['code'] ?? null),

@@ -2,6 +2,7 @@
 header('Content-Type: application/json');
 include('../includes/connect.php');
 require_once('../classes/Pos/Service/ItemAvailabilityService.php');
+require_once('../classes/Items/ItemCatalogStatus.php');
 
 if (!isset($_GET['category_id'])) {
     echo json_encode(['success' => false, 'error' => 'معرف المجموعة مطلوب']);
@@ -10,7 +11,8 @@ if (!isset($_GET['category_id'])) {
 
 $category_id = intval($_GET['category_id']);
 
-$sql = "SELECT id, iname as name, price1 as price FROM myitems WHERE group1 = $category_id AND isdeleted = 0 ORDER BY iname";
+$activeFilter = ItemCatalogStatus::activeOnlySql($conn);
+$sql = "SELECT id, iname as name, price1 as price FROM myitems WHERE group1 = $category_id AND isdeleted = 0 {$activeFilter} ORDER BY iname";
 $result = $conn->query($sql);
 
 $items = [];

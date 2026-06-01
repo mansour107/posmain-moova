@@ -8,6 +8,7 @@ header('Content-Type: application/json');
 require_once '../includes/connect.php';
 require_once '../classes/Pos/Service/ItemAvailabilityService.php';
 require_once '../classes/Pos/Service/ItemVariantService.php';
+require_once '../classes/Items/ItemCatalogStatus.php';
 require_once '../includes/pos_item_card.php';
 
 try {
@@ -21,7 +22,7 @@ try {
     $hasVariantTable = $variantTableResult && $variantTableResult->num_rows > 0;
     
     // بناء الاستعلام
-    $where = "m.isdeleted = 0";
+    $where = "m.isdeleted = 0" . ItemCatalogStatus::activeOnlySql($conn, 'm');
     $params = [];
     $types = '';
     

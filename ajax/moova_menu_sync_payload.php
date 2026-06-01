@@ -195,13 +195,14 @@ function moova_menu_sync_fingerprint(mysqli $conn): array
     $itemGroup1Expr = moova_menu_sync_column_exists($conn, 'myitems', 'group1') ? "COALESCE(group1, 0)" : '0';
     $itemGroup2Expr = moova_menu_sync_column_exists($conn, 'myitems', 'group2') ? "COALESCE(group2, 0)" : '0';
     $itemDeletedExpr = moova_menu_sync_column_exists($conn, 'myitems', 'isdeleted') ? "COALESCE(isdeleted, 0)" : '0';
+    $itemActiveExpr = moova_menu_sync_column_exists($conn, 'myitems', 'is_active') ? "COALESCE(is_active, 1)" : '1';
     $items = $conn->query("
         SELECT COUNT(*) AS row_count,
                COALESCE(SUM(CRC32(CONCAT_WS('|',
                    id, COALESCE(iname, ''), {$itemName2Expr}, {$itemInfoExpr}, COALESCE(barcode, ''),
                    COALESCE(price1, 0), {$itemPrice2Expr}, {$itemPrice3Expr},
                    COALESCE(cost_price, 0), {$itemGroup1Expr}, {$itemGroup2Expr},
-                   {$itemDeletedExpr}, {$itemChangedExpr}
+                   {$itemDeletedExpr}, {$itemActiveExpr}, {$itemChangedExpr}
                ))), 0) AS checksum,
                COALESCE(MAX(UNIX_TIMESTAMP({$itemChangedExpr})), 0) AS max_changed_at
         FROM myitems
@@ -424,6 +425,9 @@ function moova_menu_sync_build_menu(mysqli $conn, string $catalogVersion, ?array
     $itemDeletedWhere = moova_menu_sync_column_exists($conn, 'myitems', 'isdeleted')
         ? 'WHERE COALESCE(i.isdeleted, 0) = 0'
         : 'WHERE 1 = 1';
+    $itemActiveWhere = moova_menu_sync_column_exists($conn, 'myitems', 'is_active')
+        ? ' AND COALESCE(i.is_active, 1) = 1'
+        : '';
     $itemCategoryJoin = moova_menu_sync_column_exists($conn, 'myitems', 'group1')
         ? 'LEFT JOIN item_group g ON g.id = i.group1'
         : '';
@@ -473,6 +477,7 @@ function moova_menu_sync_build_menu(mysqli $conn, string $catalogVersion, ?array
         {$itemCategoryJoin}
         {$variantJoin}
         {$itemDeletedWhere}
+        {$itemActiveWhere}
         {$variantSellableWhere}
         {$itemOrder}
     ");

@@ -159,8 +159,12 @@ try {
     exit;
 }
 
-// إعادة التوجيه إلى صفحة إضافة الصنف
-header('Location: ../add_item.php?saved=1');
+$saveIntent = (string) ($_POST['save_intent'] ?? 'stay');
+if ($saveIntent === 'close') {
+    header('Location: ../myitems.php?saved=1');
+} else {
+    header('Location: ../add_item.php?saved=1');
+}
 exit;
 
 function posmain_add_item_images_are_valid(array $files): bool
