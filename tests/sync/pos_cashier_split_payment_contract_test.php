@@ -18,6 +18,9 @@ posCashierSplitAssert(strpos($posJs, 'pos_split_payment_payload') !== false, 'ca
 posCashierSplitAssert(strpos($posJs, 'سداد الأصناف المحددة يستخدم طريقة دفع واحدة') !== false, 'cashier JS should guard single-method split payments');
 posCashierSplitAssert(strpos($posJs, 'function updateSplitPaymentButtons()') !== false, 'cashier JS should hide full-payment action while selected-item mode is active');
 posCashierSplitAssert(strpos($posJs, "action === 'cash' && \$('#pos_split_payment_enabled').prop('checked')") !== false, 'cashier JS should route active split mode away from full payment');
+posCashierSplitAssert(strpos($posJs, 'function paymentAmountDue()') !== false, 'cashier JS should derive amount due from split selection when enabled');
+posCashierSplitAssert(strpos($posJs, 'splitPaymentPayloadFromModal().total') !== false, 'remaining balance should use selected split total instead of whole-order net');
+posCashierSplitAssert(strpos($posJs, 'const change = totalPaid - amountDue') !== false, 'remaining balance should compare paid amount to the active receipt total');
 posCashierSplitAssert(strpos($invoice, '$is_split_line_payment = ($submit === \'split_cash\')') !== false, 'invoice handler should recognize split_cash action');
 posCashierSplitAssert(strpos($invoice, 'posmainInvoiceDecodeSplitRows') !== false, 'invoice handler should decode selected row payload');
 posCashierSplitAssert(strpos($invoice, '$mutationService->splitTablePayment') !== false, 'invoice handler should route selected item payment through splitTablePayment');

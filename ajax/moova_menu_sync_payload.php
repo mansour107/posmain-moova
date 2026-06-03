@@ -5,6 +5,7 @@ require_once __DIR__ . '/../classes/MoovaPosIntegration.php';
 require_once __DIR__ . '/../classes/Recipe/RecipeScopeResolver.php';
 require_once __DIR__ . '/../classes/Recipe/RecipeCostLeakAuditService.php';
 require_once __DIR__ . '/../classes/Recipe/RecipeSyncPayloadService.php';
+require_once __DIR__ . '/../classes/Items/ItemCustomerMenuOptions.php';
 
 header('Content-Type: application/json; charset=UTF-8');
 header('Cache-Control: no-store, max-age=0');
@@ -283,95 +284,7 @@ function moova_menu_sync_fingerprint(mysqli $conn): array
 
 function moova_menu_sync_item_modifier_groups(mysqli $conn, int $itemId): array
 {
-    if (
-        $itemId <= 0
-        || !moova_menu_sync_table_exists($conn, 'modifier_groups')
-        || !moova_menu_sync_table_exists($conn, 'modifier_options')
-        || !moova_menu_sync_table_exists($conn, 'item_modifier_groups')
-    ) {
-        return [];
-    }
-
-    $stmt = $conn->prepare("
-        SELECT
-            mg.id,
-            mg.name_ar,
-            mg.name_en,
-            mg.selection_min,
-            mg.selection_max,
-            mg.is_required,
-            mg.is_active,
-            COALESCE(img.sort_order, mg.sort_order, 0) AS group_sort_order
-        FROM item_modifier_groups img
-        JOIN modifier_groups mg ON mg.id = img.group_id
-        WHERE img.item_id = ?
-          AND mg.is_active = 1
-        ORDER BY img.sort_order, mg.sort_order, mg.id
-    ");
-    $stmt->bind_param('i', $itemId);
-    $stmt->execute();
-    $result = $stmt->get_result();
-    $groups = [];
-    while ($row = $result->fetch_assoc()) {
-        $groupId = (int) $row['id'];
-        $providerGroupId = 'pos-mod-group-' . $groupId;
-        $groups[$groupId] = [
-            'id' => $providerGroupId,
-            'providerOptionGroupId' => $providerGroupId,
-            'group_id' => $groupId,
-            'name' => (string) ($row['name_ar'] ?? ''),
-            'name2' => trim((string) ($row['name_en'] ?? '')) ?: null,
-            'min' => max(0, (int) ($row['selection_min'] ?? 0)),
-            'max' => max(0, (int) ($row['selection_max'] ?? 0)),
-            'required' => (int) ($row['is_required'] ?? 0) === 1,
-            'isActive' => (int) ($row['is_active'] ?? 1) === 1,
-            'sortOrder' => (int) ($row['group_sort_order'] ?? 0),
-            'options' => [],
-            'values' => [],
-        ];
-    }
-    $stmt->close();
-
-    if (!$groups) {
-        return [];
-    }
-
-    $groupIds = array_keys($groups);
-    $placeholders = implode(',', array_fill(0, count($groupIds), '?'));
-    $stmt = $conn->prepare("
-        SELECT id, group_id, name_ar, name_en, price_delta, is_active, sort_order
-        FROM modifier_options
-        WHERE group_id IN ({$placeholders})
-          AND is_active = 1
-        ORDER BY group_id, sort_order, id
-    ");
-    $stmt->bind_param(str_repeat('i', count($groupIds)), ...$groupIds);
-    $stmt->execute();
-    $result = $stmt->get_result();
-    while ($row = $result->fetch_assoc()) {
-        $groupId = (int) $row['group_id'];
-        if (!isset($groups[$groupId])) {
-            continue;
-        }
-        $optionId = (int) $row['id'];
-        $providerOptionId = 'pos-mod-option-' . $optionId;
-        $option = [
-            'id' => $providerOptionId,
-            'providerOptionId' => $providerOptionId,
-            'option_id' => $optionId,
-            'name' => (string) ($row['name_ar'] ?? ''),
-            'name2' => trim((string) ($row['name_en'] ?? '')) ?: null,
-            'price' => moova_menu_sync_decimal($row['price_delta'] ?? 0),
-            'priceDelta' => moova_menu_sync_decimal($row['price_delta'] ?? 0),
-            'isActive' => (int) ($row['is_active'] ?? 1) === 1,
-            'sortOrder' => (int) ($row['sort_order'] ?? 0),
-        ];
-        $groups[$groupId]['options'][] = $option;
-        $groups[$groupId]['values'][] = $option;
-    }
-    $stmt->close();
-
-    return array_values($groups);
+    return ItemCustomerMenuOptions::modifierGroupsForItem($conn, $itemId);
 }
 
 function moova_menu_sync_build_menu(mysqli $conn, string $catalogVersion, ?array $link = null): array
@@ -428,23 +341,28 @@ function moova_menu_sync_build_menu(mysqli $conn, string $catalogVersion, ?array
     $itemActiveWhere = moova_menu_sync_column_exists($conn, 'myitems', 'is_active')
         ? ' AND COALESCE(i.is_active, 1) = 1'
         : '';
+    if (moova_menu_sync_column_exists($conn, 'myitems', 'item_type')) {
+        $itemActiveWhere .= " AND COALESCE(NULLIF(TRIM(i.item_type), ''), 'sellable') = 'sellable'";
+    }
     $itemCategoryJoin = moova_menu_sync_column_exists($conn, 'myitems', 'group1')
         ? 'LEFT JOIN item_group g ON g.id = i.group1'
         : '';
     $itemCategoryNameSelect = $itemCategoryJoin ? 'g.gname AS category_name' : 'NULL AS category_name';
     $hasVariantTable = moova_menu_sync_table_exists($conn, 'item_variants');
-    $variantJoin = $hasVariantTable
-        ? 'LEFT JOIN item_variants iv_child ON iv_child.variant_item_id = i.id AND iv_child.is_active = 1'
-        : '';
-    $variantSelect = $hasVariantTable
-        ? 'iv_child.parent_item_id AS parent_item_id, iv_child.variant_label AS variant_label'
-        : 'NULL AS parent_item_id, NULL AS variant_label';
+    $variantHasSelect = $hasVariantTable
+        ? "(EXISTS (
+                SELECT 1
+                FROM item_variants ivp
+                WHERE ivp.parent_item_id = i.id
+                  AND ivp.is_active = 1
+            )) AS has_variants"
+        : '0 AS has_variants';
     $variantSellableWhere = $hasVariantTable
         ? " AND NOT EXISTS (
                 SELECT 1
-                FROM item_variants iv_parent
-                WHERE iv_parent.parent_item_id = i.id
-                  AND iv_parent.is_active = 1
+                FROM item_variants ivc
+                WHERE ivc.variant_item_id = i.id
+                  AND ivc.is_active = 1
             )
             AND NOT EXISTS (
                 SELECT 1
@@ -472,23 +390,49 @@ function moova_menu_sync_build_menu(mysqli $conn, string $catalogVersion, ?array
                {$itemTypeSelect},
                {$itemTrackStockSelect},
                {$itemCategoryNameSelect},
-               {$variantSelect}
+               {$variantHasSelect}
         FROM myitems i
         {$itemCategoryJoin}
-        {$variantJoin}
         {$itemDeletedWhere}
         {$itemActiveWhere}
         {$variantSellableWhere}
         {$itemOrder}
     ");
 
-    $items = [];
+    $itemRowBuffer = [];
     while ($row = $itemRows->fetch_assoc()) {
+        $itemRowBuffer[] = $row;
+    }
+
+    $variantsByParent = [];
+    if ($hasVariantTable && $itemRowBuffer) {
+        $variantParentIds = [];
+        foreach ($itemRowBuffer as $row) {
+            if (!empty($row['has_variants'])) {
+                $variantParentIds[] = (int) $row['id'];
+            }
+        }
+        if ($variantParentIds) {
+            $variantsByParent = ItemCustomerMenuOptions::activeVariantsForParents($conn, $variantParentIds);
+        }
+    }
+
+    $items = [];
+    foreach ($itemRowBuffer as $row) {
         $itemId = (int) $row['id'];
         $name = trim((string) $row['iname']);
         if ($itemId < 1 || $name === '') {
             continue;
         }
+        $hasVariants = !empty($row['has_variants']);
+        $variants = $variantsByParent[$itemId] ?? [];
+        $basePriceMajor = moova_menu_sync_decimal($row['price1'] ?? 0);
+        if ($hasVariants && $variants) {
+            $basePriceMajor = ItemCustomerMenuOptions::resolveVariantBasePrice($variants, $basePriceMajor);
+        }
+        $basePriceCents = ItemCustomerMenuOptions::majorToCents($basePriceMajor);
+        $price2Major = moova_menu_sync_decimal($row['price2'] ?? 0);
+        $price3Major = moova_menu_sync_decimal($row['price3'] ?? 0);
         $providerItemId = 'pos-item-' . $itemId;
         $categoryId = (int) ($row['group1'] ?? 0);
         $categoryKey = $categoryId > 0 ? 'pos-cat-' . $categoryId : null;
@@ -499,20 +443,34 @@ function moova_menu_sync_build_menu(mysqli $conn, string $catalogVersion, ?array
             'name2' => trim((string) ($row['name2'] ?? '')) ?: null,
             'desc' => (string) ($row['info'] ?? ''),
             'barcode' => trim((string) ($row['barcode'] ?? '')) ?: null,
-            'price' => moova_menu_sync_decimal($row['price1'] ?? 0),
-            'price2' => moova_menu_sync_decimal($row['price2'] ?? 0),
-            'price3' => moova_menu_sync_decimal($row['price3'] ?? 0),
+            'price' => $basePriceCents,
+            'priceCents' => $basePriceCents,
+            'priceMajor' => $basePriceMajor,
+            'posPriceMajor' => $basePriceMajor,
+            'price2' => ItemCustomerMenuOptions::majorToCents($price2Major),
+            'price2Cents' => ItemCustomerMenuOptions::majorToCents($price2Major),
+            'price2Major' => $price2Major,
+            'price3' => ItemCustomerMenuOptions::majorToCents($price3Major),
+            'price3Cents' => ItemCustomerMenuOptions::majorToCents($price3Major),
+            'price3Major' => $price3Major,
+            'currency' => 'EGP',
             'cost' => moova_menu_sync_decimal($row['cost_price'] ?? 0),
             'available' => true,
             'deliveryAvailable' => true,
             'categoryId' => $categoryKey,
             'categoryKey' => $categoryKey,
             'categoryName' => $row['category_name'] ?? null,
+            'hasVariants' => $hasVariants,
             'isOrderable' => true,
-            'isVariantChild' => !empty($row['parent_item_id']),
-            'parentItemId' => !empty($row['parent_item_id']) ? 'pos-item-' . (int) $row['parent_item_id'] : null,
-            'variantLabel' => trim((string) ($row['variant_label'] ?? '')) ?: null,
+            'isVariantChild' => false,
+            'parentItemId' => null,
+            'variantLabel' => null,
         ];
+        $itemOptions = ItemCustomerMenuOptions::buildForItem($conn, $itemId, $basePriceMajor, $variants);
+        if ($itemOptions) {
+            $menuItem['options'] = $itemOptions;
+            $menuItem['modifierGroups'] = $itemOptions;
+        }
         if ($recipeSync !== null && $recipeScope !== null) {
             $menuItem = moova_menu_sync_apply_recipe_availability(
                 $conn,
@@ -544,7 +502,10 @@ function moova_menu_sync_build_menu(mysqli $conn, string $catalogVersion, ?array
             'source' => 'posmain_local_menu',
             'catalogVersion' => $catalogVersion,
             'generatedAt' => gmdate('Y-m-d\TH:i:s\Z'),
-            'priceUnit' => 'major',
+            'priceUnit' => 'minor',
+            'priceUnitScale' => 100,
+            'currency' => 'EGP',
+            'posPriceUnit' => 'major',
             'counts' => [
                 'categories' => count($categories),
                 'items' => count($items),

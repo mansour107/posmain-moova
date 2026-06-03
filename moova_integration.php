@@ -286,10 +286,17 @@ document.addEventListener('DOMContentLoaded', function () {
       saveBtn.disabled = true;
       try {
         const result = await postJson('ajax/moova_save_integration.php', payload());
-        const syncMessage = result.autoSync && result.autoSync.ok
-          ? ' وتم بدء مزامنة المنيو تلقائياً.'
-          : ' وسيحاول الودجت مزامنة المنيو عند فتح شاشة البيع.';
-        showAlert('success', 'تم حفظ الربط بنجاح.' + syncMessage);
+        let syncMessage = ' وسيحاول الودجت مزامنة المنيو عند فتح شاشة البيع.';
+        if (result.autoSync && result.autoSync.ok) {
+          syncMessage = result.autoSync.message
+            ? ' ' + result.autoSync.message
+            : ' وتمت مزامنة المنيو من الـ POS إلى متجر Moova.';
+        } else if (result.autoSync && result.autoSync.attempted) {
+          syncMessage = result.autoSync.message
+            ? ' ' + result.autoSync.message
+            : ' تم حفظ الربط لكن مزامنة المنيو لم تكتمل؛ افتح شاشة البيع لإعادة المحاولة.';
+        }
+        showAlert(result.autoSync && result.autoSync.attempted && !result.autoSync.ok ? 'warning' : 'success', 'تم حفظ الربط بنجاح.' + syncMessage);
         setTimeout(function () { window.location.reload(); }, 900);
       } catch (error) {
         showAlert('danger', error.message);

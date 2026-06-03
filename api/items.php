@@ -9,6 +9,7 @@ require_once __DIR__ . '/../classes/Inventory/InventoryStockReadService.php';
 require_once __DIR__ . '/../classes/Pos/Service/ItemVariantService.php';
 require_once __DIR__ . '/../classes/Recipe/RecipeCostLeakAuditService.php';
 require_once __DIR__ . '/../classes/Items/ItemCatalogStatus.php';
+require_once __DIR__ . '/../classes/Items/ItemCustomerMenuOptions.php';
 
 function posmain_items_api_sanitize_public_payload(array $payload): array
 {
@@ -16,6 +17,61 @@ function posmain_items_api_sanitize_public_payload(array $payload): array
     $flags = new RecipeFeatureFlags($config);
 
     return (new RecipeCostLeakAuditService())->sanitizePayload($payload, 'moova-facing api', $flags);
+}
+
+function posmain_items_api_major_to_cents($value): int
+{
+    return ItemCustomerMenuOptions::majorToCents($value);
+}
+
+function posmain_items_api_price_fields_for_moova(array $prices): array
+{
+    foreach (['sale_price', 'price2', 'price3', 'market_price'] as $key) {
+        if (!array_key_exists($key, $prices)) {
+            continue;
+        }
+        $major = is_numeric($prices[$key]) ? (float) $prices[$key] : 0.0;
+        $prices[$key . '_major'] = $major;
+        $prices[$key . '_cents'] = posmain_items_api_major_to_cents($major);
+        $prices[$key] = $prices[$key . '_cents'];
+    }
+
+    return $prices;
+}
+
+function posmain_items_api_variant_for_moova(array $variant): array
+{
+    $price1Major = is_numeric($variant['price1'] ?? $variant['price'] ?? null)
+        ? (float) ($variant['price1'] ?? $variant['price'])
+        : 0.0;
+    $price2Major = is_numeric($variant['price2'] ?? null) ? (float) $variant['price2'] : 0.0;
+    $price3Major = is_numeric($variant['price3'] ?? null) ? (float) $variant['price3'] : 0.0;
+
+    return [
+        'relation_id' => (int) ($variant['relation_id'] ?? 0),
+        'item_id' => (int) ($variant['variant_item_id'] ?? $variant['item_id'] ?? 0),
+        'variant_item_id' => (int) ($variant['variant_item_id'] ?? $variant['item_id'] ?? 0),
+        'label' => (string) ($variant['variant_label'] ?? $variant['label'] ?? ''),
+        'name' => (string) ($variant['iname'] ?? $variant['name'] ?? ''),
+        'barcode' => (string) ($variant['barcode'] ?? ''),
+        'price' => posmain_items_api_major_to_cents($price1Major),
+        'price_cents' => posmain_items_api_major_to_cents($price1Major),
+        'price_major' => $price1Major,
+        'price1' => posmain_items_api_major_to_cents($price1Major),
+        'price1_cents' => posmain_items_api_major_to_cents($price1Major),
+        'price1_major' => $price1Major,
+        'price2' => posmain_items_api_major_to_cents($price2Major),
+        'price2_cents' => posmain_items_api_major_to_cents($price2Major),
+        'price2_major' => $price2Major,
+        'price3' => posmain_items_api_major_to_cents($price3Major),
+        'price3_cents' => posmain_items_api_major_to_cents($price3Major),
+        'price3_major' => $price3Major,
+        'cost_price' => (float) ($variant['cost_price'] ?? 0),
+        'sort_order' => (int) ($variant['sort_order'] ?? 0),
+        'is_default' => (bool) ($variant['is_default'] ?? false),
+        'is_active' => (bool) ($variant['is_active'] ?? true),
+        'is_orderable' => true,
+    ];
 }
 
 try {
@@ -37,7 +93,8 @@ try {
     $categoryId = isset($_GET['category_id']) ? intval($_GET['category_id']) : null;
     
     // Build query - all item fields with images
-    $activeFilter = ItemCatalogStatus::activeOnlySql($conn, 'i');
+    $activeFilter = ItemCatalogStatus::activeOnlySql($conn, 'i')
+        . ItemCatalogStatus::posSellableOnlySql($conn, 'i');
     $sql = "SELECT 
                 i.id,
                 i.iname as name,
@@ -163,37 +220,41 @@ try {
     $itemIds = array_map(static function (array $item): int {
         return (int) ($item['id'] ?? 0);
     }, $items);
-    $variantsByParent = $variantService->activeVariantsForParents($conn, $itemIds);
-    foreach ($items as &$item) {
+    $variantsByParent = ItemCustomerMenuOptions::activeVariantsForParents($conn, $itemIds);
+    $publicItems = [];
+    foreach ($items as $item) {
         $itemId = (int) $item['id'];
         $variants = $variantsByParent[$itemId] ?? [];
         $variantParent = $variantService->variantParentForChild($conn, $itemId);
-        $item['has_variants'] = count($variants) > 0;
-        $item['is_orderable'] = !$item['has_variants'];
-        $item['is_variant_child'] = $variantParent !== null;
-        $item['parent_item_id'] = $variantParent ? (int) ($variantParent['parent_item_id'] ?? 0) : null;
-        $item['variant_label'] = $variantParent ? (string) ($variantParent['variant_label'] ?? '') : null;
-        $item['variants'] = array_map(static function (array $variant): array {
-            return [
-                'relation_id' => (int) ($variant['relation_id'] ?? 0),
-                'item_id' => (int) ($variant['variant_item_id'] ?? $variant['item_id'] ?? 0),
-                'variant_item_id' => (int) ($variant['variant_item_id'] ?? $variant['item_id'] ?? 0),
-                'label' => (string) ($variant['variant_label'] ?? $variant['label'] ?? ''),
-                'name' => (string) ($variant['iname'] ?? $variant['name'] ?? ''),
-                'barcode' => (string) ($variant['barcode'] ?? ''),
-                'price' => (float) ($variant['price1'] ?? $variant['price'] ?? 0),
-                'price1' => (float) ($variant['price1'] ?? $variant['price'] ?? 0),
-                'price2' => (float) ($variant['price2'] ?? 0),
-                'price3' => (float) ($variant['price3'] ?? 0),
-                'cost_price' => (float) ($variant['cost_price'] ?? 0),
-                'sort_order' => (int) ($variant['sort_order'] ?? 0),
-                'is_default' => (bool) ($variant['is_default'] ?? false),
-                'is_active' => (bool) ($variant['is_active'] ?? true),
-                'is_orderable' => true,
-            ];
-        }, $variants);
+        $hasVariants = count($variants) > 0;
+        $isVariantChild = $variantParent !== null;
+        if ($isVariantChild) {
+            continue;
+        }
+        $basePrice = (float) ($item['prices']['sale_price'] ?? 0);
+        if ($hasVariants && $variants) {
+            $basePrice = ItemCustomerMenuOptions::resolveVariantBasePrice($variants, $basePrice);
+            $item['prices']['sale_price'] = $basePrice;
+        }
+        $item['has_variants'] = $hasVariants;
+        $item['is_orderable'] = true;
+        $item['is_variant_child'] = false;
+        $item['parent_item_id'] = null;
+        $item['variant_label'] = null;
+        $item['variants'] = array_map('posmain_items_api_variant_for_moova', $variants);
+        $menuOptions = ItemCustomerMenuOptions::buildForItem($conn, $itemId, $basePrice, $variants);
+        if ($menuOptions) {
+            $item['options'] = $menuOptions;
+            $item['modifierGroups'] = $menuOptions;
+        }
+        $item['prices'] = posmain_items_api_price_fields_for_moova($item['prices'] ?? []);
+        $item['price'] = posmain_items_api_major_to_cents($basePrice);
+        $item['price_cents'] = posmain_items_api_major_to_cents($basePrice);
+        $item['price_major'] = $basePrice;
+        $item['currency'] = 'EGP';
+        $publicItems[] = $item;
     }
-    unset($item);
+    $items = $publicItems;
     $conn->close();
     
     // Return success response

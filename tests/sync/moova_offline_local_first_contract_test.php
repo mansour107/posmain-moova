@@ -25,6 +25,10 @@ foreach ([
     'CURLOPT_TIMEOUT_MS',
     "'connect_ms' => 800",
     "'total_ms' => 2000",
+    'function moova_proxy_local_passive_bridge_payload',
+    "'mode' => 'local_passive_fallback'",
+    "'remoteReachable' => false",
+    'moova_proxy_json(200, moova_proxy_local_passive_bridge_payload($path, $link, $error))',
 ] as $needle) {
     moovaOfflineLocalFirstAssert(
         strpos($proxy, $needle) !== false,

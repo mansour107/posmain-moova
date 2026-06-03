@@ -29,7 +29,8 @@ try {
     $search_param = '%' . $search . '%';
     
     // استخدام الجدول الصحيح myitems والعمود الصحيح price1
-    $activeFilter = ItemCatalogStatus::activeOnlySql($conn);
+    $activeFilter = ItemCatalogStatus::activeOnlySql($conn)
+        . ItemCatalogStatus::posSellableOnlySql($conn);
     $query = "SELECT id, iname as name, price1 as price
               FROM myitems
               WHERE (iname LIKE ? OR name2 LIKE ? OR barcode LIKE ?)

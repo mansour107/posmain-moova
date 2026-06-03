@@ -13,6 +13,11 @@ class MoovaWidgetReachabilityMessagesTest extends TestCase
         $this->assertStringContainsString("'code' => 'MOOVA_UNREACHABLE'", $source);
         $this->assertStringContainsString("'retryable' => true", $source);
         $this->assertStringContainsString("'details' => (string) \$details", $source);
+        $this->assertStringContainsString('function moova_proxy_local_passive_bridge_payload', $source);
+        $this->assertStringContainsString("'mode' => 'local_passive_fallback'", $source);
+        $this->assertStringContainsString("'remoteReachable' => false", $source);
+        $this->assertStringContainsString('moova_proxy_json(200, moova_proxy_local_passive_bridge_payload($path, $link, $error))', $source);
+        $this->assertStringContainsString("moova_proxy_json(200, moova_proxy_local_passive_bridge_payload(\$path, \$link, 'http_status_' . \$statusCode))", $source);
         $this->assertStringContainsString('moova_proxy_json(502, moova_proxy_reachability_error($error))', $source);
     }
 

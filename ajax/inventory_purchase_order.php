@@ -83,6 +83,10 @@ function inventoryPurchaseOrderArabicError(string $code): string
     $messages = [
         'DESTINATION_STORE_REQUIRED' => 'اختر المخزن',
         'PURCHASE_ORDER_LINES_REQUIRED' => 'أضف صنفاً واحداً على الأقل',
+        'INVALID_PURCHASE_LINE' => 'راجع بيانات سطور الأصناف',
+        'INVENTORY_ITEM_REQUIRED' => 'اختر صنفاً مسجلاً لكل سطر قبل الحفظ',
+        'INVENTORY_ITEM_NOT_FOUND' => 'الصنف المختار غير مسجل في النظام',
+        'INVENTORY_QTY_REQUIRED' => 'أدخل كمية صحيحة لكل صنف',
         'PURCHASE_ORDER_REQUIRED' => 'اختر أمر الشراء',
         'PURCHASE_ORDER_NOT_FOUND' => 'أمر الشراء غير موجود',
         'PURCHASE_ORDER_INVALID_TRANSITION' => 'حالة أمر الشراء لا تسمح بهذه العملية',

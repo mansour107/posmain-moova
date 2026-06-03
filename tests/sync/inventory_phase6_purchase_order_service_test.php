@@ -72,6 +72,36 @@ try {
     inventoryPhase6PoAssert((int) $conn->query('SELECT COUNT(*) AS c FROM inventory_purchase_orders')->fetch_assoc()['c'] === 1, 'purchase order replay should not duplicate header');
     inventoryPhase6PoAssert((int) $conn->query('SELECT COUNT(*) AS c FROM inventory_purchase_order_lines')->fetch_assoc()['c'] === 1, 'purchase order replay should not duplicate lines');
 
+    try {
+        $orderService->createDraft($conn, [
+            'purchase_order_uuid' => '99999999-9999-4999-8999-999999999999',
+            'supplier_account_id' => 2101,
+            'destination_store_id' => 3,
+            'lines' => [
+                ['item_id' => 0, 'qty' => '1.000000', 'unit_cost' => '7.500000'],
+            ],
+        ], ['user_id' => 7]);
+        inventoryPhase6PoAssert(false, 'purchase order missing item selection should fail');
+    } catch (InvalidArgumentException $exception) {
+        inventoryPhase6PoAssert($exception->getMessage() === 'INVENTORY_ITEM_REQUIRED', 'purchase order missing item should return expected code');
+    }
+    inventoryPhase6PoAssert((int) $conn->query('SELECT COUNT(*) AS c FROM inventory_purchase_orders')->fetch_assoc()['c'] === 1, 'missing item should not create purchase order header');
+
+    try {
+        $orderService->createDraft($conn, [
+            'purchase_order_uuid' => 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+            'supplier_account_id' => 2101,
+            'destination_store_id' => 3,
+            'lines' => [
+                ['item_id' => 6399, 'qty' => '1.000000', 'unit_cost' => '7.500000'],
+            ],
+        ], ['user_id' => 7]);
+        inventoryPhase6PoAssert(false, 'purchase order unknown item should fail');
+    } catch (InvalidArgumentException $exception) {
+        inventoryPhase6PoAssert($exception->getMessage() === 'INVENTORY_ITEM_NOT_FOUND', 'purchase order unknown item should return expected code');
+    }
+    inventoryPhase6PoAssert((int) $conn->query('SELECT COUNT(*) AS c FROM inventory_purchase_orders')->fetch_assoc()['c'] === 1, 'unknown item should not create purchase order header');
+
     $submitted = $orderService->submit($conn, (int) $draft['purchase_order_id'], ['user_id' => 8]);
     inventoryPhase6PoAssert($submitted['status'] === 'submitted', 'draft order should submit');
     $submittedRow = inventoryPhase6PoOne($conn, 'SELECT status, submitted_by, submitted_at FROM inventory_purchase_orders WHERE id = ' . (int) $draft['purchase_order_id'] . ' LIMIT 1');
@@ -150,7 +180,7 @@ CREATE TABLE myitems (
 function inventoryPhase6PoAssertSourceContracts(string $root): void
 {
     $page = inventoryPhase6PoSource($root . '/inventory_purchasing.php');
-    foreach (['saveInventoryPurchaseOrder', 'submitInventoryPurchaseOrder', 'approveInventoryPurchaseOrder', 'inventoryPurchaseCanApproveOrders', 'purchase_order_line_id', 'ajax/inventory_purchase_order.php', 'inventoryPurchaseOrderStatusLabel', "'submitted' => 'بانتظار الاعتماد'", "'partially_received' => 'مستلم جزئيا'", 'inventory-purchase-item-search', 'applyInventoryPurchaseItemSearch', 'نتائج مطابقة'] as $needle) {
+    foreach (['saveInventoryPurchaseOrder', 'submitInventoryPurchaseOrder', 'approveInventoryPurchaseOrder', 'inventoryPurchaseCanApproveOrders', 'purchase_order_line_id', 'ajax/inventory_purchase_order.php', 'inventoryPurchaseOrderStatusLabel', "'submitted' => 'بانتظار الاعتماد'", "'partially_received' => 'مستلم جزئيا'", 'inventory-purchase-item-search', 'applyInventoryPurchaseItemSearch', 'نتائج مطابقة', 'assertInventoryLinesReady'] as $needle) {
         inventoryPhase6PoAssert(strpos($page, $needle) !== false, 'Arabic purchasing UI should include PO workflow: ' . $needle);
     }
 
@@ -160,7 +190,7 @@ function inventoryPhase6PoAssertSourceContracts(string $root): void
     inventoryPhase6PoAssert(strpos($docs, '`inventory.approve` or `accounting.view`') !== false, 'Phase 6 docs should describe PO approval permission boundary');
 
     $endpoint = inventoryPhase6PoSource($root . '/ajax/inventory_purchase_order.php');
-    foreach (['InventoryPurchaseOrderService.php', 'create_submit', 'approve', "require_permission('inventory.edit'", "require_csrf('inventory_receiving'", "auth_guard_has_permission('inventory.approve'", "auth_guard_has_permission('accounting.view'", 'PURCHASE_ORDER_APPROVAL_REQUIRED'] as $needle) {
+    foreach (['InventoryPurchaseOrderService.php', 'create_submit', 'approve', "require_permission('inventory.edit'", "require_csrf('inventory_receiving'", "auth_guard_has_permission('inventory.approve'", "auth_guard_has_permission('accounting.view'", 'PURCHASE_ORDER_APPROVAL_REQUIRED', 'INVENTORY_ITEM_REQUIRED', 'INVENTORY_ITEM_NOT_FOUND'] as $needle) {
         inventoryPhase6PoAssert(strpos($endpoint, $needle) !== false, 'PO endpoint should include: ' . $needle);
     }
 
@@ -170,7 +200,7 @@ function inventoryPhase6PoAssertSourceContracts(string $root): void
     }
 
     $orderSource = inventoryPhase6PoSource($root . '/classes/Inventory/InventoryPurchaseOrderService.php');
-    foreach (['assertExistingOrderReplay', 'PURCHASE_ORDER_IDEMPOTENCY_CONFLICT', 'canonicalOrderRequestLines', 'canonicalOrderStoredLines'] as $needle) {
+    foreach (['assertExistingOrderReplay', 'PURCHASE_ORDER_IDEMPOTENCY_CONFLICT', 'canonicalOrderRequestLines', 'canonicalOrderStoredLines', 'assertRegisteredItem', 'INVENTORY_ITEM_NOT_FOUND'] as $needle) {
         inventoryPhase6PoAssert(strpos($orderSource, $needle) !== false, 'purchase order service should guard idempotent replay conflicts: ' . $needle);
     }
 }

@@ -585,13 +585,16 @@ WHERE purchase_order_id = ?");
         $normalized = [];
         foreach ($lines as $line) {
             if (!is_array($line)) {
-                continue;
+                throw new InvalidArgumentException('INVALID_PURCHASE_LINE');
             }
             $itemId = (int) ($line['item_id'] ?? $line['id'] ?? 0);
             $qty = InventoryDecimal::normalize($line['qty'] ?? $line['received_qty'] ?? $line['returned_qty'] ?? '0');
             $unitCost = InventoryDecimal::normalize($line['unit_cost'] ?? $line['cost_price'] ?? '0');
-            if ($itemId < 1 || !InventoryDecimal::isPositive($qty)) {
-                continue;
+            if ($itemId < 1) {
+                throw new InvalidArgumentException('INVENTORY_ITEM_REQUIRED');
+            }
+            if (!InventoryDecimal::isPositive($qty)) {
+                throw new InvalidArgumentException('INVENTORY_QTY_REQUIRED');
             }
 
             $normalized[] = [
@@ -671,7 +674,7 @@ WHERE purchase_order_id = ?");
     private function loadItem(mysqli $conn, int $itemId): array
     {
         if ($itemId < 1 || !$this->tableExists($conn, 'myitems')) {
-            return ['item_id' => $itemId, 'item_type' => 'sellable', 'track_stock' => 0];
+            throw new InvalidArgumentException('INVENTORY_ITEM_NOT_FOUND');
         }
 
         $columns = ['id'];
@@ -681,13 +684,21 @@ WHERE purchase_order_id = ?");
             }
         }
 
-        $stmt = $conn->prepare('SELECT ' . implode(', ', $columns) . ' FROM myitems WHERE id = ? LIMIT 1');
+        $conditions = ['id = ?'];
+        if ($this->columnExists($conn, 'myitems', 'isdeleted')) {
+            $conditions[] = 'COALESCE(isdeleted, 0) = 0';
+        }
+        $stmt = $conn->prepare('SELECT ' . implode(', ', $columns) . ' FROM myitems WHERE ' . implode(' AND ', $conditions) . ' LIMIT 1');
         $stmt->bind_param('i', $itemId);
         $stmt->execute();
         $item = $stmt->get_result()->fetch_assoc();
         $stmt->close();
 
-        return $item ?: ['item_id' => $itemId, 'item_type' => 'sellable', 'track_stock' => 0];
+        if (!$item) {
+            throw new InvalidArgumentException('INVENTORY_ITEM_NOT_FOUND');
+        }
+
+        return $item;
     }
 
     private function movementKey(string $action, array $scope, string $receiptUuid, int $lineId): string

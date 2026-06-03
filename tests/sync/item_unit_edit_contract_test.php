@@ -12,6 +12,8 @@ foreach ([
     '$renderedUnitRows === 0',
     'id="addUnit"',
     'id="unitsContainer"',
+    'وحدة العد الأساسية',
+    'unit-base-lock',
 ] as $needle) {
     itemUnitEditAssert(strpos($form, $needle) !== false, 'edit item form should render a usable unit row when none exists: ' . $needle);
 }
@@ -29,7 +31,9 @@ foreach ([
 foreach ([
     '$(\'#addUnit\').on(\'click\'',
     '$(\'.urow\').first().clone()',
-    'clone.find(\'input[name="u_val[]"]\').val(\'6\').prop(\'readonly\', false)',
+    'clone.removeClass(\'unit-base-row\')',
+    'clone.find(\'input[name="u_val[]"]\').val(\'6\').prop(\'readonly\', false).removeClass(\'d-none\')',
+    '.addClass(\'btn-outline-danger deleteRow\')',
     'refreshItemUnitsUi',
 ] as $needle) {
     itemUnitEditAssert(strpos($js, $needle) !== false, 'add item JS should keep add-unit behavior: ' . $needle);

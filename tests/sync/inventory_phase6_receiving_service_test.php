@@ -102,6 +102,38 @@ try {
     }
     inventoryPhase6ReceivingAssert((int) $conn->query("SELECT COUNT(*) AS c FROM inventory_movements WHERE item_id = 6201 AND movement_type = 'purchase'")->fetch_assoc()['c'] === 1, 'duplicate supplier invoice should not create a second purchase movement');
 
+    try {
+        $service->receive($conn, [
+            'purchase_receipt_uuid' => '88888888-8888-4888-8888-888888888888',
+            'supplier_account_id' => 2101,
+            'destination_store_id' => 3,
+            'supplier_invoice_no' => 'SUP-150',
+            'lines' => [
+                ['item_id' => 0, 'qty' => '1.000000', 'unit_cost' => '6.000000'],
+            ],
+        ], ['user_id' => 7]);
+        inventoryPhase6ReceivingAssert(false, 'missing item selection should fail');
+    } catch (InvalidArgumentException $exception) {
+        inventoryPhase6ReceivingAssert($exception->getMessage() === 'INVENTORY_ITEM_REQUIRED', 'missing item selection should return expected code');
+    }
+    inventoryPhase6ReceivingAssert((int) $conn->query("SELECT COUNT(*) AS c FROM inventory_purchase_receipts WHERE supplier_invoice_no = 'SUP-150'")->fetch_assoc()['c'] === 0, 'missing item selection should not create receipt header');
+
+    try {
+        $service->receive($conn, [
+            'purchase_receipt_uuid' => '99999999-9999-4999-8999-999999999999',
+            'supplier_account_id' => 2101,
+            'destination_store_id' => 3,
+            'supplier_invoice_no' => 'SUP-151',
+            'lines' => [
+                ['item_id' => 6299, 'qty' => '1.000000', 'unit_cost' => '6.000000'],
+            ],
+        ], ['user_id' => 7]);
+        inventoryPhase6ReceivingAssert(false, 'unknown item should fail');
+    } catch (InvalidArgumentException $exception) {
+        inventoryPhase6ReceivingAssert($exception->getMessage() === 'INVENTORY_ITEM_NOT_FOUND', 'unknown item should return expected code');
+    }
+    inventoryPhase6ReceivingAssert((int) $conn->query("SELECT COUNT(*) AS c FROM inventory_purchase_receipts WHERE supplier_invoice_no = 'SUP-151'")->fetch_assoc()['c'] === 0, 'unknown item failure should roll back receipt header');
+
     $unitReceipt = $service->receive($conn, [
         'purchase_receipt_uuid' => '66666666-6666-4666-8666-666666666666',
         'supplier_account_id' => 2101,
@@ -204,7 +236,7 @@ CREATE TABLE item_units (
 function inventoryPhase6ReceivingAssertSourceContracts(string $root): void
 {
     $page = inventoryPhase6ReceivingSource($root . '/inventory_purchasing.php');
-    foreach (['استلام المشتريات', 'مردود', 'الوحدة', 'ajax/inventory_purchase_receive.php', 'inventory-receiving-csrf', 'inventoryPurchasePreferredUnits', 'inventoryPreferredPurchaseUnit', 'inventoryDefaultSupplierAccount', 'applyInventoryDefaultSupplier', 'inventoryPurchaseSupplierDefaults', 'inventorySupplierPurchaseDefault', 'inventoryDefaultPurchaseUnit', 'inventoryPurchaseBarcodeScan', 'applyInventoryPurchaseScan', 'findInventoryBlankLine', 'مسح باركود الاستلام', 'كمية كل مسحة'] as $needle) {
+    foreach (['استلام المشتريات', 'مردود', 'الوحدة', 'ajax/inventory_purchase_receive.php', 'inventory-receiving-csrf', 'inventoryPurchasePreferredUnits', 'inventoryPreferredPurchaseUnit', 'inventoryDefaultSupplierAccount', 'applyInventoryDefaultSupplier', 'inventoryPurchaseSupplierDefaults', 'inventorySupplierPurchaseDefault', 'inventoryDefaultPurchaseUnit', 'inventoryPurchaseBarcodeScan', 'applyInventoryPurchaseScan', 'findInventoryBlankLine', 'مسح باركود الاستلام', 'كمية كل مسحة', 'assertInventoryLinesReady', 'اختر صنفاً مسجلاً'] as $needle) {
         inventoryPhase6ReceivingAssert(strpos($page, $needle) !== false, 'Arabic receiving UI should include: ' . $needle);
     }
     foreach (['inventoryPurchasingColumnExists', 'inventoryPurchaseHasDefaultSupplierColumn', 'AS default_supplier_account_id'] as $needle) {
@@ -212,12 +244,12 @@ function inventoryPhase6ReceivingAssertSourceContracts(string $root): void
     }
 
     $endpoint = inventoryPhase6ReceivingSource($root . '/ajax/inventory_purchase_receive.php');
-    foreach (['InventoryPurchaseReceivingService.php', "require_permission('inventory.edit'", "require_csrf('inventory_receiving'", 'returnItems', 'receive($conn', 'SUPPLIER_INVOICE_DUPLICATE', 'ITEM_UNIT_NOT_FOUND'] as $needle) {
+    foreach (['InventoryPurchaseReceivingService.php', "require_permission('inventory.edit'", "require_csrf('inventory_receiving'", 'returnItems', 'receive($conn', 'SUPPLIER_INVOICE_DUPLICATE', 'ITEM_UNIT_NOT_FOUND', 'INVENTORY_ITEM_REQUIRED', 'INVENTORY_ITEM_NOT_FOUND'] as $needle) {
         inventoryPhase6ReceivingAssert(strpos($endpoint, $needle) !== false, 'receiving endpoint should include: ' . $needle);
     }
 
     $serviceSource = inventoryPhase6ReceivingSource($root . '/classes/Inventory/InventoryPurchaseReceivingService.php');
-    foreach (['assertExistingReceiptReplay', 'PURCHASE_RECEIPT_IDEMPOTENCY_CONFLICT', 'canonicalReceiptRequestLines', 'canonicalReceiptStoredLines'] as $needle) {
+    foreach (['assertExistingReceiptReplay', 'PURCHASE_RECEIPT_IDEMPOTENCY_CONFLICT', 'canonicalReceiptRequestLines', 'canonicalReceiptStoredLines', 'INVENTORY_ITEM_REQUIRED', 'INVENTORY_ITEM_NOT_FOUND'] as $needle) {
         inventoryPhase6ReceivingAssert(strpos($serviceSource, $needle) !== false, 'receiving service should guard idempotent replay conflicts: ' . $needle);
     }
 

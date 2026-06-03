@@ -687,6 +687,13 @@ LIMIT " . $this->limit($filters['limit'] ?? ($onlyUnavailable ? 8 : 500)), $para
             $conditions[] = $itemAlias . '.group1 = ?';
             $params[] = $categoryId;
         }
+        if (($search = $this->searchFilter($filters['q'] ?? '')) !== '') {
+            $like = '%' . addcslashes($search, "\\%_") . '%';
+            $conditions[] = '(' . $itemAlias . ".iname LIKE ? ESCAPE '\\\\' OR " . $itemAlias . ".barcode LIKE ? ESCAPE '\\\\' OR CAST(" . $itemIdColumn . ' AS CHAR) = ?)';
+            $params[] = $like;
+            $params[] = $like;
+            $params[] = $search;
+        }
     }
 
     private function applyScopeFilters(array &$conditions, array &$params, string $alias, array $filters, array $columns): void
@@ -931,6 +938,16 @@ WHERE " . implode(' AND ', $conditions) . "
     private function textFilter($value): string
     {
         return preg_replace('/[^a-zA-Z0-9_:-]/', '', strtolower(trim((string) $value)));
+    }
+
+    private function searchFilter($value): string
+    {
+        $text = trim(preg_replace('/[\x00-\x1F\x7F]+/u', ' ', (string) $value) ?? '');
+        if ($text === '') {
+            return '';
+        }
+
+        return function_exists('mb_substr') ? mb_substr($text, 0, 120, 'UTF-8') : substr($text, 0, 120);
     }
 
     private function dateFilter($value): string

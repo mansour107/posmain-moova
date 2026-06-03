@@ -68,7 +68,9 @@ class MoovaWidgetBridgeContractTest extends TestCase
         $this->assertStringContainsString('findActiveLinkByToken($conn', $endpointSource);
         $this->assertStringContainsString('findActiveLinkByTokenAndBranch($conn', $endpointSource);
         $this->assertStringContainsString('findActiveLinkForUser($conn', $endpointSource);
-        $this->assertStringContainsString("'priceUnit' => 'major'", $endpointSource);
+        $this->assertStringContainsString("'priceUnit' => 'minor'", $endpointSource);
+        $this->assertStringContainsString("'priceUnitScale' => 100", $endpointSource);
+        $this->assertStringContainsString("'posPriceUnit' => 'major'", $endpointSource);
         $this->assertStringContainsString("'pos-cat-' . (int) \$row['id']", $endpointSource);
         $this->assertStringContainsString("'pos-item-' . \$itemId", $endpointSource);
 

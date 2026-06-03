@@ -52,7 +52,10 @@ foreach ([
 foreach ([
     'activeOnlySql',
     'activeSelectSql',
+    'posSellableOnlySql',
+    'isPosSellableItemType',
     "SHOW COLUMNS FROM myitems LIKE 'is_active'",
+    "SHOW COLUMNS FROM myitems LIKE 'item_type'",
 ] as $needle) {
     itemCatalogOptionBAssert(strpos($status, $needle) !== false, 'status helper should provide active column guards: ' . $needle);
 }
@@ -79,6 +82,7 @@ foreach ([
 ] as $relativePath) {
     $source = itemCatalogOptionBSource($root . '/' . $relativePath);
     itemCatalogOptionBAssert(strpos($source, 'ItemCatalogStatus') !== false, $relativePath . ' should use item catalog active status helper');
+    itemCatalogOptionBAssert(strpos($source, 'posSellableOnlySql') !== false, $relativePath . ' should hide non-sellable items from POS catalog');
 }
 
 foreach ([

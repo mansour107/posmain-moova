@@ -32,8 +32,9 @@ if (isset($options['help'])) {
     exit(0);
 }
 
-if (!empty($options['env-file'])) {
-    loadSupervisorEnvFile((string) $options['env-file']);
+$envFile = !empty($options['env-file']) ? (string) $options['env-file'] : '';
+if ($envFile !== '') {
+    loadSupervisorEnvFile($envFile, true);
 }
 
 $daemon = new BranchWorkerDaemon();
@@ -92,6 +93,9 @@ $hadFailure = false;
 
 do {
     $cycleNo++;
+    if ($envFile !== '') {
+        loadSupervisorEnvFile($envFile, true);
+    }
     $config = supervisorLoadConfig($config);
     $preflight = supervisorPreflight($daemon, $config, $strict);
     $metrics = runSupervisorCycle($daemon, $config, $runOptions);
@@ -100,7 +104,8 @@ do {
     $status = [
         'supervisor' => 'local_sync_worker_supervisor',
         'mode' => $loop ? 'loop' : 'once',
-        'ok' => !$hadFailure,
+        'ok' => !empty($metrics['ok']),
+        'had_failure_since_start' => $hadFailure,
         'pid' => getmypid(),
         'cycle' => $cycleNo,
         'preflight' => $preflight,
@@ -226,7 +231,7 @@ function ensureSupervisorDirectory(string $directory): void
     }
 }
 
-function loadSupervisorEnvFile(string $path): void
+function loadSupervisorEnvFile(string $path, bool $override = false): void
 {
     if (!is_file($path)) {
         throw new RuntimeException('Environment file does not exist: ' . $path);
@@ -250,7 +255,7 @@ function loadSupervisorEnvFile(string $path): void
 
         $name = trim($parts[0]);
         $value = trim($parts[1]);
-        if ($name === '' || getenv($name) !== false) {
+        if ($name === '' || (!$override && getenv($name) !== false)) {
             continue;
         }
 

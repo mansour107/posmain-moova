@@ -55,6 +55,9 @@ class InventoryPurchaseOrderService
             if ((int) $scope['store_id'] < 1) {
                 throw new InvalidArgumentException('DESTINATION_STORE_REQUIRED');
             }
+            foreach ($lines as $line) {
+                $this->assertRegisteredItem($conn, (int) $line['item_id']);
+            }
 
             $orderId = $this->insertOrder($conn, $uuid, $request, $scope, $context);
             foreach ($lines as $line) {
@@ -234,13 +237,16 @@ VALUES (?, ?, ?, ?, ?, ?, ?)");
         $normalized = [];
         foreach ($lines as $line) {
             if (!is_array($line)) {
-                continue;
+                throw new InvalidArgumentException('INVALID_PURCHASE_LINE');
             }
             $itemId = (int) ($line['item_id'] ?? $line['id'] ?? 0);
             $qty = InventoryDecimal::normalize($line['qty'] ?? $line['ordered_qty'] ?? '0');
             $unitCost = InventoryDecimal::normalize($line['unit_cost'] ?? $line['cost_price'] ?? '0');
-            if ($itemId < 1 || !InventoryDecimal::isPositive($qty)) {
-                continue;
+            if ($itemId < 1) {
+                throw new InvalidArgumentException('INVENTORY_ITEM_REQUIRED');
+            }
+            if (!InventoryDecimal::isPositive($qty)) {
+                throw new InvalidArgumentException('INVENTORY_QTY_REQUIRED');
             }
 
             $normalized[] = [
@@ -254,6 +260,27 @@ VALUES (?, ?, ?, ?, ?, ?, ?)");
         }
 
         return $normalized;
+    }
+
+    private function assertRegisteredItem(mysqli $conn, int $itemId): void
+    {
+        if ($itemId < 1 || !$this->tableExists($conn, 'myitems')) {
+            throw new InvalidArgumentException('INVENTORY_ITEM_NOT_FOUND');
+        }
+
+        $conditions = ['id = ?'];
+        if ($this->columnExists($conn, 'myitems', 'isdeleted')) {
+            $conditions[] = 'COALESCE(isdeleted, 0) = 0';
+        }
+        $stmt = $conn->prepare('SELECT id FROM myitems WHERE ' . implode(' AND ', $conditions) . ' LIMIT 1');
+        $stmt->bind_param('i', $itemId);
+        $stmt->execute();
+        $exists = (bool) $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        if (!$exists) {
+            throw new InvalidArgumentException('INVENTORY_ITEM_NOT_FOUND');
+        }
     }
 
     private function lockOrder(mysqli $conn, int $purchaseOrderId): ?array
@@ -380,6 +407,22 @@ WHERE TABLE_SCHEMA = DATABASE()
         $stmt->close();
 
         return (int) ($row['table_count'] ?? 0) > 0;
+    }
+
+    private function columnExists(mysqli $conn, string $table, string $column): bool
+    {
+        $stmt = $conn->prepare("
+SELECT COUNT(*) AS column_count
+FROM INFORMATION_SCHEMA.COLUMNS
+WHERE TABLE_SCHEMA = DATABASE()
+  AND TABLE_NAME = ?
+  AND COLUMN_NAME = ?");
+        $stmt->bind_param('ss', $table, $column);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        return (int) ($row['column_count'] ?? 0) > 0;
     }
 
     private function uuidFromRequest(array $request, string $key): string

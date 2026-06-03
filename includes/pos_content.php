@@ -535,7 +535,8 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                             $posVariantChildFilter = $posHasVariantTable
                                 ? "AND NOT EXISTS (SELECT 1 FROM item_variants ivc WHERE ivc.variant_item_id = m.id AND ivc.is_active = 1)"
                                 : "";
-                            $posActiveFilter = ItemCatalogStatus::activeOnlySql($conn, 'm');
+                            $posActiveFilter = ItemCatalogStatus::activeOnlySql($conn, 'm')
+                                . ItemCatalogStatus::posSellableOnlySql($conn, 'm');
                             ?>
                             <div class="row g-3" id="itemsGrid"
                                 data-initial-page="<?= $initialPosItemsPage ?>"

@@ -26,6 +26,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['search'])) {
     // البحث في الأصناف بالاسم أو الباركود
     $searchLike = "%{$search}%";
     
+    require_once __DIR__ . '/../classes/Items/ItemCatalogStatus.php';
+    $catalogFilter = ItemCatalogStatus::activeOnlySql($conn, 'm')
+        . ItemCatalogStatus::posSellableOnlySql($conn, 'm');
     $sql = "SELECT m.*, i.iname as img_filename
             FROM myitems m 
             LEFT JOIN (
@@ -35,7 +38,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['search'])) {
                 GROUP BY itemid
             ) image_pick ON image_pick.itemid = m.id
             LEFT JOIN imgs i ON i.id = image_pick.image_id
-            WHERE m.isdeleted = 0 
+            WHERE m.isdeleted = 0
+            {$catalogFilter}
             AND (m.iname LIKE ? OR m.barcode LIKE ? OR m.id = ?)
             ORDER BY m.iname
             LIMIT 20";

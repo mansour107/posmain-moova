@@ -181,6 +181,35 @@ class RecipeFeatureFlagsTest extends TestCase
         $this->assertTrue($enabledFlags->isMoovaSyncEnabled());
     }
 
+    public function testConsumptionImpliesReservationsForUnpaidOrderHold(): void
+    {
+        $flags = new RecipeFeatureFlags([
+            'recipe' => [
+                'enabled' => true,
+                'mode' => 'consume_pilot',
+                'reservations' => false,
+                'consumption' => true,
+            ],
+        ]);
+
+        $this->assertTrue($flags->isReservationEnabled());
+        $this->assertTrue($flags->isConsumptionEnabledForItem(new RecipeScope(0, 0, null, 0, 'pos', 'takeaway', 'pos'), 10));
+    }
+
+    public function testReserveOnlyStillRequiresExplicitReservationFlag(): void
+    {
+        $flags = new RecipeFeatureFlags([
+            'recipe' => [
+                'enabled' => true,
+                'mode' => 'reserve_only',
+                'reservations' => false,
+                'consumption' => false,
+            ],
+        ]);
+
+        $this->assertFalse($flags->isReservationEnabled());
+    }
+
     public function testPilotCategoryScopeFailsClosedUnlessCategoryMatches(): void
     {
         $flags = new RecipeFeatureFlags([

@@ -30,7 +30,10 @@ class LocalSyncWorkerSupervisorTest extends TestCase
         $this->assertStringContainsString('writePidFile($pidFile)', $source);
         $this->assertStringContainsString('writeSupervisorStatus($statusFile', $source);
         $this->assertStringContainsString('strict_blockers', $source);
-        $this->assertStringContainsString('loadSupervisorEnvFile', $source);
+        $this->assertStringContainsString('loadSupervisorEnvFile($envFile, true)', $source);
+        $this->assertStringContainsString('function loadSupervisorEnvFile(string $path, bool $override = false)', $source);
+        $this->assertStringContainsString("'ok' => !empty(\$metrics['ok'])", $source);
+        $this->assertStringContainsString("'had_failure_since_start' => \$hadFailure", $source);
     }
 
     public function testServiceTemplatesRunSupervisorUnderPlatformSupervision(): void

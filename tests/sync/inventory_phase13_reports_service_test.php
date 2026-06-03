@@ -79,6 +79,10 @@ try {
 
     $categoryRows = $reports->report($conn, 'inventory_levels', ['store_id' => 3, 'category_id' => 77, 'limit' => 50]);
     inventoryPhase13Assert(count($categoryRows) === 1 && (int) $categoryRows[0]['item_id'] === 13001, 'inventory levels should filter by item category');
+    $searchNameRows = $reports->report($conn, 'inventory_levels', ['store_id' => 3, 'q' => 'flour', 'limit' => 50]);
+    inventoryPhase13Assert(count($searchNameRows) === 1 && (int) $searchNameRows[0]['item_id'] === 13001, 'inventory levels should search by item name');
+    $searchBarcodeRows = $reports->report($conn, 'inventory_levels', ['store_id' => 3, 'q' => 'R-13002', 'limit' => 50]);
+    inventoryPhase13Assert(count($searchBarcodeRows) === 1 && (int) $searchBarcodeRows[0]['item_id'] === 13002, 'inventory levels should search by barcode');
     $suggestionRows = $reports->report($conn, 'replenishment_suggestions', ['store_id' => 3, 'item_id' => 13001, 'limit' => 50]);
     inventoryPhase13Assert(count($suggestionRows) === 1, 'replenishment suggestions should return preferred purchase unit fixture');
     inventoryPhase13Assert((int) $suggestionRows[0]['preferred_purchase_unit_id'] === 13011, 'replenishment suggestions should expose preferred purchase unit id');
@@ -166,6 +170,7 @@ function inventoryPhase13AssertSourceContracts(string $root): void
         'default_supplier_account_id',
         'recipe_availability_cache',
         'drilldown_url',
+        'searchFilter',
     ] as $needle) {
         inventoryPhase13Assert(strpos($service, $needle) !== false, 'reports service should preserve phase13 behavior: ' . $needle);
     }

@@ -11,7 +11,8 @@ if (!isset($_GET['category_id'])) {
 
 $category_id = intval($_GET['category_id']);
 
-$activeFilter = ItemCatalogStatus::activeOnlySql($conn);
+$activeFilter = ItemCatalogStatus::activeOnlySql($conn)
+    . ItemCatalogStatus::posSellableOnlySql($conn);
 $sql = "SELECT id, iname as name, price1 as price FROM myitems WHERE group1 = $category_id AND isdeleted = 0 {$activeFilter} ORDER BY iname";
 $result = $conn->query($sql);
 

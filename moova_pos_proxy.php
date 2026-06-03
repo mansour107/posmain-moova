@@ -164,6 +164,66 @@ function moova_proxy_rewrite_browser_moova_urls($responseBody, $widgetOrigin)
     return is_string($encoded) ? $encoded : $responseBody;
 }
 
+function moova_proxy_local_device(array $link)
+{
+    $branchId = trim((string) ($link['moova_branch_id'] ?? ''));
+    $shopId = trim((string) ($link['moova_shop_id'] ?? ''));
+
+    return [
+        'id' => 'posmain-local-' . ($branchId !== '' ? $branchId : 'branch'),
+        'branchId' => $branchId,
+        'shopId' => $shopId,
+        'connectionId' => 'posmain-local-fallback',
+        'metadata' => [
+            'source' => 'posmain_local_proxy',
+            'fallback' => true,
+        ],
+    ];
+}
+
+function moova_proxy_local_passive_bridge_payload($path, array $link, $details)
+{
+    $device = moova_proxy_local_device($link);
+    $base = [
+        'success' => true,
+        'source' => 'posmain_local_proxy',
+        'fallback' => true,
+        'remoteReachable' => false,
+        'warning' => moova_proxy_reachability_error($details),
+        'device' => $device,
+    ];
+
+    if ($path === '/api/integrations/pos/local-bridge/widget/bootstrap') {
+        $base['config'] = [
+            'moova' => [
+                'pollIntervalMs' => 10000,
+                'heartbeatIntervalMs' => 30000,
+                'websocketUrl' => null,
+            ],
+            'bridge' => [
+                'mode' => 'local_passive_fallback',
+                'remoteRequiredForOrders' => true,
+            ],
+            'widget' => [
+                'soundEnabled' => true,
+            ],
+        ];
+        return $base;
+    }
+
+    if ($path === '/api/integrations/pos/local-bridge/pending') {
+        $base['drafts'] = [];
+        $base['commands'] = [];
+        return $base;
+    }
+
+    if ($path === '/api/integrations/pos/local-bridge/heartbeat') {
+        return $base;
+    }
+
+    return null;
+}
+
 $path = isset($_GET['path']) ? (string) $_GET['path'] : '';
 $path = rawurldecode($path);
 
@@ -232,6 +292,9 @@ if ($response === false) {
     if (PHP_VERSION_ID < 80500) {
         curl_close($ch);
     }
+    if (moova_proxy_is_passive_bridge_path($path)) {
+        moova_proxy_json(200, moova_proxy_local_passive_bridge_payload($path, $link, $error));
+    }
     moova_proxy_json(502, moova_proxy_reachability_error($error));
 }
 
@@ -240,6 +303,10 @@ $statusCode = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
 $responseBody = substr($response, $headerSize);
 if (PHP_VERSION_ID < 80500) {
     curl_close($ch);
+}
+
+if ($statusCode >= 500 && moova_proxy_is_passive_bridge_path($path)) {
+    moova_proxy_json(200, moova_proxy_local_passive_bridge_payload($path, $link, 'http_status_' . $statusCode));
 }
 
 $responseBody = moova_proxy_rewrite_browser_moova_urls($responseBody, $widgetOrigin);

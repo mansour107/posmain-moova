@@ -32,9 +32,16 @@ $(document).ready(function() {
         }
 
         var clone = $('.urow').first().clone();
+        clone.removeClass('unit-base-row');
 
-        clone.find('input[name="u_val[]"]').val('6').prop('readonly', false);
+        clone.find('input[name="u_val[]"]').val('6').prop('readonly', false).removeClass('d-none');
         clone.find('input[name="unit_barcode[]"]').val('');
+        clone.find('.base-delete-disabled')
+            .removeClass('btn-outline-secondary base-delete-disabled')
+            .addClass('btn-outline-danger deleteRow')
+            .prop('disabled', false)
+            .attr('title', 'حذف الصف')
+            .html('<i class="fas fa-times"></i>');
         chooseFirstUnusedUnit(clone.find('select[name="unit_id[]"]'));
 
         var u_val_main = parseFloat($('.urow').first().find('input[name="u_val[]"]').val()) || 1;

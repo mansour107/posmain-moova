@@ -25,6 +25,17 @@ $inventoryReportsDashboard = $inventoryReportsService->dashboard($conn, $invento
 $inventoryReportsRows = $inventoryReportsService->report($conn, $inventoryReportsReport, $inventoryReportsFilters);
 $inventoryReportsColumns = posmain_inventory_report_columns($inventoryReportsReport, $inventoryReportsCanViewCost);
 
+if (isset($_GET['ajax']) && $_GET['ajax'] === '1') {
+    header('Content-Type: application/json; charset=utf-8');
+    echo json_encode([
+        'ok' => true,
+        'row_count' => count($inventoryReportsRows),
+        'rows_html' => posmain_inventory_report_rows_html($inventoryReportsColumns, $inventoryReportsRows),
+        'empty_html' => 'لا توجد نتائج مطابقة للفلاتر الحالية.',
+    ], JSON_UNESCAPED_UNICODE);
+    exit;
+}
+
 if (isset($_GET['export']) && $_GET['export'] === 'csv') {
     posmain_inventory_reports_export_csv($inventoryReportsReport, $inventoryReportsColumns, $inventoryReportsRows);
     exit;
@@ -52,17 +63,20 @@ include __DIR__ . '/includes/sidebar.php';
     .inventory-report-panel{background:#fff;border:1px solid #dbe4ee;border-radius:8px;box-shadow:0 8px 18px rgba(15,23,42,.06);margin-top:14px}
     .inventory-report-panel-header{padding:14px 16px;border-bottom:1px solid #e5edf5;display:flex;align-items:center;justify-content:space-between;gap:10px}
     .inventory-report-panel-title{margin:0;font-size:16px;font-weight:800}
-    .inventory-report-filters{display:grid;grid-template-columns:repeat(8,minmax(120px,1fr));gap:10px;padding:14px 16px}
+    .inventory-report-filters{display:grid;grid-template-columns:repeat(9,minmax(120px,1fr));gap:10px;padding:14px 16px}
+    .inventory-report-search-field{grid-column:span 2}
     .inventory-report-field label{display:block;font-size:12px;color:#526477;font-weight:800;margin-bottom:6px}
     .inventory-report-field .form-control{border-radius:8px;border-color:#ccd7e3;min-height:38px}
+    .inventory-report-search-control{font-weight:800;background:#fffdf5;border-color:#d6b35d!important}
     .inventory-report-table{margin:0;table-layout:auto;min-width:1120px}
     .inventory-report-table th{background:#edf3f8;color:#334155;font-size:12px;border-color:#dbe4ee;white-space:nowrap}
     .inventory-report-table td{border-color:#e7edf3;vertical-align:middle;font-size:13px}
+    .inventory-report-results-loading .inventory-report-table{opacity:.55}
     .inventory-report-empty{padding:28px;text-align:center;color:#64748b}
     .inventory-report-note{margin-top:12px;color:#64748b;font-size:12px}
     .inventory-report-chip{display:inline-flex;align-items:center;gap:6px;border-radius:8px;padding:6px 9px;background:#ecfdf5;color:#047857;font-weight:800;font-size:12px}
     @media(max-width:1200px){.inventory-report-kpis{grid-template-columns:repeat(3,minmax(0,1fr))}.inventory-report-filters{grid-template-columns:repeat(4,minmax(120px,1fr))}}
-    @media(max-width:768px){.inventory-report-hero{align-items:flex-start;flex-direction:column}.inventory-report-kpis{grid-template-columns:1fr 1fr}.inventory-report-filters{grid-template-columns:1fr 1fr}}
+    @media(max-width:768px){.inventory-report-hero{align-items:flex-start;flex-direction:column}.inventory-report-kpis{grid-template-columns:1fr 1fr}.inventory-report-filters{grid-template-columns:1fr 1fr}.inventory-report-search-field{grid-column:1 / -1}}
 </style>
 
 <div class="content-wrapper inventory-report-page">
@@ -97,7 +111,7 @@ include __DIR__ . '/includes/sidebar.php';
                         <span class="inventory-report-chip"><i class="fas fa-eye-slash"></i> أعمدة التكلفة مخفية</span>
                     <?php endif; ?>
                 </div>
-                <form method="GET" class="inventory-report-filters">
+                <form method="GET" class="inventory-report-filters" data-inventory-report-filters>
                     <div class="inventory-report-field">
                         <label>التقرير</label>
                         <select name="report" class="form-control">
@@ -107,6 +121,10 @@ include __DIR__ . '/includes/sidebar.php';
                                 </option>
                             <?php endforeach; ?>
                         </select>
+                    </div>
+                    <div class="inventory-report-field inventory-report-search-field">
+                        <label>بحث في المخزون</label>
+                        <input type="search" name="q" class="form-control inventory-report-search-control" placeholder="اكتب اسم الصنف أو الباركود أو رقم الصنف" value="<?= posmain_inventory_report_h($inventoryReportsFilters['q']) ?>" data-inventory-report-live-search>
                     </div>
                     <div class="inventory-report-field">
                         <label>من تاريخ</label>
@@ -218,9 +236,9 @@ include __DIR__ . '/includes/sidebar.php';
             <div class="inventory-report-panel">
                 <div class="inventory-report-panel-header">
                     <h2 class="inventory-report-panel-title"><?= posmain_inventory_report_h($inventoryReportsTypes[$inventoryReportsReport] ?? '') ?></h2>
-                    <span class="inventory-report-chip"><?= count($inventoryReportsRows) ?> صف</span>
+                    <span class="inventory-report-chip" data-inventory-report-count><?= count($inventoryReportsRows) ?> صف</span>
                 </div>
-                <div class="table-responsive">
+                <div class="table-responsive" data-inventory-report-results>
                     <table class="table table-bordered table-hover inventory-report-table">
                         <thead>
                             <tr>
@@ -229,24 +247,140 @@ include __DIR__ . '/includes/sidebar.php';
                                 <?php endforeach; ?>
                             </tr>
                         </thead>
-                        <tbody>
-                            <?php foreach ($inventoryReportsRows as $row): ?>
-                                <tr>
-                                    <?php foreach ($inventoryReportsColumns as $column => $label): ?>
-                                        <td><?= posmain_inventory_report_cell($column, $row[$column] ?? '', $row) ?></td>
-                                    <?php endforeach; ?>
-                                </tr>
-                            <?php endforeach; ?>
+                        <tbody data-inventory-report-body>
+                            <?= posmain_inventory_report_rows_html($inventoryReportsColumns, $inventoryReportsRows) ?>
                         </tbody>
                     </table>
                 </div>
-                <?php if (!$inventoryReportsRows): ?>
-                    <div class="inventory-report-empty">لا توجد نتائج مطابقة للفلاتر الحالية.</div>
-                <?php endif; ?>
+                <div class="inventory-report-empty" data-inventory-report-empty <?= $inventoryReportsRows ? 'style="display:none"' : '' ?>>لا توجد نتائج مطابقة للفلاتر الحالية.</div>
             </div>
             <p class="inventory-report-note">هذه الصفحة للقراءة فقط ولا تعدل المخزون. كل الأرقام تأتي من دفتر المخزون والجداول التشغيلية الحالية.</p>
         </div>
     </section>
+<script>
+(function () {
+    var form = document.querySelector('[data-inventory-report-filters]');
+    var search = document.querySelector('[data-inventory-report-live-search]');
+    if (!form || !search) {
+        return;
+    }
+
+    var submitTimer = null;
+    var isComposing = false;
+    var lastSubmittedSearch = search.value;
+    var activeRequest = null;
+    var activeRequestId = 0;
+    var results = document.querySelector('[data-inventory-report-results]');
+    var rowsBody = document.querySelector('[data-inventory-report-body]');
+    var emptyState = document.querySelector('[data-inventory-report-empty]');
+    var countChip = document.querySelector('[data-inventory-report-count]');
+
+    function formUrl(includeAjax) {
+        var params = new URLSearchParams(new FormData(form));
+        params.delete('export');
+        if (includeAjax) {
+            params.set('ajax', '1');
+        }
+        var action = form.getAttribute('action') || window.location.pathname;
+        return action + '?' + params.toString();
+    }
+
+    function setLoading(isLoading) {
+        if (results) {
+            results.classList.toggle('inventory-report-results-loading', isLoading);
+            results.setAttribute('aria-busy', isLoading ? 'true' : 'false');
+        }
+    }
+
+    function applySearchResults(payload) {
+        if (!payload || !payload.ok) {
+            return;
+        }
+        if (rowsBody) {
+            rowsBody.innerHTML = payload.rows_html || '';
+        }
+        if (countChip) {
+            countChip.textContent = String(payload.row_count || 0) + ' صف';
+        }
+        if (emptyState) {
+            emptyState.textContent = payload.empty_html || 'لا توجد نتائج مطابقة للفلاتر الحالية.';
+            emptyState.style.display = Number(payload.row_count || 0) > 0 ? 'none' : '';
+        }
+        if (window.history && typeof window.history.replaceState === 'function') {
+            window.history.replaceState(null, '', formUrl(false));
+        }
+    }
+
+    function fetchSearch() {
+        var currentSearch = search.value;
+        if (currentSearch === lastSubmittedSearch) {
+            return;
+        }
+        lastSubmittedSearch = currentSearch;
+        if (!window.fetch || !window.URLSearchParams || !window.FormData) {
+            form.submit();
+            return;
+        }
+        if (activeRequest) {
+            activeRequest.abort();
+        }
+        activeRequest = new AbortController();
+        activeRequestId += 1;
+        var requestId = activeRequestId;
+        setLoading(true);
+        fetch(formUrl(true), {
+            method: 'GET',
+            credentials: 'same-origin',
+            headers: {'X-Requested-With': 'XMLHttpRequest'},
+            signal: activeRequest.signal,
+            })
+            .then(function (response) {
+                if (requestId !== activeRequestId) {
+                    return null;
+                }
+                if (!response.ok) {
+                    throw new Error('inventory report search failed');
+                }
+                return response.json();
+            })
+            .then(function (payload) {
+                if (requestId === activeRequestId) {
+                    applySearchResults(payload);
+                }
+            })
+            .catch(function (error) {
+                if (error.name !== 'AbortError') {
+                    console.error(error);
+                }
+            })
+            .finally(function () {
+                if (requestId === activeRequestId) {
+                    setLoading(false);
+                }
+            });
+    }
+
+    function scheduleSubmit() {
+        window.clearTimeout(submitTimer);
+        submitTimer = window.setTimeout(fetchSearch, 450);
+    }
+
+    search.addEventListener('compositionstart', function () {
+        isComposing = true;
+        window.clearTimeout(submitTimer);
+    });
+    search.addEventListener('compositionend', function () {
+        isComposing = false;
+        scheduleSubmit();
+    });
+    search.addEventListener('input', function () {
+        if (!isComposing) {
+            scheduleSubmit();
+        }
+    });
+})();
+</script>
+
 </div>
 
 <?php include __DIR__ . '/includes/footer.php'; ?>
@@ -307,6 +441,7 @@ function posmain_inventory_report_filters(array $request): array
         'supplier_account_id' => isset($request['supplier_account_id']) && (int) $request['supplier_account_id'] > 0 ? (int) $request['supplier_account_id'] : 0,
         'item_id' => isset($request['item_id']) && (int) $request['item_id'] > 0 ? (int) $request['item_id'] : 0,
         'category_id' => isset($request['category_id']) && (int) $request['category_id'] > 0 ? (int) $request['category_id'] : 0,
+        'q' => posmain_inventory_report_search_text($request['q'] ?? ''),
         'movement_type' => preg_replace('/[^a-zA-Z0-9_:-]/', '', strtolower(trim((string) ($request['movement_type'] ?? '')))),
         'limit' => max(1, min(5000, (int) ($request['limit'] ?? 500))),
     ];
@@ -717,6 +852,20 @@ function posmain_inventory_dashboard_cards(array $dashboard, bool $canViewCost):
     return array_slice($cards, 0, 8);
 }
 
+function posmain_inventory_report_rows_html(array $columns, array $rows): string
+{
+    ob_start();
+    foreach ($rows as $row): ?>
+        <tr>
+            <?php foreach ($columns as $column => $label): ?>
+                <td><?= posmain_inventory_report_cell($column, $row[$column] ?? '', $row) ?></td>
+            <?php endforeach; ?>
+        </tr>
+    <?php endforeach;
+
+    return (string) ob_get_clean();
+}
+
 function posmain_inventory_report_cell(string $column, $value, array $row): string
 {
     if ($column === 'drilldown_url') {
@@ -927,6 +1076,16 @@ function posmain_inventory_report_date($value): string
     $value = trim((string) $value);
 
     return preg_match('/^\d{4}-\d{2}-\d{2}$/', $value) ? $value : '';
+}
+
+function posmain_inventory_report_search_text($value): string
+{
+    $text = trim(preg_replace('/[\x00-\x1F\x7F]+/u', ' ', (string) $value) ?? '');
+    if ($text === '') {
+        return '';
+    }
+
+    return function_exists('mb_substr') ? mb_substr($text, 0, 120, 'UTF-8') : substr($text, 0, 120);
 }
 
 function posmain_inventory_report_decimal($value): string

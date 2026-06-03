@@ -75,11 +75,18 @@ class RecipeOrderLifecycleService
         $this->assertStrictAvailability($conn, $lineContext);
 
         $itemCategoryId = $this->itemCategoryId($conn, $lineContext->sellableItemId, $lineContext->itemCategoryId);
-        if ($this->flags->isReservationEnabled() && !$this->flags->isReservationEnabledForItem(
-            $this->scopeResolver->resolve($this->contextArray($lineContext)),
+        $scope = $this->scopeResolver->resolve($this->contextArray($lineContext));
+        $inReservationScope = $this->flags->isReservationEnabledForItem(
+            $scope,
             $lineContext->sellableItemId,
             $itemCategoryId
-        )) {
+        );
+        $inConsumptionScope = $this->flags->isConsumptionEnabledForItem(
+            $scope,
+            $lineContext->sellableItemId,
+            $itemCategoryId
+        );
+        if ($this->flags->isReservationEnabled() && !$inReservationScope && !$inConsumptionScope) {
             return $this->result('order_line_added', $this->contextArray($lineContext), true, [], $explosion->warnings, $explosion->toArray());
         }
 

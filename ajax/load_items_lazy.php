@@ -22,7 +22,9 @@ try {
     $hasVariantTable = $variantTableResult && $variantTableResult->num_rows > 0;
     
     // بناء الاستعلام
-    $where = "m.isdeleted = 0" . ItemCatalogStatus::activeOnlySql($conn, 'm');
+    $where = "m.isdeleted = 0"
+        . ItemCatalogStatus::activeOnlySql($conn, 'm')
+        . ItemCatalogStatus::posSellableOnlySql($conn, 'm');
     $params = [];
     $types = '';
     

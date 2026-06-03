@@ -49,8 +49,12 @@ posVariantAssert(strpos($apiItems, "'is_orderable'") !== false, 'public items AP
 posVariantAssert(strpos($menuSync, "'has_variants'") !== false, 'menu sync payload should mark parent chooser items');
 posVariantAssert(strpos($menuSync, "'is_variant_child'") !== false, 'menu sync payload should mark child variation items');
 posVariantAssert(strpos($menuSync, "'variants'") !== false, 'menu sync payload should include child variant metadata');
-posVariantAssert(strpos($moovaMenu, 'isVariantChild') !== false, 'Moova payload should expose sellable child variation metadata');
-posVariantAssert(strpos($moovaMenu, 'iv_parent.parent_item_id = i.id') !== false, 'Moova payload should exclude non-orderable parent chooser rows');
+posVariantAssert(strpos($moovaMenu, 'ItemCustomerMenuOptions') !== false, 'Moova payload should build customer menu options from variants and modifiers');
+posVariantAssert(strpos($moovaMenu, 'ivc.variant_item_id = i.id') !== false, 'Moova payload should hide active variant child rows from the flat menu list');
+posVariantAssert(strpos($moovaMenu, 'has_variants') !== false, 'Moova payload should include parent chooser rows with has_variants');
+posVariantAssert(strpos($moovaMenu, "'options'") !== false, 'Moova payload should attach native option groups for Moova menu import');
+$menuOptions = posVariantSource($root . '/classes/Items/ItemCustomerMenuOptions.php');
+posVariantAssert(strpos($menuOptions, 'pos-variant-group-') !== false, 'variant option groups should use stable pos-variant-group ids');
 
 echo "pos-variant-cashier-sync-contract-ok\n";
 

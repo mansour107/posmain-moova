@@ -3,6 +3,7 @@
 $root = dirname(__DIR__, 2);
 $page = file_get_contents($root . '/moova_integration.php');
 $save = file_get_contents($root . '/ajax/moova_save_integration.php');
+$service = file_get_contents($root . '/classes/Moova/MoovaPosMenuReconcileService.php');
 $disconnect = file_get_contents($root . '/ajax/moova_disconnect_integration.php');
 $confirm = file_get_contents($root . '/ajax/moova_confirm_order.php');
 $change = file_get_contents($root . '/ajax/moova_change_order.php');
@@ -27,11 +28,13 @@ foreach (['save' => $save, 'disconnect' => $disconnect] as $name => $source) {
 
 moovaAdminAssertContains("moova_integration_saved", $save, 'save endpoint should audit successful save');
 moovaAdminAssertContains("moova_integration_trigger_menu_sync_after_save", $save, 'save endpoint should trigger automatic menu sync after token attach');
-moovaAdminAssertContains("posmain_integration_save", $save, 'save-triggered heartbeat should identify the POS integration save source');
-moovaAdminAssertContains("X-Pos-Widget-Origin", $save, 'save-triggered heartbeat should expose the POS public origin to Moova');
-moovaAdminAssertContains("menu-endpoints/register", $save, 'save endpoint should register POS item/category endpoints with Moova');
-moovaAdminAssertContains("/api/categories.php", $save, 'save endpoint should send the POS categories endpoint');
-moovaAdminAssertContains("/api/items.php", $save, 'save endpoint should send the POS items endpoint');
+moovaAdminAssertContains("posmain_integration_save", $service, 'save-triggered reconcile should identify the POS integration save source');
+moovaAdminAssertContains("X-Pos-Widget-Origin", $service, 'save-triggered reconcile should expose the POS public origin to Moova');
+moovaAdminAssertContains("MoovaPosMenuReconcileService", $save, 'save endpoint should reconcile Moova menu through dedicated service');
+moovaAdminAssertContains("moova_menu_sync_payload.php", $service, 'save endpoint reconcile service should target full POS menu payload');
+moovaAdminAssertContains("menu-endpoints/register", $service, 'save endpoint should register POS menu endpoints with Moova');
+moovaAdminAssertContains("menu-sync/reconcile", $service, 'save endpoint should fall back to explicit menu reconcile route');
+moovaAdminAssertContains("menuSyncMode", $service, 'save endpoint should request full POS-authoritative menu sync');
 moovaAdminAssertContains("moova_integration_disconnected", $disconnect, 'disconnect endpoint should audit successful disconnect');
 
 moovaAdminAssertNotContains("verify_csrf_from_post_or_header", $confirm, 'machine Moova confirm should not use browser CSRF');

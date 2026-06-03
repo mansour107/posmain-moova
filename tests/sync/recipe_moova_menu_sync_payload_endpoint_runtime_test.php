@@ -45,6 +45,12 @@ try {
     recipeMoovaMenuSyncPayloadEndpointRuntimeAssert(($enabledItem['isOrderable'] ?? true) === false, 'unavailable recipe item should mark isOrderable false');
     recipeMoovaMenuSyncPayloadEndpointRuntimeAssert(($enabledItem['unavailableReason'] ?? '') === 'Delivery packaging is out of stock.', 'unavailable recipe item should expose top-level reason');
     recipeMoovaMenuSyncPayloadEndpointRuntimeAssert(($enabledItem['availabilityRevision'] ?? 0) === 44, 'unavailable recipe item should expose top-level revision alias');
+    recipeMoovaMenuSyncPayloadEndpointRuntimeAssert(($enabledItem['price'] ?? null) === 9500, 'Moova menu payload should expose item price in cents');
+    recipeMoovaMenuSyncPayloadEndpointRuntimeAssert(($enabledItem['priceCents'] ?? null) === 9500, 'Moova menu payload should expose explicit priceCents alias');
+    recipeMoovaMenuSyncPayloadEndpointRuntimeAssert(recipeMoovaMenuSyncPayloadEndpointRuntimeDecimalEquals($enabledItem['priceMajor'] ?? '', '95.000000'), 'Moova menu payload should preserve POS major price alias');
+    recipeMoovaMenuSyncPayloadEndpointRuntimeAssert(($enabledPayload['rawPayload']['priceUnit'] ?? '') === 'minor', 'Moova menu payload should declare minor-unit prices');
+    recipeMoovaMenuSyncPayloadEndpointRuntimeAssert((int) ($enabledPayload['rawPayload']['priceUnitScale'] ?? 0) === 100, 'Moova menu payload should declare cents scale');
+    recipeMoovaMenuSyncPayloadEndpointRuntimeAssert(($enabledPayload['rawPayload']['posPriceUnit'] ?? '') === 'major', 'Moova menu payload should keep POS price-unit provenance');
 
     $sensitivePaths = recipeMoovaMenuSyncPayloadEndpointRuntimeSensitivePaths($enabledPayload);
     recipeMoovaMenuSyncPayloadEndpointRuntimeAssert($sensitivePaths === [], 'enabled Moova menu payload must not expose sensitive cost fields: ' . implode(', ', $sensitivePaths));

@@ -128,6 +128,24 @@ class RecipeOrderLifecycleServiceTest extends TestCase
         $this->assertSame('released', $reservation['status']);
     }
 
+    public function testConsumePilotWithoutExplicitReservationFlagStillReservesOnLineAdd(): void
+    {
+        $setup = $this->recipeWithIngredient('10.000000');
+        $service = $this->consumeService([
+            'reservations' => false,
+        ]);
+        $ctx = $this->lineContext(9055, 955, $setup['sellable_item_id'], '2.000000');
+
+        $added = $service->onOrderLineAdded($ctx);
+        $balance = $this->balance($setup['ingredient_item_id']);
+
+        $this->assertFalse($added['noop']);
+        $this->assertCount(1, $added['writes']['stock_reservations']);
+        $this->assertSame('10.000000', $balance['qty_on_hand']);
+        $this->assertSame('2.000000', $balance['qty_reserved']);
+        $this->assertSame('8.000000', $balance['qty_available']);
+    }
+
     public function testPaidOrderConsumesReservedStockOnce(): void
     {
         $setup = $this->recipeWithIngredient('10.000000');

@@ -14,8 +14,9 @@ if ($conn->connect_error) {
     exit;
 }
 
-$activeFilter = ItemCatalogStatus::activeOnlySql($conn);
-$stmt = $conn->prepare("SELECT * FROM myitems WHERE barcode = ? {$activeFilter} LIMIT 1");
+$activeFilter = ItemCatalogStatus::activeOnlySql($conn)
+    . ItemCatalogStatus::posSellableOnlySql($conn);
+$stmt = $conn->prepare("SELECT * FROM myitems WHERE barcode = ? AND isdeleted = 0 {$activeFilter} LIMIT 1");
 $stmt->bind_param('s', $barcode);
 $stmt->execute();
 $result = $stmt->get_result();

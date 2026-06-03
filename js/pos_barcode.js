@@ -2005,6 +2005,7 @@ $(document).ready(function() {
         $('.pos-empty-table-option').toggle(isTableOrder);
         $('#pos_empty_table_after_payment').prop('checked', true);
         renderSplitPaymentRows();
+        calculateChange();
     });
 
     $(document).on('change', '#pos_split_payment_enabled', function() {
@@ -2013,6 +2014,8 @@ $(document).ready(function() {
         updateSplitPaymentButtons();
         if (enabled) {
             renderSplitPaymentRows();
+            $('#modal_paid_bank').val('0.00');
+            updateSplitPaymentTotal();
         } else {
             $('#pos_split_payment_total').text('0.00 ج.م');
             updateTotal();
@@ -2031,16 +2034,35 @@ $(document).ready(function() {
         submitPOS('free_table');
     });
 
+    function paymentAmountDue() {
+        if ($('#pos_split_payment_enabled').prop('checked')) {
+            return Math.max(0, splitPaymentPayloadFromModal().total || 0);
+        }
+
+        return Math.max(0, parseFloat($('#net_val').val()) || 0);
+    }
+
+    function updateModalChangeDisplay(change) {
+        const $change = $('#modal_change');
+        const formatted = change.toFixed(2) + ' ج.م';
+        $change.text(formatted);
+        $change.removeClass('text-danger text-success');
+        if (change >= 0) {
+            $change.addClass('text-success');
+        } else {
+            $change.addClass('text-danger');
+        }
+    }
+
     function calculateChange() {
-        let net = parseFloat($('#net_val').val()) || 0;
-        let paidCash = parseFloat($('#modal_paid_cash').val()) || 0;
-        let paidBank = parseFloat($('#modal_paid_bank').val()) || 0;
-        let totalPaid = paidCash + paidBank;
+        const amountDue = paymentAmountDue();
+        const paidCash = parseFloat($('#modal_paid_cash').val()) || 0;
+        const paidBank = parseFloat($('#modal_paid_bank').val()) || 0;
+        const totalPaid = paidCash + paidBank;
+        const change = totalPaid - amountDue;
 
-        let change = totalPaid - net;
-
-        // الباقي للحساب فقط - لا يؤثر على السند
-        $('#modal_change').text(change.toFixed(2) + ' ج.م');
+        // الباقي = المدفوع - المستحق (كامل الصافي أو إجمالي المحدد في سداد الأصناف)
+        updateModalChangeDisplay(change);
     }
 
     // ========================================

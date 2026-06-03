@@ -6,6 +6,7 @@ include('../includes/connect.php');
 ob_clean();
 
 require_once('../classes/MoovaPosIntegration.php');
+require_once('../classes/Moova/MoovaPosMenuReconcileService.php');
 require_once('../includes/auth_guard.php');
 require_once('../includes/csrf.php');
 require_once('../classes/Security/SecurityAuditLogger.php');
@@ -79,72 +80,9 @@ function moova_integration_current_origin()
 
 function moova_integration_trigger_menu_sync_after_save(array $saved, $deviceToken)
 {
-    $token = trim((string) $deviceToken);
-    $moovaOrigin = moova_integration_origin_from_widget_url($saved['widget_url'] ?? '');
     $posOrigin = moova_integration_current_origin();
-    if ($token === '' || $moovaOrigin === '' || $posOrigin === '') {
-        return [
-            'attempted' => false,
-            'ok' => false,
-            'reason' => 'missing_origin_or_token',
-        ];
-    }
-    if (!function_exists('curl_init')) {
-        return [
-            'attempted' => false,
-            'ok' => false,
-            'reason' => 'curl_unavailable',
-        ];
-    }
 
-    $body = [
-        'publicOrigin' => $posOrigin,
-        'categoriesUrl' => rtrim($posOrigin, '/') . '/api/categories.php',
-        'itemsUrl' => rtrim($posOrigin, '/') . '/api/items.php',
-        'source' => 'posmain_integration_save',
-    ];
-    $encodedBody = json_encode($body, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-    if (!is_string($encodedBody)) {
-        return [
-            'attempted' => false,
-            'ok' => false,
-            'reason' => 'payload_encode_failed',
-        ];
-    }
-
-    $targetUrl = rtrim($moovaOrigin, '/') . '/api/integrations/pos/local-bridge/menu-endpoints/register';
-    $ch = curl_init($targetUrl);
-    curl_setopt($ch, CURLOPT_POST, true);
-    curl_setopt($ch, CURLOPT_HTTPHEADER, [
-        'Authorization: Bearer ' . $token,
-        'X-Pos-Device-Token: ' . $token,
-        'X-Pos-Widget-Origin: ' . $posOrigin,
-        'Content-Type: application/json',
-        'Accept: application/json',
-    ]);
-    curl_setopt($ch, CURLOPT_POSTFIELDS, $encodedBody);
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 3);
-    curl_setopt($ch, CURLOPT_TIMEOUT, 8);
-
-    $response = curl_exec($ch);
-    $statusCode = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
-    $curlError = $response === false ? curl_error($ch) : '';
-    curl_close($ch);
-
-    $ok = $statusCode >= 200 && $statusCode < 300;
-    if (!$ok) {
-        error_log('[Moova POS] attach endpoint menu sync failed: status=' . $statusCode . ' error=' . $curlError);
-    }
-
-    return [
-        'attempted' => true,
-        'ok' => $ok,
-        'statusCode' => $statusCode,
-        'posOrigin' => $posOrigin,
-        'moovaOrigin' => $moovaOrigin,
-        'retryable' => !$ok,
-    ];
+    return (new MoovaPosMenuReconcileService())->reconcileAfterIntegrationSave($saved, (string) $deviceToken, $posOrigin);
 }
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {

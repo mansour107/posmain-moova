@@ -45,9 +45,25 @@ class RecipeFeatureFlags
 
     public function isReservationEnabled(): bool
     {
-        return $this->isEnabled()
-            && $this->boolValue($this->recipeConfig()['reservations'] ?? false)
-            && in_array($this->mode(), ['reserve_only', 'consume_pilot', 'accounting_pilot', 'availability_pilot', 'full'], true);
+        if (!$this->isEnabled()) {
+            return false;
+        }
+
+        $mode = $this->mode();
+        $reservationModes = ['reserve_only', 'consume_pilot', 'accounting_pilot', 'availability_pilot', 'full'];
+        if (!in_array($mode, $reservationModes, true)) {
+            return false;
+        }
+
+        if ($this->boolValue($this->recipeConfig()['reservations'] ?? false)) {
+            return true;
+        }
+
+        // Unpaid orders should reserve ingredients whenever payment will consume them.
+        $consumptionModes = ['consume_pilot', 'accounting_pilot', 'availability_pilot', 'full'];
+
+        return in_array($mode, $consumptionModes, true)
+            && $this->boolValue($this->recipeConfig()['consumption'] ?? false);
     }
 
     public function isReservationEnabledForItem(?RecipeScope $scope, int $itemId, ?int $itemCategoryId = null): bool

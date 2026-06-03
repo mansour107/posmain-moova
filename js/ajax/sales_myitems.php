@@ -4,7 +4,8 @@ require_once('../../classes/Items/ItemCatalogStatus.php');
 
 $search = isset($_GET['search']) ? $_GET['search'] : '';
 
-$activeFilter = ItemCatalogStatus::activeOnlySql($conn);
+$activeFilter = ItemCatalogStatus::activeOnlySql($conn)
+    . ItemCatalogStatus::posSellableOnlySql($conn);
 $sql = "SELECT id, iname FROM myitems WHERE iname LIKE ? AND isdeleted = 0 {$activeFilter} order by iname limit 50";
 $stmt = $conn->prepare($sql);
 $searchTerm = "%".$search."%";

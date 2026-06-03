@@ -8,7 +8,8 @@ if ($conn->connect_error) {
 $input = $_GET['input']; // Assuming you're using GET method
 
 // Prepare and execute SQL query
-$activeFilter = ItemCatalogStatus::activeOnlySql($conn);
+$activeFilter = ItemCatalogStatus::activeOnlySql($conn)
+    . ItemCatalogStatus::posSellableOnlySql($conn);
 $sql = "SELECT id, iname FROM myitems WHERE iname LIKE '%" . $conn->real_escape_string($input) . "%' AND isdeleted = 0 {$activeFilter} LIMIT 50";
 $result = $conn->query($sql);
 

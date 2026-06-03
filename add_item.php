@@ -212,6 +212,10 @@ try {
                         font-size: .82rem;
                         margin: 4px 0 0;
                     }
+                    #addUnit {
+                        flex: 0 0 auto;
+                        white-space: nowrap;
+                    }
                     .item-editor-panel-body {
                         padding: 18px;
                     }
@@ -263,6 +267,88 @@ try {
                         color: #475569;
                         font-size: .88rem;
                         padding: 12px 18px;
+                    }
+                    .unit-base-row td {
+                        background: #fbfefd;
+                    }
+                    .unit-base-row .unit-select {
+                        border-color: #99f6e4;
+                        box-shadow: 0 0 0 1px rgba(20, 184, 166, .12);
+                        font-weight: 800;
+                    }
+                    .unit-equation {
+                        align-items: center;
+                        display: flex;
+                        flex-wrap: wrap;
+                        gap: 8px;
+                        justify-content: flex-end;
+                        min-width: 250px;
+                    }
+                    .unit-equation strong {
+                        color: #102033;
+                    }
+                    .unit-equation-muted {
+                        color: #64748b;
+                        font-size: .82rem;
+                        width: 100%;
+                    }
+                    .unit-base-lock {
+                        align-items: center;
+                        background: #ccfbf1;
+                        border: 1px solid #99f6e4;
+                        border-radius: 999px;
+                        color: #0f766e;
+                        display: inline-flex;
+                        font-size: .78rem;
+                        font-weight: 800;
+                        gap: 5px;
+                        padding: 6px 10px;
+                    }
+                    .base-delete-disabled {
+                        cursor: not-allowed;
+                        opacity: .35;
+                    }
+                    .item-image-feedback {
+                        align-items: center;
+                        background: #f8fafc;
+                        border: 1px solid #dbe4ef;
+                        border-radius: 8px;
+                        display: none;
+                        gap: 10px;
+                        margin-top: 10px;
+                        padding: 8px;
+                    }
+                    .item-image-feedback.is-visible {
+                        display: flex;
+                    }
+                    .item-image-feedback img {
+                        background: #ffffff;
+                        border: 1px solid #e2e8f0;
+                        border-radius: 7px;
+                        height: 48px;
+                        object-fit: cover;
+                        width: 48px;
+                    }
+                    .item-image-feedback-text {
+                        min-width: 0;
+                    }
+                    .item-image-feedback-name {
+                        color: #102033;
+                        display: block;
+                        font-size: .86rem;
+                        font-weight: 800;
+                        overflow: hidden;
+                        text-overflow: ellipsis;
+                        white-space: nowrap;
+                    }
+                    .item-image-feedback-status {
+                        align-items: center;
+                        color: #0f766e;
+                        display: inline-flex;
+                        font-size: .78rem;
+                        font-weight: 700;
+                        gap: 5px;
+                        margin-top: 2px;
                     }
                     .item-summary-sidebar {
                         align-self: start;
@@ -423,6 +509,16 @@ try {
                                                     <input type="file" name="imgs[]" class="custom-file-input" id="imgs" multiple accept="image/*,.jpg,.jpeg,.png,.gif,.webp">
                                                     <label class="custom-file-label" for="imgs" data-browse="استعراض">اختر صورة</label>
                                                 </div>
+                                                <div class="item-image-feedback" id="itemImageFeedback" aria-live="polite">
+                                                    <img id="itemImagePreview" src="" alt="">
+                                                    <div class="item-image-feedback-text">
+                                                        <span class="item-image-feedback-name" id="itemImageFileName"></span>
+                                                        <span class="item-image-feedback-status">
+                                                            <i class="fas fa-check-circle"></i>
+                                                            جاهزة للحفظ
+                                                        </span>
+                                                    </div>
+                                                </div>
                                                 <small class="form-text text-muted">صيغ مسموحة: jpg, png, gif, webp</small>
                                             </div>
                                         </div>
@@ -439,10 +535,10 @@ try {
                                 <div class="item-editor-panel-header">
                                     <div>
                                         <h3 class="item-editor-panel-title">2. الوحدات والأسعار</h3>
-                                        <p class="item-editor-panel-subtitle">عرّف العلاقة بوضوح: 1 كرتونة = 12 قطعة.</p>
+                                        <p class="item-editor-panel-subtitle">اختر وحدة العد الأساسية أولاً، ثم أضف وحدات الشراء أو البيع مثل: 1 كرتونة = 12 قطعة.</p>
                                     </div>
                                     <button type="button" id="addUnit" class="btn btn-sm btn-primary">
-                                        <i class="fas fa-plus ml-1"></i> إضافة وحدة
+                                        <i class="fas fa-plus ml-1"></i> إضافة وحدة شراء/بيع
                                     </button>
                                 </div>
                                 <div class="table-responsive">
@@ -461,7 +557,7 @@ try {
                                         </thead>
                                         <tbody id="unitsContainer">
                                         <?php if (!$isEdit) { ?>
-                                            <tr class="urow">
+                                            <tr class="urow unit-base-row">
                                                 <td>
                                                     <select name="unit_id[]" class="form-control form-control-sm unit-select">
                                                         <?php foreach ($unitOptions as $rowunit) { ?>
@@ -471,7 +567,7 @@ try {
                                                 </td>
                                                 <td>
                                                     <div class="unit-relation">
-                                                        <span class="unit-relation-base">الوحدة الأساسية</span>
+                                                        <span class="unit-relation-base">وحدة العد الأساسية</span>
                                                         <input class="form-control form-control-sm text-center unit-factor-input" type="number" readonly name="u_val[]" value="1" step="0.001">
                                                         <span class="unit-relation-text">قطعة</span>
                                                     </div>
@@ -482,7 +578,7 @@ try {
                                                 <td><input type="number" name="price2[]" class="form-control form-control-sm" value="0" step="0.001" min="0"></td>
                                                 <td><input type="number" name="market_price[]" class="form-control form-control-sm" value="0" step="0.001" min="0"></td>
                                                 <td class="text-center">
-                                                    <button type="button" class="btn btn-sm btn-outline-danger deleteRow" title="حذف الصف"><i class="fas fa-times"></i></button>
+                                                    <button type="button" class="btn btn-sm btn-outline-secondary base-delete-disabled" disabled title="لا يمكن حذف وحدة العد الأساسية"><i class="fas fa-lock"></i></button>
                                                 </td>
                                             </tr>
                                         <?php } else {
@@ -492,7 +588,7 @@ try {
                                                 $renderedUnitRows++;
                                                 $isBaseUnitRow = $renderedUnitRows === 1;
                                                 ?>
-                                                <tr class="urow">
+                                                <tr class="urow <?= $isBaseUnitRow ? 'unit-base-row' : '' ?>">
                                                     <td>
                                                         <select name="unit_id[]" class="form-control form-control-sm unit-select">
                                                             <?php foreach ($unitOptions as $rowunit) { ?>
@@ -503,7 +599,7 @@ try {
                                                     <td>
                                                         <div class="unit-relation">
                                                             <?php if ($isBaseUnitRow): ?>
-                                                                <span class="unit-relation-base">الوحدة الأساسية</span>
+                                                                <span class="unit-relation-base">وحدة العد الأساسية</span>
                                                             <?php else: ?>
                                                                 <span>1 <strong class="unit-relation-unit-name"></strong> =</span>
                                                             <?php endif; ?>
@@ -517,12 +613,16 @@ try {
                                                     <td><input type="number" name="price2[]" class="form-control form-control-sm" value="<?= htmlspecialchars((string) $rowunt['price2'], ENT_QUOTES, 'UTF-8') ?>" step="0.001" min="0"></td>
                                                     <td><input type="number" name="market_price[]" class="form-control form-control-sm" value="<?= htmlspecialchars((string) $rowunt['price3'], ENT_QUOTES, 'UTF-8') ?>" step="0.001" min="0"></td>
                                                     <td class="text-center">
-                                                        <button type="button" class="btn btn-sm btn-outline-danger deleteRow" title="حذف الصف"><i class="fas fa-times"></i></button>
+                                                        <?php if ($isBaseUnitRow): ?>
+                                                            <button type="button" class="btn btn-sm btn-outline-secondary base-delete-disabled" disabled title="لا يمكن حذف وحدة العد الأساسية"><i class="fas fa-lock"></i></button>
+                                                        <?php else: ?>
+                                                            <button type="button" class="btn btn-sm btn-outline-danger deleteRow" title="حذف الصف"><i class="fas fa-times"></i></button>
+                                                        <?php endif; ?>
                                                     </td>
                                                 </tr>
                                             <?php }
                                             if ($renderedUnitRows === 0) { ?>
-                                                <tr class="urow">
+                                                <tr class="urow unit-base-row">
                                                     <td>
                                                         <select name="unit_id[]" class="form-control form-control-sm unit-select">
                                                             <?php foreach ($unitOptions as $rowunit) { ?>
@@ -532,7 +632,7 @@ try {
                                                     </td>
                                                     <td>
                                                         <div class="unit-relation">
-                                                            <span class="unit-relation-base">الوحدة الأساسية</span>
+                                                            <span class="unit-relation-base">وحدة العد الأساسية</span>
                                                             <input class="form-control form-control-sm text-center unit-factor-input" type="number" name="u_val[]" value="1" step="0.001">
                                                             <span class="unit-relation-text">قطعة</span>
                                                         </div>
@@ -543,7 +643,7 @@ try {
                                                     <td><input type="number" name="price2[]" class="form-control form-control-sm" value="<?= htmlspecialchars((string) ($rowitm['price2'] ?? 0), ENT_QUOTES, 'UTF-8') ?>" step="0.001" min="0"></td>
                                                     <td><input type="number" name="market_price[]" class="form-control form-control-sm" value="<?= htmlspecialchars((string) ($rowitm['price3'] ?? 0), ENT_QUOTES, 'UTF-8') ?>" step="0.001" min="0"></td>
                                                     <td class="text-center">
-                                                        <button type="button" class="btn btn-sm btn-outline-danger deleteRow" title="حذف الصف"><i class="fas fa-times"></i></button>
+                                                        <button type="button" class="btn btn-sm btn-outline-secondary base-delete-disabled" disabled title="لا يمكن حذف وحدة العد الأساسية"><i class="fas fa-lock"></i></button>
                                                     </td>
                                                 </tr>
                                             <?php }
@@ -806,6 +906,38 @@ $(document).ready(function() {
         $(this).siblings('.custom-file-label').addClass('selected').html(fileName || 'اختر ملفاً');
     });
 
+    $('#imgs').on('change', function() {
+        var files = this.files || [];
+        var $feedback = $('#itemImageFeedback');
+        var $preview = $('#itemImagePreview');
+        var $fileName = $('#itemImageFileName');
+
+        if (!files.length) {
+            $feedback.removeClass('is-visible');
+            $preview.attr('src', '');
+            $fileName.text('');
+            return;
+        }
+
+        var firstFile = files[0];
+        var displayName = firstFile.name || 'صورة محددة';
+        if (files.length > 1) {
+            displayName += ' +' + (files.length - 1);
+        }
+        $fileName.text(displayName);
+        $feedback.addClass('is-visible');
+
+        if (firstFile.type && firstFile.type.indexOf('image/') === 0) {
+            var reader = new FileReader();
+            reader.onload = function(event) {
+                $preview.attr('src', event.target.result);
+            };
+            reader.readAsDataURL(firstFile);
+        } else {
+            $preview.attr('src', '');
+        }
+    });
+
 	    var fields = ['cost_price', 'price1', 'price2', 'market_price'];
 	    var itemTypeLabels = {
 	        sellable: 'منتج للبيع',
@@ -834,12 +966,21 @@ $(document).ready(function() {
 	            var input = row.find('input[name="u_val[]"]');
 	            relation.find('.unit-relation-text').text(baseName);
 	            if (index === 0) {
-	                input.prop('readonly', true);
-	                relation.html('<span class="unit-relation-base">الوحدة الأساسية</span>')
-	                    .append(input)
-	                    .append('<span class="unit-relation-text">' + baseName + '</span>');
+	                row.addClass('unit-base-row');
+	                input.prop('readonly', true).val('1').addClass('d-none');
+	                relation.empty()
+	                    .append('<span class="unit-base-lock"><i class="fas fa-lock"></i> وحدة العد الأساسية</span>')
+	                    .append(
+	                        $('<span class="unit-equation"></span>')
+	                            .append($('<strong></strong>').text('1 ' + baseName))
+	                            .append('<span>=</span>')
+	                            .append($('<strong></strong>').text('1 ' + baseName))
+	                    )
+	                    .append('<span class="unit-equation-muted">اختر هنا أصغر وحدة تريد أن يحسب النظام المخزون بها.</span>')
+	                    .append(input);
 	            } else {
-	                input.prop('readonly', false);
+	                row.removeClass('unit-base-row');
+	                input.prop('readonly', false).removeClass('d-none');
 	                var unitName = selectedUnitName(row) || 'الوحدة';
 	                if (!relation.find('.unit-relation-unit-name').length) {
 	                    relation.html('<span>1 <strong class="unit-relation-unit-name"></strong> =</span>')

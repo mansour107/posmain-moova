@@ -15,7 +15,8 @@ try {
     $variantChildFilter = $hasVariantTable
         ? "AND NOT EXISTS (SELECT 1 FROM item_variants ivc WHERE ivc.variant_item_id = myitems.id AND ivc.is_active = 1)"
         : "";
-    $activeFilter = ItemCatalogStatus::activeOnlySql($conn, 'myitems');
+    $activeFilter = ItemCatalogStatus::activeOnlySql($conn, 'myitems')
+        . ItemCatalogStatus::posSellableOnlySql($conn, 'myitems');
     $query = "SELECT myitems.*, {$variantSelect}
               FROM myitems
               WHERE isdeleted = 0

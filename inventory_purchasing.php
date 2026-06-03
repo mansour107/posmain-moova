@@ -256,6 +256,10 @@ include __DIR__ . '/includes/sidebar.php';
         min-height: 36px;
         border-radius: 8px;
     }
+    .inventory-lines-table tr.inventory-line-invalid .form-control {
+        border-color: #dc2626;
+        box-shadow: 0 0 0 1px rgba(220, 38, 38, .18);
+    }
     .inventory-purchase-search {
         margin-bottom: 8px;
     }
@@ -1026,6 +1030,61 @@ function collectInventoryPayload() {
     };
 }
 
+function inventoryLineHasUserInput(row) {
+    const searchText = row.querySelector('.inventory-purchase-item-search').value.trim();
+    const itemId = Number(row.querySelector('.inventory-item-select').value || 0);
+    const qty = Number(row.querySelector('.inventory-qty').value || 0);
+    const unitCost = Number(row.querySelector('.inventory-cost').value || 0);
+
+    return searchText !== '' || itemId > 0 || qty > 0 || unitCost > 0;
+}
+
+function validateInventoryLineRows() {
+    const issues = [];
+    document.querySelectorAll('#inventoryLinesBody tr').forEach((row, index) => {
+        row.classList.remove('inventory-line-invalid');
+        const itemId = Number(row.querySelector('.inventory-item-select').value || 0);
+        const qty = Number(row.querySelector('.inventory-qty').value || 0);
+        if (!inventoryLineHasUserInput(row)) {
+            return;
+        }
+
+        if (itemId < 1) {
+            row.classList.add('inventory-line-invalid');
+            issues.push({
+                row,
+                message: `اختر صنفاً مسجلاً في السطر ${index + 1} أو استخدم إنشاء صنف جديد أولاً`
+            });
+            return;
+        }
+
+        if (!(qty > 0)) {
+            row.classList.add('inventory-line-invalid');
+            issues.push({
+                row,
+                message: `أدخل كمية صحيحة في السطر ${index + 1}`
+            });
+        }
+    });
+
+    return issues;
+}
+
+function assertInventoryLinesReady() {
+    const issues = validateInventoryLineRows();
+    if (issues.length > 0) {
+        const issue = issues[0];
+        inventoryToast(issue.message, true);
+        const focusTarget = issue.row.querySelector('.inventory-item-select').value
+            ? issue.row.querySelector('.inventory-qty')
+            : issue.row.querySelector('.inventory-purchase-item-search');
+        focusTarget.focus();
+        return false;
+    }
+
+    return true;
+}
+
 function openInventoryQuickItemModal(defaults = {}) {
     inventoryQuickItemTargetRow = defaults.row || null;
     const modal = document.getElementById('inventoryQuickItemModal');
@@ -1170,6 +1229,9 @@ function loadPurchaseOrderLines(purchaseOrderId) {
 }
 
 async function postPurchaseOrder(action) {
+    if (!assertInventoryLinesReady()) {
+        return;
+    }
     const payload = collectInventoryPayload();
     payload.action = action;
     if (!payload.destination_store_id || payload.lines.length === 0) {
@@ -1265,6 +1327,9 @@ document.getElementById('inventoryPurchaseBarcodeScan').addEventListener('keydow
     }
 });
 document.getElementById('postInventoryReceipt').addEventListener('click', async () => {
+    if (!assertInventoryLinesReady()) {
+        return;
+    }
     const payload = collectInventoryPayload();
     if (!payload.destination_store_id || payload.lines.length === 0) {
         inventoryToast('راجع المخزن والأصناف قبل التسجيل', true);
