@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/../includes/session_bootstrap.php';
 include('../includes/connect.php');
+require_once __DIR__ . '/../classes/Items/ItemEditorFlash.php';
 require_once __DIR__ . '/../classes/Items/ItemFormInput.php';
 require_once __DIR__ . '/../classes/Items/ItemRecipeCatalogService.php';
 require_once __DIR__ . '/../classes/Pos/Service/ItemVariantService.php';
@@ -26,20 +27,23 @@ try {
     $stmt->close();
 
     if ($chkname !== null) {
-        header('Location: ../add_item.php?error=duplicate_name');
+        ItemEditorFlash::set('danger', 'duplicate_name');
+        header('Location: ../add_item.php');
         exit;
     }
 
     $defaultUnitId = posmain_add_item_needs_default_unit($_POST) ? posmain_add_item_default_unit_id($conn) : 0;
     $payload = ItemFormInput::normalizeAddPayload($_POST, $usid, $defaultUnitId);
 } catch (InvalidArgumentException $exception) {
-    header('Location: ../add_item.php?error=save_failed');
+    ItemEditorFlash::set('danger', 'save_failed');
+    header('Location: ../add_item.php');
     exit;
 }
 
 $imageFiles = $_FILES['imgs'] ?? ['name' => []];
 if (!posmain_add_item_images_are_valid($imageFiles)) {
-    header('Location: ../add_item.php?error=invalid_image');
+    ItemEditorFlash::set('danger', 'invalid_image');
+    header('Location: ../add_item.php');
     exit;
 }
 
@@ -146,6 +150,19 @@ try {
         posmain_record_menu_item_sync($conn, (int) $changedItemId, 'item_form');
     }
     $conn->commit();
+} catch (InvalidArgumentException $exception) {
+    if ($conn instanceof mysqli) {
+        $conn->rollback();
+    }
+    $error = 'save_failed';
+    if ($exception->getMessage() === 'duplicate_item_name') {
+        $error = 'duplicate_name';
+    } elseif ($exception->getMessage() === 'duplicate_item_barcode') {
+        $error = 'duplicate_barcode';
+    }
+    ItemEditorFlash::set('danger', $error);
+    header('Location: ../add_item.php');
+    exit;
 } catch (Throwable $exception) {
     if ($conn instanceof mysqli) {
         $conn->rollback();
@@ -155,15 +172,17 @@ try {
         posmain_log_exception($exception, posmain_error_reference(), 'add_item_save');
     }
 
-    header('Location: ../add_item.php?error=save_failed');
+    ItemEditorFlash::set('danger', 'save_failed');
+    header('Location: ../add_item.php');
     exit;
 }
 
 $saveIntent = (string) ($_POST['save_intent'] ?? 'stay');
 if ($saveIntent === 'close') {
-    header('Location: ../myitems.php?saved=1');
+    header('Location: ../myitems.php');
 } else {
-    header('Location: ../add_item.php?saved=1');
+    ItemEditorFlash::set('success', 'saved');
+    header('Location: ../add_item.php');
 }
 exit;
 

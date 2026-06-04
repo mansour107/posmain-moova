@@ -14,6 +14,9 @@ $inventoryReportsCanViewCost = posmain_inventory_reports_can_view_cost($conn);
 $inventoryReportsTypes = posmain_inventory_report_types($inventoryReportsCanViewCost);
 $inventoryReportsReport = posmain_inventory_report_key($_GET['report'] ?? '', $inventoryReportsTypes);
 $inventoryReportsFilters = posmain_inventory_report_filters($_GET);
+if ($inventoryReportsReport === 'movement_history' && (int) ($inventoryReportsFilters['item_id'] ?? 0) > 0) {
+    posmain_inventory_reports_redirect_item_movements($inventoryReportsFilters);
+}
 $inventoryReportsBranches = posmain_inventory_report_branches($conn);
 $inventoryReportsStores = posmain_inventory_report_stores($conn);
 $inventoryReportsSuppliers = posmain_inventory_report_suppliers($conn);
@@ -71,6 +74,8 @@ include __DIR__ . '/includes/sidebar.php';
     .inventory-report-table{margin:0;table-layout:auto;min-width:1120px}
     .inventory-report-table th{background:#edf3f8;color:#334155;font-size:12px;border-color:#dbe4ee;white-space:nowrap}
     .inventory-report-table td{border-color:#e7edf3;vertical-align:middle;font-size:13px}
+    .inventory-report-item-link{color:#0f766e;font-weight:800;text-decoration:none}
+    .inventory-report-item-link:hover{color:#115e59;text-decoration:underline}
     .inventory-report-results-loading .inventory-report-table{opacity:.55}
     .inventory-report-empty{padding:28px;text-align:center;color:#64748b}
     .inventory-report-note{margin-top:12px;color:#64748b;font-size:12px}
@@ -84,10 +89,11 @@ include __DIR__ . '/includes/sidebar.php';
         <div class="inventory-report-wrap">
             <div class="inventory-report-hero">
                 <div>
-                    <h1 class="inventory-report-title">لوحة وتقارير المخزون</h1>
+                    <h1 class="inventory-report-title">لوحة المخزون</h1>
                     <p class="inventory-report-subtitle">قراءة تشغيلية من دفتر المخزون الجديد: أرصدة، حركات، نقص، مشتريات، تحويلات، جرد، هالك، إنتاج، واستهلاك وصفات.</p>
                 </div>
                 <div class="inventory-report-actions">
+                    <a class="inventory-report-btn primary" href="inventory_dashboard.php"><i class="fas fa-history"></i> حركات المخزون</a>
                     <a class="inventory-report-btn dark" href="inventory_purchasing.php"><i class="fas fa-dolly-flatbed"></i> الاستلام</a>
                     <a class="inventory-report-btn dark" href="inventory_counts.php"><i class="fas fa-clipboard-check"></i> الجرد</a>
                     <a class="inventory-report-btn dark" href="inventory_transfers.php"><i class="fas fa-exchange-alt"></i> التحويلات</a>
@@ -386,6 +392,30 @@ include __DIR__ . '/includes/sidebar.php';
 <?php include __DIR__ . '/includes/footer.php'; ?>
 
 <?php
+function posmain_inventory_reports_redirect_item_movements(array $filters): void
+{
+    $params = [];
+    foreach (['item_id', 'store_id', 'pos_branch', 'date_from', 'date_to', 'movement_type', 'limit'] as $key) {
+        $value = $filters[$key] ?? '';
+        if ($key === 'item_id' && (int) $value <= 0) {
+            continue;
+        }
+        if (in_array($key, ['store_id'], true) && (int) $value <= 0) {
+            continue;
+        }
+        if ($key === 'pos_branch' && (int) $value < 0) {
+            continue;
+        }
+        if ($value === '' || $value === 0) {
+            continue;
+        }
+        $params[$key] = $value;
+    }
+
+    header('Location: inventory_dashboard.php?' . http_build_query($params));
+    exit;
+}
+
 function posmain_inventory_reports_can_view(mysqli $conn): bool
 {
     return auth_guard_has_permission('reports.view', $conn)
@@ -652,7 +682,6 @@ function posmain_inventory_report_columns(string $report, bool $canViewCost): ar
             'minimum_level' => 'الحد الأدنى',
             'reorder_level' => 'نقطة الطلب',
             'par_level' => 'المستهدف',
-            'inventory_status' => 'الحالة',
             'last_movement_at' => 'آخر حركة',
             'drilldown_url' => 'تفاصيل',
         ],
@@ -840,7 +869,7 @@ function posmain_inventory_dashboard_cards(array $dashboard, bool $canViewCost):
         ['label' => 'أصناف لها رصيد', 'value' => number_format((float) ($dashboard['item_count'] ?? 0), 0)],
         ['label' => 'أصناف منخفضة', 'value' => number_format((float) ($dashboard['low_stock_count'] ?? 0), 0)],
         ['label' => 'حركات اليوم', 'value' => number_format((float) ($dashboard['movements_today'] ?? 0), 0)],
-        ['label' => 'محجوز حاليا', 'value' => posmain_inventory_report_decimal($dashboard['reserved_qty'] ?? 0)],
+        ['label' => 'محجوز حاليا', 'value' => posmain_inventory_report_qty($dashboard['reserved_qty'] ?? 0)],
         ['label' => 'جرد مفتوح', 'value' => number_format((float) ($dashboard['open_counts'] ?? 0), 0)],
         ['label' => 'تحويلات مفتوحة', 'value' => number_format((float) ($dashboard['open_transfers'] ?? 0), 0)],
     ];
@@ -866,8 +895,42 @@ function posmain_inventory_report_rows_html(array $columns, array $rows): string
     return (string) ob_get_clean();
 }
 
+function posmain_inventory_report_item_page_url(string $column, array $row): string
+{
+    $itemId = 0;
+    if ($column === 'item_name' || $column === 'barcode') {
+        $itemId = (int) ($row['item_id'] ?? 0);
+    } elseif ($column === 'sellable_item_name') {
+        $itemId = (int) ($row['sellable_item_id'] ?? 0);
+    } elseif ($column === 'blocking_item_name') {
+        $itemId = (int) ($row['blocking_item_id'] ?? 0);
+    } elseif ($column === 'output_item_name') {
+        $itemId = (int) ($row['output_item_id'] ?? 0);
+    }
+
+    return $itemId > 0 ? 'add_item.php?edit=' . $itemId : '';
+}
+
+function posmain_inventory_report_item_link(string $column, $value, array $row): string
+{
+    $label = trim((string) $value);
+    if ($label === '') {
+        return '';
+    }
+
+    $url = posmain_inventory_report_item_page_url($column, $row);
+    if ($url === '') {
+        return posmain_inventory_report_h($label);
+    }
+
+    return '<a class="inventory-report-item-link" href="' . posmain_inventory_report_h($url) . '">' . posmain_inventory_report_h($label) . '</a>';
+}
+
 function posmain_inventory_report_cell(string $column, $value, array $row): string
 {
+    if (in_array($column, ['item_name', 'barcode', 'sellable_item_name', 'blocking_item_name', 'output_item_name'], true)) {
+        return posmain_inventory_report_item_link($column, $value, $row);
+    }
     if ($column === 'drilldown_url') {
         $url = trim((string) $value);
         if ($url === '') {
@@ -903,8 +966,14 @@ function posmain_inventory_report_cell(string $column, $value, array $row): stri
     if ($column === 'status') {
         return posmain_inventory_report_h(posmain_inventory_report_workflow_status_label((string) $value));
     }
-    if (preg_match('/(qty|cost|value|total|percent|level)$/', $column)) {
-        return posmain_inventory_report_h(posmain_inventory_report_decimal($value));
+    if (posmain_inventory_report_is_qty_column($column)) {
+        return posmain_inventory_report_h(posmain_inventory_report_qty($value));
+    }
+    if (posmain_inventory_report_is_money_column($column)) {
+        return posmain_inventory_report_h(posmain_inventory_report_money($value));
+    }
+    if (preg_match('/_percent$/', $column)) {
+        return posmain_inventory_report_h(posmain_inventory_report_money($value));
     }
     if ($column === 'stale_count_conflict') {
         return ((int) $value === 1) ? 'نعم' : 'لا';
@@ -1088,9 +1157,58 @@ function posmain_inventory_report_search_text($value): string
     return function_exists('mb_substr') ? mb_substr($text, 0, 120, 'UTF-8') : substr($text, 0, 120);
 }
 
+function posmain_inventory_report_is_qty_column(string $column): bool
+{
+    if (preg_match('/(?:^qty_|_qty$|_level$|_count$)/', $column)) {
+        return true;
+    }
+
+    return in_array($column, [
+        'received_qty',
+        'returned_qty',
+        'net_received_qty',
+        'requested_qty',
+        'sent_qty',
+        'snapshot_qty',
+        'counted_qty',
+        'effective_available_qty',
+        'preferred_purchase_unit_conversion',
+    ], true);
+}
+
+function posmain_inventory_report_is_money_column(string $column): bool
+{
+    if (preg_match('/(?:_cost$|_value$|_total$)/', $column)) {
+        return true;
+    }
+
+    return in_array($column, [
+        'moving_average_cost',
+        'unit_cost',
+        'avg_unit_cost',
+        'movement_total',
+        'journal_debit_total',
+        'journal_credit_total',
+    ], true);
+}
+
+function posmain_inventory_report_qty($value): string
+{
+    $value = (float) $value;
+    if (!is_finite($value)) {
+        return '0';
+    }
+
+    if (abs($value - round($value)) < 0.0000005) {
+        return number_format($value, 0, '.', '');
+    }
+
+    return rtrim(rtrim(number_format($value, 6, '.', ''), '0'), '.');
+}
+
 function posmain_inventory_report_decimal($value): string
 {
-    return number_format((float) $value, 3, '.', '');
+    return posmain_inventory_report_money($value);
 }
 
 function posmain_inventory_report_money($value): string

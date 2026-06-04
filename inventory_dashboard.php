@@ -11,12 +11,30 @@ if (!posmain_inventory_dashboard_can_view($conn)) {
 
 $inventoryDashboardCanViewCost = posmain_inventory_dashboard_can_view_cost($conn);
 $inventoryDashboardFilters = posmain_inventory_dashboard_filters($_GET);
+$inventoryDashboardItemFocus = (int) ($inventoryDashboardFilters['item_id'] ?? 0) > 0; // inventory_dashboard_item_focus
+$inventoryDashboardMovementTypes = posmain_inventory_dashboard_movement_type_labels();
 $inventoryDashboardService = new InventoryReportsService();
-$inventoryDashboardSummary = $inventoryDashboardService->dashboard($conn, $inventoryDashboardFilters);
-$inventoryDashboardDetails = $inventoryDashboardService->dashboardDetails($conn, array_merge($inventoryDashboardFilters, ['limit' => 8]));
+$inventoryDashboardMovements = $inventoryDashboardService->report($conn, 'movement_history', $inventoryDashboardFilters);
+$inventoryDashboardSummary = $inventoryDashboardItemFocus
+    ? []
+    : $inventoryDashboardService->dashboard($conn, $inventoryDashboardFilters);
+$inventoryDashboardStats = posmain_inventory_dashboard_movement_stats(
+    $inventoryDashboardMovements,
+    $inventoryDashboardSummary,
+    $inventoryDashboardCanViewCost,
+    $inventoryDashboardItemFocus
+);
 $inventoryDashboardStores = posmain_inventory_dashboard_stores($conn);
-$inventoryDashboardBranches = posmain_inventory_dashboard_branches($conn);
-$inventoryDashboardItems = posmain_inventory_dashboard_items($conn);
+$inventoryDashboardBranches = $inventoryDashboardItemFocus ? [] : posmain_inventory_dashboard_branches($conn);
+$inventoryDashboardItems = $inventoryDashboardItemFocus ? [] : posmain_inventory_dashboard_items($conn);
+$inventoryDashboardFocusedItem = $inventoryDashboardItemFocus
+    ? posmain_inventory_dashboard_focused_item($conn, (int) $inventoryDashboardFilters['item_id'])
+    : null;
+$inventoryDashboardFocusedStoreName = posmain_inventory_dashboard_store_name(
+    $inventoryDashboardStores,
+    (int) ($inventoryDashboardFilters['store_id'] ?? 0)
+);
+$inventoryDashboardReportUrl = posmain_inventory_dashboard_reports_url($inventoryDashboardFilters);
 
 include __DIR__ . '/includes/header.php';
 include __DIR__ . '/includes/navbar.php';
@@ -28,31 +46,38 @@ include __DIR__ . '/includes/sidebar.php';
     .inventory-dashboard-wrap{max-width:1480px;margin:0 auto;padding:18px}
     .inventory-dashboard-hero{display:grid;grid-template-columns:1fr auto;gap:18px;align-items:center;padding:20px;background:#102033;color:#fff;border-radius:8px;box-shadow:0 14px 32px rgba(16,32,51,.16)}
     .inventory-dashboard-title{margin:0;font-size:24px;font-weight:800;letter-spacing:0}
-    .inventory-dashboard-subtitle{margin:7px 0 0;color:#c8d4df;font-size:13px;max-width:760px}
+    .inventory-dashboard-subtitle{margin:7px 0 0;color:#c8d4df;font-size:13px;max-width:760px;line-height:1.6}
     .inventory-dashboard-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
     .inventory-dashboard-btn{min-height:40px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;color:#102033;font-weight:800;padding:0 13px;display:inline-flex;align-items:center;gap:8px;text-decoration:none}
     .inventory-dashboard-btn:hover{color:#0f766e;text-decoration:none}
     .inventory-dashboard-btn.primary{background:#0f766e;border-color:#0f766e;color:#fff}
-    .inventory-dashboard-filters{display:grid;grid-template-columns:repeat(5,minmax(130px,1fr));gap:10px;margin-top:14px;padding:14px;background:#fff;border:1px solid #dbe4ee;border-radius:8px;box-shadow:0 8px 18px rgba(15,23,42,.06)}
-    .inventory-dashboard-field label{display:block;font-size:12px;color:#526477;font-weight:800;margin-bottom:6px}
-    .inventory-dashboard-field .form-control{border-radius:8px;border-color:#ccd7e3;min-height:38px}
-    .inventory-dashboard-kpis{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:10px;margin-top:14px}
+    .inventory-dashboard-btn.ghost{background:transparent;border-color:rgba(255,255,255,.35);color:#fff}
+    .inventory-dashboard-btn.ghost:hover{background:rgba(255,255,255,.08);color:#fff}
+    .inventory-dashboard-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-top:14px}
     .inventory-dashboard-kpi{background:#fff;border:1px solid #dbe4ee;border-radius:8px;padding:14px;min-height:86px;box-shadow:0 8px 18px rgba(15,23,42,.06)}
     .inventory-dashboard-kpi span{display:block;color:#64748b;font-size:12px;font-weight:800}
     .inventory-dashboard-kpi strong{display:block;margin-top:8px;font-size:22px;line-height:1.15;color:#102033}
-    .inventory-dashboard-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:14px}
-    .inventory-dashboard-panel{background:#fff;border:1px solid #dbe4ee;border-radius:8px;box-shadow:0 8px 18px rgba(15,23,42,.06);min-width:0}
-    .inventory-dashboard-panel.wide{grid-column:1 / -1}
-    .inventory-dashboard-panel-header{padding:14px 16px;border-bottom:1px solid #e5edf5;display:flex;align-items:center;justify-content:space-between;gap:10px}
+    .inventory-dashboard-kpi-note{display:block;margin-top:6px;color:#94a3b8;font-size:11px;font-weight:700}
+    .inventory-dashboard-filters{display:grid;grid-template-columns:repeat(5,minmax(130px,1fr));gap:10px;margin-top:14px;padding:14px;background:#fff;border:1px solid #dbe4ee;border-radius:8px;box-shadow:0 8px 18px rgba(15,23,42,.06)}
+    .inventory-dashboard-field label{display:block;font-size:12px;color:#526477;font-weight:800;margin-bottom:6px}
+    .inventory-dashboard-field .form-control{border-radius:8px;border-color:#ccd7e3;min-height:38px}
+    .inventory-dashboard-field.wide{grid-column:span 2}
+    .inventory-dashboard-panel{background:#fff;border:1px solid #dbe4ee;border-radius:8px;box-shadow:0 8px 18px rgba(15,23,42,.06);margin-top:14px;min-width:0}
+    .inventory-dashboard-panel-header{padding:14px 16px;border-bottom:1px solid #e5edf5;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
     .inventory-dashboard-panel-title{margin:0;font-size:16px;font-weight:800;color:#102033}
     .inventory-dashboard-chip{display:inline-flex;align-items:center;gap:6px;border-radius:8px;padding:6px 9px;background:#ecfdf5;color:#047857;font-weight:800;font-size:12px}
-    .inventory-dashboard-table{margin:0;min-width:760px}
-    .inventory-dashboard-table th{background:#edf3f8;color:#334155;font-size:12px;border-color:#dbe4ee;white-space:nowrap}
+    .inventory-dashboard-table{margin:0;min-width:1120px}
+    .inventory-dashboard-table th{background:#edf3f8;color:#334155;font-size:12px;border-color:#dbe4ee;white-space:nowrap;position:sticky;top:0;z-index:1}
     .inventory-dashboard-table td{border-color:#e7edf3;vertical-align:middle;font-size:13px}
+    .inventory-dashboard-table .movement-in{color:#047857;font-weight:800}
+    .inventory-dashboard-table .movement-out{color:#b45309;font-weight:800}
+    .inventory-dashboard-item-link{color:#0f766e;font-weight:800;text-decoration:none}
+    .inventory-dashboard-item-link:hover{color:#115e59;text-decoration:underline}
     .inventory-dashboard-empty{padding:26px;text-align:center;color:#64748b}
-    .inventory-dashboard-note{margin-top:12px;color:#64748b;font-size:12px}
-    @media(max-width:1200px){.inventory-dashboard-kpis{grid-template-columns:repeat(3,minmax(0,1fr))}.inventory-dashboard-grid{grid-template-columns:1fr}.inventory-dashboard-filters{grid-template-columns:repeat(3,minmax(130px,1fr))}}
-    @media(max-width:768px){.inventory-dashboard-hero{grid-template-columns:1fr}.inventory-dashboard-actions{justify-content:flex-start}.inventory-dashboard-kpis{grid-template-columns:1fr 1fr}.inventory-dashboard-filters{grid-template-columns:1fr 1fr}}
+    .inventory-dashboard-note{margin-top:12px;color:#64748b;font-size:12px;line-height:1.6}
+    .inventory-dashboard-filter-actions{display:flex;gap:8px;align-items:flex-end}
+    @media(max-width:1200px){.inventory-dashboard-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.inventory-dashboard-filters{grid-template-columns:repeat(3,minmax(130px,1fr))}.inventory-dashboard-field.wide{grid-column:span 3}}
+    @media(max-width:768px){.inventory-dashboard-hero{grid-template-columns:1fr}.inventory-dashboard-actions{justify-content:flex-start}.inventory-dashboard-kpis{grid-template-columns:1fr}.inventory-dashboard-filters{grid-template-columns:1fr 1fr}.inventory-dashboard-field.wide{grid-column:1 / -1}}
 </style>
 
 <div class="content-wrapper inventory-dashboard-page">
@@ -60,18 +85,63 @@ include __DIR__ . '/includes/sidebar.php';
         <div class="inventory-dashboard-wrap">
             <div class="inventory-dashboard-hero">
                 <div>
-                    <h1 class="inventory-dashboard-title">لوحة المخزون</h1>
-                    <p class="inventory-dashboard-subtitle">ملخص يومي هادئ لمدير الفرع: قيمة المخزون، النقص، السالب، العمليات المفتوحة، آخر الحركات، وتأثير المخزون على توفر قائمة البيع.</p>
+                    <?php if ($inventoryDashboardItemFocus): ?>
+                        <h1 class="inventory-dashboard-title">حركات الصنف</h1>
+                        <p class="inventory-dashboard-subtitle">
+                            <strong><?= posmain_inventory_dashboard_h(($inventoryDashboardFocusedItem['iname'] ?? '') !== '' ? $inventoryDashboardFocusedItem['iname'] : 'صنف غير مسمى') ?></strong>
+                            <?php if (($inventoryDashboardFocusedItem['barcode'] ?? '') !== ''): ?>
+                                <span> — باركود <?= posmain_inventory_dashboard_h($inventoryDashboardFocusedItem['barcode']) ?></span>
+                            <?php endif; ?>
+                            <?php if ($inventoryDashboardFocusedStoreName !== ''): ?>
+                                <span> — مخزن <?= posmain_inventory_dashboard_h($inventoryDashboardFocusedStoreName) ?></span>
+                            <?php endif; ?>
+                        </p>
+                    <?php else: ?>
+                        <h1 class="inventory-dashboard-title">لوحة المخزون</h1>
+                        <p class="inventory-dashboard-subtitle">دفتر حركات مباشر للقراءة فقط: تتبع الداخل والخارج حسب المخزن والفرع والصنف ونوع الحركة. ملخصات الأرصدة والتقارير التفصيلية تبقى في لوحة المخزون الرئيسية.</p>
+                    <?php endif; ?>
                 </div>
                 <div class="inventory-dashboard-actions">
-                    <a class="inventory-dashboard-btn primary" href="inventory_reports.php"><i class="fas fa-chart-bar"></i> التقارير</a>
-                    <a class="inventory-dashboard-btn" href="inventory_purchasing.php"><i class="fas fa-dolly-flatbed"></i> الاستلام</a>
-                    <a class="inventory-dashboard-btn" href="inventory_counts.php"><i class="fas fa-clipboard-check"></i> الجرد</a>
-                    <a class="inventory-dashboard-btn" href="inventory_adjustments.php"><i class="fas fa-sliders-h"></i> التسويات</a>
+                    <a class="inventory-dashboard-btn ghost" href="inventory_reports.php"><i class="fas fa-chart-bar"></i> لوحة المخزون</a>
+                    <?php if ($inventoryDashboardItemFocus): ?>
+                        <a class="inventory-dashboard-btn ghost" href="add_item.php?edit=<?= (int) $inventoryDashboardFilters['item_id'] ?>"><i class="fas fa-box"></i> صفحة الصنف</a>
+                        <a class="inventory-dashboard-btn primary" href="inventory_dashboard.php"><i class="fas fa-list"></i> كل الحركات</a>
+                    <?php else: ?>
+                        <a class="inventory-dashboard-btn primary" href="<?= posmain_inventory_dashboard_h($inventoryDashboardReportUrl) ?>"><i class="fas fa-table"></i> نفس الفلاتر في التقرير</a>
+                    <?php endif; ?>
                 </div>
             </div>
 
+            <?php if ($inventoryDashboardStats): ?>
+            <div class="inventory-dashboard-kpis">
+                <?php foreach ($inventoryDashboardStats as $stat): ?>
+                    <div class="inventory-dashboard-kpi">
+                        <span><?= posmain_inventory_dashboard_h($stat['label']) ?></span>
+                        <strong><?= posmain_inventory_dashboard_h($stat['value']) ?></strong>
+                        <?php if (($stat['note'] ?? '') !== ''): ?>
+                            <span class="inventory-dashboard-kpi-note"><?= posmain_inventory_dashboard_h($stat['note']) ?></span>
+                        <?php endif; ?>
+                    </div>
+                <?php endforeach; ?>
+            </div>
+            <?php endif; ?>
+
             <form method="GET" class="inventory-dashboard-filters">
+                <?php if ($inventoryDashboardItemFocus): ?>
+                    <input type="hidden" name="item_id" value="<?= (int) $inventoryDashboardFilters['item_id'] ?>">
+                    <?php if ((int) $inventoryDashboardFilters['store_id'] > 0): ?>
+                        <input type="hidden" name="store_id" value="<?= (int) $inventoryDashboardFilters['store_id'] ?>">
+                    <?php endif; ?>
+                <?php endif; ?>
+                <div class="inventory-dashboard-field">
+                    <label>من تاريخ</label>
+                    <input type="date" name="date_from" class="form-control" value="<?= posmain_inventory_dashboard_h($inventoryDashboardFilters['date_from']) ?>">
+                </div>
+                <div class="inventory-dashboard-field">
+                    <label>إلى تاريخ</label>
+                    <input type="date" name="date_to" class="form-control" value="<?= posmain_inventory_dashboard_h($inventoryDashboardFilters['date_to']) ?>">
+                </div>
+                <?php if (!$inventoryDashboardItemFocus): ?>
                 <div class="inventory-dashboard-field">
                     <label>المخزن</label>
                     <select name="store_id" class="form-control">
@@ -111,59 +181,66 @@ include __DIR__ . '/includes/sidebar.php';
                         <?php endforeach; ?>
                     </select>
                 </div>
+                <div class="inventory-dashboard-field wide">
+                    <label>بحث</label>
+                    <input type="search" name="q" class="form-control" placeholder="اسم الصنف أو الباركود أو رقم الصنف" value="<?= posmain_inventory_dashboard_h($inventoryDashboardFilters['q']) ?>">
+                </div>
+                <?php elseif ((int) $inventoryDashboardFilters['store_id'] <= 0): ?>
+                <div class="inventory-dashboard-field">
+                    <label>المخزن</label>
+                    <select name="store_id" class="form-control">
+                        <option value="">كل المخازن</option>
+                        <?php foreach ($inventoryDashboardStores as $store): ?>
+                            <option value="<?= (int) $store['id'] ?>" <?= (int) $inventoryDashboardFilters['store_id'] === (int) $store['id'] ? 'selected' : '' ?>>
+                                <?= posmain_inventory_dashboard_h(($store['aname'] ?? '') !== '' ? $store['aname'] : 'مخزن غير مسمى') ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+                <?php endif; ?>
+                <div class="inventory-dashboard-field">
+                    <label>نوع الحركة</label>
+                    <select name="movement_type" class="form-control">
+                        <option value="">كل الحركات</option>
+                        <?php if ($inventoryDashboardFilters['movement_type'] !== '' && !isset($inventoryDashboardMovementTypes[$inventoryDashboardFilters['movement_type']])): ?>
+                            <option value="<?= posmain_inventory_dashboard_h($inventoryDashboardFilters['movement_type']) ?>" selected>نوع حركة محدد من الرابط</option>
+                        <?php endif; ?>
+                        <?php foreach ($inventoryDashboardMovementTypes as $movementType => $movementLabel): ?>
+                            <option value="<?= posmain_inventory_dashboard_h($movementType) ?>" <?= $inventoryDashboardFilters['movement_type'] === $movementType ? 'selected' : '' ?>>
+                                <?= posmain_inventory_dashboard_h($movementLabel) ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
                 <div class="inventory-dashboard-field">
                     <label>عدد الصفوف</label>
-                    <input type="number" name="limit" class="form-control" min="1" max="12" value="<?= (int) $inventoryDashboardFilters['limit'] ?>">
+                    <input type="number" name="limit" class="form-control" min="1" max="500" value="<?= (int) $inventoryDashboardFilters['limit'] ?>">
                 </div>
                 <div class="inventory-dashboard-field">
                     <label>&nbsp;</label>
-                    <button type="submit" class="inventory-dashboard-btn primary"><i class="fas fa-filter"></i> تحديث اللوحة</button>
+                    <div class="inventory-dashboard-filter-actions">
+                        <button type="submit" class="inventory-dashboard-btn primary"><i class="fas fa-filter"></i> عرض الحركات</button>
+                    </div>
                 </div>
             </form>
 
-            <div class="inventory-dashboard-kpis">
-                <?php foreach (posmain_inventory_dashboard_cards($inventoryDashboardSummary, $inventoryDashboardCanViewCost) as $card): ?>
-                    <div class="inventory-dashboard-kpi">
-                        <span><?= posmain_inventory_dashboard_h($card['label']) ?></span>
-                        <strong><?= posmain_inventory_dashboard_h($card['value']) ?></strong>
-                    </div>
-                <?php endforeach; ?>
+            <div class="inventory-dashboard-panel">
+                <div class="inventory-dashboard-panel-header">
+                    <h2 class="inventory-dashboard-panel-title">سجل الحركات</h2>
+                    <span class="inventory-dashboard-chip"><i class="fas fa-list"></i> <?= count($inventoryDashboardMovements) ?> حركة</span>
+                    <?php if (!$inventoryDashboardCanViewCost): ?>
+                        <span class="inventory-dashboard-chip" style="background:#fff7ed;color:#9a3412"><i class="fas fa-eye-slash"></i> أعمدة التكلفة مخفية</span>
+                    <?php endif; ?>
+                </div>
+                <?= posmain_inventory_dashboard_movements_table($inventoryDashboardMovements, $inventoryDashboardCanViewCost, $inventoryDashboardItemFocus) ?>
             </div>
-
-            <div class="inventory-dashboard-grid">
-                <div class="inventory-dashboard-panel">
-                    <div class="inventory-dashboard-panel-header">
-                        <h2 class="inventory-dashboard-panel-title">يحتاج انتباه</h2>
-                        <span class="inventory-dashboard-chip"><?= count($inventoryDashboardDetails['needs_attention'] ?? []) ?> صنف</span>
-                    </div>
-                    <?= posmain_inventory_dashboard_low_stock_table($inventoryDashboardDetails['needs_attention'] ?? []) ?>
-                </div>
-
-                <div class="inventory-dashboard-panel">
-                    <div class="inventory-dashboard-panel-header">
-                        <h2 class="inventory-dashboard-panel-title">اقتراحات الشراء</h2>
-                        <a class="inventory-dashboard-chip" href="inventory_reports.php?report=replenishment_suggestions">فتح التقرير</a>
-                    </div>
-                    <?= posmain_inventory_dashboard_replenishment_table($inventoryDashboardDetails['replenishment_suggestions'] ?? []) ?>
-                </div>
-
-                <div class="inventory-dashboard-panel">
-                    <div class="inventory-dashboard-panel-header">
-                        <h2 class="inventory-dashboard-panel-title">آخر حركات المخزون</h2>
-                        <a class="inventory-dashboard-chip" href="inventory_reports.php?report=movement_history">الحركات</a>
-                    </div>
-                    <?= posmain_inventory_dashboard_movements_table($inventoryDashboardDetails['recent_movements'] ?? []) ?>
-                </div>
-
-                <div class="inventory-dashboard-panel">
-                    <div class="inventory-dashboard-panel-header">
-                        <h2 class="inventory-dashboard-panel-title">تأثير توفر القائمة</h2>
-                        <span class="inventory-dashboard-chip"><?= count($inventoryDashboardDetails['menu_availability_impact'] ?? []) ?> عنصر</span>
-                    </div>
-                    <?= posmain_inventory_dashboard_availability_table($inventoryDashboardDetails['menu_availability_impact'] ?? []) ?>
-                </div>
-            </div>
-            <p class="inventory-dashboard-note">لوحة المخزون للقراءة فقط. إجراءات الاستلام والجرد والتحويل والهالك تتم من صفحاتها المخصصة وتظل محكومة بخدمات المخزون.</p>
+            <p class="inventory-dashboard-note">
+                <?php if ($inventoryDashboardItemFocus): ?>
+                    عرض حركات هذا الصنف فقط. الإجماليات محسوبة من الصفوف المعروضة حتى الحد المحدد.
+                <?php else: ?>
+                    هذه الصفحة للقراءة فقط ولا تعدل المخزون. الإجماليات أعلاه محسوبة من الصفوف المعروضة حتى الحد المحدد. للتصدير أو تقارير أخرى استخدم <a href="inventory_reports.php">لوحة المخزون</a>.
+                <?php endif; ?>
+            </p>
         </div>
     </section>
 </div>
@@ -187,12 +264,111 @@ function posmain_inventory_dashboard_can_view_cost(mysqli $conn): bool
 function posmain_inventory_dashboard_filters(array $input): array
 {
     return [
+        'date_from' => posmain_inventory_dashboard_date($input['date_from'] ?? ''),
+        'date_to' => posmain_inventory_dashboard_date($input['date_to'] ?? ''),
         'pos_tenant' => isset($input['pos_tenant']) && (int) $input['pos_tenant'] >= 0 ? (int) $input['pos_tenant'] : -1,
-        'pos_branch' => isset($input['pos_branch']) && (int) $input['pos_branch'] >= 0 ? (int) $input['pos_branch'] : -1,
+        'pos_branch' => isset($input['pos_branch']) && $input['pos_branch'] !== '' ? max(0, (int) $input['pos_branch']) : -1,
         'store_id' => isset($input['store_id']) && (int) $input['store_id'] > 0 ? (int) $input['store_id'] : 0,
         'item_id' => isset($input['item_id']) && (int) $input['item_id'] > 0 ? (int) $input['item_id'] : 0,
-        'limit' => isset($input['limit']) ? max(1, min(12, (int) $input['limit'])) : 8,
+        'q' => posmain_inventory_dashboard_search_text($input['q'] ?? ''),
+        'movement_type' => preg_replace('/[^a-zA-Z0-9_:-]/', '', strtolower(trim((string) ($input['movement_type'] ?? '')))),
+        'limit' => isset($input['limit']) ? max(1, min(500, (int) $input['limit'])) : 100,
     ];
+}
+
+function posmain_inventory_dashboard_date($value): string
+{
+    $value = trim((string) $value);
+    if ($value === '') {
+        return '';
+    }
+
+    $date = DateTime::createFromFormat('Y-m-d', $value);
+
+    return $date instanceof DateTime ? $date->format('Y-m-d') : '';
+}
+
+function posmain_inventory_dashboard_search_text($value): string
+{
+    $value = trim((string) $value);
+
+    return mb_substr($value, 0, 120);
+}
+
+function posmain_inventory_dashboard_reports_url(array $filters): string
+{
+    $params = ['report' => 'movement_history'];
+    foreach (['date_from', 'date_to', 'pos_branch', 'store_id', 'item_id', 'q', 'movement_type', 'limit'] as $key) {
+        $value = $filters[$key] ?? '';
+        if ($key === 'pos_branch' && (int) $value < 0) {
+            continue;
+        }
+        if (in_array($key, ['store_id', 'item_id'], true) && (int) $value <= 0) {
+            continue;
+        }
+        if ($value === '' || $value === 0) {
+            continue;
+        }
+        $params[$key] = $value;
+    }
+
+    return 'inventory_reports.php?' . http_build_query($params);
+}
+
+function posmain_inventory_dashboard_focused_item(mysqli $conn, int $itemId): ?array
+{
+    if ($itemId <= 0) {
+        return null;
+    }
+
+    $rows = posmain_inventory_dashboard_rows($conn, '
+        SELECT id, iname, barcode
+        FROM myitems
+        WHERE id = ' . $itemId . '
+        LIMIT 1
+    ');
+
+    return $rows[0] ?? null;
+}
+
+function posmain_inventory_dashboard_store_name(array $stores, int $storeId): string
+{
+    if ($storeId <= 0) {
+        return '';
+    }
+
+    foreach ($stores as $store) {
+        if ((int) ($store['id'] ?? 0) === $storeId) {
+            return trim((string) ($store['aname'] ?? '')) !== '' ? (string) $store['aname'] : 'مخزن غير مسمى';
+        }
+    }
+
+    return '';
+}
+
+function posmain_inventory_dashboard_movement_stats(array $rows, array $dashboard, bool $canViewCost, bool $itemFocus = false): array
+{
+    $qtyIn = 0.0;
+    $qtyOut = 0.0;
+    $totalCost = 0.0;
+    foreach ($rows as $row) {
+        $qtyIn += (float) ($row['qty_in'] ?? 0);
+        $qtyOut += (float) ($row['qty_out'] ?? 0);
+        $totalCost += (float) ($row['total_cost'] ?? 0);
+    }
+
+    $stats = [];
+    if (!$itemFocus) {
+        $stats[] = ['label' => 'حركات اليوم', 'value' => number_format((float) ($dashboard['movements_today'] ?? 0), 0), 'note' => 'كل الفروع والمخازن'];
+    }
+    $stats[] = ['label' => 'حركات معروضة', 'value' => number_format(count($rows), 0), 'note' => $itemFocus ? 'لهذا الصنف' : 'حسب الفلاتر والحد'];
+    $stats[] = ['label' => 'إجمالي الداخل', 'value' => posmain_inventory_dashboard_qty($qtyIn), 'note' => 'في الصفوف المعروضة'];
+    $stats[] = ['label' => 'إجمالي الخارج', 'value' => posmain_inventory_dashboard_qty($qtyOut), 'note' => 'في الصفوف المعروضة'];
+    if ($canViewCost) {
+        $stats[] = ['label' => 'إجمالي التكلفة', 'value' => posmain_inventory_dashboard_money($totalCost), 'note' => 'في الصفوف المعروضة'];
+    }
+
+    return $stats;
 }
 
 function posmain_inventory_dashboard_stores(mysqli $conn): array
@@ -342,76 +518,60 @@ function posmain_inventory_dashboard_option_exists(array $rows, int $id): bool
     return false;
 }
 
-function posmain_inventory_dashboard_cards(array $dashboard, bool $canViewCost): array
+function posmain_inventory_dashboard_movements_table(array $rows, bool $canViewCost, bool $hideItemColumns = false): string
 {
-    $cards = [
-        ['label' => 'أصناف لها رصيد', 'value' => number_format((float) ($dashboard['item_count'] ?? 0), 0)],
-        ['label' => 'أصناف منخفضة', 'value' => number_format((float) ($dashboard['low_stock_count'] ?? 0), 0)],
-        ['label' => 'أصناف سالبة', 'value' => number_format((float) ($dashboard['negative_count'] ?? 0), 0)],
-        ['label' => 'حركات اليوم', 'value' => number_format((float) ($dashboard['movements_today'] ?? 0), 0)],
-        ['label' => 'جرد مفتوح', 'value' => number_format((float) ($dashboard['open_counts'] ?? 0), 0)],
-        ['label' => 'تحويلات مفتوحة', 'value' => number_format((float) ($dashboard['open_transfers'] ?? 0), 0)],
-        ['label' => 'أوامر شراء مفتوحة', 'value' => number_format((float) ($dashboard['open_purchase_orders'] ?? 0), 0)],
-    ];
+    if (!$rows) {
+        return '<div class="inventory-dashboard-empty">لا توجد حركات مطابقة للفلاتر الحالية.</div>';
+    }
+
+    $html = '<div class="table-responsive"><table class="table table-bordered table-hover inventory-dashboard-table"><thead><tr>';
+    $html .= '<th>التاريخ</th><th>المخزن</th>';
+    if (!$hideItemColumns) {
+        $html .= '<th>الصنف</th><th>الباركود</th>';
+    }
+    $html .= '<th>نوع الحركة</th><th>المصدر</th><th>داخل</th><th>خارج</th>';
     if ($canViewCost) {
-        array_unshift($cards, ['label' => 'قيمة المخزون', 'value' => posmain_inventory_dashboard_money($dashboard['stock_value'] ?? 0)]);
+        $html .= '<th>تكلفة الوحدة</th><th>إجمالي التكلفة</th><th>القيد</th>';
     }
+    $html .= '<th></th></tr></thead><tbody>';
 
-    return array_slice($cards, 0, 8);
-}
-
-function posmain_inventory_dashboard_low_stock_table(array $rows): string
-{
-    if (!$rows) {
-        return '<div class="inventory-dashboard-empty">لا توجد أصناف منخفضة حسب الفلاتر الحالية.</div>';
-    }
-
-    $html = '<div class="table-responsive"><table class="table table-bordered inventory-dashboard-table"><thead><tr><th>الصنف</th><th>المخزن</th><th>المتاح</th><th>نقطة الطلب</th><th></th></tr></thead><tbody>';
     foreach ($rows as $row) {
-        $html .= '<tr><td>' . posmain_inventory_dashboard_h(($row['item_name'] ?? '') !== '' ? $row['item_name'] : 'صنف غير مسمى') . '</td><td>' . posmain_inventory_dashboard_h(($row['store_name'] ?? '') !== '' ? $row['store_name'] : 'مخزن غير مسمى') . '</td><td>' . posmain_inventory_dashboard_decimal($row['qty_available'] ?? 0) . '</td><td>' . posmain_inventory_dashboard_decimal($row['reorder_level'] ?? $row['minimum_level'] ?? 0) . '</td><td>' . posmain_inventory_dashboard_link($row['drilldown_url'] ?? '') . '</td></tr>';
+        $qtyIn = (float) ($row['qty_in'] ?? 0);
+        $qtyOut = (float) ($row['qty_out'] ?? 0);
+        $html .= '<tr>';
+        $html .= '<td>' . posmain_inventory_dashboard_h($row['created_at'] ?? '') . '</td>';
+        $html .= '<td>' . posmain_inventory_dashboard_h(($row['store_name'] ?? '') !== '' ? $row['store_name'] : 'مخزن غير مسمى') . '</td>';
+        if (!$hideItemColumns) {
+            $html .= '<td>' . posmain_inventory_dashboard_item_link((int) ($row['item_id'] ?? 0), ($row['item_name'] ?? '') !== '' ? $row['item_name'] : 'صنف غير مسمى') . '</td>';
+            $html .= '<td>' . posmain_inventory_dashboard_item_link((int) ($row['item_id'] ?? 0), (string) ($row['barcode'] ?? '')) . '</td>';
+        }
+        $html .= '<td>' . posmain_inventory_dashboard_h(posmain_inventory_dashboard_movement_label((string) ($row['movement_type'] ?? ''))) . '</td>';
+        $html .= '<td>' . posmain_inventory_dashboard_h(posmain_inventory_dashboard_source_type_label((string) ($row['source_type'] ?? ''))) . '</td>';
+        $html .= '<td class="movement-in">' . posmain_inventory_dashboard_decimal($qtyIn) . '</td>';
+        $html .= '<td class="movement-out">' . posmain_inventory_dashboard_decimal($qtyOut) . '</td>';
+        if ($canViewCost) {
+            $html .= '<td>' . posmain_inventory_dashboard_money($row['unit_cost'] ?? 0) . '</td>';
+            $html .= '<td>' . posmain_inventory_dashboard_money($row['total_cost'] ?? 0) . '</td>';
+            $html .= '<td>' . posmain_inventory_dashboard_h($row['accounting_journal_id'] ?? '') . '</td>';
+        }
+        $html .= '<td>' . posmain_inventory_dashboard_link($row['drilldown_url'] ?? '') . '</td>';
+        $html .= '</tr>';
     }
+
     return $html . '</tbody></table></div>';
 }
 
-function posmain_inventory_dashboard_replenishment_table(array $rows): string
+function posmain_inventory_dashboard_item_link(int $itemId, string $label): string
 {
-    if (!$rows) {
-        return '<div class="inventory-dashboard-empty">لا توجد اقتراحات شراء الآن.</div>';
+    $label = trim($label);
+    if ($label === '') {
+        return '';
+    }
+    if ($itemId <= 0) {
+        return posmain_inventory_dashboard_h($label);
     }
 
-    $html = '<div class="table-responsive"><table class="table table-bordered inventory-dashboard-table"><thead><tr><th>الصنف</th><th>المورد</th><th>المقترح</th><th>وحدة الشراء</th><th></th></tr></thead><tbody>';
-    foreach ($rows as $row) {
-        $supplier = trim((string) ($row['default_supplier_name'] ?? '')) !== '' ? $row['default_supplier_name'] : 'بدون مورد افتراضي';
-        $html .= '<tr><td>' . posmain_inventory_dashboard_h(($row['item_name'] ?? '') !== '' ? $row['item_name'] : 'صنف غير مسمى') . '</td><td>' . posmain_inventory_dashboard_h($supplier) . '</td><td>' . posmain_inventory_dashboard_decimal($row['suggested_purchase_qty'] ?? $row['suggested_qty'] ?? 0) . '</td><td>' . posmain_inventory_dashboard_h(($row['preferred_purchase_unit_name'] ?? '') !== '' ? $row['preferred_purchase_unit_name'] : 'الوحدة الأساسية') . '</td><td>' . posmain_inventory_dashboard_link($row['drilldown_url'] ?? '') . '</td></tr>';
-    }
-    return $html . '</tbody></table></div>';
-}
-
-function posmain_inventory_dashboard_movements_table(array $rows): string
-{
-    if (!$rows) {
-        return '<div class="inventory-dashboard-empty">لا توجد حركات حديثة.</div>';
-    }
-
-    $html = '<div class="table-responsive"><table class="table table-bordered inventory-dashboard-table"><thead><tr><th>الوقت</th><th>الصنف</th><th>النوع</th><th>داخل</th><th>خارج</th></tr></thead><tbody>';
-    foreach ($rows as $row) {
-        $html .= '<tr><td>' . posmain_inventory_dashboard_h($row['created_at'] ?? '') . '</td><td>' . posmain_inventory_dashboard_h(($row['item_name'] ?? '') !== '' ? $row['item_name'] : 'صنف غير مسمى') . '</td><td>' . posmain_inventory_dashboard_h(posmain_inventory_dashboard_movement_label((string) ($row['movement_type'] ?? ''))) . '</td><td>' . posmain_inventory_dashboard_decimal($row['qty_in'] ?? 0) . '</td><td>' . posmain_inventory_dashboard_decimal($row['qty_out'] ?? 0) . '</td></tr>';
-    }
-    return $html . '</tbody></table></div>';
-}
-
-function posmain_inventory_dashboard_availability_table(array $rows): string
-{
-    if (!$rows) {
-        return '<div class="inventory-dashboard-empty">لا توجد عناصر قائمة متأثرة بالمخزون الآن.</div>';
-    }
-
-    $html = '<div class="table-responsive"><table class="table table-bordered inventory-dashboard-table"><thead><tr><th>عنصر القائمة</th><th>المكوّن المحدد</th><th>المتاح</th><th>القناة</th><th></th></tr></thead><tbody>';
-    foreach ($rows as $row) {
-        $orderChannel = posmain_inventory_dashboard_order_type_label((string) ($row['order_type'] ?? '')) . ' / ' . posmain_inventory_dashboard_channel_label((string) ($row['channel'] ?? ''));
-        $html .= '<tr><td>' . posmain_inventory_dashboard_h(($row['sellable_item_name'] ?? '') !== '' ? $row['sellable_item_name'] : 'عنصر غير مسمى') . '</td><td>' . posmain_inventory_dashboard_h(($row['blocking_item_name'] ?? '') !== '' ? $row['blocking_item_name'] : ($row['unavailable_reason'] ?? '')) . '</td><td>' . posmain_inventory_dashboard_decimal($row['effective_available_qty'] ?? 0) . '</td><td>' . posmain_inventory_dashboard_h($orderChannel) . '</td><td>' . posmain_inventory_dashboard_link($row['drilldown_url'] ?? '') . '</td></tr>';
-    }
-    return $html . '</tbody></table></div>';
+    return '<a class="inventory-dashboard-item-link" href="' . posmain_inventory_dashboard_h('add_item.php?edit=' . $itemId) . '">' . posmain_inventory_dashboard_h($label) . '</a>';
 }
 
 function posmain_inventory_dashboard_link(string $url): string
@@ -424,9 +584,9 @@ function posmain_inventory_dashboard_link(string $url): string
     return '<a class="btn btn-sm btn-outline-primary" href="' . posmain_inventory_dashboard_h($url) . '"><i class="fas fa-arrow-left"></i></a>';
 }
 
-function posmain_inventory_dashboard_movement_label(string $movementType): string
+function posmain_inventory_dashboard_movement_type_labels(): array
 {
-    $labels = [
+    return [
         'purchase' => 'شراء',
         'purchase_return' => 'مرتجع شراء',
         'sale_direct' => 'بيع مباشر',
@@ -443,32 +603,30 @@ function posmain_inventory_dashboard_movement_label(string $movementType): strin
         'sync_replay' => 'إعادة مزامنة',
         'opening_balance' => 'رصيد افتتاحي',
     ];
+}
+
+function posmain_inventory_dashboard_movement_label(string $movementType): string
+{
+    $labels = posmain_inventory_dashboard_movement_type_labels();
 
     return $labels[$movementType] ?? $movementType;
 }
 
-function posmain_inventory_dashboard_order_type_label(string $orderType): string
+function posmain_inventory_dashboard_source_type_label(string $sourceType): string
 {
     $labels = [
-        'table_order' => 'طاولة',
-        'dine_in' => 'محلي',
-        'takeaway' => 'سفري',
-        'delivery' => 'توصيل',
+        'purchase_receipt' => 'استلام شراء',
+        'sales_invoice' => 'فاتورة بيع',
+        'inventory_count' => 'جرد مخزون',
+        'inventory_transfer' => 'تحويل مخزون',
+        'inventory_adjustment' => 'تسوية مخزون',
+        'production_batch' => 'دفعة إنتاج',
+        'recipe' => 'وصفة',
+        'manual' => 'يدوي',
+        'sync' => 'مزامنة',
     ];
 
-    return $labels[$orderType] ?? $orderType;
-}
-
-function posmain_inventory_dashboard_channel_label(string $channel): string
-{
-    $labels = [
-        'pos' => 'نقطة البيع',
-        'pos_counter' => 'كاشير',
-        'moova' => 'موفا',
-        'online' => 'أونلاين',
-    ];
-
-    return $labels[$channel] ?? $channel;
+    return $labels[$sourceType] ?? $sourceType;
 }
 
 function posmain_inventory_dashboard_decimal($value): string
@@ -476,9 +634,14 @@ function posmain_inventory_dashboard_decimal($value): string
     return posmain_inventory_dashboard_h(number_format((float) $value, 3, '.', ''));
 }
 
+function posmain_inventory_dashboard_qty($value): string
+{
+    return number_format((float) $value, 3, '.', '');
+}
+
 function posmain_inventory_dashboard_money($value): string
 {
-    return posmain_inventory_dashboard_h(number_format((float) $value, 2, '.', ''));
+    return number_format((float) $value, 2, '.', '');
 }
 
 function posmain_inventory_dashboard_h($value): string

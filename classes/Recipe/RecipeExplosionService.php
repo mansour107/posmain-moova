@@ -83,6 +83,18 @@ class RecipeExplosionService
             return $this->fallback($context, 'recipes_disabled');
         }
 
+        return $this->buildRecipeExplosion($conn, $recipeId, $context, $orderQty);
+    }
+
+    public function explodeRecipeByIdForCosting(mysqli $conn, int $recipeId, RecipeOrderLineContext $context, ?string $orderQty = null): RecipeExplosionResult
+    {
+        $this->warnings = [];
+
+        return $this->buildRecipeExplosion($conn, $recipeId, $context, $orderQty);
+    }
+
+    private function buildRecipeExplosion(mysqli $conn, int $recipeId, RecipeOrderLineContext $context, ?string $orderQty): RecipeExplosionResult
+    {
         $recipe = $this->recipes->findHeaderById($conn, $recipeId);
         if (!$recipe) {
             throw new RuntimeException('Recipe not found.');

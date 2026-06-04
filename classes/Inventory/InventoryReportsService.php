@@ -2,9 +2,17 @@
 
 require_once __DIR__ . '/InventoryDecimal.php';
 require_once __DIR__ . '/InventoryAccountingReconciliationService.php';
+require_once dirname(__DIR__) . '/Recipe/RecipeInventoryDisplayCostService.php';
 
 class InventoryReportsService
 {
+    private $recipeDisplayCosts;
+
+    public function __construct(?RecipeInventoryDisplayCostService $recipeDisplayCosts = null)
+    {
+        $this->recipeDisplayCosts = $recipeDisplayCosts ?: new RecipeInventoryDisplayCostService();
+    }
+
     public function report(mysqli $conn, string $report, array $filters = []): array
     {
         switch ($report) {
@@ -79,7 +87,7 @@ class InventoryReportsService
         $params = [];
         $this->applyBalanceFilters($conn, $conditions, $params, 'b', 'item', $filters);
 
-        return $this->fetchAll($conn, "
+        $rows = $this->fetchAll($conn, "
 SELECT
   b.pos_tenant,
   b.pos_branch,
@@ -106,7 +114,7 @@ SELECT
   END AS inventory_status,
   b.last_movement_id,
   last_movement.created_at AS last_movement_at,
-  CONCAT('inventory_reports.php?report=movement_history&item_id=', b.item_id, '&store_id=', b.store_id) AS drilldown_url
+  CONCAT('inventory_dashboard.php?item_id=', b.item_id, '&store_id=', b.store_id) AS drilldown_url
 FROM inventory_item_balances b
 LEFT JOIN myitems item ON item.id = b.item_id
 LEFT JOIN acc_head store ON store.id = b.store_id
@@ -120,6 +128,8 @@ LEFT JOIN inventory_movements last_movement ON last_movement.id = b.last_movemen
 WHERE " . implode(' AND ', $conditions) . "
 ORDER BY inventory_status DESC, item.iname ASC, b.item_id ASC
 LIMIT " . $this->limit($filters['limit'] ?? 500), $params);
+
+        return $this->recipeDisplayCosts->enrichBalanceReportRows($conn, $rows, $filters);
     }
 
     private function movementHistory(mysqli $conn, array $filters): array
@@ -203,7 +213,7 @@ LIMIT " . $this->limit($filters['limit'] ?? 500), $params);
             ? "\nLEFT JOIN acc_head supplier\n  ON supplier.id = levels.default_supplier_account_id\n AND COALESCE(supplier.isdeleted, 0) = 0"
             : '';
 
-        return $this->fetchAll($conn, "
+        $rows = $this->fetchAll($conn, "
 SELECT
   b.pos_tenant,
   b.pos_branch,
@@ -240,7 +250,7 @@ SELECT
       THEN CEIL(GREATEST(COALESCE(levels.par_level, 0) - b.qty_available, 0) / purchase_item_unit.u_val) * purchase_item_unit.u_val
     ELSE GREATEST(COALESCE(levels.par_level, 0) - b.qty_available, 0)
   END * b.moving_average_cost) AS estimated_purchase_cost,
-  CONCAT('inventory_reports.php?report=movement_history&item_id=', b.item_id, '&store_id=', b.store_id) AS drilldown_url
+  CONCAT('inventory_dashboard.php?item_id=', b.item_id, '&store_id=', b.store_id) AS drilldown_url
 FROM inventory_item_balances b
 LEFT JOIN myitems item ON item.id = b.item_id
 LEFT JOIN acc_head store ON store.id = b.store_id
@@ -261,6 +271,8 @@ LEFT JOIN myunits purchase_unit
 WHERE " . implode(' AND ', $conditions) . "
 ORDER BY suggested_qty DESC, b.qty_available ASC, item.iname ASC
 LIMIT " . $this->limit($filters['limit'] ?? 500), $params);
+
+        return $this->recipeDisplayCosts->enrichBalanceReportRows($conn, $rows, $filters);
     }
 
     private function purchaseHistory(mysqli $conn, array $filters): array
@@ -498,7 +510,7 @@ SELECT
   COALESCE(SUM(im.total_cost), 0) AS total_cost,
   MIN(im.created_at) AS first_movement_at,
   MAX(im.created_at) AS last_movement_at,
-  CONCAT('inventory_reports.php?report=movement_history&item_id=', im.item_id, '&store_id=', im.store_id, '&movement_type=', im.movement_type) AS drilldown_url
+  CONCAT('inventory_dashboard.php?item_id=', im.item_id, '&store_id=', im.store_id, '&movement_type=', im.movement_type) AS drilldown_url
 FROM inventory_movements im
 LEFT JOIN myitems item ON item.id = im.item_id
 LEFT JOIN acc_head store ON store.id = im.store_id
@@ -578,7 +590,7 @@ LIMIT " . $this->limit($filters['limit'] ?? 500), $params);
         $params = [];
         $this->applyBalanceFilters($conn, $conditions, $params, 'b', 'item', $filters);
 
-        return $this->fetchAll($conn, "
+        $rows = $this->fetchAll($conn, "
 SELECT
   b.pos_tenant,
   b.pos_branch,
@@ -598,7 +610,7 @@ SELECT
   last_movement.unit_cost AS last_unit_cost,
   last_movement.total_cost AS last_total_cost,
   last_movement.created_at AS last_cost_movement_at,
-  CONCAT('inventory_reports.php?report=movement_history&item_id=', b.item_id, '&store_id=', b.store_id) AS drilldown_url
+  CONCAT('inventory_dashboard.php?item_id=', b.item_id, '&store_id=', b.store_id) AS drilldown_url
 FROM inventory_item_balances b
 LEFT JOIN myitems item ON item.id = b.item_id
 LEFT JOIN acc_head store ON store.id = b.store_id
@@ -606,6 +618,8 @@ LEFT JOIN inventory_movements last_movement ON last_movement.id = b.last_movemen
 WHERE " . implode(' AND ', $conditions) . "
 ORDER BY current_stock_value DESC, b.qty_on_hand DESC, item.iname ASC
 LIMIT " . $this->limit($filters['limit'] ?? 500), $params);
+
+        return $this->recipeDisplayCosts->enrichBalanceReportRows($conn, $rows, $filters);
     }
 
     private function menuAvailabilityImpact(mysqli $conn, array $filters): array

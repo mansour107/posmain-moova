@@ -4,6 +4,7 @@ $page_start_time = microtime(true);
 ob_start();
 
 include('includes/header.php');
+require_once __DIR__ . '/includes/csrf.php';
 include('includes/navbar.php');
 include('includes/sidebar.php');
 
@@ -162,6 +163,7 @@ if (!empty($elements['add_item_modal'])) {
             ?>
         
             <form action="<?php echo $form_action; ?>" method="post" id="myForm2">
+                <?= csrf_input('pos_browser') ?>
                 <input type="hidden" value="<?php echo $opid ?? ''; ?>" name="ot_id">
                 
                 <?php

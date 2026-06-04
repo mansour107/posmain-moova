@@ -125,7 +125,7 @@ try {
     inventoryPhase13Assert(inventoryPhase13DecimalEquals($valuationRows[0]['moving_average_cost'], '2.500000'), 'inventory valuation report should expose moving average cost');
     inventoryPhase13Assert(inventoryPhase13DecimalEquals($valuationRows[0]['current_stock_value'], '45.000000'), 'inventory valuation report should calculate current stock value');
     inventoryPhase13Assert((string) $valuationRows[0]['last_movement_type'] === 'waste', 'inventory valuation report should expose last movement type');
-    inventoryPhase13Assert(isset($valuationRows[0]['drilldown_url']) && strpos($valuationRows[0]['drilldown_url'], 'movement_history') !== false, 'inventory valuation report should link to movement history');
+    inventoryPhase13Assert(isset($valuationRows[0]['drilldown_url']) && strpos($valuationRows[0]['drilldown_url'], 'inventory_dashboard.php?item_id=') !== false, 'inventory valuation report should link to item movement dashboard');
 
     $movementRows = $reports->report($conn, 'movement_history', ['store_id' => 3, 'item_id' => 13001, 'movement_type' => 'waste', 'limit' => 50]);
     inventoryPhase13Assert(count($movementRows) === 1 && $movementRows[0]['movement_type'] === 'waste', 'movement history should filter by item and movement type');

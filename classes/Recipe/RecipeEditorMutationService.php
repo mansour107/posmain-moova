@@ -6,6 +6,7 @@ require_once __DIR__ . '/RecipeDefinitionService.php';
 require_once __DIR__ . '/RecipeDecimal.php';
 require_once __DIR__ . '/Repository/RecipeRepository.php';
 require_once __DIR__ . '/Repository/RecipeVariantLineRepository.php';
+require_once __DIR__ . '/RecipeEditorItemCostService.php';
 
 class RecipeEditorMutationService
 {
@@ -31,28 +32,33 @@ class RecipeEditorMutationService
             case 'add_line':
                 $recipeId = $this->positiveInt($input['recipe_id'] ?? null, 'Recipe id is required.');
                 $this->definition->addLine($conn, $recipeId, $this->linePayload($conn, $input), $actor);
+                $this->syncAutoItemCosts($conn, $recipeId);
                 return $this->result('Component added.', $recipeId);
 
             case 'update_line':
                 $recipeId = $this->positiveInt($input['recipe_id'] ?? null, 'Recipe id is required.');
                 $lineId = $this->positiveInt($input['line_id'] ?? null, 'Component id is required.');
                 $this->definition->updateLine($conn, $lineId, $this->linePayload($conn, $input), $actor);
+                $this->syncAutoItemCosts($conn, $recipeId);
                 return $this->result('Component updated.', $recipeId);
 
             case 'remove_line':
                 $recipeId = $this->positiveInt($input['recipe_id'] ?? null, 'Recipe id is required.');
                 $lineId = $this->positiveInt($input['line_id'] ?? null, 'Component id is required.');
                 $this->definition->removeLine($conn, $lineId, $actor);
+                $this->syncAutoItemCosts($conn, $recipeId);
                 return $this->result('Component removed.', $recipeId);
 
             case 'approve':
                 $recipeId = $this->positiveInt($input['recipe_id'] ?? null, 'Recipe id is required.');
                 $this->definition->approve($conn, $recipeId, $actor);
+                $this->syncAutoItemCosts($conn, $recipeId);
                 return $this->result('Recipe approved.', $recipeId);
 
             case 'activate':
                 $recipeId = $this->positiveInt($input['recipe_id'] ?? null, 'Recipe id is required.');
                 $this->definition->activate($conn, $recipeId, $actor);
+                $this->syncAutoItemCosts($conn, $recipeId);
                 return $this->result('Recipe activated.', $recipeId);
 
             case 'archive':
@@ -77,7 +83,13 @@ class RecipeEditorMutationService
                 $recipeId = $this->positiveInt($input['recipe_id'] ?? null, 'Recipe id is required.');
                 $variantItemId = $this->positiveInt($input['variant_item_id'] ?? null, 'Variation is required.');
                 $this->saveVariantRecipe($conn, $recipeId, $variantItemId, $input, $actor);
+                $this->syncAutoItemCosts($conn, $recipeId);
                 return $this->result('Variation recipe updated.', $recipeId);
+
+            case 'save_item_costs':
+                $recipeId = $this->positiveInt($input['recipe_id'] ?? null, 'Recipe id is required.');
+                $this->saveItemCosts($conn, $recipeId, $input);
+                return $this->result('Item costs updated.', $recipeId);
         }
 
         throw new InvalidArgumentException('Unsupported recipe editor action.');
@@ -297,6 +309,43 @@ LIMIT 1
         $this->assertCanEditVariationRecipe($conn, $recipeId, $variantItemId, $actor);
         $rows = $this->variantRecipeRows($conn, $input);
         (new RecipeVariantLineRepository())->replaceLinesForVariant($conn, $recipeId, $variantItemId, $rows);
+    }
+
+    private function saveItemCosts(mysqli $conn, int $recipeId, array $input): void
+    {
+        (new RecipeEditorItemCostService())->saveItemCostsFromInput(
+            $conn,
+            $recipeId,
+            $input,
+            $this->costPreviewContextForRecipe($conn, $recipeId)
+        );
+    }
+
+    private function syncAutoItemCosts(mysqli $conn, int $recipeId): void
+    {
+        (new RecipeEditorItemCostService())->applyAutoItemCosts(
+            $conn,
+            $recipeId,
+            $this->costPreviewContextForRecipe($conn, $recipeId)
+        );
+    }
+
+    private function costPreviewContextForRecipe(mysqli $conn, int $recipeId): array
+    {
+        $recipe = (new RecipeRepository())->findHeaderById($conn, $recipeId);
+        if (!$recipe) {
+            return [];
+        }
+
+        return [
+            'pos_tenant' => (int) ($recipe['pos_tenant'] ?? 0),
+            'pos_branch' => (int) ($recipe['pos_branch'] ?? 0),
+            'branch_uuid' => $recipe['branch_uuid'] ?? null,
+            'store_id' => 0,
+            'order_type' => 'takeaway',
+            'channel' => 'pos',
+            'costing_method' => (string) ($recipe['costing_method'] ?? 'item_cost_price'),
+        ];
     }
 
     private function assertCanEditVariationRecipe(mysqli $conn, int $recipeId, int $variantItemId, RecipeActorContext $actor): void

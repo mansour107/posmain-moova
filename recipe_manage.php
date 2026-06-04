@@ -7,6 +7,8 @@ require_once __DIR__ . '/includes/csrf.php';
 require_once __DIR__ . '/classes/Recipe/RecipeEditorMutationService.php';
 require_once __DIR__ . '/classes/Recipe/RecipeEditorPreviewService.php';
 require_once __DIR__ . '/classes/Recipe/RecipeEditorReadService.php';
+require_once __DIR__ . '/classes/Recipe/RecipeEditorItemCostService.php';
+require_once __DIR__ . '/classes/Recipe/RecipeDecimal.php';
 require_once __DIR__ . '/classes/Recipe/RecipeFeatureFlags.php';
 require_once __DIR__ . '/classes/Recipe/RecipeScopeResolver.php';
 
@@ -68,6 +70,14 @@ if ($selectedHeader) {
         $recipeManagePreviewError = $exception->getMessage();
     }
 }
+$recipeItemCostState = $selectedRecipe
+    ? (new RecipeEditorItemCostService())->buildEditorState(
+        $conn,
+        $selectedRecipe,
+        $selectedHeader ? posmain_recipe_manage_preview_context($_GET, $selectedHeader) : [],
+        $canViewRecipeCost
+    )
+    : ['visible' => false, 'items' => [], 'line_costs' => [], 'variant_line_costs' => []];
 
 include __DIR__ . '/includes/header.php';
 include __DIR__ . '/includes/navbar.php';
@@ -182,9 +192,21 @@ include __DIR__ . '/includes/sidebar.php';
                         $componentCount = count($selectedRecipe['lines']);
                         $availabilityPreview = $recipeManagePreview['availability'] ?? [];
                         $costPreview = $recipeManagePreview['cost'] ?? null;
+                        $recipeItemCosts = $recipeItemCostState['items'] ?? [];
+                        $recipeLineCosts = $recipeItemCostState['line_costs'] ?? [];
+                        $recipeVariantLineCosts = $recipeItemCostState['variant_line_costs'] ?? [];
+                        $mainItemCostRow = count($recipeVariants) === 0
+                            ? ($recipeItemCosts[(int) $mainItemId] ?? null)
+                            : null;
                         $canMakeText = posmain_recipe_manage_qty($availabilityPreview['effective_available_qty'] ?? '');
                         $missingText = trim((string) ($availabilityPreview['unavailable_reason'] ?? ''));
                         $missingDisplay = posmain_recipe_manage_ui_message($missingText);
+                        $recipeSummaryUnitCost = posmain_recipe_manage_summary_unit_cost(
+                            $costPreview,
+                            $recipeVariants,
+                            $recipeItemCosts,
+                            $canViewRecipeCost
+                        );
                         ?>
                         <div class="recipe-page-header mb-3">
                             <div>
@@ -219,7 +241,7 @@ include __DIR__ . '/includes/sidebar.php';
                             <div class="col-md-3 mb-2">
                                 <div class="recipe-summary-card">
                                     <span>تكلفة الوصفة</span>
-                                    <strong><?= $canViewRecipeCost && $costPreview ? posmain_recipe_manage_qty($costPreview['cost_per_sell_unit'] ?? '') : '-' ?></strong>
+                                    <strong><?= $recipeSummaryUnitCost !== '' ? posmain_recipe_manage_h($recipeSummaryUnitCost) : '-' ?></strong>
                                 </div>
                             </div>
                             <div class="col-md-3 mb-2">
@@ -300,10 +322,35 @@ include __DIR__ . '/includes/sidebar.php';
                                     </div>
                                 </div>
                                 <div class="recipe-section-fade" aria-hidden="true"></div>
+                                <?php if ($canViewRecipeCost && !empty($recipeItemCostState['visible'])): ?>
+                                    <?php if ($mainItemCostRow): ?>
+                                        <?= posmain_recipe_manage_item_cost_card(
+                                            (int) $selectedHeader['id'],
+                                            $mainItemCostRow,
+                                            'تكلفة الصنف',
+                                            $selectedIsDraft,
+                                            $recipeManageWritesEnabled
+                                        ) ?>
+                                    <?php endif; ?>
+                                <?php endif; ?>
                                 <?php if (count($recipeVariants) > 0): ?>
                                     <div class="recipe-variation-recipes mb-3">
                                         <?php foreach ($recipeVariants as $variantRecipeIndex => $variant): ?>
-                                            <?= posmain_recipe_manage_variant_recipe_card($conn, $selectedHeader, $variant, (int) $variantRecipeIndex, $recipeManageWritesEnabled, count($recipeVariants) === 1) ?>
+                                            <?php
+                                            $variantItemId = (int) ($variant['variant_item_id'] ?? 0);
+                                            $variantCostRow = $recipeItemCosts[$variantItemId] ?? null;
+                                            ?>
+                                            <?= posmain_recipe_manage_variant_recipe_card(
+                                                $conn,
+                                                $selectedHeader,
+                                                $variant,
+                                                (int) $variantRecipeIndex,
+                                                $recipeManageWritesEnabled,
+                                                false,
+                                                $variantCostRow,
+                                                $canViewRecipeCost,
+                                                $recipeVariantLineCosts[$variantItemId] ?? []
+                                            ) ?>
                                         <?php endforeach; ?>
                                     </div>
                                 <?php else: ?>
@@ -324,7 +371,7 @@ include __DIR__ . '/includes/sidebar.php';
                                                     </div>
                                                     <div class="col-md-2 mb-2">
                                                         <label>الكمية</label>
-                                                        <input type="text" name="qty_per_yield" class="form-control" value="1.00" required>
+                                                        <input type="number" name="qty_per_yield" class="form-control recipe-qty-input" value="1" step="1" min="1" required>
                                                     </div>
                                                     <div class="col-md-2 mb-2">
                                                         <label>الوحدة</label>
@@ -367,7 +414,8 @@ include __DIR__ . '/includes/sidebar.php';
                                                     <thead>
                                                         <tr>
                                                             <th>المكون</th>
-                                                            <th class="text-end">الكمية</th>
+                                                            <th class="recipe-unit-price-col">سعر الوحدة</th>
+                                                            <th class="recipe-qty-col text-end">الكمية</th>
                                                             <th>الوحدة</th>
                                                             <th>الهالك %</th>
                                                             <th>النوع</th>
@@ -385,11 +433,12 @@ include __DIR__ . '/includes/sidebar.php';
                                                                         <span><?= posmain_recipe_manage_h(posmain_recipe_manage_component_label($line)) ?></span>
                                                                     </span>
                                                                 </td>
-                                                                <td class="text-end"><?= posmain_recipe_manage_h(posmain_recipe_manage_qty($line['qty_per_yield'] ?? '')) ?></td>
+                                                                <td class="recipe-unit-price-col"><?= posmain_recipe_manage_component_unit_cost_field($line, $recipeLineCosts, $canViewRecipeCost) ?></td>
+                                                                <td class="recipe-qty-col text-end"><?= posmain_recipe_manage_h(posmain_recipe_manage_integer_qty($line['qty_per_yield'] ?? '')) ?></td>
                                                                 <td><?= posmain_recipe_manage_h(posmain_recipe_manage_unit_label($line)) ?></td>
                                                                 <td><?= posmain_recipe_manage_h(posmain_recipe_manage_qty($line['wastage_percent'] ?? '0.00')) ?></td>
                                                                 <td><?= posmain_recipe_manage_h(posmain_recipe_manage_component_type_label($line)) ?></td>
-                                                                <td><?= $canViewRecipeCost ? '-' : 'مخفية' ?></td>
+                                                                <td><?= $canViewRecipeCost ? posmain_recipe_manage_h(posmain_recipe_manage_line_cost_label($line, $recipeLineCosts)) : 'مخفية' ?></td>
                                                                 <td><?= posmain_recipe_manage_h(posmain_recipe_manage_applies_to_label($line)) ?></td>
                                                                 <td>
                                                                     <?php if ($selectedIsDraft): ?>
@@ -403,7 +452,7 @@ include __DIR__ . '/includes/sidebar.php';
                                                                                 <label>المكون</label>
                                                                                 <?= posmain_recipe_manage_component_input('line_' . (int) $line['id'], $line) ?>
                                                                                 <label class="mt-2">الكمية</label>
-                                                                                <input type="text" name="qty_per_yield" class="form-control" value="<?= posmain_recipe_manage_h(posmain_recipe_manage_qty($line['qty_per_yield'] ?? '1.00')) ?>" required>
+                                                                                <input type="number" name="qty_per_yield" class="form-control recipe-qty-input" value="<?= posmain_recipe_manage_h(posmain_recipe_manage_integer_qty($line['qty_per_yield'] ?? '1')) ?>" step="1" min="1" required>
                                                                                 <label class="mt-2">الوحدة</label>
                                                                                 <?= posmain_recipe_manage_unit_select($conn, 'unit_id', (int) ($line['unit_id'] ?? 0)) ?>
                                                                                 <label class="mt-2">الهالك %</label>
@@ -458,8 +507,23 @@ include __DIR__ . '/includes/sidebar.php';
                                                 <div class="col-md-4 mb-2"><strong>آخر حساب:</strong> <?= posmain_recipe_manage_h(date('Y-m-d H:i')) ?></div>
                                                 <?php if ($canViewRecipeCost && $costPreview): ?>
                                                     <div class="col-md-4 mb-2"><strong>تكلفة الوصفة:</strong> <?= posmain_recipe_manage_qty($costPreview['cost_per_yield'] ?? '') ?></div>
-                                                    <div class="col-md-4 mb-2"><strong>تكلفة الوحدة المباعة:</strong> <?= posmain_recipe_manage_qty($costPreview['cost_per_sell_unit'] ?? '') ?></div>
+                                                    <div class="col-md-4 mb-2"><strong>تكلفة الوحدة المباعة:</strong> <?= posmain_recipe_manage_h($recipeSummaryUnitCost !== '' ? $recipeSummaryUnitCost : posmain_recipe_manage_qty($costPreview['cost_per_sell_unit'] ?? '')) ?></div>
                                                     <div class="col-md-4 mb-2"><strong>هامش الربح:</strong> -</div>
+                                                <?php endif; ?>
+                                                <?php if ($canViewRecipeCost && !empty($recipeItemCostState['visible'])): ?>
+                                                    <div class="col-md-12 mt-2">
+                                                        <?php if ($mainItemCostRow): ?>
+                                                            <?= posmain_recipe_manage_item_cost_card(
+                                                                (int) $selectedHeader['id'],
+                                                                $mainItemCostRow,
+                                                                'تكلفة الصنف المحفوظة',
+                                                                $selectedIsDraft,
+                                                                $recipeManageWritesEnabled
+                                                            ) ?>
+                                                        <?php elseif (count($recipeVariants) > 0): ?>
+                                                            <div class="alert alert-light mb-0">تكلفة كل تنويعة تظهر داخل قسم التنويعات في تفاصيل الوصفة.</div>
+                                                        <?php endif; ?>
+                                                    </div>
                                                 <?php endif; ?>
                                                 <div class="col-md-4 mb-2"><strong>يمكن تحضير الآن:</strong> <?= $canMakeText !== '' ? posmain_recipe_manage_h($canMakeText) : '-' ?></div>
                                                 <div class="col-md-4 mb-2"><strong>المكون المحدد:</strong> <?= $missingDisplay !== '' ? posmain_recipe_manage_h($missingDisplay) : 'لا يوجد' ?></div>
@@ -543,7 +607,7 @@ include __DIR__ . '/includes/sidebar.php';
                                     <div class="card-body">
                                         <div class="recipe-side-card-row">
                                             <span class="recipe-side-icon recipe-side-icon-green"><i class="fas fa-money-bill-wave"></i></span>
-                                            <span><strong><?= $canViewRecipeCost && $costPreview ? posmain_recipe_manage_qty($costPreview['cost_per_sell_unit'] ?? '') . ' ج.م' : '-' ?></strong><small>لكل وحدة</small></span>
+                                            <span><strong><?= $recipeSummaryUnitCost !== '' ? posmain_recipe_manage_h($recipeSummaryUnitCost) . ' ج.م' : '-' ?></strong><small>لكل وحدة</small></span>
                                         </div>
                                     </div>
                                 </div>
@@ -874,6 +938,15 @@ include __DIR__ . '/includes/sidebar.php';
 .recipe-variation-recipe-card summary::-webkit-details-marker {
     display: none;
 }
+.recipe-variation-recipe-toggle {
+    color: #64748b;
+    flex-shrink: 0;
+    font-size: 14px;
+    transition: transform 0.2s ease;
+}
+.recipe-variation-recipe-card[open] .recipe-variation-recipe-toggle {
+    transform: rotate(180deg);
+}
 .recipe-variation-recipe-card-direct {
     display: block;
 }
@@ -901,13 +974,36 @@ include __DIR__ . '/includes/sidebar.php';
 .recipe-variation-recipe-table td {
     vertical-align: middle;
 }
+.recipe-qty-col {
+    min-width: 88px;
+    width: 96px;
+}
+.recipe-qty-input,
 .recipe-variation-amount {
-    font-size: 18px;
-    font-weight: 800;
-    max-width: 130px;
+    font-size: 14px;
+    font-weight: 700;
+    min-width: 72px;
+    text-align: center;
+    width: 100%;
 }
 .recipe-variation-component-cell {
     min-width: 230px;
+}
+.recipe-unit-price-col {
+    min-width: 58px;
+    width: 68px;
+    white-space: nowrap;
+}
+.recipe-component-unit-cost {
+    background: #f8fafc;
+    border-color: #e2e8f0;
+    color: #334155;
+    font-size: 11px;
+    font-weight: 700;
+    min-width: 54px;
+    padding: 2px 4px;
+    text-align: center;
+    width: 100%;
 }
 .recipe-component-form {
     background: #f8fafc;
@@ -1140,6 +1236,13 @@ include __DIR__ . '/includes/sidebar.php';
             return document.getElementById('recipe-info-form');
         }
 
+        if (activePanel.id === 'recipe-cost-stock') {
+            const costForm = activePanel.querySelector('form[data-recipe-save-form="item-costs"]');
+            if (isVisibleRecipeForm(costForm)) {
+                return costForm;
+            }
+        }
+
         if (activePanel.id === 'recipe-details') {
             const focusedForm = document.activeElement ? document.activeElement.closest('form[data-recipe-save-form]') : null;
             if (isVisibleRecipeForm(focusedForm)) {
@@ -1206,7 +1309,7 @@ include __DIR__ . '/includes/sidebar.php';
         const clone = sample.cloneNode(true);
         clone.querySelectorAll('input').forEach(function (input) {
             if (input.name === 'variant_recipe_qty_per_yield[]') {
-                input.value = '1.00';
+                input.value = '1';
             } else if (input.name === 'variant_recipe_wastage_percent[]') {
                 input.value = '0.00';
             } else if (input.name === 'variant_recipe_line_type[]') {
@@ -1249,6 +1352,47 @@ include __DIR__ . '/includes/sidebar.php';
         }
     });
     document.querySelectorAll('[data-variant-recipe-card]').forEach(refreshVariantRecipeRows);
+
+    document.addEventListener('input', function (event) {
+        const input = event.target.closest ? event.target.closest('.recipe-item-cost-input') : null;
+        if (!input) {
+            return;
+        }
+        const form = input.closest('form');
+        const manualFlag = form ? form.querySelector('.recipe-item-cost-manual-flag') : null;
+        const calculated = (input.getAttribute('data-calculated-cost') || '').trim();
+        if (manualFlag) {
+            manualFlag.value = input.value.trim() !== calculated ? '1' : '0';
+        }
+    });
+
+    document.addEventListener('click', function (event) {
+        const resetButton = event.target.closest ? event.target.closest('.recipe-item-cost-reset') : null;
+        if (!resetButton) {
+            return;
+        }
+        const form = resetButton.closest('form');
+        if (!form) {
+            return;
+        }
+        const input = form.querySelector('.recipe-item-cost-input');
+        const resetFlag = form.querySelector('.recipe-item-cost-reset-flag');
+        const manualFlag = form.querySelector('.recipe-item-cost-manual-flag');
+        if (input) {
+            input.value = input.getAttribute('data-calculated-cost') || '0';
+        }
+        if (resetFlag) {
+            resetFlag.value = '1';
+        }
+        if (manualFlag) {
+            manualFlag.value = '0';
+        }
+        if (typeof form.requestSubmit === 'function') {
+            form.requestSubmit();
+        } else {
+            form.submit();
+        }
+    });
 
     function clearResults(input) {
         const box = input.parentElement ? input.parentElement.querySelector('.recipe-lookup-results') : null;
@@ -1424,6 +1568,51 @@ function posmain_recipe_manage_actor(mysqli $conn): RecipeActorContext
     );
 }
 
+function posmain_recipe_manage_summary_unit_cost(?array $costPreview, array $variants, array $itemCosts, bool $canViewCost): string
+{
+    if (!$canViewCost) {
+        return '';
+    }
+
+    if (count($variants) > 0 && $itemCosts) {
+        $amounts = [];
+        foreach ($variants as $variant) {
+            $variantItemId = (int) ($variant['variant_item_id'] ?? 0);
+            if ($variantItemId < 1 || !isset($itemCosts[$variantItemId])) {
+                continue;
+            }
+            $row = $itemCosts[$variantItemId];
+            $amounts[] = (string) ($row['display_cost'] ?? $row['calculated_cost'] ?? '0');
+        }
+        if ($amounts) {
+            $normalized = array_values(array_unique(array_map(static function (string $amount): string {
+                return RecipeDecimal::normalize($amount);
+            }, $amounts)));
+            if (count($normalized) === 1) {
+                return posmain_recipe_manage_qty($normalized[0]);
+            }
+
+            sort($normalized);
+            return posmain_recipe_manage_qty($normalized[0]) . ' - ' . posmain_recipe_manage_qty($normalized[count($normalized) - 1]);
+        }
+    }
+
+    if (!$costPreview) {
+        return '';
+    }
+
+    $range = $costPreview['variant_cost_range'] ?? null;
+    if (is_array($range)) {
+        $min = (string) ($range['cost_per_sell_unit_min'] ?? '');
+        $max = (string) ($range['cost_per_sell_unit_max'] ?? '');
+        if ($min !== '' && $max !== '' && RecipeDecimal::compare($min, $max) !== 0) {
+            return posmain_recipe_manage_qty($min) . ' - ' . posmain_recipe_manage_qty($max);
+        }
+    }
+
+    return posmain_recipe_manage_qty($costPreview['cost_per_sell_unit'] ?? '');
+}
+
 function posmain_recipe_manage_preview_context(array $request, array $recipe): array
 {
     return [
@@ -1595,25 +1784,45 @@ function posmain_recipe_manage_sellable_item_label(array $row): string
     return 'الصنف غير موجود';
 }
 
-function posmain_recipe_manage_variant_recipe_card(mysqli $conn, array $recipe, array $variant, int $index, bool $enabled, bool $direct = false): string
-{
+function posmain_recipe_manage_variant_recipe_card(
+    mysqli $conn,
+    array $recipe,
+    array $variant,
+    int $index,
+    bool $enabled,
+    bool $direct = false,
+    ?array $costRow = null,
+    bool $canViewCost = false,
+    array $lineCosts = []
+): string {
     $recipeId = (int) ($recipe['id'] ?? 0);
     $variantItemId = (int) ($variant['variant_item_id'] ?? 0);
     $label = trim((string) ($variant['variant_label'] ?? ''));
     $name = trim((string) ($variant['iname'] ?? $variant['name'] ?? ''));
     $title = $name !== '' ? $name : ($label !== '' ? $label : 'تنويعة');
+    $costHtml = ($canViewCost && $costRow)
+        ? posmain_recipe_manage_item_cost_fields($recipeId, $costRow, $enabled)
+        : '';
     $lines = is_array($variant['editable_recipe_lines'] ?? null) ? $variant['editable_recipe_lines'] : [];
     $rowHtml = '';
     foreach ($lines as $lineIndex => $line) {
-        $rowHtml .= posmain_recipe_manage_variant_recipe_line_row($conn, $variantItemId, $line, (int) $lineIndex);
+        $rowHtml .= posmain_recipe_manage_variant_recipe_line_row(
+            $conn,
+            $variantItemId,
+            $line,
+            (int) $lineIndex,
+            $lineCosts,
+            $canViewCost
+        );
     }
     if ($rowHtml === '') {
-        $rowHtml = posmain_recipe_manage_variant_recipe_line_row($conn, $variantItemId, null, 0);
+        $rowHtml = posmain_recipe_manage_variant_recipe_line_row($conn, $variantItemId, null, 0, $lineCosts, $canViewCost);
     }
     $disabled = $enabled ? '' : ' disabled';
 
     if ($direct) {
         return '<div class="recipe-variation-recipe-card recipe-variation-recipe-card-direct" data-variant-recipe-card data-variant-item-id="' . $variantItemId . '">'
+        . ($costHtml !== '' ? '<div class="recipe-variation-cost-row px-3 pt-3">' . $costHtml . '</div>' : '')
         . '<div class="recipe-variation-recipe-body">'
         . '<form method="POST" class="recipe-variant-recipe-form" data-recipe-save-form="variant-recipe">'
         . csrf_input('recipe_editor')
@@ -1622,7 +1831,7 @@ function posmain_recipe_manage_variant_recipe_card(mysqli $conn, array $recipe, 
         . '<input type="hidden" name="variant_item_id" value="' . $variantItemId . '">'
         . '<div class="table-responsive">'
         . '<table class="table table-sm recipe-variation-recipe-table mb-2">'
-        . '<thead><tr><th>المكون</th><th>الكمية</th><th>الوحدة</th><th>الهالك %</th><th>ملاحظات</th><th>إجراءات</th></tr></thead>'
+        . '<thead><tr><th>المكون</th><th class="recipe-unit-price-col">سعر الوحدة</th><th class="recipe-qty-col">الكمية</th><th>الوحدة</th><th>الهالك %</th><th>ملاحظات</th><th>إجراءات</th></tr></thead>'
         . '<tbody class="recipe-variant-recipe-rows">' . $rowHtml . '</tbody>'
         . '</table>'
         . '</div>'
@@ -1636,8 +1845,12 @@ function posmain_recipe_manage_variant_recipe_card(mysqli $conn, array $recipe, 
 
     return '<details class="recipe-variation-recipe-card" data-variant-recipe-card data-variant-item-id="' . $variantItemId . '">'
         . '<summary>'
-        . '<span class="recipe-variation-recipe-title"><strong>' . posmain_recipe_manage_h($title) . '</strong></span>'
+        . '<span class="recipe-variation-recipe-title"><strong>' . posmain_recipe_manage_h($title) . '</strong>'
+        . ($costHtml !== '' ? '<span class="recipe-variation-cost-inline text-muted"> — تكلفة: ' . posmain_recipe_manage_h(posmain_recipe_manage_qty($costRow['display_cost'] ?? '')) . ' ج.م</span>' : '')
+        . '</span>'
+        . '<span class="recipe-variation-recipe-toggle" aria-hidden="true"><i class="fas fa-chevron-down"></i></span>'
         . '</summary>'
+        . ($costHtml !== '' ? '<div class="recipe-variation-cost-row px-3 pt-2">' . $costHtml . '</div>' : '')
         . '<div class="recipe-variation-recipe-body">'
         . '<form method="POST" class="recipe-variant-recipe-form" data-recipe-save-form="variant-recipe">'
         . csrf_input('recipe_editor')
@@ -1646,7 +1859,7 @@ function posmain_recipe_manage_variant_recipe_card(mysqli $conn, array $recipe, 
         . '<input type="hidden" name="variant_item_id" value="' . $variantItemId . '">'
         . '<div class="table-responsive">'
         . '<table class="table table-sm recipe-variation-recipe-table mb-2">'
-        . '<thead><tr><th>المكون</th><th>الكمية</th><th>الوحدة</th><th>الهالك %</th><th>ملاحظات</th><th>إجراءات</th></tr></thead>'
+        . '<thead><tr><th>المكون</th><th class="recipe-unit-price-col">سعر الوحدة</th><th class="recipe-qty-col">الكمية</th><th>الوحدة</th><th>الهالك %</th><th>ملاحظات</th><th>إجراءات</th></tr></thead>'
         . '<tbody class="recipe-variant-recipe-rows">' . $rowHtml . '</tbody>'
         . '</table>'
         . '</div>'
@@ -1658,8 +1871,103 @@ function posmain_recipe_manage_variant_recipe_card(mysqli $conn, array $recipe, 
         . '</details>';
 }
 
-function posmain_recipe_manage_variant_recipe_line_row(mysqli $conn, int $variantItemId, ?array $line, int $index): string
+function posmain_recipe_manage_item_cost_card(int $recipeId, array $costRow, string $title, bool $isDraft, bool $enabled): string
 {
+    $fields = posmain_recipe_manage_item_cost_fields($recipeId, $costRow, $isDraft && $enabled);
+    if ($fields === '') {
+        return '';
+    }
+
+    return '<div class="card border-secondary mb-3 recipe-item-cost-card">'
+        . '<div class="card-header bg-light">' . posmain_recipe_manage_h($title) . '</div>'
+        . '<div class="card-body">' . $fields . '</div>'
+        . '</div>';
+}
+
+function posmain_recipe_manage_item_cost_fields(int $recipeId, array $costRow, bool $enabled): string
+{
+    $itemId = (int) ($costRow['item_id'] ?? 0);
+    if ($itemId < 1) {
+        return '';
+    }
+
+    $calculated = posmain_recipe_manage_qty($costRow['calculated_cost'] ?? '0');
+    $display = posmain_recipe_manage_qty($costRow['display_cost'] ?? '0');
+    $manual = !empty($costRow['manual_cost_edit']);
+    $disabled = $enabled ? '' : ' disabled';
+
+    return '<form method="POST" class="recipe-item-cost-form" data-recipe-save-form="item-costs">'
+        . csrf_input('recipe_editor')
+        . '<input type="hidden" name="action" value="save_item_costs">'
+        . '<input type="hidden" name="recipe_id" value="' . $recipeId . '">'
+        . '<input type="hidden" name="item_cost_item_id[]" value="' . $itemId . '">'
+        . '<input type="hidden" name="item_cost_manual_edit[]" value="' . ($manual ? '1' : '0') . '" class="recipe-item-cost-manual-flag">'
+        . '<div class="row align-items-end">'
+        . '<div class="col-md-4 mb-2">'
+        . '<label class="text-muted mb-1">التكلفة المحسوبة من المكونات</label>'
+        . '<div class="form-control-plaintext"><strong>' . posmain_recipe_manage_h($calculated) . ' ج.م</strong></div>'
+        . '</div>'
+        . '<div class="col-md-4 mb-2">'
+        . '<label>تكلفة الصنف</label>'
+        . '<input type="number" class="form-control recipe-item-cost-input" name="item_cost_price[]" value="' . posmain_recipe_manage_h($display) . '" step="0.001" min="0" data-calculated-cost="' . posmain_recipe_manage_h($calculated) . '"' . $disabled . '>'
+        . '</div>'
+        . '<div class="col-md-4 mb-2">'
+        . '<button type="button" class="btn btn-outline-secondary recipe-item-cost-reset"' . $disabled . '>إعادة للحساب التلقائي</button>'
+        . '<input type="hidden" name="item_cost_reset_auto[]" value="0" class="recipe-item-cost-reset-flag">'
+        . '</div>'
+        . '</div>'
+        . ($manual ? '<small class="text-muted">تم تعديل التكلفة يدويا.</small>' : '<small class="text-muted">يتم تحديث التكلفة تلقائيا عند تغيير المكونات.</small>')
+        . '</form>';
+}
+
+function posmain_recipe_manage_line_cost_label(array $line, array $lineCosts): string
+{
+    $lineId = (int) ($line['id'] ?? 0);
+    if ($lineId < 1 || !isset($lineCosts[$lineId])) {
+        return '-';
+    }
+
+    $row = $lineCosts[$lineId];
+    $total = is_array($row) ? (string) ($row['total_cost'] ?? '0') : (string) $row;
+
+    return posmain_recipe_manage_qty($total) . ' ج.م';
+}
+
+function posmain_recipe_manage_line_unit_cost_value(array $line, array $lineCosts): string
+{
+    $lineId = (int) ($line['id'] ?? 0);
+    if ($lineId < 1 || !isset($lineCosts[$lineId])) {
+        return '';
+    }
+
+    $row = $lineCosts[$lineId];
+    if (!is_array($row)) {
+        return '';
+    }
+
+    return posmain_recipe_manage_qty($row['unit_cost'] ?? '');
+}
+
+function posmain_recipe_manage_component_unit_cost_field(array $line, array $lineCosts, bool $canViewCost): string
+{
+    if (!$canViewCost) {
+        return '<input type="text" class="form-control form-control-sm recipe-component-unit-cost" value="مخفية" readonly tabindex="-1" aria-label="سعر الوحدة">';
+    }
+
+    $unitCost = posmain_recipe_manage_line_unit_cost_value($line, $lineCosts);
+    $display = $unitCost !== '' ? $unitCost : '-';
+
+    return '<input type="text" class="form-control form-control-sm recipe-component-unit-cost" value="' . posmain_recipe_manage_h($display) . '" readonly tabindex="-1" aria-label="سعر الوحدة" title="سعر الوحدة من بطاقة الصنف (غير قابل للتعديل)">';
+}
+
+function posmain_recipe_manage_variant_recipe_line_row(
+    mysqli $conn,
+    int $variantItemId,
+    ?array $line,
+    int $index,
+    array $lineCosts = [],
+    bool $canViewCost = false
+): string {
     $prefix = 'variant_recipe_' . $variantItemId . '_' . $index;
     $lineType = (string) ($line['line_type'] ?? 'ingredient');
     if ($lineType === 'modifier_ingredient') {
@@ -1670,10 +1978,14 @@ function posmain_recipe_manage_variant_recipe_line_row(mysqli $conn, int $varian
         : (int) ($line['ingredient_item_id'] ?? 0);
     $label = $line ? posmain_recipe_manage_component_label($line) : '';
     $baseLineId = (int) ($line['base_line_id'] ?? $line['id'] ?? 0);
-    $qty = posmain_recipe_manage_qty($line['qty_per_yield'] ?? '1.00');
+    $qty = posmain_recipe_manage_integer_qty($line['qty_per_yield'] ?? '1');
     $unitId = (int) ($line['unit_id'] ?? 0);
     $waste = posmain_recipe_manage_qty($line['wastage_percent'] ?? '0.00');
     $notes = (string) ($line['notes'] ?? '');
+
+    $unitCostField = $line
+        ? posmain_recipe_manage_component_unit_cost_field($line, $lineCosts, $canViewCost)
+        : posmain_recipe_manage_component_unit_cost_field(['id' => 0], $lineCosts, $canViewCost);
 
     return '<tr class="recipe-variant-recipe-row">'
         . '<td class="recipe-variation-component-cell">'
@@ -1685,7 +1997,8 @@ function posmain_recipe_manage_variant_recipe_line_row(mysqli $conn, int $varian
         . '<input type="hidden" id="' . posmain_recipe_manage_h($prefix) . '_line_type" name="variant_recipe_line_type[]" value="' . posmain_recipe_manage_h($lineType) . '">'
         . '<input type="hidden" name="variant_recipe_base_line_id[]" value="' . ($baseLineId > 0 ? $baseLineId : '') . '">'
         . '</td>'
-        . '<td><input type="number" class="form-control form-control-sm recipe-variation-amount" name="variant_recipe_qty_per_yield[]" value="' . posmain_recipe_manage_h($qty) . '" step="0.01" min="0.01"></td>'
+        . '<td class="recipe-unit-price-col">' . $unitCostField . '</td>'
+        . '<td class="recipe-qty-col"><input type="number" class="form-control form-control-sm recipe-variation-amount recipe-qty-input" name="variant_recipe_qty_per_yield[]" value="' . posmain_recipe_manage_h($qty) . '" step="1" min="1" inputmode="numeric"></td>'
         . '<td>' . posmain_recipe_manage_unit_select($conn, 'variant_recipe_unit_id[]', $unitId, 'الوحدة الأساسية') . '</td>'
         . '<td><input type="number" class="form-control form-control-sm" name="variant_recipe_wastage_percent[]" value="' . posmain_recipe_manage_h($waste) . '" step="0.01" min="0"></td>'
         . '<td><input type="text" class="form-control form-control-sm" name="variant_recipe_notes[]" value="' . posmain_recipe_manage_h($notes) . '" placeholder="اختياري"></td>'
@@ -1951,6 +2264,15 @@ function posmain_recipe_manage_qty($value): string
     }
 
     return number_format((float) $value, 2, '.', '');
+}
+
+function posmain_recipe_manage_integer_qty($value): string
+{
+    if ($value === null || $value === '') {
+        return '';
+    }
+
+    return (string) max(0, (int) round((float) $value));
 }
 
 function posmain_recipe_manage_money_value($value): string

@@ -7,8 +7,10 @@ require_once __DIR__ . '/../classes/Recipe/RecipeCostLeakAuditService.php';
 require_once __DIR__ . '/../classes/Recipe/RecipeSyncPayloadService.php';
 require_once __DIR__ . '/../classes/Items/ItemCustomerMenuOptions.php';
 
-header('Content-Type: application/json; charset=UTF-8');
-header('Cache-Control: no-store, max-age=0');
+if (!defined('MOOVA_MENU_SYNC_LIBRARY_ONLY') || !MOOVA_MENU_SYNC_LIBRARY_ONLY) {
+    header('Content-Type: application/json; charset=UTF-8');
+    header('Cache-Control: no-store, max-age=0');
+}
 
 function moova_menu_sync_sanitize_public_payload(array $payload): array
 {
@@ -512,6 +514,10 @@ function moova_menu_sync_build_menu(mysqli $conn, string $catalogVersion, ?array
             ],
         ],
     ];
+}
+
+if (defined('MOOVA_MENU_SYNC_LIBRARY_ONLY') && MOOVA_MENU_SYNC_LIBRARY_ONLY) {
+    return;
 }
 
 require __DIR__ . '/../includes/connect.php';

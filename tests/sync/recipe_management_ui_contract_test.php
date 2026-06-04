@@ -4,6 +4,7 @@ $root = dirname(__DIR__, 2);
 $page = recipeManagementUiSource($root . '/recipe_manage.php');
 $service = recipeManagementUiSource($root . '/classes/Recipe/RecipeEditorMutationService.php');
 $preview = recipeManagementUiSource($root . '/classes/Recipe/RecipeEditorPreviewService.php');
+$itemCost = recipeManagementUiSource($root . '/classes/Recipe/RecipeEditorItemCostService.php');
 $availability = recipeManagementUiSource($root . '/classes/Recipe/RecipeAvailabilityService.php');
 $lookup = recipeManagementUiSource($root . '/classes/Recipe/RecipeEditorLookupService.php');
 $lookupEndpoint = recipeManagementUiSource($root . '/ajax/recipe_editor_lookup.php');
@@ -17,6 +18,8 @@ $reports = recipeManagementUiSource($root . '/reports.php');
 recipeManagementUiAssert(strpos($page, 'RecipeEditorMutationService') !== false, 'management page should delegate mutations');
 recipeManagementUiAssert(strpos($page, 'RecipeEditorReadService') !== false, 'management page should reuse read service');
 recipeManagementUiAssert(strpos($page, 'RecipeEditorPreviewService') !== false, 'management page should delegate previews');
+recipeManagementUiAssert(strpos($preview, 'resolvePreviewCost') !== false, 'preview service should calculate costs per variation when variants exist');
+recipeManagementUiAssert(strpos($page, 'posmain_recipe_manage_summary_unit_cost') !== false, 'management page should summarize variation unit costs for top metrics');
 recipeManagementUiAssert(strpos($page, 'require_login()') !== false, 'management page should require login');
 recipeManagementUiAssert(strpos($page, 'require_csrf(\'recipe_editor\')') !== false, 'management page should require recipe editor CSRF');
 recipeManagementUiAssert(strpos($page, 'posmain_recipe_manage_can_edit') !== false, 'management page should enforce edit permission');
@@ -45,6 +48,11 @@ recipeManagementUiAssert(strpos($page, '<th>الوحدة</th>') !== false, 'mana
 recipeManagementUiAssert(strpos($page, 'الإصدارات والنشاط') !== false, 'management page should expose clean version activity');
 recipeManagementUiAssert(strpos($page, 'التكلفة والتوفر') !== false, 'management page should expose cost and availability');
 recipeManagementUiAssert(strpos($page, 'posmain_recipe_manage_can_view_cost') !== false, 'management page should guard cost visibility');
+recipeManagementUiAssert(strpos($page, 'RecipeEditorItemCostService') !== false, 'management page should build editable item costs from recipe components');
+recipeManagementUiAssert(strpos($page, 'posmain_recipe_manage_item_cost_card') !== false, 'management page should expose item cost editor card');
+recipeManagementUiAssert(strpos($page, 'save_item_costs') !== false, 'management page should save item costs from recipe editor');
+recipeManagementUiAssert(strpos($page, 'recipe-item-cost-input') !== false, 'management page should expose editable item cost inputs');
+recipeManagementUiAssert(strpos($page, 'التكلفة المحسوبة من المكونات') !== false, 'management page should show calculated component cost to users');
 recipeManagementUiAssert(strpos($page, 'recipe-lookup-input') !== false, 'management page should expose lookup inputs');
 recipeManagementUiAssert(strpos($page, 'ajax/recipe_editor_lookup.php') !== false, 'management page should call lookup endpoint');
 recipeManagementUiAssert(strpos($page, 'مكون') !== false, 'management page should use user-facing component wording');
@@ -76,6 +84,13 @@ recipeManagementUiAssert(strpos($page, 'recipe-section-fade') !== false, 'recipe
 recipeManagementUiAssert(strpos($page, 'يرث وصفة الصنف الرئيسي') === false, 'variation cards should not show inherited recipe wording');
 recipeManagementUiAssert(strpos($page, 'recipe-variation-badge') === false, 'variation cards should not show status badges in the simplified recipe UI');
 recipeManagementUiAssert(strpos($page, 'وصفة ' . "' . posmain_recipe_manage_h(") === false, 'variation cards should not prefix variation names with recipe wording');
+recipeManagementUiAssert(strpos($page, 'recipe-unit-price-col') !== false, 'recipe editor should show unit price in its own table column');
+recipeManagementUiAssert(strpos($page, 'recipe-qty-col') !== false, 'recipe editor should give quantity its own wider column');
+recipeManagementUiAssert(strpos($page, 'posmain_recipe_manage_integer_qty') !== false, 'recipe editor should format component quantities as integers');
+recipeManagementUiAssert(strpos($page, 'step="1" min="1"') !== false, 'recipe quantity inputs should step by whole units');
+recipeManagementUiAssert(strpos($page, 'recipe-component-unit-cost') !== false, 'recipe editor should show read-only unit price input per component row');
+recipeManagementUiAssert(strpos($page, 'posmain_recipe_manage_component_unit_cost_field') !== false, 'recipe editor should resolve component unit price from costing service');
+recipeManagementUiAssert(strpos($itemCost, "'unit_cost'") !== false, 'item cost service should expose per-line unit cost for component display');
 recipeManagementUiAssert(strpos($page, 'variant_recipe_qty_per_yield') !== false, 'variation recipe editor should make amount editing straightforward');
 recipeManagementUiAssert(strpos($page, 'recipe-add-variant-component') !== false, 'variation recipe editor should allow adding ingredients/components');
 recipeManagementUiAssert(strpos($page, 'recipe-remove-variant-component') !== false, 'variation recipe editor should allow removing ingredients/components');
@@ -84,7 +99,13 @@ recipeManagementUiAssert(strpos($page, 'عدّل كميات كل تنويعة ب
 recipeManagementUiAssert(strpos($page, '<th>نشطة</th>') === false, 'variation table should not expose active controls on recipe page');
 recipeManagementUiAssert(strpos($page, '<th>افتراضية</th>') === false, 'variation table should not expose default controls on recipe page');
 recipeManagementUiAssert(strpos($page, 'recipe-variation-default') === false, 'variation table should not expose default checkbox behavior');
-recipeManagementUiAssert(strpos($page, '<details class="recipe-variation-recipe-card" data-variant-recipe-card') !== false, 'variation recipe cards should be minimized by default');
+recipeManagementUiAssert(strpos($page, '<details class="recipe-variation-recipe-card"') !== false, 'variation recipe cards should render as collapsible details tabs');
+recipeManagementUiAssert(strpos($page, '<details class="recipe-variation-recipe-card" open') === false, 'variation recipe cards should start collapsed by default');
+recipeManagementUiAssert(strpos($page, 'recipe-variation-recipe-toggle') !== false, 'variation recipe cards should expose a collapse toggle in the tab header');
+recipeManagementUiAssert(strpos($page, '$recipeManageWritesEnabled,
+                                                true,') === false, 'variation recipe cards should not force always-expanded direct rendering');
+recipeManagementUiAssert(strpos($page, '$recipeManageWritesEnabled,
+                                                false,') !== false, 'variation recipe cards should use collapsible details mode');
 foreach (['مكتبة الوصفات', 'معلومات الوصفة', 'مكونات الوصفة', 'قواعد متقدمة'] as $sectionLabel) {
     recipeManagementUiAssert(strpos($page, $sectionLabel) !== false, 'management page should expose item recipe section: ' . $sectionLabel);
 }
@@ -157,9 +178,12 @@ recipeManagementUiAssert(strpos($service, 'Please choose an item by name.') !== 
 recipeManagementUiAssert(strpos($service, 'Sellable item id is required.') === false, 'mutation service should not expose database-id language to users');
 recipeManagementUiAssert(strpos($service, 'mainItemIdForSellable') !== false, 'mutation service should normalize variation child selections to the main item');
 recipeManagementUiAssert(strpos($service, 'ItemVariantService') !== false, 'mutation service should delegate variation saves to the item variant service');
-foreach (['create_draft', 'update_draft', 'add_line', 'update_line', 'approve', 'activate', 'archive', 'clone_new_version', 'save_variations', 'save_variant_recipe'] as $action) {
+foreach (['create_draft', 'update_draft', 'add_line', 'update_line', 'approve', 'activate', 'archive', 'clone_new_version', 'save_variations', 'save_variant_recipe', 'save_item_costs'] as $action) {
     recipeManagementUiAssert(strpos($service, $action) !== false, 'mutation service missing action: ' . $action);
 }
+recipeManagementUiAssert(strpos($service, 'RecipeEditorItemCostService') !== false, 'mutation service should sync item costs from recipe components');
+recipeManagementUiAssert(strpos($service, 'syncAutoItemCosts') !== false, 'mutation service should auto-sync non-manual item costs after recipe edits');
+recipeManagementUiAssert(strpos($service, "case 'approve':") !== false && strpos($service, "case 'activate':") !== false, 'mutation service should sync item costs when recipes are approved or activated');
 recipeManagementUiAssert(strpos($service, 'RecipeVariantLineRepository') !== false, 'mutation service should persist variation recipe rows through a repository');
 foreach (['modifier_behavior', 'substitution_group', 'substitution_remove', 'substitution_add'] as $field) {
     recipeManagementUiAssert(strpos($service, $field) !== false, 'mutation service missing substitution field: ' . $field);
@@ -203,6 +227,9 @@ recipeManagementUiAssert(strpos($explosionService, 'variantLinesForRecipe') !== 
 recipeManagementUiAssert(strpos($explosionService, 'variantParentForChild') !== false, 'explosion service should resolve child variation sales to the parent recipe');
 
 recipeManagementUiAssert(strpos($preview, 'RecipeCostService') !== false, 'preview service should use cost service');
+recipeManagementUiAssert(strpos($itemCost, 'class RecipeEditorItemCostService') !== false, 'item cost service should exist for recipe editor');
+recipeManagementUiAssert(strpos($itemCost, 'buildEditorState') !== false, 'item cost service should build editor cost state');
+recipeManagementUiAssert(strpos($itemCost, 'applyAutoItemCosts') !== false, 'item cost service should auto-apply calculated costs');
 recipeManagementUiAssert(strpos($preview, 'RecipeAvailabilityService') !== false, 'preview service should use availability service');
 recipeManagementUiAssert(strpos($availability, 'previewForRecipe') !== false, 'availability service should expose no-write recipe preview');
 foreach (['INSERT INTO', 'UPDATE ', 'DELETE FROM'] as $writeNeedle) {

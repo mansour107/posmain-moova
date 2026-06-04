@@ -60,7 +60,7 @@ include __DIR__ . '/includes/sidebar.php';
                 </div>
                 <div class="inventory-store-actions">
                     <a class="inventory-store-btn dark" href="add_store.php"><i class="fas fa-plus"></i> مخزن جديد</a>
-                    <a class="inventory-store-btn" href="inventory_dashboard.php"><i class="fas fa-tachometer-alt"></i> لوحة المخزون</a>
+                    <a class="inventory-store-btn" href="inventory_dashboard.php"><i class="fas fa-history"></i> حركات المخزون</a>
                     <a class="inventory-store-btn" href="inventory_stock_levels.php"><i class="fas fa-layer-group"></i> مستويات المخزون</a>
                 </div>
             </div>

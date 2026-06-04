@@ -3,6 +3,8 @@
 require_once __DIR__ . '/DTO/RecipeCostContext.php';
 require_once __DIR__ . '/RecipeAvailabilityService.php';
 require_once __DIR__ . '/RecipeCostService.php';
+require_once __DIR__ . '/RecipeEditorReadService.php';
+require_once __DIR__ . '/RecipeDecimal.php';
 
 class RecipeEditorPreviewService
 {
@@ -27,12 +29,58 @@ class RecipeEditorPreviewService
         ];
 
         if ($includeCost) {
-            $preview['cost'] = $this->costs
-                ->calculateRecipeCost($conn, $recipeId, new RecipeCostContext($this->costContext($context)))
-                ->toArray();
+            $preview['cost'] = $this->resolvePreviewCost($conn, $recipeId, $context);
         }
 
         return $preview;
+    }
+
+    private function resolvePreviewCost(mysqli $conn, int $recipeId, array $context): array
+    {
+        $costContext = new RecipeCostContext($this->costContext($context));
+        $detail = (new RecipeEditorReadService())->recipeDetail($conn, $recipeId);
+        $variants = is_array($detail['variants'] ?? null) ? $detail['variants'] : [];
+        if (count($variants) > 0) {
+            $variantCosts = [];
+            foreach ($variants as $variant) {
+                $variantItemId = (int) ($variant['variant_item_id'] ?? 0);
+                if ($variantItemId < 1) {
+                    continue;
+                }
+                $variantCosts[] = $this->costs
+                    ->calculateRecipeCost($conn, $recipeId, $costContext, $variantItemId)
+                    ->toArray();
+            }
+            if ($variantCosts) {
+                return $this->representativeVariantCost($variantCosts);
+            }
+        }
+
+        return $this->costs->calculateRecipeCost($conn, $recipeId, $costContext)->toArray();
+    }
+
+    private function representativeVariantCost(array $variantCosts): array
+    {
+        $sellUnits = [];
+        $yieldCosts = [];
+        foreach ($variantCosts as $row) {
+            $sellUnits[] = RecipeDecimal::normalize($row['cost_per_sell_unit'] ?? '0');
+            $yieldCosts[] = RecipeDecimal::normalize($row['cost_per_yield'] ?? '0');
+        }
+
+        sort($sellUnits);
+        sort($yieldCosts);
+        $template = $variantCosts[0];
+        $template['cost_per_sell_unit'] = $sellUnits[0];
+        $template['cost_per_yield'] = $yieldCosts[0];
+        if (count($sellUnits) > 1 && RecipeDecimal::compare($sellUnits[0], $sellUnits[count($sellUnits) - 1]) !== 0) {
+            $template['variant_cost_range'] = [
+                'cost_per_sell_unit_min' => $sellUnits[0],
+                'cost_per_sell_unit_max' => $sellUnits[count($sellUnits) - 1],
+            ];
+        }
+
+        return $template;
     }
 
     private function costContext(array $context): array

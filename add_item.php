@@ -1,6 +1,9 @@
 <?php include('includes/header.php') ?>
 <?php
+require_once __DIR__ . '/classes/Items/ItemEditorFlash.php';
 require_once __DIR__ . '/classes/Pos/Service/ItemVariantService.php';
+
+$itemEditorFlash = ItemEditorFlash::take();
 
 $isEdit = isset($_GET['edit']);
 $editId = $isEdit ? (int) $_GET['edit'] : 0;
@@ -46,7 +49,7 @@ $itemVariants = [];
 try {
     $itemVariantService = new ItemVariantService();
     $itemVariantService->ensureSchema($conn);
-    $itemVariants = $isEdit ? $itemVariantService->variantsForParent($conn, $editId, false) : [];
+    $itemVariants = $isEdit ? $itemVariantService->variantsForEdit($conn, $editId) : [];
 } catch (Throwable $exception) {
     $itemVariants = [];
 }
@@ -60,8 +63,12 @@ try {
             <div class="row mb-2 align-items-center">
                 <div class="col-sm-6">
                     <h1 class="m-0 text-dark">
-                        <i class="fas fa-<?= $isEdit ? 'pen' : 'plus-circle' ?> text-primary ml-2"></i>
-                        <?= $isEdit ? 'تعديل صنف' : 'إضافة صنف' ?>
+                        <?php if ($isEdit): ?>
+                            <?= htmlspecialchars((string) ($rowitm['iname'] ?? ''), ENT_QUOTES, 'UTF-8') ?: 'صنف بدون اسم' ?>
+                        <?php else: ?>
+                            <i class="fas fa-plus-circle text-primary ml-2"></i>
+                            إضافة صنف
+                        <?php endif; ?>
                     </h1>
                 </div>
                 <div class="col-sm-6">
@@ -78,29 +85,11 @@ try {
     <section class="content">
         <div class="container-fluid">
 
-            <?php if (isset($_GET['saved']) && $_GET['saved'] === '1'): ?>
-                <div class="alert alert-success alert-dismissible fade show shadow-sm" role="alert">
+            <?php if ($itemEditorFlash !== null): ?>
+                <div class="alert alert-<?= $itemEditorFlash['type'] === 'success' ? 'success' : 'danger' ?> alert-dismissible fade show shadow-sm item-editor-flash-alert" role="alert" data-autodismiss-ms="10000">
                     <button type="button" class="close" data-dismiss="alert" aria-label="إغلاق">&times;</button>
-                    <i class="fas fa-check-circle ml-1"></i>
-                    تم الحفظ بنجاح.
-                </div>
-            <?php endif; ?>
-            <?php if (isset($_GET['error'])): ?>
-                <div class="alert alert-danger alert-dismissible fade show shadow-sm" role="alert">
-                    <button type="button" class="close" data-dismiss="alert" aria-label="إغلاق">&times;</button>
-                    <i class="fas fa-exclamation-triangle ml-1"></i>
-                    <?php
-                    $err = isset($_GET['error']) ? $_GET['error'] : '';
-                    if ($err === 'duplicate_name') {
-                        echo 'يوجد صنف بنفس الاسم، اختر اسماً مختلفاً.';
-                    } elseif ($err === 'save_failed') {
-                        echo 'تعذّر حفظ البيانات. حاول مرة أخرى.';
-                    } elseif ($err === 'invalid_image') {
-                        echo 'صيغة الصورة غير مسموحة. استخدم jpg أو png أو gif أو jpeg أو webp.';
-                    } else {
-                        echo 'حدث خطأ أثناء الحفظ.';
-                    }
-                    ?>
+                    <i class="fas fa-<?= $itemEditorFlash['type'] === 'success' ? 'check-circle' : 'exclamation-triangle' ?> ml-1"></i>
+                    <?= htmlspecialchars($itemEditorFlash['message'], ENT_QUOTES, 'UTF-8') ?>
                 </div>
             <?php endif; ?>
 
@@ -150,27 +139,9 @@ try {
                         border-radius: 10px;
                         display: flex;
                         gap: 16px;
-                        justify-content: space-between;
+                        justify-content: flex-end;
                         margin-bottom: 18px;
                         padding: 18px 20px;
-                    }
-                    .item-editor-title {
-                        color: #102033;
-                        font-size: 1.35rem;
-                        font-weight: 800;
-                        margin: 0;
-                    }
-                    .item-editor-status {
-                        align-items: center;
-                        background: #e7f7f3;
-                        border: 1px solid #b8e4da;
-                        border-radius: 999px;
-                        color: #0f766e;
-                        display: inline-flex;
-                        font-size: .82rem;
-                        font-weight: 700;
-                        gap: 6px;
-                        padding: 6px 12px;
                     }
                     .item-editor-grid {
                         direction: ltr;
@@ -218,6 +189,10 @@ try {
                     }
                     .item-editor-panel-body {
                         padding: 18px;
+                    }
+                    #item-info-section .item-name-field-input {
+                        min-width: 0;
+                        width: 100%;
                     }
                     .item-type-options {
                         display: grid;
@@ -415,23 +390,19 @@ try {
 
                 <div class="item-editor-shell">
                     <div class="item-editor-hero">
-                        <div>
-                            <h2 class="item-editor-title"><?= $isEdit ? 'تعديل الصنف' : 'إضافة صنف جديد' ?></h2>
-                            <div class="mt-2">
-                                <span class="item-editor-status">
-                                    <i class="fas fa-database"></i>
-                                    <?= $trackStock ? 'مخزون متابع' : 'بدون متابعة مخزون' ?>
-                                </span>
-                                <span class="text-muted small mr-2">املأ البيانات بالترتيب، وافتح الأقسام الاختيارية فقط عند الحاجة.</span>
-                            </div>
-                        </div>
                         <div class="d-flex flex-wrap align-items-center">
                             <a href="myitems.php" class="btn btn-outline-secondary ml-2">
                                 <i class="fas fa-arrow-right ml-1"></i> رجوع للأصناف
                             </a>
-                            <button type="submit" name="save_intent" value="stay" class="btn btn-primary">
-                                <i class="fas fa-save ml-1"></i> <?= $isEdit ? 'حفظ التغييرات' : 'حفظ الصنف' ?>
-                            </button>
+                            <?php if ($isEdit): ?>
+                                <button type="button" class="btn btn-outline-danger" data-toggle="modal" data-target="#deleteItemModal" title="حذف الصنف">
+                                    <i class="fas fa-trash ml-1"></i> حذف الصنف
+                                </button>
+                            <?php else: ?>
+                                <button type="submit" name="save_intent" value="stay" class="btn btn-primary">
+                                    <i class="fas fa-save ml-1"></i> حفظ الصنف
+                                </button>
+                            <?php endif; ?>
                         </div>
                     </div>
 
@@ -446,37 +417,39 @@ try {
                                 </div>
                                 <div class="item-editor-panel-body">
                                     <div class="row">
-                                        <div class="col-lg-5">
-                                            <div class="form-group">
+                                        <div class="col-lg-6">
+                                            <div class="form-group mb-lg-0">
                                                 <label for="iname">اسم الصنف <span class="text-danger">*</span></label>
-                                                <input id="iname" required class="form-control form-control-lg" type="text" name="iname"
+                                                <input id="iname" required class="form-control form-control-lg item-name-field-input" type="text" name="iname"
                                                        value="<?= $isEdit ? htmlspecialchars($rowitm['iname'], ENT_QUOTES, 'UTF-8') : '' ?>"
                                                        placeholder="مثال: قهوة تركي">
                                             </div>
                                         </div>
-                                        <div class="col-lg-3">
-                                            <div class="form-group">
+                                        <div class="col-lg-6">
+                                            <div class="form-group mb-lg-0">
                                                 <label for="name2" class="text-muted small">الاسم الثاني</label>
-                                                <input id="name2" class="form-control form-control-lg" type="text" name="name2" placeholder="اختياري"
-                                                       value="<?= $isEdit ? htmlspecialchars((string) ($rowitm['name2'] ?? ''), ENT_QUOTES, 'UTF-8') : '' ?>">
+                                                <?php $name2Value = $isEdit ? htmlspecialchars((string) ($rowitm['name2'] ?? ''), ENT_QUOTES, 'UTF-8') : ''; ?>
+                                                <input id="name2" class="form-control form-control-lg item-name-field-input" type="text" name="name2" placeholder="اختياري"
+                                                       maxlength="200" dir="auto" title="<?= $name2Value ?>"
+                                                       value="<?= $name2Value ?>">
                                             </div>
                                         </div>
-                                        <div class="col-lg-2">
+                                    </div>
+
+                                    <div class="row mt-lg-2">
+                                        <div class="col-lg-2 col-md-6">
                                             <div class="form-group">
                                                 <label class="text-muted small mb-1">الكود</label>
                                                 <input readonly value="<?= htmlspecialchars((string) $itmid, ENT_QUOTES, 'UTF-8') ?>" class="form-control form-control-lg bg-light" type="text" name="code">
                                             </div>
                                         </div>
-                                        <div class="col-lg-2">
+                                        <div class="col-lg-2 col-md-6">
                                             <div class="form-group">
                                                 <label class="text-muted small mb-1">الباركود</label>
                                                 <input required value="<?= htmlspecialchars((string) $newBarcode, ENT_QUOTES, 'UTF-8') ?>" class="form-control form-control-lg frst" type="text" name="barcode">
                                             </div>
                                         </div>
-                                    </div>
-
-                                    <div class="row">
-                                        <div class="col-md-4">
+                                        <div class="col-lg-4 col-md-6">
                                             <div class="form-group mb-md-0">
                                                 <label for="group1">المجموعة</label>
                                                 <select id="group1" name="group1" class="form-control">
@@ -489,7 +462,7 @@ try {
                                                 </select>
                                             </div>
                                         </div>
-                                        <div class="col-md-4">
+                                        <div class="col-lg-4 col-md-6">
                                             <div class="form-group mb-md-0">
                                                 <label for="group2">التصنيف</label>
                                                 <select id="group2" name="group2" class="form-control">
@@ -502,7 +475,10 @@ try {
                                                 </select>
                                             </div>
                                         </div>
-                                        <div class="col-md-4">
+                                    </div>
+
+                                    <div class="row mt-2">
+                                        <div class="col-md-6">
                                             <div class="form-group mb-md-0">
                                                 <label for="imgs"><i class="fas fa-image text-muted ml-1"></i> صورة الصنف</label>
                                                 <div class="custom-file">
@@ -730,7 +706,7 @@ try {
                                         <i class="fas fa-plus ml-1"></i> إضافة تنوع
                                     </button>
                                 </div>
-                                <div id="variantEditorBody" class="collapse <?= count($itemVariants) > 0 ? 'show' : '' ?>">
+                                <div id="variantEditorBody" class="<?= count($itemVariants) > 0 ? '' : 'd-none' ?>">
                                     <div class="table-responsive">
                                         <table class="table table-sm table-hover mb-0">
                                             <thead class="thead-light text-center">
@@ -763,17 +739,21 @@ try {
                                         $variantActive = (int) ($variant['is_active'] ?? 1) === 1;
                                         $variantDefault = (int) ($variant['is_default'] ?? 0) === 1;
                                         $variantSort = (int) ($variant['sort_order'] ?? ($variantIndex + 1));
+                                        $variantUnlinked = !empty($variant['is_unlinked_recovery']);
                                         ?>
-                                        <tr class="variant-row">
+                                        <tr class="variant-row<?= $variantUnlinked ? ' table-warning' : '' ?>" data-original-label="<?= $variantLabel ?>">
                                             <td>
                                                 <input type="hidden" name="variant_link_id[]" value="<?= $variantLinkId ?>">
                                                 <input type="hidden" name="variant_item_id[]" value="<?= $variantItemId ?>">
                                                 <input type="hidden" name="variant_code[]" value="<?= $variantCode ?>">
                                                 <input type="hidden" class="variant-sort-input" name="variant_sort[]" value="<?= $variantSort ?>">
                                                 <input type="text" class="form-control form-control-sm variant-label-input" name="variant_label[]" value="<?= $variantLabel ?>" placeholder="صغير / كبير">
+                                                <?php if ($variantUnlinked): ?>
+                                                    <small class="text-warning d-block mt-1">تنوع قديم غير مربوط — سيُعاد ربطه عند الحفظ</small>
+                                                <?php endif; ?>
                                             </td>
                                             <td>
-                                                <input type="text" class="form-control form-control-sm variant-name-input" name="variant_name[]" value="<?= $variantName ?>" placeholder="يتولد تلقائياً من اسم الصنف">
+                                                <input type="text" class="form-control form-control-sm variant-name-input" name="variant_name[]" value="<?= $variantName ?>" data-initial-child-name="<?= $variantName ?>" placeholder="يتولد تلقائياً من اسم الصنف">
                                             </td>
                                             <td><input type="text" class="form-control form-control-sm" name="variant_barcode[]" value="<?= $variantBarcode ?>" placeholder="اختياري"></td>
                                             <td><input type="number" class="form-control form-control-sm" name="variant_cost_price[]" value="<?= $variantCost ?>" step="0.001" min="0"></td>
@@ -859,6 +839,34 @@ try {
                 </div>
 
                 </form>
+
+                <?php if ($isEdit): ?>
+                    <div class="modal fade" id="deleteItemModal" tabindex="-1" role="dialog" aria-labelledby="deleteItemModalLabel" aria-hidden="true">
+                        <div class="modal-dialog" role="document">
+                            <div class="modal-content bg-danger">
+                                <div class="modal-header">
+                                    <h4 class="modal-title" id="deleteItemModalLabel">تحذير</h4>
+                                    <button type="button" class="close text-white" data-dismiss="modal" aria-label="إغلاق">
+                                        <span aria-hidden="true">&times;</span>
+                                    </button>
+                                </div>
+                                <form action="do/dodel_item.php?id=<?= $editId ?>" method="post">
+                                    <div class="modal-body">
+                                        <p class="mb-3">هل تريد بالتأكيد حذف <strong><?= htmlspecialchars((string) ($rowitm['iname'] ?? ''), ENT_QUOTES, 'UTF-8') ?></strong>؟ لا يمكن التراجع عن هذا الإجراء.</p>
+                                        <label for="delete-item-password" class="small mb-1">كلمة مرور الحذف</label>
+                                        <input id="delete-item-password" type="password" class="form-control" name="password" placeholder="كلمة مرور الحذف" required autocomplete="off">
+                                    </div>
+                                    <div class="modal-footer justify-content-between">
+                                        <button type="button" class="btn btn-outline-light" data-dismiss="modal">إلغاء</button>
+                                        <button type="submit" class="btn btn-outline-light">
+                                            <i class="fas fa-trash ml-1"></i> حذف
+                                        </button>
+                                    </div>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+                <?php endif; ?>
 
                 <?php if (!$isEdit): ?>
                 <div class="card card-outline card-info shadow-sm mt-4">
@@ -1061,7 +1069,7 @@ $(document).ready(function() {
                     <input type="text" class="form-control form-control-sm variant-label-input" name="variant_label[]" value="" placeholder="صغير / كبير">
                 </td>
                 <td>
-                    <input type="text" class="form-control form-control-sm variant-name-input" name="variant_name[]" value="" placeholder="يتولد تلقائياً من اسم الصنف">
+                    <input type="text" class="form-control form-control-sm variant-name-input" name="variant_name[]" value="" data-initial-child-name="" placeholder="يتولد تلقائياً من اسم الصنف">
                 </td>
                 <td><input type="text" class="form-control form-control-sm" name="variant_barcode[]" value="" placeholder="اختياري"></td>
                 <td><input type="number" class="form-control form-control-sm" name="variant_cost_price[]" value="0" step="0.001" min="0"></td>
@@ -1108,15 +1116,88 @@ $(document).ready(function() {
         return parentName + ' - ' + label;
     }
 
+    function markVariantRowAutoNameState($row) {
+        var label = $.trim($row.find('.variant-label-input').val() || '');
+        var $nameInput = $row.find('.variant-name-input');
+        var name = $.trim($nameInput.val() || '');
+        var generated = generatedVariantName(label);
+        var originalLabel = $.trim($row.attr('data-original-label') || label);
+        var oldGenerated = generatedVariantName(originalLabel);
+        var initialChildName = $.trim($nameInput.attr('data-initial-child-name') || '');
+        var isStaleSavedName = initialChildName !== '' && name === initialChildName && name !== generated;
+        if (name === '' || name === generated || name === oldGenerated || isStaleSavedName) {
+            $row.attr('data-auto-name', '1');
+            $row.attr('data-last-generated', generated);
+            if (name === '' || name === oldGenerated || isStaleSavedName) {
+                $nameInput.val(generated);
+            }
+            return;
+        }
+        $row.attr('data-auto-name', '0');
+        $row.attr('data-last-generated', generated);
+    }
+
+    function syncVariantNamesBeforeSubmit() {
+        $('#variantRowsContainer .variant-row').each(function() {
+            var $row = $(this);
+            var label = $.trim($row.find('.variant-label-input').val() || '');
+            var name = $.trim($row.find('.variant-name-input').val() || '');
+            var originalLabel = $.trim($row.attr('data-original-label') || '');
+            if ($row.attr('data-auto-name') === '1' || name === '') {
+                syncVariantNameFromLabel($row, true);
+                return;
+            }
+            if (originalLabel !== '' && originalLabel !== label && name === generatedVariantName(originalLabel)) {
+                $row.find('.variant-name-input').val(generatedVariantName(label));
+            }
+        });
+    }
+
+    function syncVariantNameFromLabel($row, forceUpdate) {
+        var label = $.trim($row.find('.variant-label-input').val() || '');
+        var $nameInput = $row.find('.variant-name-input');
+        var currentName = $.trim($nameInput.val() || '');
+        var lastGenerated = $.trim($row.attr('data-last-generated') || '');
+        var initialChildName = $.trim($nameInput.attr('data-initial-child-name') || '');
+        var isAuto = $row.attr('data-auto-name') === '1';
+        var shouldUpdate = !!forceUpdate
+            || currentName === ''
+            || isAuto
+            || (lastGenerated !== '' && currentName === lastGenerated)
+            || (initialChildName !== '' && currentName === initialChildName);
+
+        if (!shouldUpdate) {
+            return;
+        }
+
+        var generated = generatedVariantName(label);
+        $nameInput.val(generated);
+        $row.attr('data-last-generated', generated);
+        $row.attr('data-auto-name', '1');
+    }
+
+    function initializeVariantRowAutoNames() {
+        $('#variantRowsContainer .variant-row').each(function() {
+            markVariantRowAutoNameState($(this));
+        });
+    }
+
 	    $('#addVariantRow').on('click', function() {
-	        $('#variantEditorBody').addClass('show').css('display', 'block');
 	        $('#variantRowsContainer').append(variantRowHtml(nextVariantIndex()));
+	        syncVariantEditorVisibility();
 	        refreshVariantSorts();
+	        var $row = $('#variantRowsContainer .variant-row').last();
+	        markVariantRowAutoNameState($row);
+	        var $labelInput = $row.find('.variant-label-input');
+	        if ($labelInput.length) {
+	            $labelInput.trigger('focus');
+	        }
 	    });
 
     $(document).on('click', '.removeVariantRow', function() {
         $(this).closest('.variant-row').remove();
         refreshVariantSorts();
+        syncVariantEditorVisibility();
     });
 
     $(document).on('click', '.moveVariantUp, .moveVariantDown', function() {
@@ -1136,11 +1217,27 @@ $(document).ready(function() {
     });
 
     $(document).on('input', '.variant-label-input', function() {
-        var row = $(this).closest('.variant-row');
-        var nameInput = row.find('.variant-name-input');
-        if ($.trim(nameInput.val() || '') === '') {
-            nameInput.attr('placeholder', generatedVariantName($(this).val()));
+        syncVariantNameFromLabel($(this).closest('.variant-row'), false);
+    });
+
+    $(document).on('input', '.variant-name-input', function() {
+        var $row = $(this).closest('.variant-row');
+        var name = $.trim($(this).val() || '');
+        var generated = generatedVariantName($.trim($row.find('.variant-label-input').val() || ''));
+        if (name === '' || name === generated) {
+            $row.attr('data-auto-name', '1');
+            $row.attr('data-last-generated', generated);
+            return;
         }
+        $row.attr('data-auto-name', '0');
+    });
+
+    $(document).on('input', '#iname', function() {
+        $('#variantRowsContainer .variant-row').each(function() {
+            if ($(this).attr('data-auto-name') === '1') {
+                syncVariantNameFromLabel($(this), true);
+            }
+        });
     });
 
     function variationsAreValidForSubmit() {
@@ -1167,6 +1264,7 @@ $(document).ready(function() {
 
     $('#item-main-form').on('submit', function(e) {
         refreshVariantSorts();
+        syncVariantNamesBeforeSubmit();
         var selectedValues = [];
         var duplicateFound = false;
         $('select[name="unit_id[]"]').each(function() {
@@ -1183,6 +1281,14 @@ $(document).ready(function() {
 	        }
 	    });
 
+	    function syncVariantEditorVisibility() {
+	        var hasRows = $('#variantRowsContainer .variant-row').length > 0;
+	        $('#variantEditorBody').toggleClass('d-none', !hasRows);
+	    }
+
+	    syncVariantEditorVisibility();
+	    initializeVariantRowAutoNames();
+
 	    refreshItemSummary();
 	    refreshItemTypeUi();
 	    window.refreshItemUnitsUi();
@@ -1190,4 +1296,26 @@ $(document).ready(function() {
 	</script>
 
 <script src="js/additem.js"></script>
+<script>
+$(function() {
+    var params = new URLSearchParams(window.location.search);
+    if (params.has('saved') || params.has('error')) {
+        params.delete('saved');
+        params.delete('error');
+        var qs = params.toString();
+        var cleanUrl = window.location.pathname + (qs ? '?' + qs : '') + window.location.hash;
+        history.replaceState(null, '', cleanUrl);
+    }
+
+    $('.item-editor-flash-alert').each(function() {
+        var $alert = $(this);
+        var delay = parseInt($alert.data('autodismiss-ms'), 10) || 10000;
+        window.setTimeout(function() {
+            $alert.fadeOut(300, function() {
+                $alert.alert('close');
+            });
+        }, delay);
+    });
+});
+</script>
 <?php include('includes/footer.php') ?>

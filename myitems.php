@@ -61,6 +61,17 @@ if ($hasItemTypeColumn && $typeFilter !== 'all') {
     $where[] = "item_type = '" . $conn->real_escape_string($typeFilter) . "'";
 }
 
+$variantTableResult = $conn->query("SHOW TABLES LIKE 'item_variants'");
+$hasVariantTable = $variantTableResult && $variantTableResult->num_rows > 0;
+if ($hasVariantTable) {
+    $where[] = 'NOT EXISTS (
+        SELECT 1
+        FROM item_variants ivc
+        WHERE ivc.variant_item_id = myitems.id
+          AND ivc.is_active = 1
+    )';
+}
+
 $inventoryStockReadService = new InventoryStockReadService();
 $sql = 'SELECT *, ' . ItemCatalogStatus::activeSelectSql($conn) . ' FROM myitems WHERE ' . implode(' AND ', $where) . ' ORDER BY iname ASC, id ASC';
 $resitm = $conn->query($sql);

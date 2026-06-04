@@ -31,9 +31,9 @@ class RecipeCostContext
         $this->actorUserId = isset($data['actor_user_id']) ? (int) $data['actor_user_id'] : null;
     }
 
-    public function toOrderLineContext(int $sellableItemId, string $quantity): RecipeOrderLineContext
+    public function toOrderLineContext(int $sellableItemId, string $quantity, int $variantItemId = 0): RecipeOrderLineContext
     {
-        return new RecipeOrderLineContext([
+        $payload = [
             'pos_tenant' => $this->posTenant,
             'pos_branch' => $this->posBranch,
             'branch_uuid' => $this->branchUuid,
@@ -44,6 +44,11 @@ class RecipeCostContext
             'channel' => $this->channel,
             'modifiers' => $this->modifiers,
             'requested_at' => $this->calculatedAt,
-        ]);
+        ];
+        if ($variantItemId > 0) {
+            $payload['variant_id'] = $variantItemId;
+        }
+
+        return new RecipeOrderLineContext($payload);
     }
 }

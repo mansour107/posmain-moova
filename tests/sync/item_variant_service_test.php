@@ -66,9 +66,117 @@ try {
     itemVariantAssert($activeVariants[0]['variant_item_id'] === $smallId, 'small should remain active');
     itemVariantAssert($activeVariants[0]['barcode'] === 'CS-S2', 'small barcode should update');
     itemVariantAssert((float) $activeVariants[0]['price1'] === 47.0, 'small price should update');
-    $childParent = $service->variantParentForChild($conn, $smallId);
-    itemVariantAssert($childParent !== null && (int) $childParent['parent_item_id'] === 10, 'child should know parent relation');
+
+    $affected = $service->saveVariantsFromPost($conn, 10, [
+        'variant_link_id' => [$variants[0]['relation_id']],
+        'variant_item_id' => [$smallId],
+        'variant_label' => ['Medium'],
+        'variant_name' => ['Chicken Sandwich - Small'],
+        'variant_barcode' => ['CS-S2'],
+        'variant_cost_price' => ['21.000'],
+        'variant_price1' => ['47.000'],
+        'variant_price2' => ['46.000'],
+        'variant_market_price' => ['49.000'],
+        'variant_active' => [1],
+        'variant_default' => [1],
+        'variant_sort' => [1],
+    ], ['user_id' => 7]);
+    itemVariantAssert(in_array($smallId, $affected, true), 'label rename should still update stale auto child name');
+    $renamedVariants = $service->variantsForParent($conn, 10, true);
+    itemVariantAssert($renamedVariants[0]['iname'] === 'Chicken Sandwich - Medium', 'child name should follow renamed variant label on save');
+    itemVariantAssert($renamedVariants[0]['variant_label'] === 'Medium', 'variant label should persist');
+
+    $conn->query("UPDATE item_variants SET variant_label = 'small' WHERE variant_item_id = {$smallId}");
+    $conn->query("UPDATE myitems SET iname = 'Chicken Sandwich - df' WHERE id = {$smallId}");
+    $affected = $service->saveVariantsFromPost($conn, 10, [
+        'variant_link_id' => [$renamedVariants[0]['relation_id']],
+        'variant_item_id' => [$smallId],
+        'variant_label' => ['large'],
+        'variant_name' => ['Chicken Sandwich - df'],
+        'variant_barcode' => ['CS-S2'],
+        'variant_cost_price' => ['21.000'],
+        'variant_price1' => ['47.000'],
+        'variant_price2' => ['46.000'],
+        'variant_market_price' => ['49.000'],
+        'variant_active' => [1],
+        'variant_default' => [1],
+        'variant_sort' => [1],
+    ], ['user_id' => 7]);
+    itemVariantAssert(in_array($smallId, $affected, true), 'stale child name should still update when only label changes');
+    $staleVariants = $service->variantsForParent($conn, 10, true);
+    itemVariantAssert($staleVariants[0]['iname'] === 'Chicken Sandwich - large', 'stale auto child name should follow renamed label');
+    itemVariantAssert($staleVariants[0]['variant_label'] === 'large', 'renamed label should persist for stale child rows');
+
+    $conn->query("INSERT INTO myitems (id, iname, barcode, user) VALUES (99, 'Chicken Sandwich - Small', 'CS-ORPHAN', 7)");
+    $repaired = $service->repairUnlinkedChildrenForParent($conn, 10);
+    itemVariantAssert(in_array(99, $repaired, true), 'repair should link unlinked small child');
+    $editVariants = $service->variantsForEdit($conn, 10);
+    $foundLinkedSmall = false;
+    foreach ($editVariants as $variant) {
+        if ((int) ($variant['variant_item_id'] ?? 0) === 99) {
+            $foundLinkedSmall = true;
+            itemVariantAssert((int) ($variant['relation_id'] ?? 0) > 0, 'repaired child should have a relation id');
+            itemVariantAssert(empty($variant['is_unlinked_recovery']), 'repaired child should not stay flagged as unlinked');
+        }
+    }
+    itemVariantAssert($foundLinkedSmall, 'repaired sibling should appear on edit screen');
+
+    $activeChildId = (int) $staleVariants[0]['variant_item_id'];
+    $affected = $service->saveVariantsFromPost($conn, 10, [
+        'variant_link_id' => [(int) $staleVariants[0]['relation_id']],
+        'variant_item_id' => [$activeChildId],
+        'variant_label' => ['Small'],
+        'variant_name' => ['Chicken Sandwich - large'],
+        'variant_barcode' => ['CS-ORPHAN'],
+        'variant_cost_price' => ['21.000'],
+        'variant_price1' => ['47.000'],
+        'variant_price2' => ['46.000'],
+        'variant_market_price' => ['49.000'],
+        'variant_active' => [1],
+        'variant_default' => [1],
+        'variant_sort' => [1],
+    ], ['user_id' => 7]);
+    itemVariantAssert(in_array(99, $affected, true), 'save should adopt the unlinked small child item');
+    $linkedSmall = $service->variantsForParent($conn, 10, true);
+    itemVariantAssert(count($linkedSmall) === 1, 'one active variant expected after adopting unlinked child');
+    itemVariantAssert((int) $linkedSmall[0]['variant_item_id'] === 99, 'active variant should point to adopted child');
+    itemVariantAssert($linkedSmall[0]['variant_label'] === 'Small', 'adopted variant label should persist');
+
+    $conn->query("INSERT INTO myitems (id, iname, barcode, user) VALUES (98, 'Manual Conflict Name', 'CS-OTHER', 7)");
+    $duplicateFailed = false;
+    try {
+        $service->saveVariantsFromPost($conn, 10, [
+            'variant_link_id' => [(int) $linkedSmall[0]['relation_id']],
+            'variant_item_id' => [(int) $linkedSmall[0]['variant_item_id']],
+            'variant_label' => ['Small'],
+            'variant_name' => ['Manual Conflict Name'],
+            'variant_barcode' => ['CS-S2'],
+            'variant_cost_price' => ['21.000'],
+            'variant_price1' => ['47.000'],
+            'variant_price2' => ['46.000'],
+            'variant_market_price' => ['49.000'],
+            'variant_active' => [1],
+            'variant_default' => [1],
+            'variant_sort' => [1],
+        ], ['user_id' => 7]);
+    } catch (InvalidArgumentException $exception) {
+        $duplicateFailed = $exception->getMessage() === 'duplicate_item_name';
+    }
+    itemVariantAssert($duplicateFailed, 'manual child name conflicts should fail clearly');
+
     itemVariantAssert($service->hasActiveVariants($conn, 10) === true, 'parent should be chooser while active child exists');
+
+    $deletedIds = $service->softDeleteParentAndVariantFamily($conn, 10);
+    itemVariantAssert(in_array(10, $deletedIds, true), 'parent should be soft deleted');
+    itemVariantAssert(in_array(99, $deletedIds, true), 'linked small child should be soft deleted with parent');
+    $parentRow = $conn->query('SELECT isdeleted FROM myitems WHERE id = 10')->fetch_assoc();
+    $childRow = $conn->query('SELECT isdeleted FROM myitems WHERE id = 99')->fetch_assoc();
+    itemVariantAssert((int) ($parentRow['isdeleted'] ?? 0) === 1, 'parent row should be marked deleted');
+    itemVariantAssert((int) ($childRow['isdeleted'] ?? 0) === 1, 'child row should be marked deleted');
+
+    $childParent = $service->variantParentForChild($conn, 99);
+    itemVariantAssert($childParent !== null && (int) $childParent['parent_item_id'] === 10, 'child should know parent relation');
+    itemVariantAssert($service->hasActiveVariants($conn, 10) === false, 'deleted parent should no longer expose active variants');
 
     echo "item-variant-service-ok db={$db}\n";
 } finally {
@@ -95,7 +203,9 @@ function itemVariantCreateFixtureSchema(mysqli $conn): void
             group2 BIGINT UNSIGNED NOT NULL DEFAULT 0,
             itmqty DECIMAL(15,3) NOT NULL DEFAULT 0,
             user BIGINT UNSIGNED NOT NULL DEFAULT 1,
-            isdeleted TINYINT(1) NOT NULL DEFAULT 0
+            isdeleted TINYINT(1) NOT NULL DEFAULT 0,
+            UNIQUE KEY uq_myitems_iname (iname),
+            UNIQUE KEY uq_myitems_barcode (barcode)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
     ");
     $conn->query("

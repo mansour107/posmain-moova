@@ -1,6 +1,10 @@
 <?php
 
 $expectations = [
+    'sales.php' => [
+        "require_once __DIR__ . '/includes/csrf.php'",
+        "csrf_input('pos_browser')",
+    ],
     'includes/pos_content.php' => [
         "csrf_input('pos_browser')",
         "csrf_token('shift_close')",

@@ -23,7 +23,7 @@ class RecipeCostService
         $this->explosion = $explosion ?: new RecipeExplosionService();
     }
 
-    public function calculateRecipeCost(mysqli $conn, int $recipeId, ?RecipeCostContext $context = null): RecipeCostResult
+    public function calculateRecipeCost(mysqli $conn, int $recipeId, ?RecipeCostContext $context = null, int $variantItemId = 0): RecipeCostResult
     {
         $context = $context ?: new RecipeCostContext();
         $recipe = $this->recipes->findHeaderById($conn, $recipeId);
@@ -32,8 +32,12 @@ class RecipeCostService
         }
 
         $method = $context->costingMethod ?: (string) ($recipe['costing_method'] ?? 'item_cost_price');
-        $orderContext = $context->toOrderLineContext((int) $recipe['sellable_item_id'], (string) $recipe['yield_qty']);
-        $explosion = $this->explosion->explodeRecipeById($conn, $recipeId, $orderContext, (string) $recipe['yield_qty']);
+        $orderContext = $context->toOrderLineContext(
+            (int) $recipe['sellable_item_id'],
+            (string) $recipe['yield_qty'],
+            max(0, $variantItemId)
+        );
+        $explosion = $this->explosion->explodeRecipeByIdForCosting($conn, $recipeId, $orderContext, (string) $recipe['yield_qty']);
 
         $ingredientCosts = [];
         $costPerYield = RecipeDecimal::zero();
@@ -63,7 +67,7 @@ class RecipeCostService
         ]);
     }
 
-    public function createSnapshot(mysqli $conn, int $recipeId, ?RecipeCostContext $context = null): array
+    public function createSnapshot(mysqli $conn, int $recipeId, ?RecipeCostContext $context = null, int $variantItemId = 0): array
     {
         $context = $context ?: new RecipeCostContext();
         $recipe = $this->recipes->findHeaderById($conn, $recipeId);
@@ -71,7 +75,7 @@ class RecipeCostService
             throw new RuntimeException('Recipe not found.');
         }
 
-        $cost = $this->calculateRecipeCost($conn, $recipeId, $context);
+        $cost = $this->calculateRecipeCost($conn, $recipeId, $context, $variantItemId);
         $snapshotId = $this->snapshots->createSnapshot($conn, [
             'snapshot_uuid' => $this->uuid(),
             'pos_tenant' => (int) $recipe['pos_tenant'],
@@ -95,14 +99,64 @@ class RecipeCostService
         return $this->snapshots->latestForRecipe($conn, $recipeId);
     }
 
-    public function getOrCreateOrderSnapshot(mysqli $conn, int $recipeId, RecipeCostContext $context): array
+    public function getOrCreateOrderSnapshot(mysqli $conn, int $recipeId, RecipeCostContext $context, int $sellableItemId = 0): array
     {
+        $variantItemId = $this->variantItemIdForSnapshot($conn, $recipeId, $sellableItemId);
         $latest = $this->getLatestSnapshot($conn, $recipeId);
-        if ($latest && $this->snapshotHasIngredientCostRows($latest)) {
+        if (
+            $latest
+            && $this->snapshotHasIngredientCostRows($latest)
+            && $this->snapshotMatchesCurrentIngredients($conn, $recipeId, $context, $variantItemId, $latest)
+        ) {
             return $latest;
         }
 
-        return $this->createSnapshot($conn, $recipeId, $context);
+        return $this->createSnapshot($conn, $recipeId, $context, $variantItemId);
+    }
+
+    private function variantItemIdForSnapshot(mysqli $conn, int $recipeId, int $sellableItemId): int
+    {
+        if ($sellableItemId < 1) {
+            return 0;
+        }
+
+        $recipe = $this->recipes->findHeaderById($conn, $recipeId);
+        if (!$recipe) {
+            return 0;
+        }
+
+        return (int) $recipe['sellable_item_id'] === $sellableItemId ? 0 : $sellableItemId;
+    }
+
+    private function snapshotMatchesCurrentIngredients(
+        mysqli $conn,
+        int $recipeId,
+        RecipeCostContext $context,
+        int $variantItemId,
+        array $snapshot
+    ): bool {
+        $current = $this->calculateRecipeCost($conn, $recipeId, $context, $variantItemId);
+        $currentIds = [];
+        foreach ($current->ingredientCosts as $row) {
+            $currentIds[] = (int) ($row['ingredient_item_id'] ?? 0);
+        }
+        sort($currentIds);
+
+        $decoded = json_decode((string) ($snapshot['ingredient_cost_json'] ?? '[]'), true);
+        if (!is_array($decoded)) {
+            return false;
+        }
+
+        $snapshotIds = [];
+        foreach ($decoded as $row) {
+            if (!is_array($row)) {
+                return false;
+            }
+            $snapshotIds[] = (int) ($row['ingredient_item_id'] ?? 0);
+        }
+        sort($snapshotIds);
+
+        return $currentIds === $snapshotIds;
     }
 
     private function snapshotHasIngredientCostRows(array $snapshot): bool

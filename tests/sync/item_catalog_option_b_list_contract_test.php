@@ -16,6 +16,7 @@ foreach ([
     'item_summery.php?id=<?= $itemid ?>',
     'do/toggle_item_active.php',
     'data-target="#deleteitm<?= $itemid ?>"',
+    'ivc.variant_item_id = myitems.id',
 ] as $needle) {
     itemCatalogOptionBAssert(strpos($catalog, $needle) !== false, 'item catalog should expose Option B list behavior: ' . $needle);
 }

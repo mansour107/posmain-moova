@@ -292,12 +292,26 @@ document.addEventListener('DOMContentLoaded', function () {
             ? ' ' + result.autoSync.message
             : ' وتمت مزامنة المنيو من الـ POS إلى متجر Moova.';
         } else if (result.autoSync && result.autoSync.attempted) {
-          syncMessage = result.autoSync.message
-            ? ' ' + result.autoSync.message
-            : ' تم حفظ الربط لكن مزامنة المنيو لم تكتمل؛ افتح شاشة البيع لإعادة المحاولة.';
+          const parts = [];
+          if (result.autoSync.syncMode) {
+            parts.push('وضع ' + result.autoSync.syncMode);
+          }
+          if (result.autoSync.phase) {
+            parts.push('مرحلة ' + result.autoSync.phase);
+          }
+          if (result.autoSync.statusCode) {
+            parts.push('HTTP ' + result.autoSync.statusCode);
+          }
+          if (result.autoSync.message) {
+            parts.push(result.autoSync.message);
+          }
+          syncMessage = parts.length
+            ? ' ' + parts.join(' — ')
+            : ' تم حفظ الربط لكن مزامنة المنيو لم تكتمل.';
         }
-        showAlert(result.autoSync && result.autoSync.attempted && !result.autoSync.ok ? 'warning' : 'success', 'تم حفظ الربط بنجاح.' + syncMessage);
-        setTimeout(function () { window.location.reload(); }, 900);
+        const syncNeedsAttention = result.autoSync && result.autoSync.attempted && !result.autoSync.ok;
+        showAlert(syncNeedsAttention ? 'warning' : 'success', 'تم حفظ الربط بنجاح.' + syncMessage);
+        setTimeout(function () { window.location.reload(); }, 10000);
       } catch (error) {
         showAlert('danger', error.message);
       } finally {

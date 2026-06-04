@@ -4,6 +4,7 @@ $root = dirname(__DIR__, 2);
 $page = inventoryPhase13Source($root . '/inventory_reports.php');
 $dashboardPage = inventoryPhase13Source($root . '/inventory_dashboard.php');
 $service = inventoryPhase13Source($root . '/classes/Inventory/InventoryReportsService.php');
+$recipeDisplayCost = inventoryPhase13Source($root . '/classes/Recipe/RecipeInventoryDisplayCostService.php');
 $reports = inventoryPhase13Source($root . '/reports.php');
 $sidebar = inventoryPhase13Source($root . '/includes/sidebar.php');
 
@@ -11,10 +12,13 @@ inventoryPhase13Assert(strpos($dashboardPage, 'InventoryReportsService') !== fal
 inventoryPhase13Assert(strpos($dashboardPage, 'require_login()') !== false, 'inventory dashboard page should require login');
 inventoryPhase13Assert(strpos($dashboardPage, 'posmain_inventory_dashboard_can_view') !== false, 'inventory dashboard page should enforce report permission');
 inventoryPhase13Assert(strpos($dashboardPage, "auth_guard_has_permission('reports.view'") !== false, 'inventory dashboard page should allow report viewers');
-inventoryPhase13Assert(strpos($dashboardPage, 'dashboardDetails') !== false, 'inventory dashboard page should load dashboard detail sections');
-foreach (['لوحة المخزون', 'يحتاج انتباه', 'اقتراحات الشراء', 'آخر حركات المخزون', 'تأثير توفر القائمة', 'inventory_purchasing.php', 'inventory_counts.php', 'inventory_adjustments.php'] as $needle) {
+inventoryPhase13Assert(strpos($dashboardPage, "report(\$conn, 'movement_history'") !== false, 'inventory dashboard page should load movement history report rows');
+foreach (['لوحة المخزون', 'سجل الحركات', 'movement_history', 'inventory_reports.php', 'posmain_inventory_dashboard_movement_type_labels', 'posmain_inventory_dashboard_source_type_label', 'inventory_dashboard_item_focus', 'حركات الصنف'] as $needle) {
     inventoryPhase13Assert(strpos($dashboardPage, $needle) !== false, 'inventory dashboard page should include: ' . $needle);
 }
+inventoryPhase13Assert(strpos($service, 'inventory_dashboard.php?item_id=') !== false, 'inventory report service should link item drilldowns to movement dashboard');
+inventoryPhase13Assert(strpos($page, 'posmain_inventory_reports_redirect_item_movements') !== false, 'inventory reports should redirect item movement drilldowns away from full reports page');
+inventoryPhase13Assert(strpos($dashboardPage, 'يحتاج انتباه') === false && strpos($dashboardPage, 'اقتراحات الشراء') === false && strpos($dashboardPage, 'تأثير توفر القائمة') === false, 'inventory dashboard page should not duplicate inventory reports summary panels');
 inventoryPhase13Assert(strpos($page, 'InventoryReportsService') !== false, 'inventory reports page should load shared report service');
 inventoryPhase13Assert(strpos($page, 'require_login()') !== false, 'inventory reports page should require login');
 inventoryPhase13Assert(strpos($page, 'posmain_inventory_reports_can_view') !== false, 'inventory reports page should enforce report permission');
@@ -24,6 +28,7 @@ inventoryPhase13Assert(strpos($page, 'posmain_inventory_reports_can_view_cost') 
 inventoryPhase13Assert(strpos($page, 'أعمدة التكلفة مخفية') !== false, 'inventory reports page should disclose hidden costs');
 inventoryPhase13Assert(strpos($page, 'text/csv') !== false && strpos($page, 'posmain_csv_safe_row') !== false, 'inventory reports should export safe CSV');
 inventoryPhase13Assert(strpos($page, 'drilldown_url') !== false && strpos($page, 'inventory_report_cell') !== false, 'inventory reports should render drilldown links');
+inventoryPhase13Assert(strpos($page, 'posmain_inventory_report_item_page_url') !== false && strpos($page, 'add_item.php?edit=') !== false && strpos($page, 'inventory-report-item-link') !== false, 'inventory reports should link item names to item details page');
 
 foreach ([
     'inventory_levels',
@@ -69,7 +74,8 @@ inventoryPhase13Assert(strpos($dashboardPage, '<select name="pos_branch"') !== f
 inventoryPhase13Assert(strpos($dashboardPage, '<select name="item_id"') !== false && strpos($dashboardPage, 'كل الأصناف') !== false, 'inventory dashboard should use named item selector instead of raw item id input');
 inventoryPhase13Assert(strpos($dashboardPage, 'posmain_inventory_dashboard_branches') !== false && strpos($dashboardPage, 'posmain_inventory_dashboard_items') !== false, 'inventory dashboard should load branch and item selector options');
 inventoryPhase13Assert(strpos($dashboardPage, 'posmain_inventory_dashboard_movement_label') !== false && strpos($dashboardPage, 'مرتجع شراء') !== false, 'inventory dashboard should label recent movement types in Arabic');
-inventoryPhase13Assert(strpos($dashboardPage, 'posmain_inventory_dashboard_order_type_label') !== false && strpos($dashboardPage, 'posmain_inventory_dashboard_channel_label') !== false, 'inventory dashboard should label menu availability order/channel tokens in Arabic');
+inventoryPhase13Assert(strpos($dashboardPage, '<select name="movement_type"') !== false && strpos($dashboardPage, 'كل الحركات') !== false, 'inventory dashboard should expose Arabic movement type filter');
+inventoryPhase13Assert(strpos($page, 'inventory_dashboard.php') !== false && strpos($page, 'حركات المخزون') !== false, 'inventory reports page should link dedicated stock movements page');
 foreach (['movement-type filter is an operator-facing selector', 'dashboard recent-movement/menu-availability rows translate technical movement', 'CSV export keeps the stored raw values', 'generic unnamed-branch/item/store labels'] as $needle) {
     $docs = inventoryPhase13Source($root . '/docs/inventory/phase13_reports_contracts.md');
     inventoryPhase13Assert(strpos($docs, $needle) !== false, 'phase13 docs should describe report label UX: ' . $needle);
@@ -80,14 +86,17 @@ inventoryPhase13Assert(strpos($page, "if (\$canViewCost)") !== false && strpos($
 foreach (['inventoryLevels', 'movementHistory', 'lowStock', 'replenishmentSuggestions', 'purchaseHistory', 'supplierPurchaseSummary', 'transferHistory', 'countVariance', 'wasteAdjustment', 'productionVariance', 'recipeConsumption', 'menuAvailability', 'inventoryValuation', 'cogsReconciliation', 'dashboard', 'dashboardDetails', 'menuAvailabilityImpact'] as $method) {
     inventoryPhase13Assert(strpos($service, 'function ' . $method) !== false, 'inventory report service should expose: ' . $method);
 }
+inventoryPhase13Assert(strpos($service, 'RecipeInventoryDisplayCostService') !== false, 'inventory report service should apply recipe-based display costs');
+inventoryPhase13Assert(strpos($service, 'enrichBalanceReportRows') !== false, 'inventory report service should enrich balance rows with recipe costs');
+inventoryPhase13Assert(strpos($recipeDisplayCost, 'resolveInventoryUnitCost') !== false, 'recipe inventory display cost service should resolve recipe unit costs');
 foreach (['moving_average_cost', 'stock_value', 'total_cost', 'variance_cost', 'estimated_purchase_cost', 'journal_debit_total', 'current_stock_value', 'last_unit_cost', 'last_total_cost'] as $costColumn) {
     inventoryPhase13Assert(strpos($page, "unset(\$selected[\$costColumn])") !== false || strpos($page, "'" . $costColumn . "'") !== false, 'inventory reports should define cost column gate for: ' . $costColumn);
 }
 
-inventoryPhase13Assert(strpos($reports, 'inventory_dashboard.php') !== false && strpos($reports, 'لوحة المخزون') !== false, 'reports index should link Arabic inventory dashboard');
-inventoryPhase13Assert(strpos($reports, 'inventory_reports.php') !== false && strpos($reports, 'تقارير المخزون') !== false, 'reports index should link Arabic inventory reports');
-inventoryPhase13Assert(strpos($sidebar, 'inventory_dashboard.php') !== false && strpos($sidebar, 'لوحة المخزون') !== false, 'sidebar should link Arabic inventory dashboard');
-inventoryPhase13Assert(strpos($sidebar, 'inventory_reports.php') !== false && strpos($sidebar, 'تقارير المخزون') !== false, 'sidebar should link Arabic inventory reports');
+inventoryPhase13Assert(strpos($reports, 'inventory_dashboard.php') !== false, 'reports index should link inventory dashboard page');
+inventoryPhase13Assert(strpos($reports, 'inventory_reports.php') !== false && strpos($reports, 'لوحة المخزون') !== false, 'reports index should link Arabic inventory dashboard');
+inventoryPhase13Assert(strpos($sidebar, 'inventory_dashboard.php') === false, 'sidebar should not expose duplicate stock movements page');
+inventoryPhase13Assert(strpos($sidebar, 'inventory_reports.php') !== false && strpos($sidebar, 'لوحة المخزون') !== false, 'sidebar should link Arabic inventory dashboard');
 
 echo "inventory-phase13-reports-contract-ok\n";
 

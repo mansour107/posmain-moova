@@ -239,9 +239,9 @@ class InvoiceHeader extends InvoiceElementBase
     private function getAccuralDate()
     {
         if ($this->isEditMode && $this->data) {
-            return $this->data['accural_date'];
+            return $this->data['accural_date'] ?? '';
         }
-        return '';
+        return date('Y-m-d');
     }
 
     /**

@@ -88,6 +88,35 @@ class RecipeEditorPreviewServiceTest extends TestCase
         $this->assertSame($beforeCacheRows, $afterCacheRows, 'editor preview must not refresh/write availability cache');
     }
 
+    public function testPreviewUsesVariationRecipeLinesWhenItemHasVariations(): void
+    {
+        $mainItemId = ++self::$itemCounter;
+        $variantItemId = ++self::$itemCounter;
+        $nutellaId = $this->insertItem('nutella', '0.000000');
+        $teaId = $this->insertItem('TEMP TEST tea', '5.000000');
+        self::$conn->query("INSERT INTO myitems (id, iname, cost_price) VALUES ({$mainItemId}, 'Main dessert', 0)");
+        self::$conn->query("INSERT INTO myitems (id, iname, cost_price) VALUES ({$variantItemId}, 'TEMP TEST tea variation', 0)");
+        self::$conn->query("
+            INSERT INTO item_variants (parent_item_id, variant_item_id, variant_label, is_active, sort_order)
+            VALUES ({$mainItemId}, {$variantItemId}, 'TEMP TEST tea', 1, 1)
+        ");
+
+        $recipe = $this->createDraftRecipe($mainItemId, $nutellaId);
+        self::$conn->query("
+            INSERT INTO recipe_variant_lines
+                (recipe_id, variant_item_id, line_uuid, ingredient_item_id, line_type, qty_per_yield, unit_conversion_to_base, wastage_percent, is_required, sort_order)
+            VALUES
+                ({$recipe['id']}, {$variantItemId}, '00000000-0000-4000-8000-000000012995', {$nutellaId}, 'ingredient', 1.000000, 1.00000000, 0.0000, 1, 1),
+                ({$recipe['id']}, {$variantItemId}, '00000000-0000-4000-8000-000000012994', {$teaId}, 'ingredient', 1.000000, 1.00000000, 0.0000, 1, 2)
+        ");
+
+        $preview = $this->previewService()->preview(self::$conn, (int) $recipe['id'], [
+            'costing_method' => 'item_cost_price',
+        ]);
+
+        $this->assertSame('5.000000', $preview['cost']['cost_per_sell_unit']);
+    }
+
     public function testPreviewCanSuppressCostForUnauthorizedViewers(): void
     {
         $sellableId = $this->insertItem('No-cost preview item', '0.000000');

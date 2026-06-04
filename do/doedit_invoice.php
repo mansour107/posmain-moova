@@ -52,8 +52,8 @@ $ot_id = isset($_POST['ot_id']) ? intval($_POST['ot_id']) : 0;
 $acc2_id = isset($_POST['acc2_id']) ? intval($_POST['acc2_id']) : 0;
 $store_id = isset($_POST['store_id']) ? intval($_POST['store_id']) : 0;
 $emp_id = isset($_POST['emp_id']) ? intval($_POST['emp_id']) : 0;
-$pro_date = isset($_POST['pro_date']) ? htmlspecialchars($_POST['pro_date'], ENT_QUOTES, 'UTF-8') : date('Y-m-d');
-$accural_date = isset($_POST['accural_date']) ? htmlspecialchars($_POST['accural_date'], ENT_QUOTES, 'UTF-8') : '';
+$pro_date = posmain_normalize_invoice_date($_POST['pro_date'] ?? null);
+$accural_date = posmain_normalize_invoice_date($_POST['accural_date'] ?? null, $pro_date);
 $pro_id = isset($_POST['pro_id']) ? htmlspecialchars($_POST['pro_id'], ENT_QUOTES, 'UTF-8') : '';
 $pro_serial = isset($_POST['pro_serial']) ? htmlspecialchars(trim($_POST['pro_serial']), ENT_QUOTES, 'UTF-8') : '';
 $headtotal = isset($_POST['headtotal']) ? floatval($_POST['headtotal']) : 0;
@@ -696,4 +696,19 @@ $redirects = [
 $redirect = $redirects[$pro_tybe] ?? '../sales.php';
 header("Location: $redirect");
 exit;
+
+function posmain_normalize_invoice_date($value, ?string $fallback = null): string
+{
+    $value = trim((string) $value);
+    if ($value !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $value)) {
+        return $value;
+    }
+
+    $fallback = trim((string) ($fallback ?? ''));
+    if ($fallback !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $fallback)) {
+        return $fallback;
+    }
+
+    return date('Y-m-d');
+}
 ?>

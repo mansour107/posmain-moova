@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/../includes/session_bootstrap.php';
 include('../includes/connect.php');
+require_once __DIR__ . '/../classes/Items/ItemEditorFlash.php';
 require_once __DIR__ . '/../classes/Items/ItemFormInput.php';
 require_once __DIR__ . '/../classes/Items/ItemRecipeCatalogService.php';
 require_once __DIR__ . '/../classes/Pos/Service/ItemVariantService.php';
@@ -32,7 +33,8 @@ if (isset($_POST['barcode'])) {
 // Item Name Validation (Check for duplicate names)
 $iname = trim((string) ($_POST['iname'] ?? ''));
 if ($iname === '') {
-    header('Location: ../add_item.php?edit=' . $item_id . '&error=save_failed');
+    ItemEditorFlash::set('danger', 'save_failed');
+    header('Location: ../add_item.php?edit=' . $item_id);
     exit;
 }
 $sqlchkname  = "SELECT * FROM myitems WHERE iname = ? AND id != ?";
@@ -43,7 +45,8 @@ $chkname = $stmt->get_result()->fetch_assoc();
 $stmt->close();
 
 if ($chkname !== null) {
-    header('Location: ../add_item.php?edit=' . (int) $item_id . '&error=duplicate_name');
+    ItemEditorFlash::set('danger', 'duplicate_name');
+    header('Location: ../add_item.php?edit=' . (int) $item_id);
     exit;
 }
 
@@ -52,7 +55,8 @@ $defaultUnitId = posmain_edit_item_needs_default_unit($_POST) ? posmain_edit_ite
 try {
     $payload = ItemFormInput::normalizeAddPayload($_POST, $usid, $defaultUnitId);
 } catch (InvalidArgumentException $exception) {
-    header('Location: ../add_item.php?edit=' . $item_id . '&error=save_failed');
+    ItemEditorFlash::set('danger', 'save_failed');
+    header('Location: ../add_item.php?edit=' . $item_id);
     exit;
 }
 
@@ -84,7 +88,8 @@ if (isset($_FILES['imgs']) && !empty($_FILES['imgs']['name'][0])) {
             $new_kvr_name = null;
         }
     } else {
-        header('Location: ../add_item.php?edit=' . $item_id . '&error=invalid_image');
+        ItemEditorFlash::set('danger', 'invalid_image');
+        header('Location: ../add_item.php?edit=' . $item_id);
         exit;
     }
 }
@@ -144,6 +149,19 @@ try {
         posmain_record_menu_item_sync($conn, (int) $changedItemId, 'item_form');
     }
     $conn->commit();
+} catch (InvalidArgumentException $exception) {
+    if ($conn instanceof mysqli) {
+        $conn->rollback();
+    }
+    $error = 'save_failed';
+    if ($exception->getMessage() === 'duplicate_item_name') {
+        $error = 'duplicate_name';
+    } elseif ($exception->getMessage() === 'duplicate_item_barcode') {
+        $error = 'duplicate_barcode';
+    }
+    ItemEditorFlash::set('danger', $error);
+    header('Location: ../add_item.php?edit=' . (int) $item_id);
+    exit;
 } catch (Throwable $exception) {
     if ($conn instanceof mysqli) {
         $conn->rollback();
@@ -151,15 +169,17 @@ try {
     if (function_exists('posmain_log_exception') && function_exists('posmain_error_reference')) {
         posmain_log_exception($exception, posmain_error_reference(), 'edit_item_save');
     }
-    header('Location: ../add_item.php?edit=' . (int) $item_id . '&error=save_failed');
+    ItemEditorFlash::set('danger', 'save_failed');
+    header('Location: ../add_item.php?edit=' . (int) $item_id);
     exit;
 }
 
 $saveIntent = (string) ($_POST['save_intent'] ?? 'stay');
 if ($saveIntent === 'close') {
-    header('Location: ../myitems.php?saved=1');
+    header('Location: ../myitems.php');
 } else {
-    header('Location: ../add_item.php?edit=' . (int) $item_id . '&saved=1');
+    ItemEditorFlash::set('success', 'saved');
+    header('Location: ../add_item.php?edit=' . (int) $item_id);
 }
 exit;
 

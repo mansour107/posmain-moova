@@ -61,6 +61,18 @@ function moova_integration_origin_from_widget_url($widgetUrl)
 
 function moova_integration_current_origin()
 {
+    $envOrigin = '';
+    if (function_exists('posmain_first_env')) {
+        $envOrigin = trim((string) posmain_first_env([
+            'POSMAIN_MOOVA_POS_PUBLIC_ORIGIN',
+            'POSMAIN_PUBLIC_ORIGIN',
+            'POS_PUBLIC_URL',
+        ], '', true));
+    }
+    if ($envOrigin !== '') {
+        return rtrim($envOrigin, '/');
+    }
+
     $forwardedProto = strtolower(trim(strtok(moova_integration_header('X-Forwarded-Proto'), ',') ?: ''));
     $scheme = in_array($forwardedProto, ['http', 'https'], true)
         ? $forwardedProto
@@ -80,9 +92,16 @@ function moova_integration_current_origin()
 
 function moova_integration_trigger_menu_sync_after_save(array $saved, $deviceToken)
 {
+    global $conn;
+
     $posOrigin = moova_integration_current_origin();
 
-    return (new MoovaPosMenuReconcileService())->reconcileAfterIntegrationSave($saved, (string) $deviceToken, $posOrigin);
+    return (new MoovaPosMenuReconcileService())->reconcileAfterIntegrationSave(
+        $conn,
+        $saved,
+        (string) $deviceToken,
+        $posOrigin
+    );
 }
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {

@@ -263,7 +263,7 @@ class RecipeOrderLifecycleService
                 'channel' => $lineContext->channel,
                 'modifiers' => $lineContext->modifiers,
                 'calculated_at' => date('Y-m-d H:i:s'),
-            ]));
+            ]), $lineContext->sellableItemId);
             $explosion->costSnapshotId = (int) $snapshot['id'];
             $this->applySnapshotCosts($explosion, $snapshot);
 
@@ -618,7 +618,7 @@ class RecipeOrderLifecycleService
                 'channel' => $lineContext->channel,
                 'modifiers' => $lineContext->modifiers,
                 'calculated_at' => date('Y-m-d H:i:s'),
-            ]));
+            ]), $lineContext->sellableItemId);
             $explosion->costSnapshotId = (int) $snapshot['id'];
             $this->applySnapshotCosts($explosion, $snapshot);
 

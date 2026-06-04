@@ -26,7 +26,7 @@ foreach ([
     '1 <strong class="unit-relation-unit-name"',
     'summaryItemType',
     'variantEditorBody',
-    "addClass('show')",
+    "removeClass('d-none')",
 ] as $needle) {
     itemEditorOptionBAssert(strpos($form, $needle) !== false, 'option B item editor script should wire: ' . $needle);
 }

@@ -93,12 +93,12 @@ $recipeReportLinks = posmain_recipe_report_link_permissions($conn);
                             <?php endif; ?>
                             <div class="col-md-4 col-lg-3 report-item">
                                 <a class="btn btn-outline-primary btn-block btn-sm w-100" href="inventory_dashboard.php">
-                                    لوحة المخزون
+                                    حركات المخزون
                                 </a>
                             </div>
                             <div class="col-md-4 col-lg-3 report-item">
                                 <a class="btn btn-outline-success btn-block btn-sm w-100" href="inventory_reports.php">
-                                    تقارير المخزون
+                                    لوحة المخزون
                                 </a>
                             </div>
                         </div>
