@@ -24,10 +24,12 @@ $(document).ready(function() {
         }
     });
 
-    // Handle Barcode Input
+    // Handle Barcode Input (scanner sends Enter — no debounced auto-add on this field)
+    let barcodeCheckTimeout;
     $('#barcodeInput').on('keypress', function(e) {
         if (e.which === 13) {
             e.preventDefault();
+            clearTimeout(barcodeCheckTimeout);
             let barcode = $(this).val().trim();
             if (barcode === '+') {
                 $(this).val('');
@@ -44,15 +46,15 @@ $(document).ready(function() {
         }
     });
 
-    // Real-time exact barcode matching to add it directly to cart
-    let barcodeCheckTimeout;
-    $('#barcodeInput, #searchInput').on('input change', function() {
+    // Search field: debounced exact barcode match only (barcode field uses Enter above)
+    $('#searchInput').on('input change', function() {
         let inputField = $(this);
         let val = inputField.val().trim();
-        
-        // Skip if empty or plus sign
-        if (!val || val === '+') return;
-        
+
+        if (!val) {
+            return;
+        }
+
         clearTimeout(barcodeCheckTimeout);
         barcodeCheckTimeout = setTimeout(function() {
             $.ajax({
@@ -61,16 +63,15 @@ $(document).ready(function() {
                 data: { barcode: val },
                 success: function(response) {
                     try {
-                        let data = JSON.parse(response);
+                        let data = typeof response === 'object' ? response : JSON.parse(response);
                         if (data.success && data.item) {
-                            // Exact match found! Add to cart with quantity 1
+                            if (!itemAvailabilityCanAdd(data.item)) {
+                                showUnavailableItem(data.item);
+                                return;
+                            }
                             addItemToTable(data.item, 1);
                             inputField.val('');
-                            
-                            // If it was searchInput, refocus on barcodeInput
                             $('#barcodeInput').focus();
-                            
-                            // Close autocomplete dropdown if open
                             if (inputField.data('ui-autocomplete')) {
                                 inputField.autocomplete('close');
                             }
@@ -80,13 +81,14 @@ $(document).ready(function() {
                     }
                 }
             });
-        }, 150); // 150ms debounce
+        }, 150);
     });
 
     // Handle Enter key on Search Input
     $('#searchInput').on('keypress', function(e) {
         if (e.which === 13) {
             e.preventDefault();
+            clearTimeout(barcodeCheckTimeout);
             let query = $(this).val().trim();
             if (query) {
                 $.ajax({
@@ -97,8 +99,12 @@ $(document).ready(function() {
                         try {
                             let items = JSON.parse(response);
                             if (items && items.length > 0) {
-                                // Add the first matched item
-                                addItemToTable(items[0].item, 1);
+                                const item = items[0].item;
+                                if (!itemAvailabilityCanAdd(item)) {
+                                    showUnavailableItem(item);
+                                    return;
+                                }
+                                addItemToTable(item, 1);
                                 $('#searchInput').val('');
                                 $('#barcodeInput').focus();
                                 // Close autocomplete if open
@@ -139,6 +145,10 @@ $(document).ready(function() {
         minLength: 1,
         select: function(event, ui) {
             if (ui.item && ui.item.item) {
+                if (!itemAvailabilityCanAdd(ui.item.item)) {
+                    showUnavailableItem(ui.item.item);
+                    return false;
+                }
                 addItemToTable(ui.item.item, 1);
                 $(this).val('');
                 $('#barcodeInput').focus();
@@ -210,6 +220,23 @@ $(document).ready(function() {
         $('#barcodeInput').focus();
     });
 
+    function itemAvailabilityCanAdd(item) {
+        item = item || {};
+        const isAvailable = String(item.is_available !== undefined ? item.is_available : '1') !== '0';
+        return String(item.availability_can_add !== undefined ? item.availability_can_add : (isAvailable ? '1' : '0')) !== '0';
+    }
+
+    function showUnavailableItem(item) {
+        const reason = (item && item.unavailable_reason) ? item.unavailable_reason : 'هذا الصنف غير متاح حالياً.';
+        Swal.fire({
+            icon: 'warning',
+            title: 'غير متاح',
+            text: reason,
+            timer: 1800,
+            showConfirmButton: false
+        });
+    }
+
     function searchItemSupermarket(barcode) {
         // Handle Scale Barcodes based on config
         let searchCode = barcode;
@@ -234,6 +261,10 @@ $(document).ready(function() {
                 try {
                     let data = JSON.parse(response);
                     if (data.success) {
+                        if (!itemAvailabilityCanAdd(data.item)) {
+                            showUnavailableItem(data.item);
+                            return;
+                        }
                         let qtyToAdd = scaleWeight > 0 ? scaleWeight : 1;
                         addItemToTable(data.item, qtyToAdd);
                     } else {

@@ -1,6 +1,7 @@
 <?php include('includes/header.php') ?>
 <?php include('includes/navbar.php') ?>
 <?php include('includes/sidebar.php') ?>
+<?php require_once __DIR__ . '/includes/csrf.php'; ?>
 
 <?php
 // Label maps for display
@@ -85,7 +86,9 @@ $stmt->close();
 
   <div class="card-body p-0">
     <?php if (isset($_GET['success'])): ?>
-      <div class="alert alert-success m-3">تم تسجيل الزيارة بنجاح.</div>
+      <div class="alert alert-success m-3">
+        <?= $_GET['success'] === 'deleted' ? 'تم حذف الزيارة.' : 'تم تسجيل الزيارة بنجاح.' ?>
+      </div>
     <?php endif; ?>
 
     <div class="table-responsive">
@@ -122,11 +125,12 @@ $stmt->close();
                 <td><?= htmlspecialchars($type_labels[$v['visit_type']] ?? $v['visit_type']) ?></td>
                 <td><?= htmlspecialchars(date('Y-m-d', strtotime($v['created_at']))) ?></td>
                 <td>
-                  <a href="do/dodel_customer_visit.php?id=<?= (int)$v['id'] ?>"
-                     class="btn btn-danger btn-xs"
-                     onclick="return confirm('هل تريد حذف هذه الزيارة؟')">
+                  <button type="button"
+                          class="btn btn-danger btn-xs delete-visit-btn"
+                          data-id="<?= (int)$v['id'] ?>"
+                          title="حذف">
                     <i class="fas fa-trash"></i>
-                  </a>
+                  </button>
                 </td>
               </tr>
             <?php endforeach; ?>
@@ -140,6 +144,8 @@ $stmt->close();
 
   <script>
     $(document).ready(function() {
+      const customerVisitCsrf = <?= json_encode(csrf_token('customer_visits'), JSON_UNESCAPED_UNICODE) ?>;
+
       $('.update-end-time').on('change', function() {
         var id = $(this).data('id');
         var endTime = $(this).val();
@@ -147,13 +153,11 @@ $stmt->close();
         $.ajax({
           url: 'ajax/update_customer_visit_end_time.php',
           type: 'POST',
-          data: { id: id, end_time: endTime },
+          data: { id: id, end_time: endTime, csrf_token: customerVisitCsrf },
           success: function(response) {
             try {
               var res = typeof response === 'string' ? JSON.parse(response) : response;
-              if(res.success) {
-                // Time updated successfully
-              } else {
+              if(!res.success) {
                 alert('حدث خطأ أثناء التحديث');
               }
             } catch(e) {
@@ -164,6 +168,19 @@ $stmt->close();
             alert('حدث خطأ أثناء الاتصال بالخادم');
           }
         });
+      });
+
+      $('.delete-visit-btn').on('click', function() {
+        const id = $(this).data('id');
+        if (!id || !confirm('هل تريد حذف هذه الزيارة؟')) {
+          return;
+        }
+
+        const form = $('<form>', { method: 'POST', action: 'do/dodel_customer_visit.php' });
+        form.append($('<input>', { type: 'hidden', name: 'id', value: id }));
+        form.append($('<input>', { type: 'hidden', name: 'csrf_token', value: customerVisitCsrf }));
+        $('body').append(form);
+        form.trigger('submit');
       });
     });
   </script>

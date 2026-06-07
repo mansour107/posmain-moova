@@ -53,20 +53,8 @@ if (
     exit;
 }
 
-$check_tables = $conn->query("SELECT COUNT(*) as count FROM tables WHERE isdeleted = 0");
-if ($check_tables) {
-    $tables_count = $check_tables->fetch_assoc()['count'];
-    if ($tables_count == 0) {
-        $stmt = $conn->prepare("INSERT INTO tables (tname, table_case) VALUES (?, 0)");
-        for ($i = 1; $i <= 12; $i++) {
-            $table_name = "طاولة " . $i;
-            $stmt->bind_param("s", $table_name);
-            $stmt->execute();
-        }
-        $stmt->close();
-    }
-}
-
+$id = 0;
+$rowed = [];
 $posdate = date('Y-m-d', strtotime('-4 hours'));
 if (isset($_GET['edit'])) {
     $id = intval($_GET['edit']);

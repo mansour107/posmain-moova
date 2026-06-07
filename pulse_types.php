@@ -156,6 +156,7 @@ while ($row = $res->fetch_assoc()) {
 </div>
 
 <?php include('includes/footer.php'); ?>
+<?php include('includes/pulse_csrf_client.php'); ?>
 
 <script>
 function resetModal() {

@@ -22,6 +22,54 @@ $expectations = [
         "csrf_meta_tag('pos_browser', 'posmain-csrf-token')",
         'PasswordService::verifyPassword',
     ],
+    'ajax/check_exact_barcode.php' => [
+        "require_once __DIR__ . '/../includes/session_bootstrap.php'",
+        'posmain_supermarket_require_pos_session',
+        'posmain_supermarket_require_ajax_csrf',
+        'posmain_supermarket_lookup_item',
+    ],
+    'ajax/search_item_supermarket.php' => [
+        "require_once __DIR__ . '/../includes/session_bootstrap.php'",
+        'posmain_supermarket_require_pos_session',
+        'posmain_supermarket_require_ajax_csrf',
+        'posmain_supermarket_lookup_item',
+    ],
+    'ajax/search_items_autocomplete.php' => [
+        "require_once __DIR__ . '/../includes/session_bootstrap.php'",
+        'posmain_supermarket_require_pos_session',
+        'posmain_supermarket_autocomplete_items',
+    ],
+    'includes/supermarket_item_lookup.php' => [
+        'ItemCatalogStatus::activeOnlySql',
+        'ItemCatalogStatus::posSellableOnlySql',
+        'ItemAvailabilityService',
+        'posmain_supermarket_require_pos_session',
+        'pos_authenticated',
+    ],
+    'do/doadd_customer_visit.php' => [
+        "require_once __DIR__ . '/../includes/session_bootstrap.php'",
+        "require_csrf('customer_visits')",
+        'require_login()',
+    ],
+    'do/dodel_customer_visit.php' => [
+        "require_once __DIR__ . '/../includes/session_bootstrap.php'",
+        "require_csrf('customer_visits')",
+        'require_login()',
+        '$_POST[\'id\']',
+    ],
+    'ajax/update_customer_visit_end_time.php' => [
+        "require_once __DIR__ . '/../includes/session_bootstrap.php'",
+        "require_csrf('customer_visits')",
+        'require_login()',
+    ],
+    'ajax/pulse_ajax.php' => [
+        "require_once __DIR__ . '/../includes/session_bootstrap.php'",
+        'http_response_code(401)',
+        "require_csrf('pulse')",
+    ],
+    'ajax/generate_items.php' => [
+        "require_csrf('items_factory')",
+    ],
     'do/doadd_invoice.php' => [
         "require_once('../includes/auth_guard.php')",
         "require_once('../includes/csrf.php')",
@@ -75,6 +123,19 @@ $forbiddenSnippets = [
     'do_close_shift_z.php' => [
         'print_r($_POST',
         'echo "خطأ في الإغلاق: " . $conn->error',
+    ],
+    'do/dodel_customer_visit.php' => [
+        "\$_GET['id']",
+    ],
+    'customer_visits.php' => [
+        "do/dodel_customer_visit.php?id=",
+    ],
+    'pos_supermarket.php' => [
+        'INSERT INTO tables',
+    ],
+    'includes/pos_supermarket_content.php' => [
+        'WHERE fd.pro_id = $id',
+        'SELECT * FROM ot_head where id = $id',
     ],
 ];
 

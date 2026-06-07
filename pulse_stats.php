@@ -140,6 +140,7 @@
 </style>
 
 <?php include('includes/footer.php'); ?>
+<?php include('includes/pulse_csrf_client.php'); ?>
 
 <script>
 $(function() {

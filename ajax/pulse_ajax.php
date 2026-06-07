@@ -1,35 +1,93 @@
 <?php
 // ajax/pulse_ajax.php — Pulse AJAX Handler
+require_once __DIR__ . '/../includes/session_bootstrap.php';
 require_once __DIR__ . '/../includes/connect.php';
-if (session_status() === PHP_SESSION_NONE) {
-    session_start();
-}
+require_once __DIR__ . '/../includes/csrf.php';
 
 if (!isset($_SESSION['login'])) {
-    echo json_encode(['error' => 'غير مصرح']);
+    http_response_code(401);
+    header('Content-Type: application/json; charset=utf-8');
+    echo json_encode(['error' => 'غير مصرح'], JSON_UNESCAPED_UNICODE);
     exit;
 }
 
 header('Content-Type: application/json; charset=utf-8');
 
 $action = $_POST['action'] ?? $_GET['action'] ?? '';
+$writeActions = ['save_log', 'delete_log', 'save_type', 'delete_type'];
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($action, $writeActions, true)) {
+    require_csrf('pulse');
+}
+
+function pulse_stats_date_filter(string $period, string $from, string $to, array &$params, string &$types): string
+{
+    switch ($period) {
+        case 'today':
+            return 'AND DATE(pl.recorded_at) = CURDATE()';
+        case 'week':
+            return 'AND pl.recorded_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)';
+        case 'month':
+            return 'AND pl.recorded_at >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)';
+        case 'custom':
+            if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $from) || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $to)) {
+                return '';
+            }
+            $params[] = $from;
+            $params[] = $to;
+            $types .= 'ss';
+            return 'AND DATE(pl.recorded_at) BETWEEN ? AND ?';
+        default:
+            return '';
+    }
+}
+
+function pulse_stats_fetch_all(mysqli $conn, string $sql, array $params, string $types): array
+{
+    $stmt = $conn->prepare($sql);
+    if (!$stmt) {
+        return [];
+    }
+
+    if ($params !== []) {
+        $stmt->bind_param($types, ...$params);
+    }
+
+    $stmt->execute();
+    $result = $stmt->get_result();
+    $rows = [];
+    while ($row = $result->fetch_assoc()) {
+        $rows[] = $row;
+    }
+    $stmt->close();
+
+    return $rows;
+}
+
+function pulse_stats_fetch_one(mysqli $conn, string $sql, array $params, string $types): array
+{
+    $rows = pulse_stats_fetch_all($conn, $sql, $params, $types);
+    return $rows[0] ?? [];
+}
 
 switch ($action) {
 
     // ─── Get types filtered by category ───
     case 'get_types':
         $cat = $_GET['category'] ?? '';
-        $sql = "SELECT * FROM pulse_types WHERE isdeleted = 0";
         if ($cat === 'positive' || $cat === 'negative') {
-            $sql .= " AND category = '" . $conn->real_escape_string($cat) . "'";
+            $stmt = $conn->prepare("SELECT * FROM pulse_types WHERE isdeleted = 0 AND category = ? ORDER BY name ASC");
+            $stmt->bind_param('s', $cat);
+        } else {
+            $stmt = $conn->prepare("SELECT * FROM pulse_types WHERE isdeleted = 0 ORDER BY name ASC");
         }
-        $sql .= " ORDER BY name ASC";
-        $result = $conn->query($sql);
+        $stmt->execute();
+        $result = $stmt->get_result();
         $types = [];
         while ($row = $result->fetch_assoc()) {
             $types[] = $row;
         }
-        echo json_encode($types);
+        $stmt->close();
+        echo json_encode($types, JSON_UNESCAPED_UNICODE);
         break;
 
     // ─── Save a new pulse log ───
@@ -52,12 +110,18 @@ switch ($action) {
         $stmt->bind_param("iisisi", $employee_id, $type_id, $category, $rating, $notes, $recorded_by);
 
         if ($stmt->execute()) {
-            // Get the type points
-            $typeRes = $conn->query("SELECT points FROM pulse_types WHERE id = $type_id");
-            $typeRow = $typeRes->fetch_assoc();
-            $points = $typeRow['points'] ?? 0;
+            $points = 0;
+            $pointsStmt = $conn->prepare('SELECT points FROM pulse_types WHERE id = ? LIMIT 1');
+            if ($pointsStmt) {
+                $pointsStmt->bind_param('i', $type_id);
+                $pointsStmt->execute();
+                $typeRes = $pointsStmt->get_result();
+                $typeRow = $typeRes ? $typeRes->fetch_assoc() : null;
+                $points = (int) ($typeRow['points'] ?? 0);
+                $pointsStmt->close();
+            }
 
-            echo json_encode(['success' => true, 'id' => $stmt->insert_id, 'points' => $points]);
+            echo json_encode(['success' => true, 'id' => $stmt->insert_id, 'points' => $points], JSON_UNESCAPED_UNICODE);
         } else {
             echo json_encode(['error' => 'فشل في الحفظ']);
         }
@@ -83,112 +147,101 @@ switch ($action) {
 
     // ─── Get recent logs ───
     case 'get_logs':
-        $limit = intval($_GET['limit'] ?? 50);
-        $sql = "SELECT pl.*, e.name AS emp_name, pt.name AS type_name, pt.icon AS type_icon, pt.points,
-                       u.uname AS recorded_by_name
-                FROM pulse_logs pl
-                LEFT JOIN employees e ON pl.employee_id = e.id
-                LEFT JOIN pulse_types pt ON pl.type_id = pt.id
-                LEFT JOIN users u ON pl.recorded_by = u.id
-                ORDER BY pl.recorded_at DESC
-                LIMIT $limit";
-        $result = $conn->query($sql);
+        $limit = max(1, min(200, (int) ($_GET['limit'] ?? 50)));
+        $stmt = $conn->prepare(
+            "SELECT pl.*, e.name AS emp_name, pt.name AS type_name, pt.icon AS type_icon, pt.points,
+                    u.uname AS recorded_by_name
+             FROM pulse_logs pl
+             LEFT JOIN employees e ON pl.employee_id = e.id
+             LEFT JOIN pulse_types pt ON pl.type_id = pt.id
+             LEFT JOIN users u ON pl.recorded_by = u.id
+             ORDER BY pl.recorded_at DESC
+             LIMIT ?"
+        );
+        $stmt->bind_param('i', $limit);
+        $stmt->execute();
+        $result = $stmt->get_result();
         $logs = [];
         while ($row = $result->fetch_assoc()) {
             $logs[] = $row;
         }
-        echo json_encode($logs);
+        $stmt->close();
+        echo json_encode($logs, JSON_UNESCAPED_UNICODE);
         break;
 
     // ─── Get stats for leaderboard ───
     case 'get_stats':
-        $period = $_GET['period'] ?? 'month';
-        $from   = $_GET['from'] ?? '';
-        $to     = $_GET['to'] ?? '';
+        $period = (string) ($_GET['period'] ?? 'month');
+        $from   = trim((string) ($_GET['from'] ?? ''));
+        $to     = trim((string) ($_GET['to'] ?? ''));
 
-        $dateFilter = '';
-        switch ($period) {
-            case 'today':
-                $dateFilter = "AND DATE(pl.recorded_at) = CURDATE()";
-                break;
-            case 'week':
-                $dateFilter = "AND pl.recorded_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)";
-                break;
-            case 'month':
-                $dateFilter = "AND pl.recorded_at >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)";
-                break;
-            case 'custom':
-                if ($from && $to) {
-                    $from = $conn->real_escape_string($from);
-                    $to   = $conn->real_escape_string($to);
-                    $dateFilter = "AND DATE(pl.recorded_at) BETWEEN '$from' AND '$to'";
-                }
-                break;
-            default: // 'all'
-                $dateFilter = '';
-        }
+        $params = [];
+        $types = '';
+        $dateFilter = pulse_stats_date_filter($period, $from, $to, $params, $types);
 
-        // Summary cards
-        $summarySQL = "SELECT
-            COUNT(*) AS total,
-            SUM(CASE WHEN pl.category='positive' THEN 1 ELSE 0 END) AS positive_count,
-            SUM(CASE WHEN pl.category='negative' THEN 1 ELSE 0 END) AS negative_count,
-            ROUND(AVG(pl.rating),1) AS avg_rating
-            FROM pulse_logs pl WHERE 1 $dateFilter";
-        $summaryRes = $conn->query($summarySQL);
-        $summary = $summaryRes->fetch_assoc();
+        $summary = pulse_stats_fetch_one(
+            $conn,
+            "SELECT
+                COUNT(*) AS total,
+                SUM(CASE WHEN pl.category='positive' THEN 1 ELSE 0 END) AS positive_count,
+                SUM(CASE WHEN pl.category='negative' THEN 1 ELSE 0 END) AS negative_count,
+                ROUND(AVG(pl.rating),1) AS avg_rating
+             FROM pulse_logs pl
+             WHERE 1=1 {$dateFilter}",
+            $params,
+            $types
+        );
 
-        // Leaderboard
-        $leaderSQL = "SELECT e.id, e.name,
-            SUM(CASE WHEN pl.category='positive' THEN pt.points ELSE 0 END) AS positive_pts,
-            SUM(CASE WHEN pl.category='negative' THEN pt.points ELSE 0 END) AS negative_pts,
-            SUM(pt.points) AS net_pts,
-            COUNT(*) AS total_evals,
-            ROUND(AVG(pl.rating),1) AS avg_rating
-            FROM pulse_logs pl
-            LEFT JOIN employees e ON pl.employee_id = e.id
-            LEFT JOIN pulse_types pt ON pl.type_id = pt.id
-            WHERE 1 $dateFilter
-            GROUP BY e.id, e.name
-            ORDER BY net_pts DESC";
-        $leaderRes = $conn->query($leaderSQL);
-        $leaderboard = [];
-        while ($row = $leaderRes->fetch_assoc()) {
-            $leaderboard[] = $row;
-        }
+        $leaderboard = pulse_stats_fetch_all(
+            $conn,
+            "SELECT e.id, e.name,
+                SUM(CASE WHEN pl.category='positive' THEN pt.points ELSE 0 END) AS positive_pts,
+                SUM(CASE WHEN pl.category='negative' THEN pt.points ELSE 0 END) AS negative_pts,
+                SUM(pt.points) AS net_pts,
+                COUNT(*) AS total_evals,
+                ROUND(AVG(pl.rating),1) AS avg_rating
+             FROM pulse_logs pl
+             LEFT JOIN employees e ON pl.employee_id = e.id
+             LEFT JOIN pulse_types pt ON pl.type_id = pt.id
+             WHERE 1=1 {$dateFilter}
+             GROUP BY e.id, e.name
+             ORDER BY net_pts DESC",
+            $params,
+            $types
+        );
 
-        // Daily chart data
-        $chartSQL = "SELECT DATE(pl.recorded_at) AS day,
-            SUM(CASE WHEN pl.category='positive' THEN 1 ELSE 0 END) AS pos,
-            SUM(CASE WHEN pl.category='negative' THEN 1 ELSE 0 END) AS neg
-            FROM pulse_logs pl WHERE 1 $dateFilter
-            GROUP BY DATE(pl.recorded_at)
-            ORDER BY day ASC";
-        $chartRes = $conn->query($chartSQL);
-        $chart = [];
-        while ($row = $chartRes->fetch_assoc()) {
-            $chart[] = $row;
-        }
+        $chart = pulse_stats_fetch_all(
+            $conn,
+            "SELECT DATE(pl.recorded_at) AS day,
+                SUM(CASE WHEN pl.category='positive' THEN 1 ELSE 0 END) AS pos,
+                SUM(CASE WHEN pl.category='negative' THEN 1 ELSE 0 END) AS neg
+             FROM pulse_logs pl
+             WHERE 1=1 {$dateFilter}
+             GROUP BY DATE(pl.recorded_at)
+             ORDER BY day ASC",
+            $params,
+            $types
+        );
 
-        // Top types
-        $typesSQL = "SELECT pt.name, pt.category, COUNT(*) AS cnt
-            FROM pulse_logs pl
-            LEFT JOIN pulse_types pt ON pl.type_id = pt.id
-            WHERE 1 $dateFilter
-            GROUP BY pt.id, pt.name, pt.category
-            ORDER BY cnt DESC LIMIT 10";
-        $typesRes = $conn->query($typesSQL);
-        $topTypes = [];
-        while ($row = $typesRes->fetch_assoc()) {
-            $topTypes[] = $row;
-        }
+        $topTypes = pulse_stats_fetch_all(
+            $conn,
+            "SELECT pt.name, pt.category, COUNT(*) AS cnt
+             FROM pulse_logs pl
+             LEFT JOIN pulse_types pt ON pl.type_id = pt.id
+             WHERE 1=1 {$dateFilter}
+             GROUP BY pt.id, pt.name, pt.category
+             ORDER BY cnt DESC
+             LIMIT 10",
+            $params,
+            $types
+        );
 
         echo json_encode([
             'summary'      => $summary,
             'leaderboard'  => $leaderboard,
             'chart'        => $chart,
-            'topTypes'     => $topTypes
-        ]);
+            'topTypes'     => $topTypes,
+        ], JSON_UNESCAPED_UNICODE);
         break;
 
     // ─── CRUD for pulse_types ───

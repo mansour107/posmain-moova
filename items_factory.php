@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/includes/production_guard.php';
 production_guard_deny_route('items_factory.php');
+require_once __DIR__ . '/includes/csrf.php';
 include('includes/header.php') ?>
 <?php include('includes/navbar.php') ?>
 <?php include('includes/sidebar.php') ?>
@@ -156,6 +157,7 @@ document.addEventListener("DOMContentLoaded", function() {
     const factoryForm = document.getElementById("factoryForm");
     const progressPanel = document.getElementById("progressPanel");
     const startBtn = document.getElementById("startBtn");
+    const factoryCsrfToken = <?= json_encode(csrf_token('items_factory'), JSON_UNESCAPED_UNICODE) ?>;
     
     const progressBar = document.getElementById("progressBar");
     const progressPercent = document.getElementById("progressPercent");
@@ -248,6 +250,7 @@ document.addEventListener("DOMContentLoaded", function() {
             type: "POST",
             data: {
                 action: 'generate',
+                csrf_token: factoryCsrfToken,
                 count: count,
                 clear_db: clearDb ? 1 : 0,
                 clear_groups: clearGroups ? 1 : 0,

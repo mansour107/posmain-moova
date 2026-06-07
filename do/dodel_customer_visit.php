@@ -1,17 +1,25 @@
 <?php
 declare(strict_types=1);
 
-include '../includes/connect.php';
+require_once __DIR__ . '/../includes/session_bootstrap.php';
+include __DIR__ . '/../includes/connect.php';
+require_once __DIR__ . '/../includes/csrf.php';
+require_once __DIR__ . '/../includes/auth_guard.php';
 
-if (!isset($_SESSION['login']) || !isset($_SESSION['userid'])) {
-    header('Location: ../index.php');
+require_login();
+
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+    http_response_code(405);
+    header('Location: ../customer_visits.php?error=invalid_method');
     exit;
 }
 
-$id = (int)($_GET['id'] ?? 0);
+require_csrf('customer_visits');
+
+$id = (int) ($_POST['id'] ?? 0);
 
 if ($id > 0) {
-    $stmt = $conn->prepare("UPDATE customer_visits SET isdeleted = 1 WHERE id = ?");
+    $stmt = $conn->prepare('UPDATE customer_visits SET isdeleted = 1 WHERE id = ?');
     $stmt->bind_param('i', $id);
     $stmt->execute();
     $stmt->close();
@@ -19,5 +27,5 @@ if ($id > 0) {
     $conn->query("INSERT INTO `process`(`type`) VALUES ('delete visit')");
 }
 
-header('Location: ../customer_visits.php');
+header('Location: ../customer_visits.php?success=deleted');
 exit;

@@ -1,6 +1,7 @@
 <?php include('includes/header.php') ?>
 <?php include('includes/navbar.php') ?>
 <?php include('includes/sidebar.php') ?>
+<?php require_once __DIR__ . '/includes/csrf.php'; ?>
 
 <style>
 .visit-form {
@@ -200,6 +201,7 @@
     this.disabled = true;
     const fd = new FormData();
     required.forEach(k => fd.append(k, selections[k]));
+    fd.append('csrf_token', <?= json_encode(csrf_token('customer_visits'), JSON_UNESCAPED_UNICODE) ?>);
 
     fetch('do/doadd_customer_visit.php', { method: 'POST', body: fd })
       .then(r => r.json())

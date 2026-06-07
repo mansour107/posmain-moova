@@ -1,20 +1,28 @@
 <?php
 // ajax/generate_items.php
-session_start();
+require_once __DIR__ . '/../includes/session_bootstrap.php';
 include(__DIR__ . '/../includes/connect.php');
 require_once __DIR__ . '/../includes/production_guard.php';
 require_once __DIR__ . '/../includes/auth_guard.php';
+require_once __DIR__ . '/../includes/csrf.php';
 
 production_guard_deny_route('ajax/generate_items.php');
 require_admin_or_permission('system.tools.run', $conn);
 
-header('Content-Type: application/json');
+header('Content-Type: application/json; charset=utf-8');
 
 // Ensure user is logged in
 if (!isset($_SESSION['login']) || !isset($_SESSION['userid'])) {
     echo json_encode(['success' => false, 'message' => 'غير مصرح بالدخول. يرجى تسجيل الدخول أولاً.']);
     exit;
 }
+
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+    echo json_encode(['success' => false, 'message' => 'طلب غير صالح.']);
+    exit;
+}
+
+require_csrf('items_factory');
 
 $action = $_POST['action'] ?? '';
 if ($action !== 'generate') {

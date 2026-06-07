@@ -54,14 +54,21 @@ if (!isset($action_url)) {
                                     <!-- الأصناف تضاف هنا -->
                                     <?php
                                     if (isset($_GET['edit'])){
-                                        $id = intval($_GET['edit']);
-                                        $sqldet = "SELECT fd.*, m.iname as item_name, m.barcode 
-                                                  FROM fat_details fd 
-                                                  LEFT JOIN myitems m ON m.id = fd.item_id 
-                                                  WHERE fd.pro_id = $id AND fd.isdeleted = 0";
-                                        $resdet = $conn->query($sqldet);
+                                        $editId = isset($id) ? (int) $id : (int) $_GET['edit'];
+                                        $stmtDet = $conn->prepare(
+                                            "SELECT fd.*, m.iname as item_name, m.barcode
+                                             FROM fat_details fd
+                                             LEFT JOIN myitems m ON m.id = fd.item_id
+                                             WHERE fd.pro_id = ? AND fd.isdeleted = 0"
+                                        );
+                                        $resdet = false;
+                                        if ($stmtDet) {
+                                            $stmtDet->bind_param('i', $editId);
+                                            $stmtDet->execute();
+                                            $resdet = $stmtDet->get_result();
+                                        }
                                         $x = 0;
-                                        while ($rowdet = $resdet->fetch_assoc()) {
+                                        while ($resdet && ($rowdet = $resdet->fetch_assoc())) {
                                             $x++;
                                             $item_name = $rowdet['item_name'] ?: 'صنف غير معروف';
                                             $qty = floatval($rowdet['qty_out']) - floatval($rowdet['qty_in']);
@@ -96,6 +103,9 @@ if (!isset($action_url)) {
                                             </td>
                                         </tr>
                                     <?php
+                                        }
+                                        if ($stmtDet) {
+                                            $stmtDet->close();
                                         }
                                     }
                                     ?>
@@ -192,7 +202,6 @@ if (!isset($action_url)) {
                                 <select name="acc2_id" class="form-select form-select-sm fw-bold" required>
                                     <?php
                                     $resclient = $conn->query("SELECT * FROM `acc_head` WHERE code like '122%'  AND is_basic = 0 AND isdeleted = 0;");
-                                    if(isset($_GET['edit'])){$rowed = $conn->query("SELECT * FROM ot_head where id = $id")->fetch_assoc();};
                                     $first_client = true;
                                     while ($rowclient = $resclient->fetch_assoc()) { 
                                         $selected = '';
@@ -210,7 +219,6 @@ if (!isset($action_url)) {
                                 <label class="small text-muted fw-bold">الصندوق</label>
                                 <select name="fund_id" class="form-select form-select-sm fw-bold" required>
                                     <?php
-                                    if(isset($_GET['edit'])){$rowed = $conn->query("SELECT * FROM ot_head where id = $id")->fetch_assoc();};
                                     $resfund = $conn->query("SELECT * FROM `acc_head` WHERE is_fund =1 AND is_basic = 0 AND isdeleted = 0;");
                                     $first_fund = true;
                                     while ($rowfund = $resfund->fetch_assoc()) { 
@@ -412,9 +420,6 @@ if (!isset($action_url)) {
 </div>
 
 <!-- Scripts -->
-<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
-<script>if (typeof jQuery === 'undefined') { document.write('<script src="plugins/jquery/jquery.min.js"><\/script>'); }</script>
 <link href="plugins/jquery-ui/jquery-ui.css" rel="stylesheet">
 <script src="plugins/jquery-ui/jquery-ui.js"></script>
 <script src="assets/libs/bootstrap.bundle.min.js"></script>
