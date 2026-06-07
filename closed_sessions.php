@@ -59,6 +59,7 @@ endif;
                     <th>تسليم الكاش</th>
                     <th>نهاية الدرج</th>
                     <th>ملاحظات</th>
+                    <th>الإجراءات</th>
                 </tr>
             </thead>
             <tbody>
@@ -90,6 +91,14 @@ endif;
                     <td class="bg-secondary text-white"><?= $rowcl['cash'] ?></td>
                     <td class="bg-light"><?= $rowcl['fund_after'] ?></td>
                     <td><?= $rowcl['info'] ?></td>
+                    <td class="text-center">
+                        <a href="print/closed_session_receipt.php?id=<?= (int) $rowcl['id'] ?>" class="btn btn-sm btn-info text-white" target="_blank" title="طباعة ملخص الشيفت">
+                            <i class="fas fa-print"></i>
+                        </a>
+                        <a href="print/closed_session_items.php?id=<?= (int) $rowcl['id'] ?>" class="btn btn-sm btn-warning" target="_blank" title="طباعة الأصناف المباعة">
+                            <i class="fas fa-list"></i>
+                        </a>
+                    </td>
                 </tr>
                 <?php $x--; } ?>
             </tbody>

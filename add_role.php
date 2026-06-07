@@ -449,6 +449,10 @@
                                         <td class="text-center"><input type="checkbox" name="sid_hr" class="user-checkbox" checked></td>
                                     </tr>
                                     <tr class="tr1">
+                                        <td>اظهار قسم Pulse (تقييم لحظي)</td>
+                                        <td class="text-center"><input type="checkbox" name="sid_pulse" class="user-checkbox" checked></td>
+                                    </tr>
+                                    <tr class="tr1">
                                         <td>اظهار قسم المرتبات</td>
                                         <td class="text-center"><input type="checkbox" name="sid_payroll" class="user-checkbox" checked></td>
                                     </tr>

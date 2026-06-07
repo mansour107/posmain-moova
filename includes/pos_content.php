@@ -110,14 +110,6 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                                 <input type="hidden" id="selected_order_id" name="selected_order_id" value="">
                             </div>
 
-                            <div class="mb-2">
-                                <button class="btn btn-outline-secondary btn-sm w-100" type="button"
-                                    data-bs-toggle="collapse" data-bs-target="#posAdvancedSetup"
-                                    aria-expanded="false" aria-controls="posAdvancedSetup">
-                                    <i class="fas fa-sliders-h me-1"></i>إعدادات متقدمة
-                                </button>
-                            </div>
-
                             <div class="collapse" id="posAdvancedSetup">
                                 <div class="border rounded-3 p-2 mb-2 bg-light">
                                     <!-- الحقول الثانوية - في الناحية التانية -->

@@ -228,6 +228,7 @@ if ($rollname === null) {
     $sid_assets = isset($_POST['sid_assets']) ? 1 : 0;
     $sid_reports = isset($_POST['sid_reports']) ? 1 : 0;
     $sid_hr = isset($_POST['sid_hr']) ? 1: 0;
+    $sid_pulse = isset($_POST['sid_pulse']) ? 1 : 0;
     $sid_payroll = isset($_POST['sid_payroll']) ? 1 : 0;
     $sid_rents = isset($_POST['sid_rents']) ? 1 : 0;    
     $sid_cards = isset($_POST['sid_cards']) ? 1 : 0;
@@ -421,6 +422,7 @@ SET
 `sid_assets`= '$sid_assets',
 `sid_reports`= '$sid_reports',
 `sid_hr`= '$sid_hr',
+`sid_pulse`= '$sid_pulse',
 `sid_payroll`= '$sid_payroll',
 `sid_rents`= '$sid_rents',
 `info`= '$info',

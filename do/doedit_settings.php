@@ -36,6 +36,8 @@ $companytel = trim($_POST['companytel'] ?? '');
 $edit_pass = trim($_POST['edit_pass'] ?? '');
 $lang = trim($_POST['lang'] ?? 'ar');
 $showhr = (int)($_POST['showhr'] ?? 0);
+$showpulse = (int)($_POST['showpulse'] ?? 0);
+$show_customer_visits = (int)($_POST['show_customer_visits'] ?? 0);
 $showatt = (int)($_POST['showatt'] ?? 0);
 $showclinc = (int)($_POST['showclinc'] ?? 0);
 $showrent = (int)($_POST['showrent'] ?? 0);
@@ -63,6 +65,8 @@ SET company_name = ?,
     lang = ?, 
     acc_rent = ?, 
     showhr = ?, 
+    showpulse = ?,
+    show_customer_visits = ?,
     showatt = ?, 
     showpayroll = ?, 
     bodycolor = ?, 
@@ -77,9 +81,9 @@ SET company_name = ?,
 WHERE 1";
 
 $stmt = $conn->prepare($sql);
-$stmt->bind_param("sssssiiiisissiiisi", 
+$stmt->bind_param("sssssiiiiisissiiisi", 
     $companyname, $companyadd, $companytel, $edit_pass, $lang,
-    $acc_rent, $showhr, $showatt, $showpayroll, $bodycolor,
+    $acc_rent, $showhr, $showpulse, $show_customer_visits, $showatt, $showpayroll, $bodycolor,
     $showrent, $showclinc, $def_pos_client, $def_pos_store, 
     $def_pos_employee, $def_pos_fund, $pos_type, $pos_has_password
 );

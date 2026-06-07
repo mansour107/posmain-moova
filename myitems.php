@@ -135,6 +135,10 @@ $itemRows = $inventoryStockReadService->decorateItems($conn, $itemRows);
                             <i class="fas fa-calculator"></i>
                             إعادة حساب
                         </a>
+                        <a href="items_factory.php" class="btn btn-outline-info">
+                            <i class="fas fa-magic"></i>
+                            مصنع الأصناف
+                        </a>
                         <button id="reset-manual-prices" class="btn btn-outline-warning" type="button">
                             <i class="fas fa-shield-alt"></i>
                             إعادة تعيين الحماية

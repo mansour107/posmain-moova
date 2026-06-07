@@ -31,6 +31,14 @@
                         </div>
 
                         <div class="col-md-3">
+                            <a href="sales-by-group.php" class="btn btn-block btn-lg btn-outline-success">
+                                <h2>المبيعات مجموعات</h2>
+                                <br>
+                                <i class="fa fa-layer-group" style="font-size:60px;"></i>
+                            </a>
+                        </div>
+
+                        <div class="col-md-3">
                             <a href="sales-by-hour.php" class="btn btn-block btn-lg btn-outline-success">
                                 <h2>المبيعات بالساعة</h2>
                                 <br>

@@ -11,6 +11,17 @@ $expectations = [
         'window.POSMAIN_SHIFT_CSRF_TOKEN',
         "csrf_input('shift_close')",
     ],
+    'includes/pos_supermarket_content.php' => [
+        "csrf_input('pos_browser')",
+        'window.POSMAIN_SHIFT_CSRF_TOKEN',
+        'closeSupermarketShift',
+        'close_shift.php',
+    ],
+    'pos_supermarket.php' => [
+        "require_once __DIR__ . '/includes/csrf.php'",
+        "csrf_meta_tag('pos_browser', 'posmain-csrf-token')",
+        'PasswordService::verifyPassword',
+    ],
     'do/doadd_invoice.php' => [
         "require_once('../includes/auth_guard.php')",
         "require_once('../includes/csrf.php')",

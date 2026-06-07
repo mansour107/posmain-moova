@@ -460,6 +460,10 @@ if ($hash_id !== $hash) {
                                 <td><input type="checkbox" name="sid_hr"  class="user-checkbox" <?php if( $rowrol['sid_hr'] == 1){echo "checked"; }?>></td>
                             </tr>
                             <tr class="tr1">
+                                <td>اظهار قسم Pulse (تقييم لحظي)</td>
+                                <td><input type="checkbox" name="sid_pulse"  class="user-checkbox" <?php if( ($rowrol['sid_pulse'] ?? 1) == 1){echo "checked"; }?>></td>
+                            </tr>
+                            <tr class="tr1">
                                 <td>اظهار قسم المرتبات من الجانب الايمن</td>
                                 <td><input type="checkbox" name="sid_payroll"  class="user-checkbox" <?php if( $rowrol['sid_payroll'] == 1){echo "checked"; }?>></td>
                             </tr>

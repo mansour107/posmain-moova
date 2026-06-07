@@ -6,9 +6,9 @@ if ($source === false) {
     throw new RuntimeException('Unable to read includes/pos_content.php');
 }
 
-phase4CashierUxAssert(strpos($source, 'id="posAdvancedSetup"') !== false, 'advanced setup collapse should exist');
-phase4CashierUxAssert(strpos($source, 'data-bs-toggle="collapse" data-bs-target="#posAdvancedSetup"') !== false, 'advanced setup should use Bootstrap collapse');
-phase4CashierUxAssert(strpos($source, 'إعدادات متقدمة') !== false, 'advanced setup Arabic label expected');
+phase4CashierUxAssert(strpos($source, 'id="posAdvancedSetup"') !== false, 'advanced setup fields should remain in the form');
+phase4CashierUxAssert(strpos($source, 'data-bs-toggle="collapse" data-bs-target="#posAdvancedSetup"') === false, 'empty advanced setup trigger should not be shown');
+phase4CashierUxAssert(strpos($source, 'إعدادات متقدمة') === false, 'empty advanced setup Arabic label should not be shown');
 phase4CashierUxAssert(strpos($source, 'pos-table-visible-control') !== false, 'current table control should remain visible');
 phase4CashierUxAssert(strpos($source, 'id="selected_table_display"') !== false, 'selected table display should remain');
 phase4CashierUxAssert(strpos($source, 'id="searchInput"') !== false, 'search input should remain visible');

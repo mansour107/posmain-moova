@@ -57,6 +57,16 @@ $migrations = [
         'name' => 'تحسين أنواع البيانات',
         'safe' => false,
         'required' => false
+    ],
+    'update/010_pulse_setup.sql' => [
+        'name' => 'إعداد Pulse (تقييم لحظي)',
+        'safe' => true,
+        'required' => false
+    ],
+    'update/011_customer_visits_setup.sql' => [
+        'name' => 'إعداد زيارات العملاء (تحليلات)',
+        'safe' => true,
+        'required' => false
     ]
 ];
 
@@ -145,7 +155,8 @@ echo "
     <h5>📋 الخطوات التالية:</h5>
     <ol>
         <li>تحقق من عمل النظام</li>
-        <li>اختبر POS (pos_barcode.php)</li>
+        <li>اختبر POS (pos_barcode.php و pos_supermarket.php)</li>
+        <li>تحقق من Pulse و زيارات العملاء بعد تشغيل migrations</li>
         <li>افتح التقارير</li>
         <li>راجع الأداء</li>
     </ol>

@@ -794,6 +794,16 @@ if ($syncDefaultCloudUrl === '' && !empty($_SERVER['HTTP_HOST'])) {
                                value="<?= htmlspecialchars((string)($rowstg['showhr'] ?? '0'), ENT_QUOTES, 'UTF-8') ?>"></td>
                   </tr>
                   <tr>
+                    <td><i class="fas fa-bolt text-warning ml-2"></i> Pulse (تقييم لحظي)</td>
+                    <td><input type="number" name="showpulse" class="form-control form-control-sm" min="0" max="1" step="1"
+                               value="<?= htmlspecialchars((string)($rowstg['showpulse'] ?? '1'), ENT_QUOTES, 'UTF-8') ?>"></td>
+                  </tr>
+                  <tr>
+                    <td><i class="fas fa-user-check text-success ml-2"></i> زيارات العملاء</td>
+                    <td><input type="number" name="show_customer_visits" class="form-control form-control-sm" min="0" max="1" step="1"
+                               value="<?= htmlspecialchars((string)($rowstg['show_customer_visits'] ?? '1'), ENT_QUOTES, 'UTF-8') ?>"></td>
+                  </tr>
+                  <tr>
                     <td><i class="fas fa-user-check text-success ml-2"></i> الحضور</td>
                     <td><input type="number" name="showatt" class="form-control form-control-sm" min="0" max="1" step="1"
                                value="<?= htmlspecialchars((string)($rowstg['showatt'] ?? '0'), ENT_QUOTES, 'UTF-8') ?>"></td>
