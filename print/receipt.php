@@ -115,7 +115,13 @@ if ($is_delivery) {
 
 
 
-<table class="table col-md-12 table-bordered text-center" style="border: 1px solid #ddd;">
+<table class="table col-md-12 table-bordered text-center receipt-fixed-table" style="border: 1px solid #ddd;">
+<colgroup>
+    <col style="width: 46%;">
+    <col style="width: 18%;">
+    <col style="width: 18%;">
+    <col style="width: 18%;">
+</colgroup>
 <thead>
 <tr style="font-size:x-small; background-color: #f0f0f0;">
 <th style="border: 1px solid #ddd; padding: 8px;">الصــــنـــف</th>
@@ -133,7 +139,7 @@ if ($is_delivery) {
             $line_notes = is_array($line['notes'] ?? null) ? $line['notes'] : [];
     ?>
 <tr>
-<td class="p-1" style="font-size:small; border: 1px solid #ddd;">
+<td class="p-1 receipt-item-name-cell" style="font-size:small; border: 1px solid #ddd;">
     <?= htmlspecialchars($line['name'] ?? '', ENT_QUOTES, 'UTF-8') ?>
     <?php foreach ($line_modifiers as $modifier): ?>
         <div style="font-size:10px; color:#444;">+ <?= htmlspecialchars($modifier['name_ar'] ?? $modifier['name_en'] ?? '', ENT_QUOTES, 'UTF-8') ?> (<?= htmlspecialchars($modifier['qty'] ?? '1.000', ENT_QUOTES, 'UTF-8') ?>)</div>
@@ -158,7 +164,7 @@ if ($is_delivery) {
             $qty = $rowdet['qty_out'];
 ?>
 <tr>
-<td class="p-1" style="font-size:small; border: 1px solid #ddd;"><?= $rowitm['iname']  ?></td>
+<td class="p-1 receipt-item-name-cell" style="font-size:small; border: 1px solid #ddd;"><?= $rowitm['iname']  ?></td>
 <td style="border: 1px solid #ddd;"><?= $qty  ?></td>
 <td style="border: 1px solid #ddd;"><?= $rowdet['price']?></td>
 <td style="border: 1px solid #ddd;"><?= $rowdet['det_value']?></td>
@@ -291,12 +297,21 @@ if ($is_delivery) {
     #printed .table {
         width: 100% !important;
         margin-bottom: 2mm !important;
+        table-layout: fixed !important;
     }
 
     #printed th,
     #printed td {
         padding: 1.2mm !important;
         word-break: break-word !important;
+        white-space: normal !important;
+        overflow-wrap: anywhere !important;
+        vertical-align: top !important;
+    }
+
+    #printed .receipt-item-name-cell {
+        text-align: right !important;
+        line-height: 1.35 !important;
     }
 }
 </style>

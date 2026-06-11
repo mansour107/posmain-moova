@@ -100,6 +100,18 @@ if ($print_payload !== null || $order) {
         .header { text-align: center; margin-bottom: 20px; }
         table { width: 100%; border-collapse: collapse; }
         th, td { border: 1px solid #000; padding: 8px; text-align: center; }
+        .receipt-fixed-table { table-layout: fixed; }
+        .receipt-fixed-table th,
+        .receipt-fixed-table td {
+            white-space: normal;
+            overflow-wrap: anywhere;
+            word-break: break-word;
+            vertical-align: top;
+        }
+        .receipt-item-name-cell {
+            text-align: right;
+            line-height: 1.35;
+        }
     </style>
 </head>
 <body>
@@ -112,7 +124,12 @@ if ($print_payload !== null || $order) {
         <p>التاريخ: <?= date('Y-m-d H:i') ?></p>
     </div>
 
-    <table>
+    <table class="receipt-fixed-table">
+        <colgroup>
+            <col style="width: 44%;">
+            <col style="width: 16%;">
+            <col style="width: 40%;">
+        </colgroup>
         <thead>
             <tr>
                 <th>الصنف</th>
@@ -124,7 +141,7 @@ if ($print_payload !== null || $order) {
             <?php if (is_array($print_lines)): ?>
             <?php foreach ($print_lines as $item): ?>
             <tr>
-                <td>
+                <td class="receipt-item-name-cell">
                     <?= htmlspecialchars($item['name'] ?? '', ENT_QUOTES, 'UTF-8') ?>
                     <?php foreach (($item['modifiers'] ?? []) as $modifier): ?>
                         <div style="font-size: 12px;">+ <?= htmlspecialchars($modifier['name_ar'] ?? $modifier['name_en'] ?? '', ENT_QUOTES, 'UTF-8') ?> (<?= htmlspecialchars($modifier['qty'] ?? '1.000', ENT_QUOTES, 'UTF-8') ?>)</div>
@@ -148,7 +165,7 @@ if ($print_payload !== null || $order) {
             <?php else: ?>
             <?php while ($item = $items_result->fetch_assoc()): ?>
             <tr>
-                <td><?= htmlspecialchars($item['iname'] ?? '', ENT_QUOTES, 'UTF-8') ?></td>
+                <td class="receipt-item-name-cell"><?= htmlspecialchars($item['iname'] ?? '', ENT_QUOTES, 'UTF-8') ?></td>
                 <td><?= floatval($item['qty_out']) - floatval($item['qty_in']) ?></td>
                 <td><?= htmlspecialchars($item['notes'] ?? '', ENT_QUOTES, 'UTF-8') ?></td>
             </tr>

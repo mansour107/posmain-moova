@@ -72,6 +72,21 @@ if ($items_query->num_rows == 0) {
         }
         body { font-family: 'Arial', sans-serif; }
         .receipt-container { width: 72mm; margin: 0 auto; }
+        .receipt-fixed-table {
+            width: 100%;
+            table-layout: fixed;
+        }
+        .receipt-fixed-table th,
+        .receipt-fixed-table td {
+            white-space: normal;
+            overflow-wrap: anywhere;
+            word-break: break-word;
+            vertical-align: top;
+        }
+        .receipt-item-name-cell {
+            text-align: right;
+            line-height: 1.35;
+        }
     </style>
 </head>
 <body>
@@ -109,7 +124,13 @@ if (file_exists($logo_path)) {
 <p class="text-center">************</p>
 <div class="row">
 
-<table class="table col-md-12 table-bordered table-lg text-center">
+<table class="table col-md-12 table-bordered table-lg text-center receipt-fixed-table">
+<colgroup>
+    <col style="width: 46%;">
+    <col style="width: 18%;">
+    <col style="width: 18%;">
+    <col style="width: 18%;">
+</colgroup>
 <thead>
 <tr class="bg-slate-100 border-2 border-slate-900" style="font-size:x-small">
 <th class="border-3 border-slate-900">الصــــنـــف</th>
@@ -124,7 +145,7 @@ if (file_exists($logo_path)) {
         while ($item = $items_query->fetch_assoc()) {
     ?>
 <tr class="border-2 border-slate-900">
-<td class="p-1" style="font-size:small"><?= $item['iname'] ?></td>
+<td class="p-1 receipt-item-name-cell" style="font-size:small"><?= $item['iname'] ?></td>
 <td><?= $item['total_qty'] ?></td>
 <td><?= $item['price'] ?></td>
 <td><?= $item['total_value'] ?></td>
@@ -135,7 +156,7 @@ if (file_exists($logo_path)) {
         foreach ($dummy_items as $item) {
     ?>
 <tr class="border-2 border-slate-900">
-<td class="p-1" style="font-size:small"><?= $item['iname'] ?></td>
+<td class="p-1 receipt-item-name-cell" style="font-size:small"><?= $item['iname'] ?></td>
 <td><?= $item['total_qty'] ?></td>
 <td><?= $item['price'] ?></td>
 <td><?= $item['total_value'] ?></td>

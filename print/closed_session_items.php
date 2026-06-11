@@ -138,6 +138,7 @@ $settings = $settings_query->fetch_assoc();
             width: 100%;
             font-size: 11px;
             margin-bottom: 5px;
+            table-layout: fixed;
         }
         .item-table th {
             border-bottom: 1px dashed #000;
@@ -150,6 +151,16 @@ $settings = $settings_query->fetch_assoc();
         }
         .item-table td.text-start {
             text-align: right !important;
+        }
+        .item-table th,
+        .item-table td {
+            white-space: normal;
+            overflow-wrap: anywhere;
+            word-break: break-word;
+            vertical-align: top;
+        }
+        .receipt-item-name-cell {
+            line-height: 1.35;
         }
         .summary-box {
             border-top: 2px dashed #000;
@@ -223,7 +234,7 @@ $settings = $settings_query->fetch_assoc();
                             $cat_val += $item['total_value'];
                         ?>
                         <tr>
-                            <td class="text-start"><?= htmlspecialchars($item['item_name']) ?></td>
+                            <td class="text-start receipt-item-name-cell"><?= htmlspecialchars($item['item_name']) ?></td>
                             <td><?= number_format($item['total_qty'], 2) ?></td>
                             <td><?= number_format($item['total_value'], 2) ?></td>
                         </tr>

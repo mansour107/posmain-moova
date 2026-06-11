@@ -82,6 +82,21 @@ $shift_end = $sales_data['last_sale_time'] ? date('H:i', strtotime($sales_data['
         .company-header { border-bottom: 2px dashed #333; padding-bottom: 10px; margin-bottom: 10px; }
         .section-divider { border-top: 1px dashed #666; margin: 10px 0; padding-top: 10px; }
         .total-section { background: #f8f9fa; padding: 8px; border-radius: 5px; }
+        .receipt-fixed-table {
+            width: 100%;
+            table-layout: fixed;
+        }
+        .receipt-fixed-table th,
+        .receipt-fixed-table td {
+            white-space: normal;
+            overflow-wrap: anywhere;
+            word-break: break-word;
+            vertical-align: top;
+        }
+        .receipt-item-name-cell {
+            text-align: right;
+            line-height: 1.35;
+        }
     </style>
 </head>
 <body>
@@ -141,7 +156,13 @@ $shift_end = $sales_data['last_sale_time'] ? date('H:i', strtotime($sales_data['
 <?php if ($items_query->num_rows > 0): ?>
 <div class="mb-3">
     <h6 class="text-center mb-2">تفاصيل الأصناف المباعة</h6>
-    <table class="table table-sm table-bordered">
+    <table class="table table-sm table-bordered receipt-fixed-table">
+        <colgroup>
+            <col style="width: 46%;">
+            <col style="width: 18%;">
+            <col style="width: 18%;">
+            <col style="width: 18%;">
+        </colgroup>
         <thead class="table-dark">
             <tr style="font-size: 10px;">
                 <th>الصنف</th>
@@ -153,7 +174,7 @@ $shift_end = $sales_data['last_sale_time'] ? date('H:i', strtotime($sales_data['
         <tbody>
             <?php while ($item = $items_query->fetch_assoc()): ?>
             <tr style="font-size: 10px;">
-                <td class="text-truncate" style="max-width: 80px;" title="<?= $item['iname'] ?>">
+                <td class="receipt-item-name-cell" title="<?= $item['iname'] ?>">
                     <?= $item['iname'] ?>
                 </td>
                 <td class="text-center"><?= number_format($item['total_qty'], 1) ?></td>

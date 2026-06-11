@@ -48,6 +48,21 @@ $rowstg = $conn->query("SELECT * FROM settings WHERE id = 1")->fetch_assoc();
             padding: 10px;
             border: 1px solid #ddd;
         }
+        .receipt-fixed-table {
+            width: 100%;
+            table-layout: fixed;
+        }
+        .receipt-fixed-table th,
+        .receipt-fixed-table td {
+            white-space: normal;
+            overflow-wrap: anywhere;
+            word-break: break-word;
+            vertical-align: top;
+        }
+        .receipt-item-name-cell {
+            text-align: right;
+            line-height: 1.35;
+        }
         .text-center { text-align: center; }
         .btn-container {
             text-align: center;
@@ -76,7 +91,13 @@ $rowstg = $conn->query("SELECT * FROM settings WHERE id = 1")->fetch_assoc();
             </p>
 
             <!-- تفاصيل الفاتورة -->
-            <table style="width: 100%; font-size: 12px;">
+            <table class="receipt-fixed-table" style="width: 100%; font-size: 12px;">
+                <colgroup>
+                    <col style="width: 46%;">
+                    <col style="width: 18%;">
+                    <col style="width: 18%;">
+                    <col style="width: 18%;">
+                </colgroup>
                 <thead>
                     <tr>
                         <th>الصنف</th>
@@ -94,7 +115,7 @@ $rowstg = $conn->query("SELECT * FROM settings WHERE id = 1")->fetch_assoc();
                         $total += $item_total;
                         ?>
                         <tr>
-                            <td><?= $item['item_name'] ?></td>
+                            <td class="receipt-item-name-cell"><?= $item['item_name'] ?></td>
                             <td><?= $item['quantity'] ?></td>
                             <td><?= number_format($item['price'], 2) ?></td>
                             <td><?= number_format($item_total, 2) ?></td>
