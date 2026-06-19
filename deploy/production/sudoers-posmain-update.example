@@ -1,0 +1,7 @@
+# Allow the web user to start update workers as the deploy user.
+# Install:
+#   install -m 0755 deploy/production/posmain-update-worker.sh /usr/local/bin/posmain-update-worker
+#   visudo -cf /etc/sudoers.d/posmain-update
+#   install -m 0440 deploy/production/sudoers-posmain-update.example /etc/sudoers.d/posmain-update
+
+www-data ALL=(posmain) NOPASSWD: /usr/local/bin/posmain-update-worker *

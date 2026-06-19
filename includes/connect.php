@@ -4,6 +4,7 @@ require_once __DIR__ . '/session_bootstrap.php';
 
 require_once __DIR__ . '/db_bootstrap.php';
 require_once __DIR__ . '/production_guard.php';
+require_once __DIR__ . '/update_maintenance_guard.php';
 
 if (!function_exists('posmain_is_json_request')) {
     function posmain_is_json_request(): bool
@@ -159,6 +160,8 @@ if (!function_exists('posmain_handle_uncaught_exception')) {
         exit;
     }
 }
+
+posmain_update_maintenance_guard();
 
 try {
     $conn = posmain_db_connect();

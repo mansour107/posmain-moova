@@ -18,6 +18,8 @@ if ($detailRequested && !$tokenOk) {
 }
 
 $config = posmain_app_config();
+$scope = strtolower(trim((string) ($_GET['scope'] ?? '')));
+$updateScope = $scope === 'update';
 $checks = [];
 $healthy = true;
 
@@ -32,16 +34,18 @@ foreach ($checks['writable_paths'] as $pathCheck) {
     $healthy = $healthy && !empty($pathCheck['ok']);
 }
 
-$isProduction = !empty($config['production_mode']);
-$branchConfigured = trim((string) ($config['branch']['uuid'] ?? '')) !== '';
-$checks['branch_identity'] = [
-    'ok' => !$isProduction || $branchConfigured,
-    'configured' => $branchConfigured,
-];
-$healthy = $healthy && !empty($checks['branch_identity']['ok']);
+if (!$updateScope) {
+    $isProduction = !empty($config['production_mode']);
+    $branchConfigured = trim((string) ($config['branch']['uuid'] ?? '')) !== '';
+    $checks['branch_identity'] = [
+        'ok' => !$isProduction || $branchConfigured,
+        'configured' => $branchConfigured,
+    ];
+    $healthy = $healthy && !empty($checks['branch_identity']['ok']);
 
-if (!empty($config['sync']['worker_enabled']) || !empty($config['features']['cloud_sync'])) {
-    $checks['worker'] = posmainHealthWorkerCheck();
+    if (!empty($config['sync']['worker_enabled']) || !empty($config['features']['cloud_sync'])) {
+        $checks['worker'] = posmainHealthWorkerCheck();
+    }
 }
 
 $payload = [
@@ -54,6 +58,7 @@ if ($detailRequested) {
     $payload['env'] = (string) ($config['env'] ?? '');
     $payload['role'] = (string) ($config['role'] ?? '');
     $payload['production_mode'] = !empty($config['production_mode']);
+    $payload['scope'] = $updateScope ? 'update' : 'full';
     $payload['app_version'] = posmainHealthAppVersion();
     $payload['checks'] = $checks;
 }

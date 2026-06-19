@@ -77,6 +77,12 @@ if ($postedPass !== null && !verify_csrf_from_post_or_header('settings_gate')) {
 <?php else: ?>
 
 <?php
+require_once __DIR__ . '/api/admin/updates/_bootstrap.php';
+$updateAvailability = posmainUpdateAvailability();
+$systemUpdateCsrf = csrf_token('system_update');
+$systemUpdateAvailable = !empty($updateAvailability['update_available']);
+$systemUpdateInstalledVersion = (string) ($updateAvailability['installed_version'] ?? 'غير معروف');
+$systemUpdatePublishedVersion = (string) ($updateAvailability['published_version'] ?? 'غير متاح');
 require_once __DIR__ . '/classes/Sync/CloudBranchRegistryService.php';
 require_once __DIR__ . '/classes/Sync/SyncRuntimeCrypto.php';
 require_once __DIR__ . '/classes/Sync/SyncRuntimeDbConfigFile.php';
@@ -233,11 +239,27 @@ if ($syncDefaultCloudUrl === '' && !empty($_SERVER['HTTP_HOST'])) {
           </ol>
         </div>
       </div>
-      <div class="alert alert-warning alert-dismissible fade show border-0 shadow-sm">
-        <button type="button" class="close" data-dismiss="alert" aria-label="إغلاق">&times;</button>
-        <i class="fas fa-exclamation-triangle ml-2"></i>
-        <strong>تنبيه:</strong> التعديل في هذه القائمة يؤثر على سلوك النظام بالكامل. راجع القيم قبل الحفظ.
+      <div class="d-flex align-items-center justify-content-end mb-3">
+        <div class="d-flex align-items-center flex-shrink-0">
+          <?php if ($systemUpdateAvailable): ?>
+          <span class="badge badge-success ml-2" style="font-size:.75rem;padding:.4em .7em;">
+            <i class="fas fa-circle" style="font-size:.5em;vertical-align:middle;"></i> تحديث جديد متاح
+          </span>
+          <?php endif; ?>
+          <button
+            type="button"
+            class="btn <?= $systemUpdateAvailable ? 'btn-primary' : 'btn-outline-secondary' ?> btn-sm"
+            id="system-update-action-btn"
+            data-update-available="<?= $systemUpdateAvailable ? '1' : '0' ?>"
+            data-target-version="<?= htmlspecialchars((string) ($updateAvailability['published_version'] ?? ''), ENT_QUOTES, 'UTF-8') ?>"
+          >
+            <i class="fas <?= $systemUpdateAvailable ? 'fa-sync-alt' : 'fa-search' ?> ml-1"></i>
+            <?= $systemUpdateAvailable ? 'تحديث النظام' : 'البحث عن تحديث' ?>
+          </button>
+        </div>
       </div>
+
+      <div id="system-update-toast" style="display:none;position:fixed;bottom:1.5rem;left:50%;transform:translateX(-50%);z-index:9999;min-width:280px;max-width:480px;"></div>
     </div>
   </section>
 
@@ -1249,6 +1271,87 @@ document.addEventListener('DOMContentLoaded', function () {
       }
     });
   }
+});
+</script>
+
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+  const updateButton = document.getElementById('system-update-action-btn');
+  const toast = document.getElementById('system-update-toast');
+  if (!updateButton || !toast) return;
+
+  const csrfToken = <?= json_encode($systemUpdateCsrf, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>;
+  let toastTimer = null;
+
+  function showToast(message, type, statusUrl) {
+    const colors = { success: '#28a745', error: '#dc3545', info: '#17a2b8', muted: '#6c757d' };
+    const color = colors[type] || colors.muted;
+    let html = '<div style="background:#fff;border-radius:12px;box-shadow:0 4px 24px rgba(0,0,0,.15);padding:1rem 1.25rem;display:flex;align-items:center;gap:.75rem;direction:rtl;border-right:4px solid ' + color + ';">'
+      + '<span style="color:' + color + ';font-size:1.2rem;">' + (type === 'success' ? '✓' : type === 'error' ? '✕' : '⟳') + '</span>'
+      + '<span style="flex:1;font-size:.9rem;">' + message + '</span>';
+    if (statusUrl) {
+      html += '<a href="' + statusUrl + '" target="_blank" style="color:' + color + ';font-size:.82rem;white-space:nowrap;">عرض الحالة</a>';
+    }
+    html += '</div>';
+    toast.innerHTML = html;
+    toast.style.display = 'block';
+    if (toastTimer) clearTimeout(toastTimer);
+    if (type !== 'info') {
+      toastTimer = setTimeout(function () { toast.style.display = 'none'; }, 5000);
+    }
+  }
+
+  function setUpdateState(available, targetVersion) {
+    updateButton.dataset.updateAvailable = available ? '1' : '0';
+    updateButton.dataset.targetVersion = targetVersion || '';
+    updateButton.innerHTML = available
+      ? '<i class="fas fa-sync-alt ml-1"></i> تحديث النظام'
+      : '<i class="fas fa-search ml-1"></i> البحث عن تحديث';
+    updateButton.className = 'btn btn-sm ' + (available ? 'btn-primary' : 'btn-outline-secondary');
+  }
+
+  async function checkForUpdates() {
+    updateButton.disabled = true;
+    showToast('جاري البحث عن تحديث…', 'info');
+    try {
+      const res = await fetch('/api/admin/updates/check.php', { headers: { Accept: 'application/json' }, credentials: 'same-origin' });
+      const data = await res.json();
+      if (data.update_available) {
+        setUpdateState(true, data.published_version);
+        showToast('يتوفر تحديث جديد — النسخة ' + data.published_version + '. اضغط "تحديث النظام" لتطبيقه.', 'success');
+      } else {
+        setUpdateState(false, '');
+        showToast('النظام محدث. لا توجد نسخة جديدة حالياً.', 'muted');
+      }
+    } catch (e) {
+      showToast('تعذر التحقق من التحديثات.', 'error');
+    } finally {
+      updateButton.disabled = false;
+    }
+  }
+
+  async function startUpdate() {
+    if (!window.confirm('سيتم إيقاف النظام مؤقتاً أثناء التحديث. هل تريد المتابعة؟')) return;
+    updateButton.disabled = true;
+    showToast('جاري بدء التحديث…', 'info');
+    try {
+      const res = await fetch('/api/admin/updates/start.php', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'X-CSRF-Token': csrfToken },
+        body: JSON.stringify({ action: 'apply', target_version: updateButton.dataset.targetVersion || null }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.message || 'تعذر بدء التحديث.');
+      showToast('بدأ التحديث بنجاح.', 'success', data.status_url || null);
+    } catch (e) {
+      showToast(e.message || 'تعذر بدء التحديث.', 'error');
+      updateButton.disabled = false;
+    }
+  }
+
+  updateButton.addEventListener('click', function () {
+    updateButton.dataset.updateAvailable === '1' ? startUpdate() : checkForUpdates();
+  });
 });
 </script>
 

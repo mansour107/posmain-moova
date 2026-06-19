@@ -56,6 +56,56 @@ if (!function_exists('posmain_load_env_file')) {
 
 posmain_load_env_file();
 
+if (!function_exists('posmain_update_channel_file')) {
+    function posmain_update_channel_file(): array
+    {
+        static $channel = null;
+        if ($channel !== null) {
+            return $channel;
+        }
+
+        $path = __DIR__ . '/update_channel.php';
+        if (!is_file($path)) {
+            $channel = [];
+
+            return $channel;
+        }
+
+        $loaded = require $path;
+        $channel = is_array($loaded) ? $loaded : [];
+
+        return $channel;
+    }
+}
+
+if (!function_exists('posmain_update_channel_base_url')) {
+    function posmain_update_channel_base_url(): string
+    {
+        $override = trim((string) posmain_env('POSMAIN_UPDATE_CHANNEL_URL', '', true));
+        if ($override !== '') {
+            return rtrim($override, '/');
+        }
+
+        $channel = posmain_update_channel_file();
+
+        return rtrim((string) ($channel['remote_base_url'] ?? ''), '/');
+    }
+}
+
+if (!function_exists('posmain_update_version_manifest_url')) {
+    function posmain_update_version_manifest_url(): string
+    {
+        $legacy = trim((string) posmain_env('POSMAIN_UPDATE_VERSION_URL', '', true));
+        if ($legacy !== '') {
+            return $legacy;
+        }
+
+        $base = posmain_update_channel_base_url();
+
+        return $base !== '' ? $base . '/version.json' : '';
+    }
+}
+
 if (!function_exists('posmain_env')) {
     function posmain_env(string $name, $default = null, bool $allowEmpty = false)
     {
@@ -490,6 +540,8 @@ if (!function_exists('posmain_app_config')) {
                 ],
             ],
             'public_base_url' => (string) posmain_env('POSMAIN_PUBLIC_BASE_URL', ''),
+            'update_channel_url' => posmain_update_channel_base_url(),
+            'update_version_url' => posmain_update_version_manifest_url(),
             'status_token' => (string) $branchEnv(['POSMAIN_STATUS_TOKEN', 'POSMAIN_SYNC_STATUS_TOKEN'], '', true),
             'database' => [
                 'host' => (string) posmain_first_env(
