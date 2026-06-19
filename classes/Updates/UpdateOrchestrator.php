@@ -61,31 +61,9 @@ class PosmainUpdateOrchestrator
             return $job;
         }
 
-        $job = $this->runStep($jobId, 'file_migrations_plan', function (array $job): array {
-            $conn = posmain_db_connect();
-            try {
-                $runner = new Stepwise($conn, $this->projectRoot . '/update', [
-                    'ledger_table' => 'stepwise_ledger',
-                ]);
-                $plan = $runner->plan();
-                $job['file_migrations_plan'] = [
-                    'pending_count' => count($plan['pending']),
-                    'pending' => array_map(static function (array $step): array {
-                        return [
-                            'step_key' => $step['step_key'],
-                            'source_file' => $step['source_file'],
-                        ];
-                    }, $plan['pending']),
-                    'drift' => $plan['drift'],
-                ];
-            } finally {
-                $conn->close();
-            }
-
-            return $job;
-        });
-
         if ($action === 'plan') {
+            $job = $this->runFileMigrationsPlan($jobId);
+
             return $job;
         }
 
@@ -137,6 +115,15 @@ class PosmainUpdateOrchestrator
             });
             $backupFile = (string) ($job['backup_file'] ?? '');
 
+            $job = $this->runStep($jobId, 'code_pull', function (array $job): array {
+                $job['code_commit_before'] = $this->currentGitCommit();
+                $job['code_pull'] = $this->gitPull();
+
+                return $job;
+            });
+
+            $job = $this->runFileMigrationsPlan($jobId);
+
             $job = $this->runStep($jobId, 'file_migrations', function (array $job) use ($backupFile): array {
                 $conn = posmain_db_connect();
                 try {
@@ -152,13 +139,6 @@ class PosmainUpdateOrchestrator
                 if ($backupFile === '') {
                     $job['warnings'][] = 'Backup path missing while applying file migrations.';
                 }
-
-                return $job;
-            });
-
-            $job = $this->runStep($jobId, 'code_pull', function (array $job): array {
-                $job['code_commit_before'] = $this->currentGitCommit();
-                $job['code_pull'] = $this->gitPull();
 
                 return $job;
             });
@@ -246,6 +226,36 @@ class PosmainUpdateOrchestrator
 
             if (($job['action'] ?? '') === 'apply' && !$job['update_available']) {
                 throw new RuntimeException('UPDATE_NOT_REQUIRED');
+            }
+
+            return $job;
+        });
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function runFileMigrationsPlan(string $jobId): array
+    {
+        return $this->runStep($jobId, 'file_migrations_plan', function (array $job): array {
+            $conn = posmain_db_connect();
+            try {
+                $runner = new Stepwise($conn, $this->projectRoot . '/update', [
+                    'ledger_table' => 'stepwise_ledger',
+                ]);
+                $plan = $runner->plan();
+                $job['file_migrations_plan'] = [
+                    'pending_count' => count($plan['pending']),
+                    'pending' => array_map(static function (array $step): array {
+                        return [
+                            'step_key' => $step['step_key'],
+                            'source_file' => $step['source_file'],
+                        ];
+                    }, $plan['pending']),
+                    'drift' => $plan['drift'],
+                ];
+            } finally {
+                $conn->close();
             }
 
             return $job;
