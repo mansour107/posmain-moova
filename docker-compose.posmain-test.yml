@@ -10,33 +10,43 @@ services:
       - --collation-server=utf8mb4_general_ci
     ports:
       - "127.0.0.1:3307:3306"
-      - "127.0.0.1:8010:8000"
     volumes:
       - posmain_mysql_data:/var/lib/mysql
       - posmain_mysql_run:/run/mysqld
       - ./db/DB.sql:/docker-entrypoint-initdb.d/01-db.sql:ro
       - ./db/moova_pos_integration.sql:/docker-entrypoint-initdb.d/02-moova-pos.sql:ro
+    networks:
+      - posmain
 
   php:
     build:
       context: .
       dockerfile: Dockerfile.posmain-php
     container_name: posmain-php
-    network_mode: service:mysql
     depends_on:
       - mysql
+    ports:
+      - "127.0.0.1:8010:8000"
     environment:
       PHP_CLI_SERVER_WORKERS: "4"
       POSMAIN_SESSION_DRIVER: file
       POSMAIN_BRANCH_WORKER_ENV_FILE: /app/.env.branch-worker
       POSMAIN_MOOVA_MODE: direct_widget
       POSMAIN_ENABLE_MOOVA_DIRECT_APPLY: "1"
+      POSMAIN_DB_HOST: mysql
+      POSMAIN_DB_PORT: "3306"
     volumes:
-      - .:/app:ro
+      - .:/app
       - posmain_php_logs:/app/logs
       - posmain_php_uploads:/app/uploads
       - posmain_php_var:/app/var
       - posmain_mysql_run:/run/mysqld
+    networks:
+      - posmain
+
+networks:
+  posmain:
+    driver: bridge
 
 volumes:
   posmain_mysql_data:

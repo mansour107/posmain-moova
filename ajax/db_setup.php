@@ -5,10 +5,14 @@ production_guard_deny_route('ajax/db_setup.php');
 // ajax/db_setup.php - Database Setup Backend
 header('Content-Type: application/json');
 
-$dbhost = 'localhost';
-$dbuser = 'root';
-$dbpass = '';
-$dbname = 'kody2';
+require_once __DIR__ . '/../includes/db_bootstrap.php';
+
+$dbConfig = posmain_app_config()['database'];
+$dbhost = (string) ($dbConfig['host'] ?? '127.0.0.1');
+$dbuser = (string) ($dbConfig['user'] ?? 'root');
+$dbpass = (string) ($dbConfig['pass'] ?? '');
+$dbname = (string) ($dbConfig['name'] ?? 'kody2');
+$dbport = (int) ($dbConfig['port'] ?? 3306);
 
 mysqli_report(MYSQLI_REPORT_OFF);
 
@@ -81,7 +85,7 @@ function execute_sql_file($conn, $file_path) {
 $action = $_POST['action'] ?? '';
 
 if ($action === 'create') {
-    $conn = @new mysqli($dbhost, $dbuser, $dbpass);
+    $conn = @new mysqli($dbhost, $dbuser, $dbpass, '', $dbport);
     if ($conn->connect_error) {
         echo json_encode(["success" => false, "message" => "فشل الاتصال بـ MySQL: " . $conn->connect_error]);
         exit;
@@ -126,7 +130,7 @@ if ($action === 'create') {
         exit;
     }
 
-    $conn = @new mysqli($dbhost, $dbuser, $dbpass);
+    $conn = @new mysqli($dbhost, $dbuser, $dbpass, '', $dbport);
     if ($conn->connect_error) {
         echo json_encode(["success" => false, "message" => "فشل الاتصال بـ MySQL: " . $conn->connect_error]);
         exit;

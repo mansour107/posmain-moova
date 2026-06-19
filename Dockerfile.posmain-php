@@ -1,7 +1,10 @@
 FROM php:8.2-cli
 
-RUN docker-php-ext-install mysqli bcmath
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git default-mysql-client \
+    && rm -rf /var/lib/apt/lists/* \
+    && docker-php-ext-install mysqli bcmath
 
 WORKDIR /app
 
-CMD ["sh", "-c", "mkdir -p /app/logs /app/uploads /app/var/sessions && chmod -R 777 /app/logs /app/uploads /app/var && php -d display_errors=1 -d mysqli.default_socket=/run/mysqld/mysqld.sock -S 0.0.0.0:8000"]
+CMD ["sh", "-c", "mkdir -p /app/logs /app/uploads /app/var/sessions /app/var/update_jobs /app/backup/updates && chmod -R 777 /app/logs /app/uploads /app/var && php -d display_errors=1 -d mysqli.default_socket=/run/mysqld/mysqld.sock -S 0.0.0.0:8000"]

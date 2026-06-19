@@ -25,6 +25,14 @@ posLocalDockerAssert(
     'Local POS PHP container should install bcmath because active recipe decimal math requires it'
 );
 posLocalDockerAssert(
+    strpos($dockerfile, 'git') !== false,
+    'Local POS PHP container should install git so update jobs can pull code'
+);
+posLocalDockerAssert(
+    strpos($dockerfile, 'default-mysql-client') !== false,
+    'Local POS PHP container should install mysql client so update backups can run'
+);
+posLocalDockerAssert(
     strpos($compose, 'PHP_CLI_SERVER_WORKERS: "4"') !== false,
     'Local POS PHP server should use multiple workers so offline sync calls cannot block local AJAX'
 );
@@ -39,6 +47,18 @@ posLocalDockerAssert(
 posLocalDockerAssert(
     strpos($compose, 'POSMAIN_ENABLE_MOOVA_DIRECT_APPLY: "1"') !== false,
     'Local POS web container should enable direct Moova apply by default'
+);
+posLocalDockerAssert(
+    strpos($compose, '- .:/app') !== false && strpos($compose, '- .:/app:ro') === false,
+    'Local POS compose should mount the app tree writable so update jobs can pull code'
+);
+posLocalDockerAssert(
+    strpos($compose, 'network_mode: service:mysql') === false,
+    'Local POS PHP container should have its own network so outbound update checks work'
+);
+posLocalDockerAssert(
+    strpos($compose, '"127.0.0.1:8010:8000"') !== false,
+    'Local POS PHP server should publish port 8010 from the PHP container'
 );
 
 foreach ([

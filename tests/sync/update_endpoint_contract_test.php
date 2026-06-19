@@ -20,6 +20,7 @@ foreach ([
     'auth_guard_is_admin_session' => $bootstrapSource,
     'auth_guard_session_has_permission' => $bootstrapSource,
     'PosmainUpdateJobStore' => $startSource . $statusSource,
+    'backup_cleanup' => updateEndpointSource('classes/Updates/UpdateOrchestrator.php'),
 ] as $snippet => $source) {
     updateEndpointAssert(strpos($source, $snippet) !== false, 'missing update endpoint contract snippet: ' . $snippet);
 }

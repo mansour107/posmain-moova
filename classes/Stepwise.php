@@ -149,6 +149,16 @@ class Stepwise
         $skippedKeys = [];
 
         foreach ($plan['pending'] as $step) {
+            $legacyStatus = $this->reconcileKnownLegacyStep($step, $appliedBy);
+            if ($legacyStatus === 'baseline') {
+                $skippedKeys[] = $step['step_key'];
+                continue;
+            }
+            if ($legacyStatus === 'repaired') {
+                $appliedKeys[] = $step['step_key'];
+                continue;
+            }
+
             $sql = file_get_contents($step['absolute_path']);
             if ($sql === false) {
                 throw new RuntimeException('Unable to read step file: ' . $step['absolute_path']);
@@ -342,6 +352,322 @@ class Stepwise
         );
         $stmt->execute();
         $stmt->close();
+    }
+
+    /**
+     * Older installs often received these schema changes through db.sql or
+     * manual server work before stepwise_ledger existed. Reconcile only these
+     * known legacy files so future migrations can stay strict and file-driven.
+     *
+     * @param array{step_key:string,source_file:string,checksum:string,absolute_path:string} $step
+     */
+    private function reconcileKnownLegacyStep(array $step, ?string $appliedBy): ?string
+    {
+        switch ($step['step_key']) {
+            case '006_add_jal_columns.sql':
+                return $this->reconcileColumns($step, $appliedBy, 'ot_head', [
+                    'jal_name' => 'VARCHAR(255) DEFAULT NULL',
+                    'jal_notes' => 'TEXT DEFAULT NULL',
+                ]);
+
+            case '007_add_jal_amount.sql':
+                return $this->reconcileColumns($step, $appliedBy, 'ot_head', [
+                    'jal_amount' => 'DECIMAL(10, 2) DEFAULT 0.00',
+                ]);
+
+            case '008_comprehensive_update.sql':
+                return $this->reconcileColumns($step, $appliedBy, 'ot_head', [
+                    'jal_name' => 'VARCHAR(255) DEFAULT NULL',
+                    'jal_notes' => 'TEXT DEFAULT NULL',
+                    'jal_amount' => 'DECIMAL(10, 2) DEFAULT 0.00',
+                ]);
+
+            case '009_table_order_identity.sql':
+                if ($this->tableOrderIdentitySatisfied()) {
+                    $this->recordStep($step, $appliedBy, [
+                        'baseline_reconciled' => true,
+                        'note' => 'Legacy table/order identity schema already exists.',
+                    ]);
+
+                    return 'baseline';
+                }
+
+                return null;
+
+            case '010_pulse_setup.sql':
+                return $this->reconcilePulseSetup($step, $appliedBy);
+
+            case '011_customer_visits_setup.sql':
+                return $this->reconcileCustomerVisitsSetup($step, $appliedBy);
+        }
+
+        return null;
+    }
+
+    /**
+     * @param array{step_key:string,source_file:string,checksum:string,absolute_path:string} $step
+     * @param array<string, string> $columns
+     */
+    private function reconcileColumns(array $step, ?string $appliedBy, string $table, array $columns): string
+    {
+        $missing = [];
+        foreach ($columns as $column => $definition) {
+            if (!$this->columnExists($table, $column)) {
+                $missing[$column] = $definition;
+            }
+        }
+
+        if ($missing === []) {
+            $this->recordStep($step, $appliedBy, [
+                'baseline_reconciled' => true,
+                'note' => 'Legacy columns already exist.',
+            ]);
+
+            return 'baseline';
+        }
+
+        $this->conn->begin_transaction();
+        try {
+            foreach ($missing as $column => $definition) {
+                $this->conn->query(
+                    'ALTER TABLE ' . $this->quoteKnownIdentifier($table)
+                    . ' ADD COLUMN ' . $this->quoteKnownIdentifier($column)
+                    . ' ' . $definition
+                );
+            }
+            $this->recordStep($step, $appliedBy, [
+                'baseline_repaired' => true,
+                'added_columns' => array_keys($missing),
+            ]);
+            $this->conn->commit();
+        } catch (Throwable $exception) {
+            $this->conn->rollback();
+            throw $exception;
+        }
+
+        return 'repaired';
+    }
+
+    private function reconcilePulseSetup(array $step, ?string $appliedBy): string
+    {
+        $changed = false;
+        $this->conn->begin_transaction();
+        try {
+            if (!$this->columnExists('settings', 'showpulse')) {
+                $this->conn->query('ALTER TABLE settings ADD COLUMN showpulse INT DEFAULT 1');
+                $changed = true;
+            }
+            if (!$this->columnExists('usr_pwrs', 'sid_pulse')) {
+                $this->conn->query('ALTER TABLE usr_pwrs ADD COLUMN sid_pulse INT DEFAULT 1');
+                $changed = true;
+            }
+            if (!$this->tableExists('pulse_types')) {
+                $this->conn->query("
+                    CREATE TABLE pulse_types (
+                        id INT(11) NOT NULL AUTO_INCREMENT,
+                        name VARCHAR(100) NOT NULL,
+                        category ENUM('positive','negative') NOT NULL DEFAULT 'positive',
+                        icon VARCHAR(50) DEFAULT 'fas fa-star',
+                        points INT DEFAULT 1,
+                        isdeleted TINYINT(1) DEFAULT 0,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        PRIMARY KEY (id)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                ");
+                $changed = true;
+            }
+            if (!$this->tableExists('pulse_logs')) {
+                $this->conn->query("
+                    CREATE TABLE pulse_logs (
+                        id INT(11) NOT NULL AUTO_INCREMENT,
+                        employee_id INT(11) NOT NULL,
+                        type_id INT(11) NOT NULL,
+                        category ENUM('positive','negative') NOT NULL,
+                        rating INT DEFAULT 5,
+                        notes TEXT,
+                        recorded_by INT(11) NOT NULL,
+                        recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        PRIMARY KEY (id),
+                        KEY idx_employee (employee_id),
+                        KEY idx_type (type_id),
+                        KEY idx_recorded_at (recorded_at),
+                        KEY idx_category (category)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                ");
+                $changed = true;
+            }
+            $this->seedPulseTypes();
+            $this->recordStep($step, $appliedBy, [
+                $changed ? 'baseline_repaired' : 'baseline_reconciled' => true,
+                'note' => $changed ? 'Pulse legacy schema repaired.' : 'Pulse legacy schema already exists.',
+            ]);
+            $this->conn->commit();
+        } catch (Throwable $exception) {
+            $this->conn->rollback();
+            throw $exception;
+        }
+
+        return $changed ? 'repaired' : 'baseline';
+    }
+
+    private function reconcileCustomerVisitsSetup(array $step, ?string $appliedBy): string
+    {
+        $changed = false;
+        $this->conn->begin_transaction();
+        try {
+            if (!$this->tableExists('customer_visits')) {
+                $this->conn->query("
+                    CREATE TABLE customer_visits (
+                        id INT(11) NOT NULL AUTO_INCREMENT,
+                        gender ENUM('male','female') NOT NULL,
+                        age_group ENUM('under18','18_25','25_40','over40') NOT NULL,
+                        mode ENUM('solo','group') NOT NULL,
+                        start_time TIME NOT NULL,
+                        end_time TIME NULL DEFAULT NULL,
+                        order_value ENUM('under60','over60') NOT NULL,
+                        visit_type ENUM('new','returning','regular') NOT NULL,
+                        created_by INT UNSIGNED NOT NULL DEFAULT 0,
+                        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        isdeleted TINYINT(1) NOT NULL DEFAULT 0,
+                        PRIMARY KEY (id),
+                        KEY idx_created_at (created_at),
+                        KEY idx_isdeleted (isdeleted),
+                        KEY idx_visit_type (visit_type)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                ");
+                $changed = true;
+            }
+            if (!$this->columnExists('settings', 'show_customer_visits')) {
+                $this->conn->query('ALTER TABLE settings ADD COLUMN show_customer_visits INT DEFAULT 1');
+                $changed = true;
+            }
+            $this->recordStep($step, $appliedBy, [
+                $changed ? 'baseline_repaired' : 'baseline_reconciled' => true,
+                'note' => $changed ? 'Customer visits legacy schema repaired.' : 'Customer visits legacy schema already exists.',
+            ]);
+            $this->conn->commit();
+        } catch (Throwable $exception) {
+            $this->conn->rollback();
+            throw $exception;
+        }
+
+        return $changed ? 'repaired' : 'baseline';
+    }
+
+    private function tableOrderIdentitySatisfied(): bool
+    {
+        foreach ([
+            'cancelled_at',
+            'cancelled_by',
+            'cancellation_reason',
+            'completed_at',
+            'created_by',
+            'updated_by',
+            'parent_order_id',
+            'split_group_id',
+        ] as $column) {
+            if (!$this->columnExists('ot_head', $column)) {
+                return false;
+            }
+        }
+
+        return $this->tableExists('order_payments')
+            && $this->tableExists('table_order_migration_review')
+            && $this->indexExists('ot_head', 'idx_ot_head_active_table_order')
+            && $this->indexExists('ot_head', 'idx_ot_head_order_type')
+            && $this->indexExists('fat_details', 'idx_fat_details_fatid');
+    }
+
+    private function seedPulseTypes(): void
+    {
+        $types = [
+            ['الالتزام بالمواعيد', 'positive', 'fas fa-clock', 3],
+            ['جودة العمل', 'positive', 'fas fa-award', 5],
+            ['روح الفريق', 'positive', 'fas fa-users', 4],
+            ['المبادرة', 'positive', 'fas fa-lightbulb', 5],
+            ['خدمة العملاء', 'positive', 'fas fa-handshake', 4],
+            ['النظافة والترتيب', 'positive', 'fas fa-broom', 2],
+            ['التأخر', 'negative', 'fas fa-clock', -3],
+            ['الإهمال', 'negative', 'fas fa-exclamation-triangle', -5],
+            ['عدم التعاون', 'negative', 'fas fa-user-slash', -4],
+            ['سوء التعامل', 'negative', 'fas fa-frown', -5],
+        ];
+
+        $result = $this->conn->query('SELECT COUNT(*) AS total FROM pulse_types');
+        $count = (int) (($result->fetch_assoc()['total'] ?? 0));
+        $stmt = $this->conn->prepare("
+            INSERT INTO pulse_types (name, category, icon, points)
+            SELECT ?, ?, ?, ? FROM DUAL
+            WHERE (SELECT COUNT(*) FROM pulse_types) < ?
+        ");
+        foreach ($types as $index => $type) {
+            $threshold = $index + 1;
+            if ($count >= $threshold) {
+                continue;
+            }
+            $stmt->bind_param('sssii', $type[0], $type[1], $type[2], $type[3], $threshold);
+            $stmt->execute();
+        }
+        $stmt->close();
+    }
+
+    private function tableExists(string $table): bool
+    {
+        $stmt = $this->conn->prepare("
+            SELECT COUNT(*) AS total
+            FROM INFORMATION_SCHEMA.TABLES
+            WHERE TABLE_SCHEMA = DATABASE()
+              AND TABLE_NAME = ?
+        ");
+        $stmt->bind_param('s', $table);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        return (int) ($row['total'] ?? 0) > 0;
+    }
+
+    private function columnExists(string $table, string $column): bool
+    {
+        $stmt = $this->conn->prepare("
+            SELECT COUNT(*) AS total
+            FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE()
+              AND TABLE_NAME = ?
+              AND COLUMN_NAME = ?
+        ");
+        $stmt->bind_param('ss', $table, $column);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        return (int) ($row['total'] ?? 0) > 0;
+    }
+
+    private function indexExists(string $table, string $index): bool
+    {
+        $stmt = $this->conn->prepare("
+            SELECT COUNT(*) AS total
+            FROM INFORMATION_SCHEMA.STATISTICS
+            WHERE TABLE_SCHEMA = DATABASE()
+              AND TABLE_NAME = ?
+              AND INDEX_NAME = ?
+        ");
+        $stmt->bind_param('ss', $table, $index);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        return (int) ($row['total'] ?? 0) > 0;
+    }
+
+    private function quoteKnownIdentifier(string $identifier): string
+    {
+        if (!preg_match('/^[A-Za-z0-9_]+$/', $identifier)) {
+            throw new InvalidArgumentException('Invalid SQL identifier.');
+        }
+
+        return '`' . $identifier . '`';
     }
 
     /**

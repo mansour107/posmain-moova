@@ -1,22 +1,38 @@
 <?php
 require_once __DIR__ . '/includes/production_guard.php';
 production_guard_deny_route('pre_start.php');
+require_once __DIR__ . '/includes/db_bootstrap.php';
 
 // pre_start.php - Database Setup Page
-$dbhost = 'localhost';
-$dbuser = 'root';
-$dbpass = '';
-$dbname = 'kody2';
+$db = posmain_app_config()['database'];
+$dbName = (string) ($db['name'] ?? 'kody2');
+$dbHost = (string) ($db['host'] ?? '127.0.0.1');
+$dbPort = (int) ($db['port'] ?? 3306);
 
-// Check if already connected
 mysqli_report(MYSQLI_REPORT_OFF);
-$conn = @new mysqli($dbhost, $dbuser, $dbpass);
+$conn = @new mysqli(
+    $dbHost,
+    (string) ($db['user'] ?? 'root'),
+    (string) ($db['pass'] ?? ''),
+    '',
+    $dbPort
+);
+
 $db_exists = false;
-if (!$conn->connect_error) {
-    if ($conn->select_db($dbname)) {
+$server_up = false;
+$connection_error = '';
+
+if ($conn->connect_error) {
+    $connection_error = $conn->connect_error;
+} else {
+    $server_up = true;
+    if ($conn->select_db($dbName)) {
         $db_exists = true;
     }
+    $conn->close();
 }
+
+$redirectReason = trim((string) ($_GET['reason'] ?? $_GET['error'] ?? ''));
 ?>
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
@@ -257,10 +273,26 @@ if (!$conn->connect_error) {
                         الدخول للنظام
                     </a>
                 </div>
+            <?php elseif (!$server_up): ?>
+                <div class="status-badge">
+                    <i class="fas fa-exclamation-triangle"></i>
+                    تعذر الاتصال بخادم MySQL
+                </div>
+                <p class="subtitle" style="margin-top: -16px; margin-bottom: 24px;">
+                    الإعداد الحالي: <?= htmlspecialchars($dbHost, ENT_QUOTES, 'UTF-8') ?>:<?= $dbPort ?>
+                    / <?= htmlspecialchars($dbName, ENT_QUOTES, 'UTF-8') ?>
+                    <?php if ($connection_error !== ''): ?>
+                        <br><small><?= htmlspecialchars($connection_error, ENT_QUOTES, 'UTF-8') ?></small>
+                    <?php endif; ?>
+                    <?php if ($redirectReason !== ''): ?>
+                        <br><small>سبب إعادة التوجيه: <?= htmlspecialchars($redirectReason, ENT_QUOTES, 'UTF-8') ?></small>
+                    <?php endif; ?>
+                    <br><small>راجع إعدادات الاتصال في ملف <code>.env</code> (POSMAIN_DB_HOST و POSMAIN_DB_PORT).</small>
+                </p>
             <?php else: ?>
                 <div class="status-badge">
                     <i class="fas fa-exclamation-triangle"></i>
-                    قاعدة البيانات (kody2) غير موجودة
+                    قاعدة البيانات (<?= htmlspecialchars($dbName, ENT_QUOTES, 'UTF-8') ?>) غير موجودة
                 </div>
                 <div class="actions">
                     <button class="btn btn-primary" id="btnCreateNew">

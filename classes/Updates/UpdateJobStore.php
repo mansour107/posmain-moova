@@ -134,7 +134,6 @@ class PosmainUpdateJobStore
 
         if ($action === 'plan' || $action === 'apply') {
             $steps[] = ['name' => 'file_migrations_plan', 'status' => 'pending'];
-            $steps[] = ['name' => 'schema_migrations_plan', 'status' => 'pending'];
         }
 
         if ($action === 'apply') {
@@ -143,12 +142,12 @@ class PosmainUpdateJobStore
                 ['name' => 'drain_requests', 'status' => 'pending'],
                 ['name' => 'backup', 'status' => 'pending'],
                 ['name' => 'file_migrations', 'status' => 'pending'],
-                ['name' => 'schema_migrations', 'status' => 'pending'],
                 ['name' => 'code_pull', 'status' => 'pending'],
                 ['name' => 'runtime_restart', 'status' => 'pending'],
                 ['name' => 'health_check', 'status' => 'pending'],
                 ['name' => 'write_version', 'status' => 'pending'],
                 ['name' => 'maintenance_off', 'status' => 'pending'],
+                ['name' => 'backup_cleanup', 'status' => 'pending'],
             ]);
         }
 

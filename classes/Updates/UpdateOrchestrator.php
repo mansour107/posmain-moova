@@ -2,7 +2,6 @@
 
 require_once __DIR__ . '/UpdateJobStore.php';
 require_once __DIR__ . '/UpdateMaintenance.php';
-require_once __DIR__ . '/SchemaMigrationRunner.php';
 require_once __DIR__ . '/../Stepwise.php';
 
 class PosmainUpdateOrchestrator
@@ -86,22 +85,6 @@ class PosmainUpdateOrchestrator
             return $job;
         });
 
-        $job = $this->runStep($jobId, 'schema_migrations_plan', function (array $job): array {
-            $conn = posmain_db_connect();
-            try {
-                $runner = new PosmainSchemaMigrationRunner();
-                $pending = $runner->pending($conn);
-                $job['schema_migrations_plan'] = [
-                    'pending_count' => count($pending),
-                    'pending_tables' => array_keys($pending),
-                ];
-            } finally {
-                $conn->close();
-            }
-
-            return $job;
-        });
-
         if ($action === 'plan') {
             return $job;
         }
@@ -146,7 +129,7 @@ class PosmainUpdateOrchestrator
                 return $job;
             });
 
-            $job = $this->runStep($jobId, 'backup', function (array $job): array {
+            $job = $this->runStep($jobId, 'backup', function (array $job) use ($jobId): array {
                 $backupFile = $this->createBackup($jobId);
                 $job['backup_file'] = $backupFile;
 
@@ -168,22 +151,6 @@ class PosmainUpdateOrchestrator
 
                 if ($backupFile === '') {
                     $job['warnings'][] = 'Backup path missing while applying file migrations.';
-                }
-
-                return $job;
-            });
-
-            $job = $this->runStep($jobId, 'schema_migrations', function (array $job) use ($backupFile): array {
-                $conn = posmain_db_connect();
-                try {
-                    $runner = new PosmainSchemaMigrationRunner();
-                    $applied = $runner->apply($conn, $backupFile);
-                    $job['schema_migrations'] = [
-                        'applied_count' => count($applied),
-                        'applied_tables' => $applied,
-                    ];
-                } finally {
-                    $conn->close();
                 }
 
                 return $job;
@@ -219,8 +186,29 @@ class PosmainUpdateOrchestrator
                 return $job;
             });
 
-            return $this->runStep($jobId, 'maintenance_off', function (array $job): array {
+            $job = $this->runStep($jobId, 'maintenance_off', function (array $job): array {
                 $this->maintenance->disable();
+
+                return $job;
+            });
+
+            return $this->runStep($jobId, 'backup_cleanup', function (array $job): array {
+                if (!$this->shouldDeleteBackupOnSuccess()) {
+                    $job['backup_deleted'] = false;
+
+                    return $job;
+                }
+
+                $backupPath = (string) ($job['backup_file'] ?? '');
+                $deleted = $this->deleteUpdateBackupFile($backupPath);
+                $job['backup_deleted'] = $deleted;
+                if ($deleted) {
+                    $job['backup_file'] = null;
+                } elseif ($backupPath !== '') {
+                    $job['warnings'][] = 'Failed to delete update backup file: ' . $backupPath;
+                }
+
+                $this->pruneCompletedUpdateBackups();
 
                 return $job;
             });
@@ -286,7 +274,7 @@ class PosmainUpdateOrchestrator
             $job = $callback($job);
 
             return $this->store->mutate($jobId, function (array $current) use ($stepName, $job): array {
-                foreach (['installed_version', 'published_version', 'target_version', 'backup_file', 'code_commit_before', 'update_available', 'version_check', 'file_migrations_plan', 'schema_migrations_plan', 'file_migrations', 'schema_migrations', 'code_pull', 'runtime_restart', 'health_check', 'worker_pid', 'warnings'] as $field) {
+                foreach (['installed_version', 'published_version', 'target_version', 'backup_file', 'backup_deleted', 'code_commit_before', 'update_available', 'version_check', 'file_migrations_plan', 'file_migrations', 'code_pull', 'runtime_restart', 'health_check', 'worker_pid', 'warnings'] as $field) {
                     if (array_key_exists($field, $job)) {
                         $current[$field] = $job[$field];
                     }
@@ -369,6 +357,66 @@ class PosmainUpdateOrchestrator
         }
 
         return $output;
+    }
+
+    private function shouldDeleteBackupOnSuccess(): bool
+    {
+        if (function_exists('posmain_bool')) {
+            return !posmain_bool(getenv('POSMAIN_UPDATE_KEEP_BACKUP') ?: '0', false);
+        }
+
+        $value = strtolower(trim((string) (getenv('POSMAIN_UPDATE_KEEP_BACKUP') ?: '0')));
+
+        return !in_array($value, ['1', 'true', 'yes', 'on'], true);
+    }
+
+    private function deleteUpdateBackupFile(string $backupFile): bool
+    {
+        $backupFile = trim($backupFile);
+        if ($backupFile === '') {
+            return false;
+        }
+
+        $backupDir = realpath($this->projectRoot . '/backup/updates');
+        if ($backupDir === false) {
+            return false;
+        }
+
+        $candidate = realpath($backupFile);
+        if ($candidate === false || !is_file($candidate)) {
+            return false;
+        }
+
+        if (strpos($candidate, $backupDir . DIRECTORY_SEPARATOR) !== 0) {
+            return false;
+        }
+
+        if (preg_match('/^pre-update-upd_[0-9]{8}_[0-9]{6}_[a-f0-9]{6}\.sql$/', basename($candidate)) !== 1) {
+            return false;
+        }
+
+        return @unlink($candidate);
+    }
+
+    private function pruneCompletedUpdateBackups(): void
+    {
+        $backupDir = realpath($this->projectRoot . '/backup/updates');
+        if ($backupDir === false) {
+            return;
+        }
+
+        foreach (glob($backupDir . '/pre-update-upd_*.sql') ?: [] as $path) {
+            if (!preg_match('/^pre-update-(upd_[0-9]{8}_[0-9]{6}_[a-f0-9]{6})\.sql$/', basename($path), $matches)) {
+                continue;
+            }
+
+            $job = $this->store->find($matches[1]);
+            if ($job === null || (string) ($job['status'] ?? '') !== 'completed') {
+                continue;
+            }
+
+            $this->deleteUpdateBackupFile($path);
+        }
     }
 
     private function gitPull(): array
