@@ -312,7 +312,7 @@ function recipeCofeEndpointStartServer(string $root, string $db, string $session
         'POSMAIN_ROUTER_ENABLED' => '0',
         'POSMAIN_SYNC_OUTBOX_ENABLED' => '0',
         'POSMAIN_MENU_SYNC_ENABLED' => '0',
-        'POSMAIN_ENABLE_RECIPES' => '1',
+        'POSMAIN_RECIPE_MODE' => 'consume_pilot',
         'POSMAIN_RECIPE_MODE' => 'consume_pilot',
         'POSMAIN_RECIPE_RESERVATIONS' => '1',
         'POSMAIN_RECIPE_CONSUMPTION' => '1',

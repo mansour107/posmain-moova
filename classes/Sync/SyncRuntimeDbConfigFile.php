@@ -134,7 +134,6 @@ class SyncRuntimeDbConfigFile
             'POSMAIN_DB_NAME=' . $database['name'],
             'POSMAIN_DB_USER=' . $database['user'],
             'POSMAIN_DB_PASS=' . $database['pass'],
-            'POSMAIN_DB_CHARSET=' . $database['charset'],
         ];
 
         return implode("\n", $lines);

@@ -6,7 +6,10 @@ require_once __DIR__ . '/../includes/csrf.php';
 require_once __DIR__ . '/../classes/Security/SecurityAuditLogger.php';
 require_once __DIR__ . '/../classes/Sync/BranchIdentity.php';
 require_once __DIR__ . '/../classes/Sync/CloudAuthService.php';
+require_once __DIR__ . '/../classes/Sync/BranchPairingService.php';
 require_once __DIR__ . '/../classes/Sync/CloudBranchRegistryService.php';
+require_once __DIR__ . '/../classes/Sync/PairingStatusService.php';
+require_once __DIR__ . '/../classes/Sync/SyncWorkerHealthService.php';
 require_once __DIR__ . '/../classes/Sync/SchemaManager.php';
 require_once __DIR__ . '/../classes/Sync/SyncHttpClient.php';
 require_once __DIR__ . '/../classes/Sync/SyncRuntimeCrypto.php';
@@ -71,12 +74,17 @@ try {
             } else {
                 (new SyncRuntimeSettings())->save($conn, syncCredentialsSettingsInput($_POST, 'branch'));
             }
+            $pairingResult = null;
+            if (syncCredentialsShouldPairLocal($_POST)) {
+                $pairingResult = (new BranchPairingService())->pairLocal($conn, $appConfig, $_POST);
+            }
             syncCredentialsAudit($conn, 'sync_credentials_local_saved', ['role' => 'branch']);
             syncCredentialsJson([
                 'ok' => true,
                 'message' => 'Local sync settings were saved successfully.',
                 'runtime_config_file' => SyncRuntimeDbConfigFile::defaultPath(),
                 'config_key_file' => $savedKeyPath,
+                'pairing' => $pairingResult,
             ]);
             break;
 
@@ -104,27 +112,66 @@ try {
             break;
 
         case 'register_cloud_branch':
+        case 'pair_hosted_branch':
             syncCredentialsSaveEncryptionKey($_POST);
             syncCredentialsRequireEncryption();
-            $cloudBaseUrl = syncCredentialsCloudBaseUrl($_POST);
-            $result = (new CloudBranchRegistryService())->register($conn, [
-                'branch_uuid' => $_POST['branch_uuid'] ?? $_POST['POSMAIN_BRANCH_UUID'] ?? '',
-                'secret' => $_POST['branch_secret'] ?? $_POST['POSMAIN_BRANCH_SYNC_SECRET'] ?? '',
-                'status' => $_POST['branch_status'] ?? 'active',
-                'cloud_base_url' => $cloudBaseUrl,
-                'require_encryption' => true,
-            ]);
-            syncCredentialsAudit($conn, 'sync_cloud_branch_registered', [
+            $pairing = new BranchPairingService();
+            $result = $pairing->pairHosted($conn, $appConfig, array_merge($_POST, [
+                'cloud_base_url' => syncCredentialsCloudBaseUrl($_POST),
+            ]));
+            syncCredentialsAudit($conn, 'sync_branch_paired_hosted', [
                 'branch_uuid' => $result['branch_uuid'],
-                'status' => $result['status'],
+                'identity_source' => $result['identity_source'],
             ]);
             $registry = new CloudBranchRegistryService();
             syncCredentialsJson([
                 'ok' => true,
-                'message' => 'Branch was registered on the hosted POS.',
+                'message' => 'Branch was paired on the hosted POS.',
                 'branch' => syncCredentialsPublicBranch($result),
-                'local_env_block' => $registry->envBlock($result['branch_env']),
-                'branches' => $registry->listBranches($conn),
+                'local_env_block' => $registry->envBlock([
+                    'POSMAIN_BRANCH_UUID' => $result['branch_uuid'],
+                    'POSMAIN_BRANCH_SYNC_SECRET' => (string) ($_POST['branch_secret'] ?? $_POST['POSMAIN_BRANCH_SYNC_SECRET'] ?? ''),
+                    'POSMAIN_CLOUD_BASE_URL' => syncCredentialsCloudBaseUrl($_POST),
+                ]),
+                'branches' => $result['branches'],
+                'pairing' => $result,
+            ]);
+            break;
+
+        case 'pair_local_branch':
+            syncCredentialsJson([
+                'ok' => true,
+                'pairing' => (new BranchPairingService())->pairLocal($conn, $appConfig, $_POST),
+            ]);
+            break;
+
+        case 'test_pairing':
+            syncCredentialsJson([
+                'ok' => true,
+                'pairing_test' => (new BranchPairingService())->testPairing($_POST, $appConfig, $conn),
+            ]);
+            break;
+
+        case 'pairing_status':
+            $branchUuid = trim((string) ($_POST['branch_uuid'] ?? $_POST['POSMAIN_BRANCH_UUID'] ?? ''));
+            $role = strtolower(trim((string) ($appConfig['role'] ?? 'branch')));
+            if ($role === 'cloud') {
+                syncCredentialsJson([
+                    'ok' => true,
+                    'dashboard' => (new PairingStatusService())->hostedDashboard($conn, $appConfig, $branchUuid),
+                ]);
+            } else {
+                syncCredentialsJson([
+                    'ok' => true,
+                    'dashboard' => (new PairingStatusService())->localDashboard($conn, $appConfig, $_POST),
+                ]);
+            }
+            break;
+
+        case 'worker_status':
+            syncCredentialsJson([
+                'ok' => true,
+                'worker' => (new SyncWorkerHealthService())->report($conn, $appConfig),
             ]);
             break;
 
@@ -334,6 +381,20 @@ function syncCredentialsAudit(mysqli $conn, string $eventType, array $metadata):
 
 function syncCredentialsPublicBranch(array $branch): array
 {
-    unset($branch['branch_env']);
+    unset($branch['branch_env'], $branch['router_route'], $branch['legacy_cloud_branch'], $branch['branches'], $branch['identity_source']);
     return $branch;
+}
+
+function syncCredentialsShouldPairLocal(array $input): bool
+{
+    $branchUuid = trim((string) ($input['POSMAIN_BRANCH_UUID'] ?? $input['branch_uuid'] ?? ''));
+    $cloudBaseUrl = trim((string) ($input['POSMAIN_CLOUD_BASE_URL'] ?? $input['cloud_base_url'] ?? ''));
+    $secret = (string) ($input['POSMAIN_BRANCH_SYNC_SECRET'] ?? $input['branch_secret'] ?? '');
+    $secretDirty = !empty($input['POSMAIN_BRANCH_SYNC_SECRET_DIRTY']);
+
+    if ($branchUuid === '' || $cloudBaseUrl === '') {
+        return false;
+    }
+
+    return $secret !== '' || $secretDirty;
 }

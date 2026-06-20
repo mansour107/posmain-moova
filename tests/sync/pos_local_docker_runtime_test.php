@@ -42,11 +42,7 @@ posLocalDockerAssert(
 );
 posLocalDockerAssert(
     strpos($compose, 'POSMAIN_MOOVA_MODE: direct_widget') !== false,
-    'Local POS web container should default Moova to direct widget mode'
-);
-posLocalDockerAssert(
-    strpos($compose, 'POSMAIN_ENABLE_MOOVA_DIRECT_APPLY: "1"') !== false,
-    'Local POS web container should enable direct Moova apply by default'
+    'Local POS web container should default Moova to direct widget mode (direct apply is implied by mode)'
 );
 posLocalDockerAssert(
     strpos($compose, '- .:/app') !== false && strpos($compose, '- .:/app:ro') === false,

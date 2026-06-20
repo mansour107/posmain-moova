@@ -14,13 +14,13 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'GET') {
 }
 
 $statusConfig = function_exists('posmain_app_config') ? posmain_app_config() : [];
-$configuredToken = trim((string) (($statusConfig['status_token'] ?? '') ?: getenv('POSMAIN_SYNC_STATUS_TOKEN')));
+$configuredToken = trim((string) ($statusConfig['status_token'] ?? ''));
 if ($configuredToken === '') {
     syncStatusJson(503, [
         'ok' => false,
         'healthy' => false,
         'error' => 'status_token_not_configured',
-        'message' => 'Set POSMAIN_SYNC_STATUS_TOKEN before exposing sync status over HTTP.',
+        'message' => 'Set POSMAIN_STATUS_TOKEN before exposing sync status over HTTP.',
     ]);
 }
 

@@ -176,6 +176,32 @@ function login_insert_session_time(mysqli $conn, int $userId): void
     }
 }
 
+function login_redirect_with_error(string $message, string $username = ''): void
+{
+    $_SESSION['login_flash'] = [
+        'message' => $message,
+        'uname' => $username,
+    ];
+    header('Location: ' . ($_SERVER['PHP_SELF'] ?? 'index.php'));
+    exit();
+}
+
+function login_take_error_flash(): array
+{
+    $flash = $_SESSION['login_flash'] ?? null;
+    unset($_SESSION['login_flash']);
+
+    if (!is_array($flash)) {
+        return ['message' => null, 'uname' => ''];
+    }
+
+    $message = trim((string) ($flash['message'] ?? ''));
+    return [
+        'message' => $message !== '' ? $message : null,
+        'uname' => trim((string) ($flash['uname'] ?? '')),
+    ];
+}
+
 // generate CSRF token
 if (empty($_SESSION['csrf_token'])) {
     $_SESSION['csrf_token'] = bin2hex(random_bytes(24));
@@ -193,6 +219,12 @@ if (
 }
 
 $error_message = null;
+$login_username = '';
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+    $loginFlash = login_take_error_flash();
+    $error_message = $loginFlash['message'];
+    $login_username = $loginFlash['uname'];
+}
 $loginThrottle = new LoginThrottleService();
 $securityAuditLogger = new SecurityAuditLogger();
 
@@ -337,6 +369,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
             }
         }
+    }
+
+    if ($error_message !== null) {
+        login_redirect_with_error($error_message, trim($_POST['uname'] ?? ''));
     }
 }
 
@@ -596,7 +632,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <label for="uname" class="form-label">اسم المستخدم أو البريد أو الهاتف</label>
                 <div class="input-group">
                     <!-- <span class="input-group-text bg-white border-0 ps-3"><i class="fas fa-user text-muted"></i></span> -->
-                    <input type="text" name="uname" id="uname" class="form-control border-start-0 ps-0" value="<?= e($_POST['uname'] ?? '') ?>" placeholder="أدخل اسم المستخدم أو البريد أو الهاتف" required autocomplete="username" style="border-radius: 0 12px 12px 0;">
+                    <input type="text" name="uname" id="uname" class="form-control border-start-0 ps-0" value="<?= e($login_username) ?>" placeholder="أدخل اسم المستخدم أو البريد أو الهاتف" required autocomplete="username" style="border-radius: 0 12px 12px 0;">
                 </div>
             </div>
 

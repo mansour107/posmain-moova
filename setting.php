@@ -3,16 +3,35 @@ require_once __DIR__ . '/includes/auth_guard.php';
 require_once __DIR__ . '/includes/csrf.php';
 include('includes/connect.php');
 require_admin_or_permission('system.tools.run', $conn);
-include('includes/header.php');
 
 $sittingpass = $sittingpass ?? 'hadi@1234';
-$postedPass = isset($_POST['password']) ? (string) $_POST['password'] : null;
-if ($postedPass !== null && !verify_csrf_from_post_or_header('settings_gate')) {
-    $postedPass = '';
+$settingsGateError = null;
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['password'])) {
+    $postedPass = (string) $_POST['password'];
+    if (!verify_csrf_from_post_or_header('settings_gate')) {
+        $_SESSION['settings_gate_flash'] = 'طلب غير صالح. حاول مرة أخرى.';
+    } elseif ($postedPass !== $sittingpass) {
+        $_SESSION['settings_gate_flash'] = 'كلمة المرور غير صحيحة';
+    } else {
+        $_SESSION['settings_gate_unlocked'] = true;
+    }
+
+    header('Location: ' . ($_SERVER['PHP_SELF'] ?? 'setting.php'));
+    exit();
 }
+
+if (!empty($_SESSION['settings_gate_flash'])) {
+    $settingsGateError = (string) $_SESSION['settings_gate_flash'];
+    unset($_SESSION['settings_gate_flash']);
+}
+
+$settingsGateUnlocked = !empty($_SESSION['settings_gate_unlocked']);
+
+include('includes/header.php');
 ?>
 
-<?php if ($postedPass === null): ?>
+<?php if (!$settingsGateUnlocked): ?>
 
 <div class="content-wrapper">
   <section class="content">
@@ -26,6 +45,12 @@ if ($postedPass !== null && !verify_csrf_from_post_or_header('settings_gate')) {
               <p class="text-muted small mb-0 mt-2">أدخل كلمة مرور الإعدادات للمتابعة</p>
             </div>
             <div class="card-body pt-0">
+              <?php if ($settingsGateError !== null): ?>
+              <div class="alert alert-danger" role="alert">
+                <i class="fas fa-times-circle ml-1"></i>
+                <?= htmlspecialchars($settingsGateError, ENT_QUOTES, 'UTF-8') ?>
+              </div>
+              <?php endif; ?>
               <form method="post" action="<?= htmlspecialchars($_SERVER['PHP_SELF'], ENT_QUOTES, 'UTF-8') ?>" autocomplete="off">
                 <?= csrf_input('settings_gate') ?>
                 <div class="form-group">
@@ -53,27 +78,6 @@ if ($postedPass !== null && !verify_csrf_from_post_or_header('settings_gate')) {
   </section>
 </div>
 
-<?php elseif ($postedPass !== $sittingpass): ?>
-
-<div class="content-wrapper">
-  <section class="content">
-    <div class="container py-5">
-      <div class="row justify-content-center">
-        <div class="col-md-8 col-lg-6">
-          <div class="alert alert-danger shadow-sm text-center mb-0">
-            <i class="fas fa-times-circle fa-2x mb-3 d-block"></i>
-            <h4 class="alert-heading">كلمة المرور غير صحيحة</h4>
-            <p class="mb-3">لا يمكن فتح صفحة الإعدادات دون كلمة المرور الصحيحة.</p>
-            <a href="setting.php" class="btn btn-outline-danger">
-              <i class="fas fa-redo ml-1"></i> إعادة المحاولة
-            </a>
-          </div>
-        </div>
-      </div>
-    </div>
-  </section>
-</div>
-
 <?php else: ?>
 
 <?php
@@ -83,6 +87,7 @@ $systemUpdateCsrf = csrf_token('system_update');
 $systemUpdateAvailable = !empty($updateAvailability['update_available']);
 $systemUpdateInstalledVersion = (string) ($updateAvailability['installed_version'] ?? 'غير معروف');
 $systemUpdatePublishedVersion = (string) ($updateAvailability['published_version'] ?? 'غير متاح');
+require_once __DIR__ . '/classes/Sync/BranchPairingService.php';
 require_once __DIR__ . '/classes/Sync/CloudBranchRegistryService.php';
 require_once __DIR__ . '/classes/Sync/SyncRuntimeCrypto.php';
 require_once __DIR__ . '/classes/Sync/SyncRuntimeDbConfigFile.php';
@@ -106,12 +111,12 @@ $syncEnvFallback = static function (array $names, $default = '', bool $allowEmpt
 };
 if (!isset($syncRuntimeFile['database'])) {
     $syncDb = [
-        'host' => (string) $syncEnvFallback(['POSMAIN_SYNC_DB_HOST', 'POSMAIN_DB_HOST', 'POSMAIN_TEST_MYSQL_HOST', 'POSMAIN_API_DB_HOST'], (string)($syncDb['host'] ?? '127.0.0.1')),
-        'port' => (int) $syncEnvFallback(['POSMAIN_SYNC_DB_PORT', 'POSMAIN_DB_PORT', 'POSMAIN_TEST_MYSQL_PORT', 'POSMAIN_API_DB_PORT'], (string)($syncDb['port'] ?? 3306)),
-        'name' => (string) $syncEnvFallback(['POSMAIN_SYNC_DB_NAME', 'POSMAIN_DB_NAME', 'POSMAIN_TEST_MYSQL_DB', 'POSMAIN_API_DB_NAME'], (string)($syncDb['name'] ?? 'kody2')),
-        'user' => (string) $syncEnvFallback(['POSMAIN_SYNC_DB_USER', 'POSMAIN_DB_USER', 'POSMAIN_TEST_MYSQL_USER', 'POSMAIN_API_DB_USER'], (string)($syncDb['user'] ?? 'root')),
-        'pass' => (string) $syncEnvFallback(['POSMAIN_SYNC_DB_PASS', 'POSMAIN_DB_PASS', 'POSMAIN_TEST_MYSQL_PASS', 'POSMAIN_API_DB_PASS'], (string)($syncDb['pass'] ?? ''), true),
-        'charset' => (string) $syncEnvFallback(['POSMAIN_DB_CHARSET'], (string)($syncDb['charset'] ?? 'utf8mb4')),
+        'host' => (string) $syncEnvFallback(['POSMAIN_DB_HOST', 'POSMAIN_TEST_MYSQL_HOST', 'POSMAIN_API_DB_HOST'], (string)($syncDb['host'] ?? '127.0.0.1')),
+        'port' => (int) $syncEnvFallback(['POSMAIN_DB_PORT', 'POSMAIN_TEST_MYSQL_PORT', 'POSMAIN_API_DB_PORT'], (string)($syncDb['port'] ?? 3306)),
+        'name' => (string) $syncEnvFallback(['POSMAIN_DB_NAME', 'POSMAIN_TEST_MYSQL_DB', 'POSMAIN_API_DB_NAME'], (string)($syncDb['name'] ?? 'kody2')),
+        'user' => (string) $syncEnvFallback(['POSMAIN_DB_USER', 'POSMAIN_TEST_MYSQL_USER', 'POSMAIN_API_DB_USER'], (string)($syncDb['user'] ?? 'root')),
+        'pass' => (string) $syncEnvFallback(['POSMAIN_DB_PASS', 'POSMAIN_TEST_MYSQL_PASS', 'POSMAIN_API_DB_PASS'], (string)($syncDb['pass'] ?? ''), true),
+        'charset' => (string) ($syncDb['charset'] ?? 'utf8mb4'),
     ];
 }
 $syncValue = static function (string $key, $default = '') use ($syncRuntimeSettings) {
@@ -171,13 +176,6 @@ $syncConfigBool = static function (string $key, bool $default = false) use ($app
         'POSMAIN_MOOVA_APPLY_ENABLED' => ['sync', 'moova_apply_enabled'],
     ];
     $envNames = [$key];
-    if ($key === 'POSMAIN_SYNC_OUTBOX_ENABLED') {
-        $envNames[] = 'POSMAIN_ENABLE_SYNC_OUTBOX';
-    } elseif ($key === 'POSMAIN_BRANCH_SYNC_ENABLED') {
-        $envNames[] = 'POSMAIN_ENABLE_CLOUD_SYNC';
-    } elseif ($key === 'POSMAIN_MOOVA_APPLY_ENABLED') {
-        $envNames[] = 'POSMAIN_ENABLE_MOOVA_QUEUED_APPLY';
-    }
 
     $envValue = $syncEnvFallback($envNames, null, true);
     if ($envValue !== null) {
@@ -210,7 +208,8 @@ if (!in_array($syncRole, ['branch', 'cloud'], true)) {
 }
 $syncIsHosted = $syncRole === 'cloud';
 $syncIsLocal = $syncRole === 'branch';
-$syncBranches = (new CloudBranchRegistryService())->listBranches($conn);
+$syncRouterEnabled = !empty($appConfig['router']['enabled']);
+$syncBranches = (new BranchPairingService())->listHostedBranches($conn, $appConfig);
 $syncCrypto = new SyncRuntimeCrypto();
 $syncConfigEncryptionKeyEffective = $syncCrypto->currentKeyMaterial();
 $syncConfigEncryptionKeyConfigured = $syncConfigEncryptionKeyEffective !== '';
@@ -488,7 +487,61 @@ if ($syncDefaultCloudUrl === '' && !empty($_SERVER['HTTP_HOST'])) {
               #sync-credentials-card .sync-switch-lg .custom-control-input:checked ~ .custom-control-label::after {
                 transform: translateX(-1.3rem);
               }
+              #sync-credentials-card .sync-status-badge {
+                display: inline-block;
+                font-size: 0.75rem;
+                font-weight: 700;
+                letter-spacing: 0.04em;
+                text-transform: uppercase;
+                border-radius: 999px;
+                padding: 0.2rem 0.65rem;
+              }
+              #sync-credentials-card .sync-status-badge-ok {
+                background: rgba(40, 167, 69, 0.18);
+                color: #1e7e34;
+              }
+              #sync-credentials-card .sync-status-badge-bad {
+                background: rgba(220, 53, 69, 0.16);
+                color: #bd2130;
+              }
+              #sync-credentials-card .sync-status-grid {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+                gap: 0.75rem;
+              }
+              #sync-credentials-card .sync-status-card {
+                background: rgba(255, 255, 255, 0.72);
+                border: 1px solid rgba(0, 0, 0, 0.06);
+                border-radius: 0.5rem;
+                padding: 0.75rem 0.9rem;
+              }
+              #sync-credentials-card .sync-status-card h6 {
+                font-size: 0.78rem;
+                text-transform: uppercase;
+                letter-spacing: 0.05em;
+                color: rgba(33, 37, 41, 0.62);
+                margin-bottom: 0.35rem;
+              }
+              #sync-credentials-card .sync-status-card p {
+                margin-bottom: 0;
+                font-size: 0.9rem;
+              }
             </style>
+
+            <section class="sync-section mb-3" id="sync-status-section">
+              <div class="sync-section-header">
+                <div>
+                  <span class="sync-section-kicker">Status</span>
+                  <h5 class="mb-1">Pairing &amp; sync health</h5>
+                </div>
+                <button type="button" class="btn btn-sm btn-outline-secondary js-refresh-sync-status" dir="ltr">
+                  <i class="fas fa-sync-alt mr-1"></i> Refresh
+                </button>
+              </div>
+              <div id="sync-status-panel" class="sync-subsection">
+                <div class="text-muted small">Loading pairing and worker status...</div>
+              </div>
+            </section>
 
             <div id="sync-local-form">
               <input type="hidden" name="action" value="save_local">
@@ -680,6 +733,37 @@ if ($syncDefaultCloudUrl === '' && !empty($_SERVER['HTTP_HOST'])) {
                 </div>
                 <span class="sync-action-result text-muted"></span>
               </div>
+
+              <?php if ($syncRouterEnabled): ?>
+              <div class="sync-subsection">
+                <h6 class="font-weight-bold mb-2">Provision new shop database</h6>
+                <p class="text-muted small mb-3">When router mode is enabled, you can create a new hosted shop database automatically during pairing.</p>
+                <div class="custom-control custom-checkbox mb-3">
+                  <input type="checkbox" class="custom-control-input" id="provision-new-shop" name="provision_new_shop" value="1">
+                  <label class="custom-control-label" for="provision-new-shop">Create a new shop database on save/pair</label>
+                </div>
+                <div class="row">
+                  <div class="col-md-4">
+                    <div class="form-group">
+                      <label>Shop slug</label>
+                      <input type="text" class="form-control" name="provision_shop_slug" placeholder="shop-alpha">
+                    </div>
+                  </div>
+                  <div class="col-md-4">
+                    <div class="form-group">
+                      <label>Shop display name</label>
+                      <input type="text" class="form-control" name="provision_shop_name" placeholder="Alpha Shop">
+                    </div>
+                  </div>
+                  <div class="col-md-4">
+                    <div class="form-group">
+                      <label>Database name (optional)</label>
+                      <input type="text" class="form-control" name="provision_db_name" placeholder="posmain_shop_alpha">
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <?php endif; ?>
 
               <div class="sync-subsection">
                 <h6 class="font-weight-bold mb-3">الفروع المسجلة على النسخة المستضافة</h6>
@@ -1043,11 +1127,125 @@ document.addEventListener('DOMContentLoaded', function () {
 	    return payload;
 	  }
 
+  function syncHostedProvisionPayload() {
+    const payload = {};
+    $('#sync-cloud-form :input').serializeArray().forEach(function (entry) {
+      if (entry.name === 'provision_new_shop' || entry.name.indexOf('provision_') === 0) {
+        payload[entry.name] = entry.value;
+      }
+    });
+    return payload;
+  }
+
+  function syncStatusPayload() {
+    const payload = Object.assign({ action: 'pairing_status' }, syncSharedIdentityPayload(), csrfPayload());
+    const role = syncCard.getAttribute('data-sync-role') || 'branch';
+    if (role === 'cloud') {
+      Object.assign(payload, syncConfigKeyPayload(), syncHostedProvisionPayload());
+    }
+    return payload;
+  }
+
+  function escapeHtml(value) {
+    return String(value == null ? '' : value)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  function renderSyncStatusPanel(dashboard) {
+    const panel = document.getElementById('sync-status-panel');
+    if (!panel || !dashboard) {
+      return;
+    }
+
+    const pairingOk = !!dashboard.pairing_ok;
+    const badgeClass = pairingOk ? 'sync-status-badge-ok' : 'sync-status-badge-bad';
+    const badgeLabel = pairingOk ? 'Paired' : 'Not paired';
+    const remote = dashboard.remote || {};
+    const identity = dashboard.identity || {};
+    const observability = dashboard.observability || {};
+    const worker = dashboard.worker || {};
+    const outbox = observability.outbox || {};
+    const cloudPull = observability.cloud_pull || {};
+    const cloudQueue = observability.cloud_queue || {};
+    const shopDb = remote.shop_db_name || identity.shop_db_name || '';
+    const lastSeen = remote.last_seen_at || identity.last_seen_at || observability.last_seen_at || '';
+    const workerHealthy = worker.worker_enabled ? !!worker.healthy : true;
+    const workerBadgeClass = workerHealthy ? 'sync-status-badge-ok' : 'sync-status-badge-bad';
+    const workerBadgeLabel = !worker.worker_enabled ? 'Disabled' : (workerHealthy ? 'Healthy' : 'Needs attention');
+
+    let html = '<div class="d-flex align-items-center justify-content-between flex-wrap mb-3" dir="ltr">';
+    html += '<div><span class="sync-status-badge ' + badgeClass + '">' + badgeLabel + '</span>';
+    html += ' <span class="text-muted small ml-2">' + escapeHtml(dashboard.pairing_message || '') + '</span></div>';
+    html += '</div>';
+
+    html += '<div class="sync-status-grid mb-2" dir="ltr">';
+    if (shopDb) {
+      html += '<div class="sync-status-card"><h6>Hosted shop database</h6><p><code>' + escapeHtml(shopDb) + '</code></p></div>';
+    }
+    if (lastSeen) {
+      html += '<div class="sync-status-card"><h6>Last seen</h6><p>' + escapeHtml(lastSeen) + '</p></div>';
+    }
+    if (remote.sync_schema_ready != null) {
+      html += '<div class="sync-status-card"><h6>Sync schema</h6><p>' + (remote.sync_schema_ready ? 'Ready' : 'Pending (' + escapeHtml(remote.schema_pending_count || 0) + ')') + '</p></div>';
+    }
+    if (outbox.dead_rows != null || outbox.retryable_due != null) {
+      html += '<div class="sync-status-card"><h6>Outbox</h6><p>Due: ' + escapeHtml(outbox.retryable_due || 0) + ', dead: ' + escapeHtml(outbox.dead_rows || 0);
+      if (outbox.last_success_at) {
+        html += '<br><span class="text-muted small">Last success: ' + escapeHtml(outbox.last_success_at) + '</span>';
+      }
+      html += '</p></div>';
+    }
+    if (cloudPull && cloudPull.created_at) {
+      html += '<div class="sync-status-card"><h6>Cloud pull worker</h6><p>' + escapeHtml(cloudPull.status || '') + '<br><span class="text-muted small">' + escapeHtml(cloudPull.created_at) + '</span></p></div>';
+    }
+    if (cloudQueue && (cloudQueue.pending != null || cloudQueue.dead != null)) {
+      html += '<div class="sync-status-card"><h6>Cloud queue</h6><p>Pending: ' + escapeHtml(cloudQueue.pending || 0) + ', dead: ' + escapeHtml(cloudQueue.dead || 0) + '</p></div>';
+    }
+    if (worker && Object.keys(worker).length) {
+      html += '<div class="sync-status-card"><h6>Background worker</h6><p><span class="sync-status-badge ' + workerBadgeClass + '">' + workerBadgeLabel + '</span>';
+      if (worker.process && worker.process.message) {
+        html += '<br><span class="text-muted small">' + escapeHtml(worker.process.message) + '</span>';
+      }
+      if (worker.recommended_command) {
+        html += '<br><code class="small d-block mt-1">' + escapeHtml(worker.recommended_command) + '</code>';
+      }
+      html += '</p></div>';
+    }
+    html += '</div>';
+
+    panel.innerHTML = html;
+  }
+
+  function loadSyncStatusPanel() {
+    const panel = document.getElementById('sync-status-panel');
+    if (!panel) {
+      return;
+    }
+    panel.innerHTML = '<div class="text-muted small">Loading pairing and worker status...</div>';
+    ajaxSync(syncStatusPayload()).done(function (response) {
+      if (response && response.dashboard) {
+        renderSyncStatusPanel(response.dashboard);
+      } else {
+        panel.innerHTML = '<div class="text-danger small">Unable to load sync status.</div>';
+      }
+    }).fail(function () {
+      panel.innerHTML = '<div class="text-danger small">Unable to load sync status.</div>';
+    });
+  }
+
+  syncCard.querySelectorAll('.js-refresh-sync-status').forEach(function (button) {
+    button.addEventListener('click', loadSyncStatusPanel);
+  });
+
   function syncBranchRegistrationPayload() {
     const payload = Object.assign(
-      { action: 'register_cloud_branch', branch_status: 'active' },
+      { action: 'pair_hosted_branch', branch_status: 'active' },
       syncConfigKeyPayload(),
       syncSharedIdentityPayload(),
+      syncHostedProvisionPayload(),
       csrfPayload()
     );
     if (!payload.POSMAIN_BRANCH_UUID || !payload.POSMAIN_BRANCH_SYNC_SECRET) {
@@ -1217,7 +1415,7 @@ document.addEventListener('DOMContentLoaded', function () {
         syncSaves.push({
           $form: $syncCloudForm.length ? $syncCloudForm : $syncLocalForm,
           payload: branchRegistrationPayload,
-          label: 'Allowed branch was registered on hosted POS.',
+          label: 'Allowed branch was paired on hosted POS.',
           afterSave: function (response) {
             renderBranches(response.branches || []);
           }
@@ -1248,6 +1446,7 @@ document.addEventListener('DOMContentLoaded', function () {
             save.afterSave(response);
           }
           showResult(save.$form, response.message || save.label, true);
+          loadSyncStatusPanel();
         }
         failedSave = null;
         if (globalResult) {
@@ -1271,6 +1470,8 @@ document.addEventListener('DOMContentLoaded', function () {
       }
     });
   }
+
+  loadSyncStatusPanel();
 });
 </script>
 

@@ -131,7 +131,7 @@ function recipePosGridAvailabilityEndpointRuntimeRunChild(string $db, array $pay
         'POSMAIN_DB_NAME' => $db,
         'POSMAIN_SESSION_DRIVER' => 'file',
         'POSMAIN_SYNC_OUTBOX_ENABLED' => '0',
-        'POSMAIN_ENABLE_RECIPES' => '1',
+        'POSMAIN_RECIPE_MODE' => 'consume_pilot',
         'POSMAIN_RECIPE_MODE' => 'availability_pilot',
         'POSMAIN_RECIPE_AVAILABILITY' => '1',
         'POSMAIN_RECIPE_PILOT_ITEM_IDS' => '7001,7002',

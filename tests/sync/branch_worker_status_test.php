@@ -38,7 +38,7 @@ class BranchWorkerStatusTest extends TestCase
 
         $this->assertStringContainsString('php tools/branch_worker_status.php --json', $doc);
         $this->assertStringContainsString('/api/sync/status.php?limit=10&recent_minutes=60', $doc);
-        $this->assertStringContainsString('POSMAIN_SYNC_STATUS_TOKEN', $doc);
+        $this->assertStringContainsString('POSMAIN_STATUS_TOKEN', $doc);
         $this->assertStringContainsString('X-POSMAIN-STATUS-TOKEN', $doc);
         $this->assertStringContainsString('fail_on_problems=1', $doc);
         $this->assertStringContainsString('status_token_not_configured', $doc);
@@ -55,7 +55,7 @@ class BranchWorkerStatusTest extends TestCase
         $source = $this->source('api/sync/status.php');
 
         $this->assertStringContainsString('POSMAIN_BRANCH_WORKER_STATUS_LIBRARY', $source);
-        $this->assertStringContainsString('POSMAIN_SYNC_STATUS_TOKEN', $source);
+        $this->assertStringContainsString('POSMAIN_STATUS_TOKEN', $source);
         $this->assertStringContainsString('HTTP_X_POSMAIN_STATUS_TOKEN', $source);
         $this->assertStringContainsString('HTTP_AUTHORIZATION', $source);
         $this->assertStringContainsString('hash_equals', $source);

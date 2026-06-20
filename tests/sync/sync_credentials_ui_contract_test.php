@@ -109,7 +109,7 @@ foreach ([
     'js-hosted-sync-core-toggle',
     'setHostedSyncCoreToggles(hostedSyncMaster.checked)',
     "branch_status: 'active'",
-    'Allowed branch was registered on hosted POS.',
+    'Allowed branch was paired on hosted POS.',
     'قاعدة بيانات هذه النسخة',
     'name="db_host"',
     'name="db_port"',
@@ -122,6 +122,15 @@ foreach ([
     'POSMAIN_BRANCH_SYNC_ENABLED',
     'POSMAIN_SYNC_WORKER_ENABLED',
     'POSMAIN_MENU_SYNC_ENABLED',
+    'sync-status-panel',
+    'js-refresh-sync-status',
+    'loadSyncStatusPanel',
+    'renderSyncStatusPanel',
+    'pairing_status',
+    'provision_new_shop',
+    'provision_shop_slug',
+    '$syncRouterEnabled',
+    'Pairing &amp; sync health',
 ] as $snippet) {
     syncCredentialsUiAssert(strpos($setting, $snippet) !== false, 'setting.php missing sync UI snippet: ' . $snippet);
 }
@@ -209,10 +218,17 @@ foreach ([
     'syncCredentialsSaveEncryptionKey($_POST)',
     'SyncRuntimeCrypto::generateKeyMaterial()',
     "\$GLOBALS['appConfig']['sync']['branch_secret']",
-    "\$_POST['branch_uuid'] ?? \$_POST['POSMAIN_BRANCH_UUID']",
-    "\$_POST['branch_secret'] ?? \$_POST['POSMAIN_BRANCH_SYNC_SECRET']",
-    "\$input['cloud_base_url'] ?? \$input['POSMAIN_CLOUD_BASE_URL']",
+    'array_merge($_POST',
+    'BranchPairingService',
+    'pair_hosted_branch',
     'register_cloud_branch',
+    'pair_local_branch',
+    'test_pairing',
+    'pairing_status',
+    'worker_status',
+    'PairingStatusService',
+    'SyncWorkerHealthService',
+    'syncCredentialsShouldPairLocal',
     'export_hosted_env',
     'test_cloud',
     'save_moova',
@@ -221,6 +237,7 @@ foreach ([
     'Local sync settings were saved successfully.',
     'Hosted sync settings were saved successfully.',
     'Moova sync settings were saved successfully.',
+    'Branch was paired on the hosted POS.',
     'SecurityAuditLogger',
 ] as $snippet) {
     syncCredentialsUiAssert(strpos($ajax, $snippet) !== false, 'sync AJAX endpoint missing snippet: ' . $snippet);
@@ -268,8 +285,8 @@ foreach ([
     'SyncRuntimeSettings',
     'posmain_runtime_file_database_overrides',
     'posmain_runtime_db_settings_overrides',
-    "\$branchEnv(['POSMAIN_ENABLE_MOOVA_QUEUED_APPLY', 'POSMAIN_MOOVA_QUEUED_APPLY_ENABLED'], null),\n            true",
-    "\$branchEnv(['POSMAIN_MOOVA_APPLY_ENABLED', 'POSMAIN_ENABLE_MOOVA_QUEUED_APPLY'], null),\n            true",
+    "\$branchEnv(['POSMAIN_MOOVA_MODE'], 'direct_widget')",
+    "\$branchEnv(['POSMAIN_MOOVA_APPLY_ENABLED'], null)",
 ] as $snippet) {
     syncCredentialsUiAssert(strpos($config, $snippet) !== false, 'app_config missing runtime override snippet: ' . $snippet);
 }

@@ -37,6 +37,16 @@ class DatabaseBranchSecretProvider implements BranchSecretProvider
             return null;
         }
 
+        return $this->readStoredSecret($branchUuid);
+    }
+
+    public function readStoredSecret(string $branchUuid): ?string
+    {
+        $branchUuid = strtolower(trim($branchUuid));
+        if ($branchUuid === '') {
+            return null;
+        }
+
         if (array_key_exists($branchUuid, $this->secrets)) {
             return (string) $this->secrets[$branchUuid];
         }

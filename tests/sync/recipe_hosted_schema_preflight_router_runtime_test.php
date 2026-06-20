@@ -28,13 +28,11 @@ try {
     $env = [
         'POSMAIN_CONFIG_ENCRYPTION_KEY' => $key,
         'POSMAIN_ROUTER_ENABLED' => '1',
-        'POSMAIN_ROUTER_REQUIRE_ENCRYPTION' => '1',
         'POSMAIN_ROUTER_DB_HOST' => $host,
         'POSMAIN_ROUTER_DB_PORT' => (string) $port,
         'POSMAIN_ROUTER_DB_NAME' => $routerDb,
         'POSMAIN_ROUTER_DB_USER' => $user,
         'POSMAIN_ROUTER_DB_PASS' => $pass,
-        'POSMAIN_ROUTER_DB_CHARSET' => 'utf8mb4',
     ];
 
     recipeHostedSchemaRouterRuntimeRun(

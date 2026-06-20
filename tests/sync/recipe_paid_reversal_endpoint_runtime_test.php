@@ -131,7 +131,7 @@ function recipePaidReversalEndpointRuntimeRunChild(string $db, array $payload): 
         'POSMAIN_DB_NAME' => $db,
         'POSMAIN_SESSION_DRIVER' => 'file',
         'POSMAIN_SYNC_OUTBOX_ENABLED' => '0',
-        'POSMAIN_ENABLE_RECIPES' => '0',
+        'POSMAIN_RECIPE_MODE' => 'off',
         'POSMAIN_RECIPE_MODE' => 'off',
         'POSMAIN_ROUTER_ENABLED' => '0',
         'POSMAIN_REQUIRE_MANAGER_APPROVAL' => '0',

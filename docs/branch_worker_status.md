@@ -52,14 +52,14 @@ For dashboards or a local admin panel, the same read-only report is available at
 
 ```text
 GET /api/sync/status.php?limit=10&recent_minutes=60
-Authorization: Bearer <POSMAIN_SYNC_STATUS_TOKEN>
+Authorization: Bearer <POSMAIN_STATUS_TOKEN>
 ```
 
 The endpoint also accepts `X-POSMAIN-STATUS-TOKEN: <token>` for simple local probes.
 
 Required behavior:
 
-- `POSMAIN_SYNC_STATUS_TOKEN` must be set before the endpoint is exposed. If it is missing, the endpoint returns `status_token_not_configured` with HTTP 503.
+- `POSMAIN_STATUS_TOKEN` must be set before the endpoint is exposed. If it is missing, the endpoint returns `status_token_not_configured` with HTTP 503.
 - Missing or wrong tokens return HTTP 403.
 - `limit` is clamped to `1..50`.
 - `recent_minutes` is clamped to `0..10080`.

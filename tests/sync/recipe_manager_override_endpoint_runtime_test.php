@@ -140,7 +140,7 @@ function recipeManagerOverrideEndpointRuntimeRunChild(string $db, array $payload
         'POSMAIN_DB_NAME' => $db,
         'POSMAIN_SESSION_DRIVER' => 'file',
         'POSMAIN_SYNC_OUTBOX_ENABLED' => '0',
-        'POSMAIN_ENABLE_RECIPES' => '1',
+        'POSMAIN_RECIPE_MODE' => 'consume_pilot',
         'POSMAIN_RECIPE_MODE' => 'availability_pilot',
         'POSMAIN_RECIPE_AVAILABILITY' => '1',
         'POSMAIN_RECIPE_ALLOW_NEGATIVE_STOCK_WITH_APPROVAL' => '1',

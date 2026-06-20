@@ -20,16 +20,12 @@ Pilot/default flags:
 
 ```dotenv
 POSMAIN_MOOVA_MODE=direct_widget
-POSMAIN_ENABLE_MOOVA_DIRECT_APPLY=1
-POSMAIN_ENABLE_MOOVA_QUEUED_APPLY=0
 POSMAIN_MOOVA_APPLY_ENABLED=0
 ```
 
 Meaning:
 
-- `POSMAIN_MOOVA_MODE=direct_widget`: the official pilot mode is direct widget apply.
-- `POSMAIN_ENABLE_MOOVA_DIRECT_APPLY=1`: direct widget apply is intentionally allowed.
-- `POSMAIN_ENABLE_MOOVA_QUEUED_APPLY=0`: queued apply is not part of the initial pilot mode.
+- `POSMAIN_MOOVA_MODE=direct_widget`: direct widget apply is allowed for the pilot.
 - `POSMAIN_MOOVA_APPLY_ENABLED=0`: the branch worker must not automatically apply queued Moova events yet.
 
 Future modes:

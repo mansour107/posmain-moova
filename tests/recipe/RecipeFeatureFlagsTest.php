@@ -12,7 +12,6 @@ class RecipeFeatureFlagsTest extends TestCase
     public function testAppConfigDefaultsRecipesOff(): void
     {
         $this->withRecipeEnv([
-            'POSMAIN_ENABLE_RECIPES' => '0',
             'POSMAIN_RECIPE_MODE' => 'off',
             'POSMAIN_RECIPE_SHADOW_LEDGER' => '0',
             'POSMAIN_RECIPE_RESERVATIONS' => '0',

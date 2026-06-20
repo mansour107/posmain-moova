@@ -43,7 +43,7 @@ function kody_merge_e2e_child_env(string $db): array
         'POSMAIN_ROUTER_ENABLED' => '0',
         'POSMAIN_ENV' => 'test',
         'POSMAIN_PRODUCTION_MODE' => '0',
-        'POSMAIN_ENABLE_RECIPES' => '0',
+        'POSMAIN_RECIPE_MODE' => 'off',
         'POSMAIN_RECIPE_AVAILABILITY' => '0',
         'POSMAIN_SYNC_OUTBOX_ENABLED' => '0',
     ];

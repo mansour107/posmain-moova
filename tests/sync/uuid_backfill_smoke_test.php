@@ -67,7 +67,6 @@ try {
 function uuidBackfillSmokeRunTool(string $root, string $db, string $args): string
 {
     $env = [
-        'POSMAIN_SYNC_DB_NAME' => '',
         'POSMAIN_DB_NAME' => $db,
         'POSMAIN_TEST_MYSQL_DB' => $db,
         'POSMAIN_DB_HOST' => getenv('POSMAIN_TEST_MYSQL_HOST') ?: '127.0.0.1',

@@ -1,6 +1,7 @@
 <?php
 
 require_once __DIR__ . '/BranchIdentity.php';
+require_once __DIR__ . '/../Router/ShopRouter.php';
 
 class CloudBranchSyncPublisher
 {
@@ -113,6 +114,21 @@ class CloudBranchSyncPublisher
 
     private function targetBranchUuids(mysqli $conn, array $config, array $payload, string $sourceBranchUuid): array
     {
+        $routerTargets = $this->routerBranchUuidsForCurrentShop($conn, $config);
+        if ($routerTargets !== null) {
+            $payloadBranchUuid = strtolower(trim((string) ($payload['branch_uuid'] ?? $sourceBranchUuid)));
+            if (SyncBranchIdentity::isUuid($payloadBranchUuid) && in_array($payloadBranchUuid, $routerTargets, true)) {
+                return [$payloadBranchUuid];
+            }
+
+            $configured = strtolower(trim((string) ($config['branch']['uuid'] ?? '')));
+            if (SyncBranchIdentity::isUuid($configured) && in_array($configured, $routerTargets, true)) {
+                return [$configured];
+            }
+
+            return $routerTargets;
+        }
+
         $configured = trim((string) ($config['branch']['uuid'] ?? ''));
         if (SyncBranchIdentity::isUuid($configured) && $this->cloudBranchExists($conn, $configured)) {
             return [$configured];
@@ -143,6 +159,67 @@ class CloudBranchSyncPublisher
         }
 
         return array_values(array_unique($targets));
+    }
+
+    private function routerBranchUuidsForCurrentShop(mysqli $shopConn, array $config): ?array
+    {
+        if (!PosmainShopRouter::enabled($config)) {
+            return null;
+        }
+
+        $shopDbName = $this->currentDatabaseName($shopConn);
+        if ($shopDbName === '') {
+            return [];
+        }
+
+        try {
+            $routerConn = PosmainShopRouter::connectRouter($config);
+        } catch (Throwable $e) {
+            error_log('Router branch target lookup unavailable: ' . $e->getMessage());
+            return [];
+        }
+
+        try {
+            $router = new PosmainShopRouter();
+            $shop = $router->findShopByDatabaseName($routerConn, $shopDbName);
+            if (!$shop) {
+                return [];
+            }
+
+            $shopId = (int) ($shop['id'] ?? 0);
+            $stmt = $routerConn->prepare("
+                SELECT r.branch_uuid
+                FROM router_branch_routes r
+                INNER JOIN router_shops s ON s.id = r.shop_id
+                WHERE r.shop_id = ?
+                  AND r.status = 'active'
+                  AND s.status = 'active'
+                ORDER BY r.id ASC
+            ");
+            $stmt->bind_param('i', $shopId);
+            $stmt->execute();
+            $result = $stmt->get_result();
+            $targets = [];
+            while ($row = $result->fetch_assoc()) {
+                $branchUuid = strtolower(trim((string) ($row['branch_uuid'] ?? '')));
+                if (SyncBranchIdentity::isUuid($branchUuid)) {
+                    $targets[] = $branchUuid;
+                }
+            }
+            $stmt->close();
+
+            return array_values(array_unique($targets));
+        } finally {
+            $routerConn->close();
+        }
+    }
+
+    private function currentDatabaseName(mysqli $conn): string
+    {
+        $result = $conn->query('SELECT DATABASE() AS db_name');
+        $row = $result ? $result->fetch_assoc() : [];
+
+        return trim((string) ($row['db_name'] ?? ''));
     }
 
     private function cloudBranchExists(mysqli $conn, string $branchUuid): bool

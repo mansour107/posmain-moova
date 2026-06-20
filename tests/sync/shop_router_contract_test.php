@@ -25,7 +25,7 @@ shopRouterAssert(strpos($dbBootstrap, 'PosmainShopRouter::activeSessionShopId') 
 shopRouterAssert(strpos($dbBootstrap, 'posmain_db_connect_for_branch_uuid') !== false, 'sync should have branch uuid DB routing helper');
 
 $envExample = file_get_contents(__DIR__ . '/../../.env.example');
-foreach (['POSMAIN_ROUTER_ENABLED', 'POSMAIN_ROUTER_DB_HOST', 'POSMAIN_ROUTER_DB_NAME', 'POSMAIN_ROUTER_REQUIRE_ENCRYPTION'] as $key) {
+foreach (['POSMAIN_ROUTER_ENABLED', 'POSMAIN_ROUTER_DB_HOST', 'POSMAIN_ROUTER_DB_NAME'] as $key) {
     shopRouterAssert(strpos($envExample, $key) !== false, $key . ' should be documented in env example');
 }
 

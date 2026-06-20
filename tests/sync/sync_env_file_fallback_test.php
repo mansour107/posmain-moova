@@ -9,7 +9,6 @@ $oldDisableRuntimeConfig = getenv('POSMAIN_DISABLE_UI_RUNTIME_CONFIG');
 $oldCloudBaseUrl = getenv('POSMAIN_CLOUD_BASE_URL');
 $oldBranchSecret = getenv('POSMAIN_BRANCH_SYNC_SECRET');
 $oldMoovaMode = getenv('POSMAIN_MOOVA_MODE');
-$oldDirectApply = getenv('POSMAIN_ENABLE_MOOVA_DIRECT_APPLY');
 $oldMenuSync = getenv('POSMAIN_MENU_SYNC_ENABLED');
 $oldDbPort = getenv('POSMAIN_DB_PORT');
 
@@ -27,7 +26,6 @@ file_put_contents($tmp, implode("\n", [
     'POSMAIN_CLOUD_BASE_URL=https://cloud.example.test',
     'POSMAIN_BRANCH_SYNC_SECRET=branch-secret-from-file',
     'POSMAIN_MOOVA_MODE=direct_widget',
-    'POSMAIN_ENABLE_MOOVA_DIRECT_APPLY=1',
     'POSMAIN_MENU_SYNC_ENABLED=1',
     'POSMAIN_DB_PORT=9999',
 ]));
@@ -65,7 +63,6 @@ foreach ([
     'POSMAIN_CLOUD_BASE_URL',
     'POSMAIN_BRANCH_SYNC_SECRET',
     'POSMAIN_MOOVA_MODE',
-    'POSMAIN_ENABLE_MOOVA_DIRECT_APPLY',
     'POSMAIN_MENU_SYNC_ENABLED',
     'POSMAIN_DB_PORT',
 ] as $key) {
@@ -116,7 +113,6 @@ restoreSyncEnvFallbackTestEnv('POSMAIN_DISABLE_UI_RUNTIME_CONFIG', $oldDisableRu
 restoreSyncEnvFallbackTestEnv('POSMAIN_CLOUD_BASE_URL', $oldCloudBaseUrl);
 restoreSyncEnvFallbackTestEnv('POSMAIN_BRANCH_SYNC_SECRET', $oldBranchSecret);
 restoreSyncEnvFallbackTestEnv('POSMAIN_MOOVA_MODE', $oldMoovaMode);
-restoreSyncEnvFallbackTestEnv('POSMAIN_ENABLE_MOOVA_DIRECT_APPLY', $oldDirectApply);
 restoreSyncEnvFallbackTestEnv('POSMAIN_MENU_SYNC_ENABLED', $oldMenuSync);
 restoreSyncEnvFallbackTestEnv('POSMAIN_DB_PORT', $oldDbPort);
 putenv('POSMAIN_EMPTY_UI_FALLBACK');

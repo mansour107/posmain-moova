@@ -1,5 +1,7 @@
 <?php
 
+require_once __DIR__ . '/BranchSecretProviderFactory.php';
+
 class CloudReceiveService
 {
     public function handle(mysqli $conn, array $headers, string $rawBody, array $config = []): array
@@ -23,7 +25,7 @@ class CloudReceiveService
             $branchUuid = trim((string) ($payload['branch_uuid'] ?? ''));
         }
 
-        $provider = DatabaseBranchSecretProvider::fromConfig($conn, $config);
+        $provider = BranchSecretProviderFactory::fromConfig($conn, $config);
         $auth = (new CloudAuthService())->verifyRequest(
             $provider,
             $branchUuid,

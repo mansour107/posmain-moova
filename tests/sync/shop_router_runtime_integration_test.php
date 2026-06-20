@@ -18,7 +18,6 @@ putenv('POSMAIN_ROUTER_DB_PORT=' . (string) $port);
 putenv('POSMAIN_ROUTER_DB_NAME=' . $routerDb);
 putenv('POSMAIN_ROUTER_DB_USER=' . $user);
 putenv('POSMAIN_ROUTER_DB_PASS=' . $pass);
-putenv('POSMAIN_ROUTER_DB_CHARSET=utf8mb4');
 
 $_ENV['POSMAIN_CONFIG_ENCRYPTION_KEY_FILE'] = $keyFile;
 $_ENV['POSMAIN_CONFIG_ENCRYPTION_KEY'] = 'router-runtime-test-key-' . $suffix;
@@ -28,7 +27,6 @@ $_ENV['POSMAIN_ROUTER_DB_PORT'] = (string) $port;
 $_ENV['POSMAIN_ROUTER_DB_NAME'] = $routerDb;
 $_ENV['POSMAIN_ROUTER_DB_USER'] = $user;
 $_ENV['POSMAIN_ROUTER_DB_PASS'] = $pass;
-$_ENV['POSMAIN_ROUTER_DB_CHARSET'] = 'utf8mb4';
 
 require_once __DIR__ . '/../../includes/db_bootstrap.php';
 

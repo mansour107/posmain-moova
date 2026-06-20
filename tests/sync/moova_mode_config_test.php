@@ -5,8 +5,6 @@ require_once __DIR__ . '/../../config/app_config.php';
 moovaModeConfigTest('direct widget mode enables direct apply and keeps worker apply off', function () {
     moovaModeWithEnv([
         'POSMAIN_MOOVA_MODE' => 'direct_widget',
-        'POSMAIN_ENABLE_MOOVA_DIRECT_APPLY' => null,
-        'POSMAIN_ENABLE_MOOVA_QUEUED_APPLY' => null,
         'POSMAIN_MOOVA_APPLY_ENABLED' => null,
     ], function () {
         $config = posmain_app_config();
@@ -22,23 +20,20 @@ moovaModeConfigTest('direct widget mode enables direct apply and keeps worker ap
 moovaModeConfigTest('queued worker mode still requires explicit worker apply flag', function () {
     moovaModeWithEnv([
         'POSMAIN_MOOVA_MODE' => 'queued_worker',
-        'POSMAIN_ENABLE_MOOVA_DIRECT_APPLY' => null,
-        'POSMAIN_ENABLE_MOOVA_QUEUED_APPLY' => null,
         'POSMAIN_MOOVA_APPLY_ENABLED' => '0',
     ], function () {
         $config = posmain_app_config();
 
         moovaModeAssertSame('queued_worker', $config['moova']['mode'], 'mode mismatch');
         moovaModeAssertSame(false, $config['features']['moova_direct_apply'], 'direct apply should be disabled');
+        moovaModeAssertSame(true, $config['features']['moova_queued_apply'], 'queued apply should be enabled');
         moovaModeAssertSame(false, $config['sync']['moova_apply_enabled'], 'worker apply should require POSMAIN_MOOVA_APPLY_ENABLED=1');
     });
 });
 
-moovaModeConfigTest('hybrid mode can enable queued apply only when both mode and flag allow it', function () {
+moovaModeConfigTest('hybrid mode enables both direct and queued worker apply when flagged', function () {
     moovaModeWithEnv([
         'POSMAIN_MOOVA_MODE' => 'hybrid',
-        'POSMAIN_ENABLE_MOOVA_DIRECT_APPLY' => null,
-        'POSMAIN_ENABLE_MOOVA_QUEUED_APPLY' => '1',
         'POSMAIN_MOOVA_APPLY_ENABLED' => '1',
     ], function () {
         $config = posmain_app_config();
@@ -50,16 +45,14 @@ moovaModeConfigTest('hybrid mode can enable queued apply only when both mode and
     });
 });
 
-moovaModeConfigTest('legacy boolean flags still derive a compatible mode', function () {
+moovaModeConfigTest('empty mode defaults to direct widget', function () {
     moovaModeWithEnv([
         'POSMAIN_MOOVA_MODE' => null,
-        'POSMAIN_ENABLE_MOOVA_DIRECT_APPLY' => '1',
-        'POSMAIN_ENABLE_MOOVA_QUEUED_APPLY' => '0',
         'POSMAIN_MOOVA_APPLY_ENABLED' => '0',
     ], function () {
         $config = posmain_app_config();
 
-        moovaModeAssertSame('direct_widget', $config['moova']['mode'], 'legacy direct flag should derive direct_widget mode');
+        moovaModeAssertSame('direct_widget', $config['moova']['mode'], 'empty mode should default to direct_widget');
         moovaModeAssertSame(true, $config['features']['moova_direct_apply'], 'direct apply should be enabled');
         moovaModeAssertSame(false, $config['sync']['moova_apply_enabled'], 'worker apply should stay disabled');
     });
@@ -81,10 +74,6 @@ function moovaModeWithEnv(array $values, callable $callback): void
 {
     $keys = [
         'POSMAIN_MOOVA_MODE',
-        'POSMAIN_ENABLE_MOOVA_DIRECT_APPLY',
-        'POSMAIN_MOOVA_DIRECT_APPLY_ENABLED',
-        'POSMAIN_ENABLE_MOOVA_QUEUED_APPLY',
-        'POSMAIN_MOOVA_QUEUED_APPLY_ENABLED',
         'POSMAIN_MOOVA_APPLY_ENABLED',
     ];
     $original = [];

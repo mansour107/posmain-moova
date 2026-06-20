@@ -28,10 +28,6 @@ $moovaSyncBool = static function (string $key, bool $default = false) use ($moov
     }
 
     $envNames = [$key];
-    if ($key === 'POSMAIN_MOOVA_APPLY_ENABLED') {
-        $envNames[] = 'POSMAIN_ENABLE_MOOVA_QUEUED_APPLY';
-        $envNames[] = 'POSMAIN_MOOVA_QUEUED_APPLY_ENABLED';
-    }
 
     $envFiles = function_exists('posmain_branch_env_file_fallbacks') ? posmain_branch_env_file_fallbacks() : [];
     $envValue = function_exists('posmain_first_env_or_file')

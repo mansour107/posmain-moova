@@ -27,11 +27,10 @@ Set the values shown in `.env.example` without committing real secrets:
 - `POSMAIN_BRANCH_UUID`, `POSMAIN_BRANCH_NAME`, `POSMAIN_POS_TENANT`, `POSMAIN_POS_BRANCH`
 - `POSMAIN_PUBLIC_BASE_URL`
 
-Keep disruptive features disabled until verified:
+Keep disruptive features disabled until verified in Settings UI or per-shop runtime settings:
 
-- `POSMAIN_ENABLE_CLOUD_SYNC=0`
-- `POSMAIN_ENABLE_MOOVA_DIRECT_APPLY=0`
-- `POSMAIN_ENABLE_MOOVA_QUEUED_APPLY=0`
+- Branch sync (`POSMAIN_BRANCH_SYNC_ENABLED` in `sync_runtime_settings`)
+- Moova queued apply (`POSMAIN_MOOVA_MODE` / worker flags)
 - `POSMAIN_ENABLE_KDS=0`
 - `POSMAIN_ENABLE_MODIFIERS=0`
 - `POSMAIN_ENABLE_NUTRITION=0`

@@ -99,8 +99,36 @@ class PosmainShopRouter
             $routerConn->query($sql);
             $applied[] = $label;
         }
+        foreach ($this->upgradeStatements($routerConn) as $label => $sql) {
+            $routerConn->query($sql);
+            $applied[] = $label;
+        }
 
         return $applied;
+    }
+
+    public function upgradeStatements(mysqli $routerConn): array
+    {
+        $statements = [];
+        if ($this->tableExists($routerConn, 'router_branch_routes')) {
+            if (!$this->columnExists($routerConn, 'router_branch_routes', 'sync_secret_hash')) {
+                $statements['router_branch_routes.add_sync_secret_hash'] = "
+ALTER TABLE router_branch_routes
+  ADD COLUMN sync_secret_hash CHAR(64) NULL AFTER status";
+            }
+            if (!$this->columnExists($routerConn, 'router_branch_routes', 'sync_secret_encrypted')) {
+                $statements['router_branch_routes.add_sync_secret_encrypted'] = "
+ALTER TABLE router_branch_routes
+  ADD COLUMN sync_secret_encrypted TEXT NULL AFTER sync_secret_hash";
+            }
+            if (!$this->columnExists($routerConn, 'router_branch_routes', 'last_seen_at')) {
+                $statements['router_branch_routes.add_last_seen_at'] = "
+ALTER TABLE router_branch_routes
+  ADD COLUMN last_seen_at DATETIME(6) NULL AFTER sync_secret_encrypted";
+            }
+        }
+
+        return $statements;
     }
 
     public function schemaStatements(): array
@@ -218,10 +246,15 @@ class PosmainShopRouter
 
     public function addBranchRoute(mysqli $routerConn, array $options): array
     {
+        return $this->pairBranchRoute($routerConn, $options);
+    }
+
+    public function pairBranchRoute(mysqli $routerConn, array $options): array
+    {
         $this->install($routerConn);
         $shopId = max(0, (int) ($options['shop_id'] ?? 0));
         if ($shopId < 1 || !$this->findShopById($routerConn, $shopId)) {
-            throw new InvalidArgumentException('Active shop is required before adding a branch route.');
+            throw new InvalidArgumentException('Active shop is required before pairing a branch route.');
         }
 
         $branchUuid = strtolower(trim((string) ($options['branch_uuid'] ?? $options['branch-uuid'] ?? '')));
@@ -230,15 +263,34 @@ class PosmainShopRouter
         }
 
         $status = $this->normalizeStatus((string) ($options['status'] ?? 'active'));
+        $secret = (string) ($options['secret'] ?? $options['branch_secret'] ?? '');
+        $secretHash = $secret !== '' ? hash('sha256', $secret) : null;
+        $encryptedSecret = null;
+        if ($secret !== '') {
+            $requireEncryption = !empty($options['require_encryption']) || !empty($options['require_encryption']);
+            $crypto = new SyncRuntimeCrypto();
+            if ($requireEncryption && !$crypto->available()) {
+                throw new RuntimeException(SyncRuntimeCrypto::ENV_KEY . ' is required before pairing router branch secrets.');
+            }
+            $encryptedSecret = $crypto->available() ? $crypto->encrypt($secret) : null;
+        }
+
         $stmt = $routerConn->prepare("
-            INSERT INTO router_branch_routes (shop_id, branch_uuid, status)
-            VALUES (?, ?, ?)
+            INSERT INTO router_branch_routes (
+                shop_id,
+                branch_uuid,
+                status,
+                sync_secret_hash,
+                sync_secret_encrypted
+            ) VALUES (?, ?, ?, ?, ?)
             ON DUPLICATE KEY UPDATE
                 shop_id = VALUES(shop_id),
                 status = VALUES(status),
+                sync_secret_hash = VALUES(sync_secret_hash),
+                sync_secret_encrypted = VALUES(sync_secret_encrypted),
                 updated_at = CURRENT_TIMESTAMP(6)
         ");
-        $stmt->bind_param('iss', $shopId, $branchUuid, $status);
+        $stmt->bind_param('issss', $shopId, $branchUuid, $status, $secretHash, $encryptedSecret);
         $stmt->execute();
         $stmt->close();
 
@@ -246,6 +298,8 @@ class PosmainShopRouter
             'shop_id' => $shopId,
             'branch_uuid' => $branchUuid,
             'status' => $status,
+            'sync_secret_hash' => $secretHash,
+            'secret_encrypted' => $encryptedSecret !== null,
         ];
     }
 
@@ -356,6 +410,97 @@ class PosmainShopRouter
             'database' => (string) ($row['db_name'] ?? ''),
             'server_version' => (string) ($row['version'] ?? ''),
         ];
+    }
+
+    public function findShopByDatabaseName(mysqli $routerConn, string $dbName): ?array
+    {
+        $dbName = trim($dbName);
+        if ($dbName === '') {
+            return null;
+        }
+
+        $stmt = $routerConn->prepare("
+            SELECT *
+              FROM router_shops
+             WHERE db_name = ?
+               AND status = 'active'
+             LIMIT 1
+        ");
+        $stmt->bind_param('s', $dbName);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        return $row ?: null;
+    }
+
+    public function listActiveShops(mysqli $routerConn): array
+    {
+        if (!$this->tableExists($routerConn, 'router_shops')) {
+            return [];
+        }
+
+        $result = $routerConn->query("
+            SELECT id, slug, display_name, status, db_name, updated_at
+            FROM router_shops
+            WHERE status = 'active'
+            ORDER BY id ASC
+        ");
+
+        $shops = [];
+        while ($row = $result->fetch_assoc()) {
+            $shops[] = [
+                'id' => (int) ($row['id'] ?? 0),
+                'slug' => (string) ($row['slug'] ?? ''),
+                'display_name' => (string) ($row['display_name'] ?? ''),
+                'status' => (string) ($row['status'] ?? ''),
+                'db_name' => (string) ($row['db_name'] ?? ''),
+                'updated_at' => (string) ($row['updated_at'] ?? ''),
+            ];
+        }
+
+        return $shops;
+    }
+
+    public function listBranchRoutes(mysqli $routerConn, int $limit = 100): array
+    {
+        $this->install($routerConn);
+        $limit = max(1, min(500, $limit));
+        $encryptedSelect = $this->columnExists($routerConn, 'router_branch_routes', 'sync_secret_encrypted')
+            ? "CASE WHEN r.sync_secret_encrypted IS NULL OR r.sync_secret_encrypted = '' THEN 0 ELSE 1 END"
+            : '0';
+        $lastSeenSelect = $this->columnExists($routerConn, 'router_branch_routes', 'last_seen_at')
+            ? 'r.last_seen_at'
+            : 'NULL AS last_seen_at';
+
+        $result = $routerConn->query("
+            SELECT r.branch_uuid,
+                   r.status,
+                   {$encryptedSelect} AS has_encrypted_secret,
+                   {$lastSeenSelect},
+                   r.updated_at,
+                   s.display_name AS shop_name,
+                   s.db_name
+            FROM router_branch_routes r
+            INNER JOIN router_shops s ON s.id = r.shop_id
+            ORDER BY r.updated_at DESC, r.id DESC
+            LIMIT {$limit}
+        ");
+
+        $routes = [];
+        while ($row = $result->fetch_assoc()) {
+            $routes[] = [
+                'branch_uuid' => (string) ($row['branch_uuid'] ?? ''),
+                'branch_name' => (string) ($row['shop_name'] ?? ''),
+                'status' => (string) ($row['status'] ?? ''),
+                'has_encrypted_secret' => !empty($row['has_encrypted_secret']),
+                'last_seen_at' => (string) ($row['last_seen_at'] ?? ''),
+                'updated_at' => (string) ($row['updated_at'] ?? ''),
+                'shop_db_name' => (string) ($row['db_name'] ?? ''),
+            ];
+        }
+
+        return $routes;
     }
 
     public function findShopById(mysqli $routerConn, int $shopId): ?array
@@ -502,6 +647,31 @@ class PosmainShopRouter
     private function isUuid(string $value): bool
     {
         return preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i', $value) === 1;
+    }
+
+    private function tableExists(mysqli $routerConn, string $table): bool
+    {
+        $escaped = $routerConn->real_escape_string($table);
+        $result = $routerConn->query("SHOW TABLES LIKE '{$escaped}'");
+
+        return $result && $result->num_rows > 0;
+    }
+
+    private function columnExists(mysqli $routerConn, string $table, string $column): bool
+    {
+        $stmt = $routerConn->prepare("
+            SELECT COUNT(*) AS column_count
+            FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE()
+              AND TABLE_NAME = ?
+              AND COLUMN_NAME = ?
+        ");
+        $stmt->bind_param('ss', $table, $column);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        return ((int) ($row['column_count'] ?? 0)) > 0;
     }
 
     private function routerShopsSql(): string

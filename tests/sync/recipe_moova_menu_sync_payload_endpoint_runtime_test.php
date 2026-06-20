@@ -107,7 +107,7 @@ function recipeMoovaMenuSyncPayloadEndpointRuntimeRunChild(string $db, string $t
         'POSMAIN_SESSION_DRIVER' => 'file',
         'POSMAIN_SYNC_OUTBOX_ENABLED' => '0',
         'POSMAIN_MENU_SYNC_ENABLED' => '1',
-        'POSMAIN_ENABLE_RECIPES' => $recipeSyncEnabled ? '1' : '0',
+        'POSMAIN_RECIPE_MODE' => $recipeSyncEnabled ? 'consume_pilot' : 'off',
         'POSMAIN_RECIPE_MODE' => $recipeSyncEnabled ? 'availability_pilot' : 'off',
         'POSMAIN_RECIPE_AVAILABILITY' => $recipeSyncEnabled ? '1' : '0',
         'POSMAIN_RECIPE_MOOVA_SYNC' => $recipeSyncEnabled ? '1' : '0',

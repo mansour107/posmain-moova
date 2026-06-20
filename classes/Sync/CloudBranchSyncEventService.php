@@ -1,7 +1,7 @@
 <?php
 
 require_once __DIR__ . '/CloudAuthService.php';
-require_once __DIR__ . '/DatabaseBranchSecretProvider.php';
+require_once __DIR__ . '/BranchSecretProviderFactory.php';
 require_once __DIR__ . '/CloudBranchSyncEventCursor.php';
 
 class CloudBranchSyncEventService
@@ -156,7 +156,7 @@ class CloudBranchSyncEventService
 
     private function verify(mysqli $conn, array $config, array $headers, string $branchUuid, string $signatureBody): array
     {
-        $provider = DatabaseBranchSecretProvider::fromConfig($conn, $config);
+        $provider = BranchSecretProviderFactory::fromConfig($conn, $config);
         $auth = (new CloudAuthService())->verifyRequest(
             $provider,
             $branchUuid,

@@ -92,14 +92,14 @@ function posTableRecipePaymentEndpointConfigureRecipeEnv(): void
 {
     putenv('POSMAIN_ENV=test');
     putenv('POSMAIN_PRODUCTION_MODE=0');
-    putenv('POSMAIN_ENABLE_SYNC_OUTBOX=1');
+    putenv('POSMAIN_SYNC_OUTBOX_ENABLED=1');
     putenv('POSMAIN_SYNC_OUTBOX_ENABLED=1');
     putenv('POSMAIN_BRANCH_UUID=' . POS_TAKEAWAY_BRANCH_UUID);
     putenv('POSMAIN_BRANCH_NAME=Table Recipe Payment Endpoint Fixture');
     putenv('POSMAIN_POS_TENANT=0');
     putenv('POSMAIN_POS_BRANCH=0');
     putenv('POSMAIN_CLOUD_BASE_URL=http://127.0.0.1/cloud-fixture');
-    putenv('POSMAIN_ENABLE_RECIPES=1');
+    putenv('POSMAIN_RECIPE_MODE=consume_pilot');
     putenv('POSMAIN_RECIPE_MODE=consume_pilot');
     putenv('POSMAIN_RECIPE_RESERVATIONS=1');
     putenv('POSMAIN_RECIPE_CONSUMPTION=1');
@@ -175,8 +175,7 @@ function posTableRecipePaymentEndpointRunChild(string $db, array $payload): arra
         if (strpos((string) $key, 'POSMAIN_RECIPE') === 0 || in_array($key, [
             'POSMAIN_ENV',
             'POSMAIN_PRODUCTION_MODE',
-            'POSMAIN_ENABLE_RECIPES',
-            'POSMAIN_ENABLE_SYNC_OUTBOX',
+            'POSMAIN_RECIPE_MODE',
             'POSMAIN_SYNC_OUTBOX_ENABLED',
             'POSMAIN_BRANCH_UUID',
             'POSMAIN_BRANCH_NAME',

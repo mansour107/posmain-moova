@@ -147,7 +147,7 @@ function recipeProductionEndpointRuntimeRunChild(string $db, array $payload): vo
         'POSMAIN_DB_NAME' => $db,
         'POSMAIN_SESSION_DRIVER' => 'file',
         'POSMAIN_SYNC_OUTBOX_ENABLED' => '0',
-        'POSMAIN_ENABLE_RECIPES' => '1',
+        'POSMAIN_RECIPE_MODE' => 'consume_pilot',
         'POSMAIN_RECIPE_MODE' => 'consume_pilot',
         'POSMAIN_RECIPE_CONSUMPTION' => '1',
         'POSMAIN_RECIPE_PILOT_ITEM_IDS' => '2001',
