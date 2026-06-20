@@ -493,18 +493,6 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                                     echo '<button type="button" class="btn btn-primary btn-sm category-btn active" data-category="all">
                                             <i class="fas fa-th me-1"></i>الكل
                                           </button>';
-                                    echo '<button type="button" class="btn btn-outline-primary btn-sm category-btn" data-keywords="شاي,قهوة,عصير,مياه,لاتيه,كابتشينو">
-                                            <i class="fas fa-mug-hot me-1"></i>مشروبات
-                                          </button>';
-                                    echo '<button type="button" class="btn btn-outline-primary btn-sm category-btn" data-keywords="كرواسون,خبز,ساندويتش">
-                                            <i class="fas fa-bread-slice me-1"></i>مخبوزات
-                                          </button>';
-                                    echo '<button type="button" class="btn btn-outline-primary btn-sm category-btn" data-keywords="كيك,كوكيز,براونيز,مافن,دونتس">
-                                            <i class="fas fa-birthday-cake me-1"></i>حلويات
-                                          </button>';
-                                    echo '<button type="button" class="btn btn-outline-primary btn-sm category-btn" data-keywords="برجر,بطاطس,وجبات,أومليت">
-                                            <i class="fas fa-hamburger me-1"></i>وجبات
-                                          </button>';
                                 }
                                 ?>
                                 </div>

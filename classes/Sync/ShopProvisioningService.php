@@ -1,6 +1,7 @@
 <?php
 
 require_once __DIR__ . '/../Router/ShopRouter.php';
+require_once __DIR__ . '/EmptyShopBootstrap.php';
 require_once __DIR__ . '/SchemaManager.php';
 
 class ShopProvisioningService
@@ -32,6 +33,17 @@ class ShopProvisioningService
 
         $this->createDatabase($dbHost, $dbPort, $dbUser, $dbPass, $dbName, $dbCharset);
 
+        $shopConn = new mysqli($dbHost, $dbUser, $dbPass, $dbName, $dbPort);
+        $shopConn->set_charset($dbCharset);
+        try {
+            $bootstrap = (new EmptyShopBootstrap())->bootstrap($shopConn, [
+                'admin_username' => trim((string) ($input['admin_username'] ?? $input['provision_admin_username'] ?? 'admin')),
+                'admin_password' => (string) ($input['admin_password'] ?? $input['provision_admin_password'] ?? '1234'),
+            ]);
+        } finally {
+            $shopConn->close();
+        }
+
         $shop = $router->registerShop($routerConn, [
             'slug' => $slug,
             'display_name' => $displayName,
@@ -47,13 +59,6 @@ class ShopProvisioningService
             'require_encryption' => true,
         ]);
 
-        $shopConn = $router->connectShopById($routerConn, (int) $shop['id']);
-        try {
-            (new SyncSchemaManager())->apply($shopConn);
-        } finally {
-            $shopConn->close();
-        }
-
         return [
             'shop_id' => (int) ($shop['id'] ?? 0),
             'slug' => (string) ($shop['slug'] ?? $slug),
@@ -62,6 +67,7 @@ class ShopProvisioningService
             'db_host' => $dbHost,
             'db_port' => $dbPort,
             'provisioned' => true,
+            'bootstrap' => $bootstrap,
         ];
     }
 

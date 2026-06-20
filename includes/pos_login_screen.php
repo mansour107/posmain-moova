@@ -113,11 +113,11 @@
         
         <form method="POST" action="">
             <input 
-                type="text" 
+                type="password" 
                 name="pos_barcode" 
                 class="form-control" 
                 placeholder="كود المستخدم الحالي"
-                autocomplete="off"
+                autocomplete="current-password"
                 autofocus
                 required
             >
