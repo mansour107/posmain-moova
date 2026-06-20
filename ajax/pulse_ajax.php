@@ -3,6 +3,7 @@
 require_once __DIR__ . '/../includes/session_bootstrap.php';
 require_once __DIR__ . '/../includes/connect.php';
 require_once __DIR__ . '/../includes/csrf.php';
+require_once __DIR__ . '/../classes/Sync/OperationalSyncRecorder.php';
 
 if (!isset($_SESSION['login'])) {
     http_response_code(401);
@@ -110,6 +111,10 @@ switch ($action) {
         $stmt->bind_param("iisisi", $employee_id, $type_id, $category, $rating, $notes, $recorded_by);
 
         if ($stmt->execute()) {
+            $logId = (int) $stmt->insert_id;
+            if ($logId > 0) {
+                posmain_record_operational_row_sync($conn, 'pulse_log', $logId, 'pulse_ajax');
+            }
             $points = 0;
             $pointsStmt = $conn->prepare('SELECT points FROM pulse_types WHERE id = ? LIMIT 1');
             if ($pointsStmt) {
@@ -138,6 +143,7 @@ switch ($action) {
         $stmt = $conn->prepare("DELETE FROM pulse_logs WHERE id = ?");
         $stmt->bind_param("i", $id);
         if ($stmt->execute()) {
+            posmain_record_operational_delete_sync($conn, 'pulse_log', $id, 'pulse_ajax');
             echo json_encode(['success' => true]);
         } else {
             echo json_encode(['error' => 'فشل في الحذف']);
@@ -266,7 +272,11 @@ switch ($action) {
         }
 
         if ($stmt->execute()) {
-            echo json_encode(['success' => true, 'id' => $id > 0 ? $id : $stmt->insert_id]);
+            $typeId = $id > 0 ? $id : (int) $stmt->insert_id;
+            if ($typeId > 0) {
+                posmain_record_operational_row_sync($conn, 'pulse_type', $typeId, 'pulse_ajax');
+            }
+            echo json_encode(['success' => true, 'id' => $typeId]);
         } else {
             echo json_encode(['error' => 'فشل في الحفظ']);
         }

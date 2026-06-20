@@ -216,6 +216,10 @@ $role = $resrole->fetch_assoc();
 $edit_pass = $rowstg['edit_pass'];
 date_default_timezone_set('Africa/Cairo'); 
 $appConfig = function_exists('posmain_app_config') ? posmain_app_config() : [];
+if (!class_exists('BranchWorkerAutoDispatcher', false)) {
+    require_once __DIR__ . '/../classes/Sync/BranchWorkerAutoDispatcher.php';
+}
+BranchWorkerAutoDispatcher::maybeDispatchFromWebRequest($appConfig);
 $appTimezone = trim((string) ($appConfig['timezone'] ?? 'Africa/Cairo'));
 if ($appTimezone !== '') {
     date_default_timezone_set($appTimezone);

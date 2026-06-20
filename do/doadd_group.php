@@ -23,7 +23,13 @@ if ($exists) {
 $stmt = $conn->prepare("INSERT INTO item_group (gname) VALUES (?)");
 $stmt->bind_param("s", $gname);
 $stmt->execute();
+$groupId = (int) $stmt->insert_id;
 $stmt->close();
+
+require_once __DIR__ . '/../classes/Sync/OperationalSyncRecorder.php';
+if ($groupId > 0) {
+    posmain_record_operational_row_sync($conn, 'item_category', $groupId, 'item_group_form');
+}
 
 $conn->query("INSERT INTO `process`(`type`) VALUES ('add group')");
 

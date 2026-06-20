@@ -7,10 +7,12 @@ require_once __DIR__ . '/RecipeDecimal.php';
 require_once __DIR__ . '/Repository/RecipeRepository.php';
 require_once __DIR__ . '/Repository/RecipeVariantLineRepository.php';
 require_once __DIR__ . '/RecipeEditorItemCostService.php';
+require_once __DIR__ . '/../Sync/OperationalSyncRecorder.php';
 
 class RecipeEditorMutationService
 {
     private $definition;
+    private ?mysqli $syncConn = null;
 
     public function __construct(?RecipeDefinitionService $definition = null)
     {
@@ -19,8 +21,10 @@ class RecipeEditorMutationService
 
     public function handle(mysqli $conn, string $action, array $input, RecipeActorContext $actor): array
     {
-        $action = strtolower(trim($action));
-        switch ($action) {
+        $this->syncConn = $conn;
+        try {
+            $action = strtolower(trim($action));
+            switch ($action) {
             case 'create_draft':
                 return $this->createOrOpenDraft($conn, $input, $actor);
 
@@ -93,6 +97,9 @@ class RecipeEditorMutationService
         }
 
         throw new InvalidArgumentException('Unsupported recipe editor action.');
+        } finally {
+            $this->syncConn = null;
+        }
     }
 
     private function headerPayload(mysqli $conn, array $input): array
@@ -474,6 +481,10 @@ LIMIT 1
 
     private function result(string $message, int $recipeId): array
     {
+        if ($this->syncConn && $recipeId > 0) {
+            posmain_record_recipe_sync($this->syncConn, $recipeId, 'recipe_editor');
+        }
+
         return [
             'success' => true,
             'message' => $message,

@@ -583,6 +583,7 @@ if (!function_exists('posmain_app_config')) {
                 'moova_apply_enabled' => $moovaWorkerApply,
                 'moova_apply_user_id' => posmain_int($branchEnv(['POSMAIN_MOOVA_APPLY_USER_ID'], null), 1),
                 'menu_sync_enabled' => posmain_bool($branchEnv(['POSMAIN_MENU_SYNC_ENABLED'], '0'), false),
+                'operational_sync_enabled' => posmain_bool($branchEnv(['POSMAIN_OPERATIONAL_SYNC_ENABLED'], '1'), true),
                 'http_connect_timeout_ms' => posmain_int($branchEnv(['POSMAIN_SYNC_HTTP_CONNECT_TIMEOUT_MS'], null), 1000),
                 'http_timeout_ms' => posmain_int($branchEnv(['POSMAIN_SYNC_HTTP_TIMEOUT_MS'], null), 5000),
             ],

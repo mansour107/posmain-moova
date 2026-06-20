@@ -1,6 +1,7 @@
 <?php
 
 require_once __DIR__ . '/BranchWorkerDaemon.php';
+require_once __DIR__ . '/BranchWorkerAutoDispatcher.php';
 
 class SyncWorkerHealthService
 {
@@ -9,7 +10,7 @@ class SyncWorkerHealthService
         $workerEnabled = !empty($config['sync']['worker_enabled']);
         $status = $this->branchWorkerStatus($conn, $limit, $recentMinutes);
         $preflight = $this->daemonPreflight($conn, $config);
-        $process = $this->processHint($status, $workerEnabled, $recentMinutes);
+        $process = $this->processHint($status, $workerEnabled, $recentMinutes, $config);
 
         $healthy = $workerEnabled
             ? empty($status['problems'] ?? []) && empty($preflight['warnings'] ?? []) && !empty($process['appears_running'])
@@ -49,7 +50,7 @@ class SyncWorkerHealthService
         }
     }
 
-    private function processHint(array $status, bool $workerEnabled, int $recentMinutes): array
+    private function processHint(array $status, bool $workerEnabled, int $recentMinutes, array $config = []): array
     {
         if (!$workerEnabled) {
             return [
@@ -71,13 +72,18 @@ class SyncWorkerHealthService
         $threshold = time() - max(300, $recentMinutes * 60);
         $appearsRunning = $newest !== null && $newest >= $threshold;
 
+        $autoDispatch = BranchWorkerAutoDispatcher::shouldAutoDispatch($config);
+
         return [
             'appears_running' => $appearsRunning,
+            'auto_dispatch_enabled' => $autoDispatch,
             'last_worker_activity_at' => $newest ? gmdate('Y-m-d\TH:i:s\Z', $newest) : null,
             'recent_failed_count' => count($recentFailed),
             'message' => $appearsRunning
                 ? 'Background worker activity detected recently.'
-                : 'Worker is enabled but no recent worker log activity was found. Start the branch worker daemon on this machine.',
+                : ($autoDispatch
+                    ? 'Worker auto-starts in the background while the local app is open. Open another page or wait a few seconds, then refresh.'
+                    : 'Worker is enabled but no recent worker log activity was found. Start the branch worker daemon on this machine.'),
         ];
     }
 }

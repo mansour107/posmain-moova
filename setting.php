@@ -665,6 +665,9 @@ if ($syncDefaultCloudUrl === '' && !empty($_SERVER['HTTP_HOST'])) {
                       <button type="button" class="btn btn-outline-info mb-3 mr-2 js-sync-test-cloud" data-form="#sync-local-form" dir="ltr">
                         <i class="fas fa-cloud mr-1"></i> Test cloud connection
                       </button>
+                      <button type="button" class="btn btn-outline-primary mb-3 mr-2 js-sync-push-data" data-form="#sync-local-form" dir="ltr">
+                        <i class="fas fa-upload mr-1"></i> Sync all data to hosted
+                      </button>
                       <button type="button" class="btn btn-outline-warning mb-3 js-sync-restore-hosted" data-form="#sync-local-form" dir="ltr">
                         <i class="fas fa-cloud-download-alt mr-1"></i> Restore from hosted
                       </button>
@@ -1455,6 +1458,38 @@ document.addEventListener('DOMContentLoaded', function () {
       showResult($form, response.message || (response.ok ? 'Test succeeded.' : 'Test failed.'), !!response.ok);
     }).fail(function (xhr) {
       showResult($form, (xhr.responseJSON && xhr.responseJSON.message) || 'Cloud connection test failed.', false);
+    });
+  });
+
+  $('.js-sync-push-data').on('click', function () {
+    const $form = $($(this).data('form'));
+    const confirmed = window.confirm(
+      'Queue all currently supported local sync data and send it to the hosted POS now? This includes menu/items, tables, order history, categories, inventory, recipes/costs, employees, and pulse logs. Credentials and sync secrets are never sent.'
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    const $button = $(this);
+    $button.prop('disabled', true);
+    showResult($form, 'Syncing supported local data to hosted...', true);
+
+    ajaxSync(formData($form, 'push_supported_data_to_hosted')).done(function (response) {
+      const push = response.push || {};
+      const queue = push.queue || {};
+      const dispatch = push.dispatch || {};
+      const pending = push.pending_outbox || 0;
+      const failed = dispatch.failed || 0;
+      const counted = 'Items: ' + (queue.catalog || 0) + ', tables: ' + (queue.tables || 0) + ', orders: ' + (queue.orders || 0) + '. ';
+      const message = failed > 0
+        ? 'Sync finished with errors. ' + counted + 'Queued: ' + (queue.queued || 0) + ', synced: ' + (dispatch.synced || 0) + ', failed: ' + failed + ', still pending: ' + pending + '.'
+        : 'Sync finished. ' + counted + 'Queued: ' + (queue.queued || 0) + ', synced: ' + (dispatch.synced || 0) + (pending > 0 ? ', still pending: ' + pending + '.' : '.');
+      showResult($form, message, failed === 0);
+      loadSyncStatusPanel();
+    }).fail(function (xhr) {
+      showResult($form, (xhr.responseJSON && xhr.responseJSON.message) || 'Data sync failed.', false);
+    }).always(function () {
+      $button.prop('disabled', false);
     });
   });
 

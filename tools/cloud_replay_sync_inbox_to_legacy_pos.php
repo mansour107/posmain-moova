@@ -2,6 +2,7 @@
 
 require_once __DIR__ . '/../includes/db_bootstrap.php';
 require_once __DIR__ . '/../classes/Sync/CloudLegacyPosMirrorService.php';
+require_once __DIR__ . '/../classes/Sync/CloudOperationalMirrorService.php';
 
 if (PHP_SAPI !== 'cli') {
     fwrite(STDERR, "This tool must be run from the command line.\n");
@@ -21,6 +22,7 @@ $limit = isset($options['limit']) ? max(1, (int) $options['limit']) : 0;
 mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
 $conn = posmain_db_connect();
 $service = new CloudLegacyPosMirrorService();
+$operational = new CloudOperationalMirrorService();
 $summary = [
     'apply' => $apply,
     'branch_uuid' => $branchUuid !== '' ? $branchUuid : null,
@@ -59,6 +61,9 @@ foreach ($rows as $row) {
     try {
         $conn->begin_transaction();
         $result = $service->mirrorFromBranchEvent($conn, (string) $row['branch_uuid'], $event);
+        if (!$result) {
+            $result = $operational->applyFromBranchEvent($conn, (string) $row['branch_uuid'], $event);
+        }
         $conn->commit();
         if ($result) {
             $summary['mirrored']++;

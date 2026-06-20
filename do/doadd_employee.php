@@ -61,7 +61,11 @@ if (isset($_POST['active'])) {
 
 $sql ="INSERT INTO employees(name,  info, imgs, email, number, dateofbirth, gender, address, address2, town, jop, department, joptybe, joplevel, dateofhire, dateofend , shift,  salary ,basma_id,password, basma_name ,ent_tybe,hour_extra,day_extra ) VALUES ('$name', '$info', '$new_kvr_name', '$email', '$number', '$dateofbirth', '$gender', '$address', '$address2', '$town', '$jop', '$department', '$joptybe', '$joplevel', '$dateofhire', '$dateofend', '$shift',  '$salary',  '$basmaid',  '$password','$basmaname' , '$ent_tybe','$hour_extra','$day_extra')";
 $conn->query($sql);
-$empid = $conn->insert_id;
+$empid = (int) $conn->insert_id;
+require_once __DIR__ . '/../classes/Sync/OperationalSyncRecorder.php';
+if ($empid > 0) {
+    posmain_record_operational_row_sync($conn, 'employee', $empid, 'employee_form');
+}
 
 }else{
 
@@ -70,7 +74,11 @@ $empid = $conn->insert_id;
 	
 		$sql ="INSERT INTO employees(name, info, email, number, dateofbirth, gender, address, address2, town, jop, department, joptybe, joplevel, dateofhire, dateofend , shift,  salary ,basma_id,password , basma_name , ent_tybe,hour_extra,day_extra) VALUES ('$name', '$info', '$email', '$number', '$dateofbirth', '$gender', '$address', '$address2', '$town', '$jop', '$department', '$joptybe', '$joplevel', '$dateofhire', '$dateofend', '$shift',  '$salary','$basmaid',  '$password','$basmaname' , '$ent_tybe','$hour_extra','$day_extra')";
 		$conn->query($sql);
-		$empid = $conn->insert_id;
+		$empid = (int) $conn->insert_id;
+		require_once __DIR__ . '/../classes/Sync/OperationalSyncRecorder.php';
+		if ($empid > 0) {
+		    posmain_record_operational_row_sync($conn, 'employee', $empid, 'employee_form');
+		}
 			}
 
 

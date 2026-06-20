@@ -1,6 +1,7 @@
 <?php
 
 require_once __DIR__ . '/CloudMenuSnapshotService.php';
+require_once __DIR__ . '/CloudOperationalMirrorService.php';
 require_once __DIR__ . '/CloudOrderSnapshotService.php';
 require_once __DIR__ . '/CloudLegacyPosMirrorService.php';
 require_once __DIR__ . '/CloudShiftSnapshotService.php';
@@ -84,6 +85,12 @@ class SyncInboxService
                                 $cloudEntityId = 'cloud_menu_item:' . (int) $menuSnapshot['cloud_menu_item_id'];
                                 $message = $mode . ' menu snapshot';
                                 $legacyMirror = $this->mirrorLegacyPosTables($conn, $branchUuid, $event, $config);
+                            } else {
+                                $operational = (new CloudOperationalMirrorService())->applyFromBranchEvent($conn, $branchUuid, $event);
+                                if ($operational && !empty($operational['entity_id'])) {
+                                    $cloudEntityId = (string) $operational['entity_id'];
+                                    $message = $mode . ' operational snapshot';
+                                }
                             }
                         }
                     }

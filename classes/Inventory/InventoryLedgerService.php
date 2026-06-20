@@ -148,6 +148,14 @@ class InventoryLedgerService
                 $conn->commit();
             }
 
+            if (!$isShadowWrite && !empty($movementId)) {
+                require_once __DIR__ . '/../Sync/OperationalSyncRecorder.php';
+                posmain_record_operational_row_sync($conn, 'inventory_movement', (int) $movementId, 'inventory_ledger');
+                if (!empty($balanceId)) {
+                    posmain_record_operational_row_sync($conn, 'inventory_balance', (int) $balanceId, 'inventory_ledger');
+                }
+            }
+
             return [
                 'success' => true,
                 'noop' => false,

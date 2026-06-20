@@ -60,5 +60,7 @@ if ($_SERVER['REQUEST_METHOD'] == "POST") {
 
 
 	$conn->query($sql);
+	require_once __DIR__ . '/../classes/Sync/OperationalSyncRecorder.php';
+	posmain_record_operational_row_sync($conn, 'employee', (int) $id, 'employee_form');
 	header('location:../employees.php');
 }

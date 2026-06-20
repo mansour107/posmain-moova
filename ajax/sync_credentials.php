@@ -16,6 +16,7 @@ require_once __DIR__ . '/../classes/Sync/SyncRuntimeCrypto.php';
 require_once __DIR__ . '/../classes/Sync/SyncRuntimeDbConfigFile.php';
 require_once __DIR__ . '/../classes/Sync/SyncRuntimeSettings.php';
 require_once __DIR__ . '/../classes/Sync/BranchRestoreFromHostedService.php';
+require_once __DIR__ . '/../classes/Sync/BranchCatalogPushService.php';
 
 header('Content-Type: application/json; charset=utf-8');
 
@@ -191,6 +192,30 @@ try {
                         'limit' => isset($_POST['limit']) ? max(1, (int) $_POST['limit']) : 50,
                     ]
                 ),
+            ]);
+            break;
+
+        case 'push_catalog_to_hosted':
+        case 'push_supported_data_to_hosted':
+            $push = (new BranchCatalogPushService())->pushToHosted(
+                $conn,
+                syncCredentialsBranchRuntimeConfig($appConfig, $_POST),
+                [
+                    'catalog' => true,
+                    'tables' => true,
+                    'orders' => true,
+                ]
+            );
+            syncCredentialsAudit($conn, 'sync_supported_data_pushed_to_hosted', [
+                'branch_uuid' => $push['branch_uuid'] ?? '',
+                'queued' => $push['queue']['queued'] ?? 0,
+                'synced' => $push['dispatch']['synced'] ?? 0,
+                'pending_outbox' => $push['pending_outbox'] ?? 0,
+            ]);
+            syncCredentialsJson([
+                'ok' => true,
+                'message' => 'Supported data sync finished.',
+                'push' => $push,
             ]);
             break;
 
