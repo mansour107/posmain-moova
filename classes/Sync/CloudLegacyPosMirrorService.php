@@ -976,6 +976,12 @@ class CloudLegacyPosMirrorService
 
     private function isTableEvent(array $event): bool
     {
+        $payload = $this->payload($event);
+        $snapshotType = strtolower(trim((string) ($payload['snapshot_type'] ?? '')));
+        if (in_array($snapshotType, ['operational_row', 'operational_delete', 'recipe_bundle'], true)) {
+            return false;
+        }
+
         foreach (['aggregate_type', 'entity_type'] as $key) {
             if (strtolower(trim((string) ($event[$key] ?? ''))) === 'table') {
                 return true;
@@ -987,9 +993,15 @@ class CloudLegacyPosMirrorService
             return true;
         }
 
-        $payload = $this->payload($event);
-        return array_key_exists('table', $payload)
-            || array_key_exists('table_uuid', $payload)
+        if ($snapshotType === 'pos_table') {
+            return true;
+        }
+
+        if (isset($payload['table']) && is_array($payload['table'])) {
+            return true;
+        }
+
+        return array_key_exists('table_uuid', $payload)
             || array_key_exists('local_table_id', $payload);
     }
 

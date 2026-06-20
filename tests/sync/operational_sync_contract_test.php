@@ -44,6 +44,10 @@ foreach ([
 $inbox = file_get_contents(__DIR__ . '/../../classes/Sync/SyncInboxService.php');
 operationalSyncContractAssert(strpos($inbox, 'CloudOperationalMirrorService') !== false, 'SyncInboxService should apply operational snapshots');
 
+$tableSnapshot = file_get_contents(__DIR__ . '/../../classes/Sync/CloudTableSnapshotService.php');
+operationalSyncContractAssert(strpos($tableSnapshot, 'operational_row') !== false, 'CloudTableSnapshotService should exclude operational sync payloads');
+operationalSyncContractAssert(strpos($tableSnapshot, 'is_array($payload[\'table\'])') !== false, 'CloudTableSnapshotService should only treat array table payloads as POS tables');
+
 echo "operational-sync-contract-ok\n";
 
 function operationalSyncContractAssert(bool $condition, string $message): void
