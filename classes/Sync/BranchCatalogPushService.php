@@ -72,7 +72,7 @@ class BranchCatalogPushService
 
         if ($includeOrders) {
             $where = 'WHERE pro_tybe = 9';
-            if (!$includeDeleted) {
+            if (!$includeDeleted && $this->columnExists($conn, 'ot_head', 'isdeleted')) {
                 $where .= ' AND COALESCE(isdeleted, 0) = 0';
             }
             $sql = "SELECT id FROM ot_head {$where} ORDER BY id ASC" . ($limit > 0 ? ' LIMIT ' . $limit : '');
@@ -150,7 +150,10 @@ class BranchCatalogPushService
 
     private function activeIds(mysqli $conn, string $table, bool $includeDeleted, int $limit): array
     {
-        $where = $includeDeleted ? '' : ' WHERE COALESCE(isdeleted, 0) = 0';
+        $where = '';
+        if (!$includeDeleted && $this->columnExists($conn, $table, 'isdeleted')) {
+            $where = ' WHERE COALESCE(isdeleted, 0) = 0';
+        }
         $sql = "SELECT id FROM `{$table}`{$where} ORDER BY id ASC" . ($limit > 0 ? ' LIMIT ' . $limit : '');
         $result = $conn->query($sql);
         $ids = [];
@@ -295,6 +298,15 @@ class BranchCatalogPushService
     {
         $escaped = $conn->real_escape_string($table);
         $result = $conn->query("SHOW TABLES LIKE '{$escaped}'");
+
+        return $result && $result->num_rows > 0;
+    }
+
+    private function columnExists(mysqli $conn, string $table, string $column): bool
+    {
+        $escapedTable = $conn->real_escape_string($table);
+        $escapedColumn = $conn->real_escape_string($column);
+        $result = $conn->query("SHOW COLUMNS FROM `{$escapedTable}` LIKE '{$escapedColumn}'");
 
         return $result && $result->num_rows > 0;
     }
