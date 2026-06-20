@@ -26,6 +26,10 @@ try {
     }
     require_csrf('sync_credentials');
 
+    if (function_exists('session_write_close')) {
+        session_write_close();
+    }
+
     $action = trim((string) ($_POST['action'] ?? ''));
     if ($action === 'save_moova') {
         require_admin_or_permission('moova.manage', $conn);
@@ -197,6 +201,9 @@ try {
 
         case 'push_catalog_to_hosted':
         case 'push_supported_data_to_hosted':
+            if (function_exists('set_time_limit')) {
+                @set_time_limit(0);
+            }
             $push = (new BranchCatalogPushService())->pushToHosted(
                 $conn,
                 syncCredentialsBranchRuntimeConfig($appConfig, $_POST),
@@ -204,6 +211,8 @@ try {
                     'catalog' => true,
                     'tables' => true,
                     'orders' => true,
+                    'operational' => true,
+                    'drain_outbox' => true,
                 ]
             );
             syncCredentialsAudit($conn, 'sync_supported_data_pushed_to_hosted', [

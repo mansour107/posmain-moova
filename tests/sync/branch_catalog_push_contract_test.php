@@ -37,8 +37,12 @@ foreach ([
     'supported_domains',
     'unsupported_domains',
     'dispatchOutbox',
+    'drain_outbox',
+    'drained_outbox',
     'countPendingOutbox',
     'columnExists',
+    'queueInventoryReferencedMenuItems',
+    'catalog_inventory_refs',
 ] as $snippet) {
     branchCatalogPushContractAssert(strpos($service, $snippet) !== false, 'BranchCatalogPushService missing snippet: ' . $snippet);
 }

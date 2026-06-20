@@ -69,6 +69,8 @@ if (!function_exists('csrf_request_token')) {
         $field = $field !== '' ? $field : 'csrf_token';
         $candidates = [
             $_POST[$field] ?? null,
+            $_POST['csrf_token'] ?? null,
+            $_POST['sync_csrf_token'] ?? null,
             $_POST['csrf'] ?? null,
             $_SERVER['HTTP_X_CSRF_TOKEN'] ?? null,
             $_SERVER['HTTP_X_POSMAIN_CSRF_TOKEN'] ?? null,

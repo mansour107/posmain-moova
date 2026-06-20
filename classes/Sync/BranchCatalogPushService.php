@@ -29,6 +29,7 @@ class BranchCatalogPushService
 
         $queue = [
             'catalog' => 0,
+            'catalog_inventory_refs' => 0,
             'tables' => 0,
             'orders' => 0,
             'item_categories' => 0,
@@ -90,9 +91,11 @@ class BranchCatalogPushService
 
         if ($includeOperational) {
             $this->queueOperationalSnapshots($conn, $pushConfig, $forceResend, $limit, $queue);
+            $this->queueInventoryReferencedMenuItems($conn, $outbox, $pushConfig, $forceResend, $limit, $queue);
         }
 
-        $dispatch = $this->dispatchOutbox($conn, $pushConfig, $options);
+        $dispatchOptions = array_merge(['drain_outbox' => true], $options);
+        $dispatch = $this->dispatchOutbox($conn, $pushConfig, $dispatchOptions);
 
         return [
             'branch_uuid' => $branchUuid,
@@ -212,6 +215,57 @@ class BranchCatalogPushService
         }
     }
 
+    private function queueInventoryReferencedMenuItems(
+        mysqli $conn,
+        SyncOutboxEventService $outbox,
+        array $pushConfig,
+        bool $forceResend,
+        int $limit,
+        array &$queue
+    ): void {
+        if (!$this->tableExists($conn, 'myitems')) {
+            return;
+        }
+
+        foreach ($this->inventoryReferencedItemIds($conn, $limit) as $itemId) {
+            $queue['catalog_inventory_refs']++;
+            $result = $outbox->recordMenuItemSnapshot($conn, $itemId, [
+                'event_type' => 'menu.item_saved',
+                'source_system' => 'settings_supported_data_push',
+                'config' => $pushConfig,
+            ]);
+            $this->trackQueuedRow($conn, $result, $forceResend, $queue);
+        }
+    }
+
+    private function inventoryReferencedItemIds(mysqli $conn, int $limit): array
+    {
+        $parts = [];
+        foreach (['inventory_item_balances', 'inventory_item_stock_levels', 'inventory_movements'] as $table) {
+            if (!$this->tableExists($conn, $table) || !$this->columnExists($conn, $table, 'item_id')) {
+                continue;
+            }
+            $parts[] = "SELECT item_id FROM `{$table}` WHERE item_id > 0";
+        }
+
+        if ($parts === []) {
+            return [];
+        }
+
+        $sql = '
+            SELECT DISTINCT refs.item_id
+            FROM (' . implode(' UNION ', $parts) . ') refs
+            INNER JOIN myitems i ON i.id = refs.item_id
+            ORDER BY refs.item_id ASC' . ($limit > 0 ? ' LIMIT ' . $limit : '');
+        $result = $conn->query($sql);
+        $ids = [];
+        while ($row = $result->fetch_assoc()) {
+            $ids[] = (int) $row['item_id'];
+        }
+
+        return $ids;
+    }
+
     private function trackQueuedRow(mysqli $conn, ?array $result, bool $forceResend, array &$queue): void
     {
         if (!$result || empty($result['outbox_id'])) {
@@ -243,8 +297,11 @@ class BranchCatalogPushService
 
     private function dispatchOutbox(mysqli $conn, array $config, array $options): array
     {
-        $maxBatches = max(1, min(50, (int) ($options['max_batches'] ?? 20)));
         $batchSize = max(1, min(100, (int) ($options['batch_size'] ?? 50)));
+        $drainOutbox = !empty($options['drain_outbox']);
+        $maxBatches = $drainOutbox
+            ? PHP_INT_MAX
+            : max(1, min(50, (int) ($options['max_batches'] ?? 20)));
         $worker = new BranchSyncWorker();
         $summary = [
             'batches' => 0,
@@ -253,6 +310,7 @@ class BranchCatalogPushService
             'failed' => 0,
             'dead' => 0,
             'skipped' => null,
+            'drained_outbox' => $drainOutbox,
         ];
 
         for ($i = 0; $i < $maxBatches; $i++) {

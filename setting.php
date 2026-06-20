@@ -1105,7 +1105,14 @@ document.addEventListener('DOMContentLoaded', function () {
 
   function csrfPayload() {
     const token = syncCard.querySelector('input[name="sync_csrf_token"]');
-    return token ? { csrf_token: token.value } : {};
+    if (!token || !token.value) {
+      return {};
+    }
+
+    return {
+      csrf_token: token.value,
+      sync_csrf_token: token.value,
+    };
   }
 
 	  function formData($form, actionOverride) {
@@ -1327,11 +1334,18 @@ document.addEventListener('DOMContentLoaded', function () {
   }
 
   function ajaxSync(payload) {
+    const headers = {};
+    const tokenInput = syncCard.querySelector('input[name="sync_csrf_token"]');
+    if (tokenInput && tokenInput.value) {
+      headers['X-CSRF-Token'] = tokenInput.value;
+    }
+
     return $.ajax({
       url: 'ajax/sync_credentials.php',
       type: 'POST',
       data: payload,
-      dataType: 'json'
+      dataType: 'json',
+      headers: headers
     });
   }
 
@@ -1487,7 +1501,10 @@ document.addEventListener('DOMContentLoaded', function () {
       showResult($form, message, failed === 0);
       loadSyncStatusPanel();
     }).fail(function (xhr) {
-      showResult($form, (xhr.responseJSON && xhr.responseJSON.message) || 'Data sync failed.', false);
+      const message = (xhr.responseJSON && xhr.responseJSON.message)
+        || (xhr.status === 403 ? 'Session expired or invalid security token. Refresh Settings and try again.' : '')
+        || 'Data sync failed.';
+      showResult($form, message, false);
     }).always(function () {
       $button.prop('disabled', false);
     });
