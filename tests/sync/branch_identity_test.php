@@ -112,7 +112,7 @@ class BranchIdentityTest extends TestCase
         $this->assertSame(0, (int) $identity['current_menu_version']);
     }
 
-    public function testStoredBranchUuidCannotBeChangedByEnvironment(): void
+    public function testStoredBranchUuidCanBeUpdatedWhenConfigured(): void
     {
         $service = new SyncBranchIdentity();
         $service->ensure(self::$conn, [
@@ -121,13 +121,14 @@ class BranchIdentityTest extends TestCase
             ],
         ]);
 
-        $this->expectException(RuntimeException::class);
-        $this->expectExceptionMessage('conflicts with stored sync_branch_identity.branch_uuid');
-        $service->ensure(self::$conn, [
+        $updated = $service->ensure(self::$conn, [
             'branch' => [
                 'uuid' => '33333333-3333-4333-8333-333333333333',
             ],
         ]);
+
+        $this->assertSame('33333333-3333-4333-8333-333333333333', $updated['branch_uuid']);
+        $this->assertSame('33333333-3333-4333-8333-333333333333', $service->current(self::$conn)['branch_uuid']);
     }
 
     public function testMissingConfiguredUuidGeneratesAndPersistsStableIdentity(): void

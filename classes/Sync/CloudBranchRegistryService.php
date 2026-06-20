@@ -33,6 +33,10 @@ class CloudBranchRegistryService
 
         (new SyncSchemaManager())->apply($conn);
 
+        if (!empty($options['replace_existing_branches']) || !empty($options['replace-existing-branches'])) {
+            $this->disableOtherBranches($conn, $branchUuid);
+        }
+
         $stmt = $conn->prepare("
             INSERT INTO cloud_branches (
                 branch_uuid,
@@ -104,6 +108,29 @@ class CloudBranchRegistryService
         }
 
         return $branches;
+    }
+
+    public function disableOtherBranches(mysqli $conn, string $keepBranchUuid): void
+    {
+        if (!$this->tableExists($conn, 'cloud_branches')) {
+            return;
+        }
+
+        $keepBranchUuid = strtolower(trim($keepBranchUuid));
+        if ($keepBranchUuid === '') {
+            return;
+        }
+
+        $stmt = $conn->prepare("
+            UPDATE cloud_branches
+            SET status = 'disabled',
+                updated_at = NOW(6)
+            WHERE branch_uuid <> ?
+              AND status = 'active'
+        ");
+        $stmt->bind_param('s', $keepBranchUuid);
+        $stmt->execute();
+        $stmt->close();
     }
 
     private function tableExists(mysqli $conn, string $table): bool

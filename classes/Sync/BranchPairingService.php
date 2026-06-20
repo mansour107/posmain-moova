@@ -85,6 +85,7 @@ class BranchPairingService
                 'status' => $input['branch_status'] ?? 'active',
                 'cloud_base_url' => $input['cloud_base_url'] ?? $input['POSMAIN_CLOUD_BASE_URL'] ?? '',
                 'require_encryption' => true,
+                'replace_existing_branches' => !empty($input['replace_existing_branches']) || !empty($input['replace_previous_branches']),
             ]);
         }
 

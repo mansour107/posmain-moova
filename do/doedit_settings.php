@@ -81,7 +81,7 @@ SET company_name = ?,
 WHERE 1";
 
 $stmt = $conn->prepare($sql);
-$stmt->bind_param("sssssiiiiisissiiisi", 
+$stmt->bind_param("sssssiiiiiisiiiiiisi", 
     $companyname, $companyadd, $companytel, $edit_pass, $lang,
     $acc_rent, $showhr, $showpulse, $show_customer_visits, $showatt, $showpayroll, $bodycolor,
     $showrent, $showclinc, $def_pos_client, $def_pos_store, 

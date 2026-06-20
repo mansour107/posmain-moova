@@ -13,15 +13,22 @@ class SyncBranchIdentity
         $this->assertSchemaExists($conn);
 
         $branchConfig = $config['branch'] ?? $config;
-        $configuredUuid = trim((string) ($branchConfig['uuid'] ?? ''));
+        $configuredUuid = strtolower(trim((string) ($branchConfig['uuid'] ?? '')));
         $existing = $this->find($conn);
 
         if ($existing) {
-            if ($configuredUuid !== '' && $configuredUuid !== (string) $existing['branch_uuid']) {
-                throw new RuntimeException('Configured POSMAIN_BRANCH_UUID conflicts with stored sync_branch_identity.branch_uuid.');
+            $existingUuid = strtolower(trim((string) ($existing['branch_uuid'] ?? '')));
+
+            if ($configuredUuid !== '' && $configuredUuid !== $existingUuid) {
+                if (!self::isUuid($configuredUuid)) {
+                    throw new InvalidArgumentException('Branch UUID must be a valid UUID string.');
+                }
+
+                $this->updateIdentity($conn, $branchConfig, $configuredUuid, $existingUuid);
+                return $this->find($conn);
             }
 
-            $this->updateMetadata($conn, $branchConfig, (string) $existing['branch_uuid']);
+            $this->updateMetadata($conn, $branchConfig, $existingUuid);
             return $this->find($conn);
         }
 
@@ -96,6 +103,79 @@ class SyncBranchIdentity
         if (!$result || $result->num_rows < 1) {
             throw new RuntimeException('sync_branch_identity table is missing. Run tools/run_migrations.php --apply first.');
         }
+    }
+
+    private function updateIdentity(mysqli $conn, array $branchConfig, string $branchUuid, string $previousBranchUuid): void
+    {
+        $branchName = $this->nullableString($branchConfig['name'] ?? null);
+        $posTenant = $this->nullableInt($branchConfig['pos_tenant'] ?? null);
+        $posBranch = $this->nullableInt($branchConfig['pos_branch'] ?? null);
+        $cloudBaseUrl = $this->nullableString($branchConfig['cloud_base_url'] ?? null);
+
+        $conn->begin_transaction();
+        try {
+            $this->migrateBranchUuidReferences($conn, $previousBranchUuid, $branchUuid);
+
+            $stmt = $conn->prepare("
+                UPDATE sync_branch_identity
+                SET branch_uuid = ?,
+                    branch_name = COALESCE(?, branch_name),
+                    pos_tenant = COALESCE(?, pos_tenant),
+                    pos_branch = COALESCE(?, pos_branch),
+                    cloud_base_url = COALESCE(?, cloud_base_url)
+                WHERE id = 1
+            ");
+            $stmt->bind_param(
+                'ssiis',
+                $branchUuid,
+                $branchName,
+                $posTenant,
+                $posBranch,
+                $cloudBaseUrl
+            );
+            $stmt->execute();
+            $stmt->close();
+
+            $conn->commit();
+        } catch (Throwable $e) {
+            $conn->rollback();
+            throw $e;
+        }
+    }
+
+    private function migrateBranchUuidReferences(mysqli $conn, string $fromUuid, string $toUuid): void
+    {
+        if ($fromUuid === '' || $toUuid === '' || $fromUuid === $toUuid) {
+            return;
+        }
+
+        foreach (['sync_outbox', 'sync_inbox', 'sync_checkpoints'] as $table) {
+            if (!$this->tableExists($conn, $table) || !$this->columnExists($conn, $table, 'branch_uuid')) {
+                continue;
+            }
+
+            $stmt = $conn->prepare("UPDATE {$table} SET branch_uuid = ? WHERE branch_uuid = ?");
+            $stmt->bind_param('ss', $toUuid, $fromUuid);
+            $stmt->execute();
+            $stmt->close();
+        }
+    }
+
+    private function tableExists(mysqli $conn, string $table): bool
+    {
+        $escaped = $conn->real_escape_string($table);
+        $result = $conn->query("SHOW TABLES LIKE '{$escaped}'");
+
+        return $result && $result->num_rows > 0;
+    }
+
+    private function columnExists(mysqli $conn, string $table, string $column): bool
+    {
+        $escapedTable = $conn->real_escape_string($table);
+        $escapedColumn = $conn->real_escape_string($column);
+        $result = $conn->query("SHOW COLUMNS FROM `{$escapedTable}` LIKE '{$escapedColumn}'");
+
+        return $result && $result->num_rows > 0;
     }
 
     private function updateMetadata(mysqli $conn, array $branchConfig, string $branchUuid): void

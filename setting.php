@@ -87,6 +87,7 @@ $systemUpdateCsrf = csrf_token('system_update');
 $systemUpdateAvailable = !empty($updateAvailability['update_available']);
 $systemUpdateInstalledVersion = (string) ($updateAvailability['installed_version'] ?? 'غير معروف');
 $systemUpdatePublishedVersion = (string) ($updateAvailability['published_version'] ?? 'غير متاح');
+require_once __DIR__ . '/classes/Sync/BranchIdentity.php';
 require_once __DIR__ . '/classes/Sync/BranchPairingService.php';
 require_once __DIR__ . '/classes/Sync/CloudBranchRegistryService.php';
 require_once __DIR__ . '/classes/Sync/SyncRuntimeCrypto.php';
@@ -210,6 +211,33 @@ $syncIsHosted = $syncRole === 'cloud';
 $syncIsLocal = $syncRole === 'branch';
 $syncRouterEnabled = !empty($appConfig['router']['enabled']);
 $syncBranches = (new BranchPairingService())->listHostedBranches($conn, $appConfig);
+$syncStoredBranchUuid = '';
+$syncRegisteredBranchUuid = '';
+foreach ($syncBranches as $branchRow) {
+    $candidateUuid = strtolower(trim((string) ($branchRow['branch_uuid'] ?? '')));
+    if ($candidateUuid === '') {
+        continue;
+    }
+
+    if (($branchRow['status'] ?? '') === 'active') {
+        $syncRegisteredBranchUuid = $candidateUuid;
+        break;
+    }
+
+    if ($syncRegisteredBranchUuid === '') {
+        $syncRegisteredBranchUuid = $candidateUuid;
+    }
+}
+$syncStoredIdentity = (new SyncBranchIdentity())->find($conn);
+if ($syncStoredIdentity) {
+    $syncStoredBranchUuid = strtolower(trim((string) ($syncStoredIdentity['branch_uuid'] ?? '')));
+}
+if ($syncIsHosted && $syncRegisteredBranchUuid !== '') {
+    $syncStoredBranchUuid = $syncRegisteredBranchUuid;
+    if (trim($syncBranchUuidEffective) === '') {
+        $syncBranchUuidEffective = $syncRegisteredBranchUuid;
+    }
+}
 $syncCrypto = new SyncRuntimeCrypto();
 $syncConfigEncryptionKeyEffective = $syncCrypto->currentKeyMaterial();
 $syncConfigEncryptionKeyConfigured = $syncConfigEncryptionKeyEffective !== '';
@@ -421,7 +449,7 @@ if ($syncDefaultCloudUrl === '' && !empty($_SERVER['HTTP_HOST'])) {
           </div>
         </div>
 
-        <div class="card card-outline card-teal shadow-sm mb-4" id="sync-credentials-card" data-sync-role="<?= htmlspecialchars($syncRole, ENT_QUOTES, 'UTF-8') ?>">
+        <div class="card card-outline card-teal shadow-sm mb-4" id="sync-credentials-card" data-sync-role="<?= htmlspecialchars($syncRole, ENT_QUOTES, 'UTF-8') ?>" data-stored-branch-uuid="<?= htmlspecialchars($syncStoredBranchUuid, ENT_QUOTES, 'UTF-8') ?>">
           <div class="card-header">
             <h3 class="card-title"><i class="fas fa-sync-alt ml-2"></i> إعدادات المزامنة</h3>
             <div class="card-tools">
@@ -602,7 +630,7 @@ if ($syncDefaultCloudUrl === '' && !empty($_SERVER['HTTP_HOST'])) {
                         <div class="input-group">
                           <input type="password" class="form-control" name="POSMAIN_BRANCH_SYNC_SECRET" value="<?= htmlspecialchars($syncBranchSecretEffective, ENT_QUOTES, 'UTF-8') ?>" autocomplete="off" placeholder="<?= $syncBranchSecretEffectiveConfigured ? 'Current secret is hidden' : 'Required before saving' ?>">
                           <div class="input-group-append">
-                            <button type="button" class="btn btn-outline-secondary js-generate-secret" data-target="#sync-shared-section [name='POSMAIN_BRANCH_SYNC_SECRET']" dir="ltr">Generate secret</button>
+                            <button type="button" class="btn btn-outline-secondary js-generate-secret" data-target="#sync-shared-section [name='POSMAIN_BRANCH_SYNC_SECRET']" data-confirm-if-filled="1" dir="ltr">Generate secret</button>
                             <button type="button" class="btn btn-outline-secondary js-toggle-secret-visibility" data-target="#sync-shared-section [name='POSMAIN_BRANCH_SYNC_SECRET']" aria-label="Show sync secret">
                               <i class="fas fa-eye"></i>
                             </button>
@@ -1130,6 +1158,42 @@ document.addEventListener('DOMContentLoaded', function () {
 	    return payload;
 	  }
 
+	  function syncHostedIdentityPayload() {
+	    const payload = Object.assign({}, syncSharedIdentityPayload(), syncConfigKeyPayload());
+	    const secretInput = syncCard.querySelector('#sync-shared-section [name="POSMAIN_BRANCH_SYNC_SECRET"]');
+	    if (
+	      secretInput
+	      && initialBranchSyncSecretValue !== null
+	      && secretInput.value !== initialBranchSyncSecretValue
+	      && secretInput.value.trim() !== ''
+	    ) {
+	      payload.POSMAIN_BRANCH_SYNC_SECRET_DIRTY = '1';
+	    }
+	    return payload;
+	  }
+
+	  function buildHostedBranchRegistrationPayload(options) {
+	    const payload = Object.assign(
+	      { action: 'pair_hosted_branch', branch_status: 'active' },
+	      syncConfigKeyPayload(),
+	      syncSharedIdentityPayload(),
+	      syncHostedProvisionPayload(),
+	      csrfPayload()
+	    );
+	    if (options && options.replaceExisting) {
+	      payload.replace_existing_branches = '1';
+	    }
+	    if (
+	      branchSecretInput
+	      && initialBranchSyncSecretValue !== null
+	      && branchSecretInput.value !== initialBranchSyncSecretValue
+	      && branchSecretInput.value.trim() !== ''
+	    ) {
+	      payload.POSMAIN_BRANCH_SYNC_SECRET_DIRTY = '1';
+	    }
+	    return payload;
+	  }
+
   function syncHostedProvisionPayload() {
     const payload = {};
     $('#sync-cloud-form :input').serializeArray().forEach(function (entry) {
@@ -1244,13 +1308,7 @@ document.addEventListener('DOMContentLoaded', function () {
   });
 
   function syncBranchRegistrationPayload() {
-    const payload = Object.assign(
-      { action: 'pair_hosted_branch', branch_status: 'active' },
-      syncConfigKeyPayload(),
-      syncSharedIdentityPayload(),
-      syncHostedProvisionPayload(),
-      csrfPayload()
-    );
+    const payload = buildHostedBranchRegistrationPayload();
     if (!payload.POSMAIN_BRANCH_UUID || !payload.POSMAIN_BRANCH_SYNC_SECRET) {
       return null;
     }
@@ -1302,6 +1360,38 @@ document.addEventListener('DOMContentLoaded', function () {
     return form ? form.querySelector(selector) : document.querySelector(selector);
   }
 
+  function confirmSyncIdentityChanges() {
+    const branchUuidInput = syncCard.querySelector('#sync-shared-section [name="POSMAIN_BRANCH_UUID"]');
+    const secretInput = syncCard.querySelector('#sync-shared-section [name="POSMAIN_BRANCH_SYNC_SECRET"]');
+    const storedUuid = (syncCard.getAttribute('data-stored-branch-uuid') || '').trim().toLowerCase();
+    const currentUuid = branchUuidInput ? branchUuidInput.value.trim().toLowerCase() : '';
+    const uuidChanged = storedUuid !== '' && currentUuid !== '' && currentUuid !== storedUuid;
+    const secretChanged = !!(
+      secretInput
+      && initialBranchSyncSecretValue !== null
+      && secretInput.value !== initialBranchSyncSecretValue
+      && secretInput.value.trim() !== ''
+    );
+
+    if (!uuidChanged && !secretChanged) {
+      return true;
+    }
+
+    const parts = [];
+    if (uuidChanged) {
+      parts.push('the branch UUID');
+    }
+    if (secretChanged) {
+      parts.push('the sync secret');
+    }
+
+    return window.confirm(
+      (syncRuntimeRole === 'cloud'
+        ? 'You are changing ' + parts.join(' and ') + ' on the hosted POS. The previously registered branch will be disabled and the local branch must use the same values to pair again. Continue?'
+        : 'You are changing ' + parts.join(' and ') + '. Cloud pairing and sync will stop working until the hosted POS is updated with the same values. Continue?')
+    );
+  }
+
   $('.js-generate-uuid').on('click', function () {
     const input = targetInput(this);
     if (
@@ -1321,6 +1411,14 @@ document.addEventListener('DOMContentLoaded', function () {
 
   $('.js-generate-secret').on('click', function () {
     const input = targetInput(this);
+    if (
+      input
+      && this.getAttribute('data-confirm-if-filled') === '1'
+      && input.value.trim() !== ''
+      && !window.confirm('Regenerating the sync secret will break cloud pairing until the hosted POS is updated with the new secret. Continue?')
+    ) {
+      return;
+    }
     ajaxSync(Object.assign({ action: 'generate_secret' }, csrfPayload())).done(function (response) {
       if (response.ok && input) input.value = response.secret;
     });
@@ -1418,6 +1516,7 @@ document.addEventListener('DOMContentLoaded', function () {
   initialBranchSyncSecretValue = branchSecretInput ? branchSecretInput.value : '';
   const initialLocalSyncSignature = $syncLocalForm.length ? payloadSignature(formData($syncLocalForm)) : '';
   const initialCloudSyncSignature = $syncCloudForm.length ? payloadSignature(formData($syncCloudForm)) : '';
+  const initialHostedIdentitySignature = syncRuntimeRole === 'cloud' ? payloadSignature(syncHostedIdentityPayload()) : '';
   const initialBranchRegistrationSignature = syncBranchRegistrationPayload() ? payloadSignature(syncBranchRegistrationPayload()) : '';
   let submittingAfterSyncSave = false;
 
@@ -1434,11 +1533,32 @@ document.addEventListener('DOMContentLoaded', function () {
       if (syncRuntimeRole === 'cloud' && $syncCloudForm.length && payloadSignature(formData($syncCloudForm)) !== initialCloudSyncSignature) {
         syncSaves.push({ $form: $syncCloudForm, payload: formData($syncCloudForm), label: 'Hosted sync settings were saved.' });
       }
-      const branchRegistrationPayload = syncBranchRegistrationPayload();
+
+      const hostedIdentityDirty = syncRuntimeRole === 'cloud'
+        && payloadSignature(syncHostedIdentityPayload()) !== initialHostedIdentitySignature;
+      const branchRegistrationPayload = hostedIdentityDirty
+        ? buildHostedBranchRegistrationPayload({ replaceExisting: true })
+        : syncBranchRegistrationPayload();
+      if (hostedIdentityDirty) {
+        if (!branchRegistrationPayload.POSMAIN_BRANCH_SYNC_SECRET || branchRegistrationPayload.POSMAIN_BRANCH_SYNC_SECRET.trim() === '') {
+          event.preventDefault();
+          const globalResult = document.getElementById('settings-global-save-result');
+          const message = 'Enter or generate the branch sync secret before registering a branch on the hosted POS.';
+          if (globalResult) {
+            globalResult.className = 'text-danger d-block small';
+            globalResult.textContent = message;
+          }
+          showResult($syncCloudForm.length ? $syncCloudForm : $syncLocalForm, message, false);
+          return;
+        }
+      }
       if (
         syncRuntimeRole === 'cloud'
         && branchRegistrationPayload
-        && payloadSignature(branchRegistrationPayload) !== initialBranchRegistrationSignature
+        && (
+          hostedIdentityDirty
+          || payloadSignature(branchRegistrationPayload) !== initialBranchRegistrationSignature
+        )
       ) {
         syncSaves.push({
           $form: $syncCloudForm.length ? $syncCloudForm : $syncLocalForm,
@@ -1446,11 +1566,21 @@ document.addEventListener('DOMContentLoaded', function () {
           label: 'Allowed branch was paired on hosted POS.',
           afterSave: function (response) {
             renderBranches(response.branches || []);
+            if (syncCard && branchRegistrationPayload.POSMAIN_BRANCH_UUID) {
+              syncCard.setAttribute('data-stored-branch-uuid', String(branchRegistrationPayload.POSMAIN_BRANCH_UUID).trim().toLowerCase());
+            }
           }
         });
       }
 
       if (!syncSaves.length) {
+        return;
+      }
+
+      if (syncRuntimeRole === 'branch' && !confirmSyncIdentityChanges()) {
+        return;
+      }
+      if (syncRuntimeRole === 'cloud' && hostedIdentityDirty && !confirmSyncIdentityChanges()) {
         return;
       }
 
@@ -1480,6 +1610,12 @@ document.addEventListener('DOMContentLoaded', function () {
         if (globalResult) {
           globalResult.className = 'text-success d-block small';
           globalResult.textContent = 'Sync changes saved. Saving page settings...';
+        }
+        if (syncCard && syncRuntimeRole === 'branch') {
+          const savedUuidInput = syncCard.querySelector('#sync-shared-section [name="POSMAIN_BRANCH_UUID"]');
+          if (savedUuidInput) {
+            syncCard.setAttribute('data-stored-branch-uuid', savedUuidInput.value.trim().toLowerCase());
+          }
         }
         submittingAfterSyncSave = true;
         settingsMainForm.submit();
