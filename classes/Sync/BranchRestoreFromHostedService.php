@@ -4,7 +4,7 @@ require_once __DIR__ . '/CloudAuthService.php';
 require_once __DIR__ . '/CloudBranchRestoreEventService.php';
 require_once __DIR__ . '/CloudLegacyPosMirrorService.php';
 require_once __DIR__ . '/RestoreEventPhase.php';
-require_once __DIR__ . '/SyncBranchIdentity.php';
+require_once __DIR__ . '/BranchIdentity.php';
 require_once __DIR__ . '/SyncRuntimeSettings.php';
 
 class BranchRestoreFromHostedService
