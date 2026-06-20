@@ -106,7 +106,8 @@ if (!function_exists('posmain_db_connect')) {
                 return posmain_shop_db_connect($shopId, $config);
             }
 
-            return posmain_router_db_connect($config);
+            // Router metadata DB has no POS schema (settings, sales, etc.).
+            return posmain_raw_db_connect($db);
         }
 
         return posmain_raw_db_connect($db);
