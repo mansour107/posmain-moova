@@ -10,6 +10,7 @@ require_once __DIR__ . '/SyncRuntimeCrypto.php';
 require_once __DIR__ . '/SyncRuntimeSettings.php';
 require_once __DIR__ . '/ShopProvisioningService.php';
 require_once __DIR__ . '/PairingStatusService.php';
+require_once __DIR__ . '/BranchRestoreFromHostedService.php';
 
 class BranchPairingService
 {
@@ -162,6 +163,28 @@ class BranchPairingService
             'cloud_base_url' => $cloudBaseUrl,
         ]);
 
+        $restoreFromHosted = null;
+        $autoRestore = !array_key_exists('auto_restore_from_hosted', $input) || !empty($input['auto_restore_from_hosted']);
+        if ($autoRestore && !empty($dashboard['pairing_ok']) && BranchRestoreFromHostedService::localNeedsRestore($conn)) {
+            try {
+                $restoreFromHosted = (new BranchRestoreFromHostedService())->restore($conn, array_merge($config, [
+                    'branch' => array_merge((array) ($config['branch'] ?? []), [
+                        'uuid' => $branchUuid,
+                        'cloud_base_url' => $cloudBaseUrl,
+                    ]),
+                    'sync' => array_merge((array) ($config['sync'] ?? []), [
+                        'branch_secret' => $secret,
+                    ]),
+                ]), ['apply' => true]);
+            } catch (Throwable $e) {
+                $restoreFromHosted = [
+                    'apply' => true,
+                    'failed' => 1,
+                    'errors' => [['message' => $e->getMessage()]],
+                ];
+            }
+        }
+
         return [
             'branch_uuid' => $branchUuid,
             'cloud_base_url' => $cloudBaseUrl,
@@ -171,6 +194,7 @@ class BranchPairingService
                 'remote' => $dashboard['remote'] ?? null,
             ],
             'dashboard' => $dashboard,
+            'restore_from_hosted' => $restoreFromHosted,
         ];
     }
 

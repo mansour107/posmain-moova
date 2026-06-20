@@ -12,6 +12,7 @@ $endpoints = [
     'api/sync/receive_branch_events.php',
     'api/sync/branch_events.php',
     'api/sync/ack_branch_events.php',
+    'api/sync/export_branch_restore.php',
     'api/moova/branch_events.php',
     'api/moova/ack_branch_events.php',
 ];

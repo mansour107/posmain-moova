@@ -633,9 +633,12 @@ if ($syncDefaultCloudUrl === '' && !empty($_SERVER['HTTP_HOST'])) {
                         <?= $syncSourceHint('POSMAIN_CLOUD_BASE_URL', $syncCloudBaseUrlEffective) ?>
                       </div>
                     </div>
-                    <div class="col-md-4 d-flex align-items-end mb-4">
-                      <button type="button" class="btn btn-outline-info mb-3 js-sync-test-cloud" data-form="#sync-local-form" dir="ltr">
+                    <div class="col-md-4 d-flex align-items-end mb-4 flex-wrap">
+                      <button type="button" class="btn btn-outline-info mb-3 mr-2 js-sync-test-cloud" data-form="#sync-local-form" dir="ltr">
                         <i class="fas fa-cloud mr-1"></i> Test cloud connection
+                      </button>
+                      <button type="button" class="btn btn-outline-warning mb-3 js-sync-restore-hosted" data-form="#sync-local-form" dir="ltr">
+                        <i class="fas fa-cloud-download-alt mr-1"></i> Restore from hosted
                       </button>
                     </div>
                   </div>
@@ -1354,6 +1357,31 @@ document.addEventListener('DOMContentLoaded', function () {
       showResult($form, response.message || (response.ok ? 'Test succeeded.' : 'Test failed.'), !!response.ok);
     }).fail(function (xhr) {
       showResult($form, (xhr.responseJSON && xhr.responseJSON.message) || 'Cloud connection test failed.', false);
+    });
+  });
+
+  $('.js-sync-restore-hosted').on('click', function () {
+    const $form = $($(this).data('form'));
+    const confirmed = window.confirm(
+      'Restore menu, tables, and orders from the hosted cloud into this local database? Stop branch sync workers first. Existing local data may be updated or duplicated depending on event history.'
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    const payload = formData($form, 'restore_from_hosted');
+    payload.append('apply', '1');
+    ajaxSync(payload).done(function (response) {
+      const restore = response.restore || {};
+      const mirrored = restore.mirrored || 0;
+      const failed = restore.failed || 0;
+      const skipped = restore.skipped || 0;
+      const message = failed > 0
+        ? 'Restore finished with errors. Mirrored: ' + mirrored + ', skipped: ' + skipped + ', failed: ' + failed + '.'
+        : 'Restore finished. Mirrored: ' + mirrored + ', skipped: ' + skipped + '.';
+      showResult($form, message, failed === 0);
+    }).fail(function (xhr) {
+      showResult($form, (xhr.responseJSON && xhr.responseJSON.message) || 'Hosted restore failed.', false);
     });
   });
 

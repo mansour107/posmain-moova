@@ -15,6 +15,7 @@ require_once __DIR__ . '/../classes/Sync/SyncHttpClient.php';
 require_once __DIR__ . '/../classes/Sync/SyncRuntimeCrypto.php';
 require_once __DIR__ . '/../classes/Sync/SyncRuntimeDbConfigFile.php';
 require_once __DIR__ . '/../classes/Sync/SyncRuntimeSettings.php';
+require_once __DIR__ . '/../classes/Sync/BranchRestoreFromHostedService.php';
 
 header('Content-Type: application/json; charset=utf-8');
 
@@ -177,6 +178,20 @@ try {
 
         case 'test_cloud':
             syncCredentialsJson(syncCredentialsTestCloud($_POST));
+            break;
+
+        case 'restore_from_hosted':
+            syncCredentialsJson([
+                'ok' => true,
+                'restore' => (new BranchRestoreFromHostedService())->restore(
+                    $conn,
+                    syncCredentialsBranchRuntimeConfig($appConfig, $_POST),
+                    [
+                        'apply' => !empty($_POST['apply']),
+                        'limit' => isset($_POST['limit']) ? max(1, (int) $_POST['limit']) : 50,
+                    ]
+                ),
+            ]);
             break;
 
         default:
@@ -397,4 +412,23 @@ function syncCredentialsShouldPairLocal(array $input): bool
     }
 
     return $secret !== '' || $secretDirty;
+}
+
+function syncCredentialsBranchRuntimeConfig(array $config, array $input): array
+{
+    $secret = (string) ($input['branch_secret'] ?? $input['POSMAIN_BRANCH_SYNC_SECRET'] ?? '');
+    $cloudBaseUrl = rtrim(trim((string) ($input['cloud_base_url'] ?? $input['POSMAIN_CLOUD_BASE_URL'] ?? '')), '/');
+    $branchUuid = strtolower(trim((string) ($input['branch_uuid'] ?? $input['POSMAIN_BRANCH_UUID'] ?? '')));
+
+    if ($secret !== '') {
+        $config['sync']['branch_secret'] = $secret;
+    }
+    if ($cloudBaseUrl !== '') {
+        $config['branch']['cloud_base_url'] = $cloudBaseUrl;
+    }
+    if ($branchUuid !== '') {
+        $config['branch']['uuid'] = $branchUuid;
+    }
+
+    return $config;
 }
