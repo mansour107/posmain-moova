@@ -130,6 +130,9 @@ function deliveryProdCreateBaseSchema(mysqli $conn): void
             branch INT NOT NULL DEFAULT 0,
             isdeleted TINYINT(1) NOT NULL DEFAULT 0,
             uuid CHAR(36) NULL,
+            cancelled_at DATETIME NULL,
+            cancelled_by INT NULL,
+            cancellation_reason VARCHAR(255) NULL,
             crtime DATETIME NULL DEFAULT CURRENT_TIMESTAMP,
             mdtime DATETIME NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
@@ -470,6 +473,53 @@ try {
         }
     }
     deliveryProdAssert($foundTerminal, 'delivered order should appear when include_terminal=true');
+
+    // Phase 6b: dispatch cancel voids unpaid delivery order
+    $cancelPhone = '0100' . random_int(1000000, 9999999);
+    $clientService->upsertByPhone($conn, $cancelPhone, 'Cancel Delivery User', 'Heliopolis Block 9');
+    $cancelRequest = [
+        'idempotency_key' => $prefix . ':delivery:cancel',
+        'store_id' => 3,
+        'acc2_id' => 501,
+        'emp_id' => 4,
+        'fund_id' => 51,
+        'pro_serial' => $prefix . '-CANCEL',
+        'pro_date' => date('Y-m-d'),
+        'accural_date' => date('Y-m-d'),
+        'headtotal' => 25,
+        'headdisc' => 0,
+        'headplus' => 15,
+        'headnet' => 40,
+        'delivery_zone_name' => 'Maadi',
+        'delivery_fee' => 15,
+        'delivery_customer_name' => 'Cancel Delivery User',
+        'delivery_customer_phone' => $cancelPhone,
+        'delivery_customer_address' => 'Heliopolis Block 9',
+        'submit' => 'save',
+        'itmname' => [10],
+        'itmqty' => [1],
+        'itmprice' => [25],
+        'itmdisc' => [0],
+        'u_val' => [1],
+    ];
+    $cancelCreate = $mutation->createDeliveryOrder($conn, $cancelRequest, ['user_id' => 7, 'record_outbox' => false]);
+    $cancelOrderId = (int) ($cancelCreate['data']['order_id'] ?? 0);
+    deliveryProdAssert($cancelOrderId > 0, 'cancel fixture order required');
+    $cancelResult = $mutation->cancelDeliveryOrder($conn, [
+        'order_id' => $cancelOrderId,
+        'user_id' => 7,
+        'reason' => 'integration cancel test',
+        'force' => true,
+    ], ['record_outbox' => false]);
+    deliveryProdAssert(($cancelResult['data']['payment_status'] ?? '') === 'voided', 'cancel should return voided payment status');
+    $voidedOrder = $conn->query("SELECT isdeleted, payment_status, order_status, invoice_status FROM ot_head WHERE id = {$cancelOrderId}")->fetch_assoc();
+    deliveryProdAssert((int) ($voidedOrder['isdeleted'] ?? 0) === 1, 'cancel should mark ot_head deleted');
+    deliveryProdAssert($voidedOrder['payment_status'] === 'voided', 'cancel should void payment_status');
+    deliveryProdAssert($voidedOrder['order_status'] === 'cancelled', 'cancel should cancel order_status');
+    $activeLineCount = (int) $conn->query("SELECT COUNT(*) AS c FROM fat_details WHERE fatid = {$cancelOrderId} AND isdeleted = 0")->fetch_assoc()['c'];
+    deliveryProdAssert($activeLineCount === 0, 'cancel should soft-delete order lines');
+    $cancelFulfillment = $conn->query("SELECT delivery_status FROM order_fulfillment WHERE order_id = {$cancelOrderId}")->fetch_assoc();
+    deliveryProdAssert(($cancelFulfillment['delivery_status'] ?? '') === 'cancelled', 'cancel should set fulfillment cancelled');
 
     $pendingCountBefore = $fulfillmentService->countPendingDeliveryOrders($conn);
 

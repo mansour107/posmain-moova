@@ -21,6 +21,7 @@ require_once __DIR__ . '/../../Inventory/InventoryInvoiceBridge.php';
 require_once __DIR__ . '/DeliveryClientService.php';
 require_once __DIR__ . '/DeliveryZoneService.php';
 require_once __DIR__ . '/OrderFulfillmentService.php';
+require_once __DIR__ . '/../../PosOrderService.php';
 
 class PosOrderMutationService
 {
@@ -32,6 +33,7 @@ class PosOrderMutationService
     const SCOPE_ORDER_VOID = 'pos.order.void';
     const SCOPE_TAKEAWAY_CREATE = 'pos.order.create.takeaway';
     const SCOPE_DELIVERY_CREATE = 'pos.order.create.delivery';
+    const SCOPE_DELIVERY_CANCEL = 'pos.order.cancel.delivery';
     const SCOPE_MOOVA_CONFIRM = 'moova.order.confirm';
     const SCOPE_MOOVA_CHANGE = 'moova.order.change';
     const PAYMENT_ROUNDING_TOLERANCE = 0.01;
@@ -106,6 +108,166 @@ class PosOrderMutationService
         }
 
         return $result;
+    }
+
+    public function cancelDeliveryOrder(mysqli $conn, array $request, array $context = []): array
+    {
+        $ownsTransaction = empty($context['in_transaction']) && empty($context['transaction_started']);
+        if ($ownsTransaction) {
+            $conn->begin_transaction();
+        }
+
+        try {
+            $orderId = $this->requiredPositiveInt($request, 'order_id', 'ORDER_ID_REQUIRED');
+            $userId = $this->contextUserId($request, $context);
+            $reason = trim((string) ($request['reason'] ?? $request['cancellation_reason'] ?? ''));
+            if ($reason === '') {
+                $reason = 'delivery_cancelled';
+            }
+            $force = !empty($request['force']) || !empty($context['force']);
+
+            $order = $this->tableOrderService->queryOne($conn, "
+                SELECT id, pro_tybe, order_type, payment_status, invoice_status, order_status,
+                       paid_amount, remaining_amount, isdeleted
+                FROM ot_head
+                WHERE id = ?
+                  AND pro_tybe = 9
+                LIMIT 1
+                FOR UPDATE
+            ", [$orderId]);
+            if (!$order || (int) ($order['isdeleted'] ?? 0) === 1) {
+                throw new RuntimeException('ORDER_NOT_FOUND');
+            }
+            if (strtolower(trim((string) ($order['order_type'] ?? ''))) !== 'delivery') {
+                throw new InvalidArgumentException('ORDER_NOT_DELIVERY');
+            }
+
+            $paymentStatus = strtolower(trim((string) ($order['payment_status'] ?? 'unpaid')));
+            if (in_array($paymentStatus, ['refunded', 'voided'], true)) {
+                throw new RuntimeException('ORDER_ALREADY_CANCELLED');
+            }
+            if ($paymentStatus === 'paid' || (float) ($order['paid_amount'] ?? 0) > self::PAYMENT_ROUNDING_TOLERANCE) {
+                throw new RuntimeException('DELIVERY_CANCEL_PAID_NOT_ALLOWED');
+            }
+
+            $fulfillmentService = new OrderFulfillmentService();
+            $fulfillment = $fulfillmentService->fulfillmentForOrder($conn, $orderId);
+            if (!$fulfillment) {
+                throw new RuntimeException('FULFILLMENT_NOT_FOUND');
+            }
+
+            $currentStatus = (string) ($fulfillment['delivery_status'] ?? 'pending');
+            if ($currentStatus !== 'cancelled') {
+                $allowed = ['pending', 'accepted', 'preparing', 'ready'];
+                if (!in_array($currentStatus, $allowed, true) && !$force) {
+                    throw new InvalidArgumentException('DELIVERY_STATUS_TRANSITION_NOT_ALLOWED');
+                }
+            }
+
+            $channel = strtolower(trim((string) ($fulfillment['order_channel'] ?? '')));
+            $externalOrderId = trim((string) ($fulfillment['external_order_id'] ?? ''));
+            if ($channel === 'moova_delivery' && $externalOrderId !== '') {
+                $scope = [
+                    'tenant' => (int) ($context['tenant'] ?? $request['tenant'] ?? 0),
+                    'branch' => (int) ($context['branch'] ?? $request['branch'] ?? 0),
+                    'user_id' => $userId,
+                ];
+                (new PosOrderService())->cancelMoovaDeliveryOrder($conn, $scope, $orderId, $externalOrderId);
+                $this->finalizeDeliveryOrderVoid($conn, $orderId, $userId, $reason);
+            } else {
+                $recipeLines = $this->loadRecipeOrderLineContexts($conn, $orderId, 'pos', 'delivery', $request, $context);
+                $this->recordRecipeOrderLinesCancelled($conn, $recipeLines, 'delivery_cancelled');
+                $inventoryLines = $this->loadInventoryInvoiceBridgeLines($conn, $orderId);
+                if ($inventoryLines) {
+                    $this->recordInventoryInvoiceBridgeReversalLines(
+                        $conn,
+                        $orderId,
+                        $inventoryLines,
+                        'delivery_cancelled',
+                        'pos',
+                        'delivery',
+                        $request,
+                        $context
+                    );
+                }
+                $this->voidDeliveryOrderHeaderAndLines($conn, $orderId, $userId, $reason);
+            }
+
+            $fulfillmentResult = $fulfillmentService->upsertForOrder($conn, $orderId, [
+                'order_channel' => $fulfillment['order_channel'],
+                'fulfillment_type' => $fulfillment['fulfillment_type'],
+                'external_provider' => $fulfillment['external_provider'],
+                'external_order_id' => $fulfillment['external_order_id'],
+                'customer_name' => $fulfillment['customer_name'],
+                'customer_phone' => $fulfillment['customer_phone'],
+                'customer_address' => $fulfillment['customer_address'],
+                'delivery_client_id' => $fulfillment['delivery_client_id'] ?? null,
+                'delivery_zone' => $fulfillment['delivery_zone'],
+                'delivery_fee' => $fulfillment['delivery_fee'],
+                'delivery_status' => 'cancelled',
+                'promised_at' => $fulfillment['promised_at'],
+                'metadata_json' => is_array($fulfillment['metadata'] ?? null) ? $fulfillment['metadata'] : [],
+            ], ['require_table' => false]);
+
+            $this->recordOrderEvent($conn, $orderId, 'order.cancelled', $context['event_source'] ?? 'delivery_dispatch', $context, [
+                'order_type' => 'delivery',
+                'delivery_status_before' => $currentStatus,
+                'delivery_status_after' => 'cancelled',
+                'reason' => $reason,
+                'order_channel' => $channel,
+            ]);
+
+            if ($ownsTransaction) {
+                $conn->commit();
+            }
+
+            return [
+                'success' => true,
+                'code' => 'OK',
+                'message' => 'DELIVERY_ORDER_CANCELLED',
+                'data' => [
+                    'order_id' => $orderId,
+                    'fulfillment' => $fulfillmentResult,
+                    'payment_status' => 'voided',
+                    'invoice_status' => 'cancelled',
+                    'order_status' => 'cancelled',
+                ],
+            ];
+        } catch (Throwable $exception) {
+            if ($ownsTransaction) {
+                $conn->rollback();
+            }
+
+            throw $exception;
+        }
+    }
+
+    public function resolveDeliveryPostedTotals(mysqli $conn, array $request): array
+    {
+        $headDiscount = (float) ($request['headdisc'] ?? $request['discount'] ?? 0);
+        $zoneResolved = (new DeliveryZoneService())->resolvePostedZone($conn, $request);
+        $deliveryFee = max(0, (float) ($zoneResolved['delivery_fee'] ?? 0));
+        $deliveryZoneName = trim((string) ($zoneResolved['delivery_zone_name'] ?? ''));
+        $headPlus = (float) ($request['headplus'] ?? $request['plus'] ?? 0);
+        if ($deliveryFee > $headPlus) {
+            $headPlus = $deliveryFee;
+        }
+
+        $lineSubtotal = $this->sumPostedItemSubtotal($request);
+        $headTotal = $lineSubtotal > 0
+            ? $lineSubtotal
+            : (float) ($request['headtotal'] ?? $request['total'] ?? 0);
+        $headNet = max(0, $headTotal - $headDiscount + $headPlus);
+
+        return [
+            'headtotal' => $headTotal,
+            'headdisc' => $headDiscount,
+            'headplus' => $headPlus,
+            'headnet' => $headNet,
+            'delivery_fee' => $deliveryFee,
+            'delivery_zone_name' => $deliveryZoneName,
+            'delivery_zone_id' => $zoneResolved['delivery_zone_id'] ?? null,
+        ];
     }
 
     public function reversePaidOrder(mysqli $conn, array $request, array $context = []): array
@@ -607,31 +769,12 @@ class PosOrderMutationService
         $headTotal = (float) ($request['headtotal'] ?? $request['total'] ?? 0);
         $headDiscount = (float) ($request['headdisc'] ?? $request['discount'] ?? 0);
         $this->requireDiscountApprovalIfNeeded($conn, null, $headDiscount, $request, $context);
-        $zoneResolved = (new DeliveryZoneService())->resolvePostedZone($conn, $request);
-        $deliveryFee = max(0, (float) ($zoneResolved['delivery_fee'] ?? 0));
-        $deliveryZoneName = trim((string) ($zoneResolved['delivery_zone_name'] ?? ''));
-        $headPlus = (float) ($request['headplus'] ?? $request['plus'] ?? 0);
-        if ($deliveryFee > $headPlus) {
-            $headPlus = $deliveryFee;
-        }
-
-        $lineSubtotal = $this->sumPostedItemSubtotal($request);
-        if ($lineSubtotal > 0) {
-            $headTotal = $lineSubtotal;
-        }
-
-        $computedNet = max(0, $headTotal - $headDiscount + $headPlus);
-        $submittedNet = null;
-        if (array_key_exists('headnet', $request) || array_key_exists('net', $request)) {
-            $submittedNet = (float) ($request['headnet'] ?? $request['net'] ?? 0);
-        }
-        if ($lineSubtotal > 0) {
-            $headNet = $computedNet;
-        } elseif ($deliveryFee > 0 || $submittedNet === null || $submittedNet + 0.009 < $computedNet) {
-            $headNet = $computedNet;
-        } else {
-            $headNet = $submittedNet;
-        }
+        $resolvedTotals = $this->resolveDeliveryPostedTotals($conn, $request);
+        $deliveryFee = (float) $resolvedTotals['delivery_fee'];
+        $deliveryZoneName = (string) $resolvedTotals['delivery_zone_name'];
+        $headPlus = (float) $resolvedTotals['headplus'];
+        $headTotal = (float) $resolvedTotals['headtotal'];
+        $headNet = (float) $resolvedTotals['headnet'];
         if ($headNet < 0) {
             throw new InvalidArgumentException('PAYMENT_AMOUNT_INVALID');
         }
@@ -2637,5 +2780,40 @@ class PosOrderMutationService
         }
 
         return $userId;
+    }
+
+    private function voidDeliveryOrderHeaderAndLines(mysqli $conn, int $orderId, int $userId, string $reason): void
+    {
+        $this->tableOrderService->execute($conn, "
+            UPDATE ot_head
+            SET order_status = 'cancelled',
+                invoice_status = 'cancelled',
+                payment_status = 'voided',
+                isdeleted = 1,
+                cancelled_at = NOW(),
+                cancelled_by = ?,
+                cancellation_reason = ?
+            WHERE id = ?
+              AND pro_tybe = 9
+        ", [$userId, $reason, $orderId]);
+
+        $this->tableOrderService->execute($conn, "
+            UPDATE fat_details
+            SET isdeleted = 1
+            WHERE fatid = ?
+        ", [$orderId]);
+    }
+
+    private function finalizeDeliveryOrderVoid(mysqli $conn, int $orderId, int $userId, string $reason): void
+    {
+        $this->tableOrderService->execute($conn, "
+            UPDATE ot_head
+            SET payment_status = 'voided',
+                cancelled_at = NOW(),
+                cancelled_by = ?,
+                cancellation_reason = ?
+            WHERE id = ?
+              AND pro_tybe = 9
+        ", [$userId, $reason, $orderId]);
     }
 }

@@ -27,6 +27,9 @@ deliveryValidationAssert(strpos(file_get_contents($root . '/classes/Pos/Service/
 deliveryValidationAssert(strpos(file_get_contents($root . '/classes/Pos/Service/DeliveryZoneService.php'), 'resolvePostedZone') !== false, 'delivery zone fee should resolve server-side');
 deliveryValidationAssert(strpos(file_get_contents($root . '/classes/Pos/Service/PosOrderMutationService.php'), 'qty * ($price - $discount)') !== false, 'line subtotal should apply per-unit discount');
 deliveryValidationAssert(strpos(file_get_contents($root . '/delivery_board.php'), "require_permission('delivery.dispatch'") !== false && strpos(file_get_contents($root . '/delivery_board.php'), "include('includes/header.php')") !== false, 'delivery board should guard before header include');
+deliveryValidationAssert(strpos(file_get_contents($root . '/ajax/delivery_status_update.php'), 'cancelDeliveryOrder') !== false, 'delivery cancel should void through cancelDeliveryOrder');
+deliveryValidationAssert(strpos(file_get_contents($root . '/classes/Pos/Service/PosOrderMutationService.php'), 'resolveDeliveryPostedTotals') !== false, 'delivery edit should resolve posted totals server-side');
+deliveryValidationAssert(strpos(file_get_contents($root . '/do/doedit_invoice.php'), 'resolveDeliveryPostedTotals') !== false, 'doedit_invoice should harden delivery totals');
 
 echo "delivery_validation_contract_test: OK\n";
 

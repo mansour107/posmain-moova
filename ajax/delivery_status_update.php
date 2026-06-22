@@ -3,6 +3,7 @@ include(__DIR__ . '/../includes/ajax_header.php');
 require_once __DIR__ . '/../includes/csrf.php';
 require_once __DIR__ . '/../includes/auth_guard.php';
 require_once __DIR__ . '/../classes/Pos/Service/OrderFulfillmentService.php';
+require_once __DIR__ . '/../classes/Pos/Service/PosOrderMutationService.php';
 
 header('Content-Type: application/json; charset=utf-8');
 
@@ -34,6 +35,33 @@ if ($orderId < 1 || $newStatus === '') {
 }
 
 try {
+    if ($newStatus === 'cancelled') {
+        $mutation = new PosOrderMutationService();
+        $conn->begin_transaction();
+        try {
+            $cancelResult = $mutation->cancelDeliveryOrder($conn, [
+                'order_id' => $orderId,
+                'reason' => trim((string) ($_POST['reason'] ?? '')) ?: 'delivery_dispatch_cancelled',
+                'user_id' => (int) ($_SESSION['userid'] ?? 0),
+                'force' => !empty($_POST['force']),
+            ], [
+                'in_transaction' => true,
+                'force' => !empty($_POST['force']),
+                'event_source' => 'delivery_dispatch',
+            ]);
+            $conn->commit();
+            echo json_encode([
+                'success' => true,
+                'fulfillment' => $cancelResult['data']['fulfillment'] ?? null,
+                'cancel' => $cancelResult['data'] ?? null,
+            ], JSON_UNESCAPED_UNICODE);
+        } catch (Throwable $inner) {
+            $conn->rollback();
+            throw $inner;
+        }
+        exit;
+    }
+
     $service = new OrderFulfillmentService();
     $result = $service->transitionDeliveryStatus($conn, $orderId, $newStatus, [
         'actor_user_id' => (int) ($_SESSION['userid'] ?? 0),

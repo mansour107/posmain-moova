@@ -26,6 +26,8 @@ $usid = $_SESSION['userid'];
 require_once('../classes/InvoiceElementFactory.php');
 require_once('../classes/Recipe/LegacyInvoiceRecipeLifecycleBridge.php');
 require_once('../classes/Inventory/InventoryInvoiceBridge.php');
+require_once('../classes/Pos/Service/PosOrderMutationService.php');
+require_once('../classes/Pos/Service/OrderFulfillmentService.php');
 
 // تعريف ثوابت أنواع الفواتير
 define('INVOICE_TYPES', [
@@ -200,6 +202,41 @@ try {
             $recipeEditOrderType = 'delivery';
         }
         $recipeLifecycleBridge->assertLegacyEditAllowed($conn, (int) $ot_id);
+    }
+
+    $deliveryV2Enabled = function_exists('posmain_bool')
+        ? posmain_bool(getenv('POSMAIN_DELIVERY_V2') !== false ? getenv('POSMAIN_DELIVERY_V2') : '1', true)
+        : true;
+    if (
+        (int) $pro_tybe === INVOICE_TYPES['POS']
+        && strtolower(trim((string) ($rowop['order_type'] ?? ''))) === 'delivery'
+        && $deliveryV2Enabled
+    ) {
+        $resolvedTotals = (new PosOrderMutationService())->resolveDeliveryPostedTotals($conn, $_POST);
+        $headtotal = (float) $resolvedTotals['headtotal'];
+        $headdisc = (float) $resolvedTotals['headdisc'];
+        $headplus = (float) $resolvedTotals['headplus'];
+        $headnet = (float) $resolvedTotals['headnet'];
+
+        $fulfillmentService = new OrderFulfillmentService();
+        $existingFulfillment = $fulfillmentService->fulfillmentForOrder($conn, (int) $ot_id);
+        if (is_array($existingFulfillment)) {
+            $fulfillmentService->upsertForOrder($conn, (int) $ot_id, [
+                'order_channel' => $existingFulfillment['order_channel'],
+                'fulfillment_type' => $existingFulfillment['fulfillment_type'],
+                'external_provider' => $existingFulfillment['external_provider'],
+                'external_order_id' => $existingFulfillment['external_order_id'],
+                'customer_name' => $existingFulfillment['customer_name'],
+                'customer_phone' => $existingFulfillment['customer_phone'],
+                'customer_address' => $existingFulfillment['customer_address'],
+                'delivery_client_id' => $existingFulfillment['delivery_client_id'] ?? null,
+                'delivery_zone' => (string) ($resolvedTotals['delivery_zone_name'] ?? $existingFulfillment['delivery_zone']),
+                'delivery_fee' => (float) $resolvedTotals['delivery_fee'],
+                'delivery_status' => $existingFulfillment['delivery_status'],
+                'promised_at' => $existingFulfillment['promised_at'],
+                'metadata_json' => is_array($existingFulfillment['metadata'] ?? null) ? $existingFulfillment['metadata'] : [],
+            ], ['require_table' => false]);
+        }
     }
     
     // حساب النسب المئوية
