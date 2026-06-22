@@ -2,6 +2,8 @@
 <?php include('includes/navbar.php'); ?>
 <?php include('includes/sidebar.php'); ?>
 <?php
+require_once __DIR__ . '/includes/auth_guard.php';
+require_permission('delivery.zones.manage', $conn);
 require_once __DIR__ . '/includes/csrf.php';
 $zoneCsrf = csrf_token('delivery_zones_write');
 $zones = [];

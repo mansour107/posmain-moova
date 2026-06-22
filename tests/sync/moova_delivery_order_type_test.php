@@ -23,6 +23,9 @@ moovaDeliveryTypeAssert(!isset($deliveryPayload['tableId']) && !isset($deliveryP
 moovaDeliveryTypeAssert(strpos($posOrderSource, 'createOrMergeMoovaDeliveryOrder') !== false, 'PosOrderService should include delivery order path');
 moovaDeliveryTypeAssert(strpos($posOrderSource, "NULL, 'delivery'") !== false, 'Moova delivery header should use order_type delivery');
 moovaDeliveryTypeAssert(strpos($posOrderSource, 'isMoovaDeliveryPayload') !== false, 'PosOrderService should detect Moova delivery payloads');
+moovaDeliveryTypeAssert(strpos($posOrderSource, 'replaceMoovaDeliveryOrder') !== false, 'PosOrderService should support Moova delivery edits');
+moovaDeliveryTypeAssert(strpos($posOrderSource, 'cancelMoovaDeliveryOrder') !== false, 'PosOrderService should support Moova delivery cancellations');
+moovaDeliveryTypeAssert(strpos($posOrderSource, 'resolveDeliveryFeeForOrder') !== false, 'accounting refresh should resolve delivery fees');
 
 echo "moova_delivery_order_type_test: OK\n";
 

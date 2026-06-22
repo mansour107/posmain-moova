@@ -19,6 +19,11 @@ deliveryValidationAssert(strpos($posBarcodeJs, "orderMode === '3'") !== false, '
 deliveryValidationAssert(strpos($posBarcodeJs, 'posDeliveryIsReadyForSubmit') !== false, 'validatePOSForm should call delivery readiness helper');
 deliveryValidationAssert(strpos($doaddInvoice, 'يجب إدخال بيانات عميل الدليفري') !== false, 'backend should require delivery customer fields');
 deliveryValidationAssert(strpos($doaddInvoice, 'createDeliveryOrder') !== false, 'delivery orders should route through createDeliveryOrder when v2 enabled');
+deliveryValidationAssert(strpos(file_get_contents($root . '/classes/Pos/Service/PosOrderMutationService.php'), 'sumPostedItemSubtotal') !== false, 'delivery create should recompute net from line subtotal and fee');
+deliveryValidationAssert(strpos(file_get_contents($root . '/ajax/delivery_status_update.php'), "require_permission('delivery.dispatch'") !== false || strpos(file_get_contents($root . '/ajax/delivery_status_update.php'), "auth_guard_has_permission('delivery.dispatch'") !== false, 'delivery status API should require dispatch permission');
+deliveryValidationAssert(strpos(file_get_contents($root . '/do/doedit_delivery_zone.php'), "require_permission('delivery.zones.manage'") !== false, 'delivery zone writes should require zones permission');
+deliveryValidationAssert(strpos(file_get_contents($root . '/classes/PosOrderService.php'), 'replaceMoovaDeliveryOrder') !== false, 'Moova delivery edits should have dedicated replace path');
+deliveryValidationAssert(strpos(file_get_contents($root . '/classes/PosOrderService.php'), 'fat_plus = ?') !== false, 'accounting refresh should preserve delivery plus amounts');
 
 echo "delivery_validation_contract_test: OK\n";
 

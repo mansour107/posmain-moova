@@ -273,6 +273,40 @@ try {
     }
     deliveryProdAssert($rejected, 'createDeliveryOrder must reject missing customer fields');
 
+    // Phase 1/3: server recomputes net when delivery fee is present but headnet is stale
+    $tamperedPhone = '0100' . random_int(1000000, 9999999);
+    $clientService->upsertByPhone($conn, $tamperedPhone, 'Tampered Net User', 'Zone 9');
+    $tamperedRequest = [
+        'idempotency_key' => $prefix . ':delivery:tampered-net',
+        'store_id' => 3,
+        'acc2_id' => 501,
+        'emp_id' => 4,
+        'fund_id' => 51,
+        'pro_serial' => $prefix . '-TAMPER',
+        'pro_date' => date('Y-m-d'),
+        'accural_date' => date('Y-m-d'),
+        'headtotal' => 35,
+        'headdisc' => 0,
+        'headplus' => 0,
+        'headnet' => 35,
+        'delivery_fee' => 15.0,
+        'delivery_zone_name' => 'Maadi',
+        'delivery_customer_name' => 'Tampered Net User',
+        'delivery_customer_phone' => $tamperedPhone,
+        'delivery_customer_address' => 'Zone 9',
+        'submit' => 'save',
+        'itmname' => [10, 11],
+        'itmqty' => [1, 1],
+        'itmprice' => [25, 10],
+        'itmdisc' => [0, 0],
+        'u_val' => [1, 1],
+    ];
+    $tamperedResult = $mutation->createDeliveryOrder($conn, $tamperedRequest, ['user_id' => 7, 'record_outbox' => false]);
+    $tamperedOrderId = (int) ($tamperedResult['data']['order_id'] ?? 0);
+    $tamperedOrder = $conn->query("SELECT fat_plus, fat_net FROM ot_head WHERE id = {$tamperedOrderId}")->fetch_assoc();
+    deliveryProdAssert(abs((float) $tamperedOrder['fat_plus'] - 15.0) < 0.01, 'tampered request should still persist delivery fee in fat_plus');
+    deliveryProdAssert(abs((float) $tamperedOrder['fat_net'] - 50.0) < 0.01, 'tampered request should recompute fat_net with delivery fee');
+
     // Phase 3/5: save-only delivery with zone fee
     $deliveryFee = 15.0;
     $itemTotal = 35.0;

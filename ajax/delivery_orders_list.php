@@ -1,8 +1,11 @@
 <?php
 include(__DIR__ . '/../includes/ajax_header.php');
+require_once __DIR__ . '/../includes/auth_guard.php';
 require_once __DIR__ . '/../classes/Pos/Service/OrderFulfillmentService.php';
 
 header('Content-Type: application/json; charset=utf-8');
+
+require_permission('delivery.dispatch', $conn);
 
 try {
     $service = new OrderFulfillmentService();

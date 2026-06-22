@@ -611,7 +611,22 @@ class PosOrderMutationService
         if ($deliveryFee > $headPlus) {
             $headPlus = $deliveryFee;
         }
-        $headNet = (float) ($request['headnet'] ?? $request['net'] ?? max(0, $headTotal - $headDiscount + $headPlus));
+
+        $lineSubtotal = $this->sumPostedItemSubtotal($request);
+        if ($lineSubtotal > 0) {
+            $headTotal = $lineSubtotal;
+        }
+
+        $computedNet = max(0, $headTotal - $headDiscount + $headPlus);
+        $submittedNet = null;
+        if (array_key_exists('headnet', $request) || array_key_exists('net', $request)) {
+            $submittedNet = (float) ($request['headnet'] ?? $request['net'] ?? 0);
+        }
+        if ($deliveryFee > 0 || $submittedNet === null || $submittedNet + 0.009 < $computedNet) {
+            $headNet = $computedNet;
+        } else {
+            $headNet = $submittedNet;
+        }
         if ($headNet < 0) {
             throw new InvalidArgumentException('PAYMENT_AMOUNT_INVALID');
         }
@@ -818,6 +833,26 @@ class PosOrderMutationService
         }
 
         return $items;
+    }
+
+    private function sumPostedItemSubtotal(array $request): float
+    {
+        if (!isset($request['itmname']) || !is_array($request['itmname'])) {
+            return 0.0;
+        }
+
+        $total = 0.0;
+        foreach ($request['itmname'] as $index => $itemId) {
+            if ((int) $itemId <= 0) {
+                continue;
+            }
+            $qty = (float) ($request['itmqty'][$index] ?? 1);
+            $price = (float) ($request['itmprice'][$index] ?? 0);
+            $discount = (float) ($request['itmdisc'][$index] ?? 0);
+            $total += max(0, ($qty * $price) - $discount);
+        }
+
+        return round($total, 4);
     }
 
     private function calculateTakeawayPayment(float $headNet, float $paidCash, float $paidBank): array

@@ -75,9 +75,11 @@ try {
     exit(1);
 }
 
-$head = $conn->query("SELECT order_type, table_id FROM ot_head WHERE id = {$orderId}")->fetch_assoc();
+$head = $conn->query("SELECT order_type, table_id, fat_plus, fat_net FROM ot_head WHERE id = {$orderId}")->fetch_assoc();
 deliveryKody2Assert($head['order_type'] === 'delivery', 'moova delivery must set ot_head.order_type=delivery');
 deliveryKody2Assert($head['table_id'] === null || (int) $head['table_id'] === 0, 'moova delivery must not bind table');
+deliveryKody2Assert(abs((float) $head['fat_plus'] - 12.5) < 0.01, 'moova delivery fat_plus should survive accounting refresh');
+deliveryKody2Assert(abs((float) $head['fat_net'] - 12.5) > 0.01, 'moova delivery fat_net should include delivery fee');
 
 $row = $fulfillment->fulfillmentForOrder($conn, $orderId);
 deliveryKody2Assert(is_array($row), 'fulfillment row required');

@@ -392,6 +392,175 @@ class PosOrderService
         ];
     }
 
+    public function isDeliveryMoovaOrder(mysqli $conn, int $tenant, int $branch, int $orderId): bool
+    {
+        $order = $this->findMoovaOrderForUpdate($conn, $tenant, $branch, $orderId);
+        if (!$order) {
+            return false;
+        }
+
+        return strtolower(trim((string) ($order['order_type'] ?? ''))) === 'delivery';
+    }
+
+    public function replaceMoovaDeliveryOrder(mysqli $conn, array $scope, $orderId, array $payload)
+    {
+        $tenant = (int) ($scope['tenant'] ?? 0);
+        $branch = (int) ($scope['branch'] ?? 0);
+        $userId = (int) ($scope['user_id'] ?? 1);
+        if ($userId < 1) {
+            $userId = 1;
+        }
+
+        $moovaOrderId = trim((string) ($payload['moovaOrderId'] ?? $payload['orderId'] ?? $payload['cofeOrderId'] ?? ''));
+        if ($moovaOrderId === '') {
+            throw new Exception('MOOVA_ORDER_REQUIRED');
+        }
+
+        $order = $this->findMoovaOrderForUpdate($conn, $tenant, $branch, (int) $orderId);
+        $this->assertEditableMoovaDeliveryOrder($order);
+        $existingLines = $this->getMoovaOrderLineStateSnapshot($conn, $tenant, $branch, (int) $order['id'], $moovaOrderId, true);
+        if (!$existingLines || empty($existingLines['lines'])) {
+            throw new Exception('POS_ORDER_LINES_UNMAPPED');
+        }
+        $expectedStateHash = trim((string) ($payload['expectedStateHash'] ?? ''));
+        if ($expectedStateHash !== '' && !hash_equals($expectedStateHash, (string) $existingLines['hash'])) {
+            throw new Exception('POS_ORDER_LINES_CHANGED');
+        }
+
+        $defaults = $this->loadTenantDefaults($conn, $tenant, $branch);
+        $incomingItems = $this->resolveIncomingItems($conn, $tenant, $branch, $payload['items'] ?? []);
+        $lines = $this->buildReplacementLines($incomingItems);
+        if (!$lines) {
+            throw new Exception('NO_VALID_ITEMS');
+        }
+
+        $deliveryFee = $this->moovaDeliveryFeeFromPayload($payload);
+        $proDate = date('Y-m-d');
+        $proId = (int) ($order['pro_id'] ?: $order['id']);
+
+        $this->recordRecipeOrderLinesCancelled(
+            $conn,
+            $this->recipeContextsFromMoovaMappedLines(
+                $conn,
+                $tenant,
+                $branch,
+                $scope,
+                $payload,
+                $moovaOrderId,
+                (int) $order['id'],
+                $existingLines['lines'] ?? []
+            ),
+            'moova_order_replaced'
+        );
+        $this->recordMoovaInventoryBridgeReversalLines($conn, $tenant, $branch, $scope, $payload, $moovaOrderId, (int) $order['id'], $existingLines['lines'] ?? [], 'moova_order_replaced');
+        $this->deactivateMoovaMappedLines($conn, $tenant, $branch, (int) $order['id'], $moovaOrderId, 'replaced');
+        $insertedLines = $this->upsertOrderDetails($conn, $tenant, $branch, (int) $order['id'], $lines, $defaults['store_id']);
+        $moovaMappedLines = $this->insertMoovaLineMappings($conn, $tenant, $branch, $moovaOrderId, (int) $order['id'], $insertedLines);
+        $this->recordMoovaInventoryBridgeLines($conn, $tenant, $branch, $scope, $payload, $moovaOrderId, (int) $order['id'], $moovaMappedLines);
+        $this->registerExternalLineIdentities(
+            $conn,
+            $tenant,
+            $branch,
+            $scope,
+            $payload,
+            $moovaOrderId,
+            (int) $order['id'],
+            $incomingItems,
+            $insertedLines,
+            (int) $defaults['store_id']
+        );
+        $this->recordRecipeOrderLinesAdded(
+            $conn,
+            $this->recipeContextsFromMoovaIncomingItems(
+                $conn,
+                $tenant,
+                $branch,
+                $scope,
+                $payload,
+                $moovaOrderId,
+                (int) $order['id'],
+                $incomingItems,
+                $insertedLines
+            )
+        );
+        $receiptState = $this->refreshReceiptTotalsAndAccounting($conn, $tenant, $branch, (int) $order['id'], $defaults, $proDate, $userId, [
+            'delivery_fee' => $deliveryFee,
+        ]);
+        $this->logProcess($conn, 'edit moova delivery order');
+        $snapshot = $this->getMoovaOrderLineStateSnapshot($conn, $tenant, $branch, (int) $order['id'], $moovaOrderId);
+
+        return [
+            'order_id' => (int) $order['id'],
+            'pro_id' => $proId,
+            'table_id' => 0,
+            'table_name' => '',
+            'total' => $receiptState['total'],
+            'discount' => $receiptState['discount'],
+            'net' => $receiptState['net'],
+            'profit' => $receiptState['profit'],
+            'journal_head_id' => $receiptState['journal_head_id'],
+            'state_hash' => $snapshot['hash'] ?? null,
+            'state_payload' => $snapshot['payload'] ?? null,
+        ];
+    }
+
+    public function cancelMoovaDeliveryOrder(mysqli $conn, array $scope, $orderId, $moovaOrderId = null, $expectedStateHash = null)
+    {
+        $tenant = (int) ($scope['tenant'] ?? 0);
+        $branch = (int) ($scope['branch'] ?? 0);
+        $userId = (int) ($scope['user_id'] ?? 1);
+        if ($userId < 1) {
+            $userId = 1;
+        }
+        $moovaOrderId = trim((string) $moovaOrderId);
+        if ($moovaOrderId === '') {
+            throw new Exception('MOOVA_ORDER_REQUIRED');
+        }
+
+        $order = $this->findMoovaOrderForUpdate($conn, $tenant, $branch, (int) $orderId);
+        $this->assertEditableMoovaDeliveryOrder($order);
+        $existingLines = $this->getMoovaOrderLineStateSnapshot($conn, $tenant, $branch, (int) $order['id'], $moovaOrderId, true);
+        if (!$existingLines || empty($existingLines['lines'])) {
+            throw new Exception('POS_ORDER_LINES_UNMAPPED');
+        }
+        $expectedStateHash = trim((string) $expectedStateHash);
+        if ($expectedStateHash !== '' && !hash_equals($expectedStateHash, (string) $existingLines['hash'])) {
+            throw new Exception('POS_ORDER_LINES_CHANGED');
+        }
+
+        $defaults = $this->loadTenantDefaults($conn, $tenant, $branch);
+        $this->recordRecipeOrderLinesCancelled(
+            $conn,
+            $this->recipeContextsFromMoovaMappedLines(
+                $conn,
+                $tenant,
+                $branch,
+                $scope,
+                ['moovaOrderId' => $moovaOrderId],
+                $moovaOrderId,
+                (int) $order['id'],
+                $existingLines['lines'] ?? []
+            ),
+            'moova_order_cancelled'
+        );
+        $this->recordMoovaInventoryBridgeReversalLines($conn, $tenant, $branch, $scope, ['moovaOrderId' => $moovaOrderId], $moovaOrderId, (int) $order['id'], $existingLines['lines'] ?? [], 'moova_order_cancelled');
+        $this->deactivateMoovaMappedLines($conn, $tenant, $branch, (int) $order['id'], $moovaOrderId, 'cancelled');
+        $receiptState = $this->refreshReceiptTotalsAndAccounting($conn, $tenant, $branch, (int) $order['id'], $defaults, date('Y-m-d'), $userId);
+        $this->logProcess($conn, 'cancel moova delivery order');
+
+        return [
+            'order_id' => (int) $order['id'],
+            'table_id' => 0,
+            'table_name' => '',
+            'total' => $receiptState['total'],
+            'discount' => $receiptState['discount'],
+            'net' => $receiptState['net'],
+            'profit' => $receiptState['profit'],
+            'state_hash' => null,
+            'state_payload' => null,
+        ];
+    }
+
     public function cancelMoovaTableOrder(mysqli $conn, array $scope, $orderId, $moovaOrderId = null, $expectedStateHash = null)
     {
         $tenant = (int) ($scope['tenant'] ?? 0);
@@ -912,7 +1081,9 @@ class PosOrderService
                 )
             );
         }
-        $receiptState = $this->refreshReceiptTotalsAndAccounting($conn, $tenant, $branch, $orderId, $defaults, $proDate, $userId);
+        $receiptState = $this->refreshReceiptTotalsAndAccounting($conn, $tenant, $branch, $orderId, $defaults, $proDate, $userId, [
+            'delivery_fee' => $deliveryFee,
+        ]);
         $this->logProcess($conn, 'add delivery');
         $lineSnapshot = $moovaOrderId === ''
             ? null
@@ -1293,6 +1464,49 @@ class PosOrderService
         if ((float) ($order['fat_net'] ?? 0) <= 0) {
             throw new Exception('POS_ORDER_NOT_ACTIVE');
         }
+    }
+
+    private function assertEditableMoovaDeliveryOrder($order)
+    {
+        if (!$order) {
+            throw new Exception('POS_ORDER_NOT_FOUND');
+        }
+        if ((int) ($order['isdeleted'] ?? 0) === 1) {
+            throw new Exception('POS_ORDER_DELETED');
+        }
+        if ((int) ($order['pro_tybe'] ?? 0) !== self::TYPE_POS
+            || strtolower(trim((string) ($order['order_type'] ?? ''))) !== 'delivery') {
+            throw new Exception('POS_ORDER_NOT_DELIVERY');
+        }
+        $paymentStatus = strtolower(trim((string) ($order['payment_status'] ?? '')));
+        $paidAmount = (float) ($order['paid_amount'] ?? 0);
+        if (($paymentStatus !== '' && $paymentStatus !== 'unpaid') || $paidAmount > 0) {
+            throw new Exception('POS_ORDER_PAID');
+        }
+        if ((float) ($order['fat_net'] ?? 0) <= 0) {
+            throw new Exception('POS_ORDER_NOT_ACTIVE');
+        }
+    }
+
+    private function moovaDeliveryFeeFromPayload(array $payload): float
+    {
+        return max(0, (float) ($payload['deliveryFee'] ?? $payload['delivery_fee'] ?? 0));
+    }
+
+    private function resolveDeliveryFeeForOrder(mysqli $conn, int $orderId): float
+    {
+        $row = $this->queryOne($conn, "
+            SELECT delivery_fee
+            FROM order_fulfillment
+            WHERE order_id = ?
+            LIMIT 1
+        ", [$orderId]);
+
+        if (!$row) {
+            return 0.0;
+        }
+
+        return max(0, (float) ($row['delivery_fee'] ?? 0));
     }
 
     private function findTableById(mysqli $conn, $tableId)
@@ -1950,10 +2164,10 @@ class PosOrderService
         ", [$status, (int) $tenant, (int) $branch, (int) $orderId, $moovaOrderId]);
     }
 
-    private function refreshReceiptTotalsAndAccounting(mysqli $conn, $tenant, $branch, $orderId, array $defaults, $proDate, $userId)
+    private function refreshReceiptTotalsAndAccounting(mysqli $conn, $tenant, $branch, $orderId, array $defaults, $proDate, $userId, array $options = [])
     {
         $order = $this->queryOne($conn, "
-            SELECT id, pro_id
+            SELECT id, pro_id, order_type
             FROM ot_head
             WHERE id = ?
               AND tenant = ?
@@ -2015,14 +2229,29 @@ class PosOrderService
         }
 
         $totals = $this->calculateTotalsFromDetailRows($activeLines);
+        $plusAmount = 0.0;
+        if (strtolower(trim((string) ($order['order_type'] ?? ''))) === 'delivery') {
+            if (array_key_exists('delivery_fee', $options)) {
+                $plusAmount = max(0, (float) $options['delivery_fee']);
+            } else {
+                $plusAmount = $this->resolveDeliveryFeeForOrder($conn, (int) $orderId);
+            }
+            if ($plusAmount > 0) {
+                $totals['plus'] = $plusAmount;
+                $totals['net'] = ($totals['net'] ?? 0) + $plusAmount;
+            }
+        }
+        $plusPercent = ($totals['total'] ?? 0) > 0 && $plusAmount > 0
+            ? round(($plusAmount / $totals['total']) * 100, 2)
+            : 0.0;
         $this->execute($conn, "
             UPDATE ot_head
             SET pro_value = ?,
                 fat_total = ?,
                 fat_disc = ?,
                 fat_disc_per = ?,
-                fat_plus = 0,
-                fat_plus_per = 0,
+                fat_plus = ?,
+                fat_plus_per = ?,
                 fat_tax = 0,
                 fat_tax_per = 0,
                 fat_net = ?,
@@ -2041,6 +2270,8 @@ class PosOrderService
             $totals['total'],
             $totals['discount'],
             $totals['disc_percent'],
+            $plusAmount,
+            $plusPercent,
             $totals['net'],
             $totals['net'],
             (int) $userId,

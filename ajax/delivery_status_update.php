@@ -13,6 +13,14 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 }
 
 require_csrf('delivery_dispatch');
+require_login();
+if (!empty($_POST['force'])) {
+    if (!auth_guard_has_permission('pos.cancel.unpaid', $conn)) {
+        deny_json_or_redirect('PERMISSION_DENIED', 403);
+    }
+} elseif (!auth_guard_has_permission('delivery.dispatch', $conn)) {
+    deny_json_or_redirect('PERMISSION_DENIED', 403);
+}
 
 $orderId = (int) ($_POST['order_id'] ?? 0);
 $newStatus = trim((string) ($_POST['delivery_status'] ?? ''));

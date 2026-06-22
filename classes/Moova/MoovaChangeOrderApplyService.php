@@ -113,25 +113,35 @@ class MoovaChangeOrderApplyService
         }
 
         try {
+            $posOrderId = (int) ($orderLink['pos_order_id'] ?? 0);
+            $isDelivery = $posOrderId > 0
+                && $this->posOrders->isDeliveryMoovaOrder($conn, $tenant, $branch, $posOrderId);
+            $scope = [
+                'tenant' => $tenant,
+                'branch' => $branch,
+                'user_id' => $userId,
+                'branch_uuid' => $branchUuid,
+            ];
+
             if ($action === 'edit') {
                 $payload['expectedStateHash'] = (string) $orderLink['last_pos_state_hash'];
-                $result = $this->posOrders->replaceMoovaTableOrder($conn, [
-                    'tenant' => $tenant,
-                    'branch' => $branch,
-                    'user_id' => $userId,
-                    'branch_uuid' => $branchUuid,
-                ], (int) $orderLink['pos_order_id'], $payload);
-                $this->fulfillment->upsertMoovaFulfillment($conn, (int) $orderLink['pos_order_id'], $payload);
+                if ($isDelivery) {
+                    $result = $this->posOrders->replaceMoovaDeliveryOrder($conn, $scope, $posOrderId, $payload);
+                } else {
+                    $result = $this->posOrders->replaceMoovaTableOrder($conn, $scope, $posOrderId, $payload);
+                }
+                $this->fulfillment->upsertMoovaFulfillment($conn, $posOrderId, $payload, [
+                    'require_table' => !$isDelivery,
+                ]);
                 $providerStatus = 'edited';
                 $response = $this->editResponse($result, $moovaOrderId, $idempotencyKey, $providerStatus);
                 $this->updateOrderLinkState($conn, (int) $orderLink['id'], $providerStatus, $result['state_hash'] ?? null, $result['state_payload'] ?? null);
             } else {
-                $result = $this->posOrders->cancelMoovaTableOrder($conn, [
-                    'tenant' => $tenant,
-                    'branch' => $branch,
-                    'user_id' => $userId,
-                    'branch_uuid' => $branchUuid,
-                ], (int) $orderLink['pos_order_id'], $moovaOrderId, (string) $orderLink['last_pos_state_hash']);
+                if ($isDelivery) {
+                    $result = $this->posOrders->cancelMoovaDeliveryOrder($conn, $scope, $posOrderId, $moovaOrderId, (string) $orderLink['last_pos_state_hash']);
+                } else {
+                    $result = $this->posOrders->cancelMoovaTableOrder($conn, $scope, $posOrderId, $moovaOrderId, (string) $orderLink['last_pos_state_hash']);
+                }
                 $providerStatus = 'cancelled';
                 $response = $this->cancelResponse($result, $moovaOrderId, $idempotencyKey, $providerStatus);
                 $this->updateOrderLinkState($conn, (int) $orderLink['id'], $providerStatus, null, null);
@@ -337,7 +347,11 @@ class MoovaChangeOrderApplyService
         if ((int) ($head['isdeleted'] ?? 0) === 1) {
             return 'POS_ORDER_DELETED';
         }
-        if ((int) ($head['pro_tybe'] ?? 0) !== PosOrderService::TYPE_POS || (int) ($head['table_id'] ?? 0) < 1) {
+        if ((int) ($head['pro_tybe'] ?? 0) !== PosOrderService::TYPE_POS) {
+            return 'POS_ORDER_NOT_TABLE';
+        }
+        $orderType = strtolower(trim((string) ($head['order_type'] ?? '')));
+        if ($orderType !== 'delivery' && (int) ($head['table_id'] ?? 0) < 1) {
             return 'POS_ORDER_NOT_TABLE';
         }
         $paymentStatus = strtolower(trim((string) ($head['payment_status'] ?? '')));
@@ -431,6 +445,7 @@ class MoovaChangeOrderApplyService
             'POS_ORDER_NOT_FOUND',
             'POS_ORDER_DELETED',
             'POS_ORDER_NOT_TABLE',
+            'POS_ORDER_NOT_DELIVERY',
             'POS_ORDER_PAID',
             'POS_ORDER_NOT_ACTIVE',
             'POS_ORDER_CHANGED',

@@ -103,6 +103,8 @@ if (!function_exists('auth_guard_permission_map')) {
             'roles.manage' => ['add_users', 'edit_users', 'delete_users'],
             'moova.manage' => ['edit_sales', 'sid_sales'],
             'moova.accept' => ['add_sales', 'sid_sales'],
+            'delivery.dispatch' => ['edit_sales', 'show_sales', 'sid_sales', 'add_sales'],
+            'delivery.zones.manage' => ['edit_sales', 'edit_items', 'add_items'],
             'system.health.view' => ['sid_reports', 'sid_accounts'],
             'system.tools.run' => ['__admin_only'],
         ];
