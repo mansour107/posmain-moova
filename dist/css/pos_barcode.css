@@ -1519,3 +1519,78 @@ div:where(.swal2-container) div:where(.swal2-popup) {
         margin: 0.5rem;
     }
 }
+
+/* Delivery customer bar */
+.pos-delivery-bar-wrap {
+    margin-top: 0.5rem;
+}
+.pos-delivery-bar {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    border-radius: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    border: 1px solid #dee2e6;
+    background: #f8f9fa;
+}
+.pos-delivery-bar--pending {
+    border-color: #ffc107;
+    background: #fff8e1;
+}
+.pos-delivery-bar--confirmed {
+    border-color: #198754;
+    background: #edf7f1;
+}
+.pos-delivery-bar__badge {
+    font-weight: 700;
+    white-space: nowrap;
+}
+.pos-delivery-bar__summary {
+    flex: 1 1 auto;
+    min-width: 0;
+    font-size: 0.9rem;
+}
+.pos-delivery-bar__actions {
+    display: flex;
+    gap: 0.35rem;
+}
+.pos-delivery-pending-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 1.1rem;
+    height: 1.1rem;
+    margin-inline-start: 0.25rem;
+    padding: 0 0.25rem;
+    border-radius: 999px;
+    background: #dc3545;
+    color: #fff;
+    font-size: 0.65rem;
+    font-weight: 700;
+    vertical-align: middle;
+}
+.pos-delivery-fee-row {
+    opacity: 0.95;
+}
+.delivery-board-column {
+    background: #f4f6f9;
+    border-radius: 0.5rem;
+    border: 1px solid #dee2e6;
+    min-height: 320px;
+}
+.delivery-board-column__title {
+    font-weight: 700;
+    padding: 0.75rem;
+    border-bottom: 1px solid #dee2e6;
+    background: #fff;
+    border-radius: 0.5rem 0.5rem 0 0;
+}
+.delivery-board-column__body {
+    padding: 0.5rem;
+    max-height: 70vh;
+    overflow-y: auto;
+}
+.delivery-board-card {
+    border-inline-start: 4px solid #0d6efd;
+}

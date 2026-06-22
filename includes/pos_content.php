@@ -466,8 +466,10 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                                     </button>
                                     <button type="button" class="pos-mode-tab" data-age-target="age3">
                                         <i class="fas fa-motorcycle"></i><span>دليفري</span>
+                                        <span class="pos-delivery-pending-badge d-none" id="posDeliveryPendingBadge">0</span>
                                     </button>
                                 </div>
+                                <div id="posDeliveryBar" class="pos-delivery-bar-wrap d-none" aria-live="polite"></div>
                             </div>
                         </div>
                         <div class="card-body">
@@ -994,6 +996,7 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                         aria-label="Close"></button>
                 </div>
                 <div class="modal-body">
+                    <div id="deliveryModalHint" class="alert alert-warning d-none mb-3"></div>
                     <div class="mb-3">
                         <label class="form-label fw-bold">رقم العميل</label>
                         <div class="input-group">
@@ -1018,7 +1021,7 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                     </button>
                     <button type="button" class="btn btn-success" onclick="confirmDeliveryOrder()" style="display:none;"
                         id="confirmOrderBtn">
-                        <i class="fas fa-check me-1"></i>تأكيد الطلب
+                        <i class="fas fa-check me-1"></i>تأكيد بيانات العميل
                     </button>
                 </div>
             </div>
@@ -1039,6 +1042,7 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
     <script src="js/pos_offline_adapter.js?v=<?= (int) (@filemtime(__DIR__ . '/../js/pos_offline_adapter.js') ?: 1) ?>"></script>
     <?php endif; ?>
     <script src="js/pos_barcode.js?v=<?= (int) (@filemtime(__DIR__ . '/../js/pos_barcode.js') ?: 1) ?>"></script>
+    <script src="js/pos_delivery.js?v=<?= (int) (@filemtime(__DIR__ . '/../js/pos_delivery.js') ?: 1) ?>"></script>
 
     <?php if ($legacyOfflinePrototypeEnabled): ?>
     <script>
@@ -1185,315 +1189,7 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                 });
             }
 
-            // وظائف الدليفري
-            window.openDeliveryModal = function () {
-                $('#deliveryModal').modal('show');
-            };
-
-            // البحث الديناميكي عن العملاء
-            let searchTimeout;
-            let lastSearchedPhone = '';
-
-            $('#customer_phone').on('input', function() {
-                const phone = $(this).val().trim();
-
-                // إزالة الألوان عند بدء الكتابة
-                $(this).removeClass('border-success border-info border-danger border-warning');
-
-                // مسح النتائج السابقة إذا كان الرقم أقل من 3 أرقام
-                if (phone.length < 3) {
-                    $('#customer_result').html('');
-                    $('#saveCustomerBtn').show().html('<i class="fas fa-save me-1"></i>حفظ');
-                    $('#confirmOrderBtn').hide();
-                    lastSearchedPhone = '';
-                    return;
-                }
-
-                // تجنب البحث المتكرر عن نفس الرقم
-                if (phone === lastSearchedPhone) {
-                    return;
-                }
-
-                // إلغاء البحث السابق
-                clearTimeout(searchTimeout);
-
-                // بدء البحث بعد 500ms من التوقف عن الكتابة
-                searchTimeout = setTimeout(function() {
-                    if (phone.length >= 3 && phone !== lastSearchedPhone) {
-                        lastSearchedPhone = phone;
-                        searchCustomerDynamic(phone);
-                    }
-                }, 500);
-            });
-
-            function searchCustomerDynamic(phone) {
-                // إضافة مؤشر بصري لحقل الإدخال
-                $('#customer_phone').addClass('border-warning').attr('placeholder', 'جاري البحث...');
-
-                // عرض مؤشر التحميل
-                $('#customer_result').html(`
-                    <div class="text-center py-2">
-                        <div class="spinner-border spinner-border-sm text-primary" role="status">
-                            <span class="visually-hidden">جاري البحث...</span>
-                        </div>
-                        <small class="d-block mt-1 text-muted">جاري البحث عن العميل...</small>
-                    </div>
-                `);
-
-                $.ajax({
-                    url: 'do/search_customer.php',
-                    method: 'POST',
-                    data: { phone: phone },
-                    success: function (data) {
-                        console.log('Dynamic search response:', data);
-
-                        // إزالة مؤشر البحث
-                        $('#customer_phone').removeClass('border-warning').attr('placeholder', 'أدخل رقم العميل (البحث يبدأ بعد 3 أرقام)');
-
-                        try {
-                            var response = JSON.parse(data);
-                            if (response.found) {
-                                // عميل موجود - ملء الحقول
-                                $('#customer_phone').addClass('border-success');
-                                $('#customer_result').html(`
-                                    <div class="alert alert-success mb-3">
-                                        <i class="fas fa-check-circle me-2"></i>تم العثور على العميل
-                                    </div>
-                                    <div class="mb-3">
-                                        <label class="form-label fw-bold">رقم الموبايل</label>
-                                        <input type="text" class="form-control" id="customer_phone_display" value="${phone}" readonly>
-                                    </div>
-                                    <div class="mb-3">
-                                        <label class="form-label fw-bold">اسم العميل</label>
-                                        <input type="text" class="form-control" id="customer_name" value="${response.name}">
-                                    </div>
-                                    <div class="mb-3">
-                                        <label class="form-label fw-bold">العنوان</label>
-                                        <textarea class="form-control" id="customer_address" rows="2">${response.address}</textarea>
-                                    </div>
-                                `);
-                                $('#saveCustomerBtn').html('<i class="fas fa-save me-1"></i>حفظ التعديل');
-                                $('#confirmOrderBtn').show();
-                            } else {
-                                // عميل غير موجود - عرض حقول الإدخال
-                                $('#customer_phone').addClass('border-info');
-                                showNewCustomerForm();
-                            }
-                        } catch (e) {
-                            console.error('Parse error in dynamic search:', e);
-                            $('#customer_phone').addClass('border-danger');
-                            showNewCustomerForm();
-                        }
-                    },
-                    error: function (xhr, status, error) {
-                        console.error('Dynamic search AJAX Error:', error);
-                        $('#customer_phone').removeClass('border-warning').addClass('border-danger').attr('placeholder', 'خطأ في البحث - حاول مرة أخرى');
-                        showNewCustomerForm();
-                    }
-                });
-            }
-
-            window.searchCustomer = function () {
-                const phone = $('#customer_phone').val().trim();
-                if (!phone) {
-                    Swal.fire({
-                        icon: 'warning',
-                        title: 'تنبيه',
-                        text: 'يرجى إدخال رقم العميل'
-                    });
-                    return;
-                }
-
-                if (phone.length < 3) {
-                    Swal.fire({
-                        icon: 'warning',
-                        title: 'تنبيه',
-                        text: 'يرجى إدخال 3 أرقام على الأقل'
-                    });
-                    return;
-                }
-
-                searchCustomerDynamic(phone);
-            };
-
-            function showNewCustomerForm() {
-                const currentPhone = $('#customer_phone').val().trim();
-                $('#customer_result').html(`
-                    <div class="alert alert-info mb-3">
-                        <i class="fas fa-user-plus me-2"></i>عميل جديد - يرجى إدخال بياناته
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label fw-bold">رقم الموبايل</label>
-                        <input type="text" class="form-control" id="customer_phone_display" value="${currentPhone}" readonly>
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label fw-bold">اسم العميل</label>
-                        <input type="text" class="form-control" id="customer_name" placeholder="اسم العميل" required>
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label fw-bold">العنوان</label>
-                        <textarea class="form-control" id="customer_address" rows="2" placeholder="عنوان العميل" required></textarea>
-                    </div>
-                `);
-                $('#saveCustomerBtn').html('<i class="fas fa-save me-1"></i>حفظ');
-                $('#confirmOrderBtn').show();
-            }
-
-            // دالة مساعدة لتنظيف النماذج
-            window.clearDeliveryForm = function () {
-                $('#customer_phone').val('').removeClass('border-success border-info border-danger border-warning').attr('placeholder', 'أدخل رقم العميل (البحث يبدأ بعد 3 أرقام)');
-                $('#customer_name').val('');
-                $('#customer_address').val('');
-                $('#customer_result').html('');
-                $('#saveCustomerBtn').html('<i class="fas fa-save me-1"></i>حفظ').show();
-                $('#confirmOrderBtn').hide();
-                lastSearchedPhone = ''; // إعادة تعيين متغير البحث
-                clearTimeout(searchTimeout); // إلغاء أي بحث معلق
-            };
-
-            // دالة لإعادة تعيين نموذج الدليفري عند إغلاق المودال
-            $('#deliveryModal').on('hidden.bs.modal', function () {
-                clearDeliveryForm();
-            });
-
-            window.confirmDeliveryOrder = function () {
-                const phone = $('#customer_phone').val().trim();
-                const name = $('#customer_name').val().trim();
-                const address = $('#customer_address').val().trim();
-
-                if (!phone || !name || !address) {
-                    Swal.fire({
-                        icon: 'warning',
-                        title: 'تنبيه',
-                        text: 'يرجى ملء جميع الحقول'
-                    });
-                    return;
-                }
-
-                // إضافة بيانات العميل للفورم
-                $('<input>').attr({
-                    type: 'hidden',
-                    name: 'delivery_customer_name',
-                    value: name
-                }).appendTo('#posForm');
-                $('<input>').attr({
-                    type: 'hidden',
-                    name: 'delivery_customer_phone',
-                    value: phone
-                }).appendTo('#posForm');
-                $('<input>').attr({
-                    type: 'hidden',
-                    name: 'delivery_customer_address',
-                    value: address
-                }).appendTo('#posForm');
-
-                // حفظ أو تحديث البيانات تلقائياً
-                const isUpdate = $('#saveCustomerBtn').text().includes('تعديل');
-                const url = isUpdate ? 'do/update_customer.php' : 'do/save_customer.php';
-
-                $.ajax({
-                    url: url,
-                    method: 'POST',
-                    data: {
-                        phone: phone,
-                        name: name,
-                        address: address
-                    },
-                    success: function (data) {
-                        $('#deliveryModal').modal('hide');
-                        Swal.fire({
-                            icon: 'success',
-                            title: 'تم بنجاح',
-                            text: 'تم تأكيد طلب الدليفري وحفظ بيانات العميل',
-                            timer: 2000,
-                            showConfirmButton: false
-                        });
-                    },
-                    error: function () {
-                        $('#deliveryModal').modal('hide');
-                        Swal.fire({
-                            icon: 'success', // Assuming success even if error callback for some reason, or should be error? Original logic was alert success ish? No, original said 'confirmed' even on error?
-                            title: 'تم',
-                            text: 'تم تأكيد طلب الدليفري',
-                            timer: 2000
-                        });
-                    }
-                });
-            };
-
-            window.saveCustomerData = function () {
-                const phone = $('#customer_phone').val().trim();
-                const name = $('#customer_name').val().trim();
-                const address = $('#customer_address').val().trim();
-
-                if (!phone || !name || !address) {
-                    alert('يرجى ملء جميع الحقول');
-                    return;
-                }
-
-                const isUpdate = $('#saveCustomerBtn').text().includes('تعديل');
-                const url = isUpdate ? 'do/update_customer.php' : 'do/save_customer.php';
-
-                $.ajax({
-                    url: url,
-                    method: 'POST',
-                    data: {
-                        phone: phone,
-                        name: name,
-                        address: address
-                    },
-                    success: function (data) {
-                        console.log('Response:', data);
-                        try {
-                            var response = JSON.parse(data);
-                            console.log('Parsed:', response);
-                            if (response.success) {
-                                Swal.fire({
-                                    icon: 'success',
-                                    title: 'تم بنجاح',
-                                    text: isUpdate ? 'تم تحديث بيانات العميل بنجاح' : 'تم حفظ بيانات العميل بنجاح',
-                                    timer: 2000,
-                                    showConfirmButton: false
-                                });
-                                $('#saveCustomerBtn').hide();
-                                $('#confirmOrderBtn').show();
-                            } else {
-                                var errorMsg = 'حدث خطأ في ' + (isUpdate ? 'تحديث' : 'حفظ') +
-                                    ' البيانات';
-                                if (response.error) {
-                                    errorMsg += ': ' + response.error;
-                                }
-                                Swal.fire({
-                                    icon: 'error',
-                                    title: 'خطأ',
-                                    text: errorMsg
-                                });
-                                console.error('Save error:', response);
-                            }
-                        } catch (e) {
-                            console.log('Parse error:', e);
-                            console.log('Raw response:', data);
-                            Swal.fire({
-                                icon: 'error',
-                                title: 'خطأ',
-                                text: 'حدث خطأ في معالجة الاستجابة. تحقق من وحدة التحكم للتفاصيل.'
-                            });
-                        }
-                    },
-                    error: function (xhr, status, error) {
-                        console.error('AJAX Error:', {
-                            status: status,
-                            error: error,
-                            responseText: xhr.responseText
-                        });
-                        Swal.fire({
-                            icon: 'error',
-                            title: 'خطأ',
-                            text: 'حدث خطأ في الاتصال: ' + error
-                        });
-                    }
-                });
-            };
+            // Delivery UI handled by js/pos_delivery.js
         });
     </script>
     <script>

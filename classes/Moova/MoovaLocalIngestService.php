@@ -3,6 +3,9 @@
 if (!class_exists('MoovaInboundQueueService')) {
     require_once __DIR__ . '/../Sync/MoovaInboundQueueService.php';
 }
+if (!class_exists('MoovaPosIntegration')) {
+    require_once __DIR__ . '/../MoovaPosIntegration.php';
+}
 
 class MoovaLocalIngestService
 {
@@ -100,12 +103,18 @@ class MoovaLocalIngestService
 
         $tableId = $this->firstNonEmpty($payload, ['tableId', 'table_id']);
         $tableNumber = $this->firstNonEmpty($payload, ['tableNumber', 'table_number', 'tableName', 'table_name']);
+        $isDelivery = $this->isDeliveryPayload($payload);
         if ($tableId !== null) {
             $posPayload['tableId'] = (string) $tableId;
         } elseif ($tableNumber !== null) {
             $posPayload['tableNumber'] = (string) $tableNumber;
-        } else {
+        } elseif (!$isDelivery) {
             throw new InvalidArgumentException('TABLE_REQUIRED');
+        }
+
+        if ($isDelivery) {
+            $posPayload['fulfillmentType'] = 'delivery';
+            $posPayload['orderChannel'] = $this->firstNonEmpty($payload, ['orderChannel', 'order_channel']) ?? 'moova_delivery';
         }
 
         $notes = $this->firstNonEmpty($payload, ['notes', 'note']);
@@ -328,8 +337,13 @@ class MoovaLocalIngestService
                 continue;
             }
 
+            $itemId = MoovaPosIntegration::normalizeProviderItemId((string) $itemId);
+            if ($itemId === '') {
+                continue;
+            }
+
             $line = [
-                'itemId' => (string) $itemId,
+                'itemId' => $itemId,
                 'qty' => (float) $qty,
             ];
 
@@ -359,6 +373,26 @@ class MoovaLocalIngestService
         }
 
         return $normalized;
+    }
+
+    private function isDeliveryPayload(array $payload): bool
+    {
+        foreach (['fulfillmentType', 'fulfillment_type', 'orderType', 'order_type', 'type', 'orderChannel', 'order_channel'] as $key) {
+            $value = strtolower(trim((string) ($payload[$key] ?? '')));
+            if (in_array($value, ['delivery', 'moova_delivery', 'moovadelivery'], true)) {
+                return true;
+            }
+        }
+        if (isset($payload['delivery']) && is_array($payload['delivery']) && $payload['delivery']) {
+            return true;
+        }
+        foreach (['deliveryFee', 'delivery_fee', 'deliveryAddress', 'delivery_address', 'customerAddress', 'customer_address'] as $key) {
+            if (!empty($payload[$key])) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private function copyFulfillmentFieldsForPos(array $payload, array &$posPayload): void

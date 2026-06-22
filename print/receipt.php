@@ -92,19 +92,43 @@ $rowacc1= $conn->query("SELECT aname,info from acc_head where id = $accid")->fet
 $is_delivery = ($rowfat['order_type'] ?? '') === 'delivery';
 
 if ($is_delivery) {
-    $info = $rowfat['info'];
-    preg_match('/العميل: ([^-]+)/', $info, $name_match);
-    preg_match('/الهاتف: ([^-]+)/', $info, $phone_match);
-    preg_match('/العنوان: (.+)$/', $info, $address_match);
-    
-    $customer_name = isset($name_match[1]) ? trim($name_match[1]) : $rowacc1['aname'];
-    $customer_phone = isset($phone_match[1]) ? trim($phone_match[1]) : '';
-    $customer_address = isset($address_match[1]) ? trim($address_match[1]) : '';
+    $customer_name = '';
+    $customer_phone = '';
+    $customer_address = '';
+    $delivery_zone = '';
+    $fulfillmentTable = $conn->query("SHOW TABLES LIKE 'order_fulfillment'");
+    if ($fulfillmentTable && $fulfillmentTable->num_rows > 0) {
+        $fulfillmentStmt = $conn->prepare("SELECT customer_name, customer_phone, customer_address, delivery_zone, delivery_fee FROM order_fulfillment WHERE order_id = ? LIMIT 1");
+        if ($fulfillmentStmt) {
+            $fulfillmentStmt->bind_param('i', $id);
+            $fulfillmentStmt->execute();
+            $fulfillmentRow = $fulfillmentStmt->get_result()->fetch_assoc();
+            $fulfillmentStmt->close();
+            if ($fulfillmentRow) {
+                $customer_name = trim((string) ($fulfillmentRow['customer_name'] ?? ''));
+                $customer_phone = trim((string) ($fulfillmentRow['customer_phone'] ?? ''));
+                $customer_address = trim((string) ($fulfillmentRow['customer_address'] ?? ''));
+                $delivery_zone = trim((string) ($fulfillmentRow['delivery_zone'] ?? ''));
+            }
+        }
+    }
+    if ($customer_name === '' && $customer_phone === '' && $customer_address === '') {
+        $info = $rowfat['info'];
+        preg_match('/العميل: ([^-]+)/', $info, $name_match);
+        preg_match('/الهاتف: ([^-]+)/', $info, $phone_match);
+        preg_match('/العنوان: (.+)$/', $info, $address_match);
+        $customer_name = isset($name_match[1]) ? trim($name_match[1]) : $rowacc1['aname'];
+        $customer_phone = isset($phone_match[1]) ? trim($phone_match[1]) : '';
+        $customer_address = isset($address_match[1]) ? trim($address_match[1]) : '';
+    } elseif ($customer_name === '') {
+        $customer_name = $rowacc1['aname'];
+    }
     
     echo '<div class="row invoice-info font-thin m-0"><div class="col-sm-12 invoice-col"><address>';
-    if($customer_name) echo "<b>العميل:</b> " . $customer_name;
-    if ($customer_address) echo "<br><b>العنوان:</b> " . $customer_address;
-    if ($customer_phone) echo "<br><b>الموبايل:</b> " . $customer_phone;
+    if($customer_name) echo "<b>العميل:</b> " . htmlspecialchars($customer_name, ENT_QUOTES, 'UTF-8');
+    if ($customer_address) echo "<br><b>العنوان:</b> " . htmlspecialchars($customer_address, ENT_QUOTES, 'UTF-8');
+    if ($delivery_zone) echo "<br><b>المنطقة:</b> " . htmlspecialchars($delivery_zone, ENT_QUOTES, 'UTF-8');
+    if ($customer_phone) echo "<br><b>الموبايل:</b> " . htmlspecialchars($customer_phone, ENT_QUOTES, 'UTF-8');
     echo '</address></div></div>';
 }
 ?>

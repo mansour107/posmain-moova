@@ -183,6 +183,49 @@ class MoovaPosIntegration
         return '•••• ' . $last4;
     }
 
+    public static function normalizeProviderItemId($providerItemId)
+    {
+        $providerItemId = trim((string) $providerItemId);
+        if ($providerItemId === '') {
+            return '';
+        }
+
+        if (preg_match('/^pos-item-(\d+)$/i', $providerItemId, $matches)) {
+            return (string) $matches[1];
+        }
+
+        return $providerItemId;
+    }
+
+    public static function upsertTableLink(mysqli $conn, array $scope, $moovaBranchId, $moovaTableId, $posTableId)
+    {
+        $tenant = (int) ($scope['tenant'] ?? 0);
+        $branch = (int) ($scope['branch'] ?? 0);
+        $moovaBranchId = trim((string) $moovaBranchId);
+        $moovaTableId = trim((string) $moovaTableId);
+        $posTableId = (int) $posTableId;
+
+        if ($moovaTableId === '' || $posTableId < 1) {
+            return false;
+        }
+
+        $status = 'active';
+        $stmt = $conn->prepare("
+            INSERT INTO moova_pos_table_links (
+                moova_branch_id, moova_table_id, pos_tenant, pos_branch, pos_table_id, status
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            ON DUPLICATE KEY UPDATE
+                pos_table_id = VALUES(pos_table_id),
+                status = 'active',
+                updated_at = CURRENT_TIMESTAMP
+        ");
+        $stmt->bind_param('ssiiis', $moovaBranchId, $moovaTableId, $tenant, $branch, $posTableId, $status);
+        $stmt->execute();
+        $stmt->close();
+
+        return true;
+    }
+
     public static function getCurrentUserScope(mysqli $conn, $userId)
     {
         $userId = (int) $userId;

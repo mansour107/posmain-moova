@@ -170,10 +170,24 @@ if ($is_free_table_only) {
 }
 
 // إضافة بيانات العميل للدليفري
+$delivery_name = '';
+$delivery_phone = '';
+$delivery_address = '';
+$delivery_client_id = 0;
+$delivery_zone_name = '';
+$delivery_fee = 0.0;
+
 if ($order_type_db === 'delivery') { // دليفري
     $delivery_name = isset($_POST['delivery_customer_name']) ? htmlspecialchars(trim($_POST['delivery_customer_name']), ENT_QUOTES, 'UTF-8') : '';
     $delivery_phone = isset($_POST['delivery_customer_phone']) ? htmlspecialchars(trim($_POST['delivery_customer_phone']), ENT_QUOTES, 'UTF-8') : '';
     $delivery_address = isset($_POST['delivery_customer_address']) ? htmlspecialchars(trim($_POST['delivery_customer_address']), ENT_QUOTES, 'UTF-8') : '';
+    $delivery_client_id = isset($_POST['delivery_client_id']) ? intval($_POST['delivery_client_id']) : 0;
+    $delivery_zone_name = isset($_POST['delivery_zone_name']) ? htmlspecialchars(trim($_POST['delivery_zone_name']), ENT_QUOTES, 'UTF-8') : '';
+    $delivery_fee = isset($_POST['delivery_fee']) ? floatval($_POST['delivery_fee']) : 0.0;
+
+    if ($delivery_name === '' || $delivery_phone === '' || $delivery_address === '') {
+        die('خطأ: يجب إدخال بيانات عميل الدليفري (الاسم، الهاتف، العنوان)');
+    }
 
     if (!empty($delivery_name) && !empty($delivery_phone) && !empty($delivery_address)) {
         $info .= " - العميل: $delivery_name - الهاتف: $delivery_phone - العنوان: $delivery_address";
@@ -420,6 +434,72 @@ $route_takeaway_service = $pro_tybe === INVOICE_TYPES['POS']
     && $selected_order_id <= 0
     && (int) ($_REQUEST['edit_id'] ?? 0) <= 0
     && ($paid_cash + $paid_bank) > 0;
+
+$delivery_v2_enabled = function_exists('posmain_bool')
+    ? posmain_bool(getenv('POSMAIN_DELIVERY_V2') !== false ? getenv('POSMAIN_DELIVERY_V2') : '1', true)
+    : true;
+
+$route_delivery_service = $delivery_v2_enabled
+    && $pro_tybe === INVOICE_TYPES['POS']
+    && $order_type_db === 'delivery'
+    && $selected_order_id <= 0
+    && (int) ($_REQUEST['edit_id'] ?? 0) <= 0;
+
+if ($route_delivery_service) {
+    try {
+        $deliveryRequest = $_POST;
+        $deliveryRequest['store_id'] = $store_id;
+        $deliveryRequest['pro_serial'] = $pro_serial;
+        $deliveryRequest['pro_date'] = $pro_date;
+        $deliveryRequest['accural_date'] = $accural_date;
+        $deliveryRequest['acc2_id'] = $acc2_id;
+        $deliveryRequest['emp_id'] = $emp_id;
+        $deliveryRequest['headtotal'] = $headtotal;
+        $deliveryRequest['headdisc'] = $headdisc;
+        $deliveryRequest['headplus'] = $headplus;
+        $deliveryRequest['headnet'] = $headnet;
+        $deliveryRequest['fund_id'] = $fund_id;
+        $deliveryRequest['info'] = $info;
+        $deliveryRequest['paid_cash'] = $paid_cash;
+        $deliveryRequest['paid_bank'] = $paid_bank;
+        $deliveryRequest['payment_fund_id'] = $payment_fund_id;
+        $deliveryRequest['payment_bank_id'] = $payment_bank_id;
+        $deliveryRequest['jal_name'] = $jal_name;
+        $deliveryRequest['jal_notes'] = $jal_notes;
+        $deliveryRequest['jal_amount'] = $jal_amount;
+        $deliveryRequest['delivery_customer_name'] = $delivery_name;
+        $deliveryRequest['delivery_customer_phone'] = $delivery_phone;
+        $deliveryRequest['delivery_customer_address'] = $delivery_address;
+        $deliveryRequest['delivery_client_id'] = $delivery_client_id;
+        $deliveryRequest['delivery_zone_name'] = $delivery_zone_name;
+        $deliveryRequest['delivery_fee'] = $delivery_fee;
+        $deliveryRequest['submit'] = $submit;
+
+        $mutationService = new PosOrderMutationService();
+        $serviceResult = $mutationService->createDeliveryOrder($conn, $deliveryRequest, [
+            'user_id' => (int) $usid,
+        ]);
+        $last_op = (int) $serviceResult['data']['order_id'];
+        $pro_id = (int) $serviceResult['data']['pro_id'];
+        $_SESSION['success_message'] = 'تم حفظ طلب الدليفري بنجاح - رقم الفاتورة: ' . $pro_id;
+        if ($submit === 'cash' && ($paid_cash + $paid_bank) > 0) {
+            header("Location: ../print/receipt.php?id=$last_op");
+        } else {
+            header('Location: ../pos_barcode.php?delivery_saved=' . $last_op);
+        }
+        exit;
+    } catch (Throwable $e) {
+        error_log('ERROR in delivery service route: ' . $e->getMessage());
+        error_log('ERROR trace: ' . $e->getTraceAsString());
+        posmain_browser_exception_response(
+            $e,
+            'حدث خطأ أثناء معالجة طلب الدليفري، يرجى المحاولة مرة أخرى أو التواصل مع الدعم',
+            500,
+            false,
+            'invoice_delivery_route'
+        );
+    }
+}
 
 if ($route_takeaway_service) {
     try {

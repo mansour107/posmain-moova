@@ -18,6 +18,8 @@ require_once __DIR__ . '/../../Recipe/RecipeSettingsService.php';
 require_once __DIR__ . '/../../Recipe/RecipeAuditService.php';
 require_once __DIR__ . '/../../Recipe/DTO/RecipeActorContext.php';
 require_once __DIR__ . '/../../Inventory/InventoryInvoiceBridge.php';
+require_once __DIR__ . '/DeliveryClientService.php';
+require_once __DIR__ . '/OrderFulfillmentService.php';
 
 class PosOrderMutationService
 {
@@ -28,6 +30,7 @@ class PosOrderMutationService
     const SCOPE_ORDER_REFUND = 'pos.order.refund';
     const SCOPE_ORDER_VOID = 'pos.order.void';
     const SCOPE_TAKEAWAY_CREATE = 'pos.order.create.takeaway';
+    const SCOPE_DELIVERY_CREATE = 'pos.order.create.delivery';
     const SCOPE_MOOVA_CONFIRM = 'moova.order.confirm';
     const SCOPE_MOOVA_CHANGE = 'moova.order.change';
     const PAYMENT_ROUNDING_TOLERANCE = 0.01;
@@ -309,6 +312,41 @@ class PosOrderMutationService
         }
     }
 
+    public function createDeliveryOrder(mysqli $conn, array $request, array $context = []): array
+    {
+        $ownsTransaction = empty($context['in_transaction']) && empty($context['transaction_started']);
+        if ($ownsTransaction) {
+            $conn->begin_transaction();
+        }
+
+        try {
+            $idempotency = $this->beginIdempotency($conn, self::SCOPE_DELIVERY_CREATE, $request, $context);
+            if ($idempotency['status'] === 'completed') {
+                if ($ownsTransaction) {
+                    $conn->commit();
+                }
+
+                $response = is_array($idempotency['response'] ?? null) ? $idempotency['response'] : [];
+                $response['idempotency_replayed'] = true;
+                return $response;
+            }
+
+            $result = $this->createDeliveryOrderInsideTransaction($conn, $request, $context);
+            $this->idempotencyService->complete($conn, self::SCOPE_DELIVERY_CREATE, $idempotency['key'], $idempotency['hash'], $result);
+            if ($ownsTransaction) {
+                $conn->commit();
+            }
+
+            return $result;
+        } catch (Throwable $exception) {
+            if ($ownsTransaction) {
+                $conn->rollback();
+            }
+
+            throw $exception;
+        }
+    }
+
     public function confirmMoovaOrder(mysqli $conn, array $request, array $context = []): array
     {
         $link = $request['link'] ?? $context['link'] ?? null;
@@ -538,6 +576,211 @@ class PosOrderMutationService
                 'journal_id' => $salesJournal['journal_id'],
                 'receipt_ids' => array_column($receipts, 'receipt_id'),
                 'outbox_id' => $outboxResult['outbox_id'] ?? null,
+            ],
+        ];
+    }
+
+    private function createDeliveryOrderInsideTransaction(mysqli $conn, array $request, array $context): array
+    {
+        $storeId = $this->requiredPositiveInt($request, 'store_id', 'بيانات مطلوبة مفقودة - المخزن');
+        $customerId = $this->requiredPositiveInt($request, 'acc2_id', 'بيانات مطلوبة مفقودة - العميل');
+        $empId = $this->requiredPositiveInt($request, 'emp_id', 'بيانات مطلوبة مفقودة - الموظف');
+        $fundId = $this->requiredPositiveInt($request, 'fund_id', 'بيانات مطلوبة مفقودة - الصندوق');
+
+        $deliveryName = trim((string) ($request['delivery_customer_name'] ?? ''));
+        $deliveryPhone = trim((string) ($request['delivery_customer_phone'] ?? ''));
+        $deliveryAddress = trim((string) ($request['delivery_customer_address'] ?? ''));
+        if ($deliveryName === '' || $deliveryPhone === '' || $deliveryAddress === '') {
+            throw new InvalidArgumentException('يجب إدخال بيانات عميل الدليفري');
+        }
+
+        $deliveryClientService = new DeliveryClientService();
+        $deliveryClient = $deliveryClientService->upsertByPhone($conn, $deliveryPhone, $deliveryName, $deliveryAddress);
+        $deliveryClientId = (int) ($deliveryClient['client_id'] ?? 0);
+
+        $items = $this->normalizeTakeawayItems($request);
+        $this->assertItemsAvailable($conn, $items, $request, $context);
+        $userId = $this->contextUserId($request, $context);
+        $date = $this->requestDate($request, ['pro_date', 'order_date', 'date']);
+        $accrualDate = $this->requestDate($request, ['accural_date', 'accrual_date'], $date);
+        $headTotal = (float) ($request['headtotal'] ?? $request['total'] ?? 0);
+        $headDiscount = (float) ($request['headdisc'] ?? $request['discount'] ?? 0);
+        $this->requireDiscountApprovalIfNeeded($conn, null, $headDiscount, $request, $context);
+        $deliveryFee = max(0, (float) ($request['delivery_fee'] ?? 0));
+        $headPlus = (float) ($request['headplus'] ?? $request['plus'] ?? 0);
+        if ($deliveryFee > $headPlus) {
+            $headPlus = $deliveryFee;
+        }
+        $headNet = (float) ($request['headnet'] ?? $request['net'] ?? max(0, $headTotal - $headDiscount + $headPlus));
+        if ($headNet < 0) {
+            throw new InvalidArgumentException('PAYMENT_AMOUNT_INVALID');
+        }
+
+        $isSaveOnly = (($request['submit'] ?? '') === 'save');
+        $paidCash = $isSaveOnly ? 0 : max(0, (float) ($request['paid_cash'] ?? $request['paid'] ?? 0));
+        $paidBank = $isSaveOnly ? 0 : max(0, (float) ($request['paid_bank'] ?? 0));
+        $paymentFundId = (int) ($request['payment_fund_id'] ?? $fundId);
+        $paymentBankId = (int) ($request['payment_bank_id'] ?? 0);
+        $payment = $this->calculateTakeawayPayment($headNet, $paidCash, $paidBank);
+        if ($payment['cash'] > 0 && $paymentFundId <= 0) {
+            throw new InvalidArgumentException('PAYMENT_FUND_REQUIRED');
+        }
+        if ($payment['bank'] > 0 && $paymentBankId <= 0) {
+            throw new InvalidArgumentException('PAYMENT_BANK_REQUIRED');
+        }
+
+        $status = $this->paidStatusForNet($headNet, $payment['applied']);
+        $proId = $this->nextInvoiceProId($conn, InventoryMovementService::TYPE_POS, 0, 0);
+        $info = $this->tableOrderService->buildInfo('delivery', '', (string) ($request['info'] ?? ''));
+        $fatDiscPer = $headTotal > 0 && $headDiscount > 0 ? round($headDiscount / $headTotal * 100, 2) : 0.0;
+        $fatPlusPer = $headTotal > 0 && $headPlus > 0 ? round($headPlus / $headTotal * 100, 2) : 0.0;
+
+        $this->tableOrderService->execute($conn, "
+            INSERT INTO ot_head (
+                pro_id, pro_tybe, is_stock, is_journal, journal_tybe, info, pro_date,
+                accural_date, pro_pattren, pro_serial, price_list, store_id, emp_id,
+                emp2_id, acc1, acc2, pro_value, fat_cost, cost_center, profit,
+                fat_total, fat_disc, fat_disc_per, fat_plus, fat_plus_per,
+                fat_tax, fat_tax_per, fat_net, user, jal_name, jal_notes, jal_amount,
+                table_id, order_type, payment_status, invoice_status, order_status,
+                paid_amount, remaining_amount, waiter_id, payment_date, completed_at
+            ) VALUES (
+                ?, 9, 1, 1, 9, ?, ?,
+                ?, 1, ?, 1, ?, ?,
+                ?, ?, ?, ?, 0, 1, 0,
+                ?, ?, ?, ?, ?,
+                0, 0, ?, ?, ?, ?, ?,
+                NULL, 'delivery', ?, ?, ?,
+                ?, ?, ?, CASE WHEN ? = 'paid' THEN NOW() ELSE NULL END,
+                CASE WHEN ? = 'completed' THEN NOW() ELSE NULL END
+            )
+        ", [
+            $proId,
+            $info,
+            $date,
+            $accrualDate,
+            trim((string) ($request['pro_serial'] ?? '')),
+            $storeId,
+            $empId,
+            $empId,
+            $fundId,
+            $customerId,
+            $headTotal,
+            $headTotal,
+            $headDiscount,
+            $fatDiscPer,
+            $headPlus,
+            $fatPlusPer,
+            $headNet,
+            $userId,
+            $this->nullableString($request['jal_name'] ?? null),
+            $this->nullableString($request['jal_notes'] ?? null),
+            (float) ($request['jal_amount'] ?? 0),
+            $status['payment_status'],
+            $status['invoice_status'],
+            $status['order_status'],
+            $status['paid_amount'],
+            $status['remaining_amount'],
+            $empId,
+            $status['payment_status'],
+            $status['order_status'],
+        ]);
+        $orderId = (int) $conn->insert_id;
+        $this->tableOrderService->assignUuidIfPresent($conn, 'ot_head', $orderId);
+
+        $salesJournal = null;
+        $receipts = [];
+        if ($status['payment_status'] === 'paid' || $payment['applied'] > 0) {
+            $salesJournal = $this->insertTakeawaySalesJournal($conn, $orderId, $proId, $headNet, $date, $customerId, $userId);
+            if ($payment['cash'] > 0) {
+                $receipts[] = $this->insertTakeawayReceipt($conn, $orderId, $proId, $info, $date, $empId, $paymentFundId, $customerId, $payment['cash'], 'كاش', $userId);
+            }
+            if ($payment['bank'] > 0) {
+                $receipts[] = $this->insertTakeawayReceipt($conn, $orderId, $proId, $info, $date, $empId, $paymentBankId, $customerId, $payment['bank'], 'صرافة', $userId);
+            }
+        }
+
+        $lineResult = $this->inventoryMovementService->normalizeInvoiceLines($conn, InventoryMovementService::TYPE_POS, $items, [
+            'store_id' => $storeId,
+        ]);
+        $recipeLines = [];
+        $inventoryBridgeLines = [];
+        foreach ($lineResult['lines'] as $index => $line) {
+            $line['_source_item'] = $items[$index] ?? [];
+            $line['note'] = $this->lineNoteFromItem($line['_source_item']);
+            $recipeLine = $this->insertTakeawayDetailLine($conn, $orderId, $storeId, $line, $context);
+            $recipeLines[] = $recipeLine;
+            $inventoryBridgeLines[] = $this->inventoryBridgeLineFromLegacyLine($line, $recipeLine, $storeId);
+        }
+        $this->recordInventoryInvoiceBridgeLines($conn, $orderId, $inventoryBridgeLines, 'pos', 'delivery', $request, $context);
+        $this->recordRecipeOrderLinesAdded($conn, $recipeLines);
+        if ($status['order_status'] === 'completed') {
+            $this->recordRecipeOrderPaid($conn, $orderId, $recipeLines, 'pos', 'delivery', $request, $context);
+        }
+        $this->tableOrderService->execute($conn, "UPDATE ot_head SET profit = ? WHERE id = ?", [
+            (float) $lineResult['totals']['profit'],
+            $orderId,
+        ]);
+
+        $fulfillmentService = new OrderFulfillmentService();
+        $fulfillmentResult = $fulfillmentService->upsertForOrder($conn, $orderId, [
+            'order_channel' => 'cashier',
+            'fulfillment_type' => 'delivery',
+            'customer_name' => $deliveryName,
+            'customer_phone' => $deliveryPhone,
+            'customer_address' => $deliveryAddress,
+            'delivery_zone' => trim((string) ($request['delivery_zone_name'] ?? '')),
+            'delivery_fee' => $deliveryFee,
+            'delivery_status' => 'pending',
+            'delivery_client_id' => $deliveryClientId > 0 ? $deliveryClientId : null,
+        ]);
+
+        $outboxResult = null;
+        if (!array_key_exists('record_outbox', $context) || $context['record_outbox']) {
+            $syncOutbox = new SyncOutboxEventService();
+            $options = [
+                'event_type' => 'order.saved',
+                'source_system' => 'pos_cashier_delivery',
+            ];
+            if (isset($context['config']) && is_array($context['config'])) {
+                $options['config'] = $context['config'];
+            }
+            $outboxResult = $syncOutbox->recordOrderSnapshot($conn, $orderId, $options);
+        }
+
+        $this->recordOrderEvent($conn, $orderId, 'order.saved', $context['event_source'] ?? 'pos_cashier_delivery', $context, [
+            'order_type' => 'delivery',
+            'payment_status' => $status['payment_status'],
+            'order_status' => $status['order_status'],
+            'paid_amount' => $status['paid_amount'],
+            'remaining_amount' => $status['remaining_amount'],
+            'line_count' => count($lineResult['lines']),
+            'delivery_client_id' => $deliveryClientId,
+            'fulfillment_persisted' => $fulfillmentResult['persisted'] ?? false,
+            'outbox_id' => $outboxResult['outbox_id'] ?? null,
+        ]);
+
+        $this->tableOrderService->execute($conn, "INSERT INTO process (type) VALUES ('add delivery')");
+
+        return [
+            'success' => true,
+            'code' => 'OK',
+            'message' => 'DELIVERY_ORDER_CREATED',
+            'data' => [
+                'order_id' => $orderId,
+                'pro_id' => $proId,
+                'payment_status' => $status['payment_status'],
+                'invoice_status' => $status['invoice_status'],
+                'order_status' => $status['order_status'],
+                'paid_amount' => $status['paid_amount'],
+                'remaining_amount' => $status['remaining_amount'],
+                'profit' => (float) $lineResult['totals']['profit'],
+                'delivery_client_id' => $deliveryClientId,
+                'journal_head_id' => $salesJournal['journal_head_id'] ?? null,
+                'journal_id' => $salesJournal['journal_id'] ?? null,
+                'receipt_ids' => array_column($receipts, 'receipt_id'),
+                'outbox_id' => $outboxResult['outbox_id'] ?? null,
+                'fulfillment' => $fulfillmentResult,
             ],
         ];
     }

@@ -1,40 +1,40 @@
 <?php
-error_reporting(E_ALL);
-ini_set('display_errors', 1);
+header('Content-Type: application/json; charset=utf-8');
 
 require_once __DIR__ . '/../includes/db_bootstrap.php';
+require_once __DIR__ . '/../classes/Pos/Service/DeliveryClientService.php';
 
 try {
     $conn = posmain_db_connect();
 } catch (Throwable $e) {
-    error_log("Database connection failed: " . $e->getMessage());
-    die('{"success":false,"error":"Database connection failed"}');
+    error_log('Database connection failed: ' . $e->getMessage());
+    echo json_encode(['success' => false, 'error' => 'Database connection failed']);
+    exit;
 }
 
-$phone = $_POST['phone'] ?? '';
-$name = $_POST['name'] ?? '';
-$address = $_POST['address'] ?? '';
+$phone = (string) ($_POST['phone'] ?? '');
+$name = (string) ($_POST['name'] ?? '');
+$address = (string) ($_POST['address'] ?? '');
 
-if (empty($phone) || empty($name) || empty($address)) {
-    die('{"success":false,"error":"Missing required fields"}');
+if ($phone === '' || $name === '' || $address === '') {
+    echo json_encode(['success' => false, 'error' => 'Missing required fields']);
+    $conn->close();
+    exit;
 }
 
-$customer_name = mysqli_real_escape_string($conn, $name);
-$customer_address = mysqli_real_escape_string($conn, $address);
-$phone = mysqli_real_escape_string($conn, $phone);
-
-$sql = "UPDATE delivery_clients SET client_name = '$customer_name', address = '$customer_address' WHERE phone = '$phone' AND isdeleted = 0";
-
-if ($conn->query($sql)) {
-    if ($conn->affected_rows > 0) {
-        echo '{"success":true}';
-    } else {
-        echo '{"success":false,"error":"No customer found to update"}';
-    }
-} else {
-    error_log("SQL Error: " . $conn->error . " - Query: " . $sql);
-    echo '{"success":false,"error":"' . $conn->error . '"}';
+try {
+    $service = new DeliveryClientService();
+    $result = $service->upsertByPhone($conn, $phone, $name, $address);
+    echo json_encode([
+        'success' => true,
+        'client_id' => $result['client_id'],
+        'name' => $result['name'],
+        'phone' => $result['phone'],
+        'address' => $result['address'],
+    ]);
+} catch (Throwable $e) {
+    error_log('update_customer error: ' . $e->getMessage());
+    echo json_encode(['success' => false, 'error' => $e->getMessage()]);
 }
 
 $conn->close();
-?>

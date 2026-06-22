@@ -520,6 +520,9 @@ if (!function_exists('posmain_app_config')) {
                 ],
             ],
             'public_base_url' => (string) posmain_env('POSMAIN_PUBLIC_BASE_URL', ''),
+            'delivery' => [
+                'v2_enabled' => posmain_bool($branchEnv(['POSMAIN_DELIVERY_V2'], '1'), true),
+            ],
             'update_channel_url' => posmain_update_channel_base_url(),
             'update_version_url' => posmain_update_version_manifest_url(),
             'status_token' => (string) $branchEnv(['POSMAIN_STATUS_TOKEN'], '', true),

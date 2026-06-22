@@ -611,9 +611,6 @@ $(document).ready(function() {
                 bootstrap.Modal.getOrCreateInstance(tablesModal).show();
             }
         }
-        if (targetId === 'age3' && typeof openDeliveryModal === 'function') {
-            openDeliveryModal();
-        }
     });
     syncModeTabs();
     syncPaymentFundOptions();
@@ -1209,6 +1206,10 @@ $(document).ready(function() {
         $('.subtotal').each(function() {
             total += parseFloat($(this).val()) || 0;
         });
+        const deliveryFee = (typeof window.posDeliveryGetFee === 'function') ? window.posDeliveryGetFee() : 0;
+        if (deliveryFee > 0) {
+            total += deliveryFee;
+        }
         $('#total').val(total.toFixed(2));
         $('#total_display').text(total.toFixed(2) + ' ج.م');
         $('#total_display_btn').text(total.toFixed(2) + ' ج.م');
@@ -1219,10 +1220,12 @@ $(document).ready(function() {
         $('#net_val').val(net.toFixed(2));
         $('#net_display').text(net.toFixed(2) + ' ج.م');
         $('#modal_net').text(net.toFixed(2) + ' ج.م');
+        $('#headplus').val(deliveryFee > 0 ? deliveryFee.toFixed(2) : ($('#headplus').val() || '0'));
 
         setDefaultCashPaymentToNet(net);
         updatePayOrderButtonState();
     }
+    window.recalculateOrderTotals = updateTotal;
 
     function setDefaultCashPaymentToNet(netAmount) {
         if ($('#pos_split_payment_enabled').prop('checked')) {
@@ -2494,6 +2497,20 @@ function validatePOSForm() {
         console.error('❌ emp_id is missing or zero');
         alert('خطأ: يجب اختيار الموظف');
         return false;
+    }
+
+    const orderMode = $('input[name="age"]:checked').val();
+    if (orderMode === '3') {
+        const hasDeliveryCustomer = (typeof window.posDeliveryIsReadyForSubmit === 'function')
+            ? window.posDeliveryIsReadyForSubmit()
+            : ($('input[name="delivery_customer_phone"]').length > 0);
+        if (!hasDeliveryCustomer) {
+            alert('يجب تأكيد بيانات عميل الدليفري قبل حفظ الطلب');
+            if (typeof window.openDeliveryModal === 'function') {
+                window.openDeliveryModal('أكمل بيانات العميل أولاً');
+            }
+            return false;
+        }
     }
 
     console.log('✅ Validation passed - Items found:', items.length);

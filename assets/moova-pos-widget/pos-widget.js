@@ -466,6 +466,7 @@
       }
       state.bootstrap = bootstrap;
       state.device = bootstrap.device || null;
+      applyBridgeHealth(bootstrap);
       initNotificationSounds();
       state.panelOpen = false;
       state.emptyStateOpen = false;
@@ -857,7 +858,7 @@
         state.device = result.device || state.device;
         state.commands = Array.isArray(result.commands) ? result.commands : [];
         state.drafts = Array.isArray(result.drafts) ? result.drafts.slice() : [];
-        state.transportError = null;
+        applyBridgeHealth(result);
         processPendingCommands();
         const nextItems = getNotificationItems();
         const hasNewNotification = nextItems.length > previousCount
@@ -1262,6 +1263,21 @@
     const draft = findDraft(draftId);
     if (!draft || state.confirmingDraftIds.has(draftId)) {
       return;
+    }
+    const payload = draft && draft.requestPayload && typeof draft.requestPayload === 'object'
+      ? draft.requestPayload
+      : {};
+    const fulfillmentType = String(payload.fulfillmentType || payload.fulfillment_type || payload.orderType || payload.order_type || '').toLowerCase();
+    const isDeliveryDraft = fulfillmentType === 'delivery'
+      || String(payload.orderChannel || payload.order_channel || '').toLowerCase().includes('delivery')
+      || (payload.delivery && typeof payload.delivery === 'object');
+    if (isDeliveryDraft) {
+      const customerName = asText(payload.customerName || payload.customer_name || (payload.customer && payload.customer.name));
+      const customerPhone = asText(payload.customerPhone || payload.customer_phone || (payload.customer && (payload.customer.phone || payload.customer.mobile)));
+      if (!customerName || !customerPhone) {
+        showToast('بيانات عميل الدليفري (الاسم والهاتف) مطلوبة قبل التأكيد');
+        return;
+      }
     }
     if (draftNeedsNotes(draft) && !draft.notesConfirmedAt) {
       state.notesDraftId = draftId;
@@ -2747,6 +2763,38 @@
     } catch {
       // Ignore cross-window communication failures.
     }
+  }
+
+  function applyBridgeHealth(result) {
+    const transportError = extractBridgeTransportError(result);
+    if (transportError) {
+      state.transportError = transportError;
+      return false;
+    }
+
+    state.transportError = null;
+    return true;
+  }
+
+  function extractBridgeTransportError(result) {
+    if (!result || typeof result !== 'object') {
+      return null;
+    }
+
+    if (result.fallback !== true && result.remoteReachable !== false) {
+      return null;
+    }
+
+    const warning = result.warning && typeof result.warning === 'object' ? result.warning : {};
+    const code = asText(warning.code) || 'MOOVA_UNREACHABLE';
+    const message = asText(warning.message)
+      || messageForApiError(code)
+      || t('moovaUnreachable');
+
+    return {
+      code,
+      message,
+    };
   }
 
   async function apiFetch(path, options) {

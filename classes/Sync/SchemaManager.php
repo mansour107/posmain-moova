@@ -11,6 +11,7 @@ class SyncSchemaManager
             'pos_request_keys' => $this->posRequestKeysSql(),
             'order_events' => $this->orderEventsSql(),
             'order_fulfillment' => $this->orderFulfillmentSql(),
+            'delivery_zones' => $this->deliveryZonesSql(),
             'security_audit_log' => $this->securityAuditLogSql(),
             'failed_login_attempts' => $this->failedLoginAttemptsSql(),
             'item_availability' => $this->itemAvailabilitySql(),
@@ -289,6 +290,10 @@ class SyncSchemaManager
 
         if ($table === 'moova_pos_inbound_events') {
             return $this->moovaPosInboundEventUpgradeStatements($conn);
+        }
+
+        if ($table === 'order_fulfillment') {
+            return $this->orderFulfillmentUpgradeStatements($conn);
         }
 
         return [];
@@ -1012,6 +1017,7 @@ CREATE TABLE IF NOT EXISTS order_fulfillment (
   customer_name VARCHAR(160) NULL,
   customer_phone VARCHAR(60) NULL,
   customer_address VARCHAR(500) NULL,
+  delivery_client_id INT NULL,
   delivery_zone VARCHAR(120) NULL,
   delivery_fee DECIMAL(12,3) NOT NULL DEFAULT 0.000,
   delivery_status VARCHAR(40) NOT NULL DEFAULT 'none',
@@ -1022,8 +1028,45 @@ CREATE TABLE IF NOT EXISTS order_fulfillment (
   PRIMARY KEY (id),
   UNIQUE KEY uq_order_fulfillment_order (order_id),
   KEY idx_order_fulfillment_channel (order_channel, fulfillment_type, delivery_status),
-  KEY idx_order_fulfillment_provider (external_provider, external_order_id)
+  KEY idx_order_fulfillment_provider (external_provider, external_order_id),
+  KEY idx_fulfillment_client (delivery_client_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
+    private function deliveryZonesSql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS delivery_zones (
+  id INT NOT NULL AUTO_INCREMENT,
+  name VARCHAR(120) NOT NULL,
+  fee DECIMAL(12,3) NOT NULL DEFAULT 0.000,
+  is_active TINYINT(1) NOT NULL DEFAULT 1,
+  sort_order INT NOT NULL DEFAULT 0,
+  tenant INT NOT NULL DEFAULT 0,
+  branch INT NOT NULL DEFAULT 0,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_delivery_zones_active (is_active, sort_order),
+  KEY idx_delivery_zones_tenant_branch (tenant, branch, is_active)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
+    private function orderFulfillmentUpgradeStatements(mysqli $conn)
+    {
+        $statements = [];
+        if (!$this->columnExists($conn, 'order_fulfillment', 'delivery_client_id')) {
+            $statements['order_fulfillment.add_delivery_client_id'] = "
+ALTER TABLE order_fulfillment
+  ADD COLUMN delivery_client_id INT NULL AFTER customer_address";
+        }
+        if (!$this->indexExists($conn, 'order_fulfillment', 'idx_fulfillment_client')) {
+            $statements['order_fulfillment.add_idx_fulfillment_client'] = "
+ALTER TABLE order_fulfillment
+  ADD KEY idx_fulfillment_client (delivery_client_id)";
+        }
+
+        return $statements;
     }
 
     private function securityAuditLogSql()

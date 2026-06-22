@@ -85,48 +85,269 @@ class OrderFulfillmentService
         }
 
         $data = $this->normalizeData($data);
-        $stmt = $conn->prepare("
-            INSERT INTO order_fulfillment (
-                order_id, order_channel, fulfillment_type, external_provider, external_order_id,
-                customer_name, customer_phone, customer_address, delivery_zone, delivery_fee,
-                delivery_status, promised_at, metadata_json
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON DUPLICATE KEY UPDATE
-                order_channel = VALUES(order_channel),
-                fulfillment_type = VALUES(fulfillment_type),
-                external_provider = VALUES(external_provider),
-                external_order_id = VALUES(external_order_id),
-                customer_name = VALUES(customer_name),
-                customer_phone = VALUES(customer_phone),
-                customer_address = VALUES(customer_address),
-                delivery_zone = VALUES(delivery_zone),
-                delivery_fee = VALUES(delivery_fee),
-                delivery_status = VALUES(delivery_status),
-                promised_at = VALUES(promised_at),
-                metadata_json = VALUES(metadata_json),
-                updated_at = CURRENT_TIMESTAMP
-        ");
-        $stmt->bind_param(
-            'issssssssdsss',
-            $orderId,
-            $data['order_channel'],
-            $data['fulfillment_type'],
-            $data['external_provider'],
-            $data['external_order_id'],
-            $data['customer_name'],
-            $data['customer_phone'],
-            $data['customer_address'],
-            $data['delivery_zone'],
-            $data['delivery_fee'],
-            $data['delivery_status'],
-            $data['promised_at'],
-            $data['metadata_json']
-        );
+        $hasClientColumn = $this->columnExists($conn, 'delivery_client_id');
+        if ($hasClientColumn) {
+            $stmt = $conn->prepare("
+                INSERT INTO order_fulfillment (
+                    order_id, order_channel, fulfillment_type, external_provider, external_order_id,
+                    customer_name, customer_phone, customer_address, delivery_client_id, delivery_zone, delivery_fee,
+                    delivery_status, promised_at, metadata_json
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON DUPLICATE KEY UPDATE
+                    order_channel = VALUES(order_channel),
+                    fulfillment_type = VALUES(fulfillment_type),
+                    external_provider = VALUES(external_provider),
+                    external_order_id = VALUES(external_order_id),
+                    customer_name = VALUES(customer_name),
+                    customer_phone = VALUES(customer_phone),
+                    customer_address = VALUES(customer_address),
+                    delivery_client_id = VALUES(delivery_client_id),
+                    delivery_zone = VALUES(delivery_zone),
+                    delivery_fee = VALUES(delivery_fee),
+                    delivery_status = VALUES(delivery_status),
+                    promised_at = VALUES(promised_at),
+                    metadata_json = VALUES(metadata_json),
+                    updated_at = CURRENT_TIMESTAMP
+            ");
+            $deliveryClientId = $data['delivery_client_id'];
+            $stmt->bind_param(
+                'isssssssisdsss',
+                $orderId,
+                $data['order_channel'],
+                $data['fulfillment_type'],
+                $data['external_provider'],
+                $data['external_order_id'],
+                $data['customer_name'],
+                $data['customer_phone'],
+                $data['customer_address'],
+                $deliveryClientId,
+                $data['delivery_zone'],
+                $data['delivery_fee'],
+                $data['delivery_status'],
+                $data['promised_at'],
+                $data['metadata_json']
+            );
+        } else {
+            $stmt = $conn->prepare("
+                INSERT INTO order_fulfillment (
+                    order_id, order_channel, fulfillment_type, external_provider, external_order_id,
+                    customer_name, customer_phone, customer_address, delivery_zone, delivery_fee,
+                    delivery_status, promised_at, metadata_json
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON DUPLICATE KEY UPDATE
+                    order_channel = VALUES(order_channel),
+                    fulfillment_type = VALUES(fulfillment_type),
+                    external_provider = VALUES(external_provider),
+                    external_order_id = VALUES(external_order_id),
+                    customer_name = VALUES(customer_name),
+                    customer_phone = VALUES(customer_phone),
+                    customer_address = VALUES(customer_address),
+                    delivery_zone = VALUES(delivery_zone),
+                    delivery_fee = VALUES(delivery_fee),
+                    delivery_status = VALUES(delivery_status),
+                    promised_at = VALUES(promised_at),
+                    metadata_json = VALUES(metadata_json),
+                    updated_at = CURRENT_TIMESTAMP
+            ");
+            $stmt->bind_param(
+                'issssssssdsss',
+                $orderId,
+                $data['order_channel'],
+                $data['fulfillment_type'],
+                $data['external_provider'],
+                $data['external_order_id'],
+                $data['customer_name'],
+                $data['customer_phone'],
+                $data['customer_address'],
+                $data['delivery_zone'],
+                $data['delivery_fee'],
+                $data['delivery_status'],
+                $data['promised_at'],
+                $data['metadata_json']
+            );
+        }
         $stmt->execute();
         $stmt->close();
 
         return ['persisted' => true] + ($this->fulfillmentForOrder($conn, $orderId) ?: []);
+    }
+
+    public function transitionDeliveryStatus(mysqli $conn, int $orderId, string $newStatus, array $options = []): array
+    {
+        $newStatus = $this->deliveryStatus($newStatus, 'delivery');
+        if ($newStatus === 'none') {
+            throw new InvalidArgumentException('INVALID_DELIVERY_STATUS');
+        }
+
+        $current = $this->fulfillmentForOrder($conn, $orderId);
+        if (!$current) {
+            throw new RuntimeException('FULFILLMENT_NOT_FOUND');
+        }
+
+        $currentStatus = (string) ($current['delivery_status'] ?? 'pending');
+        $allowed = $this->allowedDeliveryTransitions();
+        if ($currentStatus !== $newStatus) {
+            $nextAllowed = $allowed[$currentStatus] ?? [];
+            if (!in_array($newStatus, $nextAllowed, true) && !(!empty($options['force']) && $newStatus === 'cancelled')) {
+                throw new InvalidArgumentException('DELIVERY_STATUS_TRANSITION_NOT_ALLOWED');
+            }
+        }
+
+        $metadata = is_array($current['metadata'] ?? null) ? $current['metadata'] : [];
+        if (!empty($options['driver_name'])) {
+            $metadata['driver_name'] = (string) $options['driver_name'];
+        }
+        if (!empty($options['driver_phone'])) {
+            $metadata['driver_phone'] = (string) $options['driver_phone'];
+        }
+        if (!empty($options['actor_user_id'])) {
+            $metadata['last_status_actor_user_id'] = (int) $options['actor_user_id'];
+        }
+
+        return $this->upsertForOrder($conn, $orderId, [
+            'order_channel' => $current['order_channel'],
+            'fulfillment_type' => $current['fulfillment_type'],
+            'external_provider' => $current['external_provider'],
+            'external_order_id' => $current['external_order_id'],
+            'customer_name' => $current['customer_name'],
+            'customer_phone' => $current['customer_phone'],
+            'customer_address' => $current['customer_address'],
+            'delivery_client_id' => $current['delivery_client_id'] ?? null,
+            'delivery_zone' => $current['delivery_zone'],
+            'delivery_fee' => $current['delivery_fee'],
+            'delivery_status' => $newStatus,
+            'promised_at' => $current['promised_at'],
+            'metadata_json' => $metadata,
+        ], ['require_table' => true]);
+    }
+
+    private function allowedDeliveryTransitions(): array
+    {
+        return [
+            'pending' => ['accepted', 'cancelled'],
+            'accepted' => ['preparing', 'cancelled'],
+            'preparing' => ['ready', 'cancelled'],
+            'ready' => ['picked_up', 'cancelled'],
+            'picked_up' => ['delivered', 'failed'],
+            'delivered' => [],
+            'cancelled' => [],
+            'failed' => [],
+            'none' => [],
+        ];
+    }
+
+    public function listActiveDeliveryOrders(mysqli $conn, array $options = []): array
+    {
+        if (!$this->tableExists($conn)) {
+            return [];
+        }
+
+        $limit = max(1, min(200, (int) ($options['limit'] ?? 100)));
+        $includeTerminal = !empty($options['include_terminal']);
+        $statusFilter = $includeTerminal
+            ? ''
+            : " AND f.delivery_status NOT IN ('delivered', 'cancelled', 'failed', 'none')";
+
+        $sql = "
+            SELECT
+                o.id AS order_id,
+                o.pro_id,
+                o.fat_net,
+                o.order_type,
+                o.payment_status,
+                o.order_status,
+                COALESCE(o.mdtime, o.crtime, o.pro_date) AS order_time,
+                f.order_channel,
+                f.fulfillment_type,
+                f.customer_name,
+                f.customer_phone,
+                f.customer_address,
+                f.delivery_zone,
+                f.delivery_fee,
+                f.delivery_status,
+                f.delivery_client_id,
+                f.metadata_json,
+                (SELECT COUNT(*) FROM fat_details fd WHERE fd.fatid = o.id AND fd.isdeleted = 0) AS line_count
+            FROM order_fulfillment f
+            INNER JOIN ot_head o ON o.id = f.order_id
+            WHERE f.fulfillment_type = 'delivery'
+              AND o.isdeleted = 0
+              {$statusFilter}
+            ORDER BY f.delivery_status ASC, order_time DESC
+            LIMIT {$limit}
+        ";
+        $result = $conn->query($sql);
+        $orders = [];
+        if ($result) {
+            while ($row = $result->fetch_assoc()) {
+                $metadata = null;
+                if (!empty($row['metadata_json'])) {
+                    $decoded = json_decode((string) $row['metadata_json'], true);
+                    $metadata = is_array($decoded) ? $decoded : null;
+                }
+                $orders[] = [
+                    'order_id' => (int) $row['order_id'],
+                    'pro_id' => (int) $row['pro_id'],
+                    'fat_net' => (float) $row['fat_net'],
+                    'order_type' => (string) $row['order_type'],
+                    'payment_status' => (string) $row['payment_status'],
+                    'order_status' => (string) $row['order_status'],
+                    'order_time' => (string) $row['order_time'],
+                    'order_channel' => (string) $row['order_channel'],
+                    'customer_name' => (string) ($row['customer_name'] ?? ''),
+                    'customer_phone' => (string) ($row['customer_phone'] ?? ''),
+                    'customer_address' => (string) ($row['customer_address'] ?? ''),
+                    'delivery_zone' => (string) ($row['delivery_zone'] ?? ''),
+                    'delivery_fee' => (float) ($row['delivery_fee'] ?? 0),
+                    'delivery_status' => (string) $row['delivery_status'],
+                    'delivery_client_id' => isset($row['delivery_client_id']) ? (int) $row['delivery_client_id'] : null,
+                    'line_count' => (int) ($row['line_count'] ?? 0),
+                    'metadata' => $metadata,
+                ];
+            }
+        }
+
+        return $orders;
+    }
+
+    public function countPendingDeliveryOrders(mysqli $conn): int
+    {
+        if (!$this->tableExists($conn)) {
+            return 0;
+        }
+        $result = $conn->query("
+            SELECT COUNT(*) AS pending_count
+            FROM order_fulfillment f
+            INNER JOIN ot_head o ON o.id = f.order_id
+            WHERE f.fulfillment_type = 'delivery'
+              AND f.delivery_status = 'pending'
+              AND o.isdeleted = 0
+        ");
+        if (!$result) {
+            return 0;
+        }
+        $row = $result->fetch_assoc();
+
+        return (int) ($row['pending_count'] ?? 0);
+    }
+
+    private function columnExists(mysqli $conn, string $column): bool
+    {
+        $stmt = $conn->prepare("
+            SELECT COUNT(*) AS column_count
+            FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE()
+              AND TABLE_NAME = 'order_fulfillment'
+              AND COLUMN_NAME = ?
+        ");
+        $stmt->bind_param('s', $column);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        return $row && (int) $row['column_count'] > 0;
     }
 
     public function fulfillmentForOrder(mysqli $conn, int $orderId): ?array
@@ -158,6 +379,9 @@ class OrderFulfillmentService
             'customer_name' => $this->nullableText($data['customer_name'] ?? null, 160),
             'customer_phone' => $this->nullableText($data['customer_phone'] ?? null, 60),
             'customer_address' => $this->nullableText($data['customer_address'] ?? null, 500),
+            'delivery_client_id' => isset($data['delivery_client_id']) && (int) $data['delivery_client_id'] > 0
+                ? (int) $data['delivery_client_id']
+                : null,
             'delivery_zone' => $this->nullableText($data['delivery_zone'] ?? null, 120),
             'delivery_fee' => $this->decimal($data['delivery_fee'] ?? 0),
             'delivery_status' => $this->deliveryStatus($data['delivery_status'] ?? null, $fulfillmentType),
@@ -346,6 +570,7 @@ class OrderFulfillmentService
             'customer_name' => $row['customer_name'] !== null ? (string) $row['customer_name'] : null,
             'customer_phone' => $row['customer_phone'] !== null ? (string) $row['customer_phone'] : null,
             'customer_address' => $row['customer_address'] !== null ? (string) $row['customer_address'] : null,
+            'delivery_client_id' => isset($row['delivery_client_id']) ? (int) $row['delivery_client_id'] : null,
             'delivery_zone' => $row['delivery_zone'] !== null ? (string) $row['delivery_zone'] : null,
             'delivery_fee' => (float) $row['delivery_fee'],
             'delivery_status' => (string) $row['delivery_status'],

@@ -12,16 +12,21 @@ if (!class_exists('PosOrderService')) {
 if (!class_exists('SyncOutboxEventService')) {
     require_once __DIR__ . '/../Sync/SyncOutboxEventService.php';
 }
+if (!class_exists('OrderFulfillmentService')) {
+    require_once __DIR__ . '/../Pos/Service/OrderFulfillmentService.php';
+}
 
 class MoovaChangeOrderApplyService
 {
     private PosOrderService $posOrders;
     private SyncOutboxEventService $syncOutbox;
+    private OrderFulfillmentService $fulfillment;
 
-    public function __construct(?PosOrderService $posOrders = null, ?SyncOutboxEventService $syncOutbox = null)
+    public function __construct(?PosOrderService $posOrders = null, ?SyncOutboxEventService $syncOutbox = null, ?OrderFulfillmentService $fulfillment = null)
     {
         $this->posOrders = $posOrders ?: new PosOrderService();
         $this->syncOutbox = $syncOutbox ?: new SyncOutboxEventService();
+        $this->fulfillment = $fulfillment ?: new OrderFulfillmentService();
     }
 
     public function applyInTransaction(mysqli $conn, array $link, array $payload, array $options = []): array
@@ -116,6 +121,7 @@ class MoovaChangeOrderApplyService
                     'user_id' => $userId,
                     'branch_uuid' => $branchUuid,
                 ], (int) $orderLink['pos_order_id'], $payload);
+                $this->fulfillment->upsertMoovaFulfillment($conn, (int) $orderLink['pos_order_id'], $payload);
                 $providerStatus = 'edited';
                 $response = $this->editResponse($result, $moovaOrderId, $idempotencyKey, $providerStatus);
                 $this->updateOrderLinkState($conn, (int) $orderLink['id'], $providerStatus, $result['state_hash'] ?? null, $result['state_payload'] ?? null);

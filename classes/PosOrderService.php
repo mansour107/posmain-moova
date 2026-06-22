@@ -5,6 +5,7 @@ require_once __DIR__ . '/Recipe/ExternalOrderLineIdentityService.php';
 require_once __DIR__ . '/Recipe/RecipeDecimal.php';
 require_once __DIR__ . '/Recipe/RecipeOrderLifecycleService.php';
 require_once __DIR__ . '/Inventory/InventoryInvoiceBridge.php';
+require_once __DIR__ . '/MoovaPosIntegration.php';
 
 class PosOrderService
 {
@@ -23,6 +24,10 @@ class PosOrderService
 
     public function createOrMergeMoovaTableOrder(mysqli $conn, array $scope, array $payload)
     {
+        if ($this->isMoovaDeliveryPayload($payload)) {
+            return $this->createOrMergeMoovaDeliveryOrder($conn, $scope, $payload);
+        }
+
         $tenant = (int) ($scope['tenant'] ?? 0);
         $branch = (int) ($scope['branch'] ?? 0);
         $userId = (int) ($scope['user_id'] ?? 1);
@@ -547,6 +552,8 @@ class PosOrderService
         ", [$branch, $branch, $tableToken, $tableToken]);
 
         if ($exactTable) {
+            $this->persistLearnedTableLink($conn, $tenant, $branch, $moovaBranchId, $tableToken, (int) $exactTable['id']);
+
             return $exactTable;
         }
 
@@ -564,31 +571,20 @@ class PosOrderService
         ", [$branch, $branch, 'طاولة ' . $tableToken]);
 
         if ($namedTable) {
+            $this->persistLearnedTableLink($conn, $tenant, $branch, $moovaBranchId, $tableToken, (int) $namedTable['id']);
+
             return $namedTable;
         }
 
-        $tableRows = $this->queryAll($conn, "
-            SELECT *
-            FROM tables
-            WHERE isdeleted = 0
-              AND (
-                  CAST(branch AS CHAR) = CAST(? AS CHAR)
-                  OR (? = 0 AND (branch IS NULL OR branch = '' OR branch = '0'))
-              )
-              AND tname LIKE ?
-            ORDER BY id ASC
-            LIMIT 2
-        ", [$branch, $branch, '%' . $tableToken . '%']);
-
-        if (count($tableRows) === 1) {
-            return $tableRows[0];
-        }
-
-        if (count($tableRows) > 1) {
-            throw new Exception('TABLE_MAPPING_AMBIGUOUS');
-        }
-
         throw new Exception('TABLE_NOT_FOUND');
+    }
+
+    private function persistLearnedTableLink(mysqli $conn, $tenant, $branch, $moovaBranchId, $moovaTableId, $posTableId)
+    {
+        MoovaPosIntegration::upsertTableLink($conn, [
+            'tenant' => (int) $tenant,
+            'branch' => (int) $branch,
+        ], $moovaBranchId, $moovaTableId, $posTableId);
     }
 
     private function resolveIncomingItems(mysqli $conn, $tenant, $branch, array $items)
@@ -596,7 +592,7 @@ class PosOrderService
         $resolved = [];
 
         foreach ($items as $itemIndex => $item) {
-            $providerItemId = trim((string) ($item['itemId'] ?? ''));
+            $providerItemId = MoovaPosIntegration::normalizeProviderItemId((string) ($item['itemId'] ?? ''));
             $qty = (float) ($item['qty'] ?? 0);
             if ($providerItemId === '' || $qty <= 0) {
                 continue;
@@ -781,6 +777,200 @@ class PosOrderService
         ]);
 
         return (int) $conn->insert_id;
+    }
+
+    private function insertMoovaDeliveryOrderHeader(mysqli $conn, $tenant, $branch, $proId, array $defaults, array $totals, $info, $proDate, $userId)
+    {
+        $plusAmount = (float) ($totals['plus'] ?? 0);
+        $plusPercent = ($totals['total'] ?? 0) > 0 && $plusAmount > 0
+            ? round(($plusAmount / $totals['total']) * 100, 2)
+            : 0;
+        $this->execute($conn, "
+            INSERT INTO ot_head (
+                pro_id, branch_id, table_id, order_type, pro_tybe, is_stock, is_journal, journal_tybe,
+                info, pro_date, accural_date, pro_pattren, pro_serial, price_list, store_id, emp_id,
+                emp2_id, acc1, acc2, pro_value, fat_cost, cost_center, profit, fat_total, fat_disc,
+                fat_disc_per, fat_plus, fat_plus_per, fat_tax, fat_tax_per, fat_net, paid_amount,
+                remaining_amount, payment_status, invoice_status, user, tenant, branch, order_status
+            ) VALUES (
+                ?, ?, NULL, 'delivery', ?, 1, 1, ?,
+                ?, ?, ?, 1, '', 1, ?, ?,
+                ?, ?, ?, ?, 0, 1, 0, ?, ?,
+                ?, ?, ?, 0, 0, ?, 0,
+                ?, 'unpaid', 'draft', ?, ?, ?, 'active'
+            )
+        ", [
+            $proId,
+            $branch,
+            self::TYPE_POS,
+            self::TYPE_POS,
+            $info,
+            $proDate,
+            $proDate,
+            $defaults['store_id'],
+            $defaults['emp_id'],
+            $defaults['emp_id'],
+            $defaults['fund_id'],
+            $defaults['client_id'],
+            $totals['total'],
+            $totals['total'],
+            $totals['discount'],
+            $totals['disc_percent'],
+            $plusAmount,
+            $plusPercent,
+            $totals['net'],
+            $totals['net'],
+            $userId,
+            $tenant,
+            $branch,
+        ]);
+
+        return (int) $conn->insert_id;
+    }
+
+    private function createOrMergeMoovaDeliveryOrder(mysqli $conn, array $scope, array $payload)
+    {
+        $tenant = (int) ($scope['tenant'] ?? 0);
+        $branch = (int) ($scope['branch'] ?? 0);
+        $userId = (int) ($scope['user_id'] ?? 1);
+        if ($userId < 1) {
+            $userId = 1;
+        }
+
+        $branchId = trim((string) ($payload['branchId'] ?? ''));
+        $defaults = $this->loadTenantDefaults($conn, $tenant, $branch);
+        $incomingItems = $this->resolveIncomingItems($conn, $tenant, $branch, $payload['items'] ?? []);
+        $moovaOrderId = trim((string) ($payload['cofeOrderId'] ?? $payload['moovaOrderId'] ?? ''));
+
+        if (!$incomingItems) {
+            throw new Exception('NO_VALID_ITEMS');
+        }
+
+        $lines = [];
+        foreach ($incomingItems as $item) {
+            $id = (int) $item['id'];
+            if (isset($lines[$id])) {
+                $lines[$id]['qty'] += (float) $item['qty'];
+                continue;
+            }
+            $lines[$id] = [
+                'item_id' => $id,
+                'name' => $item['name'],
+                'barcode' => $item['barcode'],
+                'qty' => (float) $item['qty'],
+                'price' => (float) $item['price'],
+                'discount' => 0.0,
+                'u_val' => 1.0,
+                'cost_price' => (float) $item['cost_price'],
+                'itmqty' => (float) $item['itmqty'],
+            ];
+        }
+
+        if (!$lines) {
+            throw new Exception('NO_VALID_ITEMS');
+        }
+
+        $totals = $this->calculateTotals($lines);
+        $deliveryFee = max(0, (float) ($payload['deliveryFee'] ?? $payload['delivery_fee'] ?? 0));
+        if ($deliveryFee > 0) {
+            $totals['plus'] = $deliveryFee;
+            $totals['net'] = ($totals['net'] ?? 0) + $deliveryFee;
+        }
+        $proDate = date('Y-m-d');
+        $info = $this->buildDeliveryOrderInfo($payload, $branchId);
+        $proId = $this->getNextInvoiceNumber($conn, self::TYPE_POS, $tenant, $branch);
+        $orderId = $this->insertMoovaDeliveryOrderHeader($conn, $tenant, $branch, $proId, $defaults, $totals, $info, $proDate, $userId);
+        $insertedLines = $this->upsertOrderDetails($conn, $tenant, $branch, $orderId, $lines, $defaults['store_id']);
+        $moovaMappedLines = [];
+        if ($moovaOrderId !== '') {
+            $moovaMappedLines = $this->insertMoovaLineMappings($conn, $tenant, $branch, $moovaOrderId, $orderId, $insertedLines);
+            $this->recordMoovaInventoryBridgeLines($conn, $tenant, $branch, $scope, $payload, $moovaOrderId, $orderId, $moovaMappedLines);
+            $this->registerExternalLineIdentities(
+                $conn,
+                $tenant,
+                $branch,
+                $scope,
+                $payload,
+                $moovaOrderId,
+                $orderId,
+                $incomingItems,
+                $insertedLines,
+                (int) $defaults['store_id']
+            );
+            $this->recordRecipeOrderLinesAdded(
+                $conn,
+                $this->recipeContextsFromMoovaIncomingItems(
+                    $conn,
+                    $tenant,
+                    $branch,
+                    $scope,
+                    $payload,
+                    $moovaOrderId,
+                    $orderId,
+                    $incomingItems,
+                    $insertedLines
+                )
+            );
+        }
+        $receiptState = $this->refreshReceiptTotalsAndAccounting($conn, $tenant, $branch, $orderId, $defaults, $proDate, $userId);
+        $this->logProcess($conn, 'add delivery');
+        $lineSnapshot = $moovaOrderId === ''
+            ? null
+            : $this->getMoovaOrderLineStateSnapshot($conn, $tenant, $branch, $orderId, $moovaOrderId);
+
+        return [
+            'order_id' => $orderId,
+            'pro_id' => $proId,
+            'table_id' => 0,
+            'table_name' => '',
+            'total' => $receiptState['total'],
+            'discount' => $receiptState['discount'],
+            'net' => $receiptState['net'],
+            'profit' => $receiptState['profit'],
+            'journal_head_id' => $receiptState['journal_head_id'],
+            'merged' => false,
+            'state_hash' => $lineSnapshot['hash'] ?? null,
+            'state_payload' => $lineSnapshot['payload'] ?? null,
+        ];
+    }
+
+    private function isMoovaDeliveryPayload(array $payload): bool
+    {
+        foreach (['fulfillmentType', 'fulfillment_type', 'orderType', 'order_type', 'type', 'orderChannel', 'order_channel'] as $key) {
+            $value = strtolower(trim((string) ($payload[$key] ?? '')));
+            if (in_array($value, ['delivery', 'moova_delivery', 'moovadelivery'], true)) {
+                return true;
+            }
+        }
+        if (isset($payload['delivery']) && is_array($payload['delivery']) && $payload['delivery']) {
+            return true;
+        }
+        foreach (['deliveryFee', 'delivery_fee', 'deliveryAddress', 'delivery_address', 'customerAddress', 'customer_address'] as $key) {
+            if (!empty($payload[$key])) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function buildDeliveryOrderInfo(array $payload, string $branchId): string
+    {
+        $pieces = [];
+        if ($branchId !== '') {
+            $pieces[] = 'فرع موفا: ' . $branchId;
+        }
+        $pieces[] = 'نوع الطلب: دليفري';
+        $customerName = trim((string) ($payload['customerName'] ?? $payload['customer_name'] ?? ''));
+        $customerPhone = trim((string) ($payload['customerPhone'] ?? $payload['customer_phone'] ?? ''));
+        if ($customerName !== '') {
+            $pieces[] = 'العميل: ' . $customerName;
+        }
+        if ($customerPhone !== '') {
+            $pieces[] = 'الهاتف: ' . $customerPhone;
+        }
+
+        return implode(' - ', $pieces);
     }
 
     private function updateOrderHeader(mysqli $conn, $tenant, $branch, $orderId, array $defaults, array $totals, $info, $proDate, $userId, $tableId)
