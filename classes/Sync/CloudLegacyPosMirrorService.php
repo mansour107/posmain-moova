@@ -941,8 +941,11 @@ class CloudLegacyPosMirrorService
 
     private function ensureCategory(mysqli $conn, int $categoryId, array $item): void
     {
-        $categoryName = $this->nullableString($this->firstExistingValue([$item], ['category_name', 'group_name', 'gname']), 100)
-            ?: 'Synced Category ' . $categoryId;
+        $categoryName = $this->nullableString($this->firstExistingValue([$item], ['category_name', 'group_name', 'gname']), 100);
+        if ($categoryName === null) {
+            return;
+        }
+
         $isDeleted = $this->boolInt($this->firstExistingValue([$item], ['category_isdeleted', 'category_deleted']), 0);
         $params = [$categoryId, $categoryName, $isDeleted];
 
