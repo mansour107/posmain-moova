@@ -483,9 +483,13 @@ class PosOrderService
                 $insertedLines
             )
         );
-        $receiptState = $this->refreshReceiptTotalsAndAccounting($conn, $tenant, $branch, (int) $order['id'], $defaults, $proDate, $userId, [
-            'delivery_fee' => $deliveryFee,
-        ]);
+        $deliveryFee = $this->moovaDeliveryFeeFromPayload($payload);
+        $refreshOptions = [];
+        if ($this->moovaPayloadHasDeliveryFee($payload)) {
+            $refreshOptions['delivery_fee'] = $deliveryFee;
+            $refreshOptions['delivery_fee_provided'] = true;
+        }
+        $receiptState = $this->refreshReceiptTotalsAndAccounting($conn, $tenant, $branch, (int) $order['id'], $defaults, $proDate, $userId, $refreshOptions);
         $this->logProcess($conn, 'edit moova delivery order');
         $snapshot = $this->getMoovaOrderLineStateSnapshot($conn, $tenant, $branch, (int) $order['id'], $moovaOrderId);
 
@@ -1083,6 +1087,7 @@ class PosOrderService
         }
         $receiptState = $this->refreshReceiptTotalsAndAccounting($conn, $tenant, $branch, $orderId, $defaults, $proDate, $userId, [
             'delivery_fee' => $deliveryFee,
+            'delivery_fee_provided' => true,
         ]);
         $this->logProcess($conn, 'add delivery');
         $lineSnapshot = $moovaOrderId === ''
@@ -1491,6 +1496,25 @@ class PosOrderService
     private function moovaDeliveryFeeFromPayload(array $payload): float
     {
         return max(0, (float) ($payload['deliveryFee'] ?? $payload['delivery_fee'] ?? 0));
+    }
+
+    private function moovaPayloadHasDeliveryFee(array $payload): bool
+    {
+        foreach (['deliveryFee', 'delivery_fee', 'shippingFee', 'shipping_fee', 'deliveryCharge', 'delivery_charge'] as $key) {
+            if (array_key_exists($key, $payload) && $payload[$key] !== null && $payload[$key] !== '') {
+                return true;
+            }
+        }
+
+        if (isset($payload['delivery']) && is_array($payload['delivery'])) {
+            foreach (['fee', 'deliveryFee', 'delivery_fee', 'shippingFee', 'shipping_fee'] as $key) {
+                if (array_key_exists($key, $payload['delivery']) && $payload['delivery'][$key] !== null && $payload['delivery'][$key] !== '') {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     private function resolveDeliveryFeeForOrder(mysqli $conn, int $orderId): float
@@ -2231,8 +2255,8 @@ class PosOrderService
         $totals = $this->calculateTotalsFromDetailRows($activeLines);
         $plusAmount = 0.0;
         if (strtolower(trim((string) ($order['order_type'] ?? ''))) === 'delivery') {
-            if (array_key_exists('delivery_fee', $options)) {
-                $plusAmount = max(0, (float) $options['delivery_fee']);
+            if (!empty($options['delivery_fee_provided'])) {
+                $plusAmount = max(0, (float) ($options['delivery_fee'] ?? 0));
             } else {
                 $plusAmount = $this->resolveDeliveryFeeForOrder($conn, (int) $orderId);
             }

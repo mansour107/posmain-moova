@@ -19,6 +19,7 @@ require_once __DIR__ . '/../../Recipe/RecipeAuditService.php';
 require_once __DIR__ . '/../../Recipe/DTO/RecipeActorContext.php';
 require_once __DIR__ . '/../../Inventory/InventoryInvoiceBridge.php';
 require_once __DIR__ . '/DeliveryClientService.php';
+require_once __DIR__ . '/DeliveryZoneService.php';
 require_once __DIR__ . '/OrderFulfillmentService.php';
 
 class PosOrderMutationService
@@ -606,7 +607,9 @@ class PosOrderMutationService
         $headTotal = (float) ($request['headtotal'] ?? $request['total'] ?? 0);
         $headDiscount = (float) ($request['headdisc'] ?? $request['discount'] ?? 0);
         $this->requireDiscountApprovalIfNeeded($conn, null, $headDiscount, $request, $context);
-        $deliveryFee = max(0, (float) ($request['delivery_fee'] ?? 0));
+        $zoneResolved = (new DeliveryZoneService())->resolvePostedZone($conn, $request);
+        $deliveryFee = max(0, (float) ($zoneResolved['delivery_fee'] ?? 0));
+        $deliveryZoneName = trim((string) ($zoneResolved['delivery_zone_name'] ?? ''));
         $headPlus = (float) ($request['headplus'] ?? $request['plus'] ?? 0);
         if ($deliveryFee > $headPlus) {
             $headPlus = $deliveryFee;
@@ -622,7 +625,9 @@ class PosOrderMutationService
         if (array_key_exists('headnet', $request) || array_key_exists('net', $request)) {
             $submittedNet = (float) ($request['headnet'] ?? $request['net'] ?? 0);
         }
-        if ($deliveryFee > 0 || $submittedNet === null || $submittedNet + 0.009 < $computedNet) {
+        if ($lineSubtotal > 0) {
+            $headNet = $computedNet;
+        } elseif ($deliveryFee > 0 || $submittedNet === null || $submittedNet + 0.009 < $computedNet) {
             $headNet = $computedNet;
         } else {
             $headNet = $submittedNet;
@@ -744,7 +749,7 @@ class PosOrderMutationService
             'customer_name' => $deliveryName,
             'customer_phone' => $deliveryPhone,
             'customer_address' => $deliveryAddress,
-            'delivery_zone' => trim((string) ($request['delivery_zone_name'] ?? '')),
+            'delivery_zone' => $deliveryZoneName !== '' ? $deliveryZoneName : trim((string) ($request['delivery_zone_name'] ?? '')),
             'delivery_fee' => $deliveryFee,
             'delivery_status' => 'pending',
             'delivery_client_id' => $deliveryClientId > 0 ? $deliveryClientId : null,
@@ -849,7 +854,7 @@ class PosOrderMutationService
             $qty = (float) ($request['itmqty'][$index] ?? 1);
             $price = (float) ($request['itmprice'][$index] ?? 0);
             $discount = (float) ($request['itmdisc'][$index] ?? 0);
-            $total += max(0, ($qty * $price) - $discount);
+            $total += max(0, $qty * ($price - $discount));
         }
 
         return round($total, 4);

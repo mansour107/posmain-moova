@@ -182,8 +182,11 @@ if ($order_type_db === 'delivery') { // دليفري
     $delivery_phone = isset($_POST['delivery_customer_phone']) ? htmlspecialchars(trim($_POST['delivery_customer_phone']), ENT_QUOTES, 'UTF-8') : '';
     $delivery_address = isset($_POST['delivery_customer_address']) ? htmlspecialchars(trim($_POST['delivery_customer_address']), ENT_QUOTES, 'UTF-8') : '';
     $delivery_client_id = isset($_POST['delivery_client_id']) ? intval($_POST['delivery_client_id']) : 0;
-    $delivery_zone_name = isset($_POST['delivery_zone_name']) ? htmlspecialchars(trim($_POST['delivery_zone_name']), ENT_QUOTES, 'UTF-8') : '';
-    $delivery_fee = isset($_POST['delivery_fee']) ? floatval($_POST['delivery_fee']) : 0.0;
+
+    require_once __DIR__ . '/../classes/Pos/Service/DeliveryZoneService.php';
+    $zoneResolved = (new DeliveryZoneService())->resolvePostedZone($conn, $_POST);
+    $delivery_zone_name = htmlspecialchars(trim((string) ($zoneResolved['delivery_zone_name'] ?? '')), ENT_QUOTES, 'UTF-8');
+    $delivery_fee = (float) ($zoneResolved['delivery_fee'] ?? 0);
 
     if ($delivery_name === '' || $delivery_phone === '' || $delivery_address === '') {
         die('خطأ: يجب إدخال بيانات عميل الدليفري (الاسم، الهاتف، العنوان)');

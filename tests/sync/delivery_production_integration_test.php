@@ -307,6 +307,77 @@ try {
     deliveryProdAssert(abs((float) $tamperedOrder['fat_plus'] - 15.0) < 0.01, 'tampered request should still persist delivery fee in fat_plus');
     deliveryProdAssert(abs((float) $tamperedOrder['fat_net'] - 50.0) < 0.01, 'tampered request should recompute fat_net with delivery fee');
 
+    // Phase 5: zone id resolves authoritative fee (ignore tampered delivery_fee=0)
+    $zoneRow = $conn->query("SELECT id, fee, name FROM delivery_zones WHERE name = 'Maadi' LIMIT 1")->fetch_assoc();
+    deliveryProdAssert(is_array($zoneRow), 'Maadi zone fixture required');
+    $zonePhone = '0100' . random_int(1000000, 9999999);
+    $clientService->upsertByPhone($conn, $zonePhone, 'Zone Fee User', 'Maadi Block 1');
+    $zoneRequest = [
+        'idempotency_key' => $prefix . ':delivery:zone-id',
+        'store_id' => 3,
+        'acc2_id' => 501,
+        'emp_id' => 4,
+        'fund_id' => 51,
+        'pro_serial' => $prefix . '-ZONE',
+        'pro_date' => date('Y-m-d'),
+        'accural_date' => date('Y-m-d'),
+        'headtotal' => 25,
+        'headdisc' => 0,
+        'headplus' => 0,
+        'headnet' => 25,
+        'delivery_zone_id' => (int) $zoneRow['id'],
+        'delivery_zone_name' => 'Ignored Name',
+        'delivery_fee' => 0,
+        'delivery_customer_name' => 'Zone Fee User',
+        'delivery_customer_phone' => $zonePhone,
+        'delivery_customer_address' => 'Maadi Block 1',
+        'submit' => 'save',
+        'itmname' => [10],
+        'itmqty' => [1],
+        'itmprice' => [25],
+        'itmdisc' => [0],
+        'u_val' => [1],
+    ];
+    $zoneResult = $mutation->createDeliveryOrder($conn, $zoneRequest, ['user_id' => 7, 'record_outbox' => false]);
+    $zoneOrderId = (int) ($zoneResult['data']['order_id'] ?? 0);
+    $zoneOrder = $conn->query("SELECT fat_plus, fat_net FROM ot_head WHERE id = {$zoneOrderId}")->fetch_assoc();
+    $expectedZoneFee = (float) $zoneRow['fee'];
+    deliveryProdAssert(abs((float) $zoneOrder['fat_plus'] - $expectedZoneFee) < 0.01, 'zone id should set authoritative delivery fee');
+    deliveryProdAssert(abs((float) $zoneOrder['fat_net'] - (25 + $expectedZoneFee)) < 0.01, 'zone fee should be included in fat_net');
+
+    // Phase 3: per-unit line discount should match detail totals (qty=2, price=10, disc=1 => 18)
+    $discPhone = '0100' . random_int(1000000, 9999999);
+    $clientService->upsertByPhone($conn, $discPhone, 'Discount Qty User', 'Nasr Block 2');
+    $discRequest = [
+        'idempotency_key' => $prefix . ':delivery:disc-qty',
+        'store_id' => 3,
+        'acc2_id' => 501,
+        'emp_id' => 4,
+        'fund_id' => 51,
+        'pro_serial' => $prefix . '-DISC',
+        'pro_date' => date('Y-m-d'),
+        'accural_date' => date('Y-m-d'),
+        'headtotal' => 19,
+        'headdisc' => 0,
+        'headplus' => 0,
+        'headnet' => 19,
+        'delivery_customer_name' => 'Discount Qty User',
+        'delivery_customer_phone' => $discPhone,
+        'delivery_customer_address' => 'Nasr Block 2',
+        'submit' => 'save',
+        'itmname' => [11],
+        'itmqty' => [2],
+        'itmprice' => [10],
+        'itmdisc' => [1],
+        'u_val' => [1],
+    ];
+    $discResult = $mutation->createDeliveryOrder($conn, $discRequest, ['user_id' => 7, 'record_outbox' => false]);
+    $discOrderId = (int) ($discResult['data']['order_id'] ?? 0);
+    $discLine = $conn->query("SELECT det_value FROM fat_details WHERE fatid = {$discOrderId} AND isdeleted = 0 LIMIT 1")->fetch_assoc();
+    $discHead = $conn->query("SELECT fat_total, fat_net FROM ot_head WHERE id = {$discOrderId}")->fetch_assoc();
+    deliveryProdAssert(abs((float) $discLine['det_value'] - 18.0) < 0.01, 'detail line should use per-unit discount');
+    deliveryProdAssert(abs((float) $discHead['fat_net'] - 18.0) < 0.01, 'header net should match discounted line subtotal');
+
     // Phase 3/5: save-only delivery with zone fee
     $deliveryFee = 15.0;
     $itemTotal = 35.0;

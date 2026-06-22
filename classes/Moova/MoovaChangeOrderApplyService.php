@@ -132,6 +132,7 @@ class MoovaChangeOrderApplyService
                 }
                 $this->fulfillment->upsertMoovaFulfillment($conn, $posOrderId, $payload, [
                     'require_table' => !$isDelivery,
+                    'merge_existing' => true,
                 ]);
                 $providerStatus = 'edited';
                 $response = $this->editResponse($result, $moovaOrderId, $idempotencyKey, $providerStatus);

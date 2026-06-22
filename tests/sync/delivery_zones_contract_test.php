@@ -17,6 +17,7 @@ deliveryZonesAssert(is_file($root . '/do/doedit_delivery_zone.php'), 'delivery z
 deliveryZonesAssert(strpos(file_get_contents($root . '/js/pos_delivery.js'), 'delivery_zones_list.php') !== false, 'POS should load zones list');
 deliveryZonesAssert(strpos(file_get_contents($root . '/delivery_zones.php'), "require_permission('delivery.zones.manage'") !== false, 'delivery zones page should require manage permission');
 deliveryZonesAssert(strpos(file_get_contents($root . '/delivery_board.php'), "require_permission('delivery.dispatch'") !== false, 'delivery board should require dispatch permission');
+deliveryZonesAssert(strpos(file_get_contents($root . '/delivery_zones.php'), "include('includes/header.php')") !== false, 'delivery zones page should guard before header include');
 
 echo "delivery_zones_contract_test: OK\n";
 

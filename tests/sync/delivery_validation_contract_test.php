@@ -23,7 +23,10 @@ deliveryValidationAssert(strpos(file_get_contents($root . '/classes/Pos/Service/
 deliveryValidationAssert(strpos(file_get_contents($root . '/ajax/delivery_status_update.php'), "require_permission('delivery.dispatch'") !== false || strpos(file_get_contents($root . '/ajax/delivery_status_update.php'), "auth_guard_has_permission('delivery.dispatch'") !== false, 'delivery status API should require dispatch permission');
 deliveryValidationAssert(strpos(file_get_contents($root . '/do/doedit_delivery_zone.php'), "require_permission('delivery.zones.manage'") !== false, 'delivery zone writes should require zones permission');
 deliveryValidationAssert(strpos(file_get_contents($root . '/classes/PosOrderService.php'), 'replaceMoovaDeliveryOrder') !== false, 'Moova delivery edits should have dedicated replace path');
-deliveryValidationAssert(strpos(file_get_contents($root . '/classes/PosOrderService.php'), 'fat_plus = ?') !== false, 'accounting refresh should preserve delivery plus amounts');
+deliveryValidationAssert(strpos(file_get_contents($root . '/classes/Pos/Service/OrderFulfillmentService.php'), 'mergeMoovaFulfillmentData') !== false, 'Moova fulfillment should merge partial edits');
+deliveryValidationAssert(strpos(file_get_contents($root . '/classes/Pos/Service/DeliveryZoneService.php'), 'resolvePostedZone') !== false, 'delivery zone fee should resolve server-side');
+deliveryValidationAssert(strpos(file_get_contents($root . '/classes/Pos/Service/PosOrderMutationService.php'), 'qty * ($price - $discount)') !== false, 'line subtotal should apply per-unit discount');
+deliveryValidationAssert(strpos(file_get_contents($root . '/delivery_board.php'), "require_permission('delivery.dispatch'") !== false && strpos(file_get_contents($root . '/delivery_board.php'), "include('includes/header.php')") !== false, 'delivery board should guard before header include');
 
 echo "delivery_validation_contract_test: OK\n";
 

@@ -9,6 +9,12 @@ class OrderFulfillmentService
     public function upsertMoovaFulfillment(mysqli $conn, int $orderId, array $payload, array $options = []): array
     {
         $data = $this->extractFromMoovaPayload($payload, $options + ['external_provider' => 'moova']);
+        if (!empty($options['merge_existing'])) {
+            $existing = $this->fulfillmentForOrder($conn, $orderId);
+            if (is_array($existing)) {
+                $data = $this->mergeMoovaFulfillmentData($existing, $data, $payload);
+            }
+        }
 
         return $this->upsertForOrder($conn, $orderId, $data, [
             'require_table' => !empty($options['require_table']),
@@ -535,6 +541,95 @@ class OrderFulfillmentService
         }
 
         return false;
+    }
+
+    private function mergeMoovaFulfillmentData(array $existing, array $incoming, array $payload): array
+    {
+        $delivery = isset($payload['delivery']) && is_array($payload['delivery']) ? $payload['delivery'] : [];
+        $merged = $incoming;
+
+        if (($existing['fulfillment_type'] ?? '') === 'delivery'
+            && !$this->hasDeliverySignal($payload, $delivery)
+            && !$this->payloadHasExplicitFulfillmentType($payload)) {
+            $merged['fulfillment_type'] = 'delivery';
+            if (!empty($existing['order_channel'])) {
+                $merged['order_channel'] = (string) $existing['order_channel'];
+            }
+        }
+
+        if (!$this->payloadHasDeliveryFee($payload, $delivery)) {
+            $merged['delivery_fee'] = $existing['delivery_fee'] ?? 0;
+        }
+
+        if (!$this->payloadHasDeliveryStatus($payload, $delivery)) {
+            $merged['delivery_status'] = $existing['delivery_status'] ?? $incoming['delivery_status'];
+        }
+
+        foreach (['customer_name', 'customer_phone', 'customer_address', 'delivery_zone', 'external_order_id', 'external_provider'] as $field) {
+            if ($this->isBlank($merged[$field] ?? null) && !$this->isBlank($existing[$field] ?? null)) {
+                $merged[$field] = $existing[$field];
+            }
+        }
+
+        if (!empty($existing['delivery_client_id']) && empty($merged['delivery_client_id'])) {
+            $merged['delivery_client_id'] = $existing['delivery_client_id'];
+        }
+
+        if ($this->isBlank($merged['promised_at'] ?? null) && !$this->isBlank($existing['promised_at'] ?? null)) {
+            $merged['promised_at'] = $existing['promised_at'];
+        }
+
+        return $merged;
+    }
+
+    private function payloadHasExplicitFulfillmentType(array $payload): bool
+    {
+        foreach (['fulfillmentType', 'fulfillment_type', 'orderType', 'order_type', 'type'] as $key) {
+            if (array_key_exists($key, $payload) && trim((string) $payload[$key]) !== '') {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function payloadHasDeliveryFee(array $payload, array $delivery = []): bool
+    {
+        foreach (['deliveryFee', 'delivery_fee', 'shippingFee', 'shipping_fee', 'deliveryCharge', 'delivery_charge'] as $key) {
+            if (array_key_exists($key, $payload) && $payload[$key] !== null && $payload[$key] !== '') {
+                return true;
+            }
+        }
+
+        foreach (['fee', 'deliveryFee', 'delivery_fee', 'shippingFee', 'shipping_fee'] as $key) {
+            if (array_key_exists($key, $delivery) && $delivery[$key] !== null && $delivery[$key] !== '') {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function payloadHasDeliveryStatus(array $payload, array $delivery = []): bool
+    {
+        foreach (['deliveryStatus', 'delivery_status'] as $key) {
+            if (array_key_exists($key, $payload) && $payload[$key] !== null && $payload[$key] !== '') {
+                return true;
+            }
+        }
+
+        foreach (['status', 'deliveryStatus', 'delivery_status'] as $key) {
+            if (array_key_exists($key, $delivery) && $delivery[$key] !== null && $delivery[$key] !== '') {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function isBlank($value): bool
+    {
+        return $value === null || trim((string) $value) === '';
     }
 
     private function tableExists(mysqli $conn): bool

@@ -1,10 +1,11 @@
-<?php include('includes/header.php'); ?>
-<?php include('includes/navbar.php'); ?>
-<?php include('includes/sidebar.php'); ?>
 <?php
+require_once __DIR__ . '/includes/session_bootstrap.php';
 require_once __DIR__ . '/includes/auth_guard.php';
-require_permission('delivery.dispatch', $conn);
 require_once __DIR__ . '/includes/csrf.php';
+require_once __DIR__ . '/includes/connect.php';
+
+require_permission('delivery.dispatch', $conn);
+
 $deliveryDispatchCsrf = csrf_token('delivery_dispatch');
 $statusColumns = [
     'pending' => 'قيد الانتظار',
@@ -22,6 +23,9 @@ $nextStatus = [
     'picked_up' => 'delivered',
 ];
 ?>
+<?php include('includes/header.php'); ?>
+<?php include('includes/navbar.php'); ?>
+<?php include('includes/sidebar.php'); ?>
 <div class="content-wrapper">
   <section class="content-header">
     <div class="container-fluid">

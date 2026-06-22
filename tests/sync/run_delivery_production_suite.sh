@@ -35,6 +35,7 @@ done
 
 # Production integration + runtime
 run_php tests/sync/delivery_production_integration_test.php
+run_php tests/sync/delivery_moova_partial_edit_runtime_test.php
 run_php tests/sync/delivery_kody2_moova_runtime_test.php
 run_php tests/sync/delivery_http_smoke_test.php
 run_node tests/sync/delivery_pos_js_runtime_test.js

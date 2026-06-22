@@ -1,10 +1,11 @@
-<?php include('includes/header.php'); ?>
-<?php include('includes/navbar.php'); ?>
-<?php include('includes/sidebar.php'); ?>
 <?php
+require_once __DIR__ . '/includes/session_bootstrap.php';
 require_once __DIR__ . '/includes/auth_guard.php';
-require_permission('delivery.zones.manage', $conn);
 require_once __DIR__ . '/includes/csrf.php';
+require_once __DIR__ . '/includes/connect.php';
+
+require_permission('delivery.zones.manage', $conn);
+
 $zoneCsrf = csrf_token('delivery_zones_write');
 $zones = [];
 $tableCheck = $conn->query("SHOW TABLES LIKE 'delivery_zones'");
@@ -17,6 +18,9 @@ if ($tableCheck && $tableCheck->num_rows > 0) {
     }
 }
 ?>
+<?php include('includes/header.php'); ?>
+<?php include('includes/navbar.php'); ?>
+<?php include('includes/sidebar.php'); ?>
 <div class="content-wrapper">
   <section class="content-header">
     <div class="container-fluid">
