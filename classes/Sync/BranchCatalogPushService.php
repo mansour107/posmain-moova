@@ -8,6 +8,88 @@ require_once __DIR__ . '/SyncOutboxEventService.php';
 
 class BranchCatalogPushService
 {
+    private const PUSH_PHASES = [
+        'catalog' => 'menu items',
+        'tables' => 'tables',
+        'orders' => 'orders',
+        'operational' => 'inventory, recipes, and staff',
+        'inventory_refs' => 'inventory-linked menu items',
+    ];
+
+    public function planPushToHosted(mysqli $conn, array $options = []): array
+    {
+        $options = $this->normalizePushOptions($options);
+        $phases = [];
+        $queueRowTotal = 0;
+
+        foreach (self::PUSH_PHASES as $phaseId => $label) {
+            if (!$this->phaseEnabled($phaseId, $options)) {
+                continue;
+            }
+
+            $total = $this->countPhaseRows($conn, $phaseId, $options);
+            $phases[] = [
+                'id' => $phaseId,
+                'label' => $label,
+                'total' => $total,
+            ];
+            $queueRowTotal += $total;
+        }
+
+        return [
+            'phases' => $phases,
+            'queue_row_total' => $queueRowTotal,
+        ];
+    }
+
+    public function runPushPhase(mysqli $conn, array $config = [], string $phase = '', array $options = []): array
+    {
+        if (!$config && function_exists('posmain_app_config')) {
+            $config = posmain_app_config();
+        }
+
+        $this->assertCanPush($config);
+        $pushConfig = $this->pushConfig($config);
+        $options = $this->normalizePushOptions($options);
+        $phase = strtolower(trim($phase));
+        if (!isset(self::PUSH_PHASES[$phase]) || !$this->phaseEnabled($phase, $options)) {
+            throw new InvalidArgumentException('Unknown or disabled sync phase.');
+        }
+
+        $queue = $this->emptyQueueCounters();
+        $outbox = new SyncOutboxEventService();
+        $this->runQueuePhase($conn, $pushConfig, $outbox, $phase, $options, $queue);
+
+        return [
+            'phase' => $phase,
+            'queue' => $queue,
+        ];
+    }
+
+    public function runPushDispatchBatch(mysqli $conn, array $config = [], array $options = []): array
+    {
+        if (!$config && function_exists('posmain_app_config')) {
+            $config = posmain_app_config();
+        }
+
+        $this->assertCanPush($config);
+        $pushConfig = $this->pushConfig($config);
+        $identity = (new SyncBranchIdentity())->ensure($conn, $pushConfig);
+        $branchUuid = strtolower(trim((string) ($identity['branch_uuid'] ?? '')));
+        $options = $this->normalizePushOptions($options);
+        $dispatch = $this->dispatchOutbox($conn, $pushConfig, array_merge($options, [
+            'drain_outbox' => false,
+            'max_batches' => 1,
+        ]));
+        $pending = $this->countPendingOutbox($conn, $branchUuid);
+
+        return [
+            'dispatch' => $dispatch,
+            'pending_outbox' => $pending,
+            'done' => (int) ($dispatch['claimed'] ?? 0) === 0,
+        ];
+    }
+
     public function pushToHosted(mysqli $conn, array $config = [], array $options = []): array
     {
         if (!$config && function_exists('posmain_app_config')) {
@@ -19,79 +101,14 @@ class BranchCatalogPushService
         $identity = (new SyncBranchIdentity())->ensure($conn, $pushConfig);
         $branchUuid = strtolower(trim((string) ($identity['branch_uuid'] ?? '')));
 
-        $includeCatalog = array_key_exists('catalog', $options) ? !empty($options['catalog']) : true;
-        $includeTables = array_key_exists('tables', $options) ? !empty($options['tables']) : true;
-        $includeOrders = array_key_exists('orders', $options) ? !empty($options['orders']) : true;
-        $includeOperational = array_key_exists('operational', $options) ? !empty($options['operational']) : true;
-        $includeDeleted = !empty($options['include_deleted']);
-        $forceResend = !empty($options['force_resend']);
-        $limit = isset($options['limit']) ? max(0, (int) $options['limit']) : 0;
+        $options = $this->normalizePushOptions($options);
 
-        $queue = [
-            'catalog' => 0,
-            'catalog_inventory_refs' => 0,
-            'tables' => 0,
-            'orders' => 0,
-            'item_categories' => 0,
-            'inventory_balances' => 0,
-            'inventory_stock_levels' => 0,
-            'inventory_movements' => 0,
-            'recipes' => 0,
-            'employees' => 0,
-            'pulse_logs' => 0,
-            'pulse_types' => 0,
-            'queued' => 0,
-            'skipped' => 0,
-            'resent' => 0,
-        ];
-
+        $queue = $this->emptyQueueCounters();
         $outbox = new SyncOutboxEventService();
-        if ($includeCatalog) {
-            foreach ($this->activeIds($conn, 'myitems', $includeDeleted, $limit) as $itemId) {
-                $queue['catalog']++;
-                $result = $outbox->recordMenuItemSnapshot($conn, $itemId, [
-                    'event_type' => 'menu.item_saved',
-                    'source_system' => 'settings_supported_data_push',
-                    'config' => $pushConfig,
-                ]);
-                $this->trackQueuedRow($conn, $result, $forceResend, $queue);
+        foreach (array_keys(self::PUSH_PHASES) as $phase) {
+            if ($this->phaseEnabled($phase, $options)) {
+                $this->runQueuePhase($conn, $pushConfig, $outbox, $phase, $options, $queue);
             }
-        }
-
-        if ($includeTables) {
-            foreach ($this->activeIds($conn, 'tables', $includeDeleted, $limit) as $tableId) {
-                $queue['tables']++;
-                $result = $outbox->recordTableSnapshot($conn, $tableId, [
-                    'event_type' => 'table.updated',
-                    'source_system' => 'settings_supported_data_push',
-                    'active_order_id' => '__auto__',
-                    'config' => $pushConfig,
-                ]);
-                $this->trackQueuedRow($conn, $result, $forceResend, $queue);
-            }
-        }
-
-        if ($includeOrders) {
-            $where = 'WHERE pro_tybe = 9';
-            if (!$includeDeleted && $this->columnExists($conn, 'ot_head', 'isdeleted')) {
-                $where .= ' AND COALESCE(isdeleted, 0) = 0';
-            }
-            $sql = "SELECT id FROM ot_head {$where} ORDER BY id ASC" . ($limit > 0 ? ' LIMIT ' . $limit : '');
-            $resultSet = $conn->query($sql);
-            while ($row = $resultSet->fetch_assoc()) {
-                $queue['orders']++;
-                $result = $outbox->recordOrderSnapshot($conn, (int) $row['id'], [
-                    'event_type' => 'order.saved',
-                    'source_system' => 'settings_supported_data_push',
-                    'config' => $pushConfig,
-                ]);
-                $this->trackQueuedRow($conn, $result, $forceResend, $queue);
-            }
-        }
-
-        if ($includeOperational) {
-            $this->queueOperationalSnapshots($conn, $pushConfig, $forceResend, $limit, $queue);
-            $this->queueInventoryReferencedMenuItems($conn, $outbox, $pushConfig, $forceResend, $limit, $queue);
         }
 
         $dispatchOptions = array_merge(['drain_outbox' => true], $options);
@@ -149,6 +166,188 @@ class BranchCatalogPushService
         $config['sync']['branch_sync_enabled'] = true;
 
         return $config;
+    }
+
+    private function normalizePushOptions(array $options): array
+    {
+        $normalized = $options;
+        $normalized['include_catalog'] = array_key_exists('catalog', $options) ? !empty($options['catalog']) : true;
+        $normalized['include_tables'] = array_key_exists('tables', $options) ? !empty($options['tables']) : true;
+        $normalized['include_orders'] = array_key_exists('orders', $options) ? !empty($options['orders']) : true;
+        $normalized['include_operational'] = array_key_exists('operational', $options) ? !empty($options['operational']) : true;
+        $normalized['include_deleted'] = !empty($options['include_deleted']);
+        $normalized['force_resend'] = !empty($options['force_resend']);
+        $normalized['limit'] = isset($options['limit']) ? max(0, (int) $options['limit']) : 0;
+
+        return $normalized;
+    }
+
+    private function phaseEnabled(string $phase, array $options): bool
+    {
+        switch ($phase) {
+            case 'catalog':
+                return !empty($options['include_catalog']);
+            case 'tables':
+                return !empty($options['include_tables']);
+            case 'orders':
+                return !empty($options['include_orders']);
+            case 'operational':
+            case 'inventory_refs':
+                return !empty($options['include_operational']);
+            default:
+                return false;
+        }
+    }
+
+    private function emptyQueueCounters(): array
+    {
+        return [
+            'catalog' => 0,
+            'catalog_inventory_refs' => 0,
+            'tables' => 0,
+            'orders' => 0,
+            'item_categories' => 0,
+            'inventory_balances' => 0,
+            'inventory_stock_levels' => 0,
+            'inventory_movements' => 0,
+            'recipes' => 0,
+            'employees' => 0,
+            'pulse_logs' => 0,
+            'pulse_types' => 0,
+            'queued' => 0,
+            'skipped' => 0,
+            'resent' => 0,
+        ];
+    }
+
+    private function countPhaseRows(mysqli $conn, string $phase, array $options): int
+    {
+        $includeDeleted = !empty($options['include_deleted']);
+        $limit = (int) ($options['limit'] ?? 0);
+
+        switch ($phase) {
+            case 'catalog':
+                return count($this->activeIds($conn, 'myitems', $includeDeleted, $limit));
+            case 'tables':
+                return count($this->activeIds($conn, 'tables', $includeDeleted, $limit));
+            case 'orders':
+                return $this->countOrderRows($conn, $includeDeleted, $limit);
+            case 'operational':
+                return $this->countOperationalRows($conn, $limit);
+            case 'inventory_refs':
+                return count($this->inventoryReferencedItemIds($conn, $limit));
+            default:
+                return 0;
+        }
+    }
+
+    private function countOrderRows(mysqli $conn, bool $includeDeleted, int $limit): int
+    {
+        $where = 'WHERE pro_tybe = 9';
+        if (!$includeDeleted && $this->columnExists($conn, 'ot_head', 'isdeleted')) {
+            $where .= ' AND COALESCE(isdeleted, 0) = 0';
+        }
+        $sql = "SELECT id FROM ot_head {$where} ORDER BY id ASC" . ($limit > 0 ? ' LIMIT ' . $limit : '');
+        $resultSet = $conn->query($sql);
+        if (!$resultSet) {
+            return 0;
+        }
+
+        return $resultSet->num_rows;
+    }
+
+    private function countOperationalRows(mysqli $conn, int $limit): int
+    {
+        $total = 0;
+        foreach (OperationalSyncDomains::bulkRowDomains() as $definition) {
+            $table = (string) $definition['table'];
+            if (!$this->tableExists($conn, $table)) {
+                continue;
+            }
+            $total += count($this->activeIds($conn, $table, false, $limit));
+        }
+
+        if ($this->tableExists($conn, 'recipe_headers')) {
+            $sql = 'SELECT id FROM recipe_headers ORDER BY id ASC' . ($limit > 0 ? ' LIMIT ' . $limit : '');
+            $resultSet = $conn->query($sql);
+            if ($resultSet) {
+                $total += $resultSet->num_rows;
+            }
+        }
+
+        return $total;
+    }
+
+    private function runQueuePhase(
+        mysqli $conn,
+        array $pushConfig,
+        SyncOutboxEventService $outbox,
+        string $phase,
+        array $options,
+        array &$queue
+    ): void {
+        $includeDeleted = !empty($options['include_deleted']);
+        $forceResend = !empty($options['force_resend']);
+        $limit = (int) ($options['limit'] ?? 0);
+
+        if ($phase === 'catalog') {
+            foreach ($this->activeIds($conn, 'myitems', $includeDeleted, $limit) as $itemId) {
+                $queue['catalog']++;
+                $result = $outbox->recordMenuItemSnapshot($conn, $itemId, [
+                    'event_type' => 'menu.item_saved',
+                    'source_system' => 'settings_supported_data_push',
+                    'config' => $pushConfig,
+                ]);
+                $this->trackQueuedRow($conn, $result, $forceResend, $queue);
+            }
+
+            return;
+        }
+
+        if ($phase === 'tables') {
+            foreach ($this->activeIds($conn, 'tables', $includeDeleted, $limit) as $tableId) {
+                $queue['tables']++;
+                $result = $outbox->recordTableSnapshot($conn, $tableId, [
+                    'event_type' => 'table.updated',
+                    'source_system' => 'settings_supported_data_push',
+                    'active_order_id' => '__auto__',
+                    'config' => $pushConfig,
+                ]);
+                $this->trackQueuedRow($conn, $result, $forceResend, $queue);
+            }
+
+            return;
+        }
+
+        if ($phase === 'orders') {
+            $where = 'WHERE pro_tybe = 9';
+            if (!$includeDeleted && $this->columnExists($conn, 'ot_head', 'isdeleted')) {
+                $where .= ' AND COALESCE(isdeleted, 0) = 0';
+            }
+            $sql = "SELECT id FROM ot_head {$where} ORDER BY id ASC" . ($limit > 0 ? ' LIMIT ' . $limit : '');
+            $resultSet = $conn->query($sql);
+            while ($row = $resultSet->fetch_assoc()) {
+                $queue['orders']++;
+                $result = $outbox->recordOrderSnapshot($conn, (int) $row['id'], [
+                    'event_type' => 'order.saved',
+                    'source_system' => 'settings_supported_data_push',
+                    'config' => $pushConfig,
+                ]);
+                $this->trackQueuedRow($conn, $result, $forceResend, $queue);
+            }
+
+            return;
+        }
+
+        if ($phase === 'operational') {
+            $this->queueOperationalSnapshots($conn, $pushConfig, $forceResend, $limit, $queue);
+
+            return;
+        }
+
+        if ($phase === 'inventory_refs') {
+            $this->queueInventoryReferencedMenuItems($conn, $outbox, $pushConfig, $forceResend, $limit, $queue);
+        }
     }
 
     private function activeIds(mysqli $conn, string $table, bool $includeDeleted, int $limit): array

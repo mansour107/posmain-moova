@@ -529,6 +529,18 @@ if ($syncDefaultCloudUrl === '' && !empty($_SERVER['HTTP_HOST'])) {
                 background: rgba(220, 53, 69, 0.16);
                 color: #bd2130;
               }
+              #sync-credentials-card .sync-ltr-value,
+              #sync-credentials-card code.sync-ltr-value {
+                direction: ltr;
+                unicode-bidi: isolate;
+                display: inline-block;
+                text-align: left;
+              }
+              #sync-credentials-card #sync-cloud-branches-table td.sync-ltr-value {
+                direction: ltr;
+                unicode-bidi: isolate;
+                text-align: left;
+              }
               #sync-credentials-card .sync-status-grid {
                 display: grid;
                 grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -613,7 +625,7 @@ if ($syncDefaultCloudUrl === '' && !empty($_SERVER['HTTP_HOST'])) {
                       <div class="form-group">
                         <label>POSMAIN_BRANCH_UUID <?= $syncHelp('Stable unique ID for this branch only. The same value must be used by the local branch and allowed on the hosted POS.') ?></label>
                         <div class="input-group">
-                          <input type="text" class="form-control" name="POSMAIN_BRANCH_UUID" value="<?= htmlspecialchars($syncBranchUuidEffective, ENT_QUOTES, 'UTF-8') ?>" placeholder="<?= $syncIsLocal ? '' : 'Generate or enter before registering a branch' ?>" <?= $syncIsLocal ? 'required' : '' ?>>
+                          <input type="text" class="form-control sync-ltr-value" name="POSMAIN_BRANCH_UUID" dir="ltr" value="<?= htmlspecialchars($syncBranchUuidEffective, ENT_QUOTES, 'UTF-8') ?>" placeholder="<?= $syncIsLocal ? '' : 'Generate or enter before registering a branch' ?>" <?= $syncIsLocal ? 'required' : '' ?>>
                           <div class="input-group-append">
                             <button type="button" class="btn btn-outline-secondary js-generate-uuid" data-target="#sync-shared-identity-fields [name='POSMAIN_BRANCH_UUID']" data-confirm-if-filled="1" dir="ltr"><?= trim($syncBranchUuidEffective) !== '' ? 'Regenerate' : 'Generate UUID' ?></button>
                           </div>
@@ -808,16 +820,16 @@ if ($syncDefaultCloudUrl === '' && !empty($_SERVER['HTTP_HOST'])) {
               <div class="sync-subsection">
                 <h6 class="font-weight-bold mb-3">الفروع المسجلة على النسخة المستضافة</h6>
                 <div class="table-responsive">
-                  <table class="table table-sm table-striped mb-0" id="sync-cloud-branches-table">
+                  <table class="table table-sm table-striped mb-0" id="sync-cloud-branches-table" dir="ltr">
                     <thead><tr><th>Branch UUID</th><th>الحالة</th><th>سر مشفر</th><th>آخر ظهور</th><th>آخر تحديث</th></tr></thead>
                     <tbody>
                       <?php foreach ($syncBranches as $branchRow): ?>
                         <tr>
-                          <td><code><?= htmlspecialchars($branchRow['branch_uuid'], ENT_QUOTES, 'UTF-8') ?></code></td>
+                          <td><code class="sync-ltr-value"><?= htmlspecialchars($branchRow['branch_uuid'], ENT_QUOTES, 'UTF-8') ?></code></td>
                           <td><?= htmlspecialchars($branchRow['status'], ENT_QUOTES, 'UTF-8') ?></td>
                           <td><?= !empty($branchRow['has_encrypted_secret']) ? 'نعم' : 'لا' ?></td>
-                          <td><?= htmlspecialchars($branchRow['last_seen_at'], ENT_QUOTES, 'UTF-8') ?></td>
-                          <td><?= htmlspecialchars($branchRow['updated_at'], ENT_QUOTES, 'UTF-8') ?></td>
+                          <td class="sync-ltr-value"><?= htmlspecialchars($branchRow['last_seen_at'], ENT_QUOTES, 'UTF-8') ?></td>
+                          <td class="sync-ltr-value"><?= htmlspecialchars($branchRow['updated_at'], ENT_QUOTES, 'UTF-8') ?></td>
                         </tr>
                       <?php endforeach; ?>
                     </tbody>
@@ -1266,7 +1278,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
     html += '<div class="sync-status-grid mb-2" dir="ltr">';
     if (shopDb) {
-      html += '<div class="sync-status-card"><h6>Hosted shop database</h6><p><code>' + escapeHtml(shopDb) + '</code></p></div>';
+      html += '<div class="sync-status-card"><h6>Hosted shop database</h6><p><code class="sync-ltr-value" dir="ltr">' + escapeHtml(shopDb) + '</code></p></div>';
     }
     if (lastSeen) {
       html += '<div class="sync-status-card"><h6>Last seen</h6><p>' + escapeHtml(lastSeen) + '</p></div>';
@@ -1503,6 +1515,101 @@ document.addEventListener('DOMContentLoaded', function () {
     });
   });
 
+  function mergeQueueTotals(target, source) {
+    if (!source) {
+      return target;
+    }
+    Object.keys(source).forEach(function (key) {
+      if (typeof source[key] === 'number') {
+        target[key] = (target[key] || 0) + source[key];
+      }
+    });
+    return target;
+  }
+
+  function formatSyncProgressMessage(label, percent) {
+    const safePercent = Math.min(100, Math.max(0, Math.round(percent)));
+    return 'Syncing ' + label + '... ' + safePercent + '%';
+  }
+
+  async function runSupportedDataPushWithProgress($form) {
+    const basePayload = formData($form);
+    const queueWeight = 0.4;
+    const dispatchWeight = 0.6;
+    const planResponse = await ajaxSyncPromise(Object.assign({}, basePayload, { action: 'push_supported_data_plan' }));
+    const plan = planResponse.plan || {};
+    const phases = plan.phases || [];
+    const queueRowTotal = Math.max(1, plan.queue_row_total || 1);
+    let completedQueueRows = 0;
+    let totalQueued = 0;
+    const aggregatedQueue = {
+      catalog: 0,
+      tables: 0,
+      orders: 0,
+      queued: 0,
+      skipped: 0,
+      resent: 0,
+    };
+    const aggregatedDispatch = {
+      batches: 0,
+      claimed: 0,
+      synced: 0,
+      failed: 0,
+      dead: 0,
+    };
+
+    for (let index = 0; index < phases.length; index++) {
+      const phase = phases[index];
+      const phaseLabel = phase.label || phase.id || 'data';
+      const phaseStartPercent = (completedQueueRows / queueRowTotal) * queueWeight * 100;
+      showResult($form, formatSyncProgressMessage(phaseLabel, phaseStartPercent), true);
+
+      const phaseResponse = await ajaxSyncPromise(Object.assign({}, basePayload, {
+        action: 'push_supported_data_phase',
+        push_phase: phase.id,
+      }));
+      mergeQueueTotals(aggregatedQueue, phaseResponse.queue || {});
+      totalQueued += (phaseResponse.queue && phaseResponse.queue.queued) ? phaseResponse.queue.queued : 0;
+      completedQueueRows += phase.total || 0;
+
+      const phaseDonePercent = (completedQueueRows / queueRowTotal) * queueWeight * 100;
+      showResult($form, formatSyncProgressMessage(phaseLabel, phaseDonePercent), true);
+    }
+
+    const dispatchTotal = Math.max(1, totalQueued || aggregatedQueue.queued || 1);
+    let syncedSoFar = 0;
+    let pendingOutbox = 0;
+    let dispatchDone = false;
+    let dispatchSafety = 0;
+
+    while (!dispatchDone && dispatchSafety < 5000) {
+      dispatchSafety++;
+      const dispatchPercent = (queueWeight * 100) + ((syncedSoFar / dispatchTotal) * dispatchWeight * 100);
+      showResult($form, formatSyncProgressMessage('sending queued events to hosted', dispatchPercent), true);
+
+      const dispatchResponse = await ajaxSyncPromise(Object.assign({}, basePayload, {
+        action: 'push_supported_data_dispatch',
+      }));
+      const dispatch = dispatchResponse.dispatch || {};
+      aggregatedDispatch.batches += dispatch.batches || 0;
+      aggregatedDispatch.claimed += dispatch.claimed || 0;
+      aggregatedDispatch.synced += dispatch.synced || 0;
+      aggregatedDispatch.failed += dispatch.failed || 0;
+      aggregatedDispatch.dead += dispatch.dead || 0;
+      syncedSoFar = aggregatedDispatch.synced;
+      pendingOutbox = dispatchResponse.pending_outbox || 0;
+      dispatchDone = !!dispatchResponse.done;
+    }
+
+    showResult($form, formatSyncProgressMessage('finishing', 100), true);
+
+    return {
+      queue: aggregatedQueue,
+      dispatch: aggregatedDispatch,
+      pending_outbox: pendingOutbox,
+    };
+  }
+
   $('.js-sync-push-data').on('click', function () {
     const $form = $($(this).data('form'));
     const confirmed = window.confirm(
@@ -1514,10 +1621,9 @@ document.addEventListener('DOMContentLoaded', function () {
 
     const $button = $(this);
     $button.prop('disabled', true);
-    showResult($form, 'Syncing supported local data to hosted...', true);
+    showResult($form, formatSyncProgressMessage('preparing', 0), true);
 
-    ajaxSync(formData($form, 'push_supported_data_to_hosted')).done(function (response) {
-      const push = response.push || {};
+    runSupportedDataPushWithProgress($form).then(function (push) {
       const queue = push.queue || {};
       const dispatch = push.dispatch || {};
       const pending = push.pending_outbox || 0;
@@ -1528,12 +1634,12 @@ document.addEventListener('DOMContentLoaded', function () {
         : 'Sync finished. ' + counted + 'Queued: ' + (queue.queued || 0) + ', synced: ' + (dispatch.synced || 0) + (pending > 0 ? ', still pending: ' + pending + '.' : '.');
       showResult($form, message, failed === 0);
       loadSyncStatusPanel();
-    }).fail(function (xhr) {
+    }).catch(function (xhr) {
       const message = (xhr.responseJSON && xhr.responseJSON.message)
         || (xhr.status === 403 ? 'Session expired or invalid security token. Refresh Settings and try again.' : '')
         || 'Data sync failed.';
       showResult($form, message, false);
-    }).always(function () {
+    }).finally(function () {
       $button.prop('disabled', false);
     });
   });
@@ -1578,11 +1684,11 @@ document.addEventListener('DOMContentLoaded', function () {
     $tbody.empty();
     branches.forEach(function (branch) {
       $('<tr>')
-        .append($('<td>').append($('<code>').text(branch.branch_uuid || '')))
+        .append($('<td>').append($('<code>', { class: 'sync-ltr-value', dir: 'ltr' }).text(branch.branch_uuid || '')))
         .append($('<td>').text(branch.status || ''))
         .append($('<td>').text(branch.has_encrypted_secret ? 'Yes' : 'No'))
-        .append($('<td>').text(branch.last_seen_at || ''))
-        .append($('<td>').text(branch.updated_at || ''))
+        .append($('<td>', { class: 'sync-ltr-value', dir: 'ltr' }).text(branch.last_seen_at || ''))
+        .append($('<td>', { class: 'sync-ltr-value', dir: 'ltr' }).text(branch.updated_at || ''))
         .appendTo($tbody);
     });
   }

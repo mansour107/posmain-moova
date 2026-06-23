@@ -10,9 +10,12 @@ branchCatalogPushContractAssert(is_string($service), 'BranchCatalogPushService.p
 
 foreach ([
     'js-sync-push-data',
-    'push_supported_data_to_hosted',
+    'push_supported_data_plan',
+    'push_supported_data_phase',
+    'push_supported_data_dispatch',
+    'runSupportedDataPushWithProgress',
+    'formatSyncProgressMessage',
     'Sync all data to hosted',
-    'Syncing supported local data to hosted...',
     'loadSyncStatusPanel();',
 ] as $snippet) {
     branchCatalogPushContractAssert(strpos($setting, $snippet) !== false, 'setting.php missing data sync snippet: ' . $snippet);
@@ -20,7 +23,13 @@ foreach ([
 
 foreach ([
     'push_supported_data_to_hosted',
+    'push_supported_data_plan',
+    'push_supported_data_phase',
+    'push_supported_data_dispatch',
     'BranchCatalogPushService',
+    'planPushToHosted',
+    'runPushPhase',
+    'runPushDispatchBatch',
     'sync_supported_data_pushed_to_hosted',
     'Supported data sync finished.',
 ] as $snippet) {
@@ -29,6 +38,9 @@ foreach ([
 
 foreach ([
     'class BranchCatalogPushService',
+    'planPushToHosted',
+    'runPushPhase',
+    'runPushDispatchBatch',
     'pushToHosted',
     'recordMenuItemSnapshot',
     'recordTableSnapshot',

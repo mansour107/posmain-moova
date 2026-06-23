@@ -17,6 +17,7 @@ require_once __DIR__ . '/../classes/Sync/SyncRuntimeDbConfigFile.php';
 require_once __DIR__ . '/../classes/Sync/SyncRuntimeSettings.php';
 require_once __DIR__ . '/../classes/Sync/BranchRestoreFromHostedService.php';
 require_once __DIR__ . '/../classes/Sync/BranchCatalogPushService.php';
+require_once __DIR__ . '/../classes/Router/ShopRouter.php';
 
 header('Content-Type: application/json; charset=utf-8');
 
@@ -159,7 +160,7 @@ try {
             break;
 
         case 'pairing_status':
-            $branchUuid = trim((string) ($_POST['branch_uuid'] ?? $_POST['POSMAIN_BRANCH_UUID'] ?? ''));
+            $branchUuid = syncCredentialsResolveHostedBranchUuid($conn, $appConfig, $_POST);
             $role = strtolower(trim((string) ($appConfig['role'] ?? 'branch')));
             if ($role === 'cloud') {
                 syncCredentialsJson([
@@ -225,6 +226,58 @@ try {
                 'ok' => true,
                 'message' => 'Supported data sync finished.',
                 'push' => $push,
+            ]);
+            break;
+
+        case 'push_supported_data_plan':
+            syncCredentialsJson([
+                'ok' => true,
+                'plan' => (new BranchCatalogPushService())->planPushToHosted($conn, [
+                    'catalog' => true,
+                    'tables' => true,
+                    'orders' => true,
+                    'operational' => true,
+                ]),
+            ]);
+            break;
+
+        case 'push_supported_data_phase':
+            if (function_exists('set_time_limit')) {
+                @set_time_limit(0);
+            }
+            $phase = trim((string) ($_POST['push_phase'] ?? ''));
+            $phaseResult = (new BranchCatalogPushService())->runPushPhase(
+                $conn,
+                syncCredentialsBranchRuntimeConfig($appConfig, $_POST),
+                $phase,
+                [
+                    'catalog' => true,
+                    'tables' => true,
+                    'orders' => true,
+                    'operational' => true,
+                ]
+            );
+            syncCredentialsJson([
+                'ok' => true,
+                'phase' => $phaseResult['phase'] ?? $phase,
+                'queue' => $phaseResult['queue'] ?? [],
+            ]);
+            break;
+
+        case 'push_supported_data_dispatch':
+            if (function_exists('set_time_limit')) {
+                @set_time_limit(0);
+            }
+            $dispatchResult = (new BranchCatalogPushService())->runPushDispatchBatch(
+                $conn,
+                syncCredentialsBranchRuntimeConfig($appConfig, $_POST),
+                ['batch_size' => 50]
+            );
+            syncCredentialsJson([
+                'ok' => true,
+                'dispatch' => $dispatchResult['dispatch'] ?? [],
+                'pending_outbox' => $dispatchResult['pending_outbox'] ?? 0,
+                'done' => !empty($dispatchResult['done']),
             ]);
             break;
 
@@ -416,6 +469,53 @@ function syncCredentialsPublicBranch(array $branch): array
 {
     unset($branch['branch_env'], $branch['router_route'], $branch['legacy_cloud_branch'], $branch['branches'], $branch['identity_source']);
     return $branch;
+}
+
+function syncCredentialsResolveHostedBranchUuid(mysqli $conn, array $config, array $input): string
+{
+    $branchUuid = strtolower(trim((string) ($input['branch_uuid'] ?? $input['POSMAIN_BRANCH_UUID'] ?? '')));
+    if (SyncBranchIdentity::isUuid($branchUuid)) {
+        return $branchUuid;
+    }
+
+    if (!function_exists('posmain_router_enabled') || !posmain_router_enabled($config)) {
+        return '';
+    }
+
+    $routerConn = posmain_router_db_connect($config);
+    try {
+        $router = new PosmainShopRouter();
+        $shopId = PosmainShopRouter::activeSessionShopId();
+        if ($shopId < 1) {
+            $dbName = trim((string) ($config['database']['name'] ?? ''));
+            if ($dbName === '') {
+                $row = $conn->query('SELECT DATABASE() AS db_name')?->fetch_assoc();
+                $dbName = trim((string) ($row['db_name'] ?? ''));
+            }
+            $shop = $dbName !== '' ? $router->findShopByDatabaseName($routerConn, $dbName) : null;
+            $shopId = $shop ? (int) $shop['id'] : 0;
+        }
+        if ($shopId < 1) {
+            return '';
+        }
+
+        $stmt = $routerConn->prepare("
+            SELECT branch_uuid
+            FROM router_branch_routes
+            WHERE shop_id = ?
+              AND status = 'active'
+            ORDER BY updated_at DESC, id DESC
+            LIMIT 1
+        ");
+        $stmt->bind_param('i', $shopId);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        return strtolower(trim((string) ($row['branch_uuid'] ?? '')));
+    } finally {
+        $routerConn->close();
+    }
 }
 
 function syncCredentialsShouldPairLocal(array $input): bool
