@@ -57,6 +57,7 @@ class SyncSchemaManager
             'sync_checkpoints' => $this->syncCheckpointsSql(),
             'sync_conflicts' => $this->syncConflictsSql(),
             'sync_worker_logs' => $this->syncWorkerLogsSql(),
+            'sync_bulk_push_jobs' => $this->syncBulkPushJobsSql(),
             'sync_runtime_settings' => $this->syncRuntimeSettingsSql(),
             'moova_pos_inbound_events' => $this->moovaPosInboundEventsSql(),
             'cloud_branches' => $this->cloudBranchesSql(),
@@ -2252,6 +2253,32 @@ CREATE TABLE IF NOT EXISTS sync_worker_logs (
   created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   PRIMARY KEY (id),
   KEY idx_sync_worker_logs_name_time (worker_name, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
+    private function syncBulkPushJobsSql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS sync_bulk_push_jobs (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  job_uuid CHAR(36) NOT NULL,
+  shop_id INT UNSIGNED NULL,
+  shop_db_name VARCHAR(120) NULL,
+  status ENUM('queued','running','completed','failed','cancelled') NOT NULL DEFAULT 'queued',
+  phase VARCHAR(40) NOT NULL DEFAULT 'queued',
+  message VARCHAR(500) NOT NULL DEFAULT '',
+  progress_percent TINYINT UNSIGNED NOT NULL DEFAULT 0,
+  queue_json LONGTEXT NULL,
+  dispatch_json LONGTEXT NULL,
+  result_json LONGTEXT NULL,
+  error_message TEXT NULL,
+  started_at DATETIME(6) NULL,
+  finished_at DATETIME(6) NULL,
+  created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_sync_bulk_push_job_uuid (job_uuid),
+  KEY idx_sync_bulk_push_status (status, updated_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
     }
 

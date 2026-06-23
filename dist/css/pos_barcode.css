@@ -727,6 +727,10 @@ div:where(.swal2-container) div:where(.swal2-popup) {
     box-shadow: 0 8px 20px rgba(26, 47, 90, 0.06);
 }
 
+.item-card.item-has-variants {
+    background-color: rgba(255, 0, 0, 0.1);
+}
+
 .item-card:hover {
     box-shadow: 0 12px 24px rgba(26, 47, 90, 0.12);
 }

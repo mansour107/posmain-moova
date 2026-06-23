@@ -1555,6 +1555,112 @@ document.addEventListener('DOMContentLoaded', function () {
     return 'Syncing ' + label + '... ' + safePercent + '%';
   }
 
+  let bulkPushPollTimer = null;
+  let bulkPushJobUuid = null;
+
+  function bulkPushResultIsOk(job) {
+    if (!job) {
+      return false;
+    }
+    if (job.running) {
+      return true;
+    }
+    if (job.status === 'completed') {
+      return true;
+    }
+    if (job.status === 'failed' && (job.dispatch && job.dispatch.failed > 0)) {
+      return false;
+    }
+    return job.status === 'failed' ? false : !!job.ok;
+  }
+
+  function applyBulkPushJobToUi($form, job) {
+    if (!$form || !job || !job.message) {
+      return;
+    }
+    showResult($form, job.message, bulkPushResultIsOk(job));
+  }
+
+  function stopBulkPushPolling() {
+    if (bulkPushPollTimer) {
+      clearInterval(bulkPushPollTimer);
+      bulkPushPollTimer = null;
+    }
+  }
+
+  function scheduleBulkPushPolling($form) {
+    if (bulkPushPollTimer) {
+      return;
+    }
+    bulkPushPollTimer = setInterval(function () {
+      pollBulkPushStatus($form);
+    }, 2000);
+  }
+
+  function pollBulkPushStatus($form) {
+    if (!$form || !$form.length) {
+      return Promise.resolve(null);
+    }
+
+    const payload = formData($form, 'push_supported_data_status');
+    if (bulkPushJobUuid) {
+      payload.job_uuid = bulkPushJobUuid;
+    }
+
+    return ajaxSyncPromise(payload).then(function (response) {
+      const job = response.job || null;
+      if (!job) {
+        stopBulkPushPolling();
+        return null;
+      }
+
+      bulkPushJobUuid = job.job_uuid || bulkPushJobUuid;
+      applyBulkPushJobToUi($form, job);
+
+      if (job.running) {
+        scheduleBulkPushPolling($form);
+        return job;
+      }
+
+      stopBulkPushPolling();
+      loadSyncStatusPanel();
+      return job;
+    }).catch(function () {
+      return null;
+    });
+  }
+
+  function startBulkPushBackground($form, $button) {
+    const payload = formData($form, 'push_supported_data_start');
+    $button.prop('disabled', true);
+    showResult($form, formatSyncProgressMessage('preparing', 0), true);
+
+    return ajaxSyncPromise(payload).then(function (response) {
+      const job = response.job || null;
+      if (job) {
+        bulkPushJobUuid = job.job_uuid || null;
+        applyBulkPushJobToUi($form, job);
+        if (job.running) {
+          scheduleBulkPushPolling($form);
+        } else {
+          loadSyncStatusPanel();
+        }
+      } else {
+        showResult($form, response.message || 'Background sync started.', true);
+        scheduleBulkPushPolling($form);
+      }
+      return job;
+    }).catch(function (xhr) {
+      const message = (xhr.responseJSON && xhr.responseJSON.message)
+        || (xhr.status === 403 ? 'Session expired or invalid security token. Refresh Settings and try again.' : '')
+        || 'Data sync failed to start.';
+      showResult($form, message, false);
+      throw xhr;
+    }).finally(function () {
+      $button.prop('disabled', false);
+    });
+  }
+
   async function runSupportedDataPushWithProgress($form) {
     const basePayload = formData($form);
     const queueWeight = 0.4;
@@ -1636,35 +1742,13 @@ document.addEventListener('DOMContentLoaded', function () {
   $('.js-sync-push-data').on('click', function () {
     const $form = $($(this).data('form'));
     const confirmed = window.confirm(
-      'Queue all currently supported local sync data and send it to the hosted POS now? This includes menu/items, tables, order history, categories, inventory, recipes/costs, employees, and pulse logs. Credentials and sync secrets are never sent.'
+      'Queue all currently supported local sync data and send it to the hosted POS in the background? You can refresh this page and progress will be kept. This includes menu/items, tables, order history, categories, inventory, recipes/costs, employees, and pulse logs. Credentials and sync secrets are never sent.'
     );
     if (!confirmed) {
       return;
     }
 
-    const $button = $(this);
-    $button.prop('disabled', true);
-    showResult($form, formatSyncProgressMessage('preparing', 0), true);
-
-    runSupportedDataPushWithProgress($form).then(function (push) {
-      const queue = push.queue || {};
-      const dispatch = push.dispatch || {};
-      const pending = push.pending_outbox || 0;
-      const failed = dispatch.failed || 0;
-      const counted = 'Items: ' + (queue.catalog || 0) + ', tables: ' + (queue.tables || 0) + ', orders: ' + (queue.orders || 0) + '. ';
-      const message = failed > 0
-        ? 'Sync finished with errors. ' + counted + 'Queued: ' + (queue.queued || 0) + ', synced: ' + (dispatch.synced || 0) + ', failed: ' + failed + ', still pending: ' + pending + '.'
-        : 'Sync finished. ' + counted + 'Queued: ' + (queue.queued || 0) + ', synced: ' + (dispatch.synced || 0) + (pending > 0 ? ', still pending: ' + pending + '.' : '.');
-      showResult($form, message, failed === 0);
-      loadSyncStatusPanel();
-    }).catch(function (xhr) {
-      const message = (xhr.responseJSON && xhr.responseJSON.message)
-        || (xhr.status === 403 ? 'Session expired or invalid security token. Refresh Settings and try again.' : '')
-        || 'Data sync failed.';
-      showResult($form, message, false);
-    }).finally(function () {
-      $button.prop('disabled', false);
-    });
+    startBulkPushBackground($form, $(this));
   });
 
   $('.js-sync-restore-hosted').on('click', function () {
@@ -1801,6 +1885,9 @@ document.addEventListener('DOMContentLoaded', function () {
   }
 
   loadSyncStatusPanel();
+  if ($syncLocalForm.length) {
+    pollBulkPushStatus($syncLocalForm);
+  }
 });
 </script>
 

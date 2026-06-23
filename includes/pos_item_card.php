@@ -91,6 +91,9 @@ function pos_render_item_card(array $rowitem): string
     } elseif (!empty($rowitem['availability_low_stock'])) {
         $cardClasses .= ' item-low-stock';
     }
+    if ($hasVariants) {
+        $cardClasses .= ' item-has-variants';
+    }
     $cardStyle = 'transition: all 0.3s ease;';
     if (!$isAvailable) {
         $cardStyle .= ' opacity: 0.58;';

@@ -166,9 +166,13 @@ if ($visibleDeviceToken !== '') {
                   </div>
                   <div class="custom-control custom-switch mb-3">
                     <input type="hidden" name="POSMAIN_MOOVA_APPLY_ENABLED" value="0">
-                    <input type="checkbox" class="custom-control-input" id="moovaApplyEnabled" name="POSMAIN_MOOVA_APPLY_ENABLED" value="1" <?= $moovaSyncBool('POSMAIN_MOOVA_APPLY_ENABLED', true) ? 'checked' : '' ?>>
+                    <input type="checkbox" class="custom-control-input" id="moovaApplyEnabled" name="POSMAIN_MOOVA_APPLY_ENABLED" value="1" <?= $moovaSyncBool('POSMAIN_MOOVA_APPLY_ENABLED', false) ? 'checked' : '' ?>>
                     <label class="custom-control-label" for="moovaApplyEnabled">Apply Moova through worker</label>
-                    <small class="form-text text-muted">فعله فقط إذا كان هذا الـ POS هو المكان الذي سيطبق أوامر Moova داخل شاشة الكاشير.</small>
+                    <small class="form-text text-muted">اتركه مغلقاً في التجربة الأولى. تفعيله يطبق أوامر Moova تلقائياً عبر الـ worker ويتطلب اختبار قبول من الكاشير قبل الإنتاج.</small>
+                  </div>
+                  <div class="alert alert-warning py-2 mb-3" id="moovaApplyWarning">
+                    <i class="fas fa-exclamation-triangle ml-1"></i>
+                    لا تفعّل Apply Moova through worker إلا بعد إكمال اختبار قبول الكاشير وتوثيقه خارج النظام.
                   </div>
                   <button type="submit" class="btn btn-success px-4" id="moovaSyncSaveBtn">
                     <i class="fas fa-save ml-1"></i> حفظ إعدادات Moova
@@ -317,6 +321,21 @@ document.addEventListener('DOMContentLoaded', function () {
   }
 
   if (syncForm) {
+    const moovaApplyEnabled = document.getElementById('moovaApplyEnabled');
+    if (moovaApplyEnabled) {
+      moovaApplyEnabled.addEventListener('change', function () {
+        if (!moovaApplyEnabled.checked) {
+          return;
+        }
+        const confirmed = confirm(
+          'تفعيل Apply Moova through worker يطبق أوامر Moova تلقائياً بدون مراجعة الكاشير في الودجت. فعّله فقط بعد اكتمال اختبار قبول الكاشير.'
+        );
+        if (!confirmed) {
+          moovaApplyEnabled.checked = false;
+        }
+      });
+    }
+
     syncForm.addEventListener('submit', async function (event) {
       event.preventDefault();
       syncSaveBtn.disabled = true;

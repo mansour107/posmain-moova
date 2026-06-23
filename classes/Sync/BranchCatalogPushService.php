@@ -138,6 +138,11 @@ class BranchCatalogPushService
         ];
     }
 
+    public function ensureCanPushToHosted(array $config): void
+    {
+        $this->assertCanPush($config);
+    }
+
     private function assertCanPush(array $config): void
     {
         if ((string) ($config['role'] ?? 'branch') !== 'branch') {

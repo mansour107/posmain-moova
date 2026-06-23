@@ -17,6 +17,7 @@ require_once __DIR__ . '/../classes/Sync/SyncRuntimeDbConfigFile.php';
 require_once __DIR__ . '/../classes/Sync/SyncRuntimeSettings.php';
 require_once __DIR__ . '/../classes/Sync/BranchRestoreFromHostedService.php';
 require_once __DIR__ . '/../classes/Sync/BranchCatalogPushService.php';
+require_once __DIR__ . '/../classes/Sync/BranchBulkPushJobService.php';
 require_once __DIR__ . '/../classes/Router/ShopRouter.php';
 
 header('Content-Type: application/json; charset=utf-8');
@@ -255,6 +256,40 @@ try {
                     'orders' => true,
                     'operational' => true,
                 ]),
+            ]);
+            break;
+
+        case 'push_supported_data_start':
+            $shopId = class_exists('PosmainShopRouter') ? PosmainShopRouter::activeSessionShopId() : 0;
+            $shopDbRow = $conn->query('SELECT DATABASE() AS db_name')->fetch_assoc();
+            $shopDbName = trim((string) ($shopDbRow['db_name'] ?? ''));
+            $pushConfig = syncCredentialsBranchRuntimeConfig($appConfig, $_POST);
+            (new BranchCatalogPushService())->ensureCanPushToHosted($pushConfig);
+            $job = (new BranchBulkPushJobService())->start(
+                $conn,
+                $pushConfig,
+                $shopId,
+                $shopDbName
+            );
+            syncCredentialsAudit($conn, 'sync_supported_data_background_started', [
+                'job_uuid' => $job['job_uuid'] ?? '',
+            ]);
+            syncCredentialsJson([
+                'ok' => true,
+                'message' => $job['message'] ?? 'Background sync started.',
+                'job' => $job,
+            ]);
+            break;
+
+        case 'push_supported_data_status':
+            $jobUuid = trim((string) ($_POST['job_uuid'] ?? ''));
+            $job = (new BranchBulkPushJobService())->getLatestJob(
+                $conn,
+                $jobUuid !== '' ? $jobUuid : null
+            );
+            syncCredentialsJson([
+                'ok' => true,
+                'job' => $job,
             ]);
             break;
 

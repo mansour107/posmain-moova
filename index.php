@@ -256,7 +256,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 try {
                     if ($routerEnabled) {
                         $router = new PosmainShopRouter();
-                        $route = $router->resolveLoginAlias($conn, $user);
+                        $routerConn = posmain_router_db_connect();
+                        try {
+                            $route = $router->resolveLoginAlias($routerConn, $user);
+                        } finally {
+                            $routerConn->close();
+                        }
                         if (!$route) {
                             $error_message = "اسم المستخدم أو كلمة المرور غير صحيحة";
                             login_throttle_failure($conn, $loginThrottle, $user, $clientIp);

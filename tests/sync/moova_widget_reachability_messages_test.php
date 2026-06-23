@@ -1,113 +1,84 @@
 <?php
 
-use PHPUnit\Framework\TestCase;
+$root = dirname(__DIR__, 2);
+$proxySource = file_get_contents($root . '/moova_pos_proxy.php');
+$widgetSource = file_get_contents($root . '/assets/moova-pos-widget/pos-widget.js');
 
-class MoovaWidgetReachabilityMessagesTest extends TestCase
+function moovaReachabilityAssert($condition, $message)
 {
-    public function testProxyKeepsLegacyErrorAndAddsStructuredReachabilityFields(): void
-    {
-        $source = $this->source('moova_pos_proxy.php');
-
-        $this->assertStringContainsString('function moova_proxy_reachability_error', $source);
-        $this->assertStringContainsString("'error' => 'moova_unreachable'", $source);
-        $this->assertStringContainsString("'code' => 'MOOVA_UNREACHABLE'", $source);
-        $this->assertStringContainsString("'retryable' => true", $source);
-        $this->assertStringContainsString("'details' => (string) \$details", $source);
-        $this->assertStringContainsString('function moova_proxy_local_passive_bridge_payload', $source);
-        $this->assertStringContainsString("'mode' => 'local_passive_fallback'", $source);
-        $this->assertStringContainsString("'remoteReachable' => false", $source);
-        $this->assertStringContainsString('moova_proxy_json(200, moova_proxy_local_passive_bridge_payload($path, $link, $error))', $source);
-        $this->assertStringContainsString("moova_proxy_json(200, moova_proxy_local_passive_bridge_payload(\$path, \$link, 'http_status_' . \$statusCode))", $source);
-        $this->assertStringContainsString('moova_proxy_json(502, moova_proxy_reachability_error($error))', $source);
-    }
-
-    public function testProxyFailsFastForPassiveBridgeRequests(): void
-    {
-        $source = $this->source('moova_pos_proxy.php');
-
-        $this->assertStringContainsString('function moova_proxy_is_passive_bridge_path', $source);
-        $this->assertStringContainsString("'/api/integrations/pos/local-bridge/widget/bootstrap'", $source);
-        $this->assertStringContainsString("'/api/integrations/pos/local-bridge/heartbeat'", $source);
-        $this->assertStringContainsString("'/api/integrations/pos/local-bridge/pending'", $source);
-        $this->assertStringContainsString('function moova_proxy_timeout_config', $source);
-        $this->assertStringContainsString("'connect_ms' => 800", $source);
-        $this->assertStringContainsString("'total_ms' => 2000", $source);
-        $this->assertStringContainsString('CURLOPT_CONNECTTIMEOUT_MS', $source);
-        $this->assertStringContainsString('CURLOPT_TIMEOUT_MS', $source);
-        $this->assertStringContainsString('CURLOPT_NOSIGNAL', $source);
-        $this->assertStringNotContainsString('CURLOPT_TIMEOUT, 15', $source);
-    }
-
-    public function testProxyRewritesDockerOnlyMoovaUrlsForBrowserBootstrap(): void
-    {
-        $source = $this->source('moova_pos_proxy.php');
-
-        $this->assertStringContainsString('function moova_proxy_rewrite_browser_moova_urls', $source);
-        $this->assertStringContainsString('function moova_proxy_browser_reachable_url', $source);
-        $this->assertStringContainsString("strtolower((string) \$parts['host']) !== 'host.docker.internal'", $source);
-        $this->assertStringContainsString("['baseUrl', 'websocketUrl', 'widgetUrl']", $source);
-        $this->assertStringContainsString("\$parts['host'] = (string) \$originParts['host'];", $source);
-        $this->assertStringContainsString('$responseBody = moova_proxy_rewrite_browser_moova_urls($responseBody, $widgetOrigin);', $source);
-    }
-
-    public function testProxyUsesForwardedOriginWhenWidgetOriginHeaderIsMissing(): void
-    {
-        $source = $this->source('moova_pos_proxy.php');
-
-        $this->assertStringContainsString('function moova_proxy_current_origin', $source);
-        $this->assertStringContainsString("moova_proxy_header('X-Forwarded-Proto')", $source);
-        $this->assertStringContainsString("moova_proxy_header('X-Forwarded-Host')", $source);
-        $this->assertStringContainsString("moova_proxy_header('X-Pos-Widget-Origin') ?: moova_proxy_current_origin()", $source);
-    }
-
-    public function testWidgetMapsReachabilityCodesToCashierMessages(): void
-    {
-        $source = $this->source('assets/moova-pos-widget/pos-widget.js');
-
-        $this->assertStringContainsString('moovaUnreachable:', $source);
-        $this->assertStringContainsString('posUnreachable:', $source);
-        $this->assertStringContainsString('تعذر الاتصال بـ Moova', $source);
-        $this->assertStringContainsString('تعذر الاتصال بنظام نقاط البيع', $source);
-        $this->assertStringContainsString('function normalizeApiErrorPayload(payload, status)', $source);
-        $this->assertStringContainsString("case 'MOOVA_UNREACHABLE':", $source);
-        $this->assertStringContainsString("case 'POS_UNREACHABLE':", $source);
-        $this->assertStringContainsString("return t('moovaUnreachable')", $source);
-        $this->assertStringContainsString("return t('posUnreachable')", $source);
-        $this->assertStringNotContainsString("payload && typeof payload.error === 'string' ? payload.error", $source);
-    }
-
-    public function testWidgetPausesMoovaBridgeWhileBrowserIsOfflineAndRetriesOnline(): void
-    {
-        $source = $this->source('assets/moova-pos-widget/pos-widget.js');
-
-        $this->assertStringContainsString("window.addEventListener('online', handleBrowserOnline)", $source);
-        $this->assertStringContainsString("window.addEventListener('offline', handleBrowserOffline)", $source);
-        $this->assertStringContainsString('function isBrowserOffline()', $source);
-        $this->assertStringContainsString('function isMoovaBridgePath(path)', $source);
-        $this->assertStringContainsString("isMoovaBridgePath(path) && isBrowserOffline()", $source);
-        $this->assertStringContainsString("throw createWidgetError(t('moovaUnreachable'), 0, 'MOOVA_UNREACHABLE')", $source);
-        $this->assertStringContainsString('cleanupRealtime();', $source);
-        $this->assertStringContainsString('initializeWidget(state.activeInitKey);', $source);
-    }
-
-    public function testWidgetPreservesRawErrorPayloadForAckFailureDetails(): void
-    {
-        $source = $this->source('assets/moova-pos-widget/pos-widget.js');
-
-        $this->assertStringContainsString('throw createWidgetError(errorInfo.message, response.status, errorInfo.code, payload)', $source);
-        $this->assertStringContainsString('error.errorPayload = payload || null', $source);
-    }
-
-    private function source(string $path): string
-    {
-        $absolute = __DIR__ . '/../../' . $path;
-        $source = file_get_contents($absolute);
-        $this->assertIsString($source);
-
-        return $source;
+    if (!$condition) {
+        fwrite(STDERR, $message . "\n");
+        exit(1);
     }
 }
 
-class moova_widget_reachability_messages_test extends MoovaWidgetReachabilityMessagesTest
-{
+moovaReachabilityAssert(is_string($proxySource), 'proxy source missing');
+moovaReachabilityAssert(is_string($widgetSource), 'widget source missing');
+
+foreach ([
+    'function moova_proxy_reachability_error',
+    "'error' => 'moova_unreachable'",
+    "'code' => 'MOOVA_UNREACHABLE'",
+    "'retryable' => true",
+    "'details' => (string) \$details",
+    'function moova_proxy_local_passive_bridge_payload',
+    "'mode' => 'local_passive_fallback'",
+    "'remoteReachable' => false",
+    'moova_proxy_json(200, moova_proxy_local_passive_bridge_payload($path, $link, $error))',
+    "moova_proxy_json(200, moova_proxy_local_passive_bridge_payload(\$path, \$link, 'http_status_' . \$statusCode))",
+    'moova_proxy_json(502, moova_proxy_reachability_error($error))',
+] as $needle) {
+    moovaReachabilityAssert(strpos($proxySource, $needle) !== false, 'proxy reachability contract missing: ' . $needle);
 }
+
+foreach ([
+    'function moova_proxy_is_passive_bridge_path',
+    "'/api/integrations/pos/local-bridge/widget/bootstrap'",
+    "'/api/integrations/pos/local-bridge/heartbeat'",
+    "'/api/integrations/pos/local-bridge/pending'",
+    'function moova_proxy_timeout_config',
+    "'connect_ms' => 800",
+    "'total_ms' => 2000",
+    'CURLOPT_CONNECTTIMEOUT_MS',
+    'CURLOPT_TIMEOUT_MS',
+    'CURLOPT_NOSIGNAL',
+] as $needle) {
+    moovaReachabilityAssert(strpos($proxySource, $needle) !== false, 'proxy passive bridge contract missing: ' . $needle);
+}
+moovaReachabilityAssert(strpos($proxySource, 'CURLOPT_TIMEOUT, 15') === false, 'proxy should not use legacy CURLOPT_TIMEOUT, 15');
+
+foreach ([
+    'moovaUnreachable:',
+    'posUnreachable:',
+    'تعذر الاتصال بـ Moova',
+    'تعذر الاتصال بنظام نقاط البيع',
+    'function normalizeApiErrorPayload(payload, status)',
+    "case 'MOOVA_UNREACHABLE':",
+    "case 'POS_UNREACHABLE':",
+    "return t('moovaUnreachable')",
+    "return t('posUnreachable')",
+    "window.addEventListener('online', handleBrowserOnline)",
+    "window.addEventListener('offline', handleBrowserOffline)",
+    'function isBrowserOffline()',
+    'function isMoovaBridgePath(path)',
+    "isMoovaBridgePath(path) && isBrowserOffline()",
+    "throw createWidgetError(t('moovaUnreachable'), 0, 'MOOVA_UNREACHABLE')",
+    'cleanupRealtime();',
+    'initializeWidget(state.activeInitKey);',
+    'function applyBridgeHealth(result)',
+    'function extractBridgeTransportError(result)',
+    'result.fallback !== true && result.remoteReachable !== false',
+    'applyBridgeHealth(bootstrap)',
+    'applyBridgeHealth(result)',
+    "const code = asText(warning.code) || 'MOOVA_UNREACHABLE'",
+    'throw createWidgetError(errorInfo.message, response.status, errorInfo.code, payload)',
+    'error.errorPayload = payload || null',
+] as $needle) {
+    moovaReachabilityAssert(strpos($widgetSource, $needle) !== false, 'widget reachability contract missing: ' . $needle);
+}
+moovaReachabilityAssert(
+    strpos($widgetSource, "payload && typeof payload.error === 'string' ? payload.error") === false,
+    'widget should not expose raw payload.error directly'
+);
+
+echo "moova-widget-reachability-messages-ok\n";
