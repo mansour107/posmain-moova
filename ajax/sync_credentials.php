@@ -62,6 +62,19 @@ try {
             ]);
             break;
 
+        case 'save_local_sync_toggles':
+            (new SyncRuntimeSettings())->savePartial(
+                $conn,
+                syncCredentialsSettingsInput($_POST, 'branch'),
+                SyncRuntimeSettings::localBranchSyncToggleKeys()
+            );
+            syncCredentialsAudit($conn, 'sync_credentials_local_toggles_saved', ['role' => 'branch']);
+            syncCredentialsJson([
+                'ok' => true,
+                'message' => 'Local sync toggles were saved.',
+            ]);
+            break;
+
         case 'save_local':
             $dbConfigDirty = !empty($_POST['POSMAIN_DB_CONFIG_DIRTY']);
             $db = syncCredentialsDbInput($_POST, true);
@@ -69,17 +82,21 @@ try {
             if ($dbConfigDirty || !empty($_POST['POSMAIN_BRANCH_SYNC_SECRET_DIRTY'])) {
                 syncCredentialsRequireEncryption();
             }
+            $settingsInput = syncCredentialsSettingsInput($_POST, 'branch');
+            $runtime = new SyncRuntimeSettings();
             if ($dbConfigDirty) {
                 $dbTest = (new SyncRuntimeDbConfigFile())->testDatabase($db);
                 if (empty($dbTest['ok'])) {
                     throw new InvalidArgumentException('Settings cannot be saved before the database connection test succeeds: ' . ($dbTest['message'] ?? ''));
                 }
                 $targetConn = syncCredentialsConnectToTargetDb($db);
-                (new SyncRuntimeSettings())->save($targetConn, syncCredentialsSettingsInput($_POST, 'branch'));
+                $runtime->savePartial($targetConn, $settingsInput, SyncRuntimeSettings::localBranchSyncToggleKeys());
+                $runtime->save($targetConn, $settingsInput);
                 $targetConn->close();
                 (new SyncRuntimeDbConfigFile())->save($db);
             } else {
-                (new SyncRuntimeSettings())->save($conn, syncCredentialsSettingsInput($_POST, 'branch'));
+                $runtime->savePartial($conn, $settingsInput, SyncRuntimeSettings::localBranchSyncToggleKeys());
+                $runtime->save($conn, $settingsInput);
             }
             $pairingResult = null;
             if (syncCredentialsShouldPairLocal($_POST)) {

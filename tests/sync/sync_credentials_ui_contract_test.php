@@ -161,6 +161,11 @@ syncCredentialsUiAssert(strpos($setting, '<?php if ($syncIsLocal): ?>') !== fals
 syncCredentialsUiAssert(strpos($setting, '<?php if ($syncIsHosted): ?>') !== false, 'hosted-only sync section should render only on cloud/hosted role');
 syncCredentialsUiAssert(strpos($setting, '<div id="sync-debug-panel" class="mt-3" style="display:none;">') !== false, 'debug database tools should be minimized by default');
 syncCredentialsUiAssert(strpos($setting, 'setLocalSyncCoreToggles(localSyncMaster.checked)') !== false, 'local branch sync master should toggle core sync settings together');
+syncCredentialsUiAssert(strpos($setting, 'persistLocalSyncToggles') !== false, 'local branch sync toggles should auto-save when changed');
+syncCredentialsUiAssert(strpos($setting, 'save_local_sync_toggles') !== false, 'local branch sync toggles should use a dedicated save action');
+syncCredentialsUiAssert(strpos($ajax, 'save_local_sync_toggles') !== false, 'sync credentials ajax should support saving local sync toggles without full identity validation');
+syncCredentialsUiAssert(strpos($ajax, 'localBranchSyncToggleKeys') !== false, 'local save should persist sync toggles before full identity save');
+syncCredentialsUiAssert(strpos($runtimeSettings, 'localBranchSyncToggleKeys') !== false, 'SyncRuntimeSettings should expose local branch sync toggle keys');
 syncCredentialsUiAssert(strpos($setting, 'localSyncAdvanced.style.display') !== false, 'advanced local sync settings should stay hidden until opened');
 syncCredentialsUiAssert(strpos($setting, 'custom-switch sync-switch-lg mb-0') !== false, 'local sync switch should use the large shared switch style');
 syncCredentialsUiAssert(substr_count($setting, 'custom-switch sync-switch-lg mb-0') >= 2, 'local and hosted sync switches should use the same large switch style');

@@ -22,6 +22,17 @@ class SyncRuntimeSettings
         'POSMAIN_MOOVA_APPLY_ENABLED',
     ];
 
+    public static function localBranchSyncToggleKeys(): array
+    {
+        return [
+            'POSMAIN_SYNC_OUTBOX_ENABLED',
+            'POSMAIN_BRANCH_SYNC_ENABLED',
+            'POSMAIN_SYNC_WORKER_ENABLED',
+            'POSMAIN_MENU_SYNC_ENABLED',
+            'POSMAIN_CLOUD_PULL_ENABLED',
+        ];
+    }
+
     public function loadForUi(mysqli $conn, bool $includeSecretValues = false): array
     {
         $rows = $this->fetchRows($conn, false);

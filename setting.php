@@ -192,9 +192,13 @@ $syncConfigBool = static function (string $key, bool $default = false) use ($app
 
     return $default;
 };
-$syncBool = static function (string $key, bool $default = false) use ($syncValue, $syncConfigBool): bool {
-    $value = $syncValue($key, $syncConfigBool($key, $default) ? '1' : '0');
-    return in_array(strtolower(trim((string) $value)), ['1', 'true', 'yes', 'on'], true);
+$syncBool = static function (string $key, bool $default = false) use ($syncRuntimeSettings, $syncConfigured, $syncConfigBool): bool {
+    if ($syncConfigured($key)) {
+        $value = (string) ($syncRuntimeSettings[$key]['value'] ?? '0');
+    } else {
+        $value = $syncConfigBool($key, $default) ? '1' : '0';
+    }
+    return in_array(strtolower(trim($value)), ['1', 'true', 'yes', 'on'], true);
 };
 // Branch identity is per-shop DB only; never prefill from env/.env.branch-worker in Settings UI.
 $syncBranchUuidEffective = $syncEffectiveValue('POSMAIN_BRANCH_UUID', '');
@@ -1076,14 +1080,33 @@ document.addEventListener('DOMContentLoaded', function () {
     });
   }
 
+  async function persistLocalSyncToggles() {
+    if (!$syncLocalForm.length) {
+      return;
+    }
+
+    try {
+      const response = await ajaxSyncPromise(formData($syncLocalForm, 'save_local_sync_toggles'));
+      initialLocalSyncSignature = payloadSignature(formData($syncLocalForm));
+      showResult($syncLocalForm, response.message || 'Local sync toggles were saved.', true);
+    } catch (xhr) {
+      const message = (xhr.responseJSON && xhr.responseJSON.message) || 'Unable to save local sync toggles.';
+      showResult($syncLocalForm, message, false);
+    }
+  }
+
   if (localSyncMaster) {
     localSyncMaster.addEventListener('change', function () {
       setLocalSyncCoreToggles(localSyncMaster.checked);
+      void persistLocalSyncToggles();
     });
   }
 
   localSyncCoreToggles.forEach(function (input) {
-    input.addEventListener('change', updateLocalSyncMaster);
+    input.addEventListener('change', function () {
+      updateLocalSyncMaster();
+      void persistLocalSyncToggles();
+    });
   });
 
   if (localSyncAdvancedButton && localSyncAdvanced) {
@@ -1700,7 +1723,7 @@ document.addEventListener('DOMContentLoaded', function () {
   const branchSecretInput = syncCard.querySelector('#sync-shared-section [name="POSMAIN_BRANCH_SYNC_SECRET"]');
   initialDebugSignature = payloadSignature(syncDebugPayload());
   initialBranchSyncSecretValue = branchSecretInput ? branchSecretInput.value : '';
-  const initialLocalSyncSignature = $syncLocalForm.length ? payloadSignature(formData($syncLocalForm)) : '';
+  let initialLocalSyncSignature = $syncLocalForm.length ? payloadSignature(formData($syncLocalForm)) : '';
   const initialCloudSyncSignature = $syncCloudForm.length ? payloadSignature(formData($syncCloudForm)) : '';
   let submittingAfterSyncSave = false;
 
