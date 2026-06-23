@@ -399,9 +399,38 @@ class Stepwise
 
             case '011_customer_visits_setup.sql':
                 return $this->reconcileCustomerVisitsSetup($step, $appliedBy);
+
+            case '012_sync_money_decimal_types.sql':
+                return $this->reconcileSyncMoneyDecimalTypes($step, $appliedBy);
         }
 
         return null;
+    }
+
+    private function reconcileSyncMoneyDecimalTypes(array $step, ?string $appliedBy): ?string
+    {
+        if (!$this->tableExists('ot_head') || !$this->columnExists('ot_head', 'pro_value')) {
+            return null;
+        }
+
+        $type = strtolower($this->columnType('ot_head', 'pro_value'));
+        if (strpos($type, 'decimal(15,4)') === false) {
+            return null;
+        }
+
+        if ($this->tableExists('order_payments') && $this->columnExists('order_payments', 'amount')) {
+            $paymentType = strtolower($this->columnType('order_payments', 'amount'));
+            if (strpos($paymentType, 'decimal(15,4)') === false) {
+                return null;
+            }
+        }
+
+        $this->recordStep($step, $appliedBy, [
+            'baseline_reconciled' => true,
+            'note' => 'Sync money decimal columns already aligned.',
+        ]);
+
+        return 'baseline';
     }
 
     /**
@@ -642,6 +671,24 @@ class Stepwise
         $stmt->close();
 
         return (int) ($row['total'] ?? 0) > 0;
+    }
+
+    private function columnType(string $table, string $column): string
+    {
+        $stmt = $this->conn->prepare("
+            SELECT COLUMN_TYPE
+            FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE()
+              AND TABLE_NAME = ?
+              AND COLUMN_NAME = ?
+            LIMIT 1
+        ");
+        $stmt->bind_param('ss', $table, $column);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        return (string) ($row['COLUMN_TYPE'] ?? '');
     }
 
     private function indexExists(string $table, string $index): bool

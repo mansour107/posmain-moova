@@ -70,9 +70,33 @@ class BranchBulkPushJobService
             return $job ? $this->presentJob($job, false) : null;
         }
 
-        $job = $this->findLatestJob($conn);
+        $job = $this->findActiveJob($conn);
+        if ($job) {
+            return $this->presentJob($job, false);
+        }
 
-        return $job ? $this->presentJob($job, false) : null;
+        $job = $this->findLatestJob($conn);
+        if ($job && $this->shouldRestoreLatestJob($job)) {
+            return $this->presentJob($job, false);
+        }
+
+        return null;
+    }
+
+    private function shouldRestoreLatestJob(array $row): bool
+    {
+        $status = (string) ($row['status'] ?? '');
+        $message = trim((string) ($row['message'] ?? ''));
+
+        if ($status === 'completed') {
+            return $message !== '';
+        }
+
+        if ($status === 'failed') {
+            return str_starts_with($message, 'Sync finished');
+        }
+
+        return false;
     }
 
     public function runToCompletion(mysqli $conn, array $config, string $jobUuid): void
@@ -150,6 +174,11 @@ class BranchBulkPushJobService
             $pendingOutbox = 0;
             $dispatchDone = false;
             $dispatchSafety = 0;
+            $dispatchOptions = [
+                'batch_size' => 25,
+                'http_timeout_ms' => max(30000, (int) ($config['sync']['http_timeout_ms'] ?? 5000)),
+                'http_connect_timeout_ms' => max(3000, (int) ($config['sync']['http_connect_timeout_ms'] ?? 1000)),
+            ];
 
             while (!$dispatchDone && $dispatchSafety < self::DISPATCH_SAFETY_LIMIT) {
                 $dispatchSafety++;
@@ -163,7 +192,7 @@ class BranchBulkPushJobService
                     'dispatch_json' => $aggregatedDispatch,
                 ]);
 
-                $dispatchResult = $this->pushService->runPushDispatchBatch($conn, $config, ['batch_size' => 50]);
+                $dispatchResult = $this->pushService->runPushDispatchBatch($conn, $config, $dispatchOptions);
                 $dispatch = $dispatchResult['dispatch'] ?? [];
                 $this->mergeDispatchTotals($aggregatedDispatch, $dispatch);
                 $syncedSoFar = (int) ($aggregatedDispatch['synced'] ?? 0);
@@ -172,11 +201,15 @@ class BranchBulkPushJobService
             }
 
             $failed = (int) ($aggregatedDispatch['failed'] ?? 0);
-            $finalMessage = $this->buildFinalMessage($aggregatedQueue, $aggregatedDispatch, $pendingOutbox);
+            $failedAwaitingRetry = $this->countFailedAwaitingRetry($conn);
+            $failureSummary = $failed > 0 ? $this->summarizeOutboxFailures($conn) : [];
+            $finalMessage = $this->buildFinalMessage($aggregatedQueue, $aggregatedDispatch, $pendingOutbox, $failedAwaitingRetry, $failureSummary);
             $result = [
                 'queue' => $aggregatedQueue,
                 'dispatch' => $aggregatedDispatch,
                 'pending_outbox' => $pendingOutbox,
+                'failed_awaiting_retry' => $failedAwaitingRetry,
+                'failure_summary' => $failureSummary,
             ];
 
             $this->updateJob($conn, $jobUuid, [
@@ -432,28 +465,127 @@ class BranchBulkPushJobService
         return 'Syncing ' . $label . '... ' . $safePercent . '%';
     }
 
-    private function buildFinalMessage(array $queue, array $dispatch, int $pending): string
-    {
+    private function buildFinalMessage(
+        array $queue,
+        array $dispatch,
+        int $pending,
+        int $failedAwaitingRetry = 0,
+        array $failureSummary = []
+    ): string {
         $failed = (int) ($dispatch['failed'] ?? 0);
-        $counted = 'Items: ' . (int) ($queue['catalog'] ?? 0)
+        $scanned = (int) ($queue['catalog'] ?? 0)
+            + (int) ($queue['tables'] ?? 0)
+            + (int) ($queue['orders'] ?? 0);
+        $counted = 'Scanned: ' . $scanned
+            . ' (items: ' . (int) ($queue['catalog'] ?? 0)
             . ', tables: ' . (int) ($queue['tables'] ?? 0)
             . ', orders: ' . (int) ($queue['orders'] ?? 0)
-            . '. ';
+            . '). ';
+        $stats = 'New/changed to send: ' . (int) ($queue['queued'] ?? 0)
+            . ', already synced (skipped): ' . (int) ($queue['skipped'] ?? 0)
+            . ', sent this run: ' . (int) ($dispatch['synced'] ?? 0)
+            . ', failed this run: ' . $failed;
 
         if ($failed > 0) {
-            return 'Sync finished with errors. ' . $counted
-                . 'Queued: ' . (int) ($queue['queued'] ?? 0)
-                . ', synced: ' . (int) ($dispatch['synced'] ?? 0)
-                . ', failed: ' . $failed
-                . ', still pending: ' . $pending . '.';
+            $message = 'Sync finished with errors. ' . $counted . $stats;
+            if ($pending > 0) {
+                $message .= ', ready to retry now: ' . $pending;
+            }
+            if ($failedAwaitingRetry > 0) {
+                $message .= ', waiting for retry backoff: ' . $failedAwaitingRetry;
+            }
+            $message .= '.';
+            $message .= $this->formatFailureSummary($failureSummary);
+
+            return $message;
         }
 
-        $suffix = $pending > 0 ? ', still pending: ' . $pending . '.' : '.';
+        $message = 'Sync finished. ' . $counted . $stats;
+        if ($pending > 0) {
+            $message .= ', ready to retry now: ' . $pending;
+        }
+        $message .= '.';
 
-        return 'Sync finished. ' . $counted
-            . 'Queued: ' . (int) ($queue['queued'] ?? 0)
-            . ', synced: ' . (int) ($dispatch['synced'] ?? 0)
-            . $suffix;
+        return $message;
+    }
+
+    private function formatFailureSummary(array $failureSummary): string
+    {
+        if ($failureSummary === []) {
+            return '';
+        }
+
+        $parts = [];
+        foreach ($failureSummary as $row) {
+            $error = trim((string) ($row['last_error'] ?? ''));
+            if ($error === '') {
+                continue;
+            }
+            if (strlen($error) > 120) {
+                $error = substr($error, 0, 117) . '...';
+            }
+            $parts[] = $error . ' (' . (int) ($row['c'] ?? 0) . ')';
+        }
+
+        if ($parts === []) {
+            return '';
+        }
+
+        return ' Top errors: ' . implode('; ', $parts) . '.';
+    }
+
+    private function countFailedAwaitingRetry(mysqli $conn): int
+    {
+        if (!$this->tableExists($conn, 'sync_outbox')) {
+            return 0;
+        }
+
+        $row = $conn->query("
+            SELECT COUNT(*) AS c
+            FROM sync_outbox
+            WHERE status = 'failed'
+              AND next_retry_at IS NOT NULL
+              AND next_retry_at > NOW(6)
+        ")->fetch_assoc();
+
+        return (int) ($row['c'] ?? 0);
+    }
+
+    private function summarizeOutboxFailures(mysqli $conn, int $limit = 5): array
+    {
+        if (!$this->tableExists($conn, 'sync_outbox')) {
+            return [];
+        }
+
+        $limit = max(1, min(10, $limit));
+        $result = $conn->query("
+            SELECT last_error, COUNT(*) AS c
+            FROM sync_outbox
+            WHERE status IN ('failed', 'dead')
+              AND last_error IS NOT NULL
+              AND last_error <> ''
+            GROUP BY last_error
+            ORDER BY c DESC, last_error ASC
+            LIMIT {$limit}
+        ");
+        if (!$result) {
+            return [];
+        }
+
+        $rows = [];
+        while ($row = $result->fetch_assoc()) {
+            $rows[] = $row;
+        }
+
+        return $rows;
+    }
+
+    private function tableExists(mysqli $conn, string $table): bool
+    {
+        $escaped = $conn->real_escape_string($table);
+        $result = $conn->query("SHOW TABLES LIKE '{$escaped}'");
+
+        return $result && $result->num_rows > 0;
     }
 
     private function phpBinary(): string

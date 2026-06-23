@@ -477,26 +477,48 @@ class BranchCatalogPushService
             return;
         }
 
-        $queue['queued']++;
+        $outboxId = (int) $result['outbox_id'];
 
-        if (!$forceResend) {
+        if ($forceResend) {
+            $conn->query("
+                UPDATE sync_outbox
+                SET status = 'pending',
+                    attempts = 0,
+                    locked_by = NULL,
+                    locked_until = NULL,
+                    next_retry_at = NULL,
+                    last_error = NULL,
+                    synced_at = NULL,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = {$outboxId}
+            ");
+            $queue['resent']++;
+            $queue['queued']++;
             return;
         }
 
-        $outboxId = (int) $result['outbox_id'];
-        $conn->query("
-            UPDATE sync_outbox
-            SET status = 'pending',
-                attempts = 0,
-                locked_by = NULL,
-                locked_until = NULL,
-                next_retry_at = NULL,
-                last_error = NULL,
-                synced_at = NULL,
-                updated_at = CURRENT_TIMESTAMP
-            WHERE id = {$outboxId}
-        ");
-        $queue['resent']++;
+        $status = $this->outboxStatus($conn, $outboxId);
+        if ($status === 'synced') {
+            $queue['skipped']++;
+            return;
+        }
+
+        $queue['queued']++;
+    }
+
+    private function outboxStatus(mysqli $conn, int $outboxId): string
+    {
+        if ($outboxId <= 0 || !$this->tableExists($conn, 'sync_outbox')) {
+            return '';
+        }
+
+        $stmt = $conn->prepare('SELECT status FROM sync_outbox WHERE id = ? LIMIT 1');
+        $stmt->bind_param('i', $outboxId);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        return (string) ($row['status'] ?? '');
     }
 
     private function dispatchOutbox(mysqli $conn, array $config, array $options): array
@@ -517,8 +539,16 @@ class BranchCatalogPushService
             'drained_outbox' => $drainOutbox,
         ];
 
+        $workerOptions = ['batch_size' => $batchSize];
+        if (isset($options['http_timeout_ms'])) {
+            $workerOptions['http_timeout_ms'] = (int) $options['http_timeout_ms'];
+        }
+        if (isset($options['http_connect_timeout_ms'])) {
+            $workerOptions['http_connect_timeout_ms'] = (int) $options['http_connect_timeout_ms'];
+        }
+
         for ($i = 0; $i < $maxBatches; $i++) {
-            $metrics = $worker->runOnce($conn, $config, ['batch_size' => $batchSize]);
+            $metrics = $worker->runOnce($conn, $config, $workerOptions);
             $summary['batches']++;
             $summary['claimed'] += (int) ($metrics['claimed'] ?? 0);
             $summary['synced'] += (int) ($metrics['synced'] ?? 0);

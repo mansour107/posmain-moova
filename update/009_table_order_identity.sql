@@ -23,7 +23,7 @@ ALTER TABLE ot_head
 CREATE TABLE IF NOT EXISTS order_payments (
     id INT AUTO_INCREMENT PRIMARY KEY,
     order_id INT NOT NULL,
-    amount DECIMAL(12,2) NOT NULL,
+    amount DECIMAL(15,4) NOT NULL,
     payment_method VARCHAR(50) NULL,
     reference_no VARCHAR(100) NULL,
     paid_by_customer_id INT NULL,

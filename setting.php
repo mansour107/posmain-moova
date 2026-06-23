@@ -1574,6 +1574,22 @@ document.addEventListener('DOMContentLoaded', function () {
     return job.status === 'failed' ? false : !!job.ok;
   }
 
+  function shouldRestoreBulkPushJobOnLoad(job) {
+    if (!job || !job.message) {
+      return false;
+    }
+    if (job.running) {
+      return true;
+    }
+    if (job.status === 'completed') {
+      return true;
+    }
+    if (job.status === 'failed' && job.message.indexOf('Sync finished') === 0) {
+      return true;
+    }
+    return false;
+  }
+
   function applyBulkPushJobToUi($form, job) {
     if (!$form || !job || !job.message) {
       return;
@@ -1615,7 +1631,9 @@ document.addEventListener('DOMContentLoaded', function () {
       }
 
       bulkPushJobUuid = job.job_uuid || bulkPushJobUuid;
-      applyBulkPushJobToUi($form, job);
+      if (shouldRestoreBulkPushJobOnLoad(job) || bulkPushPollTimer) {
+        applyBulkPushJobToUi($form, job);
+      }
 
       if (job.running) {
         scheduleBulkPushPolling($form);

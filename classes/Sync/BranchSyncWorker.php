@@ -1,5 +1,11 @@
 <?php
 
+require_once __DIR__ . '/BranchIdentity.php';
+require_once __DIR__ . '/CloudAuthService.php';
+require_once __DIR__ . '/OutboxWorker.php';
+require_once __DIR__ . '/SyncDeliveryResultHandler.php';
+require_once __DIR__ . '/SyncHttpClient.php';
+
 class BranchSyncWorker
 {
     private OutboxWorker $outboxWorker;
@@ -63,7 +69,59 @@ class BranchSyncWorker
             return $metrics;
         }
 
-        $body = $this->buildPayload($claimed, $branchUuid, $runUuid);
+        $receiveUrl = $this->receiveUrl($cloudBaseUrl);
+        $delivery = $this->deliverClaimedBatch(
+            $conn,
+            $claimed,
+            $branchUuid,
+            $branchSecret,
+            $runUuid,
+            $receiveUrl,
+            $config,
+            $options
+        );
+        $metrics['synced'] = (int) ($delivery['synced'] ?? 0);
+        $metrics['failed'] = (int) ($delivery['failed'] ?? 0);
+        $metrics['dead'] = (int) ($delivery['dead'] ?? 0);
+
+        $status = $metrics['failed'] > 0 || $metrics['dead'] > 0 ? 'failed' : 'success';
+        $message = (string) ($delivery['message'] ?? 'sync worker batch finished');
+        $this->logWorker($conn, $runUuid, $status, $message, $metrics);
+
+        return $metrics + [
+            'http_status' => $delivery['http_status'] ?? null,
+            'mode' => $delivery['mode'] ?? null,
+            'error' => $delivery['error'] ?? null,
+        ];
+    }
+
+    private function deliverClaimedBatch(
+        mysqli $conn,
+        array $rows,
+        string $branchUuid,
+        string $branchSecret,
+        string $runUuid,
+        string $receiveUrl,
+        array $config,
+        array $options,
+        bool $boostTimeout = false
+    ): array {
+        if ($rows === []) {
+            return [
+                'synced' => 0,
+                'failed' => 0,
+                'dead' => 0,
+                'message' => 'empty batch',
+            ];
+        }
+
+        $deliveryOptions = $options;
+        if ($boostTimeout) {
+            $baseTimeout = (int) ($options['http_timeout_ms'] ?? $config['sync']['http_timeout_ms'] ?? 5000);
+            $deliveryOptions['http_timeout_ms'] = max($baseTimeout * 2, 60000);
+        }
+
+        $body = $this->buildPayload($rows, $branchUuid, $runUuid);
         $timestamp = (string) time();
         $nonce = bin2hex(random_bytes(12));
         $signature = CloudAuthService::sign($branchSecret, $timestamp, $nonce, $body);
@@ -75,20 +133,128 @@ class BranchSyncWorker
             'X-POSMAIN-Signature: ' . $signature,
         ];
 
-        $response = $this->postBatch($this->receiveUrl($cloudBaseUrl), $body, $headers, $config, $options);
-        if (!$response['ok'] || !is_array($response['json'])) {
-            $error = $response['error'] ?: 'cloud response unavailable';
-            $this->markRowsFailed($conn, $claimed, $error);
-            $metrics['failed'] = count($claimed);
-            $this->logWorker($conn, $runUuid, 'failed', $error, $metrics);
-            return $metrics + ['http_status' => $response['status'], 'error' => $error];
+        $response = $this->postBatch($receiveUrl, $body, $headers, $config, $deliveryOptions);
+        if ($response['ok'] && is_array($response['json'])) {
+            $metrics = ['synced' => 0, 'failed' => 0, 'dead' => 0];
+            $this->applyCloudResults($conn, $rows, $response['json']['results'] ?? [], $metrics);
+
+            return $metrics + [
+                'http_status' => $response['status'],
+                'mode' => $response['json']['mode'] ?? null,
+                'message' => 'sync worker batch finished',
+            ];
         }
 
-        $this->applyCloudResults($conn, $claimed, $response['json']['results'] ?? [], $metrics);
-        $status = $metrics['failed'] > 0 || $metrics['dead'] > 0 ? 'failed' : 'success';
-        $this->logWorker($conn, $runUuid, $status, 'sync worker batch finished', $metrics);
+        $error = $response['error'] ?: 'cloud response unavailable';
+        if (!$this->shouldRetryTransportFailure($response, $error, count($rows), $boostTimeout)) {
+            $immediateRetry = $this->isRetryableTransportFailure($response, $error) && $boostTimeout;
+            $this->markRowsFailed($conn, $rows, $error, $immediateRetry);
 
-        return $metrics + ['http_status' => $response['status'], 'mode' => $response['json']['mode'] ?? null];
+            return [
+                'synced' => 0,
+                'failed' => count($rows),
+                'dead' => 0,
+                'http_status' => $response['status'],
+                'error' => $error,
+                'message' => $error,
+            ];
+        }
+
+        if (count($rows) === 1) {
+            return $this->deliverClaimedBatch(
+                $conn,
+                $rows,
+                $branchUuid,
+                $branchSecret,
+                $runUuid,
+                $receiveUrl,
+                $config,
+                $options,
+                true
+            );
+        }
+
+        $midpoint = (int) ceil(count($rows) / 2);
+        $first = array_slice($rows, 0, $midpoint);
+        $second = array_slice($rows, $midpoint);
+        $totals = ['synced' => 0, 'failed' => 0, 'dead' => 0];
+
+        foreach ([$first, $second] as $chunk) {
+            if ($chunk === []) {
+                continue;
+            }
+            $chunkResult = $this->deliverClaimedBatch(
+                $conn,
+                $chunk,
+                $branchUuid,
+                $branchSecret,
+                $runUuid,
+                $receiveUrl,
+                $config,
+                $options,
+                false
+            );
+            $totals['synced'] += (int) ($chunkResult['synced'] ?? 0);
+            $totals['failed'] += (int) ($chunkResult['failed'] ?? 0);
+            $totals['dead'] += (int) ($chunkResult['dead'] ?? 0);
+        }
+
+        return $totals + [
+            'http_status' => $response['status'],
+            'error' => $error,
+            'message' => 'sync worker split retry after transport failure',
+        ];
+    }
+
+    private function shouldRetryTransportFailure(array $response, string $error, int $rowCount, bool $boostTimeout): bool
+    {
+        if (!$this->isRetryableTransportFailure($response, $error)) {
+            return false;
+        }
+
+        if ($rowCount > 1) {
+            return true;
+        }
+
+        return !$boostTimeout;
+    }
+
+    private function isRetryableTransportFailure(array $response, string $error): bool
+    {
+        $status = (int) ($response['status'] ?? 0);
+        if (in_array($status, [502, 503, 504], true)) {
+            return true;
+        }
+
+        if ($status === 0 || !is_array($response['json'] ?? null)) {
+            $normalized = strtolower($error);
+            if ($normalized === '') {
+                return true;
+            }
+
+            foreach ([
+                'timed out',
+                'timeout',
+                'time out',
+                'curl error 28',
+                'operation timed out',
+                'connection reset',
+                'connection refused',
+                'could not resolve host',
+                'failed to connect',
+                'empty reply',
+                'cloud response unavailable',
+                'cloud unreachable',
+            ] as $needle) {
+                if (strpos($normalized, $needle) !== false) {
+                    return true;
+                }
+            }
+
+            return $status === 0;
+        }
+
+        return false;
     }
 
     private function buildPayload(array $rows, string $branchUuid, string $runUuid): string
@@ -131,8 +297,8 @@ class BranchSyncWorker
             $url,
             $body,
             $headers,
-            (int) ($config['sync']['http_connect_timeout_ms'] ?? 1000),
-            (int) ($config['sync']['http_timeout_ms'] ?? 5000)
+            (int) ($options['http_connect_timeout_ms'] ?? $config['sync']['http_connect_timeout_ms'] ?? 1000),
+            (int) ($options['http_timeout_ms'] ?? $config['sync']['http_timeout_ms'] ?? 5000)
         );
     }
 
@@ -170,10 +336,10 @@ class BranchSyncWorker
         }
     }
 
-    private function markRowsFailed(mysqli $conn, array $rows, string $error): void
+    private function markRowsFailed(mysqli $conn, array $rows, string $error, bool $immediateRetry = false): void
     {
         foreach ($rows as $row) {
-            $this->markRowFailed($conn, (int) $row['id'], $error, (int) $row['attempts']);
+            $this->markRowFailed($conn, (int) $row['id'], $error, (int) $row['attempts'], $immediateRetry);
         }
     }
 
@@ -209,16 +375,20 @@ class BranchSyncWorker
         $stmt->close();
     }
 
-    private function markRowFailed(mysqli $conn, int $id, string $error, int $attempts): void
+    private function markRowFailed(mysqli $conn, int $id, string $error, int $attempts, bool $immediateRetry = false): void
     {
-        $retryDelaySeconds = $this->retryDelaySeconds($attempts);
+        $immediateRetry = $immediateRetry && $attempts < 6;
+        $retryDelaySeconds = $immediateRetry ? 0 : $this->retryDelaySeconds($attempts);
+        $nextRetrySql = $immediateRetry
+            ? 'next_retry_at = NULL'
+            : "next_retry_at = DATE_ADD(NOW(6), INTERVAL {$retryDelaySeconds} SECOND)";
         $stmt = $conn->prepare("
             UPDATE sync_outbox
             SET status = 'failed',
                 locked_by = NULL,
                 locked_until = NULL,
                 last_error = ?,
-                next_retry_at = DATE_ADD(NOW(6), INTERVAL {$retryDelaySeconds} SECOND)
+                {$nextRetrySql}
             WHERE id = ?
         ");
         $stmt->bind_param('si', $error, $id);

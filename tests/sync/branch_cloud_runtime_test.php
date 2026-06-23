@@ -208,6 +208,62 @@ class BranchCloudRuntimeTest extends TestCase
         $this->assertLessThanOrEqual(15, (int) $retryWindow['retry_seconds']);
     }
 
+    public function testBranchWorkerSplitsTimedOutBatchAndSyncsRemainingRows(): void
+    {
+        $events = [
+            $this->insertOutbox('split-a'),
+            $this->insertOutbox('split-b'),
+            $this->insertOutbox('split-c'),
+            $this->insertOutbox('split-d'),
+        ];
+        $calls = 0;
+        $worker = new BranchSyncWorker();
+
+        $metrics = $worker->runOnce(self::$conn, $this->branchConfig(), [
+            'batch_size' => 10,
+            'worker_id' => 'phpunit-split-worker',
+            'http_post' => function (string $url, string $body, array $headers) use (&$calls): array {
+                $calls++;
+                $payload = json_decode($body, true);
+                $eventCount = is_array($payload) ? count($payload['events'] ?? []) : 0;
+                if ($eventCount >= 4 && $calls === 1) {
+                    return [
+                        'ok' => false,
+                        'status' => 0,
+                        'body' => '',
+                        'json' => null,
+                        'error' => 'Operation timed out after 5000 milliseconds',
+                    ];
+                }
+
+                $result = (new CloudReceiveService())->handle(
+                    self::$conn,
+                    $this->headerLinesToMap($headers),
+                    $body,
+                    $this->cloudConfig(true, true)
+                );
+
+                return [
+                    'ok' => $result['status_code'] >= 200 && $result['status_code'] < 300,
+                    'status' => $result['status_code'],
+                    'body' => json_encode($result['body'], JSON_UNESCAPED_SLASHES),
+                    'json' => $result['body'],
+                    'error' => '',
+                ];
+            },
+        ]);
+
+        $this->assertSame(4, $metrics['claimed']);
+        $this->assertSame(4, $metrics['synced']);
+        $this->assertSame(0, $metrics['failed']);
+        $this->assertGreaterThan(1, $calls);
+
+        foreach ($events as $event) {
+            $outbox = $this->fetchOutbox($event['id']);
+            $this->assertSame('synced', $outbox['status']);
+        }
+    }
+
     private function event(string $suffix): array
     {
         $payload = ['scenario' => $suffix, 'amount' => 12.34];
