@@ -113,6 +113,8 @@
       itemFallback: 'Item',
       justNow: 'Just now',
       counterOrder: 'Counter order',
+      delivery: 'Delivery',
+      deliveryOrder: 'Delivery order',
       tableDisplay: ({ table }) => `Table ${table}`,
       showAll: ({ count }) => `Show all ${count}`,
       pendingOrdersMeta: ({ count, transport, isOne }) => `${count} pending ${isOne ? 'order' : 'orders'} · ${transport}`,
@@ -216,6 +218,8 @@
       itemFallback: 'صنف',
       justNow: 'الآن',
       counterOrder: 'طلب كاونتر',
+      delivery: 'توصيل',
+      deliveryOrder: 'طلب توصيل',
       tableDisplay: ({ table }) => `طاولة ${table}`,
       showAll: ({ count }) => `عرض الكل ${count}`,
       pendingOrdersMeta: ({ count, transport }) => `${transport} · ${count} طلبات معلّقة`,
@@ -1267,10 +1271,7 @@
     const payload = draft && draft.requestPayload && typeof draft.requestPayload === 'object'
       ? draft.requestPayload
       : {};
-    const fulfillmentType = String(payload.fulfillmentType || payload.fulfillment_type || payload.orderType || payload.order_type || '').toLowerCase();
-    const isDeliveryDraft = fulfillmentType === 'delivery'
-      || String(payload.orderChannel || payload.order_channel || '').toLowerCase().includes('delivery')
-      || (payload.delivery && typeof payload.delivery === 'object');
+    const isDeliveryDraft = isDeliveryPayload(payload);
     if (isDeliveryDraft) {
       const customerName = asText(payload.customerName || payload.customer_name || (payload.customer && payload.customer.name));
       const customerPhone = asText(payload.customerPhone || payload.customer_phone || (payload.customer && (payload.customer.phone || payload.customer.mobile)));
@@ -2149,8 +2150,8 @@
       <article class="pw-card" data-draft-card="true" data-draft-id="${escapeHtml(String(draft.id))}" data-status="${escapeHtml(status)}">
         <div class="pw-card-top">
           <div>
-            <p class="pw-card-kicker">${escapeHtml(t('table'))}</p>
-            <h3 class="pw-card-title">${escapeHtml(getTableDisplay(ui.tableNumber))}</h3>
+            <p class="pw-card-kicker">${escapeHtml(getFulfillmentKicker(ui))}</p>
+            <h3 class="pw-card-title">${escapeHtml(getFulfillmentDisplay(ui))}</h3>
             <div class="pw-card-meta">
               <span>${escapeHtml(formatPlacedAt(ui.placedAt || draft.createdAt))}</span>
               ${draft.lastError && status === 'failed' ? `<span>${escapeHtml(draft.lastError)}</span>` : ''}
@@ -2235,8 +2236,8 @@
         </div>
         <div class="pw-items">${itemRows}</div>
         <div class="pw-card-summary">
-          <span class="pw-card-summary-label">${escapeHtml(t('table'))}</span>
-          <strong class="pw-card-summary-value">${escapeHtml(getTableDisplay(ui.tableNumber))}</strong>
+          <span class="pw-card-summary-label">${escapeHtml(getFulfillmentKicker(ui))}</span>
+          <strong class="pw-card-summary-value">${escapeHtml(getFulfillmentDisplay(ui))}</strong>
         </div>
         <div class="pw-card-actions">
           <button
@@ -2311,7 +2312,7 @@
                   <div class="pw-queue-meta">${escapeHtml(summarizeItems(ui.items))}</div>
                 </div>
                 <div style="text-align:right;">
-                  <div class="pw-card-summary-value">${escapeHtml(getTableDisplay(ui.tableNumber))}</div>
+                  <div class="pw-card-summary-value">${escapeHtml(getFulfillmentDisplay(ui))}</div>
                   <div class="pw-queue-meta">${escapeHtml(ui.reference)}</div>
                 </div>
               </button>
@@ -2326,8 +2327,8 @@
           return `
             <button class="pw-queue-row" type="button" data-action="open-detail" data-draft-id="${escapeHtml(String(draft.id))}">
               <div>
-                <p class="pw-card-kicker">${escapeHtml(t('table'))}</p>
-                <h3 class="pw-queue-title">${escapeHtml(getTableDisplay(ui.tableNumber))}</h3>
+                <p class="pw-card-kicker">${escapeHtml(getFulfillmentKicker(ui))}</p>
+                <h3 class="pw-queue-title">${escapeHtml(getFulfillmentDisplay(ui))}</h3>
                 <div class="pw-queue-meta">${escapeHtml(summaryLine)}</div>
               </div>
               <div style="text-align:right;">
@@ -2369,8 +2370,8 @@
       <div class="pw-detail-header">
         <div class="pw-detail-hero">
           <div>
-            <p class="pw-card-kicker">${escapeHtml(t('table'))}</p>
-            <h3 class="pw-detail-table">${escapeHtml(getTableDisplay(ui.tableNumber))}</h3>
+            <p class="pw-card-kicker">${escapeHtml(getFulfillmentKicker(ui))}</p>
+            <h3 class="pw-detail-table">${escapeHtml(getFulfillmentDisplay(ui))}</h3>
             <div class="pw-detail-meta">${escapeHtml(formatPlacedAt(ui.placedAt || draft.createdAt))}</div>
           </div>
           <div class="pw-detail-total">${escapeHtml(formatCurrency(resolveTotal(ui), ui.summary?.currencyCode || ui.currencyCode))}</div>
@@ -2446,7 +2447,7 @@
             <h3 class="pw-detail-table">${escapeHtml(ui.title)}</h3>
             <div class="pw-detail-meta">${escapeHtml(`${formatPlacedAt(command.createdAt)} · ${ui.reference}`)}</div>
           </div>
-          <div class="pw-detail-total">${escapeHtml(getTableDisplay(ui.tableNumber))}</div>
+          <div class="pw-detail-total">${escapeHtml(getFulfillmentDisplay(ui))}</div>
         </div>
         ${command.lastError && String(command.status || '').toLowerCase() === 'failed' && !isCashierReviewRequiredFailure(command)
           ? `<div class="pw-detail-note-callout">${escapeHtml(command.lastError)}</div>`
@@ -2584,12 +2585,12 @@
       if (elements.declineKicker) elements.declineKicker.textContent = t('declineReasonKicker');
       if (elements.declineTitle) elements.declineTitle.textContent = t('declineReasonTitle');
     }
-    const summaryTitle = draft ? getTableDisplay(ui.tableNumber) : ui.title;
-    const summaryMeta = draft ? summarizeItems(ui.items) : `${getTableDisplay(ui.tableNumber)} · ${ui.reference}`;
+    const summaryTitle = draft ? getFulfillmentDisplay(ui) : ui.title;
+    const summaryMeta = draft ? summarizeItems(ui.items) : `${getFulfillmentDisplay(ui)} · ${ui.reference}`;
     elements.declineContent.innerHTML = `
       <form id="pw-decline-form" class="pw-decline-form">
         <div class="pw-decline-summary">
-          <p class="pw-card-kicker">${escapeHtml(draft ? t('table') : t('changeRequestKicker'))}</p>
+          <p class="pw-card-kicker">${escapeHtml(draft ? getFulfillmentKicker(ui) : t('changeRequestKicker'))}</p>
           <h3 class="pw-queue-title">${escapeHtml(summaryTitle)}</h3>
           <div class="pw-queue-meta">${escapeHtml(summaryMeta)}</div>
         </div>
@@ -2985,6 +2986,7 @@
       title: action === 'cancel' ? t('cancelRequestTitle') : t('editRequestTitle'),
       reference: reference ? t('orderReference', { reference }) : t('changeRequestKicker'),
       tableNumber: asText(posPayload.tableNumber || requestPayload.tableNumber),
+      ...buildFulfillmentBridgePayload(requestPayload, posPayload),
       items,
       oldItems,
     };
@@ -3208,9 +3210,41 @@
     return `${quantityLabel} · ${formatCurrency(lineTotal, currencyCode)}`;
   }
 
-  function getTableDisplay(tableNumber) {
-    const normalized = asText(tableNumber);
-    return normalized ? t('tableDisplay', { table: normalized }) : t('counterOrder');
+  function isDeliveryPayload(source) {
+    if (!source || typeof source !== 'object') {
+      return false;
+    }
+    const fulfillmentType = String(
+      source.fulfillmentType
+      || source.fulfillment_type
+      || source.orderType
+      || source.order_type
+      || '',
+    ).toLowerCase();
+    if (fulfillmentType === 'delivery') {
+      return true;
+    }
+    const channel = String(source.orderChannel || source.order_channel || '').toLowerCase();
+    if (channel.includes('delivery')) {
+      return true;
+    }
+    return Boolean(source.delivery && typeof source.delivery === 'object');
+  }
+
+  function getFulfillmentKicker(source) {
+    return isDeliveryPayload(source) ? t('delivery') : t('table');
+  }
+
+  function getFulfillmentDisplay(source) {
+    const payload = source && typeof source === 'object' ? source : {};
+    const tableNumber = asText(payload.tableNumber);
+    if (tableNumber) {
+      return t('tableDisplay', { table: tableNumber });
+    }
+    if (isDeliveryPayload(payload)) {
+      return t('deliveryOrder');
+    }
+    return t('counterOrder');
   }
 
   function buildFulfillmentBridgePayload(...sources) {

@@ -70,6 +70,19 @@ foreach ([
 }
 
 foreach ([
+    'function isDeliveryPayload',
+    'function getFulfillmentDisplay',
+    'function getFulfillmentKicker',
+    'deliveryOrder',
+    'طلب توصيل',
+    "return t('deliveryOrder')",
+    "return isDeliveryPayload(source) ? t('delivery') : t('table')",
+] as $needle) {
+    phase5UxAssert(strpos($widgetSource, $needle) !== false, "delivery fulfillment label contract missing {$needle}");
+}
+phase5UxAssert(strpos($widgetSource, 'function getTableDisplay') === false, 'widget should use fulfillment display instead of table-only fallback');
+
+foreach ([
     'function buildFulfillmentBridgePayload',
 ] as $needle) {
     phase5UxAssert(strpos($widgetSource, $needle) !== false, "widget fulfillment bridge missing {$needle}");
