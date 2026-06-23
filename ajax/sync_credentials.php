@@ -296,14 +296,6 @@ function syncCredentialsDbInput(array $input, bool $preserveBlankPassword = fals
 function syncCredentialsSettingsInput(array $input, string $role): array
 {
     $branchSecretDirty = !empty($input['POSMAIN_BRANCH_SYNC_SECRET_DIRTY']);
-    $localEnvFiles = function_exists('posmain_sync_local_env_files') ? posmain_sync_local_env_files() : [];
-    $envFallback = static function (array $names, $default = '', bool $allowEmpty = false) use ($localEnvFiles) {
-        if (function_exists('posmain_first_env_or_file')) {
-            return posmain_first_env_or_file($names, $default, $allowEmpty, $localEnvFiles);
-        }
-
-        return $default;
-    };
     $keys = [
         'POSMAIN_BRANCH_UUID',
         'POSMAIN_CLOUD_BASE_URL',
@@ -327,14 +319,6 @@ function syncCredentialsSettingsInput(array $input, string $role): array
         if (array_key_exists($key, $input)) {
             $settings[$key] = $input[$key];
         }
-    }
-    if (
-        $role === 'branch'
-        && !$branchSecretDirty
-        && trim((string) ($settings['POSMAIN_BRANCH_SYNC_SECRET'] ?? '')) === ''
-        && trim((string) $envFallback(['POSMAIN_BRANCH_SYNC_SECRET'], (string) ($GLOBALS['appConfig']['sync']['branch_secret'] ?? ''), true)) !== ''
-    ) {
-        $settings['POSMAIN_BRANCH_SYNC_SECRET_EXTERNAL'] = '1';
     }
 
     return $settings;

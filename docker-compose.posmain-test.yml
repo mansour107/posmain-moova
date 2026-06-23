@@ -31,6 +31,7 @@ services:
       PHP_CLI_SERVER_WORKERS: "4"
       POSMAIN_SESSION_DRIVER: file
       POSMAIN_BRANCH_WORKER_ENV_FILE: /app/.env.branch-worker
+      POSMAIN_DISABLE_BRANCH_ENV_FILE_FALLBACK: "1"
       POSMAIN_MOOVA_MODE: direct_widget
       POSMAIN_DB_HOST: mysql
       POSMAIN_DB_PORT: "3306"
@@ -49,6 +50,8 @@ networks:
 
 volumes:
   posmain_mysql_data:
+    external: true
+    name: cbbe79275d8c14e7f3bdac929a87976f10b1302e569d9472ab21600145c82dbb
   posmain_mysql_run:
   posmain_php_logs:
   posmain_php_uploads:

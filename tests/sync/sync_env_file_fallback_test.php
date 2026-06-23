@@ -76,16 +76,16 @@ $_ENV['POSMAIN_DISABLE_UI_RUNTIME_CONFIG'] = '1';
 
 $config = posmain_app_config();
 syncEnvFallbackAssert(
-    $config['branch']['uuid'] === '33333333-3333-4333-8333-333333333333',
-    'web config should read branch UUID from branch env fallback'
+    $config['branch']['uuid'] === '',
+    'branch UUID must not be loaded from branch-worker env files'
 );
 syncEnvFallbackAssert(
-    $config['branch']['cloud_base_url'] === 'https://cloud.example.test',
-    'web config should read cloud URL from branch env fallback'
+    $config['branch']['cloud_base_url'] === '',
+    'cloud URL must not be loaded from branch-worker env files'
 );
 syncEnvFallbackAssert(
-    $config['sync']['branch_secret'] === 'branch-secret-from-file',
-    'web config should read branch secret from branch env fallback'
+    $config['sync']['branch_secret'] === '',
+    'branch secret must not be loaded from branch-worker env files'
 );
 syncEnvFallbackAssert(
     $config['moova']['mode'] === 'direct_widget' && $config['features']['moova_direct_apply'] === true,
@@ -101,10 +101,17 @@ syncEnvFallbackAssert(
 );
 
 putenv('POSMAIN_BRANCH_UUID=process-uuid');
+$configWithProcessUuid = posmain_app_config();
+syncEnvFallbackAssert(
+    $configWithProcessUuid['branch']['uuid'] === 'process-uuid',
+    'process env should still provide branch UUID when explicitly set'
+);
 syncEnvFallbackAssert(
     posmain_first_env_or_file(['POSMAIN_BRANCH_UUID'], '', false, [$tmp]) === 'process-uuid',
     'process env should win over file fallback'
 );
+putenv('POSMAIN_BRANCH_UUID');
+unset($_ENV['POSMAIN_BRANCH_UUID']);
 
 restoreSyncEnvFallbackTestEnv('POSMAIN_BRANCH_UUID', $oldUuid);
 restoreSyncEnvFallbackTestEnv('POSMAIN_TEST_UI_FALLBACK_PORT', $oldPort);

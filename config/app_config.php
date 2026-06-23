@@ -414,6 +414,9 @@ if (!function_exists('posmain_app_config')) {
         $branchEnv = static function (array $names, $default = null, bool $allowEmpty = false) use ($branchEnvFiles) {
             return posmain_first_env_or_file($names, $default, $allowEmpty, $branchEnvFiles);
         };
+        $branchIdentityEnv = static function (array $names, $default = null, bool $allowEmpty = false) {
+            return posmain_first_env($names, $default, $allowEmpty);
+        };
 
         $env = (string) posmain_env('POSMAIN_ENV', 'local');
         $productionMode = posmain_bool(posmain_env('POSMAIN_PRODUCTION_MODE', null), strtolower($env) === 'production');
@@ -551,11 +554,11 @@ if (!function_exists('posmain_app_config')) {
                 'charset' => 'utf8mb4',
             ],
             'branch' => [
-                'uuid' => (string) $branchEnv(['POSMAIN_BRANCH_UUID'], ''),
+                'uuid' => (string) $branchIdentityEnv(['POSMAIN_BRANCH_UUID'], ''),
                 'name' => (string) $branchEnv(['POSMAIN_BRANCH_NAME'], ''),
                 'pos_tenant' => posmain_int($branchEnv(['POSMAIN_POS_TENANT'], null), null),
                 'pos_branch' => posmain_int($branchEnv(['POSMAIN_POS_BRANCH'], null), null),
-                'cloud_base_url' => (string) $branchEnv(['POSMAIN_CLOUD_BASE_URL'], ''),
+                'cloud_base_url' => (string) $branchIdentityEnv(['POSMAIN_CLOUD_BASE_URL'], ''),
             ],
             'features' => [
                 'legacy_debug_routes' => posmain_bool($branchEnv(['POSMAIN_ENABLE_LEGACY_DEBUG_ROUTES'], '0'), false),
@@ -572,7 +575,7 @@ if (!function_exists('posmain_app_config')) {
                 'recipes' => $recipeMode !== 'off',
             ],
             'sync' => [
-                'branch_secret' => (string) $branchEnv(['POSMAIN_BRANCH_SYNC_SECRET'], '', true),
+                'branch_secret' => (string) $branchIdentityEnv(['POSMAIN_BRANCH_SYNC_SECRET'], '', true),
                 'cloud_branch_secrets' => posmain_map($branchEnv(['POSMAIN_CLOUD_BRANCH_SECRETS'], '', true)),
                 'outbox_enabled' => posmain_bool($branchEnv(['POSMAIN_SYNC_OUTBOX_ENABLED'], '1'), true),
                 'branch_sync_enabled' => posmain_bool($branchEnv(['POSMAIN_BRANCH_SYNC_ENABLED'], '0'), false),

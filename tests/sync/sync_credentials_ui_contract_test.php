@@ -55,7 +55,6 @@ foreach ([
     'الاتصال بالسحابة',
     'sync-shared-identity-fields',
     'syncSharedIdentityPayload',
-    'syncBranchRegistrationPayload',
     'syncDebugPayload',
     'initialDebugSignature',
     'POSMAIN_DB_CONFIG_DIRTY',
@@ -102,7 +101,8 @@ foreach ([
     'initialCloudSyncSignature',
     'submittingAfterSyncSave',
     'syncRuntimeRole',
-    'initialBranchRegistrationSignature',
+    'js-register-hosted-branch',
+    'Register branch on hosted POS',
     "syncRuntimeRole === 'branch'",
     "syncRuntimeRole === 'cloud'",
     'Sync changes saved. Saving page settings...',
@@ -112,7 +112,7 @@ foreach ([
     'js-hosted-sync-core-toggle',
     'setHostedSyncCoreToggles(hostedSyncMaster.checked)',
     "branch_status: 'active'",
-    'Allowed branch was paired on hosted POS.',
+    'Branch was paired on the hosted POS.',
     'قاعدة بيانات هذه النسخة',
     'name="db_host"',
     'name="db_port"',
@@ -146,9 +146,9 @@ syncCredentialsUiAssert(strpos($setting, '#sync-shared-section [name="POSMAIN_BR
 syncCredentialsUiAssert(strpos($setting, '#sync-shared-section [name="POSMAIN_BRANCH_SYNC_SECRET"]') !== false, 'shared payload should include POSMAIN_BRANCH_SYNC_SECRET');
 syncCredentialsUiAssert(strpos($setting, '#sync-branch-register-form [name=\'POSMAIN_BRANCH_UUID\']') === false, 'hosted allowed branch form should use the shared POSMAIN_BRANCH_UUID field');
 syncCredentialsUiAssert(strpos($setting, '#sync-branch-register-form [name=\'POSMAIN_BRANCH_SYNC_SECRET\']') === false, 'hosted allowed branch form should use the shared POSMAIN_BRANCH_SYNC_SECRET field');
-syncCredentialsUiAssert(strpos($setting, 'id="sync-branch-register-form"') === false, 'hosted allowed branch form should be automatic instead of visible');
+syncCredentialsUiAssert(strpos($setting, 'id="sync-branch-register-form"') === false, 'hosted branch registration uses the shared identity fields and explicit register button');
 syncCredentialsUiAssert(strpos($setting, 'name="cloud_base_url"') === false, 'hosted allowed branch form should reuse POSMAIN_CLOUD_BASE_URL instead of showing a duplicate URL field');
-syncCredentialsUiAssert(strpos($setting, "syncSharedIdentityPayload(),") !== false, 'automatic hosted branch registration should read shared identity values');
+syncCredentialsUiAssert(strpos($setting, "syncSharedIdentityPayload(),") !== false, 'hosted branch registration should read shared identity values');
 syncCredentialsUiAssert(strpos($setting, "Object.assign(payload, syncConfigKeyPayload())") !== false, 'hosted save/register actions should include the config encryption key');
 syncCredentialsUiAssert(strpos($setting, '#sync-local-section [name="POSMAIN_CLOUD_BASE_URL"]') !== false, 'hosted branch registration should include the existing POSMAIN_CLOUD_BASE_URL value');
 syncCredentialsUiAssert(strpos($setting, "Object.assign(payload, debugPayload)") !== false, 'local save should include hidden debug database credentials');
@@ -214,13 +214,11 @@ foreach ([
     "require_csrf('sync_credentials')",
     'POSMAIN_DB_CONFIG_DIRTY',
     'POSMAIN_BRANCH_SYNC_SECRET_DIRTY',
-    'POSMAIN_BRANCH_SYNC_SECRET_EXTERNAL',
     "\$branchSecretDirty = !empty(\$input['POSMAIN_BRANCH_SYNC_SECRET_DIRTY'])",
     "if (\$key === 'POSMAIN_BRANCH_SYNC_SECRET' && !\$branchSecretDirty)",
     'SyncRuntimeCrypto::ENV_KEY',
     'syncCredentialsSaveEncryptionKey($_POST)',
     'SyncRuntimeCrypto::generateKeyMaterial()',
-    "\$GLOBALS['appConfig']['sync']['branch_secret']",
     'array_merge($_POST',
     'BranchPairingService',
     'pair_hosted_branch',
@@ -266,7 +264,7 @@ foreach ([
 
 syncCredentialsUiAssert(strpos($runtimeSettings, 'function savePartial') !== false, 'SyncRuntimeSettings should support partial saves for Moova switches');
 syncCredentialsUiAssert(strpos($runtimeSettings, "'POSMAIN_ROLE' =>") !== false, 'full sync saves should keep role handling');
-syncCredentialsUiAssert(strpos($runtimeSettings, 'POSMAIN_BRANCH_SYNC_SECRET_EXTERNAL') !== false, 'branch saves should accept a sync secret configured outside runtime DB');
+syncCredentialsUiAssert(strpos($config, 'branchIdentityEnv') !== false, 'branch UUID/secret/cloud URL must not fall back to branch-worker env files');
 syncCredentialsUiAssert(strpos($runtimeSettings, 'savePartial') < strpos($runtimeSettings, 'fetchConfigOverrides'), 'partial save should stay separate from config loading');
 
 foreach ([
@@ -276,7 +274,7 @@ foreach ([
     'POSMAIN_MOOVA_POLLER_ENABLED',
     'POSMAIN_MOOVA_APPLY_ENABLED',
     "\$moovaSyncBool('POSMAIN_MOOVA_POLLER_ENABLED', true)",
-    "\$moovaSyncBool('POSMAIN_MOOVA_APPLY_ENABLED', true)",
+    "\$moovaSyncBool('POSMAIN_MOOVA_APPLY_ENABLED', false)",
     'Poll Moova events from cloud',
     'Apply Moova through worker',
     'ajax/sync_credentials.php',

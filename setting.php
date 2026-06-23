@@ -102,7 +102,7 @@ try {
     $syncRuntimeFile = [];
 }
 $syncDb = $syncRuntimeFile['database'] ?? ($appConfig['database'] ?? []);
-$syncLocalEnvFiles = function_exists('posmain_sync_local_env_files') ? posmain_sync_local_env_files() : [];
+$syncLocalEnvFiles = function_exists('posmain_branch_env_file_fallbacks') ? posmain_branch_env_file_fallbacks() : [];
 $syncEnvFallback = static function (array $names, $default = '', bool $allowEmpty = false) use ($syncLocalEnvFiles) {
     if (function_exists('posmain_first_env_or_file')) {
         return posmain_first_env_or_file($names, $default, $allowEmpty, $syncLocalEnvFiles);
@@ -196,12 +196,10 @@ $syncBool = static function (string $key, bool $default = false) use ($syncValue
     $value = $syncValue($key, $syncConfigBool($key, $default) ? '1' : '0');
     return in_array(strtolower(trim((string) $value)), ['1', 'true', 'yes', 'on'], true);
 };
-$syncBranchUuidFallback = (string) $syncEnvFallback(['POSMAIN_BRANCH_UUID'], (string)($appConfig['branch']['uuid'] ?? ''));
-$syncCloudBaseUrlFallback = (string) $syncEnvFallback(['POSMAIN_CLOUD_BASE_URL'], (string)($appConfig['branch']['cloud_base_url'] ?? ''));
-$syncBranchSecretFallback = (string) $syncEnvFallback(['POSMAIN_BRANCH_SYNC_SECRET'], (string)($appConfig['sync']['branch_secret'] ?? ''), true);
-$syncBranchUuidEffective = $syncEffectiveValue('POSMAIN_BRANCH_UUID', $syncBranchUuidFallback);
-$syncCloudBaseUrlEffective = $syncEffectiveValue('POSMAIN_CLOUD_BASE_URL', $syncCloudBaseUrlFallback);
-$syncBranchSecretEffective = $syncSecretEffectiveValue('POSMAIN_BRANCH_SYNC_SECRET', $syncBranchSecretFallback);
+// Branch identity is per-shop DB only; never prefill from env/.env.branch-worker in Settings UI.
+$syncBranchUuidEffective = $syncEffectiveValue('POSMAIN_BRANCH_UUID', '');
+$syncCloudBaseUrlEffective = $syncEffectiveValue('POSMAIN_CLOUD_BASE_URL', '');
+$syncBranchSecretEffective = $syncSecretEffectiveValue('POSMAIN_BRANCH_SYNC_SECRET', '');
 $syncBranchSecretEffectiveConfigured = $syncBranchSecretEffective !== '';
 $syncRole = strtolower(trim($syncEffectiveValue('POSMAIN_ROLE', (string)($appConfig['role'] ?? 'branch'))));
 if (!in_array($syncRole, ['branch', 'cloud'], true)) {
@@ -229,13 +227,12 @@ foreach ($syncBranches as $branchRow) {
     }
 }
 $syncStoredIdentity = (new SyncBranchIdentity())->find($conn);
-if ($syncStoredIdentity) {
-    $syncStoredBranchUuid = strtolower(trim((string) ($syncStoredIdentity['branch_uuid'] ?? '')));
-}
-if ($syncIsHosted && $syncRegisteredBranchUuid !== '') {
-    $syncStoredBranchUuid = $syncRegisteredBranchUuid;
-    if (trim($syncBranchUuidEffective) === '') {
-        $syncBranchUuidEffective = $syncRegisteredBranchUuid;
+$syncStoredBranchUuid = '';
+if ($syncIsLocal) {
+    if ($syncConfigured('POSMAIN_BRANCH_UUID')) {
+        $syncStoredBranchUuid = strtolower(trim($syncBranchUuidEffective));
+    } elseif ($syncStoredIdentity) {
+        $syncStoredBranchUuid = strtolower(trim((string) ($syncStoredIdentity['branch_uuid'] ?? '')));
     }
 }
 $syncCrypto = new SyncRuntimeCrypto();
@@ -616,12 +613,12 @@ if ($syncDefaultCloudUrl === '' && !empty($_SERVER['HTTP_HOST'])) {
                       <div class="form-group">
                         <label>POSMAIN_BRANCH_UUID <?= $syncHelp('Stable unique ID for this branch only. The same value must be used by the local branch and allowed on the hosted POS.') ?></label>
                         <div class="input-group">
-                          <input type="text" class="form-control" name="POSMAIN_BRANCH_UUID" value="<?= htmlspecialchars($syncBranchUuidEffective, ENT_QUOTES, 'UTF-8') ?>" required>
+                          <input type="text" class="form-control" name="POSMAIN_BRANCH_UUID" value="<?= htmlspecialchars($syncBranchUuidEffective, ENT_QUOTES, 'UTF-8') ?>" placeholder="<?= $syncIsLocal ? '' : 'Generate or enter before registering a branch' ?>" <?= $syncIsLocal ? 'required' : '' ?>>
                           <div class="input-group-append">
                             <button type="button" class="btn btn-outline-secondary js-generate-uuid" data-target="#sync-shared-identity-fields [name='POSMAIN_BRANCH_UUID']" data-confirm-if-filled="1" dir="ltr"><?= trim($syncBranchUuidEffective) !== '' ? 'Regenerate' : 'Generate UUID' ?></button>
                           </div>
                         </div>
-                        <?= $syncSourceHint('POSMAIN_BRANCH_UUID', $syncBranchUuidEffective) ?>
+                        <?= $syncSourceHint('POSMAIN_BRANCH_UUID', '') ?>
                       </div>
                     </div>
                     <div class="col-12">
@@ -636,7 +633,7 @@ if ($syncDefaultCloudUrl === '' && !empty($_SERVER['HTTP_HOST'])) {
                             </button>
                           </div>
                         </div>
-                        <?= $syncSourceHint('POSMAIN_BRANCH_SYNC_SECRET', $syncBranchSecretEffective, $syncBranchSecretFallback !== '') ?>
+                        <?= $syncSourceHint('POSMAIN_BRANCH_SYNC_SECRET', '') ?>
                       </div>
                     </div>
                   </div>
@@ -658,7 +655,7 @@ if ($syncDefaultCloudUrl === '' && !empty($_SERVER['HTTP_HOST'])) {
                       <div class="form-group">
                         <label>POSMAIN_CLOUD_BASE_URL <?= $syncHelp('Hosted POS base URL for this shop, for example https://shop1.example.com.') ?></label>
                         <input type="url" class="form-control" name="POSMAIN_CLOUD_BASE_URL" value="<?= htmlspecialchars($syncCloudBaseUrlEffective, ENT_QUOTES, 'UTF-8') ?>" required>
-                        <?= $syncSourceHint('POSMAIN_CLOUD_BASE_URL', $syncCloudBaseUrlEffective) ?>
+                        <?= $syncSourceHint('POSMAIN_CLOUD_BASE_URL', '') ?>
                       </div>
                     </div>
                     <div class="col-md-4 d-flex align-items-end mb-4 flex-wrap">
@@ -798,6 +795,15 @@ if ($syncDefaultCloudUrl === '' && !empty($_SERVER['HTTP_HOST'])) {
                 </div>
               </div>
               <?php endif; ?>
+
+              <div class="sync-subsection">
+                <h6 class="font-weight-bold mb-2">تسجيل فرع جديد على النسخة المستضافة</h6>
+                <p class="text-muted small mb-3">يُضاف الفرع إلى الجدول أدناه فقط عند الضغط على هذا الزر بعد إنشاء UUID والسر من الحقول المشتركة أعلاه.</p>
+                <button type="button" class="btn btn-primary js-register-hosted-branch" dir="ltr">
+                  <i class="fas fa-link mr-1"></i> Register branch on hosted POS
+                </button>
+                <span class="sync-action-result text-muted ml-2"></span>
+              </div>
 
               <div class="sync-subsection">
                 <h6 class="font-weight-bold mb-3">الفروع المسجلة على النسخة المستضافة</h6>
@@ -1317,14 +1323,6 @@ document.addEventListener('DOMContentLoaded', function () {
     button.addEventListener('click', loadSyncStatusPanel);
   });
 
-  function syncBranchRegistrationPayload() {
-    const payload = buildHostedBranchRegistrationPayload();
-    if (!payload.POSMAIN_BRANCH_UUID || !payload.POSMAIN_BRANCH_SYNC_SECRET) {
-      return null;
-    }
-    return payload;
-  }
-
   function showResult($form, message, ok) {
     let $target = $form.find('.sync-action-result').first();
     if (!$target.length) {
@@ -1466,6 +1464,36 @@ document.addEventListener('DOMContentLoaded', function () {
     });
   });
 
+  $('.js-register-hosted-branch').on('click', function () {
+    const $button = $(this);
+    const $resultHost = $button.closest('.sync-subsection');
+    const payload = buildHostedBranchRegistrationPayload();
+    if (!payload.POSMAIN_BRANCH_UUID || payload.POSMAIN_BRANCH_UUID.trim() === '') {
+      showResult($resultHost, 'Generate or enter a branch UUID before registering on the hosted POS.', false);
+      return;
+    }
+    if (!payload.POSMAIN_BRANCH_SYNC_SECRET || payload.POSMAIN_BRANCH_SYNC_SECRET.trim() === '') {
+      showResult($resultHost, 'Generate or enter the branch sync secret before registering on the hosted POS.', false);
+      return;
+    }
+    if (!window.confirm('Register this branch UUID on the hosted POS? Existing branches stay registered unless you replace them from the hosted tools.')) {
+      return;
+    }
+
+    payload.POSMAIN_BRANCH_SYNC_SECRET_DIRTY = '1';
+    $button.prop('disabled', true);
+    showResult($resultHost, 'Registering branch on hosted POS...', true);
+    ajaxSyncPromise(payload).then(function (response) {
+      renderBranches(response.branches || []);
+      showResult($resultHost, response.message || 'Branch was paired on the hosted POS.', true);
+      loadSyncStatusPanel();
+    }).catch(function (xhr) {
+      showResult($resultHost, (xhr.responseJSON && xhr.responseJSON.message) || 'Unable to register branch on hosted POS.', false);
+    }).finally(function () {
+      $button.prop('disabled', false);
+    });
+  });
+
   $('.js-sync-test-cloud').on('click', function () {
     const $form = $($(this).data('form'));
     ajaxSync(formData($form, 'test_cloud')).done(function (response) {
@@ -1568,8 +1596,6 @@ document.addEventListener('DOMContentLoaded', function () {
   initialBranchSyncSecretValue = branchSecretInput ? branchSecretInput.value : '';
   const initialLocalSyncSignature = $syncLocalForm.length ? payloadSignature(formData($syncLocalForm)) : '';
   const initialCloudSyncSignature = $syncCloudForm.length ? payloadSignature(formData($syncCloudForm)) : '';
-  const initialHostedIdentitySignature = syncRuntimeRole === 'cloud' ? payloadSignature(syncHostedIdentityPayload()) : '';
-  const initialBranchRegistrationSignature = syncBranchRegistrationPayload() ? payloadSignature(syncBranchRegistrationPayload()) : '';
   let submittingAfterSyncSave = false;
 
   if (settingsMainForm) {
@@ -1586,53 +1612,11 @@ document.addEventListener('DOMContentLoaded', function () {
         syncSaves.push({ $form: $syncCloudForm, payload: formData($syncCloudForm), label: 'Hosted sync settings were saved.' });
       }
 
-      const hostedIdentityDirty = syncRuntimeRole === 'cloud'
-        && payloadSignature(syncHostedIdentityPayload()) !== initialHostedIdentitySignature;
-      const branchRegistrationPayload = hostedIdentityDirty
-        ? buildHostedBranchRegistrationPayload({ replaceExisting: true })
-        : syncBranchRegistrationPayload();
-      if (hostedIdentityDirty) {
-        if (!branchRegistrationPayload.POSMAIN_BRANCH_SYNC_SECRET || branchRegistrationPayload.POSMAIN_BRANCH_SYNC_SECRET.trim() === '') {
-          event.preventDefault();
-          const globalResult = document.getElementById('settings-global-save-result');
-          const message = 'Enter or generate the branch sync secret before registering a branch on the hosted POS.';
-          if (globalResult) {
-            globalResult.className = 'text-danger d-block small';
-            globalResult.textContent = message;
-          }
-          showResult($syncCloudForm.length ? $syncCloudForm : $syncLocalForm, message, false);
-          return;
-        }
-      }
-      if (
-        syncRuntimeRole === 'cloud'
-        && branchRegistrationPayload
-        && (
-          hostedIdentityDirty
-          || payloadSignature(branchRegistrationPayload) !== initialBranchRegistrationSignature
-        )
-      ) {
-        syncSaves.push({
-          $form: $syncCloudForm.length ? $syncCloudForm : $syncLocalForm,
-          payload: branchRegistrationPayload,
-          label: 'Allowed branch was paired on hosted POS.',
-          afterSave: function (response) {
-            renderBranches(response.branches || []);
-            if (syncCard && branchRegistrationPayload.POSMAIN_BRANCH_UUID) {
-              syncCard.setAttribute('data-stored-branch-uuid', String(branchRegistrationPayload.POSMAIN_BRANCH_UUID).trim().toLowerCase());
-            }
-          }
-        });
-      }
-
       if (!syncSaves.length) {
         return;
       }
 
       if (syncRuntimeRole === 'branch' && !confirmSyncIdentityChanges()) {
-        return;
-      }
-      if (syncRuntimeRole === 'cloud' && hostedIdentityDirty && !confirmSyncIdentityChanges()) {
         return;
       }
 
