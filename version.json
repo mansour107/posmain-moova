@@ -1,0 +1,6 @@
+{
+  "version": "1.0.4",
+  "released_at": "2026-06-24",
+  "notes": "Fix POS cashier default warehouse resolution on hosted installs.",
+  "min_php": "8.2"
+}
