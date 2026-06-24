@@ -29,7 +29,7 @@ if (isset($rowed) && is_array($rowed)) {
     } elseif ($orderType === 'delivery') {
         $posOrderMode = 3;
     }
-} elseif (isset($_GET['table'])) {
+} elseif (!empty($_GET['table'])) {
     $posOrderMode = 2;
 }
 

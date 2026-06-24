@@ -59,11 +59,77 @@ function posDefaultAccountsTestMain(): void
         $defaults = posmain_resolve_pos_defaults($conn, $settings);
         posDefaultAccountsAssert((int) $defaults['client_id'] === 148, 'resolved defaults should expose repaired client id');
 
+        posDefaultAccountsTestOrderContext($conn);
+
+        $legacyConn = @new mysqli($host, $user, $pass, '', $port);
+        if (!$legacyConn->connect_errno) {
+            mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
+            $legacyDb = 'posmain_legacy_settings_' . getmypid();
+            try {
+                $legacyConn->query("CREATE DATABASE `{$legacyDb}` CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci");
+                $legacyConn->select_db($legacyDb);
+                $legacyConn->query('
+                    CREATE TABLE acc_head (
+                        id INT PRIMARY KEY,
+                        code VARCHAR(32) NOT NULL,
+                        aname VARCHAR(120) NOT NULL,
+                        parent_id INT NOT NULL DEFAULT 0,
+                        is_basic TINYINT NOT NULL DEFAULT 0,
+                        is_stock TINYINT NOT NULL DEFAULT 0,
+                        is_fund TINYINT NOT NULL DEFAULT 0,
+                        isdeleted TINYINT NOT NULL DEFAULT 0
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                ');
+                $legacyConn->query('
+                    CREATE TABLE settings (
+                        id INT PRIMARY KEY,
+                        isdeleted TINYINT NOT NULL DEFAULT 0
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                ');
+                $legacyConn->query("INSERT INTO acc_head (id, code, aname, parent_id, is_basic, is_stock, is_fund, isdeleted) VALUES
+                    (27, '123001', 'Main Store', 0, 0, 1, 0, 0),
+                    (148, '122001', 'Default Client', 0, 0, 0, 0, 0)
+                ");
+                $legacyConn->query('INSERT INTO settings (id, isdeleted) VALUES (1, 0)');
+
+                $legacyResolved = posmain_resolve_pos_invoice_accounts($legacyConn, [], [
+                    'store_id' => 0,
+                    'emp_id' => 0,
+                    'fund_id' => 0,
+                    'acc2_id' => 155,
+                ]);
+                posDefaultAccountsAssert($legacyResolved['store_id'] === 27, 'legacy schema without def_pos columns should still resolve store');
+                posDefaultAccountsAssert($legacyResolved['acc2_id'] === 148, 'legacy schema without def_pos columns should still resolve client');
+            } finally {
+                $legacyConn->query("DROP DATABASE IF EXISTS `{$legacyDb}`");
+                $legacyConn->close();
+            }
+        }
+
         echo "pos-default-accounts-ok\n";
     } finally {
         $conn->query("DROP DATABASE IF EXISTS `{$db}`");
         $conn->close();
     }
+}
+
+function posDefaultAccountsTestOrderContext(mysqli $conn): void
+{
+    $takeaway = posmain_resolve_invoice_order_context($conn, [
+        'age' => '2',
+        'table_id' => '0',
+    ]);
+    posDefaultAccountsAssert($takeaway['order_type_db'] === 'takeaway', 'table mode without table should downgrade to takeaway');
+    posDefaultAccountsAssert((int) $takeaway['order_mode'] === 1, 'table mode without table should reset order mode to takeaway');
+
+    $delivery = posmain_resolve_invoice_order_context($conn, [
+        'age' => '2',
+        'table_id' => '0',
+        'delivery_customer_name' => 'Ali',
+        'delivery_customer_phone' => '01012345678',
+        'delivery_customer_address' => 'Cairo',
+    ]);
+    posDefaultAccountsAssert($delivery['order_type_db'] === 'delivery', 'delivery fields should override stale table mode');
 }
 
 function posDefaultAccountsCreateSchema(mysqli $conn): void

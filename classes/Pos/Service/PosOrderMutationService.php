@@ -668,7 +668,7 @@ class PosOrderMutationService
         $orderId = (int) $conn->insert_id;
         $this->tableOrderService->assignUuidIfPresent($conn, 'ot_head', $orderId);
 
-        $salesJournal = $this->insertTakeawaySalesJournal($conn, $orderId, $proId, $headNet, $date, $customerId, $userId);
+        $salesJournal = $this->insertTakeawaySalesJournal($conn, $orderId, $proId, $headNet, $date, $customerId, $userId, (int) ($request['sales_account_id'] ?? 0));
         $receipts = [];
         if ($payment['cash'] > 0) {
             $receipts[] = $this->insertTakeawayReceipt($conn, $orderId, $proId, $info, $date, $empId, $paymentFundId, $customerId, $payment['cash'], 'كاش', $userId);
@@ -701,15 +701,19 @@ class PosOrderMutationService
 
         $outboxResult = null;
         if (!array_key_exists('record_outbox', $context) || $context['record_outbox']) {
-            $syncOutbox = new SyncOutboxEventService();
-            $options = [
-                'event_type' => 'order.saved',
-                'source_system' => 'pos_cashier',
-            ];
-            if (isset($context['config']) && is_array($context['config'])) {
-                $options['config'] = $context['config'];
+            try {
+                $syncOutbox = new SyncOutboxEventService();
+                $options = [
+                    'event_type' => 'order.saved',
+                    'source_system' => 'pos_cashier',
+                ];
+                if (isset($context['config']) && is_array($context['config'])) {
+                    $options['config'] = $context['config'];
+                }
+                $outboxResult = $syncOutbox->recordOrderSnapshot($conn, $orderId, $options);
+            } catch (Throwable $exception) {
+                error_log('POS order outbox skipped: ' . $exception->getMessage());
             }
-            $outboxResult = $syncOutbox->recordOrderSnapshot($conn, $orderId, $options);
         }
 
         $this->recordOrderEvent($conn, $orderId, 'order.saved', $context['event_source'] ?? 'pos_cashier', $context, [
@@ -857,7 +861,7 @@ class PosOrderMutationService
         $salesJournal = null;
         $receipts = [];
         if ($status['payment_status'] === 'paid' || $payment['applied'] > 0) {
-            $salesJournal = $this->insertTakeawaySalesJournal($conn, $orderId, $proId, $headNet, $date, $customerId, $userId);
+            $salesJournal = $this->insertTakeawaySalesJournal($conn, $orderId, $proId, $headNet, $date, $customerId, $userId, (int) ($request['sales_account_id'] ?? 0));
             if ($payment['cash'] > 0) {
                 $receipts[] = $this->insertTakeawayReceipt($conn, $orderId, $proId, $info, $date, $empId, $paymentFundId, $customerId, $payment['cash'], 'كاش', $userId);
             }
@@ -903,15 +907,19 @@ class PosOrderMutationService
 
         $outboxResult = null;
         if (!array_key_exists('record_outbox', $context) || $context['record_outbox']) {
-            $syncOutbox = new SyncOutboxEventService();
-            $options = [
-                'event_type' => 'order.saved',
-                'source_system' => 'pos_cashier_delivery',
-            ];
-            if (isset($context['config']) && is_array($context['config'])) {
-                $options['config'] = $context['config'];
+            try {
+                $syncOutbox = new SyncOutboxEventService();
+                $options = [
+                    'event_type' => 'order.saved',
+                    'source_system' => 'pos_cashier_delivery',
+                ];
+                if (isset($context['config']) && is_array($context['config'])) {
+                    $options['config'] = $context['config'];
+                }
+                $outboxResult = $syncOutbox->recordOrderSnapshot($conn, $orderId, $options);
+            } catch (Throwable $exception) {
+                error_log('POS delivery outbox skipped: ' . $exception->getMessage());
             }
-            $outboxResult = $syncOutbox->recordOrderSnapshot($conn, $orderId, $options);
         }
 
         $this->recordOrderEvent($conn, $orderId, 'order.saved', $context['event_source'] ?? 'pos_cashier_delivery', $context, [
@@ -1056,8 +1064,13 @@ class PosOrderMutationService
         ];
     }
 
-    private function insertTakeawaySalesJournal(mysqli $conn, int $orderId, int $proId, float $amount, string $date, int $customerId, int $userId): array
+    private function insertTakeawaySalesJournal(mysqli $conn, int $orderId, int $proId, float $amount, string $date, int $customerId, int $userId, int $salesAccountId = 0): array
     {
+        $salesAccountId = posmain_resolve_sales_account_id($conn, $salesAccountId > 0 ? $salesAccountId : 91);
+        if ($salesAccountId <= 0) {
+            throw new InvalidArgumentException('لا يوجد حساب مبيعات صالح في دليل الحسابات');
+        }
+
         $journalId = $this->tableOrderService->nextJournalId($conn, 0, 0);
         $details = 'فاتورة ريسيت _ ' . $orderId;
         $this->tableOrderService->execute($conn, "
@@ -1072,8 +1085,8 @@ class PosOrderMutationService
         ", [$journalHeadId, $customerId, $amount, $orderId]);
         $this->tableOrderService->execute($conn, "
             INSERT INTO journal_entries (journal_id, account_id, debit, credit, tybe, op_id)
-            VALUES (?, 91, 0, ?, 1, ?)
-        ", [$journalHeadId, $amount, $orderId]);
+            VALUES (?, ?, 0, ?, 1, ?)
+        ", [$journalHeadId, $salesAccountId, $amount, $orderId]);
 
         return [
             'journal_id' => $journalId,
@@ -2398,17 +2411,7 @@ class PosOrderMutationService
 
     private function resolvePosRequestAccounts(mysqli $conn, array $request): array
     {
-        $settingsQuery = $conn->query(
-            'SELECT id, def_pos_store, def_pos_employee, def_pos_fund, def_pos_client
-             FROM settings
-             WHERE isdeleted = 0
-             ORDER BY id ASC
-             LIMIT 1'
-        );
-        $settingsRow = ($settingsQuery && $settingsQuery->num_rows > 0)
-            ? $settingsQuery->fetch_assoc()
-            : [];
-
+        $settingsRow = posmain_load_pos_settings_row($conn);
         $resolved = posmain_resolve_pos_invoice_accounts($conn, $settingsRow, $request);
 
         return array_merge($request, $resolved);

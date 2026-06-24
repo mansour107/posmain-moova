@@ -2523,6 +2523,18 @@ function validatePOSForm() {
     }
 
     const orderMode = $('input[name="age"]:checked').val();
+    if (orderMode === '2') {
+        const tableId = parseInt($('#selected_table_id').val() || 0, 10) || 0;
+        const selectedOrderId = parseInt($('#selected_order_id').val() || $('#edit_order_id').val() || 0, 10) || 0;
+        if (tableId <= 0 && selectedOrderId <= 0) {
+            alert('يجب اختيار طاولة قبل إتمام طلب الطاولة');
+            const tablesModal = document.getElementById('tablesModal');
+            if (tablesModal) {
+                bootstrap.Modal.getOrCreateInstance(tablesModal).show();
+            }
+            return false;
+        }
+    }
     if (orderMode === '3') {
         const hasDeliveryCustomer = (typeof window.posDeliveryIsReadyForSubmit === 'function')
             ? window.posDeliveryIsReadyForSubmit()

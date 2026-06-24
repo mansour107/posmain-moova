@@ -93,23 +93,23 @@ $paid_bank = isset($_POST['paid_bank']) ? floatval($_POST['paid_bank']) : 0;
 $payment_fund_id = isset($_POST['payment_fund_id']) ? intval($_POST['payment_fund_id']) : $fund_id;
 $payment_bank_id = isset($_POST['payment_bank_id']) ? intval($_POST['payment_bank_id']) : 0;
 
-$posSettingsRow = [];
-$posSettingsQuery = $conn->query('SELECT id, def_pos_store, def_pos_employee, def_pos_fund, def_pos_client FROM settings WHERE isdeleted = 0 ORDER BY id ASC LIMIT 1');
-if ($posSettingsQuery && $posSettingsQuery->num_rows > 0) {
-    $posSettingsRow = $posSettingsQuery->fetch_assoc();
-}
+$posSettingsRow = posmain_load_pos_settings_row($conn);
 $posResolvedAccounts = posmain_resolve_pos_invoice_accounts($conn, $posSettingsRow, [
     'store_id' => $store_id,
     'emp_id' => $emp_id,
     'fund_id' => $fund_id,
     'acc2_id' => $acc2_id,
     'payment_fund_id' => $payment_fund_id,
+    'payment_bank_id' => $payment_bank_id,
+    'paid_bank' => $paid_bank,
 ]);
 $store_id = (int) $posResolvedAccounts['store_id'];
 $emp_id = (int) $posResolvedAccounts['emp_id'];
 $fund_id = (int) $posResolvedAccounts['fund_id'];
 $acc2_id = (int) $posResolvedAccounts['acc2_id'];
 $payment_fund_id = (int) $posResolvedAccounts['payment_fund_id'];
+$payment_bank_id = (int) $posResolvedAccounts['payment_bank_id'];
+$sales_account_id = (int) ($posResolvedAccounts['sales_account_id'] ?? 0);
 
 error_log('=== SPLIT PAYMENT DEBUG ===');
 error_log('POST paid_cash: ' . (isset($_POST['paid_cash']) ? $_POST['paid_cash'] : 'NOT SET'));
@@ -120,22 +120,11 @@ error_log('Processed: paid_cash=' . $paid_cash . ', paid_bank=' . $paid_bank . '
 error_log('=========================');
 
 // Get order type from age parameter.
-$order_mode = isset($_POST['age']) ? intval($_POST['age']) : 1; // 1 takeaway, 2 table, 3 delivery
-$order_type_db = 'takeaway';
-if ($order_mode === 2) {
-    $order_type_db = 'table';
-} elseif ($order_mode === 3) {
-    $order_type_db = 'delivery';
-}
-
-$table_id = isset($_POST['table_id']) ? intval($_POST['table_id']) : 0;
-$selected_order_id = 0;
-foreach (['selected_order_id', 'edit', 'edit_id'] as $selectedOrderKey) {
-    if (isset($_POST[$selectedOrderKey]) && intval($_POST[$selectedOrderKey]) > 0) {
-        $selected_order_id = intval($_POST[$selectedOrderKey]);
-        break;
-    }
-}
+$orderContext = posmain_resolve_invoice_order_context($conn, $_POST);
+$order_mode = (int) $orderContext['order_mode'];
+$order_type_db = (string) $orderContext['order_type_db'];
+$table_id = (int) $orderContext['table_id'];
+$selected_order_id = (int) $orderContext['selected_order_id'];
 
 $db_table_name = '';
 if ($order_type_db === 'table') {
@@ -219,6 +208,7 @@ if ($order_type_db === 'delivery') { // دليفري
 
 // Build display info from structured order type. Table names are read from DB, not trusted from POST.
 $info = $tableOrderService->buildInfo($order_type_db, $db_table_name, $info);
+$info = posmain_truncate_invoice_info($info);
 
 // تحديد المبلغ المدفوع حسب نوع الفاتورة
 // أوامر الشراء والبيع وعروض الأسعار لا تحتاج مدفوعات
@@ -1164,7 +1154,10 @@ try {
                 "INSERT INTO journal_entries (journal_id, account_id, debit, credit, tybe, op_id)
                  VALUES (?, ?, 0, ?, 1, ?)"
             );
-            $sales_account = 91;
+            $sales_account = $sales_account_id > 0 ? $sales_account_id : posmain_resolve_sales_account_id($conn, 91);
+            if ($sales_account <= 0) {
+                throw new Exception('لا يوجد حساب مبيعات صالح في دليل الحسابات');
+            }
             $stmt->bind_param("ssds", $journal_lastid, $sales_account, $headnet, $last_op);
 
             if (!$stmt->execute()) {

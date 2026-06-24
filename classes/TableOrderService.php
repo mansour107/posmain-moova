@@ -247,7 +247,7 @@ class TableOrderService
             }
         }
 
-        return implode(' - ', $deduped);
+        return posmain_truncate_invoice_info(implode(' - ', $deduped));
     }
 
     public function recalculateOrderTotals(mysqli $conn, $orderId)
