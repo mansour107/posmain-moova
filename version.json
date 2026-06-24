@@ -1,6 +1,6 @@
 {
-  "version": "1.0.5",
+  "version": "1.0.6",
   "released_at": "2026-06-24",
-  "notes": "Detect GitHub updates via git fetch so Settings can offer system update after push.",
+  "notes": "Auto-create cashier warehouse, fund, employee, and client accounts for new shops missing acc_head.",
   "min_php": "8.2"
 }

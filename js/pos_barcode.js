@@ -2486,7 +2486,7 @@ function validatePOSForm() {
 
     if (!store_id || store_id == '0') {
         console.error('❌ store_id is missing or zero');
-        alert('خطأ: يجب اختيار المخزن');
+        alert('خطأ: لا يوجد مخزن مُعد لهذا الفرع. من الإعدادات تأكد من وجود مخزن (حساب مخزون) أو تواصل مع الدعم.');
         return false;
     }
 
