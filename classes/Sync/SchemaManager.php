@@ -58,6 +58,7 @@ class SyncSchemaManager
             'sync_conflicts' => $this->syncConflictsSql(),
             'sync_worker_logs' => $this->syncWorkerLogsSql(),
             'sync_bulk_push_jobs' => $this->syncBulkPushJobsSql(),
+            'sync_image_queue' => $this->syncImageQueueSql(),
             'sync_runtime_settings' => $this->syncRuntimeSettingsSql(),
             'moova_pos_inbound_events' => $this->moovaPosInboundEventsSql(),
             'cloud_branches' => $this->cloudBranchesSql(),
@@ -2279,6 +2280,33 @@ CREATE TABLE IF NOT EXISTS sync_bulk_push_jobs (
   PRIMARY KEY (id),
   UNIQUE KEY uq_sync_bulk_push_job_uuid (job_uuid),
   KEY idx_sync_bulk_push_status (status, updated_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
+    private function syncImageQueueSql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS sync_image_queue (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  branch_uuid CHAR(36) NOT NULL,
+  imgs_id INT NOT NULL,
+  item_id INT NOT NULL,
+  file_name VARCHAR(255) NOT NULL,
+  file_size INT UNSIGNED NOT NULL DEFAULT 0,
+  file_sha256 CHAR(64) NULL,
+  direction ENUM('branch_to_cloud','cloud_to_branch') NOT NULL DEFAULT 'branch_to_cloud',
+  status ENUM('pending','uploading','synced','failed','missing_file','skipped') NOT NULL DEFAULT 'pending',
+  attempts SMALLINT UNSIGNED NOT NULL DEFAULT 0,
+  last_error VARCHAR(500) NULL,
+  locked_until DATETIME(6) NULL,
+  locked_by VARCHAR(120) NULL,
+  synced_at DATETIME(6) NULL,
+  created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_sync_image_branch_imgs_dir (branch_uuid, imgs_id, direction),
+  KEY idx_sync_image_pending (status, direction, locked_until),
+  KEY idx_sync_image_branch_status (branch_uuid, status, direction)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
     }
 

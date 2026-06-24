@@ -12,16 +12,19 @@ if (!class_exists('CloudBranchSyncEventService')) {
 if (!class_exists('CloudLegacyPosMirrorService')) {
     require_once __DIR__ . '/CloudLegacyPosMirrorService.php';
 }
+if (!class_exists('BranchRestoreEventApplyService')) {
+    require_once __DIR__ . '/BranchRestoreEventApplyService.php';
+}
 
 class BranchCloudSyncPollWorker
 {
     private const STREAM_NAME = 'cloud_sync';
 
-    private CloudLegacyPosMirrorService $legacyMirror;
+    private BranchRestoreEventApplyService $applyService;
 
-    public function __construct(?CloudLegacyPosMirrorService $legacyMirror = null)
+    public function __construct(?BranchRestoreEventApplyService $applyService = null)
     {
-        $this->legacyMirror = $legacyMirror ?: new CloudLegacyPosMirrorService();
+        $this->applyService = $applyService ?: new BranchRestoreEventApplyService();
     }
 
     public function runOnce(mysqli $conn, array $config = [], array $options = []): array
@@ -202,7 +205,7 @@ class BranchCloudSyncPollWorker
                 $this->updateInboxResult($conn, $inboxId, 'processing', [], null);
             }
 
-            $mirror = $this->legacyMirror->mirrorFromBranchEvent($conn, $branchUuid, $event);
+            $mirror = $this->applyService->apply($conn, $branchUuid, $event);
             if (!$mirror) {
                 $result = $this->applyResult($eventUuid, $idempotencyKey, 'unsupported', 'ack_declined', 'unsupported cloud sync event type');
                 $this->updateInboxResult($conn, $inboxId, 'processed', $result, null);

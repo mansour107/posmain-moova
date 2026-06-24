@@ -23,6 +23,22 @@ class CloudOperationalMirrorService
             return $this->mirrorRecipeBundle($conn, $payload);
         }
 
+        if ($snapshotType === 'shop_settings') {
+            return $this->mirrorShopSettings($conn, $payload);
+        }
+
+        if ($snapshotType === 'modifier_group_bundle') {
+            return $this->mirrorModifierGroupBundle($conn, $payload);
+        }
+
+        if ($snapshotType === 'moova_shop_link') {
+            return $this->mirrorMoovaShopLink($conn, $payload);
+        }
+
+        if ($snapshotType === 'shift_close') {
+            return $this->mirrorShiftClose($conn, $payload);
+        }
+
         return null;
     }
 
@@ -101,6 +117,140 @@ class CloudOperationalMirrorService
         }
 
         return ['entity_id' => 'recipe_headers:' . $recipeId];
+    }
+
+    private function mirrorShopSettings(mysqli $conn, array $payload): ?array
+    {
+        $settings = $payload['settings'] ?? null;
+        if (!is_array($settings)) {
+            return null;
+        }
+
+        $settings['id'] = 1;
+        $this->upsertRow($conn, 'settings', $settings);
+
+        return ['entity_id' => 'settings:1'];
+    }
+
+    private function mirrorModifierGroupBundle(mysqli $conn, array $payload): ?array
+    {
+        $group = $payload['group'] ?? null;
+        if (!is_array($group) || empty($group['id'])) {
+            return null;
+        }
+
+        $groupId = (int) $group['id'];
+        $this->upsertRow($conn, 'modifier_groups', $group);
+
+        if ($this->tableExists($conn, 'modifier_options')) {
+            foreach ($payload['options'] ?? [] as $option) {
+                if (!is_array($option) || empty($option['id'])) {
+                    continue;
+                }
+                $this->upsertRow($conn, 'modifier_options', $option);
+            }
+        }
+
+        if ($this->tableExists($conn, 'item_modifier_groups')) {
+            foreach ($payload['item_links'] ?? [] as $link) {
+                if (!is_array($link)) {
+                    continue;
+                }
+                $this->upsertJunctionRow($conn, 'item_modifier_groups', $link, ['item_id', 'group_id']);
+            }
+        }
+
+        return ['entity_id' => 'modifier_groups:' . $groupId];
+    }
+
+    private function mirrorMoovaShopLink(mysqli $conn, array $payload): ?array
+    {
+        $link = $payload['link'] ?? null;
+        if (!is_array($link) || empty($link['id'])) {
+            return null;
+        }
+
+        $this->upsertRow($conn, 'moova_pos_shop_links', $link);
+
+        return ['entity_id' => 'moova_pos_shop_links:' . (int) $link['id']];
+    }
+
+    private function mirrorShiftClose(mysqli $conn, array $payload): ?array
+    {
+        $shift = $payload['shift'] ?? null;
+        if (!is_array($shift)) {
+            return null;
+        }
+
+        $legacy = $shift['legacy'] ?? null;
+        if (is_array($legacy) && !empty($legacy['id'])) {
+            $this->upsertRow($conn, 'closed_orders', $legacy);
+
+            return ['entity_id' => 'closed_orders:' . (int) $legacy['id']];
+        }
+
+        $closedOrderId = (int) ($shift['local_closed_order_id'] ?? 0);
+        if ($closedOrderId <= 0 || !$this->tableExists($conn, 'closed_orders')) {
+            return null;
+        }
+
+        $stmt = $conn->prepare('SELECT * FROM closed_orders WHERE id = ? LIMIT 1');
+        $stmt->bind_param('i', $closedOrderId);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        if (!$row) {
+            return null;
+        }
+
+        $this->upsertRow($conn, 'closed_orders', $row);
+
+        return ['entity_id' => 'closed_orders:' . $closedOrderId];
+    }
+
+    private function upsertJunctionRow(mysqli $conn, string $table, array $row, array $keyColumns): void
+    {
+        if (!$this->tableExists($conn, $table)) {
+            return;
+        }
+
+        foreach ($keyColumns as $column) {
+            if (empty($row[$column])) {
+                return;
+            }
+        }
+
+        $columns = $this->tableColumns($conn, $table);
+        $fields = [];
+        $values = [];
+        foreach ($row as $column => $value) {
+            if (!in_array($column, $columns, true)) {
+                continue;
+            }
+            $fields[] = '`' . $column . '`';
+            $values[] = $value;
+        }
+
+        if ($fields === []) {
+            return;
+        }
+
+        $placeholders = implode(', ', array_fill(0, count($fields), '?'));
+        $updates = [];
+        foreach ($fields as $field) {
+            $updates[] = $field . ' = VALUES(' . $field . ')';
+        }
+
+        $sql = 'INSERT INTO `' . $table . '` (' . implode(', ', $fields) . ') VALUES (' . $placeholders . ')';
+        if ($updates !== []) {
+            $sql .= ' ON DUPLICATE KEY UPDATE ' . implode(', ', $updates);
+        }
+
+        $stmt = $conn->prepare($sql);
+        $types = str_repeat('s', count($values));
+        $this->bindParams($stmt, $types, $values);
+        $stmt->execute();
+        $stmt->close();
     }
 
     private function upsertRow(mysqli $conn, string $table, array $row): void

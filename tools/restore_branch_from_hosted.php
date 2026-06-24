@@ -14,6 +14,7 @@ $options = getopt('', [
     'menu',
     'tables',
     'orders',
+    'operational',
     'all',
     'limit:',
     'help',
@@ -35,6 +36,9 @@ if ($all || isset($options['tables'])) {
 }
 if ($all || isset($options['orders'])) {
     $phases[] = RestoreEventPhase::ORDERS;
+}
+if ($all || isset($options['operational'])) {
+    $phases[] = RestoreEventPhase::OPERATIONAL;
 }
 if ($phases === []) {
     $phases = RestoreEventPhase::all();
@@ -63,6 +67,6 @@ exit(($summary['failed'] ?? 0) > 0 ? 2 : 0);
 
 function restoreBranchFromHostedUsage($stream = STDOUT): void
 {
-    fwrite($stream, "Usage: php tools/restore_branch_from_hosted.php [--apply] [--all|--menu|--tables|--orders] [--limit=N]\n");
+    fwrite($stream, "Usage: php tools/restore_branch_from_hosted.php [--apply] [--all|--menu|--tables|--orders|--operational] [--limit=N]\n");
     fwrite($stream, "Dry-run by default. Stop branch sync workers before --apply on a replacement PC.\n");
 }

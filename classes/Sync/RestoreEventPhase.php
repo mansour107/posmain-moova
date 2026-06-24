@@ -1,10 +1,13 @@
 <?php
 
+require_once __DIR__ . '/OperationalSyncDomains.php';
+
 class RestoreEventPhase
 {
     public const MENU = 'menu';
     public const TABLES = 'tables';
     public const ORDERS = 'orders';
+    public const OPERATIONAL = 'operational';
 
     public static function all(): array
     {
@@ -12,6 +15,7 @@ class RestoreEventPhase
             self::MENU,
             self::TABLES,
             self::ORDERS,
+            self::OPERATIONAL,
         ];
     }
 
@@ -19,7 +23,7 @@ class RestoreEventPhase
     {
         $phase = strtolower(trim($phase));
         if (!in_array($phase, self::all(), true)) {
-            throw new InvalidArgumentException('phase must be one of: menu, tables, orders.');
+            throw new InvalidArgumentException('phase must be one of: menu, tables, orders, operational.');
         }
 
         return $phase;
@@ -39,11 +43,89 @@ class RestoreEventPhase
             return self::MENU;
         }
 
+        if (self::isOperationalEvent($event)) {
+            return self::OPERATIONAL;
+        }
+
         return null;
+    }
+
+    public static function isOperationalEvent(array $event): bool
+    {
+        $payload = self::payload($event);
+        $snapshotType = (string) ($payload['snapshot_type'] ?? '');
+        if (in_array($snapshotType, self::operationalSnapshotTypes(), true)) {
+            return true;
+        }
+
+        $aggregateType = strtolower(trim((string) ($event['aggregate_type'] ?? '')));
+        if ($aggregateType !== '') {
+            foreach (OperationalSyncDomains::all() as $definition) {
+                $domainAggregate = strtolower(trim((string) ($definition['aggregate_type'] ?? '')));
+                if ($domainAggregate !== '' && $domainAggregate === $aggregateType) {
+                    return true;
+                }
+            }
+        }
+
+        $eventType = strtolower(trim((string) ($event['event_type'] ?? '')));
+        $operationalPrefixes = [
+            'inventory.',
+            'customer.',
+            'delivery_',
+            'employee.',
+            'pulse.',
+            'shift_close.',
+            'shop_settings.',
+            'modifier_group.',
+            'moova.',
+            'recipe.',
+            'production.',
+            'order_fulfillment.',
+            'payment_method.',
+            'table_area.',
+            'drawer_',
+            'order_event.',
+            'manager_approval.',
+            'item_unit.',
+            'item_availability.',
+            'item_variant.',
+            'item_modifier_group.',
+            'item_nutrition.',
+            'printer.',
+            'print_job.',
+            'store.',
+            'town.',
+            'category.',
+        ];
+        foreach ($operationalPrefixes as $prefix) {
+            if (strpos($eventType, $prefix) === 0) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static function operationalSnapshotTypes(): array
+    {
+        return [
+            'operational_row',
+            'operational_delete',
+            'recipe_bundle',
+            'shop_settings',
+            'modifier_group_bundle',
+            'moova_shop_link',
+            'shift_close',
+        ];
     }
 
     public static function isOrderEvent(array $event): bool
     {
+        if (self::isOperationalPayload(self::payload($event))) {
+            return false;
+        }
+
         $aggregateType = strtolower(trim((string) ($event['aggregate_type'] ?? '')));
         $entityType = strtolower(trim((string) ($event['entity_type'] ?? '')));
         $eventType = strtolower(trim((string) ($event['event_type'] ?? '')));
@@ -59,6 +141,10 @@ class RestoreEventPhase
 
     public static function isTableEvent(array $event): bool
     {
+        if (self::isOperationalPayload(self::payload($event))) {
+            return false;
+        }
+
         foreach (['aggregate_type', 'entity_type'] as $key) {
             if (strtolower(trim((string) ($event[$key] ?? ''))) === 'table') {
                 return true;
@@ -79,6 +165,10 @@ class RestoreEventPhase
 
     public static function isMenuEvent(array $event): bool
     {
+        if (self::isOperationalPayload(self::payload($event))) {
+            return false;
+        }
+
         foreach (['aggregate_type', 'entity_type'] as $key) {
             $type = strtolower(trim((string) ($event[$key] ?? '')));
             if ($type === 'menu_item' || $type === 'item') {
@@ -97,6 +187,13 @@ class RestoreEventPhase
             || array_key_exists('menu_item', $payload)
             || array_key_exists('local_item_id', $payload)
             || array_key_exists('item_uuid', $payload);
+    }
+
+    private static function isOperationalPayload(array $payload): bool
+    {
+        $snapshotType = (string) ($payload['snapshot_type'] ?? '');
+
+        return in_array($snapshotType, self::operationalSnapshotTypes(), true);
     }
 
     private static function payload(array $event): array

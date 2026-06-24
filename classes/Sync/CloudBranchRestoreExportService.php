@@ -1,11 +1,17 @@
 <?php
 
 require_once __DIR__ . '/RestoreEventPhase.php';
+require_once __DIR__ . '/OperationalSyncDomains.php';
+require_once __DIR__ . '/ShopSettingsSyncPayloadService.php';
+require_once __DIR__ . '/ModifierGroupSyncPayloadService.php';
+require_once __DIR__ . '/ShiftCloseSyncPayloadService.php';
+require_once __DIR__ . '/PosOrderSnapshotBuilder.php';
 
 class CloudBranchRestoreExportService
 {
     private const INBOX_STATUSES = ['processed', 'duplicate'];
     private const MAX_SCAN_MULTIPLIER = 8;
+    private const OPERATIONAL_CURSOR_SCALE = 1000000000;
 
     public function exportPage(mysqli $conn, string $branchUuid, string $phase, int $afterId, int $limit, string $source = 'auto'): array
     {
@@ -133,7 +139,15 @@ class CloudBranchRestoreExportService
             return $this->exportCloudTables($conn, $branchUuid, $afterId, $limit, $source, $phase);
         }
 
-        return $this->exportCloudOrders($conn, $branchUuid, $afterId, $limit, $source, $phase);
+        if ($phase === RestoreEventPhase::ORDERS) {
+            return $this->exportCloudOrders($conn, $branchUuid, $afterId, $limit, $source, $phase);
+        }
+
+        if ($phase === RestoreEventPhase::OPERATIONAL) {
+            return $this->exportOperationalFromLegacy($conn, $branchUuid, $afterId, $limit, $source, $phase);
+        }
+
+        return $this->emptyPage($source, $phase, $afterId);
     }
 
     private function exportCloudMenuItems(
@@ -448,6 +462,452 @@ class CloudBranchRestoreExportService
             'count' => 0,
             'events' => [],
         ];
+    }
+
+    private function exportOperationalFromLegacy(
+        mysqli $conn,
+        string $branchUuid,
+        int $afterId,
+        int $limit,
+        string $source,
+        string $phase
+    ): array {
+        $segments = $this->operationalExportSegments($conn);
+        if ($segments === []) {
+            return $this->emptyPage($source, $phase, $afterId);
+        }
+
+        $segmentIndex = intdiv($afterId, self::OPERATIONAL_CURSOR_SCALE);
+        $rowAfterId = $afterId % self::OPERATIONAL_CURSOR_SCALE;
+        $events = [];
+        $nextAfterId = $afterId;
+        $hasMore = false;
+
+        while (count($events) < $limit && $segmentIndex < count($segments)) {
+            $page = $this->exportOperationalSegmentPage(
+                $conn,
+                $branchUuid,
+                $segments[$segmentIndex],
+                $rowAfterId,
+                $limit - count($events)
+            );
+
+            foreach ($page['events'] as $event) {
+                $events[] = [
+                    'restore_id' => $nextAfterId,
+                    'event' => $event,
+                ];
+                if (count($events) >= $limit) {
+                    break;
+                }
+            }
+
+            $rowAfterId = (int) $page['next_after_id'];
+            $nextAfterId = ($segmentIndex * self::OPERATIONAL_CURSOR_SCALE) + $rowAfterId;
+
+            if (!empty($page['has_more_in_segment'])) {
+                $hasMore = true;
+                break;
+            }
+
+            $segmentIndex++;
+            $rowAfterId = 0;
+            if ($segmentIndex < count($segments)) {
+                $hasMore = true;
+                $nextAfterId = $segmentIndex * self::OPERATIONAL_CURSOR_SCALE;
+            }
+
+            if (count($events) >= $limit) {
+                $hasMore = true;
+                break;
+            }
+        }
+
+        return [
+            'source' => $source,
+            'phase' => $phase,
+            'after_id' => $afterId,
+            'next_after_id' => $nextAfterId,
+            'has_more' => $hasMore,
+            'count' => count($events),
+            'events' => $events,
+        ];
+    }
+
+    private function operationalExportSegments(mysqli $conn): array
+    {
+        $segments = [];
+        foreach (OperationalSyncDomains::bulkRowDomains() as $domain => $definition) {
+            $table = (string) ($definition['table'] ?? '');
+            if ($table !== '' && $this->tableExists($conn, $table)) {
+                $segments[] = [
+                    'type' => 'row_domain',
+                    'domain' => $domain,
+                    'definition' => $definition,
+                ];
+            }
+        }
+
+        if ($this->tableExists($conn, 'recipe_headers')) {
+            $segments[] = ['type' => 'recipes'];
+        }
+        if ($this->tableExists($conn, 'settings')) {
+            $segments[] = ['type' => 'shop_settings'];
+        }
+        if ($this->tableExists($conn, 'modifier_groups')) {
+            $segments[] = ['type' => 'modifier_groups'];
+        }
+        if ($this->tableExists($conn, 'moova_pos_shop_links')) {
+            $segments[] = ['type' => 'moova_shop_links'];
+        }
+        if ($this->tableExists($conn, 'closed_orders')) {
+            $segments[] = ['type' => 'shift_closes'];
+        }
+
+        return $segments;
+    }
+
+    private function exportOperationalSegmentPage(
+        mysqli $conn,
+        string $branchUuid,
+        array $segment,
+        int $rowAfterId,
+        int $limit
+    ): array {
+        $type = (string) ($segment['type'] ?? '');
+        if ($type === 'row_domain') {
+            return $this->exportRowDomainSegment(
+                $conn,
+                $branchUuid,
+                (string) ($segment['domain'] ?? ''),
+                (array) ($segment['definition'] ?? []),
+                $rowAfterId,
+                $limit
+            );
+        }
+
+        if ($type === 'recipes') {
+            return $this->exportRecipeSegment($conn, $branchUuid, $rowAfterId, $limit);
+        }
+
+        if ($type === 'shop_settings') {
+            return $this->exportShopSettingsSegment($conn, $branchUuid, $rowAfterId);
+        }
+
+        if ($type === 'modifier_groups') {
+            return $this->exportModifierGroupSegment($conn, $branchUuid, $rowAfterId, $limit);
+        }
+
+        if ($type === 'moova_shop_links') {
+            return $this->exportMoovaShopLinkSegment($conn, $branchUuid, $rowAfterId, $limit);
+        }
+
+        if ($type === 'shift_closes') {
+            return $this->exportShiftCloseSegment($conn, $branchUuid, $rowAfterId, $limit);
+        }
+
+        return [
+            'events' => [],
+            'next_after_id' => $rowAfterId,
+            'has_more_in_segment' => false,
+        ];
+    }
+
+    private function exportRowDomainSegment(
+        mysqli $conn,
+        string $branchUuid,
+        string $domain,
+        array $definition,
+        int $rowAfterId,
+        int $limit
+    ): array {
+        $table = (string) ($definition['table'] ?? '');
+        if ($table === '' || !$this->tableExists($conn, $table)) {
+            return [
+                'events' => [],
+                'next_after_id' => $rowAfterId,
+                'has_more_in_segment' => false,
+            ];
+        }
+
+        $stmt = $conn->prepare("SELECT * FROM `{$table}` WHERE id > ? ORDER BY id ASC LIMIT ?");
+        $stmt->bind_param('ii', $rowAfterId, $limit);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        $events = [];
+        $nextRowAfterId = $rowAfterId;
+        while ($row = $result->fetch_assoc()) {
+            $nextRowAfterId = (int) $row['id'];
+            $event = $this->operationalRowEvent($branchUuid, $domain, $definition, $row);
+            if ($event) {
+                $events[] = $event;
+            }
+        }
+        $result->free();
+        $stmt->close();
+
+        $hasMore = count($events) >= $limit;
+        if (!$hasMore && $events !== []) {
+            $countStmt = $conn->prepare("SELECT COUNT(*) AS c FROM `{$table}` WHERE id > ?");
+            $countStmt->bind_param('i', $nextRowAfterId);
+            $countStmt->execute();
+            $hasMore = ((int) ($countStmt->get_result()->fetch_assoc()['c'] ?? 0)) > 0;
+            $countStmt->close();
+        }
+
+        return [
+            'events' => $events,
+            'next_after_id' => $nextRowAfterId,
+            'has_more_in_segment' => $hasMore,
+        ];
+    }
+
+    private function exportRecipeSegment(mysqli $conn, string $branchUuid, int $rowAfterId, int $limit): array
+    {
+        $stmt = $conn->prepare('SELECT * FROM recipe_headers WHERE id > ? ORDER BY id ASC LIMIT ?');
+        $stmt->bind_param('ii', $rowAfterId, $limit);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        $events = [];
+        $nextRowAfterId = $rowAfterId;
+        while ($header = $result->fetch_assoc()) {
+            $recipeId = (int) $header['id'];
+            $nextRowAfterId = $recipeId;
+            $lines = $this->rowsForRecipeChildTable($conn, 'recipe_lines', $recipeId);
+            $variantLines = $this->rowsForRecipeChildTable($conn, 'recipe_variant_lines', $recipeId);
+            $costSnapshots = $this->rowsForRecipeChildTable($conn, 'recipe_cost_snapshots', $recipeId);
+            $recipeUuid = (string) ($header['recipe_uuid'] ?? PosOrderSnapshotBuilder::deterministicUuid($branchUuid, 'recipe_headers:' . $recipeId));
+            $payload = [
+                'schema_version' => 1,
+                'snapshot_type' => 'recipe_bundle',
+                'domain' => 'recipe',
+                'branch_uuid' => $branchUuid,
+                'source_system' => 'cloud_restore',
+                'captured_at_utc' => gmdate('Y-m-d\TH:i:s\Z'),
+                'recipe_id' => $recipeId,
+                'recipe_uuid' => $recipeUuid,
+                'header' => $header,
+                'lines' => $lines,
+                'variant_lines' => $variantLines,
+                'cost_snapshots' => $costSnapshots,
+            ];
+            $events[] = $this->wrapOperationalEvent('recipe.saved', 'recipe', 'recipe', $payload);
+        }
+        $result->free();
+        $stmt->close();
+
+        $hasMore = count($events) >= $limit;
+        if (!$hasMore && $events !== []) {
+            $countStmt = $conn->prepare('SELECT COUNT(*) AS c FROM recipe_headers WHERE id > ?');
+            $countStmt->bind_param('i', $nextRowAfterId);
+            $countStmt->execute();
+            $hasMore = ((int) ($countStmt->get_result()->fetch_assoc()['c'] ?? 0)) > 0;
+            $countStmt->close();
+        }
+
+        return [
+            'events' => $events,
+            'next_after_id' => $nextRowAfterId,
+            'has_more_in_segment' => $hasMore,
+        ];
+    }
+
+    private function exportShopSettingsSegment(mysqli $conn, string $branchUuid, int $rowAfterId): array
+    {
+        if ($rowAfterId > 0) {
+            return [
+                'events' => [],
+                'next_after_id' => $rowAfterId,
+                'has_more_in_segment' => false,
+            ];
+        }
+
+        $payload = (new ShopSettingsSyncPayloadService())->build($conn, $branchUuid, ['source_system' => 'cloud_restore']);
+        if (!$payload) {
+            return [
+                'events' => [],
+                'next_after_id' => 0,
+                'has_more_in_segment' => false,
+            ];
+        }
+
+        return [
+            'events' => [$this->wrapOperationalEvent('shop_settings.saved', 'shop_settings', 'shop_settings', $payload)],
+            'next_after_id' => 1,
+            'has_more_in_segment' => false,
+        ];
+    }
+
+    private function exportModifierGroupSegment(mysqli $conn, string $branchUuid, int $rowAfterId, int $limit): array
+    {
+        $stmt = $conn->prepare('SELECT id FROM modifier_groups WHERE id > ? ORDER BY id ASC LIMIT ?');
+        $stmt->bind_param('ii', $rowAfterId, $limit);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        $events = [];
+        $nextRowAfterId = $rowAfterId;
+        $builder = new ModifierGroupSyncPayloadService();
+        while ($row = $result->fetch_assoc()) {
+            $groupId = (int) $row['id'];
+            $nextRowAfterId = $groupId;
+            $payload = $builder->build($conn, $groupId, $branchUuid, ['source_system' => 'cloud_restore']);
+            if ($payload) {
+                $events[] = $this->wrapOperationalEvent('modifier_group.saved', 'modifier_group', 'modifier_group', $payload);
+            }
+        }
+        $result->free();
+        $stmt->close();
+
+        $hasMore = count($events) >= $limit;
+        if (!$hasMore && $events !== []) {
+            $countStmt = $conn->prepare('SELECT COUNT(*) AS c FROM modifier_groups WHERE id > ?');
+            $countStmt->bind_param('i', $nextRowAfterId);
+            $countStmt->execute();
+            $hasMore = ((int) ($countStmt->get_result()->fetch_assoc()['c'] ?? 0)) > 0;
+            $countStmt->close();
+        }
+
+        return [
+            'events' => $events,
+            'next_after_id' => $nextRowAfterId,
+            'has_more_in_segment' => $hasMore,
+        ];
+    }
+
+    private function exportMoovaShopLinkSegment(mysqli $conn, string $branchUuid, int $rowAfterId, int $limit): array
+    {
+        $stmt = $conn->prepare('SELECT * FROM moova_pos_shop_links WHERE id > ? ORDER BY id ASC LIMIT ?');
+        $stmt->bind_param('ii', $rowAfterId, $limit);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        $events = [];
+        $nextRowAfterId = $rowAfterId;
+        while ($row = $result->fetch_assoc()) {
+            $nextRowAfterId = (int) $row['id'];
+            $payload = [
+                'schema_version' => 1,
+                'snapshot_type' => 'moova_shop_link',
+                'branch_uuid' => $branchUuid,
+                'source_system' => 'cloud_restore',
+                'captured_at_utc' => gmdate('Y-m-d\TH:i:s\Z'),
+                'link' => $row,
+            ];
+            $events[] = $this->wrapOperationalEvent('moova.shop_link_saved', 'moova_shop_link', 'moova_shop_link', $payload);
+        }
+        $result->free();
+        $stmt->close();
+
+        $hasMore = count($events) >= $limit;
+        if (!$hasMore && $events !== []) {
+            $countStmt = $conn->prepare('SELECT COUNT(*) AS c FROM moova_pos_shop_links WHERE id > ?');
+            $countStmt->bind_param('i', $nextRowAfterId);
+            $countStmt->execute();
+            $hasMore = ((int) ($countStmt->get_result()->fetch_assoc()['c'] ?? 0)) > 0;
+            $countStmt->close();
+        }
+
+        return [
+            'events' => $events,
+            'next_after_id' => $nextRowAfterId,
+            'has_more_in_segment' => $hasMore,
+        ];
+    }
+
+    private function exportShiftCloseSegment(mysqli $conn, string $branchUuid, int $rowAfterId, int $limit): array
+    {
+        $stmt = $conn->prepare('SELECT id FROM closed_orders WHERE id > ? ORDER BY id ASC LIMIT ?');
+        $stmt->bind_param('ii', $rowAfterId, $limit);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        $events = [];
+        $nextRowAfterId = $rowAfterId;
+        $builder = new ShiftCloseSyncPayloadService();
+        while ($row = $result->fetch_assoc()) {
+            $closedOrderId = (int) $row['id'];
+            $nextRowAfterId = $closedOrderId;
+            $payload = $builder->build($conn, $closedOrderId, $branchUuid, ['source_system' => 'cloud_restore']);
+            if ($payload) {
+                $events[] = $this->wrapOperationalEvent('shift_close.saved', 'shift_close', 'shift_close', $payload);
+            }
+        }
+        $result->free();
+        $stmt->close();
+
+        $hasMore = count($events) >= $limit;
+        if (!$hasMore && $events !== []) {
+            $countStmt = $conn->prepare('SELECT COUNT(*) AS c FROM closed_orders WHERE id > ?');
+            $countStmt->bind_param('i', $nextRowAfterId);
+            $countStmt->execute();
+            $hasMore = ((int) ($countStmt->get_result()->fetch_assoc()['c'] ?? 0)) > 0;
+            $countStmt->close();
+        }
+
+        return [
+            'events' => $events,
+            'next_after_id' => $nextRowAfterId,
+            'has_more_in_segment' => $hasMore,
+        ];
+    }
+
+    private function operationalRowEvent(string $branchUuid, string $domain, array $definition, array $row): ?array
+    {
+        $rowId = (int) ($row['id'] ?? 0);
+        if ($rowId <= 0) {
+            return null;
+        }
+
+        foreach ($definition['exclude_columns'] ?? [] as $column) {
+            unset($row[$column]);
+        }
+
+        $payload = [
+            'schema_version' => 1,
+            'snapshot_type' => 'operational_row',
+            'domain' => $domain,
+            'table' => (string) ($definition['table'] ?? ''),
+            'primary_key' => 'id',
+            'row' => $row,
+            'branch_uuid' => $branchUuid,
+            'source_system' => 'cloud_restore',
+            'captured_at_utc' => gmdate('Y-m-d\TH:i:s\Z'),
+        ];
+
+        return $this->wrapOperationalEvent(
+            (string) ($definition['event_type'] ?? 'operational.saved'),
+            (string) ($definition['aggregate_type'] ?? $domain),
+            (string) ($definition['entity_type'] ?? $domain),
+            $payload
+        );
+    }
+
+    private function wrapOperationalEvent(string $eventType, string $aggregateType, string $entityType, array $payload): array
+    {
+        return [
+            'event_type' => $eventType,
+            'aggregate_type' => $aggregateType,
+            'entity_type' => $entityType,
+            'payload' => $payload,
+        ];
+    }
+
+    private function rowsForRecipeChildTable(mysqli $conn, string $table, int $recipeId): array
+    {
+        if (!$this->tableExists($conn, $table)) {
+            return [];
+        }
+
+        $stmt = $conn->prepare("SELECT * FROM `{$table}` WHERE recipe_id = ? ORDER BY id ASC");
+        $stmt->bind_param('i', $recipeId);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        $rows = [];
+        while ($row = $result->fetch_assoc()) {
+            $rows[] = $row;
+        }
+        $result->free();
+        $stmt->close();
+
+        return $rows;
     }
 
     private function normalizeSource(string $source): string

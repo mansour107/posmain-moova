@@ -5,6 +5,7 @@ require_once __DIR__ . '/CloudAuthService.php';
 require_once __DIR__ . '/OutboxWorker.php';
 require_once __DIR__ . '/SyncDeliveryResultHandler.php';
 require_once __DIR__ . '/SyncHttpClient.php';
+require_once __DIR__ . '/BranchImageSyncWorker.php';
 
 class BranchSyncWorker
 {
@@ -66,6 +67,7 @@ class BranchSyncWorker
         $metrics['claimed'] = count($claimed);
         if (!$claimed) {
             $this->logWorker($conn, $runUuid, 'success', 'no outbox rows to sync', $metrics);
+            $metrics = $this->appendImageSyncMetrics($conn, $config, $options, $metrics);
             return $metrics;
         }
 
@@ -88,11 +90,30 @@ class BranchSyncWorker
         $message = (string) ($delivery['message'] ?? 'sync worker batch finished');
         $this->logWorker($conn, $runUuid, $status, $message, $metrics);
 
-        return $metrics + [
+        return $this->appendImageSyncMetrics($conn, $config, $options, $metrics + [
             'http_status' => $delivery['http_status'] ?? null,
             'mode' => $delivery['mode'] ?? null,
             'error' => $delivery['error'] ?? null,
-        ];
+        ]);
+    }
+
+    private function appendImageSyncMetrics(mysqli $conn, array $config, array $options, array $metrics): array
+    {
+        if (empty($config['sync']['image_sync_enabled'])) {
+            return $metrics;
+        }
+
+        try {
+            $imageMetrics = (new BranchImageSyncWorker())->runOnce($conn, $config, $options);
+            $metrics['images'] = $imageMetrics;
+        } catch (Throwable $e) {
+            $metrics['images'] = [
+                'skipped' => 'image_worker_failed',
+                'error' => $e->getMessage(),
+            ];
+        }
+
+        return $metrics;
     }
 
     private function deliverClaimedBatch(

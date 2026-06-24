@@ -18,6 +18,7 @@ require_once __DIR__ . '/../classes/Sync/SyncRuntimeSettings.php';
 require_once __DIR__ . '/../classes/Sync/BranchRestoreFromHostedService.php';
 require_once __DIR__ . '/../classes/Sync/BranchCatalogPushService.php';
 require_once __DIR__ . '/../classes/Sync/BranchBulkPushJobService.php';
+require_once __DIR__ . '/../classes/Sync/ItemImageSyncQueueService.php';
 require_once __DIR__ . '/../classes/Router/ShopRouter.php';
 
 header('Content-Type: application/json; charset=utf-8');
@@ -330,6 +331,22 @@ try {
                 'dispatch' => $dispatchResult['dispatch'] ?? [],
                 'pending_outbox' => $dispatchResult['pending_outbox'] ?? 0,
                 'done' => !empty($dispatchResult['done']),
+            ]);
+            break;
+
+        case 'image_sync_status':
+            $identity = (new SyncBranchIdentity())->ensure($conn, $appConfig);
+            $branchUuid = strtolower(trim((string) ($identity['branch_uuid'] ?? '')));
+            $queueService = new ItemImageSyncQueueService();
+            $uploadCounts = $branchUuid !== '' ? $queueService->countByStatus($conn, $branchUuid, 'branch_to_cloud') : [];
+            $downloadCounts = $branchUuid !== '' ? $queueService->countByStatus($conn, $branchUuid, 'cloud_to_branch') : [];
+            syncCredentialsJson([
+                'ok' => true,
+                'enabled' => !empty($appConfig['sync']['image_sync_enabled']),
+                'upload' => $uploadCounts,
+                'download' => $downloadCounts,
+                'pending_upload' => (int) ($uploadCounts['pending'] ?? 0) + (int) ($uploadCounts['failed'] ?? 0),
+                'pending_download' => (int) ($downloadCounts['pending'] ?? 0) + (int) ($downloadCounts['failed'] ?? 0),
             ]);
             break;
 

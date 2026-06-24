@@ -20,6 +20,25 @@ restoreEventPhaseAssert(RestoreEventPhase::classify([
     'payload' => ['order' => ['order_uuid' => '33333333-3333-3333-3333-333333333333']],
 ]) === RestoreEventPhase::ORDERS, 'order events should classify as orders');
 
+restoreEventPhaseAssert(RestoreEventPhase::classify([
+    'event_type' => 'customer.saved',
+    'aggregate_type' => 'customer',
+    'payload' => [
+        'snapshot_type' => 'operational_row',
+        'domain' => 'customer',
+        'table' => 'customers',
+        'row' => ['id' => 1],
+    ],
+]) === RestoreEventPhase::OPERATIONAL, 'operational row events should classify as operational');
+
+restoreEventPhaseAssert(RestoreEventPhase::classify([
+    'event_type' => 'shop_settings.saved',
+    'aggregate_type' => 'shop_settings',
+    'payload' => ['snapshot_type' => 'shop_settings', 'settings' => ['id' => 1]],
+]) === RestoreEventPhase::OPERATIONAL, 'shop settings events should classify as operational');
+
+restoreEventPhaseAssert(in_array(RestoreEventPhase::OPERATIONAL, RestoreEventPhase::all(), true), 'operational phase should be included in restore phases');
+
 $endpoint = file_get_contents(dirname(__DIR__, 2) . '/api/sync/export_branch_restore.php');
 restoreEventPhaseAssert(strpos($endpoint, 'export_branch_restore') !== false || strpos($endpoint, 'CloudBranchRestoreEventService') !== false, 'export endpoint should wire restore service');
 restoreEventPhaseAssert(strpos($endpoint, 'sync_route.php') !== false, 'export endpoint should use sync route helper');

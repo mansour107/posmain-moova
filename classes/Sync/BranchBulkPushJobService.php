@@ -2,6 +2,8 @@
 
 require_once __DIR__ . '/BranchCatalogPushService.php';
 require_once __DIR__ . '/BranchIdentity.php';
+require_once __DIR__ . '/BranchImageSyncService.php';
+require_once __DIR__ . '/ItemImageSyncQueueService.php';
 require_once __DIR__ . '/SchemaManager.php';
 
 class BranchBulkPushJobService
@@ -9,6 +11,7 @@ class BranchBulkPushJobService
     private const QUEUE_WEIGHT = 0.4;
     private const DISPATCH_WEIGHT = 0.6;
     private const DISPATCH_SAFETY_LIMIT = 5000;
+    private const FINISHED_JOB_MESSAGE_TTL_SECONDS = 1800;
 
     private BranchCatalogPushService $pushService;
 
@@ -87,9 +90,20 @@ class BranchBulkPushJobService
     {
         $status = (string) ($row['status'] ?? '');
         $message = trim((string) ($row['message'] ?? ''));
+        if ($message === '') {
+            return false;
+        }
+
+        if (in_array($status, ['queued', 'running'], true)) {
+            return true;
+        }
+
+        if (!$this->jobMessageIsFresh($row)) {
+            return false;
+        }
 
         if ($status === 'completed') {
-            return $message !== '';
+            return true;
         }
 
         if ($status === 'failed') {
@@ -97,6 +111,24 @@ class BranchBulkPushJobService
         }
 
         return false;
+    }
+
+    private function jobMessageIsFresh(array $row): bool
+    {
+        $timestamp = trim((string) ($row['finished_at'] ?? ''));
+        if ($timestamp === '') {
+            $timestamp = trim((string) ($row['updated_at'] ?? ''));
+        }
+        if ($timestamp === '') {
+            return false;
+        }
+
+        $parsed = strtotime($timestamp);
+        if ($parsed === false) {
+            return false;
+        }
+
+        return (time() - $parsed) <= self::FINISHED_JOB_MESSAGE_TTL_SECONDS;
     }
 
     public function runToCompletion(mysqli $conn, array $config, string $jobUuid): void
@@ -203,13 +235,15 @@ class BranchBulkPushJobService
             $failed = (int) ($aggregatedDispatch['failed'] ?? 0);
             $failedAwaitingRetry = $this->countFailedAwaitingRetry($conn);
             $failureSummary = $failed > 0 ? $this->summarizeOutboxFailures($conn) : [];
-            $finalMessage = $this->buildFinalMessage($aggregatedQueue, $aggregatedDispatch, $pendingOutbox, $failedAwaitingRetry, $failureSummary);
+            $imageSummary = $this->startBackgroundImageSync($conn, $config, $jobUuid);
+            $finalMessage = $this->buildFinalMessage($aggregatedQueue, $aggregatedDispatch, $pendingOutbox, $failedAwaitingRetry, $failureSummary, $imageSummary);
             $result = [
                 'queue' => $aggregatedQueue,
                 'dispatch' => $aggregatedDispatch,
                 'pending_outbox' => $pendingOutbox,
                 'failed_awaiting_retry' => $failedAwaitingRetry,
                 'failure_summary' => $failureSummary,
+                'images' => $imageSummary,
             ];
 
             $this->updateJob($conn, $jobUuid, [
@@ -470,7 +504,8 @@ class BranchBulkPushJobService
         array $dispatch,
         int $pending,
         int $failedAwaitingRetry = 0,
-        array $failureSummary = []
+        array $failureSummary = [],
+        array $imageSummary = []
     ): string {
         $failed = (int) ($dispatch['failed'] ?? 0);
         $scanned = (int) ($queue['catalog'] ?? 0)
@@ -496,6 +531,7 @@ class BranchBulkPushJobService
             }
             $message .= '.';
             $message .= $this->formatFailureSummary($failureSummary);
+            $message .= $this->formatImageSummary($imageSummary);
 
             return $message;
         }
@@ -505,8 +541,60 @@ class BranchBulkPushJobService
             $message .= ', ready to retry now: ' . $pending;
         }
         $message .= '.';
+        $message .= $this->formatImageSummary($imageSummary);
 
         return $message;
+    }
+
+    private function startBackgroundImageSync(mysqli $conn, array $config, string $jobUuid): array
+    {
+        if (empty($config['sync']['image_sync_enabled'])) {
+            return ['enabled' => false];
+        }
+
+        $job = $this->findJob($conn, $jobUuid);
+        $shopId = (int) ($job['shop_id'] ?? 0);
+        $shopDbName = trim((string) ($job['shop_db_name'] ?? ''));
+
+        $identity = (new SyncBranchIdentity())->ensure($conn, $config);
+        $branchUuid = strtolower(trim((string) ($identity['branch_uuid'] ?? '')));
+        if ($branchUuid === '') {
+            return ['enabled' => true, 'queued' => 0, 'spawned' => false, 'reason' => 'branch_uuid_missing'];
+        }
+
+        $queueService = new ItemImageSyncQueueService();
+        $queued = $queueService->scanBranchUploadQueue($conn, $branchUuid);
+        $counts = $queueService->countByStatus($conn, $branchUuid, 'branch_to_cloud');
+        $pending = (int) ($counts['pending'] ?? 0) + (int) ($counts['failed'] ?? 0);
+        $spawned = false;
+        if ($pending > 0) {
+            $spawned = (new BranchImageSyncService())->spawnBackgroundWorker($shopId, $shopDbName);
+        }
+
+        return [
+            'enabled' => true,
+            'queued' => $queued,
+            'pending' => $pending,
+            'spawned' => $spawned,
+        ];
+    }
+
+    private function formatImageSummary(array $imageSummary): string
+    {
+        if (empty($imageSummary['enabled'])) {
+            return '';
+        }
+
+        $pending = (int) ($imageSummary['pending'] ?? 0);
+        if ($pending <= 0) {
+            return ' Item images: nothing pending.';
+        }
+
+        $suffix = !empty($imageSummary['spawned'])
+            ? ' Background image sync started (throttled).'
+            : ' Image sync is queued; run the image worker or wait for the next sync cycle.';
+
+        return ' Item images pending: ' . $pending . '.' . $suffix;
     }
 
     private function formatFailureSummary(array $failureSummary): string

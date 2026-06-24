@@ -20,6 +20,59 @@ class SyncHttpClient
         return $this->getWithStreams($url, $headers, $timeoutMs);
     }
 
+    public function postMultipart(
+        string $url,
+        array $fields,
+        array $fileFields,
+        array $headers,
+        int $connectTimeoutMs,
+        int $timeoutMs
+    ): array {
+        if (!function_exists('curl_init')) {
+            return [
+                'ok' => false,
+                'status' => 0,
+                'body' => '',
+                'json' => null,
+                'error' => 'curl_required_for_multipart',
+            ];
+        }
+
+        $postFields = $fields;
+        foreach ($fileFields as $fieldName => $absolutePath) {
+            if (!is_string($absolutePath) || !is_file($absolutePath)) {
+                return [
+                    'ok' => false,
+                    'status' => 0,
+                    'body' => '',
+                    'json' => null,
+                    'error' => 'multipart_file_missing',
+                ];
+            }
+
+            $postFields[$fieldName] = new CURLFile($absolutePath, mime_content_type($absolutePath) ?: 'application/octet-stream', basename($absolutePath));
+        }
+
+        $ch = curl_init($url);
+        curl_setopt_array($ch, [
+            CURLOPT_POST => true,
+            CURLOPT_POSTFIELDS => $postFields,
+            CURLOPT_HTTPHEADER => $headers,
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_CONNECTTIMEOUT_MS => max(1, $connectTimeoutMs),
+            CURLOPT_TIMEOUT_MS => max(1, $timeoutMs),
+        ]);
+
+        $responseBody = curl_exec($ch);
+        $error = curl_error($ch);
+        $status = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+        if (PHP_VERSION_ID < 80500) {
+            curl_close($ch);
+        }
+
+        return $this->formatResponse($responseBody, $status, $error);
+    }
+
     private function getWithCurl(string $url, array $headers, int $connectTimeoutMs, int $timeoutMs): array
     {
         $ch = curl_init($url);

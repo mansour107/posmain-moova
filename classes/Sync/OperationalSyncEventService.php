@@ -3,6 +3,10 @@
 require_once __DIR__ . '/BranchIdentity.php';
 require_once __DIR__ . '/OperationalSyncDomains.php';
 require_once __DIR__ . '/PosOrderSnapshotBuilder.php';
+require_once __DIR__ . '/ShopSettingsSyncPayloadService.php';
+require_once __DIR__ . '/ModifierGroupSyncPayloadService.php';
+require_once __DIR__ . '/ShiftCloseSyncPayloadService.php';
+require_once __DIR__ . '/CloudBranchSyncPublisher.php';
 require_once __DIR__ . '/../Recipe/Repository/RecipeRepository.php';
 require_once __DIR__ . '/../Recipe/Repository/RecipeLineRepository.php';
 require_once __DIR__ . '/../Recipe/Repository/RecipeVariantLineRepository.php';
@@ -165,6 +169,142 @@ class OperationalSyncEventService
         ]);
     }
 
+    public function recordShopSettingsSnapshot(mysqli $conn, array $options = []): ?array
+    {
+        if (!$this->enabled($options['config'] ?? null)) {
+            return null;
+        }
+
+        $config = $options['config'] ?? (function_exists('posmain_app_config') ? posmain_app_config() : []);
+        $branch = $this->branchIdentity->ensure($conn, $config);
+        $branchUuid = (string) $branch['branch_uuid'];
+        $payload = (new ShopSettingsSyncPayloadService())->build($conn, $branchUuid, $options);
+        if (!$payload) {
+            return null;
+        }
+
+        $entityUuid = PosOrderSnapshotBuilder::deterministicUuid($branchUuid, 'settings:1');
+
+        return $this->insertOutbox($conn, $config, $branch, [
+            'event_type' => (string) ($options['event_type'] ?? 'shop_settings.saved'),
+            'source_system' => $this->sourceSystem($options['source_system'] ?? null),
+            'aggregate_type' => 'shop_settings',
+            'entity_type' => 'shop_settings',
+            'aggregate_local_id' => 1,
+            'entity_local_id' => 1,
+            'aggregate_uuid' => $entityUuid,
+            'entity_uuid' => $entityUuid,
+            'aggregate_id' => 'settings:1',
+            'payload' => $payload,
+            'event_version' => 1,
+            'idempotency_suffix' => 'shop_settings.saved',
+        ]);
+    }
+
+    public function recordModifierGroupSnapshot(mysqli $conn, int $groupId, array $options = []): ?array
+    {
+        if (!$this->enabled($options['config'] ?? null) || $groupId <= 0) {
+            return null;
+        }
+
+        $config = $options['config'] ?? (function_exists('posmain_app_config') ? posmain_app_config() : []);
+        $branch = $this->branchIdentity->ensure($conn, $config);
+        $branchUuid = (string) $branch['branch_uuid'];
+        $payload = (new ModifierGroupSyncPayloadService())->build($conn, $groupId, $branchUuid, $options);
+        if (!$payload) {
+            return null;
+        }
+
+        $entityUuid = PosOrderSnapshotBuilder::deterministicUuid($branchUuid, 'modifier_groups:' . $groupId);
+
+        return $this->insertOutbox($conn, $config, $branch, [
+            'event_type' => (string) ($options['event_type'] ?? 'modifier_group.saved'),
+            'source_system' => $this->sourceSystem($options['source_system'] ?? null),
+            'aggregate_type' => 'modifier_group',
+            'entity_type' => 'modifier_group',
+            'aggregate_local_id' => $groupId,
+            'entity_local_id' => $groupId,
+            'aggregate_uuid' => $entityUuid,
+            'entity_uuid' => $entityUuid,
+            'aggregate_id' => 'modifier_groups:' . $groupId,
+            'payload' => $payload,
+            'event_version' => 1,
+            'idempotency_suffix' => 'modifier_group.saved',
+        ]);
+    }
+
+    public function recordMoovaShopLinkSnapshot(mysqli $conn, int $linkId, array $options = []): ?array
+    {
+        if (!$this->enabled($options['config'] ?? null) || $linkId <= 0 || !$this->tableExists($conn, 'moova_pos_shop_links')) {
+            return null;
+        }
+
+        $row = $this->fetchRow($conn, 'moova_pos_shop_links', $linkId);
+        if (!$row) {
+            return null;
+        }
+
+        $config = $options['config'] ?? (function_exists('posmain_app_config') ? posmain_app_config() : []);
+        $branch = $this->branchIdentity->ensure($conn, $config);
+        $branchUuid = (string) $branch['branch_uuid'];
+        $entityUuid = PosOrderSnapshotBuilder::deterministicUuid($branchUuid, 'moova_pos_shop_links:' . $linkId);
+        $payload = [
+            'schema_version' => 1,
+            'snapshot_type' => 'moova_shop_link',
+            'branch_uuid' => $branchUuid,
+            'source_system' => $this->sourceSystem($options['source_system'] ?? null),
+            'captured_at_utc' => gmdate('Y-m-d\TH:i:s\Z'),
+            'link' => $row,
+        ];
+
+        return $this->insertOutbox($conn, $config, $branch, [
+            'event_type' => (string) ($options['event_type'] ?? 'moova.shop_link_saved'),
+            'source_system' => $this->sourceSystem($options['source_system'] ?? null),
+            'aggregate_type' => 'moova_shop_link',
+            'entity_type' => 'moova_shop_link',
+            'aggregate_local_id' => $linkId,
+            'entity_local_id' => $linkId,
+            'aggregate_uuid' => $entityUuid,
+            'entity_uuid' => $entityUuid,
+            'aggregate_id' => 'moova_pos_shop_links:' . $linkId,
+            'payload' => $payload,
+            'event_version' => $this->revisionFromRow($row),
+            'idempotency_suffix' => 'moova.shop_link_saved',
+        ]);
+    }
+
+    public function recordShiftCloseSnapshot(mysqli $conn, int $closedOrderId, array $options = []): ?array
+    {
+        if (!$this->enabled($options['config'] ?? null) || $closedOrderId <= 0) {
+            return null;
+        }
+
+        $config = $options['config'] ?? (function_exists('posmain_app_config') ? posmain_app_config() : []);
+        $branch = $this->branchIdentity->ensure($conn, $config);
+        $branchUuid = (string) $branch['branch_uuid'];
+        $payload = (new ShiftCloseSyncPayloadService())->build($conn, $closedOrderId, $branchUuid, $options);
+        if (!$payload) {
+            return null;
+        }
+
+        $entityUuid = (string) ($payload['close_uuid'] ?? PosOrderSnapshotBuilder::deterministicUuid($branchUuid, 'closed_orders:' . $closedOrderId));
+
+        return $this->insertOutbox($conn, $config, $branch, [
+            'event_type' => (string) ($options['event_type'] ?? 'shift_close.saved'),
+            'source_system' => $this->sourceSystem($options['source_system'] ?? null),
+            'aggregate_type' => 'shift_close',
+            'entity_type' => 'shift_close',
+            'aggregate_local_id' => $closedOrderId,
+            'entity_local_id' => $closedOrderId,
+            'aggregate_uuid' => $entityUuid,
+            'entity_uuid' => $entityUuid,
+            'aggregate_id' => 'closed_orders:' . $closedOrderId,
+            'payload' => $payload,
+            'event_version' => 1,
+            'idempotency_suffix' => 'shift_close.saved',
+        ]);
+    }
+
     private function recordRowPayload(mysqli $conn, string $domain, array $definition, array $row, array $options): ?array
     {
         $config = $options['config'] ?? (function_exists('posmain_app_config') ? posmain_app_config() : []);
@@ -211,21 +351,48 @@ class OperationalSyncEventService
 
     private function insertOutbox(mysqli $conn, array $config, array $branch, array $event): ?array
     {
-        if (empty($config['sync']['outbox_enabled'])) {
-            return null;
-        }
-
-        $this->assertOutboxTableExists($conn);
-
         $branchUuid = (string) $branch['branch_uuid'];
-        $posTenant = $this->intOrZero($branch['pos_tenant'] ?? ($config['branch']['pos_tenant'] ?? 0));
-        $posBranch = $this->intOrZero($branch['pos_branch'] ?? ($config['branch']['pos_branch'] ?? 0));
         $payload = $event['payload'];
         $payloadJson = $this->encodeJson($payload);
         $payloadHash = hash('sha256', $payloadJson);
         $eventUuid = SyncBranchIdentity::generateUuidV4();
         $aggregateLocalId = (int) $event['aggregate_local_id'];
         $idempotencyKey = 'pos:' . $event['aggregate_type'] . ':' . $aggregateLocalId . ':' . $event['idempotency_suffix'] . ':' . substr(hash('sha256', $branchUuid . ':' . $payloadHash), 0, 32);
+        $role = (string) ($config['role'] ?? 'branch');
+
+        if (in_array($role, ['cloud', 'fake_cloud'], true) && !empty($config['sync']['cloud_to_branch_publish_enabled'])) {
+            return [
+                'outbox_id' => null,
+                'event_uuid' => $eventUuid,
+                'branch_uuid' => $branchUuid,
+                'idempotency_key' => $idempotencyKey,
+                'payload_hash' => $payloadHash,
+                'cloud_branch_events' => (new CloudBranchSyncPublisher())->publish($conn, [
+                    'branch_uuid' => $branchUuid,
+                    'event_type' => (string) $event['event_type'],
+                    'event_version' => (int) $event['event_version'],
+                    'source_system' => (string) $event['source_system'],
+                    'aggregate_type' => (string) $event['aggregate_type'],
+                    'aggregate_uuid' => (string) $event['aggregate_uuid'],
+                    'aggregate_local_id' => $aggregateLocalId,
+                    'aggregate_id' => (string) $event['aggregate_id'],
+                    'entity_type' => (string) $event['entity_type'],
+                    'entity_uuid' => (string) $event['entity_uuid'],
+                    'entity_local_id' => $aggregateLocalId,
+                    'payload_hash' => $payloadHash,
+                    'payload' => $payload,
+                ], $config),
+            ];
+        }
+
+        if (empty($config['sync']['outbox_enabled'])) {
+            return null;
+        }
+
+        $this->assertOutboxTableExists($conn);
+
+        $posTenant = $this->intOrZero($branch['pos_tenant'] ?? ($config['branch']['pos_tenant'] ?? 0));
+        $posBranch = $this->intOrZero($branch['pos_branch'] ?? ($config['branch']['pos_branch'] ?? 0));
 
         $stmt = $conn->prepare("
             INSERT INTO sync_outbox (
@@ -287,6 +454,7 @@ class OperationalSyncEventService
             'branch_uuid' => $branchUuid,
             'idempotency_key' => $idempotencyKey,
             'payload_hash' => $payloadHash,
+            'cloud_branch_events' => [],
         ];
     }
 
@@ -296,10 +464,21 @@ class OperationalSyncEventService
             $config = posmain_app_config();
         }
 
-        return (string) ($config['role'] ?? 'branch') === 'branch'
-            && !empty($config['sync']['outbox_enabled'])
-            && !empty($config['sync']['branch_sync_enabled'])
-            && !empty($config['sync']['operational_sync_enabled']);
+        if (empty($config['sync']['operational_sync_enabled'])) {
+            return false;
+        }
+
+        $role = (string) ($config['role'] ?? 'branch');
+        if ($role === 'branch') {
+            return !empty($config['sync']['outbox_enabled'])
+                && !empty($config['sync']['branch_sync_enabled']);
+        }
+
+        if (in_array($role, ['cloud', 'fake_cloud'], true)) {
+            return !empty($config['sync']['cloud_to_branch_publish_enabled']);
+        }
+
+        return false;
     }
 
     private function fetchRow(mysqli $conn, string $table, int $rowId): ?array

@@ -12,8 +12,11 @@ class BranchCatalogPushService
         'catalog' => 'menu items',
         'tables' => 'tables',
         'orders' => 'orders',
-        'operational' => 'inventory, recipes, and staff',
+        'operational' => 'inventory, recipes, staff, and reference data',
         'inventory_refs' => 'inventory-linked menu items',
+        'shop_config' => 'shop settings and Moova links',
+        'modifier_catalog' => 'modifier groups and options',
+        'shift_closes' => 'shift and Z-close records',
     ];
 
     public function planPushToHosted(mysqli $conn, array $options = []): array
@@ -111,7 +114,10 @@ class BranchCatalogPushService
             }
         }
 
-        $dispatchOptions = array_merge(['drain_outbox' => true], $options);
+        $dispatchOptions = $options;
+        if (!array_key_exists('drain_outbox', $dispatchOptions)) {
+            $dispatchOptions['drain_outbox'] = true;
+        }
         $dispatch = $this->dispatchOutbox($conn, $pushConfig, $dispatchOptions);
 
         return [
@@ -130,6 +136,37 @@ class BranchCatalogPushService
                 'employees',
                 'pulse_logs',
                 'pulse_types',
+                'customers',
+                'delivery_clients',
+                'delivery_zones',
+                'order_fulfillments',
+                'payment_methods',
+                'table_areas',
+                'drawer_sessions',
+                'drawer_movements',
+                'order_events',
+                'external_order_line_maps',
+                'manager_approvals',
+                'item_units',
+                'item_availabilities',
+                'item_variants',
+                'inventory_counts',
+                'inventory_transfers',
+                'inventory_purchase_orders',
+                'inventory_purchase_receipts',
+                'production_batches',
+                'recipe_order_line_usages',
+                'shift_closes',
+                'stores',
+                'towns',
+                'moova_shop_links',
+                'moova_table_links',
+                'moova_order_links',
+                'printers',
+                'print_jobs',
+                'item_nutrition_profiles',
+                'shop_settings',
+                'modifier_groups',
             ],
             'unsupported_domains' => ['user_credentials', 'sync_secrets', 'login_passwords'],
             'queue' => $queue,
@@ -199,6 +236,10 @@ class BranchCatalogPushService
             case 'operational':
             case 'inventory_refs':
                 return !empty($options['include_operational']);
+            case 'shop_config':
+            case 'modifier_catalog':
+            case 'shift_closes':
+                return !empty($options['include_operational']);
             default:
                 return false;
         }
@@ -206,23 +247,21 @@ class BranchCatalogPushService
 
     private function emptyQueueCounters(): array
     {
-        return [
+        $queue = [
             'catalog' => 0,
             'catalog_inventory_refs' => 0,
             'tables' => 0,
             'orders' => 0,
-            'item_categories' => 0,
-            'inventory_balances' => 0,
-            'inventory_stock_levels' => 0,
-            'inventory_movements' => 0,
-            'recipes' => 0,
-            'employees' => 0,
-            'pulse_logs' => 0,
-            'pulse_types' => 0,
             'queued' => 0,
             'skipped' => 0,
             'resent' => 0,
         ];
+
+        foreach (array_unique(array_values(OperationalSyncDomains::pushCounterMap())) as $counter) {
+            $queue[$counter] = 0;
+        }
+
+        return $queue;
     }
 
     private function countPhaseRows(mysqli $conn, string $phase, array $options): int
@@ -238,9 +277,19 @@ class BranchCatalogPushService
             case 'orders':
                 return $this->countOrderRows($conn, $includeDeleted, $limit);
             case 'operational':
-                return $this->countOperationalRows($conn, $limit);
+                return $this->countOperationalRows($conn, $includeDeleted, $limit);
             case 'inventory_refs':
                 return count($this->inventoryReferencedItemIds($conn, $limit));
+            case 'shop_config':
+                return $this->countShopConfigRows($conn);
+            case 'modifier_catalog':
+                return $this->tableExists($conn, 'modifier_groups')
+                    ? count($this->activeIds($conn, 'modifier_groups', $includeDeleted, $limit))
+                    : 0;
+            case 'shift_closes':
+                return $this->tableExists($conn, 'closed_orders')
+                    ? count($this->activeIds($conn, 'closed_orders', $includeDeleted, $limit))
+                    : 0;
             default:
                 return 0;
         }
@@ -248,7 +297,7 @@ class BranchCatalogPushService
 
     private function countOrderRows(mysqli $conn, bool $includeDeleted, int $limit): int
     {
-        $where = 'WHERE pro_tybe = 9';
+        $where = 'WHERE 1=1';
         if (!$includeDeleted && $this->columnExists($conn, 'ot_head', 'isdeleted')) {
             $where .= ' AND COALESCE(isdeleted, 0) = 0';
         }
@@ -261,7 +310,7 @@ class BranchCatalogPushService
         return $resultSet->num_rows;
     }
 
-    private function countOperationalRows(mysqli $conn, int $limit): int
+    private function countOperationalRows(mysqli $conn, bool $includeDeleted, int $limit): int
     {
         $total = 0;
         foreach (OperationalSyncDomains::bulkRowDomains() as $definition) {
@@ -269,7 +318,7 @@ class BranchCatalogPushService
             if (!$this->tableExists($conn, $table)) {
                 continue;
             }
-            $total += count($this->activeIds($conn, $table, false, $limit));
+            $total += count($this->activeIds($conn, $table, $includeDeleted, $limit));
         }
 
         if ($this->tableExists($conn, 'recipe_headers')) {
@@ -278,6 +327,16 @@ class BranchCatalogPushService
             if ($resultSet) {
                 $total += $resultSet->num_rows;
             }
+        }
+
+        return $total;
+    }
+
+    private function countShopConfigRows(mysqli $conn): int
+    {
+        $total = $this->tableExists($conn, 'settings') ? 1 : 0;
+        if ($this->tableExists($conn, 'moova_pos_shop_links')) {
+            $total += count($this->activeIds($conn, 'moova_pos_shop_links', false, 0));
         }
 
         return $total;
@@ -325,7 +384,7 @@ class BranchCatalogPushService
         }
 
         if ($phase === 'orders') {
-            $where = 'WHERE pro_tybe = 9';
+            $where = 'WHERE 1=1';
             if (!$includeDeleted && $this->columnExists($conn, 'ot_head', 'isdeleted')) {
                 $where .= ' AND COALESCE(isdeleted, 0) = 0';
             }
@@ -345,20 +404,43 @@ class BranchCatalogPushService
         }
 
         if ($phase === 'operational') {
-            $this->queueOperationalSnapshots($conn, $pushConfig, $forceResend, $limit, $queue);
+            $this->queueOperationalSnapshots($conn, $pushConfig, $forceResend, $includeDeleted, $limit, $queue);
 
             return;
         }
 
         if ($phase === 'inventory_refs') {
             $this->queueInventoryReferencedMenuItems($conn, $outbox, $pushConfig, $forceResend, $limit, $queue);
+
+            return;
+        }
+
+        if ($phase === 'shop_config') {
+            $this->queueShopConfigSnapshots($conn, $pushConfig, $forceResend, $queue);
+
+            return;
+        }
+
+        if ($phase === 'modifier_catalog') {
+            $this->queueModifierCatalogSnapshots($conn, $pushConfig, $forceResend, $includeDeleted, $limit, $queue);
+
+            return;
+        }
+
+        if ($phase === 'shift_closes') {
+            $this->queueShiftCloseSnapshots($conn, $pushConfig, $forceResend, $includeDeleted, $limit, $queue);
         }
     }
 
     private function activeIds(mysqli $conn, string $table, bool $includeDeleted, int $limit): array
     {
         $where = '';
-        if (!$includeDeleted && $this->columnExists($conn, $table, 'isdeleted')) {
+        if ($table === 'imgs') {
+            $where = ' WHERE itemid > 0 AND COALESCE(clprofile, 0) = 0';
+            if (!$includeDeleted) {
+                $where .= ' AND COALESCE(isdeleted, 0) = 0';
+            }
+        } elseif (!$includeDeleted && $this->columnExists($conn, $table, 'isdeleted')) {
             $where = ' WHERE COALESCE(isdeleted, 0) = 0';
         }
         $sql = "SELECT id FROM `{$table}`{$where} ORDER BY id ASC" . ($limit > 0 ? ' LIMIT ' . $limit : '');
@@ -371,18 +453,16 @@ class BranchCatalogPushService
         return $ids;
     }
 
-    private function queueOperationalSnapshots(mysqli $conn, array $pushConfig, bool $forceResend, int $limit, array &$queue): void
-    {
+    private function queueOperationalSnapshots(
+        mysqli $conn,
+        array $pushConfig,
+        bool $forceResend,
+        bool $includeDeleted,
+        int $limit,
+        array &$queue
+    ): void {
         $operational = new OperationalSyncEventService();
-        $domainCounters = [
-            'item_category' => 'item_categories',
-            'inventory_balance' => 'inventory_balances',
-            'inventory_stock_level' => 'inventory_stock_levels',
-            'inventory_movement' => 'inventory_movements',
-            'employee' => 'employees',
-            'pulse_log' => 'pulse_logs',
-            'pulse_type' => 'pulse_types',
-        ];
+        $domainCounters = OperationalSyncDomains::pushCounterMap();
 
         foreach (OperationalSyncDomains::bulkRowDomains() as $domain => $definition) {
             $counter = $domainCounters[$domain] ?? null;
@@ -395,8 +475,8 @@ class BranchCatalogPushService
                 continue;
             }
 
-            foreach ($this->activeIds($conn, $table, false, $limit) as $rowId) {
-                $queue[$counter]++;
+            foreach ($this->activeIds($conn, $table, $includeDeleted, $limit) as $rowId) {
+                $queue[$counter] = ($queue[$counter] ?? 0) + 1;
                 $result = $operational->recordRowSnapshot($conn, $domain, $rowId, [
                     'source_system' => 'settings_supported_data_push',
                     'config' => $pushConfig,
@@ -409,13 +489,82 @@ class BranchCatalogPushService
             $sql = 'SELECT id FROM recipe_headers ORDER BY id ASC' . ($limit > 0 ? ' LIMIT ' . $limit : '');
             $resultSet = $conn->query($sql);
             while ($row = $resultSet->fetch_assoc()) {
-                $queue['recipes']++;
+                $queue['recipes'] = ($queue['recipes'] ?? 0) + 1;
                 $result = $operational->recordRecipeSnapshot($conn, (int) $row['id'], [
                     'source_system' => 'settings_supported_data_push',
                     'config' => $pushConfig,
                 ]);
                 $this->trackQueuedRow($conn, $result, $forceResend, $queue);
             }
+        }
+    }
+
+    private function queueShopConfigSnapshots(mysqli $conn, array $pushConfig, bool $forceResend, array &$queue): void
+    {
+        $operational = new OperationalSyncEventService();
+        $options = [
+            'source_system' => 'settings_supported_data_push',
+            'config' => $pushConfig,
+        ];
+
+        if ($this->tableExists($conn, 'settings')) {
+            $queue['shop_settings'] = ($queue['shop_settings'] ?? 0) + 1;
+            $this->trackQueuedRow($conn, $operational->recordShopSettingsSnapshot($conn, $options), $forceResend, $queue);
+        }
+
+        if ($this->tableExists($conn, 'moova_pos_shop_links')) {
+            foreach ($this->activeIds($conn, 'moova_pos_shop_links', false, 0) as $linkId) {
+                $queue['moova_shop_links'] = ($queue['moova_shop_links'] ?? 0) + 1;
+                $this->trackQueuedRow($conn, $operational->recordMoovaShopLinkSnapshot($conn, $linkId, $options), $forceResend, $queue);
+            }
+        }
+    }
+
+    private function queueModifierCatalogSnapshots(
+        mysqli $conn,
+        array $pushConfig,
+        bool $forceResend,
+        bool $includeDeleted,
+        int $limit,
+        array &$queue
+    ): void {
+        if (!$this->tableExists($conn, 'modifier_groups')) {
+            return;
+        }
+
+        $operational = new OperationalSyncEventService();
+        $options = [
+            'source_system' => 'settings_supported_data_push',
+            'config' => $pushConfig,
+        ];
+
+        foreach ($this->activeIds($conn, 'modifier_groups', $includeDeleted, $limit) as $groupId) {
+            $queue['modifier_groups'] = ($queue['modifier_groups'] ?? 0) + 1;
+            $this->trackQueuedRow($conn, $operational->recordModifierGroupSnapshot($conn, $groupId, $options), $forceResend, $queue);
+        }
+    }
+
+    private function queueShiftCloseSnapshots(
+        mysqli $conn,
+        array $pushConfig,
+        bool $forceResend,
+        bool $includeDeleted,
+        int $limit,
+        array &$queue
+    ): void {
+        if (!$this->tableExists($conn, 'closed_orders')) {
+            return;
+        }
+
+        $operational = new OperationalSyncEventService();
+        $options = [
+            'source_system' => 'settings_supported_data_push',
+            'config' => $pushConfig,
+        ];
+
+        foreach ($this->activeIds($conn, 'closed_orders', $includeDeleted, $limit) as $closedOrderId) {
+            $queue['shift_closes'] = ($queue['shift_closes'] ?? 0) + 1;
+            $this->trackQueuedRow($conn, $operational->recordShiftCloseSnapshot($conn, $closedOrderId, $options), $forceResend, $queue);
         }
     }
 

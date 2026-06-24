@@ -13,6 +13,7 @@ branchCatalogPushContractAssert(is_string($bulkPush), 'BranchBulkPushJobService.
 branchCatalogPushContractAssert(is_string($bulkPushCli), 'cli/sync_bulk_push.php should be readable');
 branchCatalogPushContractAssert(strpos($bulkPush, 'cli/sync_bulk_push.php') !== false, 'bulk push service should spawn cli/sync_bulk_push.php');
 branchCatalogPushContractAssert(strpos($bulkPush, 'sync_bulk_push_jobs') !== false, 'bulk push service should persist jobs in sync_bulk_push_jobs');
+branchCatalogPushContractAssert(strpos($bulkPush, 'FINISHED_JOB_MESSAGE_TTL_SECONDS') !== false, 'bulk push service should expire finished job messages');
 
 foreach ([
     'js-sync-push-data',
@@ -25,6 +26,7 @@ foreach ([
     'startBulkPushBackground',
     'pollBulkPushStatus',
     'applyBulkPushJobToUi',
+    'bulkPushJobMessageIsFresh',
     'formatSyncProgressMessage',
     'Sync all data to hosted',
     'loadSyncStatusPanel();',
@@ -70,6 +72,13 @@ foreach ([
     'countPendingOutbox',
     'columnExists',
     'queueInventoryReferencedMenuItems',
+    'queueShopConfigSnapshots',
+    'queueModifierCatalogSnapshots',
+    'queueShiftCloseSnapshots',
+    'shop_config',
+    'modifier_catalog',
+    'shift_closes',
+    'delivery_clients',
     'catalog_inventory_refs',
 ] as $snippet) {
     branchCatalogPushContractAssert(strpos($service, $snippet) !== false, 'BranchCatalogPushService missing snippet: ' . $snippet);

@@ -2,18 +2,20 @@
 
 require_once __DIR__ . '/CloudAuthService.php';
 require_once __DIR__ . '/CloudBranchRestoreEventService.php';
-require_once __DIR__ . '/CloudLegacyPosMirrorService.php';
+require_once __DIR__ . '/BranchRestoreEventApplyService.php';
 require_once __DIR__ . '/RestoreEventPhase.php';
 require_once __DIR__ . '/BranchIdentity.php';
+require_once __DIR__ . '/BranchImageSyncService.php';
+require_once __DIR__ . '/ItemImageSyncQueueService.php';
 require_once __DIR__ . '/SyncRuntimeSettings.php';
 
 class BranchRestoreFromHostedService
 {
-    private CloudLegacyPosMirrorService $mirror;
+    private BranchRestoreEventApplyService $applyService;
 
-    public function __construct(?CloudLegacyPosMirrorService $mirror = null)
+    public function __construct(?BranchRestoreEventApplyService $applyService = null)
     {
-        $this->mirror = $mirror ?: new CloudLegacyPosMirrorService();
+        $this->applyService = $applyService ?: new BranchRestoreEventApplyService();
     }
 
     public static function localNeedsRestore(mysqli $conn): bool
@@ -80,6 +82,7 @@ class BranchRestoreFromHostedService
                 'failed' => 0,
             ];
             $afterId = 0;
+            $maxPages = max(0, (int) ($options['max_pages_per_phase'] ?? 0));
 
             do {
                 $response = $this->fetchPage(
@@ -131,7 +134,7 @@ class BranchRestoreFromHostedService
 
                     try {
                         $conn->begin_transaction();
-                        $result = $this->mirror->mirrorFromBranchEvent($conn, $branchUuid, $event);
+                        $result = $this->applyService->apply($conn, $branchUuid, $event);
                         $conn->commit();
                         if ($result) {
                             $phaseSummary['mirrored']++;
@@ -156,6 +159,9 @@ class BranchRestoreFromHostedService
 
                 $afterId = max($afterId, (int) ($page['next_after_id'] ?? $afterId));
                 $hasMore = !empty($page['has_more']);
+                if ($maxPages > 0 && $phaseSummary['pages'] >= $maxPages) {
+                    $hasMore = false;
+                }
             } while ($hasMore);
 
             $summary['phases'][] = $phaseSummary;
@@ -163,6 +169,7 @@ class BranchRestoreFromHostedService
 
         if ($apply) {
             $this->recordRestoreCheckpoint($conn, $branchUuid, $summary);
+            $summary['images'] = $this->startBackgroundImageDownload($conn, $config, $branchUuid);
         }
 
         return $summary;
@@ -284,7 +291,7 @@ class BranchRestoreFromHostedService
 
     private function recordRestoreCheckpoint(mysqli $conn, string $branchUuid, array $summary): void
     {
-        if (!self::$tableExists($conn, 'sync_checkpoints')) {
+        if (!self::tableExists($conn, 'sync_checkpoints')) {
             return;
         }
 
@@ -309,6 +316,29 @@ class BranchRestoreFromHostedService
         $stmt->bind_param('sss', $branchUuid, $stream, $payload);
         $stmt->execute();
         $stmt->close();
+    }
+
+    private function startBackgroundImageDownload(mysqli $conn, array $config, string $branchUuid): array
+    {
+        if (empty($config['sync']['image_sync_enabled'])) {
+            return ['enabled' => false];
+        }
+
+        $queueService = new ItemImageSyncQueueService();
+        $queued = $queueService->scanBranchDownloadQueue($conn, $branchUuid);
+        $counts = $queueService->countByStatus($conn, $branchUuid, 'cloud_to_branch');
+        $pending = (int) ($counts['pending'] ?? 0) + (int) ($counts['failed'] ?? 0);
+        $spawned = false;
+        if ($pending > 0) {
+            $spawned = (new BranchImageSyncService())->spawnBackgroundWorker();
+        }
+
+        return [
+            'enabled' => true,
+            'queued' => $queued,
+            'pending' => $pending,
+            'spawned' => $spawned,
+        ];
     }
 
     private static function tableExists(mysqli $conn, string $table): bool

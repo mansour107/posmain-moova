@@ -79,6 +79,10 @@ class SyncInboxService
                         if ($shiftSnapshot) {
                             $cloudEntityId = 'cloud_shift:' . (int) $shiftSnapshot['cloud_shift_id'];
                             $message = $mode . ' shift snapshot';
+                            $operational = (new CloudOperationalMirrorService())->applyFromBranchEvent($conn, $branchUuid, $event);
+                            if ($operational && !empty($operational['entity_id'])) {
+                                $legacyMirror = ['legacy_entity_id' => (string) $operational['entity_id']];
+                            }
                         } else {
                             $menuSnapshot = (new CloudMenuSnapshotService())->upsertFromBranchEvent($conn, $branchUuid, $event);
                             if ($menuSnapshot) {

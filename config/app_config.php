@@ -590,6 +590,16 @@ if (!function_exists('posmain_app_config')) {
                 'moova_apply_user_id' => posmain_int($branchEnv(['POSMAIN_MOOVA_APPLY_USER_ID'], null), 1),
                 'menu_sync_enabled' => posmain_bool($branchEnv(['POSMAIN_MENU_SYNC_ENABLED'], '0'), false),
                 'operational_sync_enabled' => posmain_bool($branchEnv(['POSMAIN_OPERATIONAL_SYNC_ENABLED'], '1'), true),
+                'image_sync_enabled' => posmain_bool(
+                    $branchEnv(['POSMAIN_IMAGE_SYNC_ENABLED'], ''),
+                    posmain_bool($branchEnv(['POSMAIN_BRANCH_SYNC_ENABLED'], '0'), false)
+                ),
+                'image_sync_max_files_per_run' => posmain_int($branchEnv(['POSMAIN_IMAGE_SYNC_MAX_FILES_PER_RUN'], null), 3),
+                'image_sync_max_bytes_per_run' => posmain_int($branchEnv(['POSMAIN_IMAGE_SYNC_MAX_BYTES_PER_RUN'], null), 5242880),
+                'image_sync_delay_ms' => posmain_int($branchEnv(['POSMAIN_IMAGE_SYNC_DELAY_MS'], null), 300),
+                'image_sync_lock_seconds' => posmain_int($branchEnv(['POSMAIN_IMAGE_SYNC_LOCK_SECONDS'], null), 180),
+                'image_sync_http_timeout_ms' => posmain_int($branchEnv(['POSMAIN_IMAGE_SYNC_HTTP_TIMEOUT_MS'], null), 60000),
+                'image_sync_max_upload_bytes' => posmain_int($branchEnv(['POSMAIN_IMAGE_SYNC_MAX_UPLOAD_BYTES'], null), 10485760),
                 'http_connect_timeout_ms' => posmain_int($branchEnv(['POSMAIN_SYNC_HTTP_CONNECT_TIMEOUT_MS'], null), 1000),
                 'http_timeout_ms' => posmain_int($branchEnv(['POSMAIN_SYNC_HTTP_TIMEOUT_MS'], null), 5000),
             ],

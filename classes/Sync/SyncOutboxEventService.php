@@ -504,6 +504,8 @@ class SyncOutboxEventService
             ];
         }, $variants);
 
+        $menuItem['modifier_groups'] = $this->modifierGroupsForMenuItem($conn, $itemId);
+
         $recipeAvailability = $this->recipeMenuAvailabilityPayload($conn, $branchUuid, $menuItem, $options);
         if ($recipeAvailability !== null) {
             $menuItem['recipe_availability'] = $recipeAvailability;
@@ -678,6 +680,83 @@ class SyncOutboxEventService
         return max(1, (int) ($item['id'] ?? 1));
     }
 
+    private function modifierGroupsForMenuItem(mysqli $conn, int $itemId): array
+    {
+        if (
+            $itemId <= 0
+            || !$this->tableExists($conn, 'modifier_groups')
+            || !$this->tableExists($conn, 'modifier_options')
+            || !$this->tableExists($conn, 'item_modifier_groups')
+        ) {
+            return [];
+        }
+
+        $stmt = $conn->prepare('
+            SELECT mg.*, COALESCE(img.sort_order, mg.sort_order, 0) AS item_sort_order
+            FROM item_modifier_groups img
+            JOIN modifier_groups mg ON mg.id = img.group_id
+            WHERE img.item_id = ?
+            ORDER BY img.sort_order, mg.sort_order, mg.id
+        ');
+        $stmt->bind_param('i', $itemId);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        $groups = [];
+        while ($row = $result->fetch_assoc()) {
+            $groupId = (int) $row['id'];
+            $groups[$groupId] = [
+                'modifier_group_id' => $groupId,
+                'group_id' => $groupId,
+                'local_group_id' => $groupId,
+                'name_ar' => $row['name_ar'] ?? null,
+                'name_en' => $row['name_en'] ?? null,
+                'selection_min' => $row['selection_min'] ?? 0,
+                'selection_max' => $row['selection_max'] ?? 0,
+                'is_required' => $row['is_required'] ?? 0,
+                'is_active' => $row['is_active'] ?? 1,
+                'sort_order' => $row['item_sort_order'] ?? 0,
+                'options' => [],
+            ];
+        }
+        $stmt->close();
+
+        if ($groups === []) {
+            return [];
+        }
+
+        $groupIds = array_keys($groups);
+        $placeholders = implode(',', array_fill(0, count($groupIds), '?'));
+        $stmt = $conn->prepare("
+            SELECT *
+            FROM modifier_options
+            WHERE group_id IN ({$placeholders})
+            ORDER BY group_id, sort_order, id
+        ");
+        $stmt->bind_param(str_repeat('i', count($groupIds)), ...$groupIds);
+        $stmt->execute();
+        $optionResult = $stmt->get_result();
+        while ($option = $optionResult->fetch_assoc()) {
+            $groupId = (int) ($option['group_id'] ?? 0);
+            if (!isset($groups[$groupId])) {
+                continue;
+            }
+            $optionId = (int) ($option['id'] ?? 0);
+            $groups[$groupId]['options'][] = [
+                'modifier_option_id' => $optionId,
+                'option_id' => $optionId,
+                'local_option_id' => $optionId,
+                'name_ar' => $option['name_ar'] ?? null,
+                'name_en' => $option['name_en'] ?? null,
+                'price_delta' => $option['price_delta'] ?? 0,
+                'is_active' => $option['is_active'] ?? 1,
+                'sort_order' => $option['sort_order'] ?? 0,
+            ];
+        }
+        $stmt->close();
+
+        return array_values($groups);
+    }
+
     private function decimalString($value): string
     {
         if ($value === null || $value === '' || !is_numeric($value)) {
@@ -746,5 +825,13 @@ class SyncOutboxEventService
 
         array_unshift($refs, $types);
         call_user_func_array([$stmt, 'bind_param'], $refs);
+    }
+
+    private function tableExists(mysqli $conn, string $table): bool
+    {
+        $escaped = $conn->real_escape_string($table);
+        $result = $conn->query("SHOW TABLES LIKE '{$escaped}'");
+
+        return $result && $result->num_rows > 0;
     }
 }

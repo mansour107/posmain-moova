@@ -24,6 +24,11 @@ foreach ([
     'employee',
     'pulse_log',
     'pulse_type',
+    'delivery_client',
+    'shop_settings',
+    'modifier_group',
+    'moova_shop_link',
+    'push_counter',
     "'password'",
 ] as $snippet) {
     operationalSyncContractAssert(strpos($domains, $snippet) !== false, 'OperationalSyncDomains missing snippet: ' . $snippet);
@@ -32,10 +37,18 @@ foreach ([
 $push = file_get_contents(__DIR__ . '/../../classes/Sync/BranchCatalogPushService.php');
 foreach ([
     'queueOperationalSnapshots',
+    'queueShopConfigSnapshots',
+    'queueModifierCatalogSnapshots',
+    'queueShiftCloseSnapshots',
     'inventory_balances',
     'recipes',
     'employees',
     'pulse_logs',
+    'shop_config',
+    'modifier_catalog',
+    'shift_closes',
+    'delivery_clients',
+    'moova_shop_links',
     'operational_sync_enabled',
 ] as $snippet) {
     operationalSyncContractAssert(strpos($push, $snippet) !== false, 'BranchCatalogPushService missing snippet: ' . $snippet);
@@ -47,6 +60,11 @@ operationalSyncContractAssert(strpos($inbox, 'CloudOperationalMirrorService') !=
 $tableSnapshot = file_get_contents(__DIR__ . '/../../classes/Sync/CloudTableSnapshotService.php');
 operationalSyncContractAssert(strpos($tableSnapshot, 'operational_row') !== false, 'CloudTableSnapshotService should exclude operational sync payloads');
 operationalSyncContractAssert(strpos($tableSnapshot, 'is_array($payload[\'table\'])') !== false, 'CloudTableSnapshotService should only treat array table payloads as POS tables');
+
+$mirror = file_get_contents(__DIR__ . '/../../classes/Sync/CloudOperationalMirrorService.php');
+operationalSyncContractAssert(strpos($mirror, 'shop_settings') !== false, 'CloudOperationalMirrorService should apply shop settings');
+operationalSyncContractAssert(strpos($mirror, 'modifier_group_bundle') !== false, 'CloudOperationalMirrorService should apply modifier bundles');
+operationalSyncContractAssert(strpos($mirror, 'moova_shop_link') !== false, 'CloudOperationalMirrorService should apply Moova shop links');
 
 echo "operational-sync-contract-ok\n";
 

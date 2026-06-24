@@ -1574,8 +1574,29 @@ document.addEventListener('DOMContentLoaded', function () {
     return job.status === 'failed' ? false : !!job.ok;
   }
 
+  function bulkPushJobMessageIsFresh(job) {
+    if (!job) {
+      return false;
+    }
+    if (job.running) {
+      return true;
+    }
+    const timestamp = job.finished_at || job.updated_at;
+    if (!timestamp) {
+      return false;
+    }
+    const parsed = Date.parse(String(timestamp).replace(' ', 'T'));
+    if (Number.isNaN(parsed)) {
+      return false;
+    }
+    return (Date.now() - parsed) <= (30 * 60 * 1000);
+  }
+
   function shouldRestoreBulkPushJobOnLoad(job) {
     if (!job || !job.message) {
+      return false;
+    }
+    if (!bulkPushJobMessageIsFresh(job)) {
       return false;
     }
     if (job.running) {
@@ -1760,7 +1781,7 @@ document.addEventListener('DOMContentLoaded', function () {
   $('.js-sync-push-data').on('click', function () {
     const $form = $($(this).data('form'));
     const confirmed = window.confirm(
-      'Queue all currently supported local sync data and send it to the hosted POS in the background? You can refresh this page and progress will be kept. This includes menu/items, tables, order history, categories, inventory, recipes/costs, employees, and pulse logs. Credentials and sync secrets are never sent.'
+      'Queue all currently supported local sync data and send it to the hosted POS in the background? You can refresh this page and progress will be kept. This includes menu/items, modifiers, tables, all order history, customers, delivery clients, shop settings, Moova links, categories, inventory documents, recipes, employees, shifts, payment methods, and reference data. Credentials and sync secrets are never sent.'
     );
     if (!confirmed) {
       return;
@@ -1772,7 +1793,7 @@ document.addEventListener('DOMContentLoaded', function () {
   $('.js-sync-restore-hosted').on('click', function () {
     const $form = $($(this).data('form'));
     const confirmed = window.confirm(
-      'Restore menu, tables, and orders from the hosted cloud into this local database? Stop branch sync workers first. Existing local data may be updated or duplicated depending on event history.'
+      'Restore menu, tables, orders, and all synced operational data (customers, settings, inventory, modifiers, shifts, and more) from the hosted cloud into this local database? Stop branch sync workers first. Existing local data may be updated or overwritten depending on event history.'
     );
     if (!confirmed) {
       return;

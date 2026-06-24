@@ -6,6 +6,7 @@ require_once __DIR__ . '/../classes/Items/ItemFormInput.php';
 require_once __DIR__ . '/../classes/Items/ItemRecipeCatalogService.php';
 require_once __DIR__ . '/../classes/Pos/Service/ItemVariantService.php';
 require_once __DIR__ . '/../classes/Sync/MenuItemSyncRecorder.php';
+require_once __DIR__ . '/../classes/Sync/ItemImageSyncRecorder.php';
 
 $usid = (int) ($_SESSION['userid'] ?? 1);
 
@@ -151,6 +152,7 @@ try {
     }
     foreach ($changedItemIds as $changedItemId) {
         posmain_record_menu_item_sync($conn, (int) $changedItemId, 'item_form');
+        posmain_queue_item_images_for_item($conn, (int) $changedItemId, 'item_form');
     }
     $conn->commit();
 } catch (InvalidArgumentException $exception) {
