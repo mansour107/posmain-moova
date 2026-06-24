@@ -1974,7 +1974,10 @@ document.addEventListener('DOMContentLoaded', function () {
       const data = await res.json();
       if (data.update_available) {
         setUpdateState(true, data.published_version);
-        showToast('يتوفر تحديث جديد — النسخة ' + data.published_version + '. اضغط "تحديث النظام" لتطبيقه.', 'success');
+        const reason = data.update_reason === 'git'
+          ? 'يتوفر تحديث جديد على GitHub — اضغط "تحديث النظام" لسحبه وتطبيقه.'
+          : 'يتوفر تحديث جديد — النسخة ' + data.published_version + '. اضغط "تحديث النظام" لتطبيقه.';
+        showToast(reason, 'success');
       } else {
         setUpdateState(false, '');
         showToast('النظام محدث. لا توجد نسخة جديدة حالياً.', 'muted');

@@ -3,6 +3,7 @@
 require_once __DIR__ . '/UpdateJobStore.php';
 require_once __DIR__ . '/UpdateMaintenance.php';
 require_once __DIR__ . '/../Stepwise.php';
+require_once __DIR__ . '/../../includes/pos_update_git.php';
 
 class PosmainUpdateOrchestrator
 {
@@ -85,7 +86,10 @@ class PosmainUpdateOrchestrator
             (string) ($job['installed_version'] ?? ''),
             $targetVersion
         );
-        if ($comparison <= 0) {
+        $gitSync = is_array($job['git_sync'] ?? null)
+            ? $job['git_sync']
+            : posmainUpdateGitSyncState($this->projectRoot);
+        if ($comparison <= 0 && empty($gitSync['git_behind'])) {
             throw new RuntimeException('UPDATE_NOT_REQUIRED');
         }
 
@@ -204,24 +208,35 @@ class PosmainUpdateOrchestrator
         return $this->runStep($jobId, 'version_check', function (array $job): array {
             $installed = posmainInstalledVersion($this->projectRoot);
             $published = posmainFetchPublishedVersion();
+            $gitSync = posmainUpdateGitSyncState($this->projectRoot);
+            $gitPublished = is_array($gitSync['remote_version'] ?? null) ? $gitSync['remote_version'] : null;
+            if ($gitPublished !== null) {
+                if ($published === null || posmainCompareVersions((string) ($published['version'] ?? ''), (string) $gitPublished['version']) < 0) {
+                    $published = $gitPublished;
+                }
+            }
+
             if ($installed === null) {
                 throw new RuntimeException('INSTALLED_VERSION_UNAVAILABLE');
             }
-            if ($published === null) {
+            if ($published === null && empty($gitSync['git_behind'])) {
                 throw new RuntimeException('PUBLISHED_VERSION_UNAVAILABLE');
             }
 
-            $target = (string) ($job['target_version'] ?: $published['version']);
+            $target = (string) ($job['target_version'] ?: ($published['version'] ?? $installed));
             $job['installed_version'] = $installed;
-            $job['published_version'] = $published['version'];
+            $job['published_version'] = (string) ($published['version'] ?? $installed);
             $job['target_version'] = $target;
-            $job['update_available'] = posmainCompareVersions($installed, $target) > 0;
+            $versionUpdateAvailable = $published !== null && posmainCompareVersions($installed, $target) > 0;
+            $job['update_available'] = $versionUpdateAvailable || !empty($gitSync['git_behind']);
+            $job['git_sync'] = $gitSync;
             $job['version_check'] = [
                 'installed_version' => $installed,
-                'published_version' => $published['version'],
+                'published_version' => $job['published_version'],
                 'target_version' => $target,
                 'update_available' => $job['update_available'],
                 'published' => $published,
+                'git_sync' => $gitSync,
             ];
 
             if (($job['action'] ?? '') === 'apply' && !$job['update_available']) {

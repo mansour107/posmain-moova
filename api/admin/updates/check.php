@@ -21,6 +21,8 @@ try {
         'installed_version' => $availability['installed_version'] ?? null,
         'published_version' => $availability['published_version'] ?? null,
         'update_available' => (bool) ($availability['update_available'] ?? false),
+        'update_reason' => $availability['update_reason'] ?? null,
+        'git_sync' => $availability['git_sync'] ?? null,
         'version_url' => $availability['version_url'] ?? null,
         'published' => $availability['published'] ?? null,
         'error' => $availability['error'] ?? null,

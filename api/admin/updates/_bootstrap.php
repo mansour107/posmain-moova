@@ -3,6 +3,7 @@
 require_once __DIR__ . '/../../../includes/db_bootstrap.php';
 require_once __DIR__ . '/../../../includes/auth_guard.php';
 require_once __DIR__ . '/../../../includes/csrf.php';
+require_once __DIR__ . '/../../../includes/pos_update_git.php';
 require_once __DIR__ . '/../../../classes/Updates/UpdateJobStore.php';
 
 if (!function_exists('posmainUpdateJson')) {
@@ -163,9 +164,18 @@ if (!function_exists('posmainCompareVersions')) {
 if (!function_exists('posmainUpdateAvailability')) {
     function posmainUpdateAvailability(): array
     {
-        $installed = posmainInstalledVersion();
+        $root = posmainUpdateProjectRoot();
+        $installed = posmainInstalledVersion($root);
         $published = posmainFetchPublishedVersion();
         $versionUrl = posmainUpdateVersionUrl();
+        $gitSync = posmainUpdateGitSyncState($root);
+        $gitPublished = is_array($gitSync['remote_version'] ?? null) ? $gitSync['remote_version'] : null;
+
+        if ($gitPublished !== null) {
+            if ($published === null || posmainCompareVersions((string) ($published['version'] ?? ''), (string) $gitPublished['version']) < 0) {
+                $published = $gitPublished;
+            }
+        }
 
         if ($installed === null) {
             return [
@@ -173,10 +183,11 @@ if (!function_exists('posmainUpdateAvailability')) {
                 'error' => 'installed_version_unavailable',
                 'message' => 'Local version.txt is missing or invalid.',
                 'update_available' => false,
+                'git_sync' => $gitSync,
             ];
         }
 
-        if ($published === null) {
+        if ($published === null && empty($gitSync['git_behind'])) {
             return [
                 'ok' => false,
                 'error' => 'published_version_unavailable',
@@ -184,18 +195,25 @@ if (!function_exists('posmainUpdateAvailability')) {
                 'installed_version' => $installed,
                 'version_url' => $versionUrl,
                 'update_available' => false,
+                'git_sync' => $gitSync,
             ];
         }
 
-        $targetVersion = (string) $published['version'];
+        $targetVersion = (string) ($published['version'] ?? $installed);
+        $versionUpdateAvailable = $published !== null && posmainCompareVersions($installed, $targetVersion) > 0;
+        $updateAvailable = $versionUpdateAvailable || !empty($gitSync['git_behind']);
 
         return [
             'ok' => true,
             'installed_version' => $installed,
             'published_version' => $targetVersion,
-            'update_available' => posmainCompareVersions($installed, $targetVersion) > 0,
+            'update_available' => $updateAvailable,
             'version_url' => $versionUrl,
             'published' => $published,
+            'git_sync' => $gitSync,
+            'update_reason' => $versionUpdateAvailable
+                ? 'version'
+                : (!empty($gitSync['git_behind']) ? 'git' : 'none'),
         ];
     }
 }
