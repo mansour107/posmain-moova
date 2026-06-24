@@ -173,13 +173,16 @@ $(document).ready(function() {
     }
 
     function syncPaymentFundOptions() {
-        const $mainFundSelect = $('select[name="fund_id"]');
-        if (!$mainFundSelect.length || !$paymentFundSelect.length) {
+        const $mainFundSelect = $('#pos_setup_fund_id');
+        const $mainFundValue = $('input[name="fund_id"]');
+        if (!$paymentFundSelect.length) {
             return;
         }
 
-        $paymentFundSelect.html($mainFundSelect.html());
-        const selectedFund = String($mainFundSelect.val() || '');
+        if ($mainFundSelect.length) {
+            $paymentFundSelect.html($mainFundSelect.html());
+        }
+        const selectedFund = String(($mainFundSelect.val() || $mainFundValue.val() || ''));
         if (selectedFund) {
             $paymentFundSelect.val(selectedFund);
         }
@@ -1929,7 +1932,7 @@ $(document).ready(function() {
 
                     if (response.order) {
                         $('#discount').val(response.order.discount || 0);
-                        if (response.order.emp_id) $('select[name="emp_id"]').val(response.order.emp_id);
+                        if (response.order.emp_id) $('input[name="emp_id"]').val(response.order.emp_id);
                         if (customerOptionExists(response.order.acc1)) {
                             selectCustomerById(response.order.acc1);
                         } else {
@@ -2465,9 +2468,9 @@ function validatePOSForm() {
     }
 
     let pro_tybe = $('input[name="pro_tybe"]').val();
-    let store_id = $('select[name="store_id"]').val();
+    let store_id = $('input[name="store_id"]').val();
     let acc2_id = $('select[name="acc2_id"]').val();
-    let emp_id = $('select[name="emp_id"]').val();
+    let emp_id = $('input[name="emp_id"]').val();
 
     console.log('🔍 Required fields check:');
     console.log('  - pro_tybe:', pro_tybe);

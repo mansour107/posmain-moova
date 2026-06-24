@@ -1,11 +1,13 @@
 <?php
 require_once __DIR__ . '/production_guard.php';
+require_once __DIR__ . '/pos_default_accounts.php';
 require_once __DIR__ . '/../classes/Pos/Service/LegacyOrderLinePresentationService.php';
 
 if (!isset($action_url)) {
     $action_url = "do/doadd_invoice.php";
 }
 
+$posmainPosDefaults = posmain_resolve_pos_defaults($conn, is_array($rowstg ?? null) ? $rowstg : []);
 $posmainLegacyLinePresentation = new LegacyOrderLinePresentationService();
 
 $legacyOfflinePrototypeEnabled = !production_guard_is_production()
@@ -130,19 +132,13 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                                     <div class="row g-1 mb-2 pos-setup-control">
                                         <!-- المخزن -->
                                         <div class="col-3 pos-store-field">
-                                            <select name="store_id" class="form-select form-select-sm" title="المخزن"
-                                                style="font-size: 0.75rem;" required>
+                                            <select id="pos_setup_store_id" class="form-select form-select-sm" title="المخزن"
+                                                style="font-size: 0.75rem;">
                                                 <?php
                                                 $resstore = $conn->query("SELECT * FROM `acc_head` WHERE is_stock =1 AND isdeleted = 0;");
-                                                $first = true;
-                                                while ($rowstore = $resstore->fetch_assoc()) {
-                                                    $selected = '';
-                                                    if($rowstg['def_pos_store'] == $rowstore['id']){
-                                                        $selected = "selected";
-                                                    } elseif ($first && empty($rowstg['def_pos_store'])) {
-                                                        $selected = "selected";
-                                                    }
-                                                    $first = false;
+                                                $defaultStoreId = (int) ($posmainPosDefaults['store_id'] ?? 0);
+                                                while ($resstore && ($rowstore = $resstore->fetch_assoc())) {
+                                                    $selected = ((int) $rowstore['id'] === $defaultStoreId) ? 'selected' : '';
                                                 ?>
                                                 <option <?= $selected ?> value="<?= $rowstore['id'] ?>">
                                                     <?= $rowstore['aname'] ?></option>
@@ -152,21 +148,18 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
 
                                         <!-- الموظف -->
                                         <div class="col-3 pos-employee-field">
-                                            <select name="emp_id" class="form-select form-select-sm" title="الموظف"
-                                                style="font-size: 0.75rem;" required>
+                                            <select id="pos_setup_emp_id" class="form-select form-select-sm" title="الموظف"
+                                                style="font-size: 0.75rem;">
                                                 <?php
                                                 $resemp = $conn->query("SELECT * FROM `acc_head` WHERE parent_id = 35 AND is_basic = 0 AND isdeleted = 0;");
-                                                $first_emp = true;
-                                                while ($rowemp = $resemp->fetch_assoc()) {
+                                                $defaultEmpId = (int) ($posmainPosDefaults['emp_id'] ?? 0);
+                                                while ($resemp && ($rowemp = $resemp->fetch_assoc())) {
                                                     $selected = '';
-                                                    if($rowstg['def_pos_employee'] == $rowemp['id']){
+                                                    if ((int) $rowemp['id'] === $defaultEmpId) {
                                                         $selected = "selected";
-                                                    } elseif(isset($_GET['edit']) && $rowed['emp_id'] == $rowemp['id']){
-                                                        $selected = "selected";
-                                                    } elseif ($first_emp && empty($rowstg['def_pos_employee']) && !isset($_GET['edit'])) {
+                                                    } elseif (isset($_GET['edit']) && $rowed['emp_id'] == $rowemp['id']) {
                                                         $selected = "selected";
                                                     }
-                                                    $first_emp = false;
                                                 ?>
                                                 <option <?= $selected ?> value="<?= $rowemp['id'] ?>"><?= $rowemp['aname'] ?>
                                                 </option>
@@ -232,22 +225,19 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
 
                                         <!-- الصندوق -->
                                         <div class="col-3 pos-fund-field">
-                                            <select name="fund_id" class="form-select form-select-sm" title="الصندوق"
-                                                style="font-size: 0.75rem;" required>
+                                            <select id="pos_setup_fund_id" class="form-select form-select-sm" title="الصندوق"
+                                                style="font-size: 0.75rem;">
                                                 <?php
                                                 if(isset($_GET['edit'])){$rowed = $conn->query("SELECT * FROM ot_head where id = $id")->fetch_assoc();};
                                                 $resfund = $conn->query("SELECT * FROM `acc_head` WHERE is_fund =1 AND is_basic = 0 AND isdeleted = 0;");
-                                                $first_fund = true;
-                                                while ($rowfund = $resfund->fetch_assoc()) {
+                                                $defaultFundId = (int) ($posmainPosDefaults['fund_id'] ?? 0);
+                                                while ($resfund && ($rowfund = $resfund->fetch_assoc())) {
                                                     $selected = '';
-                                                    if($rowstg['def_pos_fund'] == $rowfund['id']){
+                                                    if ((int) $rowfund['id'] === $defaultFundId) {
                                                         $selected = "selected";
                                                     } elseif((isset($_GET['edit'])) && $rowed['acc_fund'] == $rowfund['id']){
                                                         $selected = "selected";
-                                                    } elseif ($first_fund && empty($rowstg['def_pos_fund']) && !isset($_GET['edit'])) {
-                                                        $selected = "selected";
                                                     }
-                                                    $first_fund = false;
                                                 ?>
                                                 <option <?= $selected ?> value="<?= $rowfund['id'] ?>"><?= $rowfund['aname'] ?>
                                                 </option>
@@ -257,6 +247,9 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                                     </div>
                                 </div>
                             </div>
+                            <input type="hidden" name="store_id" value="<?= (int) ($posmainPosDefaults['store_id'] ?? 0) ?>">
+                            <input type="hidden" name="emp_id" value="<?= (int) ($posmainPosDefaults['emp_id'] ?? 0) ?>">
+                            <input type="hidden" name="fund_id" value="<?= (int) ($posmainPosDefaults['fund_id'] ?? 0) ?>">
 
                             <!-- الأصناف المُضافة -->
                             <div class="mb-2 flex-grow-1 d-flex flex-column pos-order-items-section">
