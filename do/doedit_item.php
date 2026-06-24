@@ -74,18 +74,21 @@ $price2 = $payload['price2'];
 
 // Handle image upload
 $new_kvr_name = null;
+$img_size = 0;
 if (isset($_FILES['imgs']) && !empty($_FILES['imgs']['name'][0])) {
     $imgs_name = $_FILES['imgs']['name'][0];
     $tmp_name = $_FILES['imgs']['tmp_name'][0];
-    
-    $arrkvr = explode(".", $imgs_name);
-    $kvr_ext = strtolower((string) end($arrkvr));
-    
-    $allow_ext = ["jpg", "png", "gif", "jpeg", "webp"];
+    $img_size = (int) ($_FILES['imgs']['size'][0] ?? 0);
+
+    $kvr_ext = strtolower(pathinfo((string) $imgs_name, PATHINFO_EXTENSION));
+
+    $allow_ext = ['jpg', 'png', 'gif', 'jpeg', 'webp'];
     if (in_array($kvr_ext, $allow_ext, true)) {
-        $new_kvr_name = $arrkvr[0] . rand(1, 1000000) . "." . $kvr_ext;
-        if (!move_uploaded_file($tmp_name, "../uploads/$new_kvr_name")) {
+        $baseName = pathinfo((string) $imgs_name, PATHINFO_FILENAME);
+        $new_kvr_name = $baseName . rand(1, 1000000) . '.' . $kvr_ext;
+        if (!move_uploaded_file($tmp_name, '../uploads/' . $new_kvr_name)) {
             $new_kvr_name = null;
+            $img_size = 0;
         }
     } else {
         ItemEditorFlash::set('danger', 'invalid_image');
@@ -111,8 +114,8 @@ try {
         $deleteImage->execute();
         $deleteImage->close();
 
-        $insertImage = $conn->prepare('INSERT INTO imgs (iname, itemid) VALUES (?, ?)');
-        $insertImage->bind_param('si', $new_kvr_name, $item_id);
+        $insertImage = $conn->prepare('INSERT INTO imgs (iname, itemid, size) VALUES (?, ?, ?)');
+        $insertImage->bind_param('sii', $new_kvr_name, $item_id, $img_size);
         $insertImage->execute();
         $insertImage->close();
     }

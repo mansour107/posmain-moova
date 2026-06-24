@@ -997,8 +997,12 @@ class ItemVariantService
             return;
         }
 
-        $stmt = $conn->prepare('INSERT INTO imgs (iname, itemid) VALUES (?, ?)');
-        $stmt->bind_param('si', $imageName, $variantItemId);
+        $uploadsDir = dirname(__DIR__, 3) . '/uploads';
+        $imagePath = $uploadsDir . '/' . $imageName;
+        $imageSize = is_file($imagePath) ? (int) filesize($imagePath) : 0;
+
+        $stmt = $conn->prepare('INSERT INTO imgs (iname, itemid, size) VALUES (?, ?, ?)');
+        $stmt->bind_param('sii', $imageName, $variantItemId, $imageSize);
         $stmt->execute();
         $stmt->close();
     }

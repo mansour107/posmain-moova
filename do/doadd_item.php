@@ -123,17 +123,20 @@ try {
     // معالجة رفع الصور
     $imgs_name = $imageFiles['name'];
     if (!empty($imgs_name['0'])) {
-        $imageStmt = $conn->prepare('INSERT INTO imgs (iname, itemid) VALUES (?, ?)');
+        $imageStmt = $conn->prepare('INSERT INTO imgs (iname, itemid, size) VALUES (?, ?, ?)');
         for ($i = 0; $i < count($imageFiles['name']); $i++) {
             $imgs_name = $imageFiles['name'][$i];
             $tmp_name = $imageFiles['tmp_name'][$i];
+            if (trim((string) $imgs_name) === '') {
+                continue;
+            }
 
-            $arrkvr = explode(".", $imgs_name);
-            $kvr_ext = end($arrkvr);
-
-            $new_kvr_name = $arrkvr[0] . rand(1, 1000000) . "." . $kvr_ext;
-            if (move_uploaded_file($tmp_name, "../uploads/$new_kvr_name")) {
-                $imageStmt->bind_param('si', $new_kvr_name, $last_id);
+            $kvr_ext = strtolower(pathinfo((string) $imgs_name, PATHINFO_EXTENSION));
+            $baseName = pathinfo((string) $imgs_name, PATHINFO_FILENAME);
+            $new_kvr_name = $baseName . rand(1, 1000000) . '.' . $kvr_ext;
+            $img_size = (int) ($imageFiles['size'][$i] ?? 0);
+            if (move_uploaded_file($tmp_name, '../uploads/' . $new_kvr_name)) {
+                $imageStmt->bind_param('sii', $new_kvr_name, $last_id, $img_size);
                 $imageStmt->execute();
             }
         }
