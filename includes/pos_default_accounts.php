@@ -125,6 +125,21 @@ if (!function_exists('posmain_ensure_pos_default_accounts')) {
     }
 }
 
+if (!function_exists('posmain_acc_head_active_id')) {
+    function posmain_acc_head_active_id(mysqli $conn, int $accountId): bool
+    {
+        if ($accountId <= 0) {
+            return false;
+        }
+
+        $result = $conn->query(
+            'SELECT id FROM acc_head WHERE id = ' . $accountId . ' AND isdeleted = 0 LIMIT 1'
+        );
+
+        return $result && $result->num_rows > 0;
+    }
+}
+
 if (!function_exists('posmain_resolve_default_account_id')) {
     /**
      * Resolve a default acc_head id, preferring settings when that account still exists.
@@ -152,10 +167,168 @@ if (!function_exists('posmain_resolve_default_account_id')) {
     }
 }
 
+if (!function_exists('posmain_resolve_pos_customer_id')) {
+    function posmain_resolve_pos_customer_id(mysqli $conn, int $preferredId, array $settings = []): int
+    {
+        if ($preferredId <= 0) {
+            $preferredId = (int) ($settings['def_pos_client'] ?? 0);
+        }
+
+        require_once __DIR__ . '/../classes/TableOrderService.php';
+
+        return (new TableOrderService())->resolveDefaultCustomerId($conn, $preferredId);
+    }
+}
+
+if (!function_exists('posmain_sync_pos_setting_defaults')) {
+    /**
+     * Repair settings rows that still point at deleted or missing acc_head ids.
+     */
+    function posmain_sync_pos_setting_defaults(mysqli $conn, array $settings): array
+    {
+        $settingsId = (int) ($settings['id'] ?? 0);
+        if ($settingsId < 1) {
+            $settingsQuery = $conn->query(
+                'SELECT id, def_pos_store, def_pos_employee, def_pos_fund, def_pos_client
+                 FROM settings
+                 ORDER BY id ASC
+                 LIMIT 1'
+            );
+            if (!$settingsQuery || $settingsQuery->num_rows === 0) {
+                return $settings;
+            }
+            $settings = $settingsQuery->fetch_assoc();
+            $settingsId = (int) ($settings['id'] ?? 0);
+        }
+        if ($settingsId < 1) {
+            return $settings;
+        }
+
+        $resolved = [
+            'store_id' => posmain_resolve_default_account_id(
+                $conn,
+                (int) ($settings['def_pos_store'] ?? 0),
+                'is_stock = 1'
+            ),
+            'emp_id' => posmain_resolve_default_account_id(
+                $conn,
+                (int) ($settings['def_pos_employee'] ?? 0),
+                'parent_id = 35 AND is_basic = 0'
+            ),
+            'fund_id' => posmain_resolve_default_account_id(
+                $conn,
+                (int) ($settings['def_pos_fund'] ?? 0),
+                'is_fund = 1 AND is_basic = 0'
+            ),
+            'client_id' => posmain_resolve_pos_customer_id(
+                $conn,
+                (int) ($settings['def_pos_client'] ?? 0),
+                $settings
+            ),
+        ];
+
+        $nextStore = (int) ($settings['def_pos_store'] ?? 0);
+        $nextEmp = (int) ($settings['def_pos_employee'] ?? 0);
+        $nextFund = (int) ($settings['def_pos_fund'] ?? 0);
+        $nextClient = (int) ($settings['def_pos_client'] ?? 0);
+        $changed = false;
+
+        if ($nextStore <= 0 || !posmain_acc_head_active_id($conn, $nextStore)) {
+            if ($resolved['store_id'] > 0 && $nextStore !== $resolved['store_id']) {
+                $nextStore = $resolved['store_id'];
+                $changed = true;
+            }
+        }
+        if ($nextEmp <= 0 || !posmain_acc_head_active_id($conn, $nextEmp)) {
+            if ($resolved['emp_id'] > 0 && $nextEmp !== $resolved['emp_id']) {
+                $nextEmp = $resolved['emp_id'];
+                $changed = true;
+            }
+        }
+        if ($nextFund <= 0 || !posmain_acc_head_active_id($conn, $nextFund)) {
+            if ($resolved['fund_id'] > 0 && $nextFund !== $resolved['fund_id']) {
+                $nextFund = $resolved['fund_id'];
+                $changed = true;
+            }
+        }
+        if ($nextClient <= 0 || !posmain_acc_head_active_id($conn, $nextClient)) {
+            if ($resolved['client_id'] > 0 && $nextClient !== $resolved['client_id']) {
+                $nextClient = $resolved['client_id'];
+                $changed = true;
+            }
+        }
+
+        if (!$changed) {
+            return $settings;
+        }
+
+        $stmt = $conn->prepare('
+            UPDATE settings
+            SET def_pos_store = ?,
+                def_pos_employee = ?,
+                def_pos_fund = ?,
+                def_pos_client = ?
+            WHERE id = ?
+        ');
+        $stmt->bind_param('iiiii', $nextStore, $nextEmp, $nextFund, $nextClient, $settingsId);
+        $stmt->execute();
+        $stmt->close();
+
+        $settings['def_pos_store'] = $nextStore;
+        $settings['def_pos_employee'] = $nextEmp;
+        $settings['def_pos_fund'] = $nextFund;
+        $settings['def_pos_client'] = $nextClient;
+
+        return $settings;
+    }
+}
+
+if (!function_exists('posmain_resolve_pos_invoice_accounts')) {
+    function posmain_resolve_pos_invoice_accounts(mysqli $conn, array $settings, array $posted): array
+    {
+        $defaults = posmain_resolve_pos_defaults($conn, $settings);
+
+        $storeId = (int) ($posted['store_id'] ?? 0);
+        if ($storeId <= 0 || posmain_resolve_default_account_id($conn, $storeId, 'is_stock = 1') !== $storeId) {
+            $storeId = (int) ($defaults['store_id'] ?? 0);
+        }
+
+        $empId = (int) ($posted['emp_id'] ?? 0);
+        if ($empId <= 0 || posmain_resolve_default_account_id($conn, $empId, 'parent_id = 35 AND is_basic = 0') !== $empId) {
+            $empId = (int) ($defaults['emp_id'] ?? 0);
+        }
+
+        $fundId = (int) ($posted['fund_id'] ?? 0);
+        if ($fundId <= 0 || posmain_resolve_default_account_id($conn, $fundId, 'is_fund = 1 AND is_basic = 0') !== $fundId) {
+            $fundId = (int) ($defaults['fund_id'] ?? 0);
+        }
+
+        $clientId = posmain_resolve_pos_customer_id(
+            $conn,
+            (int) ($posted['acc2_id'] ?? 0),
+            $settings
+        );
+
+        $paymentFundId = (int) ($posted['payment_fund_id'] ?? 0);
+        if ($paymentFundId <= 0 || posmain_resolve_default_account_id($conn, $paymentFundId, 'is_fund = 1 AND is_basic = 0') !== $paymentFundId) {
+            $paymentFundId = $fundId;
+        }
+
+        return [
+            'store_id' => $storeId,
+            'emp_id' => $empId,
+            'fund_id' => $fundId,
+            'acc2_id' => $clientId,
+            'payment_fund_id' => $paymentFundId,
+        ];
+    }
+}
+
 if (!function_exists('posmain_resolve_pos_defaults')) {
     function posmain_resolve_pos_defaults(mysqli $conn, array $settings): array
     {
         posmain_ensure_pos_default_accounts($conn);
+        $settings = posmain_sync_pos_setting_defaults($conn, $settings);
 
         $preferredStoreId = (int) ($settings['def_pos_store'] ?? 0);
         if ($preferredStoreId < 1) {
@@ -180,6 +353,11 @@ if (!function_exists('posmain_resolve_pos_defaults')) {
                 $conn,
                 (int) ($settings['def_pos_fund'] ?? 0),
                 'is_fund = 1 AND is_basic = 0'
+            ),
+            'client_id' => posmain_resolve_pos_customer_id(
+                $conn,
+                (int) ($settings['def_pos_client'] ?? 0),
+                $settings
             ),
         ];
     }

@@ -170,42 +170,26 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                                         <!-- العميل -->
                                         <div class="col-3 pos-customer-field">
                                             <?php
-                                            $tableDefaultClientId = 0;
-                                            $tableDefaultClientResult = $conn->query("SELECT id FROM `acc_head` WHERE TRIM(aname) = 'العميل الافتراضي' AND code LIKE '122%' AND isdeleted = 0 ORDER BY CASE WHEN is_basic = 0 THEN 0 ELSE 1 END, id LIMIT 1");
-                                            if ($tableDefaultClientResult && $tableDefaultClientResult->num_rows > 0) {
-                                                $tableDefaultClientId = intval($tableDefaultClientResult->fetch_assoc()['id']);
-                                            }
+                                            $tableDefaultClientId = (int) ($posmainPosDefaults['client_id'] ?? 0);
                                             $shouldUseTableDefaultClient = !isset($_GET['edit']) && isset($_GET['table']) && $tableDefaultClientId > 0;
                                             if(isset($_GET['edit'])){$rowed = $conn->query("SELECT * FROM ot_head where id = $id")->fetch_assoc();};
                                             $editClientId = isset($rowed['acc1']) ? intval($rowed['acc1']) : 0;
-                                            $selectedCustomerId = 0;
+                                            $selectedCustomerId = (int) ($posmainPosDefaults['client_id'] ?? 0);
                                             if (isset($_GET['edit']) && $editClientId > 0) {
                                                 $selectedCustomerId = $editClientId;
                                             } elseif ($shouldUseTableDefaultClient) {
                                                 $selectedCustomerId = $tableDefaultClientId;
-                                            } elseif (!empty($rowstg['def_pos_client'])) {
-                                                $selectedCustomerId = intval($rowstg['def_pos_client']);
                                             }
+                                            $selectedCustomerId = posmain_resolve_pos_customer_id(
+                                                $conn,
+                                                $selectedCustomerId,
+                                                is_array($rowstg ?? null) ? $rowstg : []
+                                            );
                                             $initialCustomerOptions = [];
-                                            $initialCustomerIds = array_values(array_unique(array_filter([$selectedCustomerId, $tableDefaultClientId])));
-                                            foreach ($initialCustomerIds as $initialCustomerId) {
-                                                $initialCustomerId = intval($initialCustomerId);
-                                                $initialCustomerResult = $conn->query("SELECT id, aname FROM `acc_head` WHERE id = $initialCustomerId AND isdeleted = 0 LIMIT 1");
-                                                if ($initialCustomerResult && $initialCustomerResult->num_rows > 0) {
-                                                    $initialCustomer = $initialCustomerResult->fetch_assoc();
-                                                    $initialCustomerOptions[intval($initialCustomer['id'])] = $initialCustomer['aname'];
-                                                }
-                                            }
-                                            if ($selectedCustomerId > 0 && !isset($initialCustomerOptions[$selectedCustomerId])) {
-                                                $selectedCustomerId = 0;
-                                            }
-                                            if ($selectedCustomerId === 0) {
-                                                $fallbackCustomerResult = $conn->query("SELECT id, aname FROM `acc_head` WHERE code LIKE '122%' AND isdeleted = 0 AND is_basic = 0 ORDER BY code, id LIMIT 1");
-                                                if ($fallbackCustomerResult && $fallbackCustomerResult->num_rows > 0) {
-                                                    $fallbackCustomer = $fallbackCustomerResult->fetch_assoc();
-                                                    $selectedCustomerId = intval($fallbackCustomer['id']);
-                                                    $initialCustomerOptions[$selectedCustomerId] = $fallbackCustomer['aname'];
-                                                }
+                                            $initialCustomerResult = $conn->query("SELECT id, aname FROM `acc_head` WHERE id = {$selectedCustomerId} AND isdeleted = 0 LIMIT 1");
+                                            if ($initialCustomerResult && $initialCustomerResult->num_rows > 0) {
+                                                $initialCustomer = $initialCustomerResult->fetch_assoc();
+                                                $initialCustomerOptions[(int) $initialCustomer['id']] = $initialCustomer['aname'];
                                             }
                                             ?>
                                             <select name="acc2_id" class="form-select form-select-sm" title="العميل"

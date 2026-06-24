@@ -22,6 +22,7 @@ require_once __DIR__ . '/DeliveryClientService.php';
 require_once __DIR__ . '/DeliveryZoneService.php';
 require_once __DIR__ . '/OrderFulfillmentService.php';
 require_once __DIR__ . '/../../PosOrderService.php';
+require_once __DIR__ . '/../../../includes/pos_default_accounts.php';
 
 class PosOrderMutationService
 {
@@ -577,6 +578,7 @@ class PosOrderMutationService
 
     private function createTakeawayOrderInsideTransaction(mysqli $conn, array $request, array $context): array
     {
+        $request = $this->resolvePosRequestAccounts($conn, $request);
         $storeId = $this->requiredPositiveInt($request, 'store_id', 'بيانات مطلوبة مفقودة - المخزن');
         $customerId = $this->requiredPositiveInt($request, 'acc2_id', 'بيانات مطلوبة مفقودة - العميل');
         $empId = $this->requiredPositiveInt($request, 'emp_id', 'بيانات مطلوبة مفقودة - الموظف');
@@ -745,6 +747,7 @@ class PosOrderMutationService
 
     private function createDeliveryOrderInsideTransaction(mysqli $conn, array $request, array $context): array
     {
+        $request = $this->resolvePosRequestAccounts($conn, $request);
         $storeId = $this->requiredPositiveInt($request, 'store_id', 'بيانات مطلوبة مفقودة - المخزن');
         $customerId = $this->requiredPositiveInt($request, 'acc2_id', 'بيانات مطلوبة مفقودة - العميل');
         $empId = $this->requiredPositiveInt($request, 'emp_id', 'بيانات مطلوبة مفقودة - الموظف');
@@ -2391,6 +2394,24 @@ class PosOrderMutationService
         $settingsRow = $settings ? $settings->fetch_assoc() : null;
 
         return $this->tableOrderService->resolveDefaultCustomerId($conn, (int) ($settingsRow['def_pos_client'] ?? 0));
+    }
+
+    private function resolvePosRequestAccounts(mysqli $conn, array $request): array
+    {
+        $settingsQuery = $conn->query(
+            'SELECT id, def_pos_store, def_pos_employee, def_pos_fund, def_pos_client
+             FROM settings
+             WHERE isdeleted = 0
+             ORDER BY id ASC
+             LIMIT 1'
+        );
+        $settingsRow = ($settingsQuery && $settingsQuery->num_rows > 0)
+            ? $settingsQuery->fetch_assoc()
+            : [];
+
+        $resolved = posmain_resolve_pos_invoice_accounts($conn, $settingsRow, $request);
+
+        return array_merge($request, $resolved);
     }
 
     private function recordOrderEvent(mysqli $conn, int $orderId, string $eventType, string $eventSource, array $context, array $metadata = []): ?array

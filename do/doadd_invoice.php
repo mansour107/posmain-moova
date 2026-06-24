@@ -36,6 +36,7 @@ require_once('../classes/Pos/Service/PosOrderMutationService.php');
 require_once('../classes/Pos/Service/ModifierLineNoteService.php');
 require_once('../classes/Recipe/LegacyInvoiceRecipeLifecycleBridge.php');
 require_once('../classes/Inventory/InventoryInvoiceBridge.php');
+require_once('../includes/pos_default_accounts.php');
 
 // تعريف ثوابت أنواع الفواتير
 define('INVOICE_TYPES', [
@@ -90,6 +91,24 @@ $paid_cash = isset($_POST['paid_cash']) ? floatval($_POST['paid_cash']) : 0;
 $paid_bank = isset($_POST['paid_bank']) ? floatval($_POST['paid_bank']) : 0;
 $payment_fund_id = isset($_POST['payment_fund_id']) ? intval($_POST['payment_fund_id']) : $fund_id;
 $payment_bank_id = isset($_POST['payment_bank_id']) ? intval($_POST['payment_bank_id']) : 0;
+
+$posSettingsRow = [];
+$posSettingsQuery = $conn->query('SELECT id, def_pos_store, def_pos_employee, def_pos_fund, def_pos_client FROM settings WHERE isdeleted = 0 ORDER BY id ASC LIMIT 1');
+if ($posSettingsQuery && $posSettingsQuery->num_rows > 0) {
+    $posSettingsRow = $posSettingsQuery->fetch_assoc();
+}
+$posResolvedAccounts = posmain_resolve_pos_invoice_accounts($conn, $posSettingsRow, [
+    'store_id' => $store_id,
+    'emp_id' => $emp_id,
+    'fund_id' => $fund_id,
+    'acc2_id' => $acc2_id,
+    'payment_fund_id' => $payment_fund_id,
+]);
+$store_id = (int) $posResolvedAccounts['store_id'];
+$emp_id = (int) $posResolvedAccounts['emp_id'];
+$fund_id = (int) $posResolvedAccounts['fund_id'];
+$acc2_id = (int) $posResolvedAccounts['acc2_id'];
+$payment_fund_id = (int) $posResolvedAccounts['payment_fund_id'];
 
 error_log('=== SPLIT PAYMENT DEBUG ===');
 error_log('POST paid_cash: ' . (isset($_POST['paid_cash']) ? $_POST['paid_cash'] : 'NOT SET'));

@@ -1,7 +1,11 @@
 <?php
+require_once __DIR__ . '/pos_default_accounts.php';
+
 if (!isset($action_url)) {
     $action_url = "do/doadd_invoice.php";
 }
+
+$posmainPosDefaults = posmain_resolve_pos_defaults($conn, is_array($rowstg ?? null) ? $rowstg : []);
 ?>
 <!-- Main Content -->
 <form action="<?= $action_url ?>" method="post" id="posForm" class="h-100 d-flex flex-column m-0">
@@ -170,8 +174,7 @@ if (!isset($action_url)) {
                                     $first = true;
                                     while ($rowstore = $resstore->fetch_assoc()) { 
                                         $selected = '';
-                                        if($rowstg['def_pos_store'] == $rowstore['id']){ $selected = "selected"; } 
-                                        elseif ($first && empty($rowstg['def_pos_store'])) { $selected = "selected"; }
+                                        if ((int) $rowstore['id'] === (int) ($posmainPosDefaults['store_id'] ?? 0)) { $selected = "selected"; } 
                                         $first = false;
                                     ?>
                                     <option <?= $selected ?> value="<?= $rowstore['id'] ?>"><?= $rowstore['aname'] ?></option>
@@ -187,9 +190,8 @@ if (!isset($action_url)) {
                                     $first_emp = true;
                                     while ($rowemp = $resemp->fetch_assoc()) { 
                                         $selected = '';
-                                        if($rowstg['def_pos_employee'] == $rowemp['id']){ $selected = "selected"; } 
+                                        if ((int) $rowemp['id'] === (int) ($posmainPosDefaults['emp_id'] ?? 0)) { $selected = "selected"; } 
                                         elseif(isset($_GET['edit']) && $rowed['emp_id'] == $rowemp['id']){ $selected = "selected"; } 
-                                        elseif ($first_emp && empty($rowstg['def_pos_employee']) && !isset($_GET['edit'])) { $selected = "selected"; }
                                         $first_emp = false;
                                     ?>
                                     <option <?= $selected ?> value="<?= $rowemp['id'] ?>"><?= $rowemp['aname'] ?></option>
@@ -205,9 +207,8 @@ if (!isset($action_url)) {
                                     $first_client = true;
                                     while ($rowclient = $resclient->fetch_assoc()) { 
                                         $selected = '';
-                                        if($rowstg['def_pos_client'] == $rowclient['id']){ $selected = "selected"; } 
+                                        if ((int) $rowclient['id'] === (int) ($posmainPosDefaults['client_id'] ?? 0)) { $selected = "selected"; } 
                                         elseif(isset($_GET['edit']) && $rowed['acc1'] == $rowclient['id']){ $selected = "selected"; } 
-                                        elseif ($first_client && empty($rowstg['def_pos_client']) && !isset($_GET['edit'])) { $selected = "selected"; }
                                         $first_client = false;
                                     ?>
                                     <option <?= $selected ?> value="<?= $rowclient['id'] ?>"><?= $rowclient['aname'] ?></option>
@@ -223,9 +224,8 @@ if (!isset($action_url)) {
                                     $first_fund = true;
                                     while ($rowfund = $resfund->fetch_assoc()) { 
                                         $selected = '';
-                                        if($rowstg['def_pos_fund'] == $rowfund['id']){ $selected = "selected"; } 
+                                        if ((int) $rowfund['id'] === (int) ($posmainPosDefaults['fund_id'] ?? 0)) { $selected = "selected"; } 
                                         elseif((isset($_GET['edit'])) && $rowed['acc_fund'] == $rowfund['id']){ $selected = "selected"; } 
-                                        elseif ($first_fund && empty($rowstg['def_pos_fund']) && !isset($_GET['edit'])) { $selected = "selected"; }
                                         $first_fund = false;
                                     ?>
                                     <option <?= $selected ?> value="<?= $rowfund['id'] ?>"><?= $rowfund['aname'] ?></option>
