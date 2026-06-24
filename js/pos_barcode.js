@@ -595,10 +595,18 @@ $(document).ready(function() {
         }
     });
 
+    function syncTableControlVisibility() {
+        const isTableMode = String($('input[name="age"]:checked').val() || '') === '2';
+        $('.pos-table-visible-control').toggle(isTableMode);
+        $('.pos-table-mount').toggle(isTableMode);
+        $('.pos-current-order-controls').toggleClass('pos-table-mode', isTableMode);
+    }
+
     function syncModeTabs() {
         const activeId = $('input[name="age"]:checked').attr('id');
         $('.pos-mode-tab').toggleClass('active', false);
         $(`.pos-mode-tab[data-age-target="${activeId}"]`).toggleClass('active', true);
+        syncTableControlVisibility();
     }
 
     $('.pos-mode-tab').on('click', function() {
@@ -2169,7 +2177,11 @@ $(document).ready(function() {
     }
 
     function ensureFormIdempotencyKey(form, action) {
-        const scope = action === 'save' ? 'pos.order.save' : (action === 'free_table' ? 'pos.table.free' : 'pos.order.pay');
+        const scope = action === 'save'
+            ? 'pos.order.save'
+            : (action === 'print_receipt'
+                ? 'pos.order.print'
+                : (action === 'free_table' ? 'pos.table.free' : 'pos.order.pay'));
         let keyInput = form.querySelector('input[name="idempotency_key"]');
         if (!keyInput) {
             keyInput = document.createElement('input');
@@ -2215,10 +2227,11 @@ $(document).ready(function() {
 
         // جمع بيانات الدفع
         const isSaveOnly = action === 'save';
+        const isPrintReceiptOnly = action === 'print_receipt';
         const isSplitLinePayment = action === 'split_cash';
         let paidCash = parseFloat($('#modal_paid_cash').val()) || 0;
         let paidBank = parseFloat($('#modal_paid_bank').val()) || 0;
-        if (isSaveOnly || isFreeTableOnly) {
+        if (isSaveOnly || isPrintReceiptOnly || isFreeTableOnly) {
             paidCash = 0;
             paidBank = 0;
         }
@@ -2242,17 +2255,17 @@ $(document).ready(function() {
         console.log('==========================');
 
         // التحقق من صحة البيانات
-        if (!isSaveOnly && !isFreeTableOnly && !isSplitLinePayment && net > 0 && paidCash + paidBank <= 0) {
+        if (!isSaveOnly && !isPrintReceiptOnly && !isFreeTableOnly && !isSplitLinePayment && net > 0 && paidCash + paidBank <= 0) {
             alert('يجب إدخال مبلغ الدفع قبل تأكيد الدفع');
             return false;
         }
 
-        if (!isSaveOnly && !isFreeTableOnly && paidCash > 0 && (!fundId || fundId == '0')) {
+        if (!isSaveOnly && !isPrintReceiptOnly && !isFreeTableOnly && paidCash > 0 && (!fundId || fundId == '0')) {
             alert('يجب اختيار الصندوق عند الدفع كاش');
             return false;
         }
 
-        if (!isSaveOnly && !isFreeTableOnly && paidBank > 0 && (!bankId || bankId == '0' || bankId == '')) {
+        if (!isSaveOnly && !isPrintReceiptOnly && !isFreeTableOnly && paidBank > 0 && (!bankId || bankId == '0' || bankId == '')) {
             alert('يجب اختيار البنك عند الدفع صرافة');
             return false;
         }
@@ -2359,10 +2372,14 @@ $(document).ready(function() {
         console.log('➕ Added submit input with value:', action);
 
         let saveBtn = $(".pos-save-order-btn");
+        let printOrderBtn = $(".pos-print-order-btn");
         let printBtn = $(".pos-pay-confirm-btn");
 
         if (saveBtn.length > 0) {
             saveBtn.prop('disabled', true).html('<i class="fas fa-spinner fa-spin"></i> جاري الحفظ...');
+        }
+        if (printOrderBtn.length > 0) {
+            printOrderBtn.prop('disabled', true).html('<i class="fas fa-spinner fa-spin"></i> جاري الطباعة...');
         }
         if (printBtn.length > 0) {
             printBtn.prop('disabled', true).html('<i class="fas fa-spinner fa-spin"></i> جاري الدفع...');
@@ -2391,6 +2408,9 @@ $(document).ready(function() {
 
                 if (saveBtn.length > 0) {
                     saveBtn.prop('disabled', false).html('<i class="fas fa-save me-1"></i>حفظ الطلب');
+                }
+                if (printOrderBtn.length > 0) {
+                    printOrderBtn.prop('disabled', false).html('<i class="fas fa-print me-1"></i>طباعة');
                 }
                 if (printBtn.length > 0) {
                     printBtn.prop('disabled', false).html('<i class="fas fa-receipt me-1"></i>دفع وطباعة');

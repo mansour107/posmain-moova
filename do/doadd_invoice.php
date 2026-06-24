@@ -74,6 +74,7 @@ $fund_id = isset($_POST['fund_id']) ? intval($_POST['fund_id']) : 0;
 $info = isset($_POST['info']) ? htmlspecialchars(trim($_POST['info']), ENT_QUOTES, 'UTF-8') : '';
 $submit = isset($_POST['submit_action']) ? htmlspecialchars($_POST['submit_action'], ENT_QUOTES, 'UTF-8') : (isset($_POST['submit']) ? htmlspecialchars($_POST['submit'], ENT_QUOTES, 'UTF-8') : 'save');
 $is_save_only = ($submit === 'save');
+$is_print_receipt_only = ($submit === 'print_receipt');
 $is_split_line_payment = ($submit === 'split_cash');
 $is_free_table_only = ($submit === 'free_table');
 $empty_table_after_payment = !isset($_POST['empty_table_after_payment']) || (string) $_POST['empty_table_after_payment'] !== '0';
@@ -235,7 +236,7 @@ if(in_array($pro_tybe, [INVOICE_TYPES['PURCHASE_ORDER'], INVOICE_TYPES['SALES_OR
     $paid = isset($_POST['paid']) ? floatval($_POST['paid']) : 0;
 }
 
-if ($is_save_only) {
+if ($is_save_only || $is_print_receipt_only) {
     $paid = 0;
     $paid_cash = 0;
     $paid_bank = 0;
@@ -507,7 +508,8 @@ if ($route_delivery_service) {
         if ($submit === 'cash' && ($paid_cash + $paid_bank) > 0) {
             header("Location: ../print/receipt.php?id=$last_op");
         } else {
-            header('Location: ../pos_barcode.php?delivery_saved=' . $last_op);
+            $redirectParams = ['edit' => $last_op];
+            header('Location: ../pos_barcode.php?' . http_build_query($redirectParams));
         }
         exit;
     } catch (Throwable $e) {
@@ -1040,7 +1042,7 @@ try {
 	    }
 
         $statusPaidAmount = max(0, $paid_cash + $paid_bank);
-        if ($order_type_db === 'table' && ($submit === 'save' || $is_split_line_payment)) {
+        if ($order_type_db === 'table' && ($submit === 'save' || $is_split_line_payment || $is_print_receipt_only)) {
             $statusPaidAmount = $lockedTableOrder ? (float) ($lockedTableOrder['paid_amount'] ?? 0) : 0;
         }
         $statusPaidAmount = min($statusPaidAmount, max(0, $headnet));
@@ -1717,6 +1719,12 @@ if ($submit == 'print') {
     error_log('Redirecting to split receipt: ' . $redirect_url);
     header("Location: $redirect_url");
     exit;
+} elseif ($submit == 'print_receipt') {
+    error_log('CONDITION MATCHED: submit == print_receipt');
+    $redirect_url = "../print/receipt.php?id=$last_op";
+    error_log('Redirecting to: ' . $redirect_url);
+    header("Location: $redirect_url");
+    exit;
 } elseif ($submit == 'save') {
     error_log('Redirecting with save action');
     // For save action, redirect back to POS for POS invoices, or to sales page for others
@@ -1728,8 +1736,13 @@ if ($submit == 'print') {
             error_log('Lock after save requested - redirecting to logout');
             header("Location: ../pos_barcode.php?logout=1");
         } else {
-            error_log('Header: Location: ../pos_barcode.php');
-            header("Location: ../pos_barcode.php?r=" . time());
+            $redirectParams = ['edit' => (int) $last_op];
+            if ($order_type_db === 'table' && $table_id > 0) {
+                $redirectParams['table'] = (int) $table_id;
+            }
+            $redirectUrl = '../pos_barcode.php?' . http_build_query($redirectParams);
+            error_log('Header: Location: ' . $redirectUrl);
+            header('Location: ' . $redirectUrl);
         }
     } else {
         $redirects = [

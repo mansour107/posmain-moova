@@ -544,9 +544,13 @@ div:where(.swal2-container) div:where(.swal2-popup) {
 
 .pos-current-order-controls {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr);
     gap: 0.65rem;
     margin-bottom: 0.85rem;
+}
+
+.pos-current-order-controls.pos-table-mode {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
 }
 
 .pos-table-field,
@@ -800,7 +804,7 @@ div:where(.swal2-container) div:where(.swal2-popup) {
 
 .pos-action-stack {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.25fr);
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.25fr);
     direction: ltr;
     gap: 0.65rem;
     align-items: stretch;
@@ -821,6 +825,13 @@ div:where(.swal2-container) div:where(.swal2-popup) {
     background: #ffffff !important;
     border-color: #1a2f5a !important;
     color: #1a2f5a !important;
+}
+
+.pos-print-order-btn {
+    order: 2.5;
+    background: #ffffff !important;
+    border-color: #6c757d !important;
+    color: #495057 !important;
 }
 
 .pos-pay-order-btn {

@@ -10,6 +10,29 @@ if (!isset($action_url)) {
 $posmainPosDefaults = posmain_resolve_pos_defaults($conn, is_array($rowstg ?? null) ? $rowstg : []);
 $posmainLegacyLinePresentation = new LegacyOrderLinePresentationService();
 
+$posOrderMode = 1;
+$posEditTableId = 0;
+$posEditTableName = '';
+$posEditOrderId = '';
+if (isset($rowed) && is_array($rowed)) {
+    $posEditOrderId = (string) (int) ($id ?? $rowed['id'] ?? 0);
+    $orderType = (string) ($rowed['order_type'] ?? 'takeaway');
+    if ($orderType === 'table') {
+        $posOrderMode = 2;
+        $posEditTableId = (int) ($rowed['table_id'] ?? 0);
+        if ($posEditTableId > 0) {
+            $tableLookup = $conn->query("SELECT tname FROM tables WHERE id = {$posEditTableId} AND isdeleted = 0 LIMIT 1");
+            if ($tableLookup && ($tableLookupRow = $tableLookup->fetch_assoc())) {
+                $posEditTableName = (string) $tableLookupRow['tname'];
+            }
+        }
+    } elseif ($orderType === 'delivery') {
+        $posOrderMode = 3;
+    }
+} elseif (isset($_GET['table'])) {
+    $posOrderMode = 2;
+}
+
 $legacyOfflinePrototypeEnabled = !production_guard_is_production()
     || production_guard_env_bool('POSMAIN_ENABLE_LEGACY_OFFLINE_PROTOTYPE', false);
 ?>
@@ -49,18 +72,20 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                             <!-- نوع الطلب -->
                             <div class="mb-2 pos-order-type-control">
                                 <div class="btn-group w-100" role="group">
-                                    <input type="radio" class="btn-check" id="age1" name="age" value="1" checked>
+                                    <input type="radio" class="btn-check" id="age1" name="age" value="1"
+                                        <?php if ($posOrderMode === 1) { echo 'checked'; } ?>>
                                     <label class="btn btn-outline-primary btn-sm" for="age1">
                                         تيك اواي
                                     </label>
 
                                                                                                                                                         <input type="radio" class="btn-check" id="age2" name="age" value="2"
-                                        <?php if (isset($_GET['table'])) {echo " checked ";} ?>>
+                                        <?php if ($posOrderMode === 2) { echo 'checked'; } ?>>
                                     <label class="btn btn-outline-primary btn-sm" for="age2">
                                         طاولة
                                     </label>
 
-                                    <input type="radio" class="btn-check" id="age3" name="age" value="3">
+                                    <input type="radio" class="btn-check" id="age3" name="age" value="3"
+                                        <?php if ($posOrderMode === 3) { echo 'checked'; } ?>>
                                     <label class="btn btn-outline-primary btn-sm" for="age3"
                                         onclick="openDeliveryModal()">
                                         دليفري
@@ -92,11 +117,17 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                             </div>
 
                             <!-- الطاولة الحالية -->
-                            <div class="mb-2 pos-table-visible-control">
+                            <div class="mb-2 pos-table-visible-control pos-table-field">
                                 <button type="button" class="btn btn-outline-primary btn-sm w-100"
                                     data-bs-toggle="modal" data-bs-target="#tablesModal" title="اختر الطاولة">
                                     <i class="fas fa-chair me-1"></i>
-                                    <span id="selected_table_display">اختر طاولة</span>
+                                    <span id="selected_table_display"><?php
+                                        if ($posEditTableName !== '') {
+                                            echo '<i class="fas fa-chair me-1"></i>' . htmlspecialchars($posEditTableName, ENT_QUOTES, 'UTF-8');
+                                        } else {
+                                            echo 'اختر طاولة';
+                                        }
+                                    ?></span>
                                 </button>
                                 <button type="button"
                                     class="btn btn-outline-primary btn-sm w-100 pos-transfer-table-btn mt-1"
@@ -106,10 +137,10 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                                     <i class="fas fa-exchange-alt me-1"></i>
                                     نقل الطاولة
                                 </button>
-                                <input type="hidden" id="selected_table_id" name="table_id" value="0">
-                                <input type="hidden" id="selected_table_name" name="table_name" value="">
-                                <input type="hidden" id="selected_table_case" name="selected_table_case" value="0">
-                                <input type="hidden" id="selected_order_id" name="selected_order_id" value="">
+                                <input type="hidden" id="selected_table_id" name="table_id" value="<?= (int) $posEditTableId ?>">
+                                <input type="hidden" id="selected_table_name" name="table_name" value="<?= htmlspecialchars($posEditTableName, ENT_QUOTES, 'UTF-8') ?>">
+                                <input type="hidden" id="selected_table_case" name="selected_table_case" value="<?= $posEditTableId > 0 ? '1' : '0' ?>">
+                                <input type="hidden" id="selected_order_id" name="selected_order_id" value="<?= $posOrderMode === 2 ? htmlspecialchars($posEditOrderId, ENT_QUOTES, 'UTF-8') : '' ?>">
                             </div>
 
                             <div class="collapse" id="posAdvancedSetup">
@@ -393,6 +424,10 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                                             onclick="submitPOS('save');">
                                             <i class="fas fa-bookmark me-1"></i>
                                             <?php if(isset($id)): ?>حفظ التعديل<?php else: ?>حفظ الطلب<?php endif; ?>
+                                        </button>
+                                        <button type="button" class="btn btn-outline-secondary pos-print-order-btn"
+                                            onclick="submitPOS('print_receipt');">
+                                            <i class="fas fa-print me-1"></i>طباعة
                                         </button>
                                         <button type="button" class="btn btn-primary pos-pay-order-btn"
                                             data-bs-toggle="modal" data-bs-target="#paymentModal">
@@ -1180,7 +1215,11 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
     }
 
     function ensureFormIdempotencyKey(form, action) {
-        const scope = action === 'save' ? 'pos.order.save' : (action === 'free_table' ? 'pos.table.free' : 'pos.order.pay');
+        const scope = action === 'save'
+            ? 'pos.order.save'
+            : (action === 'print_receipt'
+                ? 'pos.order.print'
+                : (action === 'free_table' ? 'pos.table.free' : 'pos.order.pay'));
         let keyInput = form.querySelector('input[name="idempotency_key"]');
         if (!keyInput) {
             keyInput = document.createElement('input');
@@ -1231,10 +1270,11 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
 
         // جمع بيانات الدفع
         const isSaveOnly = action === 'save';
+        const isPrintReceiptOnly = action === 'print_receipt';
         const isSplitLinePayment = action === 'split_cash';
         let paidCash = parseFloat($('#modal_paid_cash').val()) || 0;
         let paidBank = parseFloat($('#modal_paid_bank').val()) || 0;
-        if (isSaveOnly || isFreeTableOnly) {
+        if (isSaveOnly || isPrintReceiptOnly || isFreeTableOnly) {
             paidCash = 0;
             paidBank = 0;
         }
@@ -1260,7 +1300,7 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
         console.log('==================================');
 
         // التحقق من صحة البيانات
-        if (!isSaveOnly && !isFreeTableOnly && !isSplitLinePayment && net > 0 && paidCash + paidBank <= 0) {
+        if (!isSaveOnly && !isPrintReceiptOnly && !isFreeTableOnly && !isSplitLinePayment && net > 0 && paidCash + paidBank <= 0) {
             Swal.fire({
                 icon: 'warning',
                 title: 'تنبيه',
@@ -1269,7 +1309,7 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
             return false;
         }
 
-        if (!isSaveOnly && !isFreeTableOnly && paidCash > 0 && (!fundId || fundId == '0')) {
+        if (!isSaveOnly && !isPrintReceiptOnly && !isFreeTableOnly && paidCash > 0 && (!fundId || fundId == '0')) {
             Swal.fire({
                 icon: 'warning',
                 title: 'تنبيه',
@@ -1278,7 +1318,7 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
             return false;
         }
 
-        if (!isSaveOnly && !isFreeTableOnly && paidBank > 0 && (!bankId || bankId == '0' || bankId == '')) {
+        if (!isSaveOnly && !isPrintReceiptOnly && !isFreeTableOnly && paidBank > 0 && (!bankId || bankId == '0' || bankId == '')) {
             Swal.fire({
                 icon: 'warning',
                 title: 'تنبيه',
@@ -1387,9 +1427,11 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
         ensureFormIdempotencyKey(form, action);
 
         let saveBtn = $(".pos-save-order-btn");
+        let printOrderBtn = $(".pos-print-order-btn");
         let printBtn = $(".pos-pay-confirm-btn");
 
         if (saveBtn.length > 0) saveBtn.prop('disabled', true).html('<i class="fas fa-spinner fa-spin"></i> جاري الحفظ...');
+        if (printOrderBtn.length > 0) printOrderBtn.prop('disabled', true).html('<i class="fas fa-spinner fa-spin"></i> جاري الطباعة...');
         if (printBtn.length > 0) printBtn.prop('disabled', true).html('<i class="fas fa-spinner fa-spin"></i> جاري الدفع...');
 
         $('#paymentModal').modal('hide');
