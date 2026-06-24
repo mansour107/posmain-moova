@@ -1066,7 +1066,7 @@ class PosOrderMutationService
 
     private function insertTakeawaySalesJournal(mysqli $conn, int $orderId, int $proId, float $amount, string $date, int $customerId, int $userId, int $salesAccountId = 0): array
     {
-        $salesAccountId = posmain_resolve_sales_account_id($conn, $salesAccountId > 0 ? $salesAccountId : 91);
+        $salesAccountId = posmain_ensure_sales_account($conn, $salesAccountId > 0 ? $salesAccountId : 91);
         if ($salesAccountId <= 0) {
             throw new InvalidArgumentException('لا يوجد حساب مبيعات صالح في دليل الحسابات');
         }

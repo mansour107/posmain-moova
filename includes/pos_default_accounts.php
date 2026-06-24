@@ -1,5 +1,26 @@
 <?php
 
+if (!function_exists('posmain_acc_head_has_column')) {
+    function posmain_acc_head_has_column(mysqli $conn, string $column): bool
+    {
+        static $cache = [];
+        $safeColumn = preg_replace('/[^a-z0-9_]/i', '', $column);
+        if ($safeColumn === '') {
+            return false;
+        }
+
+        $key = spl_object_hash($conn) . ':' . $safeColumn;
+        if (array_key_exists($key, $cache)) {
+            return $cache[$key];
+        }
+
+        $result = $conn->query("SHOW COLUMNS FROM acc_head LIKE '{$safeColumn}'");
+        $cache[$key] = $result && $result->num_rows > 0;
+
+        return $cache[$key];
+    }
+}
+
 if (!function_exists('posmain_insert_acc_head_if_missing')) {
     function posmain_insert_acc_head_if_missing(mysqli $conn, array $account): int
     {
@@ -26,20 +47,49 @@ if (!function_exists('posmain_insert_acc_head_if_missing')) {
         $tenant = (int) ($account['tenant'] ?? 0);
         $branch = (int) ($account['branch'] ?? 0);
 
+        $columns = [];
+        $placeholders = [];
+        $types = '';
+        $values = [];
+
         if ($id > 0) {
-            $stmt = $conn->prepare('
-                INSERT INTO acc_head (id, code, aname, parent_id, is_basic, is_stock, is_fund, isdeleted, tenant, branch)
-                VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
-            ');
-            $stmt->bind_param('issiiiiii', $id, $code, $aname, $parentId, $isBasic, $isStock, $isFund, $tenant, $branch);
-        } else {
-            $stmt = $conn->prepare('
-                INSERT INTO acc_head (code, aname, parent_id, is_basic, is_stock, is_fund, isdeleted, tenant, branch)
-                VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)
-            ');
-            $stmt->bind_param('ssiiiiii', $code, $aname, $parentId, $isBasic, $isStock, $isFund, $tenant, $branch);
+            $columns[] = 'id';
+            $placeholders[] = '?';
+            $types .= 'i';
+            $values[] = $id;
         }
 
+        foreach ([
+            ['code', 's', $code],
+            ['aname', 's', $aname],
+            ['parent_id', 'i', $parentId],
+            ['is_basic', 'i', $isBasic],
+            ['is_stock', 'i', $isStock],
+            ['is_fund', 'i', $isFund],
+            ['isdeleted', 'i', 0],
+        ] as $field) {
+            $columns[] = $field[0];
+            $placeholders[] = '?';
+            $types .= $field[1];
+            $values[] = $field[2];
+        }
+
+        if (posmain_acc_head_has_column($conn, 'tenant')) {
+            $columns[] = 'tenant';
+            $placeholders[] = '?';
+            $types .= 'i';
+            $values[] = $tenant;
+        }
+        if (posmain_acc_head_has_column($conn, 'branch')) {
+            $columns[] = 'branch';
+            $placeholders[] = '?';
+            $types .= 'i';
+            $values[] = $branch;
+        }
+
+        $sql = 'INSERT INTO acc_head (' . implode(', ', $columns) . ') VALUES (' . implode(', ', $placeholders) . ')';
+        $stmt = $conn->prepare($sql);
+        $stmt->bind_param($types, ...$values);
         $stmt->execute();
         $insertId = $id > 0 ? $id : (int) $stmt->insert_id;
         $stmt->close();
@@ -54,6 +104,8 @@ if (!function_exists('posmain_ensure_pos_default_accounts')) {
      */
     function posmain_ensure_pos_default_accounts(mysqli $conn): void
     {
+        posmain_ensure_sales_account($conn);
+
         $stockCount = $conn->query('SELECT COUNT(*) AS c FROM acc_head WHERE is_stock = 1 AND isdeleted = 0');
         $hasStock = $stockCount && (int) ($stockCount->fetch_assoc()['c'] ?? 0) > 0;
         if ($hasStock) {
@@ -313,21 +365,70 @@ if (!function_exists('posmain_truncate_invoice_info')) {
     }
 }
 
-if (!function_exists('posmain_resolve_sales_account_id')) {
-    function posmain_resolve_sales_account_id(mysqli $conn, int $preferredId = 91): int
+if (!function_exists('posmain_find_sales_account_id')) {
+    function posmain_find_sales_account_id(mysqli $conn, int $preferredId = 91): int
     {
-        if ($preferredId > 0 && posmain_acc_head_active_id($conn, $preferredId)) {
-            return $preferredId;
+        foreach (array_unique([$preferredId, 93, 91]) as $candidateId) {
+            if ($candidateId > 0 && posmain_acc_head_active_id($conn, $candidateId)) {
+                return $candidateId;
+            }
         }
 
-        foreach (["code = '3111'", "code = '311'", "code LIKE '41%'"] as $whereSql) {
-            $resolved = posmain_resolve_default_account_id($conn, 0, $whereSql);
+        foreach ([
+            "code = '3111'",
+            "code = '311'",
+            "code LIKE '31%'",
+            "aname LIKE '%مبيع%'",
+        ] as $whereSql) {
+            $resolved = posmain_resolve_default_account_id(
+                $conn,
+                0,
+                $whereSql . ' AND is_stock = 0 AND is_fund = 0 AND is_basic = 0'
+            );
             if ($resolved > 0) {
                 return $resolved;
             }
         }
 
         return 0;
+    }
+}
+
+if (!function_exists('posmain_ensure_sales_account')) {
+    /**
+     * Shops bootstrapped for POS often have store/fund/client but no revenue account yet.
+     */
+    function posmain_ensure_sales_account(mysqli $conn, int $preferredId = 91): int
+    {
+        $existing = posmain_find_sales_account_id($conn, $preferredId);
+        if ($existing > 0) {
+            return $existing;
+        }
+
+        $parentId = posmain_insert_acc_head_if_missing($conn, [
+            'code' => '311',
+            'aname' => 'صافي المبيعات',
+            'parent_id' => 0,
+            'is_basic' => 1,
+        ]);
+
+        $salesId = posmain_insert_acc_head_if_missing($conn, [
+            'code' => '3111',
+            'aname' => 'المبيعات',
+            'parent_id' => $parentId > 0 ? $parentId : 0,
+        ]);
+        if ($salesId > 0) {
+            return $salesId;
+        }
+
+        return posmain_find_sales_account_id($conn, $preferredId);
+    }
+}
+
+if (!function_exists('posmain_resolve_sales_account_id')) {
+    function posmain_resolve_sales_account_id(mysqli $conn, int $preferredId = 91): int
+    {
+        return posmain_ensure_sales_account($conn, $preferredId);
     }
 }
 
@@ -546,7 +647,7 @@ if (!function_exists('posmain_resolve_pos_invoice_accounts')) {
             $paymentBankId = posmain_resolve_payment_bank_id($conn, $paymentBankId);
         }
 
-        $salesAccountId = posmain_resolve_sales_account_id(
+        $salesAccountId = posmain_ensure_sales_account(
             $conn,
             (int) ($posted['sales_account_id'] ?? 91)
         );

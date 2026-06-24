@@ -60,6 +60,7 @@ function posDefaultAccountsTestMain(): void
         posDefaultAccountsAssert((int) $defaults['client_id'] === 148, 'resolved defaults should expose repaired client id');
 
         posDefaultAccountsTestOrderContext($conn);
+        posDefaultAccountsTestMinimalShopSalesAccount($conn);
 
         $legacyConn = @new mysqli($host, $user, $pass, '', $port);
         if (!$legacyConn->connect_errno) {
@@ -70,7 +71,7 @@ function posDefaultAccountsTestMain(): void
                 $legacyConn->select_db($legacyDb);
                 $legacyConn->query('
                     CREATE TABLE acc_head (
-                        id INT PRIMARY KEY,
+                        id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
                         code VARCHAR(32) NOT NULL,
                         aname VARCHAR(120) NOT NULL,
                         parent_id INT NOT NULL DEFAULT 0,
@@ -132,11 +133,28 @@ function posDefaultAccountsTestOrderContext(mysqli $conn): void
     posDefaultAccountsAssert($delivery['order_type_db'] === 'delivery', 'delivery fields should override stale table mode');
 }
 
+function posDefaultAccountsTestMinimalShopSalesAccount(mysqli $conn): void
+{
+    $conn->query('DELETE FROM acc_head');
+    $conn->query("INSERT INTO acc_head (id, code, aname, parent_id, is_basic, is_stock, is_fund, isdeleted) VALUES
+        (35, '213', 'Employees', 0, 1, 0, 0, 0),
+        (274, '123001', 'Main Store', 0, 0, 1, 0, 0),
+        (275, '213001', 'Employee 1', 35, 0, 0, 0, 0),
+        (276, '121001', 'Default Fund', 0, 0, 0, 1, 0),
+        (277, '122001', 'Default Client', 0, 0, 0, 0, 0)
+    ");
+
+    $salesId = posmain_ensure_sales_account($conn, 91);
+    posDefaultAccountsAssert($salesId > 0, 'minimal shop should bootstrap a sales account');
+    $row = $conn->query("SELECT code, aname FROM acc_head WHERE id = {$salesId} AND isdeleted = 0")->fetch_assoc();
+    posDefaultAccountsAssert(($row['code'] ?? '') === '3111', 'bootstrapped sales account should use code 3111');
+}
+
 function posDefaultAccountsCreateSchema(mysqli $conn): void
 {
     $conn->query('
         CREATE TABLE acc_head (
-            id INT PRIMARY KEY,
+            id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
             code VARCHAR(32) NOT NULL,
             aname VARCHAR(120) NOT NULL,
             parent_id INT NOT NULL DEFAULT 0,

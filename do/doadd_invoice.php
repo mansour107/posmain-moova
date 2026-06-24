@@ -1154,7 +1154,7 @@ try {
                 "INSERT INTO journal_entries (journal_id, account_id, debit, credit, tybe, op_id)
                  VALUES (?, ?, 0, ?, 1, ?)"
             );
-            $sales_account = $sales_account_id > 0 ? $sales_account_id : posmain_resolve_sales_account_id($conn, 91);
+            $sales_account = $sales_account_id > 0 ? $sales_account_id : posmain_ensure_sales_account($conn, 91);
             if ($sales_account <= 0) {
                 throw new Exception('لا يوجد حساب مبيعات صالح في دليل الحسابات');
             }
