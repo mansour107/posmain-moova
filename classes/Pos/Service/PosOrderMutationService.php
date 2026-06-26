@@ -2720,6 +2720,24 @@ class PosOrderMutationService
                 && !empty($availability['recipe_enabled'])
                 && (string) ($availability['availability_status'] ?? '') === 'recipe_unavailable';
             if ($isRecipeUnavailable) {
+                // Warn-only contract (Fix 3): when the shop runs non-strict with
+                // allow-negative-stock-with-approval, the cashier presentation marks the
+                // item availability_warn_only=true and the JS shows a non-blocking toast
+                // instead of the manager-approval modal. The server MUST honor the same
+                // contract here — do NOT throw MANAGER_APPROVAL_REQUIRED for warn-only.
+                // Record a warn-only audit entry (no approval id) and proceed with the sale.
+                if (!empty($availability['availability_warn_only'])) {
+                    $this->recordRecipeStockOverrideAudit(
+                        $conn,
+                        $itemId,
+                        $availability,
+                        ['approved_by' => $this->contextUserId($request, $context), 'warn_only' => true],
+                        $request,
+                        $context,
+                    );
+                    continue;
+                }
+
                 $approval = $this->managerApprovalService->requireApprovedIfNeeded(
                     $conn,
                     'recipe.stock_override',
@@ -2770,10 +2788,11 @@ class PosOrderMutationService
                 isset($availability['recipe_id']) ? (int) $availability['recipe_id'] : null,
                 null,
                 [
-                    'manager_approval_id' => (int) $approval['id'],
+                    'manager_approval_id' => (int) ($approval['id'] ?? 0),
                     'unavailable_reason' => $availability['unavailable_reason'] ?? $availability['recipe_unavailable_reason'] ?? null,
                     'effective_available_qty' => $availability['recipe_effective_available_qty'] ?? null,
                     'source' => $context['event_source'] ?? 'pos_order',
+                    'warn_only' => !empty($approval['warn_only']),
                 ]
             );
         } catch (Throwable $exception) {
