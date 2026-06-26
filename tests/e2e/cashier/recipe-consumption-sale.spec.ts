@@ -39,13 +39,15 @@ test('cashier sells recipe item past availability and triggers recipe consumptio
     if (req.url().includes('manager_approval.php')) managerApproval.push(req.url());
   });
 
-  // Surface the recipe item via search if not on the default grid.
+  // Surface the recipe item via search if not on the default grid. The POS search input
+  // is #searchInput (and #posUnifiedSearch on newer layouts); older layouts used #search_item.
   let card = page.locator(`.item-wrapper [data-item-id="${RECIPE_ITEM_ID}"]`).first();
   if ((await card.count()) === 0) {
-    const search = page.locator('#search_item, input[name="search_item"]').first();
+    const search = page.locator('#searchInput, #posUnifiedSearch, #search_item, input[name="search_item"]').first();
     if (await search.isVisible().catch(() => false)) {
       await search.fill(RECIPE_ITEM_NAME);
       await page.waitForLoadState('networkidle').catch(() => undefined);
+      await page.waitForTimeout(1200);
       card = page.locator(`.item-wrapper [data-item-id="${RECIPE_ITEM_ID}"]`).first();
     }
   }

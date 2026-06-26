@@ -39,7 +39,12 @@ try {
     $unavailable = $items[7001];
     recipePosGridAvailabilityEndpointRuntimeAssert((int) ($unavailable['is_available'] ?? 1) === 0, 'recipe item with missing ingredient should be unavailable');
     recipePosGridAvailabilityEndpointRuntimeAssert(($unavailable['availability_status'] ?? '') === 'recipe_unavailable', 'unavailable recipe item should expose recipe_unavailable status');
-    recipePosGridAvailabilityEndpointRuntimeAssert(($unavailable['availability_can_add'] ?? true) === false, 'unavailable recipe item should not be addable');
+    // Warn-only oversell contract (Fix 3): strict stock OFF + allow-negative-with-approval ON
+    // means an unavailable recipe item is still addable (availability_can_add=true) with a
+    // non-blocking warn toast and NO manager-approval gate.
+    recipePosGridAvailabilityEndpointRuntimeAssert(($unavailable['availability_can_add'] ?? false) === true, 'unavailable recipe item should be addable under warn-only contract');
+    recipePosGridAvailabilityEndpointRuntimeAssert(($unavailable['availability_warn_only'] ?? false) === true, 'unavailable recipe item should be flagged warn-only');
+    recipePosGridAvailabilityEndpointRuntimeAssert(($unavailable['availability_requires_manager_override'] ?? true) === false, 'unavailable recipe item should not require manager override under warn-only');
     recipePosGridAvailabilityEndpointRuntimeAssert(($unavailable['recipe_enabled'] ?? false) === true, 'unavailable recipe item should expose recipe_enabled');
     recipePosGridAvailabilityEndpointRuntimeAssert((int) ($unavailable['recipe_id'] ?? 0) === 101, 'unavailable recipe item should expose active recipe id');
     recipePosGridAvailabilityEndpointRuntimeAssert(recipePosGridAvailabilityEndpointRuntimeDecimalEquals($unavailable['recipe_effective_available_qty'] ?? '', '0.000000'), 'unavailable recipe item should expose zero effective qty');
@@ -70,7 +75,8 @@ try {
     $barcodeItem = $barcodePayload['item'] ?? [];
     recipePosGridAvailabilityEndpointRuntimeAssert((int) ($barcodeItem['id'] ?? 0) === 7001, 'barcode endpoint should return the searched item');
     recipePosGridAvailabilityEndpointRuntimeAssert(($barcodeItem['availability_status'] ?? '') === 'recipe_unavailable', 'barcode endpoint should expose recipe availability status');
-    recipePosGridAvailabilityEndpointRuntimeAssert(($barcodeItem['availability_can_add'] ?? true) === false, 'barcode endpoint should block unavailable recipe item');
+    recipePosGridAvailabilityEndpointRuntimeAssert(($barcodeItem['availability_can_add'] ?? false) === true, 'barcode endpoint should allow unavailable recipe item under warn-only contract');
+    recipePosGridAvailabilityEndpointRuntimeAssert(($barcodeItem['availability_warn_only'] ?? false) === true, 'barcode endpoint should flag unavailable recipe item warn-only');
     recipePosGridAvailabilityEndpointRuntimeAssert(($barcodeItem['unavailable_reason'] ?? '') === 'Required ingredient out of stock.', 'barcode endpoint should expose cashier unavailable reason');
     recipePosGridAvailabilityEndpointRuntimeAssert(recipePosGridAvailabilityEndpointRuntimeDecimalEquals($barcodeItem['recipe_effective_available_qty'] ?? '', '0.000000'), 'barcode endpoint should expose effective recipe quantity');
     foreach (['cost_price', 'unit_cost', 'total_cost', 'ingredient_cost_json', 'internal_cost_per_sell_unit'] as $sensitiveKey) {
@@ -138,6 +144,13 @@ function recipePosGridAvailabilityEndpointRuntimeRunChild(string $db, array $pay
         'POSMAIN_RECIPE_MOOVA_SYNC' => '0',
         'POSMAIN_RECIPE_COST_PUBLIC_PAYLOADS' => '0',
         'POSMAIN_ROUTER_ENABLED' => '0',
+        // Pin the production warn-only oversell contract (Fix 3): strict stock OFF and
+        // allow-negative-stock-with-approval ON. This makes unavailable recipe items
+        // availability_warn_only=true and availability_can_add=true (sale allowed with a
+        // non-blocking toast, no manager-approval modal). Pinning keeps this endpoint test
+        // hermetic regardless of the host .env so the asserted contract is deterministic.
+        'POSMAIN_RECIPE_STRICT_STOCK' => '0',
+        'POSMAIN_RECIPE_ALLOW_NEGATIVE_STOCK_WITH_APPROVAL' => '1',
     ]);
     $command = [
         PHP_BINARY,

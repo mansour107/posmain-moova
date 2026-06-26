@@ -37,10 +37,13 @@ test.describe('cashier: warn-only oversell (Fix 3)', () => {
 
     if ((await warnOnlyCard.count()) === 0) {
       // Try the POS search box to surface the out-of-stock recipe item (e.g. "كريب برجر").
-      const search = page.locator('#search_item, input[name="search_item"]').first();
+      // The search input is #searchInput (and #posUnifiedSearch on newer layouts); older
+      // layouts used #search_item.
+      const search = page.locator('#searchInput, #posUnifiedSearch, #search_item, input[name="search_item"]').first();
       if (await search.isVisible().catch(() => false)) {
         await search.fill('كريب برجر');
         await page.waitForLoadState('networkidle').catch(() => undefined);
+        await page.waitForTimeout(1200);
         warnOnlyCard = page.locator('.item-wrapper [data-availability-warn-only="1"]').first();
       }
     }
