@@ -1,0 +1,37 @@
+{
+  "run_id": "qa-2026-06-24-example",
+  "created_at_utc": "2026-06-24T12:00:00Z",
+  "git_commit": "",
+  "users": {
+    "admin": "p6_admin",
+    "manager": "p6_manager",
+    "cashier": "p6_cashier",
+    "waiter": "p6_waiter",
+    "password": "P6demo123!"
+  },
+  "local": {
+    "base_url": "http://127.0.0.1:8010",
+    "mysql_host": "127.0.0.1",
+    "mysql_port": 3307,
+    "mysql_user": "root",
+    "mysql_pass": "",
+    "db_name": "kody2",
+    "shop_slug": "qa-campaign-local-example",
+    "branch_uuid": "aaaaaaaa-bbbb-4ccc-dddd-eeeeeeeeeeee",
+    "branch_secret": "replace-with-generated-secret",
+    "role": "branch"
+  },
+  "hosted": {
+    "base_url": "https://your-hosted-domain.example",
+    "ssh_host": "hetzner",
+    "ssh_user": "",
+    "remote_app_path": "/var/www/posmain",
+    "shop_slug": "qa-campaign-hosted-example",
+    "branch_uuid": "bbbbbbbb-cccc-4ddd-8eee-ffffffffffff",
+    "branch_secret": "replace-with-generated-secret",
+    "role": "cloud"
+  },
+  "sync": {
+    "pair_local_to_hosted": true
+  }
+}

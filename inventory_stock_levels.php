@@ -326,7 +326,10 @@ include __DIR__ . '/includes/sidebar.php';
                             </table>
                         </div>
                         <?php if (!$inventoryStockLevelRows): ?>
-                            <div class="alert alert-secondary mb-0">لم يتم ضبط مستويات مخزون بعد.</div>
+                            <div class="alert alert-info mb-0">
+                                لم يتم ضبط مستويات مخزون بعد. تأكد من وجود <a href="add_acc.php">مخزن</a> و<a href="myitems.php">أصناف</a>،
+                                ثم استلم أول كمية من <a href="inventory_purchasing.php">شاشة استلام المشتريات</a>، أو أضِف مستوى مخزون يدويًا من النموذج أعلاه.
+                            </div>
                         <?php endif; ?>
                     </div>
                 </div>

@@ -123,6 +123,7 @@ class ItemAvailabilityService
                 'availability_requires_manager_override',
                 'availability_override_allowed',
                 'availability_override_permission',
+                'availability_warn_only',
                 'recipe_enabled',
                 'recipe_id',
                 'recipe_computed_available_qty',
@@ -215,19 +216,36 @@ class ItemAvailabilityService
         $availability['availability_requires_manager_override'] = false;
         $availability['availability_override_allowed'] = false;
         $availability['availability_override_permission'] = '';
+        // Warn-only flag: the sale is allowed but the cashier should see a non-blocking
+        // warning toast (e.g. ingredient stock insufficient under non-strict mode). The JS
+        // must NOT open the manager-approval modal for this flag.
+        $availability['availability_warn_only'] = false;
 
         if (!$availability['availability_can_add']) {
             $manualAvailable = array_key_exists('manual_is_available', $availability)
                 ? (bool) $availability['manual_is_available']
                 : false;
             if ($manualAvailable && !empty($availability['recipe_enabled'])) {
-                $overrideAllowed = !$this->recipeFlags->isStrictStockEnabled()
+                $strictStock = $this->recipeFlags->isStrictStockEnabled();
+                $overrideAllowed = !$strictStock
                     && $this->recipeSettingsService->allowNegativeStockWithApproval();
                 $availability['availability_status'] = 'recipe_unavailable';
-                $availability['availability_requires_manager_override'] = true;
-                $availability['availability_override_allowed'] = $overrideAllowed;
-                $availability['availability_can_add'] = $overrideAllowed;
-                $availability['availability_override_permission'] = 'pos.recipe_stock_override';
+
+                if ($strictStock) {
+                    // Strict mode: keep the manager-approval gate (hard override path).
+                    $availability['availability_requires_manager_override'] = true;
+                    $availability['availability_override_allowed'] = $overrideAllowed;
+                    $availability['availability_can_add'] = $overrideAllowed;
+                    $availability['availability_override_permission'] = 'pos.recipe_stock_override';
+                } else {
+                    // Non-strict + allow-negative-with-approval: TRUE warn-only. The sale is
+                    // allowed with a warning toast; no manager-approval modal is opened.
+                    $availability['availability_warn_only'] = $overrideAllowed;
+                    $availability['availability_can_add'] = $overrideAllowed;
+                    if (!$overrideAllowed) {
+                        $availability['availability_requires_manager_override'] = false;
+                    }
+                }
 
                 return $availability;
             }
@@ -242,6 +260,8 @@ class ItemAvailabilityService
             if ($effectiveQty > 0 && $effectiveQty <= 5) {
                 $availability['availability_status'] = 'recipe_low';
                 $availability['availability_low_stock'] = true;
+                // Low stock is sellable — flag it as warn-only so the cashier gets a toast.
+                $availability['availability_warn_only'] = true;
 
                 return $availability;
             }

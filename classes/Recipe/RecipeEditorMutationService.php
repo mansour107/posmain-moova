@@ -31,6 +31,7 @@ class RecipeEditorMutationService
             case 'update_draft':
                 $recipeId = $this->positiveInt($input['recipe_id'] ?? null, 'Recipe id is required.');
                 $this->definition->updateDraft($conn, $recipeId, $this->headerUpdatePayload($input), $actor);
+                $this->syncAutoItemCosts($conn, $recipeId);
                 return $this->result('Recipe draft updated.', $recipeId);
 
             case 'add_line':
@@ -73,6 +74,7 @@ class RecipeEditorMutationService
             case 'clone_new_version':
                 $recipeId = $this->positiveInt($input['recipe_id'] ?? null, 'Recipe id is required.');
                 $draft = $this->definition->cloneAsNewVersion($conn, $recipeId, $actor);
+                $this->syncAutoItemCosts($conn, (int) $draft['id']);
                 return $this->result('Recipe cloned into a new draft version.', (int) $draft['id']);
 
             case 'save_variations':

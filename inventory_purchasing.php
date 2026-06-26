@@ -477,6 +477,19 @@ include __DIR__ . '/includes/sidebar.php';
                 <div class="alert alert-warning mt-3 mb-0">هذه الشاشة جاهزة، لكن التسجيل يحتاج وضع bridge أو live للمخزون.</div>
             <?php endif; ?>
 
+            <?php if (count($inventoryPurchaseSuppliers) === 0): ?>
+                <div class="alert alert-info mt-3 mb-0">
+                    لا يوجد موردون مسجّلون بعد. لإتمام عمليات الاستلام، أضف حساب مورد برمز يبدأ بـ <code>211</code> من
+                    <a href="add_acc.php">صفحة الحسابات</a>، أو سيتم إنشاء مورد افتراضي تلقائيًا عند فتح شاشة النقطة.
+                </div>
+            <?php endif; ?>
+
+            <?php if (count($inventoryPurchaseStores) === 0): ?>
+                <div class="alert alert-info mt-3 mb-0">
+                    لا يوجد مخزن مسجّل. أضف حساب مخزون من <a href="add_acc.php">صفحة الحسابات</a> لإتمام الاستلام.
+                </div>
+            <?php endif; ?>
+
             <div class="inventory-receiving-grid">
                 <div class="inventory-panel">
                     <div class="inventory-panel-header">

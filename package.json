@@ -1,0 +1,26 @@
+{
+  "name": "posmain-e2e",
+  "private": true,
+  "scripts": {
+    "test:e2e": "playwright test",
+    "test:e2e:shared": "playwright test --project=shared",
+    "test:e2e:cashier": "playwright test --project=cashier",
+    "test:e2e:waiter": "playwright test --project=waiter",
+    "test:e2e:manager": "playwright test --project=manager",
+    "test:e2e:owner": "playwright test --project=owner",
+    "test:e2e:sync_ops": "playwright test --project=sync_ops",
+    "test:persona": "php tools/run_persona_tests.php",
+    "test:persona:list": "php tools/run_persona_tests.php --list",
+    "test:e2e:campaign:local": "POSMAIN_TEST_HTTP_BASE=http://127.0.0.1:8010 POSMAIN_QA_ENV=local npx playwright test",
+    "test:e2e:campaign:hosted": "POSMAIN_QA_ENV=hosted npx playwright test",
+    "qa:campaign:provision": "php tools/qa/provision_qa_campaign_shop.php",
+    "qa:campaign": "php tools/run_persona_qa_campaign.php",
+    "qa:campaign:local": "php tools/run_persona_qa_campaign.php --provision --local-only --continue-on-failure",
+    "qa:report": "php tools/generate_persona_qa_report.php"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.52.0",
+    "@types/node": "^22.15.0",
+    "typescript": "^5.8.3"
+  }
+}

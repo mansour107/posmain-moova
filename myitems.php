@@ -295,6 +295,13 @@ $itemRows = $inventoryStockReadService->decorateItems($conn, $itemRows);
                                 </td>
                             </tr>
                         <?php endforeach; ?>
+                        <?php if (count($itemRows) === 0): ?>
+                            <tr>
+                                <td colspan="8" class="text-center text-muted py-4">
+                                    لا توجد أصناف بعد. أضف أول صنف من <a href="add_item.php">صفحة إضافة صنف</a>.
+                                </td>
+                            </tr>
+                        <?php endif; ?>
                         </tbody>
                     </table>
                 </div>

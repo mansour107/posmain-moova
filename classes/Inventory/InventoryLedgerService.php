@@ -6,6 +6,7 @@ require_once __DIR__ . '/InventoryFeatureFlags.php';
 require_once __DIR__ . '/InventoryItemPolicyService.php';
 require_once __DIR__ . '/../Recipe/Repository/InventoryBalanceRepository.php';
 require_once __DIR__ . '/../Recipe/Repository/InventoryMovementRepository.php';
+require_once __DIR__ . '/../Recipe/RecipeAffectedItemCostService.php';
 
 class InventoryLedgerService
 {
@@ -375,6 +376,8 @@ VALUES (?, ?, ?, 'inventory_movement', ?, 'record_inventory_movement', ?, ?, ?)"
             $stmt->execute();
             $stmt->close();
 
+            $this->resyncRecipeItemCostsForIngredient($conn, $itemId);
+
             return;
         }
         if ($request->movementType === 'purchase' && $this->columnExists($conn, 'myitems', 'cost_price')) {
@@ -383,6 +386,8 @@ VALUES (?, ?, ?, 'inventory_movement', ?, 'record_inventory_movement', ?, ?, ?)"
             $stmt->execute();
             $stmt->close();
 
+            $this->resyncRecipeItemCostsForIngredient($conn, $itemId);
+
             return;
         }
 
@@ -390,6 +395,29 @@ VALUES (?, ?, ?, 'inventory_movement', ?, 'record_inventory_movement', ?, ?, ?)"
         $stmt->bind_param('si', $qtyOnHand, $itemId);
         $stmt->execute();
         $stmt->close();
+    }
+
+    /**
+     * Keep sellable item cost in sync when an ingredient's cost changes via a purchase
+     * movement. Covers both the legacy invoice path and the ledger purchase path because
+     * updateLegacyMirror is the lowest common write point. Failures are logged, never
+     * propagated, so a recipe resync problem cannot break a purchase receipt.
+     */
+    private function resyncRecipeItemCostsForIngredient(mysqli $conn, int $ingredientItemId): void
+    {
+        if ($ingredientItemId < 1) {
+            return;
+        }
+
+        try {
+            (new RecipeAffectedItemCostService())->resyncItemsUsingIngredient($conn, $ingredientItemId);
+        } catch (Throwable $exception) {
+            error_log(sprintf(
+                '[recipe_cost_resync] ledger hook failed ingredient_item_id=%d: %s',
+                $ingredientItemId,
+                $exception->getMessage()
+            ));
+        }
     }
 
     private function availabilitySignals(InventoryMovementRequest $request): array

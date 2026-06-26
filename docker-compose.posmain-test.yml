@@ -28,6 +28,7 @@ services:
     ports:
       - "127.0.0.1:8010:8000"
     environment:
+      TZ: Africa/Cairo
       PHP_CLI_SERVER_WORKERS: "4"
       POSMAIN_SESSION_DRIVER: file
       POSMAIN_BRANCH_WORKER_ENV_FILE: /app/.env.branch-worker

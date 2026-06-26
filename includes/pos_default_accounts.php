@@ -151,6 +151,51 @@ if (!function_exists('posmain_insert_acc_head_if_missing')) {
     }
 }
 
+if (!function_exists('posmain_ensure_pos_default_suppliers')) {
+    /**
+     * Ensure at least one selectable supplier account exists (acc_head code LIKE '211%' AND is_basic = 0).
+     *
+     * Inventory goods receipt (inventory_purchasing.php) filters suppliers by code LIKE '211%' AND is_basic = 0,
+     * but new shops bootstrapped via EmptyShopBootstrap import schema only (no INSERTs) and the default
+     * account bootstrap seeds store/fund/client/employee/sales only. This seeds a parent supplier group plus a
+     * default leaf supplier so goods receipt is usable from day one. Runs regardless of the stock-account guard.
+     */
+    function posmain_ensure_pos_default_suppliers(mysqli $conn): void
+    {
+        if (posmain_acc_head_has_column($conn, 'is_basic')) {
+            $leafCount = $conn->query(
+                "SELECT COUNT(*) AS c FROM acc_head WHERE isdeleted = 0 AND is_basic = 0 AND code LIKE '211%'"
+            );
+            if ($leafCount && (int) ($leafCount->fetch_assoc()['c'] ?? 0) > 0) {
+                return;
+            }
+        } else {
+            $leafCount = $conn->query(
+                "SELECT COUNT(*) AS c FROM acc_head WHERE isdeleted = 0 AND code LIKE '211%'"
+            );
+            if ($leafCount && (int) ($leafCount->fetch_assoc()['c'] ?? 0) > 0) {
+                return;
+            }
+        }
+
+        $parentId = posmain_insert_acc_head_if_missing($conn, [
+            'code' => '211',
+            'aname' => 'الموردين',
+            'parent_id' => 0,
+            'is_basic' => 1,
+        ]);
+
+        posmain_insert_acc_head_if_missing($conn, [
+            'code' => '211001',
+            'aname' => 'المورد الافتراضي',
+            'parent_id' => $parentId > 0 ? $parentId : 0,
+            'is_basic' => 0,
+            'is_stock' => 0,
+            'is_fund' => 0,
+        ]);
+    }
+}
+
 if (!function_exists('posmain_ensure_pos_default_accounts')) {
     /**
      * Create the minimum cashier accounts when a shop schema exists without acc_head rows.
@@ -158,6 +203,7 @@ if (!function_exists('posmain_ensure_pos_default_accounts')) {
     function posmain_ensure_pos_default_accounts(mysqli $conn): void
     {
         posmain_ensure_sales_account($conn);
+        posmain_ensure_pos_default_suppliers($conn);
 
         if (posmain_acc_head_has_column($conn, 'is_stock')) {
             $stockCount = $conn->query('SELECT COUNT(*) AS c FROM acc_head WHERE is_stock = 1 AND isdeleted = 0');

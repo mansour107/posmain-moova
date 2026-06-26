@@ -206,26 +206,36 @@ final class Phase6DemoSeeder
     private function seedAccounts(): void
     {
         $accounts = [
+            'supplier_parent' => ['code' => '211P6DEMO', 'aname' => 'P6-DEMO Suppliers', 'parent_id' => 0, 'is_stock' => 0, 'is_fund' => 0, 'is_basic' => 1],
+            'supplier' => ['code' => '211P6DEMO001', 'aname' => 'P6-DEMO Default Supplier', 'parent_id' => 0, 'is_stock' => 0, 'is_fund' => 0, 'is_basic' => 0],
             'client' => ['code' => '122P6DEMO', 'aname' => 'P6-DEMO Walk-in Customer', 'parent_id' => 0, 'is_stock' => 0, 'is_fund' => 0],
             'store' => ['code' => '123P6DEMO', 'aname' => 'P6-DEMO Main Store', 'parent_id' => 0, 'is_stock' => 1, 'is_fund' => 0],
             'employee' => ['code' => '213P6DEMO', 'aname' => 'P6-DEMO Staff Clearing', 'parent_id' => 35, 'is_stock' => 0, 'is_fund' => 0],
             'fund' => ['code' => '121P6DEMO', 'aname' => 'P6-DEMO Cash Drawer', 'parent_id' => 0, 'is_stock' => 0, 'is_fund' => 1],
         ];
 
+        $supplierParentId = null;
         foreach ($accounts as $slot => $account) {
+            $parentId = $account['parent_id'];
+            if ($slot === 'supplier' && $supplierParentId !== null) {
+                $parentId = $supplierParentId;
+            }
             $id = $this->upsert('acc_head', 'code', $account['code'], [
                 'code' => $account['code'],
                 'aname' => $account['aname'],
-                'parent_id' => $account['parent_id'],
+                'parent_id' => $parentId,
                 'is_stock' => $account['is_stock'],
                 'is_fund' => $account['is_fund'],
-                'is_basic' => 0,
+                'is_basic' => $account['is_basic'],
                 'isdeleted' => 0,
                 'tenant' => $this->tenant(),
                 'branch' => $this->branch(),
             ], 'accounts');
             if ($id !== null) {
                 $this->accountIds[$slot] = $id;
+                if ($slot === 'supplier_parent') {
+                    $supplierParentId = $id;
+                }
             }
         }
     }

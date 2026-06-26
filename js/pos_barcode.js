@@ -309,7 +309,8 @@ $(document).ready(function() {
             overrideAllowed: String($card.attr('data-override-allowed') || '0') === '1',
             overridePermission: String($card.attr('data-override-permission') || '').trim(),
             recipeEnabled: String($card.attr('data-recipe-enabled') || '0') === '1',
-            recipeQty: String($card.attr('data-recipe-effective-available-qty') || '').trim()
+            recipeQty: String($card.attr('data-recipe-effective-available-qty') || '').trim(),
+            warnOnly: String($card.attr('data-availability-warn-only') || '0') === '1'
         };
     }
 
@@ -326,7 +327,8 @@ $(document).ready(function() {
             overrideAllowed: String(item.availability_override_allowed || '0') === '1',
             overridePermission: String(item.availability_override_permission || '').trim(),
             recipeEnabled: String(item.recipe_enabled || '0') === '1',
-            recipeQty: String(item.recipe_effective_available_qty || '').trim()
+            recipeQty: String(item.recipe_effective_available_qty || '').trim(),
+            warnOnly: String(item.availability_warn_only || '0') === '1'
         };
     }
 
@@ -340,6 +342,33 @@ $(document).ready(function() {
         }
 
         return 'هذا الصنف غير متاح حالياً.';
+    }
+
+    function showAvailabilityWarnToast(context, itemName) {
+        const lowStock = context.status === 'recipe_low';
+        const message = lowStock
+            ? 'هذا الصنف على وشك النفاد (متبقي ' + (context.recipeQty || '0') + ').'
+            : (context.reason || 'مخزون المكونات غير كافٍ — سيُسمح بالبيع مع تحذير.');
+        const title = lowStock ? 'تنبيه: نفاد قريب' : 'تنبيه: مخزون غير كافٍ';
+
+        if (window.Swal && typeof Swal.fire === 'function' && typeof Swal.mixin === 'function') {
+            const toast = Swal.mixin({
+                toast: true,
+                position: 'top-end',
+                showConfirmButton: false,
+                timer: 3500,
+                timerProgressBar: true
+            });
+            toast.fire({ icon: 'warning', title: title + ' — ' + itemName, text: message });
+            return;
+        }
+
+        // Non-blocking fallback: avoid alert() so the sale flow is not interrupted.
+        try {
+            if (window.console && console.warn) {
+                console.warn('[posmain][availability]', title, itemName, message);
+            }
+        } catch (e) { /* ignore */ }
     }
 
     function showUnavailableItemMessage(context, itemName) {
@@ -720,6 +749,17 @@ $(document).ready(function() {
             return;
         }
 
+        if (availability.warnOnly && !availability.requiresManagerOverride) {
+            // True warn-only: sale is allowed, show a non-blocking toast and proceed
+            // without manager approval.
+            showAvailabilityWarnToast(availability, itemName);
+            beginAddItemToOrder(itemId, itemName, itemPrice, itemBarcode, 1, imageHtml, '', {
+                hasVariants: hasVariants,
+                managerApprovalId: null
+            });
+            return;
+        }
+
         requestRecipeStockOverride(availability, itemName, itemId).then(function(managerApprovalId) {
             beginAddItemToOrder(itemId, itemName, itemPrice, itemBarcode, 1, imageHtml, '', {
                 hasVariants: hasVariants,
@@ -767,7 +807,9 @@ $(document).ready(function() {
             'unavailableReason': availability.reason,
             'requiresManagerOverride': availability.requiresManagerOverride,
             'overrideAllowed': availability.overrideAllowed,
-            'overridePermission': availability.overridePermission
+            'overridePermission': availability.overridePermission,
+            'warnOnly': availability.warnOnly,
+            'recipeQty': availability.recipeQty
         });
 
         $('#itemDetailsModal').modal('show');
@@ -785,6 +827,7 @@ $(document).ready(function() {
             return;
         }
         let itemPrice = parseFloat(data.price) || 0;
+        const warnOnly = data.warnOnly === true || String(data.warnOnly) === 'true';
         const availability = {
             isAvailable: data.isAvailable === true || String(data.isAvailable) === 'true',
             canAdd: true,
@@ -792,8 +835,21 @@ $(document).ready(function() {
             reason: String(data.unavailableReason || ''),
             requiresManagerOverride: data.requiresManagerOverride === true || String(data.requiresManagerOverride) === 'true',
             overrideAllowed: data.overrideAllowed === true || String(data.overrideAllowed) === 'true',
-            overridePermission: String(data.overridePermission || '')
+            overridePermission: String(data.overridePermission || ''),
+            warnOnly: warnOnly,
+            recipeQty: String(data.recipeQty || '').trim()
         };
+
+        if (warnOnly && !availability.requiresManagerOverride) {
+            showAvailabilityWarnToast(availability, data.name);
+            beginAddItemToOrder(data.id, data.name, itemPrice, data.barcode, 1, data.image, '', {
+                hasVariants: itemHasVariantsValue(data.hasVariants),
+                managerApprovalId: null
+            });
+            $('#itemDetailsModal').modal('hide');
+            return;
+        }
+
         requestRecipeStockOverride(availability, data.name, data.id).then(function(managerApprovalId) {
             beginAddItemToOrder(data.id, data.name, itemPrice, data.barcode, 1, data.image, '', {
                 hasVariants: itemHasVariantsValue(data.hasVariants),

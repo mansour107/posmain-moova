@@ -67,6 +67,7 @@ function pos_render_item_card(array $rowitem): string
     $requiresManagerOverride = !empty($rowitem['availability_requires_manager_override']);
     $overrideAllowed = !empty($rowitem['availability_override_allowed']);
     $overridePermission = htmlspecialchars((string) ($rowitem['availability_override_permission'] ?? ''), ENT_QUOTES, 'UTF-8');
+    $warnOnly = !empty($rowitem['availability_warn_only']);
     $recipeEnabled = !empty($rowitem['recipe_enabled']);
     $recipeQty = htmlspecialchars((string) ($rowitem['recipe_effective_available_qty'] ?? ''), ENT_QUOTES, 'UTF-8');
     $recipeRevision = htmlspecialchars((string) ($rowitem['recipe_availability_revision'] ?? ''), ENT_QUOTES, 'UTF-8');
@@ -114,6 +115,7 @@ function pos_render_item_card(array $rowitem): string
             data-requires-manager-override="<?= $requiresManagerOverride ? '1' : '0' ?>"
             data-override-allowed="<?= $overrideAllowed ? '1' : '0' ?>"
             data-override-permission="<?= $overridePermission ?>"
+            data-availability-warn-only="<?= $warnOnly ? '1' : '0' ?>"
             data-recipe-enabled="<?= $recipeEnabled ? '1' : '0' ?>"
             data-recipe-effective-available-qty="<?= $recipeQty ?>"
             data-recipe-availability-revision="<?= $recipeRevision ?>"

@@ -58,6 +58,21 @@ class RecipeInventoryMovementService
             $balance = $lockedBalances[$requirement->ingredientItemId]
                 ?? $this->lockBalance($conn, $scope, $requirement->ingredientItemId);
             $newOnHand = RecipeDecimal::subtract($balance['qty_on_hand'], $requirement->requiredQtyBase);
+            if (RecipeDecimal::compare($newOnHand, '0') < 0) {
+                // Warn-only (strict stock is OFF): record a tagged warning so owners have
+                // visibility into which sales drove negative ingredient stock, but still
+                // allow the sale to proceed. Do NOT throw — throwing would be strict stock.
+                error_log(sprintf(
+                    '[recipe_negative_stock] item_id=%d required=%s balance=%s new_on_hand=%s order_id=%s recipe_id=%s order_line_uuid=%s',
+                    (int) $requirement->ingredientItemId,
+                    (string) $requirement->requiredQtyBase,
+                    (string) ($balance['qty_on_hand'] ?? '0'),
+                    (string) $newOnHand,
+                    (string) ($orderContext['order_id'] ?? ''),
+                    (string) ($explosion->recipeId ?? ''),
+                    (string) ($orderContext['order_line_uuid'] ?? '')
+                ));
+            }
             $newReserved = (bool) ($orderContext['consume_reserved'] ?? false)
                 ? RecipeDecimal::subtract($balance['qty_reserved'], $requirement->requiredQtyBase)
                 : $balance['qty_reserved'];

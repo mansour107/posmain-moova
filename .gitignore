@@ -10,6 +10,9 @@ uploads/
 logs/
 var/
 .playwright-mcp/
+node_modules/
+playwright-report/
+test-results/
 *.log
 Thumbs.db
 
@@ -19,6 +22,7 @@ Thumbs.db
 !.env.example
 config/database.php
 debug.php
+tests/qa/campaign_config.local.json
 
 # Temporary office/system files
 ~$*
@@ -26,3 +30,8 @@ debug.php
 2025-01-08
 '2025-01-01'
 '2025-01-08'
+
+# Playwright/CI artifacts
+.playwright-cli/
+test-results.json
+tmp/

@@ -673,20 +673,38 @@ include __DIR__ . '/includes/sidebar.php';
                                                         <th>الصنف المرتبط</th>
                                                         <th>الحالة</th>
                                                         <th>الإصدار النشط</th>
+                                                        <th>المتاح للتحضير</th>
                                                         <th>آخر تعديل</th>
                                                         <th>إجراءات</th>
                                                     </tr>
                                                 </thead>
                                                 <tbody>
                                                     <?php foreach ($recipeManageRows as $row): ?>
+                                                        <?php
+                                                        $availabilityCell = posmain_recipe_manage_availability_cell(
+                                                            (int) ($row['cached_effective_is_available'] ?? 0),
+                                                            (string) ($row['cached_effective_available_qty'] ?? '0'),
+                                                            (string) ($row['status'] ?? ''),
+                                                            (string) ($row['cached_unavailable_reason'] ?? '')
+                                                        );
+                                                        ?>
                                                         <tr>
                                                             <td><?= posmain_recipe_manage_h(posmain_recipe_manage_sellable_item_label($row)) ?></td>
                                                             <td><?= posmain_recipe_manage_h(posmain_recipe_manage_status_label($row['status'] ?? '')) ?></td>
                                                             <td>v<?= (int) ($row['version_number'] ?? 0) ?></td>
+                                                            <td><?= $availabilityCell ?></td>
                                                             <td><?= posmain_recipe_manage_h($row['updated_at'] ?? '') ?></td>
                                                             <td><a class="btn btn-sm btn-outline-primary" href="recipe_manage.php?recipe_id=<?= (int) $row['id'] ?>">فتح</a></td>
                                                         </tr>
                                                     <?php endforeach; ?>
+                                                    <?php if (count($recipeManageRows) === 0): ?>
+                                                        <tr>
+                                                            <td colspan="6" class="text-center text-muted py-4">
+                                                                لا توجد وصفات بعد. ابدأ بإضافة صنف قابل للبيع ثم أنشئ وصفة له من صفحة
+                                                                <a href="myitems.php">الأصناف</a>.
+                                                            </td>
+                                                        </tr>
+                                                    <?php endif; ?>
                                                 </tbody>
                                             </table>
                                         </div>
@@ -1871,9 +1889,37 @@ function posmain_recipe_manage_variant_recipe_card(
         . '</details>';
 }
 
+function posmain_recipe_manage_availability_cell(int $isAvailable, string $effectiveQty, string $status, string $unavailableReason): string
+{
+    // Only surface availability for active recipes; drafts/archived have no live cache row.
+    if ($status !== 'active') {
+        return '<span class="text-muted">—</span>';
+    }
+
+    // No cache row yet (availability feature off or not refreshed) — show unknown rather
+    // than a misleading "available" so the owner knows the cache is empty.
+    if ($isAvailable === 0 && (float) $effectiveQty <= 0 && $unavailableReason === '') {
+        return '<span class="badge bg-secondary">غير محسوب</span>';
+    }
+
+    $qty = posmain_recipe_manage_qty($effectiveQty);
+    if ($isAvailable === 1) {
+        if ((float) $effectiveQty > 0 && (float) $effectiveQty <= 5) {
+            return '<span class="badge bg-warning">متبقي ' . posmain_recipe_manage_h($qty) . '</span>';
+        }
+        return '<span class="badge bg-success">متاح (' . posmain_recipe_manage_h($qty) . ')</span>';
+    }
+
+    $reason = trim($unavailableReason);
+    return '<span class="badge bg-danger" title="' . posmain_recipe_manage_h($reason) . '">غير متاح</span>';
+}
+
 function posmain_recipe_manage_item_cost_card(int $recipeId, array $costRow, string $title, bool $isDraft, bool $enabled): string
 {
-    $fields = posmain_recipe_manage_item_cost_fields($recipeId, $costRow, $isDraft && $enabled);
+    // Owners may adjust or override an item's cost even after the recipe is activated
+    // (e.g. set a manual override, or reset back to auto-calculated). The form is
+    // therefore enabled whenever writes are allowed, not only for draft recipes.
+    $fields = posmain_recipe_manage_item_cost_fields($recipeId, $costRow, $enabled);
     if ($fields === '') {
         return '';
     }

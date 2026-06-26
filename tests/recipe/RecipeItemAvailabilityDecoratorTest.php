@@ -95,7 +95,7 @@ class RecipeItemAvailabilityDecoratorTest extends TestCase
         $this->assertSame('Required ingredient out of stock.', $availability['unavailable_reason']);
     }
 
-    public function testRecipeUnavailableCanRequireManagerOverrideWhenNegativeApprovalIsAllowed(): void
+    public function testRecipeUnavailableIsWarnOnlyWhenNegativeApprovalIsAllowedAndStrictStockOff(): void
     {
         $itemId = $this->nextItemId();
         $ingredientId = $this->nextItemId();
@@ -116,11 +116,13 @@ class RecipeItemAvailabilityDecoratorTest extends TestCase
             'order_type' => 'takeaway',
         ]);
 
+        // Non-strict + allow-negative-with-approval is TRUE warn-only: the sale is
+        // allowed with a non-blocking warning, and no manager-approval modal is opened.
         $this->assertFalse($availability['is_available']);
         $this->assertTrue($availability['availability_can_add']);
-        $this->assertTrue($availability['availability_requires_manager_override']);
-        $this->assertTrue($availability['availability_override_allowed']);
-        $this->assertSame('pos.recipe_stock_override', $availability['availability_override_permission']);
+        $this->assertFalse($availability['availability_requires_manager_override']);
+        $this->assertTrue($availability['availability_warn_only']);
+        $this->assertSame('recipe_unavailable', $availability['availability_status']);
     }
 
     public function testStrictStockPreventsManagerOverridePresentation(): void

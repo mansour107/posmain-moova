@@ -61,6 +61,7 @@ function posDefaultAccountsTestMain(): void
 
         posDefaultAccountsTestOrderContext($conn);
         posDefaultAccountsTestMinimalShopSalesAccount($conn);
+        posDefaultAccountsTestSupplierSeedingWithExistingStore($conn);
         posDefaultAccountsTestMinimalAccHeadSchema($host, $port, $user, $pass);
 
         $legacyConn = @new mysqli($host, $user, $pass, '', $port);
@@ -151,8 +152,38 @@ function posDefaultAccountsTestMinimalShopSalesAccount(mysqli $conn): void
     posDefaultAccountsAssert(($row['code'] ?? '') === '3111', 'bootstrapped sales account should use code 3111');
 }
 
-function posDefaultAccountsTestMinimalAccHeadSchema(string $host, int $port, string $user, string $pass): void
+function posDefaultAccountsTestSupplierSeedingWithExistingStore(mysqli $conn): void
 {
+    $conn->query('DELETE FROM acc_head');
+    $conn->query("INSERT INTO acc_head (id, code, aname, parent_id, is_basic, is_stock, is_fund, isdeleted) VALUES
+        (274, '123001', 'Main Store', 0, 0, 1, 0, 0),
+        (277, '122001', 'Default Client', 0, 0, 0, 0, 0)
+    ");
+
+    posmain_ensure_pos_default_accounts($conn);
+
+    $supplierLeaf = $conn->query(
+        "SELECT id, code, aname, is_basic FROM acc_head
+         WHERE isdeleted = 0 AND is_basic = 0 AND code LIKE '211%' AND code != '211'
+         ORDER BY id ASC LIMIT 1"
+    )->fetch_assoc();
+    posDefaultAccountsAssert(!empty($supplierLeaf), 'default supplier leaf should be seeded even when a stock account already exists');
+
+    $supplierParent = $conn->query(
+        "SELECT id, code, aname, is_basic FROM acc_head
+         WHERE isdeleted = 0 AND code = '211' LIMIT 1"
+    )->fetch_assoc();
+    posDefaultAccountsAssert(!empty($supplierParent), 'default supplier parent group should be seeded');
+    posDefaultAccountsAssert((int) ($supplierParent['is_basic'] ?? 0) === 1, 'supplier parent should be a basic group');
+    posDefaultAccountsAssert((int) ($supplierLeaf['is_basic'] ?? 0) === 0, 'supplier leaf should be selectable (is_basic = 0)');
+
+    $supplierLeaf2 = $conn->query(
+        "SELECT id FROM acc_head WHERE isdeleted = 0 AND is_basic = 0 AND code LIKE '211%' ORDER BY id ASC LIMIT 1"
+    )->fetch_assoc();
+    posDefaultAccountsAssert(!empty($supplierLeaf2), 'goods-receipt supplier filter (code LIKE 211% AND is_basic=0) should return at least one row');
+}
+
+function posDefaultAccountsTestMinimalAccHeadSchema(string $host, int $port, string $user, string $pass): void{
     $minimalConn = @new mysqli($host, $user, $pass, '', $port);
     if ($minimalConn->connect_errno) {
         return;
