@@ -47,6 +47,34 @@ if (!function_exists('posmain_log_exception')) {
     }
 }
 
+if (!function_exists('posmain_log_warn_event')) {
+    /**
+     * Persist a non-exception warn-only event to a dedicated app log file so owners/ops
+     * always have visibility regardless of PHP-FPM error_log routing (which can swallow
+     * plain error_log() output on hosted pools). Mirrors the posmain_log_exception pattern.
+     *
+     * @param string $logName  Log file name within the app logs/ directory (e.g. 'recipe_negative_stock.log').
+     * @param string $tag      Stable tag prefix for the line (e.g. 'recipe_negative_stock').
+     * @param array  $fields   Key/value pairs rendered as k=v tokens on the log line.
+     */
+    function posmain_log_warn_event(string $logName, string $tag, array $fields = []): void
+    {
+        $logFile = __DIR__ . '/../logs/' . $logName;
+        $logDir = dirname($logFile);
+        if (!is_dir($logDir)) {
+            @mkdir($logDir, 0755, true);
+        }
+
+        $tokens = '';
+        foreach ($fields as $key => $value) {
+            $tokens .= ' ' . $key . '=' . (string) $value;
+        }
+        $line = '[' . date('Y-m-d H:i:s') . '] [' . $tag . ']' . $tokens . PHP_EOL;
+        error_log('[' . $tag . ']' . $tokens);
+        @file_put_contents($logFile, $line, FILE_APPEND | LOCK_EX);
+    }
+}
+
 if (!function_exists('posmain_safe_exception_message')) {
     function posmain_safe_exception_message(Throwable $exception, string $fallbackMessage, bool $allowValidationMessage = true): string
     {

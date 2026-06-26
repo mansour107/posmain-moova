@@ -62,16 +62,27 @@ class RecipeInventoryMovementService
                 // Warn-only (strict stock is OFF): record a tagged warning so owners have
                 // visibility into which sales drove negative ingredient stock, but still
                 // allow the sale to proceed. Do NOT throw — throwing would be strict stock.
-                error_log(sprintf(
-                    '[recipe_negative_stock] item_id=%d required=%s balance=%s new_on_hand=%s order_id=%s recipe_id=%s order_line_uuid=%s',
-                    (int) $requirement->ingredientItemId,
-                    (string) $requirement->requiredQtyBase,
-                    (string) ($balance['qty_on_hand'] ?? '0'),
-                    (string) $newOnHand,
-                    (string) ($orderContext['order_id'] ?? ''),
-                    (string) ($explosion->recipeId ?? ''),
-                    (string) ($orderContext['order_line_uuid'] ?? '')
-                ));
+                // Prefer the app-level warn logger (posmain_log_warn_event) so the event lands
+                // in logs/recipe_negative_stock.log regardless of PHP-FPM error_log routing;
+                // fall back to error_log() if the helper is not loaded (e.g. some CLI paths).
+                $warnFields = [
+                    'item_id' => (int) $requirement->ingredientItemId,
+                    'required' => (string) $requirement->requiredQtyBase,
+                    'balance' => (string) ($balance['qty_on_hand'] ?? '0'),
+                    'new_on_hand' => (string) $newOnHand,
+                    'order_id' => (string) ($orderContext['order_id'] ?? ''),
+                    'recipe_id' => (string) ($explosion->recipeId ?? ''),
+                    'order_line_uuid' => (string) ($orderContext['order_line_uuid'] ?? ''),
+                ];
+                if (function_exists('posmain_log_warn_event')) {
+                    posmain_log_warn_event('recipe_negative_stock.log', 'recipe_negative_stock', $warnFields);
+                } else {
+                    error_log('[recipe_negative_stock]' . implode('', array_map(
+                        static fn($k, $v) => " {$k}={$v}",
+                        array_keys($warnFields),
+                        $warnFields,
+                    )));
+                }
             }
             $newReserved = (bool) ($orderContext['consume_reserved'] ?? false)
                 ? RecipeDecimal::subtract($balance['qty_reserved'], $requirement->requiredQtyBase)
