@@ -3,6 +3,35 @@
 require_once __DIR__ . '/../config/app_config.php';
 require_once __DIR__ . '/../classes/Router/ShopRouter.php';
 
+if (!function_exists('posmain_apply_db_timezone')) {
+    function posmain_apply_db_timezone(mysqli $conn, ?string $timezone = null): void
+    {
+        $timezone = trim($timezone ?? date_default_timezone_get() ?: 'Africa/Cairo');
+        if ($timezone === '') {
+            return;
+        }
+
+        $escaped = $conn->real_escape_string($timezone);
+        if (@$conn->query("SET time_zone = '{$escaped}'")) {
+            return;
+        }
+
+        try {
+            $dateTimeZone = new DateTimeZone($timezone);
+            $offsetSeconds = $dateTimeZone->getOffset(new DateTime('now', $dateTimeZone));
+        } catch (Throwable $ignored) {
+            $offsetSeconds = 2 * 3600;
+        }
+
+        $sign = $offsetSeconds >= 0 ? '+' : '-';
+        $abs = abs($offsetSeconds);
+        $hours = intdiv($abs, 3600);
+        $minutes = intdiv($abs % 3600, 60);
+        $offset = sprintf('%s%02d:%02d', $sign, $hours, $minutes);
+        $conn->query("SET time_zone = '{$offset}'");
+    }
+}
+
 if (!function_exists('posmain_raw_db_connect')) {
     function posmain_raw_db_connect(array $db): mysqli
     {
@@ -15,6 +44,7 @@ if (!function_exists('posmain_raw_db_connect')) {
             (int) $db['port']
         );
         $conn->set_charset((string) ($db['charset'] ?: 'utf8mb4'));
+        posmain_apply_db_timezone($conn);
 
         return $conn;
     }

@@ -54,6 +54,10 @@ class PosmainShopRouter
         );
         $conn->set_charset((string) (($db['charset'] ?? '') ?: 'utf8mb4'));
 
+        if (function_exists('posmain_apply_db_timezone')) {
+            posmain_apply_db_timezone($conn);
+        }
+
         return $conn;
     }
 
