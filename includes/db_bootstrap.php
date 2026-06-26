@@ -11,11 +11,10 @@ if (!function_exists('posmain_apply_db_timezone')) {
             return;
         }
 
-        $escaped = $conn->real_escape_string($timezone);
-        if (@$conn->query("SET time_zone = '{$escaped}'")) {
-            return;
-        }
-
+        // Compute the numeric offset first so we never depend on MySQL's named
+        // time zone tables (which are empty on minimal/MariaDB installs). Strict
+        // mysqli mode makes @ suppression ineffective, so all SET time_zone calls
+        // are wrapped to avoid throwing on unsupported names.
         try {
             $dateTimeZone = new DateTimeZone($timezone);
             $offsetSeconds = $dateTimeZone->getOffset(new DateTime('now', $dateTimeZone));
@@ -28,7 +27,24 @@ if (!function_exists('posmain_apply_db_timezone')) {
         $hours = intdiv($abs, 3600);
         $minutes = intdiv($abs % 3600, 60);
         $offset = sprintf('%s%02d:%02d', $sign, $hours, $minutes);
-        $conn->query("SET time_zone = '{$offset}'");
+        $offsetEscaped = $conn->real_escape_string($offset);
+
+        // Prefer the named zone when the server actually supports it; otherwise
+        // fall back to the numeric offset, which always works.
+        $escaped = $conn->real_escape_string($timezone);
+        try {
+            if (@$conn->query("SET time_zone = '{$escaped}'")) {
+                return;
+            }
+        } catch (Throwable $ignored) {
+            // Named time zone not supported; continue to numeric fallback.
+        }
+
+        try {
+            @$conn->query("SET time_zone = '{$offsetEscaped}'");
+        } catch (Throwable $ignored) {
+            // Last-resort: leave the connection timezone as the server default.
+        }
     }
 }
 
