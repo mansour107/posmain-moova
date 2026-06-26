@@ -41,7 +41,7 @@ try {
     recipeProductionEndpointRuntimeAssert(recipeProductionEndpointRuntimeDecimalEquals($batch['planned_output_qty'], '2.000000'), 'production page should persist planned output qty');
     $batchId = (int) $batch['id'];
 
-    recipeProductionEndpointRuntimeRunChild($db, [
+    $commitChild = recipeProductionEndpointRuntimeRunChild($db, [
         'action' => 'commit',
         'batch_id' => $batchId,
         'actual_output_qty' => '2.000000',
@@ -50,7 +50,13 @@ try {
 
     $committed = recipeProductionEndpointRuntimeOne($conn, "SELECT * FROM production_batches WHERE id = {$batchId}");
     recipeProductionEndpointRuntimeAssert($committed !== null, 'committed batch should still exist');
-    recipeProductionEndpointRuntimeAssert($committed['status'] === 'committed', 'production page should commit draft batch');
+    $commitError = trim((string) ($commitChild['stderr'] ?? ''));
+    recipeProductionEndpointRuntimeAssert(
+        $committed['status'] === 'committed',
+        $commitError !== ''
+            ? 'production page should commit draft batch: ' . $commitError
+            : 'production page should commit draft batch'
+    );
     recipeProductionEndpointRuntimeAssert((int) $committed['committed_by'] === 1, 'production page should stamp committer');
     recipeProductionEndpointRuntimeAssert(recipeProductionEndpointRuntimeDecimalEquals($committed['actual_output_qty'], '2.000000'), 'production page should persist actual output qty');
 
@@ -132,12 +138,24 @@ function recipeProductionEndpointRuntimeChild(string $json): void
         'recipe_production' => $csrf,
     ];
 
+    register_shutdown_function(static function (): void {
+        $flash = $_SESSION['recipe_production_flash'] ?? null;
+        if (!is_array($flash) || ($flash['type'] ?? '') !== 'danger') {
+            return;
+        }
+
+        $message = trim((string) ($flash['message'] ?? ''));
+        if ($message !== '') {
+            fwrite(STDERR, $message . "\n");
+        }
+    });
+
     chdir(dirname(__DIR__, 2));
     require dirname(__DIR__, 2) . '/recipe_production.php';
     exit(0);
 }
 
-function recipeProductionEndpointRuntimeRunChild(string $db, array $payload): void
+function recipeProductionEndpointRuntimeRunChild(string $db, array $payload): array
 {
     $env = array_merge($_ENV, [
         'POSMAIN_DB_HOST' => getenv('POSMAIN_TEST_MYSQL_HOST') ?: '127.0.0.1',
@@ -148,12 +166,14 @@ function recipeProductionEndpointRuntimeRunChild(string $db, array $payload): vo
         'POSMAIN_SESSION_DRIVER' => 'file',
         'POSMAIN_SYNC_OUTBOX_ENABLED' => '0',
         'POSMAIN_RECIPE_MODE' => 'consume_pilot',
-        'POSMAIN_RECIPE_MODE' => 'consume_pilot',
         'POSMAIN_RECIPE_CONSUMPTION' => '1',
         'POSMAIN_RECIPE_PILOT_ITEM_IDS' => '2001',
         'POSMAIN_RECIPE_ACCOUNTING' => '0',
         'POSMAIN_RECIPE_AVAILABILITY' => '0',
         'POSMAIN_ROUTER_ENABLED' => '0',
+        'POSMAIN_INVENTORY_LEDGER_MODE' => 'off',
+        'POSMAIN_ENV' => 'test',
+        'POSMAIN_PRODUCTION_MODE' => '0',
     ]);
     $command = [
         PHP_BINARY,
@@ -178,6 +198,11 @@ function recipeProductionEndpointRuntimeRunChild(string $db, array $payload): vo
     if ($exitCode !== 0) {
         throw new RuntimeException("Production endpoint child failed with code {$exitCode}: {$stderr}\n{$stdout}");
     }
+
+    return [
+        'stdout' => $stdout,
+        'stderr' => $stderr,
+    ];
 }
 
 function recipeProductionEndpointRuntimeCreateSchema(mysqli $conn): void

@@ -314,7 +314,8 @@ function posTakeawayServiceSeedFixtures(mysqli $conn): void
         INSERT INTO acc_head (id, code, aname, isdeleted) VALUES
             (91, '400001', 'Sales', 0),
             (501, '122001', 'Walk-in Customer', 0),
-            (51, '101001', 'Cash Drawer', 0)
+            (51, '101001', 'Cash Drawer', 0),
+            (61, '102001', 'Bank Account', 0)
     ");
     $conn->query("
         INSERT INTO myitems (id, iname, barcode, itmqty, cost_price, price1, isdeleted) VALUES
@@ -405,9 +406,20 @@ function posTakeawayServiceAssertCommittedSale(mysqli $conn, int $orderId): void
     posTakeawayServiceAssertCounter($conn, 'journal_id', 'journal:default', 2);
     posTakeawayServiceAssert($conn->query("SELECT type FROM process LIMIT 1")->fetch_assoc()['type'] === 'add cash', 'process row expected');
 
-    $outbox = $conn->query("SELECT * FROM sync_outbox ORDER BY id ASC LIMIT 1")->fetch_assoc();
+    $outbox = $conn->query("
+        SELECT *
+        FROM sync_outbox
+        WHERE aggregate_type = 'order'
+          AND entity_type = 'order'
+          AND event_type = 'order.saved'
+        ORDER BY id ASC
+        LIMIT 1
+    ")->fetch_assoc();
     posTakeawayServiceAssert(is_array($outbox), 'sync outbox event expected');
-    posTakeawayServiceAssert($outbox['branch_uuid'] === POS_TAKEAWAY_SERVICE_BRANCH_UUID, 'outbox branch expected');
+    posTakeawayServiceAssert(
+        $outbox['branch_uuid'] === POS_TAKEAWAY_SERVICE_BRANCH_UUID,
+        'outbox branch expected actual=' . (string) $outbox['branch_uuid']
+    );
     posTakeawayServiceAssert($outbox['event_type'] === 'order.saved', 'outbox event type expected');
     posTakeawayServiceAssert($outbox['source_system'] === 'pos_cashier', 'outbox source expected');
     posTakeawayServiceAssert($outbox['payload_hash'] === hash('sha256', $outbox['payload_json']), 'outbox payload hash expected');
@@ -441,7 +453,10 @@ function posTakeawayServiceAssertCommittedMixedSale(mysqli $conn, int $orderId):
     posTakeawayServiceAssert(count($receipts) === 2, 'mixed order should have two receipt operations');
     posTakeawayServiceAssert((int) $receipts[0]['acc1'] === 51, 'mixed cash receipt fund account expected');
     posTakeawayServiceAssertFloat((float) $receipts[0]['pro_value'], 10.0, 'mixed cash receipt amount expected');
-    posTakeawayServiceAssert((int) $receipts[1]['acc1'] === 61, 'mixed bank receipt account expected');
+    posTakeawayServiceAssert(
+        (int) $receipts[1]['acc1'] === 61,
+        'mixed bank receipt account expected actual=' . json_encode(array_column($receipts, 'acc1'))
+    );
     posTakeawayServiceAssertFloat((float) $receipts[1]['pro_value'], 18.0, 'mixed bank receipt amount expected');
 
     posTakeawayServiceAssertCounter($conn, 'pro_id', 'pro_tybe:9', 2);
@@ -475,8 +490,14 @@ function posTakeawayServiceAssertRecipeConsumedOnce(mysqli $conn, int $orderId, 
     posTakeawayServiceAssert((string) $movements[0]['accounting_journal_id'] === '' || $movements[0]['accounting_journal_id'] === null, 'recipe accounting should stay disabled in this isolated proof');
 
     $balance = (new InventoryBalanceRepository())->findBalance($conn, 0, 0, 3, 12);
+    $storeZeroBalance = (new InventoryBalanceRepository())->findBalance($conn, 0, 0, 0, 12);
     posTakeawayServiceAssert(is_array($balance), 'ingredient balance should exist after recipe consumption');
-    posTakeawayServiceAssert((string) $balance['qty_on_hand'] === $expectedIngredientOnHand, 'ingredient stock should be deducted exactly once for this paid takeaway order');
+    posTakeawayServiceAssert(
+        (string) $balance['qty_on_hand'] === $expectedIngredientOnHand,
+        'ingredient stock should be deducted exactly once for this paid takeaway order actual=' . (string) $balance['qty_on_hand']
+            . ' movement_store=' . (string) ($movements[0]['store_id'] ?? '')
+            . ' store0=' . (string) ($storeZeroBalance['qty_on_hand'] ?? 'missing')
+    );
 }
 
 function posTakeawayServiceAssertLine(array $line, int $itemId, float $qtyOut, float $price, float $cost, float $value, float $profit): void

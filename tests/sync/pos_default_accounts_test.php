@@ -61,6 +61,7 @@ function posDefaultAccountsTestMain(): void
 
         posDefaultAccountsTestOrderContext($conn);
         posDefaultAccountsTestMinimalShopSalesAccount($conn);
+        posDefaultAccountsTestMinimalAccHeadSchema($host, $port, $user, $pass);
 
         $legacyConn = @new mysqli($host, $user, $pass, '', $port);
         if (!$legacyConn->connect_errno) {
@@ -148,6 +149,46 @@ function posDefaultAccountsTestMinimalShopSalesAccount(mysqli $conn): void
     posDefaultAccountsAssert($salesId > 0, 'minimal shop should bootstrap a sales account');
     $row = $conn->query("SELECT code, aname FROM acc_head WHERE id = {$salesId} AND isdeleted = 0")->fetch_assoc();
     posDefaultAccountsAssert(($row['code'] ?? '') === '3111', 'bootstrapped sales account should use code 3111');
+}
+
+function posDefaultAccountsTestMinimalAccHeadSchema(string $host, int $port, string $user, string $pass): void
+{
+    $minimalConn = @new mysqli($host, $user, $pass, '', $port);
+    if ($minimalConn->connect_errno) {
+        return;
+    }
+
+    mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
+    $minimalDb = 'posmain_minimal_acc_head_' . getmypid();
+
+    try {
+        $minimalConn->query("CREATE DATABASE `{$minimalDb}` CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci");
+        $minimalConn->select_db($minimalDb);
+        $minimalConn->query('
+            CREATE TABLE acc_head (
+                id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                code VARCHAR(32) NOT NULL,
+                aname VARCHAR(120) NOT NULL,
+                isdeleted TINYINT NOT NULL DEFAULT 0
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        ');
+        $minimalConn->query('
+            CREATE TABLE settings (
+                id INT PRIMARY KEY,
+                isdeleted TINYINT NOT NULL DEFAULT 0
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        ');
+        $minimalConn->query('INSERT INTO settings (id, isdeleted) VALUES (1, 0)');
+
+        posmain_ensure_pos_default_accounts($minimalConn);
+        $defaults = posmain_resolve_pos_defaults($minimalConn, []);
+
+        posDefaultAccountsAssert($defaults['store_id'] > 0, 'minimal acc_head schema should resolve a fallback store');
+        posDefaultAccountsAssert($defaults['client_id'] > 0, 'minimal acc_head schema should resolve a fallback client');
+    } finally {
+        $minimalConn->query("DROP DATABASE IF EXISTS `{$minimalDb}`");
+        $minimalConn->close();
+    }
 }
 
 function posDefaultAccountsCreateSchema(mysqli $conn): void

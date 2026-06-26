@@ -707,8 +707,14 @@ class PosOrderMutationService
                     'event_type' => 'order.saved',
                     'source_system' => 'pos_cashier',
                 ];
+                $branchConfig = $this->syncBranchConfig($request, $context);
                 if (isset($context['config']) && is_array($context['config'])) {
                     $options['config'] = $context['config'];
+                    if ($branchConfig) {
+                        $options['config']['branch'] = array_merge($options['config']['branch'] ?? [], $branchConfig);
+                    }
+                } elseif ($branchConfig) {
+                    $options['config'] = ['branch' => $branchConfig];
                 }
                 $outboxResult = $syncOutbox->recordOrderSnapshot($conn, $orderId, $options);
             } catch (Throwable $exception) {
@@ -913,8 +919,14 @@ class PosOrderMutationService
                     'event_type' => 'order.saved',
                     'source_system' => 'pos_cashier_delivery',
                 ];
+                $branchConfig = $this->syncBranchConfig($request, $context);
                 if (isset($context['config']) && is_array($context['config'])) {
                     $options['config'] = $context['config'];
+                    if ($branchConfig) {
+                        $options['config']['branch'] = array_merge($options['config']['branch'] ?? [], $branchConfig);
+                    }
+                } elseif ($branchConfig) {
+                    $options['config'] = ['branch' => $branchConfig];
                 }
                 $outboxResult = $syncOutbox->recordOrderSnapshot($conn, $orderId, $options);
             } catch (Throwable $exception) {
@@ -2431,6 +2443,46 @@ class PosOrderMutationService
 
             return null;
         }
+    }
+
+    private function syncBranchConfig(array $request = [], array $context = []): array
+    {
+        $config = is_array($context['config'] ?? null) ? $context['config'] : [];
+        $branchConfig = is_array($config['branch'] ?? null) ? $config['branch'] : [];
+        $syncConfig = is_array($config['sync'] ?? null) ? $config['sync'] : [];
+
+        $uuid = $this->nullableString(
+            $context['branch_uuid']
+            ?? $request['branch_uuid']
+            ?? ($branchConfig['uuid'] ?? null)
+            ?? ($syncConfig['branch_uuid'] ?? null)
+            ?? getenv('POSMAIN_BRANCH_UUID')
+            ?: null
+        );
+        $cloudBaseUrl = $this->nullableString(
+            $context['cloud_base_url']
+            ?? $request['cloud_base_url']
+            ?? ($branchConfig['cloud_base_url'] ?? null)
+            ?? ($syncConfig['cloud_base_url'] ?? null)
+            ?? getenv('POSMAIN_CLOUD_BASE_URL')
+            ?: null
+        );
+
+        $branch = [];
+        if ($uuid !== null) {
+            $branch['uuid'] = $uuid;
+        }
+        if (array_key_exists('tenant', $context) || array_key_exists('pos_tenant', $context) || array_key_exists('tenant', $request) || array_key_exists('pos_tenant', $request)) {
+            $branch['pos_tenant'] = (int) ($context['tenant'] ?? $context['pos_tenant'] ?? $request['tenant'] ?? $request['pos_tenant'] ?? 0);
+        }
+        if (array_key_exists('branch', $context) || array_key_exists('pos_branch', $context) || array_key_exists('branch', $request) || array_key_exists('pos_branch', $request)) {
+            $branch['pos_branch'] = (int) ($context['branch'] ?? $context['pos_branch'] ?? $request['branch'] ?? $request['pos_branch'] ?? 0);
+        }
+        if ($cloudBaseUrl !== null) {
+            $branch['cloud_base_url'] = $cloudBaseUrl;
+        }
+
+        return $branch;
     }
 
     private function requiredItems(array $request): array

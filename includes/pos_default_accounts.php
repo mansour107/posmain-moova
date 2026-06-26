@@ -21,6 +21,51 @@ if (!function_exists('posmain_acc_head_has_column')) {
     }
 }
 
+if (!function_exists('posmain_acc_head_normalize_where')) {
+    function posmain_acc_head_normalize_where(mysqli $conn, string $whereSql): string
+    {
+        $parts = preg_split('/\s+AND\s+/i', trim($whereSql)) ?: [];
+        $kept = [];
+        $optionalColumns = ['parent_id', 'is_basic', 'is_stock', 'is_fund', 'tenant', 'branch'];
+
+        foreach ($parts as $part) {
+            $part = trim($part);
+            if ($part === '') {
+                continue;
+            }
+
+            foreach ($optionalColumns as $column) {
+                if (preg_match('/\b' . preg_quote($column, '/') . '\b/i', $part)
+                    && !posmain_acc_head_has_column($conn, $column)
+                ) {
+                    continue 2;
+                }
+            }
+
+            $kept[] = $part;
+        }
+
+        return $kept ? implode(' AND ', $kept) : '1 = 1';
+    }
+}
+
+if (!function_exists('posmain_acc_head_id_auto_increment')) {
+    function posmain_acc_head_id_auto_increment(mysqli $conn): bool
+    {
+        static $cache = [];
+        $key = spl_object_hash($conn);
+        if (array_key_exists($key, $cache)) {
+            return $cache[$key];
+        }
+
+        $result = $conn->query("SHOW COLUMNS FROM acc_head LIKE 'id'");
+        $row = $result ? $result->fetch_assoc() : null;
+        $cache[$key] = $row && stripos((string) ($row['Extra'] ?? ''), 'auto_increment') !== false;
+
+        return $cache[$key];
+    }
+}
+
 if (!function_exists('posmain_insert_acc_head_if_missing')) {
     function posmain_insert_acc_head_if_missing(mysqli $conn, array $account): int
     {
@@ -52,6 +97,11 @@ if (!function_exists('posmain_insert_acc_head_if_missing')) {
         $types = '';
         $values = [];
 
+        if ($id <= 0 && posmain_acc_head_has_column($conn, 'id') && !posmain_acc_head_id_auto_increment($conn)) {
+            $next = $conn->query('SELECT COALESCE(MAX(id), 0) + 1 AS next_id FROM acc_head');
+            $id = $next ? (int) ($next->fetch_assoc()['next_id'] ?? 0) : 0;
+        }
+
         if ($id > 0) {
             $columns[] = 'id';
             $placeholders[] = '?';
@@ -68,6 +118,9 @@ if (!function_exists('posmain_insert_acc_head_if_missing')) {
             ['is_fund', 'i', $isFund],
             ['isdeleted', 'i', 0],
         ] as $field) {
+            if (!posmain_acc_head_has_column($conn, $field[0])) {
+                continue;
+            }
             $columns[] = $field[0];
             $placeholders[] = '?';
             $types .= $field[1];
@@ -106,10 +159,12 @@ if (!function_exists('posmain_ensure_pos_default_accounts')) {
     {
         posmain_ensure_sales_account($conn);
 
-        $stockCount = $conn->query('SELECT COUNT(*) AS c FROM acc_head WHERE is_stock = 1 AND isdeleted = 0');
-        $hasStock = $stockCount && (int) ($stockCount->fetch_assoc()['c'] ?? 0) > 0;
-        if ($hasStock) {
-            return;
+        if (posmain_acc_head_has_column($conn, 'is_stock')) {
+            $stockCount = $conn->query('SELECT COUNT(*) AS c FROM acc_head WHERE is_stock = 1 AND isdeleted = 0');
+            $hasStock = $stockCount && (int) ($stockCount->fetch_assoc()['c'] ?? 0) > 0;
+            if ($hasStock) {
+                return;
+            }
         }
 
         posmain_insert_acc_head_if_missing($conn, [
@@ -468,6 +523,8 @@ if (!function_exists('posmain_resolve_default_account_id')) {
      */
     function posmain_resolve_default_account_id(mysqli $conn, int $preferredId, string $whereSql): int
     {
+        $whereSql = posmain_acc_head_normalize_where($conn, $whereSql);
+
         if ($preferredId > 0) {
             $result = $conn->query(
                 'SELECT id FROM acc_head WHERE id = ' . $preferredId
@@ -616,17 +673,26 @@ if (!function_exists('posmain_resolve_pos_invoice_accounts')) {
         $defaults = posmain_resolve_pos_defaults($conn, $settings);
 
         $storeId = (int) ($posted['store_id'] ?? 0);
-        if ($storeId <= 0 || posmain_resolve_default_account_id($conn, $storeId, 'is_stock = 1') !== $storeId) {
+        if ($storeId <= 0
+            || (posmain_acc_head_has_column($conn, 'is_stock')
+                && posmain_resolve_default_account_id($conn, $storeId, 'is_stock = 1') !== $storeId)
+        ) {
             $storeId = (int) ($defaults['store_id'] ?? 0);
         }
 
         $empId = (int) ($posted['emp_id'] ?? 0);
-        if ($empId <= 0 || posmain_resolve_default_account_id($conn, $empId, 'parent_id = 35 AND is_basic = 0') !== $empId) {
+        if ($empId <= 0
+            || ((posmain_acc_head_has_column($conn, 'parent_id') || posmain_acc_head_has_column($conn, 'is_basic'))
+                && posmain_resolve_default_account_id($conn, $empId, 'parent_id = 35 AND is_basic = 0') !== $empId)
+        ) {
             $empId = (int) ($defaults['emp_id'] ?? 0);
         }
 
         $fundId = (int) ($posted['fund_id'] ?? 0);
-        if ($fundId <= 0 || posmain_resolve_default_account_id($conn, $fundId, 'is_fund = 1 AND is_basic = 0') !== $fundId) {
+        if ($fundId <= 0
+            || ((posmain_acc_head_has_column($conn, 'is_fund') || posmain_acc_head_has_column($conn, 'is_basic'))
+                && posmain_resolve_default_account_id($conn, $fundId, 'is_fund = 1 AND is_basic = 0') !== $fundId)
+        ) {
             $fundId = (int) ($defaults['fund_id'] ?? 0);
         }
 
@@ -637,7 +703,10 @@ if (!function_exists('posmain_resolve_pos_invoice_accounts')) {
         );
 
         $paymentFundId = (int) ($posted['payment_fund_id'] ?? 0);
-        if ($paymentFundId <= 0 || posmain_resolve_default_account_id($conn, $paymentFundId, 'is_fund = 1 AND is_basic = 0') !== $paymentFundId) {
+        if ($paymentFundId <= 0
+            || ((posmain_acc_head_has_column($conn, 'is_fund') || posmain_acc_head_has_column($conn, 'is_basic'))
+                && posmain_resolve_default_account_id($conn, $paymentFundId, 'is_fund = 1 AND is_basic = 0') !== $paymentFundId)
+        ) {
             $paymentFundId = $fundId;
         }
 

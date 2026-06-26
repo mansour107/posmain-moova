@@ -316,24 +316,38 @@ LIMIT 1");
     private function writeMovementWithSavepoint(mysqli $conn, array $movement, array $item, int $index): array
     {
         $savepoint = 'inventory_invoice_bridge_' . $index;
-        $conn->query('SAVEPOINT ' . $savepoint);
+        $hasSavepoint = false;
+        try {
+            $conn->query('SAVEPOINT ' . $savepoint);
+            $hasSavepoint = true;
+        } catch (Throwable $exception) {
+            // Some legacy flows reach the bridge after implicit commits; the movement write is still authoritative.
+        }
 
         try {
             $writeOptions = ['manage_transaction' => false];
             $write = $this->flags->isShadowMode()
                 ? $this->ledger->recordShadowMovement($conn, $movement, $item, $writeOptions)
                 : $this->ledger->recordMovement($conn, $movement, $item, $writeOptions);
-            $conn->query('RELEASE SAVEPOINT ' . $savepoint);
+            if ($hasSavepoint) {
+                try {
+                    $conn->query('RELEASE SAVEPOINT ' . $savepoint);
+                } catch (Throwable $exception) {
+                    // The caller owns the broader transaction; implicit commits may already have released this savepoint.
+                }
+            }
 
             $write['movement_type'] = (string) ($movement['movement_type'] ?? '');
 
             return $write;
         } catch (Throwable $exception) {
-            try {
-                $conn->query('ROLLBACK TO SAVEPOINT ' . $savepoint);
-                $conn->query('RELEASE SAVEPOINT ' . $savepoint);
-            } catch (Throwable $rollbackException) {
-                // Keep the original bridge error visible; the caller still owns the outer transaction.
+            if ($hasSavepoint) {
+                try {
+                    $conn->query('ROLLBACK TO SAVEPOINT ' . $savepoint);
+                    $conn->query('RELEASE SAVEPOINT ' . $savepoint);
+                } catch (Throwable $rollbackException) {
+                    // Keep the original bridge error visible; the caller still owns the outer transaction.
+                }
             }
             throw $exception;
         }

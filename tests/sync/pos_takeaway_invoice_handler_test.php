@@ -771,6 +771,9 @@ function posTakeawayInvoiceAssertCommittedTakeawaySale(mysqli $conn): void
     $outbox = $conn->query("
         SELECT *
         FROM sync_outbox
+        WHERE aggregate_type = 'order'
+          AND entity_type = 'order'
+          AND event_type = 'order.saved'
         ORDER BY id ASC
         LIMIT 1
     ")->fetch_assoc();
@@ -871,7 +874,10 @@ function posTakeawayInvoiceAssertRecipeConsumedOnce(mysqli $conn, int $orderId, 
 
     $balance = (new InventoryBalanceRepository())->findBalance($conn, 0, 0, 3, 12);
     posTakeawayInvoiceAssert(is_array($balance), 'ingredient balance should exist after handler recipe consumption');
-    posTakeawayInvoiceAssert((string) $balance['qty_on_hand'] === $expectedIngredientOnHand, 'ingredient stock should be deducted exactly once for this paid takeaway handler order');
+    posTakeawayInvoiceAssert(
+        (string) $balance['qty_on_hand'] === $expectedIngredientOnHand,
+        'ingredient stock should be deducted exactly once for this paid takeaway handler order actual=' . (string) $balance['qty_on_hand']
+    );
 }
 
 function posTakeawayInvoiceAssertLine(array $line, int $itemId, float $qtyOut, float $price, float $cost, float $value, float $profit): void

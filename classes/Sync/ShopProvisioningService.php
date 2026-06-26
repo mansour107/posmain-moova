@@ -31,7 +31,9 @@ class ShopProvisioningService
         $dbPass = (string) ($input['db_pass'] ?? $templateDb['pass'] ?? '');
         $dbCharset = trim((string) ($input['db_charset'] ?? $templateDb['charset'] ?? 'utf8mb4')) ?: 'utf8mb4';
 
-        $this->createDatabase($dbHost, $dbPort, $dbUser, $dbPass, $dbName, $dbCharset);
+        if (empty($input['skip_database_create'])) {
+            $this->createDatabase($dbHost, $dbPort, $dbUser, $dbPass, $dbName, $dbCharset);
+        }
 
         $shopConn = new mysqli($dbHost, $dbUser, $dbPass, $dbName, $dbPort);
         $shopConn->set_charset($dbCharset);
