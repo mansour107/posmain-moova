@@ -55,14 +55,21 @@ test.describe('owner: production-parity UX contract', () => {
       page.locator('table thead tr th', { hasText: 'المتاح للتحضير' }),
     ).toHaveCount(1);
 
-    // The item cost card container must be rendered on the page (it appears when a recipe is
-    // selected; on a fresh shop with no recipes we still assert the card template is wired by
-    // checking the recipe-item-cost-card class exists in markup OR the empty-state row).
+    // The item cost card container renders when a recipe is selected; on a fresh shop with no
+    // recipes the empty-state row (colspan=6) renders instead. On a shop that already has
+    // recipes but none opened, neither appears — so also accept the normal list-populated
+    // case where the availability column shows real badges for active recipes.
     const costCardCount = await page.locator('.recipe-item-cost-card').count();
     const emptyStateCount = await page.locator('table tbody td[colspan="6"]').count();
+    const availabilityBadges = await page.locator('table tbody tr .badge').count();
+    const recipeRows = await page.locator('table tbody tr').count();
     const hasRecipes = costCardCount > 0;
     const hasEmptyState = emptyStateCount > 0;
-    expect(hasRecipes || hasEmptyState, 'recipe list must either show cost cards or the empty state').toBeTruthy();
+    const hasPopulatedList = recipeRows > 0 && availabilityBadges > 0;
+    expect(
+      hasRecipes || hasEmptyState || hasPopulatedList,
+      'recipe list must show cost cards, the empty state, or a populated list with availability badges',
+    ).toBeTruthy();
   });
 
   test('myitems surfaces empty-state guidance when catalog is empty', async ({ page }) => {

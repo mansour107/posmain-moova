@@ -33,6 +33,22 @@ export default defineConfig({
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',
+    // Apple Silicon + Playwright's headless-shell registry can resolve to the mac-x64
+    // folder name while only the mac-arm64 binary is installed, causing a SIGSEGV when
+    // the symlinked arm64 binary is launched as x64. Pin the executable to the working
+    // arm64 headless shell so launches are stable across dev/CI machines.
+    launchOptions: {
+      executablePath:
+        process.env.POSMAIN_PLAYWRIGHT_EXECUTABLE ||
+        (process.arch === 'arm64' && process.platform === 'darwin'
+          ? require('path').join(
+              process.env.PLAYWRIGHT_BROWSERS_PATH ||
+                require('os').homedir() + '/Library/Caches/ms-playwright',
+              'chromium_headless_shell-1228/chrome-headless-shell-mac-arm64/chrome-headless-shell',
+            )
+          : undefined),
+      chromiumSandbox: false,
+    },
   },
   projects: [
     {

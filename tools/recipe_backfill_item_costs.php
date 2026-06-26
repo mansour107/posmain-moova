@@ -3,6 +3,7 @@
 require_once __DIR__ . '/../includes/db_bootstrap.php';
 require_once __DIR__ . '/../classes/Recipe/RecipeFeatureFlags.php';
 require_once __DIR__ . '/../classes/Recipe/RecipeEditorItemCostService.php';
+require_once __DIR__ . '/../classes/Recipe/RecipeEditorReadService.php';
 require_once __DIR__ . '/../classes/Recipe/Repository/RecipeRepository.php';
 
 if (PHP_SAPI !== 'cli') {
@@ -78,7 +79,7 @@ function recipeBackfillItemCostsRun(mysqli $conn, bool $dryRun, int $limit): arr
         . ($limit > 0 ? ' LIMIT ' . $limit : '')
     );
 
-    $repository = new RecipeRepository();
+    $readService = new RecipeEditorReadService();
     $costService = new RecipeEditorItemCostService();
 
     $processed = 0;
@@ -89,7 +90,6 @@ function recipeBackfillItemCostsRun(mysqli $conn, bool $dryRun, int $limit): arr
 
     while ($recipe = $rows->fetch_assoc()) {
         $recipeId = (int) $recipe['id'];
-        $itemId = (int) $recipe['sellable_item_id'];
         $processed++;
 
         $previewContext = [
@@ -102,12 +102,28 @@ function recipeBackfillItemCostsRun(mysqli $conn, bool $dryRun, int $limit): arr
             'costing_method' => (string) ($recipe['costing_method'] ?? 'item_cost_price'),
         ];
 
+        // Use the SAME detail source as RecipeEditorItemCostService::applyAutoItemCosts
+        // (RecipeEditorReadService::recipeDetail) so the dry-run drift check inspects exactly
+        // the items that --apply will write. For variant-based recipes this is the variant
+        // items, not the parent sellable item; checking the parent would be a false positive.
+        $recipeDetail = $readService->recipeDetail($conn, $recipeId);
+        if (!$recipeDetail) {
+            $items[] = ['recipe_id' => $recipeId, 'item_id' => 0, 'action' => 'missing_detail', 'stored' => '0', 'calculated' => '0'];
+            continue;
+        }
+
         $state = $costService->buildEditorState(
             $conn,
-            $repository->findHeaderById($conn, $recipeId) ?? [],
+            $recipeDetail,
             $previewContext,
             true
         );
+
+        if (empty($state['items'])) {
+            $mainItemId = (int) ($recipe['sellable_item_id'] ?? 0);
+            $items[] = ['recipe_id' => $recipeId, 'item_id' => $mainItemId, 'action' => 'no_cost_state', 'stored' => '0', 'calculated' => '0'];
+            continue;
+        }
 
         foreach ($state['items'] ?? [] as $rowItemId => $row) {
             $manual = !empty($row['manual_cost_edit']);
