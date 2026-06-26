@@ -70,12 +70,12 @@ class RecipeOrderLifecycleService
         $lineContext = new RecipeOrderLineContext((array) $ctx);
         $explosion = $this->explosionService->explodeOrderLine($conn, $lineContext);
         if (!$explosion->hasRecipe) {
-            return $this->result('order_line_added', $ctx, true, [], $explosion->warnings, $explosion->toArray());
+            return $this->result('order_line_added', $ctx, true, [], $explosion->warnings, $explosion->toArray(), $conn);
         }
         $this->assertStrictAvailability($conn, $lineContext);
 
         $itemCategoryId = $this->itemCategoryId($conn, $lineContext->sellableItemId, $lineContext->itemCategoryId);
-        $scope = $this->scopeResolver->resolve($this->contextArray($lineContext));
+        $scope = $this->resolveScope($conn, $this->contextArray($lineContext));
         $inReservationScope = $this->flags->isReservationEnabledForItem(
             $scope,
             $lineContext->sellableItemId,
@@ -87,7 +87,7 @@ class RecipeOrderLifecycleService
             $itemCategoryId
         );
         if ($this->flags->isReservationEnabled() && !$inReservationScope && !$inConsumptionScope) {
-            return $this->result('order_line_added', $this->contextArray($lineContext), true, [], $explosion->warnings, $explosion->toArray());
+            return $this->result('order_line_added', $this->contextArray($lineContext), true, [], $explosion->warnings, $explosion->toArray(), $conn);
         }
 
         $usage = $this->ensureUsage($conn, $lineContext, $explosion, 'previewed');
@@ -113,7 +113,7 @@ class RecipeOrderLifecycleService
         }
         $this->refreshAvailabilityCache($conn, $lineContext);
 
-        return $this->result('order_line_added', $ctx, false, $writes, $explosion->warnings, $explosion->toArray());
+        return $this->result('order_line_added', $ctx, false, $writes, $explosion->warnings, $explosion->toArray(), $conn);
     }
 
     public function onOrderLineUpdated($oldCtx, $newCtx): array
@@ -137,7 +137,7 @@ class RecipeOrderLifecycleService
     {
         $conn = $this->connectionFromContext($ctx);
         if (!$conn || !$this->flags->isEnabled()) {
-            return $this->noopResult('order_line_cancelled', ['context' => $ctx, 'reason' => $reason]);
+            return $this->noopResult('order_line_cancelled', ['context' => $ctx, 'reason' => $reason], $conn);
         }
 
         $context = new RecipeOrderLineContext((array) $ctx);
@@ -180,7 +180,8 @@ class RecipeOrderLifecycleService
                 'inventory_movements' => $release->movementIds,
             ],
             [],
-            null
+            null,
+            $conn
         );
     }
 
@@ -209,7 +210,7 @@ class RecipeOrderLifecycleService
     {
         $conn = $this->connectionFromContext($order);
         if (!$conn || !$this->flags->isEnabled()) {
-            return $this->noopResult('order_paid', $order);
+            return $this->noopResult('order_paid', $order, $conn);
         }
 
         $orderId = (int) (((array) $order)['order_id'] ?? 0);
@@ -220,7 +221,7 @@ class RecipeOrderLifecycleService
 
         $lines = $this->orderLines((array) $order);
         if (!$lines) {
-            return $this->noopResult('order_paid', $order);
+            return $this->noopResult('order_paid', $order, $conn);
         }
 
         $writes = [
@@ -240,7 +241,7 @@ class RecipeOrderLifecycleService
             }
             $itemCategoryId = $this->itemCategoryId($conn, $lineContext->sellableItemId, $lineContext->itemCategoryId);
             if (!$this->flags->isConsumptionEnabledForItem(
-                $this->scopeResolver->resolve($this->contextArray($lineContext)),
+                $this->resolveScope($conn, $this->contextArray($lineContext)),
                 $lineContext->sellableItemId,
                 $itemCategoryId
             )) {
@@ -279,7 +280,7 @@ class RecipeOrderLifecycleService
             $movementContext['consume_reserved'] = (bool) $activeReservations;
             $movementResult = $this->movementService->recordRecipeConsumption($conn, $explosion, $movementContext);
             if ($movementResult->movementIds && $this->flags->isAccountingEnabledForItem(
-                $this->scopeResolver->resolve($this->contextArray($lineContext)),
+                $this->resolveScope($conn, $this->contextArray($lineContext)),
                 $lineContext->sellableItemId,
                 $itemCategoryId
             )) {
@@ -323,7 +324,7 @@ class RecipeOrderLifecycleService
             return array_values(array_unique($ids));
         }, $writes);
 
-        return $this->result('order_paid', (array) $order, !$paidAny, $writes, $warnings, null);
+        return $this->result('order_paid', (array) $order, !$paidAny, $writes, $warnings, null, $conn);
     }
 
     public function onOrderVoided($order, $void): array
@@ -590,7 +591,7 @@ class RecipeOrderLifecycleService
             $lineContext = new RecipeOrderLineContext($lineContextData);
             $itemCategoryId = $this->itemCategoryId($conn, $lineContext->sellableItemId, $lineContext->itemCategoryId);
             if (!$this->flags->isConsumptionEnabledForItem(
-                $this->scopeResolver->resolve($lineContextData),
+                $this->resolveScope($conn, $lineContextData),
                 $lineContext->sellableItemId,
                 $itemCategoryId
             )) {
@@ -633,7 +634,7 @@ class RecipeOrderLifecycleService
             $movementContext['consume_reserved'] = (bool) $activeReservations;
             $movementResult = $this->movementService->recordRecipeConsumption($conn, $explosion, $movementContext);
             if ($movementResult->movementIds && $this->flags->isAccountingEnabledForItem(
-                $this->scopeResolver->resolve($lineContextData),
+                $this->resolveScope($conn, $lineContextData),
                 $lineContext->sellableItemId,
                 $itemCategoryId
             )) {
@@ -678,7 +679,7 @@ class RecipeOrderLifecycleService
             return array_values(array_unique($ids));
         }, $writes);
 
-        return $this->result('order_paid', $order, !$paidAny, $writes, $warnings, null);
+        return $this->result('order_paid', $order, !$paidAny, $writes, $warnings, null, $conn);
     }
 
     private function lineContextFromUsage(mysqli $conn, array $order, array $usage): array
@@ -752,7 +753,7 @@ class RecipeOrderLifecycleService
     {
         $conn = $this->connectionFromContext($order);
         if (!$conn || !$this->flags->isEnabled()) {
-            return $this->noopResult($action, ['order' => $order, 'reverse' => $reverseContext]);
+            return $this->noopResult($action, ['order' => $order, 'reverse' => $reverseContext], $conn);
         }
 
         $usageRows = [];
@@ -766,7 +767,7 @@ class RecipeOrderLifecycleService
         }
 
         if (!$usageRows) {
-            return $this->noopResult($action, ['order' => $order, 'reverse' => $reverseContext]);
+            return $this->noopResult($action, ['order' => $order, 'reverse' => $reverseContext], $conn);
         }
 
         $movementIds = [];
@@ -784,7 +785,7 @@ class RecipeOrderLifecycleService
             $movementIds = array_merge($movementIds, $result->movementIds);
             $itemCategoryId = $this->itemCategoryId($conn, (int) ($usage['sellable_item_id'] ?? 0));
             if ($result->movementIds && $this->flags->isAccountingEnabledForItem(
-                $this->scopeResolver->resolve(array_merge($order, $reverseContext)),
+                $this->resolveScope($conn, array_merge($order, $reverseContext)),
                 (int) ($usage['sellable_item_id'] ?? 0),
                 $itemCategoryId
             )) {
@@ -817,7 +818,7 @@ class RecipeOrderLifecycleService
         }
 
         if (!$movementIds && !$journalIds && !$warnings) {
-            return $this->noopResult($action, ['order' => $order, 'reverse' => $reverseContext]);
+            return $this->noopResult($action, ['order' => $order, 'reverse' => $reverseContext], $conn);
         }
 
         return $this->result(
@@ -830,7 +831,8 @@ class RecipeOrderLifecycleService
                 'accounting_journals' => array_values(array_unique($journalIds)),
             ],
             $warnings,
-            null
+            null,
+            $conn
         );
     }
 
@@ -1167,9 +1169,16 @@ WHERE TABLE_SCHEMA = DATABASE()
         return (int) ($row['column_count'] ?? 0) > 0;
     }
 
-    private function result(string $action, array $context, bool $noop, array $writes, array $warnings, ?array $preview): array
+    private function resolveScope(mysqli $conn, array $context, string $mode = 'write'): RecipeScope
     {
-        $scope = $this->scopeResolver->resolve($context);
+        return $this->scopeResolver->resolveForConn($conn, $context, $mode);
+    }
+
+    private function result(string $action, array $context, bool $noop, array $writes, array $warnings, ?array $preview, ?mysqli $conn = null): array
+    {
+        $scope = $conn instanceof mysqli
+            ? $this->resolveScope($conn, $context)
+            : $this->scopeResolver->resolve($context);
 
         return [
             'success' => true,
@@ -1184,9 +1193,11 @@ WHERE TABLE_SCHEMA = DATABASE()
         ];
     }
 
-    private function noopResult(string $action, $context): array
+    private function noopResult(string $action, $context, ?mysqli $conn = null): array
     {
-        $scope = is_array($context) ? $this->scopeResolver->resolve($context) : $this->scopeResolver->resolve();
+        $scope = $conn instanceof mysqli && is_array($context)
+            ? $this->resolveScope($conn, $context, 'read')
+            : (is_array($context) ? $this->scopeResolver->resolve($context) : $this->scopeResolver->resolve());
 
         return [
             'success' => true,

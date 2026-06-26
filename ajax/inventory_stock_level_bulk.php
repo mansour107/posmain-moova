@@ -3,6 +3,7 @@ require_once __DIR__ . '/../includes/session_bootstrap.php';
 require_once __DIR__ . '/../includes/connect.php';
 require_once __DIR__ . '/../includes/auth_guard.php';
 require_once __DIR__ . '/../includes/csrf.php';
+require_once __DIR__ . '/../includes/pos_default_accounts.php';
 require_once __DIR__ . '/../classes/Inventory/InventoryStockLevelService.php';
 
 header('Content-Type: application/json; charset=utf-8');
@@ -21,7 +22,7 @@ require_csrf('inventory_stock_level');
 require_permission('inventory.edit', $conn);
 
 try {
-    $payload = inventoryStockLevelBulkPayload();
+    $payload = posmain_inventory_enforce_operational_store_write($conn, inventoryStockLevelBulkPayload(), 'write');
     $action = strtolower(trim((string) ($payload['action'] ?? 'import_csv')));
     if ($action === 'import_csv' && !auth_guard_has_permission('system.tools.run', $conn)) {
         http_response_code(403);

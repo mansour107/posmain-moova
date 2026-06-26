@@ -12,7 +12,7 @@ require_csrf('inventory_count');
 require_permission('inventory.edit', $conn);
 
 try {
-    $payload = inventoryCountPayload();
+    $payload = inventoryCountNormalizePayload($conn, inventoryCountPayload());
     $service = new InventoryCountService();
     $context = [
         'user_id' => current_user_id(),

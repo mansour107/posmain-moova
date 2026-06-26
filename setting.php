@@ -2,6 +2,7 @@
 require_once __DIR__ . '/includes/auth_guard.php';
 require_once __DIR__ . '/includes/csrf.php';
 include('includes/connect.php');
+require_once __DIR__ . '/includes/pos_default_accounts.php';
 require_admin_or_permission('system.tools.run', $conn);
 
 $sittingpass = $sittingpass ?? 'hadi@1234';
@@ -27,6 +28,21 @@ if (!empty($_SESSION['settings_gate_flash'])) {
 }
 
 $settingsGateUnlocked = !empty($_SESSION['settings_gate_unlocked']);
+$settingsStockStores = [];
+$settingsStockResult = $conn->query("
+    SELECT id, aname
+    FROM acc_head
+    WHERE COALESCE(isdeleted, 0) = 0
+      AND COALESCE(is_stock, 0) = 1
+    ORDER BY aname
+    LIMIT 150
+");
+if ($settingsStockResult) {
+    while ($settingsStockRow = $settingsStockResult->fetch_assoc()) {
+        $settingsStockStores[] = $settingsStockRow;
+    }
+}
+$settingsCurrentPosStore = (int) ($rowstg['def_pos_store'] ?? 0);
 
 include('includes/header.php');
 ?>
@@ -396,8 +412,25 @@ if ($syncDefaultCloudUrl === '' && !empty($_SERVER['HTTP_HOST'])) {
               <div class="col-md-6 col-lg-4">
                 <div class="form-group">
                   <label for="def_pos_store">مخزن الكاشير الافتراضي</label>
-                  <input type="number" class="form-control" id="def_pos_store" name="def_pos_store"
-                         value="<?= htmlspecialchars((string)($rowstg['def_pos_store'] ?? '0'), ENT_QUOTES, 'UTF-8') ?>">
+                  <?php if ($settingsStockStores): ?>
+                    <select class="form-control" id="def_pos_store" name="def_pos_store" required>
+                      <option value="">اختر مخزن الكاشير</option>
+                      <?php foreach ($settingsStockStores as $settingsStockStore): ?>
+                        <option value="<?= (int) ($settingsStockStore['id'] ?? 0) ?>" <?= $settingsCurrentPosStore === (int) ($settingsStockStore['id'] ?? 0) ? 'selected' : '' ?>>
+                          <?= htmlspecialchars((string) ($settingsStockStore['aname'] ?? ''), ENT_QUOTES, 'UTF-8') ?>
+                        </option>
+                      <?php endforeach; ?>
+                    </select>
+                    <?php if ($settingsCurrentPosStore > 0 && !posmain_resolve_default_account_id($conn, $settingsCurrentPosStore, 'is_stock = 1')): ?>
+                      <small class="form-text text-warning">المخزن المحفوظ حاليا غير صالح. اختر مخزنا نشطا من القائمة.</small>
+                    <?php else: ?>
+                      <small class="form-text text-muted">يحدد المخزن التشغيلي الوحيد للمخزون والكاشير.</small>
+                    <?php endif; ?>
+                  <?php else: ?>
+                    <input type="number" class="form-control" id="def_pos_store" name="def_pos_store"
+                           value="<?= htmlspecialchars((string)($rowstg['def_pos_store'] ?? '0'), ENT_QUOTES, 'UTF-8') ?>">
+                    <small class="form-text text-muted">لا توجد حسابات مخزون نشطة لاختيارها.</small>
+                  <?php endif; ?>
                 </div>
               </div>
               <div class="col-md-6 col-lg-4">

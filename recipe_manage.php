@@ -1557,7 +1557,7 @@ function posmain_recipe_manage_can_view_cost(mysqli $conn): bool
 
 function posmain_recipe_manage_actor(mysqli $conn): RecipeActorContext
 {
-    $scope = (new RecipeScopeResolver())->resolve($_POST);
+    $scope = (new RecipeScopeResolver())->resolveForConn($conn, $_POST, 'write');
     $roleFlags = auth_guard_current_role_flags($conn);
     $isAdmin = auth_guard_is_admin_session($_SESSION, $roleFlags);
     $permissions = [];

@@ -3,6 +3,7 @@ require_once __DIR__ . '/includes/session_bootstrap.php';
 require_once __DIR__ . '/includes/auth_guard.php';
 require_once __DIR__ . '/includes/csrf.php';
 require_once __DIR__ . '/includes/connect.php';
+require_once __DIR__ . '/includes/pos_default_accounts.php';
 
 require_permission('inventory.edit', $conn);
 
@@ -19,14 +20,7 @@ if (isset($_GET['stock_level_export'])) {
     exit;
 }
 
-$inventoryStockLevelStores = inventoryStockLevelRows($conn, "
-    SELECT id, aname
-    FROM acc_head
-    WHERE isdeleted = 0
-      AND is_stock = 1
-    ORDER BY aname
-    LIMIT 100
-");
+$inventoryStockLevelStores = posmain_inventory_store_select_options($conn);
 $inventoryStockLevelCategories = inventoryStockLevelRows($conn, "
     SELECT id, gname
     FROM item_group

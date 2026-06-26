@@ -1,5 +1,6 @@
 <?php 
 include('../includes/connect.php');
+require_once '../includes/pos_default_accounts.php';
 
 // التحقق من صحة البيانات المدخلة
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
@@ -43,6 +44,10 @@ if ($parent_id != 0) {
 }
 
 if (isset($_POST['is_stock'])) {
+    if (function_exists('posmain_single_store_mode_enabled') && posmain_single_store_mode_enabled()) {
+        echo '<center><h1>وضع المخزن الواحد مفعّل: لا يمكن إنشاء مخازن إضافية من هنا.</h1></center>';
+        die;
+    }
     $is_stock = 1;    
 }else {
     $is_stock = 0;

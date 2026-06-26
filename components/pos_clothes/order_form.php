@@ -1,15 +1,8 @@
 <?php
-// جلب المخزن الافتراضي
-$default_store_id = 1;
-
-if (!empty($rowstg['def_pos_store'])) {
-    $default_store_id = $rowstg['def_pos_store'];
-} else {
-    $resstore = $conn->query("SELECT id FROM `acc_head` WHERE is_stock = 1 AND isdeleted = 0 LIMIT 1;");
-    if ($resstore && $resstore->num_rows > 0) {
-        $rowstore = $resstore->fetch_assoc();
-        $default_store_id = $rowstore['id'];
-    }
+require_once __DIR__ . '/../../includes/pos_operational_store.php';
+$default_store_id = posmain_operational_store_id($conn);
+if ($default_store_id < 1 && !empty($rowstg['def_pos_store'])) {
+    $default_store_id = (int) $rowstg['def_pos_store'];
 }
 ?>
 

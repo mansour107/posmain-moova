@@ -1,7 +1,9 @@
 <?php 
+require_once __DIR__ . '/includes/pos_operational_store.php';
 include('includes/header.php');
 include('includes/navbar.php');
 include('includes/sidebar.php');
+$mystoresSingleStore = posmain_single_store_mode_enabled();
 ?>
 <div class="content-wrapper">
     <!-- Content Header (Page header) -->
@@ -16,7 +18,9 @@ include('includes/sidebar.php');
         <div class="col-lg-4"><h3>ادارة المخازن</h3></div>
         <div class="col-lg-4"></div>
         <div class="col-lg-4 text-right">
-           <a href="add_store.php" id="addNewElement"><p class="btn btn-large btn-dark"  >جديد(f3)</p></a> 
+           <?php if (!$mystoresSingleStore): ?>
+           <a href="add_store.php" id="addNewElement"><p class="btn btn-large btn-dark"  >جديد(f3)</p></a>
+           <?php endif; ?>
         </div>
         </div>
       </div>

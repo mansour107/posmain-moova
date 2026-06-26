@@ -1,7 +1,9 @@
 <?php 
+require_once __DIR__ . '/includes/pos_operational_store.php';
 include('includes/header.php');
 include('includes/navbar.php');
 include('includes/sidebar.php');
+$addStoreBlocked = posmain_single_store_mode_enabled();
 ?>
 <div class="content-wrapper">
     <!-- Content Header (Page header) -->
@@ -22,6 +24,12 @@ include('includes/sidebar.php');
 
 
       <div class="card-body">
+<?php if ($addStoreBlocked): ?>
+<div class="alert alert-warning">
+    وضع المخزن الواحد مفعّل. المخزن التشغيلي يُدار من إعدادات النظام (مخزن الكاشير الافتراضي) ولا يمكن إنشاء مخازن إضافية من هنا.
+    <a href="inventory_stores.php" class="alert-link">العودة إلى إعداد المخازن</a>
+</div>
+<?php else: ?>
 <div class="alert alert-info">
     هذه شاشة إعداد مخزن وربطه بالحسابات فقط. أرصدة وكميات المخزون تدار من دفتر المخزون الجديد.
 </div>
@@ -109,6 +117,7 @@ include('includes/sidebar.php');
         </div>
 
 </form>
+<?php endif; ?>
 
 
 

@@ -3,6 +3,7 @@ require_once __DIR__ . '/includes/session_bootstrap.php';
 require_once __DIR__ . '/includes/auth_guard.php';
 require_once __DIR__ . '/includes/csrf.php';
 require_once __DIR__ . '/includes/connect.php';
+require_once __DIR__ . '/includes/pos_default_accounts.php';
 require_once __DIR__ . '/classes/Inventory/InventoryFeatureFlags.php';
 
 require_permission('inventory.edit', $conn);
@@ -20,14 +21,8 @@ $inventoryTransferCurrentBranch = [
     'branch_name' => trim((string) ($inventoryTransferBranchConfig['name'] ?? '')) ?: 'الفرع الحالي',
 ];
 $inventoryTransferBranches = inventoryTransferBranchRows($conn, $inventoryTransferCurrentBranch);
-$inventoryTransferStores = inventoryTransferRows($conn, "
-    SELECT id, aname
-    FROM acc_head
-    WHERE isdeleted = 0
-      AND is_stock = 1
-    ORDER BY aname
-    LIMIT 100
-");
+$inventoryTransfersAllowed = posmain_inventory_transfers_allowed();
+$inventoryTransferStores = posmain_inventory_store_select_options($conn);
 $inventoryTransferItems = inventoryTransferRows($conn, "
     SELECT id, iname, barcode
     FROM myitems
@@ -137,6 +132,10 @@ include __DIR__ . '/includes/sidebar.php';
                 </div>
             </div>
 
+            <?php if (!$inventoryTransfersAllowed): ?>
+                <div class="alert alert-info mt-3 mb-0">وضع المخزن الواحد مفعّل: تحويلات المخزون بين مخازن متعددة غير متاحة.</div>
+            <?php endif; ?>
+
             <?php if (!$inventoryTransferCanPost): ?>
                 <div class="alert alert-warning mt-3 mb-0">يمكن إنشاء التحويل، لكن الإرسال والاستلام يحتاجان وضع bridge أو live للمخزون.</div>
             <?php endif; ?>
@@ -146,7 +145,7 @@ include __DIR__ . '/includes/sidebar.php';
                     <div class="inventory-transfer-panel-header">
                         <h2 class="inventory-transfer-panel-title">تحويل جديد</h2>
                     </div>
-                    <div class="inventory-transfer-panel-body">
+                    <div class="inventory-transfer-panel-body"<?= !$inventoryTransfersAllowed ? ' style="opacity:0.55;pointer-events:none;"' : '' ?>>
                         <div class="inventory-transfer-field">
                             <label for="inventoryTransferSource">من مخزن</label>
                             <select id="inventoryTransferSource" class="form-control">

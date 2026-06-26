@@ -35,9 +35,16 @@ class InvoiceHeader extends InvoiceElementBase
             }
 
             // تحميل المخازن
-            $query = "SELECT * FROM acc_head WHERE is_stock = 1";
-            $result = $this->executeSecureQuery($query);
-            $this->stores = $result->fetch_all(MYSQLI_ASSOC);
+            if (!function_exists('posmain_inventory_store_select_options')) {
+                require_once __DIR__ . '/../includes/pos_operational_store.php';
+            }
+            if (function_exists('posmain_inventory_store_select_options')) {
+                $this->stores = posmain_inventory_store_select_options($this->conn);
+            } else {
+                $query = "SELECT * FROM acc_head WHERE is_stock = 1";
+                $result = $this->executeSecureQuery($query);
+                $this->stores = $result->fetch_all(MYSQLI_ASSOC);
+            }
 
             // تحميل الموظفين
             $query = "SELECT * FROM acc_head WHERE parent_id = 35 AND is_basic = 0";

@@ -3,6 +3,7 @@ require_once __DIR__ . '/includes/session_bootstrap.php';
 require_once __DIR__ . '/includes/auth_guard.php';
 require_once __DIR__ . '/includes/csrf.php';
 require_once __DIR__ . '/includes/connect.php';
+require_once __DIR__ . '/includes/pos_default_accounts.php';
 require_once __DIR__ . '/classes/Inventory/InventoryFeatureFlags.php';
 
 require_permission('inventory.edit', $conn);
@@ -21,14 +22,7 @@ $inventoryPurchaseSuppliers = inventoryPurchasingRows($conn, "
     ORDER BY aname
     LIMIT 200
 ");
-$inventoryPurchaseStores = inventoryPurchasingRows($conn, "
-    SELECT id, aname
-    FROM acc_head
-    WHERE isdeleted = 0
-      AND is_stock = 1
-    ORDER BY aname
-    LIMIT 100
-");
+$inventoryPurchaseStores = posmain_inventory_store_select_options($conn);
 $inventoryPurchaseItems = inventoryPurchasingRows($conn, "
     SELECT id, iname, barcode, cost_price
     FROM myitems

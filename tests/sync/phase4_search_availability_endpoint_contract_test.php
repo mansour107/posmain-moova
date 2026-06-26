@@ -14,7 +14,8 @@ phase4SearchAvailabilityAssert(strpos($lazyItems, 'bind_param($types, ...$params
 phase4SearchAvailabilityAssert(strpos($lazyItems, "'total' => \$total") !== false, 'load_items_lazy should preserve total response contract');
 phase4SearchAvailabilityAssert(strpos($lazyItems, "'has_more' => (\$offset + \$limit) < \$total") !== false, 'load_items_lazy should preserve pagination contract');
 phase4SearchAvailabilityAssert(
-    strpos($lazyItems, 'decorateItems($conn, $items, $availabilityScope)') < strpos($lazyItems, "pos_render_item_card(\$item)"),
+    strpos($lazyItems, 'decorateItems($conn, $items, $availabilityScope)') < strpos($lazyItems, "pos_render_item_card(\$item)")
+        || strpos($lazyItems, 'posmain_pos_availability_scope($conn)') < strpos($lazyItems, "pos_render_item_card(\$item)"),
     'load_items_lazy should render item cards after availability decoration'
 );
 
@@ -27,11 +28,13 @@ function phase4SearchAvailabilityEndpointAssert(string $source, string $name): v
         "{$name} should load ItemAvailabilityService"
     );
     phase4SearchAvailabilityAssert(
-        strpos($source, 'decorateItems($conn, $items, $availabilityScope)') !== false,
+        strpos($source, 'decorateItems($conn, $items, $availabilityScope)') !== false
+            || strpos($source, 'decorateItems($conn, $items, posmain_pos_availability_scope($conn))') !== false,
         "{$name} should decorate the response items after fetching"
     );
     phase4SearchAvailabilityAssert(
-        strpos($source, "'channel' => 'pos'") !== false,
+        strpos($source, "'channel' => 'pos'") !== false
+            || strpos($source, 'posmain_pos_availability_scope') !== false,
         "{$name} should use a non-breaking POS availability channel scope"
     );
     phase4SearchAvailabilityAssert(

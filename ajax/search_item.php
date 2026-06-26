@@ -10,6 +10,7 @@ require_once __DIR__ . '/../classes/Items/ItemCatalogStatus.php';
 // استخدام dirname للحصول على المسار الصحيح
 $root_path = dirname(__DIR__);
 include($root_path . '/includes/connect.php');
+require_once($root_path . '/includes/pos_default_accounts.php');
 
 header('Content-Type: application/json');
 
@@ -59,15 +60,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['barcode'])) {
             'barcode' => $item['barcode'],
             'has_variants' => (int) ($item['has_variants'] ?? 0) === 1
         ];
-        $branchConfig = function_exists('posmain_app_config')
-            ? (posmain_app_config()['branch'] ?? [])
-            : [];
-        $decoratedItems = (new ItemAvailabilityService())->decorateItems($conn, [$barcodeItem], [
-            'tenant' => (int)($branchConfig['pos_tenant'] ?? 0),
-            'branch' => (int)($branchConfig['pos_branch'] ?? 0),
-            'channel' => 'pos',
-            'order_type' => 'takeaway',
-        ]);
+        $decoratedItems = (new ItemAvailabilityService())->decorateItems($conn, [$barcodeItem], posmain_pos_availability_scope($conn));
 
         echo json_encode([
             'success' => true,

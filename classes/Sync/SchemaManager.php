@@ -136,6 +136,17 @@ class SyncSchemaManager
                     ],
                 ],
             ],
+            'acc_head' => [
+                'columns' => [
+                    'is_operational_store' => 'ALTER TABLE acc_head ADD COLUMN is_operational_store TINYINT(1) NOT NULL DEFAULT 0',
+                ],
+                'indexes' => [
+                    'idx_acc_head_operational_store' => [
+                        'columns' => ['is_operational_store', 'is_stock', 'isdeleted'],
+                        'sql' => 'ALTER TABLE acc_head ADD KEY idx_acc_head_operational_store (is_operational_store, is_stock, isdeleted)',
+                    ],
+                ],
+            ],
             'fat_details' => [
                 'columns' => [],
                 'indexes' => [

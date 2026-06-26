@@ -3,6 +3,7 @@ require_once __DIR__ . '/includes/session_bootstrap.php';
 require_once __DIR__ . '/includes/connect.php';
 require_once __DIR__ . '/includes/auth_guard.php';
 require_once __DIR__ . '/includes/csv_export.php';
+require_once __DIR__ . '/includes/pos_operational_store.php';
 require_once __DIR__ . '/classes/Inventory/InventoryReportsService.php';
 
 require_login();
@@ -13,12 +14,13 @@ if (!posmain_inventory_reports_can_view($conn)) {
 $inventoryReportsCanViewCost = posmain_inventory_reports_can_view_cost($conn);
 $inventoryReportsTypes = posmain_inventory_report_types($inventoryReportsCanViewCost);
 $inventoryReportsReport = posmain_inventory_report_key($_GET['report'] ?? '', $inventoryReportsTypes);
-$inventoryReportsFilters = posmain_inventory_report_filters($_GET);
+$inventoryReportsFilters = posmain_inventory_report_filters($_GET, $conn);
 if ($inventoryReportsReport === 'movement_history' && (int) ($inventoryReportsFilters['item_id'] ?? 0) > 0) {
     posmain_inventory_reports_redirect_item_movements($inventoryReportsFilters);
 }
 $inventoryReportsBranches = posmain_inventory_report_branches($conn);
 $inventoryReportsStores = posmain_inventory_report_stores($conn);
+$inventoryReportsSingleStore = posmain_single_store_mode_enabled();
 $inventoryReportsSuppliers = posmain_inventory_report_suppliers($conn);
 $inventoryReportsItems = posmain_inventory_report_items($conn);
 $inventoryReportsCategories = posmain_inventory_report_categories($conn);
@@ -157,7 +159,9 @@ include __DIR__ . '/includes/sidebar.php';
                     <div class="inventory-report-field">
                         <label>المخزن</label>
                         <select name="store_id" class="form-control">
-                            <option value="">كل المخازن</option>
+                            <?php if (!$inventoryReportsSingleStore): ?>
+                                <option value="">كل المخازن</option>
+                            <?php endif; ?>
                             <?php if ($inventoryReportsFilters['store_id'] > 0 && !posmain_inventory_report_option_exists($inventoryReportsStores, $inventoryReportsFilters['store_id'])): ?>
                                 <option value="<?= (int) $inventoryReportsFilters['store_id'] ?>" selected>مخزن محدد من الرابط</option>
                             <?php endif; ?>
@@ -460,14 +464,19 @@ function posmain_inventory_report_key($value, array $types): string
     return isset($types[$key]) ? $key : 'inventory_levels';
 }
 
-function posmain_inventory_report_filters(array $request): array
+function posmain_inventory_report_filters(array $request, ?mysqli $conn = null): array
 {
+    $storeId = isset($request['store_id']) && (int) $request['store_id'] > 0 ? (int) $request['store_id'] : 0;
+    if ($conn instanceof mysqli) {
+        $storeId = posmain_apply_read_store_filter($conn, $storeId);
+    }
+
     return [
         'date_from' => posmain_inventory_report_date($request['date_from'] ?? ''),
         'date_to' => posmain_inventory_report_date($request['date_to'] ?? ''),
         'pos_tenant' => isset($request['pos_tenant']) && $request['pos_tenant'] !== '' ? max(0, (int) $request['pos_tenant']) : -1,
         'pos_branch' => isset($request['pos_branch']) && $request['pos_branch'] !== '' ? max(0, (int) $request['pos_branch']) : -1,
-        'store_id' => isset($request['store_id']) && (int) $request['store_id'] > 0 ? (int) $request['store_id'] : 0,
+        'store_id' => $storeId,
         'supplier_account_id' => isset($request['supplier_account_id']) && (int) $request['supplier_account_id'] > 0 ? (int) $request['supplier_account_id'] : 0,
         'item_id' => isset($request['item_id']) && (int) $request['item_id'] > 0 ? (int) $request['item_id'] : 0,
         'category_id' => isset($request['category_id']) && (int) $request['category_id'] > 0 ? (int) $request['category_id'] : 0,
@@ -544,6 +553,10 @@ function posmain_inventory_report_branches(mysqli $conn): array
 
 function posmain_inventory_report_stores(mysqli $conn): array
 {
+    if (function_exists('posmain_single_store_mode_enabled') && posmain_single_store_mode_enabled()) {
+        return posmain_inventory_store_select_options($conn);
+    }
+
     return posmain_inventory_report_rows($conn, "
         SELECT id, aname
         FROM acc_head

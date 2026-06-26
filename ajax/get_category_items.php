@@ -1,6 +1,7 @@
 <?php
 header('Content-Type: application/json');
 include('../includes/connect.php');
+require_once('../includes/pos_default_accounts.php');
 require_once('../classes/Pos/Service/ItemAvailabilityService.php');
 require_once('../classes/Items/ItemCatalogStatus.php');
 
@@ -25,15 +26,7 @@ if ($result && $result->num_rows > 0) {
             'price' => floatval($row['price'] ?: 0)
         ];
     }
-    $branchConfig = function_exists('posmain_app_config')
-        ? (posmain_app_config()['branch'] ?? [])
-        : [];
-    $items = (new ItemAvailabilityService())->decorateItems($conn, $items, [
-        'tenant' => (int)($branchConfig['pos_tenant'] ?? 0),
-        'branch' => (int)($branchConfig['pos_branch'] ?? 0),
-        'channel' => 'pos',
-        'order_type' => 'takeaway',
-    ]);
+    $items = (new ItemAvailabilityService())->decorateItems($conn, $items, posmain_pos_availability_scope($conn));
     echo json_encode(['success' => true, 'items' => $items]);
 } else {
     echo json_encode(['success' => false, 'error' => 'لا توجد أصناف في هذه المجموعة']);

@@ -1,5 +1,7 @@
 <?php
 
+require_once __DIR__ . '/../includes/pos_default_accounts.php';
+
 function inventoryTransferPayload(): array
 {
     $raw = file_get_contents('php://input');
@@ -18,6 +20,11 @@ function inventoryTransferPayload(): array
     }
 
     return $payload;
+}
+
+function inventoryTransferNormalizePayload(mysqli $conn, array $payload): array
+{
+    return posmain_inventory_enforce_operational_store_write($conn, $payload, 'transfer');
 }
 
 function inventoryTransferRequirePost(): void
@@ -78,6 +85,8 @@ function inventoryTransferArabicError(string $code): string
         'ITEM_UNIT_NOT_FOUND' => 'الوحدة المختارة غير مرتبطة بهذا الصنف',
         'INVALID_UNIT_CONVERSION' => 'معامل تحويل الوحدة غير صحيح',
         'METHOD_NOT_ALLOWED' => 'طريقة الطلب غير صحيحة',
+        'INVENTORY_TRANSFERS_DISABLED' => 'تحويلات المخزون معطلة في وضع المخزن الواحد',
+        'NON_OPERATIONAL_STORE' => 'المخزن المحدد غير نشط في هذا الفرع',
     ];
 
     return $messages[$code] ?? 'تعذر تنفيذ عملية التحويل';

@@ -3,17 +3,23 @@
 require_once __DIR__ . '/DTO/RecipeActorContext.php';
 require_once __DIR__ . '/ProductionBatchService.php';
 require_once __DIR__ . '/RecipeDecimal.php';
+require_once __DIR__ . '/RecipeScopeResolver.php';
 require_once __DIR__ . '/Repository/RecipeRepository.php';
 
 class ProductionBatchMutationService
 {
     private $production;
     private $recipes;
+    private RecipeScopeResolver $scopeResolver;
 
-    public function __construct(?ProductionBatchService $production = null, ?RecipeRepository $recipes = null)
-    {
+    public function __construct(
+        ?ProductionBatchService $production = null,
+        ?RecipeRepository $recipes = null,
+        ?RecipeScopeResolver $scopeResolver = null
+    ) {
         $this->production = $production ?: new ProductionBatchService();
         $this->recipes = $recipes ?: new RecipeRepository();
+        $this->scopeResolver = $scopeResolver ?: new RecipeScopeResolver();
     }
 
     public function handle(mysqli $conn, string $action, array $input, RecipeActorContext $actor): array
@@ -30,11 +36,18 @@ class ProductionBatchMutationService
                     throw new InvalidArgumentException('Production batch recipe type must be batch, hybrid, or sub-recipe.');
                 }
 
-                $batch = $this->production->createDraft($conn, [
+                $scope = $this->scopeResolver->resolveForConn($conn, [
                     'pos_tenant' => (int) ($recipe['pos_tenant'] ?? $actor->posTenant),
                     'pos_branch' => (int) ($recipe['pos_branch'] ?? $actor->posBranch),
                     'branch_uuid' => $recipe['branch_uuid'] ?? $actor->branchUuid,
                     'store_id' => $this->nonNegativeInt($input['store_id'] ?? 0),
+                ], 'write');
+
+                $batch = $this->production->createDraft($conn, [
+                    'pos_tenant' => $scope->posTenant,
+                    'pos_branch' => $scope->posBranch,
+                    'branch_uuid' => $scope->branchUuid,
+                    'store_id' => $scope->storeId,
                     'recipe_id' => $recipeId,
                     'output_item_id' => (int) $recipe['sellable_item_id'],
                     'planned_output_qty' => $this->positiveDecimal($input['planned_output_qty'] ?? '0', 'Planned output quantity is required.'),

@@ -59,16 +59,24 @@
             </div>
 
             <!-- المخزن -->
+            <?php
+            if (!function_exists('posmain_inventory_store_select_options')) {
+                require_once __DIR__ . '/../../includes/pos_default_accounts.php';
+            }
+            $right0Stores = posmain_inventory_store_select_options($conn);
+            $right0SingleStore = function_exists('posmain_single_store_mode_enabled') && posmain_single_store_mode_enabled() && count($right0Stores) <= 1;
+            if ($right0SingleStore) { ?>
+            <input type="hidden" name="store_id" value="<?= (int) posmain_operational_store_id($conn) ?>">
+            <?php } else { ?>
             <div class="col-6">
                 <select name="store_id" class="form-select form-select-sm" title="المخزن">
-                    <?php
-                    $resstore = $conn->query("SELECT * FROM `acc_head` WHERE is_stock =1 AND isdeleted = 0;");
-                    while ($rowstore = $resstore->fetch_assoc()) { ?>
-                        <option <?php if($rowstg['def_pos_store'] == $rowstore['id']){echo "selected";} ?> 
-                                value="<?= $rowstore['id'] ?>"><?= $rowstore['aname'] ?></option>
+                    <?php foreach ($right0Stores as $rowstore) { ?>
+                        <option <?php if ((int) ($rowstg['def_pos_store'] ?? 0) === (int) $rowstore['id']) { echo 'selected'; } ?>
+                                value="<?= (int) $rowstore['id'] ?>"><?= htmlspecialchars((string) $rowstore['aname'], ENT_QUOTES, 'UTF-8') ?></option>
                     <?php } ?>
                 </select>
             </div>
+            <?php } ?>
 
             <!-- الموظف -->
             <div class="col-6">

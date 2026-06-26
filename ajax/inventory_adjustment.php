@@ -4,6 +4,7 @@ require_once __DIR__ . '/../includes/connect.php';
 require_once __DIR__ . '/../includes/auth_guard.php';
 require_once __DIR__ . '/../includes/csrf.php';
 require_once __DIR__ . '/../includes/upload_guard.php';
+require_once __DIR__ . '/../includes/pos_default_accounts.php';
 require_once __DIR__ . '/../classes/Inventory/InventoryAdjustmentService.php';
 
 header('Content-Type: application/json; charset=utf-8');
@@ -22,7 +23,7 @@ require_csrf('inventory_adjustment');
 require_permission('inventory.edit', $conn);
 
 try {
-    $payload = inventoryAdjustmentPayload();
+    $payload = posmain_inventory_enforce_operational_store_write($conn, inventoryAdjustmentPayload(), 'write');
     $action = strtolower(trim((string) ($payload['action'] ?? 'waste')));
     $storedAttachment = null;
     if (inventoryAdjustmentHasWastePhotoUpload()) {

@@ -10,6 +10,7 @@ require_once('../classes/Sync/DocumentCounterService.php');
 require_once('../classes/Sync/SyncOutboxEventService.php');
 require_once('../classes/Recipe/LegacyInvoiceRecipeLifecycleBridge.php');
 require_once('../classes/Inventory/InventoryInvoiceBridge.php');
+require_once('../includes/pos_default_accounts.php');
 
 // امسح أي output جاي من connect.php (warnings, notices, etc.)
 ob_clean();
@@ -73,34 +74,11 @@ if (!empty($idempotencyKey)) {
 
 // ===== جلب الـ defaults من الـ settings =====
 $stg = $conn->query("SELECT * FROM settings WHERE id = 1")->fetch_assoc();
-
-// المخزن الافتراضي
-$store_id = intval($stg['def_pos_store'] ?? 0);
-if ($store_id == 0) {
-    $r = $conn->query("SELECT id FROM stores WHERE isdeleted = 0 ORDER BY id LIMIT 1");
-    if ($r && $r->num_rows > 0) $store_id = intval($r->fetch_assoc()['id']);
-}
-
-// الموظف الافتراضي
-$emp_id = intval($stg['def_pos_employee'] ?? 0);
-if ($emp_id == 0) {
-    $r = $conn->query("SELECT id FROM acc_head WHERE parent_id = 35 AND is_basic = 0 AND isdeleted = 0 ORDER BY id LIMIT 1");
-    if ($r && $r->num_rows > 0) $emp_id = intval($r->fetch_assoc()['id']);
-}
-
-// العميل الافتراضي
-$acc2_id = intval($stg['def_pos_client'] ?? 0);
-if ($acc2_id == 0) {
-    $r = $conn->query("SELECT id FROM acc_head WHERE parent_id = 12 AND is_basic = 0 AND isdeleted = 0 ORDER BY id LIMIT 1");
-    if ($r && $r->num_rows > 0) $acc2_id = intval($r->fetch_assoc()['id']);
-}
-
-// الصندوق الافتراضي
-$fund_id = intval($stg['def_pos_fund'] ?? 0);
-if ($fund_id == 0) {
-    $r = $conn->query("SELECT id FROM acc_head WHERE is_fund = 1 AND is_basic = 0 AND isdeleted = 0 ORDER BY id LIMIT 1");
-    if ($r && $r->num_rows > 0) $fund_id = intval($r->fetch_assoc()['id']);
-}
+$posResolvedAccounts = posmain_resolve_pos_invoice_accounts($conn, is_array($stg) ? $stg : [], []);
+$store_id = (int) ($posResolvedAccounts['store_id'] ?? 0);
+$emp_id = (int) ($posResolvedAccounts['emp_id'] ?? 0);
+$acc2_id = (int) ($posResolvedAccounts['acc2_id'] ?? 0);
+$fund_id = (int) ($posResolvedAccounts['fund_id'] ?? 0);
 
 if ($store_id == 0 || $emp_id == 0 || $acc2_id == 0 || $fund_id == 0) {
     http_response_code(500);

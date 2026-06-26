@@ -12,7 +12,7 @@ require_csrf('inventory_transfer');
 require_permission('inventory.edit', $conn);
 
 try {
-    $payload = inventoryTransferPayload();
+    $payload = inventoryTransferNormalizePayload($conn, inventoryTransferPayload());
     $service = new InventoryTransferService();
     $result = $service->cancel($conn, (int) ($payload['transfer_id'] ?? 0), $payload, [
         'user_id' => current_user_id(),

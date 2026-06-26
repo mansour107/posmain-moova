@@ -193,6 +193,13 @@ $posmainInventoryLegacyOpeningBalanceVisible = !$posmainInventoryLiveLedgerMode;
 
 
               <li class="nav-item">
+                <a href="inventory_dashboard.php" class="nav-link">
+                  <i class="nav-icon fas fa-tachometer-alt"></i>
+                  <p>دفتر المخزون</p>
+                </a>
+              </li>
+
+              <li class="nav-item">
                 <a href="inventory_reports.php" class="nav-link">
                   <i class="nav-icon fas fa-chart-bar"></i>
                   <p>لوحة المخزون</p>
@@ -1478,6 +1485,13 @@ $posmainInventoryLegacyOpeningBalanceVisible = !$posmainInventoryLiveLedgerMode;
                   <p>
                     <?= $lang_sales_items_report ?>
                   </p>
+                </a>
+              </li>
+
+              <li class="nav-item">
+                <a href="inventory_dashboard.php" class="nav-link">
+                  <i class="nav-icon fas fa-tachometer-alt"></i>
+                  <p>دفتر المخزون</p>
                 </a>
               </li>
 

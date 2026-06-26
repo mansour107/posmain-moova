@@ -39,7 +39,7 @@ class InventoryTransferService
 
         try {
             $transferUuid = $this->uuidFromRequest($request, 'transfer_uuid');
-            $scope = $this->resolveScope($request, $context);
+            $scope = $this->resolveScope($conn, $request, $context);
             $lines = $this->normalizeLines($request['lines'] ?? []);
             if (!$lines) {
                 throw new InvalidArgumentException('TRANSFER_LINES_REQUIRED');
@@ -540,22 +540,26 @@ WHERE id = ?");
         }
     }
 
-    private function resolveScope(array $request, array $context): array
+    private function resolveScope(mysqli $conn, array $request, array $context): array
     {
+        if (function_exists('posmain_inventory_transfers_allowed') && !posmain_inventory_transfers_allowed()) {
+            throw new InvalidArgumentException('INVENTORY_TRANSFERS_DISABLED');
+        }
+
         $sourceStoreId = $this->positiveInt($request['source_store_id'] ?? 0);
         $destinationStoreId = $this->positiveInt($request['destination_store_id'] ?? 0);
         if ($sourceStoreId < 1 || $destinationStoreId < 1) {
             throw new InvalidArgumentException('TRANSFER_STORES_REQUIRED');
         }
 
-        $scope = $this->scopeResolver->resolve([
+        $scope = $this->scopeResolver->resolveForConn($conn, [
             'store_id' => $sourceStoreId,
             'pos_tenant' => $context['pos_tenant'] ?? $request['pos_tenant'] ?? null,
             'pos_branch' => $context['pos_branch'] ?? $request['pos_branch'] ?? null,
             'branch_uuid' => $context['branch_uuid'] ?? $request['branch_uuid'] ?? null,
             'source' => 'inventory_transfer',
         ]);
-        $destinationScope = $this->scopeResolver->resolve([
+        $destinationScope = $this->scopeResolver->resolveForConn($conn, [
             'store_id' => $destinationStoreId,
             'pos_tenant' => $scope['pos_tenant'],
             'pos_branch' => $context['destination_pos_branch'] ?? $request['destination_pos_branch'] ?? $scope['pos_branch'],

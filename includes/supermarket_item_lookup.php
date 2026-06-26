@@ -32,8 +32,12 @@ function posmain_supermarket_catalog_sql(mysqli $conn, string $alias = 'myitems'
         . posmain_supermarket_variant_child_sql($conn, $alias);
 }
 
-function posmain_supermarket_availability_scope(): array
+function posmain_supermarket_availability_scope(?mysqli $conn = null): array
 {
+    if ($conn instanceof mysqli && function_exists('posmain_pos_availability_scope')) {
+        return posmain_pos_availability_scope($conn);
+    }
+
     $branchConfig = function_exists('posmain_app_config')
         ? (posmain_app_config()['branch'] ?? [])
         : [];
@@ -65,7 +69,7 @@ function posmain_supermarket_finalize_item(mysqli $conn, ?array $row): ?array
         return null;
     }
 
-    $decorated = (new ItemAvailabilityService())->decorateItems($conn, [$item], posmain_supermarket_availability_scope());
+    $decorated = (new ItemAvailabilityService())->decorateItems($conn, [$item], posmain_supermarket_availability_scope($conn));
     $final = $decorated[0] ?? $item;
 
     $isAvailable = !in_array($final['is_available'] ?? 1, [0, '0', false], true);

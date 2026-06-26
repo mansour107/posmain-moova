@@ -87,6 +87,15 @@ class InventoryQuickItemCreateService
             $userId = 1;
         }
 
+        $storeId = $this->positiveInt($request['store_id'] ?? $request['destination_store_id'] ?? 0);
+        if (function_exists('posmain_assert_operational_store_id')) {
+            require_once __DIR__ . '/../../includes/pos_default_accounts.php';
+            $storeId = posmain_assert_operational_store_id($conn, $storeId);
+        } elseif ($storeId < 1 && function_exists('posmain_operational_store_id')) {
+            require_once __DIR__ . '/../../includes/pos_default_accounts.php';
+            $storeId = posmain_operational_store_id($conn);
+        }
+
         return [
             'iname' => $name,
             'name2' => trim((string) ($request['name2'] ?? '')),
@@ -106,7 +115,7 @@ class InventoryQuickItemCreateService
             'user' => $userId,
             'unit_id' => $unitId,
             'unit_barcode' => trim((string) ($request['unit_barcode'] ?? $barcode)),
-            'store_id' => $this->positiveInt($request['store_id'] ?? $request['destination_store_id'] ?? 0),
+            'store_id' => $storeId,
             'supplier_account_id' => $this->positiveInt($request['supplier_account_id'] ?? 0),
         ];
     }

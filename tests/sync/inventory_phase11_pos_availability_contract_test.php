@@ -59,8 +59,7 @@ foreach ([
 foreach ([
     'ItemAvailabilityService.php',
     'decorateItems($conn, [$barcodeItem]',
-    "'channel' => 'pos'",
-    "'order_type' => 'takeaway'",
+    'posmain_pos_availability_scope($conn)',
 ] as $needle) {
     inventoryPhase11Assert(strpos($barcodeSearch, $needle) !== false, 'barcode search should use POS availability service: ' . $needle);
 }

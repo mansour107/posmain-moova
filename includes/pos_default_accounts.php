@@ -581,6 +581,14 @@ if (!function_exists('posmain_resolve_default_account_id')) {
             }
         }
 
+        if (
+            function_exists('posmain_single_store_mode_enabled')
+            && posmain_single_store_mode_enabled()
+            && stripos($whereSql, 'is_stock') !== false
+        ) {
+            return 0;
+        }
+
         $result = $conn->query(
             'SELECT id FROM acc_head WHERE isdeleted = 0 AND ' . $whereSql . ' ORDER BY id ASC LIMIT 1'
         );
@@ -725,6 +733,13 @@ if (!function_exists('posmain_resolve_pos_invoice_accounts')) {
         ) {
             $storeId = (int) ($defaults['store_id'] ?? 0);
         }
+        if (function_exists('posmain_single_store_mode_enabled') && posmain_single_store_mode_enabled()) {
+            try {
+                $storeId = posmain_assert_operational_store_id($conn, $storeId);
+            } catch (InvalidArgumentException $exception) {
+                $storeId = (int) ($defaults['store_id'] ?? 0);
+            }
+        }
 
         $empId = (int) ($posted['emp_id'] ?? 0);
         if ($empId <= 0
@@ -796,12 +811,24 @@ if (!function_exists('posmain_resolve_pos_defaults')) {
             }
         }
 
+        $storeId = posmain_resolve_default_account_id(
+            $conn,
+            $preferredStoreId,
+            'is_stock = 1'
+        );
+        if (
+            function_exists('posmain_single_store_mode_enabled')
+            && function_exists('posmain_operational_store_id')
+            && posmain_single_store_mode_enabled()
+        ) {
+            $operational = posmain_operational_store_id($conn);
+            if ($operational > 0) {
+                $storeId = $operational;
+            }
+        }
+
         return [
-            'store_id' => posmain_resolve_default_account_id(
-                $conn,
-                $preferredStoreId,
-                'is_stock = 1'
-            ),
+            'store_id' => $storeId,
             'emp_id' => posmain_resolve_default_account_id(
                 $conn,
                 (int) ($settings['def_pos_employee'] ?? 0),
@@ -820,3 +847,5 @@ if (!function_exists('posmain_resolve_pos_defaults')) {
         ];
     }
 }
+
+require_once __DIR__ . '/pos_operational_store.php';

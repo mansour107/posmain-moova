@@ -55,7 +55,7 @@ class RecipeReconciliationService
     {
         $posTenant = (int) ($filters['pos_tenant'] ?? 0);
         $posBranch = (int) ($filters['pos_branch'] ?? 0);
-        $storeId = $this->requestedStoreId($filters);
+        $storeId = $this->requestedStoreId($conn, $filters);
         $itemIds = $filters['item_ids'] ?? [];
         if (!$itemIds) {
             $itemIds = $this->candidateItemIds($conn, $posTenant, $posBranch, $storeId);
@@ -265,13 +265,18 @@ WHERE pos_tenant = ?
         return $row ?: [];
     }
 
-    private function requestedStoreId(array $filters): int
+    private function requestedStoreId(mysqli $conn, array $filters): int
     {
         if (!array_key_exists('store_id', $filters) && !array_key_exists('store', $filters)) {
             return 0;
         }
 
-        return max(0, (int) ($filters['store_id'] ?? $filters['store'] ?? 0));
+        $storeId = max(0, (int) ($filters['store_id'] ?? $filters['store'] ?? 0));
+        if (function_exists('posmain_apply_read_store_filter')) {
+            return posmain_apply_read_store_filter($conn, $storeId);
+        }
+
+        return $storeId;
     }
 
     private function tableExists(mysqli $conn, string $table): bool

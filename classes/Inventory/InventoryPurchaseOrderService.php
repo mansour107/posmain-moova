@@ -45,7 +45,7 @@ class InventoryPurchaseOrderService
                 ];
             }
 
-            $scope = $this->scopeResolver->resolve([
+            $scope = $this->scopeResolver->resolveForConn($conn,[
                 'store_id' => $request['destination_store_id'] ?? $request['store_id'] ?? 0,
                 'pos_tenant' => $context['pos_tenant'] ?? $request['pos_tenant'] ?? null,
                 'pos_branch' => $context['pos_branch'] ?? $request['pos_branch'] ?? null,

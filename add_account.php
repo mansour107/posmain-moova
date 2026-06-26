@@ -146,10 +146,17 @@ if (($parent == '122' && $role['add_clients'] == 1) ||
                 <div class="col">
                     <div class="row">
                         <div class="col">
+                        <?php
+                        if (!function_exists('posmain_single_store_mode_enabled')) {
+                            require_once __DIR__ . '/includes/pos_operational_store.php';
+                        }
+                        if (!posmain_single_store_mode_enabled()):
+                        ?>
                         <div class="form-group">
                             <label for="">مخزون</label>
                             <input type="checkbox" name="is_stock" id="" <?php if ($parent == "123"){echo "checked ";}?>>
                                 </div>
+                        <?php endif; ?>
 
                         </div>
                         <div class="col">

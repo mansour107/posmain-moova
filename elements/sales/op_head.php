@@ -1,5 +1,11 @@
 
 <div class="row frst-row bg--200">
+      <?php
+      if (!function_exists('posmain_inventory_store_select_options')) {
+          require_once __DIR__ . '/../../includes/pos_operational_store.php';
+      }
+      $opHeadStores = posmain_inventory_store_select_options($conn);
+      ?>
       <div class="col-lg-2">
         <div class="tool">
       <label for=""><?php if ($pro_tybe == '4' OR $pro_tybe == '10' OR $pro_tybe == '12') {
@@ -44,15 +50,11 @@
       <label for="">المخزن</label>
                          
                          <select name="store_id" class="form-control form-control-sm" id="">
-                             <?php
-                     $resstore = $conn->query("SELECT * FROM `acc_head` WHERE is_stock =1;");
-                     while ($rowstore = $resstore->fetch_assoc()) { ?>
+                             <?php foreach ($opHeadStores as $rowstore): ?>
                      <option
-                     <?php  echo ($conn->query("SELECT cur_value FROM myoptions WHERE oname = 'def_store'")->fetch_assoc()['cur_value'] == $rowstore['id']) ? " selected " : ""; ?>
                      <?php if (isset($_GET['e']) && $rowedit['store_id'] == $rowstore['id'] ){echo " selected ";}?>
-
-                     value="<?= $rowstore['id'] ?>"><?= $rowstore['aname'] ?></option>
-                     <?php } ?>
+                     value="<?= (int) $rowstore['id'] ?>"><?= htmlspecialchars((string) ($rowstore['aname'] ?? ''), ENT_QUOTES, 'UTF-8') ?></option>
+                     <?php endforeach; ?>
                          </select>
       </div>
       <div class="col-md-2">

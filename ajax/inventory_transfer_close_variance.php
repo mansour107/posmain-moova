@@ -12,7 +12,7 @@ require_csrf('inventory_transfer');
 require_permission('inventory.edit', $conn);
 
 try {
-    $payload = inventoryTransferPayload();
+    $payload = inventoryTransferNormalizePayload($conn, inventoryTransferPayload());
     $canApproveReason = auth_guard_has_permission('inventory.approve', $conn) || auth_guard_has_permission('accounting.view', $conn);
     $service = new InventoryTransferService();
     $result = $service->closeVariance($conn, (int) ($payload['transfer_id'] ?? 0), $payload, [

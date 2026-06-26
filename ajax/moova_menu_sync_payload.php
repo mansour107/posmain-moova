@@ -64,16 +64,21 @@ function moova_menu_sync_decimal($value): float
     return is_numeric($value) ? (float) $value : 0.0;
 }
 
-function moova_menu_sync_recipe_scope(array $config, ?array $link): RecipeScope
+function moova_menu_sync_recipe_scope(mysqli $conn, array $config, ?array $link): RecipeScope
 {
-    return (new RecipeScopeResolver($config))->resolve([
+    $storeId = 0;
+    if (function_exists('posmain_operational_store_id')) {
+        $storeId = posmain_operational_store_id($conn);
+    }
+
+    return (new RecipeScopeResolver($config))->resolveForConn($conn, [
         'pos_tenant' => $link !== null ? ($link['pos_tenant'] ?? null) : null,
         'pos_branch' => $link !== null ? ($link['pos_branch'] ?? null) : null,
-        'store_id' => 0,
+        'store_id' => $storeId,
         'channel' => 'moova',
         'order_type' => 'delivery',
-        'source_system' => 'moova_menu_sync',
-    ]);
+        'source' => 'moova_menu_sync',
+    ], 'read');
 }
 
 function moova_menu_sync_apply_recipe_availability(
@@ -297,7 +302,7 @@ function moova_menu_sync_build_menu(mysqli $conn, string $catalogVersion, ?array
     $recipeScope = null;
     if ($recipeFlags->isMoovaSyncEnabled()) {
         $recipeSync = new RecipeSyncPayloadService($recipeFlags);
-        $recipeScope = moova_menu_sync_recipe_scope($config, $link);
+        $recipeScope = moova_menu_sync_recipe_scope($conn, $config, $link);
     }
 
     $categoryInfoSelect = moova_menu_sync_optional_expr($conn, 'item_group', 'info', 'info', "''");

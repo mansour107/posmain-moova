@@ -6,6 +6,7 @@
 
 header('Content-Type: application/json');
 require_once '../includes/connect.php';
+require_once '../includes/pos_default_accounts.php';
 require_once '../classes/Pos/Service/ItemAvailabilityService.php';
 require_once '../classes/Pos/Service/ItemVariantService.php';
 require_once '../classes/Items/ItemCatalogStatus.php';
@@ -108,15 +109,7 @@ try {
         unset($item);
     }
 
-    $branchConfig = function_exists('posmain_app_config')
-        ? (posmain_app_config()['branch'] ?? [])
-        : [];
-    $availabilityScope = [
-        'tenant' => (int)($branchConfig['pos_tenant'] ?? 0),
-        'branch' => (int)($branchConfig['pos_branch'] ?? 0),
-        'channel' => 'pos',
-        'order_type' => 'takeaway',
-    ];
+    $availabilityScope = posmain_pos_availability_scope($conn);
     $items = (new ItemAvailabilityService())->decorateItems($conn, $items, $availabilityScope);
 
     foreach ($items as &$item) {

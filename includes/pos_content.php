@@ -162,17 +162,20 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                                     <!-- الحقول الصغيرة -->
                                     <div class="row g-1 mb-2 pos-setup-control">
                                         <!-- المخزن -->
-                                        <div class="col-3 pos-store-field">
+                                        <?php
+                                        $posOperationalStores = posmain_inventory_store_select_options($conn);
+                                        $posSingleStoreMode = posmain_single_store_mode_enabled() && count($posOperationalStores) <= 1;
+                                        ?>
+                                        <div class="col-3 pos-store-field<?= $posSingleStoreMode ? ' d-none' : '' ?>">
                                             <select id="pos_setup_store_id" class="form-select form-select-sm" title="المخزن"
                                                 style="font-size: 0.75rem;">
                                                 <?php
-                                                $resstore = $conn->query("SELECT * FROM `acc_head` WHERE is_stock =1 AND isdeleted = 0;");
                                                 $defaultStoreId = (int) ($posmainPosDefaults['store_id'] ?? 0);
-                                                while ($resstore && ($rowstore = $resstore->fetch_assoc())) {
+                                                foreach ($posOperationalStores as $rowstore) {
                                                     $selected = ((int) $rowstore['id'] === $defaultStoreId) ? 'selected' : '';
                                                 ?>
-                                                <option <?= $selected ?> value="<?= $rowstore['id'] ?>">
-                                                    <?= $rowstore['aname'] ?></option>
+                                                <option <?= $selected ?> value="<?= (int) $rowstore['id'] ?>">
+                                                    <?= htmlspecialchars((string) $rowstore['aname'], ENT_QUOTES, 'UTF-8') ?></option>
                                                 <?php } ?>
                                             </select>
                                         </div>
@@ -571,15 +574,7 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                                     }
                                     unset($rowitem);
                                 }
-                                $branchConfig = function_exists('posmain_app_config')
-                                    ? (posmain_app_config()['branch'] ?? [])
-                                    : [];
-                                $availabilityScope = [
-                                    'tenant' => (int)($branchConfig['pos_tenant'] ?? 0),
-                                    'branch' => (int)($branchConfig['pos_branch'] ?? 0),
-                                    'channel' => 'pos',
-                                    'order_type' => 'takeaway',
-                                ];
+                                $availabilityScope = posmain_pos_availability_scope($conn);
                                 $posInitialItems = (new ItemAvailabilityService())->decorateItems($conn, $posInitialItems, $availabilityScope);
                                 foreach ($posInitialItems as $rowitem) {
                                     echo pos_render_item_card($rowitem);

@@ -3,6 +3,7 @@ require_once __DIR__ . '/includes/session_bootstrap.php';
 require_once __DIR__ . '/includes/auth_guard.php';
 require_once __DIR__ . '/includes/csrf.php';
 require_once __DIR__ . '/includes/connect.php';
+require_once __DIR__ . '/includes/pos_default_accounts.php';
 require_once __DIR__ . '/classes/Inventory/InventoryFeatureFlags.php';
 
 require_permission('inventory.edit', $conn);
@@ -10,14 +11,7 @@ require_permission('inventory.edit', $conn);
 $inventoryCountFlags = new InventoryFeatureFlags();
 $inventoryCountMode = $inventoryCountFlags->mode();
 $inventoryCountCanClose = $inventoryCountFlags->canWriteLedger();
-$inventoryCountStores = inventoryCountRows($conn, "
-    SELECT id, aname
-    FROM acc_head
-    WHERE isdeleted = 0
-      AND is_stock = 1
-    ORDER BY aname
-    LIMIT 100
-");
+$inventoryCountStores = posmain_inventory_store_select_options($conn);
 $inventoryCountItems = inventoryCountRows($conn, "
     SELECT id, iname, barcode
     FROM myitems

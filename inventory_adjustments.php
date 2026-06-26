@@ -3,6 +3,7 @@ require_once __DIR__ . '/includes/session_bootstrap.php';
 require_once __DIR__ . '/includes/auth_guard.php';
 require_once __DIR__ . '/includes/csrf.php';
 require_once __DIR__ . '/includes/connect.php';
+require_once __DIR__ . '/includes/pos_default_accounts.php';
 require_once __DIR__ . '/classes/Inventory/InventoryFeatureFlags.php';
 require_once __DIR__ . '/classes/Inventory/InventoryReasonCodeService.php';
 require_once __DIR__ . '/classes/Inventory/InventoryScopeResolver.php';
@@ -14,23 +15,16 @@ $inventoryAdjustmentFlags = new InventoryFeatureFlags();
 $inventoryAdjustmentMode = $inventoryAdjustmentFlags->mode();
 $inventoryAdjustmentCanPost = $inventoryAdjustmentFlags->canWriteLedger();
 $inventoryAdjustmentCanViewCost = auth_guard_has_permission('accounting.view', $conn) || auth_guard_has_permission('reports.view', $conn);
-$inventoryAdjustmentScope = (new InventoryScopeResolver($inventoryAdjustmentFlags->appConfig()))->resolve([
+$inventoryAdjustmentScope = (new InventoryScopeResolver($inventoryAdjustmentFlags->appConfig()))->resolveForConn($conn, [
     'source' => 'inventory_adjustment',
-]);
+], 'read');
 $inventoryAdjustmentReasonService = new InventoryReasonCodeService();
 $inventoryAdjustmentReasonCodes = [
     'waste' => $inventoryAdjustmentReasonService->listForOperation($conn, $inventoryAdjustmentScope, 'waste', 'decrease'),
     'increase' => $inventoryAdjustmentReasonService->listForOperation($conn, $inventoryAdjustmentScope, 'adjustment', 'increase'),
     'decrease' => $inventoryAdjustmentReasonService->listForOperation($conn, $inventoryAdjustmentScope, 'adjustment', 'decrease'),
 ];
-$inventoryAdjustmentStores = inventoryAdjustmentRows($conn, "
-    SELECT id, aname
-    FROM acc_head
-    WHERE isdeleted = 0
-      AND is_stock = 1
-    ORDER BY aname
-    LIMIT 100
-");
+$inventoryAdjustmentStores = posmain_inventory_store_select_options($conn);
 $inventoryAdjustmentItemCostSelect = $inventoryAdjustmentCanViewCost ? 'cost_price' : '0.000000 AS cost_price';
 $inventoryAdjustmentBalanceCostSelect = $inventoryAdjustmentCanViewCost ? 'moving_average_cost' : '0.000000 AS moving_average_cost';
 $inventoryAdjustmentItems = inventoryAdjustmentRows($conn, "

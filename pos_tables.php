@@ -182,16 +182,25 @@ if ($tables_count == 0) {
                                 <input type="date" class="form-control" id="order_date" value="<?= date('Y-m-d') ?>">
                             </div>
                             
+                            <?php
+                            if (!function_exists('posmain_inventory_store_select_options')) {
+                                require_once __DIR__ . '/includes/pos_default_accounts.php';
+                            }
+                            $posTablesStores = posmain_inventory_store_select_options($conn);
+                            $posTablesSingleStore = function_exists('posmain_single_store_mode_enabled') && posmain_single_store_mode_enabled() && count($posTablesStores) <= 1;
+                            ?>
+                            <?php if ($posTablesSingleStore) { ?>
+                            <input type="hidden" id="store_id" value="<?= (int) posmain_operational_store_id($conn) ?>">
+                            <?php } else { ?>
                             <div class="form-group mb-2">
                                 <label>المخزن</label>
                                 <select class="form-control" id="store_id">
-                                    <?php
-                                    $resstore = $conn->query("SELECT * FROM `acc_head` WHERE is_stock =1 AND isdeleted = 0");
-                                    while ($rowstore = $resstore->fetch_assoc()) { ?>
-                                        <option <?php if($rowstg['def_pos_store'] == $rowstore['id']){echo "selected";} ?> value="<?= $rowstore['id'] ?>"><?= $rowstore['aname'] ?></option>
+                                    <?php foreach ($posTablesStores as $rowstore) { ?>
+                                        <option <?php if ((int) ($rowstg['def_pos_store'] ?? 0) === (int) $rowstore['id']) { echo 'selected'; } ?> value="<?= (int) $rowstore['id'] ?>"><?= htmlspecialchars((string) $rowstore['aname'], ENT_QUOTES, 'UTF-8') ?></option>
                                     <?php } ?>
                                 </select>
                             </div>
+                            <?php } ?>
                             
                             <div class="form-group mb-2">
                                 <label>الموظف</label>

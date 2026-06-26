@@ -1230,10 +1230,14 @@ class PosOrderMutationService
 
     private function saveTableOrderInsideTransaction(mysqli $conn, array $request, array $context): array
     {
+        $request = $this->resolvePosRequestAccounts($conn, $request);
         $tableId = $this->requiredPositiveInt($request, 'table_id', 'الرجاء اختيار طاولة');
         $orderId = (int) ($request['order_id'] ?? 0);
         $orderDate = trim((string) ($request['order_date'] ?? date('Y-m-d')));
-        $storeId = $this->requiredPositiveInt($request, 'store_id', 'بيانات المخزن أو الموظف أو الصندوق ناقصة');
+        $storeId = (int) ($request['store_id'] ?? 0);
+        if ($storeId < 1) {
+            throw new RuntimeException('بيانات المخزن أو الموظف أو الصندوق ناقصة');
+        }
         $empId = $this->requiredPositiveInt($request, 'emp_id', 'بيانات المخزن أو الموظف أو الصندوق ناقصة');
         $fundId = $this->requiredPositiveInt($request, 'fund_id', 'بيانات المخزن أو الموظف أو الصندوق ناقصة');
         $items = $this->requiredItems($request);

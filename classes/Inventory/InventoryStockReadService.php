@@ -2,6 +2,7 @@
 
 require_once __DIR__ . '/InventoryDecimal.php';
 require_once __DIR__ . '/InventoryFeatureFlags.php';
+require_once __DIR__ . '/../../includes/pos_default_accounts.php';
 
 class InventoryStockReadService
 {
@@ -30,12 +31,18 @@ class InventoryStockReadService
         $branch = is_array($config['branch'] ?? null) ? $config['branch'] : [];
         $inventory = is_array($config['inventory'] ?? null) ? $config['inventory'] : [];
 
-        return [
+        $base = [
             'pos_tenant' => $this->nonNegativeInt($scope['pos_tenant'] ?? $scope['tenant'] ?? $branch['pos_tenant'] ?? 0),
             'pos_branch' => $this->nonNegativeInt($scope['pos_branch'] ?? $scope['branch'] ?? $branch['pos_branch'] ?? 0),
             'store_id' => $this->positiveInt($scope['store_id'] ?? $inventory['default_store_id'] ?? 0)
                 ?: $this->defaultStoreId($conn),
         ];
+
+        if (function_exists('posmain_resolve_store_scope_for_read')) {
+            return posmain_resolve_store_scope_for_read($conn, array_merge($base, $scope));
+        }
+
+        return array_merge($base, $scope);
     }
 
     public function decorateItems(mysqli $conn, array $items, array $scope = []): array
@@ -275,6 +282,13 @@ GROUP BY item_id", $params);
 
     private function defaultStoreId(mysqli $conn): int
     {
+        if (function_exists('posmain_operational_store_id')) {
+            $operational = posmain_operational_store_id($conn);
+            if ($operational > 0) {
+                return $operational;
+            }
+        }
+
         if (!$this->tableExists($conn, 'acc_head')) {
             return 0;
         }

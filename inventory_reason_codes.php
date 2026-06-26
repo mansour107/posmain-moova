@@ -10,9 +10,9 @@ require_once __DIR__ . '/classes/Inventory/InventoryScopeResolver.php';
 require_permission('inventory.edit', $conn);
 
 $inventoryReasonFlags = new InventoryFeatureFlags();
-$inventoryReasonScope = (new InventoryScopeResolver($inventoryReasonFlags->appConfig()))->resolve([
+$inventoryReasonScope = (new InventoryScopeResolver($inventoryReasonFlags->appConfig()))->resolveForConn($conn, [
     'source' => 'inventory_reason_code_admin',
-]);
+], 'read');
 $inventoryReasonService = new InventoryReasonCodeService();
 $inventoryReasonRows = $inventoryReasonService->listAll($conn, $inventoryReasonScope, true);
 $inventoryReasonGroups = [

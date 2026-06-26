@@ -166,21 +166,24 @@ $posmainPosDefaults = posmain_resolve_pos_defaults($conn, is_array($rowstg ?? nu
                     <div class="card-body p-2 bg-light">
                         <div class="row g-2">
                             <!-- المخزن -->
-                            <div class="col-6">
+                            <?php
+                            $posOperationalStores = posmain_inventory_store_select_options($conn);
+                            $posSingleStoreMode = posmain_single_store_mode_enabled() && count($posOperationalStores) <= 1;
+                            ?>
+                            <div class="col-6<?= $posSingleStoreMode ? ' d-none' : '' ?>">
                                 <label class="small text-muted fw-bold">المخزن</label>
                                 <select name="store_id" class="form-select form-select-sm fw-bold" required>
                                     <?php
-                                    $resstore = $conn->query("SELECT * FROM `acc_head` WHERE is_stock =1 AND isdeleted = 0;");
-                                    $first = true;
-                                    while ($rowstore = $resstore->fetch_assoc()) { 
-                                        $selected = '';
-                                        if ((int) $rowstore['id'] === (int) ($posmainPosDefaults['store_id'] ?? 0)) { $selected = "selected"; } 
-                                        $first = false;
+                                    foreach ($posOperationalStores as $rowstore) {
+                                        $selected = ((int) $rowstore['id'] === (int) ($posmainPosDefaults['store_id'] ?? 0)) ? 'selected' : '';
                                     ?>
-                                    <option <?= $selected ?> value="<?= $rowstore['id'] ?>"><?= $rowstore['aname'] ?></option>
+                                    <option <?= $selected ?> value="<?= (int) $rowstore['id'] ?>"><?= htmlspecialchars((string) $rowstore['aname'], ENT_QUOTES, 'UTF-8') ?></option>
                                     <?php } ?>
                                 </select>
                             </div>
+                            <?php if ($posSingleStoreMode) { ?>
+                            <input type="hidden" name="store_id" value="<?= (int) ($posmainPosDefaults['store_id'] ?? 0) ?>">
+                            <?php } ?>
                             <!-- الموظف -->
                             <div class="col-6">
                                 <label class="small text-muted fw-bold">البائع</label>

@@ -9,6 +9,7 @@ require_once __DIR__ . '/classes/Recipe/ProductionBatchReadService.php';
 require_once __DIR__ . '/classes/Recipe/ProductionBatchService.php';
 require_once __DIR__ . '/classes/Recipe/RecipeFeatureFlags.php';
 require_once __DIR__ . '/classes/Recipe/RecipeScopeResolver.php';
+require_once __DIR__ . '/includes/pos_operational_store.php';
 
 require_login();
 if (!posmain_recipe_production_can_view($conn)) {
@@ -39,7 +40,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
     }
 }
 
-$recipeProductionFilters = posmain_recipe_production_filters($_GET);
+$recipeProductionFilters = posmain_recipe_production_filters($_GET, $conn);
 $recipeProductionRows = $recipeProductionReadService->listBatches($conn, $recipeProductionFilters);
 $recipeProductionRecipes = $recipeProductionReadService->activeProductionRecipes($conn, [
     'pos_tenant' => $recipeProductionFilters['pos_tenant'],
@@ -47,6 +48,7 @@ $recipeProductionRecipes = $recipeProductionReadService->activeProductionRecipes
     'limit' => 300,
 ]);
 $recipeProductionStores = posmain_recipe_production_stock_stores($conn);
+$recipeProductionSingleStore = posmain_single_store_mode_enabled();
 $recipeProductionStoreNames = [];
 foreach ($recipeProductionStores as $store) {
     $recipeProductionStoreNames[(int) $store['id']] = (string) $store['aname'];
@@ -341,7 +343,8 @@ include __DIR__ . '/includes/sidebar.php';
                                                 <?php endforeach; ?>
                                             </select>
                                         <?php else: ?>
-                                            <input type="number" name="store_id" class="form-control" min="0" value="0">
+                                            <input type="hidden" name="store_id" value="<?= (int) posmain_operational_store_id($conn) ?>">
+                                            <input type="text" class="form-control" value="المخزن التشغيلي" readonly>
                                         <?php endif; ?>
                                     </div>
                                 </div>
@@ -374,7 +377,9 @@ include __DIR__ . '/includes/sidebar.php';
                                     <div class="mb-2">
                                         <?php if ($recipeProductionStores): ?>
                                             <select name="store_id" class="form-control">
-                                                <option value="">كل المخازن</option>
+                                                <?php if (!$recipeProductionSingleStore): ?>
+                                                    <option value="">كل المخازن</option>
+                                                <?php endif; ?>
                                                 <?php foreach ($recipeProductionStores as $store): ?>
                                                     <option value="<?= (int) $store['id'] ?>" <?= $recipeProductionFilters['store_id'] === (int) $store['id'] ? 'selected' : '' ?>>
                                                         <?= posmain_recipe_production_h($store['aname'] ?? '') ?>
@@ -382,7 +387,8 @@ include __DIR__ . '/includes/sidebar.php';
                                                 <?php endforeach; ?>
                                             </select>
                                         <?php else: ?>
-                                            <input type="number" name="store_id" class="form-control" min="0" value="<?= $recipeProductionFilters['store_id'] >= 0 ? (int) $recipeProductionFilters['store_id'] : '' ?>" placeholder="المخزن">
+                                            <input type="hidden" name="store_id" value="<?= (int) posmain_operational_store_id($conn) ?>">
+                                            <input type="text" class="form-control" value="المخزن التشغيلي" readonly>
                                         <?php endif; ?>
                                     </div>
                                 </div>
@@ -655,7 +661,7 @@ function posmain_recipe_production_can_view_cost(mysqli $conn): bool
 
 function posmain_recipe_production_actor(mysqli $conn): RecipeActorContext
 {
-    $scope = (new RecipeScopeResolver())->resolve($_POST);
+    $scope = (new RecipeScopeResolver())->resolveForConn($conn, $_POST, 'write');
     $roleFlags = auth_guard_current_role_flags($conn);
     $isAdmin = auth_guard_is_admin_session($_SESSION, $roleFlags);
     $permissions = [];
@@ -684,16 +690,24 @@ function posmain_recipe_production_actor(mysqli $conn): RecipeActorContext
     );
 }
 
-function posmain_recipe_production_filters(array $request): array
+function posmain_recipe_production_filters(array $request, ?mysqli $conn = null): array
 {
     $status = strtolower(trim((string) ($request['status'] ?? '')));
+    $storeId = isset($request['store_id']) && $request['store_id'] !== '' ? max(0, (int) $request['store_id']) : -1;
+    if ($conn instanceof mysqli && posmain_single_store_mode_enabled()) {
+        if ($storeId < 0) {
+            $storeId = posmain_operational_store_id($conn);
+        } else {
+            $storeId = posmain_apply_read_store_filter($conn, $storeId);
+        }
+    }
 
     return [
         'q' => trim((string) ($request['q'] ?? '')),
         'status' => in_array($status, ['draft', 'committed', 'cancelled'], true) ? $status : '',
         'pos_tenant' => isset($request['pos_tenant']) && $request['pos_tenant'] !== '' ? max(0, (int) $request['pos_tenant']) : -1,
         'pos_branch' => isset($request['pos_branch']) && $request['pos_branch'] !== '' ? max(0, (int) $request['pos_branch']) : -1,
-        'store_id' => isset($request['store_id']) && $request['store_id'] !== '' ? max(0, (int) $request['store_id']) : -1,
+        'store_id' => $storeId,
         'recipe_id' => isset($request['recipe_id']) && (int) $request['recipe_id'] > 0 ? (int) $request['recipe_id'] : -1,
         'limit' => max(1, min(500, (int) ($request['limit'] ?? 100))),
     ];
@@ -727,6 +741,10 @@ function posmain_recipe_production_options(array $options, $selected): string
 
 function posmain_recipe_production_stock_stores(mysqli $conn): array
 {
+    if (function_exists('posmain_inventory_store_select_options')) {
+        return posmain_inventory_store_select_options($conn);
+    }
+
     if (!posmain_recipe_production_table_exists($conn, 'acc_head')
         || !posmain_recipe_production_column_exists($conn, 'acc_head', 'is_stock')) {
         return [];

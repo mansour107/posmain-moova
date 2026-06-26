@@ -39,7 +39,7 @@ class InventoryCountService
 
         try {
             $countUuid = $this->uuidFromRequest($request, 'count_uuid');
-            $scope = $this->resolveScope($request, $context);
+            $scope = $this->resolveScope($conn, $request, $context);
             $requestLines = $this->normalizeLines($request['lines'] ?? []);
             $existing = $this->findCountByUuid($conn, $countUuid);
             if ($existing) {
@@ -626,9 +626,9 @@ FOR UPDATE");
         ], $this->loadItem($conn, (int) $line['item_id']), ['manage_transaction' => false]);
     }
 
-    private function resolveScope(array $request, array $context): array
+    private function resolveScope(mysqli $conn, array $request, array $context): array
     {
-        $scope = $this->scopeResolver->resolve([
+        $scope = $this->scopeResolver->resolveForConn($conn, [
             'store_id' => $request['store_id'] ?? $request['destination_store_id'] ?? 0,
             'pos_tenant' => $context['pos_tenant'] ?? $request['pos_tenant'] ?? null,
             'pos_branch' => $context['pos_branch'] ?? $request['pos_branch'] ?? null,

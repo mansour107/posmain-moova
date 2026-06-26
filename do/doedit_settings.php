@@ -4,6 +4,8 @@ error_log('[Settings] doedit_settings.php accessed - Method: ' . $_SERVER['REQUE
 include('../includes/connect.php');
 require_once __DIR__ . '/../includes/auth_guard.php';
 require_once __DIR__ . '/../includes/csrf.php';
+require_once __DIR__ . '/../includes/pos_default_accounts.php';
+require_once __DIR__ . '/../includes/pos_operational_store.php';
 require_once __DIR__ . '/../classes/Security/SecurityAuditLogger.php';
 
 require_admin_or_permission('system.tools.run', $conn);
@@ -56,6 +58,14 @@ if (empty($companyname)) {
     die("Error: Company name is required");
 }
 
+$resolvedPosStore = posmain_resolve_default_account_id($conn, $def_pos_store, 'is_stock = 1');
+if ($def_pos_store > 0 && $resolvedPosStore !== $def_pos_store) {
+    die('Error: Default POS store must be a valid active stock account');
+}
+if ($resolvedPosStore > 0) {
+    $def_pos_store = $resolvedPosStore;
+}
+
 // استخدام prepared statement لتحديث الإعدادات
 $sql = "UPDATE settings 
 SET company_name = ?, 
@@ -89,12 +99,14 @@ $stmt->bind_param("sssssiiiiiisiiiiiisi",
 );
 
 if ($stmt->execute()) {
+    posmain_sync_operational_store_flags($conn);
     doedit_settings_audit($conn, 'settings_updated', [
         'target_type' => 'settings',
         'metadata' => [
             'companyname' => $companyname,
             'lang' => $lang,
             'pos_type' => $pos_type,
+            'def_pos_store' => $def_pos_store,
         ],
     ]);
     header('location:../dashboard.php');

@@ -24,21 +24,36 @@ $submit_type = isset($_POST['submit']) ? $_POST['submit'] : 'save';
 
 // تضمين ملف الاتصال بقاعدة البيانات
 include('../includes/connect.php');
-
-// معالجة الفاتورة باستخدام نفس منطق doadd_invoice.php
-// لكن مع تخصيص للويترز
+require_once('../includes/pos_default_accounts.php');
 
 // استخراج البيانات الأساسية
 $pro_tybe = isset($_POST['pro_tybe']) ? intval($_POST['pro_tybe']) : 9; // POS type
 $store_id = isset($_POST['store_id']) ? intval($_POST['store_id']) : 0;
 $pro_date = isset($_POST['pro_date']) ? $_POST['pro_date'] : date('Y-m-d');
 $acc2_id = isset($_POST['acc2_id']) ? intval($_POST['acc2_id']) : 0;
+$emp_id = isset($_POST['emp_id']) ? intval($_POST['emp_id']) : 0;
+$fund_id = isset($_POST['fund_id']) ? intval($_POST['fund_id']) : 0;
 $headtotal = isset($_POST['headtotal']) ? floatval($_POST['headtotal']) : 0;
 $headdisc = isset($_POST['headdisc']) ? floatval($_POST['headdisc']) : 0;
 $headplus = isset($_POST['headplus']) ? floatval($_POST['headplus']) : 0;
 $headnet = isset($_POST['headnet']) ? floatval($_POST['headnet']) : 0;
 $info = isset($_POST['info']) ? $_POST['info'] : '';
 $order_type = isset($_POST['age']) ? intval($_POST['age']) : 1;
+
+$posResolvedAccounts = posmain_resolve_pos_invoice_accounts($conn, posmain_load_pos_settings_row($conn), [
+    'store_id' => $store_id,
+    'emp_id' => $emp_id,
+    'fund_id' => $fund_id,
+    'acc2_id' => $acc2_id,
+]);
+$store_id = (int) ($posResolvedAccounts['store_id'] ?? 0);
+$emp_id = (int) ($posResolvedAccounts['emp_id'] ?? 0);
+$fund_id = (int) ($posResolvedAccounts['fund_id'] ?? 0);
+$acc2_id = (int) ($posResolvedAccounts['acc2_id'] ?? 0);
+
+if ($store_id < 1 || $emp_id < 1 || $acc2_id < 1) {
+    die('خطأ: إعدادات المخزن أو الموظف أو العميل غير مكتملة');
+}
 
 // إضافة اسم الويتر إلى معلومات الطلب
 $info .= " | الويتر: " . $waiter_name;

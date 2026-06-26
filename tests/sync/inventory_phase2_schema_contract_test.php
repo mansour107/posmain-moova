@@ -337,6 +337,9 @@ function inventoryPhase2UnexpectedRuntimeReference(string $reference): bool
         'inventory_dashboard.php' => [
             'inventory_counts',
         ],
+        'includes/pos_operational_store.php' => [
+            'inventory_transfers',
+        ],
     ];
 
     foreach ($allowedLaterPhaseReferences as $file => $tables) {

@@ -3,6 +3,7 @@ require_once __DIR__ . '/../includes/session_bootstrap.php';
 require_once __DIR__ . '/../includes/connect.php';
 require_once __DIR__ . '/../includes/auth_guard.php';
 require_once __DIR__ . '/../includes/csrf.php';
+require_once __DIR__ . '/../includes/pos_default_accounts.php';
 require_once __DIR__ . '/../classes/Inventory/InventoryPurchaseOrderService.php';
 
 header('Content-Type: application/json; charset=utf-8');
@@ -21,7 +22,7 @@ require_csrf('inventory_receiving');
 require_permission('inventory.edit', $conn);
 
 try {
-    $payload = inventoryPurchaseOrderPayload();
+    $payload = posmain_inventory_enforce_operational_store_write($conn, inventoryPurchaseOrderPayload(), 'write');
     $action = strtolower(trim((string) ($payload['action'] ?? 'create_draft')));
     $service = new InventoryPurchaseOrderService();
     $context = [

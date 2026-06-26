@@ -552,15 +552,15 @@ class SyncOutboxEventService
             return null;
         }
 
-        $scope = (new RecipeScopeResolver($config))->resolve([
+        $scope = (new RecipeScopeResolver($config))->resolveForConn($conn, [
             'pos_tenant' => $options['pos_tenant'] ?? null,
             'pos_branch' => $options['pos_branch'] ?? null,
             'branch_uuid' => $branchUuid,
             'store_id' => $options['store_id'] ?? 0,
             'channel' => 'moova',
             'order_type' => 'delivery',
-            'source_system' => $options['source_system'] ?? 'pos',
-        ]);
+            'source' => $options['source_system'] ?? 'pos',
+        ], 'read');
 
         return (new RecipeSyncPayloadService($flags))->menuItemSnapshotPayload(
             $conn,

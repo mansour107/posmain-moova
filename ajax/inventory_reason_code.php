@@ -25,9 +25,9 @@ require_permission('inventory.edit', $conn);
 try {
     $payload = inventoryReasonCodePayload();
     $action = strtolower(trim((string) ($payload['action'] ?? 'save')));
-    $scope = (new InventoryScopeResolver((new InventoryFeatureFlags())->appConfig()))->resolve([
+    $scope = (new InventoryScopeResolver((new InventoryFeatureFlags())->appConfig()))->resolveForConn($conn, [
         'source' => 'inventory_reason_code_admin',
-    ]);
+    ], 'write');
     $service = new InventoryReasonCodeService();
 
     if ($action === 'save') {

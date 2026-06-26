@@ -10,26 +10,19 @@ if (strtolower((string) ($items_start_balance_config_for_guard['inventory']['led
 <?php include('includes/navbar.php') ?>
 <?php include('includes/sidebar.php') ?>
 <?php
+require_once __DIR__ . '/includes/pos_operational_store.php';
+
 if (!function_exists('items_start_balance_default_store_id')) {
     function items_start_balance_default_store_id(mysqli $conn): int
     {
-        $row = $conn->query("SELECT cur_value FROM myoptions WHERE oname = 'def_store' LIMIT 1");
-        if ($row && $row->num_rows > 0) {
-            $store_id = (int) ($row->fetch_assoc()['cur_value'] ?? 0);
-            if ($store_id > 0) {
-                return $store_id;
+        if (function_exists('posmain_operational_store_id')) {
+            $operational = posmain_operational_store_id($conn);
+            if ($operational > 0) {
+                return $operational;
             }
         }
 
-        $row = $conn->query('SELECT id FROM acc_head WHERE is_stock = 1 AND isdeleted = 0 ORDER BY id LIMIT 1');
-        if ($row && $row->num_rows > 0) {
-            $store_id = (int) ($row->fetch_assoc()['id'] ?? 0);
-            if ($store_id > 0) {
-                return $store_id;
-            }
-        }
-
-        return 1;
+        return 0;
     }
 }
 

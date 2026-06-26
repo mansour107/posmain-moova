@@ -7,6 +7,8 @@ require_once('../classes/Pos/Validation/OrderInputValidator.php');
 require_once('../classes/Pos/Validation/TableInputValidator.php');
 require_once('../classes/Pos/Service/PosOrderMutationService.php');
 require_once('../classes/Sync/SyncOutboxEventService.php');
+require_once('../includes/pos_default_accounts.php');
+require_once('../includes/pos_operational_store.php');
 
 header('Content-Type: application/json; charset=utf-8');
 
@@ -21,6 +23,7 @@ try {
         throw new Exception('بيانات غير صحيحة');
     }
     $data = OrderInputValidator::validateTableSave($data);
+    $data = posmain_resolve_pos_invoice_accounts($conn, posmain_load_pos_settings_row($conn), $data);
 
     $tableId = intval($data['table_id'] ?? 0);
     $orderId = intval($data['order_id'] ?? 0);

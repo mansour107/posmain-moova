@@ -16,7 +16,7 @@ try {
         throw new RuntimeException('COUNT_REVERSAL_APPROVAL_REQUIRED');
     }
 
-    $payload = inventoryCountPayload();
+    $payload = inventoryCountNormalizePayload($conn, inventoryCountPayload());
     $service = new InventoryCountService();
     $result = $service->reverseClosed($conn, (int) ($payload['count_id'] ?? 0), [
         'user_id' => current_user_id(),

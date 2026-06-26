@@ -2,21 +2,36 @@
 require_once __DIR__ . '/includes/session_bootstrap.php';
 require_once __DIR__ . '/includes/auth_guard.php';
 require_once __DIR__ . '/includes/connect.php';
+require_once __DIR__ . '/includes/pos_operational_store.php';
 
 require_permission('inventory.edit', $conn);
 
+$inventoryStoreSingleStore = posmain_single_store_mode_enabled();
 $inventoryStoreRows = [];
-$inventoryStoreResult = $conn->query("
-    SELECT id, code, aname, address, phone, is_stock
-    FROM acc_head
-    WHERE isdeleted = 0
-      AND is_basic = 0
-      AND (is_stock = 1 OR code LIKE '123%')
-    ORDER BY aname, code
-    LIMIT 300
-");
-while ($row = $inventoryStoreResult->fetch_assoc()) {
-    $inventoryStoreRows[] = $row;
+if ($inventoryStoreSingleStore) {
+    foreach (posmain_list_operational_stores($conn) as $store) {
+        $inventoryStoreRows[] = [
+            'id' => (int) ($store['id'] ?? 0),
+            'code' => (string) ($store['code'] ?? ''),
+            'aname' => (string) ($store['aname'] ?? ''),
+            'address' => '',
+            'phone' => '',
+            'is_stock' => 1,
+        ];
+    }
+} else {
+    $inventoryStoreResult = $conn->query("
+        SELECT id, code, aname, address, phone, is_stock
+        FROM acc_head
+        WHERE isdeleted = 0
+          AND is_basic = 0
+          AND (is_stock = 1 OR code LIKE '123%')
+        ORDER BY aname, code
+        LIMIT 300
+    ");
+    while ($row = $inventoryStoreResult->fetch_assoc()) {
+        $inventoryStoreRows[] = $row;
+    }
 }
 
 $inventoryStoreLegacyRedirect = isset($_GET['legacy_redirect']);
@@ -59,7 +74,9 @@ include __DIR__ . '/includes/sidebar.php';
                     <p class="inventory-store-subtitle">إدارة تعريف المخازن المستخدمة في دفتر المخزون الجديد بدون عرضها كرصيد مخزون قديم.</p>
                 </div>
                 <div class="inventory-store-actions">
+                    <?php if (!$inventoryStoreSingleStore): ?>
                     <a class="inventory-store-btn dark" href="add_store.php"><i class="fas fa-plus"></i> مخزن جديد</a>
+                    <?php endif; ?>
                     <a class="inventory-store-btn" href="inventory_dashboard.php"><i class="fas fa-history"></i> حركات المخزون</a>
                     <a class="inventory-store-btn" href="inventory_stock_levels.php"><i class="fas fa-layer-group"></i> مستويات المخزون</a>
                 </div>
@@ -68,6 +85,11 @@ include __DIR__ . '/includes/sidebar.php';
             <?php if ($inventoryStoreLegacyRedirect) { ?>
                 <div class="inventory-store-alert">
                     تم تحويلك من شاشة الحسابات القديمة لأن المخزون يعمل الآن من دفتر المخزون الجديد. هذه الصفحة مخصصة لإعداد المخازن فقط.
+                </div>
+            <?php } ?>
+            <?php if ($inventoryStoreSingleStore) { ?>
+                <div class="inventory-store-alert">
+                    وضع المخزن الواحد مفعّل. المخزن التشغيلي الوحيد هو المخزن الافتراضي للكاشير من الإعدادات. بقية حسابات المخزون القديمة تبقى للمراجعة فقط حتى اكتمال الدمج.
                 </div>
             <?php } ?>
 

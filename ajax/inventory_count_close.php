@@ -12,7 +12,7 @@ require_csrf('inventory_count');
 require_permission('inventory.edit', $conn);
 
 try {
-    $payload = inventoryCountPayload();
+    $payload = inventoryCountNormalizePayload($conn, inventoryCountPayload());
     $canOverrideStaleClose = auth_guard_has_permission('inventory.approve', $conn) || auth_guard_has_permission('accounting.view', $conn);
     if (!empty($payload['allow_stale_close']) && !$canOverrideStaleClose) {
         throw new RuntimeException('STALE_CLOSE_APPROVAL_REQUIRED');

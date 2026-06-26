@@ -2,6 +2,7 @@
 
 require_once __DIR__ . '/RecipeAvailabilityService.php';
 require_once __DIR__ . '/RecipeDependencyResolverService.php';
+require_once __DIR__ . '/RecipeScopeResolver.php';
 
 class RecipeAvailabilityRefreshService
 {
@@ -20,10 +21,22 @@ class RecipeAvailabilityRefreshService
     {
         $targets = $this->targets($conn, $options);
         $apply = !empty($options['apply']);
-        $context = [
-            'store_id' => max(0, (int) ($options['store_id'] ?? 0)),
+        $scopeContext = [
+            'store_id' => (int) ($options['store_id'] ?? 0),
             'order_type' => $this->orderType($options['order_type'] ?? 'takeaway'),
             'channel' => $this->channel($options['channel'] ?? 'pos'),
+        ];
+        if (isset($options['pos_tenant'])) {
+            $scopeContext['pos_tenant'] = (int) $options['pos_tenant'];
+        }
+        if (isset($options['pos_branch'])) {
+            $scopeContext['pos_branch'] = (int) $options['pos_branch'];
+        }
+        $scope = (new RecipeScopeResolver())->resolveForConn($conn, $scopeContext, 'read');
+        $context = [
+            'store_id' => $scope->storeId,
+            'order_type' => $scope->orderType,
+            'channel' => $scope->channel,
         ];
 
         $results = [];

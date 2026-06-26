@@ -2,6 +2,7 @@
 require_once __DIR__ . '/includes/session_bootstrap.php';
 require_once __DIR__ . '/includes/connect.php';
 require_once __DIR__ . '/includes/auth_guard.php';
+require_once __DIR__ . '/includes/pos_operational_store.php';
 require_once __DIR__ . '/classes/Inventory/InventoryReportsService.php';
 
 require_login();
@@ -10,7 +11,7 @@ if (!posmain_inventory_dashboard_can_view($conn)) {
 }
 
 $inventoryDashboardCanViewCost = posmain_inventory_dashboard_can_view_cost($conn);
-$inventoryDashboardFilters = posmain_inventory_dashboard_filters($_GET);
+$inventoryDashboardFilters = posmain_inventory_dashboard_filters($_GET, $conn);
 $inventoryDashboardItemFocus = (int) ($inventoryDashboardFilters['item_id'] ?? 0) > 0; // inventory_dashboard_item_focus
 $inventoryDashboardMovementTypes = posmain_inventory_dashboard_movement_type_labels();
 $inventoryDashboardService = new InventoryReportsService();
@@ -25,6 +26,7 @@ $inventoryDashboardStats = posmain_inventory_dashboard_movement_stats(
     $inventoryDashboardItemFocus
 );
 $inventoryDashboardStores = posmain_inventory_dashboard_stores($conn);
+$inventoryDashboardSingleStore = posmain_single_store_mode_enabled();
 $inventoryDashboardBranches = $inventoryDashboardItemFocus ? [] : posmain_inventory_dashboard_branches($conn);
 $inventoryDashboardItems = $inventoryDashboardItemFocus ? [] : posmain_inventory_dashboard_items($conn);
 $inventoryDashboardFocusedItem = $inventoryDashboardItemFocus
@@ -145,7 +147,9 @@ include __DIR__ . '/includes/sidebar.php';
                 <div class="inventory-dashboard-field">
                     <label>المخزن</label>
                     <select name="store_id" class="form-control">
-                        <option value="">كل المخازن</option>
+                        <?php if (!$inventoryDashboardSingleStore): ?>
+                            <option value="">كل المخازن</option>
+                        <?php endif; ?>
                         <?php foreach ($inventoryDashboardStores as $store): ?>
                             <option value="<?= (int) $store['id'] ?>" <?= (int) $inventoryDashboardFilters['store_id'] === (int) $store['id'] ? 'selected' : '' ?>>
                                 <?= posmain_inventory_dashboard_h(($store['aname'] ?? '') !== '' ? $store['aname'] : 'مخزن غير مسمى') ?>
@@ -189,7 +193,9 @@ include __DIR__ . '/includes/sidebar.php';
                 <div class="inventory-dashboard-field">
                     <label>المخزن</label>
                     <select name="store_id" class="form-control">
-                        <option value="">كل المخازن</option>
+                        <?php if (!$inventoryDashboardSingleStore): ?>
+                            <option value="">كل المخازن</option>
+                        <?php endif; ?>
                         <?php foreach ($inventoryDashboardStores as $store): ?>
                             <option value="<?= (int) $store['id'] ?>" <?= (int) $inventoryDashboardFilters['store_id'] === (int) $store['id'] ? 'selected' : '' ?>>
                                 <?= posmain_inventory_dashboard_h(($store['aname'] ?? '') !== '' ? $store['aname'] : 'مخزن غير مسمى') ?>
@@ -261,14 +267,19 @@ function posmain_inventory_dashboard_can_view_cost(mysqli $conn): bool
         || auth_guard_has_permission('settings.manage', $conn);
 }
 
-function posmain_inventory_dashboard_filters(array $input): array
+function posmain_inventory_dashboard_filters(array $input, ?mysqli $conn = null): array
 {
+    $storeId = isset($input['store_id']) && (int) $input['store_id'] > 0 ? (int) $input['store_id'] : 0;
+    if ($conn instanceof mysqli) {
+        $storeId = posmain_apply_read_store_filter($conn, $storeId);
+    }
+
     return [
         'date_from' => posmain_inventory_dashboard_date($input['date_from'] ?? ''),
         'date_to' => posmain_inventory_dashboard_date($input['date_to'] ?? ''),
         'pos_tenant' => isset($input['pos_tenant']) && (int) $input['pos_tenant'] >= 0 ? (int) $input['pos_tenant'] : -1,
         'pos_branch' => isset($input['pos_branch']) && $input['pos_branch'] !== '' ? max(0, (int) $input['pos_branch']) : -1,
-        'store_id' => isset($input['store_id']) && (int) $input['store_id'] > 0 ? (int) $input['store_id'] : 0,
+        'store_id' => $storeId,
         'item_id' => isset($input['item_id']) && (int) $input['item_id'] > 0 ? (int) $input['item_id'] : 0,
         'q' => posmain_inventory_dashboard_search_text($input['q'] ?? ''),
         'movement_type' => preg_replace('/[^a-zA-Z0-9_:-]/', '', strtolower(trim((string) ($input['movement_type'] ?? '')))),
@@ -373,6 +384,10 @@ function posmain_inventory_dashboard_movement_stats(array $rows, array $dashboar
 
 function posmain_inventory_dashboard_stores(mysqli $conn): array
 {
+    if (function_exists('posmain_single_store_mode_enabled') && posmain_single_store_mode_enabled()) {
+        return posmain_inventory_store_select_options($conn);
+    }
+
     return posmain_inventory_dashboard_rows($conn, "
         SELECT id, aname
         FROM acc_head

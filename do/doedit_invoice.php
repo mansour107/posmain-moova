@@ -28,6 +28,7 @@ require_once('../classes/Recipe/LegacyInvoiceRecipeLifecycleBridge.php');
 require_once('../classes/Inventory/InventoryInvoiceBridge.php');
 require_once('../classes/Pos/Service/PosOrderMutationService.php');
 require_once('../classes/Pos/Service/OrderFulfillmentService.php');
+require_once('../includes/pos_default_accounts.php');
 
 // تعريف ثوابت أنواع الفواتير
 define('INVOICE_TYPES', [
@@ -67,6 +68,17 @@ $fund_id = isset($_POST['fund_id']) ? intval($_POST['fund_id']) : 0;
 $paid = isset($_POST['paid']) ? floatval($_POST['paid']) : 0;
 $submit = isset($_POST['submit']) ? htmlspecialchars($_POST['submit'], ENT_QUOTES, 'UTF-8') : 'save';
 $info = isset($_POST['info']) ? htmlspecialchars(trim($_POST['info']), ENT_QUOTES, 'UTF-8') : '';
+
+$posResolvedAccounts = posmain_resolve_pos_invoice_accounts($conn, posmain_load_pos_settings_row($conn), [
+    'store_id' => $store_id,
+    'emp_id' => $emp_id,
+    'fund_id' => $fund_id,
+    'acc2_id' => $acc2_id,
+]);
+$store_id = (int) ($posResolvedAccounts['store_id'] ?? 0);
+$emp_id = (int) ($posResolvedAccounts['emp_id'] ?? 0);
+$fund_id = (int) ($posResolvedAccounts['fund_id'] ?? 0);
+$acc2_id = (int) ($posResolvedAccounts['acc2_id'] ?? 0);
 
 // التحقق من صحة البيانات الأساسية
 if ($ot_id == 0) {

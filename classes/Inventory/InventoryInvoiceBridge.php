@@ -179,7 +179,7 @@ class InventoryInvoiceBridge
 
         $detailId = (int) ($line['fat_detail_id'] ?? $line['detail_id'] ?? $line['id'] ?? 0);
         $itemId = (int) ($line['item_id'] ?? $line['itmname'] ?? 0);
-        $scope = $this->scopeResolver->resolve(array_merge($context, [
+        $scope = $this->scopeResolver->resolveForConn($conn,array_merge($context, [
             'store_id' => $line['store_id'] ?? $line['det_store'] ?? $context['store_id'] ?? 0,
         ]));
         $unitConversion = InventoryDecimal::normalize($line['u_val'] ?? $line['unit_conversion_to_base'] ?? '1', 8);
