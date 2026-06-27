@@ -6,7 +6,7 @@ goal:
   title: "POSMAIN Production Grade"
   slug: "posmain-production-grade"
   kind: open_ended
-  tranche: "Gate 1 done; Gate 2 shop reconcile in progress; Gate 3 certify queued"
+  tranche: "Gate 2 nearly complete; Gate 3 browser QA + shop2 reconcile remain"
   status: active
 
 rules:
@@ -21,42 +21,17 @@ agents:
   worker: installed
   judge: installed
 
-active_task: T020
+active_task: T021
 
 tasks:
-  - id: T001
-    type: scout
-    assignee: Scout
-    status: done
-    objective: "Architecture vs Foodics: stock/recipe/sync/write paths and P01-P14 registry"
-    receipt:
-      result: done
-      summary: "Registry confirmed; cloud health, recost, per-shop reconcile, profile collapse sequenced in three gates."
-  - id: T005
-    type: judge
-    assignee: Judge
-    status: done
-    objective: "Synthesize scouts; lock Gate 1 worker tasks"
-    receipt:
-      result: done
-      decision: "Gate 1 before backfill or profile defaults."
-      next_allowed_task: T010
   - id: T010
     type: worker
     assignee: Worker
     status: done
-    objective: "Fix cloud health branch_identity check in api/health.php"
+    objective: "Fix cloud health branch_identity check"
     receipt:
       result: done
-      changed_files:
-        - api/health.php
-        - tests/sync/health_endpoint_contract_test.php
-      commands:
-        - cmd: php tests/sync/health_endpoint_contract_test.php
-          status: pass
-        - cmd: curl https://erp.withmoova.com/api/health.php
-          status: pass
-      summary: "Cloud hosts no longer fail branch_identity; public health HTTP 200 on Hetzner."
+      summary: "Deployed c1e6741; public health HTTP 200."
   - id: T011
     type: worker
     assignee: Worker
@@ -64,48 +39,35 @@ tasks:
     objective: "Guard recost endpoints in live inventory mode"
     receipt:
       result: done
-      changed_files:
-        - do/recost.php
-        - js/ajax/recost.php
-        - tests/sync/recost_live_guard_contract_test.php
-      commands:
-        - cmd: php tests/sync/recost_live_guard_contract_test.php
-          status: pass
-      summary: "Legacy recost blocked in live mode with InventoryLegacyStockEndpointGuard."
-  - id: T012
-    type: worker
-    assignee: Worker
-    status: done
-    objective: "Run Gate 1 contract sweep"
-    receipt:
-      result: done
-      commands:
-        - cmd: php tests/sync/single_store_operational_contract_test.php
-          status: pass
-      summary: "Single-store contract green; Docker daemon unavailable locally."
+      summary: "Live guard on do/recost.php and js/ajax/recost.php."
   - id: T013
     type: judge
     assignee: Judge
     status: done
-    objective: "Gate 1 audit before Gate 2 data repair"
+    objective: "Gate 1 audit"
     receipt:
       result: done
-      decision: "Gate 1 complete; proceed Gate 2 per-shop backfill with operational store migration fix."
-      next_allowed_task: T020
+      decision: "Gate 1 shipped in e7381d3."
   - id: T020
     type: worker
     assignee: Worker
-    status: active
-    objective: "Gate 2 pilot reconcile posmain_shop2 and focushouse on Hetzner"
+    status: done
+    objective: "Gate 2 per-shop backfill and reconcile on Hetzner"
     receipt:
-      result: blocked
-      note: notes/session-20260627.md
-      summary: "shop2 backfill+rebuild applied; focushouse fully backfilled+233 mirror repairs. Both shops still blocked on reconciliation/accounting cutover gates."
+      result: done
+      summary: "kody2+focushouse cutover READY; shop2 blocked on 31 reconciliation + 34 live accounting rows (QA test items)."
+      commands:
+        - cmd: git pull origin main on Hetzner
+          status: pass
+        - cmd: POSMAIN_DB_NAME=focushouse inventory_cutover_readiness
+          status: pass
+        - cmd: POSMAIN_DB_NAME=posmain_shop2 inventory_cutover_readiness
+          status: fail
   - id: T021
     type: worker
     assignee: Worker
-    status: queued
-    objective: "Resolve remaining reconciliation/accounting blockers per shop"
+    status: active
+    objective: "Resolve shop2 reconciliation/accounting; automate browser QA evidence"
     receipt: null
   - id: T025
     type: judge
@@ -113,17 +75,11 @@ tasks:
     status: queued
     objective: "Gate 2 audit all shop DBs cutover-ready"
     receipt: null
-  - id: T030
-    type: worker
-    assignee: Worker
-    status: queued
-    objective: "Gate 3 additive production profile resolver"
-    receipt: null
   - id: T040
     type: worker
     assignee: Worker
     status: queued
-    objective: "Gate 3 Playwright hosted QA + browser evidence automation"
+    objective: "Gate 3 Playwright hosted QA + browser evidence JSON"
     receipt: null
   - id: T999
     type: judge
@@ -133,16 +89,16 @@ tasks:
     receipt: null
 
 checks:
-  dirty_fingerprint: uncommitted-local-and-hetzner-scp
+  dirty_fingerprint: clean-at-c1e6741
   last_verification:
     result: partial
     task: T020
     commands:
       - cmd: curl https://erp.withmoova.com/api/health.php
         status: pass
-      - cmd: POSMAIN_DB_NAME=kody2 inventory_cutover_readiness
+      - cmd: kody2 cutover + production (except browser QA)
         status: pass
-      - cmd: POSMAIN_DB_NAME=posmain_shop2 inventory_cutover_readiness
-        status: fail
-      - cmd: POSMAIN_DB_NAME=focushouse inventory_cutover_readiness
+      - cmd: focushouse cutover
+        status: pass
+      - cmd: posmain_shop2 cutover
         status: fail
