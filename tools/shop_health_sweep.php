@@ -168,7 +168,7 @@ function shopHealthSweepCutoverCheck(string $dbName): array
     $reviewOptions = shopHealthSweepAcceptanceOptions($dbName);
     try {
         $conn = posmain_db_connect();
-        $review = (new InventoryCutoverReadinessService())->review($conn, $reviewOptions);
+        $review = (new InventoryCutoverReadinessService())->review($conn, [], $reviewOptions);
         $conn->close();
 
         return [
