@@ -1,13 +1,14 @@
 import { expect, type Locator, type Page } from '@playwright/test';
 
 export async function clickFirstAddableItem(page: Page): Promise<void> {
-  const cards = page.locator('.item-wrapper [data-item-id]');
+  const cards = page.locator('.item-wrapper [data-item-id], .item-wrapper .item-card.itemButton');
   const count = await cards.count();
   expect(count, 'POS item grid should expose at least one item card').toBeGreaterThan(0);
 
   for (let index = 0; index < Math.min(count, 30); index++) {
     const card = cards.nth(index);
-    const canAdd = await card.getAttribute('data-can-add');
+    const canAdd = await card.getAttribute('data-availability-can-add')
+      ?? await card.getAttribute('data-can-add');
     if (canAdd === '0') {
       continue;
     }
@@ -18,6 +19,49 @@ export async function clickFirstAddableItem(page: Page): Promise<void> {
   await cards.first().click();
 }
 
+export async function clearCartFromHeader(page: Page): Promise<void> {
+  page.once('dialog', async dialog => {
+    await dialog.accept();
+  });
+  await page.locator('#posClearOrderBtn').click();
+  await expect(page.locator('#itemData .item-card-order')).toHaveCount(0);
+}
+
+export async function expectPremiumDarkTheme(page: Page): Promise<void> {
+  await expect(page.locator('body')).toHaveClass(/pos-premium-dark/);
+  const background = await page.evaluate(() => getComputedStyle(document.body).backgroundColor);
+  expect(background).toBeTruthy();
+}
+
+export async function selectCategory(page: Page, categoryId: string): Promise<void> {
+  await page.locator(`.category-btn[data-category="${categoryId}"]`).click();
+}
+
+export async function addItemBySearchBarcode(page: Page, barcode: string): Promise<void> {
+  const search = page.locator('#posUnifiedSearch');
+  await search.fill(barcode);
+  await search.press('Enter');
+}
+
+export async function selectOrderModeTab(page: Page, mode: 'age1' | 'age2' | 'age3'): Promise<void> {
+  await page.locator(`.pos-mode-tab[data-age-target="${mode}"]`).click();
+}
+
+export async function openRecentOrdersFromCorner(page: Page): Promise<void> {
+  await page.locator('#cornerRecentOrdersBtn').click();
+  await expect(page.locator('#recentOrdersModal')).toBeVisible();
+}
+
+export async function cartRowCount(page: Page): Promise<number> {
+  return page.locator('#itemData .item-card-order').count();
+}
+
+export async function readCartTotalDisplay(page: Page): Promise<number> {
+  const text = (await page.locator('#total_display').innerText()).replace(/[^\d.]/g, '');
+  const value = parseFloat(text);
+  return Number.isFinite(value) ? value : 0;
+}
+
 export async function readCartNet(page: Page): Promise<number> {
   const net = page.locator('#net_val');
   await expect(net).toBeAttached();
@@ -26,7 +70,8 @@ export async function readCartNet(page: Page): Promise<number> {
 }
 
 export async function openPaymentModal(page: Page): Promise<void> {
-  const payButton = page.locator('[data-bs-target="#paymentModal"], button[data-bs-target="#paymentModal"]').first();
+  const payButton = page.locator('.pos-order-footer .pos-pay-order-btn').first();
+  await payButton.scrollIntoViewIfNeeded();
   await expect(payButton).toBeVisible();
   await payButton.click();
   await expect(page.locator('#paymentModal')).toBeVisible();
@@ -51,7 +96,9 @@ export async function payCashInModal(page: Page, amount?: number): Promise<void>
 }
 
 export async function saveOrderOnly(page: Page): Promise<void> {
-  await page.locator('.pos-save-order-btn').click();
+  const saveButton = page.locator('.pos-order-footer .pos-save-order-btn').first();
+  await saveButton.scrollIntoViewIfNeeded();
+  await saveButton.click({ force: true });
 }
 
 export async function saveTableOrderAndWait(page: Page): Promise<void> {
@@ -120,7 +167,7 @@ export async function selectFirstAvailableTable(page: Page): Promise<void> {
 }
 
 export async function cartLineCount(page: Page): Promise<number> {
-  return page.locator('#order-items .order-item-row, #order-items tr, #order-items .pos-cart-line').count();
+  return page.locator('#itemData .item-card-order, #order-items .order-item-row, #order-items tr, #order-items .pos-cart-line').count();
 }
 
 export async function increaseFirstLineQty(page: Page): Promise<void> {

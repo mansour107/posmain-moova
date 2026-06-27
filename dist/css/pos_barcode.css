@@ -1609,3 +1609,1072 @@ div:where(.swal2-container) div:where(.swal2-popup) {
 .delivery-board-card {
     border-inline-start: 4px solid #0d6efd;
 }
+
+/* ==========================================================================
+   Premium Dark POS Theme (pos_barcode.php)
+   ========================================================================== */
+
+body.pos-premium-dark {
+    --pos-bg: #0d1117;
+    --pos-panel: #1a222d;
+    --pos-panel-elevated: #232d3b;
+    --pos-border: #2d3748;
+    --pos-text: #e8edf4;
+    --pos-text-muted: #8b98a8;
+    --pos-accent: #e8a020;
+    --pos-accent-hover: #f0b030;
+    --pos-accent-rgb: 232, 160, 32;
+    --pos-danger: #ef4444;
+    --pos-success: #22c55e;
+    --border-radius: 12px;
+    --bs-primary: #e8a020;
+    --bs-primary-rgb: 232, 160, 32;
+    background: var(--pos-bg) !important;
+    color: var(--pos-text);
+    overflow: hidden;
+}
+
+body.pos-premium-dark.pos-immersive .pos-topbar {
+    display: none !important;
+}
+
+body.pos-premium-dark .pos-corner-menu {
+    position: fixed;
+    top: 0.65rem;
+    inset-inline-start: 0.65rem;
+    z-index: 1040;
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.35rem 0.5rem;
+    border-radius: 999px;
+    background: rgba(26, 34, 45, 0.92);
+    border: 1px solid var(--pos-border);
+    backdrop-filter: blur(8px);
+}
+
+body.pos-premium-dark .pos-corner-menu .pos-corner-btn {
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: transparent;
+    color: var(--pos-text-muted);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: color 0.15s ease, background 0.15s ease;
+}
+
+body.pos-premium-dark .pos-corner-menu .pos-corner-btn:hover,
+body.pos-premium-dark .pos-corner-menu .pos-corner-btn:focus {
+    color: var(--pos-accent);
+    background: rgba(232, 160, 32, 0.12);
+}
+
+body.pos-premium-dark .pos-corner-menu .moova-navbar-widget {
+    transform: scale(0.85);
+    transform-origin: center;
+}
+
+body.pos-premium-dark .pos-shell {
+    height: 100vh !important;
+    padding: 0.65rem;
+    padding-top: 0.65rem;
+}
+
+body.pos-premium-dark.pos-immersive .pos-shell {
+    padding-top: 3rem;
+}
+
+body.pos-premium-dark .pos-order-panel,
+body.pos-premium-dark .pos-catalog-panel {
+    background: var(--pos-panel);
+    border: 1px solid var(--pos-border);
+    border-radius: var(--border-radius);
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+}
+
+body.pos-premium-dark .pos-order-column > .card,
+body.pos-premium-dark .items-section-card {
+    background: transparent !important;
+    border: 0 !important;
+    box-shadow: none !important;
+    height: 100% !important;
+    max-height: none !important;
+}
+
+body.pos-premium-dark .pos-order-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.85rem 1rem;
+    border-bottom: 1px solid var(--pos-border);
+    flex: 0 0 auto;
+}
+
+body.pos-premium-dark .pos-order-header h6 {
+    margin: 0;
+    font-size: 1.05rem;
+    font-weight: 700;
+    color: var(--pos-text);
+}
+
+body.pos-premium-dark .pos-order-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+}
+
+body.pos-premium-dark .pos-header-icon-btn {
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--pos-text-muted);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+body.pos-premium-dark .pos-header-icon-btn:hover {
+    color: var(--pos-accent);
+    background: rgba(232, 160, 32, 0.1);
+}
+
+body.pos-premium-dark #posClearOrderBtn {
+    color: var(--pos-accent);
+}
+
+body.pos-premium-dark .pos-order-type-tabs {
+    display: flex;
+    gap: 0;
+    padding: 0 1rem;
+    border-bottom: 1px solid var(--pos-border);
+    flex: 0 0 auto;
+}
+
+body.pos-premium-dark .pos-order-type-tabs .pos-mode-tab {
+    flex: 1;
+    height: 44px;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    color: var(--pos-text-muted);
+    font-weight: 600;
+    font-size: 0.88rem;
+    border-bottom: 2px solid transparent;
+    box-shadow: none !important;
+}
+
+body.pos-premium-dark .pos-order-type-tabs .pos-mode-tab.active {
+    color: var(--pos-accent);
+    background: transparent !important;
+    border-bottom-color: var(--pos-accent);
+    box-shadow: none !important;
+}
+
+body.pos-premium-dark .pos-order-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    padding: 0 0.5rem;
+}
+
+body.pos-premium-dark #itemData,
+body.pos-premium-dark .pos-order-items-scroll {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto !important;
+    overflow-x: hidden;
+    padding: 0.5rem 0;
+    background: transparent !important;
+    max-height: none !important;
+}
+
+body.pos-premium-dark .pos-order-footer {
+    flex: 0 0 auto;
+    padding: 0.75rem 1rem 1rem;
+    border-top: 1px solid var(--pos-border);
+    background: var(--pos-panel);
+    position: sticky;
+    bottom: 0;
+    z-index: 5;
+}
+
+body.pos-premium-dark .pos-order-total {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    margin-bottom: 0.75rem;
+    direction: rtl;
+}
+
+body.pos-premium-dark .pos-order-total-label {
+    font-size: 0.95rem;
+    color: var(--pos-text-muted);
+    font-weight: 600;
+}
+
+body.pos-premium-dark #total_display,
+body.pos-premium-dark #net_display {
+    font-size: 1.65rem !important;
+    font-weight: 800 !important;
+    color: var(--pos-accent) !important;
+    margin: 0 !important;
+}
+
+body.pos-premium-dark #net_display {
+    display: none;
+}
+
+body.pos-premium-dark .pos-action-stack {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1.35fr;
+    gap: 0.5rem;
+    direction: rtl;
+}
+
+body.pos-premium-dark .pos-action-stack .btn {
+    min-height: 48px;
+    border-radius: 10px;
+    font-weight: 700;
+    font-size: 0.88rem;
+}
+
+body.pos-premium-dark .pos-save-order-btn,
+body.pos-premium-dark .pos-print-order-btn {
+    background: transparent !important;
+    border: 1px solid var(--pos-border) !important;
+    color: var(--pos-text) !important;
+    box-shadow: none !important;
+}
+
+body.pos-premium-dark .pos-save-order-btn:hover,
+body.pos-premium-dark .pos-print-order-btn:hover {
+    border-color: var(--pos-accent) !important;
+    color: var(--pos-accent) !important;
+    transform: none;
+}
+
+body.pos-premium-dark .pos-pay-order-btn {
+    background: var(--pos-accent) !important;
+    border: none !important;
+    color: #1a1408 !important;
+    box-shadow: 0 4px 14px rgba(232, 160, 32, 0.35) !important;
+}
+
+body.pos-premium-dark .pos-pay-order-btn:hover {
+    background: var(--pos-accent-hover) !important;
+    transform: none;
+}
+
+body.pos-premium-dark .pos-pay-order-btn strong {
+    display: none;
+}
+
+body.pos-premium-dark .pos-clear-btn {
+    display: none !important;
+}
+
+body.pos-premium-dark .pos-catalog-search {
+    padding: 0.85rem 1rem;
+    flex: 0 0 auto;
+}
+
+body.pos-premium-dark .pos-catalog-search .form-control {
+    height: 48px;
+    background: var(--pos-panel-elevated);
+    border: 1px solid var(--pos-border);
+    color: var(--pos-text);
+    border-radius: 10px;
+    font-size: 0.95rem;
+    padding-inline-start: 2.5rem;
+}
+
+body.pos-premium-dark .pos-catalog-search .form-control::placeholder {
+    color: var(--pos-text-muted);
+}
+
+body.pos-premium-dark .pos-catalog-search .pos-search-wrap {
+    position: relative;
+}
+
+body.pos-premium-dark .pos-catalog-search .pos-search-icon {
+    position: absolute;
+    top: 50%;
+    inset-inline-end: 0.85rem;
+    transform: translateY(-50%);
+    color: var(--pos-text-muted);
+    pointer-events: none;
+}
+
+body.pos-premium-dark .pos-catalog-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 0 1rem 1rem;
+}
+
+body.pos-premium-dark .items-section-card .card-header {
+    display: none !important;
+}
+
+body.pos-premium-dark .items-section-card .card-body {
+    padding: 0 !important;
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+}
+
+body.pos-premium-dark #categoriesContainer .category-btn {
+    min-width: auto;
+    min-height: 40px;
+    padding: 0.4rem 1rem;
+    border-radius: 999px !important;
+    border: 1px solid var(--pos-border) !important;
+    background: var(--pos-panel-elevated) !important;
+    color: var(--pos-text-muted) !important;
+    font-weight: 600;
+    font-size: 0.85rem;
+}
+
+body.pos-premium-dark #categoriesContainer .category-btn.active {
+    border-color: var(--pos-accent) !important;
+    color: var(--pos-accent) !important;
+    background: rgba(232, 160, 32, 0.08) !important;
+}
+
+body.pos-premium-dark #categoriesContainer .category-btn .fas {
+    display: none;
+}
+
+body.pos-premium-dark #itemsGrid {
+    row-gap: 0.65rem;
+}
+
+body.pos-premium-dark .pos-compact-card {
+    background: var(--pos-panel-elevated);
+    border: 1px solid var(--pos-border);
+    border-radius: 12px;
+    min-height: 100px;
+    padding: 1rem 0.75rem;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.35rem;
+    height: 100%;
+}
+
+body.pos-premium-dark .pos-compact-card:hover {
+    border-color: var(--pos-accent);
+    transform: translateY(-2px);
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.25);
+}
+
+body.pos-premium-dark .pos-compact-card.item-unavailable {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+body.pos-premium-dark .pos-compact-card-name {
+    color: var(--pos-text);
+    font-size: 0.92rem;
+    font-weight: 600;
+    line-height: 1.3;
+    word-break: break-word;
+}
+
+body.pos-premium-dark .pos-compact-card-price {
+    color: var(--pos-accent);
+    font-size: 0.88rem;
+    font-weight: 700;
+}
+
+body.pos-premium-dark .pos-compact-card-badge {
+    position: absolute;
+    top: 0.4rem;
+    inset-inline-start: 0.4rem;
+    font-size: 0.62rem;
+}
+
+body.pos-premium-dark .item-wrapper {
+    position: relative;
+}
+
+body.pos-premium-dark .pos-cart-row {
+    background: transparent !important;
+    border: 0 !important;
+    border-bottom: 1px solid var(--pos-border) !important;
+    border-radius: 0 !important;
+    padding: 0.55rem 0.25rem;
+}
+
+body.pos-premium-dark .pos-cart-row:last-child {
+    border-bottom: 0 !important;
+}
+
+body.pos-premium-dark .pos-cart-row .card-body {
+    padding: 0 !important;
+    background: transparent;
+}
+
+body.pos-premium-dark .pos-cart-row-inner {
+    display: grid !important;
+    grid-template-columns: 72px minmax(88px, auto) minmax(0, 1fr) 28px 24px;
+    grid-template-areas: "price qty name note delete";
+    gap: 0.5rem;
+    align-items: center;
+    direction: ltr;
+    min-height: 44px;
+    padding: 0;
+}
+
+body.pos-premium-dark .pos-cart-price-display {
+    grid-area: price;
+    color: var(--pos-text);
+    font-size: 0.88rem;
+    font-weight: 600;
+    white-space: nowrap;
+    text-align: left;
+}
+
+body.pos-premium-dark .pos-cart-price-display .pos-currency {
+    font-size: 0.75rem;
+    color: var(--pos-text-muted);
+}
+
+body.pos-premium-dark .pos-cart-qty {
+    grid-area: qty;
+    display: inline-flex !important;
+    align-items: center;
+    gap: 0;
+    background: var(--pos-panel-elevated);
+    border: 1px solid var(--pos-border);
+    border-radius: 8px;
+    padding: 2px;
+    width: fit-content;
+}
+
+body.pos-premium-dark .pos-cart-qty .qty-step {
+    width: 28px;
+    height: 28px;
+    border: 0;
+    background: transparent;
+    color: var(--pos-text-muted);
+    border-radius: 6px !important;
+}
+
+body.pos-premium-dark .pos-cart-qty .qty-step:hover {
+    color: var(--pos-accent);
+    background: rgba(232, 160, 32, 0.1);
+}
+
+body.pos-premium-dark .pos-cart-qty .quantityInput {
+    width: 32px !important;
+    height: 28px !important;
+    border: 0 !important;
+    background: transparent !important;
+    color: var(--pos-text) !important;
+    font-size: 0.85rem !important;
+    padding: 0 !important;
+    box-shadow: none !important;
+}
+
+body.pos-premium-dark .pos-cart-main {
+    grid-area: name;
+}
+
+body.pos-premium-dark .pos-cart-name {
+    color: var(--pos-text);
+    font-size: 0.9rem;
+    font-weight: 600;
+    text-align: right;
+}
+
+body.pos-premium-dark .pos-cart-note {
+    grid-area: note;
+}
+
+body.pos-premium-dark .lineNoteButton {
+    width: 24px;
+    height: 24px;
+    border: 0;
+    background: transparent;
+    color: var(--pos-text-muted);
+    font-size: 0.7rem;
+}
+
+body.pos-premium-dark .lineNoteButton.line-note-has-value {
+    color: var(--pos-success);
+}
+
+body.pos-premium-dark .pos-cart-row .delRow {
+    grid-area: delete;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--pos-text-muted);
+    font-size: 0.7rem;
+    opacity: 0;
+    transition: opacity 0.15s ease;
+}
+
+body.pos-premium-dark .pos-cart-row:hover .delRow,
+body.pos-premium-dark .pos-cart-row:focus-within .delRow {
+    opacity: 1;
+}
+
+body.pos-premium-dark .pos-order-type-control {
+    display: none !important;
+}
+
+body.pos-premium-dark .pos-barcode-search-control {
+    display: none !important;
+}
+
+body.pos-premium-dark .pos-order-items-card {
+    display: none !important;
+}
+
+body.pos-premium-dark .pos-order-items-section {
+    flex: 1 1 auto;
+    min-height: 0;
+    margin: 0 !important;
+    display: flex;
+    flex-direction: column;
+}
+
+body.pos-premium-dark .pos-table-visible-control {
+    padding: 0.5rem 1rem 0;
+}
+
+body.pos-premium-dark .pos-table-field .btn {
+    height: 40px;
+    background: var(--pos-panel-elevated);
+    border-color: var(--pos-border) !important;
+    color: var(--pos-text) !important;
+    font-size: 0.82rem !important;
+}
+
+body.pos-premium-dark #posOrderExtras {
+    padding: 0 1rem 0.5rem;
+}
+
+body.pos-premium-dark #posOrderExtras {
+    margin: 0 1rem 0.5rem;
+}
+
+body.pos-premium-dark #posOrderExtras .accordion-button {
+    background: var(--pos-panel-elevated);
+    color: var(--pos-text-muted);
+    border: 1px solid var(--pos-border);
+    font-size: 0.82rem;
+    padding: 0.55rem 0.75rem;
+    border-radius: var(--pos-radius-sm);
+    box-shadow: none;
+}
+
+body.pos-premium-dark #posOrderExtras .accordion-button:not(.collapsed) {
+    border-bottom-left-radius: 0;
+    border-bottom-right-radius: 0;
+    color: var(--pos-text);
+}
+
+body.pos-premium-dark #posOrderExtras .accordion-button::after {
+    filter: invert(0.7);
+}
+
+body.pos-premium-dark #posOrderExtras .accordion-body {
+    background: var(--pos-panel-elevated);
+    border: 1px solid var(--pos-border);
+    border-top: 0;
+}
+
+body.pos-premium-dark #posOrderExtras .form-control,
+body.pos-premium-dark #posOrderExtras .form-select {
+    background: var(--pos-panel);
+    border-color: var(--pos-border);
+    color: var(--pos-text);
+}
+
+body.pos-premium-dark .pos-delivery-bar-wrap {
+    padding: 0 1rem 0.5rem;
+}
+
+body.pos-premium-dark .pos-delivery-bar {
+    background: var(--pos-panel-elevated);
+    border-color: var(--pos-border);
+    color: var(--pos-text);
+}
+
+body.pos-premium-dark .modal-content {
+    background: var(--pos-panel);
+    border: 1px solid var(--pos-border);
+    color: var(--pos-text);
+}
+
+body.pos-premium-dark .modal-header {
+    background: var(--pos-panel-elevated) !important;
+    border-bottom: 1px solid var(--pos-border);
+    color: var(--pos-text) !important;
+}
+
+body.pos-premium-dark .modal-footer {
+    background: var(--pos-panel);
+    border-top: 1px solid var(--pos-border);
+}
+
+body.pos-premium-dark .modal-body {
+    background: var(--pos-panel);
+}
+
+body.pos-premium-dark .form-control,
+body.pos-premium-dark .form-select {
+    background: var(--pos-panel-elevated);
+    border-color: var(--pos-border);
+    color: var(--pos-text);
+}
+
+body.pos-premium-dark .form-control:focus,
+body.pos-premium-dark .form-select:focus {
+    border-color: var(--pos-accent);
+    box-shadow: 0 0 0 2px rgba(232, 160, 32, 0.2);
+}
+
+body.pos-premium-dark .btn-close {
+    filter: invert(1) grayscale(1);
+}
+
+body.pos-premium-dark .offcanvas {
+    background: var(--pos-panel);
+    color: var(--pos-text);
+}
+
+body.pos-premium-dark .offcanvas-header {
+    background: var(--pos-panel-elevated) !important;
+}
+
+body.pos-premium-dark .table {
+    color: var(--pos-text);
+}
+
+body.pos-premium-dark #barcodeInput {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    opacity: 0;
+    pointer-events: none;
+}
+
+body.pos-premium-dark .pos-catalog-toolbar {
+    display: none !important;
+}
+
+body.pos-premium-dark .recent-orders-btn {
+    display: none !important;
+}
+
+body.pos-premium-dark ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+
+body.pos-premium-dark ::-webkit-scrollbar-thumb {
+    background: var(--pos-border);
+    border-radius: 999px;
+}
+
+@media (max-width: 991.98px) {
+    body.pos-premium-dark .pos-shell {
+        height: auto !important;
+        min-height: 100vh;
+    }
+
+    body.pos-premium-dark .pos-layout-row {
+        display: flex;
+        flex-direction: column;
+    }
+
+    body.pos-premium-dark .pos-order-panel,
+    body.pos-premium-dark .pos-catalog-panel {
+        min-height: 50vh;
+    }
+}
+
+/* ==========================================================================
+   Premium Dark — workflow polish (tabs, modals, offcanvas, legacy overrides)
+   ========================================================================== */
+
+body.pos-premium-dark .pos-order-type-tabs.pos-mode-tabs {
+    background: transparent !important;
+    border: 0 !important;
+    border-bottom: 1px solid var(--pos-border) !important;
+    border-radius: 0 !important;
+    padding: 0 1rem !important;
+    gap: 0 !important;
+    box-shadow: none !important;
+}
+
+body.pos-premium-dark .pos-order-type-tabs .pos-mode-tab,
+body.pos-premium-dark .pos-order-type-tabs .pos-mode-tab:nth-child(1),
+body.pos-premium-dark .pos-order-type-tabs .pos-mode-tab:nth-child(2),
+body.pos-premium-dark .pos-order-type-tabs .pos-mode-tab:nth-child(3) {
+    background: transparent !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    color: var(--pos-text-muted) !important;
+    box-shadow: none !important;
+    font-weight: 600;
+}
+
+body.pos-premium-dark .pos-order-type-tabs .pos-mode-tab:hover,
+body.pos-premium-dark .pos-order-type-tabs .pos-mode-tab:nth-child(1):hover,
+body.pos-premium-dark .pos-order-type-tabs .pos-mode-tab:nth-child(2):hover,
+body.pos-premium-dark .pos-order-type-tabs .pos-mode-tab:nth-child(3):hover {
+    background: transparent !important;
+    color: var(--pos-text) !important;
+}
+
+body.pos-premium-dark .pos-order-type-tabs .pos-mode-tab.active,
+body.pos-premium-dark .pos-order-type-tabs .pos-mode-tab:nth-child(1).active,
+body.pos-premium-dark .pos-order-type-tabs .pos-mode-tab:nth-child(2).active,
+body.pos-premium-dark .pos-order-type-tabs .pos-mode-tab:nth-child(3).active {
+    background: transparent !important;
+    color: var(--pos-accent) !important;
+    border-bottom: 2px solid var(--pos-accent) !important;
+    box-shadow: none !important;
+}
+
+body.pos-premium-dark .pos-current-order-controls {
+    padding: 0.5rem 1rem 0;
+}
+
+body.pos-premium-dark .pos-current-order-controls .form-select,
+body.pos-premium-dark .pos-current-order-controls .form-control,
+body.pos-premium-dark .pos-current-order-controls .btn {
+    background: var(--pos-panel-elevated);
+    border-color: var(--pos-border);
+    color: var(--pos-text);
+    border-radius: var(--pos-radius-sm);
+    font-size: 0.85rem;
+}
+
+body.pos-premium-dark .pos-current-order-controls .btn-outline-primary {
+    border-color: var(--pos-border);
+    color: var(--pos-text);
+}
+
+body.pos-premium-dark .pos-current-order-controls .btn-outline-primary:hover {
+    background: rgba(232, 160, 32, 0.12);
+    border-color: var(--pos-accent);
+    color: var(--pos-accent);
+}
+
+body.pos-premium-dark .pos-compact-card.item-card {
+    border: 1px solid var(--pos-border) !important;
+    background: var(--pos-panel-elevated) !important;
+    box-shadow: none !important;
+    min-height: 100px !important;
+}
+
+body.pos-premium-dark .pos-compact-card.item-card:hover {
+    border-color: var(--pos-accent) !important;
+    box-shadow: 0 0 0 1px rgba(232, 160, 32, 0.25) !important;
+}
+
+body.pos-premium-dark .pos-compact-card .card-title,
+body.pos-premium-dark .pos-compact-card .card-body {
+    background: transparent !important;
+    color: var(--pos-text) !important;
+}
+
+/* Payment modal */
+body.pos-premium-dark #paymentModal .modal-content {
+    background: var(--pos-panel);
+    border: 1px solid var(--pos-border);
+}
+
+body.pos-premium-dark #paymentModal .modal-header,
+body.pos-premium-dark #paymentModal .modal-header.bg-primary {
+    background: var(--pos-panel-elevated) !important;
+    color: var(--pos-text) !important;
+    border-bottom: 1px solid var(--pos-border);
+}
+
+body.pos-premium-dark #paymentModal .modal-body {
+    background: var(--pos-panel);
+}
+
+body.pos-premium-dark #paymentModal .modal-footer {
+    background: var(--pos-panel);
+    border-top: 1px solid var(--pos-border);
+}
+
+body.pos-premium-dark #paymentModal .bg-light,
+body.pos-premium-dark #paymentModal .card-body.bg-light {
+    background: var(--pos-panel-elevated) !important;
+    color: var(--pos-text) !important;
+}
+
+body.pos-premium-dark #paymentModal .card {
+    background: var(--pos-panel-elevated);
+    border-color: var(--pos-border) !important;
+    color: var(--pos-text);
+}
+
+body.pos-premium-dark #paymentModal .card.border-primary {
+    border-color: var(--pos-accent) !important;
+}
+
+body.pos-premium-dark #paymentModal .card-header.bg-primary,
+body.pos-premium-dark #paymentModal .card-header.bg-info {
+    background: var(--pos-panel) !important;
+    color: var(--pos-text) !important;
+    border-bottom: 1px solid var(--pos-border);
+}
+
+body.pos-premium-dark #paymentModal .text-dark,
+body.pos-premium-dark #paymentModal .text-primary,
+body.pos-premium-dark #paymentModal label {
+    color: var(--pos-text) !important;
+}
+
+body.pos-premium-dark #paymentModal .text-success {
+    color: #4ade80 !important;
+}
+
+body.pos-premium-dark #paymentModal .alert-warning {
+    background: rgba(232, 160, 32, 0.15);
+    border: 1px solid rgba(232, 160, 32, 0.35);
+    color: var(--pos-accent);
+}
+
+body.pos-premium-dark #paymentModal .alert-warning .text-success {
+    color: #4ade80 !important;
+}
+
+body.pos-premium-dark #paymentModal .form-control,
+body.pos-premium-dark #paymentModal .form-select {
+    background: var(--pos-panel);
+    border-color: var(--pos-border);
+    color: var(--pos-text);
+}
+
+body.pos-premium-dark #paymentModal #confirmPaymentBtn {
+    background: var(--pos-accent);
+    border-color: var(--pos-accent);
+    color: #111;
+    font-weight: 700;
+}
+
+body.pos-premium-dark #paymentModal #confirmPaymentBtn:hover {
+    filter: brightness(1.08);
+}
+
+body.pos-premium-dark #paymentModal .btn-secondary {
+    background: transparent;
+    border-color: var(--pos-border);
+    color: var(--pos-text-muted);
+}
+
+body.pos-premium-dark #paymentModal .form-check-input {
+    background-color: var(--pos-panel);
+    border-color: var(--pos-border);
+}
+
+body.pos-premium-dark #paymentModal .form-check-input:checked {
+    background-color: var(--pos-accent);
+    border-color: var(--pos-accent);
+}
+
+/* Tables modal */
+body.pos-premium-dark #tablesModal .modal-header.bg-primary,
+body.pos-premium-dark #tablesModal .modal-header {
+    background: var(--pos-panel-elevated) !important;
+    color: var(--pos-text) !important;
+}
+
+body.pos-premium-dark #tablesModal .alert-info,
+body.pos-premium-dark #tablesModal .alert-warning,
+body.pos-premium-dark #tablesModal .alert-success {
+    background: var(--pos-panel-elevated);
+    border-color: var(--pos-border);
+    color: var(--pos-text-muted);
+}
+
+body.pos-premium-dark #tablesModal .table {
+    --bs-table-bg: transparent;
+    --bs-table-striped-bg: rgba(255, 255, 255, 0.03);
+    --bs-table-hover-bg: rgba(232, 160, 32, 0.08);
+    color: var(--pos-text);
+}
+
+body.pos-premium-dark #tablesModal .table-bordered > :not(caption) > * {
+    border-color: var(--pos-border);
+}
+
+body.pos-premium-dark #tablesModal .btn-primary {
+    background: var(--pos-accent);
+    border-color: var(--pos-accent);
+    color: #111;
+}
+
+/* Delivery modal */
+body.pos-premium-dark #deliveryModal .modal-header.bg-primary,
+body.pos-premium-dark #deliveryModal .modal-header {
+    background: var(--pos-panel-elevated) !important;
+    color: var(--pos-text) !important;
+}
+
+body.pos-premium-dark #deliveryModal .list-group-item {
+    background: var(--pos-panel-elevated);
+    border-color: var(--pos-border);
+    color: var(--pos-text);
+}
+
+body.pos-premium-dark #deliveryModal .list-group-item:hover,
+body.pos-premium-dark #deliveryModal .list-group-item.active {
+    background: rgba(232, 160, 32, 0.12);
+    border-color: var(--pos-accent);
+    color: var(--pos-accent);
+}
+
+body.pos-premium-dark #deliveryModal .btn-primary {
+    background: var(--pos-accent);
+    border-color: var(--pos-accent);
+    color: #111;
+}
+
+/* Recent orders offcanvas */
+body.pos-premium-dark #recentOrdersModal.offcanvas {
+    background: var(--pos-panel);
+}
+
+body.pos-premium-dark #recentOrdersModal .offcanvas-header.bg-primary {
+    background: var(--pos-panel-elevated) !important;
+    color: var(--pos-text) !important;
+    border-bottom: 1px solid var(--pos-border);
+}
+
+body.pos-premium-dark #recentOrdersModal .offcanvas-body {
+    background: var(--pos-panel);
+}
+
+body.pos-premium-dark #recentOrdersModal .table {
+    --bs-table-bg: transparent;
+    --bs-table-striped-bg: rgba(255, 255, 255, 0.03);
+    --bs-table-hover-bg: rgba(232, 160, 32, 0.08);
+    color: var(--pos-text);
+    border-color: var(--pos-border);
+}
+
+body.pos-premium-dark #recentOrdersModal .table-bordered > :not(caption) > * {
+    border-color: var(--pos-border);
+}
+
+body.pos-premium-dark #recentOrdersModal .table thead th {
+    background: var(--pos-panel-elevated);
+    color: var(--pos-text-muted);
+    border-color: var(--pos-border);
+    font-weight: 600;
+    font-size: 0.78rem;
+}
+
+body.pos-premium-dark #recentOrdersModal .table tbody td {
+    background: transparent;
+    border-color: var(--pos-border);
+    color: var(--pos-text);
+    vertical-align: middle;
+}
+
+body.pos-premium-dark #recentOrdersModal .text-primary {
+    color: var(--pos-accent) !important;
+}
+
+body.pos-premium-dark #recentOrdersModal .text-success {
+    color: #4ade80 !important;
+}
+
+body.pos-premium-dark #recentOrdersModal .badge.bg-secondary {
+    background: rgba(96, 165, 250, 0.2) !important;
+    color: #93c5fd !important;
+}
+
+body.pos-premium-dark #recentOrdersModal .badge.bg-warning {
+    background: rgba(232, 160, 32, 0.2) !important;
+    color: var(--pos-accent) !important;
+}
+
+body.pos-premium-dark #recentOrdersModal .badge.bg-success {
+    background: rgba(74, 222, 128, 0.2) !important;
+    color: #4ade80 !important;
+}
+
+body.pos-premium-dark #recentOrdersModal .btn-warning {
+    background: rgba(232, 160, 32, 0.2);
+    border-color: var(--pos-accent);
+    color: var(--pos-accent);
+}
+
+body.pos-premium-dark #recentOrdersModal .btn-info {
+    background: rgba(96, 165, 250, 0.2);
+    border-color: #60a5fa;
+    color: #93c5fd;
+}
+
+body.pos-premium-dark #recentOrdersModal .btn-secondary {
+    background: var(--pos-panel-elevated);
+    border-color: var(--pos-border);
+    color: var(--pos-text-muted);
+}
+
+body.pos-premium-dark #recentOrdersModal .btn-outline-danger {
+    border-color: rgba(248, 113, 113, 0.5);
+    color: #f87171;
+}
+
+/* Variant / line-note / shift modals */
+body.pos-premium-dark #itemVariantModal .modal-header,
+body.pos-premium-dark #lineNoteModal .modal-header,
+body.pos-premium-dark #closeShiftModal .modal-header {
+    background: var(--pos-panel-elevated) !important;
+    color: var(--pos-text) !important;
+}
+
+body.pos-premium-dark #itemVariantModal .list-group-item,
+body.pos-premium-dark #lineNoteModal .list-group-item {
+    background: var(--pos-panel-elevated);
+    border-color: var(--pos-border);
+    color: var(--pos-text);
+}
+
+body.pos-premium-dark #itemVariantModal .list-group-item:hover,
+body.pos-premium-dark #itemVariantModal .list-group-item.active {
+    background: rgba(232, 160, 32, 0.12);
+    color: var(--pos-accent);
+}
+
+body.pos-premium-dark .pos-premium-modal .btn-primary,
+body.pos-premium-dark #lineNoteModal .btn-primary,
+body.pos-premium-dark #closeShiftModal .btn-primary {
+    background: var(--pos-accent);
+    border-color: var(--pos-accent);
+    color: #111;
+}

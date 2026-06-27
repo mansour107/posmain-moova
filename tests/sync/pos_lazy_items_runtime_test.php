@@ -17,7 +17,7 @@ posLazyItemsAssert(strpos($posContent, 'ORDER BY COALESCE(m.salesqty, 0) DESC, m
 posLazyItemsAssert(strpos($posContent, 'itemsGridLoader') !== false, 'POS should expose a background item-loader status element');
 
 $lazyEndpoint = file_get_contents($root . '/ajax/load_items_lazy.php');
-posLazyItemsAssert(strpos($lazyEndpoint, 'pos_render_item_card($item)') !== false, 'Lazy endpoint should return rendered item-card HTML');
+posLazyItemsAssert(strpos($lazyEndpoint, 'pos_render_item_card_compact($item)') !== false, 'Lazy endpoint should return rendered compact item-card HTML');
 posLazyItemsAssert(strpos($lazyEndpoint, 'LIMIT ? OFFSET ?') !== false, 'Lazy endpoint should page through remaining items');
 posLazyItemsAssert(strpos($lazyEndpoint, 'ORDER BY COALESCE(m.salesqty, 0) DESC, m.iname') !== false, 'Lazy endpoint should use the same order as initial render');
 
@@ -27,7 +27,7 @@ foreach (['loadRemainingItems', 'appendLazyItems', 'applyActiveItemFilter', 'aja
 }
 
 $itemCard = file_get_contents($root . '/includes/pos_item_card.php');
-foreach (['function pos_render_item_card', 'data-item-id', 'data-item-name', 'data-item-price', 'data-variants', 'item-details-btn'] as $needle) {
+foreach (['function pos_render_item_card', 'function pos_render_item_card_compact', 'data-item-id', 'data-item-name', 'data-item-price', 'data-variants', 'item-card itemButton'] as $needle) {
     posLazyItemsAssert(strpos($itemCard, $needle) !== false, 'Shared item-card renderer should include ' . $needle);
 }
 

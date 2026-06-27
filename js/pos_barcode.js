@@ -1159,6 +1159,7 @@ $(document).ready(function() {
             let itemPrice = parseFloat(priceInput.val()) || 0;
             let subtotal = newQty * itemPrice;
             existingItem.find('.subtotal').val(subtotal.toFixed(2));
+            existingItem.find('.pos-cart-price-display').html(subtotal.toFixed(2) + ' <span class="pos-currency">ج.م</span>');
             if (managerApprovalId > 0) {
                 existingItem.find('.managerApprovalInput').val(managerApprovalId);
             }
@@ -1179,61 +1180,58 @@ $(document).ready(function() {
         const safeLineNote = escapeHtml(noteValue);
 
         let itemCard = `
-            <div class="card mb-1 item-card-order pos-cart-row shadow-sm" data-itemid="${escapeHtml(barcode)}">
-                <div class="card-body p-1">
-                    <div class="pos-cart-row-inner">
-                        <div class="pos-cart-value">
-                            <input type="hidden" name="itmdisc[]" value="0">
-                            <input type="text"
-                                   class="form-control form-control-sm text-center subtotal fw-bold"
-                                   readonly
-                                   value="${subtotal.toFixed(2)}"
-                                   name="itmval[]"
-                                   title="القيمة">
-                        </div>
-                        <div class="pos-cart-qty">
-                            <button type="button" class="btn qty-step qty-decrease" title="تقليل">−</button>
-                            <input type="number"
-                                   class="form-control form-control-sm text-center quantityInput nozero fw-bold"
-                                   value="${qty}"
-                                   name="itmqty[]"
-                                   min="1"
-                                   step="1"
-                                   title="الكمية">
-                            <button type="button" class="btn qty-step qty-increase" title="زيادة">+</button>
-                            <input type="hidden" name="u_val[]" value="${escapeHtml(String(unitValue))}">
-                        </div>
-                        <div class="pos-cart-main">
-                            <input type="hidden" value='${id}' name="itmname[]">
-                            <input type="hidden" class="barcode" value="${escapeHtml(barcode)}">
-                            <div class="fw-bold pos-cart-name" title="${safeName}">${safeName}</div>
-                            <span class="badge bg-primary pos-cart-index">#${itemNumber}</span>
-                            <input type="hidden"
-                                   class="lineNoteInput"
-                                   name="itmnote[]"
-                                   value="${safeLineNote}">
-                            <input type="hidden"
-                                   class="managerApprovalInput"
-                                   name="itmmanagerapproval[]"
-                                   value="${managerApprovalId > 0 ? managerApprovalId : ''}">
-                        </div>
-                        <div class="pos-cart-note">
-                            <button type="button" class="btn lineNoteButton line-note-empty" title="إضافة ملاحظة للمطبخ" aria-label="إضافة ملاحظة للمطبخ">
-                                <i class="fas fa-sticky-note"></i>
-                            </button>
-                        </div>
-                        ${thumbHtml}
-                        <button type="button" class="btn btn-danger btn-sm delRow" title="حذف">
-                            <i class="fas fa-trash-alt"></i>
+            <div class="item-card-order pos-cart-row" data-itemid="${escapeHtml(barcode)}">
+                <div class="pos-cart-row-inner">
+                    <div class="pos-cart-price-display" aria-hidden="true">${subtotal.toFixed(2)} <span class="pos-currency">ج.م</span></div>
+                    <div class="pos-cart-qty">
+                        <button type="button" class="btn qty-step qty-decrease" title="تقليل">−</button>
+                        <input type="number"
+                               class="form-control form-control-sm text-center quantityInput nozero fw-bold"
+                               value="${qty}"
+                               name="itmqty[]"
+                               min="1"
+                               step="1"
+                               title="الكمية">
+                        <button type="button" class="btn qty-step qty-increase" title="زيادة">+</button>
+                        <input type="hidden" name="u_val[]" value="${escapeHtml(String(unitValue))}">
+                    </div>
+                    <div class="pos-cart-main">
+                        <input type="hidden" value='${id}' name="itmname[]">
+                        <input type="hidden" class="barcode" value="${escapeHtml(barcode)}">
+                        <div class="pos-cart-name" title="${safeName}">${safeName}</div>
+                        <input type="hidden"
+                               class="lineNoteInput"
+                               name="itmnote[]"
+                               value="${safeLineNote}">
+                        <input type="hidden"
+                               class="managerApprovalInput"
+                               name="itmmanagerapproval[]"
+                               value="${managerApprovalId > 0 ? managerApprovalId : ''}">
+                    </div>
+                    <div class="pos-cart-note">
+                        <button type="button" class="btn lineNoteButton line-note-empty" title="إضافة ملاحظة للمطبخ" aria-label="إضافة ملاحظة للمطبخ">
+                            <i class="fas fa-sticky-note"></i>
                         </button>
-                        <div class="pos-cart-price">
-                            <input type="number"
-                                   class="form-control form-control-sm text-center priceInput nozero"
-                                   value="${unitPrice.toFixed(2)}"
-                                   name="itmprice[]"
-                                   step="0.01"
-                                   title="السعر">
-                        </div>
+                    </div>
+                    <button type="button" class="btn delRow" title="حذف" aria-label="حذف">
+                        <i class="fas fa-times"></i>
+                    </button>
+                    <div class="pos-cart-value d-none">
+                        <input type="hidden" name="itmdisc[]" value="0">
+                        <input type="text"
+                               class="form-control form-control-sm text-center subtotal fw-bold"
+                               readonly
+                               value="${subtotal.toFixed(2)}"
+                               name="itmval[]"
+                               title="القيمة">
+                    </div>
+                    <div class="pos-cart-price d-none">
+                        <input type="number"
+                               class="form-control form-control-sm text-center priceInput nozero"
+                               value="${unitPrice.toFixed(2)}"
+                               name="itmprice[]"
+                               step="0.01"
+                               title="السعر">
                     </div>
                 </div>
             </div>
@@ -2158,6 +2156,7 @@ $(document).ready(function() {
         let price = parseFloat(card.find('.priceInput').val()) || 0;
         let subtotal = qty * price;
         card.find('.subtotal').val(subtotal.toFixed(2));
+        card.find('.pos-cart-price-display').html(subtotal.toFixed(2) + ' <span class="pos-currency">ج.م</span>');
         updateTotal();
     });
 

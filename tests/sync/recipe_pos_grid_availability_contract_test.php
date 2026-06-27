@@ -49,7 +49,7 @@ recipePosGridAssert(strpos($lowStockHtml, 'متبقي 3') !== false, 'low stock 
 recipePosGridAssert(strpos($cardSource, 'data-recipe-effective-available-qty') !== false, 'card renderer should emit recipe available quantity data');
 recipePosGridAssert(strpos($posContent, 'ItemAvailabilityService.php') !== false, 'initial POS grid should load ItemAvailabilityService');
 recipePosGridAssert(strpos($posContent, 'decorateItems($conn, $posInitialItems, $availabilityScope)') !== false, 'initial POS grid should decorate items before rendering');
-recipePosGridAssert(strpos($lazyEndpoint, 'decorateItems($conn, $items, $availabilityScope)') < strpos($lazyEndpoint, "pos_render_item_card(\$item)"), 'lazy grid should render cards after decoration');
+recipePosGridAssert(strpos($lazyEndpoint, 'decorateItems($conn, $items, $availabilityScope)') < strpos($lazyEndpoint, "pos_render_item_card_compact(\$item)"), 'lazy grid should render cards after decoration');
 recipePosGridAssert(strpos($categoryEndpoint, 'decorateItems($conn, $items') !== false, 'category endpoint should decorate items before returning JSON');
 recipePosGridAssert(strpos($barcodeJs, 'itemAvailabilityContext') !== false, 'POS JS should read item availability data attributes');
 recipePosGridAssert(strpos($barcodeJs, 'showUnavailableItemMessage') !== false, 'POS JS should explain unavailable item clicks');

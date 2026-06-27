@@ -14,8 +14,8 @@ phase4SearchAvailabilityAssert(strpos($lazyItems, 'bind_param($types, ...$params
 phase4SearchAvailabilityAssert(strpos($lazyItems, "'total' => \$total") !== false, 'load_items_lazy should preserve total response contract');
 phase4SearchAvailabilityAssert(strpos($lazyItems, "'has_more' => (\$offset + \$limit) < \$total") !== false, 'load_items_lazy should preserve pagination contract');
 phase4SearchAvailabilityAssert(
-    strpos($lazyItems, 'decorateItems($conn, $items, $availabilityScope)') < strpos($lazyItems, "pos_render_item_card(\$item)")
-        || strpos($lazyItems, 'posmain_pos_availability_scope($conn)') < strpos($lazyItems, "pos_render_item_card(\$item)"),
+    strpos($lazyItems, 'decorateItems($conn, $items, $availabilityScope)') < strpos($lazyItems, "pos_render_item_card_compact(\$item)")
+        || strpos($lazyItems, 'posmain_pos_availability_scope($conn)') < strpos($lazyItems, "pos_render_item_card_compact(\$item)"),
     'load_items_lazy should render item cards after availability decoration'
 );
 

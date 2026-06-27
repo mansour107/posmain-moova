@@ -167,3 +167,88 @@ function pos_render_item_card(array $rowitem): string
     <?php
     return trim(ob_get_clean());
 }
+
+function pos_render_item_card_compact(array $rowitem): string
+{
+    $itemId = isset($rowitem['id']) ? (int) $rowitem['id'] : 0;
+    $itemNameRaw = isset($rowitem['iname']) ? (string) $rowitem['iname'] : 'صنف غير محدد';
+    $itemName = htmlspecialchars($itemNameRaw, ENT_QUOTES, 'UTF-8');
+
+    $itemPrice = 0.0;
+    if (isset($rowitem['price1']) && $rowitem['price1'] !== '') {
+        $itemPrice = (float) $rowitem['price1'];
+    } elseif (isset($rowitem['price']) && $rowitem['price'] !== '') {
+        $itemPrice = (float) $rowitem['price'];
+    }
+
+    $itemBarcode = htmlspecialchars((string) ($rowitem['barcode'] ?? ''), ENT_QUOTES, 'UTF-8');
+    $itemCategory = htmlspecialchars((string) ($rowitem['group1'] ?? ''), ENT_QUOTES, 'UTF-8');
+    $itemDesc = htmlspecialchars((string) ($rowitem['info'] ?? ''), ENT_QUOTES, 'UTF-8');
+    $isAvailable = !array_key_exists('is_available', $rowitem) || (int) $rowitem['is_available'] === 1;
+    $canAdd = array_key_exists('availability_can_add', $rowitem) ? (bool) $rowitem['availability_can_add'] : $isAvailable;
+    $availabilityStatus = htmlspecialchars((string) ($rowitem['availability_status'] ?? ($isAvailable ? 'available' : 'manual_unavailable')), ENT_QUOTES, 'UTF-8');
+    $unavailableReasonRaw = (string) ($rowitem['unavailable_reason'] ?? $rowitem['recipe_unavailable_reason'] ?? '');
+    $unavailableReason = htmlspecialchars($unavailableReasonRaw, ENT_QUOTES, 'UTF-8');
+    $requiresManagerOverride = !empty($rowitem['availability_requires_manager_override']);
+    $overrideAllowed = !empty($rowitem['availability_override_allowed']);
+    $overridePermission = htmlspecialchars((string) ($rowitem['availability_override_permission'] ?? ''), ENT_QUOTES, 'UTF-8');
+    $warnOnly = !empty($rowitem['availability_warn_only']);
+    $recipeEnabled = !empty($rowitem['recipe_enabled']);
+    $recipeQty = htmlspecialchars((string) ($rowitem['recipe_effective_available_qty'] ?? ''), ENT_QUOTES, 'UTF-8');
+    $recipeRevision = htmlspecialchars((string) ($rowitem['recipe_availability_revision'] ?? ''), ENT_QUOTES, 'UTF-8');
+    $hasVariants = !empty($rowitem['has_variants']) || !empty($rowitem['has_active_variants']);
+    $variantDataAttribute = '';
+    if ($hasVariants && isset($rowitem['variants']) && is_array($rowitem['variants'])) {
+        $variantJson = json_encode($rowitem['variants'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        if (is_string($variantJson)) {
+            $variantDataAttribute = ' data-variants="' . htmlspecialchars($variantJson, ENT_QUOTES, 'UTF-8') . '"';
+        }
+    }
+
+    $availabilityBadge = pos_item_card_availability_badge($rowitem);
+    $cardClasses = 'pos-compact-card item-card itemButton';
+    if (!$isAvailable) {
+        $cardClasses .= ' item-unavailable';
+    } elseif (!empty($rowitem['availability_low_stock'])) {
+        $cardClasses .= ' item-low-stock';
+    }
+    if ($hasVariants) {
+        $cardClasses .= ' item-has-variants';
+    }
+
+    $priceLabel = $hasVariants
+        ? 'اختيارات'
+        : number_format($itemPrice, 2) . ' ج.م';
+
+    ob_start();
+    ?>
+    <div class="col-6 col-md-4 col-lg-3 item-wrapper" data-category="<?= $itemCategory ?>">
+        <div class="<?= $cardClasses ?>"
+            data-item-id="<?= $itemId ?>" data-item-name="<?= $itemName ?>"
+            data-item-price="<?= $itemPrice ?>" data-item-barcode="<?= $itemBarcode ?>"
+            data-item-desc="<?= $itemDesc ?>"
+            data-is-available="<?= $isAvailable ? '1' : '0' ?>"
+            data-availability-can-add="<?= $canAdd ? '1' : '0' ?>"
+            data-availability-status="<?= $availabilityStatus ?>"
+            data-unavailable-reason="<?= $unavailableReason ?>"
+            data-requires-manager-override="<?= $requiresManagerOverride ? '1' : '0' ?>"
+            data-override-allowed="<?= $overrideAllowed ? '1' : '0' ?>"
+            data-override-permission="<?= $overridePermission ?>"
+            data-availability-warn-only="<?= $warnOnly ? '1' : '0' ?>"
+            data-recipe-enabled="<?= $recipeEnabled ? '1' : '0' ?>"
+            data-recipe-effective-available-qty="<?= $recipeQty ?>"
+            data-recipe-availability-revision="<?= $recipeRevision ?>"
+            data-has-variants="<?= $hasVariants ? '1' : '0' ?>"
+            <?= $variantDataAttribute ?>
+            aria-disabled="<?= $canAdd ? 'false' : 'true' ?>"
+            title="<?= !$isAvailable && $unavailableReason !== '' ? $unavailableReason : $itemName ?>">
+            <?php if ($availabilityBadge !== ''): ?>
+                <div class="pos-compact-card-badge"><?= $availabilityBadge ?></div>
+            <?php endif; ?>
+            <div class="pos-compact-card-name"><?= $itemName ?></div>
+            <div class="pos-compact-card-price"><?= htmlspecialchars($priceLabel, ENT_QUOTES, 'UTF-8') ?></div>
+        </div>
+    </div>
+    <?php
+    return trim(ob_get_clean());
+}

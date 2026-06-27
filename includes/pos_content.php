@@ -2,6 +2,7 @@
 require_once __DIR__ . '/production_guard.php';
 require_once __DIR__ . '/pos_default_accounts.php';
 require_once __DIR__ . '/../classes/Pos/Service/LegacyOrderLinePresentationService.php';
+require_once __DIR__ . '/pos_cart_row.php';
 
 if (!isset($action_url)) {
     $action_url = "do/doadd_invoice.php";
@@ -45,21 +46,39 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
             window.POSMAIN_CAN_RECIPE_STOCK_OVERRIDE = <?= (function_exists('auth_guard_has_permission') && isset($conn) && $conn instanceof mysqli && auth_guard_has_permission('pos.recipe_stock_override', $conn)) ? 'true' : 'false' ?>;
         </script>
         <?php endif; ?>
-        <div class="container-fluid h-100 pos-shell" style="height: calc(100vh - 60px);">
+        <div class="container-fluid h-100 pos-shell">
             <div class="row h-100 g-2 pos-layout-row">
                 <!-- القسم الأيمن - معلومات الطلب -->
                 <div class="col-lg-3 pos-order-column">
-                    <div class="card shadow-sm h-100 d-flex flex-column">
-                        <div
-                            class="card-header bg-primary text-white py-2 d-flex justify-content-between align-items-center pos-current-order-header">
-                            <h6 class="mb-0">
-                                <i class="fas fa-shopping-cart me-1"></i>الطلب الحالي
-                            </h6>
-                            <button type="button" id="recentOrdersBtn2" class="btn btn-light btn-sm recent-orders-btn">
-                                 عرض الطلبات السابقة
+                    <div class="pos-order-panel h-100 d-flex flex-column">
+                        <div class="pos-order-header">
+                            <h6>الطلب الحالي</h6>
+                            <div class="pos-order-header-actions">
+                                <button type="button" id="recentOrdersBtn2" class="pos-header-icon-btn recent-orders-btn"
+                                    title="عرض الطلبات السابقة" aria-label="عرض الطلبات السابقة">
+                                    <i class="fas fa-history"></i>
+                                </button>
+                                <button type="button" id="posClearOrderBtn" class="pos-header-icon-btn"
+                                    title="مسح الطلب" aria-label="مسح الطلب" onclick="clearAllItems();">
+                                    <i class="fas fa-trash"></i>
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="pos-order-type-tabs pos-mode-tabs" role="group" aria-label="نوع الطلب">
+                            <button type="button" class="pos-mode-tab<?= $posOrderMode === 1 ? ' active' : '' ?>" data-age-target="age1">
+                                تيك اواي
+                            </button>
+                            <button type="button" class="pos-mode-tab<?= $posOrderMode === 2 ? ' active' : '' ?>" data-age-target="age2">
+                                طاولة
+                            </button>
+                            <button type="button" class="pos-mode-tab<?= $posOrderMode === 3 ? ' active' : '' ?>" data-age-target="age3">
+                                دليفري
+                                <span class="pos-delivery-pending-badge d-none" id="posDeliveryPendingBadge">0</span>
                             </button>
                         </div>
-                        <div class="card-body flex-grow-1 overflow-auto d-flex flex-column">
+
+                        <div class="pos-order-body">
                             <!-- Hidden Fields -->
                             <input type="hidden" name="pro_tybe" value="9">
                             <input type="hidden" name="pro_serial" value="0">
@@ -270,19 +289,13 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                             <input type="hidden" name="fund_id" value="<?= (int) ($posmainPosDefaults['fund_id'] ?? 0) ?>">
 
                             <!-- الأصناف المُضافة -->
-                            <div class="mb-2 flex-grow-1 d-flex flex-column pos-order-items-section">
-                                <div class="card flex-grow-1 d-flex flex-column border-primary pos-order-items-card">
-                                    <div class="card-header bg-gradient bg-primary text-white py-2">
-                                        <div class="d-flex justify-content-between align-items-center">
-                                            <h6 class="mb-0" style="font-size: 0.95rem;">
-                                                الأصناف المُضافة
-                                            </h6>
-                                            <span class="badge bg-white text-primary" id="itemCount">0</span>
-                                        </div>
+                            <div class="pos-order-items-section flex-grow-1 d-flex flex-column">
+                                <div class="pos-order-items-card d-none">
+                                    <div class="card-header">
+                                        <span id="itemCount">0</span>
                                     </div>
-                                    <div class="card-body p-1 flex-grow-1"
-                                        style="min-height: 40vh; max-height: 40vh; overflow-y: auto; overflow-x: auto; background: #f8f9fa;"
-                                        id="itemData">
+                                </div>
+                                <div class="pos-order-items-scroll flex-grow-1" id="itemData">
                                         <?php
                                         if (isset($_GET['edit'])){
                                             $id = $_GET['edit'];
@@ -291,203 +304,111 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                                                       LEFT JOIN myitems m ON m.id = fd.item_id
 	                                                      WHERE fd.fatid = $id AND fd.isdeleted = 0";
                                             $resdet = $conn->query($sqldet);
-                                            $x = 0;
                                             while ($rowdet = $resdet->fetch_assoc()) {
-                                                $x++;
                                                 $item_name = $rowdet['item_name'] ?: 'صنف غير معروف';
                                                 $presentedLine = $posmainLegacyLinePresentation->presentSaleLine($rowdet);
                                                 $qty = $posmainLegacyLinePresentation->inputValue($presentedLine['qty']);
                                                 $price = floatval($presentedLine['price']);
                                                 $u_val = $posmainLegacyLinePresentation->inputValue($presentedLine['u_val']);
-                                                // Fix: Use det_value instead of val
                                                 $subtotal = floatval($rowdet['det_value']);
                                                 $barcode = $rowdet['barcode'] ?: $rowdet['item_id'];
                                                 $line_note = $rowdet['notes'] ?? '';
-                                                ?>
-                                        <div class="card mb-1 item-card-order pos-cart-row shadow-sm border-start border-3"
-                                            data-itemid="<?= $barcode ?>"
-                                            style="border-color: #0a7ea4 !important; max-width: 100%;">
-                                            <div class="card-body p-1">
-                                                <div class="d-flex align-items-center gap-1 pos-cart-row-inner"
-                                                    style="font-size: 0.75rem;">
-                                                    <span class="badge bg-primary pos-cart-index"
-                                                        style="font-size: 0.7rem; min-width: 25px;">#<?= $x ?></span>
-
-                                                    <div class="pos-cart-main" style="flex: 1; min-width: 0;">
-                                                        <input type="hidden" value='<?= $rowdet['item_id'] ?>'
-                                                            name="itmname[]">
-                                                        <input type="hidden" class="barcode" value="<?= $barcode ?>">
-                                                        <div class="fw-bold pos-cart-name"
-                                                            title="<?= htmlspecialchars($item_name, ENT_QUOTES, 'UTF-8') ?>"><?= htmlspecialchars($item_name, ENT_QUOTES, 'UTF-8') ?></div>
-                                                        <input type="hidden"
-                                                            class="lineNoteInput"
-                                                            name="itmnote[]"
-                                                            value="<?= htmlspecialchars($line_note, ENT_QUOTES, 'UTF-8') ?>">
-                                                    </div>
-
-                                                    <div class="pos-cart-note">
-                                                        <button type="button"
-                                                            class="btn lineNoteButton line-note-empty"
-                                                            title="إضافة ملاحظة للمطبخ"
-                                                            aria-label="إضافة ملاحظة للمطبخ">
-                                                            <i class="fas fa-sticky-note"></i>
-                                                        </button>
-                                                    </div>
-
-                                                    <div class="pos-cart-qty" style="width: 65px;">
-                                                        <small class="d-block text-center text-muted"
-                                                            style="font-size: 0.6rem; margin-bottom: 1px;">كمية</small>
-                                                        <button type="button" class="btn qty-step qty-decrease"
-                                                            title="تقليل">−</button>
-                                                        <input type="number"
-                                                            class="form-control form-control-sm text-center quantityInput nozero fw-bold"
-                                                            value="<?= $qty ?>" name="itmqty[]" min="1" step="1"
-                                                            style="width: 100%; font-size: 0.75rem; padding: 3px; border: 2px solid #ff6347; height: 26px;"
-                                                            title="الكمية">
-                                                        <button type="button" class="btn qty-step qty-increase"
-                                                            title="زيادة">+</button>
-                                                        <input type="hidden" name="u_val[]" value="<?= htmlspecialchars($u_val, ENT_QUOTES, 'UTF-8') ?>">
-                                                    </div>
-
-                                                    <div class="pos-cart-price" style="width: 55px;">
-                                                        <small class="d-block text-center text-muted"
-                                                            style="font-size: 0.6rem; margin-bottom: 1px;">سعر</small>
-                                                        <input type="number"
-                                                            class="form-control form-control-sm text-center priceInput nozero"
-                                                            value="<?= number_format($price, 2, '.', '') ?>"
-                                                            name="itmprice[]" step="0.01"
-                                                            style="width: 100%; font-size: 0.7rem; padding: 3px; height: 26px;"
-                                                            title="السعر">
-                                                    </div>
-
-                                                    <div class="pos-cart-value" style="width: 60px;">
-                                                        <small class="d-block text-center text-muted"
-                                                            style="font-size: 0.6rem; margin-bottom: 1px;">قيمة</small>
-                                                        <input type="hidden" name="itmdisc[]" value="0">
-                                                        <input type="text"
-                                                            class="form-control form-control-sm text-center subtotal fw-bold"
-                                                            readonly value="<?= number_format($subtotal, 2, '.', '') ?>"
-                                                            name="itmval[]"
-                                                            style="width: 100%; font-size: 0.7rem; padding: 3px; background: #fff3cd; height: 26px;"
-                                                            title="القيمة">
-                                                    </div>
-
-                                                    <button type="button" class="btn btn-danger btn-sm delRow"
-                                                        style="padding: 2px 6px; font-size: 0.7rem;" title="حذف">
-                                                        <i class="fas fa-trash"></i>
-                                                    </button>
-                                                </div>
-                                            </div>
-                                        </div>
-                                        <?php
+                                                echo pos_render_cart_row([
+                                                    'item_id' => (int) $rowdet['item_id'],
+                                                    'item_name' => $item_name,
+                                                    'qty' => $qty,
+                                                    'price' => $price,
+                                                    'subtotal' => $subtotal,
+                                                    'barcode' => $barcode,
+                                                    'line_note' => $line_note,
+                                                    'u_val' => $u_val,
+                                                ]);
                                             }
                                         }
                                         ?>
-                                    </div>
                                 </div>
                             </div>
 
-                            <!-- قسم الدفع والحسابات -->
-                            <div class="card border-primary mt-1 pos-payment-summary-card">
-                                <div class="card-header bg-primary text-white py-1">
-                                    <h6 class="mb-0" style="font-size: 0.8rem;">
-                                        <i class="fas fa-calculator me-1"></i>الحسابات والدفع
-                                    </h6>
-                                </div>
-                                <div class="card-body p-1">
-                                    <!-- الإجمالي والصافي -->
-                                    <div class="row g-1 mb-1">
-                                        <div class="col-6 text-center">
-                                            <small class="text-muted d-block"
-                                                style="font-size: 0.65rem;">الإجمالي</small>
-                                            <h5 class="mb-0 text-primary" id="total_display" style="font-size: 0.9rem;">
-                                                0.00 ج.م</h5>
-                                            <input type="hidden" name="headtotal" id="total" value="0.00">
-                                            <input name="headplus" type="hidden">
-                                        </div>
-                                        <div class="col-6 text-center">
-                                            <small class="text-muted d-block" style="font-size: 0.65rem;">الصافي</small>
-                                            <h5 class="mb-0 text-success" id="net_display" style="font-size: 0.9rem;">
-                                                0.00 ج.م</h5>
+                            <div class="accordion mb-2" id="posOrderExtras">
+                                <div class="accordion-item border-0 bg-transparent">
+                                    <h2 class="accordion-header">
+                                        <button class="accordion-button collapsed py-2" type="button"
+                                            data-bs-toggle="collapse" data-bs-target="#posOrderExtrasBody"
+                                            aria-expanded="false" aria-controls="posOrderExtrasBody">
+                                            خصم وملاحظات
+                                        </button>
+                                    </h2>
+                                    <div id="posOrderExtrasBody" class="accordion-collapse collapse"
+                                        data-bs-parent="#posOrderExtras">
+                                        <div class="accordion-body p-2">
+                                            <div class="mb-2">
+                                                <label class="form-label small text-muted mb-1" for="info">ملاحظات الطلب</label>
+                                                <textarea class="form-control form-control-sm" name="info" id="info" rows="2"
+                                                    placeholder="ملاحظات..."><?php echo isset($_GET['edit']) ? htmlspecialchars($rowed['info']) : ''; ?></textarea>
+                                            </div>
                                             <input type="hidden" name="headnet" id="net_val" value="0">
                                             <input type="hidden" name="headdisc" id="discount" value="0">
                                         </div>
                                     </div>
-
-                                    <!-- ملاحظات -->
-                                    <div class="mb-1">
-                                        <textarea class="form-control form-control-sm" name="info" id="info" rows="1"
-                                            placeholder="ملاحظات..."
-                                            style="font-size: 0.7rem; padding: 0.2rem;"><?php echo isset($_GET['edit']) ? htmlspecialchars($rowed['info']) : ''; ?></textarea>
-                                    </div>
-
-                                    <!-- أزرار الإجراءات -->
-                                    <div class="pos-action-stack">
-                                        <button type="button" class="btn btn-outline-primary pos-save-order-btn"
-                                            onclick="submitPOS('save');">
-                                            <i class="fas fa-bookmark me-1"></i>
-                                            <?php if(isset($id)): ?>حفظ التعديل<?php else: ?>حفظ الطلب<?php endif; ?>
-                                        </button>
-                                        <button type="button" class="btn btn-outline-secondary pos-print-order-btn"
-                                            onclick="submitPOS('print_receipt');">
-                                            <i class="fas fa-print me-1"></i>طباعة
-                                        </button>
-                                        <button type="button" class="btn btn-primary pos-pay-order-btn"
-                                            data-bs-toggle="modal" data-bs-target="#paymentModal">
-                                            <span><i class="fas fa-money-bill-wave me-1"></i>دفع</span>
-                                            <strong id="total_display_btn">0.00 ج.م</strong>
-                                        </button>
-                                        <button type="button" class="btn btn-outline-danger pos-clear-btn"
-                                            onclick="clearAllItems();" title="مسح">
-                                            <i class="fas fa-trash-alt me-1"></i><span>إلغاء</span>
-                                        </button>
-                                    </div>
-                                    <div id="selectedTableDisplay" class="badge bg-primary text-white pos-selected-table"
-                                        style="display: none;">
-                                        <i class="fas fa-chair me-1"></i><span id="selectedTableName"></span>
-                                    </div>
                                 </div>
                             </div>
+                        </div>
 
+                        <div class="pos-order-footer">
+                            <div class="pos-order-total">
+                                <span class="pos-order-total-label">المجموع</span>
+                                <h5 class="mb-0" id="total_display">0.00 ج.م</h5>
+                                <input type="hidden" name="headtotal" id="total" value="0.00">
+                                <input name="headplus" type="hidden">
+                                <span id="net_display" class="d-none">0.00 ج.م</span>
+                            </div>
+
+                            <div class="pos-action-stack">
+                                <button type="button" class="btn btn-outline-primary pos-save-order-btn"
+                                    onclick="submitPOS('save');">
+                                    <i class="fas fa-bookmark me-1"></i>
+                                    <?php if(isset($id)): ?>حفظ التعديل<?php else: ?>حفظ<?php endif; ?>
+                                </button>
+                                <button type="button" class="btn btn-outline-secondary pos-print-order-btn"
+                                    onclick="submitPOS('print_receipt');">
+                                    <i class="fas fa-print me-1"></i>طباعة
+                                </button>
+                                <button type="button" class="btn btn-primary pos-pay-order-btn"
+                                    data-bs-toggle="modal" data-bs-target="#paymentModal">
+                                    <span><i class="fas fa-credit-card me-1"></i>دفع</span>
+                                    <strong id="total_display_btn">0.00 ج.م</strong>
+                                </button>
+                                <button type="button" class="btn btn-outline-danger pos-clear-btn d-none"
+                                    onclick="clearAllItems();" title="مسح">
+                                    <i class="fas fa-trash-alt me-1"></i><span>إلغاء</span>
+                                </button>
+                            </div>
+                            <div id="selectedTableDisplay" class="badge bg-primary text-white pos-selected-table"
+                                style="display: none;">
+                                <i class="fas fa-chair me-1"></i><span id="selectedTableName"></span>
+                            </div>
                         </div>
                     </div>
                 </div>
 
                 <!-- القسم الأوسط - الأصناف -->
                 <div class="col-lg-9 pos-items-column">
-                    <div class="card shadow-sm items-section-card">
-                        <div class="card-header bg-primary text-white py-2">
-                            <div class="pos-catalog-toolbar">
-                                <div class="pos-search-tools">
-                                    <button type="button" class="btn pos-barcode-btn" id="focusUnifiedSearch" title="بحث أو باركود">
-                                        <i class="fas fa-barcode"></i>
-                                    </button>
-                                    <div class="input-group pos-unified-search">
-                                        <input type="text" class="scnd form-control" id="posUnifiedSearch"
-                                            placeholder="بحث أو باركود" autocomplete="off"
-                                            title="اكتب للفلترة أو اضغط Enter للبحث بالباركود">
-                                        <button class="btn btn-outline-secondary" type="button" id="clearFilter"
-                                            title="مسح الفلتر">
-                                            <i class="fas fa-search"></i>
-                                        </button>
-                                    </div>
-                                </div>
-                                <div class="pos-mode-tabs" role="group" aria-label="نوع الطلب">
-                                    <button type="button" class="pos-mode-tab active" data-age-target="age1">
-                                        <i class="fas fa-shopping-bag"></i><span>تيك اواي</span>
-                                    </button>
-                                    <button type="button" class="pos-mode-tab" data-age-target="age2">
-                                        <i class="fas fa-chair"></i><span>طاولة</span>
-                                    </button>
-                                    <button type="button" class="pos-mode-tab" data-age-target="age3">
-                                        <i class="fas fa-motorcycle"></i><span>دليفري</span>
-                                        <span class="pos-delivery-pending-badge d-none" id="posDeliveryPendingBadge">0</span>
+                    <div class="card shadow-sm items-section-card h-100">
+                        <div class="pos-catalog-panel h-100 d-flex flex-column">
+                            <div class="pos-catalog-search">
+                                <div class="pos-search-wrap">
+                                    <input type="text" class="scnd form-control" id="posUnifiedSearch"
+                                        placeholder="ابحث عن الصنف..." autocomplete="off"
+                                        title="اكتب للفلترة أو اضغط Enter للبحث بالباركود">
+                                    <span class="pos-search-icon"><i class="fas fa-search"></i></span>
+                                    <button class="btn d-none" type="button" id="focusUnifiedSearch" title="بحث أو باركود"></button>
+                                    <button class="btn d-none" type="button" id="clearFilter" title="مسح الفلتر">
+                                        <i class="fas fa-times"></i>
                                     </button>
                                 </div>
-                                <div id="posDeliveryBar" class="pos-delivery-bar-wrap d-none" aria-live="polite"></div>
                             </div>
-                        </div>
-                        <div class="card-body">
+                            <div id="posDeliveryBar" class="pos-delivery-bar-wrap d-none" aria-live="polite"></div>
+                            <div class="pos-catalog-body">
                             <!-- التصنيفات -->
                             <div class="mb-2">
                                 <div class="d-flex flex-wrap gap-1" id="categoriesContainer">
@@ -577,7 +498,7 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                                 $availabilityScope = posmain_pos_availability_scope($conn);
                                 $posInitialItems = (new ItemAvailabilityService())->decorateItems($conn, $posInitialItems, $availabilityScope);
                                 foreach ($posInitialItems as $rowitem) {
-                                    echo pos_render_item_card($rowitem);
+                                    echo pos_render_item_card_compact($rowitem);
                                 }
                             } else {
                                 echo '<div class="col-12 text-center text-muted"><p>لا توجد أصناف متاحة</p></div>';
@@ -587,6 +508,7 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                             <div id="itemsGridLoader" class="text-center text-muted small py-2 d-none">
                                 <span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>
                                 جاري تحميل باقي الأصناف...
+                            </div>
                             </div>
                         </div>
                     </div>
@@ -1548,6 +1470,11 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                     }
                 }
                 loadRecentOrders();
+            });
+
+            $('#cornerRecentOrdersBtn').on('click', function(e) {
+                e.preventDefault();
+                $('#recentOrdersBtn2').trigger('click');
             });
 
             function loadRecentOrders() {

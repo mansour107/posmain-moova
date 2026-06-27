@@ -113,7 +113,7 @@ try {
     $items = (new ItemAvailabilityService())->decorateItems($conn, $items, $availabilityScope);
 
     foreach ($items as &$item) {
-        $item['html'] = pos_render_item_card($item);
+        $item['html'] = pos_render_item_card_compact($item);
     }
     unset($item);
     

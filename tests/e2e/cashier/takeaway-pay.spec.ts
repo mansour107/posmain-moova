@@ -11,7 +11,7 @@ test.describe('cashier: takeaway payment', () => {
     expect(net).toBeGreaterThan(0);
 
     await Promise.all([
-      page.waitForLoadState('load'),
+      page.waitForURL(/print\/receipt\.php/, { timeout: 30_000 }),
       payCashInModal(page, net),
     ]);
 

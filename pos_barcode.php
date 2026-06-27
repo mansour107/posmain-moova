@@ -83,7 +83,7 @@ if(isset($_SESSION['success_message'])){
     unset($_SESSION['success_message']);
 }
 
-$pos_body_class = 'bg-light';
+$pos_body_class = 'pos-premium-dark pos-immersive';
 include('includes/pos_simple_header.php');
 ?>
 
@@ -116,7 +116,26 @@ include('includes/pos_simple_header.php');
 <!-- Hidden input for Edit Mode -->
 <input type="hidden" id="edit_order_id" value="<?= isset($id) ? $id : '' ?>">
 
-<!-- Navbar -->
+<div class="pos-corner-menu" aria-label="قائمة نقاط البيع">
+    <button type="button" class="pos-corner-btn" id="cornerRecentOrdersBtn" title="الطلبات السابقة" aria-label="الطلبات السابقة">
+        <i class="fas fa-history"></i>
+    </button>
+    <div class="moova-navbar-widget" aria-label="Moova POS widget">
+        <?php include('elements/pos/cofe_widget.php'); ?>
+    </div>
+    <button type="button" class="pos-corner-btn" id="fullscreenBtn" title="ملء الشاشة" aria-label="ملء الشاشة">
+        <i class="fas fa-expand-arrows-alt"></i>
+    </button>
+    <button type="button" class="pos-corner-btn" data-bs-toggle="modal"
+        data-bs-target="#closeShiftModal" title="إغلاق الشيفت" aria-label="إغلاق الشيفت">
+        <i class="fas fa-power-off"></i>
+    </button>
+    <a href="do/do_logout.php" class="pos-corner-btn" title="تسجيل الخروج" aria-label="تسجيل الخروج">
+        <i class="fas fa-sign-out-alt"></i>
+    </a>
+</div>
+
+<!-- Navbar (hidden in immersive mode) -->
 <nav class="navbar navbar-expand-lg navbar-dark bg-primary shadow-sm pos-topbar">
     <div class="container-fluid">
         <div class="pos-brand-with-moova">

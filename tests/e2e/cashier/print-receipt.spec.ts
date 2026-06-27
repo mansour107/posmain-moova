@@ -7,7 +7,8 @@ test.describe('cashier: print receipt', () => {
     await loginAndUnlockPos(page, 'cashier');
     await clickFirstAddableItem(page);
 
-    const printButton = page.locator('.pos-print-order-btn');
+    const printButton = page.locator('.pos-order-footer .pos-print-order-btn');
+    await printButton.scrollIntoViewIfNeeded();
     await expect(printButton).toBeVisible();
 
     await Promise.all([

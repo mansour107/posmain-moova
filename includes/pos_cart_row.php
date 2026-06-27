@@ -1,0 +1,75 @@
+<?php
+
+/**
+ * Shared cart row markup for POS premium dark UI.
+ */
+function pos_render_cart_row(array $row): string
+{
+    $itemId = (int) ($row['item_id'] ?? 0);
+    $itemName = htmlspecialchars((string) ($row['item_name'] ?? 'صنف غير معروف'), ENT_QUOTES, 'UTF-8');
+    $qty = htmlspecialchars((string) ($row['qty'] ?? '1'), ENT_QUOTES, 'UTF-8');
+    $price = (float) ($row['price'] ?? 0);
+    $subtotal = (float) ($row['subtotal'] ?? ($price * (float) $qty));
+    $barcode = htmlspecialchars((string) ($row['barcode'] ?? (string) $itemId), ENT_QUOTES, 'UTF-8');
+    $lineNote = htmlspecialchars((string) ($row['line_note'] ?? ''), ENT_QUOTES, 'UTF-8');
+    $uVal = htmlspecialchars((string) ($row['u_val'] ?? '1'), ENT_QUOTES, 'UTF-8');
+    $priceFormatted = number_format($price, 2, '.', '');
+    $subtotalFormatted = number_format($subtotal, 2, '.', '');
+
+    ob_start();
+    ?>
+    <div class="item-card-order pos-cart-row" data-itemid="<?= $barcode ?>">
+        <div class="pos-cart-row-inner">
+            <div class="pos-cart-price-display" aria-hidden="true"><?= $subtotalFormatted ?> <span class="pos-currency">ج.م</span></div>
+            <div class="pos-cart-qty">
+                <button type="button" class="btn qty-step qty-decrease" title="تقليل">−</button>
+                <input type="number"
+                    class="form-control form-control-sm text-center quantityInput nozero fw-bold"
+                    value="<?= $qty ?>"
+                    name="itmqty[]"
+                    min="1"
+                    step="1"
+                    title="الكمية">
+                <button type="button" class="btn qty-step qty-increase" title="زيادة">+</button>
+                <input type="hidden" name="u_val[]" value="<?= $uVal ?>">
+            </div>
+            <div class="pos-cart-main">
+                <input type="hidden" value="<?= $itemId ?>" name="itmname[]">
+                <input type="hidden" class="barcode" value="<?= $barcode ?>">
+                <div class="pos-cart-name" title="<?= $itemName ?>"><?= $itemName ?></div>
+                <input type="hidden" class="lineNoteInput" name="itmnote[]" value="<?= $lineNote ?>">
+                <input type="hidden" class="managerApprovalInput" name="itmmanagerapproval[]" value="">
+            </div>
+            <div class="pos-cart-note">
+                <button type="button"
+                    class="btn lineNoteButton <?= $lineNote !== '' ? 'line-note-has-value' : 'line-note-empty' ?>"
+                    title="إضافة ملاحظة للمطبخ"
+                    aria-label="إضافة ملاحظة للمطبخ">
+                    <i class="fas fa-sticky-note"></i>
+                </button>
+            </div>
+            <button type="button" class="btn delRow" title="حذف" aria-label="حذف">
+                <i class="fas fa-times"></i>
+            </button>
+            <div class="pos-cart-value d-none">
+                <input type="hidden" name="itmdisc[]" value="0">
+                <input type="text"
+                    class="form-control form-control-sm text-center subtotal fw-bold"
+                    readonly
+                    value="<?= $subtotalFormatted ?>"
+                    name="itmval[]"
+                    title="القيمة">
+            </div>
+            <div class="pos-cart-price d-none">
+                <input type="number"
+                    class="form-control form-control-sm text-center priceInput nozero"
+                    value="<?= $priceFormatted ?>"
+                    name="itmprice[]"
+                    step="0.01"
+                    title="السعر">
+            </div>
+        </div>
+    </div>
+    <?php
+    return trim(ob_get_clean());
+}

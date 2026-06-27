@@ -2,15 +2,18 @@
 
 $jsSource = file_get_contents(__DIR__ . '/../../js/pos_barcode.js');
 $posContent = file_get_contents(__DIR__ . '/../../includes/pos_content.php');
+$cartRow = file_get_contents(__DIR__ . '/../../includes/pos_cart_row.php');
 $cssSource = file_get_contents(__DIR__ . '/../../dist/css/pos_barcode.css');
 $loadOrderSource = file_get_contents(__DIR__ . '/../../ajax/load_order.php');
 $tableOrderSource = file_get_contents(__DIR__ . '/../../classes/TableOrderService.php');
 $invoiceSource = file_get_contents(__DIR__ . '/../../do/doadd_invoice.php');
 $mutationSource = file_get_contents(__DIR__ . '/../../classes/Pos/Service/PosOrderMutationService.php');
 
-if ($jsSource === false || $posContent === false || $cssSource === false || $loadOrderSource === false || $tableOrderSource === false || $invoiceSource === false || $mutationSource === false) {
+if ($jsSource === false || $posContent === false || $cartRow === false || $cssSource === false || $loadOrderSource === false || $tableOrderSource === false || $invoiceSource === false || $mutationSource === false) {
     throw new RuntimeException('Unable to read cashier line note sources');
 }
+
+$posLineMarkup = $posContent . $cartRow;
 
 phase4CashierLineNoteAssert(strpos($jsSource, 'lineNoteInput') !== false, 'new cashier rows should include lineNoteInput');
 phase4CashierLineNoteAssert(strpos($jsSource, 'name="itmnote[]"') !== false, 'new cashier rows should submit itmnote[]');
@@ -26,14 +29,18 @@ phase4CashierLineNoteAssert(strpos($jsSource, "addItemToOrder(id, name, price, b
 phase4CashierLineNoteAssert(strpos($jsSource, 'item.note || item.kitchen_note || item.notes ||') !== false, 'loaded table items should preserve note fields when provided');
 phase4CashierLineNoteAssert(strpos($jsSource, '{ uVal: item.u_val || 1 }') !== false, 'loaded table items should preserve u_val when provided');
 
-phase4CashierLineNoteAssert(strpos($posContent, 'lineNoteInput') !== false, 'edit-mode cashier rows should include lineNoteInput');
-phase4CashierLineNoteAssert(strpos($posContent, 'name="itmnote[]"') !== false, 'edit-mode cashier rows should submit itmnote[]');
-phase4CashierLineNoteAssert(strpos($posContent, 'lineNoteButton') !== false, 'edit-mode cashier rows should expose note icon button');
-phase4CashierLineNoteAssert(strpos($posContent, 'qty-decrease') !== false, 'edit-mode cashier rows should keep minus button');
-phase4CashierLineNoteAssert(strpos($posContent, 'qty-increase') !== false, 'edit-mode cashier rows should keep plus button');
+phase4CashierLineNoteAssert(strpos($posLineMarkup, 'lineNoteInput') !== false, 'edit-mode cashier rows should include lineNoteInput');
+phase4CashierLineNoteAssert(strpos($posLineMarkup, 'name="itmnote[]"') !== false, 'edit-mode cashier rows should submit itmnote[]');
+phase4CashierLineNoteAssert(strpos($posLineMarkup, 'lineNoteButton') !== false, 'edit-mode cashier rows should expose note icon button');
+phase4CashierLineNoteAssert(strpos($posLineMarkup, 'qty-decrease') !== false, 'edit-mode cashier rows should keep minus button');
+phase4CashierLineNoteAssert(strpos($posLineMarkup, 'qty-increase') !== false, 'edit-mode cashier rows should keep plus button');
 phase4CashierLineNoteAssert(strpos($posContent, "\$line_note = \$rowdet['notes'] ?? '';") !== false, 'edit-mode note value should stay compatible with legacy fd.notes');
 
-phase4CashierLineNoteAssert(strpos($cssSource, 'grid-template-areas: "value decrease qty increase name note delete"') !== false, 'cart row should keep minus/quantity/plus together and reserve a note icon slot');
+phase4CashierLineNoteAssert(
+    strpos($cssSource, 'grid-template-areas: "value decrease qty increase name note delete"') !== false
+        || strpos($cssSource, 'grid-template-areas: "price qty name note delete"') !== false,
+    'cart row should keep quantity controls and note icon slot'
+);
 phase4CashierLineNoteAssert(strpos($cssSource, '.pos-cart-note') !== false, 'cart row should style a compact note icon slot');
 phase4CashierLineNoteAssert(strpos($cssSource, 'white-space: normal !important;') !== false, 'cart item names should wrap instead of one-line truncating');
 phase4CashierLineNoteAssert(strpos($cssSource, '.lineNoteButton.line-note-empty') !== false, 'empty note icon color style expected');
