@@ -1,5 +1,8 @@
 <?php
+require_once __DIR__ . '/../classes/Inventory/InventoryLegacyStockEndpointGuard.php';
 include('../includes/connect.php');
+
+InventoryLegacyStockEndpointGuard::blockIfLive('legacy_recost_retired', 'html');
 
 $recostSuccess = false;
 

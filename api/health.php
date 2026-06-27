@@ -36,10 +36,14 @@ foreach ($checks['writable_paths'] as $pathCheck) {
 
 if (!$updateScope) {
     $isProduction = !empty($config['production_mode']);
+    $role = strtolower(trim((string) ($config['role'] ?? 'branch')));
     $branchConfigured = trim((string) ($config['branch']['uuid'] ?? '')) !== '';
+    $branchIdentityRequired = $isProduction && $role !== 'cloud';
     $checks['branch_identity'] = [
-        'ok' => !$isProduction || $branchConfigured,
+        'ok' => !$branchIdentityRequired || $branchConfigured,
         'configured' => $branchConfigured,
+        'required' => $branchIdentityRequired,
+        'role' => $role,
     ];
     $healthy = $healthy && !empty($checks['branch_identity']['ok']);
 

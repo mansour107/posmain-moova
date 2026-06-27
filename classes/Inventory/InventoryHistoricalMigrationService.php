@@ -3,6 +3,8 @@
 require_once __DIR__ . '/InventoryDecimal.php';
 require_once __DIR__ . '/InventoryFeatureFlags.php';
 require_once __DIR__ . '/InventoryLedgerService.php';
+require_once __DIR__ . '/../../includes/pos_default_accounts.php';
+require_once __DIR__ . '/../../includes/pos_operational_store.php';
 
 class InventoryHistoricalMigrationService
 {
@@ -555,6 +557,10 @@ WHERE " . implode(' AND ', $conditions), $params);
             $conditions[] = 'item_id = ?';
             $params[] = $itemId;
         }
+        if (($minFatDetailId = $this->positiveInt($filters['min_fat_detail_id'] ?? null)) > 0 && $this->columnExists($conn, 'fat_details', 'id')) {
+            $conditions[] = 'id > ?';
+            $params[] = $minFatDetailId;
+        }
 
         return $this->fetchAll($conn, 'SELECT ' . implode(', ', array_map([$this, 'quoteIdentifier'], $columns)) . ' FROM fat_details WHERE ' . implode(' AND ', $conditions) . ' ORDER BY id ASC LIMIT ' . $this->limit($filters), $params);
     }
@@ -566,6 +572,8 @@ WHERE " . implode(' AND ', $conditions), $params);
         $qtyIn = InventoryDecimal::normalize($row['qty_in'] ?? '0');
         $qtyOut = InventoryDecimal::normalize($row['qty_out'] ?? '0');
         $storeId = (int) ($row['det_store'] ?? 0);
+        $scopedStore = posmain_resolve_store_scope_for_read($conn, ['det_store' => $storeId]);
+        $storeId = (int) ($scopedStore['store_id'] ?? $storeId);
         $posTenant = (int) ($row['tenant'] ?? 0);
         $posBranch = (int) ($row['branch'] ?? 0);
         $proType = (int) ($row['pro_tybe'] ?? 0);
@@ -916,6 +924,15 @@ LIMIT 1", [$posTenant, $posBranch, $storeId, $itemId]) ?: [];
     {
         if (!$this->tableExists($conn, 'inventory_movements')) {
             return false;
+        }
+        if (strpos($idempotencyKey, 'migration:fat_details:') === 0) {
+            $row = $this->fetchOne($conn, '
+SELECT id
+FROM inventory_movements
+WHERE idempotency_key = ?
+LIMIT 1', [$idempotencyKey]);
+
+            return is_array($row);
         }
         $row = $this->fetchOne($conn, "
 SELECT id

@@ -1,5 +1,9 @@
 <?php
+require_once __DIR__ . '/../../classes/Inventory/InventoryLegacyStockEndpointGuard.php';
 include('../../includes/connect.php'); // تضمين ملف الاتصال بقاعدة البيانات
+
+InventoryLegacyStockEndpointGuard::blockIfLive('legacy_recost_ajax_retired', 'json');
+
 $fatid = isset($_GET['fatid']) ? intval($_GET['fatid']) : 1; // رقم العملية
 
 try {

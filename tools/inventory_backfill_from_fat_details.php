@@ -20,6 +20,7 @@ $options = getopt('', [
     'store:',
     'item:',
     'limit:',
+    'min-fat-detail-id:',
     'include-deleted',
     'json',
     'help',
@@ -118,7 +119,7 @@ exit(empty($result['blockers']) ? 0 : 2);
 
 function inventoryFatDetailsBackfillUsage(): void
 {
-    fwrite(STDOUT, "Usage: php tools/inventory_backfill_from_fat_details.php --dry-run [--tenant=0] [--branch=0] [--store=0] [--item=123] [--limit=1000] [--include-deleted] [--decisions-file=/absolute/path/to/decisions.json] [--json]\n");
+    fwrite(STDOUT, "Usage: php tools/inventory_backfill_from_fat_details.php --dry-run [--tenant=0] [--branch=0] [--store=0] [--item=123] [--limit=1000] [--min-fat-detail-id=5000] [--include-deleted] [--decisions-file=/absolute/path/to/decisions.json] [--json]\n");
     fwrite(STDOUT, "Rehearse: php tools/inventory_backfill_from_fat_details.php --rehearse [--tenant=0] [--branch=0] [--store=0] [--item=123] [--limit=1000] [--decisions-file=/absolute/path/to/decisions.json] [--json]\n");
     fwrite(STDOUT, "Apply: php tools/inventory_backfill_from_fat_details.php --apply --backup-file=/absolute/path/to/recent.sql [--tenant=0] [--branch=0] [--store=0] [--limit=1000] [--decisions-file=/absolute/path/to/decisions.json] [--json]\n");
     fwrite(STDOUT, "\n");
@@ -134,6 +135,10 @@ function inventoryFatDetailsBackfillFilters(array $options): array
         'item_id' => inventoryFatDetailsBackfillIntOption($options, 'item', 0),
         'limit' => max(1, min(5000, inventoryFatDetailsBackfillIntOption($options, 'limit', 1000))),
     ];
+    $minFatDetailId = inventoryFatDetailsBackfillIntOption($options, 'min-fat-detail-id', 0);
+    if ($minFatDetailId > 0) {
+        $filters['min_fat_detail_id'] = $minFatDetailId;
+    }
     if (isset($options['include-deleted'])) {
         $filters['include_deleted'] = true;
     }
