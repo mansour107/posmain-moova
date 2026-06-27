@@ -101,6 +101,15 @@ foreach ($detailReplacements as $label => $value) {
     );
 }
 
+foreach ($service->requiredRuntimeProofs($flags) as $label => $tokens) {
+    $value = implode(' ', array_map('strval', $tokens));
+    $content = preg_replace(
+        '/^- ' . preg_quote((string) $label, '/') . ':.*$/m',
+        '- ' . $label . ': ' . $value,
+        $content
+    );
+}
+
 $content = preg_replace('/^- \[ \] /m', '- [x] ', $content);
 
 $dir = dirname($output);
