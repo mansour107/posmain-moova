@@ -5,7 +5,6 @@ require_once $root . '/config/app_config.php';
 require_once $root . '/config/production_profile.php';
 
 foreach ([
-    'posmain_production_profile_enabled',
     'posmain_production_profile_matrix',
     'posmain_production_profile_apply',
     'ledger_mode',
@@ -23,8 +22,6 @@ $config = [
     'inventory' => ['ledger_mode' => 'shadow', 'legacy_mirror' => false],
     'recipe' => ['mode' => 'consume_pilot', 'moova_sync' => false, 'reservations' => false, 'consumption' => true, 'accounting' => false, 'availability' => false, 'shadow_ledger' => false, 'enabled' => true],
 ];
-putenv('POSMAIN_USE_PRODUCTION_PROFILE=1');
-$_ENV['POSMAIN_USE_PRODUCTION_PROFILE'] = '1';
 $applied = posmain_production_profile_apply($config);
 if (($applied['inventory']['ledger_mode'] ?? '') !== 'live') {
     fwrite(STDERR, "production-profile-contract-FAIL: expected live ledger\n");
@@ -39,6 +36,14 @@ if (empty($applied['production_profile']['enabled'])) {
     exit(1);
 }
 
-putenv('POSMAIN_USE_PRODUCTION_PROFILE');
-unset($_ENV['POSMAIN_USE_PRODUCTION_PROFILE']);
+$defaults = posmain_app_config();
+if (($defaults['inventory']['ledger_mode'] ?? '') !== 'live') {
+    fwrite(STDERR, "production-profile-contract-FAIL: app defaults should use live inventory\n");
+    exit(1);
+}
+if (($defaults['recipe']['mode'] ?? '') !== 'full') {
+    fwrite(STDERR, "production-profile-contract-FAIL: app defaults should use full recipe\n");
+    exit(1);
+}
+
 echo "production-profile-contract-ok\n";

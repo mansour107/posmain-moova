@@ -438,17 +438,19 @@ if (!function_exists('posmain_app_config')) {
         $moovaQueuedApply = $moovaModeAllowsQueued;
         $moovaWorkerApply = $moovaModeAllowsQueued
             && posmain_bool($branchEnv(['POSMAIN_MOOVA_APPLY_ENABLED'], null), true);
-        $recipeMode = strtolower(trim((string) $branchEnv(['POSMAIN_RECIPE_MODE'], 'off')));
+        $recipeMode = strtolower(trim((string) $branchEnv(['POSMAIN_RECIPE_MODE'], 'full')));
         $recipeMode = str_replace(['-', ' '], '_', $recipeMode);
         $recipeModes = ['off', 'schema_only', 'read_only', 'shadow', 'reserve_only', 'consume_pilot', 'accounting_pilot', 'availability_pilot', 'full'];
         if (!in_array($recipeMode, $recipeModes, true)) {
-            $recipeMode = 'off';
+            $recipeMode = 'full';
         }
-        $inventoryLedgerMode = strtolower(trim((string) $branchEnv(['POSMAIN_INVENTORY_LEDGER_MODE'], 'off')));
+        $inventoryLedgerMode = strtolower(trim((string) $branchEnv(['POSMAIN_INVENTORY_LEDGER_MODE'], 'live')));
         $inventoryLedgerMode = str_replace(['-', ' '], '_', $inventoryLedgerMode);
         if (!in_array($inventoryLedgerMode, ['off', 'shadow', 'bridge', 'live'], true)) {
-            $inventoryLedgerMode = 'off';
+            $inventoryLedgerMode = 'live';
         }
+        $configRole = strtolower(trim((string) $branchEnv(['POSMAIN_ROLE'], 'branch')));
+        $recipeMoovaSyncDefault = $configRole === 'cloud' ? '0' : '1';
 
         $config = [
             'env' => $env,
@@ -477,12 +479,12 @@ if (!function_exists('posmain_app_config')) {
             'recipe' => [
                 'enabled' => $recipeMode !== 'off',
                 'mode' => $recipeMode,
-                'shadow_ledger' => posmain_bool($branchEnv(['POSMAIN_RECIPE_SHADOW_LEDGER'], '0'), false),
-                'reservations' => posmain_bool($branchEnv(['POSMAIN_RECIPE_RESERVATIONS', 'POSMAIN_INVENTORY_RESERVATIONS'], '0'), false),
-                'consumption' => posmain_bool($branchEnv(['POSMAIN_RECIPE_CONSUMPTION'], '0'), false),
-                'accounting' => posmain_bool($branchEnv(['POSMAIN_RECIPE_ACCOUNTING'], '0'), false),
-                'availability' => posmain_bool($branchEnv(['POSMAIN_RECIPE_AVAILABILITY', 'POSMAIN_INVENTORY_AVAILABILITY'], '0'), false),
-                'moova_sync' => posmain_bool($branchEnv(['POSMAIN_RECIPE_MOOVA_SYNC'], '0'), false),
+                'shadow_ledger' => posmain_bool($branchEnv(['POSMAIN_RECIPE_SHADOW_LEDGER'], '1'), true),
+                'reservations' => posmain_bool($branchEnv(['POSMAIN_RECIPE_RESERVATIONS', 'POSMAIN_INVENTORY_RESERVATIONS'], '1'), true),
+                'consumption' => posmain_bool($branchEnv(['POSMAIN_RECIPE_CONSUMPTION'], '1'), true),
+                'accounting' => posmain_bool($branchEnv(['POSMAIN_RECIPE_ACCOUNTING'], '1'), true),
+                'availability' => posmain_bool($branchEnv(['POSMAIN_RECIPE_AVAILABILITY', 'POSMAIN_INVENTORY_AVAILABILITY'], '1'), true),
+                'moova_sync' => posmain_bool($branchEnv(['POSMAIN_RECIPE_MOOVA_SYNC'], $recipeMoovaSyncDefault), $configRole !== 'cloud'),
                 'strict_stock' => posmain_bool($branchEnv(['POSMAIN_RECIPE_STRICT_STOCK', 'POSMAIN_INVENTORY_STRICT_STOCK'], '0'), false),
                 'cost_public_payloads' => posmain_bool($branchEnv(['POSMAIN_RECIPE_COST_PUBLIC_PAYLOADS'], '0'), false),
                 'default_reservation_minutes' => posmain_int($branchEnv(['POSMAIN_RECIPE_DEFAULT_RESERVATION_MINUTES'], 90), 90),
@@ -506,7 +508,7 @@ if (!function_exists('posmain_app_config')) {
             ],
             'inventory' => [
                 'ledger_mode' => $inventoryLedgerMode,
-                'legacy_mirror' => posmain_bool($branchEnv(['POSMAIN_INVENTORY_LEGACY_MIRROR'], '0'), false),
+                'legacy_mirror' => posmain_bool($branchEnv(['POSMAIN_INVENTORY_LEGACY_MIRROR'], '1'), true),
                 'strict_stock' => posmain_bool($branchEnv(['POSMAIN_INVENTORY_STRICT_STOCK'], '0'), false),
                 'reservations' => posmain_bool($branchEnv(['POSMAIN_INVENTORY_RESERVATIONS'], '0'), false),
                 'accounting' => posmain_bool($branchEnv(['POSMAIN_INVENTORY_ACCOUNTING'], '0'), false),

@@ -1,16 +1,8 @@
 <?php
 
-if (!function_exists('posmain_production_profile_enabled')) {
-    function posmain_production_profile_enabled(): bool
-    {
-        return function_exists('posmain_bool')
-            && posmain_bool(posmain_env('POSMAIN_USE_PRODUCTION_PROFILE', '0'), false);
-    }
-}
-
 if (!function_exists('posmain_production_profile_matrix')) {
     /**
-     * Target production capability matrix by role. Env keys remain compatibility overrides.
+     * Default production capability matrix by role.
      *
      * @return array<string,mixed>
      */
@@ -41,17 +33,14 @@ if (!function_exists('posmain_production_profile_matrix')) {
 
 if (!function_exists('posmain_production_profile_apply')) {
     /**
-     * Merge production profile defaults into resolved config without deleting env overrides.
+     * Apply production defaults into resolved config. Legacy pilot modes are upgraded in code;
+     * explicit env overrides that already target production are left unchanged.
      *
      * @param array<string,mixed> $config
      * @return array<string,mixed>
      */
     function posmain_production_profile_apply(array $config): array
     {
-        if (!posmain_production_profile_enabled()) {
-            return $config;
-        }
-
         $role = strtolower(trim((string) ($config['role'] ?? 'branch')));
         $matrix = posmain_production_profile_matrix($role);
         $warnings = is_array($config['production_profile_warnings'] ?? null) ? $config['production_profile_warnings'] : [];
