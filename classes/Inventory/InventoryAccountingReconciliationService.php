@@ -19,6 +19,7 @@ class InventoryAccountingReconciliationService
         $conditions = [
             "im.movement_type IN ('purchase','purchase_return','sale_direct','waste','adjustment','refund_reversal')",
             'COALESCE(im.total_cost, 0) > 0',
+            "(im.source_type IS NULL OR im.source_type <> 'fat_details' OR im.idempotency_key IS NULL OR im.idempotency_key NOT LIKE 'migration:fat_details:%')",
         ];
         $params = [];
         foreach (['pos_tenant', 'pos_branch', 'store_id'] as $column) {
