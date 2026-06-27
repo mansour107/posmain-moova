@@ -53,7 +53,7 @@ if (isset($options['json'])) {
     foreach ($results as $entry) {
         fwrite(STDOUT, '- ' . $entry['slug'] . ' health=' . (!empty($entry['health']['ok']) ? 'ok' : 'fail'));
         if (isset($entry['cutover'])) {
-            fwrite(STDOUT, ' cutover=' . (!empty($entry['cutover']['ready_for_cutover']) ? 'ready' : 'blocked');
+            fwrite(STDOUT, ' cutover=' . (!empty($entry['cutover']['ready_for_cutover']) ? 'ready' : 'blocked'));
         }
         fwrite(STDOUT, PHP_EOL);
     }
@@ -128,14 +128,16 @@ function shopHealthSweepCutoverCheck(string $dbName): array
     $previous = getenv('POSMAIN_DB_NAME');
     putenv('POSMAIN_DB_NAME=' . $dbName);
     $_ENV['POSMAIN_DB_NAME'] = $dbName;
+    $reviewOptions = shopHealthSweepAcceptanceOptions($dbName);
     try {
         $conn = posmain_db_connect();
-        $review = (new InventoryCutoverReadinessService())->review($conn, []);
+        $review = (new InventoryCutoverReadinessService())->review($conn, $reviewOptions);
         $conn->close();
 
         return [
             'ready_for_cutover' => !empty($review['ready_for_cutover']),
             'blockers' => $review['blockers'] ?? [],
+            'acceptance' => $reviewOptions,
         ];
     } catch (Throwable $exception) {
         return [
@@ -152,4 +154,22 @@ function shopHealthSweepCutoverCheck(string $dbName): array
             $_ENV['POSMAIN_DB_NAME'] = $previous;
         }
     }
+}
+
+function shopHealthSweepAcceptanceOptions(string $dbName): array
+{
+    $baseDir = __DIR__ . '/../var/inventory-acceptance/' . $dbName;
+    $reconciliation = $baseDir . '/reconciliation-acceptance.json';
+    $accounting = $baseDir . '/accounting-acceptance.json';
+    $options = [];
+    if (is_file($reconciliation)) {
+        $options['acceptance_file'] = $reconciliation;
+        $options['allow_accepted_reconciliation'] = true;
+    }
+    if (is_file($accounting)) {
+        $options['accounting_acceptance_file'] = $accounting;
+        $options['allow_accepted_accounting_reconciliation'] = true;
+    }
+
+    return $options;
 }
