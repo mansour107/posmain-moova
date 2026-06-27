@@ -135,12 +135,12 @@ exit(!empty($validation['ok']) ? 0 : 2);
 function recipePilotEvidenceFinalizeRunJson(array $args): array
 {
     $root = dirname(__DIR__);
-    $process = proc_open(
-        $args,
-        [1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
-        $pipes,
-        $root
-    );
+    $descriptors = [
+        0 => ['pipe', 'r'],
+        1 => ['pipe', 'w'],
+        2 => ['pipe', 'w'],
+    ];
+    $process = proc_open($args, $descriptors, $pipes, $root);
     if (!is_resource($process)) {
         return [];
     }
