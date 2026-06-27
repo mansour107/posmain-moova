@@ -69,6 +69,12 @@ function shopHealthSweepShops(): array
 
     $config = posmain_app_config();
     if (empty($config['router']['enabled'])) {
+        foreach (shopHealthSweepKnownShopDbs() as $dbName) {
+            if ($dbName !== '' && !isset($unique[$dbName])) {
+                $unique[$dbName] = ['slug' => $dbName, 'db_name' => $dbName];
+            }
+        }
+
         return array_values($unique);
     }
 
@@ -95,10 +101,41 @@ function shopHealthSweepShops(): array
         }
         $routerConn->close();
     } catch (Throwable $exception) {
+        foreach (shopHealthSweepKnownShopDbs() as $dbName) {
+            if ($dbName !== '' && !isset($unique[$dbName])) {
+                $unique[$dbName] = ['slug' => $dbName, 'db_name' => $dbName];
+            }
+        }
+
         return array_values($unique);
     }
 
+    foreach (shopHealthSweepKnownShopDbs() as $dbName) {
+        if ($dbName !== '' && !isset($unique[$dbName])) {
+            $unique[$dbName] = ['slug' => $dbName, 'db_name' => $dbName];
+        }
+    }
+
     return array_values($unique);
+}
+
+function shopHealthSweepKnownShopDbs(): array
+{
+    $shops = [];
+    $raw = trim((string) (getenv('POSMAIN_SHOP_HEALTH_DBS') ?: ''));
+    if ($raw !== '') {
+        foreach (preg_split('/\s*,\s*/', $raw) ?: [] as $dbName) {
+            $dbName = trim((string) $dbName);
+            if ($dbName !== '') {
+                $shops[] = $dbName;
+            }
+        }
+    }
+    if ($shops === []) {
+        $shops = ['kody2', 'focushouse', 'posmain_shop2'];
+    }
+
+    return $shops;
 }
 
 function shopHealthSweepHealthCheck(): array
