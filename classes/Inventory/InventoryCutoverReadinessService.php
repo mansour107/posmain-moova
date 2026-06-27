@@ -82,7 +82,8 @@ class InventoryCutoverReadinessService
         if ((int) ($backfillSummary['unused_review_decision_count'] ?? 0) > 0) {
             $blockers[] = 'unused_review_decisions_in_current_scope';
         }
-        if ((int) ($backfillSummary['safe_candidate_count'] ?? 0) > 0) {
+        $unmigratedLegacyRows = (new InventoryHistoricalMigrationService())->countUnmigratedLegacyFatRows($conn, $filters);
+        if ($unmigratedLegacyRows > 0) {
             $blockers[] = 'safe_legacy_backfill_candidates_not_applied';
         }
 
@@ -132,6 +133,7 @@ class InventoryCutoverReadinessService
                 'already_migrated_count' => (int) ($backfillSummary['already_migrated_count'] ?? 0),
                 'ambiguous_count' => (int) ($backfillSummary['ambiguous_count'] ?? 0),
                 'unused_review_decision_count' => (int) ($backfillSummary['unused_review_decision_count'] ?? 0),
+                'unmigrated_legacy_row_count' => $unmigratedLegacyRows,
                 'difference_count' => (int) ($rebuildSummary['difference_count'] ?? 0),
                 'cost_difference_count' => (int) ($rebuildSummary['cost_difference_count'] ?? 0),
                 'rebuild_candidate_count' => (int) ($rebuildSummary['rebuild_candidate_count'] ?? 0),

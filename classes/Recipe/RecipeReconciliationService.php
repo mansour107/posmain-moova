@@ -1,5 +1,8 @@
 <?php
 
+require_once __DIR__ . '/../../includes/pos_default_accounts.php';
+require_once __DIR__ . '/../../includes/pos_operational_store.php';
+
 class RecipeReconciliationService
 {
     public function compareItem(mysqli $conn, int $posTenant, int $posBranch, int $storeId, int $itemId, array $filters = []): array
@@ -153,7 +156,7 @@ class RecipeReconciliationService
             $conditions[] = 'branch = ?';
             $params[] = $posBranch;
         }
-        if ($storeId > 0 && $this->columnExists($conn, 'fat_details', 'det_store')) {
+        if ($storeId > 0 && $this->columnExists($conn, 'fat_details', 'det_store') && $this->shouldScopeFatDetailsByStore($conn, $storeId)) {
             $conditions[] = 'det_store = ?';
             $params[] = $storeId;
         }
@@ -263,6 +266,21 @@ WHERE pos_tenant = ?
         );
 
         return $row ?: [];
+    }
+
+    private function shouldScopeFatDetailsByStore(mysqli $conn, int $storeId): bool
+    {
+        if ($storeId < 1) {
+            return false;
+        }
+        if (function_exists('posmain_single_store_mode_enabled') && posmain_single_store_mode_enabled()
+            && function_exists('posmain_operational_store_id')) {
+            $operational = posmain_operational_store_id($conn);
+
+            return $operational < 1 || $storeId !== $operational;
+        }
+
+        return true;
     }
 
     private function requestedStoreId(mysqli $conn, array $filters): int

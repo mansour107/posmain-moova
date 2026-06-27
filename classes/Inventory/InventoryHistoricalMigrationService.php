@@ -157,6 +157,47 @@ class InventoryHistoricalMigrationService
         }
     }
 
+    public function countUnmigratedLegacyFatRows(mysqli $conn, array $filters = []): int
+    {
+        if (!$this->tableExists($conn, 'fat_details') || !$this->tableExists($conn, 'inventory_movements')) {
+            return 0;
+        }
+        if (!$this->columnExists($conn, 'fat_details', 'id')) {
+            return 0;
+        }
+
+        $conditions = ['COALESCE(fd.isdeleted, 0) = 0', 'im.id IS NULL'];
+        $params = [];
+        if (isset($filters['pos_tenant']) && (int) $filters['pos_tenant'] >= 0 && $this->columnExists($conn, 'fat_details', 'tenant')) {
+            $conditions[] = 'fd.tenant = ?';
+            $params[] = (int) $filters['pos_tenant'];
+        }
+        if (isset($filters['pos_branch']) && (int) $filters['pos_branch'] >= 0 && $this->columnExists($conn, 'fat_details', 'branch')) {
+            $conditions[] = 'fd.branch = ?';
+            $params[] = (int) $filters['pos_branch'];
+        }
+        if (($storeId = $this->positiveInt($filters['store_id'] ?? null)) > 0 && $this->columnExists($conn, 'fat_details', 'det_store')) {
+            $conditions[] = 'fd.det_store = ?';
+            $params[] = $storeId;
+        }
+        if (($itemId = $this->positiveInt($filters['item_id'] ?? null)) > 0) {
+            $conditions[] = 'fd.item_id = ?';
+            $params[] = $itemId;
+        }
+
+        $row = $this->fetchOne(
+            $conn,
+            'SELECT COUNT(*) AS row_count
+FROM fat_details fd
+LEFT JOIN inventory_movements im
+  ON im.idempotency_key = CONCAT(\'migration:fat_details:\', fd.id, \':v1\')
+WHERE ' . implode(' AND ', $conditions),
+            $params
+        );
+
+        return (int) ($row['row_count'] ?? 0);
+    }
+
     private function runFatDetailsBackfill(mysqli $conn, array $filters, array $options, bool $rehearsal): array
     {
         $plan = $this->fatDetailsBackfillPlan($conn, $filters);
