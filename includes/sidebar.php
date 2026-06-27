@@ -2,6 +2,10 @@
 $posmainInventoryConfig = function_exists('posmain_app_config') ? posmain_app_config() : [];
 $posmainInventoryLiveLedgerMode = strtolower((string) ($posmainInventoryConfig['inventory']['ledger_mode'] ?? 'off')) === 'live';
 $posmainInventoryLegacyOpeningBalanceVisible = !$posmainInventoryLiveLedgerMode;
+if (!function_exists('posmain_inventory_transfers_allowed')) {
+    require_once __DIR__ . '/pos_operational_store.php';
+}
+$posmainInventoryTransfersAllowed = posmain_inventory_transfers_allowed();
 ?>
 <!-- Main Sidebar Container -->
 <aside class="main-sidebar elevation-4 font-light">
@@ -220,12 +224,14 @@ $posmainInventoryLegacyOpeningBalanceVisible = !$posmainInventoryLiveLedgerMode;
                 </a>
               </li>
 
+              <?php if ($posmainInventoryTransfersAllowed): ?>
               <li class="nav-item">
                 <a href="inventory_transfers.php" class="nav-link">
                   <i class="nav-icon fas fa-exchange-alt"></i>
                   <p>تحويلات المخزون</p>
                 </a>
               </li>
+              <?php endif; ?>
 
               <li class="nav-item">
                 <a href="inventory_adjustments.php" class="nav-link">
@@ -524,12 +530,14 @@ $posmainInventoryLegacyOpeningBalanceVisible = !$posmainInventoryLiveLedgerMode;
                   <p>جرد المخزون</p>
                 </a>
               </li>
+              <?php if ($posmainInventoryTransfersAllowed): ?>
               <li class="nav-item">
                 <a href="inventory_transfers.php" class="nav-link">
                   <i class="nav-icon fas fa-exchange-alt"></i>
                   <p>تحويلات المخزون</p>
                 </a>
               </li>
+              <?php endif; ?>
               <li class="nav-item">
                 <a href="inventory_adjustments.php" class="nav-link">
                   <i class="nav-icon fas fa-sliders-h"></i>

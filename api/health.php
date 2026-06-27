@@ -52,6 +52,18 @@ if (!$updateScope) {
     }
 }
 
+if ($scope === 'router' && $detailRequested && $tokenOk) {
+    $checks['router_shops'] = posmainHealthRouterShopsCheck($config);
+    foreach ($checks['router_shops']['shops'] ?? [] as $shopCheck) {
+        if (empty($shopCheck['ok'])) {
+            $healthy = false;
+        }
+    }
+    if (!empty($checks['router_shops']['error'])) {
+        $healthy = false;
+    }
+}
+
 $payload = [
     'ok' => $healthy,
     'healthy' => $healthy,
@@ -209,6 +221,65 @@ function posmainHealthAppVersion(): array
     }
 
     return ['head' => $head];
+}
+
+function posmainHealthRouterShopsCheck(array $config): array
+{
+    if (empty($config['router']['enabled'])) {
+        return ['ok' => true, 'enabled' => false, 'shops' => []];
+    }
+
+    require_once __DIR__ . '/../classes/Router/ShopRouter.php';
+    $routerDb = (array) ($config['router']['database'] ?? []);
+    if (trim((string) ($routerDb['name'] ?? '')) === '') {
+        return ['ok' => false, 'enabled' => true, 'error' => 'router_database_not_configured', 'shops' => []];
+    }
+
+    try {
+        mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
+        $routerConn = new mysqli(
+            (string) ($routerDb['host'] ?? '127.0.0.1'),
+            (string) ($routerDb['user'] ?? ''),
+            (string) ($routerDb['pass'] ?? ''),
+            (string) ($routerDb['name'] ?? ''),
+            (int) ($routerDb['port'] ?? 3306)
+        );
+        $router = new ShopRouter();
+        $shops = [];
+        foreach ($router->listActiveShops($routerConn) as $shop) {
+            $dbName = trim((string) ($shop['db_name'] ?? ''));
+            if ($dbName === '') {
+                continue;
+            }
+            $shopOk = true;
+            $detail = ['slug' => (string) ($shop['slug'] ?? ''), 'db_name' => $dbName];
+            try {
+                $validation = $router->validateShopConnection($routerConn, (int) ($shop['id'] ?? 0));
+                $detail['database'] = (string) ($validation['database'] ?? '');
+                $shopOk = !empty($validation['ok']);
+            } catch (Throwable $exception) {
+                $shopOk = false;
+                $detail['error'] = $exception->getMessage();
+            }
+            $detail['ok'] = $shopOk;
+            $shops[] = $detail;
+        }
+        $routerConn->close();
+
+        return [
+            'ok' => $shops !== [] && !in_array(false, array_column($shops, 'ok'), true),
+            'enabled' => true,
+            'shop_count' => count($shops),
+            'shops' => $shops,
+        ];
+    } catch (Throwable $exception) {
+        return [
+            'ok' => false,
+            'enabled' => true,
+            'error' => $exception->getMessage(),
+            'shops' => [],
+        ];
+    }
 }
 
 function posmainHealthJson(int $statusCode, array $payload): void

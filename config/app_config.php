@@ -607,6 +607,8 @@ if (!function_exists('posmain_app_config')) {
 
         $config = posmain_merge_config($config, posmain_runtime_file_database_overrides());
         $config = posmain_merge_config($config, posmain_runtime_db_settings_overrides($config));
+        require_once __DIR__ . '/production_profile.php';
+        $config = posmain_production_profile_apply($config);
 
         return posmain_merge_config($config, $overrides);
     }
