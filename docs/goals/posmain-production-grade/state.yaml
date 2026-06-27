@@ -105,18 +105,18 @@ tasks:
       decision: "Gate 1–3 production-grade tranche complete on Hetzner acc1189: health 200, all 3 shop DBs production_ready, shop_health_sweep --include-cutover ok."
 
 checks:
-  dirty_fingerprint: clean-at-acc1189
+  dirty_fingerprint: clean-at-0183eb5
   last_verification:
     result: pass
-    task: T050
+    task: polish
     commands:
-      - cmd: curl https://erp.withmoova.com/api/health.php
+      - cmd: git pull + production defaults deployed (b0d90f0..0183eb5)
         status: pass
-      - cmd: POSMAIN_DB_NAME=kody2 inventory_production_readiness --browser-evidence
+      - cmd: shop2 QA fixture cleanup (31 -> 9 reconciliation diffs)
         status: pass
-      - cmd: POSMAIN_DB_NAME=focushouse inventory_production_readiness --browser-evidence
+      - cmd: recipe_rollout_readiness --allow-full-mode + pilot evidence
         status: pass
-      - cmd: POSMAIN_DB_NAME=posmain_shop2 inventory_production_readiness --browser-evidence --allow-accepted-*
+      - cmd: shop_health_sweep --include-cutover all 3 shops
         status: pass
-      - cmd: php tools/shop_health_sweep.php --include-cutover
+      - cmd: env trimmed redundant POSMAIN_RECIPE/INVENTORY flags
         status: pass

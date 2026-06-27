@@ -31,3 +31,7 @@ When `POSMAIN_ROLE=cloud`, recipe Moova sync stays off by default. Do **not** se
 - `POSMAIN_PUBLIC_BASE_URL`
 - Recipe account ID mappings (`POSMAIN_RECIPE_*_ACCOUNT_ID`)
 - Moova/sync worker settings that match your deployment topology
+
+## Hosted Playwright login
+
+When `POSMAIN_ROUTER_ENABLED=1`, use the router alias (e.g. `admin@kody2`), not bare `admin`.
