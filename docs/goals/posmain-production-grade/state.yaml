@@ -7,7 +7,7 @@ goal:
   slug: "posmain-production-grade"
   kind: open_ended
   tranche: "Gate 3 certified — all shop DBs production_ready with browser QA evidence"
-  status: active
+  status: completed
 
 rules:
   pm_owns_state: true
@@ -21,7 +21,7 @@ agents:
   worker: installed
   judge: installed
 
-active_task: T999
+active_task: null
 
 tasks:
   - id: T010
@@ -98,12 +98,14 @@ tasks:
   - id: T999
     type: judge
     assignee: Judge
-    status: active
+    status: done
     objective: "Audit tranche completion"
-    receipt: null
+    receipt:
+      result: done
+      decision: "Gate 1–3 production-grade tranche complete on Hetzner acc1189: health 200, all 3 shop DBs production_ready, shop_health_sweep --include-cutover ok."
 
 checks:
-  dirty_fingerprint: clean-at-1d65267
+  dirty_fingerprint: clean-at-acc1189
   last_verification:
     result: pass
     task: T050
