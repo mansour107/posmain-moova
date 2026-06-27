@@ -35,6 +35,7 @@ $patterns = [
     '/^codex/i',
     '/^Codex QA/i',
     '/^codex_/i',
+    '/اختبار/i',
 ];
 if (!empty($options['pattern'])) {
     $patterns = ['/' . str_replace('/', '\/', (string) $options['pattern']) . '/i'];
