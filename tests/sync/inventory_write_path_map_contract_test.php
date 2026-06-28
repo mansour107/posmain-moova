@@ -137,7 +137,6 @@ foreach ([
     'do/doedit_invoice.php:530',
     'do/dodel_invoice.php:190',
     'classes/PosOrderService.php:955',
-    'ajax/cofe_create_order.php:333',
     'save_start_balance.php:195',
     'save_start_balance.php:655',
     'classes/Inventory/InventoryInvoiceBridge.php:324',

@@ -376,12 +376,12 @@ function saveOrder() {
     
     if (!tableId) {
         alert('الرجاء اختيار طاولة');
-        return;
+        return $.Deferred().reject('no_table').promise();
     }
     
     if (currentOrder.items.length == 0) {
         alert('الرجاء إضافة أصناف للطلب');
-        return;
+        return $.Deferred().reject('no_items').promise();
     }
     
     const orderData = {
@@ -398,32 +398,33 @@ function saveOrder() {
         net: currentOrder.net,
         idempotency_key: getPOSTableIdempotencyKey('pos.table.save')
     };
-    
+
+    if (window.posCustomerState && window.posCustomerState.attached && window.posCustomerState.customerId) {
+        orderData.pos_customer_id = window.posCustomerState.customerId;
+    }
+
     $('#save-order').addClass('loading').prop('disabled', true);
     
-    $.ajax({
-        url: 'ajax/save_order.php',
+    return $.ajax({
+        url: 'api/pos/index.php?route=orders.table',
         method: 'POST',
         data: JSON.stringify(orderData),
         contentType: 'application/json',
         dataType: 'json',
-        beforeSend: attachPOSTableCsrfHeader,
-        success: function(response) {
-            if (response.success) {
-                alert('تم حفظ الطلب بنجاح');
-                $('#current_order_id').val(response.order_id);
-                clearPOSTableIdempotencyKey('pos.table.save');
-                loadTables(); // تحديث حالة الطاولات
-            } else {
-                alert('خطأ: ' + response.message);
-            }
-        },
-        error: function() {
-            alert('خطأ في حفظ الطلب');
-        },
-        complete: function() {
-            $('#save-order').removeClass('loading').prop('disabled', false);
+        beforeSend: attachPOSTableCsrfHeader
+    }).done(function(response) {
+        if (response.success) {
+            alert('تم حفظ الطلب بنجاح');
+            $('#current_order_id').val(response.order_id);
+            clearPOSTableIdempotencyKey('pos.table.save');
+            loadTables();
+        } else {
+            alert('خطأ: ' + response.message);
         }
+    }).fail(function() {
+        alert('خطأ في حفظ الطلب');
+    }).always(function() {
+        $('#save-order').removeClass('loading').prop('disabled', false);
     });
 }
 
@@ -439,11 +440,11 @@ function openPayment() {
     
     // حفظ الطلب أولاً قبل السداد
     if (currentOrder.items.length > 0) {
-        saveOrder();
-        // انتظار قليل لضمان حفظ الطلب
-        setTimeout(function() {
-            openPaymentModal(tableId, tableName);
-        }, 500);
+        saveOrder().done(function(response) {
+            if (response && response.success) {
+                openPaymentModal(tableId, tableName);
+            }
+        });
     } else {
         // التحقق من وجود طلب محفوظ للطاولة
         const orderId = $('#current_order_id').val();

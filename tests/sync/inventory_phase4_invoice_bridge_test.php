@@ -250,8 +250,8 @@ function inventoryPhase4AssertSourceContracts(string $root): void
     }
 
     $cofeSource = inventoryPhase4Source($root . '/ajax/cofe_create_order.php');
-    foreach (['InventoryInvoiceBridge.php', 'recordInvoiceLines', 'source_system', 'cofe_widget', '[Cofe] Inventory invoice bridge shadow errors'] as $needle) {
-        inventoryPhase4Assert(strpos($cofeSource, (string) $needle) !== false, 'Cofe endpoint should contain guarded phase4 shadow hook: ' . (string) $needle);
+    foreach (['PosOrderController', 'cofe_widget', 'SCOPE_COFE_CREATE'] as $needle) {
+        inventoryPhase4Assert(strpos($cofeSource, (string) $needle) !== false, 'Cofe endpoint should delegate inventory side effects through canonical mutation path: ' . (string) $needle);
     }
 
     $posMutationSource = inventoryPhase4Source($root . '/classes/Pos/Service/PosOrderMutationService.php');

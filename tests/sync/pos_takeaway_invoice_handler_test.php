@@ -129,7 +129,17 @@ function posTakeawayInvoiceCreateSchema(mysqli $conn): void
     $conn->query("
         CREATE TABLE usr_pwrs (
             id INT NOT NULL PRIMARY KEY,
-            name VARCHAR(255) NULL
+            rollname VARCHAR(191) NULL,
+            add_sales TINYINT(1) NOT NULL DEFAULT 0,
+            show_sales TINYINT(1) NOT NULL DEFAULT 0,
+            sid_sales TINYINT(1) NOT NULL DEFAULT 0,
+            edit_sales TINYINT(1) NOT NULL DEFAULT 0,
+            add_payment TINYINT(1) NOT NULL DEFAULT 0,
+            show_payment TINYINT(1) NOT NULL DEFAULT 0,
+            delete_sales TINYINT(1) NOT NULL DEFAULT 0,
+            edit_payment TINYINT(1) NOT NULL DEFAULT 0,
+            delete_payment TINYINT(1) NOT NULL DEFAULT 0,
+            isdeleted TINYINT(1) NOT NULL DEFAULT 0
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
     ");
     $conn->query("
@@ -303,6 +313,12 @@ function posTakeawayInvoiceCreateSchema(mysqli $conn): void
 function posTakeawayInvoiceSeedFixtures(mysqli $conn): void
 {
     $conn->query("INSERT INTO settings (id, def_pos_client, edit_pass, isdeleted) VALUES (1, 501, '1234', 0)");
+    $conn->query("
+        INSERT INTO usr_pwrs (
+            id, rollname, add_sales, show_sales, sid_sales, edit_sales,
+            add_payment, show_payment, delete_sales, edit_payment, delete_payment, isdeleted
+        ) VALUES (1, 'admin', 1, 1, 1, 1, 1, 1, 1, 1, 1, 0)
+    ");
     $conn->query("
         INSERT INTO acc_head (id, code, aname, isdeleted) VALUES
             (91, '400001', 'Sales', 0),

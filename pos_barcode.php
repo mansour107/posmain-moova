@@ -123,9 +123,6 @@ include('includes/pos_simple_header.php');
     <div class="moova-navbar-widget" aria-label="Moova POS widget">
         <?php include('elements/pos/cofe_widget.php'); ?>
     </div>
-    <button type="button" class="pos-corner-btn" id="fullscreenBtn" title="ملء الشاشة" aria-label="ملء الشاشة">
-        <i class="fas fa-expand-arrows-alt"></i>
-    </button>
     <button type="button" class="pos-corner-btn" data-bs-toggle="modal"
         data-bs-target="#closeShiftModal" title="إغلاق الشيفت" aria-label="إغلاق الشيفت">
         <i class="fas fa-power-off"></i>
@@ -165,10 +162,6 @@ include('includes/pos_simple_header.php');
 
             <ul class="navbar-nav">
                 <li class="nav-item">
-                    <button class="btn btn-outline-light btn-sm me-2" id="fullscreenBtn" title="ملء الشاشة">
-                        <i class="fas fa-expand-arrows-alt"></i>
-                    </button>
-
                     <button type="button" class="btn btn-outline-warning btn-sm me-2" data-bs-toggle="modal"
                         data-bs-target="#closeShiftModal" title="إغلاق الشيفت">
                         <i class="fas fa-power-off me-1"></i> إغلاق الشيفت
@@ -183,9 +176,6 @@ include('includes/pos_simple_header.php');
         </div>
     </div>
 </nav>
-
-<!-- رسالة النجاح -->
-<?php include('includes/pos_success_message.php'); ?>
 
 <!-- Main Content -->
 <?php 

@@ -55,7 +55,7 @@ class InventoryInvoiceBridge
 
         foreach (array_values($lines) as $index => $line) {
             try {
-                $movement = $this->movementForInvoiceLine($invoiceType, $invoiceId, $line, $context, $index);
+                $movement = $this->movementForInvoiceLine($conn, $invoiceType, $invoiceId, $line, $context, $index);
                 if (!$movement) {
                     $result['skipped'][] = [
                         'line_index' => $index,
@@ -105,7 +105,7 @@ class InventoryInvoiceBridge
 
         foreach (array_values($lines) as $index => $line) {
             try {
-                $original = $this->movementForInvoiceLine($invoiceType, $invoiceId, $line, $context, $index);
+                $original = $this->movementForInvoiceLine($conn, $invoiceType, $invoiceId, $line, $context, $index);
                 if (!$original) {
                     $result['skipped'][] = [
                         'line_index' => $index,
@@ -164,7 +164,7 @@ class InventoryInvoiceBridge
         return $result;
     }
 
-    public function movementForInvoiceLine(int $invoiceType, int $invoiceId, array $line, array $context = [], int $lineIndex = 0): ?array
+    public function movementForInvoiceLine(mysqli $conn, int $invoiceType, int $invoiceId, array $line, array $context = [], int $lineIndex = 0): ?array
     {
         $qtyIn = InventoryDecimal::normalize($line['qty_in'] ?? '0');
         $qtyOut = InventoryDecimal::normalize($line['qty_out'] ?? '0');
@@ -179,7 +179,7 @@ class InventoryInvoiceBridge
 
         $detailId = (int) ($line['fat_detail_id'] ?? $line['detail_id'] ?? $line['id'] ?? 0);
         $itemId = (int) ($line['item_id'] ?? $line['itmname'] ?? 0);
-        $scope = $this->scopeResolver->resolveForConn($conn,array_merge($context, [
+        $scope = $this->scopeResolver->resolveForConn($conn, array_merge($context, [
             'store_id' => $line['store_id'] ?? $line['det_store'] ?? $context['store_id'] ?? 0,
         ]));
         $unitConversion = InventoryDecimal::normalize($line['u_val'] ?? $line['unit_conversion_to_base'] ?? '1', 8);

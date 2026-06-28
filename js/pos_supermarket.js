@@ -426,7 +426,13 @@ $(document).ready(function() {
         $('<input>').attr({type: 'hidden', name: 'payment_fund_id', value: $('#payment_fund_id').val()}).appendTo(form);
         $('<input>').attr({type: 'hidden', name: 'submit', value: action}).appendTo(form);
 
-        // form.submit();
-        HTMLFormElement.prototype.submit.call(form);
+        const api = window.POSOrderApi;
+        if (api && typeof api.submitFromForm === 'function') {
+            api.submitFromForm(form, action === 'cash' ? 'cash' : action);
+            return true;
+        }
+
+        alert('تعذر إرسال الطلب عبر واجهة البرنامج الموحدة.');
+        return false;
     }
 });

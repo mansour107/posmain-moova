@@ -5,7 +5,7 @@
  */
 
 require_once __DIR__ . '/../../classes/Pos/Service/PosOrderMutationService.php';
-require_once __DIR__ . '/../../classes/Pos/Service/DeliveryClientService.php';
+require_once __DIR__ . '/../../classes/Pos/Service/PosCustomerService.php';
 require_once __DIR__ . '/../../classes/Pos/Service/OrderFulfillmentService.php';
 require_once __DIR__ . '/../../classes/Sync/SchemaManager.php';
 
@@ -240,15 +240,15 @@ try {
 
     $prefix = 'prod-' . bin2hex(random_bytes(3));
     $phone = '0100' . random_int(1000000, 9999999);
-    $clientService = new DeliveryClientService();
+    $clientService = new PosCustomerService();
 
     // Phase 1/3: customer upsert reliability
-    $upsert1 = $clientService->upsertByPhone($conn, $phone, 'Production Test User', 'Maadi Street 1');
-    deliveryProdAssert($upsert1['success'] === true, 'client upsert should succeed');
-    $upsert2 = $clientService->upsertByPhone($conn, $phone, 'Production Test User Updated', 'Maadi Street 2');
-    deliveryProdAssert($upsert2['client_id'] === $upsert1['client_id'], 'duplicate phone should upsert same client');
-    $clientCount = (int) $conn->query('SELECT COUNT(*) AS c FROM delivery_clients')->fetch_assoc()['c'];
-    deliveryProdAssert($clientCount === 1, 'only one delivery_clients row after upsert');
+    $upsert1 = $clientService->upsertForDelivery($conn, $phone, 'Production Test User', 'Maadi Street 1');
+    deliveryProdAssert((int) ($upsert1['id'] ?? 0) > 0, 'client upsert should succeed');
+    $upsert2 = $clientService->upsertForDelivery($conn, $phone, 'Production Test User Updated', 'Maadi Street 2');
+    deliveryProdAssert((int) $upsert2['id'] === (int) $upsert1['id'], 'duplicate phone should upsert same client');
+    $clientCount = (int) $conn->query('SELECT COUNT(*) AS c FROM pos_customers WHERE isdeleted = 0')->fetch_assoc()['c'];
+    deliveryProdAssert($clientCount === 1, 'only one pos_customers row after upsert');
 
     // Phase 1: reject create without customer
     $mutation = new PosOrderMutationService();
@@ -278,7 +278,7 @@ try {
 
     // Phase 1/3: server recomputes net when delivery fee is present but headnet is stale
     $tamperedPhone = '0100' . random_int(1000000, 9999999);
-    $clientService->upsertByPhone($conn, $tamperedPhone, 'Tampered Net User', 'Zone 9');
+    $clientService->upsertForDelivery($conn, $tamperedPhone, 'Tampered Net User', 'Zone 9');
     $tamperedRequest = [
         'idempotency_key' => $prefix . ':delivery:tampered-net',
         'store_id' => 3,
@@ -314,7 +314,7 @@ try {
     $zoneRow = $conn->query("SELECT id, fee, name FROM delivery_zones WHERE name = 'Maadi' LIMIT 1")->fetch_assoc();
     deliveryProdAssert(is_array($zoneRow), 'Maadi zone fixture required');
     $zonePhone = '0100' . random_int(1000000, 9999999);
-    $clientService->upsertByPhone($conn, $zonePhone, 'Zone Fee User', 'Maadi Block 1');
+    $clientService->upsertForDelivery($conn, $zonePhone, 'Zone Fee User', 'Maadi Block 1');
     $zoneRequest = [
         'idempotency_key' => $prefix . ':delivery:zone-id',
         'store_id' => 3,
@@ -350,7 +350,7 @@ try {
 
     // Phase 3: per-unit line discount should match detail totals (qty=2, price=10, disc=1 => 18)
     $discPhone = '0100' . random_int(1000000, 9999999);
-    $clientService->upsertByPhone($conn, $discPhone, 'Discount Qty User', 'Nasr Block 2');
+    $clientService->upsertForDelivery($conn, $discPhone, 'Discount Qty User', 'Nasr Block 2');
     $discRequest = [
         'idempotency_key' => $prefix . ':delivery:disc-qty',
         'store_id' => 3,
@@ -428,7 +428,7 @@ try {
     deliveryProdAssert($fulfillment['fulfillment_type'] === 'delivery', 'fulfillment_type delivery');
     deliveryProdAssert($fulfillment['order_channel'] === 'cashier', 'order_channel cashier');
     deliveryProdAssert($fulfillment['delivery_status'] === 'pending', 'initial delivery_status pending');
-    deliveryProdAssert((int) $fulfillment['delivery_client_id'] === (int) $upsert2['client_id'], 'delivery_client_id linked');
+    deliveryProdAssert((int) $fulfillment['pos_customer_id'] === (int) $upsert2['id'], 'pos_customer_id linked');
     deliveryProdAssert($fulfillment['customer_phone'] === $phone, 'customer phone persisted');
     deliveryProdAssert($fulfillment['delivery_zone'] === 'Maadi', 'delivery zone persisted');
     deliveryProdAssert(abs((float) $fulfillment['delivery_fee'] - $deliveryFee) < 0.01, 'delivery fee persisted');
@@ -476,7 +476,7 @@ try {
 
     // Phase 6b: dispatch cancel voids unpaid delivery order
     $cancelPhone = '0100' . random_int(1000000, 9999999);
-    $clientService->upsertByPhone($conn, $cancelPhone, 'Cancel Delivery User', 'Heliopolis Block 9');
+    $clientService->upsertForDelivery($conn, $cancelPhone, 'Cancel Delivery User', 'Heliopolis Block 9');
     $cancelRequest = [
         'idempotency_key' => $prefix . ':delivery:cancel',
         'store_id' => 3,
@@ -525,7 +525,7 @@ try {
 
     // Phase 3: paid delivery order + idempotency replay
     $paidPhone = '0100' . random_int(1000000, 9999999);
-    $clientService->upsertByPhone($conn, $paidPhone, 'Paid Delivery User', 'Nasr City Block 3');
+    $clientService->upsertForDelivery($conn, $paidPhone, 'Paid Delivery User', 'Nasr City Block 3');
     $paidRequest = $saveRequest;
     $paidRequest['idempotency_key'] = $prefix . ':delivery:paid';
     $paidRequest['pro_serial'] = $prefix . '-PAID';

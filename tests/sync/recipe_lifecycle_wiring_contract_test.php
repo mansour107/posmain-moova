@@ -60,12 +60,10 @@ recipeLifecycleWiringAssertContains('recordCurrentOrderRefunded', $legacyBridge,
 recipeLifecycleWiringAssertNotContains('(float)', $legacyBridge, 'legacy invoice bridge should not coerce recipe quantities through floats');
 recipeLifecycleWiringAssertNotContains('float $', $legacyBridge, 'legacy invoice bridge should not accept recipe quantities as float parameters');
 recipeLifecycleWiringAssertContains('divideScaledDecimal', $legacyBridge, 'legacy invoice bridge should divide legacy quantities with decimal-safe helpers');
-recipeLifecycleWiringAssertContains('LegacyInvoiceRecipeLifecycleBridge', $cofeCreate, 'legacy Cofe order creation should route through the recipe lifecycle bridge');
-recipeLifecycleWiringAssertContains('recordExternalLinesAdded', $cofeCreate, 'Cofe order creation should record external recipe lines through the bridge');
-recipeLifecycleWiringAssertContains('recordExternalOrderPaid', $cofeCreate, 'Cofe order creation should record paid external recipe lines through the bridge');
-recipeLifecycleWiringAssertContains('persistCofeIdempotencyKey', $cofeCreate, 'Cofe replay guard should persist the idempotency key after the order header is inserted');
-recipeLifecycleWiringAssertContains('UPDATE ot_head SET cofe_idempotency_key', $cofeCreate, 'Cofe replay guard should make later replays return the existing order');
-recipeLifecycleWiringAssertContains('cofeColumnExists', $cofeCreate, 'Cofe idempotency persistence should tolerate older schemas without the column');
+recipeLifecycleWiringAssertContains('PosOrderController', $cofeCreate, 'Cofe order creation should route through PosOrderController');
+recipeLifecycleWiringAssertContains('SCOPE_COFE_CREATE', $cofeCreate, 'Cofe order creation should use shared idempotency scope');
+recipeLifecycleWiringAssertNotContains('LegacyInvoiceRecipeLifecycleBridge', $cofeCreate, 'Cofe order creation should not keep inline recipe bridge wiring');
+recipeLifecycleWiringAssertNotContains('INSERT INTO ot_head', $cofeCreate, 'Cofe order creation should not keep inline order SQL');
 recipeLifecycleWiringAssertContains(
     "require_once __DIR__ . '/../../Recipe/RecipeOrderLifecycleService.php'",
     $tableMerge,

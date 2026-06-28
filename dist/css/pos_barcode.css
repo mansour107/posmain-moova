@@ -374,7 +374,7 @@ div:where(.swal2-container) div:where(.swal2-popup) {
 
     .pos-layout-row {
         display: grid;
-        grid-template-columns: minmax(0, 1fr) clamp(360px, 27vw, 430px);
+        grid-template-columns: clamp(360px, 27vw, 430px) minmax(0, 1fr);
         gap: 0.75rem;
         width: 100%;
         margin: 0;
@@ -383,7 +383,7 @@ div:where(.swal2-container) div:where(.swal2-popup) {
     }
 
     .pos-order-column {
-        grid-column: 2;
+        grid-column: 1;
         grid-row: 1;
         width: 100%;
         max-width: 100%;
@@ -393,7 +393,7 @@ div:where(.swal2-container) div:where(.swal2-popup) {
     }
 
     .pos-items-column {
-        grid-column: 1;
+        grid-column: 2;
         grid-row: 1;
         width: 100%;
         max-width: 100%;
@@ -867,57 +867,606 @@ div:where(.swal2-container) div:where(.swal2-popup) {
 }
 
 #paymentModal .pos-payment-modal-dialog {
-    margin-top: 0.5rem;
-    margin-bottom: 0.5rem;
-    max-height: calc(100vh - 1rem);
+    margin: 1rem auto;
+    max-width: min(420px, calc(100vw - 1.5rem));
 }
 
-#paymentModal .modal-content {
+#paymentModal.pos-payment-modal-fade.fade .modal-dialog {
+    transition: opacity 0.14s ease-out;
+    transform: none !important;
+}
+
+#paymentModal.pos-payment-modal-fade.show .modal-dialog {
+    transform: none !important;
+}
+
+#paymentModal.pos-payment-modal-fade {
+    transition: opacity 0.14s ease-out;
+}
+
+.modal-backdrop.fade {
+    transition: opacity 0.14s ease-out;
+}
+
+#paymentModal .modal-content,
+#paymentModal .pos-payment-modal-content {
     display: flex;
     flex-direction: column;
     max-height: calc(100vh - 1rem);
     overflow: hidden;
+    border: 1px solid #e1e8f1;
+    border-radius: 16px;
+    box-shadow: 0 24px 48px rgba(15, 23, 42, 0.18);
 }
 
-#paymentModal .modal-header {
+#paymentModal .pos-payment-modal-header {
     flex: 0 0 auto;
-    padding: 0.75rem 1rem;
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 1rem 1.1rem 0.85rem;
+    border-bottom: 1px solid #e8edf4;
+    background: #fff;
+}
+
+#paymentModal .pos-payment-modal-title {
+    margin: 0;
+    font-size: 1.05rem;
+    font-weight: 700;
+    line-height: 1.3;
+    color: #0f172a;
+}
+
+#paymentModal .pos-payment-modal-subtitle {
+    margin-top: 0.2rem;
+    font-size: 0.78rem;
+    color: #64748b;
+}
+
+#paymentModal .pos-payment-modal-close {
+    margin-top: 0.1rem;
+    opacity: 0.55;
 }
 
 #paymentModal .pos-payment-modal-body {
     flex: 1 1 auto;
     overflow-y: auto;
-    padding: 0.75rem;
+    padding: 0.85rem 1.1rem 1rem;
+    background: #f8fafc;
 }
 
 #paymentModal .pos-payment-grid {
-    --bs-gutter-x: 0.75rem;
-    --bs-gutter-y: 0.65rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.85rem;
 }
 
-#paymentModal .card {
-    margin-bottom: 0;
-    box-shadow: none;
+#paymentModal .pos-payment-option-row {
+    padding: 0.55rem 0.75rem;
+    border-radius: 10px;
+    background: #fff;
+    border: 1px solid #e8edf4;
 }
 
-#paymentModal .card-header {
-    padding: 0.45rem 0.7rem;
+#paymentModal .pos-payment-summary {
+    display: flex;
+    flex-direction: column;
+    gap: 0.65rem;
+    padding: 0.85rem;
+    border-radius: 12px;
+    background: #fff;
+    border: 1px solid #e8edf4;
 }
 
-#paymentModal .card-body {
-    padding: 0.6rem;
+#paymentModal .pos-payment-summary-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
 }
 
-#paymentModal .form-label {
-    margin-bottom: 0.25rem;
+#paymentModal .pos-payment-summary-label {
     font-size: 0.82rem;
+    font-weight: 600;
+    color: #64748b;
 }
 
-#paymentModal .input-group-lg > .form-control,
-#paymentModal .input-group-lg > .input-group-text {
+#paymentModal .pos-payment-summary-value {
+    font-size: 1rem;
+    font-weight: 700;
+    color: #0f172a;
+    direction: ltr;
+}
+
+#paymentModal .pos-payment-net-row {
+    padding-top: 0.55rem;
+    border-top: 1px dashed #e2e8f0;
+}
+
+#paymentModal .pos-payment-net-value {
+    font-size: 1.35rem;
+    color: #16a34a;
+}
+
+#paymentModal .pos-payment-discount-fields {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.55rem;
+}
+
+#paymentModal .pos-payment-field-label {
+    display: block;
+    margin-bottom: 0.3rem;
+    font-size: 0.74rem;
+    font-weight: 600;
+    color: #64748b;
+}
+
+#paymentModal .pos-payment-input,
+#paymentModal .pos-payment-amount-input {
     min-height: 38px;
-    padding: 0.35rem 0.55rem;
+    padding: 0.4rem 0.65rem;
+    border-radius: 10px;
+    border: 1px solid #dbe3ee;
+    background: #f8fafc;
+    font-size: 0.92rem;
+    font-weight: 600;
+    text-align: center;
+}
+
+#paymentModal .pos-payment-input:focus,
+#paymentModal .pos-payment-amount-input:focus {
+    border-color: #082b62;
+    box-shadow: 0 0 0 3px rgba(8, 43, 98, 0.12);
+    background: #fff;
+}
+
+#paymentModal .pos-payment-section-label {
+    display: block;
+    margin-bottom: 0.55rem;
+    font-size: 0.74rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    color: #64748b;
+}
+
+#paymentModal .pos-payment-method-picker {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.45rem;
+    margin-bottom: 0.75rem;
+}
+
+#paymentModal .pos-payment-method-option {
+    margin: 0;
+    cursor: pointer;
+}
+
+#paymentModal .pos-payment-method-input {
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+}
+
+#paymentModal .pos-payment-method-chip {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.25rem;
+    min-height: 58px;
+    padding: 0.45rem 0.35rem;
+    border-radius: 12px;
+    border: 1px solid #dbe3ee;
+    background: #fff;
+    color: #64748b;
+    font-size: 0.78rem;
+    font-weight: 700;
+    transition: border-color 0.12s ease, background 0.12s ease, color 0.12s ease, box-shadow 0.12s ease;
+}
+
+#paymentModal .pos-payment-method-chip i {
     font-size: 0.95rem;
+}
+
+#paymentModal .pos-payment-method-input:checked + .pos-payment-method-chip {
+    border-color: #082b62;
+    background: rgba(8, 43, 98, 0.08);
+    color: #082b62;
+    box-shadow: 0 0 0 1px rgba(8, 43, 98, 0.12);
+}
+
+#paymentModal .pos-payment-amounts {
+    display: grid;
+    gap: 0.55rem;
+}
+
+#paymentModal .pos-payment-amounts.pos-payment-mode-cash .pos-payment-amount-bank,
+#paymentModal .pos-payment-amounts.pos-payment-mode-bank .pos-payment-amount-cash {
+    display: none;
+}
+
+#paymentModal .pos-payment-amounts.pos-payment-mode-mixed {
+    grid-template-columns: 1fr 1fr;
+}
+
+#paymentModal .pos-payment-amount-wrap {
+    position: relative;
+}
+
+#paymentModal .pos-payment-amount-input {
+    width: 100%;
+    padding-inline-end: 2.5rem;
+    font-size: 1.05rem;
+}
+
+#paymentModal .pos-payment-currency {
+    position: absolute;
+    top: 50%;
+    inset-inline-end: 0.75rem;
+    transform: translateY(-50%);
+    font-size: 0.78rem;
+    font-weight: 700;
+    color: #94a3b8;
+    pointer-events: none;
+}
+
+#paymentModal .pos-payment-method-section {
+    padding: 0.85rem;
+    border-radius: 12px;
+    background: #fff;
+    border: 1px solid #e8edf4;
+}
+
+#paymentModal .pos-payment-change-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 0.75rem;
+    padding: 0.65rem 0.75rem;
+    border-radius: 10px;
+    background: rgba(22, 163, 74, 0.08);
+    border: 1px solid rgba(22, 163, 74, 0.18);
+}
+
+#paymentModal .pos-payment-change-label {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: #64748b;
+}
+
+#paymentModal .pos-payment-change-value {
+    font-size: 1.15rem;
+    font-weight: 800;
+    color: #16a34a;
+    direction: ltr;
+}
+
+#paymentModal .pos-payment-change-value.is-short {
+    color: #dc2626;
+}
+
+#paymentModal .pos-payment-split-section {
+    border-radius: 12px;
+    background: #fff;
+    border: 1px solid #e8edf4;
+    overflow: hidden;
+}
+
+#paymentModal .pos-payment-split-section.is-active {
+    border-color: rgba(8, 43, 98, 0.28);
+    box-shadow: 0 0 0 1px rgba(8, 43, 98, 0.06);
+}
+
+#paymentModal .pos-payment-split-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.85rem;
+    margin: 0;
+    padding: 0.85rem 0.9rem;
+    cursor: pointer;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+}
+
+#paymentModal .pos-payment-split-header-copy {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    min-width: 0;
+}
+
+#paymentModal .pos-payment-split-title {
+    font-size: 0.9rem;
+    font-weight: 700;
+    color: #0f172a;
+    line-height: 1.3;
+}
+
+#paymentModal .pos-payment-split-hint {
+    font-size: 0.72rem;
+    color: #64748b;
+    line-height: 1.35;
+}
+
+#paymentModal .pos-payment-split-switch-wrap {
+    position: relative;
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    min-width: 52px;
+    min-height: 44px;
+    justify-content: center;
+}
+
+#paymentModal .pos-payment-split-switch {
+    position: relative;
+    width: 3.35rem;
+    height: 1.95rem;
+    margin: 0;
+    appearance: none;
+    -webkit-appearance: none;
+    border: 1px solid #cbd5e1;
+    border-radius: 999px;
+    background: #e2e8f0;
+    cursor: pointer;
+    transition: background 0.14s ease, border-color 0.14s ease, box-shadow 0.14s ease;
+}
+
+#paymentModal .pos-payment-split-switch::before {
+    content: "";
+    position: absolute;
+    top: 50%;
+    inset-inline-start: 0.18rem;
+    width: 1.45rem;
+    height: 1.45rem;
+    border-radius: 50%;
+    background: #fff;
+    box-shadow: 0 1px 4px rgba(15, 23, 42, 0.18);
+    transform: translateY(-50%);
+    transition: inset-inline-start 0.14s ease, transform 0.14s ease;
+}
+
+#paymentModal .pos-payment-split-switch:checked {
+    background: #082b62;
+    border-color: #082b62;
+}
+
+#paymentModal .pos-payment-split-switch:checked::before {
+    inset-inline-start: calc(100% - 1.63rem);
+}
+
+#paymentModal .pos-payment-split-switch:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px rgba(8, 43, 98, 0.22);
+}
+
+#paymentModal .pos-payment-split-panel {
+    padding: 0 0.85rem 0.85rem;
+}
+
+#paymentModal .pos-split-lines {
+    display: flex;
+    flex-direction: column;
+    gap: 0.55rem;
+    max-height: min(220px, 32vh);
+    overflow-y: auto;
+    padding-inline-end: 0.1rem;
+}
+
+#paymentModal .pos-split-lines-empty {
+    padding: 1rem 0.75rem;
+    border-radius: 10px;
+    background: #f8fafc;
+    border: 1px dashed #dbe3ee;
+    text-align: center;
+    font-size: 0.82rem;
+    color: #64748b;
+}
+
+#paymentModal .pos-split-line-item {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 0.65rem;
+    align-items: start;
+    padding: 0.7rem 0.75rem;
+    border-radius: 12px;
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    transition: border-color 0.12s ease, background 0.12s ease, box-shadow 0.12s ease;
+}
+
+#paymentModal .pos-split-line-item.is-selected {
+    border-color: rgba(8, 43, 98, 0.35);
+    background: rgba(8, 43, 98, 0.05);
+    box-shadow: 0 0 0 1px rgba(8, 43, 98, 0.08);
+}
+
+#paymentModal .pos-split-line-select {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 44px;
+    min-height: 44px;
+    margin: 0;
+    cursor: pointer;
+}
+
+#paymentModal .pos-split-line-check {
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+}
+
+#paymentModal .pos-split-line-check-ui {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.35rem;
+    height: 1.35rem;
+    border-radius: 0.4rem;
+    border: 2px solid #94a3b8;
+    background: #fff;
+    transition: border-color 0.12s ease, background 0.12s ease;
+}
+
+#paymentModal .pos-split-line-check:checked + .pos-split-line-check-ui {
+    border-color: #082b62;
+    background: #082b62;
+    box-shadow: inset 0 0 0 2px #fff;
+}
+
+#paymentModal .pos-split-line-body {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.55rem;
+}
+
+#paymentModal .pos-split-line-name {
+    font-size: 0.86rem;
+    font-weight: 700;
+    color: #0f172a;
+    line-height: 1.35;
+    word-break: break-word;
+}
+
+#paymentModal .pos-split-line-meta {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(88px, auto);
+    gap: 0.55rem;
+    align-items: end;
+}
+
+#paymentModal .pos-split-line-qty-wrap,
+#paymentModal .pos-split-line-amount-wrap {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+
+#paymentModal .pos-split-line-qty-label,
+#paymentModal .pos-split-line-amount-label {
+    font-size: 0.68rem;
+    font-weight: 600;
+    color: #64748b;
+}
+
+#paymentModal .pos-split-line-qty {
+    width: 100%;
+    min-height: 44px;
+    padding: 0.35rem 0.5rem;
+    border-radius: 10px;
+    border: 1px solid #dbe3ee;
+    background: #fff;
+    font-size: 1rem;
+    font-weight: 700;
+    text-align: center;
+    color: #0f172a;
+}
+
+#paymentModal .pos-split-line-qty:focus {
+    border-color: #082b62;
+    box-shadow: 0 0 0 3px rgba(8, 43, 98, 0.12);
+    outline: none;
+}
+
+#paymentModal .pos-split-line-total {
+    display: block;
+    min-height: 44px;
+    padding: 0.55rem 0.65rem;
+    border-radius: 10px;
+    background: rgba(22, 163, 74, 0.08);
+    border: 1px solid rgba(22, 163, 74, 0.16);
+    font-size: 0.98rem;
+    font-weight: 800;
+    text-align: center;
+    color: #16a34a;
+    direction: ltr;
+}
+
+#paymentModal .pos-payment-split-total {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    margin-top: 0.7rem;
+    padding: 0.7rem 0.75rem;
+    border-radius: 10px;
+    background: rgba(22, 163, 74, 0.08);
+    border: 1px solid rgba(22, 163, 74, 0.16);
+    font-size: 0.84rem;
+}
+
+#paymentModal .pos-payment-split-total-label {
+    font-weight: 600;
+    color: #64748b;
+}
+
+#paymentModal .pos-payment-split-total strong {
+    color: #16a34a;
+    font-size: 1.05rem;
+    direction: ltr;
+}
+
+#paymentModal .modal-footer,
+#paymentModal .pos-payment-modal-footer {
+    flex: 0 0 auto;
+    display: flex;
+    gap: 0.5rem;
+    padding: 0.75rem 1.1rem 1rem;
+    background: #fff;
+    border-top: 1px solid #e8edf4;
+}
+
+#paymentModal .pos-payment-btn-cancel,
+#paymentModal .pos-payment-btn-split,
+#paymentModal .pos-payment-btn-confirm {
+    min-height: 44px;
+    border-radius: 10px;
+    font-weight: 700;
+    font-size: 0.88rem;
+    padding-inline: 1rem;
+}
+
+#paymentModal .pos-payment-btn-cancel {
+    background: transparent;
+    border: 1px solid #dbe3ee;
+    color: #64748b;
+}
+
+#paymentModal .pos-payment-btn-split {
+    background: rgba(232, 160, 32, 0.12);
+    border: 1px solid rgba(232, 160, 32, 0.35);
+    color: #b45309;
+}
+
+#paymentModal .pos-payment-btn-confirm {
+    flex: 1 1 auto;
+    background: #082b62;
+    border: 1px solid #082b62;
+    color: #fff;
+}
+
+#paymentModal .pos-payment-btn-confirm:hover {
+    background: #0a3478;
+    border-color: #0a3478;
+    color: #fff;
+}
+
+#paymentModal .form-check-label {
+    font-size: 0.84rem;
+    font-weight: 600;
+    color: #334155;
+}
+
+#paymentModal .form-check-input:checked {
+    background-color: #082b62;
+    border-color: #082b62;
 }
 
 #paymentModal h3,
@@ -930,45 +1479,24 @@ div:where(.swal2-container) div:where(.swal2-popup) {
 #paymentModal #modal_total,
 #paymentModal #modal_net,
 #paymentModal #modal_change {
-    font-size: 1.35rem;
-}
-
-#paymentModal .alert {
-    padding: 0.55rem 0.75rem;
-}
-
-#paymentModal .modal-footer {
-    flex: 0 0 auto;
-    position: sticky;
-    bottom: 0;
-    z-index: 3;
-    gap: 0.5rem;
-    padding: 0.6rem 0.9rem;
-    background: #ffffff;
-    border-top: 1px solid #e1e8f1;
-    box-shadow: 0 -8px 18px rgba(26, 47, 90, 0.08);
-}
-
-#paymentModal .modal-footer .btn {
-    min-height: 44px;
-    padding-inline: 1rem;
+    font-size: inherit;
 }
 
 @media (min-width: 768px) {
     #paymentModal .pos-payment-total-section,
     #paymentModal .pos-payment-net-section {
-        flex: 0 0 25%;
-        max-width: 25%;
+        flex: unset;
+        max-width: none;
     }
 
     #paymentModal .pos-payment-discount-section {
-        flex: 0 0 50%;
-        max-width: 50%;
+        flex: unset;
+        max-width: none;
     }
 
     #paymentModal .pos-payment-method-section {
-        flex: 0 0 100%;
-        max-width: 100%;
+        flex: unset;
+        max-width: none;
     }
 }
 
@@ -1634,6 +2162,12 @@ body.pos-premium-dark {
     overflow: hidden;
 }
 
+body.pos-premium-dark.swal2-shown {
+    padding-right: 0 !important;
+    margin-right: 0 !important;
+    width: 100% !important;
+}
+
 body.pos-premium-dark.pos-immersive .pos-topbar {
     display: none !important;
 }
@@ -1682,6 +2216,30 @@ body.pos-premium-dark .pos-shell {
     height: 100vh !important;
     padding: 0.65rem;
     padding-top: 0.65rem;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+
+body.pos-premium-dark .pos-shell > .pos-layout-row {
+    flex: 1 1 auto;
+    min-height: 0;
+}
+
+@media (min-width: 992px) {
+    body.pos-premium-dark .pos-layout-row {
+        height: 100%;
+        min-height: 0;
+        align-items: stretch;
+    }
+
+    body.pos-premium-dark .pos-order-column,
+    body.pos-premium-dark .pos-items-column {
+        height: 100%;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+    }
 }
 
 body.pos-premium-dark.pos-immersive .pos-shell {
@@ -1698,6 +2256,7 @@ body.pos-premium-dark .pos-catalog-panel {
     flex-direction: column;
     min-height: 0;
     overflow: hidden;
+    flex: 1 1 auto;
 }
 
 body.pos-premium-dark .pos-order-column > .card,
@@ -1790,6 +2349,10 @@ body.pos-premium-dark .pos-order-body {
     padding: 0 0.5rem;
 }
 
+body.pos-premium-dark .pos-current-order-controls {
+    flex: 0 0 auto;
+}
+
 body.pos-premium-dark #itemData,
 body.pos-premium-dark .pos-order-items-scroll {
     flex: 1 1 auto;
@@ -1799,6 +2362,7 @@ body.pos-premium-dark .pos-order-items-scroll {
     padding: 0.5rem 0;
     background: transparent !important;
     max-height: none !important;
+    -webkit-overflow-scrolling: touch;
 }
 
 body.pos-premium-dark .pos-order-footer {
@@ -1806,8 +2370,6 @@ body.pos-premium-dark .pos-order-footer {
     padding: 0.75rem 1rem 1rem;
     border-top: 1px solid var(--pos-border);
     background: var(--pos-panel);
-    position: sticky;
-    bottom: 0;
     z-index: 5;
 }
 
@@ -2035,13 +2597,17 @@ body.pos-premium-dark .pos-cart-row .card-body {
 
 body.pos-premium-dark .pos-cart-row-inner {
     display: grid !important;
-    grid-template-columns: 72px minmax(88px, auto) minmax(0, 1fr) 28px 24px;
-    grid-template-areas: "price qty name note delete";
+    grid-template-columns: 72px minmax(88px, auto) minmax(0, 1fr) 40px;
+    grid-template-areas: "price qty name delete";
     gap: 0.5rem;
     align-items: center;
     direction: ltr;
     min-height: 44px;
     padding: 0;
+}
+
+body.pos-premium-dark .pos-cart-note {
+    display: none !important;
 }
 
 body.pos-premium-dark .pos-cart-price-display {
@@ -2125,15 +2691,25 @@ body.pos-premium-dark .lineNoteButton.line-note-has-value {
 
 body.pos-premium-dark .pos-cart-row .delRow {
     grid-area: delete;
-    width: 24px;
-    height: 24px;
+    width: 36px;
+    height: 36px;
     padding: 0;
     border: 0;
-    background: transparent;
-    color: var(--pos-text-muted);
-    font-size: 0.7rem;
-    opacity: 0;
-    transition: opacity 0.15s ease;
+    border-radius: 8px;
+    background: rgba(239, 68, 68, 0.12);
+    color: var(--pos-danger);
+    font-size: 0.95rem;
+    opacity: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+body.pos-premium-dark .pos-cart-row .delRow:hover,
+body.pos-premium-dark .pos-cart-row .delRow:focus {
+    background: rgba(239, 68, 68, 0.22);
+    color: #fff;
 }
 
 body.pos-premium-dark .pos-cart-row:hover .delRow,
@@ -2159,6 +2735,13 @@ body.pos-premium-dark .pos-order-items-section {
     margin: 0 !important;
     display: flex;
     flex-direction: column;
+    overflow: hidden;
+}
+
+body.pos-premium-dark #posOrderExtras {
+    flex: 0 0 auto;
+    padding: 0 1rem 0.5rem;
+    margin: 0 1rem 0.5rem;
 }
 
 body.pos-premium-dark .pos-table-visible-control {
@@ -2171,14 +2754,6 @@ body.pos-premium-dark .pos-table-field .btn {
     border-color: var(--pos-border) !important;
     color: var(--pos-text) !important;
     font-size: 0.82rem !important;
-}
-
-body.pos-premium-dark #posOrderExtras {
-    padding: 0 1rem 0.5rem;
-}
-
-body.pos-premium-dark #posOrderExtras {
-    margin: 0 1rem 0.5rem;
 }
 
 body.pos-premium-dark #posOrderExtras .accordion-button {
@@ -2301,6 +2876,152 @@ body.pos-premium-dark ::-webkit-scrollbar-thumb {
     border-radius: 999px;
 }
 
+/* Premium minimalist SweetAlert dialogs */
+.swal2-container.swal2-backdrop-show {
+    background: rgba(13, 17, 23, 0.72) !important;
+    backdrop-filter: blur(4px);
+}
+
+.swal2-popup.pos-swal-premium {
+    background: var(--pos-panel, #1a222d) !important;
+    border: 1px solid var(--pos-border, #2d3748) !important;
+    border-radius: 14px !important;
+    padding: 1.35rem 1.25rem 1.1rem !important;
+    color: var(--pos-text, #e8edf4) !important;
+    box-shadow: 0 24px 48px rgba(0, 0, 0, 0.45) !important;
+    width: min(92vw, 380px) !important;
+}
+
+.swal2-popup.pos-swal-premium .pos-swal-premium__title {
+    color: var(--pos-text, #e8edf4) !important;
+    font-size: 1.08rem !important;
+    font-weight: 700 !important;
+    margin: 0 0 0.35rem !important;
+    padding: 0 !important;
+}
+
+.swal2-popup.pos-swal-premium .pos-swal-premium__text {
+    color: var(--pos-text-muted, #8b98a8) !important;
+    font-size: 0.92rem !important;
+    line-height: 1.55 !important;
+    margin: 0 !important;
+}
+
+.swal2-popup.pos-swal-premium .pos-swal-premium__actions {
+    gap: 0.5rem !important;
+    margin-top: 1.15rem !important;
+    width: 100%;
+    flex-direction: row-reverse;
+}
+
+.swal2-popup.pos-swal-premium .pos-swal-premium__confirm,
+.swal2-popup.pos-swal-premium .pos-swal-premium__cancel {
+    border-radius: 10px !important;
+    padding: 0.58rem 1.15rem !important;
+    font-weight: 700 !important;
+    font-size: 0.88rem !important;
+    margin: 0 !important;
+    min-width: 96px;
+}
+
+.swal2-popup.pos-swal-premium .pos-swal-premium__confirm {
+    background: var(--pos-accent, #e8a020) !important;
+    color: #1a1408 !important;
+    border: none !important;
+}
+
+.swal2-popup.pos-swal-premium .pos-swal-premium__confirm:hover {
+    background: var(--pos-accent-hover, #f0b030) !important;
+}
+
+.swal2-popup.pos-swal-premium .pos-swal-premium__cancel {
+    background: transparent !important;
+    border: 1px solid var(--pos-border, #2d3748) !important;
+    color: var(--pos-text, #e8edf4) !important;
+}
+
+.swal2-popup.pos-swal-premium .pos-swal-premium__cancel:hover {
+    border-color: var(--pos-text-muted, #8b98a8) !important;
+    color: var(--pos-text, #e8edf4) !important;
+}
+
+/* Order-saved success modal — mirrors #paymentModal's fade behavior
+   (opacity-only, no transform) so it behaves identically. */
+#posOrderSuccessModal.pos-success-modal-fade.fade .modal-dialog {
+    transition: opacity 0.14s ease-out;
+    transform: none !important;
+}
+
+#posOrderSuccessModal.pos-success-modal-fade.show .modal-dialog {
+    transform: none !important;
+}
+
+#posOrderSuccessModal.pos-success-modal-fade {
+    transition: opacity 0.14s ease-out;
+}
+
+#posOrderSuccessModal .pos-success-dialog {
+    max-width: min(380px, calc(100vw - 1.5rem));
+    margin: 1.5rem auto;
+}
+
+#posOrderSuccessModal .pos-success-content {
+    background: var(--pos-panel, #1a222d);
+    border: 1px solid var(--pos-border, #2d3748);
+    border-radius: 14px;
+    color: var(--pos-text, #e8edf4);
+    box-shadow: 0 24px 48px rgba(0, 0, 0, 0.45);
+    text-align: center;
+    overflow: hidden;
+}
+
+#posOrderSuccessModal .pos-success-body {
+    padding: 1.5rem 1.35rem 1.1rem;
+}
+
+#posOrderSuccessModal .pos-success-icon {
+    width: 3rem;
+    height: 3rem;
+    margin: 0.35rem auto 0.85rem;
+    border-radius: 50%;
+    border: 2px solid rgba(232, 160, 32, 0.35);
+    color: var(--pos-accent, #e8a020);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.35rem;
+    font-weight: 700;
+    line-height: 1;
+}
+
+#posOrderSuccessModal .pos-success-title {
+    margin: 0 0 0.35rem;
+    font-size: 1.08rem;
+    font-weight: 700;
+    color: var(--pos-text, #e8edf4);
+}
+
+#posOrderSuccessModal .pos-success-text {
+    margin: 0;
+    font-size: 0.92rem;
+    line-height: 1.55;
+    color: var(--pos-text-muted, #8b98a8);
+}
+
+body.supermarket-theme #posOrderSuccessModal .pos-success-content {
+    background: #ffffff;
+    border-color: #dee2e6;
+    color: #212529;
+}
+
+body.supermarket-theme #posOrderSuccessModal .pos-success-title {
+    color: #1a2f5a;
+}
+
+body.supermarket-theme #posOrderSuccessModal .pos-success-text {
+    color: #5c6b7a;
+}
+
 @media (max-width: 991.98px) {
     body.pos-premium-dark .pos-shell {
         height: auto !important;
@@ -2406,77 +3127,212 @@ body.pos-premium-dark .pos-compact-card .card-body {
 }
 
 /* Payment modal */
-body.pos-premium-dark #paymentModal .modal-content {
+body.pos-premium-dark #paymentModal .pos-payment-modal-content {
     background: var(--pos-panel);
-    border: 1px solid var(--pos-border);
+    border-color: var(--pos-border);
+    box-shadow: 0 24px 48px rgba(0, 0, 0, 0.45);
 }
 
-body.pos-premium-dark #paymentModal .modal-header,
-body.pos-premium-dark #paymentModal .modal-header.bg-primary {
+body.pos-premium-dark #paymentModal .pos-payment-modal-header,
+body.pos-premium-dark #paymentModal .pos-payment-modal-footer {
     background: var(--pos-panel-elevated) !important;
-    color: var(--pos-text) !important;
-    border-bottom: 1px solid var(--pos-border);
-}
-
-body.pos-premium-dark #paymentModal .modal-body {
-    background: var(--pos-panel);
-}
-
-body.pos-premium-dark #paymentModal .modal-footer {
-    background: var(--pos-panel);
-    border-top: 1px solid var(--pos-border);
-}
-
-body.pos-premium-dark #paymentModal .bg-light,
-body.pos-premium-dark #paymentModal .card-body.bg-light {
-    background: var(--pos-panel-elevated) !important;
-    color: var(--pos-text) !important;
-}
-
-body.pos-premium-dark #paymentModal .card {
-    background: var(--pos-panel-elevated);
     border-color: var(--pos-border) !important;
-    color: var(--pos-text);
 }
 
-body.pos-premium-dark #paymentModal .card.border-primary {
-    border-color: var(--pos-accent) !important;
-}
-
-body.pos-premium-dark #paymentModal .card-header.bg-primary,
-body.pos-premium-dark #paymentModal .card-header.bg-info {
-    background: var(--pos-panel) !important;
-    color: var(--pos-text) !important;
-    border-bottom: 1px solid var(--pos-border);
-}
-
-body.pos-premium-dark #paymentModal .text-dark,
-body.pos-premium-dark #paymentModal .text-primary,
-body.pos-premium-dark #paymentModal label {
+body.pos-premium-dark #paymentModal .pos-payment-modal-title {
     color: var(--pos-text) !important;
 }
 
-body.pos-premium-dark #paymentModal .text-success {
+body.pos-premium-dark #paymentModal .pos-payment-modal-subtitle {
+    color: var(--pos-text-muted) !important;
+}
+
+body.pos-premium-dark #paymentModal .pos-payment-modal-body {
+    background: var(--pos-panel);
+}
+
+body.pos-premium-dark #paymentModal .pos-payment-option-row,
+body.pos-premium-dark #paymentModal .pos-payment-summary,
+body.pos-premium-dark #paymentModal .pos-payment-split-section {
+    background: var(--pos-panel-elevated);
+    border-color: var(--pos-border);
+}
+
+body.pos-premium-dark #paymentModal .pos-payment-split-section.is-active {
+    border-color: rgba(var(--pos-accent-rgb), 0.35);
+    box-shadow: 0 0 0 1px rgba(var(--pos-accent-rgb), 0.12);
+}
+
+body.pos-premium-dark #paymentModal .pos-payment-summary-label,
+body.pos-premium-dark #paymentModal .pos-payment-field-label,
+body.pos-premium-dark #paymentModal .pos-payment-section-label,
+body.pos-premium-dark #paymentModal .pos-payment-change-label,
+body.pos-premium-dark #paymentModal .form-check-label {
+    color: var(--pos-text-muted) !important;
+}
+
+body.pos-premium-dark #paymentModal .pos-payment-summary-value {
+    color: var(--pos-text) !important;
+}
+
+body.pos-premium-dark #paymentModal .pos-payment-net-value,
+body.pos-premium-dark #paymentModal .pos-payment-change-value {
     color: #4ade80 !important;
 }
 
-body.pos-premium-dark #paymentModal .alert-warning {
-    background: rgba(232, 160, 32, 0.15);
-    border: 1px solid rgba(232, 160, 32, 0.35);
+body.pos-premium-dark #paymentModal .pos-payment-change-value.is-short {
+    color: var(--pos-danger) !important;
+}
+
+body.pos-premium-dark #paymentModal .pos-payment-net-row {
+    border-top-color: var(--pos-border);
+}
+
+body.pos-premium-dark #paymentModal .pos-payment-method-chip {
+    background: var(--pos-panel);
+    border-color: var(--pos-border);
+    color: var(--pos-text-muted);
+}
+
+body.pos-premium-dark #paymentModal .pos-payment-method-input:checked + .pos-payment-method-chip {
+    border-color: var(--pos-accent);
+    background: rgba(var(--pos-accent-rgb), 0.12);
     color: var(--pos-accent);
+    box-shadow: 0 0 0 1px rgba(var(--pos-accent-rgb), 0.2);
 }
 
-body.pos-premium-dark #paymentModal .alert-warning .text-success {
-    color: #4ade80 !important;
-}
-
-body.pos-premium-dark #paymentModal .form-control,
-body.pos-premium-dark #paymentModal .form-select {
+body.pos-premium-dark #paymentModal .pos-payment-input,
+body.pos-premium-dark #paymentModal .pos-payment-amount-input {
     background: var(--pos-panel);
     border-color: var(--pos-border);
     color: var(--pos-text);
 }
 
+body.pos-premium-dark #paymentModal .pos-payment-input:focus,
+body.pos-premium-dark #paymentModal .pos-payment-amount-input:focus {
+    border-color: var(--pos-accent);
+    box-shadow: 0 0 0 3px rgba(var(--pos-accent-rgb), 0.18);
+    background: var(--pos-panel-elevated);
+}
+
+body.pos-premium-dark #paymentModal .pos-payment-currency {
+    color: var(--pos-text-muted);
+}
+
+body.pos-premium-dark #paymentModal .pos-payment-method-section {
+    background: var(--pos-panel-elevated);
+    border-color: var(--pos-border);
+}
+
+body.pos-premium-dark #paymentModal .pos-payment-change-row {
+    background: rgba(34, 197, 94, 0.1);
+    border-color: rgba(34, 197, 94, 0.22);
+}
+
+body.pos-premium-dark #paymentModal .pos-payment-split-title {
+    color: var(--pos-text) !important;
+}
+
+body.pos-premium-dark #paymentModal .pos-payment-split-hint,
+body.pos-premium-dark #paymentModal .pos-payment-split-total-label,
+body.pos-premium-dark #paymentModal .pos-split-line-qty-label,
+body.pos-premium-dark #paymentModal .pos-split-line-amount-label {
+    color: var(--pos-text-muted) !important;
+}
+
+body.pos-premium-dark #paymentModal .pos-payment-split-switch {
+    background: var(--pos-panel);
+    border-color: var(--pos-border);
+}
+
+body.pos-premium-dark #paymentModal .pos-payment-split-switch::before {
+    background: var(--pos-text-muted);
+}
+
+body.pos-premium-dark #paymentModal .pos-payment-split-switch:checked {
+    background: var(--pos-accent);
+    border-color: var(--pos-accent);
+}
+
+body.pos-premium-dark #paymentModal .pos-payment-split-switch:checked::before {
+    background: #111;
+}
+
+body.pos-premium-dark #paymentModal .pos-payment-split-switch:focus-visible {
+    box-shadow: 0 0 0 3px rgba(var(--pos-accent-rgb), 0.24);
+}
+
+body.pos-premium-dark #paymentModal .pos-split-lines-empty {
+    background: var(--pos-panel);
+    border-color: var(--pos-border);
+    color: var(--pos-text-muted);
+}
+
+body.pos-premium-dark #paymentModal .pos-split-line-item {
+    background: var(--pos-panel);
+    border-color: var(--pos-border);
+}
+
+body.pos-premium-dark #paymentModal .pos-split-line-item.is-selected {
+    border-color: rgba(var(--pos-accent-rgb), 0.45);
+    background: rgba(var(--pos-accent-rgb), 0.1);
+    box-shadow: 0 0 0 1px rgba(var(--pos-accent-rgb), 0.16);
+}
+
+body.pos-premium-dark #paymentModal .pos-split-line-check-ui {
+    background: var(--pos-panel-elevated);
+    border-color: var(--pos-border);
+}
+
+body.pos-premium-dark #paymentModal .pos-split-line-check:checked + .pos-split-line-check-ui {
+    border-color: var(--pos-accent);
+    background: var(--pos-accent);
+    box-shadow: inset 0 0 0 2px #111;
+}
+
+body.pos-premium-dark #paymentModal .pos-split-line-name {
+    color: var(--pos-text) !important;
+}
+
+body.pos-premium-dark #paymentModal .pos-split-line-qty {
+    background: var(--pos-panel-elevated);
+    border-color: var(--pos-border);
+    color: var(--pos-text);
+}
+
+body.pos-premium-dark #paymentModal .pos-split-line-qty:focus {
+    border-color: var(--pos-accent);
+    box-shadow: 0 0 0 3px rgba(var(--pos-accent-rgb), 0.18);
+}
+
+body.pos-premium-dark #paymentModal .pos-split-line-total,
+body.pos-premium-dark #paymentModal .pos-payment-split-total {
+    background: rgba(34, 197, 94, 0.1);
+    border-color: rgba(34, 197, 94, 0.22);
+}
+
+body.pos-premium-dark #paymentModal .pos-payment-split-total {
+    border-top-color: transparent;
+}
+
+body.pos-premium-dark #paymentModal .pos-payment-split-total strong,
+body.pos-premium-dark #paymentModal .pos-split-line-total {
+    color: #4ade80 !important;
+}
+
+body.pos-premium-dark #paymentModal .pos-payment-btn-cancel {
+    background: transparent;
+    border-color: var(--pos-border);
+    color: var(--pos-text-muted);
+}
+
+body.pos-premium-dark #paymentModal .pos-payment-btn-split {
+    background: rgba(var(--pos-accent-rgb), 0.12);
+    border-color: rgba(var(--pos-accent-rgb), 0.35);
+    color: var(--pos-accent);
+}
+
+body.pos-premium-dark #paymentModal .pos-payment-btn-confirm,
 body.pos-premium-dark #paymentModal #confirmPaymentBtn {
     background: var(--pos-accent);
     border-color: var(--pos-accent);
@@ -2484,14 +3340,10 @@ body.pos-premium-dark #paymentModal #confirmPaymentBtn {
     font-weight: 700;
 }
 
+body.pos-premium-dark #paymentModal .pos-payment-btn-confirm:hover,
 body.pos-premium-dark #paymentModal #confirmPaymentBtn:hover {
     filter: brightness(1.08);
-}
-
-body.pos-premium-dark #paymentModal .btn-secondary {
-    background: transparent;
-    border-color: var(--pos-border);
-    color: var(--pos-text-muted);
+    color: #111;
 }
 
 body.pos-premium-dark #paymentModal .form-check-input {
@@ -2677,4 +3529,449 @@ body.pos-premium-dark #closeShiftModal .btn-primary {
     background: var(--pos-accent);
     border-color: var(--pos-accent);
     color: #111;
+}
+
+/* POS customer strip (cashier) */
+body.pos-premium-dark .pos-customer-strip {
+    margin-bottom: 0.65rem;
+}
+
+body.pos-premium-dark .pos-customer-search-wrap {
+    position: relative;
+}
+
+body.pos-premium-dark .pos-customer-search-icon {
+    position: absolute;
+    inset-inline-start: 0.85rem;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--pos-text-muted);
+    pointer-events: none;
+}
+
+body.pos-premium-dark .pos-customer-phone-input {
+    height: 44px;
+    padding-inline-start: 2.35rem;
+    background: var(--pos-panel-elevated);
+    border: 1px solid var(--pos-border);
+    color: var(--pos-text);
+    border-radius: 10px;
+    font-size: 0.9rem;
+}
+
+body.pos-premium-dark .pos-customer-phone-input:focus {
+    border-color: var(--pos-accent);
+    box-shadow: 0 0 0 2px rgba(232, 160, 32, 0.15);
+}
+
+body.pos-premium-dark .pos-customer-chip {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 0.5rem;
+    align-items: center;
+    padding: 0.65rem 0.75rem;
+    background: var(--pos-panel-elevated);
+    border: 1px solid var(--pos-border);
+    border-radius: 10px;
+}
+
+body.pos-premium-dark .pos-customer-chip-main strong {
+    display: block;
+    color: var(--pos-text);
+    font-size: 0.92rem;
+}
+
+body.pos-premium-dark .pos-customer-chip-phone {
+    color: var(--pos-text-muted);
+    font-size: 0.8rem;
+}
+
+body.pos-premium-dark .pos-customer-chip-stats {
+    grid-column: 1 / -1;
+    color: var(--pos-text-muted);
+    font-size: 0.75rem;
+}
+
+body.pos-premium-dark .pos-customer-chip-actions {
+    display: flex;
+    gap: 0.35rem;
+    align-items: center;
+}
+
+body.pos-premium-dark .pos-customer-edit-btn,
+body.pos-premium-dark .pos-customer-detach-btn {
+    min-width: 44px;
+    min-height: 36px;
+    border-radius: 8px;
+}
+
+body.pos-premium-dark .pos-customer-detach-btn {
+    background: rgba(239, 68, 68, 0.12);
+    color: var(--pos-danger);
+    border: 0;
+}
+
+body.pos-premium-dark .pos-customer-suggestions {
+    margin-top: 0.35rem;
+    display: grid;
+    gap: 0.35rem;
+}
+
+body.pos-premium-dark .pos-customer-suggestion-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    width: 100%;
+    border: 1px solid var(--pos-border);
+    background: var(--pos-panel-elevated);
+    color: var(--pos-text);
+    border-radius: 8px;
+    padding: 0.55rem 0.75rem;
+    text-align: right;
+}
+
+body.pos-premium-dark .pos-customer-create,
+body.pos-premium-dark .pos-customer-editor {
+    margin-top: 0.5rem;
+    padding: 0.65rem;
+    background: var(--pos-panel-elevated);
+    border: 1px solid var(--pos-border);
+    border-radius: 10px;
+}
+
+body.pos-premium-dark .pos-customer-editor-phone,
+body.pos-premium-dark .pos-customer-editor-address {
+    padding: 0.35rem 0;
+    color: var(--pos-text-muted);
+    font-size: 0.82rem;
+}
+
+/* Admin CRM page */
+body:has(.pos-customers-admin) {
+    background: #0a0e14;
+}
+
+body:has(.pos-customers-admin) .content-wrapper.pos-customers-admin {
+    background: #0a0e14 !important;
+    min-height: calc(100vh - 57px);
+    padding: 0 !important;
+}
+
+body:has(.pos-customers-admin) .main-sidebar {
+    background: linear-gradient(180deg, #121820 0%, #0d1117 100%) !important;
+    border-left: 1px solid #2d3748;
+}
+
+body:has(.pos-customers-admin) .main-sidebar .brand-link,
+body:has(.pos-customers-admin) .main-sidebar .user-panel,
+body:has(.pos-customers-admin) .main-sidebar .nav-sidebar .nav-link {
+    color: #cbd5e1 !important;
+}
+
+body:has(.pos-customers-admin) .main-sidebar .nav-sidebar .nav-link .nav-icon {
+    color: #94a3b8 !important;
+}
+
+body:has(.pos-customers-admin) .main-sidebar .nav-sidebar .nav-link:hover,
+body:has(.pos-customers-admin) .main-sidebar .nav-sidebar .nav-link:focus {
+    background: rgba(232, 160, 32, 0.12) !important;
+    color: #f8fafc !important;
+    box-shadow: none !important;
+    transform: none !important;
+}
+
+body:has(.pos-customers-admin) .main-sidebar .nav-sidebar .nav-link:hover .nav-icon,
+body:has(.pos-customers-admin) .main-sidebar .nav-sidebar .nav-link:focus .nav-icon {
+    color: #e8a020 !important;
+    transform: none !important;
+}
+
+body:has(.pos-customers-admin) .main-sidebar .nav-sidebar .nav-link.active {
+    background: rgba(232, 160, 32, 0.18) !important;
+    color: #f8fafc !important;
+    border-right-color: #e8a020 !important;
+    box-shadow: none !important;
+}
+
+body:has(.pos-customers-admin) .main-sidebar .form-control {
+    background: #1a222d !important;
+    border-color: #2d3748 !important;
+    color: #e8edf4 !important;
+}
+
+body:has(.pos-customers-admin) .main-sidebar .form-control::placeholder {
+    color: #64748b;
+}
+
+.pos-customers-admin {
+    --crm-bg: #0a0e14;
+    --crm-panel: #151b24;
+    --crm-panel-elevated: #1c2430;
+    --crm-border: #2d3748;
+    --crm-text: #f1f5f9;
+    --crm-muted: #94a3b8;
+    --crm-accent: #f0a830;
+    --crm-accent-soft: rgba(240, 168, 48, 0.14);
+    direction: rtl;
+    background: var(--crm-bg);
+    min-height: calc(100vh - 57px);
+    color: var(--crm-text);
+}
+
+.pos-customers-admin .crm-wrap {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 1.5rem 1.25rem 2rem;
+}
+
+.pos-customers-admin .crm-hero,
+.pos-customers-admin .crm-panel {
+    background: var(--crm-panel);
+    border: 1px solid var(--crm-border);
+    border-radius: 14px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
+}
+
+.pos-customers-admin .crm-hero {
+    padding: 1.25rem 1.5rem;
+    margin-bottom: 1rem;
+    background: linear-gradient(135deg, #1a222d 0%, #151b24 100%);
+}
+
+.pos-customers-admin .crm-hero h1 {
+    color: var(--crm-text);
+    font-weight: 700;
+    letter-spacing: -0.01em;
+}
+
+.pos-customers-admin .crm-hero p,
+.pos-customers-admin .crm-subtitle,
+.pos-customers-admin .text-muted {
+    color: var(--crm-muted) !important;
+}
+
+.pos-customers-admin .crm-kpis {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0.85rem;
+    margin-bottom: 1rem;
+}
+
+.pos-customers-admin .crm-kpi {
+    background: var(--crm-panel);
+    border: 1px solid var(--crm-border);
+    border-radius: 12px;
+    padding: 1rem 1.1rem;
+    transition: border-color 0.2s ease, transform 0.2s ease;
+}
+
+.pos-customers-admin .crm-kpi:hover {
+    border-color: rgba(240, 168, 48, 0.35);
+    transform: translateY(-1px);
+}
+
+.pos-customers-admin .crm-kpi span {
+    color: var(--crm-muted);
+    font-size: 0.82rem;
+    font-weight: 500;
+}
+
+.pos-customers-admin .crm-kpi strong {
+    display: block;
+    margin-top: 0.4rem;
+    font-size: 1.45rem;
+    font-weight: 700;
+    color: var(--crm-accent);
+    line-height: 1.2;
+    word-break: break-word;
+}
+
+.pos-customers-admin .crm-toolbar {
+    display: grid;
+    grid-template-columns: 2fr repeat(5, minmax(120px, 1fr)) auto;
+    gap: 0.65rem;
+    padding: 1rem 1.1rem;
+    border-bottom: 1px solid var(--crm-border);
+    background: var(--crm-panel-elevated);
+    border-radius: 14px 14px 0 0;
+}
+
+.pos-customers-admin .crm-toolbar .form-control,
+.pos-customers-admin .crm-toolbar .form-select,
+.pos-customers-admin .crm-detail .form-control {
+    background: #0f141c;
+    border-color: var(--crm-border);
+    color: var(--crm-text);
+    min-height: 40px;
+}
+
+.pos-customers-admin input[type="date"],
+.pos-customers-admin input[type="number"],
+.pos-customers-admin input[type="search"] {
+    color-scheme: dark;
+}
+
+.pos-customers-admin .crm-toolbar .form-control::placeholder,
+.pos-customers-admin .crm-detail .form-control::placeholder {
+    color: #64748b;
+    opacity: 1;
+}
+
+.pos-customers-admin .crm-toolbar .form-control:focus,
+.pos-customers-admin .crm-toolbar .form-select:focus,
+.pos-customers-admin .crm-detail .form-control:focus {
+    background: #121821 !important;
+    border-color: var(--crm-accent) !important;
+    color: var(--crm-text) !important;
+    box-shadow: 0 0 0 0.2rem rgba(240, 168, 48, 0.18) !important;
+    outline: none;
+}
+
+.pos-customers-admin .crm-toolbar .btn-warning,
+.pos-customers-admin .crm-detail .btn-warning {
+    background: var(--crm-accent);
+    border-color: #d4921f;
+    color: #1a1205;
+    font-weight: 600;
+    min-height: 40px;
+    padding-inline: 1.1rem;
+}
+
+.pos-customers-admin .crm-toolbar .btn-warning:hover,
+.pos-customers-admin .crm-detail .btn-warning:hover {
+    background: #f5b942;
+    border-color: #e8a020;
+    color: #1a1205;
+}
+
+.pos-customers-admin .table-responsive {
+    border-radius: 0 0 14px 14px;
+    overflow: hidden;
+}
+
+.pos-customers-admin .crm-table {
+    width: 100%;
+    color: var(--crm-text) !important;
+    margin-bottom: 0;
+    background: transparent;
+}
+
+.pos-customers-admin .crm-table thead th {
+    background: #1c2430;
+    color: #e2e8f0 !important;
+    border-color: var(--crm-border) !important;
+    padding: 0.85rem 0.9rem;
+    font-size: 0.82rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+}
+
+.pos-customers-admin .crm-table tbody td {
+    color: #e2e8f0 !important;
+    border-color: var(--crm-border) !important;
+    padding: 0.8rem 0.9rem;
+    vertical-align: middle;
+    font-size: 0.92rem;
+}
+
+.pos-customers-admin .crm-table tbody tr {
+    cursor: pointer;
+    background: #121820;
+    transition: background 0.15s ease;
+}
+
+.pos-customers-admin .crm-table tbody tr:nth-child(even) {
+    background: #151b24;
+}
+
+.pos-customers-admin .crm-table tbody tr:hover {
+    background: var(--crm-accent-soft) !important;
+}
+
+.pos-customers-admin .crm-table tbody tr:hover td {
+    color: #f8fafc !important;
+}
+
+.pos-customers-admin .crm-table tbody td:first-child {
+    font-weight: 600;
+    color: #f8fafc !important;
+}
+
+.pos-customers-admin .crm-table .text-center.text-muted,
+.pos-customers-admin .crm-table .crm-empty-state {
+    color: var(--crm-muted) !important;
+    padding: 2rem 1rem !important;
+}
+
+.pos-customers-admin .crm-detail {
+    margin-top: 1rem;
+    padding: 1.25rem;
+}
+
+.pos-customers-admin .crm-detail h2,
+.pos-customers-admin .crm-detail h3 {
+    color: var(--crm-text);
+}
+
+.pos-customers-admin .crm-detail p,
+.pos-customers-admin .crm-detail strong {
+    color: var(--crm-text);
+}
+
+.pos-customers-admin .crm-detail .border.rounded {
+    background: var(--crm-panel-elevated);
+    border-color: var(--crm-border) !important;
+}
+
+.pos-customers-admin .crm-detail .btn-outline-secondary {
+    color: #cbd5e1;
+    border-color: #475569;
+}
+
+.pos-customers-admin .crm-detail .btn-outline-secondary:hover {
+    background: #334155;
+    color: #f8fafc;
+}
+
+.pos-customers-admin .crm-detail .btn-outline-danger {
+    color: #fca5a5;
+    border-color: #7f1d1d;
+}
+
+.pos-customers-admin .crm-detail .btn-outline-danger:hover {
+    background: rgba(239, 68, 68, 0.15);
+    color: #fecaca;
+}
+
+.pos-customers-admin .crm-detail .btn-outline-warning {
+    color: var(--crm-accent);
+    border-color: rgba(240, 168, 48, 0.45);
+}
+
+.pos-customers-admin .crm-detail-grid {
+    display: grid;
+    grid-template-columns: 1fr 1.4fr;
+    gap: 1rem;
+}
+
+@media (max-width: 991.98px) {
+    .pos-customers-admin .crm-kpis {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .pos-customers-admin .crm-toolbar,
+    .pos-customers-admin .crm-detail-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+@media (max-width: 575.98px) {
+    .pos-customers-admin .crm-kpis {
+        grid-template-columns: 1fr;
+    }
+
+    .pos-customers-admin .crm-wrap {
+        padding: 1rem 0.85rem 1.5rem;
+    }
 }

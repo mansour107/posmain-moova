@@ -107,6 +107,7 @@ if (!function_exists('auth_guard_permission_map')) {
             'delivery.zones.manage' => ['edit_sales', 'edit_items', 'add_items'],
             'system.health.view' => ['sid_reports', 'sid_accounts'],
             'system.tools.run' => ['__admin_only'],
+            'customers.manage' => ['__admin_only'],
         ];
     }
 }

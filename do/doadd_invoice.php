@@ -1,6 +1,8 @@
 <?php
 require_once __DIR__ . '/../includes/production_guard.php';
 production_guard_deny_debug_request('do/doadd_invoice.php');
+require_once __DIR__ . '/../includes/pos_order_api_router_guard.php';
+pos_order_api_router_guard_direct_access('do/doadd_invoice.php');
 
 require_once __DIR__ . '/../includes/session_bootstrap.php';
 include('../includes/connect.php');
@@ -182,7 +184,7 @@ if ($is_free_table_only) {
 $delivery_name = '';
 $delivery_phone = '';
 $delivery_address = '';
-$delivery_client_id = 0;
+$pos_customer_id = isset($_POST['pos_customer_id']) ? intval($_POST['pos_customer_id']) : 0;
 $delivery_zone_name = '';
 $delivery_fee = 0.0;
 
@@ -190,7 +192,6 @@ if ($order_type_db === 'delivery') { // دليفري
     $delivery_name = isset($_POST['delivery_customer_name']) ? htmlspecialchars(trim($_POST['delivery_customer_name']), ENT_QUOTES, 'UTF-8') : '';
     $delivery_phone = isset($_POST['delivery_customer_phone']) ? htmlspecialchars(trim($_POST['delivery_customer_phone']), ENT_QUOTES, 'UTF-8') : '';
     $delivery_address = isset($_POST['delivery_customer_address']) ? htmlspecialchars(trim($_POST['delivery_customer_address']), ENT_QUOTES, 'UTF-8') : '';
-    $delivery_client_id = isset($_POST['delivery_client_id']) ? intval($_POST['delivery_client_id']) : 0;
 
     require_once __DIR__ . '/../classes/Pos/Service/DeliveryZoneService.php';
     $zoneResolved = (new DeliveryZoneService())->resolvePostedZone($conn, $_POST);
@@ -483,7 +484,7 @@ if ($route_delivery_service) {
         $deliveryRequest['delivery_customer_name'] = $delivery_name;
         $deliveryRequest['delivery_customer_phone'] = $delivery_phone;
         $deliveryRequest['delivery_customer_address'] = $delivery_address;
-        $deliveryRequest['delivery_client_id'] = $delivery_client_id;
+        $deliveryRequest['pos_customer_id'] = $pos_customer_id;
         $deliveryRequest['delivery_zone_name'] = $delivery_zone_name;
         $deliveryRequest['delivery_fee'] = $delivery_fee;
         $deliveryRequest['submit'] = $submit;
@@ -537,6 +538,7 @@ if ($route_takeaway_service) {
         $takeawayRequest['jal_name'] = $jal_name;
         $takeawayRequest['jal_notes'] = $jal_notes;
         $takeawayRequest['jal_amount'] = $jal_amount;
+        $takeawayRequest['pos_customer_id'] = $pos_customer_id;
 
         $mutationService = new PosOrderMutationService();
         $serviceResult = $mutationService->createTakeawayOrder($conn, $takeawayRequest, [
@@ -558,6 +560,16 @@ if ($route_takeaway_service) {
             'invoice_takeaway_route'
         );
     }
+}
+
+require_once('../includes/pos_cashier_table_service_route.php');
+if (posmain_should_route_cashier_table_save([
+    'pro_tybe' => (int) $pro_tybe,
+    'order_type_db' => (string) $order_type_db,
+    'is_save_only' => $is_save_only,
+    'table_id' => (int) $table_id,
+])) {
+    posmain_route_cashier_table_save($conn, $_POST, (int) $usid);
 }
 
 function nextLegacyInvoiceProId(mysqli $conn, DocumentCounterService $counterService, int $invoiceType): int
@@ -1637,6 +1649,28 @@ try {
                 'source_system' => $is_split_line_payment ? 'pos_cashier_split_payment' : 'pos_cashier',
                 'active_order_id' => $activeOrderId,
             ]);
+        }
+    }
+
+    if ((int) $pro_tybe === INVOICE_TYPES['POS'] && (int) $last_op > 0) {
+        require_once __DIR__ . '/../includes/pos_customer_order_hook.php';
+        posmain_apply_crm_order_side_effects(
+            $conn,
+            (int) $last_op,
+            $_POST,
+            (string) $order_type_db,
+            (string) $payment_status_db,
+            (float) $statusPaidAmount
+        );
+        if ($is_split_line_payment && !empty($split_receipt_order_id)) {
+            posmain_apply_crm_order_side_effects(
+                $conn,
+                (int) $split_receipt_order_id,
+                $_POST,
+                'table',
+                'paid',
+                (float) ($splitPaidAmount ?? 0)
+            );
         }
     }
 

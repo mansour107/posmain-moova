@@ -17,6 +17,7 @@ class POSOfflineAdapter {
         this.loadOfflineData();
         this.setupEventListeners();
         this.interceptAjaxCalls();
+        this.interceptFetchCalls();
         this.cacheCurrentItems();
     }
 
@@ -133,6 +134,62 @@ class POSOfflineAdapter {
         };
     }
 
+    interceptFetchCalls() {
+        if (!window.fetch || window.__posOfflineFetchWrapped) {
+            return;
+        }
+
+        const self = this;
+        const originalFetch = window.fetch.bind(window);
+        window.__posOfflineFetchWrapped = true;
+
+        window.fetch = function(input, init) {
+            const url = typeof input === 'string' ? input : (input && input.url ? input.url : '');
+            const isPosOrderApi = url.indexOf('api/pos/index.php') !== -1;
+            const method = String((init && init.method) || 'GET').toUpperCase();
+
+            if (!self.isOnline && isPosOrderApi && method === 'POST') {
+                return self.queueOfflineOrderFetch(url, init || {});
+            }
+
+            return originalFetch(input, init);
+        };
+    }
+
+    queueOfflineOrderFetch(url, init) {
+        let payload = {};
+        try {
+            payload = init.body ? JSON.parse(init.body) : {};
+        } catch (error) {
+            payload = {};
+        }
+
+        if (!payload.idempotency_key) {
+            payload.idempotency_key = 'offline:' + Date.now().toString(36) + ':' + Math.random().toString(36).slice(2);
+        }
+
+        const queued = {
+            url: url,
+            payload: payload,
+            queued_at: new Date().toISOString(),
+            status: 'queued'
+        };
+        this.offlineData.orders.push(queued);
+        this.saveOfflineData();
+        this.showOfflineNotification('تم حفظ الطلب محلياً وسيتم إرساله عند عودة الاتصال');
+
+        return Promise.resolve(new Response(JSON.stringify({
+            success: true,
+            code: 'OFFLINE_QUEUED',
+            message: 'تم حفظ الطلب محلياً',
+            request_id: payload.idempotency_key,
+            offline_queued: true
+        }), {
+            status: 202,
+            headers: { 'Content-Type': 'application/json' }
+        }));
+    }
+
     normalizeAjaxOptions(options, ajaxSettings) {
         if (typeof options === 'string') {
             return Object.assign({ url: options, method: 'GET' }, ajaxSettings || {});
@@ -189,9 +246,9 @@ class POSOfflineAdapter {
     handleOfflineRequest(options) {
         const deferred = $.Deferred();
         
-        if (options.url && options.url.includes('search_customer.php')) {
+        if (options.url && options.url.includes('pos_customer_search.php')) {
             this.handleCustomerSearch(options, deferred);
-        } else if (options.url && options.url.includes('doadd_invoice.php')) {
+        } else if (options.url && (options.url.includes('doadd_invoice.php') || options.url.includes('api/pos/index.php'))) {
             this.handleOrderSave(options, deferred);
         } else if (options.url && options.url.includes('get_tables.php')) {
             this.handleTablesRequest(deferred);
@@ -208,18 +265,28 @@ class POSOfflineAdapter {
     }
 
     handleCustomerSearch(options, deferred) {
-        const phone = options.data.phone;
+        const phone = options.data && (options.data.phone || options.data.q);
         const customer = this.offlineData.customers.find(c => c.phone.includes(phone));
         
         setTimeout(() => {
             if (customer) {
                 deferred.resolve(JSON.stringify({
+                    success: true,
+                    exact: {
+                        id: customer.id || 0,
+                        display_name: customer.name,
+                        primary_phone: customer.phone,
+                        stats: { orders_count: 0, lifetime_paid: 0 },
+                    },
                     found: true,
                     name: customer.name,
                     address: customer.address
                 }));
             } else {
                 deferred.resolve(JSON.stringify({
+                    success: true,
+                    exact: null,
+                    suggestions: [],
                     found: false
                 }));
             }
@@ -234,7 +301,7 @@ class POSOfflineAdapter {
             timestamp: new Date().toISOString(),
             data: options.data,
             method: options.method || 'POST',
-            url: options.url || 'do/doadd_invoice.php',
+            url: options.url || 'api/pos/index.php?route=orders.takeaway',
             synced: false
         };
         
@@ -326,63 +393,74 @@ class POSOfflineAdapter {
     }
 
     async syncPendingData() {
-        const pendingOrders = this.offlineData.orders.filter(order => !order.synced);
-        
+        const pendingOrders = this.offlineData.orders.filter(function(order) {
+            return order && !order.synced && order.status !== 'synced';
+        });
+
         if (pendingOrders.length === 0) {
             console.log('✅ No pending orders to sync');
             return;
         }
-        
+
         console.log(`🔄 Starting sync of ${pendingOrders.length} pending orders...`);
         this.showOfflineNotification(`جاري مزامنة ${pendingOrders.length} طلب معلق...`);
-        
+
         let syncedCount = 0;
         let failedCount = 0;
-        
+
         for (const order of pendingOrders) {
             try {
-                console.log(`📤 Syncing order ${order.id}...`);
-                console.log('📋 Order data:', order.data);
-                
-                // إرسال مباشر بدون اعتراض
-                console.log('📤 Syncing order directly...');
-                const response = await new Promise((resolve, reject) => {
-                    $.ajax({
-                        url: order.url || 'do/doadd_invoice.php',
-                        method: order.method || 'POST',
-                        data: order.data,
-                        timeout: 15000,
-                        success: resolve,
-                        error: reject
+                if (order.payload && order.url) {
+                    const response = await window.fetch(order.url, {
+                        method: 'POST',
+                        credentials: 'same-origin',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Accept': 'application/json',
+                            'X-Requested-With': 'XMLHttpRequest'
+                        },
+                        body: JSON.stringify(order.payload)
                     });
-                });
-                
-                console.log('📝 Response:', response);
-                
+                    const body = await response.json();
+                    if (!response.ok || body.success === false) {
+                        throw new Error(body.message || 'sync_failed');
+                    }
+                } else {
+                    const response = await new Promise((resolve, reject) => {
+                        $.ajax({
+                            url: order.url || 'api/pos/index.php?route=orders.takeaway',
+                            method: order.method || 'POST',
+                            data: order.data,
+                            timeout: 15000,
+                            success: resolve,
+                            error: reject
+                        });
+                    });
+                    console.log('📝 Response:', response);
+                }
+
                 order.synced = true;
+                order.status = 'synced';
                 order.syncedAt = new Date().toISOString();
                 syncedCount++;
-                
-                console.log(`✅ Order ${order.id} synced successfully`);
-                
             } catch (error) {
-                console.error(`❌ Failed to sync order ${order.id}:`, error);
-                order.syncError = error.responseText || error.statusText || error.message || 'Unknown error';
+                console.error('❌ Failed to sync queued order:', error);
+                order.syncError = error.message || 'Unknown error';
                 order.lastSyncAttempt = new Date().toISOString();
                 failedCount++;
             }
         }
-        
+
         this.saveOfflineData();
-        
+
         if (syncedCount > 0) {
             this.showOfflineNotification(`✅ تم مزامنة ${syncedCount} طلب بنجاح!`);
         }
-        
+
         if (failedCount > 0) {
             this.showOfflineNotification(`⚠️ فشل في مزامنة ${failedCount} طلب - سيتم إعادة المحاولة`);
         }
-        
+
         console.log(`📊 Sync completed: ${syncedCount} success, ${failedCount} failed`);
     }
 

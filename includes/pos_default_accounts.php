@@ -757,11 +757,14 @@ if (!function_exists('posmain_resolve_pos_invoice_accounts')) {
             $fundId = (int) ($defaults['fund_id'] ?? 0);
         }
 
-        $clientId = posmain_resolve_pos_customer_id(
-            $conn,
-            (int) ($posted['acc2_id'] ?? 0),
-            $settings
-        );
+        $clientId = (int) ($defaults['client_id'] ?? 0);
+        if ($clientId <= 0) {
+            $clientId = posmain_resolve_pos_customer_id(
+                $conn,
+                (int) ($posted['acc2_id'] ?? 0),
+                $settings
+            );
+        }
 
         $paymentFundId = (int) ($posted['payment_fund_id'] ?? 0);
         if ($paymentFundId <= 0

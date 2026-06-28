@@ -64,17 +64,3 @@ function updateTableStatus(tableId, isOccupied) {
     });
 }
 
-// Fullscreen toggle
-$(document).ready(function() {
-    $('#fullscreenBtn').on('click', function() {
-        if (!document.fullscreenElement) {
-            document.documentElement.requestFullscreen().catch(err => {
-                console.error('Error attempting to enable fullscreen:', err);
-            });
-        } else {
-            if (document.exitFullscreen) {
-                document.exitFullscreen();
-            }
-        }
-    });
-});

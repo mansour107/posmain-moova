@@ -19,6 +19,9 @@ $pageExpectations = [
         "csrf_input('settings_write')",
         "verify_csrf_from_post_or_header('settings_gate')",
     ],
+    'pos_customers.php' => [
+        "require_admin_or_permission('customers.manage', \$conn)",
+    ],
 ];
 
 foreach ($pageExpectations as $path => $snippets) {

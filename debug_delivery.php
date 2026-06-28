@@ -63,8 +63,9 @@ header('Content-Type: text/html; charset=utf-8');
         echo "<div class='card-body'>";
         
         $files_to_check = [
-            'do/save_customer.php',
-            'do/search_customer.php'
+            'ajax/pos_customer_search.php',
+            'ajax/pos_customer_save.php',
+            'classes/Pos/Service/PosCustomerService.php',
         ];
         
         foreach ($files_to_check as $file) {
@@ -83,25 +84,27 @@ header('Content-Type: text/html; charset=utf-8');
         echo "<div class='card-body'>";
         ?>
         
+        <p class="text-muted small">اختبار CRM يتطلب تسجيل الدخول — استخدم <a href="pos_customers.php">شاشة العملاء</a> أو نقطة البيع.</p>
         <div class="row">
-            <div class="col-md-6">
-                <h6>اختبار البحث عن عميل:</h6>
-                <div class="input-group mb-3">
-                    <input type="text" class="form-control" id="test_phone" placeholder="رقم الهاتف">
-                    <button class="btn btn-primary" onclick="testSearch()">بحث</button>
-                </div>
-                <div id="search_result"></div>
-            </div>
-            
-            <div class="col-md-6">
-                <h6>اختبار حفظ عميل جديد:</h6>
-                <div class="mb-2">
-                    <input type="text" class="form-control mb-2" id="test_phone_save" placeholder="رقم الهاتف">
-                    <input type="text" class="form-control mb-2" id="test_name" placeholder="اسم العميل">
-                    <textarea class="form-control mb-2" id="test_address" placeholder="العنوان"></textarea>
-                    <button class="btn btn-success" onclick="testSave()">حفظ</button>
-                </div>
-                <div id="save_result"></div>
+            <div class="col-md-12">
+                <h6>اختبار مباشر عبر الخدمة (بدون جلسة):</h6>
+                <?php
+                try {
+                    require_once __DIR__ . '/includes/db_bootstrap.php';
+                    require_once __DIR__ . '/classes/Pos/Service/PosCustomerService.php';
+                    require_once __DIR__ . '/includes/pos_customer_bootstrap.php';
+                    $diagConn = posmain_db_connect();
+                    posmain_ensure_pos_customer_schema($diagConn);
+                    $diagService = new PosCustomerService();
+                    $diagSearch = $diagService->searchByPhone($diagConn, '01000000000');
+                    echo '<div class="alert alert-info">PosCustomerService::searchByPhone — '
+                        . (empty($diagSearch['exact']) ? 'لا نتائج (متوقع لرقم وهمي)' : 'وجد عميل')
+                        . '</div>';
+                    $diagConn->close();
+                } catch (Throwable $e) {
+                    echo '<div class="alert alert-danger">CRM: ' . htmlspecialchars($e->getMessage()) . '</div>';
+                }
+                ?>
             </div>
         </div>
         
@@ -119,63 +122,5 @@ header('Content-Type: text/html; charset=utf-8');
             </div>
         </div>
     </div>
-
-    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
-    <script>
-        function testSearch() {
-            const phone = $('#test_phone').val();
-            if (!phone) {
-                alert('يرجى إدخال رقم الهاتف');
-                return;
-            }
-            
-            $('#search_result').html('<div class="spinner-border spinner-border-sm"></div> جاري البحث...');
-            
-            $.ajax({
-                url: 'do/search_customer.php',
-                method: 'POST',
-                data: { phone: phone },
-                success: function(data) {
-                    console.log('Search response:', data);
-                    $('#search_result').html('<div class="alert alert-info"><strong>النتيجة:</strong><br><pre>' + data + '</pre></div>');
-                },
-                error: function(xhr, status, error) {
-                    console.error('Search error:', error);
-                    $('#search_result').html('<div class="alert alert-danger">خطأ: ' + error + '</div>');
-                }
-            });
-        }
-        
-        function testSave() {
-            const phone = $('#test_phone_save').val();
-            const name = $('#test_name').val();
-            const address = $('#test_address').val();
-            
-            if (!phone || !name || !address) {
-                alert('يرجى ملء جميع الحقول');
-                return;
-            }
-            
-            $('#save_result').html('<div class="spinner-border spinner-border-sm"></div> جاري الحفظ...');
-            
-            $.ajax({
-                url: 'do/save_customer.php',
-                method: 'POST',
-                data: {
-                    phone: phone,
-                    name: name,
-                    address: address
-                },
-                success: function(data) {
-                    console.log('Save response:', data);
-                    $('#save_result').html('<div class="alert alert-info"><strong>النتيجة:</strong><br><pre>' + data + '</pre></div>');
-                },
-                error: function(xhr, status, error) {
-                    console.error('Save error:', error);
-                    $('#save_result').html('<div class="alert alert-danger">خطأ: ' + error + '</div>');
-                }
-            });
-        }
-    </script>
 </body>
 </html>

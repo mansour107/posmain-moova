@@ -474,4 +474,5 @@ $posmainPosDefaults = posmain_resolve_pos_defaults($conn, is_array($rowstg ?? nu
     });
 })(jQuery);
 </script>
+<script src="js/pos_order_api.js?v=<?= (int) (@filemtime(__DIR__ . '/../js/pos_order_api.js') ?: 1) ?>"></script>
 <script src="js/pos_supermarket.js?v=<?= time() ?>"></script>

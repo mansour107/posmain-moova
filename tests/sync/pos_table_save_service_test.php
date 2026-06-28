@@ -26,8 +26,16 @@ try {
     posTableSaveCreateSchema($conn);
 
     $service = new PosOrderMutationService();
-    $conn->query("INSERT INTO settings (id, def_pos_client, isdeleted) VALUES (1, 501, 0)");
-    $conn->query("INSERT INTO acc_head (id, code, isdeleted) VALUES (501, '122001', 0)");
+    $conn->query("INSERT INTO settings (id, def_pos_client, def_pos_store, def_pos_employee, def_pos_fund, isdeleted) VALUES (1, 501, 3, 4, 51, 0)");
+    $conn->query("
+        INSERT INTO acc_head (id, code, aname, parent_id, is_basic, is_stock, is_fund, isdeleted) VALUES
+            (3, '123001', 'Main store', 0, 0, 1, 0, 0),
+            (4, '213001', 'Employee 1', 35, 0, 0, 0, 0),
+            (35, '213', 'Employees', 0, 1, 0, 0, 0),
+            (51, '121001', 'Default fund', 0, 0, 0, 1, 0),
+            (501, '122001', 'Default client', 0, 0, 0, 0, 0),
+            (91, '3111', 'Sales', 0, 0, 0, 0, 0)
+    ");
     $conn->query("
         INSERT INTO myitems (id, iname, item_type, track_stock, isdeleted) VALUES
             (10, 'Table item 10', 'sellable', 1, 0),
@@ -149,6 +157,31 @@ try {
     posTableSaveAssert((int) $conn->query("SELECT table_case FROM tables WHERE id = 3")->fetch_assoc()['table_case'] === 0, 'paid updated order should free table');
     posTableSaveAssert((int) $conn->query("SELECT COUNT(*) AS c FROM inventory_movements WHERE order_id = 300 AND movement_type = 'sale_direct'")->fetch_assoc()['c'] === 1, 'paid update should shadow-add replacement table line');
 
+    $conn->query("INSERT INTO pos_customers (id, display_name, notes, isdeleted) VALUES (1, 'CRM Customer', '', 0)");
+    $conn->query("INSERT INTO pos_customer_phones (id, customer_id, phone_normalized, phone_display, is_primary, isdeleted) VALUES (1, 1, '201001234567', '01001234567', 1, 0)");
+    $conn->query("UPDATE pos_customers SET primary_phone_id = 1 WHERE id = 1");
+
+    $customerSave = $service->saveTableOrder($conn, [
+        'table_id' => 3,
+        'order_date' => '2026-05-12',
+        'store_id' => 3,
+        'emp_id' => 4,
+        'fund_id' => 51,
+        'items' => [
+            ['id' => 10, 'qty' => 1, 'price' => 15],
+        ],
+        'total' => 15,
+        'discount' => 0,
+        'net' => 15,
+        'pos_customer_id' => 1,
+    ], ['user_id' => 7]);
+    $customerOrderId = (int) ($customerSave['data']['order_id'] ?? 0);
+    posTableSaveAssert($customerOrderId > 0, 'table save with CRM customer should create order');
+    $fulfillment = $conn->query("SELECT pos_customer_id, customer_name, customer_phone FROM order_fulfillment WHERE order_id = {$customerOrderId} LIMIT 1")->fetch_assoc();
+    posTableSaveAssert(is_array($fulfillment), 'CRM table save should write order_fulfillment row');
+    posTableSaveAssert((int) ($fulfillment['pos_customer_id'] ?? 0) === 1, 'order_fulfillment should store pos_customer_id');
+    posTableSaveAssert((string) ($fulfillment['customer_name'] ?? '') === 'CRM Customer', 'order_fulfillment should snapshot customer name');
+
     echo "pos-table-save-service-ok db={$db}\n";
 } finally {
     $conn->query("DROP DATABASE IF EXISTS `{$db}`");
@@ -161,6 +194,9 @@ function posTableSaveCreateSchema(mysqli $conn): void
         CREATE TABLE settings (
             id INT NOT NULL PRIMARY KEY,
             def_pos_client INT NULL,
+            def_pos_store INT NULL,
+            def_pos_employee INT NULL,
+            def_pos_fund INT NULL,
             isdeleted TINYINT(1) NOT NULL DEFAULT 0
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
     ");
@@ -168,6 +204,11 @@ function posTableSaveCreateSchema(mysqli $conn): void
         CREATE TABLE acc_head (
             id INT NOT NULL PRIMARY KEY,
             code VARCHAR(40) NULL,
+            aname VARCHAR(255) NULL,
+            parent_id INT NULL,
+            is_basic TINYINT(1) NOT NULL DEFAULT 0,
+            is_stock TINYINT(1) NOT NULL DEFAULT 0,
+            is_fund TINYINT(1) NOT NULL DEFAULT 0,
             isdeleted TINYINT(1) NOT NULL DEFAULT 0
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
     ");

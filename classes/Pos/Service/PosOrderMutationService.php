@@ -18,9 +18,13 @@ require_once __DIR__ . '/../../Recipe/RecipeSettingsService.php';
 require_once __DIR__ . '/../../Recipe/RecipeAuditService.php';
 require_once __DIR__ . '/../../Recipe/DTO/RecipeActorContext.php';
 require_once __DIR__ . '/../../Inventory/InventoryInvoiceBridge.php';
-require_once __DIR__ . '/DeliveryClientService.php';
+require_once __DIR__ . '/PosCustomerOrderLinkService.php';
+require_once __DIR__ . '/PosCustomerOrderSideEffects.php';
+require_once __DIR__ . '/PosCustomerService.php';
 require_once __DIR__ . '/DeliveryZoneService.php';
 require_once __DIR__ . '/OrderFulfillmentService.php';
+require_once __DIR__ . '/SideEffectPolicy.php';
+require_once __DIR__ . '/../../../includes/pos_user_context.php';
 require_once __DIR__ . '/../../PosOrderService.php';
 require_once __DIR__ . '/../../../includes/pos_default_accounts.php';
 
@@ -34,9 +38,12 @@ class PosOrderMutationService
     const SCOPE_ORDER_VOID = 'pos.order.void';
     const SCOPE_TAKEAWAY_CREATE = 'pos.order.create.takeaway';
     const SCOPE_DELIVERY_CREATE = 'pos.order.create.delivery';
+    const SCOPE_ORDER_UPDATE = 'pos.order.update';
+    const SCOPE_TABLE_FREE = 'pos.table.free';
     const SCOPE_DELIVERY_CANCEL = 'pos.order.cancel.delivery';
     const SCOPE_MOOVA_CONFIRM = 'moova.order.confirm';
     const SCOPE_MOOVA_CHANGE = 'moova.order.change';
+    const SCOPE_COFE_CREATE = 'pos.integration.cofe.create';
     const PAYMENT_ROUNDING_TOLERANCE = 0.01;
 
     private $paymentService;
@@ -79,6 +86,10 @@ class PosOrderMutationService
             $this->recordRecipeOrderPaid($conn, $orderId, $lines, 'table', 'dine_in', $request, $context);
         }
         if ($orderId > 0) {
+            $this->customerSideEffects()->afterOrderSaved($conn, $orderId, $request, 'table', [
+                'paid_amount' => (float) ($result['data']['paid_amount'] ?? 0),
+                'payment_status' => (string) ($result['data']['payment_status'] ?? 'unpaid'),
+            ]);
             $this->recordOrderEvent($conn, $orderId, 'order.payment_recorded', $context['event_source'] ?? 'pos_table_payment', $context, [
                 'payment_status' => $result['data']['payment_status'] ?? null,
                 'order_status' => $result['data']['order_status'] ?? null,
@@ -202,7 +213,7 @@ class PosOrderMutationService
                 'customer_name' => $fulfillment['customer_name'],
                 'customer_phone' => $fulfillment['customer_phone'],
                 'customer_address' => $fulfillment['customer_address'],
-                'delivery_client_id' => $fulfillment['delivery_client_id'] ?? null,
+                'pos_customer_id' => $fulfillment['pos_customer_id'] ?? null,
                 'delivery_zone' => $fulfillment['delivery_zone'],
                 'delivery_fee' => $fulfillment['delivery_fee'],
                 'delivery_status' => 'cancelled',
@@ -443,6 +454,10 @@ class PosOrderMutationService
 
     public function createTakeawayOrder(mysqli $conn, array $request, array $context = []): array
     {
+        if (!empty($context['skip_idempotency'])) {
+            return $this->createTakeawayOrderInsideTransaction($conn, $request, $context);
+        }
+
         $ownsTransaction = empty($context['in_transaction']) && empty($context['transaction_started']);
         if ($ownsTransaction) {
             $conn->begin_transaction();
@@ -478,6 +493,10 @@ class PosOrderMutationService
 
     public function createDeliveryOrder(mysqli $conn, array $request, array $context = []): array
     {
+        if (!empty($context['skip_idempotency'])) {
+            return $this->createDeliveryOrderInsideTransaction($conn, $request, $context);
+        }
+
         $ownsTransaction = empty($context['in_transaction']) && empty($context['transaction_started']);
         if ($ownsTransaction) {
             $conn->begin_transaction();
@@ -497,6 +516,84 @@ class PosOrderMutationService
 
             $result = $this->createDeliveryOrderInsideTransaction($conn, $request, $context);
             $this->idempotencyService->complete($conn, self::SCOPE_DELIVERY_CREATE, $idempotency['key'], $idempotency['hash'], $result);
+            if ($ownsTransaction) {
+                $conn->commit();
+            }
+
+            return $result;
+        } catch (Throwable $exception) {
+            if ($ownsTransaction) {
+                $conn->rollback();
+            }
+
+            throw $exception;
+        }
+    }
+
+    public function updateCashierOrder(mysqli $conn, array $request, array $context = []): array
+    {
+        if (!empty($context['skip_idempotency'])) {
+            return $this->updateCashierOrderInsideTransaction($conn, $request, $context);
+        }
+
+        $ownsTransaction = empty($context['in_transaction']) && empty($context['transaction_started']);
+        if ($ownsTransaction) {
+            $conn->begin_transaction();
+        }
+
+        try {
+            $idempotency = $this->beginIdempotency($conn, self::SCOPE_ORDER_UPDATE, $request, $context);
+            if ($idempotency['status'] === 'completed') {
+                if ($ownsTransaction) {
+                    $conn->commit();
+                }
+
+                $response = is_array($idempotency['response'] ?? null) ? $idempotency['response'] : [];
+                $response['idempotency_replayed'] = true;
+                return $response;
+            }
+
+            $result = $this->updateCashierOrderInsideTransaction($conn, $request, $context);
+            $this->idempotencyService->complete($conn, self::SCOPE_ORDER_UPDATE, $idempotency['key'], $idempotency['hash'], $result);
+            if ($ownsTransaction) {
+                $conn->commit();
+            }
+
+            return $result;
+        } catch (Throwable $exception) {
+            if ($ownsTransaction) {
+                $conn->rollback();
+            }
+
+            throw $exception;
+        }
+    }
+
+    public function freeTable(mysqli $conn, array $request, array $context = []): array
+    {
+        if (!empty($context['skip_idempotency'])) {
+            return $this->freeTableInsideTransaction($conn, $request, $context);
+        }
+
+        $ownsTransaction = empty($context['in_transaction']) && empty($context['transaction_started']);
+        if ($ownsTransaction) {
+            $conn->begin_transaction();
+        }
+
+        try {
+            $idempotency = $this->beginIdempotency($conn, self::SCOPE_TABLE_FREE, $request, $context);
+            if ($idempotency['status'] === 'completed') {
+                if ($ownsTransaction) {
+                    $conn->commit();
+                }
+
+                $response = is_array($idempotency['response'] ?? null) ? $idempotency['response'] : [];
+                $response['idempotency_replayed'] = true;
+                return $response;
+            }
+
+            $result = $this->freeTableInsideTransaction($conn, $request, $context);
+            $this->idempotencyService->complete($conn, self::SCOPE_TABLE_FREE, $idempotency['key'], $idempotency['hash'], $result);
             if ($ownsTransaction) {
                 $conn->commit();
             }
@@ -574,6 +671,266 @@ class PosOrderMutationService
             'status' => $begin['status'],
             'response' => $begin['response'] ?? null,
         ];
+    }
+
+    private function freeTableInsideTransaction(mysqli $conn, array $request, array $context): array
+    {
+        $tableId = $this->requiredPositiveInt($request, 'table_id', 'الرجاء اختيار طاولة');
+        if (!$this->tableOrderService->setTableFreeIfNoActiveOrder($conn, $tableId)) {
+            throw new InvalidArgumentException('لا يمكن إفراغ الطاولة لأن عليها طلب مفتوح');
+        }
+
+        if (!array_key_exists('record_outbox', $context) || $context['record_outbox']) {
+            try {
+                $syncOutbox = new SyncOutboxEventService();
+                $syncOutbox->recordTableSnapshot($conn, $tableId, [
+                    'event_type' => 'table.updated',
+                    'source_system' => 'pos_cashier_empty_table',
+                    'active_order_id' => null,
+                ]);
+            } catch (Throwable $exception) {
+                error_log('POS empty table outbox skipped: ' . $exception->getMessage());
+            }
+        }
+
+        return [
+            'success' => true,
+            'code' => 'OK',
+            'message' => 'TABLE_FREED',
+            'data' => [
+                'table_id' => $tableId,
+                'updated_state' => [
+                    'table_id' => $tableId,
+                    'cleared' => true,
+                ],
+            ],
+        ];
+    }
+
+    private function updateCashierOrderInsideTransaction(mysqli $conn, array $request, array $context): array
+    {
+        $orderId = (int) ($request['edit_id'] ?? $request['order_id'] ?? 0);
+        if ($orderId < 1) {
+            throw new InvalidArgumentException('ORDER_ID_REQUIRED');
+        }
+
+        $order = $this->tableOrderService->queryOne($conn, 'SELECT * FROM ot_head WHERE id = ? LIMIT 1', [$orderId]);
+        if (!$order) {
+            throw new InvalidArgumentException('ORDER_NOT_FOUND');
+        }
+
+        $orderType = trim((string) ($order['order_type'] ?? 'takeaway'));
+        if ($orderType === 'table') {
+            throw new InvalidArgumentException('USE_TABLE_SAVE_FOR_TABLE_ORDERS');
+        }
+
+        $request = $this->resolvePosRequestAccounts($conn, $request);
+        $storeId = $this->requiredPositiveInt($request, 'store_id', 'بيانات مطلوبة مفقودة - المخزن');
+        $customerId = $this->requiredPositiveInt($request, 'acc2_id', 'بيانات مطلوبة مفقودة - العميل');
+        $empId = $this->requiredPositiveInt($request, 'emp_id', 'بيانات مطلوبة مفقودة - الموظف');
+        $fundId = $this->requiredPositiveInt($request, 'fund_id', 'بيانات مطلوبة مفقودة - الصندوق');
+        $items = $this->normalizeTakeawayItems($request);
+        $this->assertItemsAvailable($conn, $items, $request, $context);
+        $userId = $this->contextUserId($request, $context);
+        $date = $this->requestDate($request, ['pro_date', 'order_date', 'date'], (string) ($order['pro_date'] ?? date('Y-m-d')));
+        $accrualDate = $this->requestDate($request, ['accural_date', 'accrual_date'], $date);
+        $headTotal = (float) ($request['headtotal'] ?? $request['total'] ?? 0);
+        $headDiscount = (float) ($request['headdisc'] ?? $request['discount'] ?? 0);
+        $this->requireDiscountApprovalIfNeeded($conn, $orderId, $headDiscount, $request, $context);
+        $headPlus = (float) ($request['headplus'] ?? $request['plus'] ?? 0);
+        $headNet = (float) ($request['headnet'] ?? $request['net'] ?? max(0, $headTotal - $headDiscount + $headPlus));
+        if ($orderType === 'delivery') {
+            $deliveryName = trim((string) ($request['delivery_customer_name'] ?? ''));
+            $deliveryPhone = trim((string) ($request['delivery_customer_phone'] ?? ''));
+            $deliveryAddress = trim((string) ($request['delivery_customer_address'] ?? ''));
+            if ($deliveryName === '' || $deliveryPhone === '' || $deliveryAddress === '') {
+                throw new InvalidArgumentException('يجب إدخال بيانات عميل الدليفري');
+            }
+            $posCustomerService = new PosCustomerService();
+            $postedCustomerId = (int) ($request['pos_customer_id'] ?? 0);
+            if ($postedCustomerId > 0 && $posCustomerService->getProfile($conn, $postedCustomerId, false)) {
+                $request['pos_customer_id'] = $postedCustomerId;
+            } else {
+                $zoneId = (int) ($request['delivery_zone_id'] ?? 0);
+                $upserted = $posCustomerService->upsertForDelivery($conn, $deliveryPhone, $deliveryName, $deliveryAddress, $zoneId > 0 ? $zoneId : null);
+                $request['pos_customer_id'] = (int) ($upserted['id'] ?? 0);
+            }
+            $resolvedTotals = $this->resolveDeliveryPostedTotals($conn, $request);
+            $headPlus = (float) $resolvedTotals['headplus'];
+            $headTotal = (float) $resolvedTotals['headtotal'];
+            $headNet = (float) $resolvedTotals['headnet'];
+        }
+        if ($headNet < 0) {
+            throw new InvalidArgumentException('PAYMENT_AMOUNT_INVALID');
+        }
+
+        $paidCash = max(0, (float) ($request['paid_cash'] ?? $request['paid'] ?? 0));
+        $paidBank = max(0, (float) ($request['paid_bank'] ?? 0));
+        $paymentFundId = (int) ($request['payment_fund_id'] ?? $fundId);
+        $paymentBankId = (int) ($request['payment_bank_id'] ?? 0);
+        $payment = $this->calculateTakeawayPayment($headNet, $paidCash, $paidBank);
+        if ($payment['cash'] > 0 && $paymentFundId <= 0) {
+            throw new InvalidArgumentException('PAYMENT_FUND_REQUIRED');
+        }
+        if ($payment['bank'] > 0 && $paymentBankId <= 0) {
+            throw new InvalidArgumentException('PAYMENT_BANK_REQUIRED');
+        }
+
+        $status = $this->paidStatusForNet($headNet, $payment['applied']);
+        $proId = (int) ($order['pro_id'] ?? 0);
+        $channel = $orderType === 'delivery' ? 'delivery' : 'takeaway';
+        $info = $this->tableOrderService->buildInfo($channel, '', (string) ($request['info'] ?? ''));
+        $fatDiscPer = $headTotal > 0 && $headDiscount > 0 ? round($headDiscount / $headTotal * 100, 2) : 0.0;
+        $fatPlusPer = $headTotal > 0 && $headPlus > 0 ? round($headPlus / $headTotal * 100, 2) : 0.0;
+
+        $recipeChannel = $orderType === 'delivery' ? 'delivery' : 'takeaway';
+        $oldRecipeLines = $this->loadRecipeOrderLineContexts($conn, $orderId, 'pos', $recipeChannel, $request, $context);
+        $oldInventoryBridgeLines = $this->loadInventoryInvoiceBridgeLines($conn, $orderId);
+        $this->recordRecipeOrderLinesCancelled($conn, $oldRecipeLines, 'order_updated');
+        $this->recordInventoryInvoiceBridgeReversalLines($conn, $orderId, $oldInventoryBridgeLines, 'order_updated', 'pos', $recipeChannel, $request, $context);
+        $this->clearCashierOrderFinancialLinks($conn, $orderId);
+        $this->tableOrderService->execute($conn, 'DELETE FROM fat_details WHERE fatid = ?', [$orderId]);
+
+        $this->tableOrderService->execute($conn, "
+            UPDATE ot_head SET
+                info = ?, accural_date = ?, pro_serial = ?, store_id = ?, emp_id = ?, emp2_id = ?,
+                acc1 = ?, acc2 = ?, pro_value = ?, fat_total = ?, fat_disc = ?, fat_disc_per = ?,
+                fat_plus = ?, fat_plus_per = ?, fat_net = ?, user = ?, jal_name = ?, jal_notes = ?, jal_amount = ?,
+                order_type = ?, payment_status = ?, invoice_status = ?, order_status = ?,
+                paid_amount = ?, remaining_amount = ?,
+                payment_date = CASE WHEN ? = 'paid' THEN NOW() ELSE NULL END,
+                completed_at = CASE WHEN ? = 'completed' THEN NOW() ELSE NULL END
+            WHERE id = ?
+        ", [
+            $info,
+            $accrualDate,
+            trim((string) ($request['pro_serial'] ?? '')),
+            $storeId,
+            $empId,
+            $empId,
+            $fundId,
+            $customerId,
+            $headTotal,
+            $headTotal,
+            $headDiscount,
+            $fatDiscPer,
+            $headPlus,
+            $fatPlusPer,
+            $headNet,
+            $userId,
+            $this->nullableString($request['jal_name'] ?? null),
+            $this->nullableString($request['jal_notes'] ?? null),
+            (float) ($request['jal_amount'] ?? 0),
+            $channel,
+            $status['payment_status'],
+            $status['invoice_status'],
+            $status['order_status'],
+            $status['paid_amount'],
+            $status['remaining_amount'],
+            $status['payment_status'],
+            $status['order_status'],
+            $orderId,
+        ]);
+
+        $salesJournal = $this->insertTakeawaySalesJournal($conn, $orderId, $proId, $headNet, $date, $customerId, $userId, (int) ($request['sales_account_id'] ?? 0));
+        $receipts = [];
+        if ($payment['cash'] > 0) {
+            $receipts[] = $this->insertTakeawayReceipt($conn, $orderId, $proId, $info, $date, $empId, $paymentFundId, $customerId, $payment['cash'], 'كاش', $userId);
+        }
+        if ($payment['bank'] > 0) {
+            $receipts[] = $this->insertTakeawayReceipt($conn, $orderId, $proId, $info, $date, $empId, $paymentBankId, $customerId, $payment['bank'], 'صرافة', $userId);
+        }
+
+        $lineResult = $this->inventoryMovementService->normalizeInvoiceLines($conn, InventoryMovementService::TYPE_POS, $items, [
+            'store_id' => $storeId,
+        ]);
+        $recipeLines = [];
+        $inventoryBridgeLines = [];
+        foreach ($lineResult['lines'] as $index => $line) {
+            $line['_source_item'] = $items[$index] ?? [];
+            $line['note'] = $this->lineNoteFromItem($line['_source_item']);
+            $recipeLine = $this->insertTakeawayDetailLine($conn, $orderId, $storeId, $line, $context);
+            $recipeLines[] = $recipeLine;
+            $inventoryBridgeLines[] = $this->inventoryBridgeLineFromLegacyLine($line, $recipeLine, $storeId);
+        }
+        $this->recordInventoryInvoiceBridgeLines($conn, $orderId, $inventoryBridgeLines, 'pos', $recipeChannel, $request, $context);
+        $this->recordRecipeOrderLinesAdded($conn, $recipeLines);
+        if ($status['order_status'] === 'completed') {
+            $this->recordRecipeOrderPaid($conn, $orderId, $recipeLines, 'pos', $recipeChannel, $request, $context);
+        }
+        $this->tableOrderService->execute($conn, 'UPDATE ot_head SET profit = ? WHERE id = ?', [
+            (float) $lineResult['totals']['profit'],
+            $orderId,
+        ]);
+
+        $this->customerSideEffects()->afterOrderSaved($conn, $orderId, $request, $channel, [
+            'paid_amount' => (float) $status['paid_amount'],
+            'payment_status' => (string) $status['payment_status'],
+        ]);
+
+        if (!array_key_exists('record_outbox', $context) || $context['record_outbox']) {
+            try {
+                $syncOutbox = new SyncOutboxEventService();
+                $syncOutbox->recordOrderSnapshot($conn, $orderId, [
+                    'event_type' => 'order.updated',
+                    'source_system' => $orderType === 'delivery' ? 'pos_cashier_delivery' : 'pos_cashier',
+                ]);
+            } catch (Throwable $exception) {
+                error_log('POS order update outbox skipped: ' . $exception->getMessage());
+            }
+        }
+
+        $this->recordOrderEvent($conn, $orderId, 'order.updated', $context['event_source'] ?? 'pos_cashier_update', $context, [
+            'order_type' => $channel,
+            'payment_status' => $status['payment_status'],
+            'order_status' => $status['order_status'],
+            'paid_amount' => $status['paid_amount'],
+            'remaining_amount' => $status['remaining_amount'],
+            'line_count' => count($lineResult['lines']),
+        ]);
+
+        return [
+            'success' => true,
+            'code' => 'OK',
+            'message' => 'ORDER_UPDATED',
+            'data' => [
+                'order_id' => $orderId,
+                'pro_id' => $proId,
+                'payment_status' => $status['payment_status'],
+                'invoice_status' => $status['invoice_status'],
+                'order_status' => $status['order_status'],
+                'paid_amount' => $status['paid_amount'],
+                'remaining_amount' => $status['remaining_amount'],
+                'profit' => (float) $lineResult['totals']['profit'],
+                'journal_head_id' => $salesJournal['journal_head_id'],
+                'journal_id' => $salesJournal['journal_id'],
+                'receipt_ids' => array_column($receipts, 'receipt_id'),
+            ],
+        ];
+    }
+
+    private function clearCashierOrderFinancialLinks(mysqli $conn, int $orderId): void
+    {
+        $stmt = $conn->prepare('SELECT id FROM journal_heads WHERE op_id = ?');
+        if (!$stmt) {
+            return;
+        }
+        $stmt->bind_param('i', $orderId);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        $journalIds = [];
+        while ($row = $result->fetch_assoc()) {
+            $journalIds[] = (int) ($row['id'] ?? 0);
+        }
+        $stmt->close();
+
+        foreach ($journalIds as $journalId) {
+            if ($journalId > 0) {
+                $this->tableOrderService->execute($conn, 'DELETE FROM journal_entries WHERE journal_id = ?', [$journalId]);
+            }
+        }
+        $this->tableOrderService->execute($conn, 'DELETE FROM journal_heads WHERE op_id = ?', [$orderId]);
+        $this->tableOrderService->execute($conn, 'DELETE FROM ot_head WHERE op2 = ?', [$orderId]);
     }
 
     private function createTakeawayOrderInsideTransaction(mysqli $conn, array $request, array $context): array
@@ -699,6 +1056,11 @@ class PosOrderMutationService
             $orderId,
         ]);
 
+        $this->customerSideEffects()->afterOrderSaved($conn, $orderId, $request, 'takeaway', [
+            'paid_amount' => (float) $status['paid_amount'],
+            'payment_status' => (string) $status['payment_status'],
+        ]);
+
         $outboxResult = null;
         if (!array_key_exists('record_outbox', $context) || $context['record_outbox']) {
             try {
@@ -770,9 +1132,16 @@ class PosOrderMutationService
             throw new InvalidArgumentException('يجب إدخال بيانات عميل الدليفري');
         }
 
-        $deliveryClientService = new DeliveryClientService();
-        $deliveryClient = $deliveryClientService->upsertByPhone($conn, $deliveryPhone, $deliveryName, $deliveryAddress);
-        $deliveryClientId = (int) ($deliveryClient['client_id'] ?? 0);
+        $posCustomerService = new PosCustomerService();
+        $postedCustomerId = (int) ($request['pos_customer_id'] ?? 0);
+        if ($postedCustomerId > 0 && $posCustomerService->getProfile($conn, $postedCustomerId, false)) {
+            $request['pos_customer_id'] = $postedCustomerId;
+        } else {
+            $zoneId = (int) ($request['delivery_zone_id'] ?? 0);
+            $upserted = $posCustomerService->upsertForDelivery($conn, $deliveryPhone, $deliveryName, $deliveryAddress, $zoneId > 0 ? $zoneId : null);
+            $request['pos_customer_id'] = (int) ($upserted['id'] ?? 0);
+        }
+        $deliveryCustomerId = (int) ($request['pos_customer_id'] ?? 0);
 
         $items = $this->normalizeTakeawayItems($request);
         $this->assertItemsAvailable($conn, $items, $request, $context);
@@ -898,17 +1267,9 @@ class PosOrderMutationService
             $orderId,
         ]);
 
-        $fulfillmentService = new OrderFulfillmentService();
-        $fulfillmentResult = $fulfillmentService->upsertForOrder($conn, $orderId, [
-            'order_channel' => 'cashier',
-            'fulfillment_type' => 'delivery',
-            'customer_name' => $deliveryName,
-            'customer_phone' => $deliveryPhone,
-            'customer_address' => $deliveryAddress,
-            'delivery_zone' => $deliveryZoneName !== '' ? $deliveryZoneName : trim((string) ($request['delivery_zone_name'] ?? '')),
-            'delivery_fee' => $deliveryFee,
-            'delivery_status' => 'pending',
-            'delivery_client_id' => $deliveryClientId > 0 ? $deliveryClientId : null,
+        $this->customerSideEffects()->afterOrderSaved($conn, $orderId, $request, 'delivery', [
+            'paid_amount' => (float) $status['paid_amount'],
+            'payment_status' => (string) $status['payment_status'],
         ]);
 
         $outboxResult = null;
@@ -941,8 +1302,7 @@ class PosOrderMutationService
             'paid_amount' => $status['paid_amount'],
             'remaining_amount' => $status['remaining_amount'],
             'line_count' => count($lineResult['lines']),
-            'delivery_client_id' => $deliveryClientId,
-            'fulfillment_persisted' => $fulfillmentResult['persisted'] ?? false,
+            'pos_customer_id' => $deliveryCustomerId,
             'outbox_id' => $outboxResult['outbox_id'] ?? null,
         ]);
 
@@ -961,12 +1321,11 @@ class PosOrderMutationService
                 'paid_amount' => $status['paid_amount'],
                 'remaining_amount' => $status['remaining_amount'],
                 'profit' => (float) $lineResult['totals']['profit'],
-                'delivery_client_id' => $deliveryClientId,
+                'pos_customer_id' => $deliveryCustomerId,
                 'journal_head_id' => $salesJournal['journal_head_id'] ?? null,
                 'journal_id' => $salesJournal['journal_id'] ?? null,
                 'receipt_ids' => array_column($receipts, 'receipt_id'),
                 'outbox_id' => $outboxResult['outbox_id'] ?? null,
-                'fulfillment' => $fulfillmentResult,
             ],
         ];
     }
@@ -1334,6 +1693,11 @@ class PosOrderMutationService
             'net' => (float) $totals['net'],
         ]);
 
+        $this->customerSideEffects()->afterOrderSaved($conn, $orderId, $request, 'table', [
+            'paid_amount' => (float) $status['paid_amount'],
+            'payment_status' => (string) $status['payment_status'],
+        ]);
+
         return [
             'success' => true,
             'code' => 'OK',
@@ -1426,6 +1790,16 @@ class PosOrderMutationService
             'original_order_id' => $originalOrderId,
             'paid_amount' => $childTotal,
             'payment_method' => $paymentMethod,
+        ]);
+
+        $crmRequest = $request;
+        $parentFulfillment = (new OrderFulfillmentService())->fulfillmentForOrder($conn, $originalOrderId);
+        if (!empty($parentFulfillment['pos_customer_id'])) {
+            $crmRequest['pos_customer_id'] = (int) $parentFulfillment['pos_customer_id'];
+        }
+        $this->customerSideEffects()->afterOrderSaved($conn, $newHeadId, $crmRequest, 'table', [
+            'paid_amount' => $childTotal,
+            'payment_status' => 'paid',
         ]);
 
         return [
@@ -1997,8 +2371,14 @@ class PosOrderMutationService
             if (!empty($result['errors'])) {
                 error_log('POS inventory invoice bridge shadow errors: ' . json_encode($result['errors'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
             }
+            if (SideEffectPolicy::inventoryBridgeShouldRollback(new RuntimeException('bridge_errors'), $result)) {
+                throw new RuntimeException('INVENTORY_BRIDGE_FAILED');
+            }
         } catch (Throwable $exception) {
             error_log('POS inventory invoice bridge shadow failed: ' . $exception->getMessage());
+            if (SideEffectPolicy::inventoryBridgeShouldRollback($exception)) {
+                throw $exception;
+            }
         }
     }
 
@@ -2030,6 +2410,9 @@ class PosOrderMutationService
             }
         } catch (Throwable $exception) {
             error_log('POS inventory invoice bridge reversal shadow failed: ' . $exception->getMessage());
+            if (SideEffectPolicy::inventoryBridgeShouldRollback($exception)) {
+                throw $exception;
+            }
         }
     }
 
@@ -2433,6 +2816,13 @@ class PosOrderMutationService
         return array_merge($request, $resolved);
     }
 
+    private function customerSideEffects(): PosCustomerOrderSideEffects
+    {
+        static $instance = null;
+
+        return $instance ??= new PosCustomerOrderSideEffects();
+    }
+
     private function recordOrderEvent(mysqli $conn, int $orderId, string $eventType, string $eventSource, array $context, array $metadata = []): ?array
     {
         try {
@@ -2444,6 +2834,9 @@ class PosOrderMutationService
             ]);
         } catch (Throwable $exception) {
             error_log('Order event recording skipped: ' . $exception->getMessage());
+            if (SideEffectPolicy::orderEventShouldRollback($exception)) {
+                throw $exception;
+            }
 
             return null;
         }
@@ -2873,12 +3266,7 @@ class PosOrderMutationService
 
     private function contextUserId(array $request, array $context): int
     {
-        $userId = (int) ($request['user_id'] ?? $context['user_id'] ?? 1);
-        if ($userId < 1) {
-            throw new InvalidArgumentException('USER_ID_REQUIRED');
-        }
-
-        return $userId;
+        return posmain_resolve_pos_user_id(array_merge($context, $request));
     }
 
     private function voidDeliveryOrderHeaderAndLines(mysqli $conn, int $orderId, int $userId, string $reason): void

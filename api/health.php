@@ -1,6 +1,7 @@
 <?php
 
 require_once __DIR__ . '/../includes/db_bootstrap.php';
+require_once __DIR__ . '/../classes/Pos/Service/SideEffectPolicy.php';
 
 if (PHP_SAPI === 'cli' && empty($_GET) && getenv('QUERY_STRING')) {
     parse_str((string) getenv('QUERY_STRING'), $_GET);
@@ -49,6 +50,21 @@ if (!$updateScope) {
 
     if (!empty($config['sync']['worker_enabled']) || !empty($config['features']['cloud_sync'])) {
         $checks['worker'] = posmainHealthWorkerCheck();
+    }
+
+    if ($detailRequested && $tokenOk) {
+        try {
+            $orderCreationConn = posmain_db_connect();
+            $checks['order_creation'] = posmainHealthOrderCreationCheck($orderCreationConn);
+            $orderCreationConn->close();
+            $healthy = $healthy && !empty($checks['order_creation']['ok']);
+        } catch (Throwable $orderCreationError) {
+            $checks['order_creation'] = [
+                'ok' => false,
+                'error' => $orderCreationError->getMessage(),
+            ];
+            $healthy = false;
+        }
     }
 }
 
@@ -280,6 +296,35 @@ function posmainHealthRouterShopsCheck(array $config): array
             'shops' => [],
         ];
     }
+}
+
+function posmainHealthOrderCreationCheck(mysqli $conn): array
+{
+    $requiredTables = ['ot_head', 'fat_details', 'pos_request_keys', 'sync_outbox'];
+    $optionalTables = ['order_events', 'order_line_notes', 'order_line_modifiers'];
+    $missing = [];
+    $optionalMissing = [];
+
+    foreach ($requiredTables as $table) {
+        $result = $conn->query("SHOW TABLES LIKE '" . $conn->real_escape_string($table) . "'");
+        if (!$result || $result->num_rows === 0) {
+            $missing[] = $table;
+        }
+    }
+    foreach ($optionalTables as $table) {
+        $result = $conn->query("SHOW TABLES LIKE '" . $conn->real_escape_string($table) . "'");
+        if (!$result || $result->num_rows === 0) {
+            $optionalMissing[] = $table;
+        }
+    }
+
+    return [
+        'ok' => $missing === [],
+        'required_tables' => $requiredTables,
+        'missing_required' => $missing,
+        'missing_optional' => $optionalMissing,
+        'order_side_effect_mode' => class_exists('SideEffectPolicy') ? SideEffectPolicy::mode() : 'shadow',
+    ];
 }
 
 function posmainHealthJson(int $statusCode, array $payload): void

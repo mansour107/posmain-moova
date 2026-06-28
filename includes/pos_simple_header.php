@@ -81,3 +81,4 @@ if (!$language_file_found || $lang == null || $lang == '') {
     </style>
 </head>
 <body<?= !empty($pos_body_class) ? ' class="' . htmlspecialchars($pos_body_class, ENT_QUOTES, 'UTF-8') . '"' : '' ?>>
+<?php if (!empty($success_message)) { include __DIR__ . '/pos_success_message.php'; } ?>

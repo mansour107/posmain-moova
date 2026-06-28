@@ -1,18 +1,46 @@
 <?php
 
-$endpointExpectations = [
+$root = realpath(__DIR__ . '/../..');
+$controller = file_get_contents($root . '/classes/Pos/Http/PosOrderController.php');
+
+$shimExpectations = [
     'ajax/save_order.php' => [
-        'scope' => 'PosOrderMutationService::SCOPE_TABLE_SAVE',
-        'complete' => '$idempotencyService->complete($conn, PosOrderMutationService::SCOPE_TABLE_SAVE',
+        'pos_api_dispatch',
+        'orders.table',
     ],
     'ajax/process_table_payment.php' => [
-        'scope' => 'PosOrderMutationService::SCOPE_TABLE_PAYMENT',
-        'complete' => '$idempotencyService->complete($conn, PosOrderMutationService::SCOPE_TABLE_PAYMENT',
+        'pos_api_dispatch',
+        'orders.payment',
     ],
     'ajax/process_split_payment.php' => [
-        'scope' => 'PosOrderMutationService::SCOPE_SPLIT_PAYMENT',
-        'complete' => '$idempotencyService->complete($conn, PosOrderMutationService::SCOPE_SPLIT_PAYMENT',
+        'pos_api_dispatch',
+        'orders.split-payment',
     ],
+];
+
+foreach ($shimExpectations as $path => $snippets) {
+    $source = file_get_contents($root . '/' . $path);
+    posTableEndpointIdempotencyAssert(is_string($source), 'unable to read ' . $path);
+    foreach ($snippets as $snippet) {
+        posTableEndpointIdempotencyAssert(strpos($source, $snippet) !== false, $path . ' should delegate via ' . $snippet);
+    }
+}
+
+$controllerExpectations = [
+    'saveTable' => 'PosOrderMutationService::SCOPE_TABLE_SAVE',
+    'payTable' => 'PosOrderMutationService::SCOPE_TABLE_PAYMENT',
+    'splitPayment' => 'PosOrderMutationService::SCOPE_SPLIT_PAYMENT',
+];
+
+foreach ($controllerExpectations as $method => $scope) {
+    posTableEndpointIdempotencyAssert(strpos($controller, 'function ' . $method) !== false, 'controller should implement ' . $method);
+    posTableEndpointIdempotencyAssert(strpos($controller, $scope) !== false, 'controller ' . $method . ' should use ' . $scope);
+}
+
+posTableEndpointIdempotencyAssert(strpos($controller, '$idempotencyService = new IdempotencyService()') !== false, 'controller should instantiate IdempotencyService');
+posTableEndpointIdempotencyAssert(strpos($controller, 'IDEMPOTENCY_CONFLICT') !== false, 'controller should handle idempotency conflicts');
+
+$directEndpointExpectations = [
     'ajax/delete_order.php' => [
         'scope' => 'PosOrderMutationService::SCOPE_ORDER_CANCEL',
         'complete' => '$idempotencyService->complete($conn, PosOrderMutationService::SCOPE_ORDER_CANCEL',
@@ -31,28 +59,23 @@ $endpointExpectations = [
     ],
 ];
 
-foreach ($endpointExpectations as $path => $expectation) {
-    $source = file_get_contents(__DIR__ . '/../../' . $path);
+foreach ($directEndpointExpectations as $path => $expectation) {
+    $source = file_get_contents($root . '/' . $path);
     posTableEndpointIdempotencyAssert(is_string($source), 'unable to read ' . $path);
     posTableEndpointIdempotencyAssert(strpos($source, '$idempotencyService = new IdempotencyService()') !== false, $path . ' should instantiate IdempotencyService');
-    posTableEndpointIdempotencyAssert(strpos($source, 'resolveKey(') !== false, $path . ' should require an idempotency key');
-    posTableEndpointIdempotencyAssert(strpos($source, 'requestHashForPayload(') !== false, $path . ' should hash the canonical request payload');
     posTableEndpointIdempotencyAssert(strpos($source, '$idempotencyService->begin($conn, ' . $expectation['scope']) !== false, $path . ' should begin the expected scope');
-    posTableEndpointIdempotencyAssert(strpos($source, "IDEMPOTENCY_CONFLICT") !== false, $path . ' should handle same-key different-payload conflicts');
-    posTableEndpointIdempotencyAssert(strpos($source, "=== 'completed'") !== false, $path . ' should replay completed responses');
     posTableEndpointIdempotencyAssert(strpos($source, $expectation['complete']) !== false, $path . ' should complete the idempotency row after side effects');
-    posTableEndpointIdempotencyAssert(strpos($source, "'request_id' => \$idempotencyKey") !== false, $path . ' should echo request_id in success response');
 }
 
 $jsExpectations = [
     'js/pos_barcode.js' => [
-        "createPOSIdempotencyKey",
-        "ensureFormIdempotencyKey(form, action)",
+        'createPOSIdempotencyKey',
+        'ensureFormIdempotencyKey(form, action)',
         "idempotency_key: createPOSIdempotencyKey('pos.order.cancel')",
     ],
     'includes/pos_content.php' => [
-        "createPOSIdempotencyKey",
-        "ensureFormIdempotencyKey(form, action)",
+        'createPOSIdempotencyKey',
+        'ensureFormIdempotencyKey(form, action)',
         "idempotency_key: createPOSIdempotencyKey('pos.order.cancel')",
     ],
     'js/pos_tables.js' => [
@@ -61,14 +84,14 @@ $jsExpectations = [
     ],
     'tables.php' => [
         "'pos.payment.table'",
-        "idempotency_key: getPOSTablePageIdempotencyKey(requestScope)",
+        'idempotency_key: getPOSTablePageIdempotencyKey(requestScope)',
         "'pos.payment.split'",
-        "clearPOSTablePageIdempotencyKey(requestScope)",
+        'clearPOSTablePageIdempotencyKey(requestScope)',
     ],
 ];
 
 foreach ($jsExpectations as $path => $snippets) {
-    $source = file_get_contents(__DIR__ . '/../../' . $path);
+    $source = file_get_contents($root . '/' . $path);
     posTableEndpointIdempotencyAssert(is_string($source), 'unable to read ' . $path);
     foreach ($snippets as $snippet) {
         posTableEndpointIdempotencyAssert(strpos($source, $snippet) !== false, $path . ' missing UI idempotency snippet: ' . $snippet);

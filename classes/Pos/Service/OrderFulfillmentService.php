@@ -92,7 +92,53 @@ class OrderFulfillmentService
 
         $data = $this->normalizeData($data);
         $hasClientColumn = $this->columnExists($conn, 'delivery_client_id');
-        if ($hasClientColumn) {
+        $hasPosCustomerColumn = $this->columnExists($conn, 'pos_customer_id');
+        if ($hasClientColumn && $hasPosCustomerColumn) {
+            $stmt = $conn->prepare("
+                INSERT INTO order_fulfillment (
+                    order_id, order_channel, fulfillment_type, external_provider, external_order_id,
+                    customer_name, customer_phone, customer_address, delivery_client_id, pos_customer_id,
+                    delivery_zone, delivery_fee, delivery_status, promised_at, metadata_json
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON DUPLICATE KEY UPDATE
+                    order_channel = VALUES(order_channel),
+                    fulfillment_type = VALUES(fulfillment_type),
+                    external_provider = VALUES(external_provider),
+                    external_order_id = VALUES(external_order_id),
+                    customer_name = VALUES(customer_name),
+                    customer_phone = VALUES(customer_phone),
+                    customer_address = VALUES(customer_address),
+                    delivery_client_id = VALUES(delivery_client_id),
+                    pos_customer_id = VALUES(pos_customer_id),
+                    delivery_zone = VALUES(delivery_zone),
+                    delivery_fee = VALUES(delivery_fee),
+                    delivery_status = VALUES(delivery_status),
+                    promised_at = VALUES(promised_at),
+                    metadata_json = VALUES(metadata_json),
+                    updated_at = CURRENT_TIMESTAMP
+            ");
+            $deliveryClientId = $data['delivery_client_id'];
+            $posCustomerId = $data['pos_customer_id'];
+            $stmt->bind_param(
+                'isssssssiisdsss',
+                $orderId,
+                $data['order_channel'],
+                $data['fulfillment_type'],
+                $data['external_provider'],
+                $data['external_order_id'],
+                $data['customer_name'],
+                $data['customer_phone'],
+                $data['customer_address'],
+                $deliveryClientId,
+                $posCustomerId,
+                $data['delivery_zone'],
+                $data['delivery_fee'],
+                $data['delivery_status'],
+                $data['promised_at'],
+                $data['metadata_json']
+            );
+        } elseif ($hasClientColumn) {
             $stmt = $conn->prepare("
                 INSERT INTO order_fulfillment (
                     order_id, order_channel, fulfillment_type, external_provider, external_order_id,
@@ -221,6 +267,7 @@ class OrderFulfillmentService
             'customer_phone' => $current['customer_phone'],
             'customer_address' => $current['customer_address'],
             'delivery_client_id' => $current['delivery_client_id'] ?? null,
+            'pos_customer_id' => $current['pos_customer_id'] ?? null,
             'delivery_zone' => $current['delivery_zone'],
             'delivery_fee' => $current['delivery_fee'],
             'delivery_status' => $newStatus,
@@ -385,8 +432,9 @@ class OrderFulfillmentService
             'customer_name' => $this->nullableText($data['customer_name'] ?? null, 160),
             'customer_phone' => $this->nullableText($data['customer_phone'] ?? null, 60),
             'customer_address' => $this->nullableText($data['customer_address'] ?? null, 500),
-            'delivery_client_id' => isset($data['delivery_client_id']) && (int) $data['delivery_client_id'] > 0
-                ? (int) $data['delivery_client_id']
+            'delivery_client_id' => null,
+            'pos_customer_id' => isset($data['pos_customer_id']) && (int) $data['pos_customer_id'] > 0
+                ? (int) $data['pos_customer_id']
                 : null,
             'delivery_zone' => $this->nullableText($data['delivery_zone'] ?? null, 120),
             'delivery_fee' => $this->decimal($data['delivery_fee'] ?? 0),
@@ -666,9 +714,12 @@ class OrderFulfillmentService
             'customer_phone' => $row['customer_phone'] !== null ? (string) $row['customer_phone'] : null,
             'customer_address' => $row['customer_address'] !== null ? (string) $row['customer_address'] : null,
             'delivery_client_id' => isset($row['delivery_client_id']) ? (int) $row['delivery_client_id'] : null,
+            'pos_customer_id' => isset($row['pos_customer_id']) ? (int) $row['pos_customer_id'] : null,
             'delivery_zone' => $row['delivery_zone'] !== null ? (string) $row['delivery_zone'] : null,
             'delivery_fee' => (float) $row['delivery_fee'],
             'delivery_status' => (string) $row['delivery_status'],
+            'crm_rollup_paid_amount' => isset($row['crm_rollup_paid_amount']) ? (float) $row['crm_rollup_paid_amount'] : 0.0,
+            'crm_rollup_counted' => isset($row['crm_rollup_counted']) ? (int) $row['crm_rollup_counted'] : 0,
             'promised_at' => $row['promised_at'] !== null ? (string) $row['promised_at'] : null,
             'metadata' => $metadata,
             'created_at' => (string) $row['created_at'],

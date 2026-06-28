@@ -140,9 +140,6 @@ include('includes/pos_simple_header.php');
     </div>
 </nav>
 
-<!-- رسالة النجاح -->
-<?php include('includes/pos_success_message.php'); ?>
-
 <!-- Main Content -->
 <div class="flex-grow-1 d-flex flex-column overflow-hidden">
 <?php

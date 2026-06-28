@@ -1,6 +1,6 @@
 <?php
 
-require_once __DIR__ . '/../../classes/Pos/Service/DeliveryClientService.php';
+require_once __DIR__ . '/../../classes/Pos/Service/PosCustomerService.php';
 require_once __DIR__ . '/../../classes/Sync/SchemaManager.php';
 
 mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
@@ -15,30 +15,21 @@ $conn = new mysqli($host, $user, $pass, '', $port);
 try {
     $conn->query("CREATE DATABASE `{$db}` CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci");
     $conn->select_db($db);
-    $conn->query("CREATE TABLE delivery_clients (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        client_name VARCHAR(255) NOT NULL,
-        phone VARCHAR(50) NOT NULL UNIQUE,
-        address TEXT NOT NULL,
-        isdeleted TINYINT(1) NOT NULL DEFAULT 0,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    (new SyncSchemaManager())->applyPosCustomerSchema($conn);
 
-    $service = new DeliveryClientService();
-    $first = $service->upsertByPhone($conn, '01001234567', 'Ahmed', 'Maadi');
-    deliveryClientAssert($first['success'] === true, 'first upsert should succeed');
-    deliveryClientAssert($first['client_id'] > 0, 'first upsert should return client id');
+    $service = new PosCustomerService();
+    $first = $service->upsertForDelivery($conn, '01001234567', 'Ahmed', 'Maadi');
+    deliveryClientAssert((int) ($first['id'] ?? 0) > 0, 'first upsert should return customer id');
 
-    $second = $service->upsertByPhone($conn, '01001234567', 'Ahmed Updated', 'Nasr City');
-    deliveryClientAssert($second['client_id'] === $first['client_id'], 'duplicate phone should upsert same client id');
+    $second = $service->upsertForDelivery($conn, '01001234567', 'Ahmed Updated', 'Nasr City');
+    deliveryClientAssert((int) $second['id'] === (int) $first['id'], 'duplicate phone should upsert same customer id');
 
-    $found = $service->findByPhone($conn, '01001234567');
-    deliveryClientAssert($found['name'] === 'Ahmed Updated', 'upsert should update name');
-    deliveryClientAssert($found['address'] === 'Nasr City', 'upsert should update address');
+    $search = $service->searchByPhone($conn, '01001234567');
+    deliveryClientAssert(!empty($search['exact']), 'search should find customer');
+    deliveryClientAssert($search['exact']['display_name'] === 'Ahmed Updated', 'upsert should update name');
 
-    $count = $conn->query('SELECT COUNT(*) AS c FROM delivery_clients')->fetch_assoc();
-    deliveryClientAssert((int) $count['c'] === 1, 'upsert should not create duplicate rows');
+    $count = $conn->query('SELECT COUNT(*) AS c FROM pos_customers WHERE isdeleted = 0')->fetch_assoc();
+    deliveryClientAssert((int) $count['c'] === 1, 'upsert should not create duplicate customers');
 
     echo "delivery_client_upsert_test: OK\n";
 } finally {

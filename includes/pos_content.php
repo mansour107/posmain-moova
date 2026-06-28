@@ -48,7 +48,7 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
         <?php endif; ?>
         <div class="container-fluid h-100 pos-shell">
             <div class="row h-100 g-2 pos-layout-row">
-                <!-- القسم الأيمن - معلومات الطلب -->
+                <!-- القسم الأيسر - معلومات الطلب -->
                 <div class="col-lg-3 pos-order-column">
                     <div class="pos-order-panel h-100 d-flex flex-column">
                         <div class="pos-order-header">
@@ -84,7 +84,44 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                             <input type="hidden" name="pro_serial" value="0">
                             <input type="hidden" name="pro_id" value="1">
                             <div class="pos-current-order-controls">
-                                <div class="pos-customer-mount"></div>
+                                <div class="pos-customer-mount">
+                                    <div class="pos-customer-strip" id="posCustomerStrip">
+                                        <div class="pos-customer-search-row" id="posCustomerSearchRow">
+                                            <div class="pos-customer-search-wrap">
+                                                <i class="fas fa-user pos-customer-search-icon" aria-hidden="true"></i>
+                                                <input type="tel"
+                                                    class="form-control pos-customer-phone-input"
+                                                    id="posCustomerPhoneInput"
+                                                    placeholder="ربط عميل (اختياري)"
+                                                    inputmode="tel"
+                                                    autocomplete="off"
+                                                    aria-label="رقم هاتف العميل">
+                                            </div>
+                                        </div>
+                                        <div class="pos-customer-attached d-none" id="posCustomerAttached">
+                                            <div class="pos-customer-chip">
+                                                <div class="pos-customer-chip-main">
+                                                    <strong id="posCustomerChipName">—</strong>
+                                                    <span id="posCustomerChipPhone" class="pos-customer-chip-phone"></span>
+                                                </div>
+                                                <div class="pos-customer-chip-stats" id="posCustomerChipStats"></div>
+                                                <div class="pos-customer-chip-actions">
+                                                    <button type="button" class="btn btn-sm pos-customer-edit-btn" id="posCustomerEditBtn">تعديل</button>
+                                                    <button type="button" class="btn btn-sm pos-customer-detach-btn" id="posCustomerDetachBtn" aria-label="إلغاء الربط">
+                                                        <i class="fas fa-times"></i>
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div class="pos-customer-suggestions d-none" id="posCustomerSuggestions"></div>
+                                        <div class="pos-customer-create d-none" id="posCustomerCreate">
+                                            <input type="text" class="form-control form-control-sm mb-2" id="posCustomerCreateName" placeholder="اسم العميل">
+                                            <textarea class="form-control form-control-sm mb-2" id="posCustomerCreateNotes" rows="2" placeholder="ملاحظات (اختياري)"></textarea>
+                                            <button type="button" class="btn btn-sm btn-primary w-100" id="posCustomerCreateBtn">حفظ وربط</button>
+                                        </div>
+                                        <div class="pos-customer-editor d-none" id="posCustomerEditor"></div>
+                                    </div>
+                                </div>
                                 <div class="pos-table-mount"></div>
                             </div>
 
@@ -220,44 +257,17 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                                             </select>
                                         </div>
 
-                                        <!-- العميل -->
-                                        <div class="col-3 pos-customer-field">
+                                        <!-- العميل المحاسبي الافتراضي (مخفي) -->
+                                        <div class="col-3 pos-customer-field d-none">
                                             <?php
                                             $tableDefaultClientId = (int) ($posmainPosDefaults['client_id'] ?? 0);
-                                            $shouldUseTableDefaultClient = !isset($_GET['edit']) && isset($_GET['table']) && $tableDefaultClientId > 0;
-                                            if(isset($_GET['edit'])){$rowed = $conn->query("SELECT * FROM ot_head where id = $id")->fetch_assoc();};
-                                            $editClientId = isset($rowed['acc1']) ? intval($rowed['acc1']) : 0;
-                                            $selectedCustomerId = (int) ($posmainPosDefaults['client_id'] ?? 0);
-                                            if (isset($_GET['edit']) && $editClientId > 0) {
-                                                $selectedCustomerId = $editClientId;
-                                            } elseif ($shouldUseTableDefaultClient) {
-                                                $selectedCustomerId = $tableDefaultClientId;
-                                            }
                                             $selectedCustomerId = posmain_resolve_pos_customer_id(
                                                 $conn,
-                                                $selectedCustomerId,
+                                                $tableDefaultClientId,
                                                 is_array($rowstg ?? null) ? $rowstg : []
                                             );
-                                            $initialCustomerOptions = [];
-                                            $initialCustomerResult = $conn->query("SELECT id, aname FROM `acc_head` WHERE id = {$selectedCustomerId} AND isdeleted = 0 LIMIT 1");
-                                            if ($initialCustomerResult && $initialCustomerResult->num_rows > 0) {
-                                                $initialCustomer = $initialCustomerResult->fetch_assoc();
-                                                $initialCustomerOptions[(int) $initialCustomer['id']] = $initialCustomer['aname'];
-                                            }
                                             ?>
-                                            <select name="acc2_id" class="form-select form-select-sm" title="العميل"
-                                                style="font-size: 0.75rem;" required
-                                                data-options-loaded="0"
-                                                data-initial-customer-id="<?= htmlspecialchars((string) $selectedCustomerId, ENT_QUOTES, 'UTF-8') ?>"
-                                                data-table-default-customer-id="<?= htmlspecialchars((string) $tableDefaultClientId, ENT_QUOTES, 'UTF-8') ?>">
-                                                <?php
-                                                foreach ($initialCustomerOptions as $rowClientId => $rowClientName) {
-                                                    $selected = $selectedCustomerId === intval($rowClientId) ? "selected" : "";
-                                                ?>
-                                                <option <?= $selected ?> value="<?= htmlspecialchars((string) $rowClientId, ENT_QUOTES, 'UTF-8') ?>">
-                                                    <?= htmlspecialchars($rowClientName, ENT_QUOTES, 'UTF-8') ?></option>
-                                                <?php } ?>
-                                            </select>
+                                            <input type="hidden" name="acc2_id" value="<?= (int) $selectedCustomerId ?>">
                                         </div>
 
                                         <!-- الصندوق -->
@@ -297,6 +307,7 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                                 </div>
                                 <div class="pos-order-items-scroll flex-grow-1" id="itemData">
                                         <?php
+                                        $pos_initial_cart_total_value = 0.0;
                                         if (isset($_GET['edit'])){
                                             $id = $_GET['edit'];
                                             $sqldet = "SELECT fd.*, m.iname as item_name, m.barcode
@@ -311,6 +322,7 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                                                 $price = floatval($presentedLine['price']);
                                                 $u_val = $posmainLegacyLinePresentation->inputValue($presentedLine['u_val']);
                                                 $subtotal = floatval($rowdet['det_value']);
+                                                $pos_initial_cart_total_value += $subtotal;
                                                 $barcode = $rowdet['barcode'] ?: $rowdet['item_id'];
                                                 $line_note = $rowdet['notes'] ?? '';
                                                 echo pos_render_cart_row([
@@ -325,6 +337,7 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                                                 ]);
                                             }
                                         }
+                                        $pos_initial_cart_total = number_format($pos_initial_cart_total_value, 2, '.', '');
                                         ?>
                                 </div>
                             </div>
@@ -335,7 +348,7 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                                         <button class="accordion-button collapsed py-2" type="button"
                                             data-bs-toggle="collapse" data-bs-target="#posOrderExtrasBody"
                                             aria-expanded="false" aria-controls="posOrderExtrasBody">
-                                            خصم وملاحظات
+                                            ملاحظات
                                         </button>
                                     </h2>
                                     <div id="posOrderExtrasBody" class="accordion-collapse collapse"
@@ -357,8 +370,8 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                         <div class="pos-order-footer">
                             <div class="pos-order-total">
                                 <span class="pos-order-total-label">المجموع</span>
-                                <h5 class="mb-0" id="total_display">0.00 ج.م</h5>
-                                <input type="hidden" name="headtotal" id="total" value="0.00">
+                                <h5 class="mb-0" id="total_display"><?= htmlspecialchars($pos_initial_cart_total ?? '0.00', ENT_QUOTES, 'UTF-8') ?> ج.م</h5>
+                                <input type="hidden" name="headtotal" id="total" value="<?= htmlspecialchars($pos_initial_cart_total ?? '0.00', ENT_QUOTES, 'UTF-8') ?>">
                                 <input name="headplus" type="hidden">
                                 <span id="net_display" class="d-none">0.00 ج.م</span>
                             </div>
@@ -376,7 +389,7 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                                 <button type="button" class="btn btn-primary pos-pay-order-btn"
                                     data-bs-toggle="modal" data-bs-target="#paymentModal">
                                     <span><i class="fas fa-credit-card me-1"></i>دفع</span>
-                                    <strong id="total_display_btn">0.00 ج.م</strong>
+                                    <strong id="total_display_btn"><?= htmlspecialchars($pos_initial_cart_total ?? '0.00', ENT_QUOTES, 'UTF-8') ?> ج.م</strong>
                                 </button>
                                 <button type="button" class="btn btn-outline-danger pos-clear-btn d-none"
                                     onclick="clearAllItems();" title="مسح">
@@ -518,221 +531,137 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
     </form>
 
     <!-- Modal الدفع -->
-    <div class="modal fade" id="paymentModal" tabindex="-1" aria-labelledby="paymentModalLabel" aria-hidden="true">
-        <div class="modal-dialog modal-lg pos-payment-modal-dialog">
-            <div class="modal-content">
-                <div class="modal-header bg-primary text-white">
-                    <h5 class="modal-title" id="paymentModalLabel">
-                       الدفع والإجماليات
-                    </h5>
-                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"
+    <div class="modal fade pos-payment-modal-fade" id="paymentModal" tabindex="-1"
+        aria-labelledby="paymentModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered pos-payment-modal-dialog">
+            <div class="modal-content pos-payment-modal-content">
+                <div class="modal-header pos-payment-modal-header">
+                    <div class="pos-payment-modal-heading">
+                        <h5 class="modal-title pos-payment-modal-title" id="paymentModalLabel">الدفع</h5>
+                        <p class="pos-payment-modal-subtitle mb-0">أكمل العملية واطبع الإيصال</p>
+                    </div>
+                    <button type="button" class="btn-close pos-payment-modal-close" data-bs-dismiss="modal"
                         aria-label="Close"></button>
                 </div>
                 <div class="modal-body pos-payment-modal-body">
-                    <div class="row g-3 pos-payment-grid">
-                        <div class="col-12 pos-empty-table-option">
-                            <div class="card border-secondary">
-                                <div class="card-body py-2">
-                                    <div class="form-check form-switch mb-0">
-                                        <input class="form-check-input" type="checkbox" id="pos_empty_table_after_payment" checked>
-                                        <label class="form-check-label fw-bold" for="pos_empty_table_after_payment">
-                                            إفراغ الطاولة
-                                        </label>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                        <!-- الإجمالي -->
-                        <div class="col-12 pos-payment-total-section">
-                            <div class="card bg-light">
-                                <div class="card-body">
-                                    <div class="row align-items-center">
-                                        <div class="col-4">
-                                            <label class="mb-0 fw-bold text-primary">
-                                                الإجمالي
-                                            </label>
-                                        </div>
-                                        <div class="col-8">
-                                            <h4 class="mb-0 text-primary text-end" id="modal_total">0.00 ج.م</h4>
-                                        </div>
-                                    </div>
-                                </div>
+                    <div class="pos-payment-grid">
+                        <div class="pos-empty-table-option pos-payment-option-row">
+                            <div class="form-check form-switch mb-0">
+                                <input class="form-check-input" type="checkbox" id="pos_empty_table_after_payment" checked>
+                                <label class="form-check-label" for="pos_empty_table_after_payment">إفراغ الطاولة</label>
                             </div>
                         </div>
 
-                        <!-- الخصم -->
-                        <div class="col-12 pos-payment-discount-section">
-                            <div class="card border-primary">
-                                <div class="card-header bg-primary text-white">
-                                    <h6 class="mb-0">
-                                       الخصم
-                                    </h6>
+                        <div class="pos-payment-summary pos-payment-total-section">
+                            <div class="pos-payment-summary-row">
+                                <span class="pos-payment-summary-label">الإجمالي</span>
+                                <span class="pos-payment-summary-value" id="modal_total">0.00 ج.م</span>
+                            </div>
+                            <div class="pos-payment-discount-section pos-payment-discount-fields">
+                                <div class="pos-payment-discount-field">
+                                    <label class="pos-payment-field-label" for="modal_discperc">الخصم %</label>
+                                    <input class="form-control pos-payment-input" type="number"
+                                        id="modal_discperc" value="0" min="0" max="100" step="0.1">
                                 </div>
-                                <div class="card-body">
-                                    <div class="row g-2">
-                                        <div class="col-6">
-                                            <label class="form-label fw-bold text-dark">الخصم %</label>
-                                            <div class="input-group">
-                                                <input class="form-control text-center" type="number"
-                                                    id="modal_discperc" value="0" min="0" max="100" step="0.1">
+                                <div class="pos-payment-discount-field">
+                                    <label class="pos-payment-field-label" for="modal_discount">قيمة الخصم</label>
+                                    <input class="form-control pos-payment-input" type="number"
+                                        id="modal_discount" value="0" step="0.01">
+                                </div>
+                            </div>
+                            <div class="pos-payment-summary-row pos-payment-net-section pos-payment-net-row">
+                                <span class="pos-payment-summary-label">الصافي</span>
+                                <span class="pos-payment-summary-value pos-payment-net-value" id="modal_net">0.00 ج.م</span>
+                            </div>
+                        </div>
 
-                                            </div>
-                                        </div>
-                                        <div class="col-6">
-                                            <label class="form-label fw-bold text-dark">قيمة الخصم</label>
-                                            <div class="input-group">
-                                                <input class="form-control text-center" type="number"
-                                                    id="modal_discount" value="0" step="0.01">
+                        <div class="pos-payment-method-section">
+                            <span class="pos-payment-section-label">طريقة الدفع</span>
+                            <div class="pos-payment-method-picker" role="radiogroup" aria-label="طريقة الدفع">
+                                <label class="pos-payment-method-option">
+                                    <input type="radio" class="pos-payment-method-input" name="pos_payment_method"
+                                        value="cash" checked>
+                                    <span class="pos-payment-method-chip">
+                                        <i class="fas fa-money-bill-wave" aria-hidden="true"></i>
+                                        <span>كاش</span>
+                                    </span>
+                                </label>
+                                <label class="pos-payment-method-option">
+                                    <input type="radio" class="pos-payment-method-input" name="pos_payment_method"
+                                        value="bank">
+                                    <span class="pos-payment-method-chip">
+                                        <i class="fas fa-credit-card" aria-hidden="true"></i>
+                                        <span>صرافة</span>
+                                    </span>
+                                </label>
+                                <label class="pos-payment-method-option">
+                                    <input type="radio" class="pos-payment-method-input" name="pos_payment_method"
+                                        value="mixed">
+                                    <span class="pos-payment-method-chip">
+                                        <i class="fas fa-coins" aria-hidden="true"></i>
+                                        <span>مختلط</span>
+                                    </span>
+                                </label>
+                            </div>
 
-                                            </div>
-                                        </div>
+                            <div class="pos-payment-amounts pos-payment-mode-cash">
+                                <div class="pos-payment-amount-cash">
+                                    <label class="pos-payment-field-label" for="modal_paid_cash">المبلغ كاش</label>
+                                    <div class="pos-payment-amount-wrap">
+                                        <input class="form-control pos-payment-amount-input" type="number"
+                                            id="modal_paid_cash" value="0.00" step="0.01" min="0">
+                                        <span class="pos-payment-currency">ج.م</span>
                                     </div>
+                                </div>
+                                <div class="pos-payment-amount-bank">
+                                    <label class="pos-payment-field-label" for="modal_paid_bank">المبلغ صرافة</label>
+                                    <div class="pos-payment-amount-wrap">
+                                        <input class="form-control pos-payment-amount-input" type="number"
+                                            id="modal_paid_bank" value="0.00" step="0.01" min="0">
+                                        <span class="pos-payment-currency">ج.م</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="pos-payment-change-row">
+                                <span class="pos-payment-change-label">الباقي</span>
+                                <span class="pos-payment-change-value" id="modal_change">0.00 ج.م</span>
+                            </div>
+                        </div>
+
+                        <div class="pos-payment-split-section">
+                            <label class="pos-payment-split-header" for="pos_split_payment_enabled">
+                                <span class="pos-payment-split-header-copy">
+                                    <span class="pos-payment-split-title">سداد أصناف محددة</span>
+                                    <span class="pos-payment-split-hint">اختر الأصناف المراد دفعها الآن</span>
+                                </span>
+                                <span class="pos-payment-split-switch-wrap">
+                                    <input class="pos-payment-split-switch" type="checkbox"
+                                        id="pos_split_payment_enabled" role="switch">
+                                </span>
+                            </label>
+                            <div class="pos-payment-split-panel" id="pos_split_payment_panel" style="display: none;">
+                                <div class="pos-split-lines" id="pos_split_payment_rows"></div>
+                                <div class="pos-payment-split-total">
+                                    <span class="pos-payment-split-total-label">إجمالي المحدد</span>
+                                    <strong id="pos_split_payment_total">0.00 ج.م</strong>
                                 </div>
                             </div>
                         </div>
 
-                        <!-- الصافي -->
-                        <div class="col-12 pos-payment-net-section">
-                            <div class="card bg-success bg-opacity-10 border-success">
-                                <div class="card-body">
-                                    <div class="row align-items-center">
-                                        <div class="col-4">
-                                            <label class="mb-0 fw-bold text-success">
-                                                الصافي
-                                            </label>
-                                        </div>
-                                        <div class="col-8">
-                                            <h3 class="mb-0 text-success text-end" id="modal_net">0.00 ج.م</h3>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- قسم الدفع -->
-                        <div class="col-12 pos-payment-method-section">
-                            <div class="card border-success">
-                                <div class="card-header bg-success bg-opacity-10">
-                                    <h6 class="mb-0 text-success">
-                                        <i class="fas fa-money-bill-wave me-2"></i>طريقة الدفع
-                                    </h6>
-                                </div>
-                                <div class="card-body">
-                                    <div class="row g-3">
-                                        <!-- مدفوع كاش -->
-                                        <div class="col-md-6">
-                                            <div class="card border-primary h-100">
-                                                <div class="card-header bg-primary text-white py-2">
-                                                    <h6 class="mb-0">
-                                                        <i class="fas fa-money-bill me-2"></i>مدفوع كاش
-                                                    </h6>
-                                                </div>
-                                                <div class="card-body">
-                                                    <div class="mb-2">
-                                                        <label class="form-label fw-bold">اختر الصندوق</label>
-                                                        <select class="form-select" id="payment_fund_id" data-options-source="fund_id"></select>
-                                                    </div>
-                                                    <div>
-                                                        <label class="form-label fw-bold">المبلغ المدفوع كاش</label>
-                                                        <div class="input-group input-group-lg">
-                                                            <input class="form-control text-center fw-bold" type="number"
-                                                                   id="modal_paid_cash" value="0.00" step="0.01" min="0">
-                                                            <span class="input-group-text">ج.م</span>
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        </div>
-
-                                        <!-- مدفوع صرافة -->
-                                        <div class="col-md-6">
-                                            <div class="card border-info h-100">
-                                                <div class="card-header bg-info text-white py-2">
-                                                    <h6 class="mb-0">
-                                                        <i class="fas fa-credit-card me-2"></i>مدفوع صرافة
-                                                    </h6>
-                                                </div>
-                                                <div class="card-body">
-                                                    <div class="mb-2">
-                                                        <label class="form-label fw-bold">اختر البنك</label>
-                                                        <select class="form-select" id="payment_bank_id" data-options-loaded="0">
-                                                            <option value="">-- اختر البنك --</option>
-                                                        </select>
-                                                    </div>
-                                                    <div>
-                                                        <label class="form-label fw-bold">المبلغ المدفوع صرافة</label>
-                                                        <div class="input-group input-group-lg">
-                                                            <input class="form-control text-center fw-bold" type="number"
-                                                                   id="modal_paid_bank" value="0.00" step="0.01" min="0">
-                                                            <span class="input-group-text">ج.م</span>
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        </div>
-
-                                        <!-- الباقي -->
-                                        <div class="col-12">
-                                            <div class="alert alert-warning mb-0">
-                                                <div class="row align-items-center">
-                                                    <div class="col-6">
-                                                        <h6 class="mb-0">
-                                                            <i class="fas fa-exclamation-triangle me-2"></i>الباقي
-                                                        </h6>
-                                                    </div>
-                                                    <div class="col-6 text-end">
-                                                        <h4 class="mb-0 text-danger" id="modal_change">0.00 ج.م</h4>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="col-12 pos-payment-split-section">
-                            <div class="card border-warning">
-                                <div class="card-header bg-warning bg-opacity-10">
-                                    <div class="form-check form-switch mb-0">
-                                        <input class="form-check-input" type="checkbox" id="pos_split_payment_enabled">
-                                        <label class="form-check-label fw-bold text-warning-emphasis" for="pos_split_payment_enabled">
-                                            سداد أصناف محددة
-                                        </label>
-                                    </div>
-                                </div>
-                                <div class="card-body p-2" id="pos_split_payment_panel" style="display: none;">
-                                    <div class="table-responsive">
-                                        <table class="table table-sm align-middle mb-2">
-                                            <thead>
-                                                <tr>
-                                                    <th style="width: 42px;"></th>
-                                                    <th>الصنف</th>
-                                                    <th style="width: 110px;">الكمية</th>
-                                                    <th style="width: 110px;">القيمة</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody id="pos_split_payment_rows"></tbody>
-                                        </table>
-                                    </div>
-                                    <div class="d-flex justify-content-between align-items-center border-top pt-2">
-                                        <span class="fw-bold">إجمالي المحدد</span>
-                                        <strong class="text-success" id="pos_split_payment_total">0.00 ج.م</strong>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
+                        <select id="payment_fund_id" data-options-source="fund_id" class="d-none"
+                            aria-hidden="true" tabindex="-1"></select>
+                        <select id="payment_bank_id" class="d-none" aria-hidden="true" tabindex="-1"
+                            data-options-loaded="0">
+                            <option value=""></option>
+                        </select>
                     </div>
                 </div>
-                <div class="modal-footer">
-                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
-                        <i class="fas fa-times me-1"></i>إلغاء
-                    </button>
-                    <button type="button" class="btn btn-warning pos-split-pay-confirm-btn" onclick="submitPOS('split_cash');" style="display: none;">
-                        <i class="fas fa-receipt me-1"></i>دفع المحدد وطباعة
-                    </button>
-                    <button type="button" class="btn btn-primary pos-pay-confirm-btn" onclick="submitPOS('cash');">
-                        <i class="fas fa-receipt me-1"></i>دفع وطباعة
-                    </button>
+                <div class="modal-footer pos-payment-modal-footer">
+                    <button type="button" class="btn pos-payment-btn-cancel" data-bs-dismiss="modal">إلغاء</button>
+                    <button type="button" class="btn pos-payment-btn-split pos-split-pay-confirm-btn" onclick="submitPOS('split_cash');" style="display: none;">دفع المحدد</button>
+                    <button type="button" class="btn pos-payment-btn-confirm pos-pay-confirm-btn"
+                        onclick="submitPOS('cash');">دفع وطباعة</button>
                 </div>
             </div>
         </div>
@@ -921,15 +850,13 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                     <h5 class="modal-title" id="deliveryModalLabel">
                         <i class="fas fa-motorcycle me-2"></i>بيانات العميل - دليفري
                     </h5>
-                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"
-                        aria-label="Close"></button>
                 </div>
                 <div class="modal-body">
                     <div id="deliveryModalHint" class="alert alert-warning d-none mb-3"></div>
                     <div class="mb-3">
                         <label class="form-label fw-bold">رقم العميل</label>
                         <div class="input-group">
-                            <input type="text" class="form-control" id="customer_phone" placeholder="أدخل رقم العميل (البحث يبدأ بعد 3 أرقام)">
+                            <input type="text" class="form-control" id="customer_phone">
                             <!-- <button class="btn btn-primary" type="button" onclick="searchCustomer()">
                                 <i class="fas fa-search"></i> بحث
                             </button> -->
@@ -970,7 +897,9 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
     <?php if ($legacyOfflinePrototypeEnabled): ?>
     <script src="js/pos_offline_adapter.js?v=<?= (int) (@filemtime(__DIR__ . '/../js/pos_offline_adapter.js') ?: 1) ?>"></script>
     <?php endif; ?>
+    <script src="js/pos_order_api.js?v=<?= (int) (@filemtime(__DIR__ . '/../js/pos_order_api.js') ?: 1) ?>"></script>
     <script src="js/pos_barcode.js?v=<?= (int) (@filemtime(__DIR__ . '/../js/pos_barcode.js') ?: 1) ?>"></script>
+    <script src="js/pos_customer.js?v=<?= (int) (@filemtime(__DIR__ . '/../js/pos_customer.js') ?: 1) ?>"></script>
     <script src="js/pos_delivery.js?v=<?= (int) (@filemtime(__DIR__ . '/../js/pos_delivery.js') ?: 1) ?>"></script>
 
     <?php if ($legacyOfflinePrototypeEnabled): ?>
@@ -1121,240 +1050,69 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
             // Delivery UI handled by js/pos_delivery.js
         });
     </script>
+    <!-- submitPOS is owned by js/pos_barcode.js + js/pos_order_api.js -->
+    <div class="modal fade pos-success-modal-fade" id="posOrderSuccessModal" tabindex="-1"
+        aria-labelledby="posOrderSuccessTitle" aria-hidden="true" style="display:none">
+        <div class="modal-dialog modal-dialog-centered pos-success-dialog">
+            <div class="modal-content pos-success-content">
+                <div class="pos-success-body">
+                    <div class="pos-success-icon" aria-hidden="true">&#10003;</div>
+                    <h3 class="pos-success-title" id="posOrderSuccessTitle">تم بنجاح!</h3>
+                    <p class="pos-success-text" id="posOrderSuccessText"></p>
+                </div>
+            </div>
+        </div>
+    </div>
     <script>
-    // override submitPOS to ensure new logic is used immediately (bypassing cache)
-    function createPOSIdempotencyKey(scope) {
-        if (window.crypto && typeof window.crypto.randomUUID === 'function') {
-            return scope + ':' + window.crypto.randomUUID();
-        }
-
-        return scope + ':' + Date.now().toString(36) + ':' + Math.random().toString(36).slice(2);
-    }
-
-    function ensureFormIdempotencyKey(form, action) {
-        const scope = action === 'save'
-            ? 'pos.order.save'
-            : (action === 'print_receipt'
-                ? 'pos.order.print'
-                : (action === 'free_table' ? 'pos.table.free' : 'pos.order.pay'));
-        let keyInput = form.querySelector('input[name="idempotency_key"]');
-        if (!keyInput) {
-            keyInput = document.createElement('input');
-            keyInput.type = 'hidden';
-            keyInput.name = 'idempotency_key';
-            form.appendChild(keyInput);
-        }
-
-        if (!keyInput.value || keyInput.dataset.action !== action) {
-            keyInput.value = createPOSIdempotencyKey(scope);
-            keyInput.dataset.action = action;
-        }
-
-        return keyInput.value;
-    }
-
-    window.submitPOS = function(action) {
-        console.log('✅ submitPOS (Inline Override) called with action:', action);
-
-        const form = document.getElementById('posForm');
-        if (!form) {
-            console.error('❌ Form with id "posForm" not found!');
-            Swal.fire({
-                icon: 'error',
-                title: 'خطأ نظام',
-                text: 'حدث خطأ في النظام. يرجى إعادة تحميل الصفحة.'
-            });
-            return false;
-        }
-
-        const isFreeTableOnly = action === 'free_table';
-        if (isFreeTableOnly && typeof window.POSMainIsHeldTableWithoutActiveOrder === 'function' && !window.POSMainIsHeldTableWithoutActiveOrder()) {
-            Swal.fire({
-                icon: 'warning',
-                title: 'تنبيه',
-                text: 'إفراغ الطاولة متاح فقط لطاولة مشغولة بدون طلب مفتوح'
-            });
-            return false;
-        }
-
-	        if (!isFreeTableOnly && typeof validatePOSForm === 'function' && !validatePOSForm()) {
-	            return false;
-	        }
-
-        if (action === 'cash' && $('#pos_split_payment_enabled').prop('checked')) {
-            action = 'split_cash';
-        }
-
-        // جمع بيانات الدفع
-        const isSaveOnly = action === 'save';
-        const isPrintReceiptOnly = action === 'print_receipt';
-        const isSplitLinePayment = action === 'split_cash';
-        let paidCash = parseFloat($('#modal_paid_cash').val()) || 0;
-        let paidBank = parseFloat($('#modal_paid_bank').val()) || 0;
-        if (isSaveOnly || isPrintReceiptOnly || isFreeTableOnly) {
-            paidCash = 0;
-            paidBank = 0;
-        }
-        if (typeof window.POSMainSyncPaymentOptions === 'function') {
-            window.POSMainSyncPaymentOptions();
-        }
-        let fundId = $('#payment_fund_id').val();
-        let bankId = $('#payment_bank_id').val();
-        let net = parseFloat($('#net_val').val()) || 0;
-
-        console.log('=== INLINE PAYMENT DATA DEBUG ===');
-        console.log('modal_paid_cash value:', $('#modal_paid_cash').val());
-        console.log('modal_paid_bank value:', $('#modal_paid_bank').val());
-        console.log('payment_fund_id value:', $('#payment_fund_id').val());
-        console.log('payment_bank_id value:', $('#payment_bank_id').val());
-        console.log('Processed:', {
-            paidCash: paidCash,
-            paidBank: paidBank,
-            fundId: fundId,
-            bankId: bankId,
-            net: net
-        });
-        console.log('==================================');
-
-        // التحقق من صحة البيانات
-        if (!isSaveOnly && !isPrintReceiptOnly && !isFreeTableOnly && !isSplitLinePayment && net > 0 && paidCash + paidBank <= 0) {
-            Swal.fire({
-                icon: 'warning',
-                title: 'تنبيه',
-                text: 'يجب إدخال مبلغ الدفع قبل تأكيد الدفع'
-            });
-            return false;
-        }
-
-        if (!isSaveOnly && !isPrintReceiptOnly && !isFreeTableOnly && paidCash > 0 && (!fundId || fundId == '0')) {
-            Swal.fire({
-                icon: 'warning',
-                title: 'تنبيه',
-                text: 'يجب اختيار الصندوق عند الدفع كاش'
-            });
-            return false;
-        }
-
-        if (!isSaveOnly && !isPrintReceiptOnly && !isFreeTableOnly && paidBank > 0 && (!bankId || bankId == '0' || bankId == '')) {
-            Swal.fire({
-                icon: 'warning',
-                title: 'تنبيه',
-                text: 'يجب اختيار البنك عند الدفع صرافة'
-            });
-            return false;
-        }
-
-        if (isSplitLinePayment && typeof window.POSMainPrepareSplitPaymentFields === 'function') {
-            if (!window.POSMainPrepareSplitPaymentFields(form, {
-                paidCash: paidCash,
-                paidBank: paidBank,
-                fundId: fundId,
-                bankId: bankId
-            })) {
-                return false;
+    (function() {
+        window.POSShowOrderSuccess = function(message) {
+            var modalEl = document.getElementById('posOrderSuccessModal');
+            var textEl = document.getElementById('posOrderSuccessText');
+            if (!modalEl || !textEl) {
+                return;
             }
-            paidCash = parseFloat($('#modal_paid_cash').val()) || 0;
-            paidBank = parseFloat($('#modal_paid_bank').val()) || 0;
-        }
 
-        // إضافة حقول الدفع المخفية
-        let paidCashInput = form.querySelector('input[name="paid_cash"]');
-        if (!paidCashInput) {
-            paidCashInput = document.createElement('input');
-            paidCashInput.type = 'hidden';
-            paidCashInput.name = 'paid_cash';
-            form.appendChild(paidCashInput);
-        }
-        paidCashInput.value = paidCash;
+            textEl.textContent = message || 'تم حفظ الطلب بنجاح';
+            window.POS_SUCCESS_HOLD = true;
 
-        let paidBankInput = form.querySelector('input[name="paid_bank"]');
-        if (!paidBankInput) {
-            paidBankInput = document.createElement('input');
-            paidBankInput.type = 'hidden';
-            paidBankInput.name = 'paid_bank';
-            form.appendChild(paidBankInput);
-        }
-        paidBankInput.value = paidBank;
+            var durationMs = 1500;
+            var hideTimer = null;
 
-        let paymentFundInput = form.querySelector('input[name="payment_fund_id"]');
-        if (!paymentFundInput) {
-            paymentFundInput = document.createElement('input');
-            paymentFundInput.type = 'hidden';
-            paymentFundInput.name = 'payment_fund_id';
-            form.appendChild(paymentFundInput);
-        }
-        paymentFundInput.value = fundId;
-
-        let paymentBankInput = form.querySelector('input[name="payment_bank_id"]');
-        if (!paymentBankInput) {
-            paymentBankInput = document.createElement('input');
-            paymentBankInput.type = 'hidden';
-            paymentBankInput.name = 'payment_bank_id';
-            form.appendChild(paymentBankInput);
-        }
-        paymentBankInput.value = bankId || '';
-
-        // إضافة المدفوع الإجمالي (للتوافق مع الكود القديم)
-        let totalPaid = paidCash + paidBank;
-        let paidInput = form.querySelector('input[name="paid"]');
-        if (!paidInput) {
-            paidInput = document.createElement('input');
-            paidInput.type = 'hidden';
-            paidInput.name = 'paid';
-            form.appendChild(paidInput);
-        }
-        paidInput.value = totalPaid;
-
-        let emptyTableInput = form.querySelector('input[name="empty_table_after_payment"]');
-        if (!emptyTableInput) {
-            emptyTableInput = document.createElement('input');
-            emptyTableInput.type = 'hidden';
-            emptyTableInput.name = 'empty_table_after_payment';
-            form.appendChild(emptyTableInput);
-        }
-        emptyTableInput.value = $('#pos_empty_table_after_payment').prop('checked') ? '1' : '0';
-
-        // Check for Edit ID
-        let editId = $('#edit_order_id').val() || $('#selected_order_id').val();
-        if (editId) {
-            console.log('✏️ Edit Mode: ID', editId);
-            let editIdInput = form.querySelector('input[name="edit_id"]');
-            if (!editIdInput) {
-                editIdInput = document.createElement('input');
-                editIdInput.type = 'hidden';
-                editIdInput.name = 'edit_id';
-                form.appendChild(editIdInput);
+            function releaseHold() {
+                window.POS_SUCCESS_HOLD = false;
             }
-            editIdInput.value = editId;
-        } else {
-            let editIdInput = form.querySelector('input[name="edit_id"]');
-            if (editIdInput) {
-                editIdInput.remove();
+
+            function showModal() {
+                if (!window.bootstrap || typeof window.bootstrap.Modal !== 'function') {
+                    window.setTimeout(showModal, 30);
+                    return;
+                }
+
+                modalEl.style.display = '';
+                var instance = window.bootstrap.Modal.getOrCreateInstance(modalEl);
+                modalEl.addEventListener('hidden.bs.modal', function onHidden() {
+                    modalEl.removeEventListener('hidden.bs.modal', onHidden);
+                    if (hideTimer) {
+                        window.clearTimeout(hideTimer);
+                        hideTimer = null;
+                    }
+                    releaseHold();
+                }, { once: true });
+
+                instance.show();
+                hideTimer = window.setTimeout(function() {
+                    var current = window.bootstrap.Modal.getInstance(modalEl);
+                    if (current) {
+                        current.hide();
+                    } else {
+                        releaseHold();
+                    }
+                }, durationMs);
             }
-        }
 
-        const existingSubmits = form.querySelectorAll('input[name="submit"]');
-        existingSubmits.forEach(input => input.remove());
-
-        const submitInput = document.createElement('input');
-        submitInput.type = 'hidden';
-        submitInput.name = 'submit';
-        submitInput.value = action;
-        form.appendChild(submitInput);
-        ensureFormIdempotencyKey(form, action);
-
-        let saveBtn = $(".pos-save-order-btn");
-        let printOrderBtn = $(".pos-print-order-btn");
-        let printBtn = $(".pos-pay-confirm-btn");
-
-        if (saveBtn.length > 0) saveBtn.prop('disabled', true).html('<i class="fas fa-spinner fa-spin"></i> جاري الحفظ...');
-        if (printOrderBtn.length > 0) printOrderBtn.prop('disabled', true).html('<i class="fas fa-spinner fa-spin"></i> جاري الطباعة...');
-        if (printBtn.length > 0) printBtn.prop('disabled', true).html('<i class="fas fa-spinner fa-spin"></i> جاري الدفع...');
-
-        $('#paymentModal').modal('hide');
-        HTMLFormElement.prototype.submit.call(form);
-        return true;
-    };
+            showModal();
+        };
+    })();
     </script>
 
 

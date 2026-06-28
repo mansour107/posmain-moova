@@ -1,20 +1,22 @@
 <?php
 
-$sourcePath = __DIR__ . '/../../ajax/save_order.php';
-$source = file_get_contents($sourcePath);
+$root = realpath(__DIR__ . '/../..');
+$source = file_get_contents($root . '/ajax/save_order.php');
+$dispatch = file_get_contents($root . '/includes/pos_api_dispatch.php');
+$controller = file_get_contents($root . '/classes/Pos/Http/PosOrderController.php');
+
 if ($source === false) {
     throw new RuntimeException('Unable to read ajax/save_order.php');
 }
 
-saveOrderRoutingAssert(strpos($source, "require_once('../classes/Pos/Service/PosOrderMutationService.php')") !== false, 'save_order should require PosOrderMutationService');
-saveOrderRoutingAssert(strpos($source, '$posMutationService = new PosOrderMutationService()') !== false, 'save_order should instantiate PosOrderMutationService');
-saveOrderRoutingAssert(strpos($source, '$posMutationService->saveTableOrder') !== false, 'save_order should route mutation through saveTableOrder');
-saveOrderRoutingAssert(strpos($source, "'in_transaction' => true") !== false, 'save_order should keep service call inside endpoint transaction for sync outbox');
-saveOrderRoutingAssert(strpos($source, 'SyncOutboxEventService') !== false, 'save_order should preserve sync outbox recording');
-saveOrderRoutingAssert(strpos($source, "'event_type' => \$isUpdate ? 'order.updated' : 'order.saved'") !== false, 'save_order should preserve order saved/updated event selection');
-saveOrderRoutingAssert(strpos($source, "'active_order_id' => \$orderStatus === 'completed' ? null : \$orderId") !== false, 'save_order should preserve active_order_id semantics');
-saveOrderRoutingAssert(strpos($source, "'order_id' => \$orderId") !== false, 'save_order should preserve order_id response key');
-saveOrderRoutingAssert(strpos($source, 'تم حفظ الطلب بنجاح') !== false, 'save_order should preserve Arabic success message');
+saveOrderRoutingAssert(strpos($source, 'pos_api_dispatch') !== false, 'save_order should delegate to pos_api_dispatch');
+saveOrderRoutingAssert(strpos($dispatch, 'orders.table') !== false, 'dispatch should route table saves');
+saveOrderRoutingAssert(strpos($controller, 'function saveTable') !== false, 'controller should own saveTable');
+saveOrderRoutingAssert(strpos($source, 'PosOrderMutationService') === false, 'save_order should not keep inline mutation wiring');
+
+$sideEffects = file_get_contents($root . '/classes/Pos/Service/OrderMutationSideEffectsService.php');
+saveOrderRoutingAssert(strpos($sideEffects, "\$eventType = \$isUpdate ? 'order.updated' : 'order.saved'") !== false, 'table save side effects should preserve order saved/updated event selection');
+saveOrderRoutingAssert(strpos($sideEffects, "'active_order_id' => \$orderStatus === 'completed' ? null : \$orderId") !== false, 'table save side effects should preserve active_order_id semantics');
 
 $forbiddenSnippets = [
     'INSERT INTO ot_head',
@@ -25,6 +27,7 @@ $forbiddenSnippets = [
     'recalculateOrderTotals',
     'markTableOccupied',
     'setTableFreeIfNoActiveOrder',
+    '$posMutationService = new PosOrderMutationService()',
 ];
 
 foreach ($forbiddenSnippets as $snippet) {

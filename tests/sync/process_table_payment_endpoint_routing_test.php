@@ -1,20 +1,23 @@
 <?php
 
-$sourcePath = __DIR__ . '/../../ajax/process_table_payment.php';
-$source = file_get_contents($sourcePath);
+$root = realpath(__DIR__ . '/../..');
+$source = file_get_contents($root . '/ajax/process_table_payment.php');
+$controller = file_get_contents($root . '/classes/Pos/Http/PosOrderController.php');
+
 if ($source === false) {
     throw new RuntimeException('Unable to read process_table_payment.php');
 }
 
-processTablePaymentRoutingAssert(strpos($source, "require_once('../classes/Pos/Service/PosOrderMutationService.php')") !== false, 'endpoint should require PosOrderMutationService');
-processTablePaymentRoutingAssert(strpos($source, "require_once('../classes/Pos/Service/AccountingPostingService.php')") !== false, 'endpoint should require AccountingPostingService');
-processTablePaymentRoutingAssert(strpos($source, '$posMutationService->payTableOrder') !== false, 'endpoint should route payment mutation through PosOrderMutationService');
-processTablePaymentRoutingAssert(strpos($source, '$accountingPostingService->postTablePaymentReceipt') !== false, 'endpoint should route receipt and journal posting through AccountingPostingService');
-processTablePaymentRoutingAssert(strpos($source, 'SyncOutboxEventService') !== false, 'endpoint should preserve sync outbox recording');
-processTablePaymentRoutingAssert(strpos($source, "'receipt_id' => \$receipt_id") !== false, 'endpoint should preserve receipt_id response key');
-processTablePaymentRoutingAssert(strpos($source, "'invoice_id' => \$order_id") !== false, 'endpoint should preserve invoice_id response key');
-processTablePaymentRoutingAssert(strpos($source, "تم السداد بالكامل") !== false, 'endpoint should preserve full-payment Arabic message');
-processTablePaymentRoutingAssert(strpos($source, "تم تسجيل دفعة جزئية") !== false, 'endpoint should preserve partial-payment Arabic message');
+processTablePaymentRoutingAssert(strpos($source, 'pos_api_dispatch') !== false, 'endpoint should delegate to pos_api_dispatch');
+processTablePaymentRoutingAssert(strpos($source, 'orders.payment') !== false, 'endpoint should target orders.payment route');
+processTablePaymentRoutingAssert(strpos($controller, '$posMutationService->payTableOrder') !== false, 'controller should route payment mutation through PosOrderMutationService');
+processTablePaymentRoutingAssert(strpos($controller, "'pos_customer_id'") !== false, 'controller should pass pos_customer_id for CRM rollup');
+processTablePaymentRoutingAssert(strpos($controller, '$accountingPostingService->postTablePaymentReceipt') !== false, 'controller should route receipt posting through OrderAccountingService');
+processTablePaymentRoutingAssert(strpos($controller, 'SyncOutboxEventService') !== false, 'controller should preserve sync outbox recording');
+processTablePaymentRoutingAssert(strpos($controller, "'receipt_id' => \$receiptId") !== false, 'controller should preserve receipt_id response key');
+processTablePaymentRoutingAssert(strpos($controller, "'invoice_id' => \$orderId") !== false, 'controller should preserve invoice_id response key');
+processTablePaymentRoutingAssert(strpos($controller, 'تم السداد بالكامل') !== false, 'controller should preserve full-payment Arabic message');
+processTablePaymentRoutingAssert(strpos($controller, 'تم تسجيل دفعة جزئية') !== false, 'controller should preserve partial-payment Arabic message');
 
 $forbiddenSnippets = [
     'INSERT INTO journal_heads',
@@ -24,7 +27,7 @@ $forbiddenSnippets = [
 ];
 
 foreach ($forbiddenSnippets as $snippet) {
-    processTablePaymentRoutingAssert(strpos($source, $snippet) === false, 'endpoint should not keep direct accounting snippet: ' . $snippet);
+    processTablePaymentRoutingAssert(strpos($source, $snippet) === false, 'endpoint shim should not keep direct accounting snippet: ' . $snippet);
 }
 
 echo "process-table-payment-endpoint-routing-ok\n";

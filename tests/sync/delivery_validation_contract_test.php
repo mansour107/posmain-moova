@@ -1,17 +1,24 @@
 <?php
 
-require_once __DIR__ . '/../../classes/Pos/Service/DeliveryClientService.php';
-
 $root = dirname(__DIR__, 2);
-$saveSource = file_get_contents($root . '/do/save_customer.php');
-$searchSource = file_get_contents($root . '/do/search_customer.php');
+
+$retired = [
+    'do/search_customer.php',
+    'do/save_customer.php',
+    'do/update_customer.php',
+];
+
+foreach ($retired as $path) {
+    deliveryValidationAssert(!is_file($root . '/' . $path), $path . ' should be removed');
+}
+
 $posDeliveryJs = file_get_contents($root . '/js/pos_delivery.js');
 $posBarcodeJs = file_get_contents($root . '/js/pos_barcode.js');
 $posContent = file_get_contents($root . '/includes/pos_content.php');
 $doaddInvoice = file_get_contents($root . '/do/doadd_invoice.php');
 
-deliveryValidationAssert(strpos($saveSource, 'DeliveryClientService') !== false, 'save_customer should use DeliveryClientService');
-deliveryValidationAssert(strpos($searchSource, 'json_encode') !== false || strpos($searchSource, 'DeliveryClientService') !== false, 'search_customer should return safe JSON');
+deliveryValidationAssert(strpos($posDeliveryJs, 'ajax/pos_customer_search.php') !== false, 'delivery JS should use CRM search API');
+deliveryValidationAssert(strpos($posDeliveryJs, 'do/search_customer.php') === false, 'delivery JS should not call legacy search endpoint');
 deliveryValidationAssert(strpos($posDeliveryJs, 'تأكيد بيانات العميل') !== false || strpos($posContent, 'تأكيد بيانات العميل') !== false, 'confirm button should be renamed');
 deliveryValidationAssert(strpos($posDeliveryJs, 'isCustomerFormComplete') !== false, 'delivery JS should gate confirm on complete form');
 deliveryValidationAssert(strpos($posDeliveryJs, 'response.success') !== false, 'delivery JS should check response.success');
@@ -19,7 +26,8 @@ deliveryValidationAssert(strpos($posBarcodeJs, "orderMode === '3'") !== false, '
 deliveryValidationAssert(strpos($posBarcodeJs, 'posDeliveryIsReadyForSubmit') !== false, 'validatePOSForm should call delivery readiness helper');
 deliveryValidationAssert(strpos($doaddInvoice, 'يجب إدخال بيانات عميل الدليفري') !== false, 'backend should require delivery customer fields');
 deliveryValidationAssert(strpos($doaddInvoice, 'createDeliveryOrder') !== false, 'delivery orders should route through createDeliveryOrder when v2 enabled');
-deliveryValidationAssert(strpos(file_get_contents($root . '/classes/Pos/Service/PosOrderMutationService.php'), 'sumPostedItemSubtotal') !== false, 'delivery create should recompute net from line subtotal and fee');
+deliveryValidationAssert(strpos($doaddInvoice, 'delivery_client_id') === false, 'invoice route should not reference delivery_client_id');
+deliveryValidationAssert(strpos(file_get_contents($root . '/classes/Pos/Service/PosOrderMutationService.php'), 'upsertForDelivery') !== false, 'delivery create should upsert CRM customers');
 deliveryValidationAssert(strpos(file_get_contents($root . '/ajax/delivery_status_update.php'), "require_permission('delivery.dispatch'") !== false || strpos(file_get_contents($root . '/ajax/delivery_status_update.php'), "auth_guard_has_permission('delivery.dispatch'") !== false, 'delivery status API should require dispatch permission');
 deliveryValidationAssert(strpos(file_get_contents($root . '/do/doedit_delivery_zone.php'), "require_permission('delivery.zones.manage'") !== false, 'delivery zone writes should require zones permission');
 deliveryValidationAssert(strpos(file_get_contents($root . '/classes/PosOrderService.php'), 'replaceMoovaDeliveryOrder') !== false, 'Moova delivery edits should have dedicated replace path');

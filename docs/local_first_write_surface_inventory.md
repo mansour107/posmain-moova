@@ -35,7 +35,10 @@ Every discovered write path is assigned at least one sync-planning category:
 | `classes/PosOrderService.php` | `pos_order`, `table_state`, `payments/accounting`, `menu_catalog`, `moova_bridge` | Shared service used by Moova table orders. It creates/merges/replaces/cancels order lines, refreshes totals/accounting, maps Moova lines, and marks tables busy. |
 | `classes/Moova/MoovaNewOrderApplyService.php` | `pos_order`, `table_state`, `moova_bridge` | Shared Moova new-order apply service. It owns new-order idempotency/link persistence and delegates POS table-order mutation to `PosOrderService` for both direct widget and queued worker delivery. |
 | `classes/Moova/MoovaChangeOrderApplyService.php` | `pos_order`, `table_state`, `moova_bridge` | Shared Moova edit/cancel apply service. It owns change-link persistence, stale-state decline checks, POS replace/cancel delegation, and direct/queued response metadata. |
-| `ajax/cofe_create_order.php` | `pos_order`, `payments/accounting`, `menu_catalog`, `moova_bridge` | Legacy Cofe widget order-creation endpoint. It accepts external order payloads and writes POS order/accounting data directly. |
+| `ajax/cofe_create_order.php` | `pos_order`, `payments/accounting`, `menu_catalog`, `moova_bridge` | Legacy Cofe widget order-creation endpoint. Integration signature required in production when secret configured. |
+| `ajax/save_order.php` | `pos_order`, `table_state` | Modern table save JSON endpoint with auth, CSRF, idempotency, and pricing. |
+| `do/doadd_invoice_waiter.php` | `pos_order`, `table_state` | Waiter raw SQL writer; legacy retirement candidate. |
+| `api/pos/index.php` | `pos_order`, `table_state` | Routed POS API entry for table save when router enabled. |
 | `ajax/moova_confirm_order.php` | `pos_order`, `table_state`, `moova_bridge` | Moova confirm endpoint. It validates the device token/idempotency key and delegates new-order idempotency/link persistence plus order creation/merge to `MoovaNewOrderApplyService`. |
 | `ajax/moova_change_order.php` | `pos_order`, `table_state`, `moova_bridge` | Moova change/cancel endpoint. It validates cashier confirmation and delegates change-link persistence, state checks, and POS replace/cancel apply to `MoovaChangeOrderApplyService`. |
 | `close_shift.php` | `shift_session` | Shift close path that inserts closed shift/order session records. |

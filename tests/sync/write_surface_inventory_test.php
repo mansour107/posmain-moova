@@ -33,6 +33,8 @@ class WriteSurfaceInventoryTest extends TestCase
         $this->assertPathHasCategory($byPath, 'classes/Moova/MoovaChangeOrderApplyService.php', 'pos_order');
         $this->assertPathHasCategory($byPath, 'ajax/cofe_create_order.php', 'moova_bridge');
         $this->assertPathHasCategory($byPath, 'ajax/cofe_create_order.php', 'pos_order');
+        $this->assertPathHasCategory($byPath, 'ajax/save_order.php', 'pos_order');
+        $this->assertPathHasCategory($byPath, 'do/doadd_invoice_waiter.php', 'pos_order');
         $this->assertPathHasCategory($byPath, 'ajax/moova_confirm_order.php', 'moova_bridge');
         $this->assertPathHasOperation($byPath, 'ajax/moova_confirm_order.php', 'DELEGATE');
         $this->assertPathHasCategory($byPath, 'ajax/moova_change_order.php', 'moova_bridge');
@@ -64,6 +66,9 @@ class WriteSurfaceInventoryTest extends TestCase
             'ajax/cofe_create_order.php',
             'ajax/moova_confirm_order.php',
             'ajax/moova_change_order.php',
+            'ajax/save_order.php',
+            'do/doadd_invoice_waiter.php',
+            'includes/pos_supermarket_content.php',
             'close_shift.php',
             'do_close_shift_z.php',
             'do/doadd_group.php',

@@ -11,6 +11,9 @@ class SyncSchemaManager
             'pos_request_keys' => $this->posRequestKeysSql(),
             'order_events' => $this->orderEventsSql(),
             'order_fulfillment' => $this->orderFulfillmentSql(),
+            'pos_customers' => $this->posCustomersSql(),
+            'pos_customer_phones' => $this->posCustomerPhonesSql(),
+            'pos_customer_addresses' => $this->posCustomerAddressesSql(),
             'delivery_zones' => $this->deliveryZonesSql(),
             'security_audit_log' => $this->securityAuditLogSql(),
             'failed_login_attempts' => $this->failedLoginAttemptsSql(),
@@ -243,6 +246,42 @@ class SyncSchemaManager
         return $applied;
     }
 
+    public function posCustomerTableKeys(): array
+    {
+        return ['pos_customers', 'pos_customer_phones', 'pos_customer_addresses', 'order_fulfillment'];
+    }
+
+    public function pendingPosCustomerStatements(mysqli $conn): array
+    {
+        $pending = [];
+        $planned = $this->plannedStatements();
+        foreach ($this->posCustomerTableKeys() as $table) {
+            if (!isset($planned[$table])) {
+                continue;
+            }
+            if (!$this->tableExists($conn, $table)) {
+                $pending[$table] = $planned[$table];
+                continue;
+            }
+            foreach ($this->upgradeStatements($conn, $table) as $label => $statement) {
+                $pending[$label] = $statement;
+            }
+        }
+
+        return $pending;
+    }
+
+    public function applyPosCustomerSchema(mysqli $conn): array
+    {
+        $applied = [];
+        foreach ($this->pendingPosCustomerStatements($conn) as $label => $sql) {
+            $conn->query($sql);
+            $applied[] = $label;
+        }
+
+        return $applied;
+    }
+
     private function tableExists(mysqli $conn, $table)
     {
         $stmt = $conn->prepare("
@@ -307,6 +346,10 @@ class SyncSchemaManager
 
         if ($table === 'order_fulfillment') {
             return $this->orderFulfillmentUpgradeStatements($conn);
+        }
+
+        if ($table === 'pos_customers') {
+            return $this->posCustomersUpgradeStatements($conn);
         }
 
         return [];
@@ -1031,6 +1074,9 @@ CREATE TABLE IF NOT EXISTS order_fulfillment (
   customer_phone VARCHAR(60) NULL,
   customer_address VARCHAR(500) NULL,
   delivery_client_id INT NULL,
+  pos_customer_id INT NULL,
+  crm_rollup_paid_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
+  crm_rollup_counted TINYINT(1) NOT NULL DEFAULT 0,
   delivery_zone VARCHAR(120) NULL,
   delivery_fee DECIMAL(12,3) NOT NULL DEFAULT 0.000,
   delivery_status VARCHAR(40) NOT NULL DEFAULT 'none',
@@ -1042,7 +1088,8 @@ CREATE TABLE IF NOT EXISTS order_fulfillment (
   UNIQUE KEY uq_order_fulfillment_order (order_id),
   KEY idx_order_fulfillment_channel (order_channel, fulfillment_type, delivery_status),
   KEY idx_order_fulfillment_provider (external_provider, external_order_id),
-  KEY idx_fulfillment_client (delivery_client_id)
+  KEY idx_fulfillment_client (delivery_client_id),
+  KEY idx_fulfillment_pos_customer (pos_customer_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
     }
 
@@ -1077,6 +1124,99 @@ ALTER TABLE order_fulfillment
             $statements['order_fulfillment.add_idx_fulfillment_client'] = "
 ALTER TABLE order_fulfillment
   ADD KEY idx_fulfillment_client (delivery_client_id)";
+        }
+        if (!$this->columnExists($conn, 'order_fulfillment', 'pos_customer_id')) {
+            $statements['order_fulfillment.add_pos_customer_id'] = "
+ALTER TABLE order_fulfillment
+  ADD COLUMN pos_customer_id INT NULL AFTER delivery_client_id";
+        }
+        if (!$this->indexExists($conn, 'order_fulfillment', 'idx_fulfillment_pos_customer')) {
+            $statements['order_fulfillment.add_idx_fulfillment_pos_customer'] = "
+ALTER TABLE order_fulfillment
+  ADD KEY idx_fulfillment_pos_customer (pos_customer_id)";
+        }
+        if (!$this->columnExists($conn, 'order_fulfillment', 'crm_rollup_paid_amount')) {
+            $statements['order_fulfillment.add_crm_rollup_paid_amount'] = "
+ALTER TABLE order_fulfillment
+  ADD COLUMN crm_rollup_paid_amount DECIMAL(12,2) NOT NULL DEFAULT 0 AFTER pos_customer_id";
+        }
+        if (!$this->columnExists($conn, 'order_fulfillment', 'crm_rollup_counted')) {
+            $statements['order_fulfillment.add_crm_rollup_counted'] = "
+ALTER TABLE order_fulfillment
+  ADD COLUMN crm_rollup_counted TINYINT(1) NOT NULL DEFAULT 0 AFTER crm_rollup_paid_amount";
+        }
+
+        return $statements;
+    }
+
+    private function posCustomersSql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS pos_customers (
+  id INT NOT NULL AUTO_INCREMENT,
+  display_name VARCHAR(160) NOT NULL,
+  primary_phone_id INT NULL,
+  notes TEXT NULL,
+  orders_count INT NOT NULL DEFAULT 0,
+  lifetime_paid DECIMAL(14,3) NOT NULL DEFAULT 0.000,
+  last_order_at DATETIME NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  isdeleted TINYINT(1) NOT NULL DEFAULT 0,
+  PRIMARY KEY (id),
+  KEY idx_pos_customers_deleted (isdeleted, updated_at),
+  KEY idx_pos_customers_last_order (last_order_at),
+  KEY idx_pos_customers_lifetime (lifetime_paid)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
+    private function posCustomerPhonesSql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS pos_customer_phones (
+  id INT NOT NULL AUTO_INCREMENT,
+  customer_id INT NOT NULL,
+  phone_normalized VARCHAR(32) NOT NULL,
+  phone_display VARCHAR(40) NOT NULL,
+  is_primary TINYINT(1) NOT NULL DEFAULT 0,
+  label VARCHAR(40) NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  isdeleted TINYINT(1) NOT NULL DEFAULT 0,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_pos_customer_phone_normalized (phone_normalized),
+  KEY idx_pos_customer_phones_customer (customer_id, is_primary)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
+    private function posCustomerAddressesSql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS pos_customer_addresses (
+  id INT NOT NULL AUTO_INCREMENT,
+  customer_id INT NOT NULL,
+  address_text VARCHAR(500) NOT NULL,
+  zone_id INT NULL,
+  is_default TINYINT(1) NOT NULL DEFAULT 0,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  isdeleted TINYINT(1) NOT NULL DEFAULT 0,
+  PRIMARY KEY (id),
+  KEY idx_pos_customer_addresses_customer (customer_id, is_default)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
+    private function posCustomersUpgradeStatements(mysqli $conn)
+    {
+        $statements = [];
+        foreach ([
+            'orders_count' => "ADD COLUMN orders_count INT NOT NULL DEFAULT 0 AFTER notes",
+            'lifetime_paid' => "ADD COLUMN lifetime_paid DECIMAL(14,3) NOT NULL DEFAULT 0.000 AFTER orders_count",
+            'last_order_at' => "ADD COLUMN last_order_at DATETIME NULL AFTER lifetime_paid",
+        ] as $column => $alter) {
+            if (!$this->columnExists($conn, 'pos_customers', $column)) {
+                $statements['pos_customers.add_' . $column] = "ALTER TABLE pos_customers {$alter}";
+            }
         }
 
         return $statements;

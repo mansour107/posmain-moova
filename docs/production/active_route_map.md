@@ -2,6 +2,62 @@
 
 Generated: 2026-05-12
 
+## Order Creation Write Surfaces (2026-06)
+
+**Canonical router:** `api/pos/index.php?route=<route>` via [`includes/pos_api_dispatch.php`](../includes/pos_api_dispatch.php).
+
+| Route | Permission | Notes |
+|---|---|---|
+| `orders.table` | `pos.table.open` | Table save/update |
+| `orders.takeaway` | `pos.sell.takeaway` | Paid takeaway create |
+| `orders.delivery` | `pos.sell.delivery` | Delivery create |
+| `orders.payment` | `pos.payment.take` | Table payment |
+| `orders.split-payment` | `pos.split` | Split line payment |
+| `orders.edit` | `pos.sell.takeaway` | Takeaway/delivery edit/update |
+| `orders.table.free` | `pos.table.open` | Empty held table without active order |
+| `integrations.cofe.orders` | `moova.accept` | Cofe HMAC integration |
+
+| Surface | Safety | Notes |
+|---|---|---|
+| `api/pos/index.php` | **Canonical** | All browser/integration order writes; auth + CSRF + permissions + idempotency |
+| `ajax/save_order.php` | Compat shim | Delegates to `orders.table`; denied when `POSMAIN_ORDER_API_ROUTER_ONLY=1` |
+| `ajax/process_table_payment.php` | Compat shim | Delegates to `orders.payment` |
+| `ajax/process_split_payment.php` | Compat shim | Delegates to `orders.split-payment` |
+| `ajax/cofe_create_order.php` | Compat shim | Delegates to `integrations.cofe.orders` |
+| `do/doadd_invoice.php` | Legacy compat | Denied when `POSMAIN_ORDER_API_ROUTER_ONLY=1` |
+| `do/doadd_invoice_waiter.php` | Waiter shim | Delegates to `do/doadd_invoice.php` |
+| `js/pos_order_api.js` | Frontend client | Cashier `submitPOS` posts JSON to API router |
+| `classes/PosOrderService.php` | Internal service | Moova table-order compatibility surface |
+| `ajax/moova_confirm_order.php` | Integration | Delegates to `MoovaNewOrderApplyService` |
+| `ajax/moova_change_order.php` | Integration | Delegates to `MoovaChangeOrderApplyService` |
+| `includes/pos_supermarket_content.php` | Browser form | Posts to `do/doadd_invoice.php` (wave 2 cutover) |
+
+**Rollout flag:** `POSMAIN_ORDER_API_ROUTER_ONLY=1` blocks direct legacy write endpoints in production after frontend cutover. Default `0` locally.
+
+**Integration security:** Cofe requires `settings.cofe_integration_secret` + `X-Posmain-Integration-Signature` in production; non-prod allows open integrations only when `POSMAIN_ALLOW_OPEN_INTEGRATIONS=1`.
+
+Cashier `submitPOS` uses `api/pos/index.php` for every supported cashier write. Legacy `do/doadd_invoice.php` form POST is no longer the active owner for takeaway save, edit, table pay, or free-table.
+
+### Cashier action matrix
+
+| Mode | Action | API route | Legacy fallback |
+|---|---|---|---|
+| Takeaway | `save` | `orders.takeaway` | blocked when router-only |
+| Takeaway | `print_receipt` | `orders.takeaway` | blocked when router-only |
+| Takeaway | `cash` | `orders.takeaway` | blocked when router-only |
+| Takeaway edit | `save` / `cash` / `print_receipt` | `orders.edit` | blocked when router-only |
+| Table | `save` / `print_receipt` | `orders.table` | blocked when router-only |
+| Table edit | `save` / `print_receipt` | `orders.table` | blocked when router-only |
+| Table | `cash` | `orders.payment` | blocked when router-only |
+| Table | `free_table` | `orders.table.free` | blocked when router-only |
+| Delivery | `save` / `cash` | `orders.delivery` | blocked when router-only |
+| Delivery edit | `save` / `cash` | `orders.edit` | blocked when router-only |
+| Table | `split_cash` | `orders.split-payment` | blocked when router-only |
+
+Success feedback for API saves uses the Bootstrap modal in `includes/pos_content.php` (`POSShowOrderSuccess`) with no full-page reload. Payment/print actions may still navigate to `print/receipt.php`.
+
+Recovery visibility: `ajax/pos_write_recovery_status.php` reports stale idempotency keys and failed outbox events.
+
 ## Main Login And Cashier POS
 
 ```mermaid

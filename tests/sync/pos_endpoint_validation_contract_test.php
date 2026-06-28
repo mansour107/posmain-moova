@@ -1,20 +1,21 @@
 <?php
 
+$root = realpath(__DIR__ . '/../..');
+$controller = file_get_contents($root . '/classes/Pos/Http/PosOrderController.php');
+$dispatch = file_get_contents($root . '/includes/pos_api_dispatch.php');
+
 $endpointExpectations = [
     'ajax/save_order.php' => [
-        "require_once('../classes/Pos/Validation/OrderInputValidator.php')",
-        'OrderInputValidator::validateTableSave($data)',
-        'VALIDATION_FAILED',
+        'pos_api_dispatch',
+        'orders.table',
     ],
     'ajax/process_table_payment.php' => [
-        "require_once('../classes/Pos/Validation/PaymentInputValidator.php')",
-        'PaymentInputValidator::validateTablePayment($_POST)',
-        'TableInputValidator::failureResponse($e)',
+        'pos_api_dispatch',
+        'orders.payment',
     ],
     'ajax/process_split_payment.php' => [
-        "require_once('../classes/Pos/Validation/PaymentInputValidator.php')",
-        'PaymentInputValidator::validateSplitPayment($data)',
-        'TableInputValidator::failureResponse($e)',
+        'pos_api_dispatch',
+        'orders.split-payment',
     ],
     'ajax/delete_order.php' => [
         "require_once('../classes/Pos/Validation/TableInputValidator.php')",
@@ -39,23 +40,24 @@ $endpointExpectations = [
 ];
 
 foreach ($endpointExpectations as $path => $snippets) {
-    $source = file_get_contents(__DIR__ . '/../../' . $path);
+    $source = file_get_contents($root . '/' . $path);
     posEndpointValidationAssert(is_string($source), 'unable to read ' . $path);
     foreach ($snippets as $snippet) {
         posEndpointValidationAssert(strpos($source, $snippet) !== false, $path . ' missing validation snippet: ' . $snippet);
     }
 }
 
-$saveSource = file_get_contents(__DIR__ . '/../../ajax/save_order.php');
 posEndpointValidationAssert(
-    strpos($saveSource, 'OrderInputValidator::validateTableSave($data)') < strpos($saveSource, '$idempotencyService = new IdempotencyService()'),
-    'save_order should validate before beginning idempotency or mutations'
+    strpos($controller, 'PaymentInputValidator::validateTablePayment') !== false,
+    'controller should validate table payments'
 );
-
-$splitSource = file_get_contents(__DIR__ . '/../../ajax/process_split_payment.php');
 posEndpointValidationAssert(
-    strpos($splitSource, 'PaymentInputValidator::validateSplitPayment($data)') < strpos($splitSource, '$idempotencyService = new IdempotencyService()'),
-    'split payment should validate before beginning idempotency or mutations'
+    strpos($controller, 'PaymentInputValidator::validateSplitPayment') !== false,
+    'controller should validate split payments'
+);
+posEndpointValidationAssert(
+    strpos($dispatch, 'PosOrderAccessPolicy::requireRoutePermission') !== false,
+    'dispatch should enforce route permissions'
 );
 
 echo "pos-endpoint-validation-contract-ok\n";

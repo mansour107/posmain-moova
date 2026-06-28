@@ -241,7 +241,7 @@ try {
                 'customer_name' => $existingFulfillment['customer_name'],
                 'customer_phone' => $existingFulfillment['customer_phone'],
                 'customer_address' => $existingFulfillment['customer_address'],
-                'delivery_client_id' => $existingFulfillment['delivery_client_id'] ?? null,
+                'pos_customer_id' => (int) ($existingFulfillment['pos_customer_id'] ?? $existingFulfillment['delivery_client_id'] ?? 0) ?: null,
                 'delivery_zone' => (string) ($resolvedTotals['delivery_zone_name'] ?? $existingFulfillment['delivery_zone']),
                 'delivery_fee' => (float) $resolvedTotals['delivery_fee'],
                 'delivery_status' => $existingFulfillment['delivery_status'],

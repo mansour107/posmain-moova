@@ -12,7 +12,8 @@ if ($content === false || $posJs === false || $invoice === false || $tablesEndpo
 
 posCashierEmptyTableAssert(strpos($content, 'id="pos_empty_table_after_payment" checked') !== false, 'payment modal should include a default-checked empty-table option');
 posCashierEmptyTableAssert(strpos($content, 'id="selected_table_case"') !== false, 'cashier form should track occupied table state separately from active order id');
-posCashierEmptyTableAssert(strpos($content, "action === 'free_table'") !== false, 'inline submit override should support the free-table action');
+posCashierEmptyTableAssert(strpos($content, "action === 'free_table'") === false, 'inline submit override should not remain in pos_content');
+posCashierEmptyTableAssert(strpos($posJs, "action === 'free_table'") !== false, 'cashier JS should support the free-table action');
 posCashierEmptyTableAssert(strpos($posJs, 'function isHeldTableWithoutActiveOrder()') !== false, 'cashier JS should detect occupied tables without active orders');
 posCashierEmptyTableAssert(strpos($posJs, 'أفرغ الطاولة') !== false, 'main payment button should switch to empty-table text');
 posCashierEmptyTableAssert(strpos($posJs, "submitPOS('free_table')") !== false, 'main payment button should submit free-table action when no items are present');
