@@ -855,7 +855,7 @@ function posmain_inventory_report_columns(string $report, bool $canViewCost): ar
             'drilldown_url' => 'تفاصيل',
         ],
         'cogs_reconciliation' => [
-            'review_key' => 'المجموعة',
+            'review_key' => 'التصنيف',
             'sample_movement_type' => 'نوع الحركة',
             'movement_count' => 'عدد الحركات',
             'movement_total' => 'قيمة الحركات',

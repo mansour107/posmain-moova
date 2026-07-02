@@ -3,7 +3,7 @@ include('../includes/connect.php');
 
 $id = (int) ($_GET['id'] ?? 0);
 $gname = trim((string) ($_POST['gname'] ?? ''));
-$returnTo = ($_GET['return_to'] ?? '') === 'item_categories' ? 'item_categories.php' : 'mygroups.php';
+$returnTo = 'mygroups.php';
 
 if ($id < 1 || $gname === '') {
     header('location:../' . $returnTo);

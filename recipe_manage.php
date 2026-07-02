@@ -1459,6 +1459,13 @@ include __DIR__ . '/includes/sidebar.php';
                         typeLabelTarget.value = item.component_type || item.item_type || lineType;
                     }
                 }
+                const form = input.closest('form');
+                if (form && item.stock_unit_id) {
+                    const unitSelect = form.querySelector('select[name="unit_id"]');
+                    if (unitSelect) {
+                        unitSelect.value = String(item.stock_unit_id);
+                    }
+                }
                 const groupTarget = document.getElementById(input.dataset.targetGroupInput || '');
                 if (groupTarget && item.group_id) {
                     groupTarget.value = item.group_id;

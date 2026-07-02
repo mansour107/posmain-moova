@@ -15,14 +15,20 @@ frontendCutoverAssert(strpos($posOrderApi, 'resolveRoute') !== false, 'pos_order
 frontendCutoverAssert(strpos($posOrderApi, 'postOrderRoute') !== false, 'pos_order_api should post to router');
 frontendCutoverAssert(strpos($posOrderApi, 'orders.takeaway') !== false, 'pos_order_api should route takeaway save to API');
 frontendCutoverAssert(strpos($posOrderApi, 'orders.payment') !== false, 'pos_order_api should route table cash to payment API');
-frontendCutoverAssert(strpos($posOrderApi, 'orders.edit') !== false, 'pos_order_api should route edit mode to orders.edit');
+frontendCutoverAssert(strpos($posOrderApi, 'clearCashierEditState') !== false, 'pos_order_api should clear stale takeaway edit state');
+frontendCutoverAssert(strpos($posOrderApi, 'age === 2') !== false, 'pos_order_api readEditId should scope table mode to selected_order_id');
 
-frontendCutoverAssert(strpos($posContent, 'pos_order_api.js') !== false, 'pos_content should load pos_order_api.js');
+frontendCutoverAssert(strpos($posBarcode, 'clearCashierEditState') !== false, 'pos_barcode should clear stale edit state when switching modes');
 frontendCutoverAssert(strpos($posContent, 'POSShowOrderSuccess') !== false, 'pos_content should expose API-driven success modal');
 frontendCutoverAssert(strpos($posContent, 'submitPOS (Inline Override)') === false, 'pos_content should not duplicate inline submitPOS');
 
 frontendCutoverAssert(strpos($posBarcode, 'window.submitPOS = function') !== false, 'pos_barcode should own submitPOS');
 frontendCutoverAssert(strpos($posBarcode, 'submitFromForm') !== false, 'pos_barcode submitPOS should use POSOrderApi.submitFromForm');
+
+$posOrderDraft = file_get_contents($root . '/js/pos_order_draft.js');
+frontendCutoverAssert(strpos($posContent, 'pos_order_draft.js') !== false, 'pos_content should load pos_order_draft.js');
+frontendCutoverAssert(strpos($posOrderDraft, 'window.POSOrderDraft') !== false, 'pos_order_draft should export POSOrderDraft');
+frontendCutoverAssert(strpos($posOrderApi, 'markSaved(body)') !== false || strpos($posOrderApi, 'draft.markSaved') !== false, 'pos_order_api should integrate draft saved state');
 
 $saveOrder = file_get_contents($root . '/ajax/save_order.php');
 frontendCutoverAssert(strpos($saveOrder, 'pos_api_dispatch') !== false, 'save_order shim should delegate to dispatch');

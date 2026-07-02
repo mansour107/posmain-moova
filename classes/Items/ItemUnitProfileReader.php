@@ -1,6 +1,7 @@
 <?php
 
 require_once __DIR__ . '/ItemUnitColumnSupport.php';
+require_once __DIR__ . '/ItemUnitConversion.php';
 
 final class ItemUnitProfileReader
 {
@@ -12,7 +13,7 @@ final class ItemUnitProfileReader
         }
 
         if (self::hasDefFlags($rows)) {
-            return self::fromDefFlags($rows, $itemType);
+            return self::fromDefFlags($rows, $itemType, ItemUnitColumnSupport::hasConversionSwapped($conn));
         }
 
         return self::fromLegacyRows($rows, $itemType);
@@ -65,7 +66,7 @@ final class ItemUnitProfileReader
         return false;
     }
 
-    private static function fromDefFlags(array $rows, string $itemType): array
+    private static function fromDefFlags(array $rows, string $itemType, bool $hasSwapColumn): array
     {
         $stock = self::pick($rows, 'def_stock') ?? $rows[0];
         $sell = self::pick($rows, 'def_sale');
@@ -83,6 +84,9 @@ final class ItemUnitProfileReader
             $purchaseActive = $buy !== null;
         }
 
+        $sellConversion = ItemUnitConversion::displayProfileFromRow($sell, $stock, 'sell', $hasSwapColumn);
+        $purchaseConversion = ItemUnitConversion::displayProfileFromRow($buy, $stock, 'purchase', $hasSwapColumn);
+
         return [
             'sell_active' => $sellActive,
             'purchase_active' => $purchaseActive,
@@ -95,8 +99,10 @@ final class ItemUnitProfileReader
             'sell_price2' => (float) ($sell['price2'] ?? 0),
             'sell_market_price' => (float) ($sell['price3'] ?? 0),
             'purchase_cost' => (float) ($buy['cost_price'] ?? 0),
-            'sell_storage_factor' => self::factorBetween($sell, $stock),
-            'purchase_storage_factor' => self::factorBetween($buy, $stock),
+            'sell_storage_factor' => $sellConversion['factor'],
+            'sell_storage_swapped' => $sellConversion['swapped'],
+            'purchase_storage_factor' => $purchaseConversion['factor'],
+            'purchase_storage_swapped' => $purchaseConversion['swapped'],
             'unit_names' => self::unitNameMap($rows),
         ];
     }
@@ -132,7 +138,9 @@ final class ItemUnitProfileReader
             'sell_market_price' => (float) ($stock['price3'] ?? 0),
             'purchase_cost' => (float) ($buy['cost_price'] ?? $stock['cost_price'] ?? 0),
             'sell_storage_factor' => 1.0,
+            'sell_storage_swapped' => false,
             'purchase_storage_factor' => (float) ($buy['u_val'] ?? 1),
+            'purchase_storage_swapped' => false,
             'unit_names' => self::unitNameMap($rows),
         ];
     }
@@ -152,7 +160,9 @@ final class ItemUnitProfileReader
             'sell_market_price' => 0,
             'purchase_cost' => 0,
             'sell_storage_factor' => 1.0,
+            'sell_storage_swapped' => false,
             'purchase_storage_factor' => 1.0,
+            'purchase_storage_swapped' => false,
             'unit_names' => [],
         ];
     }
@@ -178,18 +188,6 @@ final class ItemUnitProfileReader
         }
 
         return $best;
-    }
-
-    private static function factorBetween(?array $from, ?array $to): float
-    {
-        if ($from === null || $to === null) {
-            return 1.0;
-        }
-        if ((int) $from['unit_id'] === (int) $to['unit_id']) {
-            return 1.0;
-        }
-
-        return (float) ($from['u_val'] ?? 1);
     }
 
     private static function unitNameMap(array $rows): array

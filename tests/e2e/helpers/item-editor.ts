@@ -59,6 +59,15 @@ export async function selectItemType(page: Page, type: ItemEditorType): Promise<
   }
 }
 
+export async function selectItemUnit(page: Page, fieldId: string, unitId: string): Promise<void> {
+  const listboxId = fieldId.replace('_id', '_listbox');
+  const option = page.locator(`#${listboxId} .item-unit-combobox__option[data-id="${unitId}"]`).first();
+  await expect(option).toHaveCount(1);
+  await page.locator(`#${fieldId}_input`).click();
+  await option.click();
+  await expect(page.locator(`#${fieldId}`)).toHaveValue(unitId);
+}
+
 export async function setSellSectionActive(page: Page, active: boolean): Promise<void> {
   const toggle = page.locator('#sell_section_checkbox');
   if (await toggle.isVisible()) {
@@ -82,10 +91,7 @@ export async function setPurchaseSectionActive(page: Page, active: boolean): Pro
 
 export async function fillSellProfile(page: Page, sell: SellProfileOptions): Promise<void> {
   if (sell.unitId) {
-    const current = await page.locator('#sell_unit_id').inputValue();
-    if (current !== sell.unitId) {
-      await page.selectOption('#sell_unit_id', sell.unitId);
-    }
+    await selectItemUnit(page, 'sell_unit_id', sell.unitId);
   }
   await page.locator('#sell_price1').fill(sell.price1);
   if (sell.price2 !== undefined) {
@@ -98,16 +104,22 @@ export async function fillSellProfile(page: Page, sell: SellProfileOptions): Pro
 
 export async function fillPurchaseProfile(page: Page, purchase: PurchaseProfileOptions): Promise<void> {
   if (purchase.storageUnitId) {
-    await page.selectOption('#storage_unit_id', purchase.storageUnitId);
+    await selectItemUnit(page, 'storage_unit_id', purchase.storageUnitId);
   }
   if (purchase.purchaseUnitId) {
-    await page.selectOption('#purchase_unit_id', purchase.purchaseUnitId);
+    await selectItemUnit(page, 'purchase_unit_id', purchase.purchaseUnitId);
   }
   if (purchase.purchaseStorageFactor) {
-    await page.locator('#purchase_storage_factor').fill(purchase.purchaseStorageFactor, { force: true });
+    const factor = page.locator('#purchase_storage_factor');
+    if (await factor.isVisible()) {
+      await factor.fill(purchase.purchaseStorageFactor);
+    }
   }
   if (purchase.sellStorageFactor) {
-    await page.locator('#sell_storage_factor').fill(purchase.sellStorageFactor, { force: true });
+    const factor = page.locator('#sell_storage_factor');
+    if (await factor.isVisible()) {
+      await factor.fill(purchase.sellStorageFactor);
+    }
   }
   if (purchase.cost !== undefined) {
     await page.fill('#purchase_cost', purchase.cost);
@@ -134,7 +146,7 @@ export async function fillCreateItemForm(page: Page, profile: CreateItemProfile)
     }
     if (profile.purchase?.storageUnitId || profile.type === 'ingredient' || profile.type === 'packaging') {
       const storageUnit = profile.purchase?.storageUnitId ?? ITEM_EDITOR_UNITS.kg;
-      await page.selectOption('#storage_unit_id', storageUnit);
+      await selectItemUnit(page, 'storage_unit_id', storageUnit);
     }
     if (profile.purchaseActive && profile.purchase) {
       await setPurchaseSectionActive(page, true);

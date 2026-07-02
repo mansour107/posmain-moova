@@ -6,7 +6,7 @@ require_once('../classes/Pos/Service/ItemAvailabilityService.php');
 require_once('../classes/Items/ItemCatalogStatus.php');
 
 if (!isset($_GET['category_id'])) {
-    echo json_encode(['success' => false, 'error' => 'معرف المجموعة مطلوب']);
+    echo json_encode(['success' => false, 'error' => 'معرف التصنيف مطلوب']);
     exit;
 }
 
@@ -29,6 +29,6 @@ if ($result && $result->num_rows > 0) {
     $items = (new ItemAvailabilityService())->decorateItems($conn, $items, posmain_pos_availability_scope($conn));
     echo json_encode(['success' => true, 'items' => $items]);
 } else {
-    echo json_encode(['success' => false, 'error' => 'لا توجد أصناف في هذه المجموعة']);
+    echo json_encode(['success' => false, 'error' => 'لا توجد أصناف في هذا التصنيف']);
 }
 ?>

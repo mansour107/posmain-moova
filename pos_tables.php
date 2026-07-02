@@ -273,7 +273,7 @@ if ($tables_count == 0) {
                                 <div class="col-6"><input type="number" class="form-control form-control-sm text-success font-weight-bold" id="net" value="0.00" readonly></div>
                             </div>
                             
-                            <button class="btn btn-success btn-block mt-3" id="save-order">
+                            <button class="btn btn-success btn-block mt-3 pos-save-order-btn" id="save-order" data-pos-save-state="empty">
                                 <i class="fas fa-save"></i> حفظ الطلب
                             </button>
                             <button class="btn btn-primary btn-block" id="payment-btn">
@@ -336,6 +336,8 @@ if ($tables_count == 0) {
     window.POSMAIN_CSRF_HEADER = 'X-CSRF-Token';
 })();
 </script>
+<script src="js/pos_order_draft.js?v=<?= (int) (@filemtime(__DIR__ . '/js/pos_order_draft.js') ?: 1) ?>"></script>
+<script src="js/pos_order_api.js?v=<?= (int) (@filemtime(__DIR__ . '/js/pos_order_api.js') ?: 1) ?>"></script>
 <script src="js/pos_tables.js"></script>
 
 <?php include('includes/footer.php');?>

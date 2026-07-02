@@ -43,7 +43,7 @@
                             <thead>
                                 <tr>
                                     <th>#</th>
-                                    <th>الكود</th>
+                                    <th>الباركود</th>
                                     <th>اسم الصنف</th>
                                     <th>ك المبيعات</th>
                                     <th>ق المبيعات</th>
@@ -80,7 +80,7 @@
                                 ?>
                                     <tr>
                                         <td class="text-center"><?= $x ?></td>
-                                        <td class="text-center"><?= $rowitm['code'] ?></td>
+                                        <td class="text-center"><?= $rowitm['barcode'] ?></td>
                                         <td class="text-center"><a class="btn btn-light btn-block" href="item_summery.php?id=<?= $rowitm['id']?>"><?= $rowitm['iname'] ?></a></td>
                                         <td class="text-center qty"><?= $sumqty['total_qty'] ?? 0 ?></td>
                                         <td class="text-center val"><?= $sumvalue['total_value'] ?? 0 ?></td>

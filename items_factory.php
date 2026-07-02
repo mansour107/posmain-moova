@@ -67,10 +67,10 @@ include('includes/header.php') ?>
                                     <div class="custom-control custom-switch custom-switch-off-warning custom-switch-on-success">
                                         <input type="checkbox" class="custom-control-input" id="clearGroups" checked>
                                         <label class="custom-control-label font-weight-bold text-warning cursor-pointer" for="clearGroups">
-                                            تصفير وإعادة تهيئة فئات الأصناف (المجموعات)
+                                            تصفير وإعادة تهيئة تصنيفات الأصناف
                                         </label>
                                     </div>
-                                    <small class="form-text text-muted pr-4">سيتم مسح المجموعات الحالية وإنشاء 10 مجموعات أساسية متنوعة باللغة العربية.</small>
+                                    <small class="form-text text-muted pr-4">سيتم مسح التصنيفات الحالية وإنشاء 10 تصنيفات أساسية متنوعة باللغة العربية.</small>
                                 </div>
 
                                 <button type="submit" id="startBtn" class="btn btn-info btn-block btn-lg shadow-sm font-weight-bold py-3 mt-4 animate__animated animate__pulse animate__infinite animate__slower">
@@ -272,14 +272,14 @@ document.addEventListener("DOMContentLoaded", function() {
                         logToTerminal("تم إفراغ قاعدة البيانات بنجاح وبدء جدول أصناف نظيف.", "info");
                     }
                     if (currentChunk === 0 && clearGroups) {
-                        logToTerminal("تم تصفير المجموعات وتوليد فئات الأصناف العشر الأساسية.", "info");
+                        logToTerminal("تم تصفير التصنيفات وتوليد التصنيفات العشر الأساسية.", "info");
                     }
                     
                     logToTerminal(`تم بنجاح توليد الدفعة ${currentChunk + 1} (+${generated} صنف).`);
                     
                     // Write preview of items
                     items.slice(0, 3).forEach(item => {
-                        logToTerminal(` -> [${item.code}] ${item.name} (${item.price} ج) - [${item.group}]`, 'info');
+                        logToTerminal(` -> [${item.barcode}] ${item.name} (${item.price} ج) - [${item.group}]`, 'info');
                     });
                     if (items.length > 3) {
                         logToTerminal(` -> ... وأكثر من ذلك في هذه الدفعة.`, 'info');

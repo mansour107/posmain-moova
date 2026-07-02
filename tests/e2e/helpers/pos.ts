@@ -1,12 +1,17 @@
 import { expect, type Locator, type Page } from '@playwright/test';
 
 export async function clickFirstAddableItem(page: Page): Promise<void> {
+  await clickNthAddableItem(page, 0);
+}
+
+export async function clickNthAddableItem(page: Page, index: number): Promise<void> {
   const cards = page.locator('.item-wrapper [data-item-id], .item-wrapper .item-card.itemButton');
   const count = await cards.count();
   expect(count, 'POS item grid should expose at least one item card').toBeGreaterThan(0);
+  expect(index, `item index ${index} must be within grid (${count} cards)`).toBeLessThan(count);
 
-  for (let index = 0; index < Math.min(count, 30); index++) {
-    const card = cards.nth(index);
+  for (let scan = index; scan < Math.min(count, index + 30); scan++) {
+    const card = cards.nth(scan);
     const canAdd = await card.getAttribute('data-availability-can-add')
       ?? await card.getAttribute('data-can-add');
     if (canAdd === '0') {
@@ -16,7 +21,55 @@ export async function clickFirstAddableItem(page: Page): Promise<void> {
     return;
   }
 
-  await cards.first().click();
+  await cards.nth(index).click();
+}
+
+export async function removeFirstCartLine(page: Page): Promise<void> {
+  const lines = page.locator('#itemData .item-card-order');
+  const before = await lines.count();
+  expect(before, 'cart must have a line to remove').toBeGreaterThan(0);
+  await page.locator('#itemData .delRow').first().click();
+  await expect(lines).toHaveCount(before - 1);
+}
+
+export async function openOrderForEdit(page: Page, orderId: number): Promise<void> {
+  await page.goto(`/pos_barcode.php?edit=${orderId}`);
+  await expect(page.locator('#itemData .item-card-order')).not.toHaveCount(0, { timeout: 20_000 });
+}
+
+export async function saveTakeawayOrder(page: Page): Promise<{ orderId: number; proId: number }> {
+  const saveResponse = page.waitForResponse((response) =>
+    response.url().includes('api/pos/index.php')
+    && response.request().method() === 'POST'
+    && response.url().includes('route=orders.takeaway'),
+  );
+  await saveOrderOnly(page);
+  const response = await saveResponse;
+  const body = await response.json();
+  expect(response.ok(), JSON.stringify(body)).toBeTruthy();
+  expect(body.success).toBeTruthy();
+  const orderId = Number(body.order_id);
+  const proId = Number(body.pro_id);
+  expect(orderId).toBeGreaterThan(0);
+  expect(proId).toBeGreaterThan(0);
+  return { orderId, proId };
+}
+
+export async function saveEditedOrder(page: Page): Promise<{ orderId: number; proId: number }> {
+  const editSave = page.waitForResponse((response) =>
+    response.url().includes('api/pos/index.php')
+    && response.request().method() === 'POST'
+    && (response.url().includes('route=orders.edit') || response.url().includes('route=orders.takeaway')),
+  );
+  await saveOrderOnly(page);
+  const response = await editSave;
+  const body = await response.json();
+  expect(response.ok(), JSON.stringify(body)).toBeTruthy();
+  expect(body.success).toBeTruthy();
+  return {
+    orderId: Number(body.order_id),
+    proId: Number(body.pro_id),
+  };
 }
 
 export async function clearCartFromHeader(page: Page): Promise<void> {
@@ -93,12 +146,43 @@ export async function payCashInModal(page: Page, amount?: number): Promise<void>
   }
 
   await page.locator('.pos-pay-confirm-btn').click();
+  await Promise.race([
+    page.waitForURL(/print\/receipt\.php/, { timeout: 30_000 }),
+    expect(page.locator('#paymentModal')).toBeHidden({ timeout: 30_000 }),
+  ]).catch(() => undefined);
 }
 
 export async function saveOrderOnly(page: Page): Promise<void> {
   const saveButton = page.locator('.pos-order-footer .pos-save-order-btn').first();
   await saveButton.scrollIntoViewIfNeeded();
   await saveButton.click({ force: true });
+}
+
+export function isCashierOrderSaveResponse(response: { url: () => string; request: () => { method: () => string } }): boolean {
+  return isCashierOrderSaveUrl(response.url(), response.request().method());
+}
+
+export function isCashierOrderSaveUrl(url: string, method = 'POST'): boolean {
+  return url.includes('api/pos/index.php')
+    && method === 'POST'
+    && (url.includes('route=orders.takeaway') || url.includes('route=orders.edit'));
+}
+
+export async function expectSaveButtonState(
+  page: Page,
+  state: 'empty' | 'dirty' | 'saving' | 'saved',
+  label?: string,
+): Promise<void> {
+  const saveButton = page.locator('.pos-order-footer .pos-save-order-btn').first();
+  await expect(saveButton).toHaveAttribute('data-pos-save-state', state);
+  if (label) {
+    await expect(saveButton).toContainText(label);
+  }
+  if (state === 'dirty') {
+    await expect(saveButton).toBeEnabled();
+  } else {
+    await expect(saveButton).toBeDisabled();
+  }
 }
 
 export async function saveTableOrderAndWait(page: Page): Promise<void> {
@@ -108,14 +192,19 @@ export async function saveTableOrderAndWait(page: Page): Promise<void> {
     await dialog.accept();
   });
 
-  const navigation = page.waitForNavigation({ waitUntil: 'load', timeout: 30_000 }).catch(error => error);
+  const tableSave = page.waitForResponse((response) => {
+    return response.url().includes('api/pos/index.php')
+      && response.request().method() === 'POST'
+      && response.url().includes('route=orders.table');
+  }, { timeout: 30_000 });
+
   await saveOrderOnly(page);
-  const navigationResult = await navigation;
+  const tableResponse = await tableSave;
+  const tableBody = await tableResponse.json().catch(() => ({}));
 
   expect(dialogMessage, `POS validation blocked table save: ${dialogMessage}`).toBe('');
-  if (navigationResult instanceof Error) {
-    throw navigationResult;
-  }
+  expect(tableResponse.ok(), JSON.stringify(tableBody)).toBeTruthy();
+  expect(tableBody.success).toBeTruthy();
 }
 
 export async function selectDeliveryMode(page: Page): Promise<void> {
@@ -137,33 +226,76 @@ export async function selectDeliveryMode(page: Page): Promise<void> {
   await expect(deliveryModal).toBeVisible({ timeout: 10_000 });
 }
 
+async function isTablesModalOpen(page: Page): Promise<boolean> {
+  return page.evaluate(() => {
+    const modal = document.getElementById('tablesModal');
+    return !!(modal && modal.classList.contains('show'));
+  });
+}
+
+export async function dismissOrderSuccessModal(page: Page): Promise<void> {
+  await page.waitForFunction(() => {
+    const hold = !!(window as Window & { POS_SUCCESS_HOLD?: boolean }).POS_SUCCESS_HOLD;
+    const modal = document.getElementById('posOrderSuccessModal');
+    if (!modal) {
+      return !hold;
+    }
+    const visible = modal.classList.contains('show') || modal.getAttribute('aria-hidden') === 'false';
+    return !visible && !hold;
+  }, null, { timeout: 10_000 });
+
+  await page.evaluate(() => {
+    const successModal = document.getElementById('posOrderSuccessModal');
+    if (successModal?.classList.contains('show') && window.bootstrap?.Modal) {
+      const instance = window.bootstrap.Modal.getInstance(successModal);
+      instance?.hide();
+    }
+    const openModal = document.querySelector('.modal.show');
+    if (!openModal) {
+      document.querySelectorAll('.modal-backdrop').forEach((backdrop) => backdrop.remove());
+      document.body.classList.remove('modal-open');
+      document.body.style.removeProperty('overflow');
+      document.body.style.removeProperty('padding-right');
+    }
+  });
+}
+
 export async function openTablesModal(page: Page): Promise<void> {
-  const modal = page.locator('#tablesModal');
-  if ((await modal.count()) > 0 && (await modal.isVisible().catch(() => false))) {
+  await dismissOrderSuccessModal(page);
+
+  if (await isTablesModalOpen(page)) {
+    return;
+  }
+
+  const tableModeTab = page.locator('.pos-mode-tab[data-age-target="age2"]').first();
+  if (await tableModeTab.isVisible().catch(() => false)) {
+    await tableModeTab.click();
+    await page.waitForFunction(() => {
+      const modal = document.getElementById('tablesModal');
+      return !!(modal && modal.classList.contains('show'));
+    }, null, { timeout: 10_000 });
     return;
   }
 
   const tablesButton = page.locator('[data-bs-target="#tablesModal"]').first();
-  if (await tablesButton.isVisible().catch(() => false)) {
-    await tablesButton.click();
-  } else {
-    const tableModeTab = page.locator('.pos-mode-tab[data-age-target="age2"]').first();
-    await expect(tableModeTab).toBeVisible();
-    await tableModeTab.click();
-  }
-  await expect(modal).toBeVisible();
+  await expect(tablesButton).toBeVisible();
+  await tablesButton.click({ force: true });
+  await page.waitForFunction(() => {
+    const modal = document.getElementById('tablesModal');
+    return !!(modal && modal.classList.contains('show'));
+  }, null, { timeout: 10_000 });
 }
 
 export async function selectFirstAvailableTable(page: Page): Promise<void> {
-  const modal = page.locator('#tablesModal');
-  const available = page.locator('.table-select-btn[data-table-case="0"]').first();
-  if ((await modal.count()) === 0 || !(await modal.isVisible().catch(() => false))) {
-    await openTablesModal(page);
-  }
+  await openTablesModal(page);
 
+  const available = page.locator('.table-select-btn[data-table-case="0"]').first();
   await expect(available).toBeVisible({ timeout: 15_000 });
   await available.click();
-  await page.locator('#tablesModal').waitFor({ state: 'hidden' }).catch(() => undefined);
+  await page.waitForFunction(() => {
+    const modal = document.getElementById('tablesModal');
+    return !modal || !modal.classList.contains('show');
+  }, null, { timeout: 10_000 }).catch(() => undefined);
 }
 
 export async function cartLineCount(page: Page): Promise<number> {

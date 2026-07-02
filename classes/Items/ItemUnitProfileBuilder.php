@@ -87,6 +87,8 @@ final class ItemUnitProfileBuilder
 
         $sellToStorage = self::decimal($post['sell_storage_factor'] ?? 1, 1.0);
         $purchaseToStorage = self::decimal($post['purchase_storage_factor'] ?? 1, 1.0);
+        $sellStorageSwapped = self::isTruthy($post['sell_storage_swapped'] ?? null);
+        $purchaseStorageSwapped = self::isTruthy($post['purchase_storage_swapped'] ?? null);
         if ($sellToStorage <= 0 || $purchaseToStorage <= 0) {
             throw new InvalidArgumentException('invalid unit factor');
         }
@@ -124,6 +126,7 @@ final class ItemUnitProfileBuilder
                     'price1' => $sellPrice1,
                     'price2' => $sellPrice2,
                     'price3' => $sellMarket,
+                    'conversion_swapped' => $sellUnitId !== $storageUnitId && $sellStorageSwapped ? 1 : 0,
                 ]);
             }
         }
@@ -150,6 +153,7 @@ final class ItemUnitProfileBuilder
                         'def_buy' => 1,
                         'unit_barcode' => $purchaseBarcode,
                         'cost_price' => $purchaseCost,
+                        'conversion_swapped' => $purchaseUnitId !== $storageUnitId && $purchaseStorageSwapped ? 1 : 0,
                     ]);
                 }
             }
@@ -206,6 +210,7 @@ final class ItemUnitProfileBuilder
             'def_sale' => 0,
             'def_buy' => 0,
             'def_stock' => 0,
+            'conversion_swapped' => 0,
             'unit_barcode' => '',
             'cost_price' => 0.0,
             'price1' => 0.0,

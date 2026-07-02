@@ -23,7 +23,11 @@
 
     function readCheckedAge(form) {
         const checked = form.querySelector('input[name="age"]:checked');
-        return checked ? parseInt(checked.value, 10) : 1;
+        if (checked) {
+            return parseInt(checked.value, 10) || 1;
+        }
+        const globalChecked = document.querySelector('input[name="age"]:checked');
+        return globalChecked ? (parseInt(globalChecked.value, 10) || 1) : 1;
     }
 
     function hasDeliveryCustomerFields(form) {
@@ -33,12 +37,41 @@
         return String(name).trim() !== '' && String(phone).trim() !== '' && String(address).trim() !== '';
     }
 
+    function clearCashierEditState() {
+        $('#edit_order_id').val('');
+        $('#selected_order_id').val('');
+        const form = document.getElementById('posForm');
+        if (!form) {
+            return;
+        }
+        const editInput = form.querySelector('input[name="edit_id"]');
+        if (editInput) {
+            editInput.remove();
+        }
+        const keyInput = form.querySelector('input[name="idempotency_key"]');
+        if (keyInput) {
+            keyInput.value = '';
+            delete keyInput.dataset.action;
+            delete keyInput.dataset.age;
+            delete keyInput.dataset.orderId;
+            delete keyInput.dataset.revision;
+        }
+    }
+
     function readEditId(form) {
-        return parseInt(
-            (form.querySelector('[name="edit_id"]') || {}).value
-            || ($('#edit_order_id').val() || $('#selected_order_id').val() || '0'),
-            10
-        ) || 0;
+        const age = readCheckedAge(form);
+        if (age === 2) {
+            const tableOrderField = form.querySelector('[name="selected_order_id"]');
+            return tableOrderField ? (parseInt(tableOrderField.value, 10) || 0) : 0;
+        }
+
+        const fromForm = form.querySelector('[name="edit_id"]');
+        const formVal = fromForm ? (parseInt(fromForm.value, 10) || 0) : 0;
+        if (formVal > 0) {
+            return formVal;
+        }
+
+        return parseInt($('#edit_order_id').val() || '0', 10) || 0;
     }
 
     function resolveRoute(action, form) {
@@ -136,6 +169,8 @@
             }
         });
 
+        payload.age = String(readCheckedAge(form));
+
         const editId = readEditId(form);
         if (editId > 0) {
             payload.edit_id = editId;
@@ -165,7 +200,9 @@
             : (action === 'print_receipt'
                 ? 'pos.order.print'
                 : (action === 'free_table' ? 'pos.table.free' : 'pos.order.pay'));
-        payload.idempotency_key = fieldValue(form, 'idempotency_key', '') || createIdempotencyKey(scope);
+        payload.idempotency_key = (window.POSOrderDraft && typeof window.POSOrderDraft.ensureFormIdempotencyKey === 'function')
+            ? window.POSOrderDraft.ensureFormIdempotencyKey(form, action)
+            : (fieldValue(form, 'idempotency_key', '') || createIdempotencyKey(scope));
 
         const route = resolveRoute(action, form);
 
@@ -200,18 +237,43 @@
             if (!splitPayload && typeof window.POSMainGetSplitPaymentPayload === 'function') {
                 splitPayload = window.POSMainGetSplitPaymentPayload();
             }
+
+            let splitItems = [];
             if (splitPayload) {
                 try {
                     const parsed = typeof splitPayload === 'string' ? JSON.parse(splitPayload) : splitPayload;
-                    payload.order_id = parseInt(parsed.order_id || fieldValue(form, 'selected_order_id', 0), 10);
-                    payload.table_id = parseInt(parsed.table_id || fieldValue(form, 'table_id', 0), 10);
-                    payload.items = parsed.items || [];
-                    payload.paid_amount = parseFloat(parsed.paid_amount || payload.paid || 0);
-                    payload.payment_method = parsed.payment_method || (parseFloat(payload.paid_bank || 0) > 0 ? 'bank' : 'cash');
+                    if (Array.isArray(parsed)) {
+                        splitItems = parsed;
+                    } else if (parsed && Array.isArray(parsed.rows)) {
+                        splitItems = parsed.rows;
+                    } else if (parsed && Array.isArray(parsed.items)) {
+                        splitItems = parsed.items;
+                    }
                 } catch (error) {
                     console.warn('split payload parse failed', error);
                 }
             }
+
+            payload.split_items = splitItems;
+            payload.order_id = parseInt(
+                fieldValue(form, 'selected_order_id', fieldValue(form, 'edit_id', fieldValue(form, 'order_id', 0))),
+                10
+            );
+            payload.table_id = parseInt(
+                fieldValue(form, 'selected_table_id', fieldValue(form, 'table_id', 0)),
+                10
+            );
+            payload.paid_amount = parseFloat(
+                fieldValue(form, 'pos_split_payment_total', 0)
+                    || fieldValue(form, 'paid', 0)
+                    || (parseFloat(fieldValue(form, 'paid_cash', 0)) + parseFloat(fieldValue(form, 'paid_bank', 0)))
+            );
+            payload.payment_method = fieldValue(form, 'pos_split_payment_method', '')
+                || (parseFloat(fieldValue(form, 'paid_bank', 0)) > 0 ? 'bank' : 'cash');
+            payload.order_date = fieldValue(form, 'pro_date', new Date().toISOString().slice(0, 10));
+            payload.total = parseFloat(fieldValue(form, 'headtotal', 0));
+            payload.discount = parseFloat(fieldValue(form, 'headdisc', 0));
+            payload.net = parseFloat(fieldValue(form, 'headnet', 0));
         }
 
         return payload;
@@ -250,25 +312,36 @@
         const state = body.updated_state || {};
         const orderId = state.order_id || body.order_id || 0;
         if (orderId > 0) {
-            $('#edit_order_id').val(orderId);
-            $('#selected_order_id').val(orderId);
             const form = document.getElementById('posForm');
-            if (form) {
-                let editInput = form.querySelector('input[name="edit_id"]');
-                if (!editInput) {
-                    editInput = document.createElement('input');
-                    editInput.type = 'hidden';
-                    editInput.name = 'edit_id';
-                    form.appendChild(editInput);
+            const age = form ? readCheckedAge(form) : 1;
+            if (age === 2) {
+                if (window.jQuery) {
+                    window.jQuery('#selected_order_id').val(String(orderId));
                 }
-                editInput.value = String(orderId);
+            } else {
+                if (window.jQuery) {
+                    window.jQuery('#edit_order_id').val(orderId);
+                    window.jQuery('#selected_order_id').val(orderId);
+                }
+                if (form) {
+                    let editInput = form.querySelector('input[name="edit_id"]');
+                    if (!editInput) {
+                        editInput = document.createElement('input');
+                        editInput.type = 'hidden';
+                        editInput.name = 'edit_id';
+                        form.appendChild(editInput);
+                    }
+                    editInput.value = String(orderId);
+                }
             }
-            if (window.history && typeof window.history.replaceState === 'function') {
+            if (window.history && typeof window.history.replaceState === 'function' && form) {
                 const params = new URLSearchParams(window.location.search);
                 params.set('edit', String(orderId));
-                const tableId = state.table_id || body.table_id || fieldValue(form || document.createElement('form'), 'table_id', '');
+                const tableId = state.table_id || body.table_id || fieldValue(form, 'table_id', '');
                 if (tableId) {
                     params.set('table', String(tableId));
+                } else if (age !== 2) {
+                    params.delete('table');
                 }
                 window.history.replaceState({}, '', window.location.pathname + '?' + params.toString());
             }
@@ -319,28 +392,82 @@
         alert(message);
     }
 
-    function restoreSubmitButtons() {
-        const saveBtn = $('.pos-save-order-btn');
+    function restorePrintOrderButton() {
         const printOrderBtn = $('.pos-print-order-btn');
+        if (printOrderBtn.length > 0) {
+            printOrderBtn.prop('disabled', false).html('<i class="fas fa-print"></i> طباعة الطلب');
+        }
+    }
+
+    function restorePayConfirmButton() {
         const printBtn = $('.pos-pay-confirm-btn');
-        if (saveBtn.length > 0) saveBtn.prop('disabled', false).html('<i class="fas fa-save"></i> حفظ');
-        if (printOrderBtn.length > 0) printOrderBtn.prop('disabled', false).html('<i class="fas fa-print"></i> طباعة الطلب');
-        if (printBtn.length > 0) printBtn.prop('disabled', false).html('<i class="fas fa-check"></i> تأكيد الدفع');
+        if (printBtn.length > 0) {
+            printBtn.prop('disabled', false).html('دفع وطباعة');
+        }
+        const splitBtn = $('.pos-split-pay-confirm-btn');
+        if (splitBtn.length > 0) {
+            splitBtn.prop('disabled', false).text('دفع المحدد');
+        }
+    }
+
+    function isDraftSaveAction(action) {
+        return action === 'save' || action === 'print_receipt';
+    }
+
+    function isPaymentAction(action) {
+        return action === 'cash' || action === 'split_cash';
+    }
+
+    function resetOrderScreenAfterCommit(body, action) {
+        if (typeof window.POSMainResetOrderScreen === 'function') {
+            const state = (body && body.updated_state) ? body.updated_state : {};
+            window.POSMainResetOrderScreen({
+                orderId: parseInt(state.order_id || (body && body.order_id) || 0, 10) || 0,
+                action: action
+            });
+            return;
+        }
+
+        const draft = window.POSOrderDraft;
+        if (draft && isDraftSaveAction(action)) {
+            draft.markSaved(body || {});
+        }
+    }
+
+    function restoreSubmitButtons(action) {
+        const draft = window.POSOrderDraft;
+        if (draft && isDraftSaveAction(action)) {
+            draft.markSaveFailed();
+            restorePrintOrderButton();
+            return;
+        }
+
+        restorePrintOrderButton();
+        restorePayConfirmButton();
     }
 
     function handleOrderResponse(result, action) {
         const body = result.body || {};
+        const draft = window.POSOrderDraft;
         if (!result.ok || body.success === false) {
             const message = body.message || 'حدث خطأ أثناء معالجة الطلب';
             showOrderError(message);
-            restoreSubmitButtons();
+            restoreSubmitButtons(action);
+            if (isPaymentAction(action) && window.jQuery) {
+                window.jQuery('#paymentModal').modal('show');
+            }
             return { success: false, body: body };
         }
 
         if (body.offline_queued) {
             applyOrderSuccessState(body, action);
             showOrderSuccess(body.message || 'تم حفظ الطلب محلياً');
-            restoreSubmitButtons();
+            if (isDraftSaveAction(action)) {
+                restorePrintOrderButton();
+                resetOrderScreenAfterCommit(body, action);
+            } else {
+                restoreSubmitButtons(action);
+            }
             return { success: true, body: body, offlineQueued: true };
         }
 
@@ -355,16 +482,55 @@
         }
 
         applyOrderSuccessState(body, action);
-        showOrderSuccess(body.message || 'تم حفظ الطلب بنجاح');
-        restoreSubmitButtons();
+        if (isDraftSaveAction(action)) {
+            showOrderSuccess(body.message || 'تم حفظ الطلب بنجاح');
+            restorePrintOrderButton();
+            resetOrderScreenAfterCommit(body, action);
+        } else {
+            showOrderSuccess(body.message || 'تم حفظ الطلب بنجاح');
+            restoreSubmitButtons(action);
+            if (isPaymentAction(action)) {
+                if (window.jQuery) {
+                    window.jQuery('#paymentModal').modal('hide');
+                }
+                resetOrderScreenAfterCommit(body, action);
+            }
+        }
         return { success: true, body: body };
     }
 
+    function prepareDraftForSubmit(draft, action) {
+        if (!draft) {
+            return;
+        }
+        if (isDraftSaveAction(action)) {
+            draft.markSaving();
+            draft.rotateIdempotencyKey(action);
+            return;
+        }
+        if (isPaymentAction(action)) {
+            draft.rotateIdempotencyKey(action);
+        }
+    }
+
     function submitFromForm(form, action) {
+        const draft = window.POSOrderDraft;
+        if (draft && !draft.canSave(action)) {
+            return Promise.resolve({ success: false, blocked: true });
+        }
+
         const route = resolveRoute(action, form);
         if (!route) {
+            if (draft && isDraftSaveAction(action)) {
+                draft.markSaveFailed();
+                restorePrintOrderButton();
+            } else if (isPaymentAction(action)) {
+                restorePayConfirmButton();
+            }
             return Promise.resolve({ success: false, noRoute: true });
         }
+
+        prepareDraftForSubmit(draft, action);
 
         const payload = buildOrderPayload(form, action);
         const attempt = function () {
@@ -374,12 +540,19 @@
         };
 
         return attempt().catch(function () {
-            restoreSubmitButtons();
+            restoreSubmitButtons(action);
+            if (isPaymentAction(action) && window.jQuery) {
+                window.jQuery('#paymentModal').modal('show');
+            }
             return new Promise(function (resolve) {
                 showOrderError('حدث خطأ في الاتصال بالخادم', function () {
+                    prepareDraftForSubmit(draft, action);
                     attempt().then(resolve).catch(function () {
                         showOrderError('تعذر إتمام الطلب بعد إعادة المحاولة');
-                        restoreSubmitButtons();
+                        restoreSubmitButtons(action);
+                        if (isPaymentAction(action) && window.jQuery) {
+                            window.jQuery('#paymentModal').modal('show');
+                        }
                         resolve({ success: false, networkError: true });
                     });
                 });
@@ -391,6 +564,9 @@
         API_BASE: API_BASE,
         getCsrfToken: getCsrfToken,
         resolveRoute: resolveRoute,
+        readCheckedAge: readCheckedAge,
+        readEditId: readEditId,
+        clearCashierEditState: clearCashierEditState,
         buildOrderPayload: buildOrderPayload,
         postOrderRoute: postOrderRoute,
         handleOrderResponse: handleOrderResponse,
@@ -398,6 +574,7 @@
         createIdempotencyKey: createIdempotencyKey,
         applyOrderSuccessState: applyOrderSuccessState,
         showOrderSuccess: showOrderSuccess,
-        restoreSubmitButtons: restoreSubmitButtons
+        restoreSubmitButtons: restoreSubmitButtons,
+        restorePayConfirmButton: restorePayConfirmButton
     };
 })(window, window.jQuery);

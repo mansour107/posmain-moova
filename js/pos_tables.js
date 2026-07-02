@@ -7,6 +7,51 @@ let currentOrder = {
 };
 let posTableRequestKeys = {};
 
+function touchTableOrderDraft() {
+    if (window.POSOrderDraft && typeof window.POSOrderDraft.markDirty === 'function') {
+        window.POSOrderDraft.markDirty();
+    }
+}
+
+function buildTableOrderFingerprint() {
+    const lines = currentOrder.items.map(function(item) {
+        return {
+            id: parseInt(item.id, 10) || 0,
+            qty: parseFloat(item.qty) || 0,
+            price: parseFloat(item.price) || 0,
+            discount: 0,
+            note: String(item.note || '')
+        };
+    }).sort(function(a, b) {
+        if (a.id !== b.id) {
+            return a.id - b.id;
+        }
+        return a.note.localeCompare(b.note);
+    });
+
+    return JSON.stringify({
+        lines: lines,
+        headdisc: parseFloat(currentOrder.discount) || 0,
+        headplus: 0,
+        headnet: parseFloat(currentOrder.net) || 0,
+        age: 0,
+        table_id: parseInt($('#selected_table_id').val() || 0, 10) || 0,
+        order_id: parseInt($('#current_order_id').val() || 0, 10) || 0
+    });
+}
+
+function bootstrapTableOrderDraft(response) {
+    if (!window.POSOrderDraft || typeof window.POSOrderDraft.bootstrapSaved !== 'function') {
+        return;
+    }
+
+    const order = response && response.order ? response.order : {};
+    window.POSOrderDraft.bootstrapSaved({
+        order_id: order.id || $('#current_order_id').val(),
+        kitchen_revision: order.kitchen_revision || 0
+    });
+}
+
 function getPOSTableCsrfToken() {
     const tokenElement = document.querySelector('meta[name="posmain-csrf-token"]');
     return window.POSMAIN_CSRF_TOKEN || (tokenElement ? tokenElement.getAttribute('content') : '');
@@ -42,8 +87,12 @@ function clearPOSTableIdempotencyKey(scope) {
 
 // تحميل الطاولات عند بدء الصفحة
 $(document).ready(function() {
-    // تعطيل الأزرار في البداية
-    $('#save-order, #payment-btn, #print-order, #cancel-order').prop('disabled', true);
+    if (window.POSOrderDraft && typeof window.POSOrderDraft.setFingerprintBuilder === 'function') {
+        window.POSOrderDraft.setFingerprintBuilder(buildTableOrderFingerprint);
+        window.POSOrderDraft.init();
+    }
+
+    $('#payment-btn, #print-order, #cancel-order').prop('disabled', true);
     
     loadTables();
     loadItems();
@@ -123,8 +172,8 @@ function selectTable(tableId, tableName) {
     // تحميل بيانات الطلب إن وجد
     loadTableOrder(tableId, tableName);
     
-    // تمكين أزرار العمليات
-    $('#save-order, #payment-btn, #print-order, #cancel-order').prop('disabled', false);
+    // تمكين أزرار العمليات (حالة زر الحفظ يديرها POSOrderDraft)
+    $('#payment-btn, #print-order, #cancel-order').prop('disabled', false);
 }
 
 // تحميل طلب الطاولة
@@ -141,11 +190,15 @@ function loadTableOrder(tableId, tableName) {
                 currentOrder.items = response.items || [];
                 displayOrderItems();
                 calculateTotal();
+                bootstrapTableOrderDraft(response);
             } else {
                 // طلب جديد
                 $('#current_order_id').val('');
                 currentOrder.items = [];
                 displayOrderItems();
+                if (window.POSOrderDraft && typeof window.POSOrderDraft.reset === 'function') {
+                    window.POSOrderDraft.reset();
+                }
             }
         }
     });
@@ -367,10 +420,16 @@ function calculateNet() {
     $('#net').val(net);
     currentOrder.net = parseFloat(net);
     currentOrder.discount = discount;
+    touchTableOrderDraft();
 }
 
 // حفظ الطلب
 function saveOrder() {
+    const draft = window.POSOrderDraft;
+    if (draft && !draft.canSave('save')) {
+        return $.Deferred().reject('blocked').promise();
+    }
+
     const tableId = $('#selected_table_id').val();
     const tableName = $('#table_name').val();
     
@@ -396,15 +455,23 @@ function saveOrder() {
         total: currentOrder.total,
         discount: currentOrder.discount,
         net: currentOrder.net,
-        idempotency_key: getPOSTableIdempotencyKey('pos.table.save')
+        idempotency_key: ''
     };
+
+    if (draft) {
+        draft.markSaving();
+        draft.rotateIdempotencyKey('save');
+        orderData.idempotency_key = draft.getStandaloneIdempotencyKey();
+    } else {
+        orderData.idempotency_key = getPOSTableIdempotencyKey('pos.table.save');
+    }
 
     if (window.posCustomerState && window.posCustomerState.attached && window.posCustomerState.customerId) {
         orderData.pos_customer_id = window.posCustomerState.customerId;
     }
 
-    $('#save-order').addClass('loading').prop('disabled', true);
-    
+    $('#save-order').addClass('loading');
+
     return $.ajax({
         url: 'api/pos/index.php?route=orders.table',
         method: 'POST',
@@ -414,17 +481,24 @@ function saveOrder() {
         beforeSend: attachPOSTableCsrfHeader
     }).done(function(response) {
         if (response.success) {
-            alert('تم حفظ الطلب بنجاح');
             $('#current_order_id').val(response.order_id);
-            clearPOSTableIdempotencyKey('pos.table.save');
+            if (draft && typeof draft.markSaved === 'function') {
+                draft.markSaved(response);
+            }
             loadTables();
         } else {
+            if (draft && typeof draft.markSaveFailed === 'function') {
+                draft.markSaveFailed();
+            }
             alert('خطأ: ' + response.message);
         }
     }).fail(function() {
+        if (draft && typeof draft.markSaveFailed === 'function') {
+            draft.markSaveFailed();
+        }
         alert('خطأ في حفظ الطلب');
     }).always(function() {
-        $('#save-order').removeClass('loading').prop('disabled', false);
+        $('#save-order').removeClass('loading');
     });
 }
 
@@ -497,6 +571,9 @@ function cancelOrder() {
                     clearPOSTableIdempotencyKey('pos.order.cancel');
                     displayOrderItems();
                     calculateTotal();
+                    if (window.POSOrderDraft && typeof window.POSOrderDraft.reset === 'function') {
+                        window.POSOrderDraft.reset();
+                    }
                     loadTables(); // تحديث حالة الطاولات
                 } else {
                     alert('خطأ: ' + response.message);

@@ -42,10 +42,10 @@ if ($prev_stmt) {
     }
 }
 
-// جلب الأصناف المباعة مقسمة بالمجموعات
+// جلب الأصناف المباعة مقسمة بالتصنيفات
 $items_query = "
     SELECT 
-        COALESCE(c.gname, 'بدون مجموعة') as category_name,
+        COALESCE(c.gname, 'بدون تصنيف') as category_name,
         i.iname as item_name,
         SUM(d.qty_out) as total_qty,
         SUM(d.det_value) as total_value

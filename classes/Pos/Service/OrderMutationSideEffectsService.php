@@ -3,6 +3,8 @@
 require_once __DIR__ . '/../../Sync/SyncOutboxEventService.php';
 require_once __DIR__ . '/OrderEventService.php';
 require_once __DIR__ . '/KitchenEventPublisher.php';
+require_once __DIR__ . '/KitchenTicketRevisionService.php';
+require_once __DIR__ . '/KdsTicketService.php';
 require_once __DIR__ . '/SideEffectPolicy.php';
 
 class OrderMutationSideEffectsService
@@ -10,15 +12,21 @@ class OrderMutationSideEffectsService
     private $syncOutbox;
     private $orderEvents;
     private $kitchenPublisher;
+    private $kitchenTicketRevisions;
+    private $kdsTickets;
 
     public function __construct(
         ?SyncOutboxEventService $syncOutbox = null,
         ?OrderEventService $orderEvents = null,
-        ?KitchenEventPublisher $kitchenPublisher = null
+        ?KitchenEventPublisher $kitchenPublisher = null,
+        ?KitchenTicketRevisionService $kitchenTicketRevisions = null,
+        ?KdsTicketService $kdsTickets = null
     ) {
         $this->syncOutbox = $syncOutbox ?: new SyncOutboxEventService();
         $this->orderEvents = $orderEvents ?: new OrderEventService();
         $this->kitchenPublisher = $kitchenPublisher ?: new KitchenEventPublisher();
+        $this->kitchenTicketRevisions = $kitchenTicketRevisions ?: new KitchenTicketRevisionService();
+        $this->kdsTickets = $kdsTickets ?: new KdsTicketService();
     }
 
     public function recordTableSave(
@@ -29,7 +37,8 @@ class OrderMutationSideEffectsService
         string $orderStatus,
         int $userId,
         string $sourceSystem = 'pos_table',
-        string $eventSource = 'pos_table_save'
+        string $eventSource = 'pos_table_save',
+        int $kitchenRevision = 0
     ): void {
         if ($orderId < 1) {
             return;
@@ -41,12 +50,15 @@ class OrderMutationSideEffectsService
             'order_status' => $orderStatus,
             'is_update' => $isUpdate,
             'channel' => 'table',
+            'kitchen_revision' => $kitchenRevision,
         ], $sourceSystem, $tableId > 0 ? $orderId : null, $tableId);
 
-        $this->kitchenPublisher->publishForOrder($conn, $orderId, $isUpdate ? 'kitchen.ticket.updated' : 'kitchen.ticket.new', [
+        $this->publishKitchenRevision($conn, $orderId, $kitchenRevision, $isUpdate, [
             'table_id' => $tableId,
             'is_full_refresh' => true,
         ]);
+
+        $this->syncKitchenDisplay($conn, $orderId, $isUpdate ? 'updated' : 'new', $userId);
     }
 
     public function recordCashierMutation(
@@ -58,7 +70,8 @@ class OrderMutationSideEffectsService
         string $orderStatus,
         string $sourceSystem,
         string $eventSource,
-        array $metadata = []
+        array $metadata = [],
+        int $kitchenRevision = 0
     ): void {
         if ($orderId < 1) {
             return;
@@ -69,12 +82,15 @@ class OrderMutationSideEffectsService
             'order_status' => $orderStatus,
             'is_update' => $isUpdate,
             'channel' => $channel,
+            'kitchen_revision' => $kitchenRevision,
         ], $metadata), $sourceSystem);
 
-        $this->kitchenPublisher->publishForOrder($conn, $orderId, $isUpdate ? 'kitchen.ticket.updated' : 'kitchen.ticket.new', array_merge([
+        $this->publishKitchenRevision($conn, $orderId, $kitchenRevision, $isUpdate, array_merge([
             'channel' => $channel,
             'is_full_refresh' => true,
         ], $metadata));
+
+        $this->syncKitchenDisplay($conn, $orderId, $isUpdate ? 'updated' : 'new', $userId);
     }
 
     public function recordTablePayment(
@@ -101,6 +117,8 @@ class OrderMutationSideEffectsService
                 'table_id' => $tableId,
             ]);
         }
+
+        $this->syncKitchenDisplay($conn, $orderId, 'paid', $userId);
     }
 
     public function recordSplitPayment(
@@ -155,6 +173,44 @@ class OrderMutationSideEffectsService
             'actor_user_id' => $userId,
             'metadata' => ['table_id' => $tableId],
         ]);
+    }
+
+    /**
+     * Persists per-station kitchen tickets for the KDS. Best-effort: a KDS
+     * failure must never roll back the underlying sale. The KDS poll
+     * endpoint also reconciles missed events as a safety net.
+     */
+    private function syncKitchenDisplay(mysqli $conn, int $orderId, string $eventType, int $userId): void
+    {
+        if ($orderId < 1) {
+            return;
+        }
+
+        try {
+            $this->kdsTickets->syncForOrder($conn, $orderId, $eventType, $userId);
+        } catch (Throwable $exception) {
+            error_log('KDS ticket sync skipped for order ' . $orderId . ': ' . $exception->getMessage());
+        }
+    }
+
+    private function publishKitchenRevision(
+        mysqli $conn,
+        int $orderId,
+        int $kitchenRevision,
+        bool $isUpdate,
+        array $metadata = []
+    ): void {
+        if ($kitchenRevision < 1) {
+            $legacyEvent = $isUpdate ? 'kitchen.ticket.updated' : 'kitchen.ticket.new';
+            $this->kitchenPublisher->publishForOrder($conn, $orderId, $legacyEvent, $metadata);
+
+            return;
+        }
+
+        $revisionEnvelope = $this->kitchenTicketRevisions->recordRevision($conn, $orderId, $kitchenRevision);
+        $this->kitchenPublisher->publishRevision($conn, $orderId, $revisionEnvelope, array_merge($metadata, [
+            'is_update' => $isUpdate,
+        ]));
     }
 
     private function recordOrderLifecycle(

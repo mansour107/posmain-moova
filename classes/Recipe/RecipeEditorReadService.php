@@ -188,7 +188,6 @@ SELECT
   iv.is_active,
   " . (isset($itemColumns['iname']) ? 'child.iname' : "NULL") . " AS iname,
   " . (isset($itemColumns['name2']) ? 'child.name2' : "NULL") . " AS name2,
-  " . (isset($itemColumns['code']) ? 'child.code' : "NULL") . " AS code,
   " . (isset($itemColumns['barcode']) ? 'child.barcode' : "NULL") . " AS barcode,
   " . (isset($itemColumns['cost_price']) ? 'child.cost_price' : "0") . " AS cost_price,
   " . (isset($itemColumns['price1']) ? 'child.price1' : "0") . " AS price1,

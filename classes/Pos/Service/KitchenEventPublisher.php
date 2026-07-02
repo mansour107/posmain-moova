@@ -30,15 +30,35 @@ class KitchenEventPublisher
         ];
     }
 
-    private function isEnabled(): bool
+    public function publishRevision(mysqli $conn, int $orderId, array $revisionEnvelope, array $metadata = []): ?array
     {
-        if (!function_exists('posmain_config')) {
-            return false;
+        if ($orderId < 1) {
+            return null;
         }
 
-        $config = posmain_config();
-        $features = is_array($config['features'] ?? null) ? $config['features'] : [];
+        $revision = (int) ($revisionEnvelope['revision'] ?? 0);
+        $event = [
+            'event_type' => 'kitchen.ticket.revised',
+            'order_id' => $orderId,
+            'revision' => $revision,
+            'supersedes_revision' => $revisionEnvelope['supersedes_revision'] ?? null,
+            'is_current' => (bool) ($revisionEnvelope['is_current'] ?? true),
+            'metadata' => $metadata,
+            'kot_payload' => $revisionEnvelope['kot_payload'] ?? null,
+        ];
 
-        return !empty($features['kds']);
+        if (!$this->isEnabled()) {
+            return $event;
+        }
+
+        return $event;
+    }
+
+    private function isEnabled(): bool
+    {
+        // KDS is a first-class, always-on production capability. It is
+        // configured through the admin KDS settings (stations) rather than
+        // a system feature flag, so the legacy gate is intentionally open.
+        return true;
     }
 }

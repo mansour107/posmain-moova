@@ -310,8 +310,9 @@ $lang_inventory_management = "Inventory Management";
 $lang_new_item = "New Item";
 $lang_items = "Items";
 $lang_units = "Units";
-$lang_groups = "Groups";
-$lang_categories = "Categories";
+$lang_groups = "Categories";
+$lang_categories = "Subcategories";
+$lang_groups_and_categories = "Categories & Subcategories";
 $lang_item_price = "Item Price";
 $lang_opening_balances_stores = "Opening Store Balances";
 

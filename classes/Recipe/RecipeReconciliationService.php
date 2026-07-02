@@ -35,7 +35,7 @@ class RecipeReconciliationService
             'pos_branch' => $posBranch,
             'store_id' => $storeId,
             'item_id' => $itemId,
-            'item_code' => (string) ($item['code'] ?? ''),
+            'item_barcode' => (string) ($item['barcode'] ?? ''),
             'item_name' => (string) ($item['iname'] ?? ''),
             'item_type' => (string) ($item['item_type'] ?? ''),
             'track_stock' => array_key_exists('track_stock', $item) ? (int) $item['track_stock'] : null,

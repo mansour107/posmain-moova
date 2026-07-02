@@ -2,6 +2,8 @@
 
 require_once __DIR__ . '/ItemUnitColumnSupport.php';
 require_once __DIR__ . '/ItemInventoryUnitSync.php';
+require_once __DIR__ . '/ItemUnitConversion.php';
+require_once __DIR__ . '/../Recipe/RecipeDecimal.php';
 
 final class ItemUnitPersistence
 {
@@ -12,15 +14,22 @@ final class ItemUnitPersistence
         }
 
         ItemUnitColumnSupport::ensureDefFlags($conn);
+        ItemUnitColumnSupport::ensureUValPrecision($conn);
+        ItemUnitColumnSupport::ensureConversionSwapped($conn);
         $hasDefFlags = ItemUnitColumnSupport::hasDefFlags($conn);
+        $hasConversionSwapped = ItemUnitColumnSupport::hasConversionSwapped($conn);
 
         $submittedUnitIds = [];
-        $updateSql = $hasDefFlags
-            ? 'UPDATE item_units SET cost_price = ?, price1 = ?, price2 = ?, price3 = ?, u_val = ?, unit_barcode = ?, def_sale = ?, def_buy = ?, def_stock = ? WHERE item_id = ? AND unit_id = ?'
-            : 'UPDATE item_units SET cost_price = ?, price1 = ?, price2 = ?, price3 = ?, u_val = ?, unit_barcode = ? WHERE item_id = ? AND unit_id = ?';
-        $insertSql = $hasDefFlags
-            ? 'INSERT INTO item_units(item_id, unit_id, u_val, unit_barcode, cost_price, price1, price2, price3, def_sale, def_buy, def_stock) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
-            : 'INSERT INTO item_units(item_id, unit_id, u_val, unit_barcode, cost_price, price1, price2, price3) VALUES (?, ?, ?, ?, ?, ?, ?, ?)';
+        if ($hasDefFlags && $hasConversionSwapped) {
+            $updateSql = 'UPDATE item_units SET cost_price = ?, price1 = ?, price2 = ?, price3 = ?, u_val = ?, unit_barcode = ?, def_sale = ?, def_buy = ?, def_stock = ?, conversion_swapped = ? WHERE item_id = ? AND unit_id = ?';
+            $insertSql = 'INSERT INTO item_units(item_id, unit_id, u_val, unit_barcode, cost_price, price1, price2, price3, def_sale, def_buy, def_stock, conversion_swapped) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)';
+        } elseif ($hasDefFlags) {
+            $updateSql = 'UPDATE item_units SET cost_price = ?, price1 = ?, price2 = ?, price3 = ?, u_val = ?, unit_barcode = ?, def_sale = ?, def_buy = ?, def_stock = ? WHERE item_id = ? AND unit_id = ?';
+            $insertSql = 'INSERT INTO item_units(item_id, unit_id, u_val, unit_barcode, cost_price, price1, price2, price3, def_sale, def_buy, def_stock) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)';
+        } else {
+            $updateSql = 'UPDATE item_units SET cost_price = ?, price1 = ?, price2 = ?, price3 = ?, u_val = ?, unit_barcode = ? WHERE item_id = ? AND unit_id = ?';
+            $insertSql = 'INSERT INTO item_units(item_id, unit_id, u_val, unit_barcode, cost_price, price1, price2, price3) VALUES (?, ?, ?, ?, ?, ?, ?, ?)';
+        }
 
         $updateStmt = $conn->prepare($updateSql);
         $insertStmt = $conn->prepare($insertSql);
@@ -32,7 +41,7 @@ final class ItemUnitPersistence
             }
             $submittedUnitIds[] = $unitId;
 
-            $uVal = (float) ($unit['u_val'] ?? 1);
+            $uVal = (float) RecipeDecimal::normalize($unit['u_val'] ?? '1', ItemUnitConversion::DISPLAY_SCALE);
             $unitBarcode = mb_substr((string) ($unit['unit_barcode'] ?? ''), 0, 20);
             $costPrice = (float) ($unit['cost_price'] ?? 0);
             $price1 = (float) ($unit['price1'] ?? 0);
@@ -41,8 +50,25 @@ final class ItemUnitPersistence
             $defSale = (int) ($unit['def_sale'] ?? 0);
             $defBuy = (int) ($unit['def_buy'] ?? 0);
             $defStock = (int) ($unit['def_stock'] ?? 0);
+            $conversionSwapped = (int) ($unit['conversion_swapped'] ?? 0);
 
-            if ($hasDefFlags) {
+            if ($hasDefFlags && $hasConversionSwapped) {
+                $updateStmt->bind_param(
+                    'dddddsiiiiii',
+                    $costPrice,
+                    $price1,
+                    $price2,
+                    $price3,
+                    $uVal,
+                    $unitBarcode,
+                    $defSale,
+                    $defBuy,
+                    $defStock,
+                    $conversionSwapped,
+                    $itemId,
+                    $unitId
+                );
+            } elseif ($hasDefFlags) {
                 $updateStmt->bind_param(
                     'dddddsiiiii',
                     $costPrice,
@@ -66,7 +92,23 @@ final class ItemUnitPersistence
                 continue;
             }
 
-            if ($hasDefFlags) {
+            if ($hasDefFlags && $hasConversionSwapped) {
+                $insertStmt->bind_param(
+                    'iidsddddiiii',
+                    $itemId,
+                    $unitId,
+                    $uVal,
+                    $unitBarcode,
+                    $costPrice,
+                    $price1,
+                    $price2,
+                    $price3,
+                    $defSale,
+                    $defBuy,
+                    $defStock,
+                    $conversionSwapped
+                );
+            } elseif ($hasDefFlags) {
                 $insertStmt->bind_param(
                     'iidsddddiii',
                     $itemId,

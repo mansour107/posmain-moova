@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/classes/Inventory/InventoryStockReadService.php';
 require_once __DIR__ . '/classes/Items/ItemCatalogStatus.php';
+require_once __DIR__ . '/classes/Items/ItemUnitCatalogLabel.php';
 
 function item_catalog_h($value): string
 {
@@ -191,7 +192,6 @@ $itemRows = $inventoryStockReadService->decorateItems($conn, $itemRows);
                             }
                             $searchParts = [
                                 (string) $rowitm['id'],
-                                isset($rowitm['code']) ? (string) $rowitm['code'] : '',
                                 isset($rowitm['barcode']) ? (string) $rowitm['barcode'] : '',
                                 (string) $rowitm['iname'],
                                 isset($rowitm['name2']) ? (string) $rowitm['name2'] : '',
@@ -207,7 +207,12 @@ $itemRows = $inventoryStockReadService->decorateItems($conn, $itemRows);
                             $dataSearch = item_catalog_h(implode(' ', array_filter($searchParts)));
                             $qtyDisplay = item_catalog_number($rowitm['stock_qty_display'] ?? $rowitm['itmqty'] ?? 0);
                             $baseQty = item_catalog_number($rowitm['legacy_itmqty'] ?? $rowitm['itmqty'] ?? 0, 6);
-                            $unitName = $unitRows[0]['uname'] ?? '';
+                            $stockUnitRow = ItemUnitCatalogLabel::stockRow($unitRows);
+                            $unitName = $stockUnitRow['uname'] ?? '';
+                            $stockUnitValue = $stockUnitRow !== null
+                                ? ItemUnitCatalogLabel::factorValue($stockUnitRow['u_val'] ?? 1)
+                                : '1';
+                            $unitSelectOptions = ItemUnitCatalogLabel::buildSelectOptions($unitRows);
                             ?>
                             <tr class="catalog-row <?= $isActive ? '' : 'catalog-row-inactive' ?>" data-search="<?= $dataSearch ?>" data-edit-url="<?= item_catalog_h($editUrl) ?>" tabindex="0">
                                 <td class="barcode-cell"><?= item_catalog_h($rowitm['barcode'] ?? '') ?></td>
@@ -234,13 +239,9 @@ $itemRows = $inventoryStockReadService->decorateItems($conn, $itemRows);
                                         <?php if (!$unitRows): ?>
                                             <option value="1">الوحدة الأساسية</option>
                                         <?php endif; ?>
-                                        <?php foreach ($unitRows as $rowunt): ?>
-                                            <?php $unitValue = item_catalog_number($rowunt['u_val'] ?? 1, 6); ?>
-                                            <option value="<?= item_catalog_h($unitValue) ?>">
-                                                <?= item_catalog_h($rowunt['uname'] ?? '') ?>
-                                                <?php if ($unitValue !== '1'): ?>
-                                                    × <?= item_catalog_h($unitValue) ?>
-                                                <?php endif; ?>
+                                        <?php foreach ($unitSelectOptions as $unitOption): ?>
+                                            <option value="<?= item_catalog_h($unitOption['value']) ?>"<?= $unitOption['value'] === $stockUnitValue ? ' selected' : '' ?>>
+                                                <?= item_catalog_h($unitOption['label']) ?>
                                             </option>
                                         <?php endforeach; ?>
                                     </select>

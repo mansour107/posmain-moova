@@ -141,7 +141,7 @@ include __DIR__ . '/includes/sidebar.php';
                             <thead class="thead-dark">
                                 <tr>
                                     <th>Item</th>
-                                    <th>Code</th>
+                                    <th>Barcode</th>
                                     <th class="text-center">Tenant</th>
                                     <th class="text-center">Branch</th>
                                     <th class="text-center">Store</th>
@@ -160,7 +160,7 @@ include __DIR__ . '/includes/sidebar.php';
                                 <?php foreach ($recipeReconciliationRows as $row): ?>
                                     <tr class="<?= !empty($row['has_difference']) ? 'table-warning' : '' ?>">
                                         <td><?= posmain_recipe_reconciliation_h($row['item_name'] !== '' ? $row['item_name'] : (string) $row['item_id']) ?></td>
-                                        <td><?= posmain_recipe_reconciliation_h($row['item_code'] ?? '') ?></td>
+                                        <td><?= posmain_recipe_reconciliation_h($row['item_barcode'] ?? '') ?></td>
                                         <td class="text-center"><?= (int) $row['pos_tenant'] ?></td>
                                         <td class="text-center"><?= (int) $row['pos_branch'] ?></td>
                                         <td class="text-center"><?= (int) $row['store_id'] ?></td>
@@ -235,7 +235,7 @@ function posmain_recipe_reconciliation_export_csv(array $rows): void
     $out = fopen('php://output', 'w');
     posmain_csv_write_row($out, [
         'item_id',
-        'item_code',
+        'item_barcode',
         'item_name',
         'pos_tenant',
         'pos_branch',
@@ -253,7 +253,7 @@ function posmain_recipe_reconciliation_export_csv(array $rows): void
     foreach ($rows as $row) {
         posmain_csv_write_row($out, posmain_csv_safe_row([
             $row['item_id'],
-            $row['item_code'],
+            $row['item_barcode'],
             $row['item_name'],
             $row['pos_tenant'],
             $row['pos_branch'],

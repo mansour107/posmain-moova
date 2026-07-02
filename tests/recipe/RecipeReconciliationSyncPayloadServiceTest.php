@@ -120,8 +120,8 @@ class RecipeReconciliationSyncPayloadServiceTest extends TestCase
     public function testReconciliationReportSupportsDateMovementAndSourceFilters(): void
     {
         self::$conn->query("
-            INSERT INTO myitems (id, uuid, code, iname, itmqty, cost_price)
-            VALUES (3002, '00000000-0000-4000-8000-000000003002', 'ING-3002', 'Filtered Ingredient', 8.000000, 2.000000)
+            INSERT INTO myitems (id, uuid, code, barcode, iname, itmqty, cost_price)
+            VALUES (3002, '00000000-0000-4000-8000-000000003002', 'ING-3002', 'ING-3002', 'Filtered Ingredient', 8.000000, 2.000000)
         ");
         self::$conn->query("
             INSERT INTO fat_details (item_id, tenant, branch, det_store, qty_in, qty_out, crtime)
@@ -168,7 +168,7 @@ class RecipeReconciliationSyncPayloadServiceTest extends TestCase
         ]);
 
         $this->assertCount(1, $rows);
-        $this->assertSame('ING-3002', $rows[0]['item_code']);
+        $this->assertSame('ING-3002', $rows[0]['item_barcode']);
         $this->assertSame('Filtered Ingredient', $rows[0]['item_name']);
         $this->assertSame('4.000000', $rows[0]['fat_details_qty']);
         $this->assertSame('3.000000', $rows[0]['ledger_qty']);

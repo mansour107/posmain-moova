@@ -2,6 +2,7 @@
 include(__DIR__ . '/../includes/ajax_header.php');
 require_once __DIR__ . '/../includes/pos_customer_bootstrap.php';
 require_once __DIR__ . '/../classes/Pos/Service/PosCustomerService.php';
+require_once __DIR__ . '/../classes/Pos/Service/PosCustomerAnalyticsService.php';
 
 header('Content-Type: application/json; charset=utf-8');
 
@@ -20,7 +21,19 @@ try {
         exit;
     }
 
-    echo json_encode(['success' => true, 'customer' => $profile], JSON_UNESCAPED_UNICODE);
+    $payload = ['success' => true, 'customer' => $profile];
+    $includeOrders = filter_var($_GET['include_orders'] ?? $_POST['include_orders'] ?? false, FILTER_VALIDATE_BOOLEAN);
+    if ($includeOrders) {
+        $analytics = new PosCustomerAnalyticsService();
+        $payload['orders'] = $analytics->customerOrders(
+            $conn,
+            $customerId,
+            max(1, (int) ($_GET['page'] ?? 1)),
+            max(1, min(20, (int) ($_GET['per_page'] ?? 10)))
+        );
+    }
+
+    echo json_encode($payload, JSON_UNESCAPED_UNICODE);
 } catch (Throwable $e) {
     http_response_code(500);
     echo json_encode(['success' => false, 'message' => $e->getMessage()], JSON_UNESCAPED_UNICODE);

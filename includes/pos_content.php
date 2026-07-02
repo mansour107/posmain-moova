@@ -897,6 +897,7 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
     <?php if ($legacyOfflinePrototypeEnabled): ?>
     <script src="js/pos_offline_adapter.js?v=<?= (int) (@filemtime(__DIR__ . '/../js/pos_offline_adapter.js') ?: 1) ?>"></script>
     <?php endif; ?>
+    <script src="js/pos_order_draft.js?v=<?= (int) (@filemtime(__DIR__ . '/../js/pos_order_draft.js') ?: 1) ?>"></script>
     <script src="js/pos_order_api.js?v=<?= (int) (@filemtime(__DIR__ . '/../js/pos_order_api.js') ?: 1) ?>"></script>
     <script src="js/pos_barcode.js?v=<?= (int) (@filemtime(__DIR__ . '/../js/pos_barcode.js') ?: 1) ?>"></script>
     <script src="js/pos_customer.js?v=<?= (int) (@filemtime(__DIR__ . '/../js/pos_customer.js') ?: 1) ?>"></script>
@@ -1170,164 +1171,136 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
         </div>
     </div>
 
-    <!-- Recent Orders Offcanvas -->
-    <div class="offcanvas offcanvas-end" tabindex="-1" id="recentOrdersModal" aria-labelledby="recentOrdersModalLabel"
-        style="width: 80%; max-width: 1200px;">
-        <div class="offcanvas-header bg-primary text-white">
-            <h5 class="offcanvas-title" id="recentOrdersModalLabel">
-                الطلبات الأخيرة (آخر 10 طلبات)
-            </h5>
-            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="offcanvas"
-                aria-label="Close"></button>
+    <!-- Recent Orders Modal -->
+    <div class="modal fade pos-recent-orders-modal-fade" id="recentOrdersModal" tabindex="-1"
+        aria-labelledby="recentOrdersModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-xl modal-dialog-centered pos-recent-orders-dialog">
+            <div class="modal-content pos-recent-orders-content">
+                <div class="modal-header bg-primary text-white">
+                    <h5 class="modal-title" id="recentOrdersModalLabel">
+                        الطلبات الأخيرة
+                    </h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"
+                        aria-label="Close"></button>
+                </div>
+                <div class="modal-body pos-recent-orders-body p-0">
+                    <div class="table-responsive">
+                        <table class="table table-hover table-bordered mb-0 pos-recent-orders-table">
+                            <thead class="table-dark sticky-top">
+                                <tr>
+                                    <th>#</th>
+                                    <th>رقم الفاتورة</th>
+                                    <th>التاريخ</th>
+                                    <th>العميل</th>
+                                    <th>النوع</th>
+                                    <th>الإجمالي</th>
+                                    <th>الحالة</th>
+                                    <th>العمليات</th>
+                                </tr>
+                            </thead>
+                            <tbody id="recentOrdersList">
+                                <tr>
+                                    <td colspan="8" class="text-center py-5">
+                                        <div class="spinner-border text-primary" role="status">
+                                            <span class="visually-hidden">جاري التحميل...</span>
+                                        </div>
+                                        <p class="mt-2">جاري تحميل الطلبات...</p>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                <div class="modal-footer pos-recent-orders-footer">
+                    <button type="button" class="btn btn-outline-primary d-none" id="recentOrdersLoadMoreBtn">
+                        <i class="fas fa-chevron-down me-1"></i>تحميل المزيد
+                    </button>
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
+                        <i class="fas fa-times me-1"></i>إغلاق
+                    </button>
+                </div>
+            </div>
         </div>
-        <div class="offcanvas-body p-0">
-            <div class="table-responsive">
-                <table class="table table-hover table-striped table-bordered mb-0">
-                    <thead class="table-dark sticky-top">
-                        <tr>
-                            <th>#</th>
-                            <th>رقم الفاتورة</th>
-                            <th>التاريخ</th>
-                            <th>العميل</th>
-                            <th>النوع</th>
-                            <th>الإجمالي</th>
-                            <th>الحالة</th>
-                            <th>العمليات</th>
-                        </tr>
-                    </thead>
-                    <tbody id="recentOrdersList">
-                        <tr>
-                            <td colspan="8" class="text-center py-5">
-                                <div class="spinner-border text-primary" role="status">
-                                    <span class="visually-hidden">جاري التحميل...</span>
-                                </div>
-                                <p class="mt-2">جاري تحميل الطلبات...</p>
-                            </td>
-                        </tr>
-                    </tbody>
-                </table>
+    </div>
+
+    <!-- Recent Order Customer Detail Modal -->
+    <div class="modal fade pos-recent-order-customer-modal-fade" id="recentOrderCustomerModal" tabindex="-1"
+        aria-labelledby="recentOrderCustomerModalLabel" aria-hidden="true" data-bs-backdrop="static">
+        <div class="modal-dialog modal-lg modal-dialog-centered pos-recent-order-customer-dialog">
+            <div class="modal-content pos-recent-order-customer-content">
+                <div class="modal-header bg-primary text-white">
+                    <h5 class="modal-title" id="recentOrderCustomerModalLabel">
+                        <i class="fas fa-user me-2"></i>بيانات العميل
+                    </h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"
+                        aria-label="Close"></button>
+                </div>
+                <div class="modal-body pos-recent-order-customer-body" id="recentOrderCustomerBody">
+                    <div class="text-center py-4">
+                        <div class="spinner-border text-primary" role="status">
+                            <span class="visually-hidden">جاري التحميل...</span>
+                        </div>
+                        <p class="mt-2 mb-0">جاري تحميل بيانات العميل...</p>
+                    </div>
+                </div>
+                <div class="modal-footer pos-recent-order-customer-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
+                        <i class="fas fa-times me-1"></i>إغلاق
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Paid Order Reversal Modal -->
+    <div class="modal fade pos-paid-reversal-modal-fade" id="paidOrderReversalModal" tabindex="-1"
+        aria-labelledby="paidOrderReversalModalLabel" aria-hidden="true" data-bs-backdrop="static">
+        <div class="modal-dialog modal-dialog-centered pos-paid-reversal-dialog">
+            <div class="modal-content pos-paid-reversal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="paidOrderReversalModalLabel">
+                        <i class="fas fa-undo me-2"></i>استرداد أو إلغاء طلب مدفوع
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body pos-paid-reversal-body">
+                    <p class="pos-paid-reversal-hint mb-3">
+                        اختر نوع العملية وسياسة المخزون، ثم اذكر سبباً مختصراً للتدقيق.
+                    </p>
+                    <div class="alert alert-danger d-none mb-3" id="paidReversalValidationAlert" role="alert"></div>
+                    <label class="form-label" for="paid-reversal-action">نوع العملية</label>
+                    <select id="paid-reversal-action" class="form-select pos-paid-reversal-control mb-3"></select>
+                    <label class="form-label" for="paid-reversal-policy">سياسة المخزون</label>
+                    <select id="paid-reversal-policy" class="form-select pos-paid-reversal-control mb-3">
+                        <option value="waste">لا يرجع المكونات للمخزون</option>
+                        <option value="return_to_stock">يرجع المكونات للمخزون</option>
+                    </select>
+                    <label class="form-label" for="paid-reversal-reason">السبب</label>
+                    <textarea id="paid-reversal-reason" class="form-control pos-paid-reversal-control" rows="3"
+                        maxlength="255" placeholder="مثال: طلب خاطئ من العميل"></textarea>
+                </div>
+                <div class="modal-footer pos-paid-reversal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
+                        <i class="fas fa-times me-1"></i>إلغاء
+                    </button>
+                    <button type="button" class="btn btn-warning" id="paidReversalSubmitBtn">
+                        <i class="fas fa-check me-1"></i>تنفيذ
+                    </button>
+                </div>
             </div>
         </div>
     </div>
 
     <script>
         $(document).ready(function() {
-            // Recent Orders Button Handler
-            $('#recentOrdersBtn2').click(function(e) {
-                e.preventDefault();
-                e.stopPropagation();
-                if (typeof window.showRecentOrdersOffcanvas === 'function') {
-                    window.showRecentOrdersOffcanvas();
-                } else {
-                    var recentOrdersModal = document.getElementById('recentOrdersModal');
-                    if (recentOrdersModal) {
-                        var offcanvas = typeof bootstrap.Offcanvas.getOrCreateInstance === 'function'
-                            ? bootstrap.Offcanvas.getOrCreateInstance(recentOrdersModal)
-                            : new bootstrap.Offcanvas(recentOrdersModal);
-                        offcanvas.show();
-                    }
-                }
-                loadRecentOrders();
-            });
-
-            $('#cornerRecentOrdersBtn').on('click', function(e) {
-                e.preventDefault();
-                $('#recentOrdersBtn2').trigger('click');
-            });
-
-            function loadRecentOrders() {
-                $('#recentOrdersList').html('<tr><td colspan="8" class="text-center py-5"><div class="spinner-border text-primary" role="status"></div><p class="mt-2">جاري تحميل الطلبات...</p></td></tr>');
-
-	                $.ajax({
-	                    url: 'ajax/get_recent_orders.php',
-	                    method: 'GET',
-	                    cache: false,
-	                    data: { _: Date.now() },
-	                    success: function(response) {
-                        try {
-                            // If response is a string (due to accidental whitespace/BOM), parse it
-                            if (typeof response === 'string') {
-                                // Try to extract JSON if mixed with HTML
-                                const jsonMatch = response.match(/\{[\s\S]*\}/);
-                                if (jsonMatch) {
-                                    response = JSON.parse(jsonMatch[0]);
-                                } else {
-                                    response = JSON.parse(response);
-                                }
-                            }
-
-                            if (response.success && response.orders) {
-                                var html = '';
-                                if (response.orders.length === 0) {
-                                    html = '<tr><td colspan="8" class="text-center py-4">لا توجد طلبات حديثة</td></tr>';
-                                } else {
-                                    response.orders.forEach(function(order, index) {
-                                        var statusBadge = (order.status === 'ملغى' || order.status === 'مسترد') ? 'bg-danger' : 'bg-success';
-                                        var typeBadge = order.type === 'دليفري' ? 'bg-info text-dark' : (order.type === 'طاولة' ? 'bg-warning text-dark' : 'bg-secondary');
-                                        var canRefund = !!order.can_refund;
-                                        var canVoid = !!order.can_void;
-
-                                        html += `
-                                            <tr>
-                                                <td>${index + 1}</td>
-                                                <td class="fw-bold">${order.invoice_number}</td>
-                                                <td>${order.date}</td>
-                                                <td>${order.customer_name}</td>
-                                                <td><span class="badge ${typeBadge}">${order.type}</span></td>
-                                                <td class="fw-bold text-primary">${parseFloat(order.total).toFixed(2)}</td>
-                                                <td><span class="badge ${statusBadge}">${order.status}</span></td>
-                                                <td>
-                                                    <div class="btn-group btn-group-sm">
-                                                        <a href="pos_barcode.php?edit=${order.id}" class="btn btn-warning" title="تعديل">
-                                                            <i class="fas fa-edit"></i>
-                                                        </a>
-                                                        <button type="button" class="btn btn-secondary" onclick="reprintOrder(${order.id})" title="طباعة">
-                                                            <i class="fas fa-print"></i>
-                                                        </button>
-	                                                        ${order.can_delete ? `
-	                                                        <button type="button" class="btn btn-danger" onclick="deleteOrder(${order.id}, ${parseInt(order.table_id || 0, 10)})" title="حذف">
-	                                                            <i class="fas fa-trash"></i>
-	                                                        </button>` : `
-		                                                        <button type="button" class="btn btn-outline-secondary" disabled title="لا يمكن حذف طلب مكتمل أو مدفوع من هنا">
-	                                                            <i class="fas fa-trash"></i>
-		                                                        </button>`}
-                                                        ${(canRefund || canVoid) ? `
-                                                        <button type="button" class="btn btn-outline-danger" onclick="reversePaidOrder(${order.id}, ${canRefund ? 'true' : 'false'}, ${canVoid ? 'true' : 'false'})" title="استرداد أو إلغاء مدفوع">
-                                                            <i class="fas fa-undo"></i>
-                                                        </button>` : ''}
-                                                    </div>
-                                                </td>
-                                            </tr>
-                                        `;
-                                    });
-                                }
-                                $('#recentOrdersList').html(html);
-                            } else {
-                                $('#recentOrdersList').html('<tr><td colspan="8" class="text-center text-danger py-4">فشل تحميل البيانات: ' + (response.error || 'خطأ غير معروف') + '</td></tr>');
-                            }
-                        } catch (e) {
-                            console.error('Error parsing recent orders:', e);
-                            $('#recentOrdersList').html('<tr><td colspan="8" class="text-center text-danger py-4">خطأ في معالجة البيانات</td></tr>');
-                        }
-                    },
-                    error: function(xhr, status, error) {
-                        console.error('AJAX Error:', error);
-                        $('#recentOrdersList').html('<tr><td colspan="8" class="text-center text-danger py-4">خطأ في الاتصال بالخادم</td></tr>');
-                    }
-                });
-            }
-
-            // Global functions for actions
             window.reprintOrder = function(orderId) {
-                // Use existing print function logic or redirect
-                // Usually calling the print endpoint directly
                  window.open('print/receipt.php?order_id=' + orderId, '_blank');
-	            };
+            };
 
-	            window.deleteOrder = function(orderId, tableId) {
-	                tableId = parseInt(tableId || 0, 10);
+            window.deleteOrder = function(orderId, tableId) {
+                tableId = parseInt(tableId || 0, 10);
 
-	                Swal.fire({
+                Swal.fire({
                     title: 'هل أنت متأكد؟',
                     text: "هل أنت متأكد من حذف هذا الطلب؟ لا يمكن التراجع عن هذا الإجراء.",
                     icon: 'warning',
@@ -1338,14 +1311,14 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                     cancelButtonText: 'إلغاء'
                 }).then((result) => {
                     if (result.isConfirmed) {
-	                        $.ajax({
-	                            url: 'ajax/delete_order.php',
-	                            method: 'POST',
-	                            data: {
-                                    order_id: orderId,
-                                    table_id: tableId,
-                                    idempotency_key: createPOSIdempotencyKey('pos.order.cancel')
-                                },
+                        $.ajax({
+                            url: 'ajax/delete_order.php',
+                            method: 'POST',
+                            data: {
+                                order_id: orderId,
+                                table_id: tableId,
+                                idempotency_key: createPOSIdempotencyKey('pos.order.cancel')
+                            },
                             success: function(response) {
                                 try {
                                     if (typeof response === 'string') response = JSON.parse(response);
@@ -1355,13 +1328,15 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                                             'تم حذف الطلب بنجاح.',
                                             'success'
                                         );
-                                        loadRecentOrders(); // Reload list
+                                        if (typeof window.loadRecentOrders === 'function') {
+                                            window.loadRecentOrders(false);
+                                        }
                                     } else {
-	                                        Swal.fire(
-	                                            'خطأ!',
-	                                            'فشل الحذف: ' + (response.message || response.error || 'خطأ غير معروف'),
-	                                            'error'
-	                                        );
+                                        Swal.fire(
+                                            'خطأ!',
+                                            'فشل الحذف: ' + (response.message || response.error || 'خطأ غير معروف'),
+                                            'error'
+                                        );
                                     }
                                 } catch (e) {
                                     Swal.fire(
@@ -1380,78 +1355,6 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                             }
                         });
                     }
-                });
-            };
-
-            window.reversePaidOrder = function(orderId, canRefund, canVoid) {
-                var actionOptions = '';
-                if (canRefund) {
-                    actionOptions += '<option value="refund">استرداد</option>';
-                }
-                if (canVoid) {
-                    actionOptions += '<option value="void">إلغاء مدفوع</option>';
-                }
-
-                Swal.fire({
-                    title: 'استرداد أو إلغاء طلب مدفوع',
-                    html:
-                        '<div class="text-start" dir="rtl">' +
-                        '<label class="form-label">نوع العملية</label>' +
-                        '<select id="paid-reversal-action" class="form-select mb-3">' + actionOptions + '</select>' +
-                        '<label class="form-label">سياسة المخزون</label>' +
-                        '<select id="paid-reversal-policy" class="form-select mb-3">' +
-                        '<option value="waste">لا يرجع المكونات للمخزون</option>' +
-                        '<option value="return_to_stock">يرجع المكونات للمخزون</option>' +
-                        '</select>' +
-                        '<label class="form-label">السبب</label>' +
-                        '<textarea id="paid-reversal-reason" class="form-control" rows="2" maxlength="255"></textarea>' +
-                        '</div>',
-                    icon: 'warning',
-                    showCancelButton: true,
-                    confirmButtonColor: '#d33',
-                    cancelButtonColor: '#3085d6',
-                    confirmButtonText: 'تنفيذ',
-                    cancelButtonText: 'إلغاء',
-                    preConfirm: function() {
-                        return {
-                            action: $('#paid-reversal-action').val(),
-                            policy: $('#paid-reversal-policy').val(),
-                            reason: ($('#paid-reversal-reason').val() || '').trim()
-                        };
-                    }
-                }).then((result) => {
-                    if (!result.isConfirmed || !result.value) {
-                        return;
-                    }
-
-                    var action = result.value.action === 'void' ? 'void' : 'refund';
-                    $.ajax({
-                        url: 'ajax/refund_order.php',
-                        method: 'POST',
-                        data: {
-                            order_id: orderId,
-                            action: action,
-                            refund_stock_policy: result.value.policy,
-                            reason: result.value.reason,
-                            idempotency_key: createPOSIdempotencyKey(action === 'void' ? 'pos.order.void' : 'pos.order.refund')
-                        },
-                        success: function(response) {
-                            try {
-                                if (typeof response === 'string') response = JSON.parse(response);
-                                if (response.success) {
-                                    Swal.fire('تم التنفيذ', action === 'void' ? 'تم إلغاء الطلب المدفوع.' : 'تم استرداد الطلب.', 'success');
-                                    loadRecentOrders();
-                                } else {
-                                    Swal.fire('خطأ!', response.message || response.error || 'خطأ غير معروف', 'error');
-                                }
-                            } catch (e) {
-                                Swal.fire('خطأ!', 'خطأ في استجابة الخادم', 'error');
-                            }
-                        },
-                        error: function() {
-                            Swal.fire('خطأ!', 'خطأ في الاتصال', 'error');
-                        }
-                    });
                 });
             };
         });

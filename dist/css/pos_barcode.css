@@ -827,6 +827,30 @@ div:where(.swal2-container) div:where(.swal2-popup) {
     color: #1a2f5a !important;
 }
 
+.pos-save-order-btn.pos-save--empty,
+.pos-save-order-btn.pos-save--saved,
+.pos-save-order-btn.pos-save--saving,
+#save-order.pos-save--empty,
+#save-order.pos-save--saved,
+#save-order.pos-save--saving {
+    opacity: 0.55;
+    cursor: not-allowed;
+    box-shadow: none !important;
+}
+
+.pos-save-order-btn.pos-save--saved,
+#save-order.pos-save--saved {
+    background: #f1f3f5 !important;
+    border-color: #adb5bd !important;
+    color: #6c757d !important;
+}
+
+.pos-save-order-btn.pos-save--dirty,
+#save-order.pos-save--dirty {
+    opacity: 1;
+    cursor: pointer;
+}
+
 .pos-print-order-btn {
     order: 2.5;
     background: #ffffff !important;
@@ -2945,6 +2969,175 @@ body.pos-premium-dark ::-webkit-scrollbar-thumb {
     color: var(--pos-text, #e8edf4) !important;
 }
 
+.swal2-popup.pos-swal-premium.pos-swal-reversal {
+    width: min(92vw, 460px) !important;
+}
+
+/* Paid order reversal modal (stacked over recent orders) */
+#paidOrderReversalModal.pos-paid-reversal-modal-fade.fade .modal-dialog {
+    transition: opacity 0.14s ease-out;
+    transform: none !important;
+}
+
+#paidOrderReversalModal.pos-paid-reversal-modal-fade.show .modal-dialog {
+    transform: none !important;
+}
+
+#paidOrderReversalModal.pos-paid-reversal-modal-fade {
+    transition: opacity 0.14s ease-out;
+    z-index: 1065;
+}
+
+#paidOrderReversalModal + .modal-backdrop {
+    z-index: 1060;
+}
+
+#paidOrderReversalModal .pos-paid-reversal-dialog {
+    max-width: min(480px, calc(100vw - 1.5rem));
+}
+
+#paidOrderReversalModal .pos-paid-reversal-content {
+    border-radius: 16px;
+    overflow: hidden;
+    box-shadow: 0 24px 48px rgba(0, 0, 0, 0.45);
+}
+
+#paidOrderReversalModal .pos-paid-reversal-hint {
+    color: var(--pos-text-muted, #8b98a8);
+    font-size: 0.9rem;
+    line-height: 1.55;
+}
+
+body.pos-premium-dark #paidOrderReversalModal .modal-content,
+body.pos-premium-dark #paidOrderReversalModal .pos-paid-reversal-content {
+    background: var(--pos-panel);
+    border: 1px solid var(--pos-border);
+    color: var(--pos-text);
+}
+
+body.pos-premium-dark #paidOrderReversalModal .modal-header,
+body.pos-premium-dark #paidOrderReversalModal .pos-paid-reversal-content .modal-header {
+    background: var(--pos-panel-elevated) !important;
+    color: var(--pos-text) !important;
+    border-bottom: 1px solid var(--pos-border);
+}
+
+body.pos-premium-dark #paidOrderReversalModal .pos-paid-reversal-body,
+body.pos-premium-dark #paidOrderReversalModal .modal-body {
+    background: var(--pos-panel);
+    color: var(--pos-text);
+}
+
+body.pos-premium-dark #paidOrderReversalModal .pos-paid-reversal-footer,
+body.pos-premium-dark #paidOrderReversalModal .modal-footer {
+    background: var(--pos-panel);
+    border-top: 1px solid var(--pos-border);
+}
+
+body.pos-premium-dark #paidOrderReversalModal .form-label {
+    color: var(--pos-text);
+    font-weight: 700;
+    font-size: 0.84rem;
+}
+
+body.pos-premium-dark #paidOrderReversalModal .pos-paid-reversal-control {
+    background: var(--pos-panel-elevated) !important;
+    border: 1px solid var(--pos-border) !important;
+    color: var(--pos-text) !important;
+    border-radius: 10px !important;
+    box-shadow: none !important;
+}
+
+body.pos-premium-dark #paidOrderReversalModal .pos-paid-reversal-control::placeholder {
+    color: rgba(232, 237, 244, 0.58) !important;
+    opacity: 1;
+}
+
+body.pos-premium-dark #paidOrderReversalModal .pos-paid-reversal-control:focus {
+    border-color: rgba(232, 160, 32, 0.65) !important;
+    box-shadow: 0 0 0 0.15rem rgba(232, 160, 32, 0.18) !important;
+    background: rgba(255, 255, 255, 0.08) !important;
+    color: var(--pos-text) !important;
+}
+
+body.pos-premium-dark #paidOrderReversalModal #paidReversalValidationAlert {
+    background: rgba(220, 53, 69, 0.14);
+    border: 1px solid rgba(248, 113, 113, 0.35);
+    color: #fecaca;
+}
+
+.swal2-popup.pos-swal-premium.pos-swal-reversal .swal2-icon {
+    margin: 0.35rem auto 0.75rem !important;
+    transform: scale(0.82);
+}
+
+.pos-swal-reversal-form__hint {
+    margin: 0 0 1rem;
+    color: var(--pos-text-muted, #8b98a8);
+    font-size: 0.88rem;
+    line-height: 1.55;
+}
+
+.swal2-popup.pos-swal-premium.pos-swal-reversal .pos-swal-reversal-form__container {
+    color: var(--pos-text, #e8edf4) !important;
+    padding: 0 0.15rem !important;
+    margin: 0 !important;
+    text-align: right !important;
+    overflow: visible !important;
+    width: 100%;
+}
+
+.pos-swal-reversal-form__label {
+    display: block;
+    margin-bottom: 0.35rem;
+    color: var(--pos-text, #e8edf4);
+    font-size: 0.84rem;
+    font-weight: 700;
+}
+
+.swal2-popup.pos-swal-premium.pos-swal-reversal .pos-swal-reversal-form__control,
+body.pos-premium-dark .swal2-popup.pos-swal-premium.pos-swal-reversal .pos-swal-reversal-form__control {
+    background: rgba(255, 255, 255, 0.08) !important;
+    border: 1px solid rgba(255, 255, 255, 0.16) !important;
+    color: var(--pos-text, #e8edf4) !important;
+    -webkit-text-fill-color: var(--pos-text, #e8edf4) !important;
+    caret-color: var(--pos-text, #e8edf4);
+    border-radius: 10px !important;
+    box-shadow: none !important;
+    pointer-events: auto;
+}
+
+.swal2-popup.pos-swal-premium.pos-swal-reversal textarea.pos-swal-reversal-form__control {
+    min-height: 92px;
+    resize: vertical;
+    line-height: 1.5;
+}
+
+.swal2-popup.pos-swal-premium.pos-swal-reversal .pos-swal-reversal-form__control::placeholder {
+    color: rgba(232, 237, 244, 0.58) !important;
+    opacity: 1;
+}
+
+.swal2-popup.pos-swal-premium.pos-swal-reversal .pos-swal-reversal-form__control:focus {
+    border-color: rgba(232, 160, 32, 0.65) !important;
+    box-shadow: 0 0 0 0.15rem rgba(232, 160, 32, 0.18) !important;
+    background: rgba(255, 255, 255, 0.1) !important;
+    color: var(--pos-text, #e8edf4) !important;
+}
+
+.swal2-popup.pos-swal-premium.pos-swal-reversal .pos-swal-reversal-form__control option {
+    color: #0f172a;
+    background: #fff;
+}
+
+.swal2-popup.pos-swal-premium.pos-swal-reversal .swal2-validation-message {
+    background: rgba(220, 53, 69, 0.16) !important;
+    color: #fecaca !important;
+    border: 1px solid rgba(248, 113, 113, 0.35);
+    border-radius: 10px;
+    margin-top: 0.85rem;
+}
+
 /* Order-saved success modal — mirrors #paymentModal's fade behavior
    (opacity-only, no transform) so it behaves identically. */
 #posOrderSuccessModal.pos-success-modal-fade.fade .modal-dialog {
@@ -3414,27 +3607,216 @@ body.pos-premium-dark #deliveryModal .btn-primary {
     color: #111;
 }
 
-/* Recent orders offcanvas */
-body.pos-premium-dark #recentOrdersModal.offcanvas {
-    background: var(--pos-panel);
+/* Recent orders modal */
+#recentOrdersModal.pos-recent-orders-modal-fade.fade .modal-dialog {
+    transition: opacity 0.14s ease-out;
+    transform: none !important;
 }
 
-body.pos-premium-dark #recentOrdersModal .offcanvas-header.bg-primary {
+#recentOrdersModal.pos-recent-orders-modal-fade.show .modal-dialog {
+    transform: none !important;
+}
+
+#recentOrdersModal.pos-recent-orders-modal-fade {
+    transition: opacity 0.14s ease-out;
+}
+
+#recentOrdersModal .pos-recent-orders-dialog {
+    max-width: min(1200px, calc(100vw - 1.5rem));
+    margin: 1rem auto;
+}
+
+#recentOrdersModal .pos-recent-orders-content {
+    display: flex;
+    flex-direction: column;
+    max-height: calc(100vh - 2rem);
+    overflow: hidden;
+    border-radius: 16px;
+    box-shadow: 0 24px 48px rgba(15, 23, 42, 0.18);
+}
+
+#recentOrdersModal .pos-recent-orders-body {
+    flex: 1 1 auto;
+    overflow-y: auto;
+    background: #fff;
+}
+
+#recentOrdersModal .pos-recent-orders-footer {
+    flex: 0 0 auto;
+    border-top: 1px solid #e8edf4;
+    background: #fff;
+}
+
+body.pos-premium-dark #recentOrdersModal .modal-content,
+body.pos-premium-dark #recentOrdersModal .pos-recent-orders-content {
+    background: var(--pos-panel);
+    border: 1px solid var(--pos-border);
+    box-shadow: 0 24px 48px rgba(0, 0, 0, 0.45);
+}
+
+body.pos-premium-dark #recentOrdersModal .modal-header.bg-primary,
+body.pos-premium-dark #recentOrdersModal .pos-recent-orders-content .modal-header {
     background: var(--pos-panel-elevated) !important;
     color: var(--pos-text) !important;
     border-bottom: 1px solid var(--pos-border);
 }
 
-body.pos-premium-dark #recentOrdersModal .offcanvas-body {
+body.pos-premium-dark #recentOrdersModal .pos-recent-orders-body,
+body.pos-premium-dark #recentOrdersModal .modal-body {
     background: var(--pos-panel);
 }
 
-body.pos-premium-dark #recentOrdersModal .table {
+body.pos-premium-dark #recentOrdersModal .pos-recent-orders-footer,
+body.pos-premium-dark #recentOrdersModal .modal-footer {
+    background: var(--pos-panel);
+    border-top: 1px solid var(--pos-border);
+}
+
+body.pos-premium-dark #recentOrdersModal .pos-recent-orders-table {
     --bs-table-bg: transparent;
-    --bs-table-striped-bg: rgba(255, 255, 255, 0.03);
-    --bs-table-hover-bg: rgba(232, 160, 32, 0.08);
+    --bs-table-striped-bg: transparent;
+    --bs-table-hover-bg: rgba(255, 255, 255, 0.07);
+    --bs-table-hover-color: var(--pos-text);
     color: var(--pos-text);
     border-color: var(--pos-border);
+}
+
+/* Override global pos.css `.table tbody tr:hover` (#e3f2fd) and slide animation */
+body.pos-premium-dark #recentOrdersModal .pos-recent-orders-table tbody tr:hover {
+    background-color: transparent !important;
+    transform: none !important;
+    color: inherit;
+}
+
+body.pos-premium-dark #recentOrdersModal .pos-recent-orders-table.table-hover > tbody > tr {
+    transition: background-color 0.12s ease;
+}
+
+body.pos-premium-dark #recentOrdersModal .pos-recent-orders-table.table-hover > tbody > tr:hover > td {
+    --bs-table-color-state: inherit;
+    --bs-table-bg-state: rgba(255, 255, 255, 0.07);
+    background-color: rgba(255, 255, 255, 0.07) !important;
+    box-shadow: inset 2px 0 0 rgba(232, 160, 32, 0.55);
+}
+
+body.pos-premium-dark #recentOrdersModal .recent-order-customer-link {
+    color: #93c5fd;
+    text-decoration: none;
+    font-weight: 600;
+}
+
+body.pos-premium-dark #recentOrdersModal .recent-order-customer-link:hover,
+body.pos-premium-dark #recentOrdersModal .recent-order-customer-link:focus {
+    color: #bfdbfe;
+    text-decoration: underline;
+}
+
+#recentOrdersModal .recent-order-customer-link {
+    color: #2563eb;
+    text-decoration: none;
+    font-weight: 600;
+}
+
+#recentOrdersModal .recent-order-customer-link:hover,
+#recentOrdersModal .recent-order-customer-link:focus {
+    color: #1d4ed8;
+    text-decoration: underline;
+}
+
+/* Recent order customer detail modal */
+#recentOrderCustomerModal.pos-recent-order-customer-modal-fade.fade .modal-dialog {
+    transition: opacity 0.14s ease-out;
+    transform: none !important;
+}
+
+#recentOrderCustomerModal.pos-recent-order-customer-modal-fade.show .modal-dialog {
+    transform: none !important;
+}
+
+#recentOrderCustomerModal.pos-recent-order-customer-modal-fade {
+    transition: opacity 0.14s ease-out;
+}
+
+#recentOrderCustomerModal .pos-recent-order-customer-dialog {
+    max-width: min(720px, calc(100vw - 1.5rem));
+}
+
+#recentOrderCustomerModal .pos-recent-order-customer-content {
+    border-radius: 16px;
+    overflow: hidden;
+    box-shadow: 0 24px 48px rgba(15, 23, 42, 0.18);
+}
+
+#recentOrderCustomerModal .pos-recent-order-customer-stat {
+    background: #f8fafc;
+    border: 1px solid #e8edf4;
+    border-radius: 12px;
+    padding: 0.75rem 0.9rem;
+    height: 100%;
+}
+
+#recentOrderCustomerModal .pos-recent-order-customer-label {
+    display: block;
+    font-size: 0.75rem;
+    color: #64748b;
+    margin-bottom: 0.25rem;
+}
+
+body.pos-premium-dark #recentOrderCustomerModal .modal-content,
+body.pos-premium-dark #recentOrderCustomerModal .pos-recent-order-customer-content {
+    background: var(--pos-panel);
+    border: 1px solid var(--pos-border);
+    box-shadow: 0 24px 48px rgba(0, 0, 0, 0.45);
+}
+
+body.pos-premium-dark #recentOrderCustomerModal .modal-header.bg-primary,
+body.pos-premium-dark #recentOrderCustomerModal .pos-recent-order-customer-content .modal-header {
+    background: var(--pos-panel-elevated) !important;
+    color: var(--pos-text) !important;
+    border-bottom: 1px solid var(--pos-border);
+}
+
+body.pos-premium-dark #recentOrderCustomerModal .pos-recent-order-customer-body,
+body.pos-premium-dark #recentOrderCustomerModal .modal-body {
+    background: var(--pos-panel);
+    color: var(--pos-text);
+}
+
+body.pos-premium-dark #recentOrderCustomerModal .pos-recent-order-customer-footer,
+body.pos-premium-dark #recentOrderCustomerModal .modal-footer {
+    background: var(--pos-panel);
+    border-top: 1px solid var(--pos-border);
+}
+
+body.pos-premium-dark #recentOrderCustomerModal .pos-recent-order-customer-stat {
+    background: var(--pos-panel-elevated);
+    border-color: var(--pos-border);
+}
+
+body.pos-premium-dark #recentOrderCustomerModal .pos-recent-order-customer-label {
+    color: var(--pos-text-muted);
+}
+
+body.pos-premium-dark #recentOrderCustomerModal .pos-recent-order-customer-orders-table {
+    --bs-table-bg: transparent;
+    --bs-table-color: var(--pos-text);
+    --bs-table-border-color: var(--pos-border);
+    color: var(--pos-text);
+}
+
+body.pos-premium-dark #recentOrderCustomerModal .pos-recent-order-customer-orders-table thead th {
+    background: var(--pos-panel-elevated);
+    color: var(--pos-text-muted);
+    border-color: var(--pos-border);
+}
+
+body.pos-premium-dark #recentOrderCustomerModal .pos-recent-order-customer-orders-table tbody td {
+    border-color: var(--pos-border);
+    color: var(--pos-text);
+}
+
+body.pos-premium-dark #recentOrderCustomerModal .text-success {
+    color: #4ade80 !important;
 }
 
 body.pos-premium-dark #recentOrdersModal .table-bordered > :not(caption) > * {

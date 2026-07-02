@@ -18,11 +18,11 @@
                 <div class="card card-primary">
                 <form action="" method="post" id="addItemForm">
                   <?php 
-              $rowlstitm = $conn->query("SELECT max(code) FROM myitems ")->fetch_assoc();
-              if ($rowlstitm['max(code)'] == null) {
-                $itmid = 1;
+              $rowlstbarcode = $conn->query("SELECT MAX(CAST(barcode AS UNSIGNED)) AS max_barcode FROM myitems WHERE barcode REGEXP '^[0-9]+$'")->fetch_assoc();
+              if (($rowlstbarcode['max_barcode'] ?? null) === null) {
+                $nextBarcode = 1;
               } else {
-                $itmid = ($rowlstitm['max(code)']+1);
+                $nextBarcode = (int) $rowlstbarcode['max_barcode'] + 1;
               }
               ?>
 
@@ -31,15 +31,8 @@
                 <div class="row">
                   <div class="col-md-6">
                     <div class="form-group">
-                      <label for="code">الكود</label>
-                      <input readonly value="<?= $itmid ?>" class="form-control form-control-sm col-4" type="text" name="code" id="code" >
-                    </div>
-                  </div>
-
-                  <div class="col-md-6">
-                    <div class="form-group">
                       <label for="barcode">الباركود</label>
-                      <input required value="<?= $itmid ?>" class="form-control form-control-sm" type="text" name="barcode" id="barcode" >
+                      <input required value="<?= $nextBarcode ?>" class="form-control form-control-sm" type="text" name="barcode" id="barcode" >
                     </div>
                   </div>
                 </div>
@@ -98,7 +91,7 @@
 
                     <div class="col-md-5">
                       <label for="">باركود</label>
-                      <input class="form-control" type="text" name="unit_barcode[]" id="unitCode" value="<?= $itmid ?>">
+                      <input class="form-control" type="text" name="unit_barcode[]" id="unitCode" value="<?= $nextBarcode ?>">
                     </div>
 
                     <div class="col-md-1">
@@ -112,7 +105,7 @@
                 <div class="row">
                   <div class="col-md-4">
                     <div class="form-group">
-                      <label for="group1">مجموعه</label>
+                      <label for="group1">التصنيف</label>
                       <select name="group1" id="" class="form-control form-control-sm float-right">
                       <?php
                       $resgroup1 = $conn->query("SELECT * FROM item_group where isdeleted = 0");
@@ -126,7 +119,7 @@
 
                   <div class="col-md-4">
                     <div class="form-group">
-                      <label for="group2">تصنيف</label>
+                      <label for="group2">المجموعة الفرعية</label>
                       <select name="group2" id="" class="form-control form-control-sm float-right">
                       <?php
                       $resgroup2 = $conn->query("SELECT * FROM item_group2 where isdeleted = 0");
@@ -147,8 +140,8 @@
                       <tr>
                         <th>سعر التكلفه</th>
                         <th>سعر البيع</th>
-                        <th>سعر البيع 2</th>
-                        <th>سعر السوق</th>
+                        <th>سعر خاص (اختياري)</th>
+                        <th>سعر السوق (اختياري)</th>
                       </tr>
                     </thead>
                     <tbody>

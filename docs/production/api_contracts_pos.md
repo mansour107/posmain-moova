@@ -538,6 +538,29 @@ Phase 2 rule:
 - Either disable it for production use or route it through the Moova/local ingest contract after a dedicated Judge-approved slice.
 - Preserve it until reachability is verified because it may still be integration-reachable.
 
+## Save Draft State and Kitchen Revisions
+
+Cashier, supermarket, and table POS surfaces share `js/pos_order_draft.js` for cart dirty/saved tracking. After a successful save the save button shows **تم الحفظ**, is disabled, and stays disabled until the cart fingerprint changes.
+
+Successful save/update responses from `api/pos/index.php` include:
+
+```json
+{
+  "success": true,
+  "order_id": 123,
+  "updated_state": {
+    "order_id": 123,
+    "kitchen_revision": 3,
+    "cart_saved": true
+  }
+}
+```
+
+- `kitchen_revision` is monotonic per order (`ot_head.kitchen_revision`).
+- Each mutation that actually runs bumps `kitchen_revision` once and persists a row in `kitchen_order_revisions` with the full KOT payload; prior `current` rows become `superseded`.
+- Browser idempotency keys rotate on every dirty save attempt: `pos.order.save:{order_id|new}:{next_revision}:{uuid}`.
+- Cloud/KDS sync should prefer `kitchen_revision` over timestamp-based `sync_revision` when the column is present.
+
 ## Event Contract
 
 Target event table: `order_events`.

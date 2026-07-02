@@ -90,7 +90,8 @@ $conversion = ItemUnitProfileBuilder::buildFromPost([
     'purchase_unit_id' => '2',
     'purchase_storage_factor' => '1',
     'purchase_cost' => '1',
-    'sell_storage_factor' => '0.25',
+    'sell_storage_factor' => '4',
+    'sell_storage_swapped' => '0',
     'sell_price1' => '9',
 ], 2);
 
@@ -102,7 +103,14 @@ foreach ($conversion['units'] as $unitRow) {
     }
 }
 itemUnitProfileBuilderAssert($sellRow !== null, 'conversion profile should include sell row');
-itemUnitProfileBuilderAssert(abs((float) $sellRow['u_val'] - 0.25) < 0.0001, 'sell row should store conversion factor');
+itemUnitProfileBuilderAssert(abs((float) $sellRow['u_val'] - 4) < 0.0001, 'sell row should store the entered conversion factor');
+itemUnitProfileBuilderAssert((int) ($sellRow['conversion_swapped'] ?? 0) === 0, 'sell row should persist swap flag');
+
+require_once __DIR__ . '/../../classes/Items/ItemUnitConversion.php';
+itemUnitProfileBuilderAssert(
+    abs(ItemUnitConversion::inventoryFactorFromRow($sellRow, 'sell', true) - 0.25) < 0.0001,
+    'inventory should still derive stock deduction from stored display factor'
+);
 
 $profilePayload = ItemFormInput::normalizeAddPayload([
     'iname' => 'Profile Item',

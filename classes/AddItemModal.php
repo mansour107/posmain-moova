@@ -11,13 +11,13 @@ class AddItemModal extends InvoiceElementBase
     private $units = [];
     private $groups1 = [];
     private $groups2 = [];
-    private $nextItemCode = 1;
+    private $nextBarcode = '1';
 
     public function __construct($invoiceType, $isEditMode = false, $data = null, $conn = null)
     {
         parent::__construct($invoiceType, $isEditMode, $data, $conn);
         $this->loadSelectOptions();
-        $this->getNextItemCode();
+        $this->getNextBarcode();
     }
 
     /**
@@ -33,12 +33,12 @@ class AddItemModal extends InvoiceElementBase
             $result = $this->executeSecureQuery($query);
             $this->units = $result->fetch_all(MYSQLI_ASSOC);
 
-            // تحميل المجموعات الأولى
+            // تحميل التصنيفات
             $query = "SELECT * FROM item_group WHERE isdeleted = 0 ORDER BY gname";
             $result = $this->executeSecureQuery($query);
             $this->groups1 = $result->fetch_all(MYSQLI_ASSOC);
 
-            // تحميل المجموعات الثانية
+            // تحميل المجموعات الفرعية
             $query = "SELECT * FROM item_group2 WHERE isdeleted = 0 ORDER BY gname";
             $result = $this->executeSecureQuery($query);
             $this->groups2 = $result->fetch_all(MYSQLI_ASSOC);
@@ -49,19 +49,19 @@ class AddItemModal extends InvoiceElementBase
     }
 
     /**
-     * الحصول على الكود التالي للصنف
+     * الحصول على الباركود التالي للصنف
      */
-    private function getNextItemCode()
+    private function getNextBarcode()
     {
         if (!$this->conn) return;
 
         try {
-            $query = "SELECT MAX(code) as max_code FROM myitems";
+            $query = "SELECT MAX(CAST(barcode AS UNSIGNED)) AS max_barcode FROM myitems WHERE barcode REGEXP '^[0-9]+$'";
             $result = $this->executeSecureQuery($query);
             $row = $result->fetch_assoc();
-            $this->nextItemCode = $row && $row['max_code'] ? ($row['max_code'] + 1) : 1;
+            $this->nextBarcode = (string) (($row && $row['max_barcode']) ? ((int) $row['max_barcode'] + 1) : 1);
         } catch (Exception $e) {
-            $this->nextItemCode = 1;
+            $this->nextBarcode = '1';
         }
     }
 
@@ -136,16 +136,8 @@ class AddItemModal extends InvoiceElementBase
         <div class="row">
             <div class="col-md-6">
                 <div class="form-group">
-                    <label for="code">الكود</label>
-                    <input readonly value="<?php echo $this->nextItemCode; ?>" 
-                           class="form-control form-control-sm col-4" 
-                           type="text" name="code" id="code">
-                </div>
-            </div>
-            <div class="col-md-6">
-                <div class="form-group">
                     <label for="barcode">الباركود</label>
-                    <input required value="<?php echo $this->nextItemCode; ?>" 
+                    <input required value="<?php echo htmlspecialchars($this->nextBarcode, ENT_QUOTES, 'UTF-8'); ?>" 
                            class="form-control form-control-sm" 
                            type="text" name="barcode" id="barcode">
                 </div>
@@ -217,7 +209,7 @@ class AddItemModal extends InvoiceElementBase
                 <div class="col-md-5">
                     <label for="">باركود</label>
                     <input class="form-control" type="text" name="unit_barcode[]" 
-                           id="unitCode" value="<?php echo $this->nextItemCode; ?>">
+                           id="unitCode" value="<?php echo htmlspecialchars($this->nextBarcode, ENT_QUOTES, 'UTF-8'); ?>">
                 </div>
                 <div class="col-md-1">
                     <p class="btn btn-danger deleteRow">X</p>
@@ -238,7 +230,7 @@ class AddItemModal extends InvoiceElementBase
     }
 
     /**
-     * عرض قسم المجموعات
+     * عرض قسم التصنيف والمجموعة الفرعية
      */
     private function renderGroupsSection()
     {
@@ -246,7 +238,7 @@ class AddItemModal extends InvoiceElementBase
         <div class="row">
             <div class="col-md-4">
                 <div class="form-group">
-                    <label for="group1">مجموعة</label>
+                    <label for="group1">التصنيف</label>
                     <select name="group1" class="form-control form-control-sm float-right">
                         <?php $this->renderGroup1Options(); ?>
                     </select>
@@ -254,7 +246,7 @@ class AddItemModal extends InvoiceElementBase
             </div>
             <div class="col-md-4">
                 <div class="form-group">
-                    <label for="group2">تصنيف</label>
+                    <label for="group2">المجموعة الفرعية</label>
                     <select name="group2" class="form-control form-control-sm float-right">
                         <?php $this->renderGroup2Options(); ?>
                     </select>
@@ -265,7 +257,7 @@ class AddItemModal extends InvoiceElementBase
     }
 
     /**
-     * عرض خيارات المجموعة الأولى
+     * عرض خيارات التصنيف
      */
     private function renderGroup1Options()
     {
@@ -275,7 +267,7 @@ class AddItemModal extends InvoiceElementBase
     }
 
     /**
-     * عرض خيارات المجموعة الثانية
+     * عرض خيارات المجموعة الفرعية
      */
     private function renderGroup2Options()
     {
@@ -296,8 +288,8 @@ class AddItemModal extends InvoiceElementBase
                     <tr>
                         <th>سعر التكلفة</th>
                         <th>سعر البيع</th>
-                        <th>سعر البيع 2</th>
-                        <th>سعر السوق</th>
+                        <th>سعر خاص (اختياري)</th>
+                        <th>سعر السوق (اختياري)</th>
                     </tr>
                 </thead>
                 <tbody>

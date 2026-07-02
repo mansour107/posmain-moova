@@ -106,7 +106,7 @@ $items_start_balance_recipe_balance_available = items_start_balance_table_exists
                         <thead>
                             <tr class="bg-gray-300">
                                 <th>#</th>
-                                <th>كود الصنف</th>
+                                <th>الباركود</th>
                                 <th>اسم الصنف</th>
                                 <th>الوحده</th>
                                 <th>رصيد اول المدة الجديد</th>
@@ -160,7 +160,7 @@ $items_start_balance_recipe_balance_available = items_start_balance_table_exists
                             ?>
                             <tr>
                                 <td><?= $count ?></td>
-                                <td><?= htmlspecialchars($row['code']) ?></td>
+                                <td><?= htmlspecialchars($row['barcode']) ?></td>
                                 <td><?= htmlspecialchars($row['iname']) ?></td>
                                 <td><?= htmlspecialchars($unit_name) ?></td>
                                 <td>

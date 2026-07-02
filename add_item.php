@@ -24,11 +24,28 @@ if ($isEdit) {
 function posmain_add_item_unit_options(mysqli $conn): array
 {
     $options = [];
+    $seenIds = [];
+    $seenNames = [];
     $resunit = $conn->query('SELECT * FROM myunits WHERE COALESCE(isdeleted, 0) = 0 ORDER BY id');
     while ($rowunit = $resunit->fetch_assoc()) {
+        $id = (int) $rowunit['id'];
+        $uname = (string) $rowunit['uname'];
+        $normalizedName = mb_strtolower(trim($uname), 'UTF-8');
+        if ($id > 0 && isset($seenIds[$id])) {
+            continue;
+        }
+        if ($normalizedName !== '' && isset($seenNames[$normalizedName])) {
+            continue;
+        }
+        if ($id > 0) {
+            $seenIds[$id] = true;
+        }
+        if ($normalizedName !== '') {
+            $seenNames[$normalizedName] = true;
+        }
         $options[] = [
-            'id' => (int) $rowunit['id'],
-            'uname' => (string) $rowunit['uname'],
+            'id' => $id,
+            'uname' => $uname,
         ];
     }
 
@@ -45,6 +62,8 @@ function posmain_add_item_unit_options(mysqli $conn): array
 function posmain_add_item_group_options(mysqli $conn, string $table): array
 {
     $options = [];
+    $seenIds = [];
+    $seenNames = [];
     $allowedTables = ['item_group' => 'item_group', 'item_group2' => 'item_group2'];
     if (!isset($allowedTables[$table])) {
         return $options;
@@ -53,9 +72,24 @@ function posmain_add_item_group_options(mysqli $conn, string $table): array
     $sqlTable = $allowedTables[$table];
     $result = $conn->query("SELECT id, gname FROM {$sqlTable} WHERE isdeleted = 0 ORDER BY gname ASC");
     while ($row = $result->fetch_assoc()) {
+        $id = (int) $row['id'];
+        $name = (string) $row['gname'];
+        $normalizedName = mb_strtolower(trim($name), 'UTF-8');
+        if ($id > 0 && isset($seenIds[$id])) {
+            continue;
+        }
+        if ($normalizedName !== '' && isset($seenNames[$normalizedName])) {
+            continue;
+        }
+        if ($id > 0) {
+            $seenIds[$id] = true;
+        }
+        if ($normalizedName !== '') {
+            $seenNames[$normalizedName] = true;
+        }
         $options[] = [
-            'id' => (int) $row['id'],
-            'name' => (string) $row['gname'],
+            'id' => $id,
+            'name' => $name,
         ];
     }
 
@@ -83,6 +117,7 @@ if ($isEdit) {
 $itemGroup1Options = posmain_add_item_group_options($conn, 'item_group');
 $itemGroup2Options = posmain_add_item_group_options($conn, 'item_group2');
 $canCreateItemGroups = !empty($role['add_items']) || !empty($role['add_item_groups']);
+$canCreateUnits = !empty($role['add_items']);
 $selectedGroup1Id = $isEdit ? (int) ($rowitm['group1'] ?? 0) : 0;
 $selectedGroup2Id = $isEdit ? (int) ($rowitm['group2'] ?? 0) : 0;
 $selectedGroup1Name = '';
@@ -776,6 +811,19 @@ try {
                     </div>
                 </div>
 
+                <div class="item-unit-modal" id="itemCatalogUnitModal" aria-hidden="true">
+                    <div class="item-unit-modal__backdrop"></div>
+                    <div class="item-unit-modal__panel" role="dialog" aria-modal="true" aria-labelledby="itemCatalogUnitModalTitle">
+                        <h4 class="item-unit-modal__title" id="itemCatalogUnitModalTitle">وحدة جديدة</h4>
+                        <input type="text" class="item-unit-modal__input form-control" autocomplete="off" placeholder="مثال: كرتونة، كيلو، علبة...">
+                        <div class="item-unit-modal__feedback" aria-live="polite"></div>
+                        <div class="item-unit-modal__actions">
+                            <button type="button" class="btn btn-light item-unit-modal__cancel">إلغاء</button>
+                            <button type="button" class="btn btn-primary item-unit-modal__save">حفظ الوحدة</button>
+                        </div>
+                    </div>
+                </div>
+
                 <?php if ($isEdit): ?>
                     <div class="modal fade" id="deleteItemModal" tabindex="-1" role="dialog" aria-labelledby="deleteItemModalLabel" aria-hidden="true">
                         <div class="modal-dialog" role="document">
@@ -1088,16 +1136,20 @@ $(document).ready(function() {
     }
 
     function sellPricesAreValidForSubmit() {
+        var validation = window.ItemEditorValidation;
         var variantRows = variantRowsForSubmit();
         if (variantRows.length > 0) {
-            var variantsValid = true;
+            var invalidFields = [];
             variantRows.forEach(function($row) {
                 var price = parseFloat($row.find('input[name="variant_price1[]"]').val());
                 if (!isFinite(price) || price <= 0) {
-                    variantsValid = false;
+                    invalidFields.push($row.find('.variant-sell-price-input'));
                 }
             });
-            if (!variantsValid) {
+            if (invalidFields.length > 0) {
+                if (validation) {
+                    return validation.fail('يرجى إدخال سعر البيع لكل تنوع', invalidFields);
+                }
                 alert('يرجى إدخال سعر البيع لكل تنوع');
                 return false;
             }
@@ -1108,30 +1160,36 @@ $(document).ready(function() {
             return true;
         }
 
-        var unitsValid = true;
         var sellPrice = parseFloat($('#sell_price1').val());
         if (!isFinite(sellPrice) || sellPrice <= 0) {
-            unitsValid = false;
-        }
-        if (!unitsValid) {
+            if (validation) {
+                return validation.fail('يرجى إدخال سعر البيع', ['#sell_price1']);
+            }
             alert('يرجى إدخال سعر البيع');
+            return false;
         }
-        return unitsValid;
+        return true;
     }
 
     function variationsAreValidForSubmit() {
+        var validation = window.ItemEditorValidation;
         var valid = true;
         var seenLabels = [];
         $('#variantRowsContainer .variant-row').each(function() {
-            var label = $.trim($(this).find('.variant-label-input').val() || '');
-            var name = $.trim($(this).find('.variant-name-input').val() || '');
+            var $row = $(this);
+            var label = $.trim($row.find('.variant-label-input').val() || '');
+            var name = $.trim($row.find('.variant-name-input').val() || '');
             if (label === '' && name === '') {
                 return;
             }
             var key = label.toLowerCase();
             if (key !== '' && seenLabels.indexOf(key) !== -1) {
-                alert('لا يمكن تكرار نفس نوع التنوع');
-                valid = false;
+                if (validation) {
+                    valid = validation.fail('لا يمكن تكرار نفس نوع التنوع', [$row.find('.variant-label-input')]);
+                } else {
+                    alert('لا يمكن تكرار نفس نوع التنوع');
+                    valid = false;
+                }
                 return false;
             }
             if (key !== '') {
@@ -1163,7 +1221,6 @@ $(document).ready(function() {
 	});
 	</script>
 
-<script src="js/item_unit_profile.js?v=<?= (int) (@filemtime(__DIR__ . '/js/item_unit_profile.js') ?: 1) ?>"></script>
 <script>
 $(function() {
     var params = new URLSearchParams(window.location.search);
@@ -1187,6 +1244,18 @@ $(function() {
 });
 </script>
 <?php include('includes/footer.php') ?>
+<script src="js/item_unit_picker.js?v=<?= (int) (@filemtime(__DIR__ . '/js/item_unit_picker.js') ?: 1) ?>"></script>
+<script>
+$(function () {
+    if (typeof window.initItemUnitPickers === 'function') {
+        window.initItemUnitPickers({
+            saveUrl: 'ajax/item_catalog_unit_save.php',
+            canCreate: <?= $canCreateUnits ? 'true' : 'false' ?>
+        });
+    }
+});
+</script>
+<script src="js/item_unit_profile.js?v=<?= (int) (@filemtime(__DIR__ . '/js/item_unit_profile.js') ?: 1) ?>"></script>
 <?php if (!empty($role['add_items'])): ?>
 <script src="js/item_catalog_group_picker.js?v=<?= (int) (@filemtime(__DIR__ . '/js/item_catalog_group_picker.js') ?: 1) ?>"></script>
 <script>

@@ -469,7 +469,7 @@ LIMIT 1
             return $fallback;
         }
 
-        $stmt = $conn->prepare('SELECT u_val FROM item_units WHERE item_id = ? AND unit_id = ? AND COALESCE(isdeleted, 0) = 0 ORDER BY id ASC LIMIT 1');
+        $stmt = $conn->prepare('SELECT * FROM item_units WHERE item_id = ? AND unit_id = ? AND COALESCE(isdeleted, 0) = 0 ORDER BY id ASC LIMIT 1');
         $stmt->bind_param('ii', $itemId, $unitId);
         $stmt->execute();
         $row = $stmt->get_result()->fetch_assoc();
@@ -478,7 +478,9 @@ LIMIT 1
             throw new InvalidArgumentException('Unit conversion is not configured for this component.');
         }
 
-        return RecipeDecimal::normalize((string) ($row['u_val'] ?? '1'), 8);
+        require_once __DIR__ . '/../Items/ItemUnitResolver.php';
+
+        return ItemUnitResolver::inventoryFactorForUnitRowDecimal($conn, $row, 8, 'purchase');
     }
 
     private function tableExists(mysqli $conn, string $table): bool

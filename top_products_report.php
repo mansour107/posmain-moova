@@ -21,9 +21,9 @@
                             <input type="date" name="to" class="form-control" value="<?= $_GET['to'] ?? '' ?>">
                         </div>
                         <div class="col-md-3">
-                            <label>نوع الصنف:</label>
+                            <label>التصنيف:</label>
                             <select name="category" class="form-control">
-                                <option value="">جميع الأصناف</option>
+                                <option value="">جميع التصنيفات</option>
                   
                                 <?php
                                 // جلب أنواع الأصناف من جدول item_group
@@ -59,7 +59,7 @@
                     $sql = "SELECT 
                                 i.id,
                                 i.iname,
-                                i.code,
+                                i.barcode,
                                 i.price1,
                                 i.cost_price,
                                 i.group1,
@@ -74,7 +74,7 @@
                                 AND (fd.fat_tybe = 9 OR fd.fat_tybe = 3) 
                                 $dateFilter
                             WHERE i.isdeleted = 0
-                            GROUP BY i.id, i.iname, i.code, i.price1, i.cost_price, i.group1, g.gname
+                            GROUP BY i.id, i.iname, i.barcode, i.price1, i.cost_price, i.group1, g.gname
                             HAVING total_qty > 0
                             ORDER BY total_qty DESC";
 
@@ -121,9 +121,9 @@
                     <!-- فلتر JavaScript -->
                     <div class="row mb-3">
                         <div class="col-md-4">
-                            <label>فلتر سريع حسب التصنيف:</label>
+                            <label>فلتر سريع حسب فئة الأداء:</label>
                             <select id="classificationFilter" class="form-control">
-                                <option value="">جميع التصنيفات</option>
+                                <option value="">جميع فئات الأداء</option>
                                 <option value="الأكثر مبيعًا">الأكثر مبيعًا</option>
                                 <option value="Cash Cows">Cash Cows</option>
                                 <option value="Stars">Stars</option>
@@ -133,19 +133,19 @@
                         </div>
                     </div>
 
-                    <!-- جدول التصنيف -->
+                    <!-- جدول الأصناف -->
                     <div class="table-responsive">
                         <table class="table table-bordered table-striped" id="productsTable" data-page-length="25">
                             <thead class="bg-dark text-white">
                                 <tr>
                                     <th>#</th>
                                     <th>اسم الصنف</th>
-                                    <th>الكود</th>
-                                    <th>نوع الصنف</th>
+                                    <th>الباركود</th>
+                                    <th>التصنيف</th>
                                     <th>الكمية المباعة</th>
                                     <th>إجمالي القيمة</th>
                                     <th>إجمالي الربح</th>
-                                    <th>التصنيف</th>
+                                    <th>فئة الأداء</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -155,7 +155,7 @@
                                     $category = '';
                                     $badgeClass = '';
                                     
-                                    // تحديد التصنيف
+                                    // تحديد فئة الأداء
                                     if (in_array($product, $topSellers)) {
                                         $category = 'الأكثر مبيعًا';
                                         $badgeClass = 'badge-success';
@@ -176,7 +176,7 @@
                                 <tr data-category="<?= $product['group1'] ?>">
                                     <td><?= $counter++ ?></td>
                                     <td><?= $product['iname'] ?></td>
-                                    <td><?= $product['code'] ?></td>
+                                    <td><?= $product['barcode'] ?></td>
                                     <td class="text-center"><?= $product['group_name'] ?? 'غير محدد' ?></td>
                                     <td class="text-center"><?= number_format($product['total_qty'], 2) ?></td>
                                     <td class="text-center"><?= number_format($product['total_value'], 2) ?></td>
@@ -230,7 +230,7 @@
 
                     <!-- الرسم البياني -->
                     <div class="mt-5">
-                        <h4>توزيع الأصناف حسب التصنيف</h4>
+                        <h4>توزيع الأصناف حسب فئة الأداء</h4>
                         <div class="row">
                             <div class="col-md-6 mx-auto">
                                 <div style="height: 200px;">
@@ -260,7 +260,7 @@ document.addEventListener('DOMContentLoaded', function() {
         },
         "columnDefs": [
             { "orderable": false, "targets": 0 }, // تعطيل ترتيب عمود #
-            { "orderable": false, "targets": 7 }  // تعطيل ترتيب عمود التصنيف
+            { "orderable": false, "targets": 7 }  // تعطيل ترتيب عمود فئة الأداء
         ],
         "dom": '<"row"<"col-sm-12 col-md-6"l><"col-sm-12 col-md-6"f>>rt<"row"<"col-sm-12 col-md-5"i><"col-sm-12 col-md-7"p>>',
         "initComplete": function() {
@@ -272,7 +272,7 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
 
-    // فلتر الجدول حسب التصنيف
+    // فلتر الجدول حسب فئة الأداء
     document.getElementById('classificationFilter').addEventListener('change', function() {
         const selectedClassification = this.value;
         const table = $('#productsTable').DataTable();
@@ -280,10 +280,10 @@ document.addEventListener('DOMContentLoaded', function() {
         if (selectedClassification === '') {
             table.search('').draw();
         } else {
-            table.column(7).search(selectedClassification).draw(); // البحث في عمود التصنيف
+            table.column(7).search(selectedClassification).draw(); // البحث في عمود فئة الأداء
         }
     });
-    // بيانات التصنيفات
+    // بيانات فئات الأداء
     const categoryData = {
         labels: ['الأكثر مبيعًا', 'Cash Cows', 'Stars', 'Loss Leaders'],
         datasets: [{
@@ -331,7 +331,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 },
                 title: {
                     display: true,
-                    text: 'توزيع الأصناف حسب التصنيف',
+                    text: 'توزيع الأصناف حسب فئة الأداء',
                     font: {
                         size: 16
                     }

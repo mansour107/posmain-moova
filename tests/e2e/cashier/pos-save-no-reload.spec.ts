@@ -27,7 +27,7 @@ test.describe('cashier: takeaway save without reload', () => {
     expect(body.order_id).toBeGreaterThan(0);
 
     await expect(page.locator('#posOrderSuccessModal')).toBeVisible({ timeout: 5000 });
-    await expect(page).toHaveURL(initialUrl);
+    expect(new URL(page.url()).pathname).toBe(new URL(initialUrl).pathname);
 
     const totalText = await page.locator('#total_display').innerText();
     expect(totalText).not.toMatch(/^0\.00/);

@@ -10,6 +10,13 @@ class SyncSchemaManager
             'document_counters' => $this->documentCountersSql(),
             'pos_request_keys' => $this->posRequestKeysSql(),
             'order_events' => $this->orderEventsSql(),
+            'kitchen_order_revisions' => $this->kitchenOrderRevisionsSql(),
+            'kds_stations' => $this->kdsStationsSql(),
+            'kds_station_categories' => $this->kdsStationCategoriesSql(),
+            'kds_station_users' => $this->kdsStationUsersSql(),
+            'kds_tickets' => $this->kdsTicketsSql(),
+            'kds_ticket_lines' => $this->kdsTicketLinesSql(),
+            'kds_changes' => $this->kdsChangesSql(),
             'order_fulfillment' => $this->orderFulfillmentSql(),
             'pos_customers' => $this->posCustomersSql(),
             'pos_customer_phones' => $this->posCustomerPhonesSql(),
@@ -101,6 +108,9 @@ class SyncSchemaManager
                     'cofe_idempotency_key' => "ALTER TABLE ot_head ADD COLUMN cofe_idempotency_key VARCHAR(191) NULL AFTER uuid",
                     'guest_count' => "ALTER TABLE ot_head ADD COLUMN guest_count INT NULL AFTER table_id",
                     'waiter_id' => "ALTER TABLE ot_head ADD COLUMN waiter_id BIGINT NULL AFTER guest_count",
+                    'kitchen_revision' => "ALTER TABLE ot_head ADD COLUMN kitchen_revision INT UNSIGNED NOT NULL DEFAULT 0 AFTER waiter_id",
+                    'kitchen_status' => "ALTER TABLE ot_head ADD COLUMN kitchen_status ENUM('pending','in_progress','ready','completed') NOT NULL DEFAULT 'pending' AFTER kitchen_revision",
+                    'kitchen_completed_at' => "ALTER TABLE ot_head ADD COLUMN kitchen_completed_at DATETIME NULL AFTER kitchen_status",
                 ],
                 'indexes' => [
                     'uq_ot_head_cofe_idempotency' => [
@@ -110,6 +120,10 @@ class SyncSchemaManager
                     'idx_ot_head_waiter' => [
                         'columns' => ['waiter_id'],
                         'sql' => "ALTER TABLE ot_head ADD KEY idx_ot_head_waiter (waiter_id)",
+                    ],
+                    'idx_ot_head_kitchen_status' => [
+                        'columns' => ['kitchen_status'],
+                        'sql' => "ALTER TABLE ot_head ADD KEY idx_ot_head_kitchen_status (kitchen_status)",
                     ],
                 ],
             ],
@@ -162,6 +176,12 @@ class SyncSchemaManager
                         'sql' => "ALTER TABLE fat_details ADD KEY idx_fat_details_fatid_deleted (fatid, isdeleted)",
                     ],
                 ],
+            ],
+            'usr_pwrs' => [
+                'columns' => [
+                    'sid_kds' => "ALTER TABLE usr_pwrs ADD COLUMN sid_kds TINYINT(1) NOT NULL DEFAULT 0",
+                ],
+                'indexes' => [],
             ],
         ];
     }
@@ -275,6 +295,127 @@ class SyncSchemaManager
     {
         $applied = [];
         foreach ($this->pendingPosCustomerStatements($conn) as $label => $sql) {
+            $conn->query($sql);
+            $applied[] = $label;
+        }
+
+        return $applied;
+    }
+
+    public function kdsTableKeys(): array
+    {
+        return [
+            'kds_stations',
+            'kds_station_categories',
+            'kds_station_users',
+            'kds_tickets',
+            'kds_ticket_lines',
+            'kds_changes',
+        ];
+    }
+
+    public function pendingKdsStatements(mysqli $conn): array
+    {
+        $pending = [];
+        $planned = $this->plannedStatements();
+        foreach ($this->kdsTableKeys() as $table) {
+            if (isset($planned[$table]) && !$this->tableExists($conn, $table)) {
+                $pending[$table] = $planned[$table];
+            }
+        }
+
+        $otHeadColumns = [
+            'kitchen_status' => "ALTER TABLE ot_head ADD COLUMN kitchen_status ENUM('pending','in_progress','ready','completed') NOT NULL DEFAULT 'pending'",
+            'kitchen_completed_at' => "ALTER TABLE ot_head ADD COLUMN kitchen_completed_at DATETIME NULL",
+        ];
+        foreach ($otHeadColumns as $column => $sql) {
+            if ($this->tableExists($conn, 'ot_head') && !$this->columnExists($conn, 'ot_head', $column)) {
+                $pending['ot_head.add_' . $column] = $sql;
+            }
+        }
+
+        if (
+            $this->tableExists($conn, 'ot_head')
+            && $this->columnExists($conn, 'ot_head', 'kitchen_status')
+            && !$this->indexExists($conn, 'ot_head', 'idx_ot_head_kitchen_status')
+        ) {
+            $pending['ot_head.add_idx_ot_head_kitchen_status'] = "ALTER TABLE ot_head ADD KEY idx_ot_head_kitchen_status (kitchen_status)";
+        }
+
+        if ($this->tableExists($conn, 'usr_pwrs') && !$this->columnExists($conn, 'usr_pwrs', 'sid_kds')) {
+            $pending['usr_pwrs.add_sid_kds'] = "ALTER TABLE usr_pwrs ADD COLUMN sid_kds TINYINT(1) NOT NULL DEFAULT 0";
+        }
+
+        // kds_ticket_lines.line_status: upgrade legacy 'pending'/'done' enum to
+        // the line-level model ('new','cooking','done','voided'). Existing rows
+        // are mapped: pending -> new, done stays done. 'pending' is kept in the
+        // enum so the migration can run without data errors.
+        if ($this->tableExists($conn, 'kds_ticket_lines') && $this->columnExists($conn, 'kds_ticket_lines', 'line_status')) {
+            if (!$this->enumColumnHasValue($conn, 'kds_ticket_lines', 'line_status', 'voided')) {
+                $pending['kds_ticket_lines.upgrade_line_status'] =
+                    "ALTER TABLE kds_ticket_lines MODIFY COLUMN line_status ENUM('new','cooking','done','voided','pending') NOT NULL DEFAULT 'new'";
+            }
+            if ($this->enumColumnHasValue($conn, 'kds_ticket_lines', 'line_status', 'pending')
+                && $this->hasLegacyPendingLines($conn)) {
+                $pending['kds_ticket_lines.migrate_pending_lines'] =
+                    "UPDATE kds_ticket_lines SET line_status = 'new' WHERE line_status = 'pending'";
+            }
+        }
+
+        if ($this->tableExists($conn, 'kds_tickets')) {
+            if (!$this->columnExists($conn, 'kds_tickets', 'parent_ticket_id')) {
+                $pending['kds_tickets.add_parent_ticket_id'] =
+                    "ALTER TABLE kds_tickets ADD COLUMN parent_ticket_id BIGINT UNSIGNED NULL AFTER completed_by";
+            }
+            if ($this->indexExists($conn, 'kds_tickets', 'uq_kds_tickets_order_station')) {
+                $pending['kds_tickets.drop_order_station_unique'] =
+                    "ALTER TABLE kds_tickets DROP INDEX uq_kds_tickets_order_station";
+            }
+            if (!$this->indexExists($conn, 'kds_tickets', 'idx_kds_tickets_order_station')) {
+                $pending['kds_tickets.add_order_station_index'] =
+                    "ALTER TABLE kds_tickets ADD KEY idx_kds_tickets_order_station (order_id, station_id)";
+            }
+            if ($this->columnExists($conn, 'kds_tickets', 'parent_ticket_id')
+                && !$this->indexExists($conn, 'kds_tickets', 'idx_kds_tickets_parent')) {
+                $pending['kds_tickets.add_parent_index'] =
+                    "ALTER TABLE kds_tickets ADD KEY idx_kds_tickets_parent (parent_ticket_id)";
+            }
+        }
+
+        if ($this->tableExists($conn, 'kds_ticket_lines')) {
+            if (!$this->columnExists($conn, 'kds_ticket_lines', 'line_key')) {
+                $pending['kds_ticket_lines.add_line_key'] =
+                    "ALTER TABLE kds_ticket_lines ADD COLUMN line_key CHAR(64) NOT NULL DEFAULT '' AFTER detail_id";
+            }
+            if ($this->columnExists($conn, 'kds_ticket_lines', 'line_key')) {
+                $pending['kds_ticket_lines.backfill_line_key'] =
+                    "UPDATE kds_ticket_lines SET line_key = SHA2(CONCAT(COALESCE(item_id, 0), '|', COALESCE(CAST(modifiers_json AS CHAR), ''), '|', COALESCE(notes, '')), 256) WHERE line_key = ''";
+            }
+            if ($this->indexExists($conn, 'kds_ticket_lines', 'uq_kds_ticket_line')) {
+                $pending['kds_ticket_lines.drop_detail_unique'] =
+                    "ALTER TABLE kds_ticket_lines DROP INDEX uq_kds_ticket_line";
+            }
+            if ($this->columnExists($conn, 'kds_ticket_lines', 'line_key')
+                && !$this->indexExists($conn, 'kds_ticket_lines', 'uq_kds_ticket_line_key')) {
+                $pending['kds_ticket_lines.add_line_key_unique'] =
+                    "ALTER TABLE kds_ticket_lines ADD UNIQUE KEY uq_kds_ticket_line_key (ticket_id, line_key)";
+            }
+        }
+
+        return $pending;
+    }
+
+    private function hasLegacyPendingLines(mysqli $conn): bool
+    {
+        $result = $conn->query("SELECT 1 FROM kds_ticket_lines WHERE line_status = 'pending' LIMIT 1");
+
+        return $result && (int) $result->num_rows > 0;
+    }
+
+    public function applyKdsSchema(mysqli $conn): array
+    {
+        $applied = [];
+        foreach ($this->pendingKdsStatements($conn) as $label => $sql) {
             $conn->query($sql);
             $applied[] = $label;
         }
@@ -815,6 +956,17 @@ ALTER TABLE journal_entries
         return in_array($column, $this->existingColumns($conn, $table), true);
     }
 
+    private function enumColumnHasValue(mysqli $conn, $table, $column, $value)
+    {
+        $info = $this->columnInfo($conn, $table, $column);
+        if (!$info) {
+            return false;
+        }
+        $type = (string) ($info['COLUMN_TYPE'] ?? '');
+
+        return stripos($type, "'" . $value . "'") !== false;
+    }
+
     private function indexExists(mysqli $conn, $table, $index)
     {
         return in_array($index, $this->existingIndexes($conn, $table), true);
@@ -1057,6 +1209,158 @@ CREATE TABLE IF NOT EXISTS order_events (
   KEY idx_order_created (order_id, created_at),
   KEY idx_type_created (event_type, created_at),
   KEY idx_tenant_branch_created (tenant, branch, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
+    private function kitchenOrderRevisionsSql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS kitchen_order_revisions (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  order_id BIGINT NOT NULL,
+  revision INT UNSIGNED NOT NULL,
+  status ENUM('current','superseded') NOT NULL DEFAULT 'current',
+  kot_payload_json LONGTEXT NOT NULL,
+  payload_hash CHAR(64) NOT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  superseded_at DATETIME NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_kitchen_order_revision (order_id, revision),
+  KEY idx_kitchen_current (order_id, status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
+    private function kdsStationsSql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS kds_stations (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  uuid CHAR(36) NOT NULL,
+  name VARCHAR(120) NOT NULL,
+  color VARCHAR(20) NOT NULL DEFAULT '#e8a020',
+  route_token CHAR(40) NOT NULL,
+  sort_order INT NOT NULL DEFAULT 0,
+  is_default TINYINT(1) NOT NULL DEFAULT 0,
+  is_active TINYINT(1) NOT NULL DEFAULT 1,
+  auto_complete_on_paid TINYINT(1) NOT NULL DEFAULT 0,
+  warn_after_seconds INT NOT NULL DEFAULT 360,
+  late_after_seconds INT NOT NULL DEFAULT 720,
+  config_json JSON NULL,
+  tenant INT NOT NULL DEFAULT 0,
+  branch INT NOT NULL DEFAULT 0,
+  isdeleted TINYINT(1) NOT NULL DEFAULT 0,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_kds_stations_uuid (uuid),
+  UNIQUE KEY uq_kds_stations_route_token (route_token),
+  KEY idx_kds_stations_branch (tenant, branch, is_active, isdeleted, sort_order)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
+    private function kdsStationCategoriesSql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS kds_station_categories (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  station_id BIGINT UNSIGNED NOT NULL,
+  item_group_id INT NOT NULL,
+  tenant INT NOT NULL DEFAULT 0,
+  branch INT NOT NULL DEFAULT 0,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_kds_station_category (item_group_id, tenant, branch),
+  KEY idx_kds_station_categories_station (station_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
+    private function kdsStationUsersSql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS kds_station_users (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  station_id BIGINT UNSIGNED NOT NULL,
+  user_id BIGINT NOT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_kds_station_user (station_id, user_id),
+  KEY idx_kds_station_users_user (user_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
+    private function kdsTicketsSql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS kds_tickets (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  uuid CHAR(36) NOT NULL,
+  order_id BIGINT NOT NULL,
+  station_id BIGINT UNSIGNED NOT NULL,
+  table_id INT NULL,
+  table_name VARCHAR(120) NULL,
+  order_label VARCHAR(60) NULL,
+  order_type VARCHAR(40) NULL,
+  status ENUM('new','in_progress','ready','completed','recalled','cancelled') NOT NULL DEFAULT 'new',
+  item_count INT NOT NULL DEFAULT 0,
+  revision INT UNSIGNED NOT NULL DEFAULT 0,
+  placed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  started_at DATETIME NULL,
+  ready_at DATETIME NULL,
+  completed_at DATETIME NULL,
+  completed_by BIGINT NULL,
+  parent_ticket_id BIGINT UNSIGNED NULL,
+  tenant INT NOT NULL DEFAULT 0,
+  branch INT NOT NULL DEFAULT 0,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_kds_tickets_order_station (order_id, station_id),
+  KEY idx_kds_tickets_parent (parent_ticket_id),
+  KEY idx_kds_tickets_station_status (station_id, status, id),
+  KEY idx_kds_tickets_order (order_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
+    private function kdsTicketLinesSql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS kds_ticket_lines (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  ticket_id BIGINT UNSIGNED NOT NULL,
+  detail_id BIGINT NOT NULL,
+  line_key CHAR(64) NOT NULL DEFAULT '',
+  item_id BIGINT NULL,
+  item_group_id INT NULL,
+  name VARCHAR(255) NULL,
+  qty DECIMAL(15,3) NOT NULL DEFAULT 0.000,
+  notes TEXT NULL,
+  modifiers_json JSON NULL,
+  line_status ENUM('new','cooking','done','voided','pending') NOT NULL DEFAULT 'new',
+  is_changed TINYINT(1) NOT NULL DEFAULT 0,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_kds_ticket_line_key (ticket_id, line_key),
+  KEY idx_kds_ticket_lines_ticket (ticket_id),
+  KEY idx_kds_ticket_lines_detail (ticket_id, detail_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
+    private function kdsChangesSql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS kds_changes (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  station_id BIGINT UNSIGNED NOT NULL,
+  ticket_id BIGINT UNSIGNED NOT NULL,
+  order_id BIGINT NOT NULL,
+  kind VARCHAR(30) NOT NULL DEFAULT 'upsert',
+  tenant INT NOT NULL DEFAULT 0,
+  branch INT NOT NULL DEFAULT 0,
+  created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (id),
+  KEY idx_kds_changes_station_seq (station_id, id),
+  KEY idx_kds_changes_ticket (ticket_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
     }
 

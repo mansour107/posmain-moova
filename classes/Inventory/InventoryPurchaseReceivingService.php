@@ -6,6 +6,7 @@ require_once __DIR__ . '/InventoryFeatureFlags.php';
 require_once __DIR__ . '/InventoryItemPolicyService.php';
 require_once __DIR__ . '/InventoryLedgerService.php';
 require_once __DIR__ . '/InventoryScopeResolver.php';
+require_once __DIR__ . '/../Items/ItemUnitResolver.php';
 
 class InventoryPurchaseReceivingService
 {
@@ -643,7 +644,7 @@ WHERE purchase_order_id = ?");
         if ($this->columnExists($conn, 'item_units', 'isdeleted')) {
             $conditions[] = 'COALESCE(isdeleted, 0) = 0';
         }
-        $stmt = $conn->prepare('SELECT u_val FROM item_units WHERE ' . implode(' AND ', $conditions) . ' ORDER BY id ASC LIMIT 1');
+        $stmt = $conn->prepare('SELECT * FROM item_units WHERE ' . implode(' AND ', $conditions) . ' ORDER BY id ASC LIMIT 1');
         $stmt->bind_param('ii', $itemId, $unitId);
         $stmt->execute();
         $row = $stmt->get_result()->fetch_assoc();
@@ -652,7 +653,10 @@ WHERE purchase_order_id = ?");
             throw new InvalidArgumentException('ITEM_UNIT_NOT_FOUND');
         }
 
-        $conversion = InventoryDecimal::normalize($row['u_val'] ?? '0', 8);
+        $conversion = InventoryDecimal::normalize(
+            (string) ItemUnitResolver::inventoryFactorForUnitRow($conn, $row),
+            8
+        );
         if (InventoryDecimal::compare($conversion, '0', 8) <= 0) {
             throw new InvalidArgumentException('INVALID_UNIT_CONVERSION');
         }

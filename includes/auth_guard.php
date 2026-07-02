@@ -88,8 +88,8 @@ if (!function_exists('auth_guard_permission_map')) {
             'pos.discount.manager_override' => ['edit_sales'],
             'pos.recipe_stock_override' => ['edit_sales', 'edit_stock'],
             'pos.cancel.unpaid' => ['delete_sales', 'edit_sales'],
-            'pos.void.paid' => ['delete_payment', 'edit_payment'],
-            'pos.refund' => ['delete_payment', 'edit_payment'],
+            'pos.void.paid' => ['__admin_only'],
+            'pos.refund' => ['__admin_only'],
             'pos.split' => ['add_payment', 'add_sales'],
             'pos.shift.open' => ['add_sales', 'sid_sales'],
             'pos.shift.close' => ['edit_sales', 'sid_sales'],
@@ -108,6 +108,9 @@ if (!function_exists('auth_guard_permission_map')) {
             'system.health.view' => ['sid_reports', 'sid_accounts'],
             'system.tools.run' => ['__admin_only'],
             'customers.manage' => ['__admin_only'],
+            'kds.view' => ['sid_kds'],
+            'kds.complete' => ['sid_kds'],
+            'kds.manage' => ['__admin_only'],
         ];
     }
 }

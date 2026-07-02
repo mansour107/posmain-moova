@@ -3,16 +3,15 @@ include('../includes/connect.php');
 
 $id = $_GET['id'];
 $gname = trim($_POST['gname']);
+$returnTo = 'mygroups.php?tab=subgroups';
 
-// التحقق من عدم وجود تصنيف بنفس الاسم (باستثناء التصنيف الحالي)
+// التحقق من عدم وجود مجموعة فرعية بنفس الاسم (باستثناء المجموعة الفرعية الحالية)
 $check = $conn->query("SELECT id FROM item_group2 WHERE gname = '$gname' AND isdeleted = 0 AND id != $id");
 
 if ($check->num_rows > 0) {
-    // التصنيف موجود بالفعل
-    header('location:../item_categories.php?error=duplicate');
+    header('location:../' . $returnTo . '&error=duplicate');
     exit();
 }
 
 $conn->query("UPDATE item_group2 SET gname = '$gname' WHERE id = $id");
-header('location:../item_categories.php');
-?>
+header('location:../' . $returnTo);

@@ -1087,7 +1087,6 @@ $(document).ready(function() {
             const variantLabel = String(variant.variant_label || variant.label || '').trim();
             const variantBarcode = String(variant.barcode || '');
             const variantPrice = parseFloat(variant.price1 || variant.price || 0) || 0;
-            const badge = variant.is_default ? '<span class="badge bg-primary ms-1">افتراضي</span>' : '';
             return `
                 <div class="col-md-6">
                     <button type="button"
@@ -1097,7 +1096,7 @@ $(document).ready(function() {
                             data-item-price="${variantPrice}"
                             data-item-barcode="${escapeHtml(variantBarcode)}">
                         <div class="d-flex justify-content-between align-items-center gap-2">
-                            <span class="fw-bold">${escapeHtml(variantLabel || variantName)} ${badge}</span>
+                            <span class="fw-bold">${escapeHtml(variantLabel || variantName)}</span>
                             <span class="text-success fw-bold">${variantPrice.toFixed(2)} ج.م</span>
                         </div>
                         <small class="text-muted d-block">${escapeHtml(variantName)}</small>
@@ -1107,6 +1106,12 @@ $(document).ready(function() {
         }).join(''));
 
         toggleVariantModal(true);
+    }
+
+    function touchOrderDraft() {
+        if (window.POSOrderDraft && typeof window.POSOrderDraft.markDirty === 'function') {
+            window.POSOrderDraft.markDirty();
+        }
     }
 
     // Compatibility call form: addItemToOrder(id, name, price, barcode, qty = 1, imageHtml = '', lineNote = '')
@@ -1257,6 +1262,7 @@ $(document).ready(function() {
 
         setDefaultCashPaymentToNet(net);
         updatePayOrderButtonState();
+        touchOrderDraft();
     }
     window.recalculateOrderTotals = updateTotal;
 
@@ -1524,6 +1530,17 @@ $(document).ready(function() {
         return true;
     };
 
+    window.POSMainGetSplitPaymentPayload = function() {
+        const payload = splitPaymentPayloadFromModal();
+        return {
+            rows: payload.rows,
+            order_id: getActiveTableOrderId() || parseInt($('#selected_order_id').val() || '0', 10) || 0,
+            table_id: getSelectedTableId(),
+            paid_amount: payload.total,
+            payment_method: (parseFloat($('#modal_paid_bank').val()) || 0) > 0 ? 'bank' : 'cash'
+        };
+    };
+
     function showPOSNotice(message, type) {
         type = type || 'success';
         if (window.Swal && typeof window.Swal.fire === 'function') {
@@ -1761,13 +1778,77 @@ $(document).ready(function() {
 
     startTablesAutoRefresh();
 
+    function clearPosOrderContextForModeSwitch() {
+        resetPosOrderScreenCore({});
+    }
+
+    function resetPosOrderScreenCore(options) {
+        options = options || {};
+        $('#itemData').empty();
+        $('#discount').val('0');
+        $('#modal_discperc').val('0');
+        $('#modal_discount').val('0');
+        $('#modal_paid').val('0.00');
+        $('#modal_change').val('0.00');
+        updateItemCount();
+        updateTotal();
+
+        if (window.POSOrderApi && typeof window.POSOrderApi.clearCashierEditState === 'function') {
+            window.POSOrderApi.clearCashierEditState();
+        } else {
+            $('#edit_order_id').val('');
+            $('#selected_order_id').val('');
+        }
+
+        const age = String($('input[name="age"]:checked').val() || '1');
+        const orderId = parseInt(options.orderId || 0, 10) || 0;
+        if (age === '2' && orderId > 0) {
+            $('#selected_order_id').val(String(orderId));
+        }
+
+        if (window.history && typeof window.history.replaceState === 'function') {
+            const params = new URLSearchParams(window.location.search);
+            if (age !== '2') {
+                params.delete('edit');
+                params.delete('table');
+            }
+            const qs = params.toString();
+            window.history.replaceState({}, '', window.location.pathname + (qs ? '?' + qs : ''));
+        }
+
+        if (typeof window.posCustomerDetach === 'function') {
+            window.posCustomerDetach();
+        }
+
+        if (window.POSOrderDraft && typeof window.POSOrderDraft.reset === 'function') {
+            window.POSOrderDraft.reset();
+        }
+
+        updateTransferTableButton();
+        updatePayOrderButtonState();
+    }
+
+    window.POSMainResetOrderScreen = function(options) {
+        resetPosOrderScreenCore(options || {});
+    };
+
+    let lastAgeMode = String($('input[name="age"]:checked').val() || '1');
+
     // مسح الطاولة عند التبديل لتيك أواي أو دليفري
     $('input[name="age"]').on('change', function() {
+        const val = String($(this).val() || '');
+        const prevVal = lastAgeMode;
+        if (prevVal !== val) {
+            clearPosOrderContextForModeSwitch();
+            lastAgeMode = val;
+        }
         syncModeTabs();
-        const val = $(this).val();
-        if (val == '2') {
-            // table mode
-        } else if (val == '1' || val == '3') {
+        if (val === '2') {
+            const tableOrderId = parseInt($('#selected_order_id').val() || '0', 10) || 0;
+            if (tableOrderId <= 0 && window.POSOrderApi && typeof window.POSOrderApi.clearCashierEditState === 'function') {
+                window.POSOrderApi.clearCashierEditState();
+            }
+        } else if (val === '1' || val === '3') {
             // تيك أواي أو دليفري - امسح الطاولة المختارة
             $('#selected_table_id').val('');
             $('#selected_table_name').val('');
@@ -1809,9 +1890,15 @@ $(document).ready(function() {
             // طاولة فاضية - طلب جديد
             $('#selected_order_id').val('');
             $('#edit_order_id').val('');
+            if (window.POSOrderApi && typeof window.POSOrderApi.clearCashierEditState === 'function') {
+                window.POSOrderApi.clearCashierEditState();
+            }
             $('#itemData').empty();
             updateItemCount();
             updateTotal();
+            if (window.POSOrderDraft && typeof window.POSOrderDraft.reset === 'function') {
+                window.POSOrderDraft.reset();
+            }
             updateTransferTableButton();
             updatePayOrderButtonState();
             console.log('طاولة فاضية: ' + tableName + ' - طلب جديد');
@@ -1986,6 +2073,15 @@ $(document).ready(function() {
                     updateTotal();
                     updateTransferTableButton();
 
+                    if (window.POSOrderDraft && typeof window.POSOrderDraft.bootstrapSaved === 'function') {
+                        window.POSOrderDraft.bootstrapSaved({
+                            order_id: response.order ? response.order.id : orderId,
+                            kitchen_revision: response.order && response.order.kitchen_revision
+                                ? response.order.kitchen_revision
+                                : 0
+                        });
+                    }
+
                     // Show success message briefly
                     if (!options.silent) {
                         const alertDiv = $('<div class="alert alert-success position-fixed top-0 start-50 translate-middle-x mt-3" style="z-index: 9999;">تم تحميل الطلب بنجاح</div>');
@@ -2022,6 +2118,7 @@ $(document).ready(function() {
         $('#net_display').text(net + ' ج.م');
 
         setDefaultCashPaymentToNet(net);
+        touchOrderDraft();
     });
 
     $('#modal_discount').on('input', function() {
@@ -2036,6 +2133,7 @@ $(document).ready(function() {
         $('#net_display').text(net + ' ج.م');
 
         setDefaultCashPaymentToNet(net);
+        touchOrderDraft();
     });
 
     // حساب الباقي عند تغيير المدفوع كاش أو صرافة
@@ -2049,6 +2147,9 @@ $(document).ready(function() {
     });
 
     $('#paymentModal').on('shown.bs.modal', function() {
+        if (window.POSOrderApi && typeof window.POSOrderApi.restorePayConfirmButton === 'function') {
+            window.POSOrderApi.restorePayConfirmButton();
+        }
         resetPosPaymentMethodToCash();
         syncPaymentFundOptions();
         loadBankOptions();
@@ -2183,6 +2284,7 @@ $(document).ready(function() {
         activeLineNoteRow.find('.lineNoteInput').val(note);
         saveLineNoteDraft(activeLineNoteRow, note);
         updateLineNoteButton(activeLineNoteRow);
+        touchOrderDraft();
         toggleLineNoteModal(false);
     });
 
@@ -2192,6 +2294,7 @@ $(document).ready(function() {
             activeLineNoteRow.find('.lineNoteInput').val('');
             saveLineNoteDraft(activeLineNoteRow, '');
             updateLineNoteButton(activeLineNoteRow);
+            touchOrderDraft();
         }
     });
 
@@ -2204,36 +2307,6 @@ $(document).ready(function() {
     // ========================================
     // Form Submission
     // ========================================
-    function createPOSIdempotencyKey(scope) {
-        if (window.crypto && typeof window.crypto.randomUUID === 'function') {
-            return scope + ':' + window.crypto.randomUUID();
-        }
-
-        return scope + ':' + Date.now().toString(36) + ':' + Math.random().toString(36).slice(2);
-    }
-
-    function ensureFormIdempotencyKey(form, action) {
-        const scope = action === 'save'
-            ? 'pos.order.save'
-            : (action === 'print_receipt'
-                ? 'pos.order.print'
-                : (action === 'free_table' ? 'pos.table.free' : 'pos.order.pay'));
-        let keyInput = form.querySelector('input[name="idempotency_key"]');
-        if (!keyInput) {
-            keyInput = document.createElement('input');
-            keyInput.type = 'hidden';
-            keyInput.name = 'idempotency_key';
-            form.appendChild(keyInput);
-        }
-
-        if (!keyInput.value || keyInput.dataset.action !== action) {
-            keyInput.value = createPOSIdempotencyKey(scope);
-            keyInput.dataset.action = action;
-        }
-
-        return keyInput.value;
-    }
-
     window.submitPOS = function(action) {
         console.log('✅ submitPOS called with action:', action);
 
@@ -2264,6 +2337,10 @@ $(document).ready(function() {
         // جمع بيانات الدفع
         const isSaveOnly = action === 'save';
         const isPrintReceiptOnly = action === 'print_receipt';
+        if ((isSaveOnly || isPrintReceiptOnly) && window.POSOrderDraft && !window.POSOrderDraft.canSave(action)) {
+            return false;
+        }
+
         const isSplitLinePayment = action === 'split_cash';
         let paidCash = parseFloat($('#modal_paid_cash').val()) || 0;
         let paidBank = parseFloat($('#modal_paid_bank').val()) || 0;
@@ -2367,9 +2444,11 @@ $(document).ready(function() {
         paidInput.value = totalPaid;
         ensureHiddenFormInput(form, 'empty_table_after_payment').value = $('#pos_empty_table_after_payment').prop('checked') ? '1' : '0';
 
-        // Check for Edit ID
-        let editId = $('#edit_order_id').val() || $('#selected_order_id').val();
-        if (editId) {
+        const api = window.POSOrderApi;
+        const editId = api && typeof api.readEditId === 'function'
+            ? api.readEditId(form)
+            : (parseInt($('#edit_order_id').val() || $('#selected_order_id').val() || '0', 10) || 0);
+        if (editId > 0) {
             console.log('✏️ Edit Mode: ID', editId);
             let editIdInput = form.querySelector('input[name="edit_id"]');
             if (!editIdInput) {
@@ -2380,9 +2459,8 @@ $(document).ready(function() {
             }
             editIdInput.value = editId;
         } else {
-            let editIdInput = form.querySelector('input[name="edit_id"]');
-            if (editIdInput) {
-                editIdInput.remove();
+            if (api && typeof api.clearCashierEditState === 'function') {
+                api.clearCashierEditState();
             }
         }
 
@@ -2394,7 +2472,6 @@ $(document).ready(function() {
         submitInput.name = 'submit';
         submitInput.value = action;
         form.appendChild(submitInput);
-        ensureFormIdempotencyKey(form, action);
 
         if (typeof window.posCustomerSyncHiddenFields === 'function') {
             window.posCustomerSyncHiddenFields();
@@ -2406,19 +2483,22 @@ $(document).ready(function() {
         let printOrderBtn = $(".pos-print-order-btn");
         let printBtn = $(".pos-pay-confirm-btn");
 
-        if (saveBtn.length > 0) {
+        if (saveBtn.length > 0 && !isSaveOnly && !isPrintReceiptOnly && !isFreeTableOnly) {
             saveBtn.prop('disabled', true).html('<i class="fas fa-spinner fa-spin"></i> جاري الحفظ...');
         }
-        if (printOrderBtn.length > 0) {
+        if (printOrderBtn.length > 0 && isPrintReceiptOnly) {
             printOrderBtn.prop('disabled', true).html('<i class="fas fa-spinner fa-spin"></i> جاري الطباعة...');
         }
-        if (printBtn.length > 0) {
+        if (printBtn.length > 0 && (action === 'cash' || action === 'split_cash')) {
             printBtn.prop('disabled', true).html('<i class="fas fa-spinner fa-spin"></i> جاري الدفع...');
         }
 
-        $('#paymentModal').modal('hide');
+        if (action === 'cash' || action === 'split_cash') {
+            // Keep the modal visible while payment is processing.
+        } else {
+            $('#paymentModal').modal('hide');
+        }
 
-        const api = window.POSOrderApi;
         if (api && typeof api.submitFromForm === 'function') {
             api.submitFromForm(form, action);
             return true;
@@ -2476,6 +2556,10 @@ $(document).ready(function() {
 }); // End of document.ready
 
 window.POSMainResetCartAfterPayment = function() {
+    if (typeof window.POSMainResetOrderScreen === 'function') {
+        window.POSMainResetOrderScreen();
+        return;
+    }
     $('#edit_order_id').val('');
     $('#selected_order_id').val('');
     const form = document.getElementById('posForm');
@@ -2493,6 +2577,9 @@ window.POSMainResetCartAfterPayment = function() {
                 window.updateTotal();
             }
         }
+    }
+    if (window.POSOrderDraft && typeof window.POSOrderDraft.reset === 'function') {
+        window.POSOrderDraft.reset();
     }
 };
 
@@ -2572,7 +2659,7 @@ function validatePOSForm() {
     const orderMode = $('input[name="age"]:checked').val();
     if (orderMode === '2') {
         const tableId = parseInt($('#selected_table_id').val() || 0, 10) || 0;
-        const selectedOrderId = parseInt($('#selected_order_id').val() || $('#edit_order_id').val() || 0, 10) || 0;
+        const selectedOrderId = parseInt($('#selected_order_id').val() || 0, 10) || 0;
         if (tableId <= 0 && selectedOrderId <= 0) {
             alert('يجب اختيار طاولة قبل إتمام طلب الطاولة');
             const tablesModal = document.getElementById('tablesModal');
@@ -2606,152 +2693,526 @@ function dis() {
 // ========================================
 // Recent Orders Functions
 // ========================================
-function cleanupStaleRecentOrdersBackdrop() {
-    const hasOpenOffcanvas = document.querySelector('.offcanvas.show, .offcanvas.showing');
-    if (hasOpenOffcanvas) {
+const recentOrdersState = {
+    offset: 0,
+    limit: 30,
+    loading: false,
+    hasMore: false,
+};
+
+function escapeRecentOrdersHtml(value) {
+    return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function formatRecentOrderCustomerDate(value) {
+    if (!value) {
+        return '-';
+    }
+    const normalized = String(value).replace(' ', 'T');
+    const date = new Date(normalized);
+    if (Number.isNaN(date.getTime())) {
+        return String(value);
+    }
+    return date.toLocaleString('ar-EG', {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+    });
+}
+
+function renderRecentOrderCustomerCell(order) {
+    const customerName = order.customer_name || '-';
+    const posCustomerId = parseInt(order.pos_customer_id || 0, 10);
+    if (customerName === '-' || posCustomerId < 1) {
+        return escapeRecentOrdersHtml(customerName);
+    }
+
+    return `<button type="button" class="btn btn-link btn-sm p-0 recent-order-customer-link text-start"
+        data-customer-id="${posCustomerId}"
+        data-customer-name="${escapeRecentOrdersHtml(customerName)}"
+        title="عرض بيانات العميل">
+        ${escapeRecentOrdersHtml(customerName)}
+    </button>`;
+}
+
+function renderRecentOrderCustomerModalContent(customer, ordersPayload) {
+    const orders = ordersPayload && Array.isArray(ordersPayload.items) ? ordersPayload.items : [];
+    const ordersHtml = orders.length
+        ? orders.map((order) => {
+            const invoice = order.pro_id ? `#${order.pro_id}` : `ORD-${order.order_id}`;
+            const total = parseFloat(order.fat_net || 0).toFixed(2);
+            return `<tr>
+                <td>${escapeRecentOrdersHtml(invoice)}</td>
+                <td>${escapeRecentOrdersHtml(formatRecentOrderCustomerDate(order.order_time))}</td>
+                <td class="text-nowrap fw-bold text-success">${total} ج.م</td>
+            </tr>`;
+        }).join('')
+        : `<tr><td colspan="3" class="text-center text-muted py-3">لا توجد طلبات سابقة</td></tr>`;
+
+    return `
+        <div class="pos-recent-order-customer-summary row g-3 mb-4">
+            <div class="col-md-6">
+                <div class="pos-recent-order-customer-stat">
+                    <span class="pos-recent-order-customer-label">الاسم</span>
+                    <strong>${escapeRecentOrdersHtml(customer.display_name || '-')}</strong>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="pos-recent-order-customer-stat">
+                    <span class="pos-recent-order-customer-label">الهاتف</span>
+                    <strong>${escapeRecentOrdersHtml(customer.primary_phone || '-')}</strong>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="pos-recent-order-customer-stat">
+                    <span class="pos-recent-order-customer-label">عدد الطلبات</span>
+                    <strong>${parseInt(customer.orders_count || 0, 10)}</strong>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="pos-recent-order-customer-stat">
+                    <span class="pos-recent-order-customer-label">إجمالي الإنفاق</span>
+                    <strong class="text-success">${parseFloat(customer.lifetime_paid || 0).toFixed(2)} ج.م</strong>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="pos-recent-order-customer-stat">
+                    <span class="pos-recent-order-customer-label">آخر طلب</span>
+                    <strong>${escapeRecentOrdersHtml(formatRecentOrderCustomerDate(customer.last_order_at))}</strong>
+                </div>
+            </div>
+        </div>
+        <h6 class="mb-2">آخر الطلبات</h6>
+        <div class="table-responsive">
+            <table class="table table-sm table-bordered mb-0 pos-recent-order-customer-orders-table">
+                <thead>
+                    <tr>
+                        <th>رقم الفاتورة</th>
+                        <th>التاريخ</th>
+                        <th>الإجمالي</th>
+                    </tr>
+                </thead>
+                <tbody>${ordersHtml}</tbody>
+            </table>
+        </div>
+    `;
+}
+
+function showRecentOrderCustomerModal(customerId, customerName) {
+    const modalEl = document.getElementById('recentOrderCustomerModal');
+    if (!modalEl || typeof bootstrap === 'undefined' || !bootstrap.Modal) {
         return;
     }
 
-    document.querySelectorAll('.offcanvas-backdrop').forEach((backdrop) => {
-        backdrop.remove();
+    const modal = typeof bootstrap.Modal.getOrCreateInstance === 'function'
+        ? bootstrap.Modal.getOrCreateInstance(modalEl)
+        : new bootstrap.Modal(modalEl);
+
+    const title = customerName ? `بيانات العميل - ${customerName}` : 'بيانات العميل';
+    $('#recentOrderCustomerModalLabel').html(`<i class="fas fa-user me-2"></i>${escapeRecentOrdersHtml(title)}`);
+    $('#recentOrderCustomerBody').html(`
+        <div class="text-center py-4">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">جاري التحميل...</span>
+            </div>
+            <p class="mt-2 mb-0">جاري تحميل بيانات العميل...</p>
+        </div>
+    `);
+
+    modal.show();
+
+    $.ajax({
+        url: 'ajax/pos_customer_profile.php',
+        type: 'GET',
+        cache: false,
+        dataType: 'json',
+        data: {
+            id: customerId,
+            include_orders: 1,
+            per_page: 10,
+            _: Date.now(),
+        },
+        success: function(response) {
+            if (response.success && response.customer) {
+                $('#recentOrderCustomerBody').html(
+                    renderRecentOrderCustomerModalContent(response.customer, response.orders || null)
+                );
+                return;
+            }
+
+            $('#recentOrderCustomerBody').html(`
+                <div class="text-center py-4 text-danger">
+                    <i class="fas fa-exclamation-triangle fa-2x mb-2"></i>
+                    <p class="mb-0">${escapeRecentOrdersHtml(response.message || 'تعذر تحميل بيانات العميل')}</p>
+                </div>
+            `);
+        },
+        error: function() {
+            $('#recentOrderCustomerBody').html(`
+                <div class="text-center py-4 text-danger">
+                    <i class="fas fa-exclamation-triangle fa-2x mb-2"></i>
+                    <p class="mb-0">حدث خطأ أثناء تحميل بيانات العميل</p>
+                </div>
+            `);
+        },
     });
-
-    if (!document.querySelector('.modal.show')) {
-        document.body.classList.remove('modal-open');
-        document.body.style.removeProperty('overflow');
-        document.body.style.removeProperty('padding-right');
-    }
 }
 
-function scheduleRecentOrdersBackdropCleanup() {
-    window.setTimeout(cleanupStaleRecentOrdersBackdrop, 250);
-    window.setTimeout(cleanupStaleRecentOrdersBackdrop, 650);
-}
-
-function showRecentOrdersOffcanvas() {
+function showRecentOrdersModal() {
     const recentOrdersModal = document.getElementById('recentOrdersModal');
-    if (!recentOrdersModal || typeof bootstrap === 'undefined' || !bootstrap.Offcanvas) {
+    if (!recentOrdersModal || typeof bootstrap === 'undefined' || !bootstrap.Modal) {
         return null;
     }
 
-    const offcanvas = typeof bootstrap.Offcanvas.getOrCreateInstance === 'function'
-        ? bootstrap.Offcanvas.getOrCreateInstance(recentOrdersModal)
-        : new bootstrap.Offcanvas(recentOrdersModal);
+    const modal = typeof bootstrap.Modal.getOrCreateInstance === 'function'
+        ? bootstrap.Modal.getOrCreateInstance(recentOrdersModal)
+        : new bootstrap.Modal(recentOrdersModal);
 
-    offcanvas.show();
-    return offcanvas;
+    modal.show();
+    return modal;
 }
 
-function loadRecentOrders() {
-    console.log('Loading recent orders...');
-    $('#recentOrdersList').html(`
+function updateRecentOrdersLoadMoreButton() {
+    const $button = $('#recentOrdersLoadMoreBtn');
+    if (!$button.length) {
+        return;
+    }
+
+    if (recentOrdersState.hasMore) {
+        $button.removeClass('d-none').prop('disabled', recentOrdersState.loading);
+    } else {
+        $button.addClass('d-none').prop('disabled', false);
+    }
+}
+
+function renderRecentOrdersLoadingRow(message) {
+    return `
         <tr>
             <td colspan="8" class="text-center py-5">
                 <div class="spinner-border text-primary" role="status">
                     <span class="visually-hidden">جاري التحميل...</span>
                 </div>
-                <p class="mt-2">جاري تحميل الطلبات...</p>
+                <p class="mt-2">${message || 'جاري تحميل الطلبات...'}</p>
             </td>
         </tr>
-    `);
+    `;
+}
+
+function renderRecentOrderRow(order, rowNumber) {
+    const tableId = parseInt(order.table_id || 0, 10);
+    const canRefund = order.can_refund === true || order.can_refund === 1 || order.can_refund === '1';
+    const canVoid = order.can_void === true || order.can_void === 1 || order.can_void === '1';
+    const canDelete = order.can_delete === true || order.can_delete === 1 || order.can_delete === '1';
+    const statusBadge = (order.status === 'ملغى' || order.status === 'مسترد')
+        ? 'bg-danger'
+        : (order.status === 'مكتمل' ? 'bg-success' : 'bg-warning');
+    const typeBadge = order.type === 'دليفري'
+        ? 'bg-info text-dark'
+        : (order.type === 'طاولة' ? 'bg-warning text-dark' : 'bg-secondary');
+    const customerCell = renderRecentOrderCustomerCell(order);
+    const deleteButton = canDelete
+        ? `<button class="btn btn-danger delete-order" data-id="${order.id}" data-table-id="${tableId}" title="حذف">
+                <i class="fas fa-trash"></i>
+           </button>`
+        : `<button class="btn btn-outline-secondary" disabled title="لا يمكن حذف طلب مكتمل أو مدفوع من هنا">
+                <i class="fas fa-trash"></i>
+           </button>`;
+    const paidReversalButton = (canRefund || canVoid)
+        ? `<button type="button" class="btn btn-outline-danger reverse-paid-order" data-id="${order.id}" data-can-refund="${canRefund ? '1' : '0'}" data-can-void="${canVoid ? '1' : '0'}" onclick="reversePaidOrder(${order.id}, ${canRefund ? 'true' : 'false'}, ${canVoid ? 'true' : 'false'})" title="استرداد أو إلغاء مدفوع">
+                <i class="fas fa-undo"></i>
+           </button>`
+        : '';
+
+    return `
+        <tr data-order-id="${order.id}">
+            <td>${rowNumber}</td>
+            <td><strong>${order.invoice_number}</strong></td>
+            <td>${order.date}</td>
+            <td>${customerCell}</td>
+            <td><span class="badge ${typeBadge}">${order.type}</span></td>
+            <td class="text-nowrap fw-bold text-success">
+                ${parseFloat(order.total || 0).toFixed(2)} ج.م
+            </td>
+            <td>
+                <span class="badge ${statusBadge}">
+                    ${order.status}
+                </span>
+            </td>
+            <td class="text-nowrap">
+                <div class="btn-group btn-group-sm" role="group">
+                    <button class="btn btn-warning edit-order" data-id="${order.id}" title="تعديل">
+                        <i class="fas fa-edit"></i>
+                    </button>
+                    <button class="btn btn-secondary print-order" data-id="${order.id}" title="طباعة الفاتورة">
+                        <i class="fas fa-print"></i>
+                    </button>
+                    ${deleteButton}
+                    ${paidReversalButton}
+                </div>
+                ${order.notes ? `<span class="text-muted ms-2" title="${order.notes}"><i class="fas fa-sticky-note"></i></span>` : ''}
+            </td>
+        </tr>
+    `;
+}
+
+function loadRecentOrders(append = false) {
+    if (recentOrdersState.loading) {
+        return;
+    }
+
+    if (!append) {
+        recentOrdersState.offset = 0;
+        recentOrdersState.hasMore = false;
+        $('#recentOrdersList').html(renderRecentOrdersLoadingRow());
+        updateRecentOrdersLoadMoreButton();
+    } else {
+        recentOrdersState.loading = true;
+        updateRecentOrdersLoadMoreButton();
+    }
 
     $.ajax({
         url: 'ajax/get_recent_orders.php',
         type: 'GET',
         cache: false,
-        data: { _: Date.now() },
+        data: {
+            limit: recentOrdersState.limit,
+            offset: recentOrdersState.offset,
+            _: Date.now(),
+        },
         dataType: 'json',
         success: function(response) {
-            console.log('AJAX Response:', response);
+            recentOrdersState.loading = false;
 
-            if (response.success && response.orders && response.orders.length > 0) {
-                let html = '';
-                response.orders.forEach((order, index) => {
-                    const tableId = parseInt(order.table_id || 0, 10);
-                    const canRefund = order.can_refund === true || order.can_refund === 1 || order.can_refund === '1';
-                    const canVoid = order.can_void === true || order.can_void === 1 || order.can_void === '1';
-                    const canDelete = order.can_delete === true || order.can_delete === 1 || order.can_delete === '1';
-                    const deleteButton = canDelete
-                        ? `<button class="btn btn-danger delete-order" data-id="${order.id}" data-table-id="${tableId}" title="حذف">
-                                <i class="fas fa-trash"></i>
-                           </button>`
-                        : `<button class="btn btn-outline-secondary" disabled title="لا يمكن حذف طلب مكتمل أو مدفوع من هنا">
-                                <i class="fas fa-trash"></i>
-                           </button>`;
-                    const paidReversalButton = (canRefund || canVoid)
-                        ? `<button type="button" class="btn btn-outline-danger reverse-paid-order" data-id="${order.id}" data-can-refund="${canRefund ? '1' : '0'}" data-can-void="${canVoid ? '1' : '0'}" onclick="reversePaidOrder(${order.id}, ${canRefund ? 'true' : 'false'}, ${canVoid ? 'true' : 'false'})" title="استرداد أو إلغاء مدفوع">
-                                <i class="fas fa-undo"></i>
-                           </button>`
-                        : '';
+            if (response.success && Array.isArray(response.orders)) {
+                if (!append) {
+                    if (response.orders.length === 0) {
+                        $('#recentOrdersList').html(`
+                            <tr>
+                                <td colspan="8" class="text-center py-5">
+                                    <i class="fas fa-inbox fa-3x text-muted mb-3"></i>
+                                    <p class="text-muted">لا توجد طلبات سابقة</p>
+                                </td>
+                            </tr>
+                        `);
+                    } else {
+                        let html = '';
+                        response.orders.forEach((order, index) => {
+                            html += renderRecentOrderRow(order, index + 1);
+                        });
+                        $('#recentOrdersList').html(html);
+                    }
+                } else if (response.orders.length > 0) {
+                    const startIndex = $('#recentOrdersList tr[data-order-id]').length;
+                    let html = '';
+                    response.orders.forEach((order, index) => {
+                        html += renderRecentOrderRow(order, startIndex + index + 1);
+                    });
+                    $('#recentOrdersList').append(html);
+                }
 
-                    html += `
-                        <tr>
-                            <td>${index + 1}</td>
-                            <td><strong>${order.invoice_number}</strong></td>
-                            <td>${order.date}</td>
-                            <td>${order.customer_name}</td>
-                            <td>
-                                <span class="badge bg-info">${order.type}</span>
-                            </td>
-                            <td class="text-nowrap fw-bold text-success">
-                                ${order.total.toFixed(2)} ج.م
-                            </td>
-                            <td>
-                                <span class="badge ${order.status === 'مكتمل' ? 'bg-success' : 'bg-warning'}">
-                                    ${order.status}
-                                </span>
-                            </td>
-                            <td class="text-nowrap">
-                                <div class="btn-group btn-group-sm" role="group">
-                                    <button class="btn btn-warning edit-order" data-id="${order.id}" title="تعديل">
-                                        <i class="fas fa-edit"></i>
-                                    </button>
-                                    <button class="btn btn-secondary print-order" data-id="${order.id}" title="طباعة الفاتورة">
-                                        <i class="fas fa-print"></i>
-                                    </button>
-                                    ${deleteButton}
-                                    ${paidReversalButton}
-                                </div>
-                                ${order.notes ? `<span class="text-muted ms-2" title="${order.notes}"><i class="fas fa-sticky-note"></i></span>` : ''}
-                            </td>
-                        </tr>
-                    `;
-                });
-                $('#recentOrdersList').html(html);
-                console.log('Orders loaded successfully:', response.orders.length);
-            } else {
+                recentOrdersState.offset += response.orders.length;
+                recentOrdersState.hasMore = response.has_more === true;
+                updateRecentOrdersLoadMoreButton();
+                return;
+            }
+
+            if (!append) {
                 $('#recentOrdersList').html(`
                     <tr>
-                        <td colspan="8" class="text-center py-5">
-                            <i class="fas fa-inbox fa-3x text-muted mb-3"></i>
-                            <p class="text-muted">لا توجد طلبات سابقة</p>
-                            <small class="text-muted">سيظهر هنا آخر 10 طلبات بعد إنشاء أول طلب</small>
+                        <td colspan="8" class="text-center py-5 text-danger">
+                            <i class="fas fa-exclamation-triangle fa-2x mb-3"></i>
+                            <p>فشل تحميل الطلبات</p>
+                            <small class="d-block">${response.error || 'خطأ غير معروف'}</small>
                         </td>
                     </tr>
                 `);
-                console.log('No orders found');
             }
+            recentOrdersState.hasMore = false;
+            updateRecentOrdersLoadMoreButton();
         },
         error: function(xhr, status, error) {
+            recentOrdersState.loading = false;
             console.error('Error loading recent orders:', error);
-            console.error('XHR status:', xhr.status);
-            console.error('Response text:', xhr.responseText);
 
-            $('#recentOrdersList').html(`
-                <tr>
-                    <td colspan="8" class="text-center py-5 text-danger">
-                        <i class="fas fa-exclamation-triangle fa-2x mb-3"></i>
-                        <p>حدث خطأ أثناء تحميل الطلبات</p>
-                        <small class="d-block">${error}</small>
-                        <button class="btn btn-sm btn-outline-primary mt-2" onclick="loadRecentOrders()">
-                            <i class="fas fa-sync-alt me-1"></i> إعادة المحاولة
-                        </button>
-                    </td>
-                </tr>
-            `);
-        }
+            if (!append) {
+                $('#recentOrdersList').html(`
+                    <tr>
+                        <td colspan="8" class="text-center py-5 text-danger">
+                            <i class="fas fa-exclamation-triangle fa-2x mb-3"></i>
+                            <p>حدث خطأ أثناء تحميل الطلبات</p>
+                            <small class="d-block">${error}</small>
+                            <button class="btn btn-sm btn-outline-primary mt-2" onclick="loadRecentOrders(false)">
+                                <i class="fas fa-sync-alt me-1"></i> إعادة المحاولة
+                            </button>
+                        </td>
+                    </tr>
+                `);
+            }
+            recentOrdersState.hasMore = false;
+            updateRecentOrdersLoadMoreButton();
+        },
     });
 }
+
+window.showRecentOrdersModal = showRecentOrdersModal;
+window.loadRecentOrders = loadRecentOrders;
+window.showRecentOrderCustomerModal = showRecentOrderCustomerModal;
+
+function createPOSIdempotencyKey(scope) {
+    if (window.POSOrderDraft && typeof window.POSOrderDraft.rotateIdempotencyKey === 'function') {
+        return window.POSOrderDraft.rotateIdempotencyKey(scope);
+    }
+    if (window.crypto && typeof window.crypto.randomUUID === 'function') {
+        return scope + ':' + window.crypto.randomUUID();
+    }
+    return scope + ':' + Date.now().toString(36) + ':' + Math.random().toString(36).slice(2);
+}
+
+const paidReversalState = {
+    orderId: 0,
+    canRefund: false,
+    canVoid: false,
+    submitting: false,
+};
+
+function resetPaidReversalValidation() {
+    $('#paidReversalValidationAlert').addClass('d-none').text('');
+}
+
+function showPaidReversalValidation(message) {
+    $('#paidReversalValidationAlert').removeClass('d-none').text(message);
+}
+
+function populatePaidReversalActionSelect(canRefund, canVoid) {
+    const $select = $('#paid-reversal-action');
+    $select.empty();
+    if (canRefund) {
+        $select.append('<option value="refund">استرداد</option>');
+    }
+    if (canVoid) {
+        $select.append('<option value="void">إلغاء مدفوع</option>');
+    }
+}
+
+function openPaidOrderReversalModal(orderId, canRefund, canVoid) {
+    canRefund = canRefund === true || canRefund === 1 || canRefund === '1';
+    canVoid = canVoid === true || canVoid === 1 || canVoid === '1';
+    if (!canRefund && !canVoid) {
+        return;
+    }
+
+    const modalEl = document.getElementById('paidOrderReversalModal');
+    if (!modalEl || typeof bootstrap === 'undefined' || !bootstrap.Modal) {
+        return;
+    }
+
+    paidReversalState.orderId = parseInt(orderId || 0, 10);
+    paidReversalState.canRefund = canRefund;
+    paidReversalState.canVoid = canVoid;
+    paidReversalState.submitting = false;
+
+    populatePaidReversalActionSelect(canRefund, canVoid);
+    $('#paid-reversal-policy').val('waste');
+    $('#paid-reversal-reason').val('');
+    resetPaidReversalValidation();
+    $('#paidReversalSubmitBtn').prop('disabled', false).html('<i class="fas fa-check me-1"></i>تنفيذ');
+
+    const modal = typeof bootstrap.Modal.getOrCreateInstance === 'function'
+        ? bootstrap.Modal.getOrCreateInstance(modalEl)
+        : new bootstrap.Modal(modalEl);
+
+    modal.show();
+}
+
+function submitPaidOrderReversal() {
+    if (paidReversalState.submitting) {
+        return;
+    }
+
+    const reason = ($('#paid-reversal-reason').val() || '').trim();
+    if (!reason) {
+        showPaidReversalValidation('يرجى إدخال سبب العملية');
+        $('#paid-reversal-reason').trigger('focus');
+        return;
+    }
+
+    const orderId = parseInt(paidReversalState.orderId || 0, 10);
+    if (orderId <= 0) {
+        showPaidReversalValidation('تعذر تحديد الطلب');
+        return;
+    }
+
+    const action = $('#paid-reversal-action').val() === 'void' ? 'void' : 'refund';
+    const policy = $('#paid-reversal-policy').val() || 'waste';
+    paidReversalState.submitting = true;
+    resetPaidReversalValidation();
+    $('#paidReversalSubmitBtn').prop('disabled', true).html('<i class="fas fa-spinner fa-spin me-1"></i>جاري التنفيذ...');
+
+    $.ajax({
+        url: 'ajax/refund_order.php',
+        method: 'POST',
+        dataType: 'json',
+        data: {
+            order_id: orderId,
+            action: action,
+            refund_stock_policy: policy,
+            reason: reason,
+            idempotency_key: createPOSIdempotencyKey(action === 'void' ? 'pos.order.void' : 'pos.order.refund'),
+        },
+        success: function(response) {
+            try {
+                if (typeof response === 'string') {
+                    response = JSON.parse(response);
+                }
+                if (response.success) {
+                    const modalEl = document.getElementById('paidOrderReversalModal');
+                    if (modalEl && typeof bootstrap !== 'undefined' && bootstrap.Modal) {
+                        const instance = bootstrap.Modal.getInstance(modalEl);
+                        if (instance) {
+                            instance.hide();
+                        }
+                    }
+                    if (window.Swal && typeof window.Swal.fire === 'function') {
+                        Swal.fire({
+                            icon: 'success',
+                            title: action === 'void' ? 'تم إلغاء الطلب المدفوع' : 'تم استرداد الطلب',
+                            timer: 1800,
+                            showConfirmButton: false,
+                        });
+                    }
+                    loadRecentOrders(false);
+                } else {
+                    showPaidReversalValidation(response.message || response.error || 'خطأ غير معروف');
+                }
+            } catch (e) {
+                showPaidReversalValidation('خطأ في استجابة الخادم');
+            }
+        },
+        error: function(xhr) {
+            let message = 'خطأ في الاتصال';
+            try {
+                const payload = xhr.responseJSON || JSON.parse(xhr.responseText || '{}');
+                message = payload.message || payload.code || message;
+            } catch (e) {
+                // keep default message
+            }
+            showPaidReversalValidation(message);
+        },
+        complete: function() {
+            paidReversalState.submitting = false;
+            $('#paidReversalSubmitBtn').prop('disabled', false).html('<i class="fas fa-check me-1"></i>تنفيذ');
+        },
+    });
+}
+
+window.reversePaidOrder = openPaidOrderReversalModal;
 
 function editOrder(orderId) {
     console.log('Edit order:', orderId);
@@ -2771,7 +3232,7 @@ function deleteOrder(orderId, tableId) {
             dataType: 'json',
             success: function(response) {
                 if (response.success) {
-                    loadRecentOrders();
+                    loadRecentOrders(false);
                     alert('تم حذف الطلب بنجاح');
                 } else {
                     alert('حدث خطأ أثناء حذف الطلب: ' + (response.message || 'خطأ غير معروف'));
@@ -2786,23 +3247,16 @@ function deleteOrder(orderId, tableId) {
 
 // Initialize recent orders functionality
 $(document).ready(function() {
-    const $recentOrdersModal = $('#recentOrdersModal');
-    if ($recentOrdersModal.length) {
-        $recentOrdersModal
-            .off('.recentOrdersCleanup')
-            .on('hidden.bs.offcanvas.recentOrdersCleanup', cleanupStaleRecentOrdersBackdrop)
-            .on('hide.bs.offcanvas.recentOrdersCleanup', scheduleRecentOrdersBackdropCleanup);
-
-        $(document)
-            .off('click.recentOrdersCleanup', '#recentOrdersModal [data-bs-dismiss="offcanvas"]')
-            .on('click.recentOrdersCleanup', '#recentOrdersModal [data-bs-dismiss="offcanvas"]', scheduleRecentOrdersBackdropCleanup);
-    }
-
-    $(document).on('click', '.recent-orders-btn, #recentOrdersBtn1, #recentOrdersBtn2', function(e) {
+    $(document).on('click', '.recent-orders-btn, #recentOrdersBtn1, #recentOrdersBtn2, #cornerRecentOrdersBtn', function(e) {
         e.preventDefault();
-        console.log('Recent orders button clicked');
-        showRecentOrdersOffcanvas();
-        loadRecentOrders();
+        showRecentOrdersModal();
+    });
+
+    $('#recentOrdersLoadMoreBtn').on('click', function(e) {
+        e.preventDefault();
+        if (!recentOrdersState.loading && recentOrdersState.hasMore) {
+            loadRecentOrders(true);
+        }
     });
 
     // Handle edit order button
@@ -2833,9 +3287,35 @@ $(document).ready(function() {
         window.open('print/receipt.php?id=' + orderId, '_blank');
     });
 
-    // Load orders when offcanvas is shown
-    $('#recentOrdersModal').on('shown.bs.offcanvas', function() {
-        loadRecentOrders();
+    $(document).on('click', '.recent-order-customer-link', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        const customerId = parseInt($(this).data('customer-id') || 0, 10);
+        const customerName = String($(this).data('customer-name') || '').trim();
+        if (customerId > 0) {
+            showRecentOrderCustomerModal(customerId, customerName);
+        }
+    });
+
+    $('#paidReversalSubmitBtn').on('click', function(e) {
+        e.preventDefault();
+        submitPaidOrderReversal();
+    });
+
+    $('#paidOrderReversalModal').on('shown.bs.modal', function() {
+        resetPaidReversalValidation();
+        $('#paid-reversal-reason').trigger('focus');
+    });
+
+    $('#paid-reversal-reason').on('input', function() {
+        if (($(this).val() || '').trim() !== '') {
+            resetPaidReversalValidation();
+        }
+    });
+
+    // Load orders when modal is shown
+    $('#recentOrdersModal').on('shown.bs.modal', function() {
+        loadRecentOrders(false);
     });
 });
 

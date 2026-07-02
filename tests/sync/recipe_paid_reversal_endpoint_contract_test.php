@@ -5,7 +5,6 @@ $endpoint = paidReversalContractSource($root . '/ajax/refund_order.php');
 $mutation = paidReversalContractSource($root . '/classes/Pos/Service/PosOrderMutationService.php');
 $lifecycle = paidReversalContractSource($root . '/classes/Recipe/RecipeOrderLifecycleService.php');
 $recentOrders = paidReversalContractSource($root . '/ajax/get_recent_orders.php');
-$posContent = paidReversalContractSource($root . '/includes/pos_content.php');
 $posBarcodeJs = paidReversalContractSource($root . '/js/pos_barcode.js');
 $runtimeTest = paidReversalContractSource($root . '/tests/sync/recipe_paid_reversal_endpoint_runtime_test.php');
 
@@ -33,9 +32,9 @@ paidReversalContractAssertContains('can_void', $recentOrders, 'recent orders pay
 paidReversalContractAssertContains("auth_guard_has_permission('pos.refund'", $recentOrders, 'recent orders capability should use named refund permission');
 paidReversalContractAssertContains("auth_guard_has_permission('pos.void.paid'", $recentOrders, 'recent orders capability should use named void permission');
 
-paidReversalContractAssertContains('reversePaidOrder', $posContent, 'POS recent-orders UI should expose paid reversal action');
-paidReversalContractAssertContains('ajax/refund_order.php', $posContent, 'POS UI should call the paid reversal endpoint');
-paidReversalContractAssertContains('refund_stock_policy', $posContent, 'POS UI should send selected recipe stock policy');
+paidReversalContractAssertContains('reversePaidOrder', $posBarcodeJs, 'POS recent-orders UI should expose paid reversal action');
+paidReversalContractAssertContains('ajax/refund_order.php', $posBarcodeJs, 'POS UI should call the paid reversal endpoint');
+paidReversalContractAssertContains('refund_stock_policy', $posBarcodeJs, 'POS UI should send selected recipe stock policy');
 
 paidReversalContractAssertContains('can_refund', $posBarcodeJs, 'active recent-orders JS renderer should consume refund capability');
 paidReversalContractAssertContains('can_void', $posBarcodeJs, 'active recent-orders JS renderer should consume void capability');

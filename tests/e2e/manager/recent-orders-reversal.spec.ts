@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import { loginAndUnlockPos } from '../helpers/auth';
 
 test.describe('manager: recent orders reversal UI', () => {
-  test('recent orders payload exposes reversal capability fields when orders exist', async ({ page }) => {
+  test('recent orders payload hides paid reversal capabilities for manager', async ({ page }) => {
     await loginAndUnlockPos(page, 'manager');
 
     const response = await page.request.get('/ajax/get_recent_orders.php');
@@ -12,9 +12,10 @@ test.describe('manager: recent orders reversal UI', () => {
     expect(payload).toHaveProperty('success');
 
     if (payload.success && Array.isArray(payload.orders) && payload.orders.length > 0) {
-      const first = payload.orders[0];
-      expect(first).toHaveProperty('can_refund');
-      expect(first).toHaveProperty('can_void');
+      for (const order of payload.orders) {
+        expect(order.can_refund).toBeFalsy();
+        expect(order.can_void).toBeFalsy();
+      }
     }
   });
 

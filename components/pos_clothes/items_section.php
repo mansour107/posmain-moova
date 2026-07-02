@@ -26,7 +26,7 @@
                           </div>';
                 }
             } else {
-                echo '<div class="col-12 text-center text-muted"><p>لا توجد مجموعات متاحة</p></div>';
+                echo '<div class="col-12 text-center text-muted"><p>لا توجد تصنيفات متاحة</p></div>';
             }
             ?>
         </div>
@@ -44,8 +44,8 @@
 
         <div class="no-items-message" id="noItemsMessage">
             <i class="fas fa-box-open fa-3x mb-3" style="color: var(--soft-gray);"></i>
-            <h5>اختر مجموعة لعرض الأصناف</h5>
-            <p class="text-muted">قم بالنقر على إحدى المجموعات أعلاه لعرض الأصناف المتاحة</p>
+            <h5>اختر تصنيفاً لعرض الأصناف</h5>
+            <p class="text-muted">قم بالنقر على أحد التصنيفات أعلاه لعرض الأصناف المتاحة</p>
         </div>
     </div>
 </div>

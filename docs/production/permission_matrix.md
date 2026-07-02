@@ -12,7 +12,8 @@ This matrix defines named permissions for POSMAIN's restaurant/cafe rollout whil
 - Keep admin role `usr_pwrs.id = 1` as a compatibility superuser unless a later migration explicitly changes this.
 - Do not require CSRF for machine-to-machine Moova/cloud endpoints that authenticate with device tokens or branch secrets.
 - Apply route enforcement gradually: helper foundation first, low-risk admin routes second, active cashier/table writes only after token propagation is tested.
-- Manager-only actions such as paid void, refund, and large discount should use named permissions even if the first bridge maps them to existing legacy flags.
+- Manager-only actions such as large discount should use named permissions even if the first bridge maps them to existing legacy flags.
+- Paid refund and paid void are admin-only (`__admin_only`); managers and cashiers must not access them from POS order history.
 
 ## Roles
 
@@ -42,8 +43,8 @@ This matrix defines named permissions for POSMAIN's restaurant/cafe rollout whil
 | `pos.discount.manager_override` | `edit_sales` | admin, manager | Discount beyond cashier policy. |
 | `pos.recipe_stock_override` | `edit_sales`, `edit_stock` | admin, manager, inventory manager | Allow a recipe-backed item sale when computed ingredient availability is unavailable and strict stock is off. |
 | `pos.cancel.unpaid` | `delete_sales`, `edit_sales` | admin, manager, cashier | Cancel unpaid active order with reason. |
-| `pos.void.paid` | `delete_payment`, `edit_payment` | admin, manager | Paid void requires manager approval. |
-| `pos.refund` | `delete_payment`, `edit_payment` | admin, manager | Refund path; must be audited. |
+| `pos.void.paid` | `__admin_only` | admin | Paid void; admin only from POS order history. |
+| `pos.refund` | `__admin_only` | admin | Paid refund; admin only from POS order history. |
 | `pos.split` | `add_payment`, `add_sales` | admin, manager, cashier | Split selected item payment. |
 | `pos.shift.open` | `add_sales`, `sid_sales` | admin, manager, cashier | Open shift/drawer. |
 | `pos.shift.close` | `edit_sales`, `sid_sales` | admin, manager, cashier | Close shift/drawer. |
@@ -59,6 +60,9 @@ This matrix defines named permissions for POSMAIN's restaurant/cafe rollout whil
 | `moova.accept` | `add_sales`, `sid_sales` | admin, manager, cashier | Accept/decline Moova order in POS. |
 | `system.health.view` | `sid_reports`, `sid_accounts` | admin, branch operator, support | Detailed health/status views. |
 | `system.tools.run` | admin only | admin | Migration/backup/repair tools; keep production-gated. |
+| `kds.view` | `sid_kds` | admin, kitchen | Open KDS launcher/station boards and read active kitchen tickets. |
+| `kds.complete` | `sid_kds` | admin, kitchen | Start/complete/recall kitchen tickets from a station board. |
+| `kds.manage` | admin only | admin | Create/edit stations, route categories to stations, assign workers in KDS settings. |
 
 ## CSRF Policy
 

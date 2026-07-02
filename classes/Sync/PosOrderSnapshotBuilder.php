@@ -379,6 +379,10 @@ class PosOrderSnapshotBuilder
 
     private function revisionFromOrder(array $order): int
     {
+        if (isset($order['kitchen_revision']) && (int) $order['kitchen_revision'] > 0) {
+            return (int) $order['kitchen_revision'];
+        }
+
         $source = $order['mdtime'] ?? $order['crtime'] ?? null;
         $timestamp = $source ? strtotime((string) $source) : false;
         if ($timestamp !== false) {

@@ -261,7 +261,6 @@ try {
 
             $generatedCount++;
             $itemsInThisChunk[] = [
-                'code' => $itemCode,
                 'barcode' => $itemBarcode,
                 'name' => $iname,
                 'price' => $price1,

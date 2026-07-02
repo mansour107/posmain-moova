@@ -11,6 +11,7 @@ import {
   queryLocalDb,
   saveItemClose,
   selectItemType,
+  selectItemUnit,
   setPurchaseSectionActive,
   uniqueItemLabel,
   type CreateItemProfile,
@@ -103,7 +104,7 @@ test.describe.serial('owner: item unit profile full browser integration', () => 
         storageUnitId: ITEM_EDITOR_UNITS.kg,
         purchaseUnitId: ITEM_EDITOR_UNITS.kg,
         purchaseStorageFactor: '1',
-        sellStorageFactor: '0.25',
+        sellStorageFactor: '4',
         cost: '40',
       },
     });
@@ -323,9 +324,9 @@ test.describe.serial('owner: item unit profile full browser integration', () => 
     await page.fill('input[name="barcode"]', uniqueItemLabel('Swap').barcode);
     await page.fill('#sell_price1', '9');
     await setPurchaseSectionActive(page, true);
-    await page.selectOption('#sell_unit_id', ITEM_EDITOR_UNITS.piece);
-    await page.selectOption('#storage_unit_id', ITEM_EDITOR_UNITS.kg);
-    await page.selectOption('#purchase_unit_id', ITEM_EDITOR_UNITS.kg);
+    await selectItemUnit(page, 'sell_unit_id', ITEM_EDITOR_UNITS.piece);
+    await selectItemUnit(page, 'storage_unit_id', ITEM_EDITOR_UNITS.kg);
+    await selectItemUnit(page, 'purchase_unit_id', ITEM_EDITOR_UNITS.kg);
     await page.fill('#purchase_cost', '10');
     await page.fill('#sell_storage_factor', '4');
     await expect(page.locator('#sell-storage-conversion')).toBeVisible();

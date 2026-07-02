@@ -203,6 +203,12 @@ $(document).ready(function() {
         }
     });
 
+    function touchOrderDraft() {
+        if (window.POSOrderDraft && typeof window.POSOrderDraft.markDirty === 'function') {
+            window.POSOrderDraft.markDirty();
+        }
+    }
+
     // Dynamic Row Calculations
     $(document).on('input', '.quantityInput, .priceInput', function() {
         let row = $(this).closest('tr');
@@ -353,6 +359,7 @@ $(document).ready(function() {
         $('#itemData tr').each(function(index) {
             $(this).find('td:first').text(index + 1);
         });
+        touchOrderDraft();
     }
 
     window.clearAllItems = function() {
@@ -375,41 +382,22 @@ $(document).ready(function() {
     }
 
     // Submit Logic overrides
-    function createPOSIdempotencyKey(scope) {
-        if (window.crypto && typeof window.crypto.randomUUID === 'function') {
-            return scope + ':' + window.crypto.randomUUID();
-        }
-
-        return scope + ':' + Date.now().toString(36) + ':' + Math.random().toString(36).slice(2);
-    }
-
-    function ensureFormIdempotencyKey(form, action) {
-        const scope = action === 'save' ? 'pos.order.save' : (action === 'free_table' ? 'pos.table.free' : 'pos.order.pay');
-        let keyInput = form.querySelector('input[name="idempotency_key"]');
-        if (!keyInput) {
-            keyInput = document.createElement('input');
-            keyInput.type = 'hidden';
-            keyInput.name = 'idempotency_key';
-            form.appendChild(keyInput);
-        }
-
-        if (!keyInput.value || keyInput.dataset.action !== action) {
-            keyInput.value = createPOSIdempotencyKey(scope);
-            keyInput.dataset.action = action;
-        }
-
-        return keyInput.value;
-    }
-
     window.submitSupermarketPOS = function(action) {
+        const resolvedAction = action === 'cash' ? 'cash' : action;
+        const saveAction = action === 'cash' ? 'save' : action;
+        if ((saveAction === 'save' || saveAction === 'print_receipt')
+            && window.POSOrderDraft
+            && !window.POSOrderDraft.canSave(saveAction)) {
+            return false;
+        }
+
         if ($('.item-card-order').length === 0) {
             Swal.fire('تنبيه', 'الفاتورة فارغة', 'warning');
             return false;
         }
 
         const form = document.getElementById('posForm');
-        ensureFormIdempotencyKey(form, action === 'cash' ? 'save' : action);
-        
+
         let paidCash = parseFloat($('#modal_paid_cash').val()) || 0;
         let net = parseFloat($('#net_val').val()) || 0;
         
@@ -428,7 +416,7 @@ $(document).ready(function() {
 
         const api = window.POSOrderApi;
         if (api && typeof api.submitFromForm === 'function') {
-            api.submitFromForm(form, action === 'cash' ? 'cash' : action);
+            api.submitFromForm(form, resolvedAction);
             return true;
         }
 

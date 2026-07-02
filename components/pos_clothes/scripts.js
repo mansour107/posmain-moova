@@ -123,7 +123,7 @@ function searchItems() {
     }, 300);
 }
 
-// تحميل أصناف المجموعة
+// تحميل أصناف التصنيف
 function loadCategoryItems(categoryId) {
     document.querySelectorAll('.category-card').forEach(card => {
         card.classList.remove('active');
@@ -152,7 +152,7 @@ function loadCategoryItems(categoryId) {
                 document.getElementById('itemsGrid').innerHTML = `
                     <div class="col-12 text-center py-5">
                         <i class="fas fa-exclamation-circle fa-3x mb-3" style="color: var(--soft-gray);"></i>
-                        <h5>لا توجد أصناف في هذه المجموعة</h5>
+                        <h5>لا توجد أصناف في هذا التصنيف</h5>
                     </div>
                 `;
             }
@@ -176,7 +176,7 @@ function displayItems(items) {
         itemsGrid.innerHTML = `
             <div class="col-12 text-center py-5">
                 <i class="fas fa-box-open fa-3x mb-3" style="color: var(--soft-gray);"></i>
-                <h5>لا توجد أصناف في هذه المجموعة</h5>
+                <h5>لا توجد أصناف في هذا التصنيف</h5>
             </div>
         `;
         return;

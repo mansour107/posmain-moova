@@ -77,8 +77,9 @@ $lang_inventory_management = "ادارة المخزون";
 $lang_new_item = "صنف جديد";
 $lang_items = "الاصناف";
 $lang_units = "الوحدات";
-$lang_groups = "المجموعات";
-$lang_categories = "التصنيفات";
+$lang_groups = "التصنيفات";
+$lang_categories = "المجموعات الفرعية";
+$lang_groups_and_categories = "التصنيفات والمجموعات الفرعية";
 $lang_item_price = "عرض سعر الصنف";
 $lang_opening_balances_stores = "ضبط الارصدة الافتتاحية للمخازن";
 

@@ -2,6 +2,8 @@
 
 require_once __DIR__ . '/../classes/Items/ItemCatalogStatus.php';
 require_once __DIR__ . '/../classes/Pos/Service/ItemAvailabilityService.php';
+require_once __DIR__ . '/../classes/Items/ItemUnitColumnSupport.php';
+require_once __DIR__ . '/../classes/Items/ItemUnitResolver.php';
 
 function posmain_supermarket_normalize_term(string $term): string
 {
@@ -61,9 +63,13 @@ function posmain_supermarket_finalize_item(mysqli $conn, ?array $row): ?array
         'name' => (string) ($row['name'] ?? ''),
         'barcode' => (string) ($row['barcode'] ?? ''),
         'price' => (float) ($row['price'] ?? 0),
-        'u_val' => $row['u_val'] ?? 1,
+        'u_val' => ItemUnitResolver::sellToStockFactor($conn, (int) ($row['id'] ?? 0)),
         'unit_name' => (string) ($row['unit_name'] ?? ''),
     ];
+
+    if (!empty($row['_unit_row'])) {
+        $item['u_val'] = ItemUnitResolver::inventoryFactorForUnitRow($conn, $row['_unit_row']);
+    }
 
     if ($item['id'] <= 0 || $item['name'] === '') {
         return null;
@@ -104,14 +110,14 @@ function posmain_supermarket_lookup_item(mysqli $conn, string $term): ?array
     $stmt = $conn->prepare(
         "SELECT id, iname AS name, barcode, price1 AS price, 1 AS u_val, '' AS unit_name
          FROM myitems
-         WHERE (barcode = ? OR code = ?) AND isdeleted = 0{$catalogFilter}
+         WHERE barcode = ? AND isdeleted = 0{$catalogFilter}
          LIMIT 1"
     );
     if (!$stmt) {
         return null;
     }
 
-    $stmt->bind_param('ss', $term, $term);
+    $stmt->bind_param('s', $term);
     $stmt->execute();
     $result = $stmt->get_result();
     $row = $result ? $result->fetch_assoc() : null;
@@ -123,9 +129,12 @@ function posmain_supermarket_lookup_item(mysqli $conn, string $term): ?array
     }
 
     $catalogFilterM = posmain_supermarket_catalog_sql($conn, 'm');
+    $swapSelect = ItemUnitColumnSupport::hasConversionSwapped($conn)
+        ? 'iu.conversion_swapped'
+        : '0 AS conversion_swapped';
     $unitStmt = $conn->prepare(
         "SELECT iu.item_id AS id, m.iname AS name, iu.unit_barcode AS barcode,
-                iu.price1 AS price, iu.u_val AS u_val
+                iu.price1 AS price, iu.u_val, {$swapSelect}, iu.def_sale, iu.def_buy
          FROM item_units iu
          INNER JOIN myitems m ON m.id = iu.item_id
          WHERE iu.unit_barcode = ? AND m.isdeleted = 0{$catalogFilterM}
@@ -146,6 +155,12 @@ function posmain_supermarket_lookup_item(mysqli $conn, string $term): ?array
     }
 
     $unitRow['unit_name'] = 'وحدة فرعية';
+    $unitRow['_unit_row'] = [
+        'u_val' => $unitRow['u_val'] ?? 1,
+        'conversion_swapped' => $unitRow['conversion_swapped'] ?? 0,
+        'def_sale' => $unitRow['def_sale'] ?? 1,
+        'def_buy' => $unitRow['def_buy'] ?? 0,
+    ];
     return posmain_supermarket_finalize_item($conn, $unitRow);
 }
 

@@ -437,6 +437,14 @@ WHERE id = $id";
 
 
 $conn->query($sqledit);
+
+$sid_kds = isset($_POST['sid_kds']) ? 1 : 0;
+$kdsStmt = $conn->prepare("UPDATE usr_pwrs SET sid_kds = ? WHERE id = ?");
+if ($kdsStmt) {
+    $kdsStmt->bind_param('ii', $sid_kds, $id);
+    $kdsStmt->execute();
+    $kdsStmt->close();
+}
 }
 header('location:../myroles.php');
 ?>

@@ -8,17 +8,107 @@
         service: 'خدمة'
     };
 
+    var conversionConfig = {
+        'sell-storage': {
+            leftUnit: function (swapped) {
+                return swapped ? $('#sell_unit_id') : $('#storage_unit_id');
+            },
+            rightUnit: function (swapped) {
+                return swapped ? $('#storage_unit_id') : $('#sell_unit_id');
+            },
+            swapField: '#sell_storage_swapped'
+        },
+        'purchase-storage': {
+            leftUnit: function (swapped) {
+                return swapped ? $('#storage_unit_id') : $('#purchase_unit_id');
+            },
+            rightUnit: function (swapped) {
+                return swapped ? $('#purchase_unit_id') : $('#storage_unit_id');
+            },
+            swapField: '#purchase_storage_swapped'
+        }
+    };
+
     function currentType() {
         return $('#item_type').val() || 'sellable';
     }
 
-    function unitLabel($select) {
-        return $.trim($select.find('option:selected').text() || '—');
+    function unitLabel($field) {
+        if (!$field || !$field.length) {
+            return '—';
+        }
+        var $combobox = $field.closest('.item-unit-combobox');
+        if ($combobox.length) {
+            return $.trim($combobox.find('.item-unit-combobox__input').val() || '—');
+        }
+        if ($field.is('select')) {
+            return $.trim($field.find('option:selected').text() || '—');
+        }
+        return '—';
+    }
+
+    function formatFactor(value) {
+        if (!isFinite(value) || value <= 0) {
+            return '1';
+        }
+        var rounded = Math.round(value);
+        if (rounded > 0 && Math.abs(value - rounded) < 1e-9) {
+            return String(rounded);
+        }
+        return value.toFixed(6).replace(/\.?0+$/, '');
+    }
+
+    function parsePositiveFactor($input) {
+        var value = parseFloat($input.val());
+        if (!isFinite(value) || value <= 0) {
+            return null;
+        }
+        return value;
+    }
+
+    function isDirectionSwapped($block) {
+        return $block.hasClass('is-direction-swapped');
+    }
+
+    function getConversionType($block) {
+        return String($block.data('conversion') || '');
+    }
+
+    function updateConversionLabels($block) {
+        var conversionType = getConversionType($block);
+        var config = conversionConfig[conversionType];
+        if (!config) {
+            return;
+        }
+        var swapped = isDirectionSwapped($block);
+        $block.find('[data-role="left-unit"]').text(unitLabel(config.leftUnit(swapped)));
+        $block.find('[data-role="right-unit"]').text(unitLabel(config.rightUnit(swapped)));
     }
 
     function setHiddenActive($hidden, $checkbox, active) {
         $hidden.val(active ? '1' : '0');
         $checkbox.prop('checked', !!active);
+    }
+
+    function syncUnitComboboxDisplay(fieldId, unitId) {
+        var value = String(unitId || '');
+        var $hidden = $('#' + fieldId);
+        if (!$hidden.length) {
+            return;
+        }
+        var $combobox = $hidden.closest('.item-unit-combobox');
+        if (!$combobox.length) {
+            $hidden.val(value);
+            return;
+        }
+        var matchName = '';
+        $combobox.find('.item-unit-combobox__option').each(function () {
+            if (String($(this).data('id') || '') === value) {
+                matchName = String($(this).data('name') || $(this).text() || '');
+            }
+        });
+        $hidden.val(value);
+        $combobox.find('.item-unit-combobox__input').val(matchName);
     }
 
     function refreshSectionStates() {
@@ -83,8 +173,7 @@
 
         $sellStorage.toggleClass('d-none', !showSellStorage);
         if (showSellStorage) {
-            $sellStorage.find('[data-role="left-unit"]').text(unitLabel($('#sell_unit_id')));
-            $sellStorage.find('[data-role="right-unit"]').text(unitLabel($('#storage_unit_id')));
+            updateConversionLabels($sellStorage);
         }
 
         var $purchaseStorage = $('#purchase-storage-conversion');
@@ -95,8 +184,7 @@
 
         $purchaseStorage.toggleClass('d-none', !showPurchaseStorage);
         if (showPurchaseStorage) {
-            $purchaseStorage.find('[data-role="left-unit"]').text(unitLabel($('#purchase_unit_id')));
-            $purchaseStorage.find('[data-role="right-unit"]').text(unitLabel($('#storage_unit_id')));
+            updateConversionLabels($purchaseStorage);
         }
     }
 
@@ -114,12 +202,37 @@
         $('#summaryUnitCount').text(String(unitCount));
     }
 
-    function swapFactor($input) {
-        var value = parseFloat($input.val());
-        if (!isFinite(value) || value <= 0) {
+    function syncConversionSwapField($block) {
+        var conversionType = getConversionType($block);
+        var config = conversionConfig[conversionType];
+        if (!config || !config.swapField) {
             return;
         }
-        $input.val((1 / value).toFixed(6).replace(/\.?0+$/, ''));
+        $(config.swapField).val(isDirectionSwapped($block) ? '1' : '0');
+    }
+
+    function initConversionDisplayFactors() {
+        $('.item-unit-conversion').each(function () {
+            var $block = $(this);
+            var $input = $block.find('.item-unit-conversion__factor');
+            var value = parsePositiveFactor($input);
+            if (value !== null) {
+                $input.val(formatFactor(value));
+            }
+            syncConversionSwapField($block);
+        });
+    }
+
+    function swapConversionDirection($block) {
+        var $input = $block.find('.item-unit-conversion__factor');
+        var display = parsePositiveFactor($input);
+        if (display === null) {
+            return;
+        }
+        $block.toggleClass('is-direction-swapped');
+        $input.val(formatFactor(1 / display));
+        syncConversionSwapField($block);
+        updateConversionLabels($block);
     }
 
     function activatePurchaseSection() {
@@ -129,6 +242,88 @@
         refreshSummary();
     }
 
+    var validationToastTimer = null;
+
+    function resolveValidationField(field) {
+        var $field = field && field.jquery ? field : $(field);
+        if (!$field.length) {
+            return $field;
+        }
+        if ($field.hasClass('item-unit-combobox__value') || $field.hasClass('item-profile-unit-select')) {
+            return $field.closest('.item-unit-combobox').find('.item-unit-combobox__input');
+        }
+        if ($field.is('input[type="hidden"]')) {
+            var $comboboxInput = $('#' + $field.attr('id') + '_input');
+            if ($comboboxInput.length) {
+                return $comboboxInput;
+            }
+        }
+        return $field;
+    }
+
+    function clearValidationErrors() {
+        $('.item-editor-field-error').removeClass('item-editor-field-error');
+        $('.variant-row.is-field-error').removeClass('is-field-error');
+    }
+
+    function markValidationError(field) {
+        var $field = resolveValidationField(field);
+        if (!$field.length) {
+            return $field;
+        }
+        $field.addClass('item-editor-field-error');
+        var $variantRow = $field.closest('.variant-row');
+        if ($variantRow.length) {
+            $variantRow.addClass('is-field-error');
+        }
+        return $field;
+    }
+
+    function showValidationToast(message) {
+        var $toast = $('#item-editor-validation-toast');
+        if (!$toast.length) {
+            $toast = $('<div id="item-editor-validation-toast" class="item-editor-validation-toast" role="alert" aria-live="assertive"></div>');
+            $('body').append($toast);
+        }
+        $toast.text(message);
+        $toast.addClass('is-visible');
+        if (validationToastTimer) {
+            window.clearTimeout(validationToastTimer);
+        }
+        validationToastTimer = window.setTimeout(function () {
+            $toast.removeClass('is-visible');
+        }, 4200);
+    }
+
+    function showValidationFailure(message, fields) {
+        clearValidationErrors();
+        var $markedFields = [];
+        (fields || []).forEach(function (field) {
+            var $marked = markValidationError(field);
+            if ($marked && $marked.length) {
+                $markedFields.push($marked);
+            }
+        });
+        showValidationToast(message);
+        if ($markedFields.length) {
+            var $first = $markedFields[0];
+            $('html, body').animate({
+                scrollTop: Math.max(0, $first.offset().top - 120)
+            }, 220);
+            window.setTimeout(function () {
+                $first.trigger('focus');
+            }, 240);
+        }
+        return false;
+    }
+
+    window.ItemEditorValidation = {
+        clear: clearValidationErrors,
+        fail: showValidationFailure,
+        mark: markValidationError,
+        toast: showValidationToast
+    };
+
     function validateBeforeSubmit() {
         var type = currentType();
         var sellActive = $('#sell_active').val() === '1';
@@ -136,34 +331,48 @@
         var hasVariants = $('#variantRowsContainer .variant-row').length > 0;
 
         if ((type === 'ingredient' || type === 'packaging') && !parseInt($('#storage_unit_id').val(), 10)) {
-            alert('يرجى اختيار وحدة التخزين');
-            return false;
+            return showValidationFailure('يرجى اختيار وحدة التخزين', ['#storage_unit_id']);
         }
 
         if (sellActive && !hasVariants) {
             var sellPrice = parseFloat($('#sell_price1').val());
             if (!isFinite(sellPrice) || sellPrice <= 0) {
-                alert('يرجى إدخال سعر البيع');
-                return false;
+                return showValidationFailure('يرجى إدخال سعر البيع', ['#sell_price1']);
             }
         }
 
         if (purchaseActive) {
             var cost = parseFloat($('#purchase_cost').val());
             if (!isFinite(cost) || cost <= 0) {
-                alert('يرجى إدخال تكلفة الشراء للوحدة');
-                return false;
+                return showValidationFailure('يرجى إدخال تكلفة الشراء للوحدة', ['#purchase_cost']);
             }
             if (!$('#purchase_unit_id').val()) {
-                alert('يرجى اختيار وحدة الشراء');
-                return false;
+                return showValidationFailure('يرجى اختيار وحدة الشراء', ['#purchase_unit_id']);
             }
         }
 
+        clearValidationErrors();
         return true;
     }
 
+    function disableNumberInputWheelScroll() {
+        var shell = document.querySelector('.item-editor-shell');
+        if (!shell) {
+            return;
+        }
+
+        shell.addEventListener('wheel', function (event) {
+            var target = event.target;
+            if (target && target.tagName === 'INPUT' && target.type === 'number') {
+                event.preventDefault();
+            }
+        }, { passive: false, capture: true });
+    }
+
     $(function () {
+        disableNumberInputWheelScroll();
+        initConversionDisplayFactors();
+
         $('.item-type-choice').on('click', function () {
             var type = $(this).data('item-type');
             var previousType = currentType();
@@ -206,7 +415,7 @@
             }
         });
 
-        $('#purchase-only-fields').on('focusin click', 'input, select', function () {
+        $('#purchase-only-fields').on('focusin click', 'input:not([type="hidden"]), select, .item-unit-combobox__input', function () {
             if (!$('#purchase_section_checkbox').is(':checked')) {
                 activatePurchaseSection();
             }
@@ -216,20 +425,15 @@
         $('.item-profile-unit-select').on('change', refreshSummary);
         $('#sell_unit_id').on('change', function () {
             if ($('#purchase_active').val() !== '1') {
-                $('#storage_unit_id').val($(this).val());
+                syncUnitComboboxDisplay('storage_unit_id', $(this).val());
             }
             refreshConversions();
             refreshSummary();
         });
 
         $('.item-unit-conversion__swap').on('click', function () {
-            var target = $(this).data('swap-target');
-            if (target === 'sell-storage') {
-                swapFactor($('#sell_storage_factor'));
-            } else if (target === 'purchase-storage') {
-                swapFactor($('#purchase_storage_factor'));
-            }
-            refreshConversions();
+            var $block = $(this).closest('.item-unit-conversion');
+            swapConversionDirection($block);
         });
 
         $('#item-main-form').on('submit', function (event) {
@@ -239,7 +443,14 @@
             }
             if (!validateBeforeSubmit()) {
                 event.preventDefault();
+                return;
             }
+        });
+
+        $(document).on('input change', '.item-editor-shell input, .item-editor-shell select, .item-editor-shell textarea', function () {
+            var $field = $(this);
+            $field.removeClass('item-editor-field-error');
+            $field.closest('.variant-row').removeClass('is-field-error');
         });
 
         refreshSectionStates();

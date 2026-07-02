@@ -6,6 +6,7 @@ ini_set('display_errors', 0);
 require_once __DIR__ . '/../includes/session_bootstrap.php';
 require_once __DIR__ . '/../classes/Pos/Service/ItemAvailabilityService.php';
 require_once __DIR__ . '/../classes/Items/ItemCatalogStatus.php';
+require_once __DIR__ . '/../classes/Items/ItemUnitColumnSupport.php';
 require_once __DIR__ . '/../classes/Items/ItemUnitResolver.php';
 
 // استخدام dirname للحصول على المسار الصحيح
@@ -44,8 +45,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['barcode'])) {
     $result = $stmt->get_result();
 
     if ($result->num_rows === 0) {
+        $swapSelect = ItemUnitColumnSupport::hasConversionSwapped($conn)
+            ? 'iu.conversion_swapped'
+            : '0 AS conversion_swapped';
         $unitSql = "
-            SELECT myitems.*, iu.u_val, iu.unit_barcode AS unit_row_barcode, iu.price1 AS unit_price1, {$variantSelect}
+            SELECT myitems.*, iu.u_val, {$swapSelect}, iu.unit_id AS scanned_unit_id,
+                   iu.unit_barcode AS unit_row_barcode, iu.price1 AS unit_price1, {$variantSelect}
             FROM item_units iu
             INNER JOIN myitems ON myitems.id = iu.item_id
             WHERE (iu.unit_barcode = ? OR iu.unit_barcode = ?)
@@ -72,12 +77,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['barcode'])) {
             }
         }
         
+        $resolvedFactor = ItemUnitResolver::sellToStockFactor($conn, (int) $item['id']);
+        if (!empty($item['scanned_unit_id'])) {
+            $unitRow = [
+                'u_val' => $item['u_val'] ?? 1,
+                'conversion_swapped' => $item['conversion_swapped'] ?? 0,
+                'def_sale' => 1,
+            ];
+            $resolvedFactor = ItemUnitResolver::inventoryFactorForUnitRow($conn, $unitRow);
+        }
+
         $barcodeItem = [
             'id' => (int) $item['id'],
             'name' => $item['iname'],
             'price' => $price,
             'barcode' => $item['barcode'],
-            'u_val' => (float) ($item['u_val'] ?? ItemUnitResolver::sellToStockFactor($conn, (int) $item['id'])),
+            'u_val' => $resolvedFactor,
             'has_variants' => (int) ($item['has_variants'] ?? 0) === 1
         ];
         $decoratedItems = (new ItemAvailabilityService())->decorateItems($conn, [$barcodeItem], posmain_pos_availability_scope($conn));

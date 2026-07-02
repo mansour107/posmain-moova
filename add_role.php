@@ -195,7 +195,7 @@
                                     </tr>
 
                                     <tr class="tr1">
-                                        <td class="font-weight-bold">مجموعات الاصناف</td>
+                                        <td class="font-weight-bold">تصنيفات الأصناف</td>
                                         <td class="text-center"><input type="checkbox" class="user-checkbox" name="show_item_groups" checked></td>
                                         <td class="text-center"><input type="checkbox" class="user-checkbox" name="add_item_groups" checked></td>
                                         <td class="text-center"><input type="checkbox" class="user-checkbox" name="edit_item_groups" checked></td>
@@ -463,6 +463,10 @@
                                     <tr class="tr1">
                                         <td>اظهار قسم ادارة الكروت</td>
                                         <td class="text-center"><input type="checkbox" name="sid_cards" class="user-checkbox" checked></td>
+                                    </tr>
+                                    <tr class="tr1">
+                                        <td>الوصول لشاشة المطبخ (KDS)</td>
+                                        <td class="text-center"><input type="checkbox" name="sid_kds" class="user-checkbox"></td>
                                     </tr>
                                     <tr class="tr1">
                                         <td>تعديل كلمات مرور المستخدمين</td>

@@ -45,6 +45,9 @@ $requiredPermissions = [
     'moova.accept',
     'system.health.view',
     'system.tools.run',
+    'kds.view',
+    'kds.complete',
+    'kds.manage',
 ];
 
 foreach ($requiredRoles as $role) {

@@ -58,16 +58,29 @@ test.describe('cashier: premium dark visual compliance', () => {
     });
   });
 
-  test('recent orders offcanvas uses dark table', async ({ page }) => {
+  test('recent orders modal uses dark table', async ({ page }) => {
     await openRecentOrdersFromCorner(page);
     await page.waitForSelector('#recentOrdersList tr', { timeout: 15000 });
 
-    const offcanvasBody = page.locator('#recentOrdersModal .offcanvas-body');
-    await expectDarkSurface(offcanvasBody);
+    const modalBody = page.locator('#recentOrdersModal .pos-recent-orders-body');
+    await expectDarkSurface(modalBody);
 
     const firstRow = page.locator('#recentOrdersList tr').first();
     const rowBg = await firstRow.evaluate((el) => getComputedStyle(el).backgroundColor);
     expect(rowBg).not.toBe('rgb(255, 255, 255)');
+
+    await firstRow.hover();
+    const hoveredRowBg = await firstRow.evaluate((el) => getComputedStyle(el).backgroundColor);
+    const hoveredCellBg = await firstRow.locator('td').first().evaluate((el) => getComputedStyle(el).backgroundColor);
+    expect(hoveredRowBg).not.toBe('rgb(227, 242, 253)'); // pos.css light-blue hover
+    expect(hoveredCellBg).not.toBe('rgb(227, 242, 253)');
+    expect(hoveredCellBg).not.toBe('rgb(255, 255, 255)');
+
+    const totalCell = firstRow.locator('td.text-success').first();
+    if (await totalCell.count()) {
+      const totalColor = await totalCell.evaluate((el) => getComputedStyle(el).color);
+      expect(totalColor).toMatch(/rgb\(74, 222, 128\)|rgb\(46, 204, 113\)/);
+    }
 
     await page.screenshot({
       path: path.join(screenshotDir, 'pos-recent-orders.png'),

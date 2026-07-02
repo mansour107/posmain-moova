@@ -56,6 +56,8 @@ try {
     posTableSaveRecipeAssert(($savedPayload['request_id'] ?? '') === $payload['idempotency_key'], 'table save endpoint should return request id');
     $orderId = (int) ($savedPayload['order_id'] ?? 0);
     posTableSaveRecipeAssert($orderId > 0, 'table save endpoint should return order id');
+    $firstKitchenRevision = (int) (($savedPayload['updated_state']['kitchen_revision'] ?? $savedPayload['kitchen_revision'] ?? 0));
+    posTableSaveRecipeAssert($firstKitchenRevision >= 1, 'table save endpoint should return kitchen_revision');
 
     $replay = posTableSaveRecipeEndpointJsonPost($baseUrl . '/ajax/save_order.php', $sessionId, $payload);
     posTableSaveRecipeAssert((int) ($replay['status'] ?? 0) === 200, 'table save endpoint replay should return HTTP 200');
@@ -66,6 +68,25 @@ try {
     posTableSaveRecipeAssert(($replayPayload['request_id'] ?? '') === $payload['idempotency_key'], 'table save endpoint replay should return original request id');
 
     posTableSaveRecipeAssertEndpointRows($conn, $orderId, $payload['idempotency_key']);
+
+    $updatePayload = $payload;
+    $updatePayload['order_id'] = $orderId;
+    $updatePayload['items'] = [
+        ['id' => 10, 'qty' => 1, 'price' => 10],
+    ];
+    $updatePayload['total'] = 10;
+    $updatePayload['net'] = 10;
+    $updatePayload['idempotency_key'] = 'recipe-table-save-update-' . getmypid();
+
+    $updated = posTableSaveRecipeEndpointJsonPost($baseUrl . '/ajax/save_order.php', $sessionId, $updatePayload);
+    $updatedPayload = json_decode((string) ($updated['body'] ?? ''), true);
+    posTableSaveRecipeAssert(($updatedPayload['success'] ?? false) === true, 'table save update should succeed');
+    posTableSaveRecipeAssert((int) ($updatedPayload['order_id'] ?? 0) === $orderId, 'table save update should keep same order id');
+    $secondKitchenRevision = (int) (($updatedPayload['updated_state']['kitchen_revision'] ?? 0));
+    posTableSaveRecipeAssert($secondKitchenRevision > $firstKitchenRevision, 'table save update should bump kitchen_revision');
+
+    $detailCount = (int) $conn->query("SELECT COUNT(*) AS c FROM fat_details WHERE fatid = {$orderId} AND isdeleted = 0")->fetch_assoc()['c'];
+    posTableSaveRecipeAssert($detailCount === 1, 'table save update should replace detail rows');
 
     echo "pos-table-save-recipe-endpoint-runtime-ok db={$db}\n";
 } finally {

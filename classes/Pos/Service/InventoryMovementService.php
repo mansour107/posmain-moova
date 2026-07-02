@@ -1,5 +1,10 @@
 <?php
 
+require_once __DIR__ . '/../../Recipe/RecipeDecimal.php';
+require_once __DIR__ . '/../../Items/ItemUnitResolver.php';
+require_once __DIR__ . '/../../Items/ItemUnitConversion.php';
+require_once __DIR__ . '/../../Items/ItemUnitConversionFeatureFlags.php';
+
 class InventoryMovementService
 {
     const TYPE_SALES = 3;
@@ -38,19 +43,32 @@ class InventoryMovementService
 
     public function normalizeInvoiceLine(mysqli $conn, int $invoiceType, array $line, array $context = []): array
     {
+        $scale = ItemUnitConversion::INVENTORY_SCALE;
         $itemId = $this->lineItemId($line);
-        $qty = $this->positiveFloat($line, ['qty', 'itmqty'], 'ITEM_QTY_INVALID');
-        $price = $this->numericValue($line, ['price', 'itmprice'], 'ITEM_PRICE_REQUIRED');
-        $discount = $this->numericValue($line, ['discount', 'itmdisc'], null, 0.0);
-        $unitValue = $this->numericValue($line, ['u_val', 'unit_value'], null, 1.0);
-        if ($unitValue <= 0) {
-            $unitValue = 1.0;
+        $qty = $this->positiveDecimal($line, ['qty', 'itmqty'], 'ITEM_QTY_INVALID', $scale);
+        $price = $this->decimalValue($line, ['price', 'itmprice'], 'ITEM_PRICE_REQUIRED', $scale);
+        $discount = $this->decimalValue($line, ['discount', 'itmdisc'], null, $scale, '0');
+        $unitId = (int) ($line['unit_id'] ?? $line['unitid'] ?? 0);
+        $resolved = ItemUnitResolver::resolvePosStockFactor(
+            $conn,
+            $itemId,
+            $unitId > 0 ? $unitId : null,
+            $line['u_val'] ?? $line['unit_value'] ?? null
+        );
+        $unitValueDecimal = $resolved['factor_decimal'];
+        if (RecipeDecimal::compare($unitValueDecimal, '0', $scale) <= 0) {
+            $unitValueDecimal = RecipeDecimal::normalize('1', $scale);
         }
+        $unitValue = (float) RecipeDecimal::normalize($unitValueDecimal, ItemUnitConversion::DISPLAY_SCALE);
 
         $item = $this->loadItem($conn, $itemId);
-        $movement = $this->movementQuantities($invoiceType, $qty, $unitValue);
-        $detValue = $qty * ($price - $discount);
-        $unitPrice = $price / $unitValue;
+        $movement = $this->movementQuantities($invoiceType, $qty, $unitValueDecimal, $resolved['unit_row'], $scale);
+        $detValue = (float) RecipeDecimal::multiply(
+            $qty,
+            RecipeDecimal::subtract($price, $discount, $scale),
+            $scale
+        );
+        $unitPrice = (float) RecipeDecimal::divide($price, $unitValueDecimal, $scale);
         $oldCost = (float) ($item['cost_price'] ?? 0);
         $oldQty = (float) ($item['itmqty'] ?? 0);
         $costPrice = $oldCost;
@@ -58,8 +76,8 @@ class InventoryMovementService
         $itemUpdate = null;
 
         if (in_array($invoiceType, [self::TYPE_PURCHASE, self::TYPE_PURCHASE_ORDER], true)) {
-            $newBalance = $movement['qty_in'] * $unitPrice;
-            $totalQty = $oldQty + $movement['qty_in'];
+            $newBalance = (float) RecipeDecimal::multiply($movement['qty_in_decimal'], (string) $unitPrice, $scale);
+            $totalQty = $oldQty + (float) $movement['qty_in_decimal'];
             if ($totalQty > 0) {
                 $costPrice = (($oldCost * $oldQty) + $newBalance) / $totalQty;
             }
@@ -68,40 +86,81 @@ class InventoryMovementService
                 'cost_price' => $costPrice,
             ];
         } elseif (in_array($invoiceType, [self::TYPE_SALES, self::TYPE_POS, self::TYPE_OFFER], true)) {
-            $profit = $qty * $unitValue * ($unitPrice - $oldCost);
+            $stockQty = $movement['qty_out_decimal'] !== '0'
+                ? $movement['qty_out_decimal']
+                : $movement['qty_in_decimal'];
+            $profit = (float) RecipeDecimal::multiply(
+                $stockQty,
+                RecipeDecimal::subtract((string) $unitPrice, (string) $oldCost, $scale),
+                $scale
+            );
         }
 
         return [
             'item_id' => $itemId,
             'u_val' => $unitValue,
-            'qty_in' => $movement['qty_in'],
-            'qty_out' => $movement['qty_out'],
+            'u_val_decimal' => RecipeDecimal::normalize($unitValueDecimal, ItemUnitConversion::DISPLAY_SCALE),
+            'qty_in' => (float) $movement['qty_in_decimal'],
+            'qty_out' => (float) $movement['qty_out_decimal'],
             'price' => $unitPrice,
-            'discount' => $discount,
+            'discount' => (float) $discount,
             'det_value' => $detValue,
             'det_store' => (int) ($line['store_id'] ?? $context['store_id'] ?? 0),
             'cost_price' => $costPrice,
             'profit' => $profit,
             'item_update' => $itemUpdate,
             'stock_affects' => $movement['stock_affects'],
+            '_source_item' => $line,
         ];
     }
 
-    private function movementQuantities(int $invoiceType, float $qty, float $unitValue): array
-    {
+    private function movementQuantities(
+        int $invoiceType,
+        string $qty,
+        string $unitValueDecimal,
+        ?array $unitRow,
+        int $scale
+    ): array {
         if (in_array($invoiceType, [self::TYPE_PURCHASE_ORDER, self::TYPE_SALES_ORDER, self::TYPE_OFFER], true)) {
-            return ['qty_in' => 0.0, 'qty_out' => 0.0, 'stock_affects' => false];
+            return [
+                'qty_in_decimal' => RecipeDecimal::normalize('0', $scale),
+                'qty_out_decimal' => RecipeDecimal::normalize('0', $scale),
+                'stock_affects' => false,
+            ];
+        }
+
+        $role = in_array($invoiceType, [self::TYPE_PURCHASE, self::TYPE_SALES_RETURN], true) ? 'purchase' : 'sell';
+        $stored = (string) ($unitRow['u_val'] ?? '1');
+        $swapped = (int) ($unitRow['conversion_swapped'] ?? 0) === 1;
+        $useExact = ItemUnitConversionFeatureFlags::exactDecimalConversions() && $unitRow !== null;
+
+        if ($useExact) {
+            $stockQty = ItemUnitConversion::stockQuantityFromEnteredQty($qty, $stored, $swapped, $role, $scale);
+        } else {
+            $stockQty = RecipeDecimal::multiply($qty, $unitValueDecimal, $scale);
         }
 
         if (in_array($invoiceType, [self::TYPE_PURCHASE, self::TYPE_SALES_RETURN], true)) {
-            return ['qty_in' => $qty * $unitValue, 'qty_out' => 0.0, 'stock_affects' => true];
+            return [
+                'qty_in_decimal' => $stockQty,
+                'qty_out_decimal' => RecipeDecimal::normalize('0', $scale),
+                'stock_affects' => true,
+            ];
         }
 
         if (in_array($invoiceType, [self::TYPE_SALES, self::TYPE_POS, self::TYPE_PURCHASE_RETURN], true)) {
-            return ['qty_in' => 0.0, 'qty_out' => $qty * $unitValue, 'stock_affects' => true];
+            return [
+                'qty_in_decimal' => RecipeDecimal::normalize('0', $scale),
+                'qty_out_decimal' => $stockQty,
+                'stock_affects' => true,
+            ];
         }
 
-        return ['qty_in' => 0.0, 'qty_out' => 0.0, 'stock_affects' => false];
+        return [
+            'qty_in_decimal' => RecipeDecimal::normalize('0', $scale),
+            'qty_out_decimal' => RecipeDecimal::normalize('0', $scale),
+            'stock_affects' => false,
+        ];
     }
 
     private function loadItem(mysqli $conn, int $itemId): array
@@ -129,26 +188,26 @@ class InventoryMovementService
         return $itemId;
     }
 
-    private function positiveFloat(array $line, array $keys, string $code): float
+    private function positiveDecimal(array $line, array $keys, string $code, int $scale): string
     {
-        $value = $this->numericValue($line, $keys, $code);
-        if ($value <= 0) {
+        $value = $this->decimalValue($line, $keys, $code, $scale);
+        if (RecipeDecimal::compare($value, '0', $scale) <= 0) {
             throw new InvalidArgumentException($code);
         }
 
         return $value;
     }
 
-    private function numericValue(array $line, array $keys, ?string $missingCode, ?float $default = null): float
+    private function decimalValue(array $line, array $keys, ?string $missingCode, int $scale, ?string $default = null): string
     {
         foreach ($keys as $key) {
             if (array_key_exists($key, $line) && $line[$key] !== '' && $line[$key] !== null) {
-                return (float) $line[$key];
+                return RecipeDecimal::normalize($line[$key], $scale);
             }
         }
 
         if ($default !== null) {
-            return $default;
+            return RecipeDecimal::normalize($default, $scale);
         }
 
         throw new InvalidArgumentException($missingCode ?: 'NUMERIC_VALUE_REQUIRED');

@@ -4,6 +4,7 @@ require_once __DIR__ . '/../includes/db_bootstrap.php';
 require_once __DIR__ . '/../includes/csv_export.php';
 require_once __DIR__ . '/../classes/Recipe/RecipeReconciliationService.php';
 require_once __DIR__ . '/../classes/Inventory/InventoryReconciliationAcceptanceService.php';
+require_once __DIR__ . '/../classes/Items/ErpUnitConversionAuditService.php';
 
 if (PHP_SAPI !== 'cli') {
     fwrite(STDERR, "This tool must be run from the command line.\n");
@@ -53,9 +54,13 @@ try {
     $conn = posmain_db_connect();
     $service = new RecipeReconciliationService();
     $rows = $service->report($conn, $filters);
+    $conversionAudit = new ErpUnitConversionAuditService();
+    $conversionMismatches = $conversionAudit->findRawFactorMovementMismatches($conn, min(100, (int) $filters['limit']));
     $conn->close();
 
     $result = inventoryReconciliationResult($filters, $rows, $acceptance);
+    $result['conversion_factor_mismatches'] = $conversionMismatches;
+    $result['conversion_factor_mismatch_count'] = count($conversionMismatches);
 } catch (Throwable $exception) {
     $result = [
         'ok' => false,
@@ -184,7 +189,7 @@ function inventoryReconciliationPrintCsv(array $result): void
         'pos_branch',
         'store_id',
         'item_id',
-        'item_code',
+        'item_barcode',
         'item_name',
         'item_type',
         'track_stock',
@@ -207,7 +212,7 @@ function inventoryReconciliationPrintCsv(array $result): void
             $row['pos_branch'] ?? '',
             $row['store_id'] ?? '',
             $row['item_id'] ?? '',
-            $row['item_code'] ?? '',
+            $row['item_barcode'] ?? '',
             $row['item_name'] ?? '',
             $row['item_type'] ?? '',
             $row['track_stock'] ?? '',

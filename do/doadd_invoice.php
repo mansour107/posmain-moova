@@ -985,6 +985,8 @@ try {
                 $conn->query("DELETE FROM fat_details WHERE fatid = '$edit_id'");
             }
             if ($order_type_db !== 'table') {
+                require_once __DIR__ . '/../classes/Accounting/JournalPostingGuard.php';
+                JournalPostingGuard::rejectJournalMutationIfAppendOnly();
                 // Also delete related journal entries and payment operations if they exist and are linked by op_id/op2.
                 $journal_query = $conn->query("SELECT id FROM journal_heads WHERE op_id = '$edit_id'");
                 if ($journal_query) {
@@ -1671,6 +1673,20 @@ try {
                 'paid',
                 (float) ($splitPaidAmount ?? 0)
             );
+        }
+    }
+
+    // مزامنة شاشة المطبخ (KDS) - أفضل جهد، لا تُسقط الفاتورة عند الفشل
+    if ((int) $pro_tybe === INVOICE_TYPES['POS'] && (int) $last_op > 0) {
+        try {
+            require_once __DIR__ . '/../classes/Pos/Service/KdsTicketService.php';
+            $kdsEventType = $payment_status_db === 'paid' ? 'paid' : ($edit_id > 0 ? 'updated' : 'new');
+            (new KdsTicketService())->syncForOrder($conn, (int) $last_op, $kdsEventType, (int) $usid);
+            if ($is_split_line_payment && !empty($split_receipt_order_id)) {
+                (new KdsTicketService())->syncForOrder($conn, (int) $split_receipt_order_id, 'paid', (int) $usid);
+            }
+        } catch (Throwable $kdsLegacyException) {
+            error_log('KDS legacy invoice sync skipped: ' . $kdsLegacyException->getMessage());
         }
     }
 

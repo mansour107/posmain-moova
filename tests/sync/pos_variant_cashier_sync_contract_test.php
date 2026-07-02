@@ -33,6 +33,8 @@ posVariantAssert(strpos($js, 'cachedItemVariants') !== false, 'cashier should us
 posVariantAssert(strpos($js, 'itemVariantModal') !== false, 'cashier should render a variant picker modal');
 posVariantAssert(strpos($js, 'modal fade" id="itemVariantModal"') === false, 'cashier variant picker should open without Bootstrap fade animation');
 posVariantAssert(strpos($js, 'itemVariantChoice') !== false, 'cashier should add selected child variant');
+posVariantAssert(strpos($js, 'افتراضي') === false, 'cashier variant picker should not show default badge');
+posVariantAssert(strpos($js, 'is_default') === false, 'cashier variant picker should not branch on is_default');
 posVariantAssert(strpos($js, 'addItemToOrder(id, name, price, barcode, qty = 1, imageHtml = \'\', lineNote = \'\')') !== false, 'cart add signature should stay line-note compatible');
 posVariantAssert(strpos($js, 'name="itmmodifiers[]"') === false, 'cashier rows should not post modifier payloads for variations');
 posVariantAssert(strpos($js, 'ajax/get_item_modifiers.php') === false, 'cashier should not fetch item modifiers for variation ordering');

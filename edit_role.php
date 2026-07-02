@@ -206,7 +206,7 @@ if ($hash_id !== $hash) {
                     </tr>
 
                     <tr class="tr1">
-                        <td>مجموعات الاصناف</td>
+                        <td>تصنيفات الأصناف</td>
                         <td><input type="checkbox" class="user-checkbox" name="show_item_groups" id="" <?php if( $rowrol['show_item_groups'] == 1){echo "checked"; }?>></td>
                         <td><input type="checkbox" class="user-checkbox" name="add_item_groups" id="" <?php if( $rowrol['add_item_groups'] == 1){echo "checked"; }?>></td>
                         <td><input type="checkbox" class="user-checkbox" name="edit_item_groups" id="" <?php if( $rowrol['edit_item_groups'] == 1){echo "checked"; }?>></td>
@@ -470,6 +470,10 @@ if ($hash_id !== $hash) {
                             <tr class="tr1">
                                 <td>اظهار قسم التأجير من الجانب الايمن</td>
                                 <td><input type="checkbox" name="sid_rents"  class="user-checkbox" <?php if( $rowrol['sid_rents'] == 1){echo "checked"; }?>></td>
+                            </tr>
+                            <tr class="tr1">
+                                <td>الوصول لشاشة المطبخ (KDS)</td>
+                                <td><input type="checkbox" name="sid_kds"  class="user-checkbox" <?php if( ($rowrol['sid_kds'] ?? 0) == 1){echo "checked"; }?>></td>
                             </tr>
 
                         </tbody>

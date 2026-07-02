@@ -18,8 +18,9 @@ $(document).ready(function() {
             processData: false,
             success: function(response) {
                 $('#msgitem').html(response);
-                const $codenew = parseInt($('#code').val(), 10) + 1; 
-                $('#code, #barcode, #unitCode').val($codenew);
+                const $barcodeVal = parseInt($('#barcode').val(), 10);
+                const $barcodeNew = Number.isFinite($barcodeVal) ? $barcodeVal + 1 : 1;
+                $('#barcode, #unitCode').val($barcodeNew);
                 refreshSelect();
             },
             error: function() {

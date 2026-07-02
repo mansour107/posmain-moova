@@ -1,6 +1,7 @@
 <?php 
 include('../../includes/connect.php');
-require_once __DIR__ . '/../../includes/session_bootstrap.php';
+require_once('../../includes/session_bootstrap.php');
+require_once __DIR__ . '/../../classes/Items/ItemCatalogCode.php';
 
 // Ensure the user is logged in
 if (!isset($_SESSION['userid'])) {
@@ -17,7 +18,7 @@ if (is_null($barcode)) {
 
 // Collect data from POST request
 $iname = $_POST['iname']; 
-$code = $_POST['code'];
+$code = (string) ItemCatalogCode::nextValue($conn);
 $name2 = $_POST['name2']; 
 $group1 = $_POST['group1']; 
 $group2 = $_POST['group2']; 

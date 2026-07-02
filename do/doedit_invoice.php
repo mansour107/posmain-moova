@@ -28,6 +28,7 @@ require_once('../classes/Recipe/LegacyInvoiceRecipeLifecycleBridge.php');
 require_once('../classes/Inventory/InventoryInvoiceBridge.php');
 require_once('../classes/Pos/Service/PosOrderMutationService.php');
 require_once('../classes/Pos/Service/OrderFulfillmentService.php');
+require_once('../classes/Accounting/JournalPostingGuard.php');
 require_once('../includes/pos_default_accounts.php');
 
 // تعريف ثوابت أنواع الفواتير
@@ -282,6 +283,7 @@ try {
     $stmt->close();
     // تحديث القيود المحاسبية إذا لزم الأمر
     if(in_array($pro_tybe, [INVOICE_TYPES['PURCHASE'], INVOICE_TYPES['SALES']])) {
+        JournalPostingGuard::rejectJournalMutationIfAppendOnly();
         // تحديث رأس القيد
         $stmt = $conn->prepare(
             "UPDATE journal_heads SET total = ?, jdate = ?, details = ? WHERE op_id = ?"

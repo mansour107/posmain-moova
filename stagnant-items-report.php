@@ -77,9 +77,9 @@ if (isset($_GET['days']) && $_GET['days'] > 0) {
                         </div>
 
                         <div class="col-md-3">
-                            <label>فئة الصنف:</label>
+                            <label>التصنيف:</label>
                             <select name="category" class="form-control">
-                                <option value="0">جميع الفئات</option>
+                                <option value="0">جميع التصنيفات</option>
                                 <?php
                                 $cat_query = $conn->query("SELECT * FROM item_group WHERE isdeleted = 0 ORDER BY gname");
                                 while ($cat_row = $cat_query->fetch_assoc()) {
@@ -116,9 +116,9 @@ if (isset($_GET['days']) && $_GET['days'] > 0) {
                             <thead class="thead-dark">
                                 <tr>
                                     <th class="text-center">#</th>
-                                    <th class="text-center">كود الصنف</th>
+                                    <th class="text-center">الباركود</th>
                                     <th class="text-center">اسم الصنف</th>
-                                    <th class="text-center">الفئة</th>
+                                    <th class="text-center">التصنيف</th>
                                     <th class="text-center">الكمية المتاحة</th>
                                     <th class="text-center">سعر البيع</th>
                                     <th class="text-center">قيمة المخزون</th>
@@ -150,7 +150,7 @@ if (isset($_GET['days']) && $_GET['days'] > 0) {
                                 $stagnant_query = "
                                     SELECT
                                         mi.id,
-                                        mi.code,
+                                        mi.barcode,
                                         mi.iname,
                                         mi.itmqty,
                                         {$inventoryStockQtyExpr} AS current_qty,
@@ -225,7 +225,7 @@ if (isset($_GET['days']) && $_GET['days'] > 0) {
                                         <tr>
                                             <td class="text-center"><?= $x ?></td>
                                             <td class="text-center">
-                                                <code><?= htmlspecialchars((string) ($row['code'] ?? ''), ENT_QUOTES, 'UTF-8') ?></code>
+                                                <?= htmlspecialchars((string) ($row['barcode'] ?? ''), ENT_QUOTES, 'UTF-8') ?>
                                             </td>
                                             <td>
                                                 <a href="item_summery.php?id=<?= $row['id'] ?>" class="btn btn-link btn-sm">

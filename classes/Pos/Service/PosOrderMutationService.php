@@ -24,9 +24,13 @@ require_once __DIR__ . '/PosCustomerService.php';
 require_once __DIR__ . '/DeliveryZoneService.php';
 require_once __DIR__ . '/OrderFulfillmentService.php';
 require_once __DIR__ . '/SideEffectPolicy.php';
+require_once __DIR__ . '/OrderRevisionService.php';
 require_once __DIR__ . '/../../../includes/pos_user_context.php';
 require_once __DIR__ . '/../../PosOrderService.php';
 require_once __DIR__ . '/../../../includes/pos_default_accounts.php';
+require_once __DIR__ . '/../../Items/ItemUnitResolver.php';
+require_once __DIR__ . '/../../Items/ItemUnitConversionFeatureFlags.php';
+require_once __DIR__ . '/../../Accounting/PaymentReconciliationService.php';
 
 class PosOrderMutationService
 {
@@ -729,7 +733,7 @@ class PosOrderMutationService
         $customerId = $this->requiredPositiveInt($request, 'acc2_id', 'بيانات مطلوبة مفقودة - العميل');
         $empId = $this->requiredPositiveInt($request, 'emp_id', 'بيانات مطلوبة مفقودة - الموظف');
         $fundId = $this->requiredPositiveInt($request, 'fund_id', 'بيانات مطلوبة مفقودة - الصندوق');
-        $items = $this->normalizeTakeawayItems($request);
+        $items = $this->normalizeTakeawayItems($conn, $request);
         $this->assertItemsAvailable($conn, $items, $request, $context);
         $userId = $this->contextUserId($request, $context);
         $date = $this->requestDate($request, ['pro_date', 'order_date', 'date'], (string) ($order['pro_date'] ?? date('Y-m-d')));
@@ -889,7 +893,7 @@ class PosOrderMutationService
             'line_count' => count($lineResult['lines']),
         ]);
 
-        return [
+        return $this->attachKitchenRevision($conn, $orderId, [
             'success' => true,
             'code' => 'OK',
             'message' => 'ORDER_UPDATED',
@@ -906,7 +910,7 @@ class PosOrderMutationService
                 'journal_id' => $salesJournal['journal_id'],
                 'receipt_ids' => array_column($receipts, 'receipt_id'),
             ],
-        ];
+        ]);
     }
 
     private function clearCashierOrderFinancialLinks(mysqli $conn, int $orderId): void
@@ -940,7 +944,7 @@ class PosOrderMutationService
         $customerId = $this->requiredPositiveInt($request, 'acc2_id', 'بيانات مطلوبة مفقودة - العميل');
         $empId = $this->requiredPositiveInt($request, 'emp_id', 'بيانات مطلوبة مفقودة - الموظف');
         $fundId = $this->requiredPositiveInt($request, 'fund_id', 'بيانات مطلوبة مفقودة - الصندوق');
-        $items = $this->normalizeTakeawayItems($request);
+        $items = $this->normalizeTakeawayItems($conn, $request);
         $this->assertItemsAvailable($conn, $items, $request, $context);
         $userId = $this->contextUserId($request, $context);
         $date = $this->requestDate($request, ['pro_date', 'order_date', 'date']);
@@ -1096,7 +1100,7 @@ class PosOrderMutationService
 
         $this->tableOrderService->execute($conn, "INSERT INTO process (type) VALUES ('add cash')");
 
-        return [
+        return $this->attachKitchenRevision($conn, $orderId, [
             'success' => true,
             'code' => 'OK',
             'message' => 'TAKEAWAY_ORDER_CREATED',
@@ -1114,7 +1118,7 @@ class PosOrderMutationService
                 'receipt_ids' => array_column($receipts, 'receipt_id'),
                 'outbox_id' => $outboxResult['outbox_id'] ?? null,
             ],
-        ];
+        ]);
     }
 
     private function createDeliveryOrderInsideTransaction(mysqli $conn, array $request, array $context): array
@@ -1143,7 +1147,7 @@ class PosOrderMutationService
         }
         $deliveryCustomerId = (int) ($request['pos_customer_id'] ?? 0);
 
-        $items = $this->normalizeTakeawayItems($request);
+        $items = $this->normalizeTakeawayItems($conn, $request);
         $this->assertItemsAvailable($conn, $items, $request, $context);
         $userId = $this->contextUserId($request, $context);
         $date = $this->requestDate($request, ['pro_date', 'order_date', 'date']);
@@ -1308,7 +1312,7 @@ class PosOrderMutationService
 
         $this->tableOrderService->execute($conn, "INSERT INTO process (type) VALUES ('add delivery')");
 
-        return [
+        return $this->attachKitchenRevision($conn, $orderId, [
             'success' => true,
             'code' => 'OK',
             'message' => 'DELIVERY_ORDER_CREATED',
@@ -1327,13 +1331,13 @@ class PosOrderMutationService
                 'receipt_ids' => array_column($receipts, 'receipt_id'),
                 'outbox_id' => $outboxResult['outbox_id'] ?? null,
             ],
-        ];
+        ]);
     }
 
-    private function normalizeTakeawayItems(array $request): array
+    private function normalizeTakeawayItems(mysqli $conn, array $request): array
     {
         if (isset($request['items']) && is_array($request['items']) && $request['items']) {
-            return $request['items'];
+            return $this->resolveAuthoritativeItemFactors($conn, $request['items']);
         }
 
         if (!isset($request['itmname']) || !is_array($request['itmname'])) {
@@ -1351,6 +1355,7 @@ class PosOrderMutationService
                 'price' => (float) ($request['itmprice'][$index] ?? 0),
                 'discount' => (float) ($request['itmdisc'][$index] ?? 0),
                 'u_val' => (float) ($request['u_val'][$index] ?? 1),
+                'unit_id' => (int) ($request['unit_id'][$index] ?? $request['unitid'][$index] ?? 0),
                 'note' => (string) ($request['itmnote'][$index] ?? ''),
                 'modifiers' => $this->decodeLineModifiers($request['itmmodifiers'][$index] ?? []),
                 'base_price' => (float) ($request['itmbaseprice'][$index] ?? $request['itmprice'][$index] ?? 0),
@@ -1361,6 +1366,28 @@ class PosOrderMutationService
         if (!$items) {
             throw new InvalidArgumentException('الرجاء إضافة أصناف للطلب');
         }
+
+        return $this->resolveAuthoritativeItemFactors($conn, $items);
+    }
+
+    private function resolveAuthoritativeItemFactors(mysqli $conn, array $items): array
+    {
+        foreach ($items as &$item) {
+            $itemId = (int) ($item['item_id'] ?? $item['id'] ?? 0);
+            if ($itemId < 1) {
+                continue;
+            }
+            $unitId = (int) ($item['unit_id'] ?? $item['unitid'] ?? 0);
+            $resolved = ItemUnitResolver::resolvePosStockFactor(
+                $conn,
+                $itemId,
+                $unitId > 0 ? $unitId : null,
+                $item['u_val'] ?? $item['unit_value'] ?? null
+            );
+            $item['u_val'] = $resolved['factor_float'];
+            $item['u_val_decimal'] = $resolved['factor_decimal'];
+        }
+        unset($item);
 
         return $items;
     }
@@ -1600,11 +1627,19 @@ class PosOrderMutationService
         $empId = $this->requiredPositiveInt($request, 'emp_id', 'بيانات المخزن أو الموظف أو الصندوق ناقصة');
         $fundId = $this->requiredPositiveInt($request, 'fund_id', 'بيانات المخزن أو الموظف أو الصندوق ناقصة');
         $items = $this->requiredItems($request);
+        $items = $this->resolveAuthoritativeItemFactors($conn, $items);
         $this->assertItemsAvailable($conn, $items, $request, $context);
         $total = (float) ($request['total'] ?? 0);
         $discount = (float) ($request['discount'] ?? 0);
         $this->requireDiscountApprovalIfNeeded($conn, $orderId > 0 ? $orderId : null, $discount, $request, $context);
         $net = (float) ($request['net'] ?? max(0, $total - $discount));
+        if (ItemUnitConversionFeatureFlags::strictPosFactorResolution()) {
+            $serverNet = (float) PaymentReconciliationService::recomputeTableNetFromLines($items, (string) $discount);
+            if (abs($serverNet - $net) > self::PAYMENT_ROUNDING_TOLERANCE) {
+                throw new InvalidArgumentException('ORDER_TOTAL_MISMATCH');
+            }
+            $net = $serverNet;
+        }
         $userId = $this->contextUserId($request, $context);
         $isUpdate = $orderId > 0;
 
@@ -1698,7 +1733,7 @@ class PosOrderMutationService
             'payment_status' => (string) $status['payment_status'],
         ]);
 
-        return [
+        return $this->attachKitchenRevision($conn, $orderId, [
             'success' => true,
             'code' => 'OK',
             'message' => 'TABLE_ORDER_SAVED',
@@ -1714,7 +1749,7 @@ class PosOrderMutationService
                 'total' => (float) $totals['total'],
                 'net' => (float) $totals['net'],
             ],
-        ];
+        ]);
     }
 
     private function splitTablePaymentInsideTransaction(mysqli $conn, array $request, array $context): array
@@ -2188,39 +2223,36 @@ class PosOrderMutationService
 
     private function insertTableOrderItems(mysqli $conn, int $orderId, int $storeId, array $items, array $context = []): array
     {
-        $recipeLines = [];
+        $movementItems = [];
         foreach ($items as $item) {
             $itemId = (int) ($item['id'] ?? $item['item_id'] ?? 0);
             $qty = (float) ($item['qty'] ?? 0);
-            $price = (float) ($item['price'] ?? 0);
             if ($itemId <= 0 || $qty <= 0) {
                 continue;
             }
 
-            $detValue = $qty * $price;
-            $this->tableOrderService->execute($conn, "
-                INSERT INTO fat_details (
-                    pro_tybe, pro_id, item_id, u_val, qty_in, qty_out, price,
-                    discount, det_value, fatid, fat_tybe, det_store
-                ) VALUES (9, ?, ?, 1, 0, ?, ?, 0, ?, ?, 9, ?)
-            ", [$orderId, $itemId, $qty, $price, $detValue, $orderId, $storeId]);
-            $detailId = (int) $conn->insert_id;
-            $detailUuid = $this->tableOrderService->assignUuidIfPresent($conn, 'fat_details', $detailId);
-            $this->persistLineCustomizationsIfAvailable($conn, $orderId, $detailId, $itemId, $item, $qty, $context);
-            $recipeLines[] = $this->recipeLineContext(
-                $conn,
-                $orderId,
-                $detailId,
-                $detailUuid,
-                $itemId,
-                $qty,
-                $storeId,
-                'table',
-                'dine_in',
-                $item,
-                [],
-                $context
-            );
+            $movementItems[] = [
+                'item_id' => $itemId,
+                'qty' => $qty,
+                'price' => (float) ($item['price'] ?? 0),
+                'discount' => (float) ($item['discount'] ?? 0),
+                'unit_id' => (int) ($item['unit_id'] ?? $item['unitid'] ?? 0),
+                'u_val' => $item['u_val'] ?? null,
+                '_source_item' => $item,
+            ];
+        }
+
+        $resolvedItems = $this->resolveAuthoritativeItemFactors($conn, $movementItems);
+        $lineResult = $this->inventoryMovementService->normalizeInvoiceLines(
+            $conn,
+            InventoryMovementService::TYPE_POS,
+            $resolvedItems,
+            ['store_id' => $storeId]
+        );
+
+        $recipeLines = [];
+        foreach ($lineResult['lines'] as $line) {
+            $recipeLines[] = $this->insertTakeawayDetailLine($conn, $orderId, $storeId, $line, $context);
         }
 
         return $recipeLines;
@@ -3302,5 +3334,28 @@ class PosOrderMutationService
             WHERE id = ?
               AND pro_tybe = 9
         ", [$userId, $reason, $orderId]);
+    }
+
+    private function orderRevisionService(): OrderRevisionService
+    {
+        static $service = null;
+        if ($service === null) {
+            $service = new OrderRevisionService();
+        }
+
+        return $service;
+    }
+
+    private function attachKitchenRevision(mysqli $conn, int $orderId, array $envelope): array
+    {
+        if ($orderId > 0) {
+            $revision = $this->orderRevisionService()->bumpAndGet($conn, $orderId);
+            if (!isset($envelope['data']) || !is_array($envelope['data'])) {
+                $envelope['data'] = [];
+            }
+            $envelope['data']['kitchen_revision'] = $revision;
+        }
+
+        return $envelope;
     }
 }

@@ -6,6 +6,16 @@ if (!function_exists('posmain_inventory_transfers_allowed')) {
     require_once __DIR__ . '/pos_operational_store.php';
 }
 $posmainInventoryTransfersAllowed = posmain_inventory_transfers_allowed();
+if (!function_exists('auth_guard_has_permission')) {
+    require_once __DIR__ . '/auth_guard.php';
+}
+$posmainCanManagePosCustomers = isset($conn) && $conn instanceof mysqli
+    && (auth_guard_has_permission('customers.manage', $conn)
+        || auth_guard_has_permission('system.tools.run', $conn));
+$posmainCanViewKds = isset($conn) && $conn instanceof mysqli
+    && auth_guard_has_permission('kds.view', $conn);
+$posmainCanManageKds = isset($conn) && $conn instanceof mysqli
+    && auth_guard_has_permission('kds.manage', $conn);
 ?>
 <!-- Main Sidebar Container -->
 <aside class="main-sidebar elevation-4 font-light">
@@ -292,16 +302,7 @@ $posmainInventoryTransfersAllowed = posmain_inventory_transfers_allowed();
                 <a href="mygroups.php" class="nav-link">
                   <i class="nav-icon fas fa-list"></i>
                   <p>
-                    <?= $lang_groups ?>
-                  </p>
-                </a>
-              </li>
-
-              <li class="nav-item">
-                <a href="item_categories.php" class="nav-link">
-                  <i class="nav-icon fas fa-list"></i>
-                  <p>
-                    <?= $lang_categories ?>
+                    <?= $lang_groups_and_categories ?>
                   </p>
                 </a>
               </li>
@@ -335,6 +336,35 @@ $posmainInventoryTransfersAllowed = posmain_inventory_transfers_allowed();
 
 
 
+
+<!-- ------------------- شاشة المطبخ KDS -->
+        <?php if ($posmainCanViewKds) { ?>
+          <li class="nav-item has-treeview">
+            <a href="#" class="nav-link nav-link-basic">
+              <i class="nav-icon fas fa-tv"></i>
+              <p>
+                شاشة المطبخ
+                <i class="fas fa-angle-left right"></i>
+              </p>
+            </a>
+            <ul class="nav nav-treeview" style="display: none;">
+              <li class="nav-item">
+                <a href="kds.php" class="nav-link">
+                  <i class="nav-icon fas fa-utensils"></i>
+                  <p>الشاشات</p>
+                </a>
+              </li>
+              <?php if ($posmainCanManageKds) { ?>
+                <li class="nav-item">
+                  <a href="kds_settings.php" class="nav-link">
+                    <i class="nav-icon fas fa-cog"></i>
+                    <p>إعدادات المطبخ</p>
+                  </a>
+                </li>
+              <?php } ?>
+            </ul>
+          </li>
+        <?php } ?>
 
 <!-- -------------------نقاط البيع  -->
         <?php if (($role['sid_sales'] ?? 0) == 1) { ?>
@@ -398,6 +428,15 @@ $posmainInventoryTransfersAllowed = posmain_inventory_transfers_allowed();
                   <p><?= $lang_closed_sessions ?></p>
                 </a>
               </li>
+
+              <?php if ($posmainCanManagePosCustomers) { ?>
+                <li class="nav-item">
+                  <a href="pos_customers.php" class="nav-link">
+                    <i class="nav-icon fas fa-address-book"></i>
+                    <p>عملاء نقاط البيع</p>
+                  </a>
+                </li>
+              <?php } ?>
 
               <?php if (($rowstg['show_customer_visits'] ?? 1) == 1) { ?>
                 <li class="nav-item">
@@ -1542,6 +1581,10 @@ $posmainInventoryTransfersAllowed = posmain_inventory_transfers_allowed();
       if (window.location.href.includes('myitems.php')) {
         $('#stock').show().addClass('bg-slate-100');
         $('#myitems').addClass('bg-slate-200');
+      }
+
+      if (window.location.href.includes('mygroups.php') || window.location.href.includes('item_categories.php')) {
+        $('#stock').show().addClass('bg-slate-100');
       }
 
       if (window.location.href.includes('reservations.php')) {

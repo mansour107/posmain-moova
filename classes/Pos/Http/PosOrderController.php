@@ -30,7 +30,16 @@ class PosOrderController
         $staleAfterSeconds = (int) ($options['stale_after_seconds'] ?? 300);
 
         $data = OrderInputValidator::validateTableSave($data);
-        $data = posmain_resolve_pos_invoice_accounts($conn, posmain_load_pos_settings_row($conn), $data);
+        $resolvedAccounts = posmain_resolve_pos_invoice_accounts($conn, posmain_load_pos_settings_row($conn), $data);
+        $data['store_id'] = (int) ($resolvedAccounts['store_id'] ?? $data['store_id'] ?? 0);
+        $data['emp_id'] = (int) ($resolvedAccounts['emp_id'] ?? $data['emp_id'] ?? 0);
+        $data['fund_id'] = (int) ($resolvedAccounts['fund_id'] ?? $data['fund_id'] ?? 0);
+        $data['acc2_id'] = (int) ($resolvedAccounts['acc2_id'] ?? $data['acc2_id'] ?? 0);
+        $data['payment_fund_id'] = (int) ($resolvedAccounts['payment_fund_id'] ?? $data['payment_fund_id'] ?? $data['fund_id'] ?? 0);
+        $data['payment_bank_id'] = (int) ($resolvedAccounts['payment_bank_id'] ?? $data['payment_bank_id'] ?? 0);
+        if (!empty($resolvedAccounts['sales_account_id'])) {
+            $data['sales_account_id'] = (int) $resolvedAccounts['sales_account_id'];
+        }
         $data = (new OrderPricingService())->resolveTableSaveRequest($conn, $data, ['user_id' => $userId]);
 
         $tableId = (int) ($data['table_id'] ?? 0);
@@ -97,8 +106,19 @@ class PosOrderController
         $saveData = $saveEnvelope['data'] ?? [];
         $orderId = (int) ($saveData['order_id'] ?? 0);
         $orderStatus = (string) ($saveData['order_status'] ?? 'active');
+        $kitchenRevision = (int) ($saveData['kitchen_revision'] ?? 0);
 
-        $sideEffects->recordTableSave($conn, $orderId, $tableId, $isUpdate, $orderStatus, $userId, $sourceSystem, $eventSource);
+        $sideEffects->recordTableSave(
+            $conn,
+            $orderId,
+            $tableId,
+            $isUpdate,
+            $orderStatus,
+            $userId,
+            $sourceSystem,
+            $eventSource,
+            $kitchenRevision
+        );
 
         $response = is_callable($options['response_builder'] ?? null)
             ? (array) call_user_func($options['response_builder'], $orderId, $idempotencyKey, $saveData)
@@ -112,6 +132,8 @@ class PosOrderController
                     'order_id' => $orderId,
                     'edit_id' => $orderId,
                     'table_id' => $tableId,
+                    'kitchen_revision' => $kitchenRevision,
+                    'cart_saved' => true,
                 ],
             ];
 
@@ -148,6 +170,7 @@ class PosOrderController
                 ]));
                 $saveData = is_array($result['data'] ?? null) ? $result['data'] : [];
                 $orderId = (int) ($saveData['order_id'] ?? 0);
+                $kitchenRevision = (int) ($saveData['kitchen_revision'] ?? 0);
                 $sideEffects->recordCashierMutation(
                     $conn,
                     $orderId,
@@ -156,7 +179,9 @@ class PosOrderController
                     $userId,
                     (string) ($saveData['order_status'] ?? 'active'),
                     'pos_cashier',
-                    'pos_takeaway_create'
+                    'pos_takeaway_create',
+                    [],
+                    $kitchenRevision
                 );
 
                 return $this->formatCashierMutationPayload($result, $request, 'takeaway');
@@ -188,6 +213,7 @@ class PosOrderController
                 ]));
                 $saveData = is_array($result['data'] ?? null) ? $result['data'] : [];
                 $orderId = (int) ($saveData['order_id'] ?? 0);
+                $kitchenRevision = (int) ($saveData['kitchen_revision'] ?? 0);
                 $sideEffects->recordCashierMutation(
                     $conn,
                     $orderId,
@@ -196,7 +222,9 @@ class PosOrderController
                     $userId,
                     (string) ($saveData['order_status'] ?? 'active'),
                     'pos_cashier_delivery',
-                    'pos_delivery_create'
+                    'pos_delivery_create',
+                    [],
+                    $kitchenRevision
                 );
 
                 return $this->formatCashierMutationPayload($result, $request, 'delivery');
@@ -238,6 +266,7 @@ class PosOrderController
                 ]));
                 $saveData = is_array($result['data'] ?? null) ? $result['data'] : [];
                 $orderId = (int) ($saveData['order_id'] ?? 0);
+                $kitchenRevision = (int) ($saveData['kitchen_revision'] ?? 0);
                 $sideEffects->recordCashierMutation(
                     $conn,
                     $orderId,
@@ -246,7 +275,9 @@ class PosOrderController
                     $userId,
                     (string) ($saveData['order_status'] ?? 'active'),
                     $channel === 'delivery' ? 'pos_cashier_delivery' : 'pos_cashier',
-                    'pos_cashier_update'
+                    'pos_cashier_update',
+                    [],
+                    $kitchenRevision
                 );
 
                 return $this->formatCashierMutationPayload($result, $request, $channel);
@@ -475,39 +506,16 @@ class PosOrderController
 
     public function splitPayment(mysqli $conn, array $data, array $server, int $userId): array
     {
-        try {
-            $data = PaymentInputValidator::validateSplitPayment($data);
-        } catch (Exception $e) {
-            throw new InvalidArgumentException($e->getMessage());
+        $splitRows = $this->extractSplitPaymentRows($data);
+        $tableId = (int) ($data['table_id'] ?? $data['selected_table_id'] ?? 0);
+        $orderId = (int) ($data['order_id'] ?? $data['edit_id'] ?? $data['selected_order_id'] ?? 0);
+        $paidAmount = (float) ($data['paid_amount'] ?? $data['paid'] ?? 0);
+        $paymentMethod = trim((string) ($data['payment_method'] ?? $data['pos_split_payment_method'] ?? ''));
+        if ($paymentMethod === '') {
+            $paymentMethod = (float) ($data['paid_bank'] ?? 0) > 0 ? 'bank' : 'cash';
         }
 
-        $originalOrderId = (int) ($data['order_id'] ?? 0);
-        $tableId = (int) ($data['table_id'] ?? 0);
-        $rawItems = is_array($data['items'] ?? null) ? $data['items'] : [];
-        $splitRequests = [];
-        foreach ($rawItems as $item) {
-            if (is_array($item)) {
-                $detailId = (int) ($item['detail_id'] ?? $item['detailId'] ?? $item['id'] ?? 0);
-                $qty = isset($item['qty']) ? (float) $item['qty'] : (isset($item['quantity']) ? (float) $item['quantity'] : null);
-            } else {
-                $detailId = (int) $item;
-                $qty = null;
-            }
-
-            if ($detailId > 0) {
-                if (!isset($splitRequests[$detailId])) {
-                    $splitRequests[$detailId] = ['qty' => null];
-                }
-                if ($qty !== null) {
-                    $splitRequests[$detailId]['qty'] = ($splitRequests[$detailId]['qty'] ?? 0) + $qty;
-                }
-            }
-        }
-        $selectedItems = array_keys($splitRequests);
-        $paidAmount = (float) ($data['paid_amount'] ?? 0);
-        $paymentMethod = trim((string) ($data['payment_method'] ?? 'cash'));
-
-        if ($originalOrderId <= 0 || $tableId <= 0 || !$selectedItems || $paidAmount <= 0) {
+        if ($tableId <= 0 || $paidAmount <= 0 || !$splitRows) {
             throw new InvalidArgumentException('بيانات السداد المقسم غير صحيحة');
         }
 
@@ -549,6 +557,26 @@ class PosOrderController
 
             return $this->idempotencyProcessingResponse($idempotencyKey);
         }
+
+        try {
+            $resolvedItems = $this->resolveSplitPaymentItems($conn, $data, $splitRows, $tableId, $orderId, $userId, $posMutationService);
+            $data = PaymentInputValidator::validateSplitPayment([
+                'order_id' => $orderId,
+                'table_id' => $tableId,
+                'items' => $resolvedItems,
+                'paid_amount' => $paidAmount,
+                'payment_method' => $paymentMethod,
+            ]);
+        } catch (Exception $e) {
+            $conn->rollback();
+            throw new InvalidArgumentException($e->getMessage());
+        }
+
+        $originalOrderId = (int) ($data['order_id'] ?? 0);
+        $tableId = (int) ($data['table_id'] ?? 0);
+        $rawItems = is_array($data['items'] ?? null) ? $data['items'] : [];
+        $paidAmount = (float) ($data['paid_amount'] ?? 0);
+        $paymentMethod = trim((string) ($data['payment_method'] ?? 'cash'));
 
         $splitEnvelope = $posMutationService->splitTablePayment($conn, [
             'order_id' => $originalOrderId,
@@ -913,6 +941,8 @@ class PosOrderController
                 'order_id' => $orderId,
                 'edit_id' => $orderId,
                 'pro_id' => $proId,
+                'kitchen_revision' => (int) ($data['kitchen_revision'] ?? 0),
+                'cart_saved' => true,
             ],
         ];
 
@@ -956,5 +986,228 @@ class PosOrderController
         $stmt->close();
 
         return (int) ($row['id'] ?? 0);
+    }
+
+    private function extractSplitPaymentRows(array $data): array
+    {
+        if (isset($data['split_items']) && is_array($data['split_items'])) {
+            return $data['split_items'];
+        }
+
+        $rawPayload = $data['pos_split_payment_payload'] ?? null;
+        if (is_string($rawPayload) && trim($rawPayload) !== '') {
+            $decoded = json_decode($rawPayload, true);
+            if (is_array($decoded)) {
+                return $decoded;
+            }
+        }
+
+        return [];
+    }
+
+    private function splitRowsNeedDetailResolution(array $splitRows): bool
+    {
+        foreach ($splitRows as $row) {
+            if (!is_array($row)) {
+                continue;
+            }
+            $detailId = (int) ($row['detail_id'] ?? $row['detailId'] ?? 0);
+            if ($detailId > 0) {
+                continue;
+            }
+            if (array_key_exists('row_index', $row)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function extractCartItemsForSplitSave(array $data): array
+    {
+        $items = is_array($data['items'] ?? null) ? $data['items'] : [];
+        $cartItems = [];
+        foreach ($items as $item) {
+            if (!is_array($item)) {
+                continue;
+            }
+            if (array_key_exists('row_index', $item) && !isset($item['id']) && !isset($item['item_id'])) {
+                continue;
+            }
+            $itemId = (int) ($item['item_id'] ?? $item['id'] ?? 0);
+            if ($itemId <= 0) {
+                continue;
+            }
+            $cartItems[] = [
+                'id' => $itemId,
+                'qty' => (float) ($item['qty'] ?? 1),
+                'price' => (float) ($item['price'] ?? 0),
+                'discount' => (float) ($item['discount'] ?? 0),
+                'note' => (string) ($item['note'] ?? ''),
+            ];
+        }
+        if ($cartItems) {
+            return $cartItems;
+        }
+
+        $names = is_array($data['itmname'] ?? null) ? $data['itmname'] : [];
+        if (!$names) {
+            return [];
+        }
+
+        $qtyFields = is_array($data['itmqty'] ?? null) ? $data['itmqty'] : [];
+        $priceFields = is_array($data['itmprice'] ?? null) ? $data['itmprice'] : [];
+        $discFields = is_array($data['itmdisc'] ?? null) ? $data['itmdisc'] : [];
+        $noteFields = is_array($data['itmnote'] ?? null) ? $data['itmnote'] : [];
+
+        foreach ($names as $index => $name) {
+            $itemId = (int) $name;
+            if ($itemId <= 0) {
+                continue;
+            }
+            $cartItems[] = [
+                'id' => $itemId,
+                'qty' => (float) ($qtyFields[$index] ?? 1),
+                'price' => (float) ($priceFields[$index] ?? 0),
+                'discount' => (float) ($discFields[$index] ?? 0),
+                'note' => (string) ($noteFields[$index] ?? ''),
+            ];
+        }
+
+        return $cartItems;
+    }
+
+    private function buildTableSaveRequestForSplit(mysqli $conn, array $data, int $tableId, int $orderId, array $cartItems, int $userId): array
+    {
+        $saveData = array_merge($data, [
+            'table_id' => $tableId,
+            'order_id' => $orderId,
+            'items' => $cartItems,
+            'user_id' => $userId,
+        ]);
+        $saveData = OrderInputValidator::validateTableSave($saveData);
+        $resolvedAccounts = posmain_resolve_pos_invoice_accounts($conn, posmain_load_pos_settings_row($conn), $saveData);
+        $saveData['store_id'] = (int) ($resolvedAccounts['store_id'] ?? $saveData['store_id'] ?? 0);
+        $saveData['emp_id'] = (int) ($resolvedAccounts['emp_id'] ?? $saveData['emp_id'] ?? 0);
+        $saveData['fund_id'] = (int) ($resolvedAccounts['fund_id'] ?? $saveData['fund_id'] ?? 0);
+
+        return $saveData;
+    }
+
+    private function loadOrderDetailIdsByIndex(mysqli $conn, int $orderId): array
+    {
+        if ($orderId <= 0) {
+            return [];
+        }
+
+        $tableOrderService = new TableOrderService();
+        $rows = $tableOrderService->queryAll($conn, "
+            SELECT id
+            FROM fat_details
+            WHERE fatid = ?
+              AND isdeleted = 0
+            ORDER BY id ASC
+        ", [$orderId]);
+
+        $detailIds = [];
+        foreach ($rows as $row) {
+            $detailIds[] = (int) ($row['id'] ?? 0);
+        }
+
+        return $detailIds;
+    }
+
+    private function mapSplitRowsToDetailIds(array $splitRows, array $detailIdsByIndex): array
+    {
+        $mapped = [];
+        foreach ($splitRows as $row) {
+            if (!is_array($row)) {
+                continue;
+            }
+
+            $detailId = (int) ($row['detail_id'] ?? $row['detailId'] ?? 0);
+            if ($detailId <= 0 && array_key_exists('row_index', $row)) {
+                $rowIndex = (int) $row['row_index'];
+                $detailId = (int) ($detailIdsByIndex[$rowIndex] ?? 0);
+            }
+            if ($detailId <= 0) {
+                throw new InvalidArgumentException('تعذر ربط الأصناف المحددة بتفاصيل الطلب');
+            }
+
+            $mapped[] = [
+                'detail_id' => $detailId,
+                'qty' => (float) ($row['qty'] ?? $row['quantity'] ?? 0),
+            ];
+        }
+
+        if (!$mapped) {
+            throw new InvalidArgumentException('بيانات السداد المقسم غير صحيحة');
+        }
+
+        return $mapped;
+    }
+
+    private function resolveSplitPaymentItems(
+        mysqli $conn,
+        array $data,
+        array $splitRows,
+        int $tableId,
+        int &$orderId,
+        int $userId,
+        PosOrderMutationService $posMutationService
+    ): array {
+        if (!$this->splitRowsNeedDetailResolution($splitRows)) {
+            $normalized = [];
+            foreach ($splitRows as $row) {
+                if (!is_array($row)) {
+                    continue;
+                }
+                $detailId = (int) ($row['detail_id'] ?? $row['detailId'] ?? $row['id'] ?? 0);
+                if ($detailId <= 0) {
+                    continue;
+                }
+                $normalized[] = [
+                    'detail_id' => $detailId,
+                    'qty' => isset($row['qty']) || isset($row['quantity'])
+                        ? (float) ($row['qty'] ?? $row['quantity'] ?? 0)
+                        : null,
+                ];
+            }
+
+            if (!$normalized || $orderId <= 0) {
+                throw new InvalidArgumentException('بيانات السداد المقسم غير صحيحة');
+            }
+
+            return $normalized;
+        }
+
+        $cartItems = $this->extractCartItemsForSplitSave($data);
+        if (!$cartItems) {
+            throw new InvalidArgumentException('بيانات السداد المقسم غير صحيحة');
+        }
+
+        $saveData = $this->buildTableSaveRequestForSplit($conn, $data, $tableId, $orderId, $cartItems, $userId);
+        $saveData = (new OrderPricingService())->resolveTableSaveRequest($conn, $saveData, ['user_id' => $userId]);
+        $saveEnvelope = $posMutationService->saveTableOrder($conn, [
+            'table_id' => $tableId,
+            'order_id' => (int) ($saveData['order_id'] ?? $orderId),
+            'order_date' => trim((string) ($saveData['order_date'] ?? date('Y-m-d'))),
+            'store_id' => (int) ($saveData['store_id'] ?? 0),
+            'emp_id' => (int) ($saveData['emp_id'] ?? 0),
+            'fund_id' => (int) ($saveData['fund_id'] ?? 0),
+            'items' => $cartItems,
+            'total' => (float) ($saveData['total'] ?? 0),
+            'discount' => (float) ($saveData['discount'] ?? 0),
+            'net' => (float) ($saveData['net'] ?? 0),
+            'user_id' => $userId,
+            'pos_customer_id' => (int) ($saveData['pos_customer_id'] ?? $data['pos_customer_id'] ?? 0) ?: null,
+        ], ['user_id' => $userId, 'in_transaction' => true, 'event_source' => 'pos_split_payment_save']);
+
+        $orderId = (int) (($saveEnvelope['data'] ?? [])['order_id'] ?? 0);
+        if ($orderId <= 0) {
+            throw new InvalidArgumentException('تعذر حفظ الطلب قبل السداد المقسم');
+        }
+
+        return $this->mapSplitRowsToDetailIds($splitRows, $this->loadOrderDetailIdsByIndex($conn, $orderId));
     }
 }

@@ -20,6 +20,7 @@ $usid = $_SESSION['userid'];
 require_once('../classes/InvoiceElementFactory.php');
 require_once('../classes/Recipe/LegacyInvoiceRecipeLifecycleBridge.php');
 require_once('../classes/Inventory/InventoryInvoiceBridge.php');
+require_once('../classes/Accounting/JournalPostingGuard.php');
 
 // تعريف ثوابت أنواع الفواتير
 define('INVOICE_TYPES', [
@@ -193,6 +194,7 @@ try {
     $conn->query("UPDATE ot_head SET isdeleted = 1 WHERE id = $id");
     
     // حذف القيود المحاسبية
+    JournalPostingGuard::rejectJournalMutationIfAppendOnly();
     $conn->query("UPDATE journal_entries SET isdeleted = 1 WHERE op_id = $id");
     $conn->query("UPDATE journal_heads SET isdeleted = 1 WHERE op_id = $id");
     

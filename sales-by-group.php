@@ -9,7 +9,7 @@
             <div class="card">
                 <form action="" method="post">
                     <div class="card-header">
-                        <h1>المبيعات مجموعات</h1>
+                        <h1>المبيعات حسب التصنيف</h1>
                         <div class="row">
                             <div class="col-md-3">
                                 <div class="form-group">
@@ -48,7 +48,7 @@
 
                 $sql = "SELECT 
                             COALESCE(g.id, 0) as group_id,
-                            COALESCE(g.gname, 'بدون مجموعة') as group_name,
+                            COALESCE(g.gname, 'بدون تصنيف') as group_name,
                             COALESCE(SUM(fd.qty_out), 0) as total_qty,
                             COALESCE(SUM(fd.det_value), 0) as total_sales
                         FROM myitems i
@@ -58,7 +58,7 @@
                             AND (fd.fat_tybe = 9 OR fd.fat_tybe = 3)
                             AND fd.crtime BETWEEN '$from 00:00:00' AND '$to 23:59:59'
                         WHERE i.isdeleted = 0
-                        GROUP BY COALESCE(g.id, 0), COALESCE(g.gname, 'بدون مجموعة')
+                        GROUP BY COALESCE(g.id, 0), COALESCE(g.gname, 'بدون تصنيف')
                         HAVING total_qty > 0 OR total_sales > 0
                         ORDER BY total_sales DESC, total_qty DESC";
 
@@ -82,7 +82,7 @@
                             <thead>
                                 <tr>
                                     <th>م</th>
-                                    <th>المجموعة</th>
+                                    <th>التصنيف</th>
                                     <th>الكمية المباعة</th>
                                     <th>إجمالي المبيعات</th>
                                 </tr>
