@@ -1,31 +1,119 @@
 <?php
 
+require_once __DIR__ . '/ItemUnitProfileBuilder.php';
+
 final class ItemFormInput
 {
     public static function normalizeAddPayload(array $post, int $userId, int $defaultUnitId = 0): array
     {
+        $itemType = self::itemType($post['item_type'] ?? null);
+        $profileUnits = null;
+        $preferredUnitId = self::intValue($post['preferred_unit_id'] ?? null);
+        $purchaseUnitId = 0;
         $marketPrice = self::decimalArrayValue($post, 'market_price', 0);
         $price3 = self::decimalArrayValue($post, 'price3', 0, $marketPrice);
+        $price1 = self::decimalArrayValue($post, 'price1', 0);
+        $price2 = self::decimalArrayValue($post, 'price2', 0);
+        $costPrice = self::decimalArrayValue($post, 'cost_price', 0);
+        $barcode = self::text($post, 'barcode');
 
-        return [
+        if (ItemUnitProfileBuilder::usesProfileForm($post)) {
+            $profile = ItemUnitProfileBuilder::buildFromPost($post, $defaultUnitId);
+            $profileUnits = $profile['units'];
+            $preferredUnitId = (int) $profile['preferred_unit_id'];
+            $purchaseUnitId = (int) $profile['purchase_unit_id'];
+            $price1 = (float) $profile['price1'];
+            $price2 = (float) $profile['price2'];
+            $price3 = (float) $profile['price3'];
+            $marketPrice = (float) $profile['market_price'];
+            $costPrice = (float) $profile['cost_price'];
+            if ($barcode === '' && ($profile['barcode'] ?? '') !== '') {
+                $barcode = (string) $profile['barcode'];
+            }
+        }
+
+        $payload = [
             'iname' => self::requiredText($post, 'iname'),
             'name2' => self::text($post, 'name2'),
-            'code' => self::intValue($post['code'] ?? null),
-            'barcode' => self::text($post, 'barcode'),
+            'barcode' => $barcode,
             'info' => self::text($post, 'info'),
-            'item_type' => self::itemType($post['item_type'] ?? null),
+            'item_type' => $itemType,
             'track_stock' => self::trackStock($post),
-            'preferred_unit_id' => self::intValue($post['preferred_unit_id'] ?? null),
+            'preferred_unit_id' => $preferredUnitId,
+            'purchase_unit_id' => $purchaseUnitId,
             'market_price' => $marketPrice,
-            'cost_price' => self::decimalArrayValue($post, 'cost_price', 0),
-            'price1' => self::decimalArrayValue($post, 'price1', 0),
-            'price2' => self::decimalArrayValue($post, 'price2', 0),
+            'cost_price' => $costPrice,
+            'price1' => $price1,
+            'price2' => $price2,
             'price3' => $price3,
             'group1' => self::intValue($post['group1'] ?? null),
             'group2' => self::intValue($post['group2'] ?? null),
             'user' => $userId > 0 ? $userId : 1,
-            'units' => self::unitRows($post, $defaultUnitId),
+            'units' => $profileUnits ?? self::unitRows($post, $defaultUnitId),
         ];
+
+        if ($profileUnits === null && !self::hasVariantRows($post)) {
+            self::assertUnitSellPrices($payload['units']);
+        }
+
+        return $payload;
+    }
+
+    public static function resolveDefaultUnitId(mysqli $conn): int
+    {
+        $stmt = $conn->prepare("SELECT id FROM myunits WHERE COALESCE(isdeleted, 0) = 0 AND uname = 'قطعة' ORDER BY id LIMIT 1");
+        if ($stmt) {
+            $stmt->execute();
+            $row = $stmt->get_result()->fetch_assoc();
+            $stmt->close();
+            if ($row !== null) {
+                return (int) $row['id'];
+            }
+        }
+
+        $row = $conn->query("SELECT id FROM myunits WHERE COALESCE(isdeleted, 0) = 0 ORDER BY id LIMIT 1")->fetch_assoc();
+        if ($row !== null) {
+            return (int) $row['id'];
+        }
+
+        $unitName = 'قطعة';
+        $stmt = $conn->prepare('INSERT INTO myunits (uname) VALUES (?)');
+        $stmt->bind_param('s', $unitName);
+        $stmt->execute();
+        $unitId = (int) $conn->insert_id;
+        $stmt->close();
+
+        return $unitId;
+    }
+
+    public static function hasVariantRows(array $post): bool
+    {
+        $labels = isset($post['variant_label']) && is_array($post['variant_label']) ? $post['variant_label'] : [];
+        $names = isset($post['variant_name']) && is_array($post['variant_name']) ? $post['variant_name'] : [];
+        $variantItemIds = isset($post['variant_item_id']) && is_array($post['variant_item_id']) ? $post['variant_item_id'] : [];
+        $max = max(count($labels), count($names), count($variantItemIds));
+
+        for ($index = 0; $index < $max; $index++) {
+            $label = trim((string) ($labels[$index] ?? ''));
+            $name = trim((string) ($names[$index] ?? ''));
+            $variantItemId = self::intValue($variantItemIds[$index] ?? null);
+            if ($label === '' && $name === '' && $variantItemId <= 0) {
+                continue;
+            }
+
+            return true;
+        }
+
+        return false;
+    }
+
+    private static function assertUnitSellPrices(array $units): void
+    {
+        foreach ($units as $unit) {
+            if ((float) ($unit['price1'] ?? 0) <= 0) {
+                throw new InvalidArgumentException('sell_price_required');
+            }
+        }
     }
 
     private static function itemType($value): string

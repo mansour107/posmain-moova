@@ -1,8 +1,10 @@
 <?php
 require_once __DIR__ . '/../includes/session_bootstrap.php';
 include('../includes/connect.php');
+require_once __DIR__ . '/../classes/Items/ItemCatalogCode.php';
 require_once __DIR__ . '/../classes/Items/ItemEditorFlash.php';
 require_once __DIR__ . '/../classes/Items/ItemFormInput.php';
+require_once __DIR__ . '/../classes/Items/ItemUnitPersistence.php';
 require_once __DIR__ . '/../classes/Items/ItemRecipeCatalogService.php';
 require_once __DIR__ . '/../classes/Pos/Service/ItemVariantService.php';
 require_once __DIR__ . '/../classes/Sync/MenuItemSyncRecorder.php';
@@ -33,7 +35,7 @@ try {
         exit;
     }
 
-    $defaultUnitId = posmain_add_item_needs_default_unit($_POST) ? posmain_add_item_default_unit_id($conn) : 0;
+    $defaultUnitId = ItemFormInput::resolveDefaultUnitId($conn);
     $payload = ItemFormInput::normalizeAddPayload($_POST, $usid, $defaultUnitId);
 } catch (InvalidArgumentException $exception) {
     ItemEditorFlash::set('danger', 'save_failed');
@@ -59,7 +61,7 @@ try {
     );
     $iname = $payload['iname'];
     $name2 = $payload['name2'];
-    $code = $payload['code'];
+    $code = ItemCatalogCode::resolveForInsert($conn, null);
     $barcode = $payload['barcode'];
     $info = $payload['info'];
     $marketPrice = $payload['market_price'];
@@ -92,34 +94,7 @@ try {
     $stmt->close();
     (new ItemRecipeCatalogService())->saveMetadata($conn, (int) $last_id, $payload);
 
-    // إدخال بيانات الوحدات إلى جدول item_units
-    $unitStmt = $conn->prepare(
-        'INSERT INTO item_units(item_id, unit_id, u_val, unit_barcode, cost_price, price1, price2, price3)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-    );
-    foreach ($payload['units'] as $unit) {
-        $unitId = $unit['unit_id'];
-        $uVal = $unit['u_val'];
-        $unitBarcode = $unit['unit_barcode'];
-        $unitCostPrice = $unit['cost_price'];
-        $unitPrice1 = $unit['price1'];
-        $unitPrice2 = $unit['price2'];
-        $unitPrice3 = $unit['price3'];
-
-        $unitStmt->bind_param(
-            'iidsdddd',
-            $last_id,
-            $unitId,
-            $uVal,
-            $unitBarcode,
-            $unitCostPrice,
-            $unitPrice1,
-            $unitPrice2,
-            $unitPrice3
-        );
-        $unitStmt->execute();
-    }
-    $unitStmt->close();
+    ItemUnitPersistence::saveForItem($conn, (int) $last_id, $payload['units'], (int) ($payload['purchase_unit_id'] ?? 0));
 
     // معالجة رفع الصور
     $imgs_name = $imageFiles['name'];

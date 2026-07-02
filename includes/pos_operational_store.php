@@ -33,6 +33,10 @@ if (!function_exists('posmain_operational_store_id')) {
      */
     function posmain_operational_store_id(mysqli $conn): int
     {
+        if (!function_exists('posmain_resolve_default_account_id')) {
+            require_once __DIR__ . '/pos_default_accounts.php';
+        }
+
         $settings = posmain_settings_row_for_operational_store($conn);
         $preferred = (int) ($settings['def_pos_store'] ?? 0);
 

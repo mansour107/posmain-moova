@@ -1,6 +1,8 @@
 <?php include('includes/header.php') ?>
 <?php
 require_once __DIR__ . '/classes/Items/ItemEditorFlash.php';
+require_once __DIR__ . '/classes/Items/ItemFormInput.php';
+require_once __DIR__ . '/classes/Items/ItemUnitProfileReader.php';
 require_once __DIR__ . '/classes/Pos/Service/ItemVariantService.php';
 
 $itemEditorFlash = ItemEditorFlash::take();
@@ -40,9 +42,63 @@ function posmain_add_item_unit_options(mysqli $conn): array
     return $options;
 }
 
+function posmain_add_item_group_options(mysqli $conn, string $table): array
+{
+    $options = [];
+    $allowedTables = ['item_group' => 'item_group', 'item_group2' => 'item_group2'];
+    if (!isset($allowedTables[$table])) {
+        return $options;
+    }
+
+    $sqlTable = $allowedTables[$table];
+    $result = $conn->query("SELECT id, gname FROM {$sqlTable} WHERE isdeleted = 0 ORDER BY gname ASC");
+    while ($row = $result->fetch_assoc()) {
+        $options[] = [
+            'id' => (int) $row['id'],
+            'name' => (string) $row['gname'],
+        ];
+    }
+
+    return $options;
+}
+
 $unitOptions = posmain_add_item_unit_options($conn);
+$defaultUnitId = ItemFormInput::resolveDefaultUnitId($conn);
 $itemType = $isEdit ? (string) ($rowitm['item_type'] ?? 'sellable') : 'sellable';
 $itemType = in_array($itemType, ['sellable', 'ingredient', 'packaging', 'service'], true) ? $itemType : 'sellable';
+$unitProfile = $isEdit
+    ? ItemUnitProfileReader::readForItem($conn, $editId, $itemType)
+    : ItemUnitProfileReader::defaultProfile($itemType, $defaultUnitId);
+if ($isEdit) {
+    if ((float) ($unitProfile['sell_price1'] ?? 0) <= 0 && (float) ($rowitm['price1'] ?? 0) > 0) {
+        $unitProfile['sell_price1'] = (float) $rowitm['price1'];
+    }
+    if ((float) ($unitProfile['sell_price2'] ?? 0) <= 0 && (float) ($rowitm['price2'] ?? 0) > 0) {
+        $unitProfile['sell_price2'] = (float) $rowitm['price2'];
+    }
+    if ((float) ($unitProfile['sell_market_price'] ?? 0) <= 0 && (float) ($rowitm['price3'] ?? 0) > 0) {
+        $unitProfile['sell_market_price'] = (float) ($rowitm['price3'] ?? 0);
+    }
+}
+$itemGroup1Options = posmain_add_item_group_options($conn, 'item_group');
+$itemGroup2Options = posmain_add_item_group_options($conn, 'item_group2');
+$canCreateItemGroups = !empty($role['add_items']) || !empty($role['add_item_groups']);
+$selectedGroup1Id = $isEdit ? (int) ($rowitm['group1'] ?? 0) : 0;
+$selectedGroup2Id = $isEdit ? (int) ($rowitm['group2'] ?? 0) : 0;
+$selectedGroup1Name = '';
+$selectedGroup2Name = '';
+foreach ($itemGroup1Options as $groupOption) {
+    if ((int) $groupOption['id'] === $selectedGroup1Id) {
+        $selectedGroup1Name = (string) $groupOption['name'];
+        break;
+    }
+}
+foreach ($itemGroup2Options as $groupOption) {
+    if ((int) $groupOption['id'] === $selectedGroup2Id) {
+        $selectedGroup2Name = (string) $groupOption['name'];
+        break;
+    }
+}
 $trackStock = $itemType === 'service' ? 0 : ($isEdit ? (int) ($rowitm['track_stock'] ?? 1) : 1);
 $preferredUnitId = $isEdit ? (int) ($rowitm['preferred_unit_id'] ?? 0) : 0;
 $itemVariants = [];
@@ -103,25 +159,12 @@ try {
                 <input type="hidden" name="item_variants_payload_present" value="1">
 
                 <?php
-                $rowlstitm = $conn->query('SELECT MAX(code) AS max_code FROM myitems')->fetch_assoc();
-                $maxCode = $rowlstitm['max_code'] ?? null;
-                if ($maxCode === null) {
-                    $itmid = 1;
-                } elseif ($isEdit) {
-                    $itmid = $rowitm['code'];
-                } else {
-                    $itmid = (int) $maxCode + 1;
-                }
-                
-                // Get the last barcode and increment by 1
-                $rowlstbarcode = $conn->query('SELECT MAX(CAST(barcode AS UNSIGNED)) AS max_barcode FROM myitems WHERE barcode REGEXP \'^[0-9]+$\'')->fetch_assoc();
-                $maxBarcode = $rowlstbarcode['max_barcode'] ?? null;
-                if ($maxBarcode === null) {
-                    $newBarcode = 1;
-                } elseif ($isEdit) {
+                if ($isEdit) {
                     $newBarcode = $rowitm['barcode'];
                 } else {
-                    $newBarcode = (int) $maxBarcode + 1;
+                    $rowlstbarcode = $conn->query('SELECT MAX(CAST(barcode AS UNSIGNED)) AS max_barcode FROM myitems WHERE barcode REGEXP \'^[0-9]+$\'')->fetch_assoc();
+                    $maxBarcode = $rowlstbarcode['max_barcode'] ?? null;
+                    $newBarcode = $maxBarcode === null ? 1 : (int) $maxBarcode + 1;
                 }
                 ?>
 
@@ -387,6 +430,8 @@ try {
                         }
                     }
                 </style>
+                <link rel="stylesheet" href="dist/css/item_catalog_group_picker.css?v=<?= (int) (@filemtime(__DIR__ . '/dist/css/item_catalog_group_picker.css') ?: 1) ?>">
+                <link rel="stylesheet" href="dist/css/item_unit_profile.css?v=<?= (int) (@filemtime(__DIR__ . '/dist/css/item_unit_profile.css') ?: 1) ?>">
 
                 <div class="item-editor-shell">
                     <div class="item-editor-hero">
@@ -439,40 +484,92 @@ try {
                                     <div class="row mt-lg-2">
                                         <div class="col-lg-2 col-md-6">
                                             <div class="form-group">
-                                                <label class="text-muted small mb-1">الكود</label>
-                                                <input readonly value="<?= htmlspecialchars((string) $itmid, ENT_QUOTES, 'UTF-8') ?>" class="form-control form-control-lg bg-light" type="text" name="code">
-                                            </div>
-                                        </div>
-                                        <div class="col-lg-2 col-md-6">
-                                            <div class="form-group">
                                                 <label class="text-muted small mb-1">الباركود</label>
                                                 <input required value="<?= htmlspecialchars((string) $newBarcode, ENT_QUOTES, 'UTF-8') ?>" class="form-control form-control-lg frst" type="text" name="barcode">
                                             </div>
                                         </div>
                                         <div class="col-lg-4 col-md-6">
                                             <div class="form-group mb-md-0">
-                                                <label for="group1">المجموعة</label>
-                                                <select id="group1" name="group1" class="form-control">
-                                                    <option value="">— اختر —</option>
-                                                    <?php
-                                                    $resgroup1 = $conn->query('SELECT * FROM item_group WHERE isdeleted = 0');
-                                                    while ($rowgroup1 = $resgroup1->fetch_assoc()) { ?>
-                                                        <option value="<?= (int) $rowgroup1['id'] ?>" <?= ($isEdit && (int) $rowgroup1['id'] === (int) $rowitm['group1']) ? 'selected' : '' ?>><?= htmlspecialchars($rowgroup1['gname'], ENT_QUOTES, 'UTF-8') ?></option>
-                                                    <?php } ?>
-                                                </select>
+                                                <label for="group1_input">التصنيف</label>
+                                                <div class="item-catalog-group-picker" data-picker-type="group1">
+                                                    <div class="item-catalog-group-picker__row">
+                                                        <div class="item-catalog-group-picker__field">
+                                                            <div class="item-catalog-combobox" data-group-type="group1">
+                                                                <input type="hidden" class="item-catalog-combobox__value" name="group1" id="group1" value="<?= $selectedGroup1Id > 0 ? (int) $selectedGroup1Id : '' ?>">
+                                                                <div class="item-catalog-combobox__control">
+                                                                    <input
+                                                                        type="text"
+                                                                        class="item-catalog-combobox__input"
+                                                                        id="group1_input"
+                                                                        autocomplete="off"
+                                                                        role="combobox"
+                                                                        aria-expanded="false"
+                                                                        aria-controls="group1_listbox"
+                                                                        placeholder="اكتب للبحث أو اختر تصنيفاً..."
+                                                                        value="<?= htmlspecialchars($selectedGroup1Name, ENT_QUOTES, 'UTF-8') ?>"
+                                                                    >
+                                                                    <button type="button" class="item-catalog-combobox__toggle" tabindex="-1" aria-label="عرض التصنيفات">
+                                                                        <i class="fas fa-chevron-down"></i>
+                                                                    </button>
+                                                                </div>
+                                                                <ul class="item-catalog-combobox__list" id="group1_listbox" role="listbox" hidden>
+                                                                    <?php foreach ($itemGroup1Options as $groupOption) { ?>
+                                                                        <li class="item-catalog-combobox__option" role="option" data-id="<?= (int) $groupOption['id'] ?>" data-name="<?= htmlspecialchars($groupOption['name'], ENT_QUOTES, 'UTF-8') ?>"><?= htmlspecialchars($groupOption['name'], ENT_QUOTES, 'UTF-8') ?></li>
+                                                                    <?php } ?>
+                                                                </ul>
+                                                            </div>
+                                                        </div>
+                                                        <?php if ($canCreateItemGroups) { ?>
+                                                            <button type="button" class="item-catalog-group-picker__add" title="إضافة تصنيف جديد" aria-label="إضافة تصنيف جديد">
+                                                                <i class="fas fa-plus"></i>
+                                                            </button>
+                                                        <?php } ?>
+                                                    </div>
+                                                    <div class="item-catalog-group-picker__hint"><?= $canCreateItemGroups ? 'اكتب مباشرة في الحقل للبحث، أو استخدم زر +' : 'اكتب مباشرة في الحقل للبحث والاختيار.' ?></div>
+                                                    <div class="item-catalog-group-picker__toast" aria-live="polite"></div>
+                                                </div>
                                             </div>
                                         </div>
                                         <div class="col-lg-4 col-md-6">
                                             <div class="form-group mb-md-0">
-                                                <label for="group2">التصنيف</label>
-                                                <select id="group2" name="group2" class="form-control">
-                                                    <option value="">— اختر —</option>
-                                                    <?php
-                                                    $resgroup2 = $conn->query('SELECT * FROM item_group2 WHERE isdeleted = 0');
-                                                    while ($rowgroup2 = $resgroup2->fetch_assoc()) { ?>
-                                                        <option value="<?= (int) $rowgroup2['id'] ?>" <?= ($isEdit && (int) $rowgroup2['id'] === (int) $rowitm['group2']) ? 'selected' : '' ?>><?= htmlspecialchars($rowgroup2['gname'], ENT_QUOTES, 'UTF-8') ?></option>
-                                                    <?php } ?>
-                                                </select>
+                                                <label for="group2_input">المجموعة الفرعية</label>
+                                                <div class="item-catalog-group-picker" data-picker-type="group2">
+                                                    <div class="item-catalog-group-picker__row">
+                                                        <div class="item-catalog-group-picker__field">
+                                                            <div class="item-catalog-combobox" data-group-type="group2">
+                                                                <input type="hidden" class="item-catalog-combobox__value" name="group2" id="group2" value="<?= $selectedGroup2Id > 0 ? (int) $selectedGroup2Id : '' ?>">
+                                                                <div class="item-catalog-combobox__control">
+                                                                    <input
+                                                                        type="text"
+                                                                        class="item-catalog-combobox__input"
+                                                                        id="group2_input"
+                                                                        autocomplete="off"
+                                                                        role="combobox"
+                                                                        aria-expanded="false"
+                                                                        aria-controls="group2_listbox"
+                                                                        placeholder="اكتب للبحث أو اختر مجموعة فرعية..."
+                                                                        value="<?= htmlspecialchars($selectedGroup2Name, ENT_QUOTES, 'UTF-8') ?>"
+                                                                    >
+                                                                    <button type="button" class="item-catalog-combobox__toggle" tabindex="-1" aria-label="عرض المجموعات الفرعية">
+                                                                        <i class="fas fa-chevron-down"></i>
+                                                                    </button>
+                                                                </div>
+                                                                <ul class="item-catalog-combobox__list" id="group2_listbox" role="listbox" hidden>
+                                                                    <?php foreach ($itemGroup2Options as $groupOption) { ?>
+                                                                        <li class="item-catalog-combobox__option" role="option" data-id="<?= (int) $groupOption['id'] ?>" data-name="<?= htmlspecialchars($groupOption['name'], ENT_QUOTES, 'UTF-8') ?>"><?= htmlspecialchars($groupOption['name'], ENT_QUOTES, 'UTF-8') ?></li>
+                                                                    <?php } ?>
+                                                                </ul>
+                                                            </div>
+                                                        </div>
+                                                        <?php if ($canCreateItemGroups) { ?>
+                                                            <button type="button" class="item-catalog-group-picker__add" title="إضافة مجموعة فرعية جديدة" aria-label="إضافة مجموعة فرعية جديدة">
+                                                                <i class="fas fa-plus"></i>
+                                                            </button>
+                                                        <?php } ?>
+                                                    </div>
+                                                    <div class="item-catalog-group-picker__hint"><?= $canCreateItemGroups ? 'اكتب مباشرة في الحقل للبحث، أو استخدم زر +' : 'اكتب مباشرة في الحقل للبحث والاختيار.' ?></div>
+                                                    <div class="item-catalog-group-picker__toast" aria-live="polite"></div>
+                                                </div>
                                             </div>
                                         </div>
                                     </div>
@@ -507,178 +604,7 @@ try {
                                 </div>
                             </section>
 
-                            <section class="item-editor-panel" id="item-units-section">
-                                <div class="item-editor-panel-header">
-                                    <div>
-                                        <h3 class="item-editor-panel-title">2. الوحدات والأسعار</h3>
-                                        <p class="item-editor-panel-subtitle">اختر وحدة العد الأساسية أولاً، ثم أضف وحدات الشراء أو البيع مثل: 1 كرتونة = 12 قطعة.</p>
-                                    </div>
-                                    <button type="button" id="addUnit" class="btn btn-sm btn-primary">
-                                        <i class="fas fa-plus ml-1"></i> إضافة وحدة شراء/بيع
-                                    </button>
-                                </div>
-                                <div class="table-responsive">
-                                    <table class="table table-hover table-sm mb-0 item-units-table">
-                                        <thead class="thead-light text-center">
-                                            <tr>
-                                                <th style="min-width: 140px;">الوحدة</th>
-                                                <th style="min-width: 260px;">العلاقة مع الوحدة الأساسية</th>
-                                                <th style="min-width: 120px;">الباركود</th>
-                                                <th style="min-width: 100px;">التكلفة</th>
-                                                <th style="min-width: 110px;">سعر البيع 1</th>
-                                                <th style="min-width: 110px;">سعر البيع 2</th>
-                                                <th style="min-width: 105px;">سعر السوق</th>
-                                                <th style="width: 60px;"></th>
-                                            </tr>
-                                        </thead>
-                                        <tbody id="unitsContainer">
-                                        <?php if (!$isEdit) { ?>
-                                            <tr class="urow unit-base-row">
-                                                <td>
-                                                    <select name="unit_id[]" class="form-control form-control-sm unit-select">
-                                                        <?php foreach ($unitOptions as $rowunit) { ?>
-                                                            <option value="<?= (int) $rowunit['id'] ?>"><?= htmlspecialchars($rowunit['uname'], ENT_QUOTES, 'UTF-8') ?></option>
-                                                        <?php } ?>
-                                                    </select>
-                                                </td>
-                                                <td>
-                                                    <div class="unit-relation">
-                                                        <span class="unit-relation-base">وحدة العد الأساسية</span>
-                                                        <input class="form-control form-control-sm text-center unit-factor-input" type="number" readonly name="u_val[]" value="1" step="0.001">
-                                                        <span class="unit-relation-text">قطعة</span>
-                                                    </div>
-                                                </td>
-                                                <td><input class="form-control form-control-sm" type="text" name="unit_barcode[]" value="<?= htmlspecialchars((string) $newBarcode, ENT_QUOTES, 'UTF-8') ?>"></td>
-                                                <td><input type="number" name="cost_price[]" class="form-control form-control-sm" value="0" step="0.001" min="0"></td>
-                                                <td><input type="number" name="price1[]" class="form-control form-control-sm" value="0" step="0.001" min="0"></td>
-                                                <td><input type="number" name="price2[]" class="form-control form-control-sm" value="0" step="0.001" min="0"></td>
-                                                <td><input type="number" name="market_price[]" class="form-control form-control-sm" value="0" step="0.001" min="0"></td>
-                                                <td class="text-center">
-                                                    <button type="button" class="btn btn-sm btn-outline-secondary base-delete-disabled" disabled title="لا يمكن حذف وحدة العد الأساسية"><i class="fas fa-lock"></i></button>
-                                                </td>
-                                            </tr>
-                                        <?php } else {
-                                            $renderedUnitRows = 0;
-                                            $resunt = $conn->query("SELECT * FROM item_units WHERE item_id = " . $editId);
-                                            while ($rowunt = $resunt->fetch_assoc()) {
-                                                $renderedUnitRows++;
-                                                $isBaseUnitRow = $renderedUnitRows === 1;
-                                                ?>
-                                                <tr class="urow <?= $isBaseUnitRow ? 'unit-base-row' : '' ?>">
-                                                    <td>
-                                                        <select name="unit_id[]" class="form-control form-control-sm unit-select">
-                                                            <?php foreach ($unitOptions as $rowunit) { ?>
-                                                                <option <?= ((int) $rowunit['id'] === (int) $rowunt['unit_id']) ? 'selected' : '' ?> value="<?= (int) $rowunit['id'] ?>"><?= htmlspecialchars($rowunit['uname'], ENT_QUOTES, 'UTF-8') ?></option>
-                                                            <?php } ?>
-                                                        </select>
-                                                    </td>
-                                                    <td>
-                                                        <div class="unit-relation">
-                                                            <?php if ($isBaseUnitRow): ?>
-                                                                <span class="unit-relation-base">وحدة العد الأساسية</span>
-                                                            <?php else: ?>
-                                                                <span>1 <strong class="unit-relation-unit-name"></strong> =</span>
-                                                            <?php endif; ?>
-                                                            <input class="form-control form-control-sm text-center unit-factor-input" type="number" <?= $isBaseUnitRow ? 'readonly' : '' ?> name="u_val[]" value="<?= htmlspecialchars((string) $rowunt['u_val'], ENT_QUOTES, 'UTF-8') ?>" step="0.001">
-                                                            <span class="unit-relation-text">قطعة</span>
-                                                        </div>
-                                                    </td>
-                                                    <td><input class="form-control form-control-sm" type="text" name="unit_barcode[]" value="<?= htmlspecialchars((string) $rowunt['unit_barcode'], ENT_QUOTES, 'UTF-8') ?>"></td>
-                                                    <td><input type="number" name="cost_price[]" class="form-control form-control-sm" value="<?= htmlspecialchars((string) $rowunt['cost_price'], ENT_QUOTES, 'UTF-8') ?>" step="0.001" min="0"></td>
-                                                    <td><input type="number" name="price1[]" class="form-control form-control-sm" value="<?= htmlspecialchars((string) $rowunt['price1'], ENT_QUOTES, 'UTF-8') ?>" step="0.001" min="0"></td>
-                                                    <td><input type="number" name="price2[]" class="form-control form-control-sm" value="<?= htmlspecialchars((string) $rowunt['price2'], ENT_QUOTES, 'UTF-8') ?>" step="0.001" min="0"></td>
-                                                    <td><input type="number" name="market_price[]" class="form-control form-control-sm" value="<?= htmlspecialchars((string) $rowunt['price3'], ENT_QUOTES, 'UTF-8') ?>" step="0.001" min="0"></td>
-                                                    <td class="text-center">
-                                                        <?php if ($isBaseUnitRow): ?>
-                                                            <button type="button" class="btn btn-sm btn-outline-secondary base-delete-disabled" disabled title="لا يمكن حذف وحدة العد الأساسية"><i class="fas fa-lock"></i></button>
-                                                        <?php else: ?>
-                                                            <button type="button" class="btn btn-sm btn-outline-danger deleteRow" title="حذف الصف"><i class="fas fa-times"></i></button>
-                                                        <?php endif; ?>
-                                                    </td>
-                                                </tr>
-                                            <?php }
-                                            if ($renderedUnitRows === 0) { ?>
-                                                <tr class="urow unit-base-row">
-                                                    <td>
-                                                        <select name="unit_id[]" class="form-control form-control-sm unit-select">
-                                                            <?php foreach ($unitOptions as $rowunit) { ?>
-                                                                <option value="<?= (int) $rowunit['id'] ?>"><?= htmlspecialchars($rowunit['uname'], ENT_QUOTES, 'UTF-8') ?></option>
-                                                            <?php } ?>
-                                                        </select>
-                                                    </td>
-                                                    <td>
-                                                        <div class="unit-relation">
-                                                            <span class="unit-relation-base">وحدة العد الأساسية</span>
-                                                            <input class="form-control form-control-sm text-center unit-factor-input" type="number" name="u_val[]" value="1" step="0.001">
-                                                            <span class="unit-relation-text">قطعة</span>
-                                                        </div>
-                                                    </td>
-                                                    <td><input class="form-control form-control-sm" type="text" name="unit_barcode[]" value="<?= htmlspecialchars((string) $newBarcode, ENT_QUOTES, 'UTF-8') ?>"></td>
-                                                    <td><input type="number" name="cost_price[]" class="form-control form-control-sm" value="<?= htmlspecialchars((string) ($rowitm['cost_price'] ?? 0), ENT_QUOTES, 'UTF-8') ?>" step="0.001" min="0"></td>
-                                                    <td><input type="number" name="price1[]" class="form-control form-control-sm" value="<?= htmlspecialchars((string) ($rowitm['price1'] ?? 0), ENT_QUOTES, 'UTF-8') ?>" step="0.001" min="0"></td>
-                                                    <td><input type="number" name="price2[]" class="form-control form-control-sm" value="<?= htmlspecialchars((string) ($rowitm['price2'] ?? 0), ENT_QUOTES, 'UTF-8') ?>" step="0.001" min="0"></td>
-                                                    <td><input type="number" name="market_price[]" class="form-control form-control-sm" value="<?= htmlspecialchars((string) ($rowitm['price3'] ?? 0), ENT_QUOTES, 'UTF-8') ?>" step="0.001" min="0"></td>
-                                                    <td class="text-center">
-                                                        <button type="button" class="btn btn-sm btn-outline-secondary base-delete-disabled" disabled title="لا يمكن حذف وحدة العد الأساسية"><i class="fas fa-lock"></i></button>
-                                                    </td>
-                                                </tr>
-                                            <?php }
-                                        } ?>
-                                        </tbody>
-                                    </table>
-                                </div>
-                                <div class="unit-impact-preview">
-                                    <i class="fas fa-calculator ml-1 text-success"></i>
-                                    <span id="unitImpactPreview">مثال: عند استلام 2 من الوحدة الثانية سيُحسب أثرها على الوحدة الأساسية تلقائياً.</span>
-                                </div>
-                            </section>
-
-                            <section class="item-editor-panel" id="item-inventory-section">
-                                <div class="item-editor-panel-header">
-                                    <div>
-                                        <h3 class="item-editor-panel-title">3. إعدادات المخزون</h3>
-                                        <p class="item-editor-panel-subtitle">نوع الصنف ومتابعة الرصيد والوحدة المفضلة للمخزون.</p>
-                                    </div>
-                                </div>
-                                <div class="item-editor-panel-body">
-                                    <label class="d-block mb-2">نوع الصنف</label>
-                                    <div class="item-type-options mb-3">
-                                        <button type="button" class="item-type-choice <?= $itemType === 'sellable' ? 'active' : '' ?>" data-item-type="sellable">منتج للبيع</button>
-                                        <button type="button" class="item-type-choice <?= $itemType === 'ingredient' ? 'active' : '' ?>" data-item-type="ingredient">مكوّن</button>
-                                        <button type="button" class="item-type-choice <?= $itemType === 'packaging' ? 'active' : '' ?>" data-item-type="packaging">تغليف</button>
-                                        <button type="button" class="item-type-choice <?= $itemType === 'service' ? 'active' : '' ?>" data-item-type="service">خدمة</button>
-                                    </div>
-                                    <select id="item_type" name="item_type" class="form-control d-none">
-                                        <option value="sellable" <?= $itemType === 'sellable' ? 'selected' : '' ?>>Sellable</option>
-                                        <option value="ingredient" <?= $itemType === 'ingredient' ? 'selected' : '' ?>>Ingredient</option>
-                                        <option value="packaging" <?= $itemType === 'packaging' ? 'selected' : '' ?>>Packaging</option>
-                                        <option value="service" <?= $itemType === 'service' ? 'selected' : '' ?>>Service</option>
-                                    </select>
-
-                                    <div class="row">
-                                        <div class="col-md-6">
-                                            <div class="form-group mb-md-0">
-                                                <label for="preferred_unit_id">الوحدة المفضلة</label>
-                                                <select id="preferred_unit_id" name="preferred_unit_id" class="form-control">
-                                                    <option value="">— من أول وحدة —</option>
-                                                    <?php foreach ($unitOptions as $rowunit): ?>
-                                                        <option value="<?= (int) $rowunit['id'] ?>" <?= (int) $rowunit['id'] === $preferredUnitId ? 'selected' : '' ?>><?= htmlspecialchars($rowunit['uname'], ENT_QUOTES, 'UTF-8') ?></option>
-                                                    <?php endforeach; ?>
-                                                </select>
-                                            </div>
-                                        </div>
-                                        <div class="col-md-6">
-                                            <label class="d-block">متابعة الرصيد</label>
-                                            <input type="hidden" name="track_stock" value="0">
-                                            <div class="custom-control custom-switch">
-                                                <input type="checkbox" class="custom-control-input" id="track_stock" name="track_stock" value="1" <?= $trackStock ? 'checked' : '' ?>>
-                                                <label class="custom-control-label" for="track_stock">خصم/متابعة الرصيد في المخزون</label>
-                                            </div>
-                                            <small class="form-text text-muted">الخدمات تحفظ بدون مخزون حتى لو كان المفتاح مفعلاً.</small>
-                                        </div>
-                                    </div>
-                                </div>
-                            </section>
+                            <?php include __DIR__ . '/elements/sales/item_unit_profile_panel.php'; ?>
 
                             <section class="item-editor-panel" id="item-recipe-section">
                                 <div class="item-editor-panel-header">
@@ -715,9 +641,9 @@ try {
                                         <th style="min-width: 190px;">اسم الصنف الفرعي</th>
                                         <th style="min-width: 110px;">الباركود</th>
                                         <th style="min-width: 90px;">التكلفة</th>
-                                        <th style="min-width: 100px;">سعر 1</th>
-                                        <th style="min-width: 100px;">سعر 2</th>
-                                        <th style="min-width: 100px;">سعر السوق</th>
+                                        <th style="min-width: 100px;">سعر البيع</th>
+                                        <th style="min-width: 130px;">سعر خاص (اختياري)</th>
+                                        <th style="min-width: 130px;">سعر السوق (اختياري)</th>
                                         <th style="width: 70px;">نشط</th>
                                         <th style="width: 80px;">افتراضي</th>
                                         <th style="width: 120px;"></th>
@@ -731,7 +657,6 @@ try {
                                         $variantLabel = htmlspecialchars((string) ($variant['variant_label'] ?? ''), ENT_QUOTES, 'UTF-8');
                                         $variantName = htmlspecialchars((string) ($variant['iname'] ?? ''), ENT_QUOTES, 'UTF-8');
                                         $variantBarcode = htmlspecialchars((string) ($variant['barcode'] ?? ''), ENT_QUOTES, 'UTF-8');
-                                        $variantCode = htmlspecialchars((string) ($variant['code'] ?? ''), ENT_QUOTES, 'UTF-8');
                                         $variantCost = htmlspecialchars((string) ($variant['cost_price'] ?? '0'), ENT_QUOTES, 'UTF-8');
                                         $variantPrice1 = htmlspecialchars((string) ($variant['price1'] ?? '0'), ENT_QUOTES, 'UTF-8');
                                         $variantPrice2 = htmlspecialchars((string) ($variant['price2'] ?? '0'), ENT_QUOTES, 'UTF-8');
@@ -745,7 +670,6 @@ try {
                                             <td>
                                                 <input type="hidden" name="variant_link_id[]" value="<?= $variantLinkId ?>">
                                                 <input type="hidden" name="variant_item_id[]" value="<?= $variantItemId ?>">
-                                                <input type="hidden" name="variant_code[]" value="<?= $variantCode ?>">
                                                 <input type="hidden" class="variant-sort-input" name="variant_sort[]" value="<?= $variantSort ?>">
                                                 <input type="text" class="form-control form-control-sm variant-label-input" name="variant_label[]" value="<?= $variantLabel ?>" placeholder="صغير / كبير">
                                                 <?php if ($variantUnlinked): ?>
@@ -757,7 +681,7 @@ try {
                                             </td>
                                             <td><input type="text" class="form-control form-control-sm" name="variant_barcode[]" value="<?= $variantBarcode ?>" placeholder="اختياري"></td>
                                             <td><input type="number" class="form-control form-control-sm" name="variant_cost_price[]" value="<?= $variantCost ?>" step="0.001" min="0"></td>
-                                            <td><input type="number" class="form-control form-control-sm" name="variant_price1[]" value="<?= $variantPrice1 ?>" step="0.001" min="0"></td>
+                                            <td><input type="number" class="form-control form-control-sm variant-sell-price-input" name="variant_price1[]" value="<?= $variantPrice1 ?>" step="0.001" min="0"></td>
                                             <td><input type="number" class="form-control form-control-sm" name="variant_price2[]" value="<?= $variantPrice2 ?>" step="0.001" min="0"></td>
                                             <td><input type="number" class="form-control form-control-sm" name="variant_market_price[]" value="<?= $variantPrice3 ?>" step="0.001" min="0"></td>
                                             <td class="text-center align-middle">
@@ -839,6 +763,18 @@ try {
                 </div>
 
                 </form>
+
+                <div class="item-catalog-modal" id="itemCatalogGroupModal" aria-hidden="true">
+                    <div class="item-catalog-modal__backdrop"></div>
+                    <div class="item-catalog-modal__panel" role="dialog" aria-modal="true" aria-labelledby="itemCatalogGroupModalTitle">
+                        <h4 class="item-catalog-modal__title" id="itemCatalogGroupModalTitle">إضافة جديدة</h4>
+                        <input type="text" class="item-catalog-modal__input form-control" autocomplete="off">
+                        <div class="item-catalog-modal__actions">
+                            <button type="button" class="btn btn-light item-catalog-modal__cancel">إلغاء</button>
+                            <button type="button" class="btn btn-primary item-catalog-modal__save">حفظ</button>
+                        </div>
+                    </div>
+                </div>
 
                 <?php if ($isEdit): ?>
                     <div class="modal fade" id="deleteItemModal" tabindex="-1" role="dialog" aria-labelledby="deleteItemModalLabel" aria-hidden="true">
@@ -946,113 +882,12 @@ $(document).ready(function() {
         }
     });
 
-	    var fields = ['cost_price', 'price1', 'price2', 'market_price'];
-	    var itemTypeLabels = {
-	        sellable: 'منتج للبيع',
-	        ingredient: 'مكوّن',
-	        packaging: 'تغليف',
-	        service: 'خدمة'
-	    };
+    function refreshItemSummary() {
+        $('#summaryItemName').text($.trim($('#iname').val() || '') || 'صنف جديد');
+        $('#summaryBarcode').text($.trim($('input[name="barcode"]').val() || '') || '—');
+    }
 
-	    function selectedUnitName(row) {
-	        return $.trim(row.find('.unit-select option:selected').text() || '');
-	    }
-
-	    function baseUnitName() {
-	        var first = $('#unitsContainer .urow').first();
-	        return selectedUnitName(first) || 'الوحدة الأساسية';
-	    }
-
-	    window.refreshItemUnitsUi = function() {
-	        var baseName = baseUnitName();
-	        var unitCount = $('#unitsContainer .urow').length;
-	        $('#summaryBaseUnit').text(baseName || '—');
-	        $('#summaryUnitCount').text(unitCount);
-	        $('#unitsContainer .urow').each(function(index) {
-	            var row = $(this);
-	            var relation = row.find('.unit-relation');
-	            var input = row.find('input[name="u_val[]"]');
-	            relation.find('.unit-relation-text').text(baseName);
-	            if (index === 0) {
-	                row.addClass('unit-base-row');
-	                input.prop('readonly', true).val('1').addClass('d-none');
-	                relation.empty()
-	                    .append('<span class="unit-base-lock"><i class="fas fa-lock"></i> وحدة العد الأساسية</span>')
-	                    .append(
-	                        $('<span class="unit-equation"></span>')
-	                            .append($('<strong></strong>').text('1 ' + baseName))
-	                            .append('<span>=</span>')
-	                            .append($('<strong></strong>').text('1 ' + baseName))
-	                    )
-	                    .append('<span class="unit-equation-muted">اختر هنا أصغر وحدة تريد أن يحسب النظام المخزون بها.</span>')
-	                    .append(input);
-	            } else {
-	                row.removeClass('unit-base-row');
-	                input.prop('readonly', false).removeClass('d-none');
-	                var unitName = selectedUnitName(row) || 'الوحدة';
-	                if (!relation.find('.unit-relation-unit-name').length) {
-	                    relation.html('<span>1 <strong class="unit-relation-unit-name"></strong> =</span>')
-	                        .append(input)
-	                        .append('<span class="unit-relation-text"></span>');
-	                }
-	                relation.find('.unit-relation-unit-name').text(unitName);
-	                relation.find('.unit-relation-text').text(baseName);
-	            }
-	        });
-	        var second = $('#unitsContainer .urow').eq(1);
-	        if (second.length) {
-	            var unitName = selectedUnitName(second) || 'الوحدة الثانية';
-	            var factor = parseFloat(second.find('input[name="u_val[]"]').val()) || 1;
-	            $('#unitImpactPreview').text('مثال: عند استلام 2 ' + unitName + ' سيضاف ' + (2 * factor).toFixed(3) + ' ' + baseName + ' إلى المخزون.');
-	        } else {
-	            $('#unitImpactPreview').text('أضف وحدة شراء مثل كرتونة لتحديد علاقتها بالوحدة الأساسية.');
-	        }
-	    };
-
-	    function refreshItemTypeUi(type) {
-	        type = type || $('#item_type').val() || 'sellable';
-	        $('.item-type-choice').removeClass('active');
-	        $('.item-type-choice[data-item-type="' + type + '"]').addClass('active');
-	        $('#item_type').val(type);
-	        $('#summaryItemType').text(itemTypeLabels[type] || type);
-	        if (type === 'service') {
-	            $('#track_stock').prop('checked', false).prop('disabled', true);
-	        } else {
-	            $('#track_stock').prop('disabled', false);
-	        }
-	    }
-
-	    function refreshItemSummary() {
-	        $('#summaryItemName').text($.trim($('#iname').val() || '') || 'صنف جديد');
-	        $('#summaryBarcode').text($.trim($('input[name="barcode"]').val() || '') || '—');
-	    }
-
-    fields.forEach(function(fieldName) {
-        $(document).on('input', '.urow:first input[name="' + fieldName + '[]"]', function() {
-            var firstRowValue = parseFloat($(this).val()) || 0;
-            $('.urow').each(function(index) {
-                if (index === 0) return;
-                var u_val = parseFloat($(this).find('input[name="u_val[]"]').val()) || 1;
-                $(this).find('input[name="' + fieldName + '[]"]').val((firstRowValue * u_val).toFixed(3));
-            });
-        });
-    });
-
-	    $(document).on('input', 'input[name="u_val[]"]', function() {
-	        var currentRow = $(this).closest('.urow');
-	        var u_val = parseFloat($(this).val()) || 1;
-	        fields.forEach(function(fieldName) {
-	            var firstRowValue = parseFloat($('.urow:first input[name="' + fieldName + '[]"]').val()) || 0;
-	            currentRow.find('input[name="' + fieldName + '[]"]').val((firstRowValue * u_val).toFixed(3));
-	        });
-	        window.refreshItemUnitsUi();
-	    });
-
-	    $(document).on('change', '.unit-select', window.refreshItemUnitsUi);
-	    $(document).on('input', '#iname, input[name="barcode"]', refreshItemSummary);
-	    $('.item-type-choice').on('click', function() {
-	        refreshItemTypeUi($(this).data('item-type'));
-	    });
+    $(document).on('input', '#iname, input[name="barcode"]', refreshItemSummary);
 
     function nextVariantIndex() {
         return $('#variantRowsContainer .variant-row').length;
@@ -1064,7 +899,6 @@ $(document).ready(function() {
                 <td>
                     <input type="hidden" name="variant_link_id[]" value="0">
                     <input type="hidden" name="variant_item_id[]" value="0">
-                    <input type="hidden" name="variant_code[]" value="">
                     <input type="hidden" class="variant-sort-input" name="variant_sort[]" value="${index + 1}">
                     <input type="text" class="form-control form-control-sm variant-label-input" name="variant_label[]" value="" placeholder="صغير / كبير">
                 </td>
@@ -1073,7 +907,7 @@ $(document).ready(function() {
                 </td>
                 <td><input type="text" class="form-control form-control-sm" name="variant_barcode[]" value="" placeholder="اختياري"></td>
                 <td><input type="number" class="form-control form-control-sm" name="variant_cost_price[]" value="0" step="0.001" min="0"></td>
-                <td><input type="number" class="form-control form-control-sm" name="variant_price1[]" value="0" step="0.001" min="0"></td>
+                <td><input type="number" class="form-control form-control-sm variant-sell-price-input" name="variant_price1[]" value="" step="0.001" min="0"></td>
                 <td><input type="number" class="form-control form-control-sm" name="variant_price2[]" value="0" step="0.001" min="0"></td>
                 <td><input type="number" class="form-control form-control-sm" name="variant_market_price[]" value="0" step="0.001" min="0"></td>
                 <td class="text-center align-middle">
@@ -1240,6 +1074,51 @@ $(document).ready(function() {
         });
     });
 
+    function variantRowsForSubmit() {
+        var rows = [];
+        $('#variantRowsContainer .variant-row').each(function() {
+            var label = $.trim($(this).find('.variant-label-input').val() || '');
+            var name = $.trim($(this).find('.variant-name-input').val() || '');
+            if (label === '' && name === '') {
+                return;
+            }
+            rows.push($(this));
+        });
+        return rows;
+    }
+
+    function sellPricesAreValidForSubmit() {
+        var variantRows = variantRowsForSubmit();
+        if (variantRows.length > 0) {
+            var variantsValid = true;
+            variantRows.forEach(function($row) {
+                var price = parseFloat($row.find('input[name="variant_price1[]"]').val());
+                if (!isFinite(price) || price <= 0) {
+                    variantsValid = false;
+                }
+            });
+            if (!variantsValid) {
+                alert('يرجى إدخال سعر البيع لكل تنوع');
+                return false;
+            }
+            return true;
+        }
+
+        if ($('#sell_active').length && $('#sell_active').val() !== '1') {
+            return true;
+        }
+
+        var unitsValid = true;
+        var sellPrice = parseFloat($('#sell_price1').val());
+        if (!isFinite(sellPrice) || sellPrice <= 0) {
+            unitsValid = false;
+        }
+        if (!unitsValid) {
+            alert('يرجى إدخال سعر البيع');
+        }
+        return unitsValid;
+    }
+
     function variationsAreValidForSubmit() {
         var valid = true;
         var seenLabels = [];
@@ -1265,21 +1144,13 @@ $(document).ready(function() {
     $('#item-main-form').on('submit', function(e) {
         refreshVariantSorts();
         syncVariantNamesBeforeSubmit();
-        var selectedValues = [];
-        var duplicateFound = false;
-        $('select[name="unit_id[]"]').each(function() {
-            var val = $(this).val();
-            if (val && selectedValues.indexOf(val) !== -1) duplicateFound = true;
-            selectedValues.push(val);
-        });
-        if (duplicateFound) {
+        if (!variationsAreValidForSubmit()) {
             e.preventDefault();
-            alert('غير مسموح بتكرار الوحدات');
         }
-	        if (!variationsAreValidForSubmit()) {
-	            e.preventDefault();
-	        }
-	    });
+        if (!sellPricesAreValidForSubmit()) {
+            e.preventDefault();
+        }
+    });
 
 	    function syncVariantEditorVisibility() {
 	        var hasRows = $('#variantRowsContainer .variant-row').length > 0;
@@ -1288,14 +1159,11 @@ $(document).ready(function() {
 
 	    syncVariantEditorVisibility();
 	    initializeVariantRowAutoNames();
-
 	    refreshItemSummary();
-	    refreshItemTypeUi();
-	    window.refreshItemUnitsUi();
 	});
 	</script>
 
-<script src="js/additem.js"></script>
+<script src="js/item_unit_profile.js?v=<?= (int) (@filemtime(__DIR__ . '/js/item_unit_profile.js') ?: 1) ?>"></script>
 <script>
 $(function() {
     var params = new URLSearchParams(window.location.search);
@@ -1319,3 +1187,16 @@ $(function() {
 });
 </script>
 <?php include('includes/footer.php') ?>
+<?php if (!empty($role['add_items'])): ?>
+<script src="js/item_catalog_group_picker.js?v=<?= (int) (@filemtime(__DIR__ . '/js/item_catalog_group_picker.js') ?: 1) ?>"></script>
+<script>
+$(function () {
+    if (typeof window.initItemCatalogGroupPickers === 'function') {
+        window.initItemCatalogGroupPickers({
+            saveUrl: 'ajax/item_catalog_group_save.php',
+            canCreate: <?= $canCreateItemGroups ? 'true' : 'false' ?>
+        });
+    }
+});
+</script>
+<?php endif; ?>

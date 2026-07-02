@@ -1,8 +1,10 @@
 <?php
 require_once __DIR__ . '/../includes/session_bootstrap.php';
 include('../includes/connect.php');
+require_once __DIR__ . '/../classes/Items/ItemCatalogCode.php';
 require_once __DIR__ . '/../classes/Items/ItemEditorFlash.php';
 require_once __DIR__ . '/../classes/Items/ItemFormInput.php';
+require_once __DIR__ . '/../classes/Items/ItemUnitPersistence.php';
 require_once __DIR__ . '/../classes/Items/ItemRecipeCatalogService.php';
 require_once __DIR__ . '/../classes/Pos/Service/ItemVariantService.php';
 require_once __DIR__ . '/../classes/Sync/MenuItemSyncRecorder.php';
@@ -52,7 +54,7 @@ if ($chkname !== null) {
 }
 
 // Prepare to update the main item
-$defaultUnitId = posmain_edit_item_needs_default_unit($_POST) ? posmain_edit_item_default_unit_id($conn) : 0;
+$defaultUnitId = ItemFormInput::resolveDefaultUnitId($conn);
 try {
     $payload = ItemFormInput::normalizeAddPayload($_POST, $usid, $defaultUnitId);
 } catch (InvalidArgumentException $exception) {
@@ -61,7 +63,12 @@ try {
     exit;
 }
 
-$code = $payload['code'];
+$existingCodeStmt = $conn->prepare('SELECT code FROM myitems WHERE id = ? LIMIT 1');
+$existingCodeStmt->bind_param('i', $item_id);
+$existingCodeStmt->execute();
+$existingCodeRow = $existingCodeStmt->get_result()->fetch_assoc();
+$existingCodeStmt->close();
+$code = ItemCatalogCode::resolveForInsert($conn, (int) ($existingCodeRow['code'] ?? 0) ?: null);
 $name2 = $payload['name2'];
 $group1 = $payload['group1'];
 $group2 = $payload['group2'];
@@ -69,6 +76,9 @@ $info = $payload['info'];
 $cost_price = $payload['cost_price'];
 $price1 = $payload['price1'];
 $price2 = $payload['price2'];
+$price3 = $payload['price3'];
+$marketPrice = $payload['market_price'];
+$barcode = $payload['barcode'] !== '' ? $payload['barcode'] : (string) ($_POST['barcode'] ?? '');
 
 
 
@@ -127,23 +137,41 @@ try {
         SET iname = ?,
             name2 = ?,
             code = ?,
+            barcode = ?,
             info = ?,
             cost_price = ?,
+            market_price = ?,
             group1 = ?,
             group2 = ?,
             price1 = ?,
             price2 = ?,
+            price3 = ?,
             manual_price_edit = 1
         WHERE id = ?
     ");
-    $stmt->bind_param('ssisdiiddi', $iname, $name2, $code, $info, $cost_price, $group1, $group2, $price1, $price2, $item_id);
+    $stmt->bind_param(
+        'ssissdiiidddi',
+        $iname,
+        $name2,
+        $code,
+        $barcode,
+        $info,
+        $cost_price,
+        $marketPrice,
+        $group1,
+        $group2,
+        $price1,
+        $price2,
+        $price3,
+        $item_id
+    );
     if (!$stmt->execute()) {
         throw new RuntimeException('Unable to update item');
     }
     $stmt->close();
     (new ItemRecipeCatalogService())->saveMetadata($conn, $item_id, $payload);
 
-    posmain_edit_item_save_units($conn, $item_id, $payload['units']);
+    ItemUnitPersistence::saveForItem($conn, $item_id, $payload['units'], (int) ($payload['purchase_unit_id'] ?? 0));
 
     $changedItemIds = [$item_id];
     if (array_key_exists('item_variants_payload_present', $_POST)) {

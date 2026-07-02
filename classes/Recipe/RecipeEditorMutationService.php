@@ -8,6 +8,7 @@ require_once __DIR__ . '/Repository/RecipeRepository.php';
 require_once __DIR__ . '/Repository/RecipeVariantLineRepository.php';
 require_once __DIR__ . '/RecipeEditorItemCostService.php';
 require_once __DIR__ . '/../Sync/OperationalSyncRecorder.php';
+require_once __DIR__ . '/../Items/ItemUnitResolver.php';
 
 class RecipeEditorMutationService
 {
@@ -301,6 +302,16 @@ LIMIT 1
         } elseif ($lineType !== 'labor_placeholder') {
             $payload['ingredient_item_id'] = $this->positiveInt($input['ingredient_item_id'] ?? null, 'Component is required.');
         }
+
+        if ($payload['ingredient_item_id'] !== null
+            && $payload['unit_id'] === null
+            && in_array($lineType, ['ingredient', 'packaging', 'modifier_ingredient'], true)) {
+            $defaultUnitId = ItemUnitResolver::stockUnitIdForItem($conn, (int) $payload['ingredient_item_id']);
+            if ($defaultUnitId > 0) {
+                $payload['unit_id'] = $defaultUnitId;
+            }
+        }
+
         if ($payload['unit_id'] !== null && $payload['ingredient_item_id'] !== null) {
             $payload['unit_conversion_to_base'] = $this->resolveUnitConversion(
                 $conn,

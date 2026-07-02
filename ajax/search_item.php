@@ -6,6 +6,7 @@ ini_set('display_errors', 0);
 require_once __DIR__ . '/../includes/session_bootstrap.php';
 require_once __DIR__ . '/../classes/Pos/Service/ItemAvailabilityService.php';
 require_once __DIR__ . '/../classes/Items/ItemCatalogStatus.php';
+require_once __DIR__ . '/../classes/Items/ItemUnitResolver.php';
 
 // استخدام dirname للحصول على المسار الصحيح
 $root_path = dirname(__DIR__);
@@ -41,16 +42,34 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['barcode'])) {
     $stmt->bind_param("sis", $barcode, $numericBarcode, $searchLike);
     $stmt->execute();
     $result = $stmt->get_result();
+
+    if ($result->num_rows === 0) {
+        $unitSql = "
+            SELECT myitems.*, iu.u_val, iu.unit_barcode AS unit_row_barcode, iu.price1 AS unit_price1, {$variantSelect}
+            FROM item_units iu
+            INNER JOIN myitems ON myitems.id = iu.item_id
+            WHERE (iu.unit_barcode = ? OR iu.unit_barcode = ?)
+              AND COALESCE(iu.isdeleted, 0) = 0
+              AND myitems.isdeleted = 0
+              {$activeFilter}
+            LIMIT 1
+        ";
+        $unitStmt = $conn->prepare($unitSql);
+        $unitStmt->bind_param('ss', $barcode, $barcode);
+        $unitStmt->execute();
+        $result = $unitStmt->get_result();
+    }
     
     if ($result->num_rows > 0) {
         $item = $result->fetch_assoc();
         
-        // تحديد السعر - جرب price أو price1
-        $price = 0;
-        if (isset($item['price']) && !empty($item['price'])) {
-            $price = floatval($item['price']);
-        } elseif (isset($item['price1']) && !empty($item['price1'])) {
-            $price = floatval($item['price1']);
+        $price = ItemUnitResolver::sellPriceForItem($conn, (int) $item['id']);
+        if ($price <= 0) {
+            if (isset($item['unit_price1']) && (float) $item['unit_price1'] > 0) {
+                $price = (float) $item['unit_price1'];
+            } elseif (isset($item['price1']) && (float) $item['price1'] > 0) {
+                $price = (float) $item['price1'];
+            }
         }
         
         $barcodeItem = [
@@ -58,6 +77,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['barcode'])) {
             'name' => $item['iname'],
             'price' => $price,
             'barcode' => $item['barcode'],
+            'u_val' => (float) ($item['u_val'] ?? ItemUnitResolver::sellToStockFactor($conn, (int) $item['id'])),
             'has_variants' => (int) ($item['has_variants'] ?? 0) === 1
         ];
         $decoratedItems = (new ItemAvailabilityService())->decorateItems($conn, [$barcodeItem], posmain_pos_availability_scope($conn));

@@ -1,5 +1,6 @@
 <?php
 
+require_once __DIR__ . '/../Items/ItemCatalogCode.php';
 require_once __DIR__ . '/../Items/ItemRecipeCatalogService.php';
 require_once __DIR__ . '/../Sync/MenuItemSyncRecorder.php';
 
@@ -99,7 +100,7 @@ class InventoryQuickItemCreateService
         return [
             'iname' => $name,
             'name2' => trim((string) ($request['name2'] ?? '')),
-            'code' => $this->positiveInt($request['code'] ?? 0),
+            'code' => ItemCatalogCode::resolveForInsert($conn, $this->positiveInt($request['code'] ?? 0) ?: null),
             'barcode' => $barcode,
             'info' => trim((string) ($request['info'] ?? $request['notes'] ?? '')),
             'item_type' => $itemType,

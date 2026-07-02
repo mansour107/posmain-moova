@@ -40,6 +40,7 @@ $defaultUnitPayload = ItemFormInput::normalizeAddPayload([
     'iname' => 'No Unit Configured',
     'u_val' => ['1'],
     'unit_barcode' => ['555'],
+    'price1' => ['10'],
 ], 1, 5);
 itemFormInputAssert($defaultUnitPayload['units'][0]['unit_id'] === 5, 'missing unit select should use resolved default unit');
 
@@ -64,6 +65,7 @@ $servicePayload = ItemFormInput::normalizeAddPayload([
     'unit_id' => ['1'],
     'u_val' => ['1'],
     'unit_barcode' => ['svc'],
+    'price1' => ['5'],
 ], 1);
 itemFormInputAssert($servicePayload['item_type'] === 'service', 'service item type should be accepted');
 itemFormInputAssert($servicePayload['track_stock'] === 0, 'service items should always normalize to non-stock');
@@ -74,8 +76,40 @@ itemFormInputExpectInvalid(function () {
         'unit_id' => ['1', '1'],
         'u_val' => ['1', '6'],
         'unit_barcode' => ['111', ''],
+        'price1' => ['10', '20'],
     ], 1);
 }, 'duplicate units should be rejected server-side');
+
+itemFormInputExpectInvalid(function () {
+    ItemFormInput::normalizeAddPayload([
+        'iname' => 'Missing Sell Price',
+        'unit_id' => ['1'],
+        'u_val' => ['1'],
+        'unit_barcode' => ['111'],
+        'price1' => ['0'],
+    ], 1);
+}, 'zero sell price should be rejected when no variants exist');
+
+$variantParentPayload = ItemFormInput::normalizeAddPayload([
+    'iname' => 'Parent With Variants',
+    'unit_id' => ['1'],
+    'u_val' => ['1'],
+    'unit_barcode' => ['111'],
+    'price1' => ['0'],
+    'variant_label' => ['Large'],
+    'variant_name' => ['Coffee - Large'],
+    'variant_price1' => ['12'],
+], 1);
+itemFormInputAssert(abs($variantParentPayload['units'][0]['price1'] - 0.0) < 0.0001, 'parent unit sell price may be zero when variants exist');
+
+itemFormInputAssert(
+    ItemFormInput::hasVariantRows([
+        'variant_label' => ['Large'],
+        'variant_name' => [''],
+        'variant_item_id' => ['0'],
+    ]),
+    'variant rows should be detected from label'
+);
 
 echo "item-form-input-ok\n";
 

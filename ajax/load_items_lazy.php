@@ -10,6 +10,7 @@ require_once '../includes/pos_default_accounts.php';
 require_once '../classes/Pos/Service/ItemAvailabilityService.php';
 require_once '../classes/Pos/Service/ItemVariantService.php';
 require_once '../classes/Items/ItemCatalogStatus.php';
+require_once '../classes/Items/ItemUnitResolver.php';
 require_once '../includes/pos_item_card.php';
 
 try {
@@ -81,11 +82,16 @@ try {
     $variantParentIds = [];
     while ($row = $result->fetch_assoc()) {
         $hasVariants = (int) ($row['has_variants'] ?? 0) === 1;
+        $itemId = (int) $row['id'];
+        $sellPrice = ItemUnitResolver::sellPriceForItem($conn, $itemId);
+        if ($sellPrice <= 0) {
+            $sellPrice = floatval($row['price1'] ?? 0);
+        }
         $item = [
-            'id' => $row['id'],
+            'id' => $itemId,
             'iname' => $row['iname'],
             'name2' => $row['name2'] ?? '',
-            'price1' => floatval($row['price1'] ?? 0),
+            'price1' => $sellPrice,
             'barcode' => $row['barcode'] ?? '',
             'group1' => $row['group1'] ?? '',
             'info' => $row['info'] ?? '',

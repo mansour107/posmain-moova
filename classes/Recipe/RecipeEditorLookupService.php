@@ -1,5 +1,7 @@
 <?php
 
+require_once __DIR__ . '/../Items/ItemUnitResolver.php';
+
 class RecipeEditorLookupService
 {
     public function searchItems(mysqli $conn, string $query, string $kind = 'any', int $limit = 20): array
@@ -20,6 +22,7 @@ class RecipeEditorLookupService
             isset($columns['group1']) ? 'group1' : 'NULL AS group1',
             isset($columns['item_type']) ? 'item_type' : "'unknown' AS item_type",
             isset($columns['track_stock']) ? 'track_stock' : 'NULL AS track_stock',
+            isset($columns['preferred_unit_id']) ? 'preferred_unit_id' : 'NULL AS preferred_unit_id',
         ];
 
         $where = [];
@@ -63,7 +66,9 @@ class RecipeEditorLookupService
         $where[] = '(' . implode(' OR ', $search) . ')';
 
         return array_map(
-            [$this, 'itemRow'],
+            function (array $row) use ($conn): array {
+                return $this->itemRow($conn, $row);
+            },
             $this->fetchAll(
                 $conn,
                 'SELECT ' . implode(', ', $select) . ' FROM myitems WHERE '
@@ -184,11 +189,16 @@ LIMIT ' . $this->limit($limit);
         return 'Component';
     }
 
-    private function itemRow(array $row): array
+    private function itemRow(mysqli $conn, array $row): array
     {
         $name = (string) ($row['iname'] ?? '');
         $barcode = (string) ($row['barcode'] ?? '');
         $label = trim($name . ($barcode !== '' ? ' - ' . $barcode : ''));
+
+        $stockUnitId = ItemUnitResolver::stockUnitIdForItem($conn, (int) ($row['id'] ?? 0));
+        if ($stockUnitId < 1 && isset($row['preferred_unit_id'])) {
+            $stockUnitId = (int) $row['preferred_unit_id'];
+        }
 
         return [
             'id' => (int) $row['id'],
@@ -199,6 +209,7 @@ LIMIT ' . $this->limit($limit);
             'group' => $row['group1'] ?? null,
             'item_type' => (string) ($row['item_type'] ?? 'unknown'),
             'track_stock' => isset($row['track_stock']) ? (int) $row['track_stock'] : null,
+            'stock_unit_id' => $stockUnitId,
         ];
     }
 

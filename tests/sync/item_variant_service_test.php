@@ -142,6 +142,21 @@ try {
     itemVariantAssert((int) $linkedSmall[0]['variant_item_id'] === 99, 'active variant should point to adopted child');
     itemVariantAssert($linkedSmall[0]['variant_label'] === 'Small', 'adopted variant label should persist');
 
+    $variantPriceFailed = false;
+    try {
+        $service->saveVariantsFromPost($conn, 10, [
+            'variant_label' => ['No Price'],
+            'variant_name' => ['Chicken Sandwich - No Price'],
+            'variant_price1' => ['0'],
+            'variant_active' => [1],
+            'variant_default' => [0],
+            'variant_sort' => [2],
+        ], ['user_id' => 7]);
+    } catch (InvalidArgumentException $exception) {
+        $variantPriceFailed = $exception->getMessage() === 'variant_sell_price_required';
+    }
+    itemVariantAssert($variantPriceFailed, 'variant save should reject missing sell price');
+
     $conn->query("INSERT INTO myitems (id, iname, barcode, user) VALUES (98, 'Manual Conflict Name', 'CS-OTHER', 7)");
     $duplicateFailed = false;
     try {

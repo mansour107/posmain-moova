@@ -1,5 +1,7 @@
 <?php
 
+require_once __DIR__ . '/../../Items/ItemUnitResolver.php';
+
 class OrderPricingService
 {
     public const DEFAULT_TOLERANCE = 0.01;
@@ -92,6 +94,11 @@ class OrderPricingService
 
         if (!$row) {
             throw new InvalidArgumentException('ITEM_NOT_FOUND');
+        }
+
+        $sellPrice = ItemUnitResolver::sellPriceForItem($conn, $itemId);
+        if ($sellPrice > 0) {
+            $row['price1'] = $sellPrice;
         }
 
         return $row;

@@ -1,5 +1,8 @@
 <?php
 
+require_once __DIR__ . '/../../Items/ItemUnitColumnSupport.php';
+require_once __DIR__ . '/../../Items/ItemUnitResolver.php';
+
 class ItemVariantService
 {
     public function ensureSchema(mysqli $conn): void
@@ -331,7 +334,6 @@ class ItemVariantService
                 'is_active' => 0,
                 'iname' => $childName,
                 'name2' => (string) ($row['name2'] ?? ''),
-                'code' => (string) ($row['code'] ?? ''),
                 'barcode' => (string) ($row['barcode'] ?? ''),
                 'info' => (string) ($row['info'] ?? ''),
                 'market_price' => (float) ($row['market_price'] ?? 0),
@@ -380,6 +382,9 @@ class ItemVariantService
             if ($label === '' && $explicitName === '' && $variantItemId <= 0) {
                 continue;
             }
+            if ($this->decimal($row['price1'] ?? 0) <= 0) {
+                throw new InvalidArgumentException('variant_sell_price_required');
+            }
             if ($label === '') {
                 $label = $explicitName !== '' ? $explicitName : 'Variant ' . ($position + 1);
             }
@@ -396,6 +401,10 @@ class ItemVariantService
             );
             $code = trim((string) ($row['code'] ?? ''));
             $barcode = trim((string) ($row['barcode'] ?? ''));
+            if ($code === '' && $variantItemId > 0 && $this->itemExists($conn, $variantItemId)) {
+                $existingVariant = $this->loadItem($conn, $variantItemId);
+                $code = (string) ($existingVariant['code'] ?? '');
+            }
             if ($code === '') {
                 $code = (string) $this->nextNumericValue($conn, 'code');
             }
@@ -643,7 +652,6 @@ class ItemVariantService
             'iname' => (string) ($row['iname'] ?? ''),
             'name' => (string) ($row['iname'] ?? ''),
             'name2' => (string) ($row['name2'] ?? ''),
-            'code' => (string) ($row['code'] ?? ''),
             'barcode' => (string) ($row['barcode'] ?? ''),
             'info' => (string) ($row['info'] ?? ''),
             'market_price' => (float) ($row['market_price'] ?? 0),
@@ -822,8 +830,14 @@ class ItemVariantService
             return;
         }
 
-        $unitId = $this->parentDefaultUnitId($conn, $parentItemId);
-        if ($unitId <= 0) {
+        ItemUnitColumnSupport::ensureDefFlags($conn);
+        $this->cloneParentUnitsForVariant($conn, $parentItemId, $variantItemId, $barcode, $prices);
+    }
+
+    private function cloneParentUnitsForVariant(mysqli $conn, int $parentItemId, int $variantItemId, string $barcode, array $prices): void
+    {
+        $parentRows = $this->parentUnitRows($conn, $parentItemId);
+        if (!$parentRows) {
             return;
         }
 
@@ -832,22 +846,66 @@ class ItemVariantService
         $delete->execute();
         $delete->close();
 
-        $uVal = 1.0;
-        $stmt = $conn->prepare("
-            INSERT INTO item_units (item_id, unit_id, u_val, unit_barcode, cost_price, price1, price2, price3)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        ");
-        $cost = $prices['cost_price'];
-        $price1 = $prices['price1'];
-        $price2 = $prices['price2'];
-        $price3 = $prices['price3'];
-        $stmt->bind_param('iidsdddd', $variantItemId, $unitId, $uVal, $barcode, $cost, $price1, $price2, $price3);
-        $stmt->execute();
+        $hasDefFlags = ItemUnitColumnSupport::hasDefFlags($conn);
+        $insertSql = $hasDefFlags
+            ? 'INSERT INTO item_units (item_id, unit_id, u_val, unit_barcode, cost_price, price1, price2, price3, def_sale, def_buy, def_stock) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+            : 'INSERT INTO item_units (item_id, unit_id, u_val, unit_barcode, cost_price, price1, price2, price3) VALUES (?, ?, ?, ?, ?, ?, ?, ?)';
+        $stmt = $conn->prepare($insertSql);
+
+        foreach ($parentRows as $row) {
+            $unitId = (int) ($row['unit_id'] ?? 0);
+            if ($unitId < 1) {
+                continue;
+            }
+
+            $uVal = (float) ($row['u_val'] ?? 1);
+            $unitBarcode = (string) ($row['unit_barcode'] ?? '');
+            $cost = (float) ($row['cost_price'] ?? 0);
+            $price1 = (float) ($row['price1'] ?? 0);
+            $price2 = (float) ($row['price2'] ?? 0);
+            $price3 = (float) ($row['price3'] ?? 0);
+            $defSale = (int) ($row['def_sale'] ?? 0);
+            $defBuy = (int) ($row['def_buy'] ?? 0);
+            $defStock = (int) ($row['def_stock'] ?? 0);
+
+            if ($defSale === 1) {
+                $price1 = (float) ($prices['price1'] ?? $price1);
+                $price2 = (float) ($prices['price2'] ?? $price2);
+                $price3 = (float) ($prices['price3'] ?? ($prices['market_price'] ?? $price3));
+                if ($barcode !== '') {
+                    $unitBarcode = $barcode;
+                }
+            }
+
+            if ($hasDefFlags) {
+                $stmt->bind_param('iidsddddiii', $variantItemId, $unitId, $uVal, $unitBarcode, $cost, $price1, $price2, $price3, $defSale, $defBuy, $defStock);
+            } else {
+                $stmt->bind_param('iidsdddd', $variantItemId, $unitId, $uVal, $unitBarcode, $cost, $price1, $price2, $price3);
+            }
+            $stmt->execute();
+        }
+
         $stmt->close();
+    }
+
+    private function parentUnitRows(mysqli $conn, int $parentItemId): array
+    {
+        $stmt = $conn->prepare('SELECT * FROM item_units WHERE item_id = ? ORDER BY id ASC');
+        $stmt->bind_param('i', $parentItemId);
+        $stmt->execute();
+        $rows = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+        $stmt->close();
+
+        return is_array($rows) ? $rows : [];
     }
 
     private function parentDefaultUnitId(mysqli $conn, int $parentItemId): int
     {
+        $stock = ItemUnitResolver::stockRowForItem($conn, $parentItemId);
+        if ($stock && (int) ($stock['unit_id'] ?? 0) > 0) {
+            return (int) $stock['unit_id'];
+        }
+
         $stmt = $conn->prepare('SELECT unit_id FROM item_units WHERE item_id = ? ORDER BY id ASC LIMIT 1');
         $stmt->bind_param('i', $parentItemId);
         $stmt->execute();
