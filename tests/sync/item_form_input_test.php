@@ -26,15 +26,15 @@ itemFormInputAssert($payload['group1'] === 0, 'blank group1 should normalize to 
 itemFormInputAssert($payload['group2'] === 0, 'blank group2 should normalize to 0');
 itemFormInputAssert(abs($payload['cost_price'] - 0.0) < 0.0001, 'blank cost should normalize to zero');
 itemFormInputAssert(abs($payload['price1'] - 12.5) < 0.0001, 'price1 should normalize to decimal');
-itemFormInputAssert(abs($payload['price2'] - 0.0) < 0.0001, 'blank price2 should normalize to zero');
-itemFormInputAssert(abs($payload['market_price'] - 15.75) < 0.0001, 'market price should normalize to decimal');
-itemFormInputAssert(abs($payload['price3'] - 15.75) < 0.0001, 'price3 should fall back to market price for myitems');
+itemFormInputAssert(abs($payload['price2'] - 0.0) < 0.0001, 'price2 should always normalize to zero');
+itemFormInputAssert(abs($payload['market_price'] - 0.0) < 0.0001, 'market price should always normalize to zero');
+itemFormInputAssert(abs($payload['price3'] - 0.0) < 0.0001, 'price3 should always normalize to zero');
 itemFormInputAssert($payload['item_type'] === 'ingredient', 'item type should normalize for recipe catalog metadata');
 itemFormInputAssert($payload['track_stock'] === 1, 'track stock should normalize to enabled for stock items');
 itemFormInputAssert($payload['preferred_unit_id'] === 1, 'preferred unit should normalize to integer');
 itemFormInputAssert($payload['user'] === 7, 'user should normalize to session user');
 itemFormInputAssert(count($payload['units']) === 1, 'one unit row should be normalized');
-itemFormInputAssert(abs($payload['units'][0]['price3'] - 15.75) < 0.0001, 'unit price3 should fall back to market price');
+itemFormInputAssert(abs($payload['units'][0]['price3'] - 0.0) < 0.0001, 'unit price3 should always normalize to zero');
 
 $defaultUnitPayload = ItemFormInput::normalizeAddPayload([
     'iname' => 'No Unit Configured',
@@ -55,8 +55,25 @@ $explicitPrice3 = ItemFormInput::normalizeAddPayload([
     'market_price' => ['4'],
     'price3' => ['5'],
 ], 0);
-itemFormInputAssert(abs($explicitPrice3['price3'] - 5.0) < 0.0001, 'explicit price3 should win when present');
+itemFormInputAssert(abs($explicitPrice3['price3'] - 0.0) < 0.0001, 'explicit price3 should be zeroed');
+itemFormInputAssert(abs($explicitPrice3['price2'] - 0.0) < 0.0001, 'explicit price2 should be zeroed');
+itemFormInputAssert(abs($explicitPrice3['market_price'] - 0.0) < 0.0001, 'explicit market price should be zeroed');
 itemFormInputAssert($explicitPrice3['user'] === 1, 'missing session user should fall back to legacy default user');
+
+$directCostPayload = ItemFormInput::normalizeAddPayload([
+    'iname' => 'Crepe',
+    'item_unit_profile_present' => '1',
+    'item_type' => 'sellable',
+    'sell_active' => '1',
+    'purchase_active' => '0',
+    'sell_unit_id' => '1',
+    'storage_unit_id' => '1',
+    'sell_price1' => '60',
+    'cost_source' => 'direct',
+    'direct_cost_price' => '18.5',
+], 3, 1);
+itemFormInputAssert(abs($directCostPayload['cost_price'] - 18.5) < 0.0001, 'direct cost source should save manual item cost');
+itemFormInputAssert($directCostPayload['cost_source'] === 'direct', 'direct cost source should be preserved in payload');
 
 $servicePayload = ItemFormInput::normalizeAddPayload([
     'iname' => 'Delivery Fee',

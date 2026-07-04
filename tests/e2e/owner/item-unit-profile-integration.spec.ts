@@ -116,7 +116,7 @@ test.describe.serial('owner: item unit profile full browser integration', () => 
     const stock = flags.find((row) => row.def_stock === 1);
     expect(sell?.unit_id).toBe(Number(ITEM_EDITOR_UNITS.piece));
     expect(stock?.unit_id).toBe(Number(ITEM_EDITOR_UNITS.kg));
-    expect(Number(sell?.u_val)).toBeCloseTo(0.25, 3);
+    expect(Number(sell?.u_val)).toBeCloseTo(4, 3);
   });
 
   test('ingredient — storage required, sell off, purchase on', async ({ page }) => {

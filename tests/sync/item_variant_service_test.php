@@ -39,6 +39,9 @@ try {
     itemVariantAssert($variants[0]['iname'] === 'Chicken Sandwich - Small', 'generated child name expected');
     itemVariantAssert($variants[0]['barcode'] === 'CS-S', 'small barcode expected');
     itemVariantAssert((float) $variants[1]['price1'] === 62.0, 'large price expected');
+    itemVariantAssert((float) ($variants[0]['price2'] ?? -1) === 0.0, 'variant price2 should be zero');
+    itemVariantAssert((float) ($variants[0]['price3'] ?? -1) === 0.0, 'variant price3 should be zero');
+    itemVariantAssert((float) ($variants[0]['market_price'] ?? -1) === 0.0, 'variant market price should be zero');
     itemVariantAssert($variants[0]['is_default'] === true, 'small should be default');
     itemVariantAssert(itemVariantCount($conn, 'item_units') === 3, 'each child should get one default item_unit row');
 

@@ -1545,6 +1545,74 @@ include __DIR__ . '/includes/sidebar.php';
 
 <?php include __DIR__ . '/includes/footer.php'; ?>
 
+<div class="modal fade" id="recipeActivateCostModal" tabindex="-1" role="dialog" aria-labelledby="recipeActivateCostModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered" role="document">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="recipeActivateCostModalLabel">تفعيل الوصفة</h5>
+                <button type="button" class="close" data-dismiss="modal" aria-label="إغلاق">
+                    <span aria-hidden="true">&times;</span>
+                </button>
+            </div>
+            <div class="modal-body">
+                <p class="mb-3">هل تريد اعتماد تكلفة الوصفة على الصنف المرتبط؟ يمكنك تغيير ذلك لاحقاً من محرر الصنف.</p>
+                <div class="custom-control custom-checkbox">
+                    <input type="checkbox" class="custom-control-input" id="apply_item_cost_source" checked>
+                    <label class="custom-control-label" for="apply_item_cost_source">اعتماد تكلفة الوصفة على هذا الصنف</label>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary" data-dismiss="modal">إلغاء</button>
+                <button type="button" class="btn btn-success" id="recipeActivateCostConfirm">تفعيل الوصفة</button>
+            </div>
+        </div>
+    </div>
+</div>
+<script>
+(function () {
+    var pendingForm = null;
+    document.querySelectorAll('form.recipe-activate-form').forEach(function (form) {
+        form.addEventListener('submit', function (event) {
+            if (form.dataset.activateConfirmed === '1') {
+                form.dataset.activateConfirmed = '0';
+                return;
+            }
+            event.preventDefault();
+            pendingForm = form;
+            if (window.jQuery) {
+                window.jQuery('#recipeActivateCostModal').modal('show');
+            }
+        });
+    });
+    var confirmBtn = document.getElementById('recipeActivateCostConfirm');
+    if (confirmBtn) {
+        confirmBtn.addEventListener('click', function () {
+            if (!pendingForm) {
+                return;
+            }
+            var existing = pendingForm.querySelector('input[name="apply_item_cost_source"]');
+            if (existing) {
+                existing.remove();
+            }
+            var apply = document.getElementById('apply_item_cost_source');
+            if (apply && apply.checked) {
+                var hidden = document.createElement('input');
+                hidden.type = 'hidden';
+                hidden.name = 'apply_item_cost_source';
+                hidden.value = '1';
+                pendingForm.appendChild(hidden);
+            }
+            pendingForm.dataset.activateConfirmed = '1';
+            if (window.jQuery) {
+                window.jQuery('#recipeActivateCostModal').modal('hide');
+            }
+            pendingForm.submit();
+            pendingForm = null;
+        });
+    }
+})();
+</script>
+
 <?php
 function posmain_recipe_manage_can_edit(mysqli $conn): bool
 {
@@ -1655,8 +1723,9 @@ function posmain_recipe_manage_preview_context(array $request, array $recipe): a
 function posmain_recipe_manage_action_button(string $action, int $recipeId, string $label, string $class, bool $enabled, bool $escapeLabel = true): string
 {
     $buttonLabel = $escapeLabel ? posmain_recipe_manage_h($label) : $label;
+    $formClass = 'd-inline' . ($action === 'activate' ? ' recipe-activate-form' : '');
 
-    return '<form method="POST" class="d-inline">'
+    return '<form method="POST" class="' . $formClass . '">'
         . csrf_input('recipe_editor')
         . '<input type="hidden" name="action" value="' . posmain_recipe_manage_h($action) . '">'
         . '<input type="hidden" name="recipe_id" value="' . $recipeId . '">'

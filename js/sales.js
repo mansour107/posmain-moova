@@ -93,7 +93,6 @@ function fetchItemInfo(itemId, row) {
             const updates = {
                 '#storeqty': data.itmqty?.toFixed(2) || '0',
                 '#price1': data.price1 || '0',
-                '#market_price': data.market_price || '0',
                 '#storemdtime': data.mdtime || '',
                 '#cost_price': data.cost_price || '0',
                 '#last_price': data.last_price || '0'
@@ -122,7 +121,6 @@ function fetchItemInfo(itemId, row) {
                         
                         $('#storeqty').text((data.itmqty/selectedUnit.unit_value).toFixed(2) + " (" + selectedUnit.unit_value + ")");
                         $('#price1').text(selectedUnit.uprice1);
-                        $('#market_price').text(selectedUnit.uprice3);
                         $('#cost_price').text(data.cost_price * selectedUnit.unit_value);
                         $('#last_price').text(data.last_price * selectedUnit.unit_value);
                         

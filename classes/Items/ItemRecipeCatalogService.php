@@ -1,5 +1,7 @@
 <?php
 
+require_once __DIR__ . '/ItemCostSourceSupport.php';
+
 final class ItemRecipeCatalogService
 {
     public function saveMetadata(mysqli $conn, int $itemId, array $payload): void
@@ -23,6 +25,11 @@ final class ItemRecipeCatalogService
             $assignments[] = 'preferred_unit_id = ?';
             $preferredUnitId = (int) ($payload['preferred_unit_id'] ?? 0);
             $params[] = $preferredUnitId > 0 ? $preferredUnitId : null;
+        }
+        if ($this->columnExists($conn, 'myitems', ItemCostSourceSupport::COLUMN)) {
+            ItemCostSourceSupport::ensureColumn($conn);
+            $assignments[] = ItemCostSourceSupport::COLUMN . ' = ?';
+            $params[] = ItemCostSourceSupport::normalize($payload['cost_source'] ?? 'direct');
         }
 
         if (!$assignments) {

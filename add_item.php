@@ -2,6 +2,8 @@
 <?php
 require_once __DIR__ . '/classes/Items/ItemEditorFlash.php';
 require_once __DIR__ . '/classes/Items/ItemFormInput.php';
+require_once __DIR__ . '/classes/Items/ItemCostSourceSupport.php';
+require_once __DIR__ . '/classes/Items/ItemUnitProfileBuilder.php';
 require_once __DIR__ . '/classes/Items/ItemUnitProfileReader.php';
 require_once __DIR__ . '/classes/Pos/Service/ItemVariantService.php';
 
@@ -107,12 +109,34 @@ if ($isEdit) {
     if ((float) ($unitProfile['sell_price1'] ?? 0) <= 0 && (float) ($rowitm['price1'] ?? 0) > 0) {
         $unitProfile['sell_price1'] = (float) $rowitm['price1'];
     }
-    if ((float) ($unitProfile['sell_price2'] ?? 0) <= 0 && (float) ($rowitm['price2'] ?? 0) > 0) {
-        $unitProfile['sell_price2'] = (float) $rowitm['price2'];
+    $existingItemCost = (float) ($rowitm['cost_price'] ?? 0);
+    if ($existingItemCost > 0) {
+        $costPerSellUnit = ItemUnitProfileBuilder::displayCostPerSellUnit($existingItemCost, $unitProfile);
+        $unitProfile['cost_per_unit'] = $costPerSellUnit;
+        if (($unitProfile['cost_source'] ?? 'purchase') === 'direct') {
+            $unitProfile['direct_cost_price'] = $costPerSellUnit;
+        }
+        if (($unitProfile['cost_source'] ?? 'purchase') === 'recipe') {
+            $unitProfile['recipe_cost_price'] = $costPerSellUnit;
+        }
     }
-    if ((float) ($unitProfile['sell_market_price'] ?? 0) <= 0 && (float) ($rowitm['price3'] ?? 0) > 0) {
-        $unitProfile['sell_market_price'] = (float) ($rowitm['price3'] ?? 0);
+}
+$itemCostSourceMeta = [
+    'recipe_available' => false,
+    'recipe_has_cost' => false,
+    'recipe_cost' => 0.0,
+    'stored_cost_source' => 'direct',
+];
+if ($isEdit) {
+    $itemCostSourceMeta = ItemCostSourceSupport::editorMeta($conn, $editId);
+    $unitProfile['recipe_available'] = $itemCostSourceMeta['recipe_available'];
+    $unitProfile['recipe_has_cost'] = $itemCostSourceMeta['recipe_has_cost'];
+    if ($itemCostSourceMeta['recipe_has_cost']) {
+        $unitProfile['recipe_cost_price'] = $itemCostSourceMeta['recipe_cost'];
     }
+    $unitProfile['cost_source'] = $itemCostSourceMeta['stored_cost_source'];
+} else {
+    $unitProfile['cost_source'] = 'direct';
 }
 $itemGroup1Options = posmain_add_item_group_options($conn, 'item_group');
 $itemGroup2Options = posmain_add_item_group_options($conn, 'item_group2');
@@ -269,6 +293,13 @@ try {
                         padding: 18px;
                     }
                     #item-info-section .item-name-field-input {
+                        min-width: 0;
+                        width: 100%;
+                    }
+                    #item-info-section input[name="barcode"] {
+                        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+                        font-size: 1.05rem;
+                        letter-spacing: 0.03em;
                         min-width: 0;
                         width: 100%;
                     }
@@ -437,6 +468,15 @@ try {
                         font-weight: 800;
                         margin-top: 3px;
                     }
+                    .summary-value--margin {
+                        color: #047857;
+                    }
+                    .summary-value--margin.is-negative {
+                        color: #b91c1c;
+                    }
+                    .summary-value--margin.is-empty {
+                        color: #94a3b8;
+                    }
                     .item-editor-actions {
                         align-items: center;
                         background: rgba(255, 255, 255, .96);
@@ -496,8 +536,9 @@ try {
                                     </div>
                                 </div>
                                 <div class="item-editor-panel-body">
+                                    <input type="hidden" name="name2" value="<?= $isEdit ? htmlspecialchars((string) ($rowitm['name2'] ?? ''), ENT_QUOTES, 'UTF-8') : '' ?>">
                                     <div class="row">
-                                        <div class="col-lg-6">
+                                        <div class="col-12 col-lg-7">
                                             <div class="form-group mb-lg-0">
                                                 <label for="iname">اسم الصنف <span class="text-danger">*</span></label>
                                                 <input id="iname" required class="form-control form-control-lg item-name-field-input" type="text" name="iname"
@@ -505,25 +546,16 @@ try {
                                                        placeholder="مثال: قهوة تركي">
                                             </div>
                                         </div>
-                                        <div class="col-lg-6">
+                                        <div class="col-12 col-lg-5">
                                             <div class="form-group mb-lg-0">
-                                                <label for="name2" class="text-muted small">الاسم الثاني</label>
-                                                <?php $name2Value = $isEdit ? htmlspecialchars((string) ($rowitm['name2'] ?? ''), ENT_QUOTES, 'UTF-8') : ''; ?>
-                                                <input id="name2" class="form-control form-control-lg item-name-field-input" type="text" name="name2" placeholder="اختياري"
-                                                       maxlength="200" dir="auto" title="<?= $name2Value ?>"
-                                                       value="<?= $name2Value ?>">
+                                                <label for="barcode">الباركود</label>
+                                                <input id="barcode" required value="<?= htmlspecialchars((string) $newBarcode, ENT_QUOTES, 'UTF-8') ?>" class="form-control form-control-lg frst" type="text" name="barcode" autocomplete="off" spellcheck="false">
                                             </div>
                                         </div>
                                     </div>
 
                                     <div class="row mt-lg-2">
-                                        <div class="col-lg-2 col-md-6">
-                                            <div class="form-group">
-                                                <label class="text-muted small mb-1">الباركود</label>
-                                                <input required value="<?= htmlspecialchars((string) $newBarcode, ENT_QUOTES, 'UTF-8') ?>" class="form-control form-control-lg frst" type="text" name="barcode">
-                                            </div>
-                                        </div>
-                                        <div class="col-lg-4 col-md-6">
+                                        <div class="col-12 col-lg-6">
                                             <div class="form-group mb-md-0">
                                                 <label for="group1_input">التصنيف</label>
                                                 <div class="item-catalog-group-picker" data-picker-type="group1">
@@ -565,7 +597,7 @@ try {
                                                 </div>
                                             </div>
                                         </div>
-                                        <div class="col-lg-4 col-md-6">
+                                        <div class="col-12 col-lg-6">
                                             <div class="form-group mb-md-0">
                                                 <label for="group2_input">المجموعة الفرعية</label>
                                                 <div class="item-catalog-group-picker" data-picker-type="group2">
@@ -677,8 +709,6 @@ try {
                                         <th style="min-width: 110px;">الباركود</th>
                                         <th style="min-width: 90px;">التكلفة</th>
                                         <th style="min-width: 100px;">سعر البيع</th>
-                                        <th style="min-width: 130px;">سعر خاص (اختياري)</th>
-                                        <th style="min-width: 130px;">سعر السوق (اختياري)</th>
                                         <th style="width: 70px;">نشط</th>
                                         <th style="width: 80px;">افتراضي</th>
                                         <th style="width: 120px;"></th>
@@ -694,8 +724,6 @@ try {
                                         $variantBarcode = htmlspecialchars((string) ($variant['barcode'] ?? ''), ENT_QUOTES, 'UTF-8');
                                         $variantCost = htmlspecialchars((string) ($variant['cost_price'] ?? '0'), ENT_QUOTES, 'UTF-8');
                                         $variantPrice1 = htmlspecialchars((string) ($variant['price1'] ?? '0'), ENT_QUOTES, 'UTF-8');
-                                        $variantPrice2 = htmlspecialchars((string) ($variant['price2'] ?? '0'), ENT_QUOTES, 'UTF-8');
-                                        $variantPrice3 = htmlspecialchars((string) ($variant['price3'] ?? '0'), ENT_QUOTES, 'UTF-8');
                                         $variantActive = (int) ($variant['is_active'] ?? 1) === 1;
                                         $variantDefault = (int) ($variant['is_default'] ?? 0) === 1;
                                         $variantSort = (int) ($variant['sort_order'] ?? ($variantIndex + 1));
@@ -717,8 +745,6 @@ try {
                                             <td><input type="text" class="form-control form-control-sm" name="variant_barcode[]" value="<?= $variantBarcode ?>" placeholder="اختياري"></td>
                                             <td><input type="number" class="form-control form-control-sm" name="variant_cost_price[]" value="<?= $variantCost ?>" step="0.001" min="0"></td>
                                             <td><input type="number" class="form-control form-control-sm variant-sell-price-input" name="variant_price1[]" value="<?= $variantPrice1 ?>" step="0.001" min="0"></td>
-                                            <td><input type="number" class="form-control form-control-sm" name="variant_price2[]" value="<?= $variantPrice2 ?>" step="0.001" min="0"></td>
-                                            <td><input type="number" class="form-control form-control-sm" name="variant_market_price[]" value="<?= $variantPrice3 ?>" step="0.001" min="0"></td>
                                             <td class="text-center align-middle">
                                                 <input type="hidden" name="variant_active[<?= (int) $variantIndex ?>]" value="0">
                                                 <input type="checkbox" name="variant_active[<?= (int) $variantIndex ?>]" value="1" <?= $variantActive ? 'checked' : '' ?>>
@@ -749,28 +775,28 @@ try {
 
                         <aside class="item-summary-sidebar">
                             <div class="summary-head">
-                                <div class="font-weight-bold">ملخص الصنف</div>
-                                <div class="small text-white-50 mt-1">يتحدث أثناء التعديل</div>
+                                <div class="font-weight-bold">مراجعة سريعة</div>
+                                <div class="small text-white-50 mt-1" id="summaryItemName"><?= $isEdit ? htmlspecialchars($rowitm['iname'], ENT_QUOTES, 'UTF-8') : 'صنف جديد' ?></div>
                             </div>
                             <div class="summary-line">
-                                <span class="summary-label">الاسم</span>
-                                <span class="summary-value" id="summaryItemName"><?= $isEdit ? htmlspecialchars($rowitm['iname'], ENT_QUOTES, 'UTF-8') : 'صنف جديد' ?></span>
+                                <span class="summary-label">وحدة البيع</span>
+                                <span class="summary-value" id="summarySellUnit">—</span>
                             </div>
                             <div class="summary-line">
-                                <span class="summary-label">الباركود</span>
-                                <span class="summary-value" id="summaryBarcode"><?= htmlspecialchars((string) $newBarcode, ENT_QUOTES, 'UTF-8') ?></span>
+                                <span class="summary-label">سعر البيع</span>
+                                <span class="summary-value" id="summarySellPrice">—</span>
                             </div>
                             <div class="summary-line">
-                                <span class="summary-label">نوع الصنف</span>
-                                <span class="summary-value" id="summaryItemType"><?= htmlspecialchars($itemType, ENT_QUOTES, 'UTF-8') ?></span>
+                                <span class="summary-label">تكلفة لكل وحدة بيع</span>
+                                <span class="summary-value" id="summaryCostPerSellUnit">—</span>
                             </div>
                             <div class="summary-line">
-                                <span class="summary-label">الوحدة الأساسية</span>
-                                <span class="summary-value" id="summaryBaseUnit">—</span>
+                                <span class="summary-label">هامش الربح</span>
+                                <span class="summary-value summary-value--margin" id="summaryProfitMargin">—</span>
                             </div>
-                            <div class="summary-line">
-                                <span class="summary-label">عدد الوحدات</span>
-                                <span class="summary-value" id="summaryUnitCount">1</span>
+                            <div class="summary-line d-none" id="summaryExtraUnitsLine">
+                                <span class="summary-label">وحدات إضافية</span>
+                                <span class="summary-value" id="summaryExtraUnits">—</span>
                             </div>
                         </aside>
                     </div>
@@ -932,7 +958,6 @@ $(document).ready(function() {
 
     function refreshItemSummary() {
         $('#summaryItemName').text($.trim($('#iname').val() || '') || 'صنف جديد');
-        $('#summaryBarcode').text($.trim($('input[name="barcode"]').val() || '') || '—');
     }
 
     $(document).on('input', '#iname, input[name="barcode"]', refreshItemSummary);
@@ -956,8 +981,6 @@ $(document).ready(function() {
                 <td><input type="text" class="form-control form-control-sm" name="variant_barcode[]" value="" placeholder="اختياري"></td>
                 <td><input type="number" class="form-control form-control-sm" name="variant_cost_price[]" value="0" step="0.001" min="0"></td>
                 <td><input type="number" class="form-control form-control-sm variant-sell-price-input" name="variant_price1[]" value="" step="0.001" min="0"></td>
-                <td><input type="number" class="form-control form-control-sm" name="variant_price2[]" value="0" step="0.001" min="0"></td>
-                <td><input type="number" class="form-control form-control-sm" name="variant_market_price[]" value="0" step="0.001" min="0"></td>
                 <td class="text-center align-middle">
                     <input type="hidden" name="variant_active[${index}]" value="0">
                     <input type="checkbox" name="variant_active[${index}]" value="1" checked>

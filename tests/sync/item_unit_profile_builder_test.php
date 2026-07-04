@@ -37,11 +37,14 @@ $purchasePack = ItemUnitProfileBuilder::buildFromPost([
     'purchase_storage_factor' => '12',
     'purchase_cost' => '48',
     'sell_price1' => '5',
+    'cost_source' => 'purchase',
 ], 3);
 
 itemUnitProfileBuilderAssert(count($purchasePack['units']) === 2, 'sell + purchase pack should produce two rows');
 itemUnitProfileBuilderAssert((int) $purchasePack['purchase_unit_id'] === 5, 'purchase unit id should be exposed');
 itemUnitProfileBuilderAssert((int) $purchasePack['preferred_unit_id'] === 3, 'preferred unit should be storage unit');
+itemUnitProfileBuilderAssert(abs((float) $purchasePack['cost_price'] - 4.0) < 0.0001, 'purchase cost should normalize to stock unit cost');
+itemUnitProfileBuilderAssert((string) $purchasePack['cost_source'] === 'purchase', 'purchase pack should keep purchase cost source');
 
 $ingredient = ItemUnitProfileBuilder::buildFromPost([
     'item_unit_profile_present' => '1',
@@ -52,10 +55,27 @@ $ingredient = ItemUnitProfileBuilder::buildFromPost([
     'purchase_unit_id' => '4',
     'purchase_storage_factor' => '6',
     'purchase_cost' => '3',
+    'cost_source' => 'purchase',
 ], 2);
 
 itemUnitProfileBuilderAssert((int) $ingredient['units'][0]['def_stock'] === 1, 'ingredient should have stock row');
 itemUnitProfileBuilderAssert((int) $ingredient['units'][1]['def_buy'] === 1, 'ingredient purchase row should be def_buy');
+itemUnitProfileBuilderAssert(abs((float) $ingredient['cost_price'] - 0.5) < 0.0001, 'ingredient purchase cost should normalize per stock unit');
+
+$directCost = ItemUnitProfileBuilder::buildFromPost([
+    'item_unit_profile_present' => '1',
+    'item_type' => 'sellable',
+    'sell_active' => '1',
+    'purchase_active' => '0',
+    'sell_unit_id' => '3',
+    'storage_unit_id' => '3',
+    'sell_price1' => '25',
+    'cost_source' => 'direct',
+    'direct_cost_price' => '9.75',
+], 3);
+
+itemUnitProfileBuilderAssert(abs((float) $directCost['cost_price'] - 9.75) < 0.0001, 'direct cost should save as item cost');
+itemUnitProfileBuilderAssert((string) $directCost['cost_source'] === 'direct', 'direct cost source should be exposed');
 
 try {
     ItemUnitProfileBuilder::buildFromPost([
@@ -93,6 +113,7 @@ $conversion = ItemUnitProfileBuilder::buildFromPost([
     'sell_storage_factor' => '4',
     'sell_storage_swapped' => '0',
     'sell_price1' => '9',
+    'cost_source' => 'purchase',
 ], 2);
 
 itemUnitProfileBuilderAssert(count($conversion['units']) === 2, 'sell != storage should create two rows');
@@ -104,7 +125,42 @@ foreach ($conversion['units'] as $unitRow) {
 }
 itemUnitProfileBuilderAssert($sellRow !== null, 'conversion profile should include sell row');
 itemUnitProfileBuilderAssert(abs((float) $sellRow['u_val'] - 4) < 0.0001, 'sell row should store the entered conversion factor');
-itemUnitProfileBuilderAssert((int) ($sellRow['conversion_swapped'] ?? 0) === 0, 'sell row should persist swap flag');
+itemUnitProfileBuilderAssert(abs((float) $conversion['cost_price'] - 0.25) < 0.0001, 'purchase cost should normalize to sell unit cost');
+
+$multiUnitSell = ItemUnitProfileBuilder::buildFromPost([
+    'item_unit_profile_present' => '1',
+    'item_type' => 'sellable',
+    'sell_active' => '1',
+    'purchase_active' => '1',
+    'sell_unit_id' => '7',
+    'storage_unit_id' => '3',
+    'purchase_unit_id' => '5',
+    'purchase_storage_factor' => '24',
+    'purchase_cost' => '10000',
+    'sell_storage_factor' => '12',
+    'sell_price1' => '50',
+    'cost_source' => 'purchase',
+], 3);
+
+itemUnitProfileBuilderAssert(
+    abs((float) $multiUnitSell['cost_price'] - (10000 / 24 / 12)) < 0.01,
+    'purchase cost should chain purchase→storage→sell units'
+);
+
+$legacyStockDisplay = ItemUnitProfileBuilder::displayCostPerSellUnit(416.666667, [
+    'cost_source' => 'purchase',
+    'sell_unit_id' => 7,
+    'storage_unit_id' => 3,
+    'purchase_cost' => 10000,
+    'purchase_storage_factor' => 24,
+    'purchase_storage_swapped' => false,
+    'sell_storage_factor' => 12,
+    'sell_storage_swapped' => false,
+]);
+itemUnitProfileBuilderAssert(
+    abs($legacyStockDisplay - (10000 / 24 / 12)) < 0.01,
+    'legacy stock-based stored cost should display as sell unit cost'
+);
 
 require_once __DIR__ . '/../../classes/Items/ItemUnitConversion.php';
 itemUnitProfileBuilderAssert(
@@ -126,5 +182,6 @@ $profilePayload = ItemFormInput::normalizeAddPayload([
 
 itemUnitProfileBuilderAssert(abs($profilePayload['price1'] - 7.5) < 0.0001, 'ItemFormInput should accept profile payload');
 itemUnitProfileBuilderAssert((int) $profilePayload['units'][0]['def_sale'] === 1, 'normalized units should include def_sale');
+itemUnitProfileBuilderAssert((string) $profilePayload['cost_source'] === 'direct', 'profile payload without purchase should default to direct cost source');
 
 echo "item-unit-profile-builder-ok\n";

@@ -7,6 +7,7 @@ require_once __DIR__ . '/RecipeDecimal.php';
 require_once __DIR__ . '/Repository/RecipeRepository.php';
 require_once __DIR__ . '/Repository/RecipeVariantLineRepository.php';
 require_once __DIR__ . '/RecipeEditorItemCostService.php';
+require_once __DIR__ . '/../Items/ItemCostSourceSupport.php';
 require_once __DIR__ . '/../Sync/OperationalSyncRecorder.php';
 require_once __DIR__ . '/../Items/ItemUnitResolver.php';
 
@@ -65,6 +66,13 @@ class RecipeEditorMutationService
                 $recipeId = $this->positiveInt($input['recipe_id'] ?? null, 'Recipe id is required.');
                 $this->definition->activate($conn, $recipeId, $actor);
                 $this->syncAutoItemCosts($conn, $recipeId);
+                if (!empty($input['apply_item_cost_source'])) {
+                    ItemCostSourceSupport::applyRecipeCostSourceForRecipe(
+                        $conn,
+                        $recipeId,
+                        $this->costPreviewContextForRecipe($conn, $recipeId)
+                    );
+                }
                 return $this->result('Recipe activated.', $recipeId);
 
             case 'archive':

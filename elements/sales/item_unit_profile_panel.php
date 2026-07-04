@@ -14,6 +14,23 @@ $storageUnitId = (int) ($profile['storage_unit_id'] ?? 0);
 $purchaseUnitId = (int) ($profile['purchase_unit_id'] ?? 0);
 $sellStorageSwapped = !empty($profile['sell_storage_swapped']);
 $purchaseStorageSwapped = !empty($profile['purchase_storage_swapped']);
+$costSource = (string) ($profile['cost_source'] ?? 'direct');
+if (!in_array($costSource, ['purchase', 'direct', 'recipe'], true)) {
+    $costSource = 'direct';
+}
+$recipeAvailable = !empty($profile['recipe_available']);
+$recipeHasCost = !empty($profile['recipe_has_cost']);
+$directCostPrice = (float) ($profile['direct_cost_price'] ?? 0);
+$recipeCostPrice = (float) ($profile['recipe_cost_price'] ?? 0);
+$purchaseCostPrice = (float) ($profile['purchase_cost'] ?? 0);
+$costPerUnit = (float) ($profile['cost_per_unit'] ?? 0);
+if ($costPerUnit <= 0) {
+    if ($costSource === 'direct') {
+        $costPerUnit = $directCostPrice;
+    } elseif ($costSource === 'recipe') {
+        $costPerUnit = $recipeCostPrice;
+    }
+}
 $canCreateUnits = !empty($canCreateUnits);
 
 function posmain_item_unit_picker_field(
@@ -141,7 +158,7 @@ function posmain_item_unit_picker_field(
         <div class="item-unit-profile-section__header">
             <div>
                 <h4 class="item-unit-profile-section__title">البيع</h4>
-                <p class="item-unit-profile-section__subtitle">وحدة البيع والأسعار الظاهرة في الكاشير.</p>
+                <p class="item-unit-profile-section__subtitle">وحدة البيع، السعر، التكلفة، وهامش الربح.</p>
             </div>
             <label class="item-unit-profile-section__toggle d-none" id="sell-section-toggle-wrap">
                 <input type="checkbox" id="sell_section_checkbox" <?= $sellActive ? 'checked' : '' ?>>
@@ -149,7 +166,7 @@ function posmain_item_unit_picker_field(
             </label>
         </div>
         <div class="item-unit-profile-section__body" id="sell-section-body">
-            <div class="item-unit-profile-field-row">
+            <div class="item-unit-profile-field-row item-unit-profile-field-row--sell-unit">
                 <?= posmain_item_unit_picker_field(
                     'sell_unit_id',
                     'sell_unit_id',
@@ -161,21 +178,58 @@ function posmain_item_unit_picker_field(
                     'sell_unit_listbox'
                 ) ?>
             </div>
-            <input type="hidden" name="sell_barcode" value="<?= htmlspecialchars((string) ($profile['sell_barcode'] ?? ''), ENT_QUOTES, 'UTF-8') ?>">
-            <div class="item-unit-profile-prices">
-                <div class="form-group mb-0">
+
+            <div class="item-sell-price-cost-row" id="sell-price-cost-row">
+                <div class="form-group mb-0 item-unit-profile-sell-price">
                     <label for="sell_price1">سعر البيع</label>
                     <input type="number" name="sell_price1" id="sell_price1" class="form-control form-control-sm" value="<?= htmlspecialchars((string) ($profile['sell_price1'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" step="0.001" min="0">
                 </div>
-                <div class="form-group mb-0">
-                    <label for="sell_price2">سعر خاص (اختياري)</label>
-                    <input type="number" name="sell_price2" id="sell_price2" class="form-control form-control-sm" value="<?= htmlspecialchars((string) ($profile['sell_price2'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" step="0.001" min="0">
-                </div>
-                <div class="form-group mb-0">
-                    <label for="sell_market_price">سعر السوق (اختياري)</label>
-                    <input type="number" name="sell_market_price" id="sell_market_price" class="form-control form-control-sm" value="<?= htmlspecialchars((string) ($profile['sell_market_price'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" step="0.001" min="0">
+                <div class="item-sell-price-cost-divider" aria-hidden="true">|</div>
+                <div class="form-group mb-0" id="cost-per-unit-field">
+                    <label for="cost_per_unit_value" id="cost_per_unit_label">تكلفة لكل وحدة بيع</label>
+                    <input type="number" name="direct_cost_price" id="direct_cost_price" class="form-control form-control-sm d-none" value="<?= htmlspecialchars((string) ($directCostPrice > 0 ? $directCostPrice : ''), ENT_QUOTES, 'UTF-8') ?>" step="0.001" min="0">
+                    <input type="number" id="cost_per_unit_value" class="form-control form-control-sm" value="<?= htmlspecialchars((string) ($costPerUnit > 0 ? $costPerUnit : ''), ENT_QUOTES, 'UTF-8') ?>" step="0.001" min="0">
                 </div>
             </div>
+
+            <div class="item-sell-margin-row" id="sell-margin-row">
+                <span class="item-sell-margin-label">هامش الربح</span>
+                <span class="item-sell-margin-value is-empty" id="sell_profit_margin">—</span>
+            </div>
+
+            <input type="hidden" name="recipe_cost_price" id="recipe_cost_price" value="<?= htmlspecialchars((string) $recipeCostPrice, ENT_QUOTES, 'UTF-8') ?>">
+            <div class="item-cost-source-block" id="sell-cost-source-block"
+                data-recipe-available="<?= $recipeAvailable ? '1' : '0' ?>"
+                data-recipe-has-cost="<?= $recipeHasCost ? '1' : '0' ?>">
+                <div class="item-cost-source-heading">كيف تُحسب التكلفة؟</div>
+                <fieldset class="item-cost-source-choices mb-2" id="item-cost-source-choices">
+                    <legend class="sr-only">مصدر تكلفة لكل وحدة</legend>
+                    <label class="item-cost-source-choice<?= $costSource === 'direct' ? ' is-active' : '' ?>" id="cost-source-direct-choice">
+                        <input type="radio" name="cost_source" value="direct" <?= $costSource === 'direct' ? 'checked' : '' ?>>
+                        <span class="item-cost-source-choice__body">
+                            <span class="item-cost-source-choice__title">إدخال يدوي</span>
+                            <span class="item-cost-source-choice__desc">أدخل تكلفة كل وحدة بيع مباشرة</span>
+                        </span>
+                    </label>
+                    <label class="item-cost-source-choice<?= $costSource === 'purchase' ? ' is-active' : '' ?><?= $purchaseActive ? '' : ' is-disabled' ?>" id="cost-source-purchase-choice">
+                        <input type="radio" name="cost_source" value="purchase" <?= $costSource === 'purchase' ? 'checked' : '' ?><?= $purchaseActive ? '' : ' disabled' ?>>
+                        <span class="item-cost-source-choice__body">
+                            <span class="item-cost-source-choice__title">من الشراء</span>
+                            <span class="item-cost-source-choice__desc">تُحسب من تكلفة الشراء وتحويل الوحدات</span>
+                        </span>
+                    </label>
+                    <label class="item-cost-source-choice<?= $costSource === 'recipe' ? ' is-active' : '' ?><?= ($recipeAvailable && $recipeHasCost) ? '' : ' is-disabled' ?>" id="cost-source-recipe-choice">
+                        <input type="radio" name="cost_source" value="recipe" <?= $costSource === 'recipe' ? 'checked' : '' ?><?= ($recipeAvailable && $recipeHasCost) ? '' : ' disabled' ?>>
+                        <span class="item-cost-source-choice__body">
+                            <span class="item-cost-source-choice__title">من الوصفة</span>
+                            <span class="item-cost-source-choice__desc" id="cost-source-recipe-desc"><?= $recipeHasCost ? 'تُقرأ من تكلفة مكونات الوصفة' : ($recipeAvailable ? 'الوصفة موجودة لكن بدون تكلفة محسوبة' : 'أضف وصفة لاحقاً لتفعيل هذا الخيار') ?></span>
+                        </span>
+                    </label>
+                </fieldset>
+                <small class="form-text text-muted mb-0" id="cost_per_unit_hint"></small>
+            </div>
+
+            <input type="hidden" name="sell_barcode" value="<?= htmlspecialchars((string) ($profile['sell_barcode'] ?? ''), ENT_QUOTES, 'UTF-8') ?>">
         </div>
     </div>
 </section>
@@ -206,13 +260,14 @@ function posmain_item_unit_picker_field(
                 ) ?>
             </div>
             <div class="item-unit-conversion d-none<?= $sellStorageSwapped ? ' is-direction-swapped' : '' ?>" id="sell-storage-conversion" data-conversion="sell-storage">
-                <span class="item-unit-conversion__label">العلاقة بين البيع والتخزين</span>
-                <span>1</span>
-                <span class="item-unit-conversion__unit" data-role="left-unit">—</span>
-                <span>=</span>
-                <input type="number" class="form-control form-control-sm item-unit-conversion__factor" name="sell_storage_factor" id="sell_storage_factor" value="<?= htmlspecialchars((string) ($profile['sell_storage_factor'] ?? '1'), ENT_QUOTES, 'UTF-8') ?>" step="any" min="0.001">
-                <span class="item-unit-conversion__unit" data-role="right-unit">—</span>
-                <button type="button" class="item-unit-conversion__swap" title="عكس الاتجاه" data-swap-target="sell-storage"><i class="fas fa-exchange-alt"></i></button>
+                <div class="item-unit-conversion__equation" dir="rtl">
+                    <span class="item-unit-conversion__one">1</span>
+                    <span class="item-unit-conversion__unit" data-role="left-unit">—</span>
+                    <span class="item-unit-conversion__equals">=</span>
+                    <input type="number" class="form-control form-control-sm item-unit-conversion__factor" name="sell_storage_factor" id="sell_storage_factor" value="<?= htmlspecialchars((string) ($profile['sell_storage_factor'] ?? '1'), ENT_QUOTES, 'UTF-8') ?>" step="any" min="0.001" aria-label="معامل التحويل">
+                    <span class="item-unit-conversion__unit" data-role="right-unit">—</span>
+                </div>
+                <button type="button" class="item-unit-conversion__swap" title="عكس الاتجاه" data-swap-target="sell-storage" aria-label="عكس اتجاه التحويل"><i class="fas fa-exchange-alt"></i></button>
                 <input type="hidden" name="sell_storage_swapped" id="sell_storage_swapped" value="<?= $sellStorageSwapped ? '1' : '0' ?>">
             </div>
             <div class="item-unit-profile-field-row" id="purchase-only-fields">
@@ -227,7 +282,7 @@ function posmain_item_unit_picker_field(
                     'purchase_unit_listbox'
                 ) ?>
                 <div class="form-group mb-0">
-                    <label for="purchase_cost">تكلفة الشراء للوحدة</label>
+                    <label for="purchase_cost" id="purchase_cost_label">تكلفة الشراء لكل وحدة</label>
                     <input type="number" name="purchase_cost" id="purchase_cost" class="form-control form-control-sm" value="<?= htmlspecialchars((string) ($profile['purchase_cost'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" step="0.001" min="0">
                 </div>
                 <div class="form-group mb-0">
@@ -236,16 +291,17 @@ function posmain_item_unit_picker_field(
                 </div>
             </div>
             <div class="item-unit-conversion d-none<?= $purchaseStorageSwapped ? ' is-direction-swapped' : '' ?>" id="purchase-storage-conversion" data-conversion="purchase-storage">
-                <span class="item-unit-conversion__label">العلاقة بين الشراء والتخزين</span>
-                <span>1</span>
-                <span class="item-unit-conversion__unit" data-role="left-unit">—</span>
-                <span>=</span>
-                <input type="number" class="form-control form-control-sm item-unit-conversion__factor" name="purchase_storage_factor" id="purchase_storage_factor" value="<?= htmlspecialchars((string) ($profile['purchase_storage_factor'] ?? '1'), ENT_QUOTES, 'UTF-8') ?>" step="any" min="0.001">
-                <span class="item-unit-conversion__unit" data-role="right-unit">—</span>
-                <button type="button" class="item-unit-conversion__swap" title="عكس الاتجاه" data-swap-target="purchase-storage"><i class="fas fa-exchange-alt"></i></button>
+                <div class="item-unit-conversion__equation" dir="rtl">
+                    <span class="item-unit-conversion__one">1</span>
+                    <span class="item-unit-conversion__unit" data-role="left-unit">—</span>
+                    <span class="item-unit-conversion__equals">=</span>
+                    <input type="number" class="form-control form-control-sm item-unit-conversion__factor" name="purchase_storage_factor" id="purchase_storage_factor" value="<?= htmlspecialchars((string) ($profile['purchase_storage_factor'] ?? '1'), ENT_QUOTES, 'UTF-8') ?>" step="any" min="0.001" aria-label="معامل التحويل">
+                    <span class="item-unit-conversion__unit" data-role="right-unit">—</span>
+                </div>
+                <button type="button" class="item-unit-conversion__swap" title="عكس الاتجاه" data-swap-target="purchase-storage" aria-label="عكس اتجاه التحويل"><i class="fas fa-exchange-alt"></i></button>
                 <input type="hidden" name="purchase_storage_swapped" id="purchase_storage_swapped" value="<?= $purchaseStorageSwapped ? '1' : '0' ?>">
             </div>
-            <p class="text-muted small mb-0" id="unitImpactPreview">عند استلام مشتريات تُحوَّل الكميات تلقائياً إلى وحدة التخزين.</p>
+            <p class="text-muted small mb-0 d-none" id="unitImpactPreview">عند استلام مشتريات تُحوَّل الكميات تلقائياً إلى وحدة التخزين.</p>
         </div>
     </div>
 </section>

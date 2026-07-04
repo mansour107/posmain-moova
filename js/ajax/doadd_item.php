@@ -25,8 +25,8 @@ $group2 = $_POST['group2'];
 $info = $_POST['info']; 
 $cost_price = $_POST['cost_price']; 
 $price1 = $_POST['price1'];
-$price2 = $_POST['price2']; 
-$market_price = $_POST['market_price'];
+$price2 = 0;
+$market_price = 0;
 
 // Prepare SQL statement for inserting into myitems
 $stmt = $conn->prepare("INSERT INTO myitems (iname, name2, code, barcode, info, market_price, cost_price, price1, price2, group1, group2, user) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");

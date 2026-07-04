@@ -140,16 +140,12 @@
                       <tr>
                         <th>سعر التكلفه</th>
                         <th>سعر البيع</th>
-                        <th>سعر خاص (اختياري)</th>
-                        <th>سعر السوق (اختياري)</th>
                       </tr>
                     </thead>
                     <tbody>
                       <tr>
                         <td><input type="number" value="0.00" name="cost_price" class="form-control form-control-sm nozero" step="any"></td>
                         <td><input type="number" value="0.00" name="price1" class="form-control form-control-sm nozero" step="any"></td>
-                        <td><input type="number" value="0.00" name="price2" class="form-control form-control-sm nozero" step="any"></td>
-                        <td><input type="number" value="0.00" name="market_price" class="form-control form-control-sm nozero" step="any"></td>
                       </tr>
                     </tbody>
                   </table>

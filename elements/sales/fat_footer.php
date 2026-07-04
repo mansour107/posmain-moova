@@ -40,14 +40,6 @@
 
             </div>
             <div class="row">
-                    <div class="col bg-light"> سعر السوق</div>
-                    <div class="col border border-light" id="cost_price_div">
-                    <h6 id="market_price" class=""></h6>
-                </div>
-            </div>
-
-            
-            <div class="row">
                     <div class="col bg-light"> آخر وقت للتعديل</div>
                     <div class="col border border-light" id="cost_price_div">
                         <h6 id="storemdtime" class=""></h6>

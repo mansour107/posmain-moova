@@ -4,6 +4,8 @@ require_once __DIR__ . '/includes/auth_guard.php';
 require_once __DIR__ . '/includes/csrf.php';
 require_once __DIR__ . '/includes/connect.php';
 require_once __DIR__ . '/includes/pos_default_accounts.php';
+require_once __DIR__ . '/classes/Items/ItemUnitCatalogLabel.php';
+require_once __DIR__ . '/classes/Items/ItemUnitColumnSupport.php';
 
 require_permission('inventory.edit', $conn);
 
@@ -37,8 +39,15 @@ $inventoryStockLevelItems = inventoryStockLevelRows($conn, "
     ORDER BY iname
     LIMIT 700
 ");
+$inventoryStockLevelUnitFlagSelect = ItemUnitColumnSupport::hasDefFlags($conn)
+    ? 'iu.def_sale, iu.def_buy, iu.def_stock'
+    : '0 AS def_sale, 0 AS def_buy, 0 AS def_stock';
+$inventoryStockLevelUnitSwapSelect = ItemUnitColumnSupport::hasConversionSwapped($conn)
+    ? 'iu.conversion_swapped'
+    : '0 AS conversion_swapped';
 $inventoryStockLevelUnits = inventoryStockLevelRows($conn, "
-    SELECT iu.item_id, iu.unit_id, iu.u_val, COALESCE(u.uname, CONCAT('وحدة ', iu.unit_id)) AS uname
+    SELECT iu.item_id, iu.unit_id, iu.u_val, {$inventoryStockLevelUnitSwapSelect}, {$inventoryStockLevelUnitFlagSelect},
+           COALESCE(u.uname, CONCAT('وحدة ', iu.unit_id)) AS uname
     FROM item_units iu
     LEFT JOIN myunits u ON u.id = iu.unit_id
     WHERE COALESCE(iu.isdeleted, 0) = 0
@@ -46,6 +55,7 @@ $inventoryStockLevelUnits = inventoryStockLevelRows($conn, "
     ORDER BY iu.item_id, u.uname, iu.unit_id
     LIMIT 1200
 ");
+$inventoryStockLevelUnits = ItemUnitCatalogLabel::decorateRows($inventoryStockLevelUnits);
 $inventoryStockLevelSuppliers = inventoryStockLevelRows($conn, "
     SELECT id, aname, code
     FROM acc_head
@@ -358,7 +368,7 @@ function inventoryStockLevelUnitOptions(itemId) {
     const units = inventoryStockLevelUnits.filter(unit => Number(unit.item_id || 0) === Number(itemId || 0));
     const options = ['<option value="">الوحدة الأساسية</option>'];
     units.forEach(unit => {
-        const label = `${unit.uname || unit.unit_id} × ${Number(unit.u_val || 1).toFixed(3)}`;
+        const label = unit.unit_label || unit.uname || unit.unit_id;
         options.push(`<option value="${Number(unit.unit_id || 0)}">${inventoryStockLevelEscapeHtml(label)}</option>`);
     });
     return options.join('');

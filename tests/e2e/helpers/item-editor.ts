@@ -13,8 +13,6 @@ export const ITEM_EDITOR_UNITS = {
 export interface SellProfileOptions {
   unitId?: string;
   price1: string;
-  price2?: string;
-  marketPrice?: string;
 }
 
 export interface PurchaseProfileOptions {
@@ -94,12 +92,6 @@ export async function fillSellProfile(page: Page, sell: SellProfileOptions): Pro
     await selectItemUnit(page, 'sell_unit_id', sell.unitId);
   }
   await page.locator('#sell_price1').fill(sell.price1);
-  if (sell.price2 !== undefined) {
-    await page.locator('#sell_price2').fill(sell.price2);
-  }
-  if (sell.marketPrice !== undefined) {
-    await page.locator('#sell_market_price').fill(sell.marketPrice);
-  }
 }
 
 export async function fillPurchaseProfile(page: Page, purchase: PurchaseProfileOptions): Promise<void> {

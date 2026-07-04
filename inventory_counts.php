@@ -5,6 +5,8 @@ require_once __DIR__ . '/includes/csrf.php';
 require_once __DIR__ . '/includes/connect.php';
 require_once __DIR__ . '/includes/pos_default_accounts.php';
 require_once __DIR__ . '/classes/Inventory/InventoryFeatureFlags.php';
+require_once __DIR__ . '/classes/Items/ItemUnitCatalogLabel.php';
+require_once __DIR__ . '/classes/Items/ItemUnitColumnSupport.php';
 
 require_permission('inventory.edit', $conn);
 
@@ -28,8 +30,15 @@ $inventoryCountCategories = inventoryCountRows($conn, "
     ORDER BY gname
     LIMIT 200
 ");
+$inventoryCountUnitFlagSelect = ItemUnitColumnSupport::hasDefFlags($conn)
+    ? 'iu.def_sale, iu.def_buy, iu.def_stock'
+    : '0 AS def_sale, 0 AS def_buy, 0 AS def_stock';
+$inventoryCountUnitSwapSelect = ItemUnitColumnSupport::hasConversionSwapped($conn)
+    ? 'iu.conversion_swapped'
+    : '0 AS conversion_swapped';
 $inventoryCountUnits = inventoryCountRows($conn, "
-    SELECT iu.item_id, iu.unit_id, iu.u_val, COALESCE(u.uname, CONCAT('وحدة ', iu.unit_id)) AS uname
+    SELECT iu.item_id, iu.unit_id, iu.u_val, {$inventoryCountUnitSwapSelect}, {$inventoryCountUnitFlagSelect},
+           COALESCE(u.uname, CONCAT('وحدة ', iu.unit_id)) AS uname
     FROM item_units iu
     LEFT JOIN myunits u ON u.id = iu.unit_id
     WHERE COALESCE(iu.isdeleted, 0) = 0
@@ -37,6 +46,7 @@ $inventoryCountUnits = inventoryCountRows($conn, "
     ORDER BY iu.item_id, u.uname, iu.unit_id
     LIMIT 1000
 ");
+$inventoryCountUnits = ItemUnitCatalogLabel::decorateRows($inventoryCountUnits);
 $inventoryCounts = inventoryCountRows($conn, "
     SELECT c.id, c.store_id, c.status, c.count_type, c.created_at, c.submitted_at, c.approved_at, c.closed_at,
            s.aname AS store_name,
@@ -437,7 +447,7 @@ function inventoryCountUnitOptions(itemId, selectedUnitId = 0) {
     units.forEach(unit => {
         const unitId = Number(unit.unit_id || 0);
         const selected = unitId === Number(selectedUnitId || 0) ? ' selected' : '';
-        const label = `${unit.uname || unitId} × ${Number(unit.u_val || 1).toFixed(3)}`;
+        const label = unit.unit_label || unit.uname || unitId;
         options.push(`<option value="${unitId}"${selected}>${inventoryCountEscapeHtml(label)}</option>`);
     });
 

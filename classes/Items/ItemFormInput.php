@@ -15,6 +15,9 @@ final class ItemFormInput
         $price1 = self::decimalArrayValue($post, 'price1', 0);
         $price2 = self::decimalArrayValue($post, 'price2', 0);
         $costPrice = self::decimalArrayValue($post, 'cost_price', 0);
+        $costSource = self::costSource($post['cost_source'] ?? 'direct');
+        $directCostPrice = self::decimalValue($post['direct_cost_price'] ?? null, 0);
+        $recipeCostPrice = self::decimalValue($post['recipe_cost_price'] ?? null, 0);
         $barcode = self::text($post, 'barcode');
 
         if (ItemUnitProfileBuilder::usesProfileForm($post)) {
@@ -27,6 +30,9 @@ final class ItemFormInput
             $price3 = (float) $profile['price3'];
             $marketPrice = (float) $profile['market_price'];
             $costPrice = (float) $profile['cost_price'];
+            $costSource = (string) ($profile['cost_source'] ?? $costSource);
+            $directCostPrice = (float) ($profile['direct_cost_price'] ?? $directCostPrice);
+            $recipeCostPrice = (float) ($profile['recipe_cost_price'] ?? $recipeCostPrice);
             if ($barcode === '' && ($profile['barcode'] ?? '') !== '') {
                 $barcode = (string) $profile['barcode'];
             }
@@ -43,6 +49,9 @@ final class ItemFormInput
             'purchase_unit_id' => $purchaseUnitId,
             'market_price' => $marketPrice,
             'cost_price' => $costPrice,
+            'cost_source' => $costSource,
+            'direct_cost_price' => $directCostPrice,
+            'recipe_cost_price' => $recipeCostPrice,
             'price1' => $price1,
             'price2' => $price2,
             'price3' => $price3,
@@ -54,6 +63,20 @@ final class ItemFormInput
 
         if ($profileUnits === null && !self::hasVariantRows($post)) {
             self::assertUnitSellPrices($payload['units']);
+        }
+
+        return self::withoutSecondaryPrices($payload);
+    }
+
+    private static function withoutSecondaryPrices(array $payload): array
+    {
+        $payload['price2'] = 0.0;
+        $payload['price3'] = 0.0;
+        $payload['market_price'] = 0.0;
+
+        foreach ($payload['units'] as $index => $unit) {
+            $payload['units'][$index]['price2'] = 0.0;
+            $payload['units'][$index]['price3'] = 0.0;
         }
 
         return $payload;
@@ -121,6 +144,13 @@ final class ItemFormInput
         $type = strtolower(trim((string) $value));
 
         return in_array($type, ['sellable', 'ingredient', 'packaging', 'service'], true) ? $type : 'sellable';
+    }
+
+    private static function costSource($value): string
+    {
+        $source = strtolower(trim((string) $value));
+
+        return in_array($source, ['purchase', 'direct', 'recipe'], true) ? $source : 'purchase';
     }
 
     private static function trackStock(array $post): int
@@ -223,6 +253,15 @@ final class ItemFormInput
         }
 
         return (int) $value;
+    }
+
+    private static function decimalValue($value, float $default = 0.0): float
+    {
+        if ($value === null || $value === false || trim((string) $value) === '') {
+            return $default;
+        }
+
+        return (float) $value;
     }
 
     private static function decimalArrayValue(array $post, string $key, int $index, float $default = 0.0): float

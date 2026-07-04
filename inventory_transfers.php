@@ -5,6 +5,8 @@ require_once __DIR__ . '/includes/csrf.php';
 require_once __DIR__ . '/includes/connect.php';
 require_once __DIR__ . '/includes/pos_default_accounts.php';
 require_once __DIR__ . '/classes/Inventory/InventoryFeatureFlags.php';
+require_once __DIR__ . '/classes/Items/ItemUnitCatalogLabel.php';
+require_once __DIR__ . '/classes/Items/ItemUnitColumnSupport.php';
 
 require_permission('inventory.edit', $conn);
 
@@ -32,8 +34,15 @@ $inventoryTransferItems = inventoryTransferRows($conn, "
     ORDER BY iname
     LIMIT 500
 ");
+$inventoryTransferUnitFlagSelect = ItemUnitColumnSupport::hasDefFlags($conn)
+    ? 'iu.def_sale, iu.def_buy, iu.def_stock'
+    : '0 AS def_sale, 0 AS def_buy, 0 AS def_stock';
+$inventoryTransferUnitSwapSelect = ItemUnitColumnSupport::hasConversionSwapped($conn)
+    ? 'iu.conversion_swapped'
+    : '0 AS conversion_swapped';
 $inventoryTransferUnits = inventoryTransferRows($conn, "
-    SELECT iu.item_id, iu.unit_id, iu.u_val, COALESCE(u.uname, CONCAT('وحدة ', iu.unit_id)) AS uname
+    SELECT iu.item_id, iu.unit_id, iu.u_val, {$inventoryTransferUnitSwapSelect}, {$inventoryTransferUnitFlagSelect},
+           COALESCE(u.uname, CONCAT('وحدة ', iu.unit_id)) AS uname
     FROM item_units iu
     LEFT JOIN myunits u ON u.id = iu.unit_id
     WHERE COALESCE(iu.isdeleted, 0) = 0
@@ -41,6 +50,7 @@ $inventoryTransferUnits = inventoryTransferRows($conn, "
     ORDER BY iu.item_id, u.uname, iu.unit_id
     LIMIT 1000
 ");
+$inventoryTransferUnits = ItemUnitCatalogLabel::decorateRows($inventoryTransferUnits);
 $inventoryTransferPreferredUnits = inventoryTransferRows($conn, "
     SELECT item_id, store_id, COALESCE(preferred_count_unit_id, preferred_purchase_unit_id, 0) AS preferred_unit_id
     FROM inventory_item_stock_levels
@@ -276,7 +286,7 @@ function inventoryTransferUnitOptions(itemId, selectedUnitId = 0) {
     units.forEach(unit => {
         const unitId = Number(unit.unit_id || 0);
         const selected = unitId === Number(selectedUnitId || 0) ? ' selected' : '';
-        const label = `${unit.uname || unitId} × ${Number(unit.u_val || 1).toFixed(3)}`;
+        const label = unit.unit_label || unit.uname || unitId;
         options.push(`<option value="${unitId}"${selected}>${inventoryTransferEscapeHtml(label)}</option>`);
     });
 

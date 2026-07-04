@@ -210,7 +210,7 @@ $itemRows = $inventoryStockReadService->decorateItems($conn, $itemRows);
                             $stockUnitRow = ItemUnitCatalogLabel::stockRow($unitRows);
                             $unitName = $stockUnitRow['uname'] ?? '';
                             $stockUnitValue = $stockUnitRow !== null
-                                ? ItemUnitCatalogLabel::factorValue($stockUnitRow['u_val'] ?? 1)
+                                ? ItemUnitCatalogLabel::displayFactorValue($stockUnitRow)
                                 : '1';
                             $unitSelectOptions = ItemUnitCatalogLabel::buildSelectOptions($unitRows);
                             ?>

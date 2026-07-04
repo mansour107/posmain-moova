@@ -5,6 +5,8 @@ require_once __DIR__ . '/includes/csrf.php';
 require_once __DIR__ . '/includes/connect.php';
 require_once __DIR__ . '/includes/pos_default_accounts.php';
 require_once __DIR__ . '/classes/Inventory/InventoryFeatureFlags.php';
+require_once __DIR__ . '/classes/Items/ItemUnitCatalogLabel.php';
+require_once __DIR__ . '/classes/Items/ItemUnitColumnSupport.php';
 
 require_permission('inventory.edit', $conn);
 
@@ -30,8 +32,15 @@ $inventoryPurchaseItems = inventoryPurchasingRows($conn, "
     ORDER BY iname
     LIMIT 300
 ");
+$inventoryPurchaseUnitFlagSelect = ItemUnitColumnSupport::hasDefFlags($conn)
+    ? 'iu.def_sale, iu.def_buy, iu.def_stock'
+    : '0 AS def_sale, 0 AS def_buy, 0 AS def_stock';
+$inventoryPurchaseUnitSwapSelect = ItemUnitColumnSupport::hasConversionSwapped($conn)
+    ? 'iu.conversion_swapped'
+    : '0 AS conversion_swapped';
 $inventoryPurchaseUnits = inventoryPurchasingRows($conn, "
-    SELECT iu.item_id, iu.unit_id, iu.u_val, iu.cost_price, COALESCE(u.uname, CONCAT('وحدة ', iu.unit_id)) AS uname
+    SELECT iu.item_id, iu.unit_id, iu.u_val, {$inventoryPurchaseUnitSwapSelect}, {$inventoryPurchaseUnitFlagSelect},
+           iu.cost_price, COALESCE(u.uname, CONCAT('وحدة ', iu.unit_id)) AS uname
     FROM item_units iu
     LEFT JOIN myunits u ON u.id = iu.unit_id
     WHERE COALESCE(iu.isdeleted, 0) = 0
@@ -39,6 +48,7 @@ $inventoryPurchaseUnits = inventoryPurchasingRows($conn, "
     ORDER BY iu.item_id, u.uname, iu.unit_id
     LIMIT 1000
 ");
+$inventoryPurchaseUnits = ItemUnitCatalogLabel::decorateRows($inventoryPurchaseUnits);
 $inventoryPurchaseBaseUnits = inventoryPurchasingRows($conn, "
     SELECT id, uname
     FROM myunits
@@ -700,8 +710,9 @@ function inventoryUnitOptions(itemId, selectedUnitId = 0) {
     units.forEach(unit => {
         const unitId = Number(unit.unit_id || 0);
         const selected = unitId === Number(selectedUnitId || 0) ? ' selected' : '';
-        const label = `${unit.uname || unitId} × ${Number(unit.u_val || 1).toFixed(3)}`;
-        options.push(`<option value="${unitId}" data-conversion="${Number(unit.u_val || 1)}" data-cost="${Number(unit.cost_price || 0)}"${selected}>${inventoryEscapeHtml(label)}</option>`);
+        const label = unit.unit_label || unit.uname || unitId;
+        const conversion = Number(unit.inventory_factor || 1);
+        options.push(`<option value="${unitId}" data-conversion="${conversion}" data-cost="${Number(unit.cost_price || 0)}"${selected}>${inventoryEscapeHtml(label)}</option>`);
     });
 
     return options.join('');

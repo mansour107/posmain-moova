@@ -54,14 +54,6 @@ $(document).ready(function() {
             return (parseFloat($('.urow').first().find('input[name="price1[]"]').val()) * u_val_main).toFixed(3);
         });
 
-        clone.find('input[name="price2[]"]').val(function() {
-            return (parseFloat($('.urow').first().find('input[name="price2[]"]').val()) * u_val_main).toFixed(3);
-        });
-
-        clone.find('input[name="market_price[]"]').val(function() {
-            return (parseFloat($('.urow').first().find('input[name="market_price[]"]').val()) * u_val_main).toFixed(3);
-        });
-
         $('.urow').last().after(clone);
         refreshUnitsUi();
     });
