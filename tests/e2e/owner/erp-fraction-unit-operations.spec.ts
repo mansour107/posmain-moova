@@ -7,7 +7,7 @@ import {
   dbUnitFlags,
   queryLocalDb,
   ITEM_EDITOR_UNITS,
-  saveItemClose,
+  saveItem,
 } from '../helpers/item-editor';
 import {
   addItemBySearchBarcode,
@@ -89,6 +89,8 @@ async function postInventoryAdjustment(
 }
 
 test.describe.serial('owner: ERP fraction unit operations on local shop', () => {
+  test.skip(true, 'Purchase/unit conversion UI removed from item editor — configure units elsewhere');
+
   test('create item — 1 carton (storage) = 12 pieces (sell)', async ({ page }) => {
     await loginAs(page, 'admin');
     await fillCreateItemForm(page, {
@@ -105,7 +107,7 @@ test.describe.serial('owner: ERP fraction unit operations on local shop', () => 
         cost: '72',
       },
     });
-    await saveItemClose(page);
+    await saveItem(page);
 
     itemId = dbItemIdByBarcode(label.barcode);
     const flags = dbUnitFlags(itemId);

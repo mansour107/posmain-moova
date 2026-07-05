@@ -6,13 +6,9 @@ import {
   dbUnitFlags,
   fillCreateItemForm,
   ITEM_EDITOR_UNITS,
-  openAddItemEditor,
   openItemEditFromCatalog,
   queryLocalDb,
-  saveItemClose,
-  selectItemType,
-  selectItemUnit,
-  setPurchaseSectionActive,
+  saveItem,
   uniqueItemLabel,
   type CreateItemProfile,
 } from '../helpers/item-editor';
@@ -20,7 +16,7 @@ import { saveTakeawayOrder } from '../helpers/pos';
 
 async function createItemViaProfile(page: Page, profile: CreateItemProfile): Promise<number> {
   await fillCreateItemForm(page, profile);
-  await saveItemClose(page);
+  await saveItem(page);
   return dbItemIdByBarcode(profile.barcode);
 }
 
@@ -39,7 +35,7 @@ test.describe.serial('owner: item unit profile full browser integration', () => 
       name,
       barcode,
       type: 'sellable',
-      sell: { unitId: ITEM_EDITOR_UNITS.piece, price1: '15.5' },
+      sell: { price1: '15.5' },
     });
 
     fixtures.sellableDefault.itemId = itemId;
@@ -56,71 +52,12 @@ test.describe.serial('owner: item unit profile full browser integration', () => 
     await assertEditProfileState(page, { type: 'sellable', sellPrice: '15.5' });
   });
 
-  test('sellable purchase pack — قطعة sell, كرتونة buy x12 with cost', async ({ page }) => {
-    const { name, barcode } = uniqueItemLabel('SellablePack');
-    fixtures.sellablePack = { name, barcode, sellPrice: '8' };
+  test.skip('sellable purchase pack — removed with simplified pricing UI', async () => {});
 
-    const itemId = await createItemViaProfile(page, {
-      name,
-      barcode,
-      type: 'sellable',
-      sell: { unitId: ITEM_EDITOR_UNITS.piece, price1: '8' },
-      purchaseActive: true,
-      purchase: {
-        storageUnitId: ITEM_EDITOR_UNITS.piece,
-        purchaseUnitId: ITEM_EDITOR_UNITS.carton,
-        purchaseStorageFactor: '12',
-        cost: '96',
-        purchaseBarcode: `P${barcode.slice(0, 8)}`,
-      },
-    });
+  test.skip('sellable sell≠storage conversion — removed with simplified pricing UI', async () => {});
 
-    fixtures.sellablePack.itemId = itemId;
-    const flags = dbUnitFlags(itemId);
-    expect(flags.length).toBe(2);
-    const buy = flags.find((row) => row.def_buy === 1);
-    const stock = flags.find((row) => row.def_stock === 1);
-    expect(stock).toBeTruthy();
-    expect(buy).toBeTruthy();
-    expect(Number(buy!.u_val)).toBeCloseTo(12, 2);
-    expect(Number(buy!.cost_price)).toBeCloseTo(96, 2);
-
-    await openItemEditFromCatalog(page, barcode);
-    await assertEditProfileState(page, { type: 'sellable', sellPrice: '8', purchaseCost: '96', purchaseActive: true });
-    await expect(page.locator('#purchase_unit_id')).toHaveValue(ITEM_EDITOR_UNITS.carton);
-  });
-
-  test('sellable sell≠storage conversion when purchase section active', async ({ page }) => {
-    const { name, barcode } = uniqueItemLabel('SellStorageConv');
-    fixtures.sellableConv = { name, barcode, sellPrice: '22' };
-
-    const itemId = await createItemViaProfile(page, {
-      name,
-      barcode,
-      type: 'sellable',
-      sell: { unitId: ITEM_EDITOR_UNITS.piece, price1: '22' },
-      purchaseActive: true,
-      purchase: {
-        storageUnitId: ITEM_EDITOR_UNITS.kg,
-        purchaseUnitId: ITEM_EDITOR_UNITS.kg,
-        purchaseStorageFactor: '1',
-        sellStorageFactor: '4',
-        cost: '40',
-      },
-    });
-
-    fixtures.sellableConv.itemId = itemId;
-    const flags = dbUnitFlags(itemId);
-    expect(flags.length).toBeGreaterThanOrEqual(2);
-    const sell = flags.find((row) => row.def_sale === 1);
-    const stock = flags.find((row) => row.def_stock === 1);
-    expect(sell?.unit_id).toBe(Number(ITEM_EDITOR_UNITS.piece));
-    expect(stock?.unit_id).toBe(Number(ITEM_EDITOR_UNITS.kg));
-    expect(Number(sell?.u_val)).toBeCloseTo(4, 3);
-  });
-
-  test('ingredient — storage required, sell off, purchase on', async ({ page }) => {
-    const { name, barcode } = uniqueItemLabel('IngredientPurchase');
+  test('ingredient — default unit stock, sell off', async ({ page }) => {
+    const { name, barcode } = uniqueItemLabel('IngredientDefault');
     fixtures.ingredient = { name, barcode };
 
     const itemId = await createItemViaProfile(page, {
@@ -128,28 +65,19 @@ test.describe.serial('owner: item unit profile full browser integration', () => 
       barcode,
       type: 'ingredient',
       sellActive: false,
-      purchaseActive: true,
-      purchase: {
-        storageUnitId: ITEM_EDITOR_UNITS.kg,
-        purchaseUnitId: ITEM_EDITOR_UNITS.carton,
-        purchaseStorageFactor: '10',
-        cost: '55',
-      },
     });
 
     fixtures.ingredient.itemId = itemId;
     const flags = dbUnitFlags(itemId);
     const stock = flags.find((row) => row.def_stock === 1);
-    const buy = flags.find((row) => row.def_buy === 1);
-    expect(stock?.unit_id).toBe(Number(ITEM_EDITOR_UNITS.kg));
-    expect(buy?.unit_id).toBe(Number(ITEM_EDITOR_UNITS.carton));
+    expect(stock?.unit_id).toBe(Number(ITEM_EDITOR_UNITS.piece));
     expect(flags.every((row) => row.def_sale === 0)).toBeTruthy();
 
     const preferred = queryLocalDb(`SELECT preferred_unit_id FROM myitems WHERE id=${itemId}`);
-    expect(Number(preferred)).toBe(Number(ITEM_EDITOR_UNITS.kg));
+    expect(Number(preferred)).toBe(Number(ITEM_EDITOR_UNITS.piece));
 
     await openItemEditFromCatalog(page, barcode);
-    await assertEditProfileState(page, { type: 'ingredient', purchaseActive: true, purchaseCost: '55', sellActive: false });
+    await assertEditProfileState(page, { type: 'ingredient', sellActive: false });
   });
 
   test('ingredient with sell section enabled', async ({ page }) => {
@@ -159,8 +87,7 @@ test.describe.serial('owner: item unit profile full browser integration', () => 
       barcode,
       type: 'ingredient',
       sellActive: true,
-      sell: { unitId: ITEM_EDITOR_UNITS.piece, price1: '3.5' },
-      purchase: { storageUnitId: ITEM_EDITOR_UNITS.kg },
+      sell: { price1: '3.5' },
     });
 
     const flags = dbUnitFlags(itemId);
@@ -172,21 +99,25 @@ test.describe.serial('owner: item unit profile full browser integration', () => 
     await assertEditProfileState(page, { type: 'ingredient', sellActive: true, sellPrice: '3.5' });
   });
 
-  test('packaging — storage only default path', async ({ page }) => {
-    const { name, barcode } = uniqueItemLabel('Packaging');
+  test('made — sell always on, type stored as made', async ({ page }) => {
+    const { name, barcode } = uniqueItemLabel('MadeItem');
     const itemId = await createItemViaProfile(page, {
       name,
       barcode,
-      type: 'packaging',
-      purchase: { storageUnitId: ITEM_EDITOR_UNITS.piece },
+      type: 'made',
+      sell: { price1: '25' },
     });
 
+    const storedType = queryLocalDb(`SELECT item_type FROM myitems WHERE id=${itemId}`);
+    expect(storedType.trim()).toBe('made');
+
     const flags = dbUnitFlags(itemId);
-    expect(flags.length).toBe(1);
-    expect(flags[0].def_stock).toBe(1);
+    const sell = flags.find((row) => row.def_sale === 1);
+    expect(sell).toBeTruthy();
+    expect(Number(sell!.price1)).toBeCloseTo(25, 2);
 
     await openItemEditFromCatalog(page, barcode);
-    await assertEditProfileState(page, { type: 'packaging', purchaseActive: false, sellActive: false });
+    await assertEditProfileState(page, { type: 'made', sellPrice: '25' });
   });
 
   test('service — sell only, no purchase panel', async ({ page }) => {
@@ -197,7 +128,7 @@ test.describe.serial('owner: item unit profile full browser integration', () => 
       name,
       barcode,
       type: 'service',
-      sell: { unitId: ITEM_EDITOR_UNITS.piece, price1: '12' },
+      sell: { price1: '12' },
     });
 
     fixtures.service.itemId = itemId;
@@ -205,7 +136,7 @@ test.describe.serial('owner: item unit profile full browser integration', () => 
     expect(Number(trackStock)).toBe(0);
 
     await openItemEditFromCatalog(page, barcode);
-    await expect(page.locator('#item-purchase-section')).toHaveClass(/d-none/);
+    await expect(page.locator('#item-pricing-section')).toBeVisible();
     await assertEditProfileState(page, { type: 'service', sellPrice: '12' });
   });
 
@@ -241,7 +172,7 @@ test.describe.serial('owner: item unit profile full browser integration', () => 
       (item) => item.id === fixtures.ingredient!.itemId,
     );
     expect(match, 'lookup must return the ingredient fixture').toBeTruthy();
-    expect(Number(match!.stock_unit_id)).toBe(Number(ITEM_EDITOR_UNITS.kg));
+    expect(Number(match!.stock_unit_id)).toBe(Number(ITEM_EDITOR_UNITS.piece));
 
     const resultButton = page
       .locator('form[data-recipe-save-form="add-component"] .recipe-lookup-results button')
@@ -251,7 +182,7 @@ test.describe.serial('owner: item unit profile full browser integration', () => 
     await resultButton.click();
 
     const unitSelect = page.locator('form[data-recipe-save-form="add-component"] select[name="unit_id"]');
-    await expect(unitSelect).toHaveValue(ITEM_EDITOR_UNITS.kg);
+    await expect(unitSelect).toHaveValue(ITEM_EDITOR_UNITS.piece);
   });
 
   test('POS barcode scan adds sellable item with correct price', async ({ page }) => {
@@ -278,59 +209,9 @@ test.describe.serial('owner: item unit profile full browser integration', () => 
     expect(orderId).toBeGreaterThan(0);
   });
 
-  test('conversion factor exposed to POS search for pack sellable', async ({ page }) => {
-    test.skip(!fixtures.sellableConv?.barcode, 'conversion fixture missing');
+  test.skip('conversion factor exposed to POS search — removed with simplified pricing UI', async () => {});
 
-    await unlockPos(page, 'admin');
-    const searchResponse = page.waitForResponse((response) =>
-      response.url().includes('ajax/search_item.php'),
-    );
-    await page.locator('#posUnifiedSearch').fill(fixtures.sellableConv!.barcode);
-    await page.locator('#posUnifiedSearch').press('Enter');
-    const response = await searchResponse;
-    const body = await response.json();
-    expect(body.success).toBeTruthy();
-    expect(Number(body.item.u_val)).toBeGreaterThan(0);
-  });
+  test.skip('client validation blocks purchase section — removed with simplified pricing UI', async () => {});
 
-  test('client validation blocks purchase section without cost', async ({ page }) => {
-    const label = uniqueItemLabel('InvalidPurchase');
-    await fillCreateItemForm(page, {
-      name: label.name,
-      barcode: label.barcode,
-      type: 'sellable',
-      sell: { price1: '5' },
-      purchaseActive: true,
-      purchase: {
-        storageUnitId: ITEM_EDITOR_UNITS.piece,
-        purchaseUnitId: ITEM_EDITOR_UNITS.carton,
-        purchaseStorageFactor: '12',
-        cost: '0',
-      },
-    });
-
-    page.once('dialog', async (dialog) => {
-      expect(dialog.message()).toContain('تكلفة الشراء');
-      await dialog.dismiss();
-    });
-    await page.getByRole('button', { name: /حفظ وإغلاق/ }).click();
-    await expect(page).toHaveURL(/add_item\.php/);
-  });
-
-  test('swap conversion direction updates factor field', async ({ page }) => {
-    await openAddItemEditor(page);
-    await selectItemType(page, 'sellable');
-    await page.fill('#iname', uniqueItemLabel('Swap').name);
-    await page.fill('input[name="barcode"]', uniqueItemLabel('Swap').barcode);
-    await page.fill('#sell_price1', '9');
-    await setPurchaseSectionActive(page, true);
-    await selectItemUnit(page, 'sell_unit_id', ITEM_EDITOR_UNITS.piece);
-    await selectItemUnit(page, 'storage_unit_id', ITEM_EDITOR_UNITS.kg);
-    await selectItemUnit(page, 'purchase_unit_id', ITEM_EDITOR_UNITS.kg);
-    await page.fill('#purchase_cost', '10');
-    await page.fill('#sell_storage_factor', '4');
-    await expect(page.locator('#sell-storage-conversion')).toBeVisible();
-    await page.locator('#sell-storage-conversion .item-unit-conversion__swap').click();
-    await expect(page.locator('#sell_storage_factor')).toHaveValue('0.25');
-  });
+  test.skip('swap conversion direction — removed with simplified pricing UI', async () => {});
 });

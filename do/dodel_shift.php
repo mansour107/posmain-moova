@@ -1,4 +1,7 @@
-<?php include('../includes/connect.php');
+<?php
+require_once __DIR__ . '/../includes/rbac_route_guard.php';
+rbac_guard_route('do/dodel_shift.php');
+
 $password = $_POST['password'];
 $syspass = $rowstg['edit_pass'];
 if ($password == $syspass) {

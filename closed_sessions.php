@@ -1,3 +1,11 @@
+<?php
+require_once __DIR__ . '/includes/auth_guard.php';
+include('includes/connect.php');
+require_once __DIR__ . '/includes/page_guard.php';
+require_once __DIR__ . '/includes/csrf.php';
+page_guard('pos.shift.close', $conn);
+?>
+<?php require_once __DIR__ . '/includes/pos_cache_control.php'; posmain_send_no_store_headers(); ?>
 <?php include('includes/header.php') ?>
 <?php include('includes/navbar.php') ?>
 <?php include('includes/sidebar.php') ?>
@@ -45,6 +53,50 @@ endif;
                     </div>
                 </div>
                 <div class="card-body">
+    <?php
+    $openDrawers = [];
+    if (function_exists('posmain_drawer_sessions_table_exists') && posmain_drawer_sessions_table_exists($conn)) {
+        $openRes = $conn->query("SELECT ds.id, ds.user_id, ds.opened_at, u.uname, u.display_name
+            FROM drawer_sessions ds
+            INNER JOIN users u ON u.id = ds.user_id
+            WHERE ds.status = 'open'
+            ORDER BY ds.opened_at DESC");
+        if ($openRes) {
+            while ($dr = $openRes->fetch_assoc()) {
+                $openDrawers[] = $dr;
+            }
+        }
+    }
+    if ($openDrawers): ?>
+    <div class="alert alert-warning mb-3">
+        <strong>جلسات درج مفتوحة</strong>
+        <div class="table-responsive mt-2">
+            <table class="table table-sm mb-0">
+                <thead><tr><th>المستخدم</th><th>منذ</th><th>إجراء</th></tr></thead>
+                <tbody>
+                <?php foreach ($openDrawers as $dr): ?>
+                    <tr>
+                        <td><?= htmlspecialchars((string) ($dr['display_name'] ?: $dr['uname'])) ?></td>
+                        <td><?= htmlspecialchars((string) $dr['opened_at']) ?></td>
+                        <td>
+                            <?php if (auth_guard_has_permission('pos.shift.force_close', $conn)): ?>
+                            <form method="post" action="do/do_force_close_drawer.php" class="d-inline"
+                                  onsubmit="return confirm('إغلاق جلسة الدرج بالقوة؟')">
+                                <?= csrf_input('shift_close') ?>
+                                <input type="hidden" name="drawer_session_id" value="<?= (int) $dr['id'] ?>">
+                                <button type="submit" class="btn btn-sm btn-danger">إغلاق قسري</button>
+                            </form>
+                            <?php else: ?>
+                            <span class="text-muted small">يتطلب صلاحية مدير</span>
+                            <?php endif; ?>
+                        </td>
+                    </tr>
+                <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
+    </div>
+    <?php endif; ?>
     <div class="table-responsive">
         <table class="table table-hover table-striped table-bordered table-sm">
             <thead class="thead-dark">

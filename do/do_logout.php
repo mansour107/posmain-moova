@@ -1,13 +1,12 @@
-<?php 
-require_once __DIR__ . '/../includes/session_bootstrap.php';
+<?php
+require_once __DIR__ . '/../includes/rbac_route_guard.php';
+rbac_guard_route('do/do_logout.php');
 
 // التحقق من وجود جلسة صالحة
 if (!isset($_SESSION['login']) || !isset($_SESSION['userid'])) {
     header('location:../index.php');
     exit();
 }
-
-include('../includes/connect.php');
 
 // تسجيل عملية تسجيل الخروج
 $user = $_SESSION['login'];

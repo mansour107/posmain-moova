@@ -1,7 +1,9 @@
 <?php
+require_once __DIR__ . '/../includes/rbac_route_guard.php';
+rbac_guard_route('do/dodel_customer_visit.php');
+
 declare(strict_types=1);
 
-require_once __DIR__ . '/../includes/session_bootstrap.php';
 include __DIR__ . '/../includes/connect.php';
 require_once __DIR__ . '/../includes/csrf.php';
 require_once __DIR__ . '/../includes/auth_guard.php';

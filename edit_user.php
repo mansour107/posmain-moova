@@ -3,6 +3,30 @@ require_once __DIR__ . '/includes/auth_guard.php';
 require_once __DIR__ . '/includes/csrf.php';
 include 'includes/connect.php';
 require_admin_or_permission('users.manage', $conn);
+require_once __DIR__ . '/classes/Security/RolePermissionSyncService.php';
+RolePermissionSyncService::seedPresetRoles($conn);
+$presetRoles = [];
+$roleStmt = $conn->query("SELECT id, rollname, role_key, is_system FROM usr_pwrs WHERE COALESCE(isdeleted,0)!=1 AND role_key IN ('owner','manager','cashier','waiter','kitchen') ORDER BY FIELD(role_key,'owner','manager','cashier','waiter','kitchen')");
+if ($roleStmt) {
+    while ($r = $roleStmt->fetch_assoc()) {
+        $presetRoles[] = $r;
+    }
+}
+$customRoles = [];
+$customStmt = $conn->query("SELECT id, rollname FROM usr_pwrs WHERE COALESCE(isdeleted,0)!=1 AND (role_key IS NULL OR role_key = '' OR role_key NOT IN ('owner','manager','cashier','waiter','kitchen')) ORDER BY id");
+if ($customStmt) {
+    while ($r = $customStmt->fetch_assoc()) {
+        $customRoles[] = $r;
+    }
+}
+$currentRoleId = (int) ($row['userrole'] ?? 0);
+$currentIsPreset = false;
+foreach ($presetRoles as $pr) {
+    if ((int) $pr['id'] === $currentRoleId) {
+        $currentIsPreset = true;
+        break;
+    }
+}
 include 'includes/header.php';
 include 'includes/navbar.php';
 include 'includes/sidebar.php';
@@ -190,6 +214,14 @@ if (!$row) {
         }
     }
 </style>
+<style>
+.role-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: .75rem; }
+.role-card { border: 2px solid #e2e8f0; border-radius: 12px; padding: .75rem; cursor: pointer; text-align: center; transition: .15s; }
+.role-card.selected { border-color: #6366f1; background: #eef2ff; }
+.role-card input { display: none; }
+.shift-shortcut-chip { display: inline-block; margin: .25rem; padding: .35rem .75rem; border-radius: 999px; border: 1px solid #cbd5e0; cursor: pointer; font-size: .85rem; }
+.shift-shortcut-chip.active { background: #6366f1; color: #fff; border-color: #6366f1; }
+</style>
 
 <div class="edit-user-container container">
     <div class="edit-user-card">
@@ -210,28 +242,58 @@ if (!$row) {
                             <i class="fas fa-user mr-2"></i>
                             <?= $lang_username ?>
                         </label>
-                        <input value="<?= $row['uname'] ?>" name="uname" type="text" class="form-control-clean" 
+                        <input value="<?= htmlspecialchars($row['uname'], ENT_QUOTES, 'UTF-8') ?>" name="uname" type="text" class="form-control-clean" 
                                id="uname" placeholder="اكتب اسم المستخدم" required>
                     </div>
 
-                    <!-- دور المستخدم -->
                     <div class="form-group-clean">
-                        <label class="form-label-clean" for="userrole">
-                            <i class="fas fa-user-tag mr-2"></i>
-                            دور المستخدم
-                        </label>
-                        <select name="userrole" class="form-control-clean" id="userrole" required>
-                            <?php
-                            $sqlrol = "SELECT id, rollname FROM usr_pwrs ORDER BY id";
-                            $resrol = $conn->query($sqlrol);
-                            while ($rowrol = $resrol->fetch_assoc()) { 
-                            ?>
-                                <option value="<?= $rowrol['id'] ?>" 
-                                    <?= $rowrol['id'] == $row['userrole'] ? 'selected' : '' ?>>
-                                    <?= $rowrol['rollname'] ?>
-                                </option>
-                            <?php } ?>
-                        </select>
+                        <label class="form-label-clean" for="display_name">الاسم المعروض</label>
+                        <input value="<?= htmlspecialchars((string) ($row['display_name'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" name="display_name" type="text" class="form-control-clean" id="display_name" placeholder="اسم الموظف على الشاشة">
+                    </div>
+
+                    <div class="form-group-clean">
+                        <label class="form-label-clean" for="phone">الهاتف</label>
+                        <input value="<?= htmlspecialchars((string) ($row['phone'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" name="phone" type="text" class="form-control-clean" id="phone" placeholder="05xxxxxxxx">
+                    </div>
+
+                    <div class="form-group-clean">
+                        <label class="form-label-clean" for="pin">رمز PIN جديد</label>
+                        <div class="input-group">
+                            <input name="pin" type="password" inputmode="numeric" class="form-control-clean" id="pin" placeholder="4-6 أرقام — اتركه فارغاً للإبقاء" autocomplete="new-password" maxlength="6">
+                            <div class="input-group-append">
+                                <button type="button" class="btn btn-outline-secondary" id="regeneratePinBtn">توليد</button>
+                            </div>
+                        </div>
+                        <small id="pinAvailabilityMsg" class="form-text-clean"></small>
+                        <input type="hidden" name="generate_pin" id="generatePinFlag" value="0">
+                        <?php if (!empty($row['pin_set_at'])): ?>
+                        <div class="custom-control custom-checkbox mt-2">
+                            <input type="checkbox" class="custom-control-input" id="clear_pin" name="clear_pin" value="1">
+                            <label class="custom-control-label" for="clear_pin">إزالة PIN</label>
+                        </div>
+                        <?php endif; ?>
+                    </div>
+
+                    <div class="form-group-clean" style="grid-column: 1 / -1;">
+                        <label class="form-label-clean"><i class="fas fa-user-tag mr-2"></i>دور المستخدم</label>
+                        <div class="role-cards" id="roleCards">
+                            <?php foreach ($presetRoles as $pr): ?>
+                                <label class="role-card<?= (int) $pr['id'] === $currentRoleId ? ' selected' : '' ?>" data-role-id="<?= (int) $pr['id'] ?>">
+                                    <input type="radio" name="userrole" value="<?= (int) $pr['id'] ?>" <?= (int) $pr['id'] === $currentRoleId ? 'checked' : '' ?>>
+                                    <strong><?= htmlspecialchars($pr['rollname']) ?></strong>
+                                    <div class="small text-muted"><?= htmlspecialchars((string) ($pr['role_key'] ?? '')) ?></div>
+                                </label>
+                            <?php endforeach; ?>
+                        </div>
+                        <details class="mt-2" <?= !$currentIsPreset && $currentRoleId > 0 ? 'open' : '' ?>>
+                            <summary class="text-muted">دور مخصص</summary>
+                            <select class="form-control-clean mt-2" id="customRoleSelect">
+                                <option value="">— اختر —</option>
+                                <?php foreach ($customRoles as $cr): ?>
+                                    <option value="<?= (int) $cr['id'] ?>" <?= (int) $cr['id'] === $currentRoleId ? 'selected' : '' ?>><?= htmlspecialchars($cr['rollname']) ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </details>
                     </div>
 
                     <?php if(isset($role) && isset($role['edit_user_passwords']) && $role['edit_user_passwords'] == 1): ?>
@@ -261,6 +323,43 @@ if (!$row) {
                     </div>
                     <?php endif; ?>
                     
+                    <!-- صلاحيات إضافية للمستخدم -->
+                    <?php
+                    require_once __DIR__ . '/classes/Security/UserPermissionGrantService.php';
+                    $grantService = new UserPermissionGrantService();
+                    $userOverrides = $grantService->tableExists($conn)
+                        ? $grantService->activeOverridesForUser($conn, (int) $row['id'])
+                        : [];
+                    $permissionCatalog = array_keys(auth_guard_permission_map());
+                    ?>
+                    <div class="form-group-clean" style="grid-column: 1 / -1;">
+                        <h4 class="form-label-clean"><i class="fas fa-shield-alt mr-2"></i>صلاحيات إضافية (تجاوز الدور)</h4>
+                        <form action="do/doedit_user_permissions.php" method="post" class="border rounded p-3">
+                            <?= csrf_input('users_write') ?>
+                            <input type="hidden" name="user_id" value="<?= (int) $row['id'] ?>">
+                            <div class="custom-control custom-switch mb-3">
+                                <input type="checkbox" class="custom-control-input" id="permission_mode" name="permission_mode" value="role_with_overrides"
+                                    <?= (($row['permission_mode'] ?? 'role_only') === 'role_with_overrides') ? 'checked' : '' ?>>
+                                <label class="custom-control-label" for="permission_mode">تفعيل تجاوزات الصلاحيات لهذا المستخدم</label>
+                            </div>
+                            <div class="mb-3">
+                                <span class="text-muted small d-block mb-1">اختصارات شائعة:</span>
+                                <span class="shift-shortcut-chip<?= (($userOverrides['pos.shift.open'] ?? '') === 'grant') ? ' active' : '' ?>" data-grant="pos.shift.open" data-label="يفتح الشيفت">يفتح الشيفت</span>
+                                <span class="shift-shortcut-chip<?= (($userOverrides['pos.shift.close'] ?? '') === 'grant') ? ' active' : '' ?>" data-grant="pos.shift.close" data-label="يغلق الشيفت">يغلق الشيفت</span>
+                            </div>
+                            <div class="row">
+                                <?php foreach ($permissionCatalog as $permKey): ?>
+                                <div class="col-md-4 mb-2">
+                                    <small class="d-block"><code><?= htmlspecialchars($permKey) ?></code></small>
+                                    <label class="mr-2"><input type="checkbox" name="grant[]" value="<?= htmlspecialchars($permKey) ?>" <?= (($userOverrides[$permKey] ?? '') === 'grant') ? 'checked' : '' ?>> منح</label>
+                                    <label><input type="checkbox" name="deny[]" value="<?= htmlspecialchars($permKey) ?>" <?= (($userOverrides[$permKey] ?? '') === 'deny') ? 'checked' : '' ?>> منع</label>
+                                </div>
+                                <?php endforeach; ?>
+                            </div>
+                            <button type="submit" class="btn btn-outline-primary mt-2">حفظ تجاوزات الصلاحيات</button>
+                        </form>
+                    </div>
+
                     <!-- خيار الويتر -->
                     <div class="form-group-clean" style="grid-column: 1 / -1;">
                         <div class="custom-control custom-switch" style="padding-top: 10px;">
@@ -364,9 +463,99 @@ if (!$row) {
         form.addEventListener('submit', function(e) {
             if (!validatePasswords()) {
                 e.preventDefault();
-                // تمرير للأعلى لرؤية الخطأ
                 passwordError.scrollIntoView({ behavior: 'smooth', block: 'center' });
             }
+        });
+
+        const cards = document.querySelectorAll('.role-card');
+        const customSelect = document.getElementById('customRoleSelect');
+        const editForm = document.querySelector('.edit-user-card > form');
+        function selectCard(card) {
+            cards.forEach(function (c) { c.classList.remove('selected'); });
+            if (card) { card.classList.add('selected'); }
+            if (customSelect) { customSelect.value = ''; }
+        }
+        cards.forEach(function (card) {
+            card.addEventListener('click', function () {
+                const radio = card.querySelector('input[type=radio]');
+                if (radio) { radio.checked = true; selectCard(card); }
+            });
+        });
+        if (customSelect && editForm) {
+            customSelect.addEventListener('change', function () {
+                if (!customSelect.value) { return; }
+                cards.forEach(function (c) {
+                    c.classList.remove('selected');
+                    c.querySelector('input').checked = false;
+                });
+                let hidden = document.getElementById('customRoleRadio');
+                if (!hidden) {
+                    hidden = document.createElement('input');
+                    hidden.type = 'radio';
+                    hidden.name = 'userrole';
+                    hidden.id = 'customRoleRadio';
+                    hidden.style.display = 'none';
+                    editForm.appendChild(hidden);
+                }
+                hidden.value = customSelect.value;
+                hidden.checked = true;
+            });
+            if (customSelect.value && !document.querySelector('.role-card input:checked')) {
+                customSelect.dispatchEvent(new Event('change'));
+            }
+        }
+
+        const excludeUserId = <?= (int) $row['id'] ?>;
+        const pinInput = document.getElementById('pin');
+        const pinMsg = document.getElementById('pinAvailabilityMsg');
+        const genFlag = document.getElementById('generatePinFlag');
+        const regenBtn = document.getElementById('regeneratePinBtn');
+        if (regenBtn && pinInput) {
+            regenBtn.addEventListener('click', function () {
+                let p = String(Math.floor(1000 + Math.random() * 9000));
+                pinInput.value = p;
+                pinInput.type = 'text';
+                if (genFlag) { genFlag.value = '1'; }
+                checkPinAvailable(p);
+            });
+            let pinTimer = null;
+            function checkPinAvailable(pin) {
+                if (!pin || pin.length < 4) { if (pinMsg) pinMsg.textContent = ''; return; }
+                clearTimeout(pinTimer);
+                pinTimer = setTimeout(function () {
+                    fetch('ajax/pin_available.php?pin=' + encodeURIComponent(pin) + '&exclude_user_id=' + excludeUserId, { credentials: 'same-origin' })
+                        .then(function (r) { return r.json(); })
+                        .then(function (j) {
+                            if (!pinMsg) { return; }
+                            if (j.available === true) {
+                                pinMsg.textContent = '✓ الرمز متاح';
+                                pinMsg.style.color = '#38a169';
+                            } else if (j.available === false) {
+                                pinMsg.textContent = '✗ الرمز مستخدم أو غير صالح';
+                                pinMsg.style.color = '#e53e3e';
+                            }
+                        });
+                }, 300);
+            }
+            pinInput.addEventListener('input', function () {
+                checkPinAvailable(pinInput.value);
+                if (genFlag) { genFlag.value = '0'; }
+            });
+        }
+
+        document.querySelectorAll('.shift-shortcut-chip').forEach(function (chip) {
+            chip.addEventListener('click', function () {
+                const key = chip.getAttribute('data-grant');
+                const grantInput = document.querySelector('input[name="grant[]"][value="' + key + '"]');
+                const denyInput = document.querySelector('input[name="deny[]"][value="' + key + '"]');
+                const modeInput = document.getElementById('permission_mode');
+                if (modeInput) { modeInput.checked = true; }
+                if (grantInput) {
+                    grantInput.checked = !grantInput.checked;
+                    if (denyInput && grantInput.checked) { denyInput.checked = false; }
+                    chip.classList.toggle('active', grantInput.checked);
+                }
+            });
         });
     });
 </script>

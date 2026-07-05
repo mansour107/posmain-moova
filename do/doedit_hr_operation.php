@@ -1,5 +1,6 @@
 <?php
-include('../includes/connect.php');
+require_once __DIR__ . '/../includes/rbac_route_guard.php';
+rbac_guard_route('do/doedit_hr_operation.php');
 
 $id = $_POST['id'];
 $name = $_POST['name'];

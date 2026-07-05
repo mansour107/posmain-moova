@@ -19,6 +19,8 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
     require_csrf('pos_browser');
 }
 
+require_permission('pos.table.move', $conn);
+
 $data = $_POST;
 $json = json_decode(file_get_contents('php://input'), true);
 if (is_array($json) && $json) {
@@ -35,7 +37,7 @@ try {
         'رقم الطاولة الجديدة غير صحيح'
     );
     $orderId = TableInputValidator::optionalPositiveInt($data['order_id'] ?? 0, 'معرف الطلب غير صحيح');
-    $userId = intval($_SESSION['userid'] ?? 1);
+    $userId = current_user_id();
 
     $idempotencyService = new IdempotencyService();
     $idempotencyKey = $idempotencyService->resolveKey($data, $_SERVER);

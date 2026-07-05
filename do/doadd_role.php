@@ -1,4 +1,6 @@
-<?php include('../includes/connect.php');
+<?php
+require_once __DIR__ . '/../includes/rbac_route_guard.php';
+rbac_guard_route('do/doadd_role.php');
 // echo "<pre>";
 // print_r($_POST);
 // echo "<pre>";
@@ -272,6 +274,9 @@ if ($newRoleId > 0) {
 }
 
 $conn->query("INSERT INTO `process`(`type`) VALUES ('add role')");
+
+require_once __DIR__ . '/../classes/Security/PermissionService.php';
+(new PermissionService($conn))->bumpPermissionsVersion();
 
 }
 header('location:../myroles.php');

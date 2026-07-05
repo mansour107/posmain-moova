@@ -1,173 +1,231 @@
 <?php
-require_once __DIR__ . '/Pos/Service/ShiftDrawerReconciliationService.php';
 
-class ShiftReport {
+require_once __DIR__ . '/Pos/Service/ShiftDrawerReconciliationService.php';
+require_once __DIR__ . '/Pos/Service/DrawerSessionService.php';
+
+class ShiftReport
+{
     private $conn;
     private $userId;
     private $username;
     private $date;
-    private $lastClosingTime = null;
+    private $shiftOpenedAt = null;
     private $drawerReconciliationService;
-    
-    public function __construct($conn, $userId, $date = null) {
+
+    public function __construct($conn, $userId, $date = null, array $scope = [])
+    {
         $this->conn = $conn;
-        $this->userId = $userId;
+        $this->userId = (int) $userId;
         $this->date = $date ? $date : date('Y-m-d');
         $this->drawerReconciliationService = new ShiftDrawerReconciliationService();
-        
-        // جلب اسم المستخدم للبحث في جدول الإغلاقات
-        $this->username = $this->getUsernameById($userId);
-        
-        // تحديد وقت آخر إغلاق لهذا المستخدم اليوم
-        $this->setLastClosingTime();
+        $this->username = $this->getCashierUsernameById($this->userId);
+        $this->resolveShiftWindow($scope);
     }
-    
-    private function getUsernameById($id) {
-        $query = "SELECT aname FROM acc_head WHERE id = ?";
-        $stmt = $this->conn->prepare($query);
-        $stmt->bind_param("i", $id);
+
+    private function getCashierUsernameById($id): string
+    {
+        $stmt = $this->conn->prepare('SELECT uname FROM users WHERE id = ? LIMIT 1');
+        $stmt->bind_param('i', $id);
         $stmt->execute();
         $res = $stmt->get_result();
-        if ($row = $res->fetch_assoc()) {
-            return $row['aname'];
-        }
-        return '';
+        $row = $res ? $res->fetch_assoc() : null;
+        $stmt->close();
+
+        return $row ? (string) $row['uname'] : '';
     }
-    
-    private function setLastClosingTime() {
-        // نبحث عن آخر عملية إغلاق تمت اليوم لهذا المستخدم
-        // نعتمد على حقل created_at لأنه الأدق زمنياً
-        // إذا لم يوجد created_at في الجدول القديم، نعتمد على endtime مع date
-        
-        // التحقق من وجود created_at
+
+    private function resolveShiftWindow(array $scope): void
+    {
+        $explicitOpenedAt = trim((string) ($scope['shift_opened_at'] ?? ''));
+        if ($explicitOpenedAt !== '') {
+            $this->shiftOpenedAt = $explicitOpenedAt;
+
+            return;
+        }
+
+        if (function_exists('posmain_drawer_sessions_table_exists')
+            && posmain_drawer_sessions_table_exists($this->conn)) {
+            $drawer = new DrawerSessionService();
+            $tenant = (int) ($scope['tenant'] ?? 0);
+            $branch = (int) ($scope['branch'] ?? 0);
+            $drawerSessionId = (int) ($scope['drawer_session_id'] ?? $_SESSION['pos_drawer_session_id'] ?? 0);
+
+            if ($drawerSessionId > 0) {
+                try {
+                    $session = $drawer->sessionById($this->conn, $drawerSessionId);
+                    if (!empty($session['opened_at'])) {
+                        $this->shiftOpenedAt = (string) $session['opened_at'];
+
+                        return;
+                    }
+                } catch (Throwable $exception) {
+                    // continue to lookup
+                }
+            }
+
+            $openSession = $drawer->findOpenSession($this->conn, $this->userId, $tenant, $branch);
+            if ($openSession && !empty($openSession['opened_at'])) {
+                $this->shiftOpenedAt = (string) $openSession['opened_at'];
+
+                return;
+            }
+        }
+
+        $this->setLastClosingTimeFromClosedOrders();
+    }
+
+    private function setLastClosingTimeFromClosedOrders(): void
+    {
+        if ($this->username === '') {
+            return;
+        }
+
         $checkCol = $this->conn->query("SHOW COLUMNS FROM closed_orders LIKE 'created_at'");
-        
         if ($checkCol && $checkCol->num_rows > 0) {
-            $query = "SELECT MAX(created_at) as last_time 
-                      FROM closed_orders 
-                      WHERE user = ? AND date = ?"; 
-                      // ملاحظة: نستخدم user (الاسم) لأن الجدول يخزن الاسم وليس المعرف
+            $query = 'SELECT MAX(created_at) AS last_time
+                      FROM closed_orders
+                      WHERE user = ? AND date = ?';
         } else {
-            // fallback if created_at doesn't exist (using date + endtime)
-            $query = "SELECT MAX(CONCAT(date, ' ', endtime)) as last_time 
-                      FROM closed_orders 
-                      WHERE user = ? AND date = ?";
+            $checkCrtime = $this->conn->query("SHOW COLUMNS FROM closed_orders LIKE 'crtime'");
+            if ($checkCrtime && $checkCrtime->num_rows > 0) {
+                $query = 'SELECT MAX(crtime) AS last_time
+                          FROM closed_orders
+                          WHERE user = ? AND date = ?';
+            } else {
+                $query = "SELECT MAX(CONCAT(date, ' ', endtime)) AS last_time
+                          FROM closed_orders
+                          WHERE user = ? AND date = ?";
+            }
         }
-        
+
         $stmt = $this->conn->prepare($query);
-        $stmt->bind_param("ss", $this->username, $this->date);
+        $stmt->bind_param('ss', $this->username, $this->date);
         $stmt->execute();
         $res = $stmt->get_result();
         if ($row = $res->fetch_assoc()) {
-            $this->lastClosingTime = $row['last_time'];
+            $lastTime = trim((string) ($row['last_time'] ?? ''));
+            if ($lastTime !== '') {
+                $this->shiftOpenedAt = $lastTime;
+            }
         }
+        $stmt->close();
     }
-    
-    /**
-     * Helper to append time condition
-     */
-    private function getTimeCondition() {
-        if ($this->lastClosingTime) {
-            return " AND crtime > '" . $this->lastClosingTime . "'";
+
+    public function getShiftOpenedAt(): ?string
+    {
+        return $this->shiftOpenedAt;
+    }
+
+    private function appendShiftWindow(string $sql, array &$params, string $crtimeColumn = 'crtime'): string
+    {
+        if ($this->shiftOpenedAt !== null && $this->shiftOpenedAt !== '') {
+            $sql .= ' AND ' . $crtimeColumn . ' >= ?';
+            $params[] = $this->shiftOpenedAt;
         }
-        return "";
+
+        return $sql;
     }
-    
-    /**
-     * Get basic shift totals (Sales, Invoices count)
-     */
-    public function getTotals() {
-        $timeCond = $this->getTimeCondition();
-        $query = "SELECT 
+
+    public function getTotals()
+    {
+        $params = [$this->date, (string) $this->userId];
+        $query = 'SELECT
                     COUNT(*) as total_orders,
                     COALESCE(SUM(fat_total), 0) as total_gross,
                     COALESCE(SUM(fat_disc), 0) as total_discount,
                     COALESCE(SUM(fat_net), 0) as total_net
-                  FROM ot_head 
-                  WHERE DATE(pro_date) = ? 
-                  AND user = ? 
-                  AND pro_tybe = 9 
-                  AND isdeleted = 0" . $timeCond;
-                  
+                  FROM ot_head
+                  WHERE DATE(pro_date) = ?
+                  AND user = ?
+                  AND pro_tybe = 9
+                  AND isdeleted = 0';
+        $query = $this->appendShiftWindow($query, $params);
+
         $stmt = $this->conn->prepare($query);
-        $stmt->bind_param("ss", $this->date, $this->userId);
+        $stmt->bind_param(str_repeat('s', count($params)), ...$params);
         $stmt->execute();
         $result = $stmt->get_result();
-        return $result->fetch_assoc();
+        $row = $result->fetch_assoc();
+        $stmt->close();
+
+        return $row;
     }
-    
-    /**
-     * Get payments breakdown by Fund (Safe/Bank)
-     */
-    public function getPaymentBreakdown() {
-        $timeCond = str_replace('crtime', 'oh.crtime', $this->getTimeCondition());
-        
-        $query = "SELECT 
+
+    public function getPaymentBreakdown()
+    {
+        $params = [$this->date, (string) $this->userId];
+        $query = 'SELECT
                     ah.aname as fund_name,
                     oh.acc1 as fund_id,
                     COUNT(*) as count,
                     COALESCE(SUM(oh.pro_value), 0) as total
                   FROM ot_head oh
                   LEFT JOIN acc_head ah ON oh.acc1 = ah.id
-                  WHERE DATE(oh.pro_date) = ? 
-                  AND oh.user = ? 
-                  AND oh.pro_tybe = 1 
-                  AND oh.isdeleted = 0" . $timeCond . "
-                  GROUP BY oh.acc1";
+                  WHERE DATE(oh.pro_date) = ?
+                  AND oh.user = ?
+                  AND oh.pro_tybe = 1
+                  AND oh.isdeleted = 0';
+        $query = $this->appendShiftWindow($query, $params, 'oh.crtime');
+        $query .= ' GROUP BY oh.acc1';
 
         $stmt = $this->conn->prepare($query);
-        $stmt->bind_param("ss", $this->date, $this->userId);
+        $stmt->bind_param(str_repeat('s', count($params)), ...$params);
         $stmt->execute();
-        return $stmt->get_result();
+        $result = $stmt->get_result();
+        $stmt->close();
+
+        return $result;
     }
-    
-    /**
-     * Get Returns (Mardoood)
-     */
-    public function getReturns() {
-         $timeCond = $this->getTimeCondition();
-         $query = "SELECT 
+
+    public function getReturns()
+    {
+        $params = [$this->date, (string) $this->userId];
+        $query = 'SELECT
                     COUNT(*) as count,
                     COALESCE(SUM(fat_net), 0) as total
-                  FROM ot_head 
-                  WHERE DATE(pro_date) = ? 
-                  AND user = ? 
+                  FROM ot_head
+                  WHERE DATE(pro_date) = ?
+                  AND user = ?
                   AND pro_tybe = 11
-                  AND isdeleted = 0" . $timeCond;
-                  
+                  AND isdeleted = 0';
+        $query = $this->appendShiftWindow($query, $params);
+
         $stmt = $this->conn->prepare($query);
-        $stmt->bind_param("ss", $this->date, $this->userId);
+        $stmt->bind_param(str_repeat('s', count($params)), ...$params);
         $stmt->execute();
         $result = $stmt->get_result();
-        return $result->fetch_assoc();
+        $row = $result->fetch_assoc();
+        $stmt->close();
+
+        return $row;
     }
-    
-    /**
-     * Get Expenses (Masrofat)
-     */
-    public function getExpenses() {
-        $timeCond = $this->getTimeCondition();
-        $query = "SELECT 
+
+    public function getExpenses()
+    {
+        $params = [$this->date, (string) $this->userId];
+        $query = 'SELECT
                    COALESCE(SUM(pro_value), 0) as total
-                  FROM ot_head 
-                  WHERE DATE(pro_date) = ? 
-                  AND user = ? 
-                  AND pro_tybe = 2 
-                  AND isdeleted = 0" . $timeCond;
-                  
+                  FROM ot_head
+                  WHERE DATE(pro_date) = ?
+                  AND user = ?
+                  AND pro_tybe = 2
+                  AND isdeleted = 0';
+        $query = $this->appendShiftWindow($query, $params);
+
         $stmt = $this->conn->prepare($query);
-        $stmt->bind_param("ss", $this->date, $this->userId);
+        $stmt->bind_param(str_repeat('s', count($params)), ...$params);
         $stmt->execute();
         $result = $stmt->get_result();
-        return $result->fetch_assoc();
+        $row = $result->fetch_assoc();
+        $stmt->close();
+
+        return $row;
     }
-    
-    /**
-     * Get Items Breakdown
-     */
-    public function getItemsBreakdown() {
-         $timeCond = str_replace('crtime', 'oh.crtime', $this->getTimeCondition());
-         $query = "SELECT 
+
+    public function getItemsBreakdown()
+    {
+        $params = [$this->date, (string) $this->userId];
+        $query = 'SELECT
                     mi.iname,
                     mi.barcode,
                     SUM(fd.qty_out) as qty,
@@ -179,17 +237,21 @@ class ShiftReport {
                    AND oh.user = ?
                    AND oh.pro_tybe = 9
                    AND oh.isdeleted = 0
-                   AND fd.isdeleted = 0" . $timeCond . "
-                   GROUP BY fd.item_id
-                   ORDER BY value DESC";
-                   
+                   AND fd.isdeleted = 0';
+        $query = $this->appendShiftWindow($query, $params, 'oh.crtime');
+        $query .= ' GROUP BY fd.item_id ORDER BY value DESC';
+
         $stmt = $this->conn->prepare($query);
-        $stmt->bind_param("ss", $this->date, $this->userId);
+        $stmt->bind_param(str_repeat('s', count($params)), ...$params);
         $stmt->execute();
-        return $stmt->get_result();
+        $result = $stmt->get_result();
+        $stmt->close();
+
+        return $result;
     }
 
-    public function getDrawerReconciliation(array $scope = []) {
+    public function getDrawerReconciliation(array $scope = [])
+    {
         $scope = array_merge($scope, [
             'user_id' => $this->userId,
             'date' => $this->date,
@@ -198,4 +260,3 @@ class ShiftReport {
         return $this->drawerReconciliationService->buildForUser($this->conn, $scope);
     }
 }
-?>

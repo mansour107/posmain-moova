@@ -3,10 +3,524 @@
  * نظام نقاط البيع بالباركود
  */
 
+function posmainCanRecipeStockOverride() {
+    if (window.POSMAIN && typeof window.POSMAIN.can === 'function') {
+        return window.POSMAIN.can('pos.recipe_stock_override') === true;
+    }
+    return window.POSMAIN_CAN_RECIPE_STOCK_OVERRIDE === true;
+}
+
+window.POSMAIN = window.POSMAIN || {};
+
+function posmainOverrideCsrfToken() {
+    const meta = document.querySelector('meta[name="pos-override-csrf-token"]');
+    return meta ? (meta.getAttribute('content') || '') : '';
+}
+
+function posmainActingUserId() {
+    const el = document.getElementById('posActingUserId');
+    return el ? parseInt(el.getAttribute('data-acting-user-id') || '0', 10) : 0;
+}
+
+function posmainParkedCartStorageKey(userId) {
+    return 'pos_parked_cart_' + String(userId || 0);
+}
+
+function posmainSerializeCartState() {
+    const rows = [];
+    $('#itemData .item-card-order').each(function () {
+        const $row = $(this);
+        rows.push({
+            barcode: String($row.attr('data-itemid') || $row.data('itemid') || ''),
+            name: String($row.find('.pos-cart-name').text() || '').trim(),
+            qty: parseFloat($row.find('.quantityInput').val()) || 0,
+            price: parseFloat($row.find('.itemprice').val() || $row.find('.subtotal').val()) || 0,
+            note: String($row.find('.line-note-input').val() || '').trim(),
+        });
+    });
+    return { rows: rows, saved_at: Date.now() };
+}
+
+window.POSMAIN.parkCartForActingUser = function (actingUserId) {
+    const userId = actingUserId || posmainActingUserId();
+    if (userId < 1) {
+        return;
+    }
+    const state = posmainSerializeCartState();
+    if (!state.rows.length) {
+        return;
+    }
+    try {
+        localStorage.setItem(posmainParkedCartStorageKey(userId), JSON.stringify(state));
+    } catch (e) {}
+};
+
+window.POSMAIN.restoreParkedCartForActingUser = function (actingUserId) {
+    const userId = actingUserId || posmainActingUserId();
+    if (userId < 1) {
+        return false;
+    }
+    let raw = null;
+    try {
+        raw = localStorage.getItem(posmainParkedCartStorageKey(userId));
+    } catch (e) {
+        return false;
+    }
+    if (!raw) {
+        return false;
+    }
+    let state = null;
+    try {
+        state = JSON.parse(raw);
+    } catch (e) {
+        return false;
+    }
+    if (!state || !Array.isArray(state.rows) || !state.rows.length) {
+        return false;
+    }
+    if ($('#itemData .item-card-order').length > 0) {
+        return false;
+    }
+    state.rows.forEach(function (row) {
+        if (!row.barcode) {
+            return;
+        }
+        if (typeof addItemToCart === 'function') {
+            addItemToCart(row.barcode, row.qty || 1, row.price || null);
+        }
+    });
+    try {
+        localStorage.removeItem(posmainParkedCartStorageKey(userId));
+    } catch (e) {}
+    if (typeof updateItemCount === 'function') {
+        updateItemCount();
+    }
+    if (typeof updateTotal === 'function') {
+        updateTotal();
+    }
+    return true;
+};
+
+window.POSMAIN.showPinPadModal = function (options) {
+    options = options || {};
+    const deferred = $.Deferred();
+    const title = options.title || 'اعتماد مدير';
+    const message = options.message || 'أدخل رمز PIN للمدير';
+    const maxLen = 6;
+
+    $('#posPinPadModal').remove();
+
+    const $overlay = $(
+        '<div id="posPinPadModal" class="pos-pin-pad-modal" dir="rtl" role="dialog" aria-modal="true" aria-labelledby="posPinPadTitle">' +
+            '<div class="pos-pin-pad-backdrop"></div>' +
+            '<div class="pos-pin-pad-card">' +
+                '<div class="pos-pin-pad-title" id="posPinPadTitle"></div>' +
+                '<p class="pos-pin-pad-message"></p>' +
+                '<div class="pos-pin-pad-error hidden" id="posPinPadError"></div>' +
+                '<div class="pos-pin-pad-dots" id="posPinPadDots" aria-hidden="true">' +
+                    '<span class="pos-pin-pad-dot"></span>'.repeat(6) +
+                '</div>' +
+                '<div class="pos-pin-pad-grid" id="posPinPadGrid"></div>' +
+                '<button type="button" class="pos-pin-pad-cancel" data-pin-cancel>إلغاء</button>' +
+            '</div>' +
+        '</div>'
+    );
+
+    $overlay.find('.pos-pin-pad-title').text(title);
+    $overlay.find('.pos-pin-pad-message').text(message);
+
+    const keys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', 'مسح', '0', 'دخول'];
+    const $grid = $overlay.find('#posPinPadGrid');
+    keys.forEach(function (key) {
+        let cls = 'pos-pin-pad-key';
+        if (key === 'مسح') {
+            cls += ' action';
+        } else if (key === 'دخول') {
+            cls += ' enter';
+        }
+        $grid.append(
+            $('<button type="button"></button>')
+                .addClass(cls)
+                .attr('data-key', key)
+                .text(key)
+        );
+    });
+
+    $('body').append($overlay);
+
+    let buffer = '';
+    const $dots = $overlay.find('.pos-pin-pad-dot');
+    const $error = $overlay.find('#posPinPadError');
+
+    function renderDots() {
+        $dots.each(function (i) {
+            $(this).toggleClass('filled', i < buffer.length);
+        });
+    }
+
+    function showError(msg) {
+        $error.text(msg).removeClass('hidden');
+    }
+
+    function closeModal() {
+        $(document).off('keydown.posPinPad');
+        $overlay.remove();
+    }
+
+    function submitPin() {
+        if (buffer.length < 4) {
+            showError('الرمز قصير جداً');
+            return;
+        }
+        const pin = buffer;
+        closeModal();
+        deferred.resolve(pin);
+    }
+
+    $overlay.find('[data-pin-cancel]').on('click', function () {
+        closeModal();
+        deferred.reject({ code: 'OVERRIDE_CANCELLED' });
+    });
+
+    $overlay.find('.pos-pin-pad-backdrop').on('click', function () {
+        closeModal();
+        deferred.reject({ code: 'OVERRIDE_CANCELLED' });
+    });
+
+    $grid.on('click', '[data-key]', function () {
+        const key = $(this).attr('data-key');
+        if (key === 'مسح') {
+            buffer = buffer.slice(0, -1);
+            renderDots();
+            $error.addClass('hidden');
+            return;
+        }
+        if (key === 'دخول') {
+            submitPin();
+            return;
+        }
+        if (buffer.length >= maxLen) {
+            return;
+        }
+        buffer += key;
+        renderDots();
+        $error.addClass('hidden');
+    });
+
+    $(document).on('keydown.posPinPad', function (e) {
+        if (e.key === 'Escape') {
+            closeModal();
+            deferred.reject({ code: 'OVERRIDE_CANCELLED' });
+            return;
+        }
+        if (e.key >= '0' && e.key <= '9' && buffer.length < maxLen) {
+            buffer += e.key;
+            renderDots();
+            $error.addClass('hidden');
+        }
+        if (e.key === 'Backspace') {
+            buffer = buffer.slice(0, -1);
+            renderDots();
+            $error.addClass('hidden');
+        }
+        if (e.key === 'Enter') {
+            submitPin();
+        }
+    });
+
+    return deferred.promise();
+};
+
+window.POSMAIN.requestManagerOverride = function (permissionKey, options) {
+    options = options || {};
+    const deferred = $.Deferred();
+    const csrf = posmainOverrideCsrfToken();
+    if (!permissionKey) {
+        deferred.reject({ code: 'PERMISSION_KEY_REQUIRED' });
+        return deferred.promise();
+    }
+
+    const promptPin = function () {
+        const pinDeferred = $.Deferred();
+        if (typeof window.POSMAIN.showPinPadModal === 'function') {
+            window.POSMAIN.showPinPadModal({
+                title: '🔒 اعتماد مدير',
+                message: options.message || 'أدخل رمز PIN للمدير',
+            }).done(function (pin) {
+                pinDeferred.resolve({ isConfirmed: true, value: pin });
+            }).fail(function () {
+                pinDeferred.resolve({ isConfirmed: false, value: null });
+            });
+            return pinDeferred.promise();
+        }
+        const pin = window.prompt(options.message || 'رمز PIN للمدير');
+        return $.Deferred().resolve({ isConfirmed: !!pin, value: pin }).promise();
+    };
+
+    $.when(promptPin()).then(function (result) {
+        if (!result || !result.isConfirmed || !result.value) {
+            deferred.reject({ code: 'OVERRIDE_CANCELLED' });
+            return;
+        }
+        const postData = {
+            manager_pin: String(result.value),
+            permission_key: permissionKey,
+            action_type: options.action_type || 'manager.override',
+            target_type: options.target_type || 'pos_action',
+            target_id: options.target_id || '',
+            reason: options.reason || '',
+            csrf_token: csrf,
+        };
+        if (options.amount !== undefined && options.amount !== null && options.amount !== '') {
+            postData.amount = options.amount;
+        }
+        if (options.limit_permission_key) {
+            postData.limit_permission_key = options.limit_permission_key;
+        }
+        $.ajax({
+            url: 'ajax/pos_override_auth.php',
+            method: 'POST',
+            dataType: 'json',
+            data: postData,
+            headers: { 'X-CSRF-Token': csrf },
+        }).done(function (response) {
+            if (response && response.success && response.approval_id) {
+                deferred.resolve(response);
+            } else {
+                deferred.reject(response || { code: 'OVERRIDE_FAILED' });
+            }
+        }).fail(function (xhr) {
+            deferred.reject((xhr.responseJSON) || { code: 'OVERRIDE_FAILED' });
+        });
+    });
+
+    return deferred.promise();
+};
+
+window.POSMAIN.applyLockedAction = function ($btn, permissionKey, onAllowed) {
+    if (!$btn || !$btn.length) {
+        return;
+    }
+    const allowed = window.POSMAIN && typeof window.POSMAIN.can === 'function'
+        ? window.POSMAIN.can(permissionKey) === true
+        : false;
+    if (allowed) {
+        $btn.removeClass('pos-action-locked').prop('disabled', false);
+        $btn.off('click.posOverride').on('click.posOverride', function (e) {
+            if (typeof onAllowed === 'function') {
+                onAllowed(e);
+            }
+        });
+        return;
+    }
+    $btn.addClass('pos-action-locked').prop('disabled', false);
+    $btn.off('click.posOverride').on('click.posOverride', function (e) {
+        e.preventDefault();
+        window.POSMAIN.requestManagerOverride(permissionKey, {
+            message: $btn.attr('title') || 'يتطلب اعتماد مدير',
+        }).done(function (approval) {
+            if (typeof onAllowed === 'function') {
+                onAllowed(e, approval);
+            }
+        });
+    });
+};
+
+window.POSMAIN.ensureEscalationForAmount = function (limitPermissionKey, escalationPermissionKey, amount, options) {
+    const deferred = $.Deferred();
+    options = options || {};
+    if (window.POSMAIN.can(escalationPermissionKey) === true) {
+        deferred.resolve(null);
+        return deferred.promise();
+    }
+    if (typeof window.POSMAIN.checkAmountWithinLimit === 'function'
+        && window.POSMAIN.checkAmountWithinLimit(limitPermissionKey, amount)) {
+        deferred.resolve(null);
+        return deferred.promise();
+    }
+    window.POSMAIN.requestManagerOverride(escalationPermissionKey, Object.assign({}, options, {
+        amount: amount,
+        limit_permission_key: limitPermissionKey,
+    })).done(function (approval) {
+        deferred.resolve(approval);
+    }).fail(function (err) {
+        deferred.reject(err);
+    });
+    return deferred.promise();
+};
+
+window.POSMAIN.ensurePermissionOrOverride = function (permissionKey, options) {
+    const deferred = $.Deferred();
+    if (window.POSMAIN.can(permissionKey) === true) {
+        deferred.resolve(null);
+        return deferred.promise();
+    }
+    window.POSMAIN.requestManagerOverride(permissionKey, options || {}).done(function (approval) {
+        deferred.resolve(approval);
+    }).fail(function (err) {
+        deferred.reject(err);
+    });
+    return deferred.promise();
+};
+
+function posmainSetHiddenFormApproval(form, approvalId, fieldName) {
+    if (!form || !approvalId) {
+        return;
+    }
+    fieldName = fieldName || 'manager_approval_id';
+    let input = form.querySelector('input[name="' + fieldName + '"]');
+    if (!input) {
+        input = document.createElement('input');
+        input.type = 'hidden';
+        input.name = fieldName;
+        form.appendChild(input);
+    }
+    input.value = String(approvalId);
+}
+
+function posmainCurrentDiscountPct() {
+    const total = parseFloat($('#total').val()) || 0;
+    const discount = parseFloat($('#discount').val()) || 0;
+    if ($('#modal_discperc').val()) {
+        return parseFloat($('#modal_discperc').val()) || 0;
+    }
+    return total > 0 ? (discount / total) * 100 : 0;
+}
+
+function posmainCartHasPriceOverride() {
+    let overridden = false;
+    $('#itemData .item-card-order').each(function () {
+        const $card = $(this);
+        const price = parseFloat($card.find('.priceInput').val()) || 0;
+        const catalog = parseFloat($card.attr('data-catalog-price')) || 0;
+        if (catalog > 0 && Math.abs(price - catalog) > 0.01) {
+            overridden = true;
+        }
+    });
+    return overridden;
+}
+
+function posmainCollectPreSubmitEscalations(form, action) {
+    const isPayment = action === 'cash' || action === 'split_cash';
+    const isSave = action === 'save' || action === 'print_receipt' || isPayment;
+
+    if (!isSave) {
+        return $.Deferred().resolve({}).promise();
+    }
+
+    const tasks = [];
+    let discountApprovalId = null;
+    let priceApprovalId = null;
+    let creditApprovalId = null;
+
+    const discountPct = posmainCurrentDiscountPct();
+    if (discountPct > 0) {
+        tasks.push(window.POSMAIN.ensureEscalationForAmount(
+            'pos.discount.apply',
+            'pos.discount.manual_pct.limit',
+            discountPct,
+            { message: 'خصم يتجاوز الحد المسموح — يتطلب اعتماد مدير' }
+        ).then(function (approval) {
+            if (approval && approval.approval_id) {
+                discountApprovalId = approval.approval_id;
+            }
+        }));
+    }
+    if (posmainCartHasPriceOverride()) {
+        tasks.push(window.POSMAIN.ensurePermissionOrOverride('pos.price.override', {
+            message: 'تعديل السعر يتطلب اعتماد مدير',
+        }).then(function (approval) {
+            if (approval && approval.approval_id) {
+                priceApprovalId = approval.approval_id;
+            }
+        }));
+    }
+    const jalAmount = parseFloat($('[name="jal_amount"]').val() || '0') || 0;
+    if (jalAmount > 0) {
+        tasks.push(window.POSMAIN.ensurePermissionOrOverride('pos.credit.sale', {
+            message: 'بيع آجل يتطلب اعتماد مدير',
+        }).then(function (approval) {
+            if (approval && approval.approval_id) {
+                creditApprovalId = approval.approval_id;
+            }
+        }));
+    }
+
+    if (!tasks.length) {
+        return $.Deferred().resolve({}).promise();
+    }
+
+    return $.when.apply($, tasks).then(function () {
+        if (discountApprovalId) {
+            posmainSetHiddenFormApproval(form, discountApprovalId, 'manager_approval_id');
+        }
+        if (priceApprovalId) {
+            posmainSetHiddenFormApproval(form, priceApprovalId, 'price_override_approval_id');
+        }
+        if (creditApprovalId && !discountApprovalId) {
+            posmainSetHiddenFormApproval(form, creditApprovalId, 'manager_approval_id');
+        }
+        return {
+            discountApprovalId: discountApprovalId,
+            priceApprovalId: priceApprovalId,
+            creditApprovalId: creditApprovalId,
+        };
+    });
+}
+
 $(document).ready(function() {
     // ========================================
     // Initialize on page load - Update totals if items exist (edit mode)
     // ========================================
+    $(document).on('click', '#posDrawerNoSaleBtn', function () {
+        const runNoSale = function (approvalId) {
+            const data = { reason: 'فتح درج بدون بيع', csrf_token: posmainOverrideCsrfToken() };
+            if (approvalId) {
+                data.manager_approval_id = approvalId;
+            }
+            $.ajax({
+                url: 'ajax/pos_drawer_no_sale.php',
+                method: 'POST',
+                dataType: 'json',
+                data: data,
+                headers: { 'X-CSRF-Token': posmainOverrideCsrfToken() },
+            }).done(function (response) {
+                if (response && response.success) {
+                    if (window.Swal) {
+                        Swal.fire({ icon: 'success', title: 'تم تسجيل فتح الدرج', timer: 1500, showConfirmButton: false });
+                    }
+                } else if ((response.code || '') === 'MANAGER_APPROVAL_REQUIRED') {
+                    window.POSMAIN.requestManagerOverride('pos.drawer.no_sale', {
+                        message: 'فتح الدرج بدون بيع يتطلب اعتماد مدير',
+                    }).done(function (approval) {
+                        runNoSale(approval.approval_id);
+                    });
+                }
+            }).fail(function (xhr) {
+                const payload = xhr.responseJSON || {};
+                if ((payload.code || '') === 'MANAGER_APPROVAL_REQUIRED') {
+                    window.POSMAIN.requestManagerOverride('pos.drawer.no_sale', {
+                        message: 'فتح الدرج بدون بيع يتطلب اعتماد مدير',
+                    }).done(function (approval) {
+                        runNoSale(approval.approval_id);
+                    });
+                }
+            });
+        };
+        if (window.POSMAIN && window.POSMAIN.can('pos.drawer.no_sale') === true) {
+            runNoSale(null);
+            return;
+        }
+        window.POSMAIN.requestManagerOverride('pos.drawer.no_sale', {
+            message: 'فتح الدرج بدون بيع يتطلب اعتماد مدير',
+        }).done(function (approval) {
+            runNoSale(approval.approval_id);
+        });
+    });
+
+    if (window.POSMAIN && typeof window.POSMAIN.restoreParkedCartForActingUser === 'function') {
+        window.POSMAIN.restoreParkedCartForActingUser(posmainActingUserId());
+    }
     if ($('#itemData .item-card-order').length > 0) {
         updateItemCount();
         updateTotal();
@@ -351,7 +865,7 @@ $(document).ready(function() {
             return $.Deferred().resolve(null).promise();
         }
 
-        if (!context.overrideAllowed || window.POSMAIN_CAN_RECIPE_STOCK_OVERRIDE !== true) {
+        if (!context.overrideAllowed || !posmainCanRecipeStockOverride()) {
             showUnavailableItemMessage(context, itemName);
             return $.Deferred().reject().promise();
         }
@@ -382,41 +896,13 @@ $(document).ready(function() {
                 return $.Deferred().reject().promise();
             }
 
-            return $.ajax({
-                url: 'ajax/manager_approval.php',
-                method: 'POST',
-                dataType: 'json',
-                data: {
-                    action: 'approve_recipe_stock_override',
-                    item_id: itemId,
-                    reason: String(result.value || 'recipe stock override').trim(),
-                    unavailable_reason: context.reason || message
-                },
-                beforeSend: window.POSMAIN_ATTACH_CSRF_HEADER
+            return window.POSMAIN.requestManagerOverride('pos.recipe_stock_override', {
+                message: message,
+                target_type: 'item',
+                target_id: itemId,
+                reason: String(result.value || 'recipe stock override').trim(),
             }).then(function(response) {
-                if (!response || response.success !== true || !response.approval_id) {
-                    const errorMessage = response && (response.message || response.code)
-                        ? (response.message || response.code)
-                        : 'تعذر اعتماد المدير';
-                    if (window.Swal && typeof Swal.fire === 'function') {
-                        Swal.fire({ icon: 'error', title: 'تعذر الاعتماد', text: errorMessage });
-                    } else {
-                        alert(errorMessage);
-                    }
-                    return $.Deferred().reject().promise();
-                }
-
                 return response.approval_id;
-            }, function(xhr) {
-                const message = xhr && xhr.responseJSON && (xhr.responseJSON.message || xhr.responseJSON.code)
-                    ? (xhr.responseJSON.message || xhr.responseJSON.code)
-                    : 'تعذر اعتماد المدير';
-                if (window.Swal && typeof Swal.fire === 'function') {
-                    Swal.fire({ icon: 'error', title: 'تعذر الاعتماد', text: message });
-                } else {
-                    alert(message);
-                }
-                return $.Deferred().reject().promise();
             });
         });
     }
@@ -1150,7 +1636,7 @@ $(document).ready(function() {
         const safeLineNote = escapeHtml(noteValue);
 
         let itemCard = `
-            <div class="item-card-order pos-cart-row" data-itemid="${escapeHtml(barcode)}">
+            <div class="item-card-order pos-cart-row" data-itemid="${escapeHtml(barcode)}" data-catalog-price="${unitPrice.toFixed(4)}">
                 <div class="pos-cart-row-inner">
                     <div class="pos-cart-price-display" aria-hidden="true">${subtotal.toFixed(2)} <span class="pos-currency">ج.م</span></div>
                     <div class="pos-cart-qty">
@@ -2500,7 +2986,19 @@ $(document).ready(function() {
         }
 
         if (api && typeof api.submitFromForm === 'function') {
-            api.submitFromForm(form, action);
+            posmainCollectPreSubmitEscalations(form, action).then(function () {
+                api.submitFromForm(form, action);
+            }).fail(function () {
+                if (saveBtn.length > 0) {
+                    saveBtn.prop('disabled', false).html('<i class="fas fa-save"></i> حفظ');
+                }
+                if (printOrderBtn.length > 0) {
+                    printOrderBtn.prop('disabled', false).html('<i class="fas fa-print"></i> طباعة');
+                }
+                if (printBtn.length > 0) {
+                    printBtn.prop('disabled', false).html('دفع وطباعة');
+                }
+            });
             return true;
         }
 
@@ -3131,7 +3629,7 @@ function openPaidOrderReversalModal(orderId, canRefund, canVoid) {
     modal.show();
 }
 
-function submitPaidOrderReversal() {
+function submitPaidOrderReversal(approvalId) {
     if (paidReversalState.submitting) {
         return;
     }
@@ -3151,27 +3649,48 @@ function submitPaidOrderReversal() {
 
     const action = $('#paid-reversal-action').val() === 'void' ? 'void' : 'refund';
     const policy = $('#paid-reversal-policy').val() || 'waste';
+    const permissionKey = action === 'void' ? 'pos.void.paid' : 'pos.refund';
     paidReversalState.submitting = true;
     resetPaidReversalValidation();
     $('#paidReversalSubmitBtn').prop('disabled', true).html('<i class="fas fa-spinner fa-spin me-1"></i>جاري التنفيذ...');
+
+    const postData = {
+        order_id: orderId,
+        action: action,
+        refund_stock_policy: policy,
+        reason: reason,
+        idempotency_key: createPOSIdempotencyKey(action === 'void' ? 'pos.order.void' : 'pos.order.refund'),
+    };
+    if (approvalId) {
+        postData.manager_approval_id = approvalId;
+    }
+
+    function handleApprovalRequired() {
+        paidReversalState.submitting = false;
+        $('#paidReversalSubmitBtn').prop('disabled', false).html('<i class="fas fa-check me-1"></i>تنفيذ');
+        window.POSMAIN.requestManagerOverride(permissionKey, {
+            message: 'يتطلب اعتماد مدير للاسترداد/الإلغاء',
+            target_type: 'order',
+            target_id: orderId,
+        }).done(function (approval) {
+            submitPaidOrderReversal(approval.approval_id);
+        }).fail(function () {
+            showPaidReversalValidation('تم إلغاء اعتماد المدير');
+        });
+    }
 
     $.ajax({
         url: 'ajax/refund_order.php',
         method: 'POST',
         dataType: 'json',
-        data: {
-            order_id: orderId,
-            action: action,
-            refund_stock_policy: policy,
-            reason: reason,
-            idempotency_key: createPOSIdempotencyKey(action === 'void' ? 'pos.order.void' : 'pos.order.refund'),
-        },
+        data: postData,
         success: function(response) {
             try {
                 if (typeof response === 'string') {
                     response = JSON.parse(response);
                 }
                 if (response.success) {
+                    paidReversalState.submitting = false;
                     const modalEl = document.getElementById('paidOrderReversalModal');
                     if (modalEl && typeof bootstrap !== 'undefined' && bootstrap.Modal) {
                         const instance = bootstrap.Modal.getInstance(modalEl);
@@ -3188,25 +3707,36 @@ function submitPaidOrderReversal() {
                         });
                     }
                     loadRecentOrders(false);
+                    $('#paidReversalSubmitBtn').prop('disabled', false).html('<i class="fas fa-check me-1"></i>تنفيذ');
+                } else if ((response.code || '') === 'MANAGER_APPROVAL_REQUIRED' && !approvalId) {
+                    handleApprovalRequired();
                 } else {
+                    paidReversalState.submitting = false;
                     showPaidReversalValidation(response.message || response.error || 'خطأ غير معروف');
+                    $('#paidReversalSubmitBtn').prop('disabled', false).html('<i class="fas fa-check me-1"></i>تنفيذ');
                 }
             } catch (e) {
+                paidReversalState.submitting = false;
                 showPaidReversalValidation('خطأ في استجابة الخادم');
+                $('#paidReversalSubmitBtn').prop('disabled', false).html('<i class="fas fa-check me-1"></i>تنفيذ');
             }
         },
         error: function(xhr) {
             let message = 'خطأ في الاتصال';
+            let code = '';
             try {
                 const payload = xhr.responseJSON || JSON.parse(xhr.responseText || '{}');
                 message = payload.message || payload.code || message;
+                code = payload.code || '';
             } catch (e) {
                 // keep default message
             }
-            showPaidReversalValidation(message);
-        },
-        complete: function() {
+            if (code === 'MANAGER_APPROVAL_REQUIRED' && !approvalId) {
+                handleApprovalRequired();
+                return;
+            }
             paidReversalState.submitting = false;
+            showPaidReversalValidation(message);
             $('#paidReversalSubmitBtn').prop('disabled', false).html('<i class="fas fa-check me-1"></i>تنفيذ');
         },
     });

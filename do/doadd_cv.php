@@ -1,6 +1,6 @@
-<?php 
-include('../includes/connect.php');
-require_once __DIR__ . '/../includes/session_bootstrap.php';
+<?php
+require_once __DIR__ . '/../includes/rbac_route_guard.php';
+rbac_guard_route('do/doadd_cv.php');
 
 $user = $_SESSION['userid'];
 $name = $_POST['name'];

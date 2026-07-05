@@ -14,11 +14,13 @@ define('DB_NAME', 'focus');
 define('SITE_URL', 'http://localhost/horstec');
 define('ADMIN_EMAIL', 'admin@horstec.com');
 
-// إعدادات الجلسة
-ini_set('session.cookie_httponly', 1);
-ini_set('session.use_only_cookies', 1);
-ini_set('session.cookie_secure', 0); // ضع 1 في HTTPS
-ini_set('session.cookie_samesite', 'Strict');
+// إعدادات الجلسة (only before session_start — avoid warnings after session_bootstrap)
+if (session_status() !== PHP_SESSION_ACTIVE) {
+    ini_set('session.cookie_httponly', 1);
+    ini_set('session.use_only_cookies', 1);
+    ini_set('session.cookie_secure', 0); // ضع 1 في HTTPS
+    ini_set('session.cookie_samesite', 'Strict');
+}
 
 // إعدادات أخرى
 date_default_timezone_set('Africa/Cairo');

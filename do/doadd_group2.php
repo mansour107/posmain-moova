@@ -1,5 +1,6 @@
-<?php 
-include('../includes/connect.php');
+<?php
+require_once __DIR__ . '/../includes/rbac_route_guard.php';
+rbac_guard_route('do/doadd_group2.php');
 
 $gname = trim($_POST['gname']);
 $returnTo = 'mygroups.php?tab=subgroups';

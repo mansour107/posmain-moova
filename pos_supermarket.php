@@ -1,7 +1,10 @@
 <?php
 require_once __DIR__ . '/includes/session_bootstrap.php';
 require_once __DIR__ . '/includes/csrf.php';
+require_once __DIR__ . '/includes/pos_cache_control.php';
 require_once __DIR__ . '/classes/PasswordService.php';
+
+posmain_send_no_store_headers();
 
 if (!isset($_SESSION['login']) || !isset($_SESSION['userid'])) {
     header('location:index.php');
@@ -11,7 +14,8 @@ if (!isset($_SESSION['login']) || !isset($_SESSION['userid'])) {
 include(__DIR__ . '/includes/connect.php');
 
 if (isset($_GET['logout'])) {
-    unset($_SESSION['pos_authenticated'], $_SESSION['pos_user_id'], $_SESSION['pos_user_name']);
+    require_once __DIR__ . '/includes/auth_guard.php';
+    posmain_clear_pos_shift_session(false);
     header('location:pos_supermarket.php');
     exit;
 }
@@ -34,8 +38,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['pos_barcode'])) {
     }
 
     if ($is_valid_user_code) {
-        $_SESSION['pos_authenticated'] = true;
-        $_SESSION['pos_user_id'] = (int) $current_user['id'];
+        require_once __DIR__ . '/includes/auth_guard.php';
+        require_once __DIR__ . '/classes/Pos/Service/ShiftSessionService.php';
+        (new ShiftSessionService())->openForCashier($conn, (int) $current_user['id'], [
+            'opening_cash' => $_POST['opening_cash'] ?? '0',
+        ]);
         $_SESSION['pos_user_name'] = $current_user['uname'];
         header('location:pos_supermarket.php');
         exit;
@@ -51,6 +58,13 @@ if (
 ) {
     include('includes/pos_login_screen.php');
     exit;
+}
+
+require_once __DIR__ . '/classes/Pos/Service/ShiftSessionService.php';
+try {
+    (new ShiftSessionService())->openForCashier($conn, $current_user_id);
+} catch (Throwable $drawerOpenException) {
+    error_log('POS drawer session ensure failed: ' . $drawerOpenException->getMessage());
 }
 
 $id = 0;
@@ -104,6 +118,7 @@ include('includes/pos_simple_header.php');
 
 <!-- نظام القفل -->
 <?php include('includes/pos_lock_system.php'); ?>
+<?php include('includes/pos_session_guard.php'); ?>
 
 <!-- Hidden input for Edit Mode -->
 <input type="hidden" id="edit_order_id" value="<?= isset($id) ? (int) $id : '' ?>">
@@ -125,6 +140,12 @@ include('includes/pos_simple_header.php');
                     </div>
                     <button class="btn btn-outline-light btn-sm me-2" id="fullscreenBtn" title="ملء الشاشة">
                         <i class="fas fa-expand-arrows-alt"></i>
+                    </button>
+
+                    <button type="button" class="btn btn-outline-info btn-sm me-2 position-relative" data-bs-toggle="modal"
+                        data-bs-target="#shiftExpenseModal" title="تسجيل مصروف">
+                        <i class="fas fa-wallet me-1"></i> مصروف
+                        <span class="badge bg-danger position-absolute top-0 start-100 translate-middle d-none js-shift-expense-badge"></span>
                     </button>
 
                     <button type="button" class="btn btn-outline-warning btn-sm me-2" data-bs-toggle="modal"

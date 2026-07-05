@@ -1,3 +1,9 @@
+<?php
+require_once __DIR__ . '/includes/auth_guard.php';
+include __DIR__ . '/includes/connect.php';
+require_once __DIR__ . '/includes/page_guard.php';
+page_guard('reports.view', $conn);
+?>
 <?php include('includes/header.php'); ?>
 <link rel="stylesheet" href="https://cdn.datatables.net/1.11.5/css/dataTables.bootstrap4.min.css">
 <?php include('includes/navbar.php'); ?>

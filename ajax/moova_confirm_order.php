@@ -1,8 +1,8 @@
 <?php
+require_once __DIR__ . '/../includes/rbac_route_guard.php';
+rbac_guard_route('ajax/moova_confirm_order.php');
 
 ob_start();
-require_once __DIR__ . '/../includes/session_bootstrap.php';
-include('../includes/connect.php');
 ob_clean();
 
 require_once('../classes/MoovaPosIntegration.php');

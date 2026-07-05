@@ -183,6 +183,11 @@ $assetVer = is_file(__DIR__ . '/../dist/css/custom.css')
   <script src="dist/modal/modal.js"></script>
   <script src="dist/css/tailwind.js"></script>
   <script src="dist/js/js.js"></script>
+  <script src="js/posmain_capabilities.js?v=<?= htmlspecialchars($assetVer, ENT_QUOTES, 'UTF-8') ?>"></script>
+  <?php
+  require_once __DIR__ . '/layout_capabilities.php';
+  echo posmain_render_layout_capabilities_script($conn ?? null);
+  ?>
 </head>
 
 <body class="hold-transition sidebar-mini sidebar-collapse layout-fixed font-semibold" style="font-family: 'Inter', 'IBM Plex Sans Arabic', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;">

@@ -27,7 +27,7 @@ if (PHP_SAPI !== 'cli') {
     require_csrf('pos_browser');
 }
 
-$usid = $_SESSION['userid'];
+$usid = function_exists('pos_acting_user_id') ? pos_acting_user_id() : (int) $_SESSION['userid'];
 
 // تضمين فئات النظام الجديد
 require_once('../classes/InvoiceElementFactory.php');
@@ -62,6 +62,18 @@ define('ACCOUNTING_TYPES', [
 
 // استخراج وتنظيف البيانات المدخلة
 $pro_tybe = isset($_POST['pro_tybe']) ? intval($_POST['pro_tybe']) : 0;
+
+// حارس الشيفت: امنع كتابة طلبات الكاشير/الويتر بعد إغلاق الشيفت.
+// POS shift gate: block cashier and waiter POS order writes once the shift is
+// closed. Waiters route through this file too, so this is the single consistent
+// enforcement point for the branch-level shift state.
+if (PHP_SAPI !== 'cli' && $pro_tybe === INVOICE_TYPES['POS']) {
+    require_once __DIR__ . '/../includes/pos_shift_guard.php';
+    if (posmain_pos_shift_write_blocked($_SESSION, $conn)) {
+        deny_json_or_redirect('POS_SHIFT_CLOSED', 403, 'pos_barcode.php?logout=1');
+    }
+}
+
 $store_id = isset($_POST['store_id']) ? intval($_POST['store_id']) : 0;
 $pro_serial = isset($_POST['pro_serial']) ? htmlspecialchars(trim($_POST['pro_serial']), ENT_QUOTES, 'UTF-8') : '';
 $pro_date = posmain_normalize_invoice_date($_POST['pro_date'] ?? null);

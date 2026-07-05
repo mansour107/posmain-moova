@@ -1,5 +1,7 @@
-<?php 
-include('../includes/connect.php');
+<?php
+require_once __DIR__ . '/../includes/rbac_route_guard.php';
+rbac_guard_route('do/doadd_account.php');
+
 require_once '../includes/pos_default_accounts.php';
 
 // التحقق من صحة البيانات المدخلة

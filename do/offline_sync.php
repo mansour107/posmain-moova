@@ -1,4 +1,13 @@
 <?php
+require_once __DIR__ . '/../includes/rbac_route_guard.php';
+rbac_guard_route('do/offline_sync.php');
+
+require_once __DIR__ . '/../includes/production_guard.php';
+require_once __DIR__ . '/../classes/Inventory/InventoryRetiredLegacyEndpoint.php';
+if (production_guard_is_production() && !production_guard_env_bool('POSMAIN_ENABLE_LEGACY_OFFLINE_PROTOTYPE', false)) {
+    InventoryRetiredLegacyEndpoint::respond('offline_sync_retired');
+}
+
 // API لمزامنة البيانات الأوفلاين مع النظام الحالي
 header('Content-Type: application/json');
 header('Access-Control-Allow-Origin: *');
@@ -6,8 +15,6 @@ header('Access-Control-Allow-Methods: GET, POST, PUT, DELETE');
 header('Access-Control-Allow-Headers: Content-Type');
 
 require_once __DIR__ . '/../classes/Inventory/InventoryRetiredLegacyEndpoint.php';
-include('../includes/connect.php');
-
 $method = $_SERVER['REQUEST_METHOD'];
 $input = json_decode(file_get_contents('php://input'), true);
 

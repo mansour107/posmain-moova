@@ -3,6 +3,7 @@
 class ManagerApprovalService
 {
     private const TERMINAL_STATUSES = ['approved', 'declined', 'expired'];
+    private const DEFAULT_TTL_SECONDS = 90;
 
     public function requestApproval(mysqli $conn, array $data): array
     {
@@ -12,13 +13,16 @@ class ManagerApprovalService
         $requestedBy = $this->positiveInt($data['requested_by'] ?? 0, 'APPROVAL_REQUESTER_REQUIRED');
         $reason = $this->nullableText($data['reason'] ?? null, 500);
         $metadataJson = $this->jsonOrNull($data['metadata'] ?? $data['metadata_json'] ?? null);
+        $permissionKey = $this->nullableText($data['permission_key'] ?? null, 80);
+        $expiresAt = $this->resolveExpiresAt($data['expires_at'] ?? null);
 
         $stmt = $conn->prepare("
             INSERT INTO manager_approvals (
-                action_type, target_type, target_id, requested_by, reason, metadata_json
-            ) VALUES (?, ?, ?, ?, ?, ?)
+                action_type, target_type, target_id, requested_by, reason, metadata_json,
+                permission_key, expires_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         ");
-        $stmt->bind_param('ssiiss', $actionType, $targetType, $targetId, $requestedBy, $reason, $metadataJson);
+        $stmt->bind_param('ssiissss', $actionType, $targetType, $targetId, $requestedBy, $reason, $metadataJson, $permissionKey, $expiresAt);
         $stmt->execute();
         $id = (int) $conn->insert_id;
         $stmt->close();
@@ -64,13 +68,29 @@ class ManagerApprovalService
         array $request = [],
         array $context = []
     ): ?array {
-        if (!$this->shouldEnforce($actionType, $context)) {
+        $userId = (int) ($context['user_id'] ?? 0);
+        $limitPermissionKey = trim((string) ($context['limit_permission_key'] ?? ''));
+        if ($userId > 0 && $limitPermissionKey !== '') {
+            if (!class_exists('PermissionService', false)) {
+                require_once __DIR__ . '/../../Security/PermissionService.php';
+            }
+            $permissionService = PermissionService::forConnection($conn);
+            if ($permissionService->checkAmount($userId, $limitPermissionKey, $amount)) {
+                return null;
+            }
+            $escalationKey = trim((string) ($context['escalation_permission_key'] ?? $actionType));
+            if ($escalationKey !== '') {
+                $actionType = $escalationKey;
+            }
+        } elseif (!$this->shouldEnforce($actionType, $context)) {
             return null;
         }
 
         $threshold = $this->threshold($context);
-        if ($amount <= $threshold) {
-            return null;
+        if ($userId < 1 || $limitPermissionKey === '') {
+            if ($amount <= $threshold) {
+                return null;
+            }
         }
 
         $approvalId = $this->approvalIdFrom($request, $context);
@@ -79,19 +99,152 @@ class ManagerApprovalService
         }
 
         $approval = $this->approvalById($conn, $approvalId, true);
+        $this->assertApprovalUsable($approval, $actionType, $targetType, $targetId);
+
+        return $approval;
+    }
+
+    public function consumeApproval(mysqli $conn, int $approvalId, int $performedBy): array
+    {
+        $approvalId = $this->positiveInt($approvalId, 'APPROVAL_ID_REQUIRED');
+        $performedBy = $this->positiveInt($performedBy, 'APPROVAL_PERFORMER_REQUIRED');
+        $approval = $this->approvalById($conn, $approvalId, true);
+
+        if (!empty($approval['consumed_at'])) {
+            throw new RuntimeException('APPROVAL_ALREADY_CONSUMED');
+        }
+        $this->assertNotExpired($approval);
+
+        $stmt = $conn->prepare("
+            UPDATE manager_approvals
+               SET consumed_at = CURRENT_TIMESTAMP,
+                   performed_by = ?
+             WHERE id = ?
+               AND consumed_at IS NULL
+        ");
+        $stmt->bind_param('ii', $performedBy, $approvalId);
+        $stmt->execute();
+        if ($stmt->affected_rows < 1) {
+            $stmt->close();
+            throw new RuntimeException('APPROVAL_NOT_FOUND');
+        }
+        $stmt->close();
+
+        return $this->approvalById($conn, $approvalId, false);
+    }
+
+    public function authenticateManagerOverride(mysqli $conn, string $pin, string $permissionKey, int $requestedBy, array $context = []): array
+    {
+        if (!class_exists('PinService', false)) {
+            require_once __DIR__ . '/../../Security/PinService.php';
+        }
+        if (!function_exists('auth_guard_has_permission')) {
+            require_once __DIR__ . '/../../../includes/auth_guard.php';
+        }
+
+        $pinService = new PinService();
+        $manager = $pinService->findUserByPin($conn, $pin);
+        if (!$manager || !$pinService->verifyPin($pin, (string) ($manager['pin_hash'] ?? ''))) {
+            throw new RuntimeException('MANAGER_PIN_INVALID');
+        }
+        if ($pinService->isUserLocked($manager)) {
+            throw new RuntimeException('MANAGER_PIN_LOCKED');
+        }
+
+        $managerId = (int) $manager['id'];
+        $roleFlags = [];
+        if (!empty($manager['userrole'])) {
+            $roleStmt = $conn->prepare('SELECT * FROM usr_pwrs WHERE id = ? LIMIT 1');
+            $roleId = (int) $manager['userrole'];
+            $roleStmt->bind_param('i', $roleId);
+            $roleStmt->execute();
+            $roleFlags = $roleStmt->get_result()->fetch_assoc() ?: [];
+            $roleStmt->close();
+        }
+
+        $managerSession = ['userid' => $managerId, 'login' => true, 'usrole' => $manager['userrole'] ?? 0];
+        if (!auth_guard_is_admin_session($managerSession, $roleFlags)
+            && !auth_guard_session_has_permission($permissionKey, $roleFlags, $managerSession, $conn)) {
+            throw new RuntimeException('MANAGER_PERMISSION_DENIED');
+        }
+
+        $limitCheck = $this->resolveApproverLimitCheck($permissionKey, $context);
+        if ($limitCheck !== null) {
+            if (!class_exists('PermissionService', false)) {
+                require_once __DIR__ . '/../../Security/PermissionService.php';
+            }
+            $permissionService = PermissionService::forConnection($conn);
+            if (!$permissionService->checkAmount(
+                $managerId,
+                $limitCheck['limit_permission_key'],
+                $limitCheck['amount'],
+                (int) ($manager['userrole'] ?? 0) ?: null
+            )) {
+                throw new RuntimeException('APPROVER_LIMIT_EXCEEDED');
+            }
+        }
+
+        $approval = $this->requestApproval($conn, [
+            'action_type' => (string) ($context['action_type'] ?? 'manager.override'),
+            'target_type' => (string) ($context['target_type'] ?? 'pos_action'),
+            'target_id' => $context['target_id'] ?? null,
+            'requested_by' => $requestedBy,
+            'permission_key' => $permissionKey,
+            'reason' => $context['reason'] ?? null,
+            'metadata' => $context['metadata'] ?? null,
+        ]);
+
+        $this->decide($conn, (int) $approval['id'], [
+            'approved_by' => $managerId,
+            'status' => 'approved',
+            'reason' => $context['reason'] ?? null,
+        ]);
+
+        return $this->approvalById($conn, (int) $approval['id'], false);
+    }
+
+    private function assertApprovalUsable(array $approval, string $actionType, string $targetType, ?int $targetId): void
+    {
         if ((string) $approval['action_type'] !== $actionType || (string) $approval['target_type'] !== $targetType) {
             throw new RuntimeException('MANAGER_APPROVAL_SCOPE_MISMATCH');
         }
         if ((string) $approval['status'] !== 'approved' || (int) ($approval['approved_by'] ?? 0) <= 0) {
             throw new RuntimeException('MANAGER_APPROVAL_NOT_APPROVED');
         }
+        if (!empty($approval['consumed_at'])) {
+            throw new RuntimeException('APPROVAL_ALREADY_CONSUMED');
+        }
+        $this->assertNotExpired($approval);
 
         $approvalTargetId = $approval['target_id'] !== null ? (int) $approval['target_id'] : null;
         if ($approvalTargetId !== null && ($targetId === null || $approvalTargetId !== $targetId)) {
             throw new RuntimeException('MANAGER_APPROVAL_TARGET_MISMATCH');
         }
+    }
 
-        return $approval;
+    private function assertNotExpired(array $approval): void
+    {
+        if (empty($approval['expires_at'])) {
+            return;
+        }
+        if (strtotime((string) $approval['expires_at']) <= time()) {
+            throw new RuntimeException('APPROVAL_EXPIRED');
+        }
+    }
+
+    private function resolveExpiresAt($value): string
+    {
+        $value = trim((string) ($value ?? ''));
+        if ($value !== '') {
+            $ts = strtotime($value);
+            if ($ts === false) {
+                throw new InvalidArgumentException('APPROVAL_EXPIRES_INVALID');
+            }
+
+            return date('Y-m-d H:i:s', $ts);
+        }
+
+        return date('Y-m-d H:i:s', time() + self::DEFAULT_TTL_SECONDS);
     }
 
     public function approvalById(mysqli $conn, int $approvalId, bool $forUpdate = false): array
@@ -119,6 +272,46 @@ class ManagerApprovalService
         return $row;
     }
 
+  /**
+     * @return array{limit_permission_key: string, amount: float}|null
+     */
+    private function resolveApproverLimitCheck(string $permissionKey, array $context): ?array
+    {
+        $limitKey = trim((string) ($context['limit_permission_key'] ?? ''));
+        if ($limitKey === '') {
+            $limitKey = $this->limitKeyForEscalation($permissionKey) ?? '';
+        }
+        if ($limitKey === '') {
+            return null;
+        }
+
+        if (!array_key_exists('amount', $context) && !array_key_exists('limit_amount', $context)) {
+            return null;
+        }
+
+        $amount = (float) ($context['amount'] ?? $context['limit_amount'] ?? 0);
+        if ($amount <= 0) {
+            return null;
+        }
+
+        return [
+            'limit_permission_key' => $limitKey,
+            'amount' => $amount,
+        ];
+    }
+
+    private function limitKeyForEscalation(string $permissionKey): ?string
+    {
+        $map = [
+            'pos.discount.manual_pct.limit' => 'pos.discount.apply',
+            'pos.payout.over_limit' => 'pos.payout.over_limit',
+            'pos.refund.limit' => 'pos.refund.limit',
+            'pos.refund' => 'pos.refund.limit',
+        ];
+
+        return $map[$permissionKey] ?? null;
+    }
+
     private function shouldEnforce(string $actionType, array $context): bool
     {
         if (array_key_exists('require_manager_approval', $context)) {
@@ -132,6 +325,13 @@ class ManagerApprovalService
         if ($this->truthy($global)) {
             return true;
         }
+        if (strpos($actionType, 'discount') !== false || strpos($actionType, 'manual_pct') !== false) {
+            $userId = (int) ($context['user_id'] ?? 0);
+            if ($userId > 0 && class_exists('PermissionService', false)) {
+                return true;
+            }
+        }
+
         $discount = getenv('POSMAIN_REQUIRE_DISCOUNT_APPROVAL');
         return strpos($actionType, 'discount') !== false && $this->truthy($discount);
     }

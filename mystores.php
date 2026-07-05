@@ -1,5 +1,10 @@
-<?php 
-require_once __DIR__ . '/includes/pos_operational_store.php';
+<?php
+require_once __DIR__ . '/includes/auth_guard.php';
+include __DIR__ . '/includes/connect.php';
+require_once __DIR__ . '/includes/page_guard.php';
+page_guard('inventory.edit', $conn);
+?>
+<?php require_once __DIR__ . '/includes/pos_operational_store.php';
 include('includes/header.php');
 include('includes/navbar.php');
 include('includes/sidebar.php');

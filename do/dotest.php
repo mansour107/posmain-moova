@@ -1,5 +1,6 @@
 <?php
-
+require_once __DIR__ . '/../includes/production_guard.php';
+production_guard_deny_route('do/dotest.php');
 require '../vendor/autoload.php'; // Adjust the path if needed
 
 use PhpOffice\PhpSpreadsheet\IOFactory;

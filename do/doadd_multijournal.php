@@ -1,10 +1,9 @@
 <?php
-require_once __DIR__ . '/../includes/session_bootstrap.php';
-include('../includes/connect.php');
-    $usid = $_SESSION['userid'];
-    echo "<pre>";
-    print_r($_POST);
-    echo "</pre>";
+require_once __DIR__ . '/../includes/rbac_route_guard.php';
+rbac_guard_route('do/doadd_multijournal.php');
+
+$user = current_user_id();
+$usid = $user;
 
 // استرجاع بيانات الإدخال وتنظيفها
 $journal_id = $_POST["journal_id"];

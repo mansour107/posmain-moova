@@ -1,135 +1,213 @@
+<?php
+/**
+ * POS terminal unlock screen — PIN pad (when any user has PIN) or legacy password fallback.
+ *
+ * Expects: $login_error (optional), $pos_pin_mode (bool), $pos_legacy_fallback (bool)
+ */
+require_once __DIR__ . '/csrf.php';
+$pos_pin_mode = !empty($pos_pin_mode);
+$pos_legacy_fallback = !empty($pos_legacy_fallback);
+$terminalLabel = htmlspecialchars($_SESSION['login'] ?? '', ENT_QUOTES, 'UTF-8');
+$csrfPin = htmlspecialchars(csrf_token('pos_pin'), ENT_QUOTES, 'UTF-8');
+?>
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>تسجيل الدخول - POS</title>
+    <title>فتح نقطة البيع</title>
     <link href="assets/libs/bootstrap.min.css" rel="stylesheet">
     <link href="assets/fonts/fonts.css" rel="stylesheet">
     <link href="assets/libs/fontawesome.min.css" rel="stylesheet">
     <style>
         body {
-            background: linear-gradient(135deg, #6366F1 0%, #8B5CF6 100%);
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
             min-height: 100vh;
             display: flex;
             align-items: center;
             justify-content: center;
             margin: 0;
-            font-family: 'Inter', 'IBM Plex Sans Arabic', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            font-family: 'IBM Plex Sans Arabic', 'Inter', sans-serif;
         }
-        .login-box {
-            background: white;
-            border-radius: 16px;
-            padding: 3rem 2.5rem;
-            max-width: 420px;
-            width: 90%;
-            box-shadow: 0 10px 40px rgba(99, 102, 241, 0.2);
-            text-align: center;
+        .unlock-shell { width: min(420px, 94vw); }
+        .unlock-card {
+            background: #fff;
+            border-radius: 20px;
+            padding: 2rem 1.75rem;
+            box-shadow: 0 24px 60px rgba(15, 23, 42, 0.35);
         }
-        .barcode-icon {
-            font-size: 64px;
-            color: #6366F1;
-            margin-bottom: 1.5rem;
-            opacity: 0.9;
+        .unlock-title { font-size: 1.5rem; font-weight: 700; color: #0f172a; margin-bottom: .25rem; text-align: center; }
+        .unlock-sub { color: #64748b; text-align: center; margin-bottom: 1.5rem; font-size: .95rem; }
+        .pin-dots {
+            display: flex; justify-content: center; gap: .75rem; margin: 1.25rem 0 1.5rem;
         }
-        h2 {
-            color: #1E293B;
-            margin-bottom: 0.5rem;
-            font-weight: 600;
-            font-size: 1.75rem;
+        .pin-dot {
+            width: 14px; height: 14px; border-radius: 50%;
+            border: 2px solid #cbd5e1; background: #f8fafc;
         }
-        .login-box p {
-            color: #64748B;
-            margin-bottom: 2rem;
-            font-size: 0.95rem;
+        .pin-dot.filled { background: #6366f1; border-color: #6366f1; }
+        .pin-grid {
+            display: grid; grid-template-columns: repeat(3, 1fr); gap: .75rem;
         }
-        .form-control {
-            padding: 0.875rem 1rem;
-            font-size: 1.1rem;
-            text-align: center;
-            border: 2px solid #E2E8F0;
-            border-radius: 10px;
-            letter-spacing: 1px;
-            width: 100%;
-            margin-bottom: 1rem;
-            transition: all 0.3s ease;
+        .pin-key {
+            border: none; border-radius: 12px;
+            min-height: 64px; min-width: 64px;
+            padding: 1rem 0;
+            font-size: 1.35rem; font-weight: 600; background: #f1f5f9; color: #0f172a;
+            cursor: pointer; transition: transform .1s, background .15s;
         }
-        .form-control:focus {
-            border-color: #6366F1;
-            box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.1);
-            outline: none;
+        .pin-key:hover { background: #e2e8f0; }
+        .pin-key:active { transform: scale(.97); }
+        .pin-key.action { background: #e0e7ff; color: #4338ca; font-size: 1rem; }
+        .pin-key.enter { background: linear-gradient(135deg, #6366f1, #8b5cf6); color: #fff; }
+        .error-box {
+            background: #fef2f2; color: #991b1b; border: 1px solid #fecaca;
+            border-radius: 10px; padding: .75rem; margin-bottom: 1rem; font-size: .9rem; text-align: center;
         }
-        .btn-login {
-            width: 100%;
-            padding: 0.875rem;
-            font-size: 1.1rem;
-            background: linear-gradient(135deg, #6366F1 0%, #8B5CF6 100%);
-            border: none;
-            border-radius: 10px;
-            color: white;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.3s ease;
-            box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
+        .legacy-panel { margin-top: 1.5rem; padding-top: 1.25rem; border-top: 1px dashed #e2e8f0; }
+        .legacy-panel .form-control {
+            text-align: center; padding: .85rem; border-radius: 10px; border: 2px solid #e2e8f0;
         }
-        .btn-login:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 6px 20px rgba(99, 102, 241, 0.4);
+        .btn-legacy {
+            width: 100%; margin-top: .75rem; padding: .85rem; border: none; border-radius: 10px;
+            background: #334155; color: #fff; font-weight: 600;
         }
-        .btn-login:active {
-            transform: translateY(0);
-        }
-        .error {
-            background: #FEE2E2;
-            color: #991B1B;
-            padding: 0.875rem;
-            border-radius: 10px;
-            margin-bottom: 1rem;
-            border: 1px solid #FECACA;
-            font-size: 0.9rem;
-        }
-        .info-text {
-            color: #94A3B8;
-            margin-top: 1.25rem;
-            margin-bottom: 0;
-            font-size: 0.85rem;
-        }
+        .hidden { display: none !important; }
     </style>
 </head>
 <body>
-    <div class="login-box">
-        <div class="barcode-icon">
-            <i class="fas fa-barcode"></i>
-        </div>
-        <h2>نظام POS محمي</h2>
-        <p>أدخل كود المستخدم الحالي: <?= htmlspecialchars($_SESSION['login'] ?? '', ENT_QUOTES, 'UTF-8') ?></p>
-        
-        <?php if (isset($login_error)): ?>
-        <div class="error">
-            <i class="fas fa-exclamation-triangle"></i>
-            <?= $login_error ?>
+<div class="unlock-shell">
+    <div class="unlock-card">
+        <div class="unlock-title"><i class="fas fa-lock"></i> فتح نقطة البيع</div>
+        <p class="unlock-sub">الجهاز: <?= $terminalLabel ?></p>
+
+        <?php if (!empty($login_error)): ?>
+        <div class="error-box" id="posUnlockError"><?= htmlspecialchars((string) $login_error, ENT_QUOTES, 'UTF-8') ?></div>
+        <?php else: ?>
+        <div class="error-box hidden" id="posUnlockError"></div>
+        <?php endif; ?>
+
+        <?php if ($pos_pin_mode): ?>
+        <div id="pinPadSection">
+            <p class="text-center text-muted mb-0" style="font-size:.9rem">أدخل رمز الموظف (PIN)</p>
+            <div class="pin-dots" id="pinDots" aria-hidden="true">
+                <?php for ($i = 0; $i < 6; $i++): ?><span class="pin-dot"></span><?php endfor; ?>
+            </div>
+            <div class="pin-grid" id="pinGrid">
+                <?php foreach (['1','2','3','4','5','6','7','8','9','مسح','0','دخول'] as $key): ?>
+                    <?php
+                    $cls = 'pin-key';
+                    if ($key === 'مسح') {
+                        $cls .= ' action';
+                    } elseif ($key === 'دخول') {
+                        $cls .= ' enter';
+                    }
+                    ?>
+                    <button type="button" class="<?= $cls ?>" data-key="<?= htmlspecialchars($key, ENT_QUOTES, 'UTF-8') ?>"><?= htmlspecialchars($key, ENT_QUOTES, 'UTF-8') ?></button>
+                <?php endforeach; ?>
+            </div>
         </div>
         <?php endif; ?>
-        
-        <form method="POST" action="">
-            <input 
-                type="password" 
-                name="pos_barcode" 
-                class="form-control" 
-                placeholder="كود المستخدم الحالي"
-                autocomplete="current-password"
-                autofocus
-                required
-            >
-            <button type="submit" class="btn-login">
-                <i class="fas fa-sign-in-alt"></i> دخول
-            </button>
-        </form>
-        
-        <p class="info-text">
-            <i class="fas fa-info-circle"></i>
-            استخدم قارئ الباركود أو اكتب يدوياً
-        </p>
+
+        <?php if ($pos_legacy_fallback || !$pos_pin_mode): ?>
+        <div class="legacy-panel" id="legacyPanel" <?= $pos_pin_mode ? '' : '' ?>>
+            <?php if ($pos_pin_mode): ?>
+            <p class="text-center text-muted" style="font-size:.85rem">أو استخدم كلمة المرور (حتى تفعيل PIN للجميع)</p>
+            <?php else: ?>
+            <p class="text-center text-muted" style="font-size:.9rem">أدخل كلمة مرور المستخدم الحالي</p>
+            <?php endif; ?>
+            <form method="POST" action="">
+                <input type="password" name="pos_barcode" class="form-control" placeholder="كلمة المرور" autocomplete="current-password" <?= $pos_pin_mode ? '' : 'autofocus required' ?>>
+                <button type="submit" class="btn-legacy"><i class="fas fa-sign-in-alt"></i> دخول</button>
+            </form>
+        </div>
+        <?php endif; ?>
     </div>
+</div>
+
+<?php if ($pos_pin_mode): ?>
+<script>
+(function () {
+    const csrfToken = <?= json_encode($csrfPin, JSON_UNESCAPED_UNICODE) ?>;
+    const dots = document.querySelectorAll('#pinDots .pin-dot');
+    const errorBox = document.getElementById('posUnlockError');
+    let buffer = '';
+    const maxLen = 6;
+
+    function showError(msg) {
+        errorBox.textContent = msg;
+        errorBox.classList.remove('hidden');
+    }
+
+    function renderDots() {
+        dots.forEach(function (dot, i) {
+            dot.classList.toggle('filled', i < buffer.length);
+        });
+    }
+
+    function submitPin() {
+        if (buffer.length < 4) {
+            showError('الرمز قصير جداً');
+            return;
+        }
+        const body = new URLSearchParams();
+        body.set('pin', buffer);
+        body.set('csrf_token', csrfToken);
+        fetch('ajax/pos_pin_login.php', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'X-Requested-With': 'XMLHttpRequest',
+                'X-CSRF-Token': csrfToken,
+            },
+            credentials: 'same-origin',
+            body: body.toString(),
+        })
+            .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+            .then(function (res) {
+                if (res.ok && res.j.success) {
+                    window.location.href = 'pos_barcode.php';
+                    return;
+                }
+                const code = (res.j && res.j.code) || 'PIN_INVALID';
+                const messages = {
+                    PIN_INVALID: 'رمز غير صحيح',
+                    PIN_USER_LOCKED: 'الحساب مقفل مؤقتاً',
+                    PIN_TERMINAL_FROZEN: 'الجهاز مقفل — حاول لاحقاً',
+                    PIN_SECRET_MISSING: 'إعداد PIN غير مكتمل',
+                };
+                showError(messages[code] || code);
+                buffer = '';
+                renderDots();
+            })
+            .catch(function () {
+                showError('تعذر الاتصال بالخادم');
+                buffer = '';
+                renderDots();
+            });
+    }
+
+    document.getElementById('pinGrid').addEventListener('click', function (e) {
+        const btn = e.target.closest('[data-key]');
+        if (!btn) return;
+        const key = btn.getAttribute('data-key');
+        if (key === 'مسح') {
+            buffer = buffer.slice(0, -1);
+            renderDots();
+            errorBox.classList.add('hidden');
+            return;
+        }
+        if (key === 'دخول') {
+            submitPin();
+            return;
+        }
+        if (buffer.length >= maxLen) return;
+        buffer += key;
+        renderDots();
+        errorBox.classList.add('hidden');
+    });
+})();
+</script>
+<?php endif; ?>
 </body>
 </html>

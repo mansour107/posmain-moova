@@ -1,6 +1,7 @@
 <?php
 
-require_once __DIR__ . '/../includes/connect.php';
+require_once __DIR__ . '/../includes/rbac_route_guard.php';
+rbac_guard_route('ajax/item_catalog_group_save.php');
 
 header('Content-Type: application/json; charset=utf-8');
 

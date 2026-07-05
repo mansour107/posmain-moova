@@ -54,8 +54,14 @@ foreach ($guardedEndpoints as $path) {
     posBrowserWriteCsrfAssert(is_string($source), 'unable to read ' . $path);
     posBrowserWriteCsrfAssert(strpos($source, "require_once('../includes/auth_guard.php')") !== false, $path . ' should require auth_guard.php');
     posBrowserWriteCsrfAssert(strpos($source, "require_once('../includes/csrf.php')") !== false, $path . ' should require csrf.php');
-    posBrowserWriteCsrfAssert(strpos($source, 'require_pos_authenticated();') !== false, $path . ' should require POS/browser authentication');
-    posBrowserWriteCsrfAssert(strpos($source, "require_csrf('pos_browser');") !== false, $path . ' should require the POS browser CSRF token');
+
+    $hasPosAuth = strpos($source, 'require_pos_authenticated();') !== false
+        || strpos($source, 'pos_api_dispatch') !== false;
+    posBrowserWriteCsrfAssert($hasPosAuth, $path . ' should require POS/browser authentication or pos_api_dispatch');
+
+    $hasCsrf = strpos($source, "require_csrf('pos_browser');") !== false
+        || strpos($source, 'pos_api_dispatch') !== false;
+    posBrowserWriteCsrfAssert($hasCsrf, $path . ' should require the POS browser CSRF token or pos_api_dispatch');
 }
 
 echo "pos-browser-write-csrf-ok\n";

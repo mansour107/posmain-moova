@@ -1,12 +1,28 @@
 <?php
 require_once __DIR__ . '/includes/session_bootstrap.php';
 include('includes/connect.php');
+require_once __DIR__ . '/includes/page_guard.php';
+page_guard('pos.shift.close', $conn);
+
+require_once __DIR__ . '/includes/auth_guard.php';
 require_once __DIR__ . '/includes/csrf.php';
+require_once __DIR__ . '/includes/pos_cache_control.php';
 include('classes/ShiftReport.php');
+
+// امنع تخزين الصفحة في ذاكرة المتصفح حتى لا تُعرض شاشة إغلاق شيفت مغلق عند الرجوع.
+posmain_send_no_store_headers();
 
 // التحقق من تسجيل الدخول
 if (!isset($_SESSION['userid'])) {
     header('Location: login.php');
+    exit;
+}
+
+// إذا أُغلق الشيفت مسبقاً لهذه الجلسة، لا تسمح بإعادة عرض/إرسال نموذج الإغلاق.
+if (!empty($_SESSION['pos_shift_closed_for_session']) || !auth_guard_is_pos_barcode_unlocked()) {
+    $_SESSION['error_message'] = $_SESSION['error_message']
+        ?? 'تم إغلاق هذا الشيفت. أعد فتح نقطة البيع لبدء شيفت جديد.';
+    header('Location: closed_sessions.php');
     exit;
 }
 
@@ -50,8 +66,12 @@ if ($reconciled_methods) {
     }
 }
 
-$expenses_total = $expenses['total'];
+$expenses_total = (float) $expenses['total'];
 $has_drawer_session = !empty($drawer_reconciliation['drawer_session']);
+$drawer_paid_out = (float) ($drawer_reconciliation['drawer']['movement_totals']['paid_out'] ?? 0);
+if ($has_drawer_session) {
+    $expenses_total = $drawer_paid_out;
+}
 $drawer_expected_cash = (float) ($drawer_reconciliation['reconciliation']['expected_cash'] ?? 0);
 $drawer_cash_difference = (float) ($drawer_reconciliation['reconciliation']['cash_difference'] ?? 0);
 $net_cash_expected = $has_drawer_session ? $drawer_expected_cash : $total_cash_sys - $expenses_total;

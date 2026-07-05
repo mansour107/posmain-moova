@@ -34,3 +34,6 @@ jobs:
 
     - name: Run test suite
       run: composer run-script test
+
+    - name: Run security / RBAC contract pack
+      run: bash scripts/run_security_contract_pack.sh

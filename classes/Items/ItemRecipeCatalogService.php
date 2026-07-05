@@ -14,6 +14,7 @@ final class ItemRecipeCatalogService
         $params = [];
 
         if ($this->columnExists($conn, 'myitems', 'item_type')) {
+            $this->ensureItemTypeSupportsMade($conn);
             $assignments[] = 'item_type = ?';
             $params[] = $this->itemType($payload['item_type'] ?? 'sellable');
         }
@@ -47,7 +48,32 @@ final class ItemRecipeCatalogService
     {
         $type = strtolower(trim((string) $value));
 
-        return in_array($type, ['sellable', 'ingredient', 'packaging', 'service'], true) ? $type : 'sellable';
+        return in_array($type, ['sellable', 'made', 'ingredient', 'packaging', 'service'], true) ? $type : 'sellable';
+    }
+
+    private function ensureItemTypeSupportsMade(mysqli $conn): void
+    {
+        static $ensured = [];
+        $key = spl_object_id($conn);
+        if (isset($ensured[$key])) {
+            return;
+        }
+        $ensured[$key] = true;
+
+        $stmt = $conn->prepare("
+SELECT COLUMN_TYPE
+FROM INFORMATION_SCHEMA.COLUMNS
+WHERE TABLE_SCHEMA = DATABASE()
+  AND TABLE_NAME = 'myitems'
+  AND COLUMN_NAME = 'item_type'");
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        $columnType = strtolower((string) ($row['COLUMN_TYPE'] ?? ''));
+        if (strpos($columnType, 'enum(') === 0 && strpos($columnType, "'made'") === false) {
+            $conn->query("ALTER TABLE myitems MODIFY COLUMN item_type ENUM('sellable','ingredient','packaging','service','made') NOT NULL DEFAULT 'sellable'");
+        }
     }
 
     private function trackStock(array $payload): int

@@ -24,6 +24,9 @@ class SyncSchemaManager
             'delivery_zones' => $this->deliveryZonesSql(),
             'security_audit_log' => $this->securityAuditLogSql(),
             'failed_login_attempts' => $this->failedLoginAttemptsSql(),
+            'user_permission_grants' => $this->userPermissionGrantsSql(),
+            'role_capabilities' => $this->roleCapabilitiesSql(),
+            'app_settings' => $this->appSettingsSql(),
             'item_availability' => $this->itemAvailabilitySql(),
             'item_variants' => $this->itemVariantsSql(),
             'modifier_groups' => $this->modifierGroupsSql(),
@@ -129,7 +132,7 @@ class SyncSchemaManager
             ],
             'myitems' => [
                 'columns' => [
-                    'item_type' => "ALTER TABLE myitems ADD COLUMN item_type ENUM('sellable','ingredient','packaging','service') NOT NULL DEFAULT 'sellable'",
+                    'item_type' => "ALTER TABLE myitems ADD COLUMN item_type ENUM('sellable','ingredient','packaging','service','made') NOT NULL DEFAULT 'sellable'",
                     'track_stock' => "ALTER TABLE myitems ADD COLUMN track_stock TINYINT(1) NOT NULL DEFAULT 1",
                     'preferred_unit_id' => "ALTER TABLE myitems ADD COLUMN preferred_unit_id BIGINT UNSIGNED NULL",
                     'is_active' => "ALTER TABLE myitems ADD COLUMN is_active TINYINT(1) NOT NULL DEFAULT 1",
@@ -180,8 +183,59 @@ class SyncSchemaManager
             'usr_pwrs' => [
                 'columns' => [
                     'sid_kds' => "ALTER TABLE usr_pwrs ADD COLUMN sid_kds TINYINT(1) NOT NULL DEFAULT 0",
+                    'role_key' => "ALTER TABLE usr_pwrs ADD COLUMN role_key VARCHAR(20) NULL",
+                    'is_system' => "ALTER TABLE usr_pwrs ADD COLUMN is_system TINYINT(1) NOT NULL DEFAULT 0",
+                ],
+                'indexes' => [
+                    'uq_usr_pwrs_role_key' => [
+                        'columns' => ['role_key'],
+                        'sql' => "ALTER TABLE usr_pwrs ADD UNIQUE KEY uq_usr_pwrs_role_key (role_key)",
+                    ],
+                ],
+            ],
+            'users' => [
+                'columns' => [
+                    'permission_mode' => "ALTER TABLE users ADD COLUMN permission_mode ENUM('role_only','role_with_overrides') NOT NULL DEFAULT 'role_only' AFTER branch",
+                    'display_name' => "ALTER TABLE users ADD COLUMN display_name VARCHAR(120) NULL",
+                    'phone' => "ALTER TABLE users ADD COLUMN phone VARCHAR(32) NULL",
+                    'pin_hash' => "ALTER TABLE users ADD COLUMN pin_hash VARCHAR(255) NULL",
+                    'pin_lookup' => "ALTER TABLE users ADD COLUMN pin_lookup CHAR(64) NULL",
+                    'failed_pin_attempts' => "ALTER TABLE users ADD COLUMN failed_pin_attempts INT UNSIGNED NOT NULL DEFAULT 0",
+                    'pin_locked_until' => "ALTER TABLE users ADD COLUMN pin_locked_until DATETIME NULL",
+                    'pin_lockout_count' => "ALTER TABLE users ADD COLUMN pin_lockout_count INT UNSIGNED NOT NULL DEFAULT 0",
+                    'pin_set_at' => "ALTER TABLE users ADD COLUMN pin_set_at DATETIME NULL",
+                ],
+                'indexes' => [
+                    'idx_users_userrole' => [
+                        'columns' => ['userrole'],
+                        'sql' => "ALTER TABLE users ADD KEY idx_users_userrole (userrole)",
+                    ],
+                    'uq_users_pin_lookup' => [
+                        'columns' => ['pin_lookup'],
+                        'sql' => "ALTER TABLE users ADD UNIQUE KEY uq_users_pin_lookup (pin_lookup)",
+                    ],
+                ],
+            ],
+            'user_permission_grants' => [
+                'columns' => [
+                    'limit_value' => "ALTER TABLE user_permission_grants ADD COLUMN limit_value DECIMAL(12,3) NULL",
+                    'is_unlimited' => "ALTER TABLE user_permission_grants ADD COLUMN is_unlimited TINYINT(1) NOT NULL DEFAULT 1",
                 ],
                 'indexes' => [],
+            ],
+            'manager_approvals' => [
+                'columns' => [
+                    'expires_at' => "ALTER TABLE manager_approvals ADD COLUMN expires_at DATETIME NULL",
+                    'consumed_at' => "ALTER TABLE manager_approvals ADD COLUMN consumed_at DATETIME NULL",
+                    'permission_key' => "ALTER TABLE manager_approvals ADD COLUMN permission_key VARCHAR(80) NULL",
+                    'performed_by' => "ALTER TABLE manager_approvals ADD COLUMN performed_by BIGINT UNSIGNED NULL",
+                ],
+                'indexes' => [
+                    'idx_manager_approvals_permission' => [
+                        'columns' => ['permission_key', 'status'],
+                        'sql' => "ALTER TABLE manager_approvals ADD KEY idx_manager_approvals_permission (permission_key, status)",
+                    ],
+                ],
             ],
         ];
     }
@@ -252,6 +306,10 @@ class SyncSchemaManager
             $pending[$label] = $statement;
         }
 
+        foreach ($this->itemTypeEnumUpgradeStatements($conn) as $label => $statement) {
+            $pending[$label] = $statement;
+        }
+
         return $pending;
     }
 
@@ -262,6 +320,8 @@ class SyncSchemaManager
             $conn->query($sql);
             $applied[] = $table;
         }
+
+        $this->seedRbacPresetRoles($conn);
 
         return $applied;
     }
@@ -920,6 +980,24 @@ ALTER TABLE journal_entries
         return $statements;
     }
 
+    private function itemTypeEnumUpgradeStatements(mysqli $conn)
+    {
+        $statements = [];
+        $info = $this->columnInfo($conn, 'myitems', 'item_type');
+        if (!$info) {
+            return $statements;
+        }
+
+        $type = strtolower((string) ($info['COLUMN_TYPE'] ?? ''));
+        if (strpos($type, 'enum(') === 0 && strpos($type, "'made'") === false) {
+            $statements['myitems.modify_item_type_made'] = "
+ALTER TABLE myitems
+  MODIFY COLUMN item_type ENUM('sellable','ingredient','packaging','service','made') NOT NULL DEFAULT 'sellable'";
+        }
+
+        return $statements;
+    }
+
     private function sqlWithAvailableAfterAnchor($sql, array $availableColumns)
     {
         if (!preg_match('/\s+AFTER\s+`?([a-zA-Z0-9_]+)`?\s*$/i', $sql, $matches)) {
@@ -1546,6 +1624,27 @@ CREATE TABLE IF NOT EXISTS security_audit_log (
   KEY idx_security_audit_user_created (user_id, created_at),
   KEY idx_security_audit_target (target_type, target_id),
   KEY idx_security_audit_tenant_branch (tenant, branch, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
+    private function userPermissionGrantsSql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS user_permission_grants (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  user_id INT NOT NULL,
+  permission_key VARCHAR(80) NOT NULL,
+  effect ENUM('grant','deny') NOT NULL,
+  reason VARCHAR(255) NULL,
+  created_by INT NULL,
+  expires_at DATETIME NULL,
+  tenant INT NOT NULL DEFAULT 0,
+  branch INT NOT NULL DEFAULT 0,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_user_permission_grant (user_id, permission_key, tenant, branch),
+  KEY idx_user_permission_grants_user (user_id),
+  KEY idx_user_permission_grants_key (permission_key)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
     }
 
@@ -3105,5 +3204,70 @@ CREATE TABLE IF NOT EXISTS cloud_sync_branch_events (
   KEY idx_cloud_sync_branch_entity (branch_uuid, entity_type, entity_local_id),
   KEY idx_cloud_sync_branch_created (created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
+    private function roleCapabilitiesSql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS role_capabilities (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  role_id INT NOT NULL,
+  permission_key VARCHAR(80) NOT NULL,
+  is_enabled TINYINT(1) NOT NULL DEFAULT 1,
+  limit_value DECIMAL(12,3) NULL,
+  is_unlimited TINYINT(1) NOT NULL DEFAULT 1,
+  tenant INT NOT NULL DEFAULT 0,
+  branch INT NOT NULL DEFAULT 0,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_role_capability (role_id, permission_key, tenant, branch),
+  KEY idx_role_capabilities_role (role_id),
+  KEY idx_role_capabilities_permission (permission_key)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
+    private function appSettingsSql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS app_settings (
+  setting_key VARCHAR(80) NOT NULL,
+  setting_value TEXT NULL,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (setting_key)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
+    private function seedRbacPresetRoles(mysqli $conn): void
+    {
+        if (!$this->tableExists($conn, 'usr_pwrs')) {
+            return;
+        }
+
+        require_once __DIR__ . '/../Security/RolePermissionSyncService.php';
+        RolePermissionSyncService::seedPresetRoles($conn);
+        $this->ensureDefaultAppSettings($conn);
+    }
+
+    private function ensureDefaultAppSettings(mysqli $conn): void
+    {
+        if (!$this->tableExists($conn, 'app_settings')) {
+            return;
+        }
+
+        $defaults = [
+            'permissions_version' => '1',
+            'pos_autolock_seconds' => '90',
+        ];
+
+        foreach ($defaults as $key => $value) {
+            $stmt = $conn->prepare(
+                'INSERT INTO app_settings (setting_key, setting_value) VALUES (?, ?)
+                 ON DUPLICATE KEY UPDATE setting_key = setting_key'
+            );
+            $stmt->bind_param('ss', $key, $value);
+            $stmt->execute();
+            $stmt->close();
+        }
     }
 }

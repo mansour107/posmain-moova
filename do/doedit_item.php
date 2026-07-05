@@ -1,6 +1,7 @@
 <?php
-require_once __DIR__ . '/../includes/session_bootstrap.php';
-include('../includes/connect.php');
+require_once __DIR__ . '/../includes/rbac_route_guard.php';
+rbac_guard_route('do/doedit_item.php');
+
 require_once __DIR__ . '/../classes/Items/ItemCatalogCode.php';
 require_once __DIR__ . '/../classes/Items/ItemEditorFlash.php';
 require_once __DIR__ . '/../classes/Items/ItemFormInput.php';
@@ -207,13 +208,8 @@ try {
     exit;
 }
 
-$saveIntent = (string) ($_POST['save_intent'] ?? 'stay');
-if ($saveIntent === 'close') {
-    header('Location: ../myitems.php');
-} else {
-    ItemEditorFlash::set('success', 'saved');
-    header('Location: ../add_item.php?edit=' . (int) $item_id);
-}
+ItemEditorFlash::set('success', 'saved');
+header('Location: ../add_item.php?edit=' . (int) $item_id);
 exit;
 
 function posmain_edit_item_needs_default_unit(array $post): bool

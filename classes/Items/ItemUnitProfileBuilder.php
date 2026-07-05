@@ -30,7 +30,7 @@ final class ItemUnitProfileBuilder
         $sellActive = self::isTruthy($post['sell_active'] ?? null);
         $purchaseActive = self::isTruthy($post['purchase_active'] ?? null);
 
-        if ($itemType === 'sellable' || $itemType === 'service') {
+        if ($itemType === 'sellable' || $itemType === 'made' || $itemType === 'service') {
             $sellActive = true;
         }
         if ($itemType === 'service') {
@@ -345,7 +345,7 @@ final class ItemUnitProfileBuilder
     {
         $type = strtolower(trim((string) $value));
 
-        return in_array($type, ['sellable', 'ingredient', 'packaging', 'service'], true) ? $type : 'sellable';
+        return in_array($type, ['sellable', 'made', 'ingredient', 'packaging', 'service'], true) ? $type : 'sellable';
     }
 
     private static function costSource($value): string

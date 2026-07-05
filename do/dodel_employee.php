@@ -1,4 +1,7 @@
-<?php include('../includes/connect.php');
+<?php
+require_once __DIR__ . '/../includes/rbac_route_guard.php';
+rbac_guard_route('do/dodel_employee.php');
+
 require_once __DIR__ . '/../classes/Sync/OperationalSyncRecorder.php';
 
 $id = (int) ($_GET['id'] ?? 0);

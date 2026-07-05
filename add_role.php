@@ -1,4 +1,10 @@
-<?php include('includes/header.php'); ?>
+<?php
+require_once __DIR__ . '/includes/auth_guard.php';
+require_once __DIR__ . '/includes/page_guard.php';
+require_once __DIR__ . '/includes/csrf.php';
+include('includes/connect.php');
+page_guard('roles.manage', $conn, true);
+include('includes/header.php'); ?>
 <?php include('includes/sidebar.php'); ?>
 <?php include('includes/navbar.php'); ?>
 
@@ -7,6 +13,7 @@
 <div class="container-fluid">
 
 <form action="do/doadd_role.php" method="post">
+<?= csrf_input('roles_write') ?>
 <div class="card shadow-sm bg-light">
     <div class="card-headerr p-5">
         <div class="d-flex justify-content-between align-items-center">

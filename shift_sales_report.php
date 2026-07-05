@@ -1,6 +1,9 @@
 <?php 
 require_once __DIR__ . '/includes/session_bootstrap.php';
 include('includes/connect.php');
+require_once __DIR__ . '/includes/page_guard.php';
+page_guard('reports.view', $conn);
+
 
 // التحقق من تسجيل الدخول
 if (!isset($_SESSION['userid'])) {

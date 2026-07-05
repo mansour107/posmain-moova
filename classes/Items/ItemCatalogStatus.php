@@ -2,7 +2,7 @@
 
 class ItemCatalogStatus
 {
-    private const ITEM_TYPES = ['sellable', 'ingredient', 'packaging', 'service'];
+    private const ITEM_TYPES = ['sellable', 'made', 'ingredient', 'packaging', 'service'];
 
     public static function hasActiveColumn(mysqli $conn): bool
     {
@@ -65,7 +65,7 @@ class ItemCatalogStatus
 
     public static function isPosSellableItemType($itemType): bool
     {
-        return self::normalizeItemType($itemType) === 'sellable';
+        return in_array(self::normalizeItemType($itemType), ['sellable', 'made'], true);
     }
 
     /**
@@ -79,7 +79,7 @@ class ItemCatalogStatus
 
         $prefix = self::safeAliasPrefix($alias);
 
-        return " AND COALESCE(NULLIF(TRIM(" . $prefix . "item_type), ''), 'sellable') = 'sellable'";
+        return " AND COALESCE(NULLIF(TRIM(" . $prefix . "item_type), ''), 'sellable') IN ('sellable', 'made')";
     }
 
     private static function safeAliasPrefix(string $alias): string

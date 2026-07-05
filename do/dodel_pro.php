@@ -1,6 +1,8 @@
 <?php
+require_once __DIR__ . '/../includes/rbac_route_guard.php';
+rbac_guard_route('do/dodel_pro.php');
+
 require_once('../classes/Inventory/InventoryInvoiceBridge.php');
-include('../includes/connect.php');
 $id = (int) ($_GET['id'] ?? 0);
 $editpass = $_POST['editpass'] ?? '';
 $pro_tybe = 0;

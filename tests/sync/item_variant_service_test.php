@@ -27,8 +27,6 @@ try {
         'variant_price1' => ['45.000', '62.000'],
         'variant_price2' => ['44.000', '60.000'],
         'variant_market_price' => ['48.000', '65.000'],
-        'variant_active' => [1, 1],
-        'variant_default' => [1, 0],
         'variant_sort' => [1, 2],
     ], ['user_id' => 7]);
 
@@ -48,18 +46,16 @@ try {
     $smallId = (int) $variants[0]['variant_item_id'];
     $largeId = (int) $variants[1]['variant_item_id'];
     $affected = $service->saveVariantsFromPost($conn, 10, [
-        'variant_link_id' => [$variants[0]['relation_id'], $variants[1]['relation_id']],
-        'variant_item_id' => [$smallId, $largeId],
-        'variant_label' => ['Small', 'Large'],
-        'variant_name' => ['Small Chicken Sandwich', 'Large Chicken Sandwich'],
-        'variant_barcode' => ['CS-S2', 'CS-L'],
-        'variant_cost_price' => ['21.000', '28.000'],
-        'variant_price1' => ['47.000', '62.000'],
-        'variant_price2' => ['46.000', '60.000'],
-        'variant_market_price' => ['49.000', '65.000'],
-        'variant_active' => [1, 0],
-        'variant_default' => [1, 0],
-        'variant_sort' => [2, 1],
+        'variant_link_id' => [$variants[0]['relation_id']],
+        'variant_item_id' => [$smallId],
+        'variant_label' => ['Small'],
+        'variant_name' => ['Small Chicken Sandwich'],
+        'variant_barcode' => ['CS-S2'],
+        'variant_cost_price' => ['21.000'],
+        'variant_price1' => ['47.000'],
+        'variant_price2' => ['46.000'],
+        'variant_market_price' => ['49.000'],
+        'variant_sort' => [2],
     ], ['user_id' => 7]);
 
     itemVariantAssert(in_array($smallId, $affected, true), 'updated child should be marked changed');
@@ -80,8 +76,6 @@ try {
         'variant_price1' => ['47.000'],
         'variant_price2' => ['46.000'],
         'variant_market_price' => ['49.000'],
-        'variant_active' => [1],
-        'variant_default' => [1],
         'variant_sort' => [1],
     ], ['user_id' => 7]);
     itemVariantAssert(in_array($smallId, $affected, true), 'label rename should still update stale auto child name');
@@ -94,21 +88,19 @@ try {
     $affected = $service->saveVariantsFromPost($conn, 10, [
         'variant_link_id' => [$renamedVariants[0]['relation_id']],
         'variant_item_id' => [$smallId],
-        'variant_label' => ['large'],
+        'variant_label' => ['xlarge'],
         'variant_name' => ['Chicken Sandwich - df'],
         'variant_barcode' => ['CS-S2'],
         'variant_cost_price' => ['21.000'],
         'variant_price1' => ['47.000'],
         'variant_price2' => ['46.000'],
         'variant_market_price' => ['49.000'],
-        'variant_active' => [1],
-        'variant_default' => [1],
         'variant_sort' => [1],
     ], ['user_id' => 7]);
     itemVariantAssert(in_array($smallId, $affected, true), 'stale child name should still update when only label changes');
     $staleVariants = $service->variantsForParent($conn, 10, true);
-    itemVariantAssert($staleVariants[0]['iname'] === 'Chicken Sandwich - large', 'stale auto child name should follow renamed label');
-    itemVariantAssert($staleVariants[0]['variant_label'] === 'large', 'renamed label should persist for stale child rows');
+    itemVariantAssert($staleVariants[0]['iname'] === 'Chicken Sandwich - xlarge', 'stale auto child name should follow renamed label');
+    itemVariantAssert($staleVariants[0]['variant_label'] === 'xlarge', 'renamed label should persist for stale child rows');
 
     $conn->query("INSERT INTO myitems (id, iname, barcode, user) VALUES (99, 'Chicken Sandwich - Small', 'CS-ORPHAN', 7)");
     $repaired = $service->repairUnlinkedChildrenForParent($conn, 10);
@@ -129,14 +121,12 @@ try {
         'variant_link_id' => [(int) $staleVariants[0]['relation_id']],
         'variant_item_id' => [$activeChildId],
         'variant_label' => ['Small'],
-        'variant_name' => ['Chicken Sandwich - large'],
+        'variant_name' => ['Chicken Sandwich - xlarge'],
         'variant_barcode' => ['CS-ORPHAN'],
         'variant_cost_price' => ['21.000'],
         'variant_price1' => ['47.000'],
         'variant_price2' => ['46.000'],
         'variant_market_price' => ['49.000'],
-        'variant_active' => [1],
-        'variant_default' => [1],
         'variant_sort' => [1],
     ], ['user_id' => 7]);
     itemVariantAssert(in_array(99, $affected, true), 'save should adopt the unlinked small child item');
@@ -151,8 +141,6 @@ try {
             'variant_label' => ['No Price'],
             'variant_name' => ['Chicken Sandwich - No Price'],
             'variant_price1' => ['0'],
-            'variant_active' => [1],
-            'variant_default' => [0],
             'variant_sort' => [2],
         ], ['user_id' => 7]);
     } catch (InvalidArgumentException $exception) {
@@ -173,8 +161,6 @@ try {
             'variant_price1' => ['47.000'],
             'variant_price2' => ['46.000'],
             'variant_market_price' => ['49.000'],
-            'variant_active' => [1],
-            'variant_default' => [1],
             'variant_sort' => [1],
         ], ['user_id' => 7]);
     } catch (InvalidArgumentException $exception) {

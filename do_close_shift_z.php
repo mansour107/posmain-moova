@@ -3,12 +3,16 @@ require_once __DIR__ . '/includes/session_bootstrap.php';
 include('includes/connect.php');
 require_once __DIR__ . '/includes/auth_guard.php';
 require_once __DIR__ . '/includes/csrf.php';
+require_once __DIR__ . '/includes/pos_cache_control.php';
 require_once __DIR__ . '/classes/Pos/Service/ShiftDrawerReconciliationService.php';
 require_once __DIR__ . '/classes/Pos/Service/DrawerSessionService.php';
+
+posmain_send_no_store_headers();
 
 // التحقق من تسجيل الدخول
 if (PHP_SAPI !== 'cli') {
     require_pos_authenticated();
+    require_permission('pos.shift.close', $conn);
 } elseif (!isset($_SESSION['userid'])) {
     header('Location: login.php');
     exit;
@@ -19,6 +23,13 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 }
 if (PHP_SAPI !== 'cli') {
     require_csrf('shift_close_z');
+}
+
+// حارس ضد الإغلاق المزدوج: إذا أُغلق الشيفت مسبقاً لهذه الجلسة لا تُدرج سجلاً جديداً.
+if (PHP_SAPI !== 'cli' && !empty($_SESSION['pos_shift_closed_for_session'])) {
+    $_SESSION['error_message'] = 'تم إغلاق هذا الشيفت مسبقاً. أعد فتح نقطة البيع لبدء شيفت جديد.';
+    header('Location: closed_sessions.php');
+    exit;
 }
 
 $user_id = $_SESSION['userid'];
@@ -48,6 +59,8 @@ try {
     ];
     if ($requested_drawer_session_id > 0) {
         $reconciliation_scope['drawer_session_id'] = $requested_drawer_session_id;
+    } elseif (!empty($_SESSION['pos_drawer_session_id'])) {
+        $reconciliation_scope['drawer_session_id'] = (int) $_SESSION['pos_drawer_session_id'];
     }
 
     $drawer_reconciliation = (new ShiftDrawerReconciliationService())->buildForUser($conn, $reconciliation_scope);
@@ -135,7 +148,11 @@ try {
     // تسجيل الخروج أو رسالة نجاح
     // سنقوم بتوجيه لصفحة طباعة نهائية او العودة
     $_SESSION['success_message'] = "تم إغلاق الشيفت بنجاح. العجز/الزيادة: " . number_format($total_deficit, 2);
-    unset($_SESSION['pos_authenticated'], $_SESSION['pos_user_id'], $_SESSION['pos_user_name']);
+    posmain_clear_pos_shift_session(true);
+    unset($_SESSION['pos_shift_session_token'], $_SESSION['pos_drawer_session_id']);
+    if (function_exists('posmain_session_regenerate')) {
+        posmain_session_regenerate();
+    }
     
     // الخيار: تسجيل خروج المستخدم فوراً
     // include('do/do_logout.php'); // اذا اردنا

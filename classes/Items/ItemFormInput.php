@@ -143,7 +143,7 @@ final class ItemFormInput
     {
         $type = strtolower(trim((string) $value));
 
-        return in_array($type, ['sellable', 'ingredient', 'packaging', 'service'], true) ? $type : 'sellable';
+        return in_array($type, ['sellable', 'made', 'ingredient', 'packaging', 'service'], true) ? $type : 'sellable';
     }
 
     private static function costSource($value): string
@@ -155,7 +155,7 @@ final class ItemFormInput
 
     private static function trackStock(array $post): int
     {
-        if (self::itemType($post['item_type'] ?? null) === 'service') {
+        if (in_array(self::itemType($post['item_type'] ?? null), ['service', 'made'], true)) {
             return 0;
         }
 

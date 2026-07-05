@@ -36,6 +36,7 @@ itemUnitDefContractAssert(strpos($recipeLookupSource, 'stock_unit_id') !== false
 itemUnitDefContractAssert(strpos($recipeMutationSource, 'ItemUnitResolver::stockUnitIdForItem') !== false, 'recipe mutation should default ingredient unit');
 itemUnitDefContractAssert(strpos($migrationSource, 'migrate_item_unit_profiles') !== false || strpos($migrationSource, 'def_stock') !== false, 'migration script should set def flags');
 itemUnitDefContractAssert(strpos($panelSource, 'item_unit_profile_present') !== false, 'item editor panel should post profile marker');
-itemUnitDefContractAssert(strpos($panelSource, 'شراء وتخزين') !== false, 'item editor panel should include purchase section');
+itemUnitDefContractAssert(strpos($panelSource, 'name="storage_unit_id"') !== false, 'item editor panel should post default storage unit');
+itemUnitDefContractAssert(strpos($panelSource, 'name="purchase_active" id="purchase_active" value="0"') !== false, 'item editor panel should post purchase inactive default');
 
 echo "item-unit-def-flags-contract-ok\n";

@@ -1,5 +1,7 @@
 <?php
-require_once __DIR__ . '/../includes/session_bootstrap.php';
+require_once __DIR__ . '/../includes/rbac_route_guard.php';
+rbac_guard_route('ajax/update_customer_visit_end_time.php');
+
 include __DIR__ . '/../includes/connect.php';
 require_once __DIR__ . '/../includes/csrf.php';
 require_once __DIR__ . '/../includes/auth_guard.php';

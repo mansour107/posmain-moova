@@ -1,5 +1,7 @@
 <?php
-include('../includes/connect.php');
+require_once __DIR__ . '/../includes/rbac_route_guard.php';
+rbac_guard_route('do/doadd_ctp copy.php');
+
 $name = $_POST['name'];
 $type = $_POST['type'];
 $number = $_POST['number'];

@@ -1,5 +1,7 @@
 <?php
-include('../includes/connect.php'); 
+require_once __DIR__ . '/../includes/rbac_route_guard.php';
+rbac_guard_route('do/doadd_dis.php');
+
 $cl = $_GET['id'];
 
 // print_r($_POST);die;

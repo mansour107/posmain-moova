@@ -32,7 +32,7 @@ try {
     echo json_encode(TableInputValidator::failureResponse($e), JSON_UNESCAPED_UNICODE);
     exit;
 }
-$user_id = intval($_SESSION['userid'] ?? 1);
+$user_id = current_user_id();
 $idempotencyService = new IdempotencyService();
 
 if ($table_id <= 0) {

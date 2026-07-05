@@ -1,8 +1,8 @@
-<?php 
- 
+<?php
+require_once __DIR__ . '/../includes/rbac_route_guard.php';
+rbac_guard_route('do/importdata.php');
+
 // Load the database configuration file 
-include_once '../includes/connect.php'; 
- 
 // Include PhpSpreadsheet library autoloader 
 require_once '../vendor/autoload.php'; 
 use PhpOffice\PhpSpreadsheet\Reader\Xlsx; 

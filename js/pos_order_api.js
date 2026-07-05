@@ -159,7 +159,8 @@
             'selected_table_id', 'selected_order_id', 'edit_id', 'jal_name', 'jal_notes', 'jal_amount',
             'delivery_customer_name', 'delivery_customer_phone', 'delivery_customer_address',
             'delivery_zone_name', 'delivery_fee', 'pos_customer_id', 'payment_fund_id', 'payment_bank_id',
-            'paid_cash', 'paid_bank', 'paid', 'empty_table_after_payment', 'pos_split_payment_payload'
+            'paid_cash', 'paid_bank', 'paid', 'empty_table_after_payment', 'pos_split_payment_payload',
+            'manager_approval_id', 'price_override_approval_id'
         ];
 
         names.forEach(function (name) {
@@ -450,7 +451,34 @@
         const body = result.body || {};
         const draft = window.POSOrderDraft;
         if (!result.ok || body.success === false) {
-            const message = body.message || 'حدث خطأ أثناء معالجة الطلب';
+            const message = body.message || body.error || 'حدث خطأ أثناء معالجة الطلب';
+            const code = body.code || '';
+            if (code === 'MANAGER_APPROVAL_REQUIRED' && window.POSMAIN && typeof window.POSMAIN.requestManagerOverride === 'function') {
+                const escalationKey = body.escalation_permission_key || body.permission_key || 'pos.discount.manual_pct.limit';
+                return window.POSMAIN.requestManagerOverride(escalationKey, {
+                    message: message,
+                }).then(function (approval) {
+                    const form = document.getElementById('posForm');
+                    if (form && approval && approval.approval_id) {
+                        let input = form.querySelector('input[name="manager_approval_id"]');
+                        if (!input) {
+                            input = document.createElement('input');
+                            input.type = 'hidden';
+                            input.name = 'manager_approval_id';
+                            form.appendChild(input);
+                        }
+                        input.value = String(approval.approval_id);
+                    }
+                    return submitFromForm(form, action);
+                }).catch(function () {
+                    showOrderError('تم إلغاء اعتماد المدير');
+                    restoreSubmitButtons(action);
+                    if (isPaymentAction(action) && window.jQuery) {
+                        window.jQuery('#paymentModal').modal('show');
+                    }
+                    return { success: false, body: body };
+                });
+            }
             showOrderError(message);
             restoreSubmitButtons(action);
             if (isPaymentAction(action) && window.jQuery) {

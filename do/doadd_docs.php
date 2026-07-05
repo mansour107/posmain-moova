@@ -1,5 +1,7 @@
 <?php
-include('../includes/connect.php');
+require_once __DIR__ . '/../includes/rbac_route_guard.php';
+rbac_guard_route('do/doadd_docs.php');
+
 echo '<pre>';
 print_r($_POST);print_r($_GET);print_r($_FILES);
 echo '</pre>';

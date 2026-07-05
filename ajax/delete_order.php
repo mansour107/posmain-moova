@@ -11,6 +11,7 @@ require_once('../classes/Sync/SyncOutboxEventService.php');
 header('Content-Type: application/json; charset=utf-8');
 
 require_pos_authenticated();
+require_permission('pos.cancel.unpaid', $conn);
 if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
     require_csrf('pos_browser');
 }
@@ -19,7 +20,10 @@ try {
     $order_id = TableInputValidator::positiveInt($_POST['order_id'] ?? 0, 'معرف الطلب مطلوب');
     $table_id = TableInputValidator::optionalPositiveInt($_POST['table_id'] ?? 0, 'معرف الطاولة غير صحيح');
     $reason = TableInputValidator::reason($_POST['reason'] ?? '', 'تم إلغاء الطلب من نظام الطاولات');
-    $user_id = intval($_SESSION['userid'] ?? 1);
+    $user_id = function_exists('pos_acting_user_id') ? pos_acting_user_id() : current_user_id();
+    if ($user_id < 1) {
+        throw new Exception('USER_ID_REQUIRED');
+    }
     $idempotencyService = new IdempotencyService();
     $idempotencyKey = $idempotencyService->resolveKey($_POST, $_SERVER);
     $idempotencyHash = $idempotencyService->requestHashForPayload($_POST);

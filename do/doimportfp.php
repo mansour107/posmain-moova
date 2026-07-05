@@ -1,5 +1,7 @@
 <?php
-require_once __DIR__ . '/../includes/session_bootstrap.php';
+require_once __DIR__ . '/../includes/rbac_route_guard.php';
+rbac_guard_route('do/doimportfp.php');
+
 require '../vendor/autoload.php'; // Adjust the path if needed
 
 use PhpOffice\PhpSpreadsheet\IOFactory;

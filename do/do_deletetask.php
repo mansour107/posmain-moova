@@ -1,5 +1,6 @@
 <?php
-include('../includes/connect.php');
+require_once __DIR__ . '/../includes/rbac_route_guard.php';
+rbac_guard_route('do/do_deletetask.php');
 
 // Ensure input data is sanitized to prevent SQL injection
 $id = intval($_GET['id']);  // Use intval to safely get the ID from the query

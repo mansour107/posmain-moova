@@ -1,4 +1,4 @@
-export type PersonaRole = 'admin' | 'manager' | 'cashier' | 'waiter';
+export type PersonaRole = 'admin' | 'manager' | 'cashier' | 'waiter' | 'kitchen';
 
 export const baseURL =
   process.env.POSMAIN_TEST_HTTP_BASE ||
@@ -28,6 +28,11 @@ export function personaCredentials(role: PersonaRole): { username: string; passw
       userKey: 'POSMAIN_E2E_USER_WAITER',
       passKey: 'POSMAIN_E2E_PASS_WAITER',
       defaultUser: 'p6_waiter',
+    },
+    kitchen: {
+      userKey: 'POSMAIN_E2E_USER_KITCHEN',
+      passKey: 'POSMAIN_E2E_PASS_KITCHEN',
+      defaultUser: 'p6_kitchen',
     },
   };
 

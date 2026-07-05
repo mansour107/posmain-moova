@@ -26,6 +26,8 @@ try {
     if (!file_exists($connectPath)) {
         throw new Exception("ملف الاتصال غير موجود");
     }
+
+    require_once __DIR__ . '/../includes/auth_guard.php';
     
     // Include ShiftReport Class
     $classPath = __DIR__ . '/../classes/ShiftReport.php';
@@ -39,24 +41,48 @@ try {
     include($classPath);
     ob_end_clean(); // Discard noise
 
-    if (!isset($_SESSION['userid'])) {
+    $user_id = auth_guard_user_id_from_session();
+    if ($user_id < 1) {
         throw new Exception('الرجاء تسجيل الدخول أولاً');
     }
+
+    if (!auth_guard_is_pos_barcode_unlocked()) {
+        throw new Exception('مطلوب فتح نقطة البيع أولاً');
+    }
+
+    require_permission('pos.shift.close', $conn);
 
     if (!isset($conn) || $conn->connect_error) {
         throw new Exception('فشل الاتصال بقاعدة البيانات');
     }
 
-    // Force UTF-8
-    $conn->set_charset("utf8mb4");
+    $conn->set_charset('utf8mb4');
 
-    $user_id = $_SESSION['userid'];
+    require_once __DIR__ . '/../classes/Pos/Service/ShiftSessionService.php';
+    $shiftSessions = new ShiftSessionService();
+    $reportScope = [];
+    $drawerSession = $shiftSessions->currentDrawerSession($conn, (int) $user_id, $reportScope);
+    if (!$drawerSession && auth_guard_is_pos_barcode_unlocked()) {
+        try {
+            $shiftSessions->openForCashier($conn, (int) $user_id, $reportScope);
+            $drawerSession = $shiftSessions->currentDrawerSession($conn, (int) $user_id, $reportScope);
+        } catch (Throwable $drawerEnsureException) {
+            error_log('Shift preview drawer ensure failed: ' . $drawerEnsureException->getMessage());
+        }
+    }
+    if ($drawerSession) {
+        $reportScope['shift_opened_at'] = $drawerSession['opened_at'];
+        $reportScope['drawer_session_id'] = (int) $drawerSession['id'];
+    }
 
-    // Create ShiftReport instance
-    $report = new ShiftReport($conn, $user_id);
+    // Create ShiftReport instance scoped to the active drawer shift window.
+    $report = new ShiftReport($conn, $user_id, null, $reportScope);
     
     // Get Totals using the unified logic (respects time boundaries)
     $totals = $report->getTotals();
+    $expenseSummary = $drawerSession
+        ? $shiftSessions->drawerExpenseSummary($conn, $drawerSession)
+        : $shiftSessions->shiftExpenseSummary($conn, (int) $user_id, $reportScope);
     
     // Get cashier name
     $cashier_name = 'الكاشير';
@@ -77,7 +103,9 @@ try {
             'total_orders' => intval($totals['total_orders'] ?? 0),
             'total_sales' => number_format($totals['total_net'] ?? 0, 2), // 使用 total_net (صافي) or total_gross (اجمالي) depending on preference. Using Net usually.
             'cashier_name' => $cashier_name,
-            'shift_number' => date('Ymd') . '_' . $user_id
+            'shift_number' => date('Ymd') . '_' . $user_id,
+            'expenses' => $expenseSummary,
+            'expected_cash' => $expenseSummary['expected_cash'] ?? null,
         ]
     ];
 

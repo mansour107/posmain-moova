@@ -1,5 +1,10 @@
 <?php
-include('includes/header.php');
+require_once __DIR__ . '/includes/auth_guard.php';
+include __DIR__ . '/includes/connect.php';
+require_once __DIR__ . '/includes/page_guard.php';
+page_guard('accounting.view', $conn);
+?>
+<?php include('includes/header.php');
 include('includes/navbar.php');
 include('includes/sidebar.php');
 

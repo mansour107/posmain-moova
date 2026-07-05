@@ -691,8 +691,8 @@ class ItemVariantService
                 'price2' => 0,
                 'price3' => 0,
                 'market_price' => 0,
-                'active' => $this->arrayValue($post, 'variant_active')[$index] ?? 1,
-                'is_default' => $this->arrayValue($post, 'variant_default')[$index] ?? 0,
+                'active' => 1,
+                'is_default' => 0,
                 'sort_order' => $this->arrayValue($post, 'variant_sort')[$index] ?? ($index + 1),
             ];
         }

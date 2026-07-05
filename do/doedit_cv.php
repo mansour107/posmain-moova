@@ -1,5 +1,7 @@
-<?php 
-include('../includes/connect.php');
+<?php
+require_once __DIR__ . '/../includes/rbac_route_guard.php';
+rbac_guard_route('do/doedit_cv.php');
+
 $id = $_GET['id'];
 foreach ($_POST as $key => $value) {
   $$key = $value;

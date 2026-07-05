@@ -1,7 +1,10 @@
 <?php include('includes/header.php') ?>
 <?php include('includes/navbar.php') ?>
 <?php include('includes/sidebar.php') ?>
-<?php include('includes/connect.php'); ?>
+<?php include('includes/connect.php');
+require_once __DIR__ . '/includes/page_guard.php';
+page_guard('reports.view', $conn);
+ ?>
 
 <style>
 .content-wrapper {

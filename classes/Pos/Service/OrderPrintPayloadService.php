@@ -1,6 +1,7 @@
 <?php
 
 require_once __DIR__ . '/ModifierLineNoteService.php';
+require_once __DIR__ . '/PosOrderMutationService.php';
 
 class OrderPrintPayloadService
 {
@@ -104,6 +105,7 @@ class OrderPrintPayloadService
             ],
             'lines' => $lines,
             'customizations_available' => $customizationsAvailable,
+            'escalation_attribution' => (new PosOrderMutationService())->escalationAttributionLineForOrder($conn, $orderId),
         ];
     }
 

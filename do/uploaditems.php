@@ -1,5 +1,7 @@
-<?php 
-include_once '../includes/connect.php'; 
+<?php
+require_once __DIR__ . '/../includes/rbac_route_guard.php';
+rbac_guard_route('do/uploaditems.php');
+
 require_once __DIR__ . '/../includes/upload_guard.php';
 require_once __DIR__ . '/../classes/Sync/MenuItemSyncRecorder.php';
 

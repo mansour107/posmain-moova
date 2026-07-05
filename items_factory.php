@@ -1,5 +1,10 @@
 <?php
-require_once __DIR__ . '/includes/production_guard.php';
+require_once __DIR__ . '/includes/auth_guard.php';
+include __DIR__ . '/includes/connect.php';
+require_once __DIR__ . '/includes/page_guard.php';
+page_guard('menu.edit', $conn);
+?>
+<?php require_once __DIR__ . '/includes/production_guard.php';
 production_guard_deny_route('items_factory.php');
 require_once __DIR__ . '/includes/csrf.php';
 include('includes/header.php') ?>

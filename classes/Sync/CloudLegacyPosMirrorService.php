@@ -1253,7 +1253,7 @@ class CloudLegacyPosMirrorService
     private function itemType($value): string
     {
         $value = strtolower(trim((string) $value));
-        return in_array($value, ['sellable', 'ingredient', 'packaging', 'service'], true) ? $value : 'sellable';
+        return in_array($value, ['sellable', 'made', 'ingredient', 'packaging', 'service'], true) ? $value : 'sellable';
     }
 
     private function isIncomingOlderThanLocal(mysqli $conn, string $table, int $id, array $event, array $payloadSources): bool

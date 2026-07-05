@@ -1,4 +1,10 @@
-<?php include('includes/header.php'); ?>
+<?php
+require_once __DIR__ . '/includes/auth_guard.php';
+require_once __DIR__ . '/includes/page_guard.php';
+require_once __DIR__ . '/includes/csrf.php';
+include('includes/connect.php');
+page_guard('roles.manage', $conn, true);
+include('includes/header.php'); ?>
 <?php include('includes/sidebar.php'); ?>
 <?php include('includes/navbar.php'); ?>
 
@@ -19,6 +25,7 @@ if ($hash_id !== $hash) {
     }else{
 ?>
 <form action="do/doedit_role.php?id=<?= $rowrol['id'] ?>" method="post">
+<?= csrf_input('roles_write') ?>
 <div class="card card-warning">
     <div class="card-header ">
         <div class="row">

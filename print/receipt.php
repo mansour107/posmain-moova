@@ -232,6 +232,14 @@ if ($is_delivery) {
 <div class="row">
 <div class="col">
     <p style="font-size:12px;text-align:center"><?= $rowfat['crtime'] ?></p>
+    <?php
+    $escalationAttribution = trim((string) ($print_payload['escalation_attribution'] ?? ''));
+    if ($escalationAttribution !== '') {
+        echo '<p style="font-size:11px;text-align:center;font-weight:bold;margin:6px 0;">'
+            . htmlspecialchars($escalationAttribution, ENT_QUOTES, 'UTF-8')
+            . '</p>';
+    }
+    ?>
     <div style="text-align: center; direction: ltr; font-size: 12px; font-weight: bold;">
         Thank you for choosing us where good ideas find the  
         <p>❤ perfect place to grow</p>

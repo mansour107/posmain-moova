@@ -1,3 +1,45 @@
+.item-pricing-fields {
+    display: grid;
+    gap: 12px;
+    grid-template-columns: repeat(2, minmax(120px, 1fr));
+    margin-bottom: 10px;
+    max-width: 420px;
+}
+
+.item-pricing-margin {
+    align-items: baseline;
+    display: flex;
+    gap: 8px;
+    max-width: 420px;
+}
+
+.item-pricing-margin__label {
+    color: #64748b;
+    font-size: .85rem;
+    font-weight: 600;
+}
+
+.item-pricing-margin__value {
+    color: #047857;
+    font-size: 1rem;
+    font-weight: 800;
+}
+
+.item-pricing-margin__value.is-negative {
+    color: #b91c1c;
+}
+
+.item-pricing-margin__value.is-empty {
+    color: #94a3b8;
+}
+
+@media (max-width: 576px) {
+    .item-pricing-fields {
+        grid-template-columns: 1fr;
+        max-width: none;
+    }
+}
+
 .item-unit-profile-section {
     border-top: 1px solid #e8edf4;
 }

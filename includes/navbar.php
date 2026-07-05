@@ -1,4 +1,17 @@
 <nav class="main-header navbar navbar-expand-lg border-bottom py-2" style="background-color: #ffffff;">
+<?php
+if (!function_exists('auth_guard_has_permission')) {
+    require_once __DIR__ . '/auth_guard.php';
+}
+$posmainNavbarCanManageUsers = isset($conn) && $conn instanceof mysqli
+    && auth_guard_has_permission('users.manage', $conn);
+$posmainNavbarCanRunTools = isset($conn) && $conn instanceof mysqli
+    && auth_guard_has_permission('system.tools.run', $conn);
+$posmainNavbarCanManageMoova = isset($conn) && $conn instanceof mysqli
+    && auth_guard_has_permission('moova.manage', $conn);
+$posmainNavbarCanViewCrm = isset($conn) && $conn instanceof mysqli
+    && (($role['sid_crm'] ?? 0) == 1 || auth_guard_has_permission('reports.view', $conn));
+?>
   <div class="container-fluid d-flex justify-content-between align-items-center">
     
     <ul class="navbar-nav align-items-center gap-2 mb-0 me-auto">
@@ -12,11 +25,13 @@
         <a href="index.php" class="nav-link active fw-bold"><?=$lang_sidemain?></a>
       </li>
 
+      <?php if ($posmainNavbarCanViewCrm) { ?>
       <li class="nav-item d-none d-sm-inline-block">
         <a href="chances.php" class="nav-link">CRM</a>
       </li>
+      <?php } ?>
 
-      <?php if($role['show_users'] == 1){ ?>
+      <?php if ($posmainNavbarCanManageUsers) { ?>
       <li class="nav-item d-none d-sm-inline-block">
         <a href="users.php" class="nav-link">المستخدمين</a>
       </li>
@@ -27,9 +42,11 @@
               الإدارة
           </a>
           <ul class="dropdown-menu" aria-labelledby="navbarDropdown">
+              <?php if ($posmainNavbarCanRunTools) { ?>
               <li><a class="dropdown-item" href="setting.php">إعدادات النظام</a></li>
+              <?php } ?>
               <li><a class="dropdown-item" href="about.php">بيانات الشركة</a></li>
-              <?php if (($role['show_users'] ?? 0) == 1) { ?>
+              <?php if ($posmainNavbarCanManageMoova) { ?>
               <li><a class="dropdown-item" href="moova_integration.php">ربط Moova</a></li>
               <?php } ?>
               <li><hr class="dropdown-divider"></li>
@@ -41,9 +58,11 @@
 
     <div class="d-flex align-items-center gap-3 ms-auto">
       
+      <?php if ($posmainNavbarCanRunTools) { ?>
       <button id="exportDB" class="btn btn-primary rounded-pill px-3 py-1 fw-semibold d-none d-lg-flex">
         <i class="fas fa-database me-1"></i> حفظ نسخة احتياطية
       </button>
+      <?php } ?>
 
       <button id="fullscreenBtn" class="btn btn-light rounded-circle p-2 shadow-sm border" data-bs-toggle="tooltip" data-bs-placement="bottom" title="وضع ملء الشاشة">
         <i class="fas fa-expand text-muted"></i>

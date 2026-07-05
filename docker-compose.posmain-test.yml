@@ -36,6 +36,8 @@ services:
       POSMAIN_MOOVA_MODE: direct_widget
       POSMAIN_DB_HOST: mysql
       POSMAIN_DB_PORT: "3306"
+      POSMAIN_DB_NAME: kody2
+      POSMAIN_PIN_SECRET: posmain-test-pin-secret-do-not-use-in-prod
     volumes:
       - .:/app
       - posmain_php_logs:/app/logs

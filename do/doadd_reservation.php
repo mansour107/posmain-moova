@@ -1,5 +1,6 @@
 <?php
-include('../includes/connect.php');
+require_once __DIR__ . '/../includes/rbac_route_guard.php';
+rbac_guard_route('do/doadd_reservation.php');
 
 $sqlrsv = "SELECT COUNT(*) as total FROM reservations";
 $result = $conn->query($sqlrsv);

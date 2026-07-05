@@ -1,5 +1,6 @@
 <?php
-include('../includes/connect.php');
+require_once __DIR__ . '/../includes/rbac_route_guard.php';
+rbac_guard_route('do/settle_credit.php');
 
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     $id = isset($_POST['id']) ? intval($_POST['id']) : 0;
@@ -12,7 +13,11 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             $customer_acc = $row['acc1']; // Assuming acc1 holds the customer account ID for Sales/POS
             $pro_id_ref = $row['pro_id'];
             $emp_id = $row['emp_id'];
-            $usid = $_SESSION['userid'] ?? 1;
+            $usid = function_exists('pos_acting_user_id') ? pos_acting_user_id() : (int) ($_SESSION['userid'] ?? $_SESSION['user_id'] ?? 0);
+            if ($usid < 1) {
+                header('Location: ../index.php');
+                exit;
+            }
             $date = date('Y-m-d');
             $full_date = date('Y-m-d H:i A');
             

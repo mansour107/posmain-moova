@@ -16,6 +16,14 @@ $posmainCanViewKds = isset($conn) && $conn instanceof mysqli
     && auth_guard_has_permission('kds.view', $conn);
 $posmainCanManageKds = isset($conn) && $conn instanceof mysqli
     && auth_guard_has_permission('kds.manage', $conn);
+$posmainCanEditMenu = isset($conn) && $conn instanceof mysqli
+    && auth_guard_has_permission('menu.edit', $conn);
+$posmainCanEditInventory = isset($conn) && $conn instanceof mysqli
+    && auth_guard_has_permission('inventory.edit', $conn);
+$posmainCanViewAccounting = isset($conn) && $conn instanceof mysqli
+    && auth_guard_has_permission('accounting.view', $conn);
+$posmainCanViewReports = isset($conn) && $conn instanceof mysqli
+    && auth_guard_has_permission('reports.view', $conn);
 ?>
 <!-- Main Sidebar Container -->
 <aside class="main-sidebar elevation-4 font-light">
@@ -183,7 +191,7 @@ $posmainCanManageKds = isset($conn) && $conn instanceof mysqli
 
 
         <!--                                                                        -->
-        <?php if (($role['sid_stock'] ?? 0) == 1) { ?>
+        <?php if ((($role['sid_stock'] ?? 0) == 1) || $posmainCanEditMenu || $posmainCanEditInventory) { ?>
 
           <li class="nav-item has-treeview">
             <a href="#" class="nav-link nav-link-basic">
@@ -196,6 +204,7 @@ $posmainCanManageKds = isset($conn) && $conn instanceof mysqli
             <ul class="nav nav-treeview shadow-inner shadow-slate-500" id="stock" style="display: none;">
 
 
+              <?php if ($posmainCanEditMenu) { ?>
               <li class="nav-item">
                 <a href="add_item.php" class="nav-link">
                   <i class="nav-icon fas fa-list"></i>
@@ -204,6 +213,7 @@ $posmainCanManageKds = isset($conn) && $conn instanceof mysqli
                   </p>
                 </a>
               </li>
+              <?php } ?>
 
 
               <li class="nav-item">
@@ -271,6 +281,7 @@ $posmainCanManageKds = isset($conn) && $conn instanceof mysqli
                 </a>
               </li>
 
+              <?php if ($posmainCanEditMenu) { ?>
               <li class="nav-item" id="myitems">
                 <a href="myitems.php" class="nav-link">
                   <i class="nav-icon fas fa-list"></i>
@@ -279,6 +290,7 @@ $posmainCanManageKds = isset($conn) && $conn instanceof mysqli
                   </p>
                 </a>
               </li>
+              <?php } ?>
 
               <li class="nav-item">
                 <a href="recipe_manage.php" class="nav-link">
@@ -1307,7 +1319,7 @@ $posmainCanManageKds = isset($conn) && $conn instanceof mysqli
           </a>
         </li>
 
-        <?php if (($role['sid_accounts'] ?? 0) == 1) { ?>
+        <?php if ((($role['sid_accounts'] ?? 0) == 1) && $posmainCanViewAccounting) { ?>
           <li class="nav-item has-treeview">
             <a href="#" class="nav-link nav-link-basic">
               <i class="nav-icon fas fa-book"></i>
@@ -1376,7 +1388,7 @@ $posmainCanManageKds = isset($conn) && $conn instanceof mysqli
 
 
 
-        <?php if (($role['sid_accounts'] ?? 0) == 1) { ?>
+        <?php if ((($role['sid_accounts'] ?? 0) == 1) && $posmainCanViewAccounting) { ?>
           <li class="nav-item has-treeview">
             <a href="#" class="nav-link nav-link-basic">
               <i class="nav-icon fas fa-book"></i>
@@ -1467,7 +1479,7 @@ $posmainCanManageKds = isset($conn) && $conn instanceof mysqli
 
 
 
-        <?php if (($role['sid_reports'] ?? 0) == 1) { ?>
+        <?php if ((($role['sid_reports'] ?? 0) == 1) && $posmainCanViewReports) { ?>
           <li class="nav-item has-treeview">
             <a href="#" class="nav-link nav-link-basic">
               <i class="nav-icon fas fa-chart-line"></i>

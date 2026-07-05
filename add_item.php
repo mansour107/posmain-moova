@@ -1,4 +1,10 @@
-<?php include('includes/header.php') ?>
+<?php
+require_once __DIR__ . '/includes/auth_guard.php';
+require_once __DIR__ . '/includes/page_guard.php';
+require_once __DIR__ . '/includes/csrf.php';
+include('includes/connect.php');
+page_guard('menu.edit', $conn);
+include('includes/header.php') ?>
 <?php
 require_once __DIR__ . '/classes/Items/ItemEditorFlash.php';
 require_once __DIR__ . '/classes/Items/ItemFormInput.php';
@@ -101,7 +107,7 @@ function posmain_add_item_group_options(mysqli $conn, string $table): array
 $unitOptions = posmain_add_item_unit_options($conn);
 $defaultUnitId = ItemFormInput::resolveDefaultUnitId($conn);
 $itemType = $isEdit ? (string) ($rowitm['item_type'] ?? 'sellable') : 'sellable';
-$itemType = in_array($itemType, ['sellable', 'ingredient', 'packaging', 'service'], true) ? $itemType : 'sellable';
+$itemType = in_array($itemType, ['sellable', 'made', 'ingredient', 'packaging', 'service'], true) ? $itemType : 'sellable';
 $unitProfile = $isEdit
     ? ItemUnitProfileReader::readForItem($conn, $editId, $itemType)
     : ItemUnitProfileReader::defaultProfile($itemType, $defaultUnitId);
@@ -158,7 +164,7 @@ foreach ($itemGroup2Options as $groupOption) {
         break;
     }
 }
-$trackStock = $itemType === 'service' ? 0 : ($isEdit ? (int) ($rowitm['track_stock'] ?? 1) : 1);
+$trackStock = in_array($itemType, ['service', 'made'], true) ? 0 : ($isEdit ? (int) ($rowitm['track_stock'] ?? 1) : 1);
 $preferredUnitId = $isEdit ? (int) ($rowitm['preferred_unit_id'] ?? 0) : 0;
 $itemVariants = [];
 try {
@@ -212,8 +218,10 @@ try {
 
                 <?php if (!$isEdit): ?>
                     <form action="do/doadd_item.php" method="post" enctype="multipart/form-data" id="item-main-form">
+                    <?= csrf_input('menu_write') ?>
                 <?php else: ?>
                     <form action="do/doedit_item.php?edit=<?= $editId ?>" method="post" enctype="multipart/form-data" id="item-main-form">
+                    <?= csrf_input('menu_write') ?>
                 <?php endif; ?>
                 <input type="hidden" name="item_variants_payload_present" value="1">
 
@@ -239,11 +247,95 @@ try {
                         background: #ffffff;
                         border: 1px solid #e2e8f0;
                         border-radius: 10px;
+                        direction: rtl;
                         display: flex;
                         gap: 16px;
-                        justify-content: flex-end;
+                        justify-content: space-between;
                         margin-bottom: 18px;
-                        padding: 18px 20px;
+                        padding: 14px 16px;
+                    }
+                    .item-editor-hero__actions {
+                        align-items: center;
+                        display: flex;
+                        flex-wrap: wrap;
+                        gap: 10px;
+                    }
+                    .item-editor-hero__actions .btn {
+                        border-radius: 8px;
+                        font-weight: 700;
+                        min-height: 40px;
+                    }
+                    .item-editor-hero__new {
+                        align-items: center;
+                        background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 55%, #1e40af 100%);
+                        border: 1px solid rgba(255, 255, 255, .14);
+                        border-radius: 12px;
+                        box-shadow: 0 10px 24px rgba(37, 99, 235, .22), inset 0 1px 0 rgba(255, 255, 255, .16);
+                        color: #ffffff;
+                        display: inline-flex;
+                        gap: 12px;
+                        padding: 9px 16px 9px 14px;
+                        text-decoration: none;
+                        transition: transform .18s ease, box-shadow .18s ease, filter .18s ease;
+                    }
+                    .item-editor-hero__new:hover,
+                    .item-editor-hero__new:focus {
+                        color: #ffffff;
+                        filter: brightness(1.04);
+                        text-decoration: none;
+                    }
+                    .item-editor-hero__new:hover {
+                        box-shadow: 0 14px 28px rgba(37, 99, 235, .28);
+                        transform: translateY(-1px);
+                    }
+                    .item-editor-hero__new:focus-visible {
+                        outline: 2px solid #93c5fd;
+                        outline-offset: 2px;
+                    }
+                    .item-editor-hero__new-icon {
+                        align-items: center;
+                        background: rgba(255, 255, 255, .16);
+                        border-radius: 10px;
+                        display: inline-flex;
+                        font-size: .95rem;
+                        height: 36px;
+                        justify-content: center;
+                        width: 36px;
+                    }
+                    .item-editor-hero__new-copy {
+                        display: flex;
+                        flex-direction: column;
+                        line-height: 1.2;
+                    }
+                    .item-editor-hero__new-label {
+                        font-size: .92rem;
+                        font-weight: 800;
+                    }
+                    .item-editor-hero__new-hint {
+                        color: rgba(255, 255, 255, .78);
+                        font-size: .72rem;
+                        font-weight: 600;
+                        margin-top: 2px;
+                    }
+                    .item-editor-hero--add {
+                        justify-content: flex-end;
+                    }
+                    @media (max-width: 575.98px) {
+                        .item-editor-hero:not(.item-editor-hero--add) {
+                            align-items: stretch;
+                            flex-direction: column;
+                        }
+                        .item-editor-hero__actions {
+                            justify-content: stretch;
+                        }
+                        .item-editor-hero__actions .btn {
+                            flex: 1 1 auto;
+                            justify-content: center;
+                        }
+                        .item-editor-hero__new {
+                            justify-content: center;
+                            width: 100%;
+                        }
                     }
                     .item-editor-grid {
                         direction: ltr;
@@ -309,17 +401,38 @@ try {
                         grid-template-columns: repeat(4, minmax(0, 1fr));
                     }
                     .item-type-choice {
-                        background: #f8fafc;
-                        border: 1px solid #cbd5e1;
+                        background: #ffffff;
+                        border: 1px solid #e2e8f0;
                         border-radius: 8px;
+                        cursor: pointer;
+                        display: flex;
+                        flex-direction: column;
+                        gap: 3px;
+                        padding: 12px 10px;
+                        text-align: center;
+                        transition: border-color .15s ease, background-color .15s ease;
+                    }
+                    .item-type-choice:hover {
+                        border-color: #94a3b8;
+                    }
+                    .item-type-choice__name {
                         color: #334155;
+                        font-size: .92rem;
                         font-weight: 700;
-                        min-height: 42px;
+                    }
+                    .item-type-choice__example {
+                        color: #94a3b8;
+                        font-size: .76rem;
                     }
                     .item-type-choice.active {
-                        background: #0f766e;
-                        border-color: #0f766e;
-                        color: #ffffff;
+                        background: #eff6ff;
+                        border-color: #2563eb;
+                    }
+                    .item-type-choice.active .item-type-choice__name {
+                        color: #1d4ed8;
+                    }
+                    .item-type-choice.active .item-type-choice__example {
+                        color: #60a5fa;
                     }
                     .item-units-table th,
                     .item-units-table td {
@@ -493,6 +606,103 @@ try {
                         position: sticky;
                         z-index: 20;
                     }
+                    .variant-cards-header {
+                        background: #f8fafc;
+                        border-bottom: 1px solid #e2e8f0;
+                        color: #64748b;
+                        display: grid;
+                        font-size: .78rem;
+                        font-weight: 700;
+                        gap: 10px;
+                        grid-template-columns: minmax(0, 1.1fr) minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, .85fr) minmax(0, .95fr) 72px;
+                        padding: 10px 16px;
+                    }
+                    .variant-cards-list {
+                        display: flex;
+                        flex-direction: column;
+                    }
+                    .variant-card {
+                        border-bottom: 1px solid #e2e8f0;
+                        padding: 12px 16px;
+                    }
+                    .variant-card:last-child {
+                        border-bottom: 0;
+                    }
+                    .variant-card.is-field-error {
+                        background: #fef2f2;
+                    }
+                    .variant-card.table-warning {
+                        background: #fffbeb;
+                    }
+                    .variant-card__grid {
+                        align-items: start;
+                        display: grid;
+                        gap: 10px;
+                        grid-template-columns: minmax(0, 1.1fr) minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, .85fr) minmax(0, .95fr) 72px;
+                    }
+                    .variant-card__field .form-control {
+                        min-width: 0;
+                    }
+                    .variant-card__label {
+                        color: #64748b;
+                        display: none;
+                        font-size: .74rem;
+                        font-weight: 700;
+                        margin-bottom: 4px;
+                    }
+                    .variant-card__actions {
+                        align-items: center;
+                        display: flex;
+                        gap: 4px;
+                        justify-content: center;
+                        padding-top: 2px;
+                    }
+                    .variant-card__hint {
+                        color: #b45309;
+                        font-size: .74rem;
+                        margin-top: 4px;
+                    }
+                    .variant-card__margin {
+                        color: #047857;
+                        display: block;
+                        font-size: .72rem;
+                        font-weight: 700;
+                        margin-top: 4px;
+                    }
+                    .variant-card__margin.is-negative {
+                        color: #b91c1c;
+                    }
+                    .variant-card__margin.is-empty {
+                        color: #94a3b8;
+                        font-weight: 600;
+                    }
+                    .variant-editor-footer {
+                        background: #f8fafc;
+                        border-top: 1px solid #e2e8f0;
+                        color: #64748b;
+                        font-size: .82rem;
+                        margin: 0;
+                        padding: 12px 16px;
+                    }
+                    @media (max-width: 767.98px) {
+                        .variant-cards-header {
+                            display: none;
+                        }
+                        .variant-card__grid {
+                            grid-template-columns: 1fr 1fr;
+                        }
+                        .variant-card__field--wide {
+                            grid-column: 1 / -1;
+                        }
+                        .variant-card__actions {
+                            grid-column: 1 / -1;
+                            justify-content: flex-end;
+                            padding-top: 0;
+                        }
+                        .variant-card__label {
+                            display: block;
+                        }
+                    }
                     @media (max-width: 991.98px) {
                         .item-editor-grid {
                             grid-template-columns: 1fr;
@@ -509,18 +719,23 @@ try {
                 <link rel="stylesheet" href="dist/css/item_unit_profile.css?v=<?= (int) (@filemtime(__DIR__ . '/dist/css/item_unit_profile.css') ?: 1) ?>">
 
                 <div class="item-editor-shell">
-                    <div class="item-editor-hero">
-                        <div class="d-flex flex-wrap align-items-center">
-                            <a href="myitems.php" class="btn btn-outline-secondary ml-2">
+                    <div class="item-editor-hero<?= $isEdit ? '' : ' item-editor-hero--add' ?>">
+                        <?php if ($isEdit): ?>
+                            <a href="add_item.php" class="item-editor-hero__new" id="itemEditorAddNew">
+                                <span class="item-editor-hero__new-icon" aria-hidden="true"><i class="fas fa-plus"></i></span>
+                                <span class="item-editor-hero__new-copy">
+                                    <span class="item-editor-hero__new-label">صنف جديد</span>
+                                    <span class="item-editor-hero__new-hint">إضافة صنف آخر</span>
+                                </span>
+                            </a>
+                        <?php endif; ?>
+                        <div class="item-editor-hero__actions">
+                            <a href="myitems.php" class="btn btn-outline-secondary">
                                 <i class="fas fa-arrow-right ml-1"></i> رجوع للأصناف
                             </a>
                             <?php if ($isEdit): ?>
                                 <button type="button" class="btn btn-outline-danger" data-toggle="modal" data-target="#deleteItemModal" title="حذف الصنف">
                                     <i class="fas fa-trash ml-1"></i> حذف الصنف
-                                </button>
-                            <?php else: ?>
-                                <button type="submit" name="save_intent" value="stay" class="btn btn-primary">
-                                    <i class="fas fa-save ml-1"></i> حفظ الصنف
                                 </button>
                             <?php endif; ?>
                         </div>
@@ -671,7 +886,89 @@ try {
                                 </div>
                             </section>
 
+                            <?php $hideParentPricingSection = count($itemVariants) > 0; ?>
                             <?php include __DIR__ . '/elements/sales/item_unit_profile_panel.php'; ?>
+
+                            <section class="item-editor-panel" id="item-variations-card">
+                                <div class="item-editor-panel-header">
+                                    <div>
+                                        <h3 class="item-editor-panel-title">3. التنوعات</h3>
+                                        <p class="item-editor-panel-subtitle">أحجام أو اختيارات بسعر وتكلفة لكل تنوع.</p>
+                                    </div>
+                                    <button type="button" id="addVariantRow" class="btn btn-sm btn-outline-info">
+                                        <i class="fas fa-plus ml-1"></i> إضافة تنوع
+                                    </button>
+                                </div>
+                                <div id="variantEditorBody" class="<?= count($itemVariants) > 0 ? '' : 'd-none' ?>">
+                                    <div class="variant-cards-header" aria-hidden="true">
+                                        <span>النوع</span>
+                                        <span>اسم الصنف الفرعي</span>
+                                        <span>الباركود</span>
+                                        <span>التكلفة</span>
+                                        <span>سعر البيع</span>
+                                        <span></span>
+                                    </div>
+                                    <div class="variant-cards-list" id="variantRowsContainer">
+                                    <?php foreach ($itemVariants as $variantIndex => $variant): ?>
+                                        <?php
+                                        $variantLinkId = (int) ($variant['relation_id'] ?? 0);
+                                        $variantItemId = (int) ($variant['variant_item_id'] ?? 0);
+                                        $variantLabel = htmlspecialchars((string) ($variant['variant_label'] ?? ''), ENT_QUOTES, 'UTF-8');
+                                        $variantName = htmlspecialchars((string) ($variant['iname'] ?? ''), ENT_QUOTES, 'UTF-8');
+                                        $variantBarcode = htmlspecialchars((string) ($variant['barcode'] ?? ''), ENT_QUOTES, 'UTF-8');
+                                        $variantCost = htmlspecialchars((string) ($variant['cost_price'] ?? '0'), ENT_QUOTES, 'UTF-8');
+                                        $variantPrice1 = htmlspecialchars((string) ($variant['price1'] ?? '0'), ENT_QUOTES, 'UTF-8');
+                                        $variantSort = (int) ($variant['sort_order'] ?? ($variantIndex + 1));
+                                        $variantUnlinked = !empty($variant['is_unlinked_recovery']);
+                                        ?>
+                                        <div class="variant-card variant-row<?= $variantUnlinked ? ' table-warning' : '' ?>" data-original-label="<?= $variantLabel ?>">
+                                            <div class="variant-card__grid">
+                                                <div class="variant-card__field">
+                                                    <span class="variant-card__label">النوع</span>
+                                                    <input type="hidden" name="variant_link_id[]" value="<?= $variantLinkId ?>">
+                                                    <input type="hidden" name="variant_item_id[]" value="<?= $variantItemId ?>">
+                                                    <input type="hidden" class="variant-sort-input" name="variant_sort[]" value="<?= $variantSort ?>">
+                                                    <input type="text" class="form-control form-control-sm variant-label-input" name="variant_label[]" value="<?= $variantLabel ?>" placeholder="صغير / كبير">
+                                                    <?php if ($variantUnlinked): ?>
+                                                        <span class="variant-card__hint">تنوع قديم غير مربوط — سيُعاد ربطه عند الحفظ</span>
+                                                    <?php endif; ?>
+                                                </div>
+                                                <div class="variant-card__field variant-card__field--wide">
+                                                    <span class="variant-card__label">اسم الصنف الفرعي</span>
+                                                    <input type="text" class="form-control form-control-sm variant-name-input" name="variant_name[]" value="<?= $variantName ?>" data-initial-child-name="<?= $variantName ?>" placeholder="يتولد تلقائياً من اسم الصنف">
+                                                </div>
+                                                <div class="variant-card__field">
+                                                    <span class="variant-card__label">الباركود</span>
+                                                    <input type="text" class="form-control form-control-sm" name="variant_barcode[]" value="<?= $variantBarcode ?>" placeholder="اختياري">
+                                                </div>
+                                                <div class="variant-card__field">
+                                                    <span class="variant-card__label">التكلفة</span>
+                                                    <input type="number" class="form-control form-control-sm" name="variant_cost_price[]" value="<?= $variantCost ?>" step="0.001" min="0">
+                                                </div>
+                                                <div class="variant-card__field">
+                                                    <span class="variant-card__label">سعر البيع</span>
+                                                    <input type="number" class="form-control form-control-sm variant-sell-price-input" name="variant_price1[]" value="<?= $variantPrice1 ?>" step="0.001" min="0">
+                                                    <span class="variant-card__margin is-empty">هامش: —</span>
+                                                </div>
+                                                <div class="variant-card__actions">
+                                                    <div class="btn-group btn-group-sm">
+                                                        <button type="button" class="btn btn-outline-secondary moveVariantUp" title="رفع"><i class="fas fa-arrow-up"></i></button>
+                                                        <button type="button" class="btn btn-outline-secondary moveVariantDown" title="خفض"><i class="fas fa-arrow-down"></i></button>
+                                                        <button type="button" class="btn btn-outline-danger removeVariantRow" title="حذف"><i class="fas fa-times"></i></button>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    <?php endforeach; ?>
+                                    </div>
+                                    <p class="variant-editor-footer mb-0">
+                                        <i class="fas fa-info-circle ml-1"></i>
+                                        عند إضافة تنوع يُخفى سعر الصنف الرئيسي — حدّد السعر والتكلفة لكل تنوع هنا. يظهر الصنف في الكاشير كاختيار وكل تنوع يُباع كصنف مستقل.
+                                    </p>
+                                </div>
+                            </section>
+
+                            <?php include __DIR__ . '/elements/sales/item_pricing_panel.php'; ?>
 
                             <section class="item-editor-panel" id="item-recipe-section">
                                 <div class="item-editor-panel-header">
@@ -688,89 +985,6 @@ try {
                                     <?php endif; ?>
                                 </div>
                             </section>
-
-                            <section class="item-editor-panel" id="item-variations-card">
-                                <div class="item-editor-panel-header">
-                                    <div>
-                                        <h3 class="item-editor-panel-title">التنوعات</h3>
-                                        <p class="item-editor-panel-subtitle">استخدمها للأحجام أو الاختيارات التي تباع كأصناف مستقلة.</p>
-                                    </div>
-                                    <button type="button" id="addVariantRow" class="btn btn-sm btn-outline-info">
-                                        <i class="fas fa-plus ml-1"></i> إضافة تنوع
-                                    </button>
-                                </div>
-                                <div id="variantEditorBody" class="<?= count($itemVariants) > 0 ? '' : 'd-none' ?>">
-                                    <div class="table-responsive">
-                                        <table class="table table-sm table-hover mb-0">
-                                            <thead class="thead-light text-center">
-                                                <tr>
-                                                    <th style="min-width: 130px;">النوع</th>
-                                        <th style="min-width: 190px;">اسم الصنف الفرعي</th>
-                                        <th style="min-width: 110px;">الباركود</th>
-                                        <th style="min-width: 90px;">التكلفة</th>
-                                        <th style="min-width: 100px;">سعر البيع</th>
-                                        <th style="width: 70px;">نشط</th>
-                                        <th style="width: 80px;">افتراضي</th>
-                                        <th style="width: 120px;"></th>
-                                    </tr>
-                                </thead>
-                                <tbody id="variantRowsContainer">
-                                    <?php foreach ($itemVariants as $variantIndex => $variant): ?>
-                                        <?php
-                                        $variantLinkId = (int) ($variant['relation_id'] ?? 0);
-                                        $variantItemId = (int) ($variant['variant_item_id'] ?? 0);
-                                        $variantLabel = htmlspecialchars((string) ($variant['variant_label'] ?? ''), ENT_QUOTES, 'UTF-8');
-                                        $variantName = htmlspecialchars((string) ($variant['iname'] ?? ''), ENT_QUOTES, 'UTF-8');
-                                        $variantBarcode = htmlspecialchars((string) ($variant['barcode'] ?? ''), ENT_QUOTES, 'UTF-8');
-                                        $variantCost = htmlspecialchars((string) ($variant['cost_price'] ?? '0'), ENT_QUOTES, 'UTF-8');
-                                        $variantPrice1 = htmlspecialchars((string) ($variant['price1'] ?? '0'), ENT_QUOTES, 'UTF-8');
-                                        $variantActive = (int) ($variant['is_active'] ?? 1) === 1;
-                                        $variantDefault = (int) ($variant['is_default'] ?? 0) === 1;
-                                        $variantSort = (int) ($variant['sort_order'] ?? ($variantIndex + 1));
-                                        $variantUnlinked = !empty($variant['is_unlinked_recovery']);
-                                        ?>
-                                        <tr class="variant-row<?= $variantUnlinked ? ' table-warning' : '' ?>" data-original-label="<?= $variantLabel ?>">
-                                            <td>
-                                                <input type="hidden" name="variant_link_id[]" value="<?= $variantLinkId ?>">
-                                                <input type="hidden" name="variant_item_id[]" value="<?= $variantItemId ?>">
-                                                <input type="hidden" class="variant-sort-input" name="variant_sort[]" value="<?= $variantSort ?>">
-                                                <input type="text" class="form-control form-control-sm variant-label-input" name="variant_label[]" value="<?= $variantLabel ?>" placeholder="صغير / كبير">
-                                                <?php if ($variantUnlinked): ?>
-                                                    <small class="text-warning d-block mt-1">تنوع قديم غير مربوط — سيُعاد ربطه عند الحفظ</small>
-                                                <?php endif; ?>
-                                            </td>
-                                            <td>
-                                                <input type="text" class="form-control form-control-sm variant-name-input" name="variant_name[]" value="<?= $variantName ?>" data-initial-child-name="<?= $variantName ?>" placeholder="يتولد تلقائياً من اسم الصنف">
-                                            </td>
-                                            <td><input type="text" class="form-control form-control-sm" name="variant_barcode[]" value="<?= $variantBarcode ?>" placeholder="اختياري"></td>
-                                            <td><input type="number" class="form-control form-control-sm" name="variant_cost_price[]" value="<?= $variantCost ?>" step="0.001" min="0"></td>
-                                            <td><input type="number" class="form-control form-control-sm variant-sell-price-input" name="variant_price1[]" value="<?= $variantPrice1 ?>" step="0.001" min="0"></td>
-                                            <td class="text-center align-middle">
-                                                <input type="hidden" name="variant_active[<?= (int) $variantIndex ?>]" value="0">
-                                                <input type="checkbox" name="variant_active[<?= (int) $variantIndex ?>]" value="1" <?= $variantActive ? 'checked' : '' ?>>
-                                            </td>
-                                            <td class="text-center align-middle">
-                                                <input type="hidden" name="variant_default[<?= (int) $variantIndex ?>]" value="0">
-                                                <input type="checkbox" class="variant-default-check" name="variant_default[<?= (int) $variantIndex ?>]" value="1" <?= $variantDefault ? 'checked' : '' ?>>
-                                            </td>
-                                            <td class="text-center align-middle">
-                                                <div class="btn-group btn-group-sm">
-                                                    <button type="button" class="btn btn-outline-secondary moveVariantUp" title="رفع"><i class="fas fa-arrow-up"></i></button>
-                                                    <button type="button" class="btn btn-outline-secondary moveVariantDown" title="خفض"><i class="fas fa-arrow-down"></i></button>
-                                                    <button type="button" class="btn btn-outline-danger removeVariantRow" title="حذف"><i class="fas fa-times"></i></button>
-                                                </div>
-                                            </td>
-                                        </tr>
-                                    <?php endforeach; ?>
-                                </tbody>
-                                        </table>
-                                    </div>
-                                    <p class="text-muted small mb-0 p-3 border-top bg-light">
-                                        <i class="fas fa-info-circle ml-1"></i>
-                                        عند وجود تنوعات يظهر الصنف الرئيسي في الكاشير كاختيار، وكل تنوع يحفظ ويباع كصنف مستقل في الفاتورة والمخزون والمزامنة.
-                                    </p>
-                                </div>
-                            </section>
                         </div>
 
                         <aside class="item-summary-sidebar">
@@ -779,24 +993,16 @@ try {
                                 <div class="small text-white-50 mt-1" id="summaryItemName"><?= $isEdit ? htmlspecialchars($rowitm['iname'], ENT_QUOTES, 'UTF-8') : 'صنف جديد' ?></div>
                             </div>
                             <div class="summary-line">
-                                <span class="summary-label">وحدة البيع</span>
-                                <span class="summary-value" id="summarySellUnit">—</span>
-                            </div>
-                            <div class="summary-line">
                                 <span class="summary-label">سعر البيع</span>
                                 <span class="summary-value" id="summarySellPrice">—</span>
                             </div>
                             <div class="summary-line">
-                                <span class="summary-label">تكلفة لكل وحدة بيع</span>
-                                <span class="summary-value" id="summaryCostPerSellUnit">—</span>
+                                <span class="summary-label">التكلفة</span>
+                                <span class="summary-value" id="summaryCost">—</span>
                             </div>
                             <div class="summary-line">
                                 <span class="summary-label">هامش الربح</span>
                                 <span class="summary-value summary-value--margin" id="summaryProfitMargin">—</span>
-                            </div>
-                            <div class="summary-line d-none" id="summaryExtraUnitsLine">
-                                <span class="summary-label">وحدات إضافية</span>
-                                <span class="summary-value" id="summaryExtraUnits">—</span>
                             </div>
                         </aside>
                     </div>
@@ -807,16 +1013,8 @@ try {
                                 <i class="fas fa-times ml-1"></i> إلغاء
                             </a>
                         </div>
-                        <div class="d-flex flex-wrap">
-                            <?php if (!$isEdit): ?>
-                                <button type="submit" name="save_intent" value="add_another" class="btn btn-outline-primary ml-2">
-                                    <i class="fas fa-plus ml-1"></i> حفظ وإضافة صنف آخر
-                                </button>
-                            <?php endif; ?>
-                            <button type="submit" name="save_intent" value="close" class="btn btn-outline-primary ml-2">
-                                <i class="fas fa-check ml-1"></i> حفظ وإغلاق
-                            </button>
-                            <button type="submit" name="save_intent" value="stay" class="btn btn-primary">
+                        <div>
+                            <button type="submit" class="btn btn-primary">
                                 <i class="fas fa-save ml-1"></i> <?= $isEdit ? 'حفظ التغييرات' : 'حفظ الصنف' ?>
                             </button>
                         </div>
@@ -968,47 +1166,47 @@ $(document).ready(function() {
 
     function variantRowHtml(index) {
         return `
-            <tr class="variant-row">
-                <td>
-                    <input type="hidden" name="variant_link_id[]" value="0">
-                    <input type="hidden" name="variant_item_id[]" value="0">
-                    <input type="hidden" class="variant-sort-input" name="variant_sort[]" value="${index + 1}">
-                    <input type="text" class="form-control form-control-sm variant-label-input" name="variant_label[]" value="" placeholder="صغير / كبير">
-                </td>
-                <td>
-                    <input type="text" class="form-control form-control-sm variant-name-input" name="variant_name[]" value="" data-initial-child-name="" placeholder="يتولد تلقائياً من اسم الصنف">
-                </td>
-                <td><input type="text" class="form-control form-control-sm" name="variant_barcode[]" value="" placeholder="اختياري"></td>
-                <td><input type="number" class="form-control form-control-sm" name="variant_cost_price[]" value="0" step="0.001" min="0"></td>
-                <td><input type="number" class="form-control form-control-sm variant-sell-price-input" name="variant_price1[]" value="" step="0.001" min="0"></td>
-                <td class="text-center align-middle">
-                    <input type="hidden" name="variant_active[${index}]" value="0">
-                    <input type="checkbox" name="variant_active[${index}]" value="1" checked>
-                </td>
-                <td class="text-center align-middle">
-                    <input type="hidden" name="variant_default[${index}]" value="0">
-                    <input type="checkbox" class="variant-default-check" name="variant_default[${index}]" value="1">
-                </td>
-                <td class="text-center align-middle">
-                    <div class="btn-group btn-group-sm">
-                        <button type="button" class="btn btn-outline-secondary moveVariantUp" title="رفع"><i class="fas fa-arrow-up"></i></button>
-                        <button type="button" class="btn btn-outline-secondary moveVariantDown" title="خفض"><i class="fas fa-arrow-down"></i></button>
-                        <button type="button" class="btn btn-outline-danger removeVariantRow" title="حذف"><i class="fas fa-times"></i></button>
+            <div class="variant-card variant-row">
+                <div class="variant-card__grid">
+                    <div class="variant-card__field">
+                        <span class="variant-card__label">النوع</span>
+                        <input type="hidden" name="variant_link_id[]" value="0">
+                        <input type="hidden" name="variant_item_id[]" value="0">
+                        <input type="hidden" class="variant-sort-input" name="variant_sort[]" value="${index + 1}">
+                        <input type="text" class="form-control form-control-sm variant-label-input" name="variant_label[]" value="" placeholder="صغير / كبير">
                     </div>
-                </td>
-            </tr>
+                    <div class="variant-card__field variant-card__field--wide">
+                        <span class="variant-card__label">اسم الصنف الفرعي</span>
+                        <input type="text" class="form-control form-control-sm variant-name-input" name="variant_name[]" value="" data-initial-child-name="" placeholder="يتولد تلقائياً من اسم الصنف">
+                    </div>
+                    <div class="variant-card__field">
+                        <span class="variant-card__label">الباركود</span>
+                        <input type="text" class="form-control form-control-sm" name="variant_barcode[]" value="" placeholder="اختياري">
+                    </div>
+                    <div class="variant-card__field">
+                        <span class="variant-card__label">التكلفة</span>
+                        <input type="number" class="form-control form-control-sm" name="variant_cost_price[]" value="0" step="0.001" min="0">
+                    </div>
+                    <div class="variant-card__field">
+                        <span class="variant-card__label">سعر البيع</span>
+                        <input type="number" class="form-control form-control-sm variant-sell-price-input" name="variant_price1[]" value="" step="0.001" min="0">
+                        <span class="variant-card__margin is-empty">هامش: —</span>
+                    </div>
+                    <div class="variant-card__actions">
+                        <div class="btn-group btn-group-sm">
+                            <button type="button" class="btn btn-outline-secondary moveVariantUp" title="رفع"><i class="fas fa-arrow-up"></i></button>
+                            <button type="button" class="btn btn-outline-secondary moveVariantDown" title="خفض"><i class="fas fa-arrow-down"></i></button>
+                            <button type="button" class="btn btn-outline-danger removeVariantRow" title="حذف"><i class="fas fa-times"></i></button>
+                        </div>
+                    </div>
+                </div>
+            </div>
         `;
     }
 
     function refreshVariantSorts() {
         $('#variantRowsContainer .variant-row').each(function(index) {
             $(this).find('.variant-sort-input').val(index + 1);
-            $(this).find('input[name^="variant_active"]').each(function() {
-                $(this).attr('name', 'variant_active[' + index + ']');
-            });
-            $(this).find('input[name^="variant_default"]').each(function() {
-                $(this).attr('name', 'variant_default[' + index + ']');
-            });
         });
     }
 
@@ -1113,12 +1311,6 @@ $(document).ready(function() {
             row.next('.variant-row').after(row);
         }
         refreshVariantSorts();
-    });
-
-    $(document).on('change', '.variant-default-check', function() {
-        if ($(this).prop('checked')) {
-            $('.variant-default-check').not(this).prop('checked', false);
-        }
     });
 
     $(document).on('input', '.variant-label-input', function() {
@@ -1236,6 +1428,7 @@ $(document).ready(function() {
 	    function syncVariantEditorVisibility() {
 	        var hasRows = $('#variantRowsContainer .variant-row').length > 0;
 	        $('#variantEditorBody').toggleClass('d-none', !hasRows);
+	        $(document).trigger('itemEditorVariantsChanged', [hasRows]);
 	    }
 
 	    syncVariantEditorVisibility();

@@ -1,5 +1,7 @@
 <?php
-include('../includes/connect.php');
+require_once __DIR__ . '/../includes/rbac_route_guard.php';
+rbac_guard_route('do/doadd_shift.php');
+
 $name = $_POST['name'];
     $shiftstart = $_POST['shiftstart'];
     $shiftend = $_POST['shiftend'];

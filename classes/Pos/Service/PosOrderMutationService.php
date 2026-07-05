@@ -323,14 +323,20 @@ class PosOrderMutationService
 
             $userId = $this->contextUserId($request, $context);
             $amount = max(0.0, (float) ($order['paid_amount'] ?? $order['fat_net'] ?? 0));
-            $this->managerApprovalService->requireApprovedIfNeeded(
+            $limitKey = $action === 'void' ? 'pos.void.paid' : 'pos.refund.limit';
+            $escalationKey = $action === 'void' ? 'pos.void.paid' : 'pos.refund';
+            $approval = $this->managerApprovalService->requireApprovedIfNeeded(
                 $conn,
-                $action === 'void' ? 'pos.void.paid' : 'pos.refund',
+                $escalationKey,
                 'order',
                 $orderId,
                 $amount,
                 $request,
-                $context
+                array_merge($context, [
+                    'user_id' => $userId,
+                    'limit_permission_key' => $limitKey,
+                    'escalation_permission_key' => $escalationKey,
+                ])
             );
 
             [$channel, $orderType] = $this->recipeChannelAndOrderType((string) ($order['order_type'] ?? ''));
@@ -374,13 +380,21 @@ class PosOrderMutationService
 
             $eventType = $action === 'void' ? 'order.voided' : 'order.refunded';
             $policy = $this->resolveRecipeRefundPolicy($request, $context);
-            $this->recordOrderEvent($conn, $orderId, $eventType, $context['event_source'] ?? 'pos_paid_reversal', $context, [
+            $eventMetadata = [
                 'payment_status_before' => $paymentStatus,
                 'payment_status_after' => $newPaymentStatus,
                 'refund_stock_policy' => $policy,
                 'reason' => $reason,
                 'amount' => $amount,
-            ]);
+            ];
+            if ($approval) {
+                $eventMetadata['manager_approval_id'] = (int) ($approval['id'] ?? 0);
+            }
+            $this->recordOrderEvent($conn, $orderId, $eventType, $context['event_source'] ?? 'pos_paid_reversal', $context, $eventMetadata);
+
+            if ($approval) {
+                $this->managerApprovalService->consumeApproval($conn, (int) $approval['id'], $userId);
+            }
 
             if ($ownsTransaction) {
                 $conn->commit();
@@ -740,7 +754,7 @@ class PosOrderMutationService
         $accrualDate = $this->requestDate($request, ['accural_date', 'accrual_date'], $date);
         $headTotal = (float) ($request['headtotal'] ?? $request['total'] ?? 0);
         $headDiscount = (float) ($request['headdisc'] ?? $request['discount'] ?? 0);
-        $this->requireDiscountApprovalIfNeeded($conn, $orderId, $headDiscount, $request, $context);
+        $this->requireOrderEscalationsIfNeeded($conn, $orderId, $headDiscount, $request, $context);
         $headPlus = (float) ($request['headplus'] ?? $request['plus'] ?? 0);
         $headNet = (float) ($request['headnet'] ?? $request['net'] ?? max(0, $headTotal - $headDiscount + $headPlus));
         if ($orderType === 'delivery') {
@@ -951,7 +965,7 @@ class PosOrderMutationService
         $accrualDate = $this->requestDate($request, ['accural_date', 'accrual_date'], $date);
         $headTotal = (float) ($request['headtotal'] ?? $request['total'] ?? 0);
         $headDiscount = (float) ($request['headdisc'] ?? $request['discount'] ?? 0);
-        $this->requireDiscountApprovalIfNeeded($conn, null, $headDiscount, $request, $context);
+        $this->requireOrderEscalationsIfNeeded($conn, null, $headDiscount, $request, $context);
         $headPlus = (float) ($request['headplus'] ?? $request['plus'] ?? 0);
         $headNet = (float) ($request['headnet'] ?? $request['net'] ?? max(0, $headTotal - $headDiscount + $headPlus));
         if ($headNet < 0) {
@@ -1154,7 +1168,7 @@ class PosOrderMutationService
         $accrualDate = $this->requestDate($request, ['accural_date', 'accrual_date'], $date);
         $headTotal = (float) ($request['headtotal'] ?? $request['total'] ?? 0);
         $headDiscount = (float) ($request['headdisc'] ?? $request['discount'] ?? 0);
-        $this->requireDiscountApprovalIfNeeded($conn, null, $headDiscount, $request, $context);
+        $this->requireOrderEscalationsIfNeeded($conn, null, $headDiscount, $request, $context);
         $resolvedTotals = $this->resolveDeliveryPostedTotals($conn, $request);
         $deliveryFee = (float) $resolvedTotals['delivery_fee'];
         $deliveryZoneName = (string) $resolvedTotals['delivery_zone_name'];
@@ -1631,7 +1645,7 @@ class PosOrderMutationService
         $this->assertItemsAvailable($conn, $items, $request, $context);
         $total = (float) ($request['total'] ?? 0);
         $discount = (float) ($request['discount'] ?? 0);
-        $this->requireDiscountApprovalIfNeeded($conn, $orderId > 0 ? $orderId : null, $discount, $request, $context);
+        $this->requireOrderEscalationsIfNeeded($conn, $orderId > 0 ? $orderId : null, $discount, $request, $context);
         $net = (float) ($request['net'] ?? max(0, $total - $discount));
         if (ItemUnitConversionFeatureFlags::strictPosFactorResolution()) {
             $serverNet = (float) PaymentReconciliationService::recomputeTableNetFromLines($items, (string) $discount);
@@ -3229,17 +3243,141 @@ class PosOrderMutationService
         }
     }
 
-    private function requireDiscountApprovalIfNeeded(mysqli $conn, ?int $orderId, float $discount, array $request, array $context): void
+    private function requireOrderEscalationsIfNeeded(
+        mysqli $conn,
+        ?int $orderId,
+        float $discount,
+        array $request,
+        array $context
+    ): void {
+        $this->requireDiscountApprovalIfNeeded($conn, $orderId, $discount, $request, $context);
+        $this->requirePriceOverrideApprovalIfNeeded($conn, $orderId, $request, $context);
+        $this->requireCreditSaleApprovalIfNeeded($conn, $orderId, $request, $context);
+    }
+
+    private function requirePriceOverrideApprovalIfNeeded(mysqli $conn, ?int $orderId, array $request, array $context): void
     {
-        $this->managerApprovalService->requireApprovedIfNeeded(
+        if (!empty($request['price_override_approval_id'])) {
+            $userId = $this->contextUserId($request, $context);
+            $approval = $this->managerApprovalService->requireApprovedIfNeeded(
+                $conn,
+                'pos.price.override',
+                'pos_order',
+                $orderId,
+                1.0,
+                $request,
+                array_merge($context, ['user_id' => $userId])
+            );
+            if ($approval) {
+                $this->managerApprovalService->consumeApproval($conn, (int) $approval['id'], $userId);
+            }
+            return;
+        }
+
+        if (!class_exists('PermissionService', false)) {
+            require_once __DIR__ . '/../../Security/PermissionService.php';
+        }
+        $userId = $this->contextUserId($request, $context);
+        $permissionService = PermissionService::forConnection($conn);
+        if ($permissionService->check($userId, 'pos.price.override')) {
+            return;
+        }
+
+        $items = is_array($request['items'] ?? null) ? $request['items'] : [];
+        $hasOverride = false;
+        foreach ($items as $item) {
+            if (!is_array($item)) {
+                continue;
+            }
+            $itemId = (int) ($item['id'] ?? $item['item_id'] ?? 0);
+            $submittedPrice = (float) ($item['price'] ?? 0);
+            if ($itemId < 1 || $submittedPrice <= 0) {
+                continue;
+            }
+            $stmt = $conn->prepare('SELECT price1 FROM myitems WHERE id = ? AND isdeleted = 0 LIMIT 1');
+            $stmt->bind_param('i', $itemId);
+            $stmt->execute();
+            $row = $stmt->get_result()->fetch_assoc();
+            $stmt->close();
+            $catalogPrice = (float) ($row['price1'] ?? 0);
+            if ($catalogPrice > 0 && abs($submittedPrice - $catalogPrice) > 0.01) {
+                $hasOverride = true;
+                break;
+            }
+        }
+
+        if (!$hasOverride) {
+            return;
+        }
+
+        $approval = $this->managerApprovalService->requireApprovedIfNeeded(
             $conn,
-            'discount.override',
+            'pos.price.override',
             'pos_order',
             $orderId,
-            max(0, $discount),
+            1.0,
             $request,
-            $context
+            array_merge($context, ['user_id' => $userId])
         );
+        if ($approval) {
+            $this->managerApprovalService->consumeApproval($conn, (int) $approval['id'], $userId);
+        }
+    }
+
+    private function requireCreditSaleApprovalIfNeeded(mysqli $conn, ?int $orderId, array $request, array $context): void
+    {
+        $jalAmount = (float) ($request['jal_amount'] ?? 0);
+        if ($jalAmount <= 0) {
+            return;
+        }
+
+        $userId = $this->contextUserId($request, $context);
+        if (!class_exists('PermissionService', false)) {
+            require_once __DIR__ . '/../../Security/PermissionService.php';
+        }
+        if (PermissionService::forConnection($conn)->check($userId, 'pos.credit.sale')) {
+            return;
+        }
+
+        $approval = $this->managerApprovalService->requireApprovedIfNeeded(
+            $conn,
+            'pos.credit.sale',
+            'pos_order',
+            $orderId,
+            $jalAmount,
+            $request,
+            array_merge($context, ['user_id' => $userId])
+        );
+        if ($approval) {
+            $this->managerApprovalService->consumeApproval($conn, (int) $approval['id'], $userId);
+        }
+    }
+
+    private function requireDiscountApprovalIfNeeded(mysqli $conn, ?int $orderId, float $discount, array $request, array $context): void
+    {
+        $userId = $this->contextUserId($request, $context);
+        $total = max(0.0, (float) ($request['headtotal'] ?? $request['total'] ?? 0));
+        $discountPct = $total > 0 ? ($discount / $total) * 100.0 : 0.0;
+        if ($discountPct <= 0) {
+            return;
+        }
+
+        $approval = $this->managerApprovalService->requireApprovedIfNeeded(
+            $conn,
+            'pos.discount.manual_pct.limit',
+            'pos_order',
+            $orderId,
+            $discountPct,
+            $request,
+            array_merge($context, [
+                'user_id' => $userId,
+                'limit_permission_key' => 'pos.discount.apply',
+                'escalation_permission_key' => 'pos.discount.manual_pct.limit',
+            ])
+        );
+        if ($approval) {
+            $this->managerApprovalService->consumeApproval($conn, (int) $approval['id'], $userId);
+        }
     }
 
     private function itemIdsFromLines(array $items): array
@@ -3275,6 +3413,60 @@ class PosOrderMutationService
         $result = $conn->query("SHOW TABLES LIKE '{$tableName}'");
 
         return $result && $result->num_rows > 0;
+    }
+
+    public function escalationAttributionLineForOrder(mysqli $conn, int $orderId): ?string
+    {
+        if ($orderId < 1 || !$this->tableExists($conn, 'manager_approvals')) {
+            return null;
+        }
+
+        $stmt = $conn->prepare("
+            SELECT performed_by, approved_by
+              FROM manager_approvals
+             WHERE consumed_at IS NOT NULL
+               AND target_id = ?
+               AND target_type IN ('order', 'pos_order')
+             ORDER BY consumed_at DESC
+             LIMIT 1
+        ");
+        $stmt->bind_param('i', $orderId);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        if (!$row) {
+            return null;
+        }
+
+        $performerId = (int) ($row['performed_by'] ?? 0);
+        $approverId = (int) ($row['approved_by'] ?? 0);
+        if ($performerId < 1 || $approverId < 1) {
+            return null;
+        }
+
+        $performerName = $this->userDisplayLabel($conn, $performerId);
+        $approverName = $this->userDisplayLabel($conn, $approverId);
+
+        return 'بواسطة ' . $performerName . ' — بموافقة ' . $approverName;
+    }
+
+    private function userDisplayLabel(mysqli $conn, int $userId): string
+    {
+        $stmt = $conn->prepare(
+            'SELECT COALESCE(NULLIF(TRIM(display_name), ""), uname) AS label FROM users WHERE id = ? LIMIT 1'
+        );
+        $stmt->bind_param('i', $userId);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        $label = trim((string) ($row['label'] ?? ''));
+        if ($label === '') {
+            return 'موظف #' . $userId;
+        }
+
+        return $label;
     }
 
     private function columnExists(mysqli $conn, string $tableName, string $columnName): bool

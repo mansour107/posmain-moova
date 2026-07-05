@@ -1,7 +1,11 @@
 <?php
 require_once __DIR__ . '/includes/session_bootstrap.php';
 require_once __DIR__ . '/includes/csrf.php';
+require_once __DIR__ . '/includes/pos_cache_control.php';
 require_once __DIR__ . '/classes/PasswordService.php';
+require_once __DIR__ . '/classes/Security/PinService.php';
+
+posmain_send_no_store_headers();
 
 if (!isset($_SESSION['login']) || !isset($_SESSION['userid'])) {
     header('location:index.php');
@@ -9,20 +13,39 @@ if (!isset($_SESSION['login']) || !isset($_SESSION['userid'])) {
 }
 
 include(__DIR__ . '/includes/connect.php');
+require_once __DIR__ . '/includes/auth_guard.php';
+require_once __DIR__ . '/includes/layout_capabilities.php';
+
+$posmainCanCloseShift = auth_guard_has_permission('pos.shift.close', $conn);
+$posmainCanRecordShiftExpense = auth_guard_has_permission('pos.cashdrawer.count', $conn);
+
+$pinService = new PinService();
+$pos_pin_mode = false;
+$pos_legacy_fallback = true;
+try {
+    posmain_pin_secret();
+    $pos_pin_mode = $pinService->anyActiveUserHasPin($conn);
+    $pos_legacy_fallback = !$pos_pin_mode;
+} catch (RuntimeException $pinSecretException) {
+    if ($pinSecretException->getMessage() !== 'PIN_SECRET_MISSING') {
+        throw $pinSecretException;
+    }
+}
 
 if (isset($_GET['logout'])) {
-    unset($_SESSION['pos_authenticated'], $_SESSION['pos_user_id'], $_SESSION['pos_user_name']);
+    require_once __DIR__ . '/includes/auth_guard.php';
+    posmain_clear_pos_shift_session(false);
     header('location:pos_barcode.php');
     exit;
 }
 
-$current_user_id = (int) $_SESSION['userid'];
+$terminal_user_id = (int) $_SESSION['userid'];
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['pos_barcode'])) {
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['pos_barcode']) && $pos_legacy_fallback) {
     $entered_code = trim($_POST['pos_barcode']);
 
-    $stmt = $conn->prepare("SELECT id, uname, password FROM users WHERE id = ? AND isdeleted = 0 LIMIT 1");
-    $stmt->bind_param("i", $current_user_id);
+    $stmt = $conn->prepare('SELECT id, uname, password, display_name FROM users WHERE id = ? AND isdeleted = 0 LIMIT 1');
+    $stmt->bind_param("i", $terminal_user_id);
     $stmt->execute();
     $current_user = $stmt->get_result()->fetch_assoc();
     $stmt->close();
@@ -34,9 +57,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['pos_barcode'])) {
     }
 
     if ($is_valid_user_code) {
-        $_SESSION['pos_authenticated'] = true;
-        $_SESSION['pos_user_id'] = (int) $current_user['id'];
-        $_SESSION['pos_user_name'] = $current_user['uname'];
+        require_once __DIR__ . '/classes/Pos/Service/ShiftSessionService.php';
+        $actingId = (int) $current_user['id'];
+        pos_set_acting_user($actingId, (string) ($current_user['display_name'] ?? $current_user['uname']));
+        posmain_begin_pos_shift_session($actingId);
+        (new ShiftSessionService())->openForCashier($conn, $actingId, [
+            'opening_cash' => $_POST['opening_cash'] ?? '0',
+        ]);
+        $_SESSION['pos_user_name'] = (string) ($current_user['display_name'] ?? $current_user['uname']);
+        pos_touch_activity();
         header('location:pos_barcode.php');
         exit;
     }
@@ -44,13 +73,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['pos_barcode'])) {
     $login_error = 'كود هذا المستخدم غير صحيح';
 }
 
-if (
-    !isset($_SESSION['pos_authenticated']) ||
-    $_SESSION['pos_authenticated'] !== true ||
-    (int) ($_SESSION['pos_user_id'] ?? 0) !== $current_user_id
-) {
+if (!auth_guard_is_pos_barcode_unlocked()) {
     include('includes/pos_login_screen.php');
     exit;
+}
+
+require_once __DIR__ . '/classes/Pos/Service/ShiftSessionService.php';
+$acting_user_id = pos_acting_user_id();
+try {
+    (new ShiftSessionService())->openForCashier($conn, $acting_user_id);
+    pos_touch_activity();
+} catch (Throwable $drawerOpenException) {
+    error_log('POS drawer session ensure failed: ' . $drawerOpenException->getMessage());
 }
 
 $check_tables = $conn->query("SELECT COUNT(*) as count FROM tables WHERE isdeleted = 0");
@@ -90,6 +124,13 @@ include('includes/pos_simple_header.php');
 <!-- Assets (CSS & JS) -->
 <?php include('includes/pos_assets.php'); ?>
 <?= csrf_meta_tag('pos_browser', 'posmain-csrf-token') ?>
+<?= csrf_meta_tag('pos_pin', 'pos-pin-csrf-token') ?>
+<?= csrf_meta_tag('pos_override', 'pos-override-csrf-token') ?>
+<?php
+$posCapsVer = (int) (@filemtime(__DIR__ . '/js/posmain_capabilities.js') ?: 1);
+?>
+<script src="js/posmain_capabilities.js?v=<?= $posCapsVer ?>"></script>
+<?= posmain_render_acting_pos_context_script($conn, (int) $acting_user_id) ?>
 <script>
 (function () {
     const tokenElement = document.querySelector('meta[name="posmain-csrf-token"]');
@@ -112,9 +153,11 @@ include('includes/pos_simple_header.php');
 })();
 </script>
 <?php include('includes/pos_lock_system.php'); ?>
+<?php include('includes/pos_session_guard.php'); ?>
 
 <!-- Hidden input for Edit Mode -->
 <input type="hidden" id="edit_order_id" value="<?= isset($id) ? $id : '' ?>">
+<input type="hidden" id="posActingUserId" data-acting-user-id="<?= (int) $acting_user_id ?>">
 
 <div class="pos-corner-menu" aria-label="قائمة نقاط البيع">
     <button type="button" class="pos-corner-btn" id="cornerRecentOrdersBtn" title="الطلبات السابقة" aria-label="الطلبات السابقة">
@@ -123,10 +166,22 @@ include('includes/pos_simple_header.php');
     <div class="moova-navbar-widget" aria-label="Moova POS widget">
         <?php include('elements/pos/cofe_widget.php'); ?>
     </div>
+    <?php if ($posmainCanRecordShiftExpense) { ?>
+    <button type="button" class="pos-corner-btn" id="posDrawerNoSaleBtn" title="فتح درج بدون بيع" aria-label="فتح درج بدون بيع">
+        <i class="fas fa-cash-register"></i>
+    </button>
+    <button type="button" class="pos-corner-btn" data-bs-toggle="modal"
+        data-bs-target="#shiftExpenseModal" title="تسجيل مصروف" aria-label="تسجيل مصروف">
+        <i class="fas fa-wallet"></i>
+        <span class="pos-corner-btn-badge d-none js-shift-expense-badge"></span>
+    </button>
+    <?php } ?>
+    <?php if ($posmainCanCloseShift) { ?>
     <button type="button" class="pos-corner-btn" data-bs-toggle="modal"
         data-bs-target="#closeShiftModal" title="إغلاق الشيفت" aria-label="إغلاق الشيفت">
         <i class="fas fa-power-off"></i>
     </button>
+    <?php } ?>
     <a href="do/do_logout.php" class="pos-corner-btn" title="تسجيل الخروج" aria-label="تسجيل الخروج">
         <i class="fas fa-sign-out-alt"></i>
     </a>
@@ -155,16 +210,32 @@ include('includes/pos_simple_header.php');
                     <i class="fas fa-circle me-1"></i>الشيفت مفتوح
                 </span>
                 <span class="pos-cashier-pill">
-                    <i class="fas fa-user me-1"></i>الكاشير: <?= htmlspecialchars($_SESSION['login'] ?? 'الموظف 1') ?>
+                    <i class="fas fa-user me-1"></i>الكاشير: <?= htmlspecialchars($_SESSION['pos_acting_user_name'] ?? $_SESSION['pos_user_name'] ?? $_SESSION['login'] ?? 'الموظف') ?>
                 </span>
             </div>
             <ul class="navbar-nav me-auto"></ul>
 
             <ul class="navbar-nav">
+                <?php if ($posmainCanRecordShiftExpense) { ?>
+                <li class="nav-item">
+                    <button type="button" class="btn btn-outline-light btn-sm me-2 position-relative" data-bs-toggle="modal"
+                        data-bs-target="#shiftExpenseModal" title="تسجيل مصروف">
+                        <i class="fas fa-wallet me-1"></i> مصروف
+                        <span class="badge bg-danger position-absolute top-0 start-100 translate-middle d-none js-shift-expense-badge"></span>
+                    </button>
+                </li>
+                <?php } ?>
+                <?php if ($posmainCanCloseShift) { ?>
                 <li class="nav-item">
                     <button type="button" class="btn btn-outline-warning btn-sm me-2" data-bs-toggle="modal"
                         data-bs-target="#closeShiftModal" title="إغلاق الشيفت">
                         <i class="fas fa-power-off me-1"></i> إغلاق الشيفت
+                    </button>
+                </li>
+                <?php } ?>
+                <li class="nav-item">
+                    <button type="button" class="btn btn-outline-light btn-sm me-2" id="posHeaderLockBtn" title="قفل الجهاز">
+                        <i class="fas fa-lock me-1"></i> قفل
                     </button>
                 </li>
                 <li class="nav-item">

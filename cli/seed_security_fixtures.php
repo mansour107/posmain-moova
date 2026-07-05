@@ -1,0 +1,203 @@
+#!/usr/bin/env php
+<?php
+
+/**
+ * Seeds RBAC/PIN security fixtures for local PHPUnit and Playwright.
+ * Usage: POSMAIN_PIN_SECRET=test-pin-secret php cli/seed_security_fixtures.php
+ */
+
+require_once __DIR__ . '/../config/app_config.php';
+require_once __DIR__ . '/../includes/db_bootstrap.php';
+require_once __DIR__ . '/../classes/Sync/SchemaManager.php';
+require_once __DIR__ . '/../classes/PasswordService.php';
+require_once __DIR__ . '/../classes/Security/PinService.php';
+require_once __DIR__ . '/../classes/Security/RolePermissionSyncService.php';
+
+if (trim((string) getenv('POSMAIN_PIN_SECRET')) === '') {
+    putenv('POSMAIN_PIN_SECRET=posmain-test-pin-secret-do-not-use-in-prod');
+    $_ENV['POSMAIN_PIN_SECRET'] = 'posmain-test-pin-secret-do-not-use-in-prod';
+}
+
+$conn = posmain_db_connect();
+$conn->set_charset('utf8mb4');
+
+(new SyncSchemaManager())->apply($conn);
+
+$demoPassword = PasswordService::hashPassword(getenv('POSMAIN_E2E_DEMO_PASSWORD') ?: 'P6demo123!');
+$pinService = new PinService();
+
+$roles = RolePermissionSyncService::seedPresetRoles($conn);
+$ownerRoleId = $roles['owner'] ?? 1;
+$cashierRoleId = $roles['cashier'] ?? 3;
+$managerRoleId = $roles['manager'] ?? 2;
+$kitchenRoleId = $roles['kitchen'] ?? 5;
+
+// Ensure Phase 6 kitchen persona exists for §8.2.2 E2E.
+$kitchenStmt = $conn->prepare('SELECT id FROM users WHERE uname = ? LIMIT 1');
+$kitchenUname = 'p6_kitchen';
+$kitchenStmt->bind_param('s', $kitchenUname);
+$kitchenStmt->execute();
+$kitchenRow = $kitchenStmt->get_result()->fetch_assoc();
+$kitchenStmt->close();
+if (!$kitchenRow) {
+    $kitchenDisplay = 'Phase 6 Kitchen';
+    $kitchenIsWaiter = 0;
+    $kitchenImg = '';
+    $insKitchen = $conn->prepare(
+        'INSERT INTO users (uname, password, usertype, userrole, display_name, is_waiter, img, isdeleted)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 0)'
+    );
+    $insKitchen->bind_param(
+        'ssiisis',
+        $kitchenUname,
+        $demoPassword,
+        $kitchenRoleId,
+        $kitchenRoleId,
+        $kitchenDisplay,
+        $kitchenIsWaiter,
+        $kitchenImg
+    );
+    $insKitchen->execute();
+    $insKitchen->close();
+    fwrite(STDOUT, "Created E2E persona {$kitchenUname}\n");
+} else {
+    $kitchenUserId = (int) $kitchenRow['id'];
+    $updKitchen = $conn->prepare(
+        'UPDATE users SET password = ?, userrole = ?, display_name = ?, isdeleted = 0 WHERE id = ?'
+    );
+    $kitchenDisplay = 'Phase 6 Kitchen';
+    $updKitchen->bind_param('sisi', $demoPassword, $kitchenRoleId, $kitchenDisplay, $kitchenUserId);
+    $updKitchen->execute();
+    $updKitchen->close();
+}
+
+// Bind Phase 6 personas to RBAC preset roles (not legacy P6 Demo * roles with leaked flags).
+$waiterRoleId = $roles['waiter'] ?? 4;
+$personaRoleBinding = [
+    'p6_admin' => $ownerRoleId,
+    'p6_manager' => $managerRoleId,
+    'p6_cashier' => $cashierRoleId,
+    'p6_waiter' => $waiterRoleId,
+    'p6_kitchen' => $kitchenRoleId,
+];
+foreach ($personaRoleBinding as $uname => $roleId) {
+    $bindStmt = $conn->prepare('SELECT id FROM users WHERE uname = ? LIMIT 1');
+    $bindStmt->bind_param('s', $uname);
+    $bindStmt->execute();
+    $bindRow = $bindStmt->get_result()->fetch_assoc();
+    $bindStmt->close();
+    if (!$bindRow) {
+        continue;
+    }
+    $personaUserId = (int) $bindRow['id'];
+    $roleStmt = $conn->prepare('UPDATE users SET userrole = ?, isdeleted = 0 WHERE id = ?');
+    $roleStmt->bind_param('ii', $roleId, $personaUserId);
+    $roleStmt->execute();
+    $roleStmt->close();
+
+    $grantTable = $conn->query("SHOW TABLES LIKE 'user_permission_grants'");
+    if ($grantTable && $grantTable->num_rows > 0) {
+        $clearGrants = $conn->prepare('DELETE FROM user_permission_grants WHERE user_id = ?');
+        $clearGrants->bind_param('i', $personaUserId);
+        $clearGrants->execute();
+        $clearGrants->close();
+    }
+
+    $modeCol = $conn->query("SHOW COLUMNS FROM users LIKE 'permission_mode'");
+    if ($modeCol && $modeCol->num_rows > 0) {
+        $mode = 'role_only';
+        $modeStmt = $conn->prepare('UPDATE users SET permission_mode = ? WHERE id = ?');
+        $modeStmt->bind_param('si', $mode, $personaUserId);
+        $modeStmt->execute();
+        $modeStmt->close();
+    }
+
+    fwrite(STDOUT, "Bound {$uname} to preset role_id={$roleId}\n");
+}
+
+$e2ePersonaPins = [
+    'p6_admin' => getenv('POSMAIN_TEST_PIN_ADMIN') ?: '2468',
+    'p6_manager' => getenv('POSMAIN_TEST_PIN_MANAGER') ?: '1357',
+    'p6_cashier' => getenv('POSMAIN_TEST_PIN_CASHIER') ?: '9753',
+    'p6_waiter' => getenv('POSMAIN_TEST_PIN_WAITER') ?: '8642',
+    'p6_kitchen' => getenv('POSMAIN_TEST_PIN_KITCHEN') ?: '7531',
+];
+
+foreach ($e2ePersonaPins as $uname => $pin) {
+    $stmt = $conn->prepare('SELECT id FROM users WHERE uname = ? AND COALESCE(isdeleted, 0) != 1 LIMIT 1');
+    $stmt->bind_param('s', $uname);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    if (!$row) {
+        continue;
+    }
+    $userId = (int) $row['id'];
+    try {
+        $lookup = $pinService->pinLookup($pin);
+        $clear = $conn->prepare(
+            'UPDATE users SET pin_lookup = NULL, pin_set_at = NULL WHERE pin_lookup = ? AND id != ?'
+        );
+        $clear->bind_param('si', $lookup, $userId);
+        $clear->execute();
+        $clear->close();
+
+        $pinService->setPinForUser($conn, $userId, $pin);
+        fwrite(STDOUT, "PIN set on E2E persona {$uname}\n");
+    } catch (Throwable $e) {
+        fwrite(STDERR, "Skip PIN for {$uname}: " . $e->getMessage() . "\n");
+    }
+}
+
+// Dedicated PHPUnit users with non-conflicting PINs.
+$rbacUsers = [
+    ['rbac_pin_admin', 'RBAC Admin', $ownerRoleId, 0, '4826'],
+    ['rbac_pin_manager', 'RBAC Manager', $managerRoleId, 0, '5739'],
+    ['rbac_pin_cashier', 'RBAC Cashier', $cashierRoleId, 0, '6847'],
+];
+
+foreach ($rbacUsers as [$uname, $display, $roleId, $isWaiter, $pin]) {
+    $stmt = $conn->prepare('SELECT id FROM users WHERE uname = ? LIMIT 1');
+    $stmt->bind_param('s', $uname);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+
+    if ($row) {
+        $userId = (int) $row['id'];
+        $upd = $conn->prepare(
+            'UPDATE users SET password = ?, userrole = ?, display_name = ?, is_waiter = ?, isdeleted = 0 WHERE id = ?'
+        );
+        $upd->bind_param('sisii', $demoPassword, $roleId, $display, $isWaiter, $userId);
+        $upd->execute();
+        $upd->close();
+    } else {
+        $ins = $conn->prepare(
+            'INSERT INTO users (uname, password, usertype, userrole, display_name, is_waiter, img, isdeleted)
+             VALUES (?, ?, ?, ?, ?, ?, ?, 0)'
+        );
+        $usertype = $roleId;
+        $emptyImg = '';
+        $ins->bind_param('ssiisis', $uname, $demoPassword, $usertype, $roleId, $display, $isWaiter, $emptyImg);
+        $ins->execute();
+        $userId = (int) $conn->insert_id;
+        $ins->close();
+    }
+
+    try {
+        $lookup = $pinService->pinLookup($pin);
+        $clear = $conn->prepare(
+            'UPDATE users SET pin_lookup = NULL, pin_set_at = NULL WHERE pin_lookup = ? AND id != ?'
+        );
+        $clear->bind_param('si', $lookup, $userId);
+        $clear->execute();
+        $clear->close();
+
+        $pinService->setPinForUser($conn, $userId, $pin);
+        fwrite(STDOUT, "Seeded user {$uname} (id={$userId}) with PIN\n");
+    } catch (Throwable $e) {
+        fwrite(STDERR, "Skip PIN for {$uname}: " . $e->getMessage() . "\n");
+    }
+}
+
+fwrite(STDOUT, "security-fixtures-ok\n");

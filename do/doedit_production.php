@@ -1,5 +1,7 @@
 <?php
-include('../includes/connect.php');
+require_once __DIR__ . '/../includes/rbac_route_guard.php';
+rbac_guard_route('do/doedit_production.php');
+
 $id = $_GET['edit'];
 
 foreach($_POST as $key => $value){

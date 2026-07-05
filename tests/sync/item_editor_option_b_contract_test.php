@@ -3,6 +3,7 @@
 $root = dirname(__DIR__, 2);
 $form = itemEditorOptionBSource($root . '/add_item.php');
 $panel = itemEditorOptionBSource($root . '/elements/sales/item_unit_profile_panel.php');
+$pricingPanel = itemEditorOptionBSource($root . '/elements/sales/item_pricing_panel.php');
 $profileJs = itemEditorOptionBSource($root . '/js/item_unit_profile.js');
 $js = itemEditorOptionBSource($root . '/js/additem.js');
 
@@ -11,43 +12,47 @@ foreach ([
     'id="item-info-section"',
     '1. معلومات الصنف',
     'id="summaryItemName"',
-    'id="summarySellUnit"',
     'id="summarySellPrice"',
-    'id="summaryCostPerSellUnit"',
+    'id="summaryCost"',
     'id="summaryProfitMargin"',
-    'id="summaryExtraUnitsLine"',
-    'name="save_intent" value="close"',
+    '3. التنوعات',
+    'id="item-variations-card"',
+    'variantEditorBody',
 ] as $needle) {
     itemEditorOptionBAssert(strpos($form, $needle) !== false, 'option B item editor should expose: ' . $needle);
 }
 
 foreach ([
-    'id="sell-price-cost-row"',
-    'id="sell_profit_margin"',
-    'id="sell-cost-source-block"',
-    'item-cost-source-choice',
-    'cost-source-direct-choice',
-    'كيف تُحسب التكلفة؟',
-    'id="cost_per_unit_value"',
-    'id="unitImpactPreview"',
-    'id="item-inventory-section"',
     'data-item-type="ingredient"',
 ] as $needle) {
     itemEditorOptionBAssert(strpos($panel, $needle) !== false, 'item unit profile panel should expose: ' . $needle);
 }
 
 foreach ([
-    'variantEditorBody',
+    'id="item-pricing-section"',
+    '4. السعر والتكلفة',
+    'id="sell-price-cost-row"',
+    'id="sell_profit_margin"',
+    'id="direct_cost_price"',
 ] as $needle) {
-    itemEditorOptionBAssert(strpos($form, $needle) !== false, 'option B item editor script should wire: ' . $needle);
+    itemEditorOptionBAssert(strpos($pricingPanel, $needle) !== false, 'item pricing panel should expose: ' . $needle);
+}
+
+foreach ([
+    'name="cost_source"',
+    'value="direct"',
+    'name="sell_unit_id"',
+    'name="storage_unit_id"',
+] as $needle) {
+    itemEditorOptionBAssert(strpos($panel, $needle) !== false, 'item unit profile panel should expose: ' . $needle);
 }
 
 foreach ([
     'refreshSanitySummary',
     'profitMarginPercent',
-    'updateCostSourceChoiceStates',
-    'summarySellUnit',
+    'summarySellPrice',
     'sell_profit_margin',
+    'refreshParentPricingVisibility',
 ] as $needle) {
     itemEditorOptionBAssert(strpos($profileJs, $needle) !== false, 'item unit profile JS should wire: ' . $needle);
 }

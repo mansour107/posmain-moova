@@ -1,5 +1,6 @@
 <?php
-include('../includes/connect.php');
+require_once __DIR__ . '/../includes/rbac_route_guard.php';
+rbac_guard_route('do/doassign_operation.php');
 
 $employee_id = $_POST['employee_id'];
 $operation_id = $_POST['operation_id'];

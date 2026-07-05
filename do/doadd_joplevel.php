@@ -1,5 +1,6 @@
 <?php
-include '../includes/connect.php';
+require_once __DIR__ . '/../includes/rbac_route_guard.php';
+rbac_guard_route('do/doadd_joplevel.php');
 
 if ($_SERVER['REQUEST_METHOD'] == "POST") {
     foreach ($_POST as $key => $value) {

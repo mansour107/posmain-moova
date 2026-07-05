@@ -1,5 +1,10 @@
 <?php
-require_once __DIR__ . '/classes/Inventory/InventoryStockReadService.php';
+require_once __DIR__ . '/includes/auth_guard.php';
+include __DIR__ . '/includes/connect.php';
+require_once __DIR__ . '/includes/page_guard.php';
+page_guard('reports.view', $conn);
+?>
+<?php require_once __DIR__ . '/classes/Inventory/InventoryStockReadService.php';
 
 include('includes/header.php');
 include('includes/navbar.php');

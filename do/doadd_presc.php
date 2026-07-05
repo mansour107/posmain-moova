@@ -1,5 +1,7 @@
 <?php
-include('../includes/connect.php');
+require_once __DIR__ . '/../includes/rbac_route_guard.php';
+rbac_guard_route('do/doadd_presc.php');
+
 echo '<pre>';
 print_r($_POST);print_r($_GET);
 $analyses = $_POST['analyses'];

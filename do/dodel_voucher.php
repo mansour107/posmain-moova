@@ -1,5 +1,7 @@
 <?php
-include("../includes/connect.php");
+require_once __DIR__ . '/../includes/rbac_route_guard.php';
+rbac_guard_route('do/dodel_voucher.php');
+
 $id = $_GET['del'];
 
 $sql1 = "SELECT * from  ot_head where id = $id";

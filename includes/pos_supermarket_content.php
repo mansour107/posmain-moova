@@ -342,79 +342,92 @@ $posmainPosDefaults = posmain_resolve_pos_defaults($conn, is_array($rowstg ?? nu
 </div>
 
 <!-- Modal إغلاق الشيفت -->
+<?php include __DIR__ . '/../elements/pos/shift_expense_modal.php'; ?>
 <?php if (function_exists('csrf_token')): ?>
 <script>
     window.POSMAIN_SHIFT_CSRF_TOKEN = <?= json_encode(csrf_token('shift_close'), JSON_UNESCAPED_SLASHES) ?>;
 </script>
 <?php endif; ?>
-<div class="modal fade" id="closeShiftModal" tabindex="-1" aria-labelledby="closeShiftModalLabel" aria-hidden="true">
-    <div class="modal-dialog modal-lg modal-dialog-centered">
-        <div class="modal-content">
-            <div class="modal-header bg-warning text-dark">
-                <h5 class="modal-title" id="closeShiftModalLabel">
-                    <i class="fas fa-power-off me-2"></i>إغلاق الشيفت
-                </h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+<div class="modal fade pos-close-shift-modal-fade" id="closeShiftModal" tabindex="-1"
+    aria-labelledby="closeShiftModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-centered pos-close-shift-dialog">
+        <div class="modal-content pos-close-shift-content">
+            <div class="modal-header pos-close-shift-header">
+                <button type="button" class="btn-close pos-close-shift-close" data-bs-dismiss="modal"
+                    aria-label="إغلاق"></button>
+                <div class="pos-close-shift-heading">
+                    <h5 class="modal-title pos-close-shift-title" id="closeShiftModalLabel">
+                        <i class="fas fa-power-off me-2"></i>إغلاق الشيفت
+                    </h5>
+                    <p class="pos-close-shift-subtitle mb-0">تأكيد الإغلاق ومراجعة مبيعات اليوم</p>
+                </div>
             </div>
-            <div class="modal-body">
-                <div class="text-center mb-4">
-                    <i class="fas fa-exclamation-triangle fa-3x text-warning mb-3"></i>
-                    <h5>هل أنت متأكد من إغلاق الشيفت؟</h5>
-                    <p class="text-muted">سيتم حساب إجمالي مبيعاتك وإغلاق الشيفت نهائياً</p>
+            <div class="modal-body pos-close-shift-body">
+                <div class="pos-close-shift-warning">
+                    <i class="fas fa-exclamation-triangle pos-close-shift-warning-icon" aria-hidden="true"></i>
+                    <h5 class="pos-close-shift-warning-title">هل أنت متأكد من إغلاق الشيفت؟</h5>
+                    <p class="pos-close-shift-warning-text">سيتم حساب إجمالي مبيعاتك وإغلاق الشيفت نهائياً</p>
                 </div>
 
-                <div class="card border-primary mb-3">
-                    <div class="card-header bg-primary text-white">
-                        <h6 class="mb-0"><i class="fas fa-chart-bar me-2"></i>معاينة سريعة لمبيعات اليوم</h6>
+                <section class="pos-close-shift-section">
+                    <div class="pos-close-shift-section-header">
+                        <i class="fas fa-chart-bar" aria-hidden="true"></i>
+                        <h6>معاينة سريعة لمبيعات اليوم</h6>
                     </div>
-                    <div class="card-body" id="shiftPreview">
-                        <div class="text-center">
-                            <div class="spinner-border text-primary" role="status">
+                    <div class="pos-close-shift-section-body" id="shiftPreview">
+                        <div class="pos-close-shift-loading">
+                            <div class="spinner-border" role="status">
                                 <span class="visually-hidden">جاري التحميل...</span>
                             </div>
-                            <p class="mt-2">جاري حساب المبيعات...</p>
+                            <p>جاري حساب المبيعات...</p>
                         </div>
                     </div>
-                </div>
+                </section>
 
-                <div class="card border-secondary mb-3">
-                    <div class="card-header bg-secondary text-white">
-                        <h6 class="mb-0"><i class="fas fa-calculator me-2"></i>بيانات إغلاق الشيفت</h6>
+                <section class="pos-close-shift-section">
+                    <div class="pos-close-shift-section-header">
+                        <i class="fas fa-calculator" aria-hidden="true"></i>
+                        <h6>بيانات إغلاق الشيفت</h6>
                     </div>
-                    <div class="card-body">
-                        <div class="row g-3">
+                    <div class="pos-close-shift-section-body">
+                        <div class="row g-3 pos-close-shift-fields">
                             <div class="col-md-6">
-                                <label class="form-label">المصاريف</label>
-                                <input type="number" class="form-control" id="shift_expenses" placeholder="0.00" step="0.01">
+                                <label class="pos-close-shift-field-label" for="shift_expenses">المصاريف</label>
+                                <input type="number" class="form-control pos-close-shift-input" id="shift_expenses"
+                                    placeholder="0.00" step="0.01" readonly title="يُحسب تلقائياً من مصروفات الشيفت">
                             </div>
                             <div class="col-md-6">
-                                <label class="form-label">تسليم الكاش</label>
-                                <input type="number" class="form-control" id="shift_cash" placeholder="0.00" step="0.01">
+                                <label class="pos-close-shift-field-label" for="shift_cash">تسليم الكاش</label>
+                                <input type="number" class="form-control pos-close-shift-input" id="shift_cash"
+                                    placeholder="0.00" step="0.01">
                             </div>
                             <div class="col-md-6">
-                                <label class="form-label">نهاية الدرج</label>
-                                <input type="number" class="form-control" id="shift_fund_after" placeholder="0.00" step="0.01">
+                                <label class="pos-close-shift-field-label" for="shift_fund_after">نهاية الدرج</label>
+                                <input type="number" class="form-control pos-close-shift-input" id="shift_fund_after"
+                                    placeholder="0.00" step="0.01">
                             </div>
                             <div class="col-md-6">
-                                <label class="form-label">بيان المصاريف</label>
-                                <input type="text" class="form-control" id="shift_exp_notes" placeholder="تفاصيل المصاريف">
+                                <label class="pos-close-shift-field-label" for="shift_exp_notes">بيان المصاريف</label>
+                                <input type="text" class="form-control pos-close-shift-input" id="shift_exp_notes"
+                                    placeholder="تفاصيل المصاريف">
                             </div>
                             <div class="col-12">
-                                <label class="form-label">ملاحظات</label>
-                                <textarea class="form-control" id="shift_notes" rows="3" placeholder="ملاحظات إضافية"></textarea>
+                                <label class="pos-close-shift-field-label" for="shift_notes">ملاحظات</label>
+                                <textarea class="form-control pos-close-shift-input" id="shift_notes" rows="3"
+                                    placeholder="ملاحظات إضافية"></textarea>
                             </div>
                         </div>
                     </div>
-                </div>
+                </section>
             </div>
-            <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
+            <div class="modal-footer pos-close-shift-footer">
+                <button type="button" class="btn pos-close-shift-btn-cancel" data-bs-dismiss="modal">
                     <i class="fas fa-times me-1"></i>إلغاء
                 </button>
-                <a href="z_report.php" class="btn btn-danger">
-                    <i class="fas fa-file-invoice me-1"></i> الانتقال لتقرير الإغلاق (Z-Report)
+                <a href="z_report.php" class="btn pos-close-shift-btn-zreport">
+                    <i class="fas fa-file-invoice me-1"></i>تقرير الإغلاق (Z-Report)
                 </a>
-                <button type="button" class="btn btn-warning" onclick="closeSupermarketShift()">
+                <button type="button" class="btn pos-close-shift-btn-confirm" onclick="closeSupermarketShift()">
                     <i class="fas fa-power-off me-1"></i>إغلاق الشيفت
                 </button>
             </div>
@@ -430,6 +443,17 @@ $posmainPosDefaults = posmain_resolve_pos_defaults($conn, is_array($rowstg ?? nu
 <script>
 (function ($) {
     window.closeSupermarketShift = function () {
+        if (window.posmainMarkShiftClosing) {
+            window.posmainMarkShiftClosing();
+        } else {
+            try {
+                sessionStorage.setItem('pos_shift_closed', '1');
+                sessionStorage.setItem('pos_locked', '1');
+            } catch (e) {
+                // ignore storage failures
+            }
+        }
+
         const form = $('<form>', { method: 'POST', action: 'close_shift.php' });
         form.append($('<input>', { type: 'hidden', name: 'expenses', value: $('#shift_expenses').val() || 0 }));
         form.append($('<input>', { type: 'hidden', name: 'exp_notes', value: $('#shift_exp_notes').val() || '' }));
@@ -445,7 +469,7 @@ $posmainPosDefaults = posmain_resolve_pos_defaults($conn, is_array($rowstg ?? nu
 
     $('#closeShiftModal').on('show.bs.modal', function () {
         $('#shiftPreview').html(
-            '<div class="text-center"><div class="spinner-border text-primary" role="status"></div><p class="mt-2">جاري حساب المبيعات...</p></div>'
+            '<div class="pos-close-shift-loading"><div class="spinner-border" role="status"></div><p>جاري حساب المبيعات...</p></div>'
         );
         $.ajax({
             url: 'do/get_shift_preview.php',
@@ -454,21 +478,40 @@ $posmainPosDefaults = posmain_resolve_pos_defaults($conn, is_array($rowstg ?? nu
                 try {
                     const response = (typeof data === 'object') ? data : JSON.parse(data);
                     if (response.success) {
+                        const expenses = response.data.expenses || {};
+                        let expenseHtml = '';
+                        if (expenses.mid_shift_enabled || Number(expenses.total || 0) > 0) {
+                            expenseHtml =
+                                '<div class="pos-close-shift-stat">' +
+                                '<i class="fas fa-wallet pos-close-shift-stat-icon is-expenses" aria-hidden="true"></i>' +
+                                '<strong class="pos-close-shift-stat-value">' + (expenses.total_formatted || '0.00') + ' ج.م</strong>' +
+                                '<span class="pos-close-shift-stat-label">مصروفات الشيفت</span></div>';
+                        }
                         $('#shiftPreview').html(
-                            '<div class="row">' +
-                            '<div class="col-md-6 text-center"><h4 class="text-info">' + response.data.total_orders + '</h4><p class="text-muted mb-0">عدد الطلبات</p></div>' +
-                            '<div class="col-md-6 text-center"><h4 class="text-success">' + response.data.total_sales + ' ج.م</h4><p class="text-muted mb-0">إجمالي المبيعات</p></div>' +
+                            '<div class="pos-close-shift-stats">' +
+                            '<div class="pos-close-shift-stat">' +
+                            '<i class="fas fa-receipt pos-close-shift-stat-icon is-orders" aria-hidden="true"></i>' +
+                            '<strong class="pos-close-shift-stat-value">' + response.data.total_orders + '</strong>' +
+                            '<span class="pos-close-shift-stat-label">عدد الطلبات</span></div>' +
+                            '<div class="pos-close-shift-stat">' +
+                            '<i class="fas fa-money-bill-wave pos-close-shift-stat-icon is-sales" aria-hidden="true"></i>' +
+                            '<strong class="pos-close-shift-stat-value">' + response.data.total_sales + ' ج.م</strong>' +
+                            '<span class="pos-close-shift-stat-label">إجمالي المبيعات</span></div>' +
+                            expenseHtml +
                             '</div>'
                         );
+                        if (window.posShiftExpenseApplyCloseFields) {
+                            window.posShiftExpenseApplyCloseFields(expenses);
+                        }
                     } else {
-                        $('#shiftPreview').html('<div class="alert alert-warning text-center">' + (response.error || 'لا توجد مبيعات لك اليوم') + '</div>');
+                        $('#shiftPreview').html('<div class="pos-close-shift-alert is-warning">' + (response.error || 'لا توجد مبيعات لك اليوم') + '</div>');
                     }
                 } catch (e) {
-                    $('#shiftPreview').html('<div class="alert alert-danger text-center">تعذر تحميل المعاينة</div>');
+                    $('#shiftPreview').html('<div class="pos-close-shift-alert is-danger">تعذر تحميل المعاينة</div>');
                 }
             },
             error: function () {
-                $('#shiftPreview').html('<div class="alert alert-danger text-center">تعذر تحميل المعاينة</div>');
+                $('#shiftPreview').html('<div class="pos-close-shift-alert is-danger">تعذر تحميل المعاينة</div>');
             }
         });
     });
@@ -477,3 +520,4 @@ $posmainPosDefaults = posmain_resolve_pos_defaults($conn, is_array($rowstg ?? nu
 <script src="js/pos_order_draft.js?v=<?= (int) (@filemtime(__DIR__ . '/../js/pos_order_draft.js') ?: 1) ?>"></script>
 <script src="js/pos_order_api.js?v=<?= (int) (@filemtime(__DIR__ . '/../js/pos_order_api.js') ?: 1) ?>"></script>
 <script src="js/pos_supermarket.js?v=<?= time() ?>"></script>
+<script src="js/pos_shift_expenses.js?v=<?= (int) (@filemtime(__DIR__ . '/../js/pos_shift_expenses.js') ?: 1) ?>"></script>

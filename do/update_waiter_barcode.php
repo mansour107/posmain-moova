@@ -1,4 +1,7 @@
 <?php
+require_once __DIR__ . '/../includes/rbac_route_guard.php';
+rbac_guard_route('do/update_waiter_barcode.php');
+
 /**
  * تحديث باركود الويتر في قاعدة البيانات
  * Update Waiter Barcode in Database
@@ -29,8 +32,6 @@ if (empty($barcode)) {
 }
 
 // الاتصال بقاعدة البيانات
-include('../includes/connect.php');
-
 // التحقق من أن المستخدم ويتر
 $check_stmt = $conn->prepare("SELECT id FROM users WHERE id = ? AND is_waiter = 1 AND isdeleted = 0");
 $check_stmt->bind_param("i", $user_id);

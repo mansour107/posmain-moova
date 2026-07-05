@@ -1,4 +1,9 @@
-<?php include('includes/header.php') ?>
+<?php
+require_once __DIR__ . '/includes/auth_guard.php';
+require_once __DIR__ . '/includes/page_guard.php';
+include('includes/connect.php');
+page_guard('roles.manage', $conn, true);
+include('includes/header.php') ?>
 <?php include('includes/navbar.php') ?>
 <?php include('includes/sidebar.php') ?>
 
@@ -39,9 +44,13 @@
                             <tr>
                                 <td class="text-center font-weight-bold text-muted"><?= $counter++ ?></td>
                                 <td class="font-weight-bold"><?= htmlspecialchars($rawrole['rollname']) ?></td>
-                                <td class="text-muted"><?= htmlspecialchars($rawrole['info']) ?></td>
+                                <td class="text-muted"><?= htmlspecialchars((string) ($rawrole['info'] ?? '')) ?></td>
                                 <td class="text-center">
                                     <div class="btn-group" role="group">
+                                        <a href="role_permissions.php?id=<?= (int) $rawrole['id'] ?>"
+                                           class="btn btn-sm" title="صلاحيات">
+                                            <i class="fas fa-shield-alt" style="color:rgb(80, 130, 220);"></i>
+                                        </a>
                                         <a href="edit_role.php?id=<?= md5($rawrole['id']) ?>&no=<?= $rawrole['id'] ?>&name=<?= urlencode($rawrole['rollname']) ?>" 
                                            class="btn btn-sm" title="تعديل">
                                             <i class="fas fa-edit " style="color:rgb(255, 184, 51);"></i>

@@ -27,6 +27,7 @@ class EmptyShopBootstrap
 
         $userId = $this->seedAdminUser($conn, $username, $password);
         $this->seedAdminRole($conn);
+        $this->seedRoleTemplates($conn);
         $this->seedSettings($conn);
         (new SyncSchemaManager())->apply($conn);
 
@@ -167,6 +168,19 @@ class EmptyShopBootstrap
         $conn->query(
             'INSERT INTO usr_pwrs (' . implode(', ', $columns) . ') VALUES (' . implode(', ', $values) . ')'
         );
+    }
+
+    private function seedRoleTemplates(mysqli $conn): void
+    {
+        $templates = ['Owner', 'Manager', 'Cashier', 'Kitchen', 'Waiter'];
+        foreach ($templates as $name) {
+            $escaped = $conn->real_escape_string($name);
+            $existing = $conn->query("SELECT id FROM usr_pwrs WHERE rollname = '{$escaped}' AND COALESCE(isdeleted, 0) = 0 LIMIT 1");
+            if ($existing && $existing->num_rows > 0) {
+                continue;
+            }
+            $conn->query("INSERT INTO usr_pwrs (rollname, info, isdeleted) VALUES ('{$escaped}', 'Role template (configure permissions)', 0)");
+        }
     }
 
     private function seedSettings(mysqli $conn): void

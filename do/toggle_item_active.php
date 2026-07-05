@@ -1,7 +1,10 @@
 <?php
-include('../includes/connect.php');
-require_once('../classes/Items/ItemCatalogStatus.php');
-require_once('../classes/Sync/MenuItemSyncRecorder.php');
+
+require_once __DIR__ . '/../includes/rbac_route_guard.php';
+rbac_guard_route('do/toggle_item_active.php');
+
+require_once __DIR__ . '/../classes/Items/ItemCatalogStatus.php';
+require_once __DIR__ . '/../classes/Sync/MenuItemSyncRecorder.php';
 
 $id = (int) ($_POST['id'] ?? 0);
 $active = (int) ($_POST['active'] ?? 1) === 1 ? 1 : 0;

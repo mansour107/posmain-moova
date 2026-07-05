@@ -1,5 +1,6 @@
 <?php
-include('../includes/connect.php');
+require_once __DIR__ . '/../includes/rbac_route_guard.php';
+rbac_guard_route('do/doupdate_operation_status.php');
 
 $id = $_GET['id'];
 $status = $_GET['status'];

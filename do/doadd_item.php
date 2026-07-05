@@ -1,6 +1,7 @@
 <?php
-require_once __DIR__ . '/../includes/session_bootstrap.php';
-include('../includes/connect.php');
+require_once __DIR__ . '/../includes/rbac_route_guard.php';
+rbac_guard_route('do/doadd_item.php');
+
 require_once __DIR__ . '/../classes/Items/ItemCatalogCode.php';
 require_once __DIR__ . '/../classes/Items/ItemEditorFlash.php';
 require_once __DIR__ . '/../classes/Items/ItemFormInput.php';
@@ -10,7 +11,11 @@ require_once __DIR__ . '/../classes/Pos/Service/ItemVariantService.php';
 require_once __DIR__ . '/../classes/Sync/MenuItemSyncRecorder.php';
 require_once __DIR__ . '/../classes/Sync/ItemImageSyncRecorder.php';
 
-$usid = (int) ($_SESSION['userid'] ?? 1);
+$usid = current_user_id();
+if ($usid < 1) {
+    header('Location: ../index.php');
+    exit;
+}
 
 try {
     if (!isset($_POST['barcode']) || trim((string) $_POST['barcode']) === '') {
@@ -157,13 +162,8 @@ try {
     exit;
 }
 
-$saveIntent = (string) ($_POST['save_intent'] ?? 'stay');
-if ($saveIntent === 'close') {
-    header('Location: ../myitems.php');
-} else {
-    ItemEditorFlash::set('success', 'saved');
-    header('Location: ../add_item.php');
-}
+ItemEditorFlash::set('success', 'saved');
+header('Location: ../add_item.php');
 exit;
 
 function posmain_add_item_images_are_valid(array $files): bool

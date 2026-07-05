@@ -1,4 +1,8 @@
-<?php include('../includes/connect.php') ;
+<?php
+require_once __DIR__ . '/../includes/rbac_route_guard.php';
+rbac_guard_route('do/do_delprint.php');
+
+include('../includes/connect.php') ;
 $id = $_GET['id'];
 $sqlchk = "select * from zankat where print = $id";
 $rowchk = $conn->query($sqlchk);

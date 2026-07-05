@@ -1,5 +1,6 @@
 <?php
 require_once __DIR__ . '/includes/auth_guard.php';
+require_once __DIR__ . '/includes/csrf.php';
 include('includes/connect.php');
 require_admin_or_permission('users.manage', $conn);
 include('includes/header.php');
@@ -295,6 +296,18 @@ include('includes/sidebar.php');
     
     <!-- Page Header -->
     <div class="page-header">
+        <?php
+        $pinReveal = $_SESSION['posmain_one_time_pin_reveal'] ?? null;
+        if (isset($_GET['pin_reveal']) && is_array($pinReveal) && (int) ($pinReveal['expires'] ?? 0) > time()):
+            $revealPin = (string) ($pinReveal['pin'] ?? '');
+            unset($_SESSION['posmain_one_time_pin_reveal']);
+        ?>
+        <div class="alert alert-warning pin-reveal-box mb-3">
+            <strong>رمز PIN لمرة واحدة:</strong>
+            <span dir="ltr" style="font-size:1.4rem;letter-spacing:.2em"><?= htmlspecialchars($revealPin, ENT_QUOTES, 'UTF-8') ?></span>
+            <div class="small text-muted mt-1">سيختفي هذا التنبيه عند تحديث الصفحة — انسخ الرمز الآن.</div>
+        </div>
+        <?php endif; ?>
         <div class="row align-items-center">
             <div class="col-md-6">
                 <h1 class="page-title">
@@ -306,6 +319,10 @@ include('includes/sidebar.php');
                     <a href="myroles.php" class="btn-light-clean">
                         <i class="fas fa-user-shield"></i>
                         أدوار المستخدمين
+                    </a>
+                    <a href="users.php?<?= isset($_GET['show_deactivated']) ? '' : 'show_deactivated=1' ?>" class="btn-light-clean">
+                        <i class="fas fa-user-slash"></i>
+                        <?= isset($_GET['show_deactivated']) ? 'المستخدمون النشطون' : 'المُلغى تفعيلهم' ?>
                     </a>
                     <a href="add_user.php" class="btn-primary-clean">
                         <i class="fas fa-plus-circle"></i>
@@ -331,27 +348,48 @@ include('includes/sidebar.php');
                     <tr>
                         <th width="80">#</th>
                         <th><?=$lang_username?></th>
+                        <th>الاسم المعروض</th>
+                        <th>الدور</th>
+                        <th width="100">PIN</th>
                         <th width="120">نوع الحساب</th>
                         <th><?=$lang_userimage?></th>
-                        <th width="250"><?=$lang_useroperations?></th>
+                        <th width="300"><?=$lang_useroperations?></th>
                     </tr>
                 </thead>
                 <tbody>
                     <?php 
-                    $sql = "SELECT * FROM `users` order by id desc";
+                    $showDeactivated = isset($_GET['show_deactivated']);
+                    $sql = "SELECT u.*, r.rollname AS role_name
+                              FROM users u
+                              LEFT JOIN usr_pwrs r ON r.id = u.userrole
+                             WHERE COALESCE(u.isdeleted, 0) = " . ($showDeactivated ? '1' : '0') . "
+                             ORDER BY u.id DESC";
                     $res = $conn->query($sql);
                     
                     if($res->num_rows > 0) {
                         $x = 0;
                         while ($row = $res->fetch_assoc()) {
                             $x++;
+                            $hasPin = !empty($row['pin_set_at']);
+                            $pinLocked = !empty($row['pin_locked_until']) && strtotime((string) $row['pin_locked_until']) > time();
                     ?>
                     <tr>
                         <td>
                             <span class="serial-number"><?php echo $x ?></span>
                         </td>
                         <td>
-                            <div class="user-name"><?= $row['uname'] ?></div>
+                            <div class="user-name"><?= htmlspecialchars($row['uname']) ?></div>
+                        </td>
+                        <td><?= htmlspecialchars((string) ($row['display_name'] ?? '—')) ?></td>
+                        <td><span class="user-type"><?= htmlspecialchars((string) ($row['role_name'] ?? '—')) ?></span></td>
+                        <td>
+                            <?php if ($hasPin): ?>
+                                <span class="badge badge-<?= $pinLocked ? 'danger' : 'success' ?>" title="<?= $pinLocked ? 'مقفل' : 'مفعّل' ?>">
+                                    <?= $pinLocked ? '🔒 مقفل' : '✓ PIN' ?>
+                                </span>
+                            <?php else: ?>
+                                <span class="badge badge-secondary">بدون PIN</span>
+                            <?php endif; ?>
                         </td>
                         <td>
                             <?php if(isset($row['is_waiter']) && $row['is_waiter'] == 1): ?>
@@ -374,15 +412,25 @@ include('includes/sidebar.php');
                         </td>
                         <td>
                             <div class="action-buttons-cell">
-                                <a class="btn-edit-clean" href="edit_user.php?id=<?= $row['id']?>">
+                                <a class="btn-edit-clean" href="edit_user.php?id=<?= $row['id']?>" title="تعديل">
                                     <i class="fas fa-edit"></i>
-                                    
                                 </a>
-                                <a class="btn-delete-clean" href="do/do_deluser.php?id=<?= $row['id'] ?>" 
-                                   onclick="return confirm('هل أنت متأكد من رغبتك في حذف المستخدم <?= $row['uname'] ?>؟')">
-                                    <i class="fas fa-trash"></i>
-                                    
-                                </a>
+                                <?php if ($pinLocked): ?>
+                                <form method="post" action="do/do_user_unlock_pin.php" class="d-inline">
+                                    <?= csrf_input('users_write') ?>
+                                    <input type="hidden" name="user_id" value="<?= (int) $row['id'] ?>">
+                                    <button type="submit" class="btn-light-clean" style="padding:8px 12px" title="فتح قفل PIN">
+                                        <i class="fas fa-unlock"></i>
+                                    </button>
+                                </form>
+                                <?php endif; ?>
+                                <form method="post" action="do/do_user_deactivate.php" class="d-inline" onsubmit="return confirm('إلغاء تفعيل <?= htmlspecialchars($row['uname'], ENT_QUOTES) ?>؟')">
+                                    <?= csrf_input('users_write') ?>
+                                    <input type="hidden" name="user_id" value="<?= (int) $row['id'] ?>">
+                                    <button type="submit" class="btn-delete-clean" style="border:none" title="إلغاء التفعيل">
+                                        <i class="fas fa-user-slash"></i>
+                                    </button>
+                                </form>
                             </div>
                         </td>
                     </tr>

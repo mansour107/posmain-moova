@@ -1,15 +1,18 @@
 <?php
 
 $root = dirname(__DIR__, 2);
-$form = itemRecipeCatalogSource($root . '/add_item.php');
+$form = itemRecipeCatalogSource($root . '/add_item.php')
+    . itemRecipeCatalogSource($root . '/elements/sales/item_unit_profile_panel.php');
 $add = itemRecipeCatalogSource($root . '/do/doadd_item.php');
 $edit = itemRecipeCatalogSource($root . '/do/doedit_item.php');
 $input = itemRecipeCatalogSource($root . '/classes/Items/ItemFormInput.php');
 $service = itemRecipeCatalogSource($root . '/classes/Items/ItemRecipeCatalogService.php');
 $recipeManage = itemRecipeCatalogSource($root . '/recipe_manage.php');
 
-foreach (['item_type', 'track_stock', 'preferred_unit_id'] as $field) {
+foreach (['item_type', 'track_stock'] as $field) {
     itemRecipeCatalogAssert(strpos($form, 'name="' . $field . '"') !== false, 'item form should expose ' . $field);
+}
+foreach (['item_type', 'track_stock', 'preferred_unit_id'] as $field) {
     itemRecipeCatalogAssert(strpos($input, "'" . $field . "'") !== false, 'item form input should normalize ' . $field);
 }
 

@@ -10,6 +10,7 @@ if (PHP_SAPI !== 'cli') {
 
 require_once __DIR__ . '/../includes/db_bootstrap.php';
 require_once __DIR__ . '/../classes/PasswordService.php';
+require_once __DIR__ . '/../classes/Security/RolePermissionSyncService.php';
 
 final class Phase6DemoSeeder
 {
@@ -208,10 +209,10 @@ final class Phase6DemoSeeder
         $accounts = [
             'supplier_parent' => ['code' => '211P6DEMO', 'aname' => 'P6-DEMO Suppliers', 'parent_id' => 0, 'is_stock' => 0, 'is_fund' => 0, 'is_basic' => 1],
             'supplier' => ['code' => '211P6DEMO001', 'aname' => 'P6-DEMO Default Supplier', 'parent_id' => 0, 'is_stock' => 0, 'is_fund' => 0, 'is_basic' => 0],
-            'client' => ['code' => '122P6DEMO', 'aname' => 'P6-DEMO Walk-in Customer', 'parent_id' => 0, 'is_stock' => 0, 'is_fund' => 0],
-            'store' => ['code' => '123P6DEMO', 'aname' => 'P6-DEMO Main Store', 'parent_id' => 0, 'is_stock' => 1, 'is_fund' => 0],
-            'employee' => ['code' => '213P6DEMO', 'aname' => 'P6-DEMO Staff Clearing', 'parent_id' => 35, 'is_stock' => 0, 'is_fund' => 0],
-            'fund' => ['code' => '121P6DEMO', 'aname' => 'P6-DEMO Cash Drawer', 'parent_id' => 0, 'is_stock' => 0, 'is_fund' => 1],
+            'client' => ['code' => '122P6DEMO', 'aname' => 'P6-DEMO Walk-in Customer', 'parent_id' => 0, 'is_stock' => 0, 'is_fund' => 0, 'is_basic' => 0],
+            'store' => ['code' => '123P6DEMO', 'aname' => 'P6-DEMO Main Store', 'parent_id' => 0, 'is_stock' => 1, 'is_fund' => 0, 'is_basic' => 0],
+            'employee' => ['code' => '213P6DEMO', 'aname' => 'P6-DEMO Staff Clearing', 'parent_id' => 35, 'is_stock' => 0, 'is_fund' => 0, 'is_basic' => 0],
+            'fund' => ['code' => '121P6DEMO', 'aname' => 'P6-DEMO Cash Drawer', 'parent_id' => 0, 'is_stock' => 0, 'is_fund' => 1, 'is_basic' => 0],
         ];
 
         $supplierParentId = null;
@@ -544,11 +545,47 @@ final class Phase6DemoSeeder
             'tenant' => $this->tenant(),
             'branch' => $this->branch(),
         ];
+        foreach ($this->roleFlagColumns() as $column) {
+            $data[$column] = 0;
+        }
         foreach ($enabledColumns as $column) {
             $data[$column] = 1;
         }
 
         return $this->upsert('usr_pwrs', 'rollname', $roleName, $data, 'roles');
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function roleFlagColumns(): array
+    {
+        if (!$this->tableExists('usr_pwrs')) {
+            return RolePermissionSyncService::allManagedLegacyColumns();
+        }
+
+        $skip = ['id', 'rollname', 'info', 'isdeleted', 'is_active', 'tenant', 'branch'];
+        $columns = [];
+        foreach (array_keys($this->tableColumnsFor('usr_pwrs')) as $column) {
+            if (in_array($column, $skip, true)) {
+                continue;
+            }
+            $columns[] = $column;
+        }
+
+        return $columns;
+    }
+
+    /**
+     * @return array<string,bool>
+     */
+    private function tableColumnsFor(string $table): array
+    {
+        if (!isset($this->tableColumns[$table])) {
+            $this->hasColumn($table, 'id');
+        }
+
+        return $this->tableColumns[$table] ?? [];
     }
 
     private function seedSettings(): void

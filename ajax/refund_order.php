@@ -33,7 +33,7 @@ if (!in_array($action, ['refund', 'void'], true)) {
 
 require_permission($action === 'void' ? 'pos.void.paid' : 'pos.refund', $conn);
 
-$userId = (int) ($_SESSION['userid'] ?? $_SESSION['user_id'] ?? 0);
+$userId = function_exists('pos_acting_user_id') ? pos_acting_user_id() : (int) ($_SESSION['userid'] ?? $_SESSION['user_id'] ?? 0);
 $idempotencyService = new IdempotencyService();
 $scope = $action === 'void' ? PosOrderMutationService::SCOPE_ORDER_VOID : PosOrderMutationService::SCOPE_ORDER_REFUND;
 

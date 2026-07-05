@@ -47,23 +47,23 @@ $expectations = [
         'pos_authenticated',
     ],
     'do/doadd_customer_visit.php' => [
-        "require_once __DIR__ . '/../includes/session_bootstrap.php'",
+        "rbac_guard_route('do/doadd_customer_visit.php')",
         "require_csrf('customer_visits')",
         'require_login()',
     ],
     'do/dodel_customer_visit.php' => [
-        "require_once __DIR__ . '/../includes/session_bootstrap.php'",
+        "rbac_guard_route('do/dodel_customer_visit.php')",
         "require_csrf('customer_visits')",
         'require_login()',
         '$_POST[\'id\']',
     ],
     'ajax/update_customer_visit_end_time.php' => [
-        "require_once __DIR__ . '/../includes/session_bootstrap.php'",
+        "rbac_guard_route('ajax/update_customer_visit_end_time.php')",
         "require_csrf('customer_visits')",
         'require_login()',
     ],
     'ajax/pulse_ajax.php' => [
-        "require_once __DIR__ . '/../includes/session_bootstrap.php'",
+        "rbac_guard_route('ajax/pulse_ajax.php')",
         'http_response_code(401)',
         "require_csrf('pulse')",
     ],
@@ -80,10 +80,9 @@ $expectations = [
         "require_once __DIR__ . '/includes/auth_guard.php'",
         "require_once __DIR__ . '/includes/csrf.php'",
         'require_pos_authenticated();',
+        "require_permission('pos.shift.close'",
         "require_csrf('shift_close');",
-        '$sales_stmt = $conn->prepare($sales_query)',
-        '$user_stmt = $conn->prepare($user_query)',
-        '$insert_stmt = $conn->prepare($insert_query)',
+        'ShiftSessionService',
     ],
     'z_report.php' => [
         "require_once __DIR__ . '/includes/csrf.php'",
@@ -93,9 +92,8 @@ $expectations = [
         "require_once __DIR__ . '/includes/auth_guard.php'",
         "require_once __DIR__ . '/includes/csrf.php'",
         'require_pos_authenticated();',
+        "require_permission('pos.shift.close'",
         "require_csrf('shift_close_z');",
-        '$user_stmt = $conn->prepare($user_query)',
-        '$insert_stmt = $conn->prepare($insert_query)',
     ],
 ];
 

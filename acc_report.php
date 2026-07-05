@@ -1,5 +1,10 @@
 <?php
-require_once __DIR__ . '/includes/session_bootstrap.php';
+require_once __DIR__ . '/includes/auth_guard.php';
+include __DIR__ . '/includes/connect.php';
+require_once __DIR__ . '/includes/page_guard.php';
+page_guard('accounting.view', $conn);
+?>
+<?php require_once __DIR__ . '/includes/session_bootstrap.php';
 require_once __DIR__ . '/includes/connect.php';
 
 $accReportScope = isset($_GET['acc']) ? (string) $_GET['acc'] : '';

@@ -1,4 +1,6 @@
-<?php include('../includes/connect.php');
+<?php
+require_once __DIR__ . '/../includes/rbac_route_guard.php';
+rbac_guard_route('do/doadd_empkbi.php');
 
 $emp_id = $_POST['emp_id'];
 $kbi_id = $_POST['kbi_id'];

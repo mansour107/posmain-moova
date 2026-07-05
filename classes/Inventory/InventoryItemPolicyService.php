@@ -24,7 +24,7 @@ class InventoryItemPolicyService
         $type = strtolower(trim((string) $value));
         $type = str_replace(['-', ' '], '_', $type);
 
-        if (in_array($type, ['ingredient', 'packaging', 'service', 'sellable'], true)) {
+        if (in_array($type, ['ingredient', 'packaging', 'service', 'sellable', 'made'], true)) {
             return $type;
         }
 

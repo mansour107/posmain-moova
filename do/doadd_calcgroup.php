@@ -1,4 +1,8 @@
-<?php include('../includes/connect.php') ;
+<?php
+require_once __DIR__ . '/../includes/rbac_route_guard.php';
+rbac_guard_route('do/doadd_calcgroup.php');
+
+include('../includes/connect.php') ;
 
 $department = $_POST['department'];
 $sqlemps = "SELECT * FROM `employees` WHERE `department` = '$department' AND isdeleted != 1  ";

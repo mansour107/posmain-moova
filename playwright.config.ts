@@ -56,6 +56,14 @@ export default defineConfig({
       testMatch: /shared\/.*\.spec\.ts/,
     },
     {
+      name: 'rbac',
+      testMatch: [
+        /shared\/rbac-.*\.spec\.ts/,
+        /manager\/roles-admin-denial\.spec\.ts/,
+        /owner\/user-permission-overrides\.spec\.ts/,
+      ],
+    },
+    {
       name: 'cashier',
       testMatch: /cashier\/.*\.spec\.ts/,
     },

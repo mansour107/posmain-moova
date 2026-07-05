@@ -24,16 +24,23 @@ function item_catalog_number($value, int $scale = 3): string
 function item_catalog_type_label(string $type): string
 {
     $labels = [
-        'sellable' => 'منتج للبيع',
-        'ingredient' => 'مكوّن',
+        'sellable' => 'يباع كما هو',
+        'made' => 'يصنع من مكونات',
+        'ingredient' => 'مادة خام',
         'packaging' => 'تغليف',
         'service' => 'خدمة',
     ];
 
-    return $labels[$type] ?? 'منتج للبيع';
+    return $labels[$type] ?? 'يباع كما هو';
 }
 ?>
-<?php include('includes/header.php') ?>
+<?php
+require_once __DIR__ . '/includes/auth_guard.php';
+require_once __DIR__ . '/includes/page_guard.php';
+require_once __DIR__ . '/includes/csrf.php';
+include('includes/connect.php');
+page_guard('menu.edit', $conn);
+include('includes/header.php') ?>
 <?php include('includes/navbar.php') ?>
 <?php include('includes/sidebar.php') ?>
 <?php
@@ -43,7 +50,7 @@ $hasItemTypeColumn = $itemTypeColumnResult && $itemTypeColumnResult->num_rows > 
 $statusFilter = $hasActiveColumn ? (string) ($_GET['status'] ?? 'all') : 'all';
 $typeFilter = $hasItemTypeColumn ? (string) ($_GET['type'] ?? 'all') : 'all';
 $allowedStatusFilters = ['all', 'active', 'inactive'];
-$allowedTypeFilters = ['all', 'sellable', 'ingredient', 'packaging', 'service'];
+$allowedTypeFilters = ['all', 'sellable', 'made', 'ingredient', 'packaging', 'service'];
 
 if (!in_array($statusFilter, $allowedStatusFilters, true)) {
     $statusFilter = 'all';
@@ -157,6 +164,9 @@ $itemRows = $inventoryStockReadService->decorateItems($conn, $itemRows);
                     <?php if ($hasItemTypeColumn): ?>
                         <?php foreach ($allowedTypeFilters as $filterType): ?>
                             <?php
+                            if ($filterType === 'packaging' && $typeFilter !== 'packaging') {
+                                continue;
+                            }
                             $label = $filterType === 'all' ? 'كل الأنواع' : item_catalog_type_label($filterType);
                             $href = 'myitems.php?status=' . rawurlencode($statusFilter) . '&type=' . rawurlencode($filterType);
                             ?>
@@ -259,6 +269,7 @@ $itemRows = $inventoryStockReadService->decorateItems($conn, $itemRows);
                                     </a>
                                     <?php if ($hasActiveColumn): ?>
                                         <form action="do/toggle_item_active.php" method="post" class="catalog-op-form">
+                                            <?= csrf_input('menu_write') ?>
                                             <input type="hidden" name="id" value="<?= $itemid ?>">
                                             <input type="hidden" name="active" value="<?= $isActive ? 0 : 1 ?>">
                                             <button type="submit" class="catalog-op status-op <?= $isActive ? 'disable' : 'enable' ?>" title="<?= $isActive ? 'تعطيل' : 'تفعيل' ?>">
@@ -282,9 +293,9 @@ $itemRows = $inventoryStockReadService->decorateItems($conn, $itemRows);
                                                     </button>
                                                 </div>
                                                 <form action="do/dodel_item.php?id=<?= $itemid ?>" method="post">
+                                                    <?= csrf_input('menu_write') ?>
                                                     <div class="modal-body">
                                                         <p>هل تريد بالتأكيد حذف <?= item_catalog_h($rowitm['iname'] ?? '') ?>؟</p>
-                                                        <input type="password" class="form-control" name="password" placeholder="كلمة مرور الحذف">
                                                     </div>
                                                     <div class="modal-footer justify-content-between">
                                                         <button type="submit" class="btn btn-flat btn-sm btn-outline-light btn-block">حذف</button>

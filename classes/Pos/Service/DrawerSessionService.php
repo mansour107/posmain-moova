@@ -136,6 +136,42 @@ class DrawerSessionService
         return $row ? $this->formatSession($row) : null;
     }
 
+    public function findOpenSessionForBranch(mysqli $conn, int $tenant = 0, int $branch = 0): ?array
+    {
+        $stmt = $conn->prepare("
+            SELECT *
+            FROM drawer_sessions
+            WHERE tenant = ?
+              AND branch = ?
+              AND status = 'open'
+            ORDER BY opened_at DESC, id DESC
+            LIMIT 1
+        ");
+        $stmt->bind_param('ii', $tenant, $branch);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        return $row ? $this->formatSession($row) : null;
+    }
+
+    public function branchHasSessions(mysqli $conn, int $tenant = 0, int $branch = 0): bool
+    {
+        $stmt = $conn->prepare("
+            SELECT 1
+            FROM drawer_sessions
+            WHERE tenant = ?
+              AND branch = ?
+            LIMIT 1
+        ");
+        $stmt->bind_param('ii', $tenant, $branch);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        return $row !== null;
+    }
+
     public function movementsForSession(mysqli $conn, int $sessionId): array
     {
         $sessionId = $this->positiveInt($sessionId, 'DRAWER_SESSION_REQUIRED');

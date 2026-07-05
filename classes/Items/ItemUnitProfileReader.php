@@ -76,7 +76,7 @@ final class ItemUnitProfileReader
         $sellUnitId = (int) (($sell['unit_id'] ?? null) ?: $storageUnitId);
         $purchaseUnitId = (int) (($buy['unit_id'] ?? null) ?: $storageUnitId);
 
-        $sellActive = $sell !== null || in_array($itemType, ['sellable', 'service'], true);
+        $sellActive = $sell !== null || in_array($itemType, ['sellable', 'made', 'service'], true);
         $purchaseActive = $buy !== null && (float) ($buy['cost_price'] ?? 0) > 0;
 
         if (in_array($itemType, ['ingredient', 'packaging'], true)) {
@@ -125,7 +125,7 @@ final class ItemUnitProfileReader
             || (float) ($buy['u_val'] ?? 1) > 1
         );
 
-        $sellActive = in_array($itemType, ['sellable', 'service'], true)
+        $sellActive = in_array($itemType, ['sellable', 'made', 'service'], true)
             || (float) ($stock['price1'] ?? 0) > 0;
 
         return [
@@ -154,7 +154,7 @@ final class ItemUnitProfileReader
     private static function emptyProfile(string $itemType): array
     {
         return [
-            'sell_active' => in_array($itemType, ['sellable', 'service'], true),
+            'sell_active' => in_array($itemType, ['sellable', 'made', 'service'], true),
             'purchase_active' => false,
             'sell_unit_id' => 0,
             'storage_unit_id' => 0,

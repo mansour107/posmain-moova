@@ -28,7 +28,7 @@ try {
     $order_id = TableInputValidator::optionalPositiveInt($_POST['order_id'] ?? 0, 'معرف الطلب غير صحيح');
     $action = TableInputValidator::tableStatusAction($_POST);
     $reason = TableInputValidator::reason($_POST['reason'] ?? '', 'تم تفريغ الطاولة');
-    $user_id = intval($_SESSION['userid'] ?? 1);
+    $user_id = current_user_id();
     $idempotencyService = new IdempotencyService();
     $idempotencyKey = $idempotencyService->resolveKey($_POST, $_SERVER);
     $idempotencyHash = $idempotencyService->requestHashForPayload($_POST);

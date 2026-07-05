@@ -122,6 +122,38 @@ if (!function_exists('posmain_env')) {
     }
 }
 
+if (!function_exists('posmain_pin_secret')) {
+    /**
+     * @throws RuntimeException PIN_SECRET_MISSING when secret is not configured
+     */
+    function posmain_pin_secret(): string
+    {
+        static $cached = null;
+        if ($cached !== null) {
+            return $cached;
+        }
+
+        $secret = trim((string) posmain_env('POSMAIN_PIN_SECRET', '', true));
+        if ($secret === '') {
+            $configPath = __DIR__ . '/../includes/config.php';
+            if (is_file($configPath)) {
+                require_once $configPath;
+                if (defined('POSMAIN_PIN_SECRET')) {
+                    $secret = trim((string) POSMAIN_PIN_SECRET);
+                }
+            }
+        }
+
+        if ($secret === '') {
+            throw new RuntimeException('PIN_SECRET_MISSING');
+        }
+
+        $cached = $secret;
+
+        return $cached;
+    }
+}
+
 if (!function_exists('posmain_first_env')) {
     function posmain_first_env(array $names, $default = null, bool $allowEmpty = false)
     {

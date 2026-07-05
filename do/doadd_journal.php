@@ -1,8 +1,9 @@
 <?php
 
-require_once __DIR__ . '/../includes/session_bootstrap.php';
-$user = $_SESSION['userid'];
-include '../includes/connect.php';
+require_once __DIR__ . '/../includes/rbac_route_guard.php';
+rbac_guard_route('do/doadd_journal.php');
+
+$user = current_user_id();
 
 require_once __DIR__ . '/../classes/Accounting/JournalPostingGuard.php';
 
