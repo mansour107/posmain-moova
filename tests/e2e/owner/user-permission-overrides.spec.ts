@@ -1,17 +1,14 @@
 import { test, expect } from '@playwright/test';
 import { loginAs } from '../helpers/auth';
+import { openTeamHubRolePermissions, openTeamHubStaffPermissions } from '../helpers/team-hub';
 
 test('admin can open role permissions editor', async ({ page }) => {
   await loginAs(page, 'admin');
-  await page.goto('/role_permissions.php?id=29', { waitUntil: 'domcontentloaded' });
-  await expect(page.locator('form[action*="doedit_role_permissions"]')).toBeVisible();
+  await openTeamHubRolePermissions(page, 'مدير');
 });
 
 test('admin can open user permission overrides section', async ({ page }) => {
   await loginAs(page, 'admin');
-  await page.goto('/users.php', { waitUntil: 'domcontentloaded' });
-  const editLink = page.locator('a[href*="edit_user.php"]').first();
-  await expect(editLink).toBeVisible();
-  await editLink.click();
-  await expect(page.locator('form[action*="doedit_user_permissions"], #permission-overrides, [name="permission_mode"]').first()).toBeVisible();
+  await openTeamHubStaffPermissions(page, 'p6_cashier');
+  await expect(page.locator('input[data-perm]').first()).toBeAttached();
 });

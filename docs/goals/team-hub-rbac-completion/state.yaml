@@ -1,0 +1,108 @@
+version: 2
+
+goal:
+  title: "Team Hub + RBAC completion"
+  slug: team-hub-rbac-completion
+  kind: specific
+  tranche: "Finish plan gaps, lint CI, refactor AJAX, tests, verification"
+  status: complete
+
+rules:
+  pm_owns_state: true
+  one_active_task: true
+  max_write_workers: 1
+  no_implementation_without_worker_or_pm_task: true
+  no_completion_without_judge_or_pm_audit: true
+
+agents:
+  scout: installed
+  worker: installed
+  judge: installed
+
+active_task: null
+
+tasks:
+  - id: T001
+    type: scout
+    assignee: Scout
+    status: done
+    objective: "Map remaining plan gaps vs current diff."
+    receipt:
+      result: done
+      summary: "ajax still 600 lines; doadd_role mega-form remains; no changed-php lint in pack; E2E missing non-admin PIN mask test."
+  - id: T002
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "Fix add_account.php parse error and add changed-php lint script."
+    receipt:
+      result: done
+      summary: "add_account.php closing paren fixed; lint script added."
+  - id: T003
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "Retire doadd_role mega-form; expand TeamHubMutationService; thin ajax dispatcher."
+    receipt:
+      result: done
+      changed_files:
+        - ajax/team_hub.php
+        - do/doadd_role.php
+        - classes/Security/TeamHubMutationService.php
+      summary: "ajax/team_hub.php is 187-line dispatcher; doadd_role delegates to TeamHubMutationService."
+  - id: T004
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "Add PHP + Playwright tests; run full verification suite."
+    allowed_files:
+      - tests/**
+      - scripts/**
+      - docs/goals/team-hub-rbac-completion/**
+    verify:
+      - bash scripts/run_security_contract_pack.sh
+      - bash scripts/lint_changed_php.sh
+    receipt:
+      result: done
+      changed_files:
+        - tests/e2e/shared/team-hub.spec.ts
+        - tests/sync/admin_write_security_test.php
+        - tests/sync/changed_php_syntax_contract_test.php
+        - tests/sync/team_hub_pin_reveal_contract_test.php
+        - scripts/lint_changed_php.sh
+        - scripts/run_security_contract_pack.sh
+      commands:
+        - cmd: bash scripts/run_security_contract_pack.sh
+          status: pass
+        - cmd: bash scripts/lint_changed_php.sh
+          status: pass
+        - cmd: php tools/permission_parity_check.php
+          status: pass
+        - cmd: php tools/run_migrations.php --dry-run
+          status: pass
+        - cmd: npx playwright test tests/e2e/shared/team-hub.spec.ts --project=shared
+          status: pass
+      summary: "Security pack 22/22; team-hub E2E 19/19 including admin PIN reveal and delegate masking."
+  - id: T999
+    type: judge
+    assignee: Judge
+    status: done
+    objective: "Audit whether the completion tranche is merge-ready."
+    receipt:
+      result: complete
+      decision: "Tranche complete: thin AJAX, doadd_role retired, lint in pack, PIN policy preserved, verification green."
+      missing_evidence:
+        - "PHPUnit ProductionRbacPinTest not run (vendor/bin/phpunit missing in env)"
+      next_task: null
+
+checks:
+  dirty_fingerprint: unknown
+  last_verification:
+    result: pass
+    task: T004
+    commands:
+      - bash scripts/run_security_contract_pack.sh
+      - bash scripts/lint_changed_php.sh
+      - php tools/permission_parity_check.php
+      - php tools/run_migrations.php --dry-run
+      - npx playwright test tests/e2e/shared/team-hub.spec.ts --project=shared

@@ -31,6 +31,7 @@ require_once __DIR__ . '/../../../includes/pos_default_accounts.php';
 require_once __DIR__ . '/../../Items/ItemUnitResolver.php';
 require_once __DIR__ . '/../../Items/ItemUnitConversionFeatureFlags.php';
 require_once __DIR__ . '/../../Accounting/PaymentReconciliationService.php';
+require_once __DIR__ . '/DrawerSessionService.php';
 
 class PosOrderMutationService
 {
@@ -63,8 +64,9 @@ class PosOrderMutationService
     private $recipeSettingsService;
     private $recipeAuditService;
     private $inventoryInvoiceBridge;
+    private $drawerSessionService;
 
-    public function __construct(?PaymentService $paymentService = null, ?TableStateService $tableStateService = null, ?TableOrderService $tableOrderService = null, ?InventoryMovementService $inventoryMovementService = null, ?OrderEventService $orderEventService = null, ?IdempotencyService $idempotencyService = null, ?ItemAvailabilityService $itemAvailabilityService = null, ?ManagerApprovalService $managerApprovalService = null, ?ModifierLineNoteService $modifierLineNoteService = null, ?RecipeOrderLifecycleService $recipeLifecycleService = null, ?RecipeSettingsService $recipeSettingsService = null, ?RecipeAuditService $recipeAuditService = null, ?InventoryInvoiceBridge $inventoryInvoiceBridge = null)
+    public function __construct(?PaymentService $paymentService = null, ?TableStateService $tableStateService = null, ?TableOrderService $tableOrderService = null, ?InventoryMovementService $inventoryMovementService = null, ?OrderEventService $orderEventService = null, ?IdempotencyService $idempotencyService = null, ?ItemAvailabilityService $itemAvailabilityService = null, ?ManagerApprovalService $managerApprovalService = null, ?ModifierLineNoteService $modifierLineNoteService = null, ?RecipeOrderLifecycleService $recipeLifecycleService = null, ?RecipeSettingsService $recipeSettingsService = null, ?RecipeAuditService $recipeAuditService = null, ?InventoryInvoiceBridge $inventoryInvoiceBridge = null, ?DrawerSessionService $drawerSessionService = null)
     {
         $this->paymentService = $paymentService ?: new PaymentService();
         $this->tableStateService = $tableStateService ?: new TableStateService();
@@ -79,6 +81,7 @@ class PosOrderMutationService
         $this->recipeSettingsService = $recipeSettingsService ?: new RecipeSettingsService();
         $this->recipeAuditService = $recipeAuditService ?: new RecipeAuditService();
         $this->inventoryInvoiceBridge = $inventoryInvoiceBridge ?: new InventoryInvoiceBridge();
+        $this->drawerSessionService = $drawerSessionService ?: new DrawerSessionService();
     }
 
     public function payTableOrder(mysqli $conn, array $request, array $context = []): array
@@ -352,6 +355,48 @@ class PosOrderMutationService
                 $context
             );
 
+            $refundableCash = $this->resolveRefundableCashForOrder($conn, $orderId, $amount);
+            if ($refundableCash > 0) {
+                $request = $this->resolvePosRequestAccounts($conn, $request);
+                $customerId = (int) ($request['acc2_id'] ?? 0);
+                $fundAccountId = (int) ($request['payment_fund_id'] ?? $request['fund_id'] ?? 0);
+                if ($customerId < 1 || $fundAccountId < 1) {
+                    throw new RuntimeException('REFUND_ACCOUNTS_REQUIRED');
+                }
+
+                $refundDate = $this->requestDate($request, ['pro_date', 'order_date', 'date']);
+                $empId = (int) ($request['emp_id'] ?? 0);
+                $proId = (int) ($request['pro_id'] ?? $orderId);
+                $info = trim((string) ($request['info'] ?? 'POS refund'));
+                $refundReason = trim((string) ($request['reason'] ?? $request['refund_reason'] ?? $request['void_reason'] ?? ''));
+                if ($refundReason === '') {
+                    $refundReason = $action === 'void' ? 'paid_order_voided' : 'paid_order_refunded';
+                }
+
+                $refundVoucher = $this->insertCashRefundVoucher(
+                    $conn,
+                    $orderId,
+                    $proId,
+                    $info,
+                    $refundDate,
+                    $empId,
+                    $fundAccountId,
+                    $customerId,
+                    $refundableCash,
+                    'كاش',
+                    $userId
+                );
+                $this->recordOrderCashRefunded(
+                    $conn,
+                    $orderId,
+                    $refundableCash,
+                    $request,
+                    $context,
+                    $action === 'void' ? 'paid_order_void_cash_refund' : 'paid_order_refund_cash',
+                    (int) ($refundVoucher['voucher_id'] ?? 0) ?: null
+                );
+            }
+
             $newPaymentStatus = $action === 'void' ? 'voided' : 'refunded';
             $reason = trim((string) ($request['reason'] ?? $request['refund_reason'] ?? $request['void_reason'] ?? ''));
             if ($reason === '') {
@@ -546,6 +591,33 @@ class PosOrderMutationService
 
             throw $exception;
         }
+    }
+
+    public function assertCashierEditVoidApprovalIfNeeded(mysqli $conn, array $request, array $context = []): void
+    {
+        $orderId = (int) ($request['edit_id'] ?? $request['order_id'] ?? 0);
+        if ($orderId < 1) {
+            return;
+        }
+
+        $userId = $this->contextUserId($request, $context);
+        if ($userId > 0) {
+            $roleStmt = $conn->prepare('SELECT userrole FROM users WHERE id = ? LIMIT 1');
+            $roleStmt->bind_param('i', $userId);
+            $roleStmt->execute();
+            $roleRow = $roleStmt->get_result()->fetch_assoc();
+            $roleStmt->close();
+            $roleId = (int) ($roleRow['userrole'] ?? 0);
+            if ($roleId > 0) {
+                if (!class_exists('RolePermissionSyncService', false)) {
+                    require_once __DIR__ . '/../../Security/RolePermissionSyncService.php';
+                }
+                RolePermissionSyncService::repairPresetRoleCapabilitiesIfNeeded($conn, $roleId);
+            }
+        }
+
+        $items = $this->normalizeTakeawayItems($conn, $request);
+        $this->ensureItemVoidApprovalPresent($conn, $orderId, $items, $request, $context);
     }
 
     public function updateCashierOrder(mysqli $conn, array $request, array $context = []): array
@@ -755,6 +827,7 @@ class PosOrderMutationService
         $headTotal = (float) ($request['headtotal'] ?? $request['total'] ?? 0);
         $headDiscount = (float) ($request['headdisc'] ?? $request['discount'] ?? 0);
         $this->requireOrderEscalationsIfNeeded($conn, $orderId, $headDiscount, $request, $context);
+        $this->requireItemVoidApprovalIfNeeded($conn, $orderId, $items, $request, $context);
         $headPlus = (float) ($request['headplus'] ?? $request['plus'] ?? 0);
         $headNet = (float) ($request['headnet'] ?? $request['net'] ?? max(0, $headTotal - $headDiscount + $headPlus));
         if ($orderType === 'delivery') {
@@ -858,6 +931,8 @@ class PosOrderMutationService
         if ($payment['bank'] > 0) {
             $receipts[] = $this->insertTakeawayReceipt($conn, $orderId, $proId, $info, $date, $empId, $paymentBankId, $customerId, $payment['bank'], 'صرافة', $userId);
         }
+        $this->recordOrderCashPaymentDelta($conn, $orderId, $payment['cash'], $request, $context, 'order_update_cash_payment');
+        $this->recordOrderBankPaymentDelta($conn, $orderId, $payment['bank'], $request, $context);
 
         $lineResult = $this->inventoryMovementService->normalizeInvoiceLines($conn, InventoryMovementService::TYPE_POS, $items, [
             'store_id' => $storeId,
@@ -998,7 +1073,7 @@ class PosOrderMutationService
                 fat_total, fat_disc, fat_disc_per, fat_plus, fat_plus_per,
                 fat_tax, fat_tax_per, fat_net, user, jal_name, jal_notes, jal_amount,
                 table_id, order_type, payment_status, invoice_status, order_status,
-                paid_amount, remaining_amount, waiter_id, payment_date, completed_at
+                paid_amount, remaining_amount, waiter_id, payment_date, completed_at, crtime
             ) VALUES (
                 ?, 9, 1, 1, 9, ?, ?,
                 ?, 1, ?, 1, ?, ?,
@@ -1007,7 +1082,8 @@ class PosOrderMutationService
                 0, 0, ?, ?, ?, ?, ?,
                 NULL, 'takeaway', ?, ?, ?,
                 ?, ?, ?, CASE WHEN ? = 'paid' THEN NOW() ELSE NULL END,
-                CASE WHEN ? = 'completed' THEN NOW() ELSE NULL END
+                CASE WHEN ? = 'completed' THEN NOW() ELSE NULL END,
+                CURRENT_TIMESTAMP
             )
         ", [
             $proId,
@@ -1045,12 +1121,17 @@ class PosOrderMutationService
 
         $salesJournal = $this->insertTakeawaySalesJournal($conn, $orderId, $proId, $headNet, $date, $customerId, $userId, (int) ($request['sales_account_id'] ?? 0));
         $receipts = [];
+        $cashReceiptId = null;
         if ($payment['cash'] > 0) {
-            $receipts[] = $this->insertTakeawayReceipt($conn, $orderId, $proId, $info, $date, $empId, $paymentFundId, $customerId, $payment['cash'], 'كاش', $userId);
+            $cashReceipt = $this->insertTakeawayReceipt($conn, $orderId, $proId, $info, $date, $empId, $paymentFundId, $customerId, $payment['cash'], 'كاش', $userId);
+            $receipts[] = $cashReceipt;
+            $cashReceiptId = (int) ($cashReceipt['receipt_id'] ?? 0) ?: null;
         }
         if ($payment['bank'] > 0) {
             $receipts[] = $this->insertTakeawayReceipt($conn, $orderId, $proId, $info, $date, $empId, $paymentBankId, $customerId, $payment['bank'], 'صرافة', $userId);
         }
+        $this->recordOrderCashCollected($conn, $orderId, $payment['cash'], $request, $context, 'takeaway_cash_payment', $cashReceiptId);
+        $this->recordOrderBankCollected($conn, $orderId, $payment['bank'], $request, $context);
 
         $lineResult = $this->inventoryMovementService->normalizeInvoiceLines($conn, InventoryMovementService::TYPE_POS, $items, [
             'store_id' => $storeId,
@@ -1206,7 +1287,7 @@ class PosOrderMutationService
                 fat_total, fat_disc, fat_disc_per, fat_plus, fat_plus_per,
                 fat_tax, fat_tax_per, fat_net, user, jal_name, jal_notes, jal_amount,
                 table_id, order_type, payment_status, invoice_status, order_status,
-                paid_amount, remaining_amount, waiter_id, payment_date, completed_at
+                paid_amount, remaining_amount, waiter_id, payment_date, completed_at, crtime
             ) VALUES (
                 ?, 9, 1, 1, 9, ?, ?,
                 ?, 1, ?, 1, ?, ?,
@@ -1215,7 +1296,8 @@ class PosOrderMutationService
                 0, 0, ?, ?, ?, ?, ?,
                 NULL, 'delivery', ?, ?, ?,
                 ?, ?, ?, CASE WHEN ? = 'paid' THEN NOW() ELSE NULL END,
-                CASE WHEN ? = 'completed' THEN NOW() ELSE NULL END
+                CASE WHEN ? = 'completed' THEN NOW() ELSE NULL END,
+                CURRENT_TIMESTAMP
             )
         ", [
             $proId,
@@ -1255,12 +1337,17 @@ class PosOrderMutationService
         $receipts = [];
         if ($status['payment_status'] === 'paid' || $payment['applied'] > 0) {
             $salesJournal = $this->insertTakeawaySalesJournal($conn, $orderId, $proId, $headNet, $date, $customerId, $userId, (int) ($request['sales_account_id'] ?? 0));
+            $cashReceiptId = null;
             if ($payment['cash'] > 0) {
-                $receipts[] = $this->insertTakeawayReceipt($conn, $orderId, $proId, $info, $date, $empId, $paymentFundId, $customerId, $payment['cash'], 'كاش', $userId);
+                $cashReceipt = $this->insertTakeawayReceipt($conn, $orderId, $proId, $info, $date, $empId, $paymentFundId, $customerId, $payment['cash'], 'كاش', $userId);
+                $receipts[] = $cashReceipt;
+                $cashReceiptId = (int) ($cashReceipt['receipt_id'] ?? 0) ?: null;
             }
             if ($payment['bank'] > 0) {
                 $receipts[] = $this->insertTakeawayReceipt($conn, $orderId, $proId, $info, $date, $empId, $paymentBankId, $customerId, $payment['bank'], 'صرافة', $userId);
             }
+            $this->recordOrderCashCollected($conn, $orderId, $payment['cash'], $request, $context, 'delivery_cash_payment', $cashReceiptId);
+            $this->recordOrderBankCollected($conn, $orderId, $payment['bank'], $request, $context);
         }
 
         $lineResult = $this->inventoryMovementService->normalizeInvoiceLines($conn, InventoryMovementService::TYPE_POS, $items, [
@@ -1545,6 +1632,44 @@ class PosOrderMutationService
         ];
     }
 
+    private function insertCashRefundVoucher(mysqli $conn, int $orderId, int $proId, string $info, string $date, int $empId, int $fundAccountId, int $customerId, float $amount, string $methodLabel, int $userId): array
+    {
+        $voucherProId = $this->nextInvoiceProId($conn, 2, 0, 0);
+        $voucherInfo = $info . ' - استرداد ' . $methodLabel;
+        $this->tableOrderService->execute($conn, "
+            INSERT INTO ot_head (
+                pro_id, pro_tybe, is_journal, journal_tybe, info, pro_date,
+                emp_id, acc1, acc2, pro_value, cost_center, profit, user, op2
+            ) VALUES (?, 2, 1, 2, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?)
+        ", [$voucherProId, $voucherInfo, $date, $empId, $customerId, $fundAccountId, $amount, $userId, $orderId]);
+        $voucherId = (int) $conn->insert_id;
+        $this->tableOrderService->assignUuidIfPresent($conn, 'ot_head', $voucherId);
+
+        $journalId = $this->tableOrderService->nextJournalId($conn, 0, 0);
+        $details = 'سند صرف استرداد ' . $methodLabel . ' _ ' . $proId;
+        $this->tableOrderService->execute($conn, "
+            INSERT INTO journal_heads (journal_id, op_id, total, jdate, details, user, op2)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        ", [$journalId, $voucherId, $amount, $date, $details, $userId, $orderId]);
+        $journalHeadId = (int) $conn->insert_id;
+
+        $this->tableOrderService->execute($conn, "
+            INSERT INTO journal_entries (journal_id, account_id, debit, credit, tybe, op2)
+            VALUES (?, ?, ?, 0, 0, ?)
+        ", [$journalHeadId, $customerId, $amount, $orderId]);
+        $this->tableOrderService->execute($conn, "
+            INSERT INTO journal_entries (journal_id, account_id, debit, credit, tybe, op2)
+            VALUES (?, ?, 0, ?, 1, ?)
+        ", [$journalHeadId, $fundAccountId, $amount, $orderId]);
+
+        return [
+            'voucher_id' => $voucherId,
+            'voucher_pro_id' => $voucherProId,
+            'journal_id' => $journalId,
+            'journal_head_id' => $journalHeadId,
+        ];
+    }
+
     private function insertTakeawayDetailLine(mysqli $conn, int $orderId, int $storeId, array $line, array $context = []): array
     {
         $this->tableOrderService->execute($conn, "
@@ -1646,6 +1771,9 @@ class PosOrderMutationService
         $total = (float) ($request['total'] ?? 0);
         $discount = (float) ($request['discount'] ?? 0);
         $this->requireOrderEscalationsIfNeeded($conn, $orderId > 0 ? $orderId : null, $discount, $request, $context);
+        if ($orderId > 0) {
+            $this->requireItemVoidApprovalIfNeeded($conn, $orderId, $items, $request, $context);
+        }
         $net = (float) ($request['net'] ?? max(0, $total - $discount));
         if (ItemUnitConversionFeatureFlags::strictPosFactorResolution()) {
             $serverNet = (float) PaymentReconciliationService::recomputeTableNetFromLines($items, (string) $discount);
@@ -2102,14 +2230,18 @@ class PosOrderMutationService
         return null;
     }
 
-    private function insertSplitPaymentRecordIfAvailable(mysqli $conn, int $newHeadId, float $childTotal, string $paymentMethod, int $userId): ?int
+    private function insertOrderPaymentRecordIfAvailable(mysqli $conn, int $orderId, float $amount, string $paymentMethod, int $userId): ?int
     {
+        if (abs($amount) < 0.0001) {
+            return null;
+        }
+
         $tableCheck = $conn->query("SHOW TABLES LIKE 'order_payments'");
         if ($tableCheck && $tableCheck->num_rows > 0) {
             $this->tableOrderService->execute($conn, "
                 INSERT INTO order_payments (order_id, amount, payment_method, created_by, created_at)
                 VALUES (?, ?, ?, ?, NOW())
-            ", [$newHeadId, $childTotal, $paymentMethod, $userId]);
+            ", [$orderId, $amount, $paymentMethod, $userId]);
             $paymentId = (int) $conn->insert_id;
             $this->tableOrderService->assignUuidIfPresent($conn, 'order_payments', $paymentId);
 
@@ -2117,6 +2249,167 @@ class PosOrderMutationService
         }
 
         return null;
+    }
+
+    private function insertSplitPaymentRecordIfAvailable(mysqli $conn, int $newHeadId, float $childTotal, string $paymentMethod, int $userId): ?int
+    {
+        return $this->insertOrderPaymentRecordIfAvailable($conn, $newHeadId, $childTotal, $paymentMethod, $userId);
+    }
+
+    private function recordOrderCashCollected(mysqli $conn, int $orderId, float $cashAmount, array $request, array $context, string $reason, ?int $refOtHeadId = null): void
+    {
+        if ($cashAmount <= 0) {
+            return;
+        }
+
+        $userId = $this->contextUserId($request, $context);
+        $drawerContext = array_merge($request, $context, ['drawer_reason' => $reason]);
+        if (session_status() === PHP_SESSION_ACTIVE) {
+            if (!array_key_exists('drawer_session_id', $drawerContext)) {
+                $drawerContext['drawer_session_id'] = (int) ($_SESSION['pos_drawer_session_id'] ?? 0);
+            }
+            if (!array_key_exists('tenant', $drawerContext) && !array_key_exists('pos_tenant', $drawerContext)) {
+                $drawerContext['tenant'] = (int) ($_SESSION['pos_tenant'] ?? 0);
+            }
+            if (!array_key_exists('branch', $drawerContext) && !array_key_exists('pos_branch', $drawerContext)) {
+                $drawerContext['branch'] = (int) ($_SESSION['pos_branch'] ?? 0);
+            }
+        }
+        $paymentId = $this->insertOrderPaymentRecordIfAvailable($conn, $orderId, $cashAmount, 'cash', $userId);
+        $this->paymentService->recordCashDrawerMovementForPayment(
+            $conn,
+            'cash',
+            $cashAmount,
+            $orderId,
+            $userId,
+            $drawerContext,
+            null,
+            $paymentId,
+            $refOtHeadId
+        );
+    }
+
+    private function recordOrderBankCollected(mysqli $conn, int $orderId, float $bankAmount, array $request, array $context): void
+    {
+        if ($bankAmount <= 0) {
+            return;
+        }
+
+        $userId = $this->contextUserId($request, $context);
+        $this->insertOrderPaymentRecordIfAvailable($conn, $orderId, $bankAmount, 'bank', $userId);
+    }
+
+    private function recordOrderCashRefunded(mysqli $conn, int $orderId, float $cashAmount, array $request, array $context, string $reason, ?int $refOtHeadId = null): void
+    {
+        if ($cashAmount <= 0) {
+            return;
+        }
+
+        $userId = $this->contextUserId($request, $context);
+        $drawerContext = array_merge($request, $context, ['drawer_reason' => $reason]);
+        $paymentId = $this->insertOrderPaymentRecordIfAvailable($conn, $orderId, -$cashAmount, 'cash', $userId);
+        $this->paymentService->recordCashRefundMovementForPayment(
+            $conn,
+            $cashAmount,
+            $orderId,
+            $userId,
+            $drawerContext,
+            null,
+            $paymentId,
+            $refOtHeadId
+        );
+    }
+
+    private function recordOrderCashPaymentDelta(mysqli $conn, int $orderId, float $targetCashAmount, array $request, array $context, string $reason): void
+    {
+        $netRecorded = $this->drawerSessionService->netCashRecordedForOrder($conn, $orderId);
+        $delta = round($targetCashAmount - $netRecorded, 3);
+        if ($delta > 0.0001) {
+            $this->recordOrderCashCollected($conn, $orderId, $delta, $request, $context, $reason);
+        } elseif ($delta < -0.0001) {
+            $this->recordOrderCashRefunded($conn, $orderId, abs($delta), $request, $context, $reason . '_refund');
+        }
+    }
+
+    private function recordOrderBankPaymentDelta(mysqli $conn, int $orderId, float $targetBankAmount, array $request, array $context): void
+    {
+        $netRecorded = $this->netPaymentRecordedForOrder($conn, $orderId, 'bank');
+        $delta = round($targetBankAmount - $netRecorded, 3);
+        if (abs($delta) < 0.0001) {
+            return;
+        }
+
+        $userId = $this->contextUserId($request, $context);
+        $this->insertOrderPaymentRecordIfAvailable($conn, $orderId, $delta, 'bank', $userId);
+    }
+
+    private function netPaymentRecordedForOrder(mysqli $conn, int $orderId, string $paymentMethod): float
+    {
+        if ($orderId < 1) {
+            return 0.0;
+        }
+
+        $tableCheck = $conn->query("SHOW TABLES LIKE 'order_payments'");
+        if (!$tableCheck instanceof mysqli_result || $tableCheck->num_rows < 1) {
+            return 0.0;
+        }
+
+        $row = $this->tableOrderService->queryOne($conn, "
+            SELECT COALESCE(SUM(amount), 0) AS total_amount
+            FROM order_payments
+            WHERE order_id = ?
+              AND payment_method = ?
+        ", [$orderId, $paymentMethod]);
+
+        return round((float) ($row['total_amount'] ?? 0), 3);
+    }
+
+    private function resolveRefundableCashForOrder(mysqli $conn, int $orderId, float $paidAmount): float
+    {
+        $netRecorded = $this->drawerSessionService->netCashRecordedForOrder($conn, $orderId);
+        if ($netRecorded > 0.0001) {
+            return min($netRecorded, max(0.0, $paidAmount));
+        }
+
+        $fallback = $this->sumCashReceiptVouchersForOrder($conn, $orderId, $this->resolveFundAccountIds($conn));
+        if ($fallback <= 0.0001) {
+            return 0.0;
+        }
+
+        return min($fallback, max(0.0, $paidAmount));
+    }
+
+    private function resolveFundAccountIds(mysqli $conn): array
+    {
+        $defaults = posmain_resolve_pos_defaults($conn, []);
+        $ids = [];
+        foreach (['fund_id', 'payment_fund_id'] as $key) {
+            $value = (int) ($defaults[$key] ?? 0);
+            if ($value > 0) {
+                $ids[$value] = $value;
+            }
+        }
+
+        return array_values($ids);
+    }
+
+    private function sumCashReceiptVouchersForOrder(mysqli $conn, int $orderId, array $fundAccountIds): float
+    {
+        if ($orderId < 1 || !$fundAccountIds) {
+            return 0.0;
+        }
+
+        $placeholders = implode(', ', array_fill(0, count($fundAccountIds), '?'));
+        $params = array_merge([$orderId], $fundAccountIds);
+        $row = $this->tableOrderService->queryOne($conn, "
+            SELECT COALESCE(SUM(pro_value), 0) AS total_amount
+            FROM ot_head
+            WHERE pro_tybe = 1
+              AND op2 = ?
+              AND acc1 IN ({$placeholders})
+        ", $params);
+
+        return round((float) ($row['total_amount'] ?? 0), 3);
     }
 
     private function splitGroupIdForOrder(mysqli $conn, int $orderId): ?string
@@ -3253,6 +3546,187 @@ class PosOrderMutationService
         $this->requireDiscountApprovalIfNeeded($conn, $orderId, $discount, $request, $context);
         $this->requirePriceOverrideApprovalIfNeeded($conn, $orderId, $request, $context);
         $this->requireCreditSaleApprovalIfNeeded($conn, $orderId, $request, $context);
+    }
+
+    private function requireItemVoidApprovalIfNeeded(
+        mysqli $conn,
+        int $orderId,
+        array $items,
+        array $request,
+        array $context,
+        ?array $orderHeader = null
+    ): void {
+        if ($orderId < 1) {
+            return;
+        }
+
+        $orderHeader = $orderHeader ?? $this->tableOrderService->queryOne($conn, "
+            SELECT payment_status, order_status
+            FROM ot_head
+            WHERE id = ?
+            LIMIT 1
+        ", [$orderId]);
+        if (!$orderHeader) {
+            return;
+        }
+
+        $reductions = $this->detectPersistedLineReductions($conn, $orderId, $items);
+        if (!$reductions) {
+            return;
+        }
+
+        $paymentStatus = strtolower(trim((string) ($orderHeader['payment_status'] ?? 'unpaid')));
+        $orderStatus = strtolower(trim((string) ($orderHeader['order_status'] ?? 'active')));
+        if ($paymentStatus === 'paid' || $orderStatus === 'completed') {
+            throw new RuntimeException('PAID_ORDER_LINE_REMOVAL_DENIED');
+        }
+
+        $userId = $this->contextUserId($request, $context);
+        if (!class_exists('PermissionService', false)) {
+            require_once __DIR__ . '/../../Security/PermissionService.php';
+        }
+        if (PermissionService::forConnection($conn)->check($userId, 'pos.void.item_after_send')) {
+            return;
+        }
+
+        $approval = $this->managerApprovalService->requireApprovedIfNeeded(
+            $conn,
+            'pos.void.item_after_send',
+            'pos_order',
+            $orderId,
+            1.0,
+            $request,
+            array_merge($context, [
+                'user_id' => $userId,
+                'require_manager_approval' => true,
+            ])
+        );
+        if ($approval) {
+            $this->managerApprovalService->consumeApproval($conn, (int) $approval['id'], $userId);
+            $this->recordOrderEvent($conn, $orderId, 'order.item_voided', $context['event_source'] ?? 'pos_item_void', $context, [
+                'reductions' => $reductions,
+                'manager_approval_id' => (int) ($approval['id'] ?? 0),
+                'approved_by' => (int) ($approval['approved_by'] ?? 0),
+            ]);
+        }
+    }
+
+    private function ensureItemVoidApprovalPresent(
+        mysqli $conn,
+        int $orderId,
+        array $items,
+        array $request,
+        array $context
+    ): void {
+        if ($orderId < 1) {
+            return;
+        }
+
+        $orderHeader = $this->tableOrderService->queryOne($conn, "
+            SELECT payment_status, order_status
+            FROM ot_head
+            WHERE id = ?
+            LIMIT 1
+        ", [$orderId]);
+        if (!$orderHeader) {
+            return;
+        }
+
+        $reductions = $this->detectPersistedLineReductions($conn, $orderId, $items);
+        if (!$reductions) {
+            return;
+        }
+
+        $paymentStatus = strtolower(trim((string) ($orderHeader['payment_status'] ?? 'unpaid')));
+        $orderStatus = strtolower(trim((string) ($orderHeader['order_status'] ?? 'active')));
+        if ($paymentStatus === 'paid' || $orderStatus === 'completed') {
+            throw new RuntimeException('PAID_ORDER_LINE_REMOVAL_DENIED');
+        }
+
+        $userId = $this->contextUserId($request, $context);
+        if (!class_exists('PermissionService', false)) {
+            require_once __DIR__ . '/../../Security/PermissionService.php';
+        }
+        if (PermissionService::forConnection($conn)->check($userId, 'pos.void.item_after_send')) {
+            return;
+        }
+
+        $this->managerApprovalService->requireApprovedIfNeeded(
+            $conn,
+            'pos.void.item_after_send',
+            'pos_order',
+            $orderId,
+            1.0,
+            $request,
+            array_merge($context, [
+                'user_id' => $userId,
+                'require_manager_approval' => true,
+            ])
+        );
+    }
+
+    private function detectPersistedLineReductions(mysqli $conn, int $orderId, array $items): array
+    {
+        $existing = $this->loadPersistedItemQuantities($conn, $orderId);
+        if (!$existing) {
+            return [];
+        }
+
+        $incoming = $this->incomingItemQuantities($items);
+        $reductions = [];
+        foreach ($existing as $itemId => $existingQty) {
+            $newQty = $incoming[$itemId] ?? 0.0;
+            if ($newQty + 0.0001 < $existingQty) {
+                $reductions[] = [
+                    'item_id' => $itemId,
+                    'from_qty' => $existingQty,
+                    'to_qty' => $newQty,
+                    'removed_qty' => $existingQty - $newQty,
+                ];
+            }
+        }
+
+        return $reductions;
+    }
+
+    private function loadPersistedItemQuantities(mysqli $conn, int $orderId): array
+    {
+        $rows = $this->tableOrderService->queryAll($conn, "
+            SELECT item_id, SUM(GREATEST(0, qty_out - qty_in)) AS qty
+            FROM fat_details
+            WHERE fatid = ?
+              AND isdeleted = 0
+            GROUP BY item_id
+        ", [$orderId]);
+
+        $map = [];
+        foreach ($rows as $row) {
+            $itemId = (int) ($row['item_id'] ?? 0);
+            if ($itemId < 1) {
+                continue;
+            }
+            $map[$itemId] = (float) ($row['qty'] ?? 0);
+        }
+
+        return $map;
+    }
+
+    private function incomingItemQuantities(array $items): array
+    {
+        $map = [];
+        foreach ($items as $item) {
+            if (!is_array($item)) {
+                continue;
+            }
+            $itemId = (int) ($item['item_id'] ?? $item['id'] ?? 0);
+            if ($itemId < 1) {
+                continue;
+            }
+            $qty = (float) ($item['qty'] ?? $item['quantity'] ?? 1);
+            $map[$itemId] = ($map[$itemId] ?? 0.0) + $qty;
+        }
+
+        return $map;
     }
 
     private function requirePriceOverrideApprovalIfNeeded(mysqli $conn, ?int $orderId, array $request, array $context): void

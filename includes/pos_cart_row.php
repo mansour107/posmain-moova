@@ -15,10 +15,15 @@ function pos_render_cart_row(array $row): string
     $uVal = htmlspecialchars((string) ($row['u_val'] ?? '1'), ENT_QUOTES, 'UTF-8');
     $priceFormatted = number_format($price, 2, '.', '');
     $subtotalFormatted = number_format($subtotal, 2, '.', '');
+    $persisted = !empty($row['persisted']);
+    $persistedQty = htmlspecialchars((string) ($row['persisted_qty'] ?? $qty), ENT_QUOTES, 'UTF-8');
+    $persistedAttrs = $persisted
+        ? ' data-persisted-line="1" data-persisted-qty="' . $persistedQty . '" data-catalog-price="' . htmlspecialchars($priceFormatted, ENT_QUOTES, 'UTF-8') . '"'
+        : ' data-catalog-price="' . htmlspecialchars($priceFormatted, ENT_QUOTES, 'UTF-8') . '"';
 
     ob_start();
     ?>
-    <div class="item-card-order pos-cart-row" data-itemid="<?= $barcode ?>">
+    <div class="item-card-order pos-cart-row" data-itemid="<?= $barcode ?>"<?= $persistedAttrs ?>>
         <div class="pos-cart-row-inner">
             <div class="pos-cart-price-display" aria-hidden="true"><?= $subtotalFormatted ?> <span class="pos-currency">ج.م</span></div>
             <div class="pos-cart-qty">

@@ -5,13 +5,13 @@ require_once('../includes/auth_guard.php');
 require_once('../includes/csrf.php');
 require_once('../classes/Pos/Validation/TableInputValidator.php');
 require_once('../classes/TableOrderService.php');
+require_once('../classes/Pos/Service/ManagerApprovalService.php');
 require_once('../classes/Pos/Service/PosOrderMutationService.php');
 require_once('../classes/Sync/SyncOutboxEventService.php');
 
 header('Content-Type: application/json; charset=utf-8');
 
 require_pos_authenticated();
-require_permission('pos.cancel.unpaid', $conn);
 if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
     require_csrf('pos_browser');
 }
@@ -30,6 +30,25 @@ try {
 
     if ($order_id <= 0) {
         throw new Exception('معرف الطلب مطلوب');
+    }
+
+    if (!auth_guard_pos_lane_has_permission('pos.cancel.unpaid', $conn)) {
+        $approvalService = new ManagerApprovalService();
+        $approval = $approvalService->requireApprovedIfNeeded(
+            $conn,
+            'pos.cancel.unpaid',
+            'pos_order',
+            $order_id,
+            1.0,
+            $_POST,
+            [
+                'user_id' => $user_id,
+                'require_manager_approval' => true,
+            ]
+        );
+        if ($approval) {
+            $approvalService->consumeApproval($conn, (int) $approval['id'], $user_id);
+        }
     }
 
     $tableOrderService = new TableOrderService();
@@ -110,6 +129,16 @@ try {
 } catch (Exception $e) {
     if (isset($conn) && $conn instanceof mysqli) {
         $conn->rollback();
+    }
+    $code = $e->getMessage();
+    if ($e instanceof ManagerApprovalRequiredException || $code === 'MANAGER_APPROVAL_REQUIRED') {
+        http_response_code(403);
+        echo json_encode([
+            'success' => false,
+            'code' => 'MANAGER_APPROVAL_REQUIRED',
+            'message' => 'يتطلب اعتماد مدير',
+        ], JSON_UNESCAPED_UNICODE);
+        exit;
     }
     echo json_encode(posmain_exception_payload(
         $e,

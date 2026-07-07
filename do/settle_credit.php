@@ -1,5 +1,6 @@
 <?php
 require_once __DIR__ . '/../includes/rbac_route_guard.php';
+require_once __DIR__ . '/../classes/Pos/Service/PaymentService.php';
 rbac_guard_route('do/settle_credit.php');
 
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
@@ -82,7 +83,21 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 $stmt->bind_param("si", $note_append, $id);
                 $stmt->execute();
                 $stmt->close();
-                
+
+                (new PaymentService())->recordCollectedOrderPayments(
+                    $conn,
+                    $id,
+                    (float) $amount,
+                    0.0,
+                    $usid,
+                    [
+                        'tenant' => (int) ($_SESSION['pos_tenant'] ?? 0),
+                        'branch' => (int) ($_SESSION['pos_branch'] ?? 0),
+                        'drawer_session_id' => (int) ($_SESSION['pos_drawer_session_id'] ?? 0),
+                    ],
+                    'credit_settlement_cash_payment'
+                );
+
                 $conn->commit();
                 header("Location: ../operations_summary.php?success=settled&q=all");
                 

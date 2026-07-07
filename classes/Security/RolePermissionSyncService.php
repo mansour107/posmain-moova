@@ -77,18 +77,55 @@ class RolePermissionSyncService
         return $values;
     }
 
-    public static function enabledPermissionsFromRoleFlags(array $roleFlags): array
+    public static function enabledPermissionsFromRoleFlags(array $roleFlags, ?mysqli $conn = null): array
+    {
+        if (!function_exists('auth_guard_permission_map')) {
+            require_once __DIR__ . '/../../includes/auth_guard.php';
+        }
+
+        $roleId = (int) ($roleFlags['id'] ?? 0);
+        if ($conn instanceof mysqli && $roleId > 0) {
+            $fromCapabilities = self::enabledPermissionsFromCapabilities($conn, $roleId);
+            if ($fromCapabilities !== null) {
+                return $fromCapabilities;
+            }
+        }
+
+        return self::enabledPermissionsFromLegacyFlags($roleFlags);
+    }
+
+    /**
+     * Permissions that must be granted only via role_capabilities / preset sync,
+     * never inferred from legacy usr_pwrs flags during backfill.
+     *
+     * @return list<string>
+     */
+    public static function legacyBackfillExcludedPermissions(): array
+    {
+        return [
+            'pos.void.item_after_send',
+            'pos.void.post_send',
+            'pos.void.paid',
+        ];
+    }
+
+    /** @return list<string> */
+    public static function enabledPermissionsFromLegacyFlags(array $roleFlags): array
     {
         if (!function_exists('auth_guard_permission_map')) {
             require_once __DIR__ . '/../../includes/auth_guard.php';
         }
 
         $enabled = [];
+        $excluded = array_fill_keys(self::legacyBackfillExcludedPermissions(), true);
         foreach (auth_guard_permission_map() as $permission => $legacyFlags) {
             if (in_array('__admin_only', $legacyFlags, true)) {
                 continue;
             }
-            if (auth_guard_session_has_permission($permission, $roleFlags, [], null)) {
+            if (isset($excluded[$permission])) {
+                continue;
+            }
+            if (auth_guard_role_flags_allow($roleFlags, $legacyFlags)) {
                 $enabled[] = $permission;
             }
         }
@@ -96,13 +133,48 @@ class RolePermissionSyncService
         return $enabled;
     }
 
+    /** @return list<string>|null */
+    public static function enabledPermissionsFromCapabilities(mysqli $conn, int $roleId): ?array
+    {
+        $tableResult = $conn->query("SHOW TABLES LIKE 'role_capabilities'");
+        if (!$tableResult || $tableResult->num_rows < 1) {
+            return null;
+        }
+
+        $countStmt = $conn->prepare('SELECT COUNT(*) AS c FROM role_capabilities WHERE role_id = ?');
+        $countStmt->bind_param('i', $roleId);
+        $countStmt->execute();
+        $count = (int) ($countStmt->get_result()->fetch_assoc()['c'] ?? 0);
+        $countStmt->close();
+        if ($count < 1) {
+            return null;
+        }
+
+        $stmt = $conn->prepare(
+            'SELECT permission_key FROM role_capabilities WHERE role_id = ? AND is_enabled = 1'
+        );
+        $stmt->bind_param('i', $roleId);
+        $stmt->execute();
+        $rows = $stmt->get_result();
+        $enabled = [];
+        while ($row = $rows->fetch_assoc()) {
+            $key = trim((string) ($row['permission_key'] ?? ''));
+            if ($key !== '') {
+                $enabled[] = $key;
+            }
+        }
+        $stmt->close();
+
+        return $enabled;
+    }
+
     public static function permissionGroups(): array
     {
         return [
-            'POS' => ['pos.open', 'pos.sell.takeaway', 'pos.table.open', 'pos.table.move', 'pos.table.merge', 'pos.payment.take', 'pos.discount.apply', 'pos.discount.manager_override', 'pos.discount.manual_pct.limit', 'pos.price.override', 'pos.recipe_stock_override', 'pos.cancel.unpaid', 'pos.void.post_send', 'pos.void.item_after_send', 'pos.order.modify_others', 'pos.split', 'pos.shift.open', 'pos.shift.close', 'pos.shift.force_close', 'pos.shift.force_close_others', 'pos.cashdrawer.count', 'pos.drawer.no_sale', 'pos.drawer.payin', 'pos.payout.over_limit', 'pos.drawer.payout.limit', 'pos.credit.sale', 'pos.credit.sell', 'pos.reprint', 'pos.refund.limit', 'pos.void.paid', 'pos.refund'],
+            'POS' => ['pos.open', 'pos.sell.takeaway', 'pos.table.open', 'pos.table.move', 'pos.table.merge', 'pos.payment.take', 'pos.discount.apply', 'pos.discount.manager_override', 'pos.discount.manual_pct.limit', 'pos.price.override', 'pos.recipe_stock_override', 'pos.cancel.unpaid', 'pos.void.post_send', 'pos.void.item_after_send', 'pos.order.modify_others', 'pos.split', 'pos.shift.open', 'pos.shift.close', 'pos.shift.force_close', 'pos.shift.force_close_others', 'pos.cashdrawer.count', 'pos.drawer.no_sale', 'pos.drawer.payin', 'pos.drawer.safe_drop', 'pos.payout.over_limit', 'pos.drawer.payout.limit', 'pos.credit.sale', 'pos.credit.sell', 'pos.reprint', 'pos.refund.limit', 'pos.void.paid', 'pos.refund'],
             'Inventory & menu' => ['menu.edit', 'inventory.edit', 'inventory.approve'],
             'Delivery & KDS' => ['moova.manage', 'moova.accept', 'delivery.dispatch', 'delivery.zones.manage', 'kds.view', 'kds.complete', 'kds.manage'],
-            'Accounting & reports' => ['accounting.view', 'reports.view', 'reports.own_shift', 'reports.branch_daily', 'reports.costs'],
+            'Accounting & reports' => ['accounting.view', 'reports.view', 'reports.own_shift', 'reports.branch_daily', 'reports.costs', 'reports.cash_flow'],
             'Administration' => ['users.manage', 'roles.manage', 'customers.manage', 'system.health.view', 'system.tools.run'],
         ];
     }
@@ -169,7 +241,7 @@ class RolePermissionSyncService
                     'pos.open', 'pos.sell.takeaway', 'pos.table.open', 'pos.table.move', 'pos.table.merge',
                     'pos.payment.take', 'pos.discount.apply', 'pos.discount.manager_override', 'pos.recipe_stock_override',
                     'pos.cancel.unpaid', 'pos.split', 'pos.shift.open', 'pos.shift.close', 'pos.cashdrawer.count',
-                    'menu.edit', 'inventory.edit', 'reports.view', 'moova.manage', 'moova.accept',
+                    'menu.edit', 'inventory.edit', 'reports.view', 'reports.cash_flow', 'moova.manage', 'moova.accept',
                     'delivery.dispatch', 'delivery.zones.manage', 'kds.view', 'kds.complete',
                 ],
                 'capabilities' => [
@@ -237,6 +309,54 @@ class RolePermissionSyncService
         return $roleId;
     }
 
+    /**
+     * Re-sync preset capabilities when legacy backfill leaked void/refund powers.
+     */
+    public static function repairPresetRoleCapabilitiesIfNeeded(mysqli $conn, int $roleId): void
+    {
+        if ($roleId < 1) {
+            return;
+        }
+
+        $stmt = $conn->prepare(
+            'SELECT role_key FROM usr_pwrs WHERE id = ? AND COALESCE(isdeleted, 0) != 1 LIMIT 1'
+        );
+        $stmt->bind_param('i', $roleId);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        $roleKey = trim((string) ($row['role_key'] ?? ''));
+        $definitions = self::presetRoleDefinitions();
+        if ($roleKey === '' || !isset($definitions[$roleKey])) {
+            return;
+        }
+
+        $definition = $definitions[$roleKey];
+        $allowed = array_fill_keys($definition['permissions'] ?? [], true);
+        $needsRepair = false;
+        foreach (self::legacyBackfillExcludedPermissions() as $permission) {
+            if (!empty($allowed[$permission])) {
+                continue;
+            }
+            $capStmt = $conn->prepare(
+                'SELECT is_enabled FROM role_capabilities WHERE role_id = ? AND permission_key = ? LIMIT 1'
+            );
+            $capStmt->bind_param('is', $roleId, $permission);
+            $capStmt->execute();
+            $capRow = $capStmt->get_result()->fetch_assoc();
+            $capStmt->close();
+            if ((int) ($capRow['is_enabled'] ?? 0) === 1) {
+                $needsRepair = true;
+                break;
+            }
+        }
+
+        if ($needsRepair) {
+            self::syncRoleCapabilities($conn, $roleId, $definition);
+        }
+    }
+
     private static function upsertPresetRole(mysqli $conn, string $roleKey, array $definition): int
     {
         $roleKey = trim($roleKey);
@@ -301,6 +421,61 @@ class RolePermissionSyncService
         return $roleId;
     }
 
+    private static function usrPwrsColumnExists(mysqli $conn, string $column): bool
+    {
+        static $cache = [];
+        if ($cache === []) {
+            $result = $conn->query('SHOW COLUMNS FROM usr_pwrs');
+            if ($result instanceof mysqli_result) {
+                while ($row = $result->fetch_assoc()) {
+                    $cache[(string) ($row['Field'] ?? '')] = true;
+                }
+            }
+        }
+
+        return isset($cache[$column]);
+    }
+
+    public static function applyLegacyFlagValuesToRole(
+        mysqli $conn,
+        int $roleId,
+        array $legacyValues,
+        bool $activeOnly = false
+    ): void {
+        if ($roleId < 1 || $legacyValues === []) {
+            return;
+        }
+
+        $setParts = [];
+        $types = '';
+        $bindValues = [];
+        foreach ($legacyValues as $column => $value) {
+            if (!preg_match('/^[a-z0-9_]+$/', (string) $column)) {
+                continue;
+            }
+            if (!self::usrPwrsColumnExists($conn, (string) $column)) {
+                continue;
+            }
+            $setParts[] = '`' . $column . '` = ?';
+            $types .= 'i';
+            $bindValues[] = (int) $value;
+        }
+        if ($setParts === []) {
+            return;
+        }
+
+        $sql = 'UPDATE usr_pwrs SET ' . implode(', ', $setParts) . ' WHERE id = ?';
+        if ($activeOnly) {
+            $sql .= ' AND COALESCE(isdeleted, 0) != 1';
+        }
+        $types .= 'i';
+        $bindValues[] = $roleId;
+        $stmt = $conn->prepare($sql);
+        $stmt->bind_param($types, ...$bindValues);
+        $stmt->execute();
+        $stmt->close();
+    }
+
     private static function updateRoleLegacyFlags(
         mysqli $conn,
         int $roleId,
@@ -315,6 +490,9 @@ class RolePermissionSyncService
 
         foreach ($legacyValues as $column => $value) {
             if (!preg_match('/^[a-z_][a-z0-9_]*$/i', $column)) {
+                continue;
+            }
+            if (!self::usrPwrsColumnExists($conn, $column)) {
                 continue;
             }
             $sets[] = '`' . $column . '` = ?';
@@ -332,6 +510,82 @@ class RolePermissionSyncService
         $stmt->close();
     }
 
+    public static function syncRoleCapabilitiesForPermissions(mysqli $conn, int $roleId, array $enabledPermissions): void
+    {
+        $result = $conn->query("SHOW TABLES LIKE 'role_capabilities'");
+        if (!$result || $result->num_rows < 1) {
+            return;
+        }
+
+        if (!function_exists('auth_guard_permission_map')) {
+            require_once __DIR__ . '/../../includes/auth_guard.php';
+        }
+
+        $enabledSet = [];
+        foreach ($enabledPermissions as $permission) {
+            $permission = trim((string) $permission);
+            if ($permission !== '') {
+                $enabledSet[$permission] = true;
+            }
+        }
+
+        $limitsByPermission = [];
+        foreach (self::limitablePermissions() as $limitPermission) {
+            if (!empty($enabledSet[$limitPermission])) {
+                $limitsByPermission[$limitPermission] = ['is_unlimited' => true];
+            }
+        }
+
+        foreach (auth_guard_permission_map() as $permission => $legacyFlags) {
+            if (in_array('__admin_only', $legacyFlags, true)) {
+                continue;
+            }
+            $isEnabled = !empty($enabledSet[$permission]) ? 1 : 0;
+            $override = $limitsByPermission[$permission] ?? [];
+            $isUnlimited = array_key_exists('is_unlimited', $override) ? (int) (bool) $override['is_unlimited'] : 1;
+            $limitValue = $isUnlimited ? null : ($override['limit_value'] ?? null);
+            $limitParam = $limitValue !== null ? (float) $limitValue : null;
+
+            $stmt = $conn->prepare("
+                INSERT INTO role_capabilities (role_id, permission_key, is_enabled, limit_value, is_unlimited)
+                VALUES (?, ?, ?, ?, ?)
+                ON DUPLICATE KEY UPDATE
+                    is_enabled = VALUES(is_enabled),
+                    limit_value = VALUES(limit_value),
+                    is_unlimited = VALUES(is_unlimited)
+            ");
+            $stmt->bind_param('isidi', $roleId, $permission, $isEnabled, $limitParam, $isUnlimited);
+            $stmt->execute();
+            $stmt->close();
+        }
+    }
+
+    public static function backfillRoleCapabilitiesFromLegacyFlags(mysqli $conn): int
+    {
+        $result = $conn->query('SELECT * FROM usr_pwrs WHERE COALESCE(isdeleted, 0) != 1');
+        if (!$result) {
+            return 0;
+        }
+
+        $count = 0;
+        while ($row = $result->fetch_assoc()) {
+            $roleId = (int) ($row['id'] ?? 0);
+            if ($roleId < 1) {
+                continue;
+            }
+            // Preset/system roles are authoritative via seedPresetRoles/restorePresetRole.
+            $roleKey = trim((string) ($row['role_key'] ?? ''));
+            if ($roleKey !== '' || (int) ($row['is_system'] ?? 0) === 1) {
+                continue;
+            }
+            $enabled = self::enabledPermissionsFromLegacyFlags($row);
+            self::syncRoleCapabilitiesForPermissions($conn, $roleId, $enabled);
+            $count++;
+        }
+
+        return $count;
+    }
+
     private static function syncRoleCapabilities(mysqli $conn, int $roleId, array $definition): void
     {
         $result = $conn->query("SHOW TABLES LIKE 'role_capabilities'");
@@ -342,26 +596,25 @@ class RolePermissionSyncService
         $permissions = $definition['permissions'] ?? [];
         $capabilityOverrides = $definition['capabilities'] ?? [];
 
+        self::syncRoleCapabilitiesForPermissions($conn, $roleId, $permissions);
+
         foreach ($permissions as $permission) {
             $permission = trim((string) $permission);
-            if ($permission === '') {
+            if ($permission === '' || !isset($capabilityOverrides[$permission])) {
                 continue;
             }
 
-            $override = $capabilityOverrides[$permission] ?? [];
+            $override = $capabilityOverrides[$permission];
             $isUnlimited = array_key_exists('is_unlimited', $override) ? (int) (bool) $override['is_unlimited'] : 1;
             $limitValue = $isUnlimited ? null : ($override['limit_value'] ?? null);
             $limitParam = $limitValue !== null ? (float) $limitValue : null;
 
             $stmt = $conn->prepare("
-                INSERT INTO role_capabilities (role_id, permission_key, is_enabled, limit_value, is_unlimited)
-                VALUES (?, ?, 1, ?, ?)
-                ON DUPLICATE KEY UPDATE
-                    is_enabled = VALUES(is_enabled),
-                    limit_value = VALUES(limit_value),
-                    is_unlimited = VALUES(is_unlimited)
+                UPDATE role_capabilities
+                SET limit_value = ?, is_unlimited = ?
+                WHERE role_id = ? AND permission_key = ?
             ");
-            $stmt->bind_param('isdi', $roleId, $permission, $limitParam, $isUnlimited);
+            $stmt->bind_param('diis', $limitParam, $isUnlimited, $roleId, $permission);
             $stmt->execute();
             $stmt->close();
         }

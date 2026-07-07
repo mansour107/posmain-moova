@@ -14,14 +14,14 @@ if ($roleId < 1) {
 
 require_once __DIR__ . '/../classes/Security/PermissionService.php';
 try {
-    (new PermissionService($conn))->assertRoleEditable($roleId);
+    (new PermissionService($conn))->assertRolePermissionsEditable($roleId);
 } catch (RuntimeException $exception) {
-    if ($exception->getMessage() === 'SYSTEM_ROLE_LOCKED') {
+    if ($exception->getMessage() === 'ADMIN_ROLE_IMMUTABLE') {
         http_response_code(403);
-        echo 'SYSTEM_ROLE_LOCKED';
+        echo 'ADMIN_ROLE_IMMUTABLE';
         exit;
     }
-    header('Location: ../myroles.php');
+    header('Location: ../team.php?tab=roles');
     exit;
 }
 
@@ -99,6 +99,8 @@ if (is_array($limitValues) || is_array($limitUnlimited)) {
     }
 }
 
+RolePermissionSyncService::syncRoleCapabilitiesForPermissions($conn, $roleId, $enabled);
+
 (new SecurityAuditLogger())->record($conn, 'role_permissions_updated', [
     'target_type' => 'role',
     'target_id' => $roleId,
@@ -108,5 +110,5 @@ if (is_array($limitValues) || is_array($limitUnlimited)) {
     ],
 ]);
 
-header('Location: ../role_permissions.php?id=' . $roleId . '&saved=1');
+header('Location: ../team.php?tab=roles&role_saved=' . $roleId);
 exit;

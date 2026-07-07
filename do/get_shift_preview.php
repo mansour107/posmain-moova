@@ -41,7 +41,7 @@ try {
     include($classPath);
     ob_end_clean(); // Discard noise
 
-    $user_id = auth_guard_user_id_from_session();
+    $user_id = function_exists('pos_acting_user_id') ? pos_acting_user_id() : auth_guard_user_id_from_session();
     if ($user_id < 1) {
         throw new Exception('الرجاء تسجيل الدخول أولاً');
     }
@@ -50,7 +50,13 @@ try {
         throw new Exception('مطلوب فتح نقطة البيع أولاً');
     }
 
-    require_permission('pos.shift.close', $conn);
+    $canPreviewShift = auth_guard_has_permission('pos.shift.close', $conn)
+        || auth_guard_has_permission('pos.cashdrawer.count', $conn)
+        || auth_guard_has_permission('pos.drawer.payin', $conn)
+        || auth_guard_has_permission('pos.drawer.safe_drop', $conn);
+    if (!$canPreviewShift) {
+        throw new Exception('PERMISSION_DENIED');
+    }
 
     if (!isset($conn) || $conn->connect_error) {
         throw new Exception('فشل الاتصال بقاعدة البيانات');
@@ -83,6 +89,24 @@ try {
     $expenseSummary = $drawerSession
         ? $shiftSessions->drawerExpenseSummary($conn, $drawerSession)
         : $shiftSessions->shiftExpenseSummary($conn, (int) $user_id, $reportScope);
+    $payInSummary = $drawerSession
+        ? $shiftSessions->shiftPayInSummary($conn, (int) $user_id, $reportScope)
+        : [
+            'total' => 0.0,
+            'total_formatted' => '0.00',
+            'count' => 0,
+            'notes' => '',
+            'movements' => [],
+        ];
+    $safeDropSummary = $drawerSession
+        ? $shiftSessions->shiftSafeDropSummary($conn, (int) $user_id, $reportScope)
+        : [
+            'total' => 0.0,
+            'total_formatted' => '0.00',
+            'count' => 0,
+            'notes' => '',
+            'movements' => [],
+        ];
     
     // Get cashier name
     $cashier_name = 'الكاشير';
@@ -105,6 +129,8 @@ try {
             'cashier_name' => $cashier_name,
             'shift_number' => date('Ymd') . '_' . $user_id,
             'expenses' => $expenseSummary,
+            'payins' => $payInSummary,
+            'safe_drops' => $safeDropSummary,
             'expected_cash' => $expenseSummary['expected_cash'] ?? null,
         ]
     ];

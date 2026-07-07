@@ -317,8 +317,11 @@ function clearTableSelection() {
 
 // دالة إغلاق الشيفت
 function closeShift() {
-    const expenses = $('#shift_expenses').val() || 0;
-    const expNotes = $('#shift_exp_notes').val() || '';
+    const expensePayload = (typeof window.posShiftExpenseClosePayload === 'function')
+        ? window.posShiftExpenseClosePayload()
+        : { expenses: 0, exp_notes: '' };
+    const expenses = expensePayload.expenses || 0;
+    const expNotes = expensePayload.exp_notes || '';
     const cash = $('#shift_cash').val() || 0;
     const fundAfter = $('#shift_fund_after').val() || 0;
     const notes = $('#shift_notes').val() || '';

@@ -15,9 +15,13 @@ if (!isset($_SESSION['login']) || !isset($_SESSION['userid'])) {
 include(__DIR__ . '/includes/connect.php');
 require_once __DIR__ . '/includes/auth_guard.php';
 require_once __DIR__ . '/includes/layout_capabilities.php';
+require_permission('pos.open', $conn);
 
 $posmainCanCloseShift = auth_guard_has_permission('pos.shift.close', $conn);
 $posmainCanRecordShiftExpense = auth_guard_has_permission('pos.cashdrawer.count', $conn);
+$posmainCanRecordShiftPayIn = auth_guard_has_permission('pos.drawer.payin', $conn);
+$posmainCanRecordShiftSafeDrop = auth_guard_has_permission('pos.drawer.safe_drop', $conn);
+$posmainCanRecordDrawerCash = $posmainCanRecordShiftExpense || $posmainCanRecordShiftPayIn || $posmainCanRecordShiftSafeDrop;
 
 $pinService = new PinService();
 $pos_pin_mode = false;
@@ -74,12 +78,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['pos_barcode']) && $po
 }
 
 if (!auth_guard_is_pos_barcode_unlocked()) {
+    if (isset($_SESSION['pos_login_error'])) {
+        $login_error = (string) $_SESSION['pos_login_error'];
+        unset($_SESSION['pos_login_error']);
+    }
     include('includes/pos_login_screen.php');
     exit;
 }
 
+pos_enforce_active_pos_lane($conn);
+
 require_once __DIR__ . '/classes/Pos/Service/ShiftSessionService.php';
+require_once __DIR__ . '/classes/Security/PermissionService.php';
+require_once __DIR__ . '/classes/Security/RolePermissionSyncService.php';
 $acting_user_id = pos_acting_user_id();
+if ($acting_user_id > 0) {
+    $actingRoleStmt = $conn->prepare('SELECT userrole FROM users WHERE id = ? AND COALESCE(isdeleted, 0) != 1 LIMIT 1');
+    $actingRoleStmt->bind_param('i', $acting_user_id);
+    $actingRoleStmt->execute();
+    $actingRoleRow = $actingRoleStmt->get_result()->fetch_assoc();
+    $actingRoleStmt->close();
+    $actingRoleId = (int) ($actingRoleRow['userrole'] ?? 0);
+    if ($actingRoleId > 0) {
+        RolePermissionSyncService::repairPresetRoleCapabilitiesIfNeeded($conn, $actingRoleId);
+    }
+}
+$posmainActingCanVoidPersistedItem = $acting_user_id > 0
+    && PermissionService::forConnection($conn)->check($acting_user_id, 'pos.void.item_after_send');
 try {
     (new ShiftSessionService())->openForCashier($conn, $acting_user_id);
     pos_touch_activity();
@@ -131,6 +156,7 @@ $posCapsVer = (int) (@filemtime(__DIR__ . '/js/posmain_capabilities.js') ?: 1);
 ?>
 <script src="js/posmain_capabilities.js?v=<?= $posCapsVer ?>"></script>
 <?= posmain_render_acting_pos_context_script($conn, (int) $acting_user_id) ?>
+<script>window.POSMAIN_ACTING_CAN_VOID_PERSISTED = <?= $posmainActingCanVoidPersistedItem ? 'true' : 'false' ?>;</script>
 <script>
 (function () {
     const tokenElement = document.querySelector('meta[name="posmain-csrf-token"]');
@@ -166,14 +192,17 @@ $posCapsVer = (int) (@filemtime(__DIR__ . '/js/posmain_capabilities.js') ?: 1);
     <div class="moova-navbar-widget" aria-label="Moova POS widget">
         <?php include('elements/pos/cofe_widget.php'); ?>
     </div>
-    <?php if ($posmainCanRecordShiftExpense) { ?>
+    <button type="button" class="pos-corner-btn" id="posKeyboardToggleBtn"
+        title="لوحة المفاتيح" aria-label="لوحة المفاتيح" aria-pressed="false">
+        <i class="fas fa-keyboard"></i>
+    </button>
+    <?php if ($posmainCanRecordDrawerCash) { ?>
     <button type="button" class="pos-corner-btn" id="posDrawerNoSaleBtn" title="فتح درج بدون بيع" aria-label="فتح درج بدون بيع">
         <i class="fas fa-cash-register"></i>
     </button>
     <button type="button" class="pos-corner-btn" data-bs-toggle="modal"
-        data-bs-target="#shiftExpenseModal" title="تسجيل مصروف" aria-label="تسجيل مصروف">
+        data-bs-target="#shiftExpenseModal" title="حركة نقدية للدرج" aria-label="حركة نقدية للدرج">
         <i class="fas fa-wallet"></i>
-        <span class="pos-corner-btn-badge d-none js-shift-expense-badge"></span>
     </button>
     <?php } ?>
     <?php if ($posmainCanCloseShift) { ?>
@@ -216,12 +245,11 @@ $posCapsVer = (int) (@filemtime(__DIR__ . '/js/posmain_capabilities.js') ?: 1);
             <ul class="navbar-nav me-auto"></ul>
 
             <ul class="navbar-nav">
-                <?php if ($posmainCanRecordShiftExpense) { ?>
+                <?php if ($posmainCanRecordDrawerCash) { ?>
                 <li class="nav-item">
                     <button type="button" class="btn btn-outline-light btn-sm me-2 position-relative" data-bs-toggle="modal"
-                        data-bs-target="#shiftExpenseModal" title="تسجيل مصروف">
-                        <i class="fas fa-wallet me-1"></i> مصروف
-                        <span class="badge bg-danger position-absolute top-0 start-100 translate-middle d-none js-shift-expense-badge"></span>
+                        data-bs-target="#shiftExpenseModal" title="حركة نقدية للدرج">
+                        <i class="fas fa-wallet me-1"></i> نقدية الدرج
                     </button>
                 </li>
                 <?php } ?>

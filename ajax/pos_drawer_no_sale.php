@@ -4,6 +4,8 @@ require_once __DIR__ . '/../includes/write_bootstrap.php';
 require_once __DIR__ . '/../includes/pos_cache_control.php';
 require_once __DIR__ . '/../classes/Pos/Service/DrawerSessionService.php';
 require_once __DIR__ . '/../classes/Pos/Service/ShiftSessionService.php';
+require_once __DIR__ . '/../classes/Pos/Service/CashDrawerHardwareService.php';
+require_once __DIR__ . '/../classes/Pos/Service/ManagerApprovalService.php';
 
 posmain_send_no_store_headers();
 header('Content-Type: application/json; charset=utf-8');
@@ -35,7 +37,10 @@ try {
             (int) ($_SESSION['pos_drawer_session_id'] ?? 0) ?: null,
             1.0,
             $_POST,
-            ['user_id' => $userId]
+            [
+                'user_id' => $userId,
+                'require_manager_approval' => true,
+            ]
         );
         if ($approval) {
             $approvalService->consumeApproval($conn, (int) $approval['id'], $userId);
@@ -43,22 +48,39 @@ try {
     }
 
     $shiftService = new ShiftSessionService();
-    $session = $shiftService->currentDrawerSession($conn, $userId, []);
+    $scope = $shiftService->resolveScope([]);
+    $session = $shiftService->currentDrawerSession($conn, $userId, $scope);
+    if (!$session) {
+        try {
+            $opened = $shiftService->openForCashier($conn, $userId, $scope);
+            if (!empty($opened['id'])) {
+                $session = $shiftService->currentDrawerSession($conn, $userId, $scope);
+            }
+        } catch (Throwable $openException) {
+            // fall through to required error
+        }
+    }
     if (!$session) {
         throw new RuntimeException('DRAWER_SESSION_REQUIRED');
     }
 
     $drawerService = new DrawerSessionService();
     $movement = $drawerService->recordMovement($conn, (int) $session['id'], [
-        'movement_type' => 'paid_in',
-        'amount' => '0.01',
+        'movement_type' => 'no_sale',
+        'amount' => '0.000',
+        'allow_zero_amount' => true,
         'reason' => $reason !== '' ? $reason : 'no_sale',
         'created_by' => $userId,
     ]);
 
+    $hardwareService = new CashDrawerHardwareService();
+    $hardwareConfig = $hardwareService->resolveDriverConfig($conn, $scope);
+    $hardwareResult = $hardwareService->open($hardwareConfig);
+
     echo json_encode([
         'success' => true,
         'movement_id' => (int) ($movement['id'] ?? 0),
+        'hardware' => $hardwareResult,
     ], JSON_UNESCAPED_UNICODE);
 } catch (RuntimeException $exception) {
     $code = $exception->getMessage();
@@ -67,6 +89,6 @@ try {
     echo json_encode([
         'success' => false,
         'code' => $code,
-        'message' => $code,
+        'message' => CashDrawerHardwareService::userMessageForCode($code),
     ], JSON_UNESCAPED_UNICODE);
 }

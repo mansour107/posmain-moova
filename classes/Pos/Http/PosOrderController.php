@@ -5,6 +5,7 @@ require_once __DIR__ . '/../Service/IdempotencyService.php';
 require_once __DIR__ . '/../Service/OrderPricingService.php';
 require_once __DIR__ . '/../Service/OrderMutationSideEffectsService.php';
 require_once __DIR__ . '/../Service/OrderAccountingService.php';
+require_once __DIR__ . '/../Service/DrawerSessionService.php';
 require_once __DIR__ . '/../Validation/OrderInputValidator.php';
 require_once __DIR__ . '/../Validation/PaymentInputValidator.php';
 require_once __DIR__ . '/../Validation/TableInputValidator.php';
@@ -138,6 +139,10 @@ class PosOrderController
             ];
 
         $idempotencyService->complete($conn, $idempotencyScope, $idempotencyKey, $idempotencyHash, $response);
+        if (!function_exists('pos_consume_lane_permission_override_if_needed')) {
+            require_once __DIR__ . '/../../../includes/auth_guard.php';
+        }
+        pos_consume_lane_permission_override_if_needed($conn, 'pos.table.open', $userId);
         $conn->commit();
 
         return [
@@ -248,6 +253,9 @@ class PosOrderController
         }
 
         $request['edit_id'] = $editId;
+        (new PosOrderMutationService())->assertCashierEditVoidApprovalIfNeeded($conn, $request, [
+            'user_id' => $userId,
+        ]);
         $request = $this->resolveCashierPricing($conn, $request, $userId);
         OrderCreateRequest::fromTakeawayPayload($request, $userId);
         $channel = !empty($request['delivery_customer_name']) ? 'delivery' : 'takeaway';
@@ -350,6 +358,10 @@ class PosOrderController
             ],
         ];
         $idempotencyService->complete($conn, PosOrderMutationService::SCOPE_TABLE_FREE, $idempotencyKey, $idempotencyHash, $response);
+        if (!function_exists('pos_consume_lane_permission_override_if_needed')) {
+            require_once __DIR__ . '/../../../includes/auth_guard.php';
+        }
+        pos_consume_lane_permission_override_if_needed($conn, 'pos.table.open', $userId);
         $conn->commit();
 
         return [
@@ -420,13 +432,15 @@ class PosOrderController
         }
 
         $table = $tableOrderService->requireTable($conn, $tableId);
-        if ($orderId <= 0) {
-            $activeOrder = $tableOrderService->findActiveOrderByTableId($conn, $tableId, true);
-            if (!$activeOrder) {
-                throw new InvalidArgumentException('لا يوجد طلب نشط لهذه الطاولة');
-            }
-            $orderId = (int) $activeOrder['id'];
-        }
+        $orderId = $this->resolveTableOrderIdForPayment(
+            $conn,
+            $data,
+            $tableId,
+            $orderId,
+            $userId,
+            $posMutationService,
+            $tableOrderService
+        );
 
         $paymentEnvelope = $posMutationService->payTableOrder($conn, [
             'table_id' => $tableId,
@@ -469,6 +483,12 @@ class PosOrderController
                 'user_id' => $userId,
             ], ['user_id' => $userId, 'tenant' => 0, 'branch' => 0]);
             $receiptId = $accountingResult['receipt_id'] ?? null;
+            $movementId = (int) ($paymentResult['drawer_movement_id'] ?? 0);
+            if ($receiptId && $movementId > 0) {
+                (new DrawerSessionService())->linkMovementToVoucher($conn, $movementId, (int) $receiptId);
+            } elseif ($receiptId) {
+                (new DrawerSessionService())->linkLatestSaleMovementToVoucher($conn, $orderId, (int) $receiptId);
+            }
         }
 
         (new OrderMutationSideEffectsService())->recordTablePayment(
@@ -496,6 +516,10 @@ class PosOrderController
             ],
         ];
         $idempotencyService->complete($conn, PosOrderMutationService::SCOPE_TABLE_PAYMENT, $idempotencyKey, $idempotencyHash, $response);
+        if (!function_exists('pos_consume_lane_permission_override_if_needed')) {
+            require_once __DIR__ . '/../../../includes/auth_guard.php';
+        }
+        pos_consume_lane_permission_override_if_needed($conn, 'pos.table.open', $userId);
         $conn->commit();
 
         return [
@@ -910,6 +934,114 @@ class PosOrderController
         }
 
         return $data;
+    }
+
+    private function resolveTableOrderIdForPayment(
+        mysqli $conn,
+        array $data,
+        int $tableId,
+        int $orderId,
+        int $userId,
+        PosOrderMutationService $posMutationService,
+        TableOrderService $tableOrderService
+    ): int {
+        if ($orderId > 0) {
+            return $orderId;
+        }
+
+        $activeOrder = $tableOrderService->findActiveOrderByTableId($conn, $tableId, true);
+        if ($activeOrder) {
+            return (int) $activeOrder['id'];
+        }
+
+        $normalized = $this->normalizeCashierMutationRequest($conn, $data);
+        $items = $this->extractItemsFromCashierPayload($normalized);
+        if ($items === []) {
+            throw new InvalidArgumentException('لا يوجد طلب نشط لهذه الطاولة');
+        }
+
+        $saveRequest = OrderInputValidator::validateTableSave([
+            'table_id' => $tableId,
+            'order_id' => 0,
+            'order_date' => trim((string) ($normalized['pro_date'] ?? $normalized['order_date'] ?? date('Y-m-d'))),
+            'store_id' => (int) ($normalized['store_id'] ?? 0),
+            'emp_id' => (int) ($normalized['emp_id'] ?? 0),
+            'fund_id' => (int) ($normalized['fund_id'] ?? 0),
+            'items' => $items,
+            'total' => (float) ($normalized['headtotal'] ?? $normalized['total'] ?? 0),
+            'discount' => (float) ($normalized['headdisc'] ?? $normalized['discount'] ?? 0),
+            'net' => (float) ($normalized['headnet'] ?? $normalized['net'] ?? 0),
+        ]);
+        $saveRequest = (new OrderPricingService())->resolveTableSaveRequest($conn, $saveRequest, ['user_id' => $userId]);
+
+        $saveEnvelope = $posMutationService->saveTableOrder($conn, [
+            'table_id' => $tableId,
+            'order_id' => 0,
+            'order_date' => trim((string) ($saveRequest['order_date'] ?? date('Y-m-d'))),
+            'store_id' => (int) ($saveRequest['store_id'] ?? 0),
+            'emp_id' => (int) ($saveRequest['emp_id'] ?? 0),
+            'fund_id' => (int) ($saveRequest['fund_id'] ?? 0),
+            'items' => is_array($saveRequest['items'] ?? null) ? $saveRequest['items'] : [],
+            'total' => (float) ($saveRequest['total'] ?? 0),
+            'discount' => (float) ($saveRequest['discount'] ?? 0),
+            'net' => (float) ($saveRequest['net'] ?? 0),
+            'user_id' => $userId,
+            'pos_customer_id' => (int) ($data['pos_customer_id'] ?? $data['posCustomerId'] ?? 0) ?: null,
+        ], ['user_id' => $userId, 'in_transaction' => true, 'event_source' => 'pos_table_pay_save']);
+
+        $saveData = is_array($saveEnvelope['data'] ?? null) ? $saveEnvelope['data'] : [];
+        $newOrderId = (int) ($saveData['order_id'] ?? 0);
+        if ($newOrderId < 1) {
+            throw new InvalidArgumentException('تعذر حفظ طلب الطاولة قبل الدفع');
+        }
+
+        (new OrderMutationSideEffectsService())->recordTableSave(
+            $conn,
+            $newOrderId,
+            $tableId,
+            false,
+            (string) ($saveData['order_status'] ?? 'active'),
+            $userId,
+            'pos_table',
+            'pos_table_pay_save',
+            (int) ($saveData['kitchen_revision'] ?? 0)
+        );
+
+        return $newOrderId;
+    }
+
+    private function extractItemsFromCashierPayload(array $data): array
+    {
+        if (is_array($data['items'] ?? null) && $data['items'] !== []) {
+            return $data['items'];
+        }
+
+        $names = is_array($data['itmname'] ?? null) ? $data['itmname'] : [];
+        if ($names === []) {
+            return [];
+        }
+
+        $qtyFields = is_array($data['itmqty'] ?? null) ? $data['itmqty'] : [];
+        $priceFields = is_array($data['itmprice'] ?? null) ? $data['itmprice'] : [];
+        $discFields = is_array($data['itmdisc'] ?? null) ? $data['itmdisc'] : [];
+        $noteFields = is_array($data['itmnote'] ?? null) ? $data['itmnote'] : [];
+        $items = [];
+
+        foreach ($names as $index => $name) {
+            $itemId = (int) $name;
+            if ($itemId < 1) {
+                continue;
+            }
+            $items[] = [
+                'id' => $itemId,
+                'qty' => (float) ($qtyFields[$index] ?? 1),
+                'price' => (float) ($priceFields[$index] ?? 0),
+                'discount' => (float) ($discFields[$index] ?? 0),
+                'note' => (string) ($noteFields[$index] ?? ''),
+            ];
+        }
+
+        return $items;
     }
 
     private function formatCashierMutationPayload(array $result, array $request, string $channel): array

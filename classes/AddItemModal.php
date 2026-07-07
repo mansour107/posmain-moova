@@ -312,10 +312,12 @@ class AddItemModal extends InvoiceElementBase
      */
     private function checkPermissions()
     {
-        // هنا يجب فحص صلاحيات المستخدم
-        // مؤقتاً سنعيد true
-        global $role;
-        return isset($role['add_items']) && $role['add_items'] == 1;
+        global $conn;
+        if ($conn instanceof mysqli && auth_guard_has_permission('menu.edit', $conn)) {
+            return true;
+        }
+
+        return false;
     }
 
     /**

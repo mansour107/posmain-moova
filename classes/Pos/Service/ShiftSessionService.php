@@ -1,15 +1,20 @@
 <?php
 
 require_once __DIR__ . '/DrawerSessionService.php';
+require_once __DIR__ . '/DrawerLedgerPostingService.php';
 require_once __DIR__ . '/../../ShiftReport.php';
 
 class ShiftSessionService
 {
     private DrawerSessionService $drawerSessions;
+    private DrawerLedgerPostingService $ledgerPosting;
 
-    public function __construct(?DrawerSessionService $drawerSessions = null)
-    {
+    public function __construct(
+        ?DrawerSessionService $drawerSessions = null,
+        ?DrawerLedgerPostingService $ledgerPosting = null
+    ) {
         $this->drawerSessions = $drawerSessions ?: new DrawerSessionService();
+        $this->ledgerPosting = $ledgerPosting ?: new DrawerLedgerPostingService();
     }
 
     public function resolveScope(array $context = []): array
@@ -61,12 +66,22 @@ class ShiftSessionService
             return $existing;
         }
 
+        $fundAccountId = $context['fund_account_id'] ?? null;
+        if ($fundAccountId === null || (int) $fundAccountId < 1) {
+            $fundAccountId = $this->ledgerPosting->resolveFundAccountId($conn, [
+                'fund_account_id' => null,
+            ]);
+            if ((int) $fundAccountId < 1) {
+                $fundAccountId = null;
+            }
+        }
+
         $session = $this->drawerSessions->openSession($conn, [
             'user_id' => $userId,
             'opened_by' => (int) ($context['opened_by'] ?? $userId),
             'tenant' => $scope['tenant'],
             'branch' => $scope['branch'],
-            'fund_account_id' => $context['fund_account_id'] ?? null,
+            'fund_account_id' => $fundAccountId,
             'opening_cash' => $context['opening_cash'] ?? '0',
             'opened_at' => $context['opened_at'] ?? null,
             'notes' => $context['notes'] ?? null,
@@ -131,16 +146,176 @@ class ShiftSessionService
             throw new RuntimeException('DRAWER_SESSION_REQUIRED');
         }
 
-        $this->requirePayoutApprovalIfNeeded($conn, $userId, $amount, (int) $drawerSession['id'], $payload);
+        $managerApprovalId = $this->requirePayoutApprovalIfNeeded(
+            $conn,
+            $userId,
+            $amount,
+            (int) $drawerSession['id'],
+            $payload
+        );
 
-        $movement = $this->drawerSessions->recordMovement($conn, (int) $drawerSession['id'], [
-            'movement_type' => 'paid_out',
-            'amount' => number_format($amount, 3, '.', ''),
-            'reason' => $reason,
-            'created_by' => $userId,
-        ]);
+        $conn->begin_transaction();
+
+        try {
+            $fundAccountId = $this->ledgerPosting->resolveFundAccountId($conn, $drawerSession);
+            $refOtHeadId = null;
+            if ($this->ledgerPosting->canPost($conn)) {
+                $refOtHeadId = $this->ledgerPosting->postPayOut(
+                    $conn,
+                    $amount,
+                    $reason,
+                    $userId,
+                    $fundAccountId,
+                    (int) $drawerSession['id']
+                );
+            }
+
+            $movement = $this->drawerSessions->recordMovement($conn, (int) $drawerSession['id'], [
+                'movement_type' => 'paid_out',
+                'amount' => number_format($amount, 3, '.', ''),
+                'reason' => $reason,
+                'created_by' => $userId,
+                'manager_approval_id' => $managerApprovalId,
+                'ref_ot_head_id' => $refOtHeadId,
+            ]);
+
+            $conn->commit();
+        } catch (Throwable $exception) {
+            $conn->rollback();
+            throw $exception;
+        }
 
         $summary = $this->shiftExpenseSummary($conn, $userId, $scope);
+
+        return [
+            'movement' => $movement,
+            'summary' => $summary,
+        ];
+    }
+
+    public function recordShiftPayIn(mysqli $conn, int $userId, array $payload): array
+    {
+        require_once dirname(__DIR__, 3) . '/includes/auth_guard.php';
+        require_once dirname(__DIR__, 3) . '/includes/pos_shift_guard.php';
+
+        if (posmain_pos_shift_write_blocked(null, $conn)) {
+            throw new RuntimeException('SHIFT_WRITE_BLOCKED');
+        }
+
+        $amount = round((float) ($payload['amount'] ?? 0), 3);
+        $reason = trim((string) ($payload['reason'] ?? ''));
+        if ($amount <= 0) {
+            throw new RuntimeException('PAYIN_AMOUNT_REQUIRED');
+        }
+        if ($reason === '') {
+            throw new RuntimeException('PAYIN_REASON_REQUIRED');
+        }
+
+        $scope = $this->resolveScope($payload);
+        $drawerSession = $this->currentDrawerSession($conn, $userId, $scope);
+        if (!$drawerSession) {
+            throw new RuntimeException('DRAWER_SESSION_REQUIRED');
+        }
+
+        $managerApprovalId = (int) ($payload['manager_approval_id'] ?? 0) ?: null;
+
+        $conn->begin_transaction();
+
+        try {
+            $fundAccountId = $this->ledgerPosting->resolveFundAccountId($conn, $drawerSession);
+            $refOtHeadId = null;
+            if ($this->ledgerPosting->canPost($conn)) {
+                $refOtHeadId = $this->ledgerPosting->postPayIn(
+                    $conn,
+                    $amount,
+                    $reason,
+                    $userId,
+                    $fundAccountId,
+                    (int) $drawerSession['id']
+                );
+            }
+
+            $movement = $this->drawerSessions->recordMovement($conn, (int) $drawerSession['id'], [
+                'movement_type' => 'paid_in',
+                'amount' => number_format($amount, 3, '.', ''),
+                'reason' => $reason,
+                'created_by' => $userId,
+                'manager_approval_id' => $managerApprovalId,
+                'ref_ot_head_id' => $refOtHeadId,
+            ]);
+
+            $conn->commit();
+        } catch (Throwable $exception) {
+            $conn->rollback();
+            throw $exception;
+        }
+
+        $summary = $this->shiftPayInSummary($conn, $userId, $scope);
+
+        return [
+            'movement' => $movement,
+            'summary' => $summary,
+        ];
+    }
+
+    public function recordShiftSafeDrop(mysqli $conn, int $userId, array $payload): array
+    {
+        require_once dirname(__DIR__, 3) . '/includes/auth_guard.php';
+        require_once dirname(__DIR__, 3) . '/includes/pos_shift_guard.php';
+
+        if (posmain_pos_shift_write_blocked(null, $conn)) {
+            throw new RuntimeException('SHIFT_WRITE_BLOCKED');
+        }
+
+        $amount = round((float) ($payload['amount'] ?? 0), 3);
+        $reason = trim((string) ($payload['reason'] ?? ''));
+        if ($amount <= 0) {
+            throw new RuntimeException('SAFE_DROP_AMOUNT_REQUIRED');
+        }
+        if ($reason === '') {
+            throw new RuntimeException('SAFE_DROP_REASON_REQUIRED');
+        }
+
+        $scope = $this->resolveScope($payload);
+        $drawerSession = $this->currentDrawerSession($conn, $userId, $scope);
+        if (!$drawerSession) {
+            throw new RuntimeException('DRAWER_SESSION_REQUIRED');
+        }
+
+        $managerApprovalId = (int) ($payload['manager_approval_id'] ?? 0) ?: null;
+
+        $conn->begin_transaction();
+
+        try {
+            $fundAccountId = $this->ledgerPosting->resolveFundAccountId($conn, $drawerSession);
+            $refOtHeadId = null;
+            if ($this->ledgerPosting->canPost($conn)) {
+                $refOtHeadId = $this->ledgerPosting->postSafeDrop(
+                    $conn,
+                    $amount,
+                    $reason,
+                    $userId,
+                    $fundAccountId,
+                    (int) $drawerSession['id']
+                );
+            }
+
+            $movement = $this->drawerSessions->recordMovement($conn, (int) $drawerSession['id'], [
+                'movement_type' => 'safe_drop',
+                'amount' => number_format($amount, 3, '.', ''),
+                'reason' => $reason,
+                'created_by' => $userId,
+                'manager_approval_id' => $managerApprovalId,
+                'ref_ot_head_id' => $refOtHeadId,
+            ]);
+
+            $conn->commit();
+        } catch (Throwable $exception) {
+            $conn->rollback();
+            throw $exception;
+        }
+
+        $summary = $this->shiftSafeDropSummary($conn, $userId, $scope);
 
         return [
             'movement' => $movement,
@@ -176,18 +351,128 @@ class ShiftSessionService
         ];
     }
 
+    public function shiftPayInSummary(mysqli $conn, int $userId, array $context = []): array
+    {
+        $cashSummary = $this->drawerCashMovementSummary($conn, $userId, $context);
+        $payins = $cashSummary['payins'];
+        $payins['source'] = $cashSummary['source'];
+        $payins['drawer_active'] = $cashSummary['drawer_active'];
+        $payins['mid_shift_enabled'] = $cashSummary['mid_shift_enabled'];
+        $payins['drawer_session_id'] = $cashSummary['drawer_session_id'] ?? null;
+        $payins['expected_cash'] = $cashSummary['expected_cash'];
+
+        return $payins;
+    }
+
+    public function shiftSafeDropSummary(mysqli $conn, int $userId, array $context = []): array
+    {
+        $cashSummary = $this->drawerCashMovementSummary($conn, $userId, $context);
+        $safeDrops = $cashSummary['safe_drops'];
+        $safeDrops['source'] = $cashSummary['source'];
+        $safeDrops['drawer_active'] = $cashSummary['drawer_active'];
+        $safeDrops['mid_shift_enabled'] = $cashSummary['mid_shift_enabled'];
+        $safeDrops['drawer_session_id'] = $cashSummary['drawer_session_id'] ?? null;
+        $safeDrops['expected_cash'] = $cashSummary['expected_cash'];
+
+        return $safeDrops;
+    }
+
+    public function drawerCashMovementSummary(mysqli $conn, int $userId, array $context = []): array
+    {
+        $scope = $this->resolveScope($context);
+        if (!empty($context['drawer_session_id'])) {
+            $scope['drawer_session_id'] = (int) $context['drawer_session_id'];
+        }
+        $drawerSession = $this->currentDrawerSession($conn, $userId, $scope);
+        if (!$drawerSession) {
+            return [
+                'source' => 'legacy',
+                'drawer_active' => false,
+                'mid_shift_enabled' => false,
+                'expected_cash' => null,
+                'payins' => [
+                    'total' => 0.0,
+                    'total_formatted' => '0.00',
+                    'count' => 0,
+                    'notes' => '',
+                    'movements' => [],
+                ],
+                'payouts' => [
+                    'total' => 0.0,
+                    'total_formatted' => '0.00',
+                    'count' => 0,
+                    'notes' => '',
+                    'movements' => [],
+                ],
+                'safe_drops' => [
+                    'total' => 0.0,
+                    'total_formatted' => '0.00',
+                    'count' => 0,
+                    'notes' => '',
+                    'movements' => [],
+                ],
+            ];
+        }
+
+        $payins = $this->summarizeMovements($conn, $drawerSession, 'paid_in', true);
+        $payouts = $this->summarizeMovements($conn, $drawerSession, 'paid_out', false);
+        $safeDrops = $this->summarizeMovements($conn, $drawerSession, 'safe_drop', false);
+
+        return [
+            'source' => 'drawer',
+            'drawer_active' => true,
+            'mid_shift_enabled' => true,
+            'drawer_session_id' => (int) $drawerSession['id'],
+            'expected_cash' => $this->drawerSessions->expectedCash($conn, (int) $drawerSession['id']),
+            'payins' => $payins,
+            'payouts' => $payouts,
+            'safe_drops' => $safeDrops,
+        ];
+    }
+
     public function drawerExpenseSummary(mysqli $conn, array $drawerSession): array
     {
+        $cashSummary = $this->drawerCashMovementSummary($conn, (int) $drawerSession['user_id'], [
+            'drawer_session_id' => (int) $drawerSession['id'],
+            'tenant' => (int) ($drawerSession['tenant'] ?? 0),
+            'branch' => (int) ($drawerSession['branch'] ?? 0),
+        ]);
+        $payouts = $cashSummary['payouts'];
+
+        return [
+            'source' => 'drawer',
+            'drawer_active' => true,
+            'mid_shift_enabled' => true,
+            'drawer_session_id' => (int) $drawerSession['id'],
+            'total' => $payouts['total'],
+            'total_formatted' => $payouts['total_formatted'],
+            'count' => $payouts['count'],
+            'notes' => $payouts['notes'],
+            'movements' => $payouts['movements'],
+            'expected_cash' => $cashSummary['expected_cash'],
+        ];
+    }
+
+    private function summarizeMovements(
+        mysqli $conn,
+        array $drawerSession,
+        string $movementType,
+        bool $excludeZeroAmountPaidIn
+    ): array {
         $movements = [];
         $total = 0.0;
         $notes = [];
 
         foreach ($this->drawerSessions->movementsForSession($conn, (int) $drawerSession['id']) as $movement) {
-            if ((string) ($movement['movement_type'] ?? '') !== 'paid_out') {
+            if ((string) ($movement['movement_type'] ?? '') !== $movementType) {
                 continue;
             }
 
             $amount = (float) ($movement['amount'] ?? 0);
+            if ($excludeZeroAmountPaidIn && $amount <= 0) {
+                continue;
+            }
+
             $total += $amount;
             $reason = trim((string) ($movement['reason'] ?? ''));
             if ($reason !== '') {
@@ -203,16 +488,11 @@ class ShiftSessionService
         }
 
         return [
-            'source' => 'drawer',
-            'drawer_active' => true,
-            'mid_shift_enabled' => true,
-            'drawer_session_id' => (int) $drawerSession['id'],
             'total' => $total,
             'total_formatted' => number_format($total, 2),
             'count' => count($movements),
             'notes' => $this->truncateExpenseNotes(implode(' | ', $notes)),
             'movements' => $movements,
-            'expected_cash' => $this->drawerSessions->expectedCash($conn, (int) $drawerSession['id']),
         ];
     }
 
@@ -279,6 +559,9 @@ class ShiftSessionService
         $expenses = (float) $resolvedExpenses['expenses'];
         $expNotes = (string) $resolvedExpenses['exp_notes'];
         $expenseSummary = $resolvedExpenses['expense_summary'];
+        $payInSummary = $drawerSession
+            ? $this->shiftPayInSummary($conn, $userId, $scope)
+            : ['total' => 0.0, 'count' => 0];
         $cash = (float) ($payload['cash'] ?? 0);
         $fundAfter = (float) ($payload['fund_after'] ?? 0);
         $notes = trim((string) ($payload['notes'] ?? ''));
@@ -295,6 +578,8 @@ class ShiftSessionService
             'close_path' => 'close_shift.php',
             'expense_source' => $expenseSummary['source'] ?? null,
             'expense_count' => (int) ($expenseSummary['count'] ?? 0),
+            'payin_total' => (float) ($payInSummary['total'] ?? 0),
+            'payin_count' => (int) ($payInSummary['count'] ?? 0),
             'drawer_expected_cash' => $expenseSummary['expected_cash'] ?? null,
         ], JSON_UNESCAPED_UNICODE);
 
@@ -484,12 +769,16 @@ class ShiftSessionService
         float $amount,
         int $drawerSessionId,
         array $request
-    ): void {
+    ): ?int {
         if (!class_exists('PermissionService', false)) {
             require_once dirname(__DIR__, 2) . '/Security/PermissionService.php';
         }
         if (!class_exists('ManagerApprovalService', false)) {
             require_once __DIR__ . '/ManagerApprovalService.php';
+        }
+
+        if (!$this->payoutLimitInfrastructureAvailable($conn)) {
+            return null;
         }
 
         $permissionService = PermissionService::forConnection($conn);
@@ -500,7 +789,7 @@ class ShiftSessionService
         }
 
         if ($withinLimit) {
-            return;
+            return null;
         }
 
         $approvalService = new ManagerApprovalService();
@@ -519,6 +808,17 @@ class ShiftSessionService
         );
         if ($approval) {
             $approvalService->consumeApproval($conn, (int) $approval['id'], $userId);
+
+            return (int) $approval['id'];
         }
+
+        return null;
+    }
+
+    private function payoutLimitInfrastructureAvailable(mysqli $conn): bool
+    {
+        $result = $conn->query("SHOW TABLES LIKE 'usr_pwrs'");
+
+        return $result instanceof mysqli_result && $result->num_rows > 0;
     }
 }

@@ -5,6 +5,7 @@ rbacPageAssert(is_array($pageManifest) && $pageManifest !== [], 'page manifest r
 
 $guardSnippets = [
     'page_guard(',
+    'page_guard_from_manifest(',
     'require_admin_or_permission(',
     'require_permission(',
     'deny_json_or_redirect(\'PERMISSION_DENIED\'',

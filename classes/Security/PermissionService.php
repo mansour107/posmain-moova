@@ -211,7 +211,7 @@ class PermissionService
         return (int) ($row['is_system'] ?? 0) === 1;
     }
 
-    public function assertRoleEditable(int $roleId): void
+    public function assertRolePermissionsEditable(int $roleId): void
     {
         if ($roleId < 1) {
             throw new RuntimeException('ROLE_NOT_FOUND');
@@ -220,6 +220,11 @@ class PermissionService
         if (self::ADMIN_ROLE_IMMUTABLE && $this->isOwnerRole($roleId)) {
             throw new RuntimeException('ADMIN_ROLE_IMMUTABLE');
         }
+    }
+
+    public function assertRoleEditable(int $roleId): void
+    {
+        $this->assertRolePermissionsEditable($roleId);
 
         if ($this->isSystemRole($roleId)) {
             throw new RuntimeException('SYSTEM_ROLE_LOCKED');

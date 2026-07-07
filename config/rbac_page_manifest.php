@@ -7,6 +7,7 @@
 return [
     // user admin
     'users.php' => ['permission' => 'users.manage', 'admin_or' => true],
+    'team.php' => ['any_of' => ['users.manage', 'roles.manage'], 'admin_or' => true],
     'add_user.php' => ['permission' => 'users.manage', 'admin_or' => true],
     'edit_user.php' => ['permission' => 'users.manage', 'admin_or' => true],
     'myroles.php' => ['permission' => 'roles.manage', 'admin_or' => true],
@@ -68,6 +69,7 @@ return [
     // POS admin
     'pos_customers.php' => ['permission' => 'customers.manage', 'admin_or' => true],
     'closed_sessions.php' => ['permission' => 'pos.shift.close'],
+    'cash_flow_report.php' => ['permission' => 'reports.cash_flow'],
     'z_report.php' => ['permission' => 'pos.shift.close'],
 
     // delivery / moova / kds

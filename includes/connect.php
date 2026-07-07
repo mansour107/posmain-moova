@@ -192,6 +192,7 @@ if (!function_exists('posmain_handle_uncaught_exception')) {
 posmain_update_maintenance_guard();
 
 try {
+    global $conn;
     $conn = posmain_db_connect();
 } catch (Throwable $e) {
     if (production_guard_is_production()) {
@@ -235,10 +236,17 @@ $restwn = $conn->query("SELECT * from towns ");
 // user powers
 $role = []; 
 if (isset($_SESSION['usrole'])) {
-$user_role_id = $_SESSION['usrole'];
-$sqlrole = "SELECT * FROM `usr_pwrs` WHERE id = $user_role_id ";
-$resrole = $conn->query($sqlrole);
-$role = $resrole->fetch_assoc();
+    $user_role_id = (int) $_SESSION['usrole'];
+    $stmt = $conn->prepare(
+        'SELECT id, rollname, role_key, is_system, isdeleted, info, is_active
+           FROM usr_pwrs
+          WHERE id = ?
+          LIMIT 1'
+    );
+    $stmt->bind_param('i', $user_role_id);
+    $stmt->execute();
+    $role = $stmt->get_result()->fetch_assoc() ?: [];
+    $stmt->close();
 }
 
 $edit_pass = $rowstg['edit_pass'];
@@ -271,3 +279,8 @@ $userErrorMassage = '<div class="alert alert-danger text-center">
     <i class="fas fa-exclamation-triangle"></i> 
     ليس لديك صلاحية للوصول إلى هذه الصفحة
 </div>';
+
+require_once __DIR__ . '/auth_guard.php';
+if (isset($conn) && $conn instanceof mysqli) {
+    auth_guard_enforce_active_session_user($conn);
+}

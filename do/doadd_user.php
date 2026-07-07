@@ -11,7 +11,7 @@ require_once __DIR__ . '/../includes/upload_guard.php';
 
 require_admin_or_permission('users.manage', $conn);
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
-    header('location:../users.php');
+    header('location:../team.php?tab=staff');
     exit();
 }
 require_csrf('users_write');
@@ -64,27 +64,43 @@ $stmt->execute();
 $newUserId = (int) $conn->insert_id;
 $stmt->close();
 
-if ($pin !== '' || $generatePin) {
-    try {
-        if ($pin === '' && $generatePin) {
-            $pin = (string) random_int(1000, 9999);
-            while (strlen($pin) < 4 || in_array($pin, ['1234', '0000', '1111'], true)) {
-                $pin = (string) random_int(1000, 9999);
+if ($newUserId < 1) {
+    echo '<h2>' . htmlspecialchars('تعذر إنشاء المستخدم', ENT_QUOTES, 'UTF-8') . '</h2>';
+    exit();
+}
+
+$pinService = new PinService();
+if ($pin === '') {
+    for ($i = 0; $i < 30; $i++) {
+        $pin = (string) random_int(1000, 9999);
+        try {
+            posmain_pin_secret();
+            $pinService->validatePinFormat($pin);
+            if (!$pinService->findUserByPin($conn, $pin)) {
+                $generatePin = true;
+                break;
             }
+        } catch (Throwable) {
+            continue;
         }
-        (new PinService())->setPinForUser($conn, $newUserId, $pin);
-        if ($generatePin) {
-            $_SESSION['posmain_one_time_pin_reveal'] = [
-                'user_id' => $newUserId,
-                'pin' => $pin,
-                'expires' => time() + 120,
-            ];
-        }
-    } catch (Throwable $pinException) {
-        $conn->query('UPDATE users SET isdeleted = 1 WHERE id = ' . (int) $newUserId);
-        echo '<h2>' . htmlspecialchars($pinException->getMessage(), ENT_QUOTES, 'UTF-8') . '</h2>';
-        exit();
     }
+}
+if ($pin === '') {
+    $conn->query('UPDATE users SET isdeleted = 1 WHERE id = ' . $newUserId);
+    echo '<h2>' . htmlspecialchars('PIN_REQUIRED', ENT_QUOTES, 'UTF-8') . '</h2>';
+    exit();
+}
+try {
+    $pinService->setPinForUser($conn, $newUserId, $pin);
+    $_SESSION['posmain_one_time_pin_reveal'] = [
+        'user_id' => $newUserId,
+        'pin' => $pin,
+        'expires' => time() + 120,
+    ];
+} catch (Throwable $pinException) {
+    $conn->query('UPDATE users SET isdeleted = 1 WHERE id = ' . $newUserId);
+    echo '<h2>' . htmlspecialchars($pinException->getMessage(), ENT_QUOTES, 'UTF-8') . '</h2>';
+    exit();
 }
 $conn->query("INSERT INTO `process`(`type`) VALUES ('add user')");
 doadd_user_audit($conn, 'user_created', [
@@ -95,5 +111,5 @@ doadd_user_audit($conn, 'user_created', [
 
 (new PermissionService($conn))->bumpPermissionsVersion();
 
-header('location:../users.php' . ($generatePin ? '?pin_reveal=1' : ''));
+header('location:../team.php?tab=staff' . ($generatePin ? '&pin_reveal=1' : ''));
 ?>

@@ -274,6 +274,24 @@ if ($is_delivery) {
 
 <?php }?>
 <style>
+#printed .receipt-fixed-table {
+    width: 100%;
+    table-layout: fixed;
+}
+
+#printed .receipt-fixed-table th,
+#printed .receipt-fixed-table td {
+    white-space: normal;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    vertical-align: top;
+}
+
+#printed .receipt-item-name-cell {
+    text-align: right;
+    line-height: 1.35;
+}
+
 @media print {
     @page {
         size: 72mm 210mm;

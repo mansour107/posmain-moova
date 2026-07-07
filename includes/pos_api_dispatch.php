@@ -176,6 +176,29 @@ if (!function_exists('pos_api_dispatch_exception_payload')) {
         }
 
         if ($e instanceof RuntimeException) {
+            if ($e instanceof ManagerApprovalRequiredException || $e->getMessage() === 'MANAGER_APPROVAL_REQUIRED') {
+                $permissionKey = $e instanceof ManagerApprovalRequiredException ? $e->permissionKey() : '';
+                return [
+                    'http_status' => 403,
+                    'payload' => [
+                        'success' => false,
+                        'code' => 'MANAGER_APPROVAL_REQUIRED',
+                        'message' => 'يتطلب اعتماد مدير',
+                        'permission_key' => $permissionKey !== '' ? $permissionKey : null,
+                        'escalation_permission_key' => $permissionKey !== '' ? $permissionKey : null,
+                    ],
+                ];
+            }
+            if ($e->getMessage() === 'PAID_ORDER_LINE_REMOVAL_DENIED') {
+                return [
+                    'http_status' => 422,
+                    'payload' => [
+                        'success' => false,
+                        'code' => 'PAID_ORDER_LINE_REMOVAL_DENIED',
+                        'message' => 'لا يمكن إزالة أصناف من طلب مدفوع من هنا — استخدم الاسترداد',
+                    ],
+                ];
+            }
             if ($e->getMessage() === 'IDEMPOTENCY_CONFLICT') {
                 return [
                     'http_status' => 409,

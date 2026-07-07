@@ -69,7 +69,7 @@ Recorded choices where the implementation spec left details implicit.
 | Decision | Choice |
 |----------|--------|
 | Deactivate | Soft delete via `isdeleted=1`; `do/do_user_deactivate.php` |
-| PIN reset | `do/do_user_reset_pin.php`; one-time reveal via session (120s), never audit-logged |
+| PIN reset | `do/do_user_reset_pin.php` or Team Hub AJAX; admin/owner can view stored PINs in Team Hub; one-time session reveal still supported after legacy reset redirect |
 | Role change | Clears `user_permission_grants`, resets `permission_mode=role_only`, bumps `permissions_version` |
 | Delegation guard | Non-admin `users.manage` holders cannot create/edit admin users, promote to admin role, or edit another `users.manage` holder → `PRIVILEGE_ESCALATION_BLOCKED` |
 | Receipt escalation line | Consumed `manager_approvals` on order print → `بواسطة X — بموافقة Y` in receipt payload/footer |

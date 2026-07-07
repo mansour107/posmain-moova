@@ -1,7 +1,7 @@
 <?php require_once __DIR__ . '/../../classes/Inventory/InventoryStockReadService.php'; ?>
 <div class="dashboard-widgets">
     <div class="row g-4">
-        <?php if($role['sid_accounts'] == 1){ ?>
+        <?php if(auth_guard_has_legacy_flag('sid_accounts', $conn)){ ?>
         <!-- آخر حسابات تم إنشاءها -->
         <div class="col-xl-4 col-lg-6">
             <div class="modern-card card-accounts">
@@ -81,7 +81,7 @@
         </div>
         <?php } ?>
 
-        <?php if($role['sid_accounts'] == 1){ ?>
+        <?php if(auth_guard_has_legacy_flag('sid_accounts', $conn)){ ?>
         <!-- محلل العمل اليومي -->
         <div class="col-xl-4 col-lg-6">
             <div class="modern-card card-operations">
@@ -152,7 +152,7 @@
         </div>
         <?php } ?>
 
-        <?php if($role['sid_stock'] == 1){ ?>
+        <?php if(auth_guard_has_legacy_flag('sid_stock', $conn)){ ?>
         <!-- آخر أصناف تم إنشاءها -->
         <div class="col-xl-4 col-lg-6">
             <div class="modern-card card-items">
@@ -389,7 +389,7 @@
             </div>
         </div>
 
-        <?php if($role['sid_rents'] == 1){ ?>
+        <?php if(auth_guard_has_legacy_flag('sid_rents', $conn)){ ?>
         <!-- الأقساط المستحقة -->
         <div class="col-xl-8 col-lg-12">
             <div class="modern-card card-installments">

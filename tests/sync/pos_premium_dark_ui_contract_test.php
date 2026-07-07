@@ -25,6 +25,7 @@ posPremiumDarkUiAssert(strpos($posBarcode, 'pos-premium-dark') !== false, 'POS p
 posPremiumDarkUiAssert(strpos($posBarcode, 'pos-immersive') !== false, 'POS page should enable immersive layout');
 posPremiumDarkUiAssert(strpos($posBarcode, 'pos-corner-menu') !== false, 'POS page should expose corner utility menu');
 posPremiumDarkUiAssert(strpos($posBarcode, 'cornerRecentOrdersBtn') !== false, 'Corner menu should expose recent orders trigger');
+posPremiumDarkUiAssert(strpos($posBarcode, 'posKeyboardToggleBtn') !== false, 'Corner menu should expose virtual keyboard toggle');
 
 posPremiumDarkUiAssert(strpos($content, 'pos-order-panel') !== false, 'Order panel shell should exist');
 posPremiumDarkUiAssert(strpos($content, 'posClearOrderBtn') !== false, 'Header trash clear button should exist');
@@ -41,6 +42,7 @@ posPremiumDarkUiAssert(strpos($content, 'pos-clear-btn') !== false, 'Legacy clea
 
 posPremiumDarkUiAssert(strpos($css, 'body.pos-premium-dark') !== false, 'Premium dark theme block should exist in CSS');
 posPremiumDarkUiAssert(strpos($css, 'pos-compact-card') !== false, 'Compact product card styles should exist');
+posPremiumDarkUiAssert(strpos($css, '#tablesModal .pos-tables-state') !== false, 'Tables modal should style empty/error states for dark theme');
 posPremiumDarkUiAssert(strpos($css, 'pos-cart-price-display') !== false, 'Mockup cart price display styles should exist');
 
 posPremiumDarkUiAssert(strpos($js, 'pos-cart-price-display') !== false, 'JS cart template should render mockup price display');

@@ -31,7 +31,7 @@ if (!in_array($action, ['refund', 'void'], true)) {
     exit;
 }
 
-require_permission($action === 'void' ? 'pos.void.paid' : 'pos.refund', $conn);
+require_pos_authenticated();
 
 $userId = function_exists('pos_acting_user_id') ? pos_acting_user_id() : (int) ($_SESSION['userid'] ?? $_SESSION['user_id'] ?? 0);
 $idempotencyService = new IdempotencyService();

@@ -24,6 +24,9 @@ $posmainCanViewAccounting = isset($conn) && $conn instanceof mysqli
     && auth_guard_has_permission('accounting.view', $conn);
 $posmainCanViewReports = isset($conn) && $conn instanceof mysqli
     && auth_guard_has_permission('reports.view', $conn);
+$posmainLegacyFlag = static function (string $flag) use ($conn): bool {
+    return isset($conn) && $conn instanceof mysqli && auth_guard_has_legacy_flag($flag, $conn);
+};
 ?>
 <!-- Main Sidebar Container -->
 <aside class="main-sidebar elevation-4 font-light">
@@ -65,7 +68,7 @@ $posmainCanViewReports = isset($conn) && $conn instanceof mysqli
 
 
         <!--                                             البيانات الاساسيه                                                                        -->
-        <?php if (($role['sid_entry'] ?? 0) == 1) { ?>
+        <?php if ($posmainLegacyFlag('sid_entry')) { ?>
           <li class="nav-item has-treeview">
             <a href="#" class="nav-link nav-link-basic">
               <i class="nav-icon fas fa-pen"></i>
@@ -191,7 +194,7 @@ $posmainCanViewReports = isset($conn) && $conn instanceof mysqli
 
 
         <!--                                                                        -->
-        <?php if ((($role['sid_stock'] ?? 0) == 1) || $posmainCanEditMenu || $posmainCanEditInventory) { ?>
+        <?php if (($posmainLegacyFlag('sid_stock')) || $posmainCanEditMenu || $posmainCanEditInventory) { ?>
 
           <li class="nav-item has-treeview">
             <a href="#" class="nav-link nav-link-basic">
@@ -379,7 +382,7 @@ $posmainCanViewReports = isset($conn) && $conn instanceof mysqli
         <?php } ?>
 
 <!-- -------------------نقاط البيع  -->
-        <?php if (($role['sid_sales'] ?? 0) == 1) { ?>
+        <?php if ($posmainLegacyFlag('sid_sales')) { ?>
 
           <li class="nav-item has-treeview">
             <a href="#" class="nav-link nav-link-basic">
@@ -440,6 +443,12 @@ $posmainCanViewReports = isset($conn) && $conn instanceof mysqli
                   <p><?= $lang_closed_sessions ?></p>
                 </a>
               </li>
+              <li class="nav-item">
+                <a href="cash_flow_report.php" class="nav-link">
+                  <i class="nav-icon fas fa-money-bill-wave"></i>
+                  <p>تقرير التدفق النقدي</p>
+                </a>
+              </li>
 
               <?php if ($posmainCanManagePosCustomers) { ?>
                 <li class="nav-item">
@@ -471,7 +480,7 @@ $posmainCanViewReports = isset($conn) && $conn instanceof mysqli
 
 
 
-        <?php if (($role['sid_cards'] ?? 0) == 1) { ?>
+        <?php if ($posmainLegacyFlag('sid_cards')) { ?>
 
           <li class="nav-item has-treeview">
             <a href="#" class="nav-link nav-link-basic">
@@ -525,7 +534,7 @@ $posmainCanViewReports = isset($conn) && $conn instanceof mysqli
 
 
 
-        <?php if (($role['sid_purchases'] ?? 0) == 1) { ?>
+        <?php if ($posmainLegacyFlag('sid_purchases')) { ?>
 
 
           <li class="nav-item has-treeview">
@@ -615,7 +624,7 @@ $posmainCanViewReports = isset($conn) && $conn instanceof mysqli
 
 
         <?php if ($rowstg['showpay'] == 1) { ?>
-          <?php if (($role['sid_sales'] ?? 0) == 1) { ?>
+          <?php if ($posmainLegacyFlag('sid_sales')) { ?>
             <li class="nav-item has-treeview">
               <a href="#" class="nav-link nav-link-basic">
                 <i class="nav-icon fa fas-sharp fa-solid fa-file-invoice-dollar fas-2xl"></i>
@@ -677,7 +686,7 @@ $posmainCanViewReports = isset($conn) && $conn instanceof mysqli
 
 
 
-        <?php if (($role['sid_vouchers'] ?? 0) == 1) { ?>
+        <?php if ($posmainLegacyFlag('sid_vouchers')) { ?>
           <li class="nav-item has-treeview">
             <a href="#" class="nav-link nav-link-basic">
               <i class="nav-icon fas fa-money-bill-wave"></i>
@@ -738,7 +747,7 @@ $posmainCanViewReports = isset($conn) && $conn instanceof mysqli
 
 
         <?php if ($rowstg['showhr'] == 1) { ?>
-          <?php if (($role['sid_hr'] ?? 0) == 1) { ?>
+          <?php if ($posmainLegacyFlag('sid_hr')) { ?>
 
             <li class="nav-item has-treeview">
               <a href="#" class="nav-link nav-link-basic">
@@ -815,7 +824,7 @@ $posmainCanViewReports = isset($conn) && $conn instanceof mysqli
 
 
         <?php if (($rowstg['showpulse'] ?? 1) == 1) { ?>
-          <?php if (($role['sid_pulse'] ?? 1) == 1) { ?>
+          <?php if ($posmainLegacyFlag('sid_pulse')) { ?>
             <li class="nav-item has-treeview">
               <a href="#" class="nav-link nav-link-basic">
                 <i class="nav-icon fas fa-bolt text-warning"></i>
@@ -850,7 +859,7 @@ $posmainCanViewReports = isset($conn) && $conn instanceof mysqli
 
 
         <?php if ($rowstg['showrent'] == 1) { ?>
-          <?php if (($role['sid_rents'] ?? 0) == 1) { ?>
+          <?php if ($posmainLegacyFlag('sid_rents')) { ?>
             <li class="nav-item has-treeview">
               <a href="#" class="nav-link nav-link-basic">
                 <i class="nav-icon fas fa-money-bill-wave"></i>
@@ -920,7 +929,7 @@ $posmainCanViewReports = isset($conn) && $conn instanceof mysqli
 
         <!-- clinck -->
         <?php if ($rowstg['showclinc'] == 1) { ?>
-          <?php if (($role['sid_clinics'] ?? 0) == 1) { ?>
+          <?php if ($posmainLegacyFlag('sid_clinics')) { ?>
             <li class="nav-item has-treeview">
               <a href="#" class="nav-link nav-link-basic">
                 <i class="nav-icon fas fa-stethoscope" style="color:#FFD43B"></i>
@@ -973,7 +982,7 @@ $posmainCanViewReports = isset($conn) && $conn instanceof mysqli
 
         <!-------------------------------الحضور---------------------------------------->
         <?php if ($rowstg['showatt'] == 1) { ?>
-          <?php if (($role['sid_payroll'] ?? 0) == 1) { ?>
+          <?php if ($posmainLegacyFlag('sid_payroll')) { ?>
 
 
             <li class="nav-item has-treeview">
@@ -1022,7 +1031,7 @@ $posmainCanViewReports = isset($conn) && $conn instanceof mysqli
           <!--                                            المرتبات                               -->
 
           <?php if ($rowstg['showatt'] == 1) { ?>
-            <?php if (($role['sid_payroll'] ?? 0) == 1) { ?>
+            <?php if ($posmainLegacyFlag('sid_payroll')) { ?>
 
 
 
@@ -1230,7 +1239,7 @@ $posmainCanViewReports = isset($conn) && $conn instanceof mysqli
 
 
 
-        <?php if (($role['sid_crm'] ?? 0) == 1) { ?>
+        <?php if ($posmainLegacyFlag('sid_crm')) { ?>
 
           <li class="nav-item has-treeview">
             <a href="#" class="nav-link nav-link-basic">
@@ -1319,7 +1328,7 @@ $posmainCanViewReports = isset($conn) && $conn instanceof mysqli
           </a>
         </li>
 
-        <?php if ((($role['sid_accounts'] ?? 0) == 1) && $posmainCanViewAccounting) { ?>
+        <?php if (($posmainLegacyFlag('sid_accounts')) && $posmainCanViewAccounting) { ?>
           <li class="nav-item has-treeview">
             <a href="#" class="nav-link nav-link-basic">
               <i class="nav-icon fas fa-book"></i>
@@ -1388,7 +1397,7 @@ $posmainCanViewReports = isset($conn) && $conn instanceof mysqli
 
 
 
-        <?php if ((($role['sid_accounts'] ?? 0) == 1) && $posmainCanViewAccounting) { ?>
+        <?php if (($posmainLegacyFlag('sid_accounts')) && $posmainCanViewAccounting) { ?>
           <li class="nav-item has-treeview">
             <a href="#" class="nav-link nav-link-basic">
               <i class="nav-icon fas fa-book"></i>
@@ -1431,7 +1440,7 @@ $posmainCanViewReports = isset($conn) && $conn instanceof mysqli
 
 
 
-        <?php if (($role['sid_assets'] ?? 0) == 1) { ?>
+        <?php if ($posmainLegacyFlag('sid_assets')) { ?>
 
           <li class="nav-item has-treeview">
             <a href="#" class="nav-link nav-link-basic">
@@ -1479,7 +1488,7 @@ $posmainCanViewReports = isset($conn) && $conn instanceof mysqli
 
 
 
-        <?php if ((($role['sid_reports'] ?? 0) == 1) && $posmainCanViewReports) { ?>
+        <?php if (($posmainLegacyFlag('sid_reports')) && $posmainCanViewReports) { ?>
           <li class="nav-item has-treeview">
             <a href="#" class="nav-link nav-link-basic">
               <i class="nav-icon fas fa-chart-line"></i>

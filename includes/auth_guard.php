@@ -158,6 +158,7 @@ if (!function_exists('auth_guard_permission_map')) {
             'pos.price.override' => ['edit_sales'],
             'pos.drawer.no_sale' => ['edit_payment', 'show_payment'],
             'pos.drawer.payin' => ['edit_payment', 'add_payment'],
+            'pos.drawer.safe_drop' => ['edit_payment', 'add_payment'],
             'pos.payout.over_limit' => ['edit_payment'],
             'pos.drawer.payout.limit' => ['edit_payment'],
             'pos.credit.sale' => ['add_sales', 'add_payment'],
@@ -187,6 +188,7 @@ if (!function_exists('auth_guard_permission_map')) {
             'reports.own_shift' => ['sid_reports', 'show_gl_reports'],
             'reports.branch_daily' => ['sid_reports', 'show_gl_reports'],
             'reports.costs' => ['sid_reports', 'show_gl_reports'],
+            'reports.cash_flow' => ['sid_reports', 'show_gl_reports'],
             'accounting.view' => ['sid_accounts', 'show_gl_reports', 'show_journals'],
             'users.manage' => ['add_users', 'edit_users', 'delete_users'],
             'roles.manage' => ['add_users', 'edit_users', 'delete_users'],
@@ -200,7 +202,74 @@ if (!function_exists('auth_guard_permission_map')) {
             'kds.view' => ['sid_kds'],
             'kds.complete' => ['sid_kds'],
             'kds.manage' => ['__admin_only'],
+            'erp.module.entry' => ['sid_entry'],
+            'erp.module.stock' => ['sid_stock'],
+            'erp.module.sales' => ['sid_sales'],
+            'erp.module.cards' => ['sid_cards'],
+            'erp.module.purchases' => ['sid_purchases'],
+            'erp.module.vouchers' => ['sid_vouchers'],
+            'erp.module.hr' => ['sid_hr'],
+            'erp.module.pulse' => ['sid_pulse'],
+            'erp.module.rents' => ['sid_rents'],
+            'erp.module.clinics' => ['sid_clinics'],
+            'erp.module.payroll' => ['sid_payroll'],
+            'erp.module.crm' => ['sid_crm'],
+            'erp.module.accounts' => ['sid_accounts'],
+            'erp.module.assets' => ['sid_assets'],
+            'erp.module.reports' => ['sid_reports'],
+            'erp.dashboard.main_cards' => ['show_main_cards'],
+            'erp.dashboard.main_elements' => ['show_main_elements'],
+            'erp.dashboard.main_tables' => ['show_main_tables'],
+            'erp.clients.create' => ['add_clients'],
+            'erp.clients.profile' => ['show_client_profile'],
+            'erp.suppliers.create' => ['add_suppliers'],
+            'erp.funds.create' => ['add_funds'],
+            'erp.banks.create' => ['add_banks'],
+            'erp.expenses.create' => ['add_expenses'],
+            'erp.revenues.create' => ['add_revenuses'],
+            'erp.credits.create' => ['add_credits'],
+            'erp.deposits.create' => ['add_depits'],
+            'erp.partners.create' => ['add_partners'],
+            'erp.assets.create' => ['add_assets'],
+            'erp.employees.create' => ['add_employees'],
+            'erp.rentables.create' => ['add_rentables'],
+            'erp.attendance.view' => ['show_attandance'],
+            'erp.attendance.create' => ['add_attandance'],
+            'erp.reservations.ended' => ['show_ended_reservation'],
+            'erp.reservations.totals' => ['show_total_reservation'],
         ];
+    }
+}
+
+if (!function_exists('auth_guard_permissions_for_legacy_flag')) {
+    function auth_guard_permissions_for_legacy_flag(string $flag): array
+    {
+        $flag = trim($flag);
+        if ($flag === '') {
+            return [];
+        }
+
+        $matches = [];
+        foreach (auth_guard_permission_map() as $permission => $legacyFlags) {
+            if (in_array($flag, $legacyFlags, true)) {
+                $matches[] = $permission;
+            }
+        }
+
+        return $matches;
+    }
+}
+
+if (!function_exists('auth_guard_has_legacy_flag')) {
+    function auth_guard_has_legacy_flag(string $flag, ?mysqli $conn = null): bool
+    {
+        foreach (auth_guard_permissions_for_legacy_flag($flag) as $permission) {
+            if (auth_guard_has_permission($permission, $conn)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 }
 
@@ -208,6 +277,17 @@ if (!function_exists('auth_guard_is_admin_session')) {
     function auth_guard_is_admin_session(?array $session = null, ?array $roleFlags = null): bool
     {
         $session = $session ?? $_SESSION;
+        if ($roleFlags === null) {
+            global $role;
+            if (isset($role) && is_array($role) && $role !== []) {
+                $roleFlags = $role;
+            } else {
+                global $conn;
+                if (isset($conn) && $conn instanceof mysqli) {
+                    $roleFlags = auth_guard_current_role_flags($conn);
+                }
+            }
+        }
         $roleValue = $session['usrole'] ?? $session['userrole'] ?? $session['role_id'] ?? null;
         if (is_numeric($roleValue) && (int) $roleValue === 1) {
             return true;
@@ -219,6 +299,11 @@ if (!function_exists('auth_guard_is_admin_session')) {
         }
 
         $roleName = strtolower((string) ($roleFlags['rollname'] ?? ''));
+        $roleKey = strtolower((string) ($roleFlags['role_key'] ?? ''));
+        if ($roleKey === 'owner' || stripos((string) ($roleFlags['rollname'] ?? ''), 'مالك') !== false) {
+            return true;
+        }
+
         return $roleName !== '' && (strpos($roleName, 'admin') !== false || strpos($roleName, 'owner') !== false);
     }
 }
@@ -265,6 +350,29 @@ if (!function_exists('auth_guard_role_flags_allow')) {
     }
 }
 
+if (!function_exists('auth_guard_role_has_capability_rows')) {
+    function auth_guard_role_has_capability_rows(array $roleFlags, ?mysqli $conn = null): bool
+    {
+        $roleId = (int) ($roleFlags['id'] ?? 0);
+        if ($roleId < 1 || !$conn instanceof mysqli) {
+            return false;
+        }
+
+        $tableResult = $conn->query("SHOW TABLES LIKE 'role_capabilities'");
+        if (!$tableResult || $tableResult->num_rows < 1) {
+            return false;
+        }
+
+        $stmt = $conn->prepare('SELECT 1 FROM role_capabilities WHERE role_id = ? LIMIT 1');
+        $stmt->bind_param('i', $roleId);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        return (bool) $row;
+    }
+}
+
 if (!function_exists('auth_guard_role_capability_enabled')) {
     function auth_guard_role_capability_enabled(string $permission, array $roleFlags, ?mysqli $conn = null): ?bool
     {
@@ -304,6 +412,15 @@ if (!function_exists('auth_guard_session_has_permission')) {
 
         $session = $session ?? $_SESSION;
         $roleFlags = $roleFlags ?? [];
+
+        $override = auth_guard_user_override_effect($permission, $session, $conn);
+        if ($override === 'deny') {
+            return false;
+        }
+        if ($override === 'grant') {
+            return true;
+        }
+
         if (auth_guard_is_admin_session($session, $roleFlags)) {
             return true;
         }
@@ -315,19 +432,17 @@ if (!function_exists('auth_guard_session_has_permission')) {
 
         $legacyFlags = $map[$permission];
         $adminOnly = in_array('__admin_only', $legacyFlags, true);
-        $roleAllowed = auth_guard_role_flags_allow($roleFlags, $legacyFlags);
-        $baseAllowed = $adminOnly ? false : $roleAllowed;
-
-        $override = auth_guard_user_override_effect($permission, $session, $conn);
-        if ($override === 'deny') {
-            return false;
-        }
-        if ($override === 'grant') {
-            return true;
-        }
+        $usesCapabilities = auth_guard_role_has_capability_rows($roleFlags, $conn);
 
         $roleCapability = auth_guard_role_capability_enabled($permission, $roleFlags, $conn);
-        if ($roleCapability === false) {
+        if ($usesCapabilities) {
+            if ($roleCapability === false) {
+                return false;
+            }
+            if ($roleCapability === true) {
+                return true;
+            }
+
             return false;
         }
 
@@ -335,11 +450,7 @@ if (!function_exists('auth_guard_session_has_permission')) {
             return false;
         }
 
-        if ($roleCapability === true) {
-            return true;
-        }
-
-        return $baseAllowed;
+        return auth_guard_role_flags_allow($roleFlags, $legacyFlags);
     }
 }
 
@@ -353,13 +464,23 @@ if (!function_exists('auth_guard_user_override_effect')) {
             return null;
         }
 
-        $cacheKey = $userId . ':' . $permission;
-        if (array_key_exists($cacheKey, $cache)) {
-            return $cache[$cacheKey];
-        }
-
         if (!class_exists('UserPermissionGrantService', false)) {
             require_once __DIR__ . '/../classes/Security/UserPermissionGrantService.php';
+        }
+        if (!class_exists('PermissionService', false)) {
+            require_once __DIR__ . '/../classes/Security/PermissionService.php';
+        }
+
+        $permissionsVersion = '0';
+        try {
+            $permissionsVersion = (new PermissionService($conn))->permissionsVersion();
+        } catch (Throwable) {
+            $permissionsVersion = '0';
+        }
+
+        $cacheKey = $userId . ':' . $permission . ':' . $permissionsVersion;
+        if (array_key_exists($cacheKey, $cache)) {
+            return $cache[$cacheKey];
         }
 
         $service = new UserPermissionGrantService();
@@ -468,6 +589,112 @@ if (!function_exists('auth_guard_record_permission_denied')) {
     }
 }
 
+if (!function_exists('auth_guard_user_is_active')) {
+    function auth_guard_user_is_active(mysqli $conn, int $userId): bool
+    {
+        if ($userId < 1) {
+            return false;
+        }
+
+        $stmt = $conn->prepare('SELECT 1 FROM users WHERE id = ? AND COALESCE(isdeleted, 0) != 1 LIMIT 1');
+        $stmt->bind_param('i', $userId);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        return (bool) $row;
+    }
+}
+
+if (!function_exists('auth_guard_end_session_for_deactivated_user')) {
+    function auth_guard_end_session_for_deactivated_user(): void
+    {
+        if (function_exists('posmain_clear_pos_shift_session')) {
+            posmain_clear_pos_shift_session(false);
+        }
+
+        foreach ([
+            'login',
+            'userid',
+            'usrole',
+            'usty',
+            'userrole',
+            'posmain_capabilities_cache',
+            'posmain_capabilities_version',
+        ] as $sessionKey) {
+            unset($_SESSION[$sessionKey]);
+        }
+    }
+}
+
+if (!function_exists('auth_guard_enforce_active_session_user')) {
+    function auth_guard_enforce_active_session_user(mysqli $conn): void
+    {
+        if (!auth_guard_is_logged_in()) {
+            return;
+        }
+
+        $userId = auth_guard_user_id_from_session();
+        if ($userId < 1 || auth_guard_user_is_active($conn, $userId)) {
+            return;
+        }
+
+        auth_guard_end_session_for_deactivated_user();
+
+        if (auth_guard_is_json_request()) {
+            deny_json_or_redirect('USER_DEACTIVATED', 403);
+        }
+
+        if (!headers_sent()) {
+            header('Location: index.php?error=user_deactivated');
+        }
+        exit;
+    }
+}
+
+if (!function_exists('pos_revoke_unlock_for_inactive_acting_user')) {
+    function pos_revoke_unlock_for_inactive_acting_user(mysqli $conn, string $message): void
+    {
+        posmain_clear_pos_shift_session(false);
+        $_SESSION['pos_login_error'] = $message;
+
+        if (auth_guard_is_json_request()) {
+            deny_json_or_redirect('POS_ACTING_USER_INACTIVE', 403, 'pos_barcode.php');
+        }
+
+        if (!headers_sent()) {
+            header('Location: pos_barcode.php');
+        }
+        exit;
+    }
+}
+
+if (!function_exists('pos_enforce_active_pos_lane')) {
+    function pos_enforce_active_pos_lane(mysqli $conn): void
+    {
+        if (!auth_guard_is_pos_barcode_unlocked()) {
+            return;
+        }
+
+        $actingUserId = pos_acting_user_id();
+        if ($actingUserId < 1) {
+            pos_revoke_unlock_for_inactive_acting_user($conn, 'يجب اختيار موظف نشط لفتح نقطة البيع');
+        }
+
+        if (!auth_guard_user_is_active($conn, $actingUserId)) {
+            pos_revoke_unlock_for_inactive_acting_user($conn, 'هذا الحساب موقوف ولا يمكنه استخدام نقطة البيع');
+        }
+
+        if (!class_exists('PermissionService', false)) {
+            require_once __DIR__ . '/../classes/Security/PermissionService.php';
+        }
+
+        if (!(new PermissionService($conn))->check($actingUserId, 'pos.open')) {
+            pos_revoke_unlock_for_inactive_acting_user($conn, 'ليس لديك صلاحية فتح نقطة البيع');
+        }
+    }
+}
+
 if (!function_exists('deny_json_or_redirect')) {
     function deny_json_or_redirect(string $message = 'AUTH_REQUIRED', int $statusCode = 401, ?string $redirect = null, ?string $permission = null): void
     {
@@ -506,6 +733,11 @@ if (!function_exists('require_login')) {
 if (!function_exists('require_pos_authenticated')) {
     function require_pos_authenticated(): void
     {
+        global $conn;
+        if (isset($conn) && $conn instanceof mysqli) {
+            pos_enforce_active_pos_lane($conn);
+        }
+
         if (!auth_guard_is_pos_write_authorized()) {
             deny_json_or_redirect('POS_AUTH_REQUIRED', 403, 'pos_barcode.php?logout=1');
         }
@@ -602,6 +834,104 @@ if (!function_exists('pos_touch_activity')) {
     }
 }
 
+if (!function_exists('auth_guard_pos_lane_has_permission')) {
+    function auth_guard_pos_lane_has_permission(string $permission, ?mysqli $conn = null): bool
+    {
+        $actingUserId = pos_acting_user_id();
+        if ($actingUserId > 0 && $conn instanceof mysqli) {
+            if (!class_exists('PermissionService', false)) {
+                require_once __DIR__ . '/../classes/Security/PermissionService.php';
+            }
+
+            try {
+                return PermissionService::forConnection($conn)->check($actingUserId, $permission);
+            } catch (InvalidArgumentException) {
+                return false;
+            }
+        }
+
+        return auth_guard_has_permission($permission, $conn);
+    }
+}
+
+if (!function_exists('auth_guard_manager_approval_id_from_request')) {
+    function auth_guard_manager_approval_id_from_request(?array $source = null): int
+    {
+        $source = $source ?? array_merge($_GET, $_POST);
+
+        return (int) ($source['manager_approval_id'] ?? $source['approval_id'] ?? 0);
+    }
+}
+
+if (!function_exists('auth_guard_pos_lane_has_permission_or_override')) {
+    function auth_guard_pos_lane_has_permission_or_override(string $permission, ?mysqli $conn = null): bool
+    {
+        if (auth_guard_pos_lane_has_permission($permission, $conn)) {
+            return true;
+        }
+        if (!$conn instanceof mysqli) {
+            return false;
+        }
+
+        $approvalId = auth_guard_manager_approval_id_from_request();
+        if ($approvalId < 1) {
+            return false;
+        }
+
+        if (!class_exists('ManagerApprovalService', false)) {
+            require_once __DIR__ . '/../classes/Pos/Service/ManagerApprovalService.php';
+        }
+
+        try {
+            (new ManagerApprovalService())->validateApprovedPermissionOverride(
+                $conn,
+                $approvalId,
+                $permission,
+                pos_acting_user_id()
+            );
+
+            return true;
+        } catch (Throwable) {
+            return false;
+        }
+    }
+}
+
+if (!function_exists('pos_consume_lane_permission_override_if_needed')) {
+    function pos_consume_lane_permission_override_if_needed(mysqli $conn, string $permission, int $userId): void
+    {
+        if ($permission === '' || $userId < 1 || auth_guard_pos_lane_has_permission($permission, $conn)) {
+            return;
+        }
+
+        $approvalId = auth_guard_manager_approval_id_from_request();
+        if ($approvalId < 1) {
+            return;
+        }
+
+        if (!class_exists('ManagerApprovalService', false)) {
+            require_once __DIR__ . '/../classes/Pos/Service/ManagerApprovalService.php';
+        }
+
+        $service = new ManagerApprovalService();
+        $service->validateApprovedPermissionOverride($conn, $approvalId, $permission, $userId);
+        $service->consumeApproval($conn, $approvalId, $userId);
+    }
+}
+
+if (!function_exists('require_pos_lane_permission')) {
+    function require_pos_lane_permission(string $permission, ?mysqli $conn = null): void
+    {
+        require_login();
+        if (!auth_guard_pos_lane_has_permission_or_override($permission, $conn)) {
+            $code = auth_guard_manager_approval_id_from_request() > 0
+                ? 'MANAGER_APPROVAL_INVALID'
+                : 'MANAGER_APPROVAL_REQUIRED';
+            deny_json_or_redirect($code, 403, null, $permission);
+        }
+    }
+}
+
 if (!function_exists('require_permission')) {
     function require_permission(string $permission, ?mysqli $conn = null): void
     {
@@ -616,11 +946,7 @@ if (!function_exists('require_admin_or_permission')) {
     function require_admin_or_permission(string $permission, ?mysqli $conn = null): void
     {
         require_login();
-        $roleFlags = auth_guard_current_role_flags($conn);
-        if (
-            !auth_guard_is_admin_session($_SESSION, $roleFlags)
-            && !auth_guard_session_has_permission($permission, $roleFlags, $_SESSION, $conn)
-        ) {
+        if (!auth_guard_has_permission($permission, $conn)) {
             deny_json_or_redirect('PERMISSION_DENIED', 403, null, $permission);
         }
     }

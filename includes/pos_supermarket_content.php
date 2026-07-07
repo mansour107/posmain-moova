@@ -392,11 +392,6 @@ $posmainPosDefaults = posmain_resolve_pos_defaults($conn, is_array($rowstg ?? nu
                     <div class="pos-close-shift-section-body">
                         <div class="row g-3 pos-close-shift-fields">
                             <div class="col-md-6">
-                                <label class="pos-close-shift-field-label" for="shift_expenses">المصاريف</label>
-                                <input type="number" class="form-control pos-close-shift-input" id="shift_expenses"
-                                    placeholder="0.00" step="0.01" readonly title="يُحسب تلقائياً من مصروفات الشيفت">
-                            </div>
-                            <div class="col-md-6">
                                 <label class="pos-close-shift-field-label" for="shift_cash">تسليم الكاش</label>
                                 <input type="number" class="form-control pos-close-shift-input" id="shift_cash"
                                     placeholder="0.00" step="0.01">
@@ -405,11 +400,6 @@ $posmainPosDefaults = posmain_resolve_pos_defaults($conn, is_array($rowstg ?? nu
                                 <label class="pos-close-shift-field-label" for="shift_fund_after">نهاية الدرج</label>
                                 <input type="number" class="form-control pos-close-shift-input" id="shift_fund_after"
                                     placeholder="0.00" step="0.01">
-                            </div>
-                            <div class="col-md-6">
-                                <label class="pos-close-shift-field-label" for="shift_exp_notes">بيان المصاريف</label>
-                                <input type="text" class="form-control pos-close-shift-input" id="shift_exp_notes"
-                                    placeholder="تفاصيل المصاريف">
                             </div>
                             <div class="col-12">
                                 <label class="pos-close-shift-field-label" for="shift_notes">ملاحظات</label>
@@ -454,9 +444,13 @@ $posmainPosDefaults = posmain_resolve_pos_defaults($conn, is_array($rowstg ?? nu
             }
         }
 
+        const expensePayload = (typeof window.posShiftExpenseClosePayload === 'function')
+            ? window.posShiftExpenseClosePayload()
+            : { expenses: 0, exp_notes: '' };
+
         const form = $('<form>', { method: 'POST', action: 'close_shift.php' });
-        form.append($('<input>', { type: 'hidden', name: 'expenses', value: $('#shift_expenses').val() || 0 }));
-        form.append($('<input>', { type: 'hidden', name: 'exp_notes', value: $('#shift_exp_notes').val() || '' }));
+        form.append($('<input>', { type: 'hidden', name: 'expenses', value: expensePayload.expenses || 0 }));
+        form.append($('<input>', { type: 'hidden', name: 'exp_notes', value: expensePayload.exp_notes || '' }));
         form.append($('<input>', { type: 'hidden', name: 'cash', value: $('#shift_cash').val() || 0 }));
         form.append($('<input>', { type: 'hidden', name: 'fund_after', value: $('#shift_fund_after').val() || 0 }));
         form.append($('<input>', { type: 'hidden', name: 'notes', value: $('#shift_notes').val() || '' }));
@@ -479,13 +473,30 @@ $posmainPosDefaults = posmain_resolve_pos_defaults($conn, is_array($rowstg ?? nu
                     const response = (typeof data === 'object') ? data : JSON.parse(data);
                     if (response.success) {
                         const expenses = response.data.expenses || {};
+                        const payins = response.data.payins || {};
                         let expenseHtml = '';
+                        let payinHtml = '';
+                        let expectedCashHtml = '';
                         if (expenses.mid_shift_enabled || Number(expenses.total || 0) > 0) {
                             expenseHtml =
                                 '<div class="pos-close-shift-stat">' +
                                 '<i class="fas fa-wallet pos-close-shift-stat-icon is-expenses" aria-hidden="true"></i>' +
                                 '<strong class="pos-close-shift-stat-value">' + (expenses.total_formatted || '0.00') + ' ج.م</strong>' +
                                 '<span class="pos-close-shift-stat-label">مصروفات الشيفت</span></div>';
+                        }
+                        if (payins.mid_shift_enabled || Number(payins.total || 0) > 0) {
+                            payinHtml =
+                                '<div class="pos-close-shift-stat">' +
+                                '<i class="fas fa-arrow-down pos-close-shift-stat-icon is-payins" aria-hidden="true"></i>' +
+                                '<strong class="pos-close-shift-stat-value">' + (payins.total_formatted || '0.00') + ' ج.م</strong>' +
+                                '<span class="pos-close-shift-stat-label">إيداعات الشيفت</span></div>';
+                        }
+                        if (response.data.expected_cash) {
+                            expectedCashHtml =
+                                '<div class="pos-close-shift-stat">' +
+                                '<i class="fas fa-cash-register pos-close-shift-stat-icon is-expected-cash" aria-hidden="true"></i>' +
+                                '<strong class="pos-close-shift-stat-value">' + response.data.expected_cash + ' ج.م</strong>' +
+                                '<span class="pos-close-shift-stat-label">النقدية المتوقعة</span></div>';
                         }
                         $('#shiftPreview').html(
                             '<div class="pos-close-shift-stats">' +
@@ -498,11 +509,11 @@ $posmainPosDefaults = posmain_resolve_pos_defaults($conn, is_array($rowstg ?? nu
                             '<strong class="pos-close-shift-stat-value">' + response.data.total_sales + ' ج.م</strong>' +
                             '<span class="pos-close-shift-stat-label">إجمالي المبيعات</span></div>' +
                             expenseHtml +
+                            payinHtml +
+                            expectedCashHtml +
                             '</div>'
                         );
-                        if (window.posShiftExpenseApplyCloseFields) {
-                            window.posShiftExpenseApplyCloseFields(expenses);
-                        }
+                        window.posShiftExpenseLastSummary = expenses;
                     } else {
                         $('#shiftPreview').html('<div class="pos-close-shift-alert is-warning">' + (response.error || 'لا توجد مبيعات لك اليوم') + '</div>');
                     }

@@ -3,6 +3,7 @@
 require_once __DIR__ . '/../includes/write_bootstrap.php';
 require_once __DIR__ . '/../classes/Pos/Service/ManagerApprovalService.php';
 require_once __DIR__ . '/../classes/Security/SecurityAuditLogger.php';
+require_once __DIR__ . '/../classes/Security/PinService.php';
 
 header('Content-Type: application/json; charset=utf-8');
 
@@ -17,7 +18,10 @@ require_csrf('pos_override');
 
 $pin = trim((string) ($_POST['manager_pin'] ?? $_POST['pin'] ?? ''));
 $permissionKey = trim((string) ($_POST['permission_key'] ?? ''));
-$actionType = trim((string) ($_POST['action_type'] ?? 'manager.override'));
+$actionType = trim((string) ($_POST['action_type'] ?? ''));
+if ($actionType === '') {
+    $actionType = $permissionKey !== '' ? $permissionKey : 'manager.override';
+}
 $targetType = trim((string) ($_POST['target_type'] ?? 'pos_action'));
 $targetId = isset($_POST['target_id']) ? (int) $_POST['target_id'] : null;
 
@@ -33,7 +37,17 @@ if (isset($_POST['amount']) && $_POST['amount'] !== '') {
 }
 $limitPermissionKey = trim((string) ($_POST['limit_permission_key'] ?? ''));
 
+$ip = (string) ($_SERVER['REMOTE_ADDR'] ?? 'unknown');
+$pinService = new PinService();
+$auditLogger = new SecurityAuditLogger();
+
 try {
+    if ($pinService->isTerminalFrozen($conn, $ip)) {
+        http_response_code(429);
+        echo json_encode(['success' => false, 'code' => 'PIN_TERMINAL_FROZEN'], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+
     $service = new ManagerApprovalService();
     $overrideContext = [
         'action_type' => $actionType,
@@ -42,6 +56,7 @@ try {
         'reason' => trim((string) ($_POST['reason'] ?? '')) ?: null,
         'metadata' => [
             'terminal_user_id' => pos_terminal_user_id(),
+            'permission_key' => $permissionKey,
         ],
     ];
     if ($amount !== null && $amount > 0) {
@@ -54,7 +69,7 @@ try {
     $approval = $service->authenticateManagerOverride($conn, $pin, $permissionKey, pos_acting_user_id(), $overrideContext);
 
     try {
-        (new SecurityAuditLogger())->record($conn, 'manager_override_granted', [
+        $auditLogger->record($conn, 'manager_override_granted', [
             'user_id' => (int) ($approval['approved_by'] ?? 0),
             'target_type' => 'approval',
             'target_id' => (int) ($approval['id'] ?? 0),
@@ -71,7 +86,32 @@ try {
     ], JSON_UNESCAPED_UNICODE);
 } catch (RuntimeException $exception) {
     $code = $exception->getMessage();
-    $status = in_array($code, ['MANAGER_PIN_INVALID', 'MANAGER_PERMISSION_DENIED', 'APPROVER_LIMIT_EXCEEDED'], true) ? 403 : 400;
+    $deniedCodes = [
+        'MANAGER_PIN_INVALID',
+        'MANAGER_PERMISSION_DENIED',
+        'APPROVER_LIMIT_EXCEEDED',
+        'MANAGER_PIN_LOCKED',
+        'PIN_TERMINAL_FROZEN',
+    ];
+    if (in_array($code, $deniedCodes, true)) {
+        try {
+            $auditLogger->record($conn, 'manager_override_denied', [
+                'user_id' => pos_acting_user_id(),
+                'target_type' => 'permission',
+                'target_id' => null,
+                'metadata' => [
+                    'permission_key' => $permissionKey,
+                    'code' => $code,
+                    'terminal_user_id' => pos_terminal_user_id(),
+                ],
+            ]);
+        } catch (Throwable $ignored) {
+        }
+    }
+    $status = in_array($code, $deniedCodes, true) ? 403 : 400;
+    if ($code === 'PIN_TERMINAL_FROZEN' || $code === 'MANAGER_PIN_LOCKED') {
+        $status = 429;
+    }
     http_response_code($status);
     echo json_encode(['success' => false, 'code' => $code], JSON_UNESCAPED_UNICODE);
 }

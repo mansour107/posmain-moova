@@ -9,8 +9,9 @@ $posBarcodeJs = paidReversalContractSource($root . '/js/pos_barcode.js');
 $runtimeTest = paidReversalContractSource($root . '/tests/sync/recipe_paid_reversal_endpoint_runtime_test.php');
 
 paidReversalContractAssertContains("require_csrf('pos_browser')", $endpoint, 'paid reversal endpoint must use POS CSRF protection');
-paidReversalContractAssertContains("require_permission(\$action === 'void' ? 'pos.void.paid' : 'pos.refund'", $endpoint, 'paid reversal endpoint must enforce refund/void permissions');
+paidReversalContractAssertContains('require_pos_authenticated()', $endpoint, 'paid reversal endpoint must require POS authentication');
 paidReversalContractAssertContains('reversePaidOrder', $endpoint, 'paid reversal endpoint should delegate to the POS mutation service');
+paidReversalContractAssertNotContains("require_permission(\$action === 'void' ? 'pos.void.paid' : 'pos.refund'", $endpoint, 'paid reversal endpoint should defer permission to manager approval service');
 paidReversalContractAssertContains('recordOrderSnapshot', $endpoint, 'paid reversal endpoint should emit order sync snapshot');
 paidReversalContractAssertNotContains('new RecipeOrderLifecycleService', $endpoint, 'endpoint must not instantiate recipe lifecycle directly');
 paidReversalContractAssertNotContains('explodeOrderLine', $endpoint, 'endpoint must not calculate recipe requirements directly');
@@ -27,19 +28,20 @@ paidReversalContractAssertContains('resolveRefundPolicy', $lifecycle, 'recipe li
 paidReversalContractAssertContains("'manager_choice'", $lifecycle, 'recipe lifecycle should handle manager-choice fallback safely');
 paidReversalContractAssertContains("!== 'consumed'", $lifecycle, 'recipe lifecycle should not reverse already refunded/wasted/voided usage rows');
 
-paidReversalContractAssertContains('can_refund', $recentOrders, 'recent orders payload should expose paid refund capability');
-paidReversalContractAssertContains('can_void', $recentOrders, 'recent orders payload should expose paid void capability');
-paidReversalContractAssertContains("auth_guard_has_permission('pos.refund'", $recentOrders, 'recent orders capability should use named refund permission');
-paidReversalContractAssertContains("auth_guard_has_permission('pos.void.paid'", $recentOrders, 'recent orders capability should use named void permission');
+paidReversalContractAssertContains('refund_eligible', $recentOrders, 'recent orders payload should expose paid refund eligibility');
+paidReversalContractAssertContains('void_eligible', $recentOrders, 'recent orders payload should expose paid void eligibility');
+paidReversalContractAssertContains('delete_eligible', $recentOrders, 'recent orders payload should expose delete eligibility');
+paidReversalContractAssertContains('can_refund', $recentOrders, 'recent orders payload should keep refund capability alias');
+paidReversalContractAssertContains('can_void', $recentOrders, 'recent orders payload should keep void capability alias');
 
 paidReversalContractAssertContains('reversePaidOrder', $posBarcodeJs, 'POS recent-orders UI should expose paid reversal action');
 paidReversalContractAssertContains('ajax/refund_order.php', $posBarcodeJs, 'POS UI should call the paid reversal endpoint');
 paidReversalContractAssertContains('refund_stock_policy', $posBarcodeJs, 'POS UI should send selected recipe stock policy');
 
-paidReversalContractAssertContains('can_refund', $posBarcodeJs, 'active recent-orders JS renderer should consume refund capability');
-paidReversalContractAssertContains('can_void', $posBarcodeJs, 'active recent-orders JS renderer should consume void capability');
+paidReversalContractAssertContains('refund_eligible', $posBarcodeJs, 'active recent-orders JS renderer should consume refund eligibility');
+paidReversalContractAssertContains('void_eligible', $posBarcodeJs, 'active recent-orders JS renderer should consume void eligibility');
 paidReversalContractAssertContains('reverse-paid-order', $posBarcodeJs, 'active recent-orders JS renderer should expose paid reversal action');
-paidReversalContractAssertContains('reversePaidOrder(${order.id}', $posBarcodeJs, 'active recent-orders JS renderer should call the paid reversal dialog');
+paidReversalContractAssertContains('pos-action-locked', $posBarcodeJs, 'recent-orders actions should use locked styling when override is required');
 
 paidReversalContractAssertContains('ajax/refund_order.php', $runtimeTest, 'runtime test should execute the real paid reversal endpoint');
 paidReversalContractAssertContains('CREATE DATABASE', $runtimeTest, 'runtime test should isolate endpoint writes in a temporary database');

@@ -105,6 +105,10 @@ export async function openRecentOrdersFromCorner(page: Page): Promise<void> {
   await expect(page.locator('#recentOrdersModal')).toBeVisible();
 }
 
+export async function toggleVirtualKeyboard(page: Page): Promise<void> {
+  await page.locator('#posKeyboardToggleBtn').click();
+}
+
 export async function cartRowCount(page: Page): Promise<number> {
   return page.locator('#itemData .item-card-order').count();
 }

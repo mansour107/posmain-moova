@@ -11,6 +11,9 @@ if (!isset($conn) || !($conn instanceof mysqli)) {
     include(__DIR__ . '/connect.php');
 }
 
+require_once __DIR__ . '/auth_guard.php';
+require_permission('pos.open', $conn);
+
 $userid = $_SESSION['userid'];
 $up = $conn->query("SELECT * FROM users where id = $userid ");
 

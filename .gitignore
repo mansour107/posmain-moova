@@ -12,6 +12,7 @@ var/
 .playwright-mcp/
 node_modules/
 playwright-report/
+tools/phpunit.phar
 test-results/
 *.log
 Thumbs.db
@@ -33,5 +34,7 @@ tests/qa/campaign_config.local.json
 
 # Playwright/CI artifacts
 .playwright-cli/
+.phpunit.cache/
+tests/e2e/screenshots/
 test-results.json
 tmp/

@@ -22,10 +22,10 @@ class PosOrderAccessPolicy
 
     public static function requireRoutePermission(mysqli $conn, string $route): void
     {
-        if (!function_exists('require_permission')) {
-            return;
+        if (!function_exists('require_pos_lane_permission')) {
+            require_once __DIR__ . '/../../../includes/auth_guard.php';
         }
 
-        require_permission(self::permissionForRoute($route), $conn);
+        require_pos_lane_permission(self::permissionForRoute($route), $conn);
     }
 }

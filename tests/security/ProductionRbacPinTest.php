@@ -70,6 +70,19 @@ final class ProductionRbacPinTest extends TestCase
         (new PinService())->validatePinFormat('1234');
     }
 
+    public function test_manager_override_blacklisted_pin_surfaces_invalid(): void
+    {
+        $service = new ManagerApprovalService();
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('MANAGER_PIN_INVALID');
+        $service->authenticateManagerOverride(
+            self::$conn,
+            '0000',
+            'pos.table.open',
+            1
+        );
+    }
+
     public function test_pin_lookup_is_deterministic(): void
     {
         $svc = new PinService();
@@ -259,6 +272,7 @@ final class ProductionRbacPinTest extends TestCase
     {
         $seeded = RolePermissionSyncService::seedPresetRoles(self::$conn);
         $cashierRoleId = (int) $seeded['cashier'];
+        RolePermissionSyncService::restorePresetRole(self::$conn, 'cashier');
 
         $uname = 'limit_test_' . bin2hex(random_bytes(3));
         $stmt = self::$conn->prepare('INSERT INTO users (uname, password, usertype, userrole, img, isdeleted) VALUES (?, ?, 1, ?, ?, 0)');
@@ -721,6 +735,33 @@ final class ProductionRbacPinTest extends TestCase
         (new PermissionService(self::$conn))->bumpPermissionsVersion();
     }
 
+    public function test_user_override_deny_blocks_admin_session_bypass(): void
+    {
+        $seeded = RolePermissionSyncService::seedPresetRoles(self::$conn);
+        $ownerRoleId = (int) $seeded['owner'];
+        $userId = $this->createTestUser($ownerRoleId);
+        $svc = new PermissionService(self::$conn);
+        $this->assertTrue($svc->check($userId, 'pos.open', $ownerRoleId));
+
+        $this->enableUserOverrides($userId);
+        $this->setUserGrant($userId, 'pos.open', 'deny');
+        (new PermissionService(self::$conn))->bumpPermissionsVersion();
+
+        $roleFlags = [];
+        $stmt = self::$conn->prepare('SELECT * FROM usr_pwrs WHERE id = ? LIMIT 1');
+        $stmt->bind_param('i', $ownerRoleId);
+        $stmt->execute();
+        $roleFlags = $stmt->get_result()->fetch_assoc() ?: [];
+        $stmt->close();
+
+        $session = ['login' => true, 'userid' => $userId, 'usrole' => $ownerRoleId];
+        $this->assertFalse($svc->check($userId, 'pos.open', $ownerRoleId));
+        $this->assertFalse(auth_guard_session_has_permission('pos.open', $roleFlags, $session, self::$conn));
+
+        $this->cleanupTestUser($userId);
+        (new PermissionService(self::$conn))->bumpPermissionsVersion();
+    }
+
     public function test_user_override_limit_wins_over_role_limit(): void
     {
         $seeded = RolePermissionSyncService::seedPresetRoles(self::$conn);
@@ -844,7 +885,7 @@ final class ProductionRbacPinTest extends TestCase
         $seeded = RolePermissionSyncService::seedPresetRoles(self::$conn);
         $managerRoleId = (int) $seeded['manager'];
 
-        $stmt = self::$conn->prepare("DELETE FROM role_capabilities WHERE role_id = ? AND permission_key = 'pos.discount.apply'");
+        $stmt = self::$conn->prepare('DELETE FROM role_capabilities WHERE role_id = ?');
         $stmt->bind_param('i', $managerRoleId);
         $stmt->execute();
         $stmt->close();
@@ -866,6 +907,7 @@ final class ProductionRbacPinTest extends TestCase
 
         $this->cleanupTestUser($userId);
         RolePermissionSyncService::restorePresetRole(self::$conn, 'manager');
+        RolePermissionSyncService::backfillRoleCapabilitiesFromLegacyFlags(self::$conn);
     }
 
     public function test_capabilities_cache_rebuilds_after_permissions_version_bump(): void
@@ -906,6 +948,7 @@ final class ProductionRbacPinTest extends TestCase
                 str_contains($message, 'duplicate')
                 || str_contains($message, '1062')
                 || str_contains($message, 'pin_lookup')
+                || str_contains($message, 'pin_already_in_use')
                 || $exception instanceof mysqli_sql_exception,
                 'Unexpected exception: ' . $exception->getMessage()
             );
@@ -937,6 +980,20 @@ final class ProductionRbacPinTest extends TestCase
         $stmt->execute();
         $stmt->close();
         $this->assertNull($pinSvc->findUserByPin(self::$conn, $pin));
+    }
+
+    public function test_deactivated_user_fails_active_session_guard(): void
+    {
+        $userId = $this->createTestUser(2);
+        $this->assertTrue(auth_guard_user_is_active(self::$conn, $userId));
+
+        $stmt = self::$conn->prepare('UPDATE users SET isdeleted = 1 WHERE id = ?');
+        $stmt->bind_param('i', $userId);
+        $stmt->execute();
+        $stmt->close();
+
+        $this->assertFalse(auth_guard_user_is_active(self::$conn, $userId));
+        $this->cleanupTestUser($userId);
     }
 
     public function test_reactivated_user_pin_hash_persists_until_reset(): void

@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { loginAs, assertNoFatalText, unlockPos } from '../helpers/auth';
+import { openTeamHubRolePermissions, openTeamHubStaffPermissions } from '../helpers/team-hub';
 import {
   RBAC_ALLOWED_PAGE_MATRIX,
   RBAC_CRITICAL_POST_HANDLERS,
@@ -103,20 +104,15 @@ test.describe('RBAC full suite: write handler denials', () => {
 test.describe('RBAC full suite: admin surfaces', () => {
   test('admin can open role permissions editor and see save form', async ({ page }) => {
     await loginAs(page, 'admin');
-    await page.goto('/role_permissions.php?id=29', { waitUntil: 'domcontentloaded' });
-    await expect(page.locator('form[action*="doedit_role_permissions"]')).toBeVisible();
+    await openTeamHubRolePermissions(page, 'مدير');
+    await expect(page.locator('#roleSaveBtn, .team-hub-switch').first()).toBeVisible();
     assertNoFatalText(await page.content());
   });
 
   test('admin can open user permission overrides on edit user', async ({ page }) => {
     await loginAs(page, 'admin');
-    await page.goto('/users.php', { waitUntil: 'domcontentloaded' });
-    const editLink = page.locator('a[href*="edit_user.php"]').first();
-    await expect(editLink).toBeVisible();
-    await editLink.click();
-    await expect(
-      page.locator('form[action*="doedit_user_permissions"], [name="permission_mode"]').first(),
-    ).toBeVisible();
+    await openTeamHubStaffPermissions(page, 'p6_cashier');
+    await expect(page.locator('input[data-perm]').first()).toBeAttached();
     assertNoFatalText(await page.content());
   });
 
@@ -164,13 +160,13 @@ test.describe('RBAC full suite: navigation visibility', () => {
     if (permissions['users.manage']) {
       test.fail(true, 'cashier has users.manage — navbar will show admin links (demo seed or role misconfiguration)');
     }
-    await expect(page.locator('a[href="users.php"]')).toHaveCount(0);
+    await expect(page.locator('a[href="team.php"]')).toHaveCount(0);
   });
 
   test('admin navbar shows users link', async ({ page }) => {
     await loginAs(page, 'admin');
     await page.goto('/dashboard.php', { waitUntil: 'domcontentloaded' });
-    await expect(page.locator('a[href="users.php"]').first()).toBeVisible();
+    await expect(page.locator('a[href="team.php"]').first()).toBeVisible();
   });
 
   test('cashier sidebar hides add item when lacking menu.edit', async ({ page }) => {

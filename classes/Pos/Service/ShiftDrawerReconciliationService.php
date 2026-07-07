@@ -13,6 +13,7 @@ class ShiftDrawerReconciliationService
         'safe_drop' => -1,
         'opening' => 1,
         'closing_adjustment' => 1,
+        'no_sale' => 0,
     ];
 
     private const PAYMENT_TYPES = ['cash', 'card', 'wallet', 'bank', 'gift_card', 'other'];
@@ -52,7 +53,10 @@ class ShiftDrawerReconciliationService
                 'cash_payments' => $this->decimal($cashPayments),
                 'drawer_sale_cash' => $this->decimal($drawerSaleCash),
                 'cash_difference' => $this->decimal($drawerSaleCash - $cashPayments),
-                'expected_cash' => $drawer['expected_cash'],
+                'pre_close_expected_cash' => $drawer['pre_close_expected_cash'],
+                'close_variance' => $drawer['close_variance'],
+                'expected_cash' => $drawer['post_close_expected_cash'],
+                'counted_cash' => $drawer['counted_cash'],
             ],
         ];
     }
@@ -90,7 +94,7 @@ class ShiftDrawerReconciliationService
 
         foreach ($this->queryAll($conn, $sql, $params) as $row) {
             $amount = (float) ($row['amount'] ?? 0);
-            if ($amount <= 0) {
+            if (abs($amount) < 0.0001) {
                 continue;
             }
 
@@ -121,6 +125,10 @@ class ShiftDrawerReconciliationService
     {
         $summary = [
             'opening_cash' => '0.000',
+            'pre_close_expected_cash' => '0.000',
+            'close_variance' => '0.000',
+            'post_close_expected_cash' => '0.000',
+            'counted_cash' => null,
             'expected_cash' => '0.000',
             'movement_totals' => $this->zeroMovementTypes(),
             'movement_count' => 0,
@@ -130,19 +138,33 @@ class ShiftDrawerReconciliationService
         }
 
         $summary['opening_cash'] = $this->decimal($session['opening_cash'] ?? 0);
-        $expected = (float) $summary['opening_cash'];
         foreach ($this->drawerSessionService->movementsForSession($conn, (int) $session['id']) as $movement) {
             $type = (string) $movement['movement_type'];
             if (!array_key_exists($type, self::MOVEMENT_SIGNS)) {
                 continue;
             }
 
+            if ($type === 'closing_adjustment') {
+                continue;
+            }
+
+            $sign = self::MOVEMENT_SIGNS[$type];
+            if ($sign === 0) {
+                $summary['movement_count']++;
+                continue;
+            }
+
             $amount = (float) $movement['amount'];
             $summary['movement_totals'][$type] = $this->decimal((float) $summary['movement_totals'][$type] + $amount);
             $summary['movement_count']++;
-            $expected += self::MOVEMENT_SIGNS[$type] * $amount;
         }
-        $summary['expected_cash'] = $this->decimal($expected);
+
+        $breakdown = $this->drawerSessionService->sessionCashBreakdown($conn, (int) $session['id']);
+        $summary['pre_close_expected_cash'] = $breakdown['pre_close_expected_cash'];
+        $summary['close_variance'] = $breakdown['close_variance'];
+        $summary['post_close_expected_cash'] = $breakdown['post_close_expected_cash'];
+        $summary['counted_cash'] = $breakdown['counted_cash'];
+        $summary['expected_cash'] = $breakdown['post_close_expected_cash'];
 
         return $summary;
     }

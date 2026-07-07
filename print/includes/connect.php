@@ -23,7 +23,15 @@ $restwn = $conn->query("SELECT * from towns ");
 
 // user powers
 if (isset($_SESSION['usrole'])) {
-$user_role_id = $_SESSION['usrole'];
-$sqlrole = "SELECT * FROM `usr_pwrs` WHERE id = $user_role_id ";
-$resrole = $conn->query($sqlrole);
-$role = $resrole->fetch_assoc();}
+    $user_role_id = (int) $_SESSION['usrole'];
+    $stmt = $conn->prepare(
+        'SELECT id, rollname, role_key, is_system, isdeleted, info, is_active
+           FROM usr_pwrs
+          WHERE id = ?
+          LIMIT 1'
+    );
+    $stmt->bind_param('i', $user_role_id);
+    $stmt->execute();
+    $role = $stmt->get_result()->fetch_assoc() ?: [];
+    $stmt->close();
+}

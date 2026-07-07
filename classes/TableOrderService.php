@@ -410,7 +410,7 @@ class TableOrderService
             self::POS_TYPE,
         ]);
 
-        $this->insertPaymentRecord($conn, $orderId, $appliedAmount, $paymentMethod, $userId, $notes);
+        $paymentId = $this->insertPaymentRecord($conn, $orderId, $appliedAmount, $paymentMethod, $userId, $notes);
 
         if ($isPaid) {
             $this->setTableFreeIfNoActiveOrder($conn, $tableId);
@@ -423,6 +423,7 @@ class TableOrderService
             'table_id' => (int) $tableId,
             'paid_amount' => $newPaid,
             'applied_amount' => $appliedAmount,
+            'payment_id' => $paymentId,
             'remaining_amount' => $remaining,
             'payment_status' => $paymentStatus,
             'order_status' => $orderStatus,
@@ -431,10 +432,10 @@ class TableOrderService
         ];
     }
 
-    private function insertPaymentRecord(mysqli $conn, $orderId, $amount, $paymentMethod, $userId, $notes)
+    private function insertPaymentRecord(mysqli $conn, $orderId, $amount, $paymentMethod, $userId, $notes): ?int
     {
         if (!$this->tableExists($conn, 'order_payments')) {
-            return;
+            return null;
         }
 
         $this->execute($conn, "
@@ -448,7 +449,10 @@ class TableOrderService
             trim((string) $notes),
             (int) $userId,
         ]);
-        $this->assignUuidIfPresent($conn, 'order_payments', (int) $conn->insert_id);
+        $paymentId = (int) $conn->insert_id;
+        $this->assignUuidIfPresent($conn, 'order_payments', $paymentId);
+
+        return $paymentId > 0 ? $paymentId : null;
     }
 
     public function queryOne(mysqli $conn, $sql, array $params = [])

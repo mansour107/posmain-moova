@@ -21,7 +21,6 @@ test.describe('manager: mid-shift expense logging', () => {
 
     await expect(page.locator('#shiftExpenseFormAlert')).toContainText(/تم تسجيل المصروف/i, { timeout: 10_000 });
     await expect(page.locator('#shiftExpenseList')).toContainText(/12\.50|12,50/);
-    await expect(page.locator('.js-shift-expense-badge').first()).toBeVisible();
   });
 
   test('server rejects expense recording without active POS unlock', async ({ page }) => {

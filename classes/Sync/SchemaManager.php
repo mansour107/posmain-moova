@@ -39,6 +39,7 @@ class SyncSchemaManager
             'manager_approvals' => $this->managerApprovalsSql(),
             'drawer_sessions' => $this->drawerSessionsSql(),
             'drawer_movements' => $this->drawerMovementsSql(),
+            'pos_branch_settings' => $this->posBranchSettingsSql(),
             'printers' => $this->printersSql(),
             'print_jobs' => $this->printJobsSql(),
             'item_nutrition_profiles' => $this->itemNutritionProfilesSql(),
@@ -204,6 +205,7 @@ class SyncSchemaManager
                     'pin_locked_until' => "ALTER TABLE users ADD COLUMN pin_locked_until DATETIME NULL",
                     'pin_lockout_count' => "ALTER TABLE users ADD COLUMN pin_lockout_count INT UNSIGNED NOT NULL DEFAULT 0",
                     'pin_set_at' => "ALTER TABLE users ADD COLUMN pin_set_at DATETIME NULL",
+                    'pin_enc' => "ALTER TABLE users ADD COLUMN pin_enc VARCHAR(255) NULL",
                 ],
                 'indexes' => [
                     'idx_users_userrole' => [
@@ -234,6 +236,35 @@ class SyncSchemaManager
                     'idx_manager_approvals_permission' => [
                         'columns' => ['permission_key', 'status'],
                         'sql' => "ALTER TABLE manager_approvals ADD KEY idx_manager_approvals_permission (permission_key, status)",
+                    ],
+                ],
+            ],
+            'drawer_movements' => [
+                'columns' => [
+                    'manager_approval_id' => "ALTER TABLE drawer_movements ADD COLUMN manager_approval_id BIGINT UNSIGNED NULL",
+                    'ref_ot_head_id' => "ALTER TABLE drawer_movements ADD COLUMN ref_ot_head_id BIGINT UNSIGNED NULL",
+                    'tenant' => "ALTER TABLE drawer_movements ADD COLUMN tenant INT NOT NULL DEFAULT 0 AFTER drawer_session_id",
+                    'branch' => "ALTER TABLE drawer_movements ADD COLUMN branch INT NOT NULL DEFAULT 0 AFTER tenant",
+                ],
+                'indexes' => [
+                    'idx_drawer_movements_voucher' => [
+                        'columns' => ['ref_ot_head_id'],
+                        'sql' => "ALTER TABLE drawer_movements ADD KEY idx_drawer_movements_voucher (ref_ot_head_id)",
+                    ],
+                    'idx_drawer_movements_branch_period' => [
+                        'columns' => ['tenant', 'branch', 'created_at'],
+                        'sql' => "ALTER TABLE drawer_movements ADD KEY idx_drawer_movements_branch_period (tenant, branch, created_at)",
+                    ],
+                ],
+            ],
+            'closed_orders' => [
+                'columns' => [
+                    'drawer_session_id' => "ALTER TABLE closed_orders ADD COLUMN drawer_session_id BIGINT UNSIGNED NULL",
+                ],
+                'indexes' => [
+                    'idx_closed_orders_drawer_session' => [
+                        'columns' => ['drawer_session_id'],
+                        'sql' => "ALTER TABLE closed_orders ADD KEY idx_closed_orders_drawer_session (drawer_session_id)",
                     ],
                 ],
             ],
@@ -307,6 +338,10 @@ class SyncSchemaManager
         }
 
         foreach ($this->itemTypeEnumUpgradeStatements($conn) as $label => $statement) {
+            $pending[$label] = $statement;
+        }
+
+        foreach ($this->drawerCashFlowUpgradeStatements($conn) as $label => $statement) {
             $pending[$label] = $statement;
         }
 
@@ -954,6 +989,43 @@ ALTER TABLE {$quotedTable}
                 }
 
                 $statements[$table . '.add_' . $index] = $definition['sql'];
+            }
+        }
+
+        return $statements;
+    }
+
+    private function drawerCashFlowUpgradeStatements(mysqli $conn)
+    {
+        $statements = [];
+
+        if ($this->tableExists($conn, 'drawer_movements')) {
+            if ($this->columnExists($conn, 'drawer_movements', 'drawer_session_id')) {
+                $info = $this->columnInfo($conn, 'drawer_movements', 'drawer_session_id');
+                $nullable = strtoupper((string) ($info['IS_NULLABLE'] ?? 'NO')) === 'YES';
+                if (!$nullable) {
+                    $statements['drawer_movements.nullable_session_id'] =
+                        'ALTER TABLE drawer_movements MODIFY COLUMN drawer_session_id BIGINT UNSIGNED NULL';
+                }
+            }
+
+            if ($this->columnExists($conn, 'drawer_movements', 'movement_type')
+                && !$this->enumColumnHasValue($conn, 'drawer_movements', 'movement_type', 'no_sale')) {
+                $statements['drawer_movements.add_no_sale_enum'] =
+                    "ALTER TABLE drawer_movements MODIFY COLUMN movement_type ENUM('sale_cash','refund_cash','paid_in','paid_out','safe_drop','opening','closing_adjustment','no_sale') NOT NULL";
+            }
+
+            if ($this->columnExists($conn, 'drawer_movements', 'tenant')
+                && $this->columnExists($conn, 'drawer_sessions', 'tenant')) {
+                $statements['drawer_movements.backfill_tenant_branch'] = "
+                    UPDATE drawer_movements dm
+                    INNER JOIN drawer_sessions ds ON ds.id = dm.drawer_session_id
+                    SET dm.tenant = ds.tenant,
+                        dm.branch = ds.branch
+                    WHERE dm.drawer_session_id IS NOT NULL
+                      AND dm.tenant = 0
+                      AND dm.branch = 0
+                      AND (ds.tenant <> 0 OR ds.branch <> 0)";
             }
         }
 
@@ -1884,18 +1956,39 @@ CREATE TABLE IF NOT EXISTS drawer_sessions (
         return "
 CREATE TABLE IF NOT EXISTS drawer_movements (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-  drawer_session_id BIGINT UNSIGNED NOT NULL,
-  movement_type ENUM('sale_cash','refund_cash','paid_in','paid_out','safe_drop','opening','closing_adjustment') NOT NULL,
+  drawer_session_id BIGINT UNSIGNED NULL,
+  tenant INT NOT NULL DEFAULT 0,
+  branch INT NOT NULL DEFAULT 0,
+  movement_type ENUM('sale_cash','refund_cash','paid_in','paid_out','safe_drop','opening','closing_adjustment','no_sale') NOT NULL,
   amount DECIMAL(12,3) NOT NULL,
   order_id BIGINT UNSIGNED NULL,
   payment_id BIGINT UNSIGNED NULL,
   reason VARCHAR(500) NULL,
   created_by BIGINT UNSIGNED NOT NULL,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  manager_approval_id BIGINT UNSIGNED NULL,
+  ref_ot_head_id BIGINT UNSIGNED NULL,
   PRIMARY KEY (id),
   KEY idx_drawer_movements_session (drawer_session_id, created_at),
+  KEY idx_drawer_movements_branch_period (tenant, branch, created_at),
   KEY idx_drawer_movements_order (order_id, payment_id),
-  KEY idx_drawer_movements_type (movement_type, created_at)
+  KEY idx_drawer_movements_type (movement_type, created_at),
+  KEY idx_drawer_movements_voucher (ref_ot_head_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
+    private function posBranchSettingsSql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS pos_branch_settings (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  pos_tenant INT NOT NULL DEFAULT 0,
+  pos_branch INT NOT NULL DEFAULT 0,
+  business_day_cutoff_hour TINYINT UNSIGNED NOT NULL DEFAULT 6,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_pos_branch_settings_scope (pos_tenant, pos_branch)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
     }
 

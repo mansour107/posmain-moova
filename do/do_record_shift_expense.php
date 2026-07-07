@@ -51,6 +51,10 @@ try {
         throw new RuntimeException('DB_CONNECTION_FAILED');
     }
 
+    if (!auth_guard_has_permission('pos.cashdrawer.count', $conn)) {
+        throw new RuntimeException('PERMISSION_DENIED');
+    }
+
     $conn->set_charset('utf8mb4');
     $userId = function_exists('pos_acting_user_id') ? pos_acting_user_id() : (int) $_SESSION['userid'];
     $payload = $_POST;
@@ -58,6 +62,7 @@ try {
     $result = (new ShiftSessionService())->recordShiftExpense($conn, $userId, [
         'amount' => $payload['amount'] ?? 0,
         'reason' => $payload['reason'] ?? '',
+        'manager_approval_id' => $payload['manager_approval_id'] ?? null,
     ]);
 
     while (ob_get_level()) {
@@ -82,7 +87,7 @@ try {
         $status = 405;
     } elseif ($message === 'SHIFT_WRITE_BLOCKED') {
         $status = 403;
-    } elseif ($message === 'MANAGER_APPROVAL_REQUIRED') {
+    } elseif ($message === 'MANAGER_APPROVAL_REQUIRED' || $message === 'PERMISSION_DENIED') {
         $status = 403;
     }
     http_response_code($status);

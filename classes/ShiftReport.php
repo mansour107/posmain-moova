@@ -11,6 +11,8 @@ class ShiftReport
     private $date;
     private $shiftOpenedAt = null;
     private $drawerReconciliationService;
+    /** @var array<string, string> */
+    private $shiftWindowTimestampCache = [];
 
     public function __construct($conn, $userId, $date = null, array $scope = [])
     {
@@ -116,14 +118,44 @@ class ShiftReport
         return $this->shiftOpenedAt;
     }
 
-    private function appendShiftWindow(string $sql, array &$params, string $crtimeColumn = 'crtime'): string
+    private function appendShiftWindow(string $sql, array &$params, string $tableAlias = ''): string
     {
         if ($this->shiftOpenedAt !== null && $this->shiftOpenedAt !== '') {
-            $sql .= ' AND ' . $crtimeColumn . ' >= ?';
+            $sql .= ' AND ' . $this->shiftWindowTimestampExpression($tableAlias) . ' >= ?';
             $params[] = $this->shiftOpenedAt;
         }
 
         return $sql;
+    }
+
+    private function shiftWindowTimestampExpression(string $tableAlias = ''): string
+    {
+        $cacheKey = $tableAlias === '' ? '_root' : $tableAlias;
+        if (isset($this->shiftWindowTimestampCache[$cacheKey])) {
+            return $this->shiftWindowTimestampCache[$cacheKey];
+        }
+
+        $prefix = $tableAlias !== '' ? $tableAlias . '.' : '';
+        $columns = [];
+        foreach (['crtime', 'payment_date', 'completed_at'] as $column) {
+            if ($this->columnExists('ot_head', $column)) {
+                $columns[] = $prefix . $column;
+            }
+        }
+        $columns[] = 'TIMESTAMP(' . $prefix . 'pro_date)';
+        $expression = 'COALESCE(' . implode(', ', $columns) . ')';
+        $this->shiftWindowTimestampCache[$cacheKey] = $expression;
+
+        return $expression;
+    }
+
+    private function columnExists(string $table, string $column): bool
+    {
+        $table = preg_replace('/[^a-zA-Z0-9_]/', '', $table) ?: $table;
+        $column = preg_replace('/[^a-zA-Z0-9_]/', '', $column) ?: $column;
+        $result = $this->conn->query("SHOW COLUMNS FROM `{$table}` LIKE '{$column}'");
+
+        return $result instanceof mysqli_result && $result->num_rows > 0;
     }
 
     public function getTotals()
@@ -165,7 +197,7 @@ class ShiftReport
                   AND oh.user = ?
                   AND oh.pro_tybe = 1
                   AND oh.isdeleted = 0';
-        $query = $this->appendShiftWindow($query, $params, 'oh.crtime');
+        $query = $this->appendShiftWindow($query, $params, 'oh');
         $query .= ' GROUP BY oh.acc1';
 
         $stmt = $this->conn->prepare($query);

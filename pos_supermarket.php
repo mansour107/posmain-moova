@@ -12,9 +12,16 @@ if (!isset($_SESSION['login']) || !isset($_SESSION['userid'])) {
 }
 
 include(__DIR__ . '/includes/connect.php');
+require_once __DIR__ . '/includes/auth_guard.php';
+require_permission('pos.open', $conn);
+
+$posmainCanCloseShift = auth_guard_has_permission('pos.shift.close', $conn);
+$posmainCanRecordShiftExpense = auth_guard_has_permission('pos.cashdrawer.count', $conn);
+$posmainCanRecordShiftPayIn = auth_guard_has_permission('pos.drawer.payin', $conn);
+$posmainCanRecordShiftSafeDrop = auth_guard_has_permission('pos.drawer.safe_drop', $conn);
+$posmainCanRecordDrawerCash = $posmainCanRecordShiftExpense || $posmainCanRecordShiftPayIn || $posmainCanRecordShiftSafeDrop;
 
 if (isset($_GET['logout'])) {
-    require_once __DIR__ . '/includes/auth_guard.php';
     posmain_clear_pos_shift_session(false);
     header('location:pos_supermarket.php');
     exit;
@@ -142,16 +149,19 @@ include('includes/pos_simple_header.php');
                         <i class="fas fa-expand-arrows-alt"></i>
                     </button>
 
+                    <?php if ($posmainCanRecordDrawerCash) { ?>
                     <button type="button" class="btn btn-outline-info btn-sm me-2 position-relative" data-bs-toggle="modal"
-                        data-bs-target="#shiftExpenseModal" title="تسجيل مصروف">
-                        <i class="fas fa-wallet me-1"></i> مصروف
-                        <span class="badge bg-danger position-absolute top-0 start-100 translate-middle d-none js-shift-expense-badge"></span>
+                        data-bs-target="#shiftExpenseModal" title="حركة نقدية للدرج">
+                        <i class="fas fa-wallet me-1"></i> نقدية الدرج
                     </button>
+                    <?php } ?>
 
+                    <?php if ($posmainCanCloseShift) { ?>
                     <button type="button" class="btn btn-outline-warning btn-sm me-2" data-bs-toggle="modal"
                         data-bs-target="#closeShiftModal" title="إغلاق الشيفت">
                         <i class="fas fa-power-off me-1"></i> إغلاق الشيفت
                     </button>
+                    <?php } ?>
                     <a href="pos_supermarket.php?logout=1" class="btn btn-danger btn-sm">
                         <i class="fas fa-sign-out-alt"></i>
                     </a>

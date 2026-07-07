@@ -207,6 +207,15 @@
 
         const route = resolveRoute(action, form);
 
+        if (
+            (route === 'orders.table' || route === 'orders.table.free' || route === 'orders.payment')
+            && window.POSMAIN_TABLE_OPEN_OVERRIDE
+            && window.POSMAIN_TABLE_OPEN_OVERRIDE.approval_id
+            && !payload.manager_approval_id
+        ) {
+            payload.manager_approval_id = window.POSMAIN_TABLE_OPEN_OVERRIDE.approval_id;
+        }
+
         if (route === 'orders.table' || route === 'orders.edit') {
             payload.table_id = parseInt(fieldValue(form, 'selected_table_id', fieldValue(form, 'table_id', 0)), 10);
             if (!payload.order_id) {
@@ -225,8 +234,13 @@
                 || (parseFloat(fieldValue(form, 'paid_cash', 0)) + parseFloat(fieldValue(form, 'paid_bank', 0)));
             payload.net = parseFloat(fieldValue(form, 'headnet', 0));
             payload.discount = parseFloat(fieldValue(form, 'headdisc', 0));
+            payload.total = parseFloat(fieldValue(form, 'headtotal', 0));
+            payload.order_date = fieldValue(form, 'pro_date', new Date().toISOString().slice(0, 10));
             payload.payment_method = parseFloat(fieldValue(form, 'paid_bank', 0)) > 0 ? 'bank' : 'cash';
             payload.notes = fieldValue(form, 'info', '');
+            if (!payload.items || !payload.items.length) {
+                payload.items = collectLineItems(form);
+            }
         }
 
         if (route === 'orders.table.free') {

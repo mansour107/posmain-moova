@@ -224,6 +224,9 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     $loginFlash = login_take_error_flash();
     $error_message = $loginFlash['message'];
     $login_username = $loginFlash['uname'];
+    if ($error_message === null && isset($_GET['error']) && $_GET['error'] === 'user_deactivated') {
+        $error_message = 'تم إيقاف حسابك. تواصل مع المدير للوصول مرة أخرى.';
+    }
 }
 $loginThrottle = new LoginThrottleService();
 $securityAuditLogger = new SecurityAuditLogger();

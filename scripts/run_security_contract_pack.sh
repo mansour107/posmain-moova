@@ -24,6 +24,17 @@ PACK=(
   tests/sync/rbac_critical_runtime_test.php
   tests/sync/rbac_page_coverage_contract_test.php
   tests/sync/user_permission_grants_integration_test.php
+  tests/sync/user_override_deny_matrix_test.php
+  tests/sync/changed_php_syntax_contract_test.php
+  tests/sync/team_hub_pin_reveal_contract_test.php
+  tests/sync/user_lifecycle_drawer_guard_test.php
+  tests/sync/user_lifecycle_session_guard_contract_test.php
+  tests/sync/team_hub_panel_url_contract_test.php
+  tests/sync/role_capabilities_backfill_contract_test.php
+  tests/sync/pos_item_void_override_contract_test.php
+  tests/sync/pos_table_visible_locked_contract_test.php
+  tests/sync/pos_override_lockout_contract_test.php
+  tests/sync/pos_item_void_override_runtime_test.php
 )
 
 echo "Running POSMAIN security / RBAC contract pack (${#PACK[@]} files)..."

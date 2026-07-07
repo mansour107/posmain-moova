@@ -16,6 +16,7 @@ posOrderControllerAssert(strpos($cofe, 'INSERT INTO ot_head') === false, 'cofe e
 $controller = file_get_contents($root . '/classes/Pos/Http/PosOrderController.php');
 posOrderControllerAssert(strpos($controller, 'createTakeaway') !== false, 'controller should own takeaway create');
 posOrderControllerAssert(strpos($controller, 'payTable') !== false, 'controller should own table payment');
+posOrderControllerAssert(strpos($controller, 'resolveTableOrderIdForPayment') !== false, 'table payment should auto-save unsaved cart before pay');
 posOrderControllerAssert(strpos($controller, 'pos_customer_id') !== false, 'table save path should support pos_customer_id');
 
 echo "pos-order-controller-contract-ok\n";

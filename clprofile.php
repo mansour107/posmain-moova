@@ -18,7 +18,7 @@
 
 
         <?php
-        if ($role['show_client_profile'] == 0) {
+        if (!auth_guard_has_legacy_flag('show_client_profile', $conn)) {
           echo $userErrorMassage;
         }else{ ?>
 

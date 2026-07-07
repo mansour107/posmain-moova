@@ -12,15 +12,16 @@ Arabic-first RBAC with five system preset roles, staff PIN identity on POS termi
 | `waiter` | ويتر | Table/order flows |
 | `kitchen` | مطبخ | KDS view/complete |
 
-Permissions map to legacy `usr_pwrs` columns via `RolePermissionSyncService`. Per-permission limits live in `role_capabilities`.
+Permissions are stored in `role_capabilities` (normalized) with `user_permission_grants` for per-user overrides. Legacy `usr_pwrs` boolean columns are deprecated; prune with `php tools/prune_usr_pwrs_legacy_columns.php --dry-run` after `php tools/permission_parity_check.php` passes.
 
 ## Staff PIN (terminal)
 
 1. Set `POSMAIN_PIN_SECRET` in environment (required in production).
 2. Assign 4–6 digit PIN on user create/edit (blacklisted codes rejected).
 3. Terminal ERP login stays separate; staff enter PIN on `pos_barcode.php` unlock screen.
-4. Until any user has `pin_set_at`, legacy password unlock remains available.
-5. Auto-lock after `app_settings.pos_autolock_seconds` (default 90).
+4. Admin/owner sessions may view staff PINs in Team Hub (`team.php`); other `users.manage` holders see masked PINs only.
+5. Until any user has `pin_set_at`, legacy password unlock remains available.
+6. Auto-lock after `app_settings.pos_autolock_seconds` (default 90).
 
 ### Acting user
 
@@ -45,7 +46,7 @@ Client helpers on POS: `POSMAIN.ensureEscalationForAmount`, `POSMAIN.ensurePermi
 
 ## Admin UI
 
-- Users: `users.php` — PIN badges, role column, deactivated toggle, one-time PIN reveal banner, lifecycle actions
+- Users: `team.php` — PIN badges, role column, deactivated toggle, admin PIN reveal on cards, lifecycle actions
 - Add user: `add_user.php` — preset role cards, PIN generate + `pin_available` live check
 - Roles: `role_permissions.php` — limit matrix, restore preset defaults, owner read-only
 - User overrides: `edit_user.php` / `ajax/user_permissions.php`

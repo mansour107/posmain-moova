@@ -6,9 +6,6 @@ require_once(__DIR__ . '/../includes/auth_guard.php');
 header('Content-Type: application/json; charset=utf-8');
 
 try {
-    $canRefundPaidOrders = auth_guard_has_permission('pos.refund', $conn);
-    $canVoidPaidOrders = auth_guard_has_permission('pos.void.paid', $conn);
-
     $limit = isset($_GET['limit']) ? max(1, min(50, (int) $_GET['limit'])) : 30;
     $offset = isset($_GET['offset']) ? max(0, (int) $_GET['offset']) : 0;
     $fetchLimit = $limit + 1;
@@ -43,7 +40,7 @@ try {
                      AND COALESCE(o.payment_status, 'unpaid') IN ('unpaid', 'partial')
                     THEN 1
                     ELSE 0
-                END as can_delete,
+                END as delete_eligible,
                 DATE_FORMAT(COALESCE(o.mdtime, o.crtime, o.pro_date), '%Y-%m-%d %H:%i') as date,
                 c.aname as acc_customer_name,
                 {$posCustomerSelect},
@@ -76,17 +73,21 @@ try {
     $orders = [];
     if ($result && $result->num_rows > 0) {
         while ($row = $result->fetch_assoc()) {
+            $deleteEligible = intval($row['delete_eligible'] ?? 0) === 1;
+            $paidCompleted = (string) ($row['payment_status'] ?? '') === 'paid'
+                && (string) ($row['order_status'] ?? '') === 'completed';
+            $refundEligible = $paidCompleted;
+            $voidEligible = $paidCompleted;
             $orders[] = [
                 'id' => $row['id'],
                 'invoice_number' => $row['invoice_number'] ?: 'ORD-' . $row['id'],
                 'table_id' => intval($row['table_id'] ?? 0),
-                'can_delete' => intval($row['can_delete'] ?? 0) === 1,
-                'can_refund' => $canRefundPaidOrders
-                    && (string) ($row['payment_status'] ?? '') === 'paid'
-                    && (string) ($row['order_status'] ?? '') === 'completed',
-                'can_void' => $canVoidPaidOrders
-                    && (string) ($row['payment_status'] ?? '') === 'paid'
-                    && (string) ($row['order_status'] ?? '') === 'completed',
+                'delete_eligible' => $deleteEligible,
+                'refund_eligible' => $refundEligible,
+                'void_eligible' => $voidEligible,
+                'can_delete' => $deleteEligible,
+                'can_refund' => $refundEligible,
+                'can_void' => $voidEligible,
                 'payment_status' => (string) ($row['payment_status'] ?? ''),
                 'order_status' => (string) ($row['order_status'] ?? ''),
                 'date' => $row['date'],

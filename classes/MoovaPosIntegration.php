@@ -342,30 +342,11 @@ class MoovaPosIntegration
             return false;
         }
 
-        $stmt = $conn->prepare("
-            SELECT u.userrole,
-                   COALESCE(r.show_users, 0) AS show_users,
-                   COALESCE(r.edit_sales, 0) AS edit_sales,
-                   COALESCE(r.sid_sales, 0) AS sid_sales
-            FROM users u
-            LEFT JOIN usr_pwrs r ON r.id = u.userrole
-            WHERE u.id = ?
-              AND u.isdeleted != 1
-            LIMIT 1
-        ");
-        $stmt->bind_param("i", $userId);
-        $stmt->execute();
-        $row = $stmt->get_result()->fetch_assoc();
-        $stmt->close();
-
-        if (!$row) {
-            return false;
+        if (!class_exists('PermissionService', false)) {
+            require_once __DIR__ . '/Security/PermissionService.php';
         }
 
-        return (int) ($row['userrole'] ?? 0) === 1
-            || (int) ($row['show_users'] ?? 0) === 1
-            || (int) ($row['edit_sales'] ?? 0) === 1
-            || (int) ($row['sid_sales'] ?? 0) === 1;
+        return (new PermissionService($conn))->check($userId, 'moova.manage');
     }
 
     public static function saveActiveLinkForScope(mysqli $conn, array $scope, array $data)

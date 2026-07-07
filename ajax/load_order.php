@@ -57,6 +57,7 @@ try {
             $basePrice = max(0, $basePrice - ($modifierLineTotal / $qty));
         }
         $items[] = [
+            'detail_id' => (int) ($item['id'] ?? 0),
             'item_id' => $item['item_id'],
             'item_name' => $item['item_name'] ?: 'صنف غير معروف',
             'item_desc' => $item['item_desc'] ?: '',

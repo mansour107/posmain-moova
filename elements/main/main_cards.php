@@ -1,6 +1,6 @@
 <div class="dashboard-cards">
     <div class="row">
-        <?php if($role['sid_rents'] == 1){ ?>
+        <?php if(auth_guard_has_legacy_flag('sid_rents', $conn)){ ?>
         <div class="col-xl-3 col-lg-4 col-md-6 mb-4">
             <div class="stat-card" style="background: #313647 !important;">
                 <div class="card-icon">
@@ -100,7 +100,7 @@
             </div>
         </div>
 
-        <?php if($role['sid_sales'] == 1){ ?>
+        <?php if(auth_guard_has_legacy_flag('sid_sales', $conn)){ ?>
         <div class="col-xl-3 col-lg-4 col-md-6 mb-4">
             <div class="stat-card" style="background: #942C21 !important;">
                 <div class="card-icon">
@@ -126,7 +126,7 @@
         </div>
         <?php } ?>
 
-        <?php if($role['sid_hr'] == 1){ ?>
+        <?php if(auth_guard_has_legacy_flag('sid_hr', $conn)){ ?>
         <div class="col-xl-3 col-lg-4 col-md-6 mb-4">
             <div class="stat-card" style="background: #E3651D !important;">
                 <div class="card-icon">
@@ -152,7 +152,7 @@
         </div>
         <?php } ?>
 
-        <?php if($role['sid_clinics'] == 1){ ?>
+        <?php if(auth_guard_has_legacy_flag('sid_clinics', $conn)){ ?>
         <div class="col-xl-3 col-lg-4 col-md-6 mb-4">
             <div class="stat-card" style="background: #313647 !important;">
                 <div class="card-icon">

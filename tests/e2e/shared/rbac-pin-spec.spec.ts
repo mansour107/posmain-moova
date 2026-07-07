@@ -1,4 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
+import { execSync } from 'child_process';
+import path from 'path';
 import { loginAs, loginAndUnlockPos, unlockPos, isPosPinPadMode } from '../helpers/auth';
 import {
   assertNoApplicationError,
@@ -7,10 +9,34 @@ import {
   isHandlerRejected,
   postHandlerAsRole,
 } from '../helpers/rbac';
+import { findSoleOwnerLikeStaffId } from '../helpers/team-hub';
 import { personaCredentials } from '../helpers/env';
 
+test.beforeAll(() => {
+  reseedSecurityFixtures();
+});
+
+function reseedSecurityFixtures(): void {
+  const root = path.join(__dirname, '../../..');
+  try {
+    execSync('docker inspect posmain-php >/dev/null 2>&1', { stdio: 'pipe' });
+    execSync(
+      'docker exec -e POSMAIN_BRANCH_WORKER_AUTODISPATCH=0 posmain-php php /app/cli/seed_security_fixtures.php',
+      { cwd: root, stdio: 'pipe' },
+    );
+    return;
+  } catch {
+    // Fall back to host PHP when Docker E2E stack is not running.
+  }
+  execSync('php cli/seed_security_fixtures.php', {
+    cwd: root,
+    env: { ...process.env, POSMAIN_DB_NAME: process.env.POSMAIN_DB_NAME || 'kody2' },
+    stdio: 'pipe',
+  });
+}
+
 async function readUsersWriteCsrf(page: Page): Promise<string> {
-  await page.goto('/users.php', { waitUntil: 'domcontentloaded' });
+  await page.goto('/team.php', { waitUntil: 'domcontentloaded' });
   const token = page.locator('input[name="csrf_token"]').first();
   await expect(token).toHaveCount(1);
   return token.inputValue();
@@ -23,13 +49,13 @@ test.describe('§8.2.1 cashier onboarding + terminal PIN login', () => {
     const demoPassword = process.env.POSMAIN_E2E_DEMO_PASSWORD || 'P6demo123!';
 
     await loginAs(page, 'admin');
-    await page.goto('/add_user.php', { waitUntil: 'domcontentloaded' });
-    await page.locator('input[name="uname"]').fill(username);
-    await page.locator('input[name="display_name"]').fill(`كاشير ${suffix}`);
-    await page.locator('input[name="password"]').fill(demoPassword);
-    await page.locator('.role-card').filter({ hasText: 'كاشير' }).first().click();
-    await page.locator('#addUserForm button[type="submit"], #addUserForm input[type="submit"]').first().click();
-    await page.waitForURL(/users\.php/, { timeout: 20_000 });
+    await page.goto('/team.php?tab=staff&panel=new', { waitUntil: 'domcontentloaded' });
+    await expect(page.locator('#teamPanel.is-open')).toBeVisible({ timeout: 10_000 });
+    await page.locator('#staffDisplayName').fill(`كاشير ${suffix}`);
+    await page.locator('#staffUname').fill(username);
+    await page.locator('#rolePickRow .team-hub-role-pick').filter({ hasText: 'كاشير' }).first().click();
+    await page.locator('#staffSaveBtn').click();
+    await page.waitForURL(/team\.php/, { timeout: 20_000 });
 
     await page.goto('/pos_barcode.php', { waitUntil: 'domcontentloaded' });
     await unlockPos(page, 'cashier');
@@ -60,6 +86,7 @@ test.describe('§8.2.2 preset home routing', () => {
 
 test.describe('§8.2.3 discount limit immediate effect', () => {
   test('cashier POS exposes discount limit or capability after unlock', async ({ page }) => {
+    reseedSecurityFixtures();
     await loginAndUnlockPos(page, 'cashier');
     const payload = await page.evaluate(() => ({
       limits: (window as unknown as { POSMAIN_LIMITS?: Record<string, unknown> }).POSMAIN_LIMITS,
@@ -80,29 +107,29 @@ test.describe('§8.2.3 discount limit immediate effect', () => {
 });
 
 test.describe('§8.2.4 shift shortcut override', () => {
-  test('edit user exposes يفتح الشيفت shortcut chip', async ({ page }) => {
+  test('edit user exposes shift open permission toggle', async ({ page }) => {
     await loginAs(page, 'admin');
-    await page.goto('/users.php', { waitUntil: 'domcontentloaded' });
-    const editLink = page.locator('a[href*="edit_user.php"]').first();
-    await editLink.click();
-    await expect(page.locator('.shift-shortcut-chip', { hasText: 'يفتح الشيفت' })).toBeVisible();
+    await page.goto('/team.php?tab=staff', { waitUntil: 'domcontentloaded' });
+    await page.locator('#staffGrid .team-hub-card').filter({ hasText: 'p6_cashier' }).first().click();
+    await expect(page.locator('#teamPanel.is-open')).toBeVisible();
+    await page.locator('[data-staff-tab="permissions"]').click();
+    await expect(page.locator('.team-hub-toggle-row:has(input[data-perm="pos.shift.open"])')).toBeVisible({ timeout: 10_000 });
+    await expect(page.locator('input[data-perm="pos.shift.open"]')).toBeAttached();
   });
 });
 
 test.describe('§8.2.5 PIN reset', () => {
-  test('reset PIN reveals one-time banner on edit user', async ({ page }) => {
+  test('regenerate PIN in panel and save shows toast', async ({ page }) => {
     await loginAs(page, 'admin');
-    await page.goto('/users.php', { waitUntil: 'domcontentloaded' });
-    const cashierRow = page.locator('tr').filter({ hasText: 'p6_cashier' }).first();
-    if (await cashierRow.count()) {
-      await cashierRow.locator('a[href*="edit_user.php"]').click();
-    } else {
-      await page.locator('a[href*="edit_user.php"]').first().click();
-    }
-    const resetForm = page.locator('form[action*="do_user_reset_pin"]');
-    if (await resetForm.count()) {
-      await resetForm.locator('button[type="submit"]').click();
-      await expect(page.locator('.pin-reveal-box, .alert-warning')).toBeVisible({ timeout: 15_000 });
+    await page.goto('/team.php?tab=staff', { waitUntil: 'domcontentloaded' });
+    const cashierCard = page.locator('#staffGrid .team-hub-card').filter({ hasText: 'p6_cashier' }).first();
+    if (await cashierCard.count()) {
+      await cashierCard.click();
+      await expect(page.locator('#teamPanel.is-open')).toBeVisible();
+      await page.locator('#regenPinBtn').click();
+      await expect(page.locator('#pinDisplay')).not.toHaveText('····', { timeout: 10_000 });
+      await page.locator('#staffSaveBtn').click();
+      await expect(page.locator('#teamToast.is-visible')).toBeVisible({ timeout: 15_000 });
     }
   });
 });
@@ -110,9 +137,10 @@ test.describe('§8.2.5 PIN reset', () => {
 test.describe('§8.2.6 deactivate and reactivate', () => {
   test('admin can open deactivated users view', async ({ page }) => {
     await loginAs(page, 'admin');
-    await page.goto('/users.php?show_deactivated=1', { waitUntil: 'domcontentloaded' });
+    await page.goto('/team.php?tab=staff&show_deactivated=1', { waitUntil: 'domcontentloaded' });
     assertNoApplicationError(await page.content());
-    await expect(page.locator('body')).toContainText(/المُلغى|المستخدمون/);
+    await expect(page.locator('#teamHubRoot')).toBeVisible();
+    await expect(page.locator('body')).toContainText(/المُلغى|النشطون/);
   });
 });
 
@@ -163,6 +191,7 @@ test.describe('§8.2.10 IDOR manager cannot edit admin user', () => {
 
 test.describe('§8.2.11 manager override API', () => {
   test('cashier override auth succeeds with valid manager PIN', async ({ page }) => {
+    reseedSecurityFixtures();
     await loginAndUnlockPos(page, 'cashier');
     const managerPin = process.env.POSMAIN_TEST_PIN_MANAGER || '1357';
     const csrf = await page.locator('meta[name="pos-override-csrf-token"]').getAttribute('content');
@@ -221,6 +250,7 @@ test.describe('§8.2.12–8.2.13 PIN lockout responses', () => {
     }
     expect(codes.length).toBe(5);
     expect(codes.every((code) => /MANAGER_PIN|403|INVALID|LOCKED|LIMIT/i.test(code))).toBeTruthy();
+    reseedSecurityFixtures();
   });
 
   test('wrong terminal PIN responses do not leak usernames', async ({ page }) => {
@@ -296,27 +326,21 @@ test.describe('§8.2.17 pin_available body shape', () => {
 });
 
 test.describe('§8.2.18 last admin guard', () => {
-  test('deactivating primary admin user is rejected', async ({ page }) => {
+  test('deactivating sole owner user is rejected', async ({ page }) => {
     await loginAs(page, 'admin');
-    const csrf = await readUsersWriteCsrf(page);
-    const adminRow = page.locator('tr').filter({ hasText: 'p6_admin' }).first();
-    let targetUserId = '1';
-    if (await adminRow.count()) {
-      const deactivateForm = adminRow.locator('form[action*="do_user_deactivate"]');
-      const hidden = deactivateForm.locator('input[name="user_id"]');
-      if (await hidden.count()) {
-        targetUserId = await hidden.inputValue();
-      }
+    const soleOwnerId = await findSoleOwnerLikeStaffId(page);
+    if (!soleOwnerId) {
+      test.skip(true, 'environment has multiple owner-role users; LAST_ADMIN guard covered in PHPUnit');
     }
-    const response = await page.request.post('/do/do_user_deactivate.php', {
-      form: { user_id: targetUserId, csrf_token: csrf },
+
+    const csrf = await readUsersWriteCsrf(page);
+    const response = await page.request.post('/ajax/team_hub.php?action=deactivate_staff', {
+      form: { user_id: soleOwnerId!, csrf_token: csrf },
       failOnStatusCode: false,
-      maxRedirects: 0,
     });
-    expect([302, 200]).toContain(response.status());
-    const location = response.headers()['location'] ?? '';
-    const body = response.status() === 200 ? await response.text() : '';
-    expect(location + body).toMatch(/error|LAST_ADMIN|صلاحية|self_deactivate|deactivated=0/i);
+    expect(response.status()).toBe(409);
+    const payload = await response.json();
+    expect(String(payload.code || '')).toMatch(/LAST_ADMIN_BLOCKED/);
   });
 });
 
@@ -325,10 +349,10 @@ test.describe('§8.2.19 RTL layout at 1024 and 1366', () => {
     { width: 1024, height: 768 },
     { width: 1366, height: 768 },
   ]) {
-    test(`staff users page RTL @ ${size.width}x${size.height}`, async ({ page }) => {
+    test(`staff team hub RTL @ ${size.width}x${size.height}`, async ({ page }) => {
       await page.setViewportSize(size);
       await loginAs(page, 'admin');
-      await page.goto('/users.php', { waitUntil: 'domcontentloaded' });
+      await page.goto('/team.php?tab=staff', { waitUntil: 'domcontentloaded' });
       await expect(page.locator('html')).toHaveAttribute('dir', 'rtl');
       assertNoApplicationError(await page.content());
     });

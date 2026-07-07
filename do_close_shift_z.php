@@ -32,7 +32,7 @@ if (PHP_SAPI !== 'cli' && !empty($_SESSION['pos_shift_closed_for_session'])) {
     exit;
 }
 
-$user_id = $_SESSION['userid'];
+$user_id = function_exists('pos_acting_user_id') ? pos_acting_user_id() : (int) $_SESSION['userid'];
 $shift_date = date('Y-m-d');
 $shift_time = date('H:i:s');
 
@@ -53,8 +53,8 @@ $has_server_reconciliation = false;
 try {
     $reconciliation_scope = [
         'user_id' => $user_id,
-        'tenant' => 0,
-        'branch' => 0,
+        'tenant' => (int) ($_SESSION['pos_tenant'] ?? 0),
+        'branch' => (int) ($_SESSION['pos_branch'] ?? 0),
         'date' => $shift_date,
     ];
     if ($requested_drawer_session_id > 0) {
@@ -115,20 +115,74 @@ $shift_number = date('Ymd') . '_' . $user_id;
 // إدخال البيانات في جدول closed_orders
 // ملاحظة: نستخدم الأعمدة الجديدة التي أضفناها في الانتقال
 // إذا لم تكن الأعمدة موجودة ستفشل العملية، لذا يجب تشغيل ملف SQL أولاً
-$insert_query = "INSERT INTO closed_orders
-                 (shift, date, user, endtime, 
-                  total_sales, expenses, cash, fund_after, info,
-                  total_cash, total_visa, total_discount,
-                  actual_cash, actual_visa, deficit, status, json_details)
-                 VALUES
-                 (?, ?, ?, ?,
-                  ?, ?, ?, ?, ?,
-                  ?, ?, 0,
-                  ?, ?, ?, 1, ?)";
-// ملاحظة: total_discount لم نمرره من النموذج، يمكن إضافته input hidden اذا اردنا
+$hasDrawerSessionColumn = false;
+if (function_exists('posmain_drawer_sessions_table_exists')) {
+    $colRes = $conn->query("SHOW COLUMNS FROM closed_orders LIKE 'drawer_session_id'");
+    $hasDrawerSessionColumn = $colRes && $colRes->num_rows > 0;
+}
 
-$insert_stmt = $conn->prepare($insert_query);
-$insert_stmt->bind_param('ssssddddsddddds', $shift_number, $shift_date, $username, $shift_time, $sys_total_sales, $expenses, $actual_cash, $actual_cash, $notes, $sys_total_cash, $sys_total_visa, $actual_cash, $actual_visa, $total_deficit, $json_details);
+if ($hasDrawerSessionColumn) {
+    $insert_query = "INSERT INTO closed_orders
+                     (shift, date, user, endtime,
+                      total_sales, expenses, cash, fund_after, info,
+                      total_cash, total_visa, total_discount,
+                      actual_cash, actual_visa, deficit, status, json_details, drawer_session_id)
+                     VALUES
+                     (?, ?, ?, ?,
+                      ?, ?, ?, ?, ?,
+                      ?, ?, 0,
+                      ?, ?, ?, 1, ?, ?)";
+    $insert_stmt = $conn->prepare($insert_query);
+    $insert_stmt->bind_param(
+        'ssssddddsdddddsi',
+        $shift_number,
+        $shift_date,
+        $username,
+        $shift_time,
+        $sys_total_sales,
+        $expenses,
+        $actual_cash,
+        $actual_cash,
+        $notes,
+        $sys_total_cash,
+        $sys_total_visa,
+        $actual_cash,
+        $actual_visa,
+        $total_deficit,
+        $json_details,
+        $drawer_session_id
+    );
+} else {
+    $insert_query = "INSERT INTO closed_orders
+                     (shift, date, user, endtime,
+                      total_sales, expenses, cash, fund_after, info,
+                      total_cash, total_visa, total_discount,
+                      actual_cash, actual_visa, deficit, status, json_details)
+                     VALUES
+                     (?, ?, ?, ?,
+                      ?, ?, ?, ?, ?,
+                      ?, ?, 0,
+                      ?, ?, ?, 1, ?)";
+    $insert_stmt = $conn->prepare($insert_query);
+    $insert_stmt->bind_param(
+        'ssssddddsddddds',
+        $shift_number,
+        $shift_date,
+        $username,
+        $shift_time,
+        $sys_total_sales,
+        $expenses,
+        $actual_cash,
+        $actual_cash,
+        $notes,
+        $sys_total_cash,
+        $sys_total_visa,
+        $actual_cash,
+        $actual_visa,
+        $total_deficit,
+        $json_details
+    );
+}
 
 try {
     $conn->begin_transaction();

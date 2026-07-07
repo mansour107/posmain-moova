@@ -18,7 +18,16 @@ if (trim((string) getenv('POSMAIN_PIN_SECRET')) === '') {
     $_ENV['POSMAIN_PIN_SECRET'] = 'posmain-test-pin-secret-do-not-use-in-prod';
 }
 
-$conn = posmain_db_connect();
+$fixtureDb = [
+    'host' => (string) (getenv('POSMAIN_DB_HOST') ?: getenv('POSMAIN_TEST_MYSQL_HOST') ?: '127.0.0.1'),
+    'port' => (int) (getenv('POSMAIN_DB_PORT') ?: getenv('POSMAIN_TEST_MYSQL_PORT') ?: 3307),
+    'user' => (string) (getenv('POSMAIN_DB_USER') ?: getenv('POSMAIN_TEST_MYSQL_USER') ?: 'root'),
+    'pass' => (string) (getenv('POSMAIN_DB_PASS') ?: getenv('POSMAIN_TEST_MYSQL_PASS') ?: ''),
+    'name' => (string) (getenv('POSMAIN_TEST_MYSQL_DB') ?: getenv('POSMAIN_DB_NAME') ?: 'kody2'),
+    'charset' => 'utf8mb4',
+];
+
+$conn = posmain_db_connect(['database' => $fixtureDb]);
 $conn->set_charset('utf8mb4');
 
 (new SyncSchemaManager())->apply($conn);
@@ -26,11 +35,59 @@ $conn->set_charset('utf8mb4');
 $demoPassword = PasswordService::hashPassword(getenv('POSMAIN_E2E_DEMO_PASSWORD') ?: 'P6demo123!');
 $pinService = new PinService();
 
+RolePermissionSyncService::backfillRoleCapabilitiesFromLegacyFlags($conn);
 $roles = RolePermissionSyncService::seedPresetRoles($conn);
 $ownerRoleId = $roles['owner'] ?? 1;
 $cashierRoleId = $roles['cashier'] ?? 3;
 $managerRoleId = $roles['manager'] ?? 2;
 $kitchenRoleId = $roles['kitchen'] ?? 5;
+
+// Ensure Phase 6 manager/waiter personas exist for E2E.
+$phase6Personas = [
+    ['p6_manager', 'Phase 6 Manager', 'manager'],
+    ['p6_waiter', 'Phase 6 Waiter', 'waiter'],
+];
+foreach ($phase6Personas as [$personaUname, $personaDisplay, $presetKey]) {
+    $personaStmt = $conn->prepare('SELECT id FROM users WHERE uname = ? LIMIT 1');
+    $personaStmt->bind_param('s', $personaUname);
+    $personaStmt->execute();
+    $personaRow = $personaStmt->get_result()->fetch_assoc();
+    $personaStmt->close();
+    $presetRoleId = (int) ($roles[$presetKey] ?? 0);
+    if ($presetRoleId < 1) {
+        continue;
+    }
+    if (!$personaRow) {
+        $personaIsWaiter = $presetKey === 'waiter' ? 1 : 0;
+        $personaImg = '';
+        $insPersona = $conn->prepare(
+            'INSERT INTO users (uname, password, usertype, userrole, display_name, is_waiter, img, isdeleted)
+             VALUES (?, ?, ?, ?, ?, ?, ?, 0)'
+        );
+        $insPersona->bind_param(
+            'ssiisis',
+            $personaUname,
+            $demoPassword,
+            $presetRoleId,
+            $presetRoleId,
+            $personaDisplay,
+            $personaIsWaiter,
+            $personaImg
+        );
+        $insPersona->execute();
+        $insPersona->close();
+        fwrite(STDOUT, "Created E2E persona {$personaUname}\n");
+    } else {
+        $personaUserId = (int) $personaRow['id'];
+        $personaIsWaiter = $presetKey === 'waiter' ? 1 : 0;
+        $updPersona = $conn->prepare(
+            'UPDATE users SET password = ?, userrole = ?, display_name = ?, is_waiter = ?, isdeleted = 0 WHERE id = ?'
+        );
+        $updPersona->bind_param('sisii', $demoPassword, $presetRoleId, $personaDisplay, $personaIsWaiter, $personaUserId);
+        $updPersona->execute();
+        $updPersona->close();
+    }
+}
 
 // Ensure Phase 6 kitchen persona exists for §8.2.2 E2E.
 $kitchenStmt = $conn->prepare('SELECT id FROM users WHERE uname = ? LIMIT 1');
@@ -90,8 +147,8 @@ foreach ($personaRoleBinding as $uname => $roleId) {
         continue;
     }
     $personaUserId = (int) $bindRow['id'];
-    $roleStmt = $conn->prepare('UPDATE users SET userrole = ?, isdeleted = 0 WHERE id = ?');
-    $roleStmt->bind_param('ii', $roleId, $personaUserId);
+    $roleStmt = $conn->prepare('UPDATE users SET userrole = ?, display_name = ?, isdeleted = 0 WHERE id = ?');
+    $roleStmt->bind_param('isi', $roleId, $uname, $personaUserId);
     $roleStmt->execute();
     $roleStmt->close();
 
@@ -143,6 +200,7 @@ foreach ($e2ePersonaPins as $uname => $pin) {
         $clear->close();
 
         $pinService->setPinForUser($conn, $userId, $pin);
+        $pinService->clearUserFailures($conn, $userId);
         fwrite(STDOUT, "PIN set on E2E persona {$uname}\n");
     } catch (Throwable $e) {
         fwrite(STDERR, "Skip PIN for {$uname}: " . $e->getMessage() . "\n");
@@ -194,9 +252,32 @@ foreach ($rbacUsers as [$uname, $display, $roleId, $isWaiter, $pin]) {
         $clear->close();
 
         $pinService->setPinForUser($conn, $userId, $pin);
+        $pinService->clearUserFailures($conn, $userId);
         fwrite(STDOUT, "Seeded user {$uname} (id={$userId}) with PIN\n");
     } catch (Throwable $e) {
         fwrite(STDERR, "Skip PIN for {$uname}: " . $e->getMessage() . "\n");
+    }
+}
+
+if (!function_exists('posmain_drawer_sessions_table_exists')) {
+    require_once __DIR__ . '/../includes/pos_shift_guard.php';
+}
+if (posmain_drawer_sessions_table_exists($conn)) {
+    $closed = $conn->query(
+        "UPDATE drawer_sessions
+            SET status = 'closed', closed_at = COALESCE(closed_at, NOW())
+          WHERE status = 'open' AND closed_at IS NULL"
+    );
+    if ($closed) {
+        fwrite(STDOUT, 'Closed stale open drawer sessions: ' . $conn->affected_rows . "\n");
+    }
+}
+
+foreach (array_keys(RolePermissionSyncService::presetRoleDefinitions()) as $presetRoleKey) {
+    try {
+        RolePermissionSyncService::restorePresetRole($conn, $presetRoleKey);
+    } catch (Throwable $presetException) {
+        fwrite(STDERR, "restorePresetRole {$presetRoleKey}: " . $presetException->getMessage() . "\n");
     }
 }
 

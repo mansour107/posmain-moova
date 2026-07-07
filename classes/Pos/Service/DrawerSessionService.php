@@ -10,7 +10,11 @@ class DrawerSessionService
         'safe_drop' => -1,
         'opening' => 1,
         'closing_adjustment' => 1,
+        'no_sale' => 0,
     ];
+
+    /** @var array<string, bool> */
+    private static array $columnCache = [];
 
     public function openSession(mysqli $conn, array $request): array
     {
@@ -51,6 +55,14 @@ class DrawerSessionService
         $id = (int) $conn->insert_id;
         $stmt->close();
 
+        $this->recordMovement($conn, $id, [
+            'movement_type' => 'opening',
+            'amount' => $openingCash,
+            'created_by' => $openedBy,
+            'allow_zero_amount' => true,
+            'reason' => 'shift_opening',
+        ]);
+
         return $this->sessionById($conn, $id);
     }
 
@@ -58,20 +70,52 @@ class DrawerSessionService
     {
         $session = $this->requireOpenSession($conn, $sessionId);
         $type = $this->movementType($request['movement_type'] ?? $request['type'] ?? '');
-        $amount = $this->decimal($request['amount'] ?? null, true, 'DRAWER_AMOUNT_INVALID');
+        $allowZeroAmount = !empty($request['allow_zero_amount']);
+        $positiveOnly = $type !== 'closing_adjustment';
+        $amount = $this->decimal($request['amount'] ?? null, $positiveOnly, 'DRAWER_AMOUNT_INVALID', $allowZeroAmount);
         $orderId = $this->optionalPositiveInt($request['order_id'] ?? null);
         $paymentId = $this->optionalPositiveInt($request['payment_id'] ?? null);
         $reason = $this->nullableText($request['reason'] ?? null, 500);
         $createdBy = $this->positiveInt($request['created_by'] ?? $session['user_id'], 'CREATED_BY_REQUIRED');
+        $managerApprovalId = $this->optionalPositiveInt($request['manager_approval_id'] ?? null);
+        $refOtHeadId = $this->optionalPositiveInt($request['ref_ot_head_id'] ?? null);
+        $tenant = (int) ($session['tenant'] ?? 0);
+        $branch = (int) ($session['branch'] ?? 0);
 
-        $stmt = $conn->prepare("
-            INSERT INTO drawer_movements (
-                drawer_session_id, movement_type, amount, order_id,
-                payment_id, reason, created_by
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        ");
-        $stmt->bind_param('issiisi', $sessionId, $type, $amount, $orderId, $paymentId, $reason, $createdBy);
+        $columns = ['drawer_session_id', 'movement_type', 'amount', 'order_id', 'payment_id', 'reason', 'created_by'];
+        $placeholders = ['?', '?', '?', '?', '?', '?', '?'];
+        $types = 'issiisi';
+        $values = [$sessionId, $type, $amount, $orderId, $paymentId, $reason, $createdBy];
+
+        if ($this->movementColumnExists($conn, 'tenant')) {
+            $columns[] = 'tenant';
+            $placeholders[] = '?';
+            $types .= 'i';
+            $values[] = $tenant;
+        }
+        if ($this->movementColumnExists($conn, 'branch')) {
+            $columns[] = 'branch';
+            $placeholders[] = '?';
+            $types .= 'i';
+            $values[] = $branch;
+        }
+
+        if ($this->movementColumnExists($conn, 'manager_approval_id')) {
+            $columns[] = 'manager_approval_id';
+            $placeholders[] = '?';
+            $types .= 'i';
+            $values[] = $managerApprovalId;
+        }
+        if ($this->movementColumnExists($conn, 'ref_ot_head_id')) {
+            $columns[] = 'ref_ot_head_id';
+            $placeholders[] = '?';
+            $types .= 'i';
+            $values[] = $refOtHeadId;
+        }
+
+        $sql = 'INSERT INTO drawer_movements (' . implode(', ', $columns) . ') VALUES (' . implode(', ', $placeholders) . ')';
+        $stmt = $conn->prepare($sql);
+        $stmt->bind_param($types, ...$values);
         $stmt->execute();
         $id = (int) $conn->insert_id;
         $stmt->close();
@@ -79,12 +123,168 @@ class DrawerSessionService
         return $this->movementById($conn, $id);
     }
 
+    public function recordUnassignedMovement(mysqli $conn, array $request): ?array
+    {
+        if (!$this->drawerMovementsTableExists($conn)) {
+            return null;
+        }
+
+        $type = $this->movementType($request['movement_type'] ?? $request['type'] ?? '');
+        $allowZeroAmount = !empty($request['allow_zero_amount']);
+        $amount = $this->decimal($request['amount'] ?? null, true, 'DRAWER_AMOUNT_INVALID', $allowZeroAmount);
+        $orderId = $this->optionalPositiveInt($request['order_id'] ?? null);
+        $paymentId = $this->optionalPositiveInt($request['payment_id'] ?? null);
+        $reason = $this->nullableText($request['reason'] ?? null, 500);
+        $createdBy = $this->positiveInt($request['created_by'] ?? 0, 'CREATED_BY_REQUIRED');
+        $refOtHeadId = $this->optionalPositiveInt($request['ref_ot_head_id'] ?? null);
+        $tenant = $this->nonNegativeInt($request['tenant'] ?? $request['pos_tenant'] ?? 0, 'TENANT_INVALID');
+        $branch = $this->nonNegativeInt($request['branch'] ?? $request['pos_branch'] ?? 0, 'BRANCH_INVALID');
+        if (session_status() === PHP_SESSION_ACTIVE) {
+            if ($tenant < 1) {
+                $tenant = (int) ($_SESSION['pos_tenant'] ?? 0);
+            }
+            if ($branch < 1) {
+                $branch = (int) ($_SESSION['pos_branch'] ?? 0);
+            }
+        }
+
+        $columns = ['drawer_session_id', 'movement_type', 'amount', 'order_id', 'payment_id', 'reason', 'created_by'];
+        $placeholders = ['?', '?', '?', '?', '?', '?', '?'];
+        $types = 'issiisi';
+        $values = [null, $type, $amount, $orderId, $paymentId, $reason, $createdBy];
+
+        if ($this->movementColumnExists($conn, 'tenant')) {
+            $columns[] = 'tenant';
+            $placeholders[] = '?';
+            $types .= 'i';
+            $values[] = $tenant;
+        }
+        if ($this->movementColumnExists($conn, 'branch')) {
+            $columns[] = 'branch';
+            $placeholders[] = '?';
+            $types .= 'i';
+            $values[] = $branch;
+        }
+        if ($this->movementColumnExists($conn, 'ref_ot_head_id')) {
+            $columns[] = 'ref_ot_head_id';
+            $placeholders[] = '?';
+            $types .= 'i';
+            $values[] = $refOtHeadId;
+        }
+
+        $sql = 'INSERT INTO drawer_movements (' . implode(', ', $columns) . ') VALUES (' . implode(', ', $placeholders) . ')';
+        $stmt = $conn->prepare($sql);
+        $stmt->bind_param($types, ...$values);
+        $stmt->execute();
+        $id = (int) $conn->insert_id;
+        $stmt->close();
+
+        return $this->movementById($conn, $id);
+    }
+
+    public function linkLatestSaleMovementToVoucher(mysqli $conn, int $orderId, int $voucherId): bool
+    {
+        if ($orderId < 1 || $voucherId < 1 || !$this->movementColumnExists($conn, 'ref_ot_head_id')) {
+            return false;
+        }
+
+        $stmt = $conn->prepare("
+            SELECT id
+            FROM drawer_movements
+            WHERE order_id = ?
+              AND movement_type = 'sale_cash'
+              AND ref_ot_head_id IS NULL
+            ORDER BY id DESC
+            LIMIT 1
+        ");
+        $stmt->bind_param('i', $orderId);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        if (!$row) {
+            return false;
+        }
+
+        return $this->linkMovementToVoucher($conn, (int) $row['id'], $voucherId);
+    }
+
+    public function linkMovementToVoucher(mysqli $conn, int $movementId, int $voucherId): bool
+    {
+        if ($movementId < 1 || $voucherId < 1 || !$this->movementColumnExists($conn, 'ref_ot_head_id')) {
+            return false;
+        }
+
+        $update = $conn->prepare('UPDATE drawer_movements SET ref_ot_head_id = ? WHERE id = ?');
+        $update->bind_param('ii', $voucherId, $movementId);
+        $update->execute();
+        $affected = $update->affected_rows;
+        $update->close();
+
+        return $affected === 1;
+    }
+
+    public function sessionCashBreakdown(mysqli $conn, int $sessionId): array
+    {
+        $session = $this->sessionById($conn, $sessionId);
+        $movements = $this->movementsForSession($conn, $sessionId);
+        $hasOpeningMovement = false;
+        foreach ($movements as $movement) {
+            if (($movement['movement_type'] ?? '') === 'opening') {
+                $hasOpeningMovement = true;
+                break;
+            }
+        }
+
+        $preCloseExpected = $hasOpeningMovement ? 0.0 : (float) $session['opening_cash'];
+        $closeVariance = 0.0;
+        foreach ($movements as $movement) {
+            $type = (string) ($movement['movement_type'] ?? '');
+            if ($type === 'closing_adjustment') {
+                $closeVariance += (float) ($movement['amount'] ?? 0);
+                continue;
+            }
+
+            $sign = self::MOVEMENT_TYPES[$type] ?? 0;
+            if ($sign === 0) {
+                continue;
+            }
+
+            $preCloseExpected += $sign * (float) ($movement['amount'] ?? 0);
+        }
+
+        $countedCash = $session['counted_cash'] !== null ? (float) $session['counted_cash'] : null;
+        $isClosed = in_array((string) ($session['status'] ?? ''), ['closed', 'forced_closed'], true);
+
+        return [
+            'pre_close_expected_cash' => $this->formatDecimal($preCloseExpected),
+            'close_variance' => $this->formatDecimal($closeVariance),
+            'post_close_expected_cash' => $this->formatDecimal($preCloseExpected + $closeVariance),
+            'counted_cash' => $countedCash !== null ? $this->formatDecimal($countedCash) : null,
+            'is_closed' => $isClosed,
+        ];
+    }
+
     public function expectedCash(mysqli $conn, int $sessionId): string
     {
         $session = $this->sessionById($conn, $sessionId);
-        $expected = (float) $session['opening_cash'];
-        foreach ($this->movementsForSession($conn, $sessionId) as $movement) {
-            $expected += self::MOVEMENT_TYPES[$movement['movement_type']] * (float) $movement['amount'];
+        $movements = $this->movementsForSession($conn, $sessionId);
+        $hasOpeningMovement = false;
+        foreach ($movements as $movement) {
+            if (($movement['movement_type'] ?? '') === 'opening') {
+                $hasOpeningMovement = true;
+                break;
+            }
+        }
+
+        $expected = $hasOpeningMovement ? 0.0 : (float) $session['opening_cash'];
+        foreach ($movements as $movement) {
+            $type = (string) ($movement['movement_type'] ?? '');
+            $sign = self::MOVEMENT_TYPES[$type] ?? 0;
+            if ($sign === 0) {
+                continue;
+            }
+            $expected += $sign * (float) $movement['amount'];
         }
 
         return $this->formatDecimal($expected);
@@ -172,6 +372,85 @@ class DrawerSessionService
         return $row !== null;
     }
 
+  /** True once any branch has ever recorded a drawer session (subsystem adopted). */
+    public function subsystemInUse(mysqli $conn): bool
+    {
+        $result = $conn->query('SELECT 1 FROM drawer_sessions LIMIT 1');
+
+        return $result instanceof mysqli_result && $result->num_rows > 0;
+    }
+
+    /** @return list<array<string, mixed>> */
+    public function findOpenSessionsForUser(mysqli $conn, int $userId): array
+    {
+        if ($userId < 1) {
+            return [];
+        }
+
+        $stmt = $conn->prepare("
+            SELECT *
+            FROM drawer_sessions
+            WHERE user_id = ?
+              AND status = 'open'
+              AND closed_at IS NULL
+            ORDER BY opened_at DESC, id DESC
+        ");
+        $stmt->bind_param('i', $userId);
+        $stmt->execute();
+        $result = $stmt->get_result();
+
+        $sessions = [];
+        while ($row = $result->fetch_assoc()) {
+            $sessions[] = $this->formatSession($row);
+        }
+        $stmt->close();
+
+        return $sessions;
+    }
+
+    public function resolveOpenSessionForUser(mysqli $conn, int $userId, array $context = []): ?array
+    {
+        if ($userId < 1) {
+            return null;
+        }
+
+        $sessionId = (int) ($context['drawer_session_id'] ?? 0);
+        if ($sessionId < 1 && session_status() === PHP_SESSION_ACTIVE) {
+            $sessionId = (int) ($_SESSION['pos_drawer_session_id'] ?? 0);
+        }
+
+        if ($sessionId > 0) {
+            try {
+                $session = $this->sessionById($conn, $sessionId);
+                if (($session['status'] ?? '') === 'open' && (int) ($session['user_id'] ?? 0) === $userId) {
+                    return $session;
+                }
+            } catch (Throwable $exception) {
+                // fall through to scoped lookup
+            }
+        }
+
+        $tenant = (int) ($context['tenant'] ?? $context['pos_tenant'] ?? 0);
+        $branch = (int) ($context['branch'] ?? $context['pos_branch'] ?? 0);
+        if (session_status() === PHP_SESSION_ACTIVE) {
+            if ($tenant < 1) {
+                $tenant = (int) ($_SESSION['pos_tenant'] ?? 0);
+            }
+            if ($branch < 1) {
+                $branch = (int) ($_SESSION['pos_branch'] ?? 0);
+            }
+        }
+
+        $session = $this->findOpenSession($conn, $userId, $tenant, $branch);
+        if ($session) {
+            return $session;
+        }
+
+        $sessions = $this->findOpenSessionsForUser($conn, $userId);
+
+        return $sessions[0] ?? null;
+    }
+
     public function movementsForSession(mysqli $conn, int $sessionId): array
     {
         $sessionId = $this->positiveInt($sessionId, 'DRAWER_SESSION_REQUIRED');
@@ -194,35 +473,95 @@ class DrawerSessionService
         return $movements;
     }
 
+    public function netCashRecordedForOrder(mysqli $conn, int $orderId): float
+    {
+        if ($orderId < 1) {
+            return 0.0;
+        }
+
+        $tableCheck = $conn->query("SHOW TABLES LIKE 'drawer_movements'");
+        if (!$tableCheck instanceof mysqli_result || $tableCheck->num_rows < 1) {
+            return 0.0;
+        }
+
+        $stmt = $conn->prepare("
+            SELECT movement_type, COALESCE(SUM(amount), 0) AS total_amount
+            FROM drawer_movements
+            WHERE order_id = ?
+              AND movement_type IN ('sale_cash', 'refund_cash')
+            GROUP BY movement_type
+        ");
+        $stmt->bind_param('i', $orderId);
+        $stmt->execute();
+        $result = $stmt->get_result();
+
+        $saleCash = 0.0;
+        $refundCash = 0.0;
+        while ($row = $result->fetch_assoc()) {
+            $type = (string) ($row['movement_type'] ?? '');
+            $amount = (float) ($row['total_amount'] ?? 0);
+            if ($type === 'sale_cash') {
+                $saleCash = $amount;
+            } elseif ($type === 'refund_cash') {
+                $refundCash = $amount;
+            }
+        }
+        $stmt->close();
+
+        return round($saleCash - $refundCash, 3);
+    }
+
     private function finishSession(mysqli $conn, int $sessionId, array $request, string $status): array
     {
         $this->requireOpenSession($conn, $sessionId);
         $closedBy = $this->positiveInt($request['closed_by'] ?? $request['user_id'] ?? 0, 'CLOSED_BY_REQUIRED');
         $countedCash = $this->decimal($request['counted_cash'] ?? null, false, 'COUNTED_CASH_INVALID');
-        $expectedCash = $this->expectedCash($conn, $sessionId);
-        $difference = $this->formatDecimal((float) $countedCash - (float) $expectedCash);
         $notes = $this->nullableText($request['notes'] ?? null, 500);
         $closedAt = $this->dateTime($request['closed_at'] ?? null);
 
-        $stmt = $conn->prepare("
-            UPDATE drawer_sessions
-            SET closed_at = ?,
-                closed_by = ?,
-                expected_cash = ?,
-                counted_cash = ?,
-                difference = ?,
-                status = ?,
-                notes = ?
-            WHERE id = ?
-              AND status = 'open'
-        ");
-        $stmt->bind_param('sisssssi', $closedAt, $closedBy, $expectedCash, $countedCash, $difference, $status, $notes, $sessionId);
-        $stmt->execute();
-        $affected = $stmt->affected_rows;
-        $stmt->close();
+        $conn->begin_transaction();
 
-        if ($affected !== 1) {
-            throw new RuntimeException('DRAWER_SESSION_NOT_OPEN');
+        try {
+            $expectedBeforeClose = (float) $this->expectedCash($conn, $sessionId);
+            $difference = round((float) $countedCash - $expectedBeforeClose, 3);
+
+            if (abs($difference) > 0.0001) {
+                $this->recordMovement($conn, $sessionId, [
+                    'movement_type' => 'closing_adjustment',
+                    'amount' => $this->formatDecimal($difference),
+                    'created_by' => $closedBy,
+                    'reason' => 'shift_close_variance',
+                ]);
+            }
+
+            $expectedCash = $this->expectedCash($conn, $sessionId);
+            $differenceFormatted = $this->formatDecimal((float) $countedCash - (float) $expectedCash);
+
+            $stmt = $conn->prepare("
+                UPDATE drawer_sessions
+                SET closed_at = ?,
+                    closed_by = ?,
+                    expected_cash = ?,
+                    counted_cash = ?,
+                    difference = ?,
+                    status = ?,
+                    notes = ?
+                WHERE id = ?
+                  AND status = 'open'
+            ");
+            $stmt->bind_param('sisssssi', $closedAt, $closedBy, $expectedCash, $countedCash, $differenceFormatted, $status, $notes, $sessionId);
+            $stmt->execute();
+            $affected = $stmt->affected_rows;
+            $stmt->close();
+
+            if ($affected !== 1) {
+                throw new RuntimeException('DRAWER_SESSION_NOT_OPEN');
+            }
+
+            $conn->commit();
+        } catch (Throwable $exception) {
+            $conn->rollback();
+            throw $exception;
         }
 
         return $this->sessionById($conn, $sessionId);
@@ -277,9 +616,9 @@ class DrawerSessionService
 
     private function formatMovement(array $row): array
     {
-        return [
+        $movement = [
             'id' => (int) $row['id'],
-            'drawer_session_id' => (int) $row['drawer_session_id'],
+            'drawer_session_id' => $row['drawer_session_id'] !== null ? (int) $row['drawer_session_id'] : null,
             'movement_type' => (string) $row['movement_type'],
             'amount' => $this->formatDecimal($row['amount']),
             'order_id' => $row['order_id'] !== null ? (int) $row['order_id'] : null,
@@ -287,7 +626,53 @@ class DrawerSessionService
             'reason' => $row['reason'] !== null ? (string) $row['reason'] : null,
             'created_by' => (int) $row['created_by'],
             'created_at' => (string) $row['created_at'],
+            'is_unassigned' => $row['drawer_session_id'] === null,
         ];
+
+        if (array_key_exists('tenant', $row)) {
+            $movement['tenant'] = (int) $row['tenant'];
+        }
+        if (array_key_exists('branch', $row)) {
+            $movement['branch'] = (int) $row['branch'];
+        }
+
+        if (array_key_exists('manager_approval_id', $row)) {
+            $movement['manager_approval_id'] = $row['manager_approval_id'] !== null
+                ? (int) $row['manager_approval_id']
+                : null;
+        }
+        if (array_key_exists('ref_ot_head_id', $row)) {
+            $movement['ref_ot_head_id'] = $row['ref_ot_head_id'] !== null
+                ? (int) $row['ref_ot_head_id']
+                : null;
+        }
+
+        return $movement;
+    }
+
+    private function movementColumnExists(mysqli $conn, string $column): bool
+    {
+        $safeColumn = preg_replace('/[^a-z0-9_]/i', '', $column);
+        if ($safeColumn === '') {
+            return false;
+        }
+
+        $key = spl_object_hash($conn) . ':drawer_movements:' . $safeColumn;
+        if (array_key_exists($key, self::$columnCache)) {
+            return self::$columnCache[$key];
+        }
+
+        $result = $conn->query("SHOW COLUMNS FROM drawer_movements LIKE '{$safeColumn}'");
+        self::$columnCache[$key] = $result instanceof mysqli_result && $result->num_rows > 0;
+
+        return self::$columnCache[$key];
+    }
+
+    private function drawerMovementsTableExists(mysqli $conn): bool
+    {
+        $result = $conn->query("SHOW TABLES LIKE 'drawer_movements'");
+
+        return $result instanceof mysqli_result && $result->num_rows > 0;
     }
 
     private function movementType($value): string
@@ -332,17 +717,17 @@ class DrawerSessionService
         return date('Y-m-d H:i:s', $timestamp);
     }
 
-    private function decimal($value, bool $positiveOnly, string $code): string
+    private function decimal($value, bool $positiveOnly, string $code, bool $allowZero = false): string
     {
         if ($value === null || $value === '') {
             throw new InvalidArgumentException($code);
         }
 
         $amount = (float) $value;
-        if ($positiveOnly && $amount <= 0) {
+        if ($positiveOnly && $amount < 0) {
             throw new InvalidArgumentException($code);
         }
-        if (!$positiveOnly && $amount < 0) {
+        if ($positiveOnly && $amount === 0.0 && !$allowZero) {
             throw new InvalidArgumentException($code);
         }
 

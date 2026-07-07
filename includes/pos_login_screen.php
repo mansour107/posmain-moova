@@ -40,6 +40,7 @@ $csrfPin = htmlspecialchars(csrf_token('pos_pin'), ENT_QUOTES, 'UTF-8');
         .unlock-sub { color: #64748b; text-align: center; margin-bottom: 1.5rem; font-size: .95rem; }
         .pin-dots {
             display: flex; justify-content: center; gap: .75rem; margin: 1.25rem 0 1.5rem;
+            direction: ltr;
         }
         .pin-dot {
             width: 14px; height: 14px; border-radius: 50%;
@@ -90,7 +91,7 @@ $csrfPin = htmlspecialchars(csrf_token('pos_pin'), ENT_QUOTES, 'UTF-8');
         <?php if ($pos_pin_mode): ?>
         <div id="pinPadSection">
             <p class="text-center text-muted mb-0" style="font-size:.9rem">أدخل رمز الموظف (PIN)</p>
-            <div class="pin-dots" id="pinDots" aria-hidden="true">
+            <div class="pin-dots" id="pinDots" dir="ltr" aria-hidden="true">
                 <?php for ($i = 0; $i < 6; $i++): ?><span class="pin-dot"></span><?php endfor; ?>
             </div>
             <div class="pin-grid" id="pinGrid">
@@ -187,24 +188,77 @@ $csrfPin = htmlspecialchars(csrf_token('pos_pin'), ENT_QUOTES, 'UTF-8');
             });
     }
 
-    document.getElementById('pinGrid').addEventListener('click', function (e) {
-        const btn = e.target.closest('[data-key]');
-        if (!btn) return;
-        const key = btn.getAttribute('data-key');
+    function appendDigit(digit) {
+        if (buffer.length >= maxLen) return;
+        buffer += digit;
+        renderDots();
+        errorBox.classList.add('hidden');
+    }
+
+    function backspaceDigit() {
+        buffer = buffer.slice(0, -1);
+        renderDots();
+        errorBox.classList.add('hidden');
+    }
+
+    function handlePadKey(key) {
         if (key === 'مسح') {
-            buffer = buffer.slice(0, -1);
-            renderDots();
-            errorBox.classList.add('hidden');
+            backspaceDigit();
             return;
         }
         if (key === 'دخول') {
             submitPin();
             return;
         }
-        if (buffer.length >= maxLen) return;
-        buffer += key;
-        renderDots();
-        errorBox.classList.add('hidden');
+        appendDigit(key);
+    }
+
+    function digitFromKeyboardEvent(e) {
+        if (e.key >= '0' && e.key <= '9') {
+            return e.key;
+        }
+        if (e.code && /^Numpad[0-9]$/.test(e.code)) {
+            return e.code.slice(-1);
+        }
+        if (e.code && /^Digit[0-9]$/.test(e.code)) {
+            return e.code.slice(-1);
+        }
+        return null;
+    }
+
+    function shouldIgnoreKeyboardEvent(e) {
+        const active = document.activeElement;
+        if (!active) return false;
+        const tag = active.tagName;
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || active.isContentEditable) {
+            return true;
+        }
+        return false;
+    }
+
+    document.getElementById('pinGrid').addEventListener('click', function (e) {
+        const btn = e.target.closest('[data-key]');
+        if (!btn) return;
+        handlePadKey(btn.getAttribute('data-key'));
+    });
+
+    document.addEventListener('keydown', function (e) {
+        if (shouldIgnoreKeyboardEvent(e)) return;
+        const digit = digitFromKeyboardEvent(e);
+        if (digit) {
+            e.preventDefault();
+            appendDigit(digit);
+            return;
+        }
+        if (e.key === 'Backspace' || e.key === 'Delete') {
+            e.preventDefault();
+            backspaceDigit();
+            return;
+        }
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            submitPin();
+        }
     });
 })();
 </script>

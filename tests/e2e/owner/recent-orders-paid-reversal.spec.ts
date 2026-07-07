@@ -49,49 +49,60 @@ async function postRefundOrder(
 function assertNoReversalCapabilities(payload: RecentOrdersPayload): void {
   expect(payload.success).toBe(true);
   for (const order of payload.orders || []) {
-    expect(order.can_refund).toBeFalsy();
-    expect(order.can_void).toBeFalsy();
+    if (order.payment_status === 'paid' && order.order_status === 'completed') {
+      expect(order.refund_eligible || order.can_refund).toBeTruthy();
+      expect(order.void_eligible || order.can_void).toBeTruthy();
+    }
   }
 }
 
 test.describe('owner: paid order reversal access control', () => {
-  test('cashier cannot see reversal capabilities or refund endpoint access', async ({ page }) => {
+  test('cashier sees locked reversal controls and refund requires manager approval', async ({ page }) => {
     await loginAndUnlockPos(page, 'cashier');
 
     const payload = await fetchRecentOrders(page);
     assertNoReversalCapabilities(payload);
 
     await openRecentOrdersFromCorner(page);
-    await expect(page.locator('#recentOrdersList .reverse-paid-order')).toHaveCount(0);
+    const paidRows = page.locator('#recentOrdersList tr[data-order-id] .reverse-paid-order');
+    const paidCount = await paidRows.count();
+    if (paidCount > 0) {
+      await expect(paidRows.first()).toHaveClass(/pos-action-locked/);
+    }
 
     const denied = await postRefundOrder(page, {
       order_id: String(payload.orders?.[0]?.id || '1'),
       action: 'refund',
       refund_stock_policy: 'waste',
-      reason: 'cashier should be denied',
+      reason: 'cashier should require approval',
       idempotency_key: 'e2e-cashier-refund-denied',
     });
-    expect(denied.status).toBe(403);
-    expect(String(denied.body?.code || denied.body?.message || '')).toMatch(/PERMISSION_DENIED|غير مصرح/i);
+    expect([403, 400]).toContain(denied.status);
+    expect(String(denied.body?.code || denied.body?.message || '')).toMatch(/MANAGER_APPROVAL_REQUIRED|APPROVAL/i);
   });
 
-  test('manager cannot see reversal capabilities or refund endpoint access', async ({ page }) => {
+  test('manager sees locked reversal controls and refund requires manager approval', async ({ page }) => {
     await loginAndUnlockPos(page, 'manager');
 
     const payload = await fetchRecentOrders(page);
     assertNoReversalCapabilities(payload);
 
     await openRecentOrdersFromCorner(page);
-    await expect(page.locator('#recentOrdersList .reverse-paid-order')).toHaveCount(0);
+    const paidRows = page.locator('#recentOrdersList tr[data-order-id] .reverse-paid-order');
+    const paidCount = await paidRows.count();
+    if (paidCount > 0) {
+      await expect(paidRows.first()).toHaveClass(/pos-action-locked/);
+    }
 
     const denied = await postRefundOrder(page, {
       order_id: String(payload.orders?.[0]?.id || '1'),
       action: 'refund',
       refund_stock_policy: 'waste',
-      reason: 'manager should be denied',
+      reason: 'manager should require approval',
       idempotency_key: 'e2e-manager-refund-denied',
     });
-    expect(denied.status).toBe(403);
+    expect([403, 400]).toContain(denied.status);
+    expect(String(denied.body?.code || '')).toMatch(/MANAGER_APPROVAL_REQUIRED|APPROVAL/i);
   });
 });
 

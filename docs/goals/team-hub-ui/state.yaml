@@ -1,0 +1,87 @@
+version: 2
+
+goal:
+  title: "Team Hub minimalist UI"
+  slug: team-hub-ui
+  kind: specific
+  tranche: "Single team.php hub with staff/roles tabs, panels, tests"
+  status: active
+
+rules:
+  pm_owns_state: true
+  one_active_task: true
+  max_write_workers: 1
+  no_implementation_without_worker_or_pm_task: true
+  no_completion_without_judge_or_pm_audit: true
+
+agents:
+  scout: installed
+  worker: installed
+  judge: installed
+
+active_task: T002
+
+tasks:
+  - id: T001
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "Implement team.php hub, CSS/JS, API, redirects, permission guard fix."
+    allowed_files:
+      - team.php
+      - css/team-hub.css
+      - js/team-hub.js
+      - classes/Security/TeamHubService.php
+      - classes/Security/PermissionService.php
+      - ajax/team_hub.php
+      - do/do_team_create_role.php
+      - do/doedit_role_permissions.php
+      - do/doadd_user.php
+      - do/doedit_user.php
+      - do/do_user_deactivate.php
+      - do/do_user_reactivate.php
+      - do/do_user_reset_pin.php
+      - do/do_user_unlock_pin.php
+      - includes/navbar.php
+      - users.php
+      - myroles.php
+      - add_user.php
+      - config/rbac_page_manifest.php
+      - config/rbac_route_manifest.php
+      - tests/e2e/**
+    verify:
+      - npx playwright test tests/e2e/shared/team-hub.spec.ts
+      - npx playwright test tests/e2e/shared/rbac-pin-spec.spec.ts
+    stop_if:
+      - "Need files outside allowed_files."
+      - "Verification fails twice."
+    receipt:
+      result: done
+      summary: "Team Hub live at team.php; 12/12 Playwright team-hub tests pass; fixes for panel deep-links, img column on create, slugify, lifecycle $conn."
+      commands:
+        - cmd: npx playwright test tests/e2e/shared/team-hub.spec.ts
+          status: pass
+      changed_files:
+        - team.php
+        - css/team-hub.css
+        - js/team-hub.js
+        - ajax/team_hub.php
+        - classes/Security/TeamHubService.php
+        - do/do_user_deactivate.php
+        - do/do_user_reactivate.php
+        - do/do_user_reset_pin.php
+        - do/do_user_unlock_pin.php
+        - tests/e2e/shared/team-hub.spec.ts
+  - id: T002
+    type: judge
+    assignee: Judge
+    status: queued
+    objective: "Audit UI vs mockups and functional completeness."
+    receipt: null
+
+checks:
+  dirty_fingerprint: unknown
+  last_verification:
+    result: unknown
+    task: null
+    commands: []

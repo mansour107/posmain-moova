@@ -146,8 +146,8 @@ if ($isEdit) {
 }
 $itemGroup1Options = posmain_add_item_group_options($conn, 'item_group');
 $itemGroup2Options = posmain_add_item_group_options($conn, 'item_group2');
-$canCreateItemGroups = !empty($role['add_items']) || !empty($role['add_item_groups']);
-$canCreateUnits = !empty($role['add_items']);
+$canCreateItemGroups = auth_guard_has_permission('menu.edit', $conn);
+$canCreateUnits = auth_guard_has_permission('menu.edit', $conn);
 $selectedGroup1Id = $isEdit ? (int) ($rowitm['group1'] ?? 0) : 0;
 $selectedGroup2Id = $isEdit ? (int) ($rowitm['group2'] ?? 0) : 0;
 $selectedGroup1Name = '';
@@ -214,7 +214,7 @@ try {
                 </div>
             <?php endif; ?>
 
-            <?php if ($role['add_items'] == 1): ?>
+            <?php if (auth_guard_has_permission('menu.edit', $conn)): ?>
 
                 <?php if (!$isEdit): ?>
                     <form action="do/doadd_item.php" method="post" enctype="multipart/form-data" id="item-main-form">
@@ -1472,7 +1472,7 @@ $(function () {
 });
 </script>
 <script src="js/item_unit_profile.js?v=<?= (int) (@filemtime(__DIR__ . '/js/item_unit_profile.js') ?: 1) ?>"></script>
-<?php if (!empty($role['add_items'])): ?>
+<?php if (auth_guard_has_permission('menu.edit', $conn)): ?>
 <script src="js/item_catalog_group_picker.js?v=<?= (int) (@filemtime(__DIR__ . '/js/item_catalog_group_picker.js') ?: 1) ?>"></script>
 <script>
 $(function () {

@@ -24,9 +24,21 @@ function isPageGuarded(string $source): bool
     return false;
 }
 
-function buildGuardBlock(?string $permission, bool $adminOr): string
+function buildGuardBlock(array $entry): string
 {
-    $permArg = $permission === null ? 'null' : "'" . addslashes($permission) . "'";
+    $anyOf = $entry['any_of'] ?? [];
+    if (is_array($anyOf) && $anyOf !== []) {
+        return "<?php\n"
+            . "require_once __DIR__ . '/includes/auth_guard.php';\n"
+            . "include __DIR__ . '/includes/connect.php';\n"
+            . "require_once __DIR__ . '/includes/page_guard.php';\n"
+            . "page_guard_from_manifest('" . addslashes((string) ($entry['__page'] ?? '')) . "', \$conn);\n"
+            . "?>\n";
+    }
+
+    $permission = $entry['permission'] ?? null;
+    $adminOr = !empty($entry['admin_or']);
+    $permArg = $permission === null ? 'null' : "'" . addslashes((string) $permission) . "'";
     $adminArg = $adminOr ? ', $conn, true' : ', $conn';
 
     return "<?php\n"
@@ -37,14 +49,22 @@ function buildGuardBlock(?string $permission, bool $adminOr): string
         . "?>\n";
 }
 
-function injectPageGuard(string $source, ?string $permission, bool $adminOr): string
+function injectPageGuard(string $source, array $entry): string
 {
+    $permission = $entry['permission'] ?? null;
+    $adminOr = !empty($entry['admin_or']);
+    $anyOf = $entry['any_of'] ?? [];
     if (preg_match('/include\s*\(?[\'"]includes\/connect\.php[\'"]\)?;/', $source, $match, PREG_OFFSET_CAPTURE)) {
         $pos = $match[0][1] + strlen($match[0][0]);
         $guardBlock = "require_once __DIR__ . '/includes/page_guard.php';\n";
-        $permArg = $permission === null ? 'null' : "'" . addslashes($permission) . "'";
-        $adminArg = $adminOr ? ', $conn, true' : ', $conn';
-        $guardBlock .= "page_guard({$permArg}{$adminArg});\n";
+        if (is_array($anyOf) && $anyOf !== []) {
+            $page = (string) ($entry['__page'] ?? '');
+            $guardBlock .= "page_guard_from_manifest('" . addslashes($page) . "', \$conn);\n";
+        } else {
+            $permArg = $permission === null ? 'null' : "'" . addslashes((string) $permission) . "'";
+            $adminArg = $adminOr ? ', $conn, true' : ', $conn';
+            $guardBlock .= "page_guard({$permArg}{$adminArg});\n";
+        }
         return substr($source, 0, $pos) . "\n" . $guardBlock . substr($source, $pos);
     }
 
@@ -53,7 +73,7 @@ function injectPageGuard(string $source, ?string $permission, bool $adminOr): st
         $prefix = substr($source, 0, $pos);
         $suffix = substr($source, $pos);
         $prefix = preg_replace('/^<\?php\s*/', '', $prefix, 1);
-        return buildGuardBlock($permission, $adminOr) . ltrim($prefix) . $suffix;
+        return buildGuardBlock($entry) . ltrim($prefix) . $suffix;
     }
 
     return $source;
@@ -76,7 +96,8 @@ foreach ($manifest as $page => $entry) {
 
     $permission = $entry['permission'] ?? null;
     $adminOr = !empty($entry['admin_or']);
-    $newSource = injectPageGuard($source, $permission, $adminOr);
+    $entry['__page'] = $page;
+    $newSource = injectPageGuard($source, $entry);
     if ($newSource === $source) {
         continue;
     }

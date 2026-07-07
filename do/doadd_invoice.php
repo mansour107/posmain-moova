@@ -35,6 +35,7 @@ require_once('../classes/TableOrderService.php');
 require_once('../classes/Sync/DocumentCounterService.php');
 require_once('../classes/Sync/SyncOutboxEventService.php');
 require_once('../classes/Pos/Service/PosOrderMutationService.php');
+require_once('../classes/Pos/Service/PaymentService.php');
 require_once('../classes/Pos/Service/ModifierLineNoteService.php');
 require_once('../classes/Recipe/LegacyInvoiceRecipeLifecycleBridge.php');
 require_once('../classes/Inventory/InventoryInvoiceBridge.php');
@@ -1371,6 +1372,19 @@ try {
             $stmt->close();
 
             error_log('Bank payment processed successfully');
+        }
+
+        if (($actual_cash_received ?? 0) > 0 || ($actual_bank_received ?? 0) > 0) {
+            $legacyPaymentService = new PaymentService();
+            $legacyPaymentService->recordCollectedOrderPayments(
+                $conn,
+                (int) $last_op,
+                (float) ($actual_cash_received ?? 0),
+                (float) ($actual_bank_received ?? 0),
+                (int) $usid,
+                [],
+                'legacy_invoice_cash_payment'
+            );
         }
     }
 

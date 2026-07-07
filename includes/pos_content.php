@@ -39,6 +39,9 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
 ?>
 <!-- Main Content -->
 <form action="<?= $action_url ?>" method="post" id="posForm">
+        <?php if ($posEditOrderId !== '') { ?>
+        <input type="hidden" name="edit_id" value="<?= htmlspecialchars($posEditOrderId, ENT_QUOTES, 'UTF-8') ?>">
+        <?php } ?>
         <?php if (function_exists('csrf_input')) { echo csrf_input('pos_browser'); } ?>
         <?php if (function_exists('csrf_token')): ?>
         <script>
@@ -337,6 +340,8 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                                                     'barcode' => $barcode,
                                                     'line_note' => $line_note,
                                                     'u_val' => $u_val,
+                                                    'persisted' => true,
+                                                    'persisted_qty' => $qty,
                                                 ]);
                                             }
                                         }
@@ -694,7 +699,7 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                         </div>
                     </div>
                     <div class="row g-3" id="tablesGrid">
-                        <div class="col-12 text-center text-muted py-4" id="tablesGridLoading">
+                        <div class="col-12 text-center pos-tables-state py-4" id="tablesGridLoading">
                             <div class="spinner-border text-primary mb-2" role="status" aria-hidden="true"></div>
                             <p class="mb-0">جاري تحميل الطاولات...</p>
                         </div>
@@ -806,11 +811,6 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                         <div class="pos-close-shift-section-body">
                             <div class="row g-3 pos-close-shift-fields">
                                 <div class="col-md-6">
-                                    <label class="pos-close-shift-field-label" for="shift_expenses">المصاريف</label>
-                                    <input type="number" class="form-control pos-close-shift-input" id="shift_expenses"
-                                        placeholder="0.00" step="0.01" readonly title="يُحسب تلقائياً من مصروفات الشيفت">
-                                </div>
-                                <div class="col-md-6">
                                     <label class="pos-close-shift-field-label" for="shift_cash">تسليم الكاش</label>
                                     <input type="number" class="form-control pos-close-shift-input" id="shift_cash"
                                         placeholder="0.00" step="0.01">
@@ -819,11 +819,6 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                                     <label class="pos-close-shift-field-label" for="shift_fund_after">نهاية الدرج</label>
                                     <input type="number" class="form-control pos-close-shift-input" id="shift_fund_after"
                                         placeholder="0.00" step="0.01">
-                                </div>
-                                <div class="col-md-6">
-                                    <label class="pos-close-shift-field-label" for="shift_exp_notes">بيان المصاريف</label>
-                                    <input type="text" class="form-control pos-close-shift-input" id="shift_exp_notes"
-                                        placeholder="تفاصيل المصاريف">
                                 </div>
                                 <div class="col-12">
                                     <label class="pos-close-shift-field-label" for="shift_notes">ملاحظات</label>
@@ -909,6 +904,7 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
     <?php endif; ?>
     <script src="js/pos_order_draft.js?v=<?= (int) (@filemtime(__DIR__ . '/../js/pos_order_draft.js') ?: 1) ?>"></script>
     <script src="js/pos_order_api.js?v=<?= (int) (@filemtime(__DIR__ . '/../js/pos_order_api.js') ?: 1) ?>"></script>
+    <script src="js/pos_virtual_keyboard.js?v=<?= (int) (@filemtime(__DIR__ . '/../js/pos_virtual_keyboard.js') ?: 1) ?>"></script>
     <script src="js/pos_barcode.js?v=<?= (int) (@filemtime(__DIR__ . '/../js/pos_barcode.js') ?: 1) ?>"></script>
     <script src="js/pos_customer.js?v=<?= (int) (@filemtime(__DIR__ . '/../js/pos_customer.js') ?: 1) ?>"></script>
     <script src="js/pos_delivery.js?v=<?= (int) (@filemtime(__DIR__ . '/../js/pos_delivery.js') ?: 1) ?>"></script>
@@ -965,8 +961,11 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
 
             // وظيفة إغلاق الشيفت
             window.closeShift = function () {
-                const expenses = $('#shift_expenses').val() || 0;
-                const expNotes = $('#shift_exp_notes').val() || '';
+                const expensePayload = (typeof window.posShiftExpenseClosePayload === 'function')
+                    ? window.posShiftExpenseClosePayload()
+                    : { expenses: 0, exp_notes: '' };
+                const expenses = expensePayload.expenses || 0;
+                const expNotes = expensePayload.exp_notes || '';
                 const cash = $('#shift_cash').val() || 0;
                 const fundAfter = $('#shift_fund_after').val() || 0;
                 const notes = $('#shift_notes').val() || '';
@@ -1019,13 +1018,34 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
 
                             if (response.success) {
                                 var expenses = response.data.expenses || {};
+                                var payins = response.data.payins || {};
                                 var expenseHtml = '';
+                                var payinHtml = '';
+                                var expectedCashHtml = '';
                                 if (expenses.mid_shift_enabled || Number(expenses.total || 0) > 0) {
                                     expenseHtml = `
                                         <div class="pos-close-shift-stat">
                                             <i class="fas fa-wallet pos-close-shift-stat-icon is-expenses" aria-hidden="true"></i>
                                             <strong class="pos-close-shift-stat-value">${expenses.total_formatted || '0.00'} ج.م</strong>
                                             <span class="pos-close-shift-stat-label">مصروفات الشيفت</span>
+                                        </div>
+                                    `;
+                                }
+                                if (payins.mid_shift_enabled || Number(payins.total || 0) > 0) {
+                                    payinHtml = `
+                                        <div class="pos-close-shift-stat">
+                                            <i class="fas fa-arrow-down pos-close-shift-stat-icon is-payins" aria-hidden="true"></i>
+                                            <strong class="pos-close-shift-stat-value">${payins.total_formatted || '0.00'} ج.م</strong>
+                                            <span class="pos-close-shift-stat-label">إيداعات الشيفت</span>
+                                        </div>
+                                    `;
+                                }
+                                if (response.data.expected_cash) {
+                                    expectedCashHtml = `
+                                        <div class="pos-close-shift-stat">
+                                            <i class="fas fa-cash-register pos-close-shift-stat-icon is-expected-cash" aria-hidden="true"></i>
+                                            <strong class="pos-close-shift-stat-value">${response.data.expected_cash} ج.م</strong>
+                                            <span class="pos-close-shift-stat-label">النقدية المتوقعة</span>
                                         </div>
                                     `;
                                 }
@@ -1042,12 +1062,12 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                                             <span class="pos-close-shift-stat-label">إجمالي المبيعات</span>
                                         </div>
                                         ${expenseHtml}
+                                        ${payinHtml}
+                                        ${expectedCashHtml}
                                     </div>
                                 `;
                                 $('#shiftPreview').html(html);
-                                if (window.posShiftExpenseApplyCloseFields) {
-                                    window.posShiftExpenseApplyCloseFields(expenses);
-                                }
+                                window.posShiftExpenseLastSummary = expenses;
                             } else {
                                 var errorMsg = response.error || 'لا توجد مبيعات لك اليوم';
                                 $('#shiftPreview').html('<div class="pos-close-shift-alert is-warning">' + errorMsg + '</div>');

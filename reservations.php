@@ -7,7 +7,7 @@
 
 
  <?php
-                if ($role['show_ended_reservation']  == 0 && isset($_GET['c'])){
+        if (!auth_guard_has_legacy_flag('show_ended_reservation', $conn) && isset($_GET['c'])){
                             echo  $userErrorMassage; 
                         }else{   
                             ?>
@@ -107,7 +107,7 @@
             </div>
 
             <div class="card-footer">
-                <?php if ($role['show_total_reservation']) {?>
+                <?php if (auth_guard_has_legacy_flag('show_total_reservation', $conn)) {?>
                 <div class="bg-slate-800 text-light col-md-1 text-md" id="total" >
 
                 </div>

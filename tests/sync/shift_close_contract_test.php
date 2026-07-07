@@ -17,6 +17,7 @@ if ($previewSource === false) {
 }
 
 shiftCloseContractAssert(strpos($previewSource, 'currentDrawerSession') !== false, 'shift preview should scope to drawer session');
+shiftCloseContractAssert(strpos($previewSource, 'pos_acting_user_id') !== false, 'shift preview should scope to acting cashier');
 shiftCloseContractAssert(strpos($previewSource, 'shift_opened_at') !== false, 'shift preview should pass shift_opened_at to ShiftReport');
 
 $barcodeSource = file_get_contents(__DIR__ . '/../../pos_barcode.php');

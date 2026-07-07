@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { loginAs } from '../helpers/auth';
 import { isAccessBlocked, assertNoApplicationError } from '../helpers/rbac';
+import { openTeamHubRolePermissions } from '../helpers/team-hub';
 
 test('cashier cannot open myroles.php', async ({ page }) => {
   await loginAs(page, 'cashier');
@@ -20,6 +21,5 @@ test('cashier cannot open add_role.php', async ({ page }) => {
 
 test('admin can open role permissions editor', async ({ page }) => {
   await loginAs(page, 'admin');
-  await page.goto('/role_permissions.php?id=29', { waitUntil: 'domcontentloaded' });
-  await expect(page.locator('form[action*="doedit_role_permissions"]')).toBeVisible();
+  await openTeamHubRolePermissions(page, 'مدير');
 });

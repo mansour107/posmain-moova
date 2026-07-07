@@ -1,17 +1,32 @@
 <?php
 
-$pageExpectations = [
+$redirectPageExpectations = [
     'add_user.php' => [
         "require_admin_or_permission('users.manage', \$conn)",
-        "csrf_input('users_write')",
+        "header('Location: team.php",
     ],
     'edit_user.php' => [
         "require_admin_or_permission('users.manage', \$conn)",
-        "csrf_input('users_write')",
-        '$stmt = $conn->prepare("SELECT * FROM users WHERE id = ? LIMIT 1")',
+        "header('Location: team.php",
     ],
     'users.php' => [
         "require_admin_or_permission('users.manage', \$conn)",
+        "header('Location:",
+    ],
+];
+
+foreach ($redirectPageExpectations as $path => $snippets) {
+    $source = file_get_contents(__DIR__ . '/../../' . $path);
+    adminWriteAssert(is_string($source), 'unable to read ' . $path);
+    foreach ($snippets as $snippet) {
+        adminWriteAssert(strpos($source, $snippet) !== false, $path . ' missing security snippet: ' . $snippet);
+    }
+}
+
+$pageExpectations = [
+    'team.php' => [
+        'page_guard_from_manifest(',
+        "csrf_token('users_write')",
     ],
     'setting.php' => [
         "require_admin_or_permission('system.tools.run', \$conn)",
@@ -33,6 +48,11 @@ foreach ($pageExpectations as $path => $snippets) {
 }
 
 $handlerExpectations = [
+    'ajax/team_hub.php' => [
+        "rbac_guard_route('ajax/team_hub.php'",
+        'team_hub_require_csrf(',
+        'TeamHubMutationService',
+    ],
     'do/doadd_user.php' => [
         "require_admin_or_permission('users.manage', \$conn)",
         "require_csrf('users_write')",

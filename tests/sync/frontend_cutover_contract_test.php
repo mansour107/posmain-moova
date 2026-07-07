@@ -15,6 +15,7 @@ frontendCutoverAssert(strpos($posOrderApi, 'resolveRoute') !== false, 'pos_order
 frontendCutoverAssert(strpos($posOrderApi, 'postOrderRoute') !== false, 'pos_order_api should post to router');
 frontendCutoverAssert(strpos($posOrderApi, 'orders.takeaway') !== false, 'pos_order_api should route takeaway save to API');
 frontendCutoverAssert(strpos($posOrderApi, 'orders.payment') !== false, 'pos_order_api should route table cash to payment API');
+frontendCutoverAssert(strpos($posOrderApi, "route === 'orders.payment'") !== false, 'pos_order_api should build payment payload for table cash');
 frontendCutoverAssert(strpos($posOrderApi, 'clearCashierEditState') !== false, 'pos_order_api should clear stale takeaway edit state');
 frontendCutoverAssert(strpos($posOrderApi, 'age === 2') !== false, 'pos_order_api readEditId should scope table mode to selected_order_id');
 

@@ -6,7 +6,7 @@
     <section class="content-header">
         <div class="container-fluid">
 
-        <?php if ($role['show_attandance'] == 1) { ?>
+        <?php if (auth_guard_has_legacy_flag('show_attandance', $conn)) { ?>
             <div class="card card-secondary">
                 <div class="card-header">
                     <h3 class="">ادارة الاذونات</h3>

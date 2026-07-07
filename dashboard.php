@@ -4,9 +4,9 @@
 <div class="content-wrapper">
   <section class="content-header">
     <div class="container-fluid">
-<?php if($role['show_main_cards'] == 1){include('elements/main/main_cards.php');} ?>
-<?php if($role['show_main_elements'] == 1){include('elements/main/main_element.php');} ?>
-<?php if($role['show_main_tables'] == 1){include('elements/main/main_tables.php');} ?>
+<?php if(auth_guard_has_legacy_flag('show_main_cards', $conn)){include('elements/main/main_cards.php');} ?>
+<?php if(auth_guard_has_legacy_flag('show_main_elements', $conn)){include('elements/main/main_element.php');} ?>
+<?php if(auth_guard_has_legacy_flag('show_main_tables', $conn)){include('elements/main/main_tables.php');} ?>
     
       </div>                  
     </section>

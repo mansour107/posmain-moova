@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { loginAs, loginAndUnlockPos } from '../helpers/auth';
+import { openTeamHubRolePermissions } from '../helpers/team-hub';
 
 test('POS unlock screen is RTL', async ({ page }) => {
   await loginAs(page, 'cashier');
@@ -62,22 +63,14 @@ test('override auth rejects missing CSRF', async ({ page }) => {
 
 test('users page shows PIN status column for admin', async ({ page }) => {
   await loginAs(page, 'admin');
-  await page.goto('/users.php', { waitUntil: 'domcontentloaded' });
-  await expect(page.locator('th', { hasText: 'PIN' })).toBeVisible();
+  await page.goto('/team.php?tab=staff', { waitUntil: 'domcontentloaded' });
+  await expect(page.locator('.team-hub-pin-code').first()).toBeVisible();
 });
 
 test('role permissions page shows limit matrix for preset role', async ({ page }) => {
   await loginAs(page, 'admin');
-  await page.goto('/role_permissions.php?id=29', { waitUntil: 'domcontentloaded' });
-  if (page.url().includes('myroles.php')) {
-    await page.goto('/myroles.php', { waitUntil: 'domcontentloaded' });
-    const permissionsLink = page.locator('a[href*="role_permissions.php"]').first();
-    await permissionsLink.click();
-  }
-  await expect(page.locator('code', { hasText: 'pos.discount.apply' })).toBeVisible({ timeout: 15_000 });
-  await expect(page.locator('input[name^="limit_value"]').first()).toBeVisible();
-  const restoreForm = page.locator('form[action*="do_restore_role_preset"]');
-  if (await restoreForm.count()) {
-    await expect(restoreForm).toBeVisible();
-  }
+  await openTeamHubRolePermissions(page, 'كاشير');
+  await expect(page.locator('input[data-perm="pos.discount.apply"]').first()).toBeAttached({
+    timeout: 15_000,
+  });
 });

@@ -17,7 +17,7 @@ if ($roleId < 1 || $roleKey === '' || $confirm !== 'restore') {
 }
 
 try {
-    (new PermissionService($conn))->assertRoleEditable($roleId);
+    (new PermissionService($conn))->assertRolePermissionsEditable($roleId);
 } catch (RuntimeException $exception) {
     http_response_code(403);
     echo htmlspecialchars($exception->getMessage(), ENT_QUOTES, 'UTF-8');
@@ -37,5 +37,5 @@ try {
     'metadata' => ['role_key' => $roleKey],
 ]);
 
-header('Location: ../role_permissions.php?id=' . $roleId . '&saved=1');
+header('Location: ../team.php?tab=roles&role_saved=' . $roleId);
 exit;

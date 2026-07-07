@@ -1,5 +1,21 @@
 <?php
 
+class ManagerApprovalRequiredException extends RuntimeException
+{
+    private string $permissionKey;
+
+    public function __construct(string $permissionKey = '')
+    {
+        parent::__construct('MANAGER_APPROVAL_REQUIRED');
+        $this->permissionKey = trim($permissionKey);
+    }
+
+    public function permissionKey(): string
+    {
+        return $this->permissionKey;
+    }
+}
+
 class ManagerApprovalService
 {
     private const TERMINAL_STATUSES = ['approved', 'declined', 'expired'];
@@ -95,7 +111,7 @@ class ManagerApprovalService
 
         $approvalId = $this->approvalIdFrom($request, $context);
         if ($approvalId === null) {
-            throw new RuntimeException('MANAGER_APPROVAL_REQUIRED');
+            throw new ManagerApprovalRequiredException($actionType);
         }
 
         $approval = $this->approvalById($conn, $approvalId, true);
@@ -143,8 +159,23 @@ class ManagerApprovalService
         }
 
         $pinService = new PinService();
-        $manager = $pinService->findUserByPin($conn, $pin);
+        $ip = (string) ($_SERVER['REMOTE_ADDR'] ?? 'unknown');
+        if ($pinService->isTerminalFrozen($conn, $ip)) {
+            throw new RuntimeException('PIN_TERMINAL_FROZEN');
+        }
+
+        $manager = null;
+        try {
+            $manager = $pinService->findUserByPin($conn, $pin);
+        } catch (InvalidArgumentException $exception) {
+            $pinService->recordTerminalFailure($conn, $ip);
+            throw new RuntimeException('MANAGER_PIN_INVALID', 0, $exception);
+        }
         if (!$manager || !$pinService->verifyPin($pin, (string) ($manager['pin_hash'] ?? ''))) {
+            if ($manager) {
+                $pinService->recordUserFailure($conn, (int) $manager['id']);
+            }
+            $pinService->recordTerminalFailure($conn, $ip);
             throw new RuntimeException('MANAGER_PIN_INVALID');
         }
         if ($pinService->isUserLocked($manager)) {
@@ -152,6 +183,8 @@ class ManagerApprovalService
         }
 
         $managerId = (int) $manager['id'];
+        $pinService->clearUserFailures($conn, $managerId);
+        $pinService->clearTerminalFailures($conn, $ip);
         $roleFlags = [];
         if (!empty($manager['userrole'])) {
             $roleStmt = $conn->prepare('SELECT * FROM usr_pwrs WHERE id = ? LIMIT 1');
@@ -185,7 +218,7 @@ class ManagerApprovalService
         }
 
         $approval = $this->requestApproval($conn, [
-            'action_type' => (string) ($context['action_type'] ?? 'manager.override'),
+            'action_type' => (string) ($context['action_type'] ?? $permissionKey ?: 'manager.override'),
             'target_type' => (string) ($context['target_type'] ?? 'pos_action'),
             'target_id' => $context['target_id'] ?? null,
             'requested_by' => $requestedBy,
@@ -201,6 +234,39 @@ class ManagerApprovalService
         ]);
 
         return $this->approvalById($conn, (int) $approval['id'], false);
+    }
+
+    public function validateApprovedPermissionOverride(
+        mysqli $conn,
+        int $approvalId,
+        string $permissionKey,
+        int $requestedBy
+    ): array {
+        $permissionKey = trim($permissionKey);
+        if ($permissionKey === '') {
+            throw new InvalidArgumentException('PERMISSION_KEY_REQUIRED');
+        }
+
+        $approval = $this->approvalById($conn, $approvalId, false);
+        $storedKey = trim((string) ($approval['permission_key'] ?? ''));
+        if ($storedKey === '') {
+            $storedKey = trim((string) ($approval['action_type'] ?? ''));
+        }
+        if ($storedKey !== $permissionKey) {
+            throw new RuntimeException('MANAGER_APPROVAL_SCOPE_MISMATCH');
+        }
+        if ($requestedBy > 0 && (int) ($approval['requested_by'] ?? 0) !== $requestedBy) {
+            throw new RuntimeException('MANAGER_APPROVAL_REQUESTER_MISMATCH');
+        }
+        if ((string) ($approval['status'] ?? '') !== 'approved' || (int) ($approval['approved_by'] ?? 0) <= 0) {
+            throw new RuntimeException('MANAGER_APPROVAL_NOT_APPROVED');
+        }
+        if (!empty($approval['consumed_at'])) {
+            throw new RuntimeException('APPROVAL_ALREADY_CONSUMED');
+        }
+        $this->assertNotExpired($approval);
+
+        return $approval;
     }
 
     private function assertApprovalUsable(array $approval, string $actionType, string $targetType, ?int $targetId): void

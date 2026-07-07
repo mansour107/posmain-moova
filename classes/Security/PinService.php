@@ -51,6 +51,54 @@ class PinService
         return PasswordService::hashPassword($this->normalizePin($pin));
     }
 
+    public function encryptPinForOwnerReveal(string $pin): string
+    {
+        $this->validatePinFormat($pin);
+        if (!function_exists('openssl_encrypt')) {
+            throw new RuntimeException('OPENSSL_REQUIRED');
+        }
+        $key = hash('sha256', posmain_pin_secret() . '|owner_pin_reveal', true);
+        $iv = random_bytes(12);
+        $tag = '';
+        $cipher = openssl_encrypt($this->normalizePin($pin), 'aes-256-gcm', $key, OPENSSL_RAW_DATA, $iv, $tag);
+        if ($cipher === false || strlen($tag) !== 16) {
+            throw new RuntimeException('PIN_ENCRYPT_FAILED');
+        }
+
+        return 'v1:' . base64_encode($iv . $tag . $cipher);
+    }
+
+    public function decryptPinForOwnerReveal(string $payload): ?string
+    {
+        if ($payload === '' || strpos($payload, 'v1:') !== 0 || !function_exists('openssl_decrypt')) {
+            return null;
+        }
+        $raw = base64_decode(substr($payload, 3), true);
+        if ($raw === false || strlen($raw) < 28) {
+            return null;
+        }
+        $iv = substr($raw, 0, 12);
+        $tag = substr($raw, 12, 16);
+        $cipher = substr($raw, 28);
+        $key = hash('sha256', posmain_pin_secret() . '|owner_pin_reveal', true);
+        $plain = openssl_decrypt($cipher, 'aes-256-gcm', $key, OPENSSL_RAW_DATA, $iv, $tag);
+
+        return $plain === false ? null : $plain;
+    }
+
+    /**
+     * @param array<string, mixed> $row
+     */
+    public function revealPinForOwner(array $row): ?string
+    {
+        $pinEnc = trim((string) ($row['pin_enc'] ?? ''));
+        if ($pinEnc === '') {
+            return null;
+        }
+
+        return $this->decryptPinForOwnerReveal($pinEnc);
+    }
+
     public function verifyPin(string $pin, string $storedHash): bool
     {
         if ($storedHash === '') {
@@ -173,6 +221,25 @@ class PinService
         $stmt->close();
     }
 
+    public function generateAvailablePin(mysqli $conn, int $forUserId = 0): string
+    {
+        for ($i = 0; $i < 30; $i++) {
+            $pin = (string) random_int(1000, 9999);
+            try {
+                posmain_pin_secret();
+                $this->validatePinFormat($pin);
+                $existing = $this->findUserByPin($conn, $pin);
+                if (!$existing || ($forUserId > 0 && (int) ($existing['id'] ?? 0) === $forUserId)) {
+                    return $pin;
+                }
+            } catch (Throwable) {
+                continue;
+            }
+        }
+
+        throw new RuntimeException('PIN_GENERATE_FAILED');
+    }
+
     public function findUserByPin(mysqli $conn, string $pin): ?array
     {
         if (!$this->pinColumnsExist($conn)) {
@@ -209,19 +276,51 @@ class PinService
         $lookup = $this->pinLookup($pin);
         $hash = $this->hashPin($pin);
         $now = date('Y-m-d H:i:s');
+        $pinEnc = null;
+        if ($this->pinEncColumnExists($conn)) {
+            try {
+                $pinEnc = $this->encryptPinForOwnerReveal($pin);
+            } catch (Throwable) {
+                $pinEnc = null;
+            }
+        }
 
-        $stmt = $conn->prepare(
-            'UPDATE users
-                SET pin_hash = ?,
-                    pin_lookup = ?,
-                    pin_set_at = ?,
-                    failed_pin_attempts = 0,
-                    pin_locked_until = NULL
-              WHERE id = ?
-                AND COALESCE(isdeleted, 0) != 1'
-        );
-        $stmt->bind_param('sssi', $hash, $lookup, $now, $userId);
-        $stmt->execute();
+        if ($pinEnc !== null) {
+            $stmt = $conn->prepare(
+                'UPDATE users
+                    SET pin_hash = ?,
+                        pin_lookup = ?,
+                        pin_set_at = ?,
+                        pin_enc = ?,
+                        failed_pin_attempts = 0,
+                        pin_locked_until = NULL
+                  WHERE id = ?
+                    AND COALESCE(isdeleted, 0) != 1'
+            );
+            $stmt->bind_param('ssssi', $hash, $lookup, $now, $pinEnc, $userId);
+        } else {
+            $stmt = $conn->prepare(
+                'UPDATE users
+                    SET pin_hash = ?,
+                        pin_lookup = ?,
+                        pin_set_at = ?,
+                        failed_pin_attempts = 0,
+                        pin_locked_until = NULL
+                  WHERE id = ?
+                    AND COALESCE(isdeleted, 0) != 1'
+            );
+            $stmt->bind_param('sssi', $hash, $lookup, $now, $userId);
+        }
+        try {
+            $stmt->execute();
+        } catch (mysqli_sql_exception $exception) {
+            $stmt->close();
+            if ((int) ($exception->getCode() ?? 0) === 1062
+                || stripos($exception->getMessage(), 'uq_users_pin_lookup') !== false) {
+                throw new RuntimeException('PIN_ALREADY_IN_USE', 0, $exception);
+            }
+            throw $exception;
+        }
         if ($stmt->affected_rows < 1) {
             $stmt->close();
             throw new RuntimeException('USER_NOT_FOUND');
@@ -235,11 +334,12 @@ class PinService
             return;
         }
 
+        $clearEnc = $this->pinEncColumnExists($conn) ? ', pin_enc = NULL' : '';
         $stmt = $conn->prepare(
             'UPDATE users
                 SET pin_hash = NULL,
                     pin_lookup = NULL,
-                    pin_set_at = NULL,
+                    pin_set_at = NULL' . $clearEnc . ',
                     failed_pin_attempts = 0,
                     pin_locked_until = NULL
               WHERE id = ?'
@@ -252,6 +352,13 @@ class PinService
     private function terminalThrottleKey(string $ip): string
     {
         return 'pin_terminal:' . trim($ip);
+    }
+
+    private function pinEncColumnExists(mysqli $conn): bool
+    {
+        $result = $conn->query("SHOW COLUMNS FROM users LIKE 'pin_enc'");
+
+        return $result instanceof mysqli_result && $result->num_rows > 0;
     }
 
     private function pinColumnsExist(mysqli $conn): bool

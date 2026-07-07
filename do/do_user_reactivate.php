@@ -1,5 +1,6 @@
 <?php
 
+require_once __DIR__ . '/../includes/connect.php';
 require_once __DIR__ . '/../includes/rbac_route_guard.php';
 rbac_guard_route('do/do_user_reactivate.php');
 
@@ -9,7 +10,7 @@ require_once __DIR__ . '/../classes/Security/PermissionService.php';
 
 $id = (int) ($_POST['user_id'] ?? $_GET['id'] ?? 0);
 if ($id < 1) {
-    header('Location: ../users.php');
+    header('Location: ../team.php?tab=staff');
     exit;
 }
 
@@ -18,7 +19,7 @@ try {
     (new UserLifecycleGuardService())->assertNoPrivilegeEscalation($conn, $currentUserId, $id, null);
 } catch (RuntimeException $exception) {
     $message = UserLifecycleGuardService::privilegeEscalationMessage($exception->getMessage());
-    header('Location: ../users.php?error=' . urlencode($message));
+    header('Location: ../team.php?tab=staff&error=' . urlencode($message));
     exit;
 }
 
@@ -34,5 +35,5 @@ $stmt->close();
 
 (new PermissionService($conn))->bumpPermissionsVersion();
 
-header('Location: ../users.php?reactivated=1');
+header('Location: ../team.php?tab=staff&reactivated=1');
 exit;

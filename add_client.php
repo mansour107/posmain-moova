@@ -5,7 +5,7 @@
 <div class="content-wrapper">
   <section class="content-header">
     <div class="container-fluid">
-        <?php if ($role['add_clients'] == 1) { ?>
+        <?php if (auth_guard_has_legacy_flag('add_clients', $conn)) { ?>
 
     <div class="card card-primary">
         <form action="do/doadd_client.php" method="post">

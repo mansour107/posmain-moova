@@ -5,7 +5,7 @@
 <div class="content-wrapper">
   <section class="content-header">
     <div class="container-fluid">
-    <?php if ($role['show_attandance'] == 1) { ?>
+    <?php if (auth_guard_has_legacy_flag('show_attandance', $conn)) { ?>
 
         <div class="card">
         <form action="<?php echo htmlspecialchars($_SERVER["PHP_SELF"]); ?>" method="post">

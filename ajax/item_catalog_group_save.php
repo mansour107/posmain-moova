@@ -25,7 +25,7 @@ if (!isset($_SESSION['login']) || (int) ($_SESSION['userid'] ?? 0) < 1) {
     exit;
 }
 
-$canCreate = !empty($role['add_items']) || !empty($role['add_item_groups']);
+$canCreate = auth_guard_has_permission('menu.edit', $conn);
 if (!$canCreate) {
     http_response_code(403);
     echo json_encode([

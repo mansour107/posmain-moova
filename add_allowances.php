@@ -8,7 +8,7 @@
     <section class="content-header">
         <div class="container-fluid">
 
-         <?php if ($role['add_attandance'] == 1) { ?>
+         <?php if (auth_guard_has_legacy_flag('add_attandance', $conn)) { ?>
 
             <form action="do/doadd_allowance.php" method="post">
             <div class="card card-info">

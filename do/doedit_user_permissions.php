@@ -5,7 +5,7 @@ rbac_guard_route('do/doedit_user_permissions.php');
 
 $userId = (int) ($_POST['user_id'] ?? 0);
 if ($userId < 1) {
-    header('Location: ../users.php');
+    header('Location: ../team.php?tab=staff');
     exit;
 }
 
@@ -76,5 +76,5 @@ require_once __DIR__ . '/../classes/Security/SecurityAuditLogger.php';
     'metadata' => ['permission_mode' => $permissionMode],
 ]);
 
-header('Location: ../edit_user.php?id=' . $userId);
+header('Location: ../team.php?tab=staff&user=' . $userId . '&section=permissions');
 exit;

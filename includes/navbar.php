@@ -10,7 +10,7 @@ $posmainNavbarCanRunTools = isset($conn) && $conn instanceof mysqli
 $posmainNavbarCanManageMoova = isset($conn) && $conn instanceof mysqli
     && auth_guard_has_permission('moova.manage', $conn);
 $posmainNavbarCanViewCrm = isset($conn) && $conn instanceof mysqli
-    && (($role['sid_crm'] ?? 0) == 1 || auth_guard_has_permission('reports.view', $conn));
+    && (auth_guard_has_legacy_flag('sid_crm', $conn) || auth_guard_has_permission('reports.view', $conn));
 ?>
   <div class="container-fluid d-flex justify-content-between align-items-center">
     
@@ -33,7 +33,7 @@ $posmainNavbarCanViewCrm = isset($conn) && $conn instanceof mysqli
 
       <?php if ($posmainNavbarCanManageUsers) { ?>
       <li class="nav-item d-none d-sm-inline-block">
-        <a href="users.php" class="nav-link">المستخدمين</a>
+        <a href="team.php" class="nav-link">الفريق</a>
       </li>
       <?php } ?>
 

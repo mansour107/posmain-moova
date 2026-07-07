@@ -13,7 +13,7 @@ require_once __DIR__ . '/../includes/upload_guard.php';
 
 require_admin_or_permission('users.manage', $conn);
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
-    header('Location: ../users.php');
+    header('Location: ../team.php?tab=staff');
     exit();
 }
 require_csrf('users_write');
@@ -139,7 +139,7 @@ if (!empty($_FILES['img']['name'])) {
 
 // إذا ما فيش حقول للتحديث، رجع
 if (count($fields) === 0) {
-    header('Location: ../users.php');
+    header('Location: ../team.php?tab=staff');
     exit();
 }
 
@@ -216,7 +216,7 @@ if ($stmt->execute()) {
     }
 
     $stmt->close();
-    header('Location: ../users.php');
+    header('Location: ../team.php?tab=staff');
     exit();
 } else {
     $updateException = new RuntimeException($stmt->error ?: 'update failed');

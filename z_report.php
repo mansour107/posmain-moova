@@ -26,7 +26,7 @@ if (!empty($_SESSION['pos_shift_closed_for_session']) || !auth_guard_is_pos_barc
     exit;
 }
 
-$user_id = $_SESSION['userid'];
+$user_id = function_exists('pos_acting_user_id') ? pos_acting_user_id() : (int) $_SESSION['userid'];
 
 // تهيئة التقرير
 $report = new ShiftReport($conn, $user_id);
@@ -69,6 +69,7 @@ if ($reconciled_methods) {
 $expenses_total = (float) $expenses['total'];
 $has_drawer_session = !empty($drawer_reconciliation['drawer_session']);
 $drawer_paid_out = (float) ($drawer_reconciliation['drawer']['movement_totals']['paid_out'] ?? 0);
+$drawer_paid_in = (float) ($drawer_reconciliation['drawer']['movement_totals']['paid_in'] ?? 0);
 if ($has_drawer_session) {
     $expenses_total = $drawer_paid_out;
 }
@@ -146,6 +147,14 @@ $net_cash_expected = $has_drawer_session ? $drawer_expected_cash : $total_cash_s
     <div class="breakdown-item">
         <span>إجمالي خارج</span>
         <span><?= number_format($expenses_total, 2) ?></span>
+    </div>
+    <?php endif; ?>
+
+    <?php if($has_drawer_session && $drawer_paid_in > 0): ?>
+    <div class="section-title">الإيداعات النقدية</div>
+    <div class="breakdown-item">
+        <span>إجمالي داخل (إيداعات)</span>
+        <span><?= number_format($drawer_paid_in, 2) ?></span>
     </div>
     <?php endif; ?>
     

@@ -5,6 +5,7 @@ require_once __DIR__ . '/../../includes/connect.php';
 require_once __DIR__ . '/../../includes/auth_guard.php';
 require_once __DIR__ . '/../../includes/csrf.php';
 require_once __DIR__ . '/../../includes/pos_api_dispatch.php';
+require_once __DIR__ . '/../../classes/Pos/Service/ManagerApprovalService.php';
 require_once __DIR__ . '/../../classes/Pos/Http/PosResponse.php';
 
 header('Content-Type: application/json; charset=utf-8');

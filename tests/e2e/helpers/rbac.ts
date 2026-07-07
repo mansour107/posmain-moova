@@ -7,6 +7,7 @@ export const RBAC_GUARDED_PAGES: Array<{
   permission: string | null;
   adminOr?: boolean;
 }> = [
+  { path: '/team.php', permission: 'users.manage', adminOr: true },
   { path: '/users.php', permission: 'users.manage', adminOr: true },
   { path: '/myroles.php', permission: 'roles.manage', adminOr: true },
   { path: '/add_role.php', permission: 'roles.manage', adminOr: true },
@@ -19,6 +20,7 @@ export const RBAC_GUARDED_PAGES: Array<{
 ];
 
 export const RBAC_DENIED_PAGE_MATRIX: Array<{ role: PersonaRole; path: string; permission: string }> = [
+  { role: 'cashier', path: '/team.php', permission: 'users.manage' },
   { role: 'cashier', path: '/users.php', permission: 'users.manage' },
   { role: 'cashier', path: '/myroles.php', permission: 'roles.manage' },
   { role: 'cashier', path: '/setting.php', permission: 'system.tools.run' },
@@ -33,8 +35,9 @@ export const RBAC_DENIED_PAGE_MATRIX: Array<{ role: PersonaRole; path: string; p
 ];
 
 export const RBAC_ALLOWED_PAGE_MATRIX: Array<{ role: PersonaRole; path: string; permission: string; hint?: RegExp }> = [
-  { role: 'admin', path: '/users.php', permission: 'users.manage', hint: /المستخدمين|users/i },
-  { role: 'admin', path: '/myroles.php', permission: 'roles.manage', hint: /ادوار|roles/i },
+  { role: 'admin', path: '/team.php', permission: 'users.manage', hint: /الفريق|الموظفون/i },
+  { role: 'admin', path: '/users.php', permission: 'users.manage', hint: /الفريق|الموظفون/i },
+  { role: 'admin', path: '/myroles.php', permission: 'roles.manage', hint: /الفريق|الأدوار/i },
   { role: 'manager', path: '/myitems.php', permission: 'menu.edit' },
   { role: 'cashier', path: '/dashboard.php', permission: 'pos.open' },
 ];
@@ -50,6 +53,15 @@ export const RBAC_CRITICAL_POST_HANDLERS: Array<{
   { path: '/do/doadd_item.php', label: 'create item', permission: 'menu.edit', body: { iname: 'rbac-blocked-item' } },
   { path: '/do/doedit_settings.php', label: 'edit settings', permission: 'system.tools.run', body: { company_name: 'blocked' } },
 ];
+
+const TEAM_HUB_LEGACY_REDIRECTS: Record<string, RegExp> = {
+  '/users.php': /\/team\.php(\?|$)/,
+  '/myroles.php': /\/team\.php(\?|$)/,
+  '/add_role.php': /\/team\.php(\?|$)/,
+  '/add_user.php': /\/team\.php(\?|$)/,
+  '/edit_user.php': /\/team\.php(\?|$)/,
+  '/edit_role.php': /\/team\.php(\?|$)/,
+};
 
 function normalizePagePath(path: string): string {
   const pathname = path.split('?')[0].split('#')[0];
@@ -75,6 +87,10 @@ export function isAccessBlocked(
   if (requestedPath) {
     const requested = normalizePagePath(requestedPath);
     const finalPath = normalizePagePath(new URL(url).pathname);
+    const legacyRedirect = TEAM_HUB_LEGACY_REDIRECTS[requested];
+    if (legacyRedirect && legacyRedirect.test(url)) {
+      return false;
+    }
     if (finalPath !== requested) {
       return true;
     }

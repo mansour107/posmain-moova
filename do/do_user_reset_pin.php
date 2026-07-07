@@ -1,5 +1,6 @@
 <?php
 
+require_once __DIR__ . '/../includes/connect.php';
 require_once __DIR__ . '/../includes/rbac_route_guard.php';
 rbac_guard_route('do/do_user_reset_pin.php');
 
@@ -9,7 +10,7 @@ require_once __DIR__ . '/../classes/Security/UserLifecycleGuardService.php';
 
 $id = (int) ($_POST['user_id'] ?? 0);
 if ($id < 1) {
-    header('Location: ../users.php');
+    header('Location: ../team.php?tab=staff');
     exit;
 }
 
@@ -18,14 +19,11 @@ $newPin = trim((string) ($_POST['pin'] ?? ''));
 
 try {
     if ($newPin === '') {
-        $newPin = (string) random_int(1000, 9999);
-        while (strlen($newPin) < 4 || in_array($newPin, ['1234', '0000', '1111'], true)) {
-            $newPin = (string) random_int(1000, 9999);
-        }
+        $newPin = $pinService->generateAvailablePin($conn, $id);
     }
     $pinService->setPinForUser($conn, $id, $newPin);
 } catch (Throwable $exception) {
-    header('Location: ../edit_user.php?id=' . $id . '&pin_error=' . urlencode($exception->getMessage()));
+    header('Location: ../team.php?tab=staff&user=' . $id . '&pin_error=' . urlencode($exception->getMessage()));
     exit;
 }
 
@@ -40,5 +38,5 @@ $_SESSION['posmain_one_time_pin_reveal'] = [
     'expires' => time() + 120,
 ];
 
-header('Location: ../edit_user.php?id=' . $id . '&pin_reset=1');
+header('Location: ../team.php?tab=staff&user=' . $id . '&pin_reset=1');
 exit;

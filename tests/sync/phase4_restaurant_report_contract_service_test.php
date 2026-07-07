@@ -49,6 +49,7 @@ phase4ReportAssert(
     'open table active truth invariant missing'
 );
 phase4ReportAssert(
+    in_array('pre_close_expected_cash = opening_cash + sale_cash - refund_cash + paid_in - paid_out - safe_drop', $contracts['shift_z']['invariants'], true),
     in_array('expected_cash = opening_cash + sale_cash - refund_cash + paid_in - paid_out - safe_drop + closing_adjustment', $contracts['shift_z']['invariants'], true),
     'shift_z expected cash invariant missing'
 );

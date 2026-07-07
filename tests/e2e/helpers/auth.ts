@@ -52,6 +52,33 @@ export async function loginAndUnlockPos(page: Page, role: PersonaRole): Promise<
   await unlockPos(page, role);
 }
 
+const personaPins: Record<PersonaRole, string> = {
+  admin: process.env.POSMAIN_TEST_PIN_ADMIN || '2468',
+  manager: process.env.POSMAIN_TEST_PIN_MANAGER || '1357',
+  cashier: process.env.POSMAIN_TEST_PIN_CASHIER || '9753',
+  waiter: process.env.POSMAIN_TEST_PIN_WAITER || '8642',
+  kitchen: process.env.POSMAIN_TEST_PIN_KITCHEN || '7531',
+};
+
+export async function enterManagerOverridePin(page: Page, role: PersonaRole = 'manager'): Promise<void> {
+  const modal = page.locator('#posPinPadModal');
+  await expect(modal).toBeVisible({ timeout: 15_000 });
+  for (const digit of personaPins[role].split('')) {
+    await modal.locator(`[data-key="${digit}"]`).click();
+  }
+  await modal.locator('[data-key="دخول"]').click();
+  await expect(modal).toBeHidden({ timeout: 15_000 });
+}
+
+export async function submitManagerOverridePinAttempt(page: Page, pin: string): Promise<void> {
+  const modal = page.locator('#posPinPadModal');
+  await expect(modal).toBeVisible({ timeout: 15_000 });
+  for (const digit of pin.split('')) {
+    await modal.locator(`[data-key="${digit}"]`).click();
+  }
+  await modal.locator('[data-key="دخول"]').click();
+}
+
 export async function isPosPinPadMode(page: Page, role: PersonaRole = 'cashier'): Promise<boolean> {
   await loginAs(page, role);
   await page.goto('/pos_barcode.php', { waitUntil: 'domcontentloaded' });

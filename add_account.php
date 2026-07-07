@@ -44,19 +44,19 @@ page_guard('accounting.view', $conn);
         <div class="container-fluid">
 
 <?php 
-if (($parent == '122' && $role['add_clients'] == 1) ||
-($parent == '211' && $role['add_suppliers'] == 1) ||
-($parent == '121' && $role['add_funds'] == 1) ||
-($parent == '124' && $role['add_banks'] == 1) ||
-($parent == '44' && $role['add_expenses'] == 1) ||
-($parent == '32' && $role['add_revenuses'] == 1) ||
-($parent == '212' && $role['add_credits'] == 1) ||
-($parent == '125' && $role['add_depits'] == 1) ||
-($parent == '221' && $role['add_partners'] == 1) ||
-($parent == '11' && $role['add_assets'] == 1) ||
-($parent == '213' && $role['add_employees'] == 1) ||
-($parent == '112' && $role['add_rentables'] == 1) ||
-($parent == '123' && $role['add_stock'] == 1)) {
+if (($parent == '122' && auth_guard_has_legacy_flag('add_clients', $conn)) ||
+($parent == '211' && auth_guard_has_legacy_flag('add_suppliers', $conn)) ||
+($parent == '121' && auth_guard_has_legacy_flag('add_funds', $conn)) ||
+($parent == '124' && auth_guard_has_legacy_flag('add_banks', $conn)) ||
+($parent == '44' && auth_guard_has_legacy_flag('add_expenses', $conn)) ||
+($parent == '32' && auth_guard_has_legacy_flag('add_revenuses', $conn)) ||
+($parent == '212' && auth_guard_has_legacy_flag('add_credits', $conn)) ||
+($parent == '125' && auth_guard_has_legacy_flag('add_depits', $conn)) ||
+($parent == '221' && auth_guard_has_legacy_flag('add_partners', $conn)) ||
+($parent == '11' && auth_guard_has_legacy_flag('add_assets', $conn)) ||
+($parent == '213' && auth_guard_has_legacy_flag('add_employees', $conn)) ||
+($parent == '112' && auth_guard_has_legacy_flag('add_rentables', $conn)) ||
+($parent == '123' && auth_guard_has_legacy_flag('add_stock', $conn))) {
 ?>
 
 

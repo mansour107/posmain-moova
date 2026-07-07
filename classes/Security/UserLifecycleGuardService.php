@@ -109,26 +109,35 @@ class UserLifecycleGuardService
 
     public function assertNoOpenDrawerForUser(mysqli $conn, int $userId): void
     {
-        if ($userId < 1) {
-            return;
-        }
-
-        $result = $conn->query("SHOW TABLES LIKE 'drawer_sessions'");
-        if (!$result || $result->num_rows < 1) {
-            return;
-        }
-
-        $stmt = $conn->prepare(
-            "SELECT 1 FROM drawer_sessions WHERE user_id = ? AND status = 'open' LIMIT 1"
-        );
-        $stmt->bind_param('i', $userId);
-        $stmt->execute();
-        $open = (bool) $stmt->get_result()->fetch_assoc();
-        $stmt->close();
-
-        if ($open) {
+        if ($this->findOpenDrawerSessionsForUser($conn, $userId) !== []) {
             throw new RuntimeException('DRAWER_SESSION_OPEN');
         }
+    }
+
+    /** @return list<array<string, mixed>> */
+    public function findOpenDrawerSessionsForUser(mysqli $conn, int $userId): array
+    {
+        if ($userId < 1) {
+            return [];
+        }
+
+        if (!function_exists('posmain_drawer_sessions_table_exists')) {
+            require_once __DIR__ . '/../../includes/pos_shift_guard.php';
+        }
+        if (!posmain_drawer_sessions_table_exists($conn)) {
+            return [];
+        }
+
+        if (!class_exists('DrawerSessionService', false)) {
+            require_once __DIR__ . '/../Pos/Service/DrawerSessionService.php';
+        }
+
+        $drawerService = new DrawerSessionService();
+        if (!$drawerService->subsystemInUse($conn)) {
+            return [];
+        }
+
+        return $drawerService->findOpenSessionsForUser($conn, $userId);
     }
 
     public function softDeleteUser(mysqli $conn, int $userId): void
@@ -140,6 +149,45 @@ class UserLifecycleGuardService
         $stmt->bind_param('i', $userId);
         $stmt->execute();
         $stmt->close();
+    }
+
+    public function permanentlyDeleteUser(mysqli $conn, int $userId): void
+    {
+        $this->assertNotLastAdmin($conn, $userId);
+        $this->assertNoOpenDrawerForUser($conn, $userId);
+
+        if ($this->tableExists($conn, 'user_permission_grants')) {
+            $stmt = $conn->prepare('DELETE FROM user_permission_grants WHERE user_id = ?');
+            $stmt->bind_param('i', $userId);
+            $stmt->execute();
+            $stmt->close();
+        }
+
+        $stmt = $conn->prepare('DELETE FROM users WHERE id = ?');
+        $stmt->bind_param('i', $userId);
+        try {
+            $executed = $stmt->execute();
+        } catch (mysqli_sql_exception) {
+            $stmt->close();
+            throw new RuntimeException('USER_DELETE_BLOCKED');
+        }
+        $errno = (int) ($stmt->errno ?: $conn->errno);
+        if (!$executed || $errno === 1451 || $errno === 1217) {
+            $stmt->close();
+            throw new RuntimeException('USER_DELETE_BLOCKED');
+        }
+        if ($stmt->affected_rows < 1) {
+            $stmt->close();
+            throw new RuntimeException('USER_NOT_FOUND');
+        }
+        $stmt->close();
+    }
+
+    private function tableExists(mysqli $conn, string $table): bool
+    {
+        $result = $conn->query("SHOW TABLES LIKE '" . $conn->real_escape_string($table) . "'");
+
+        return $result instanceof mysqli_result && $result->num_rows > 0;
     }
 
     private function columnExists(mysqli $conn, string $column): bool
