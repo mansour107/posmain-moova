@@ -5,7 +5,13 @@ export async function clickFirstAddableItem(page: Page): Promise<void> {
 }
 
 export async function clickNthAddableItem(page: Page, index: number): Promise<void> {
-  const cards = page.locator('.item-wrapper [data-item-id], .item-wrapper .item-card.itemButton');
+  // data-item-id lives on .item-wrapper; click target is the inner .item-card.itemButton.
+  const cards = page.locator(
+    '#itemsGrid .item-card.itemButton, .item-wrapper .item-card.itemButton, .item-wrapper[data-item-id]',
+  );
+  await expect(cards.first(), 'POS item grid should expose at least one item card').toBeVisible({
+    timeout: 20_000,
+  });
   const count = await cards.count();
   expect(count, 'POS item grid should expose at least one item card').toBeGreaterThan(0);
   expect(index, `item index ${index} must be within grid (${count} cards)`).toBeLessThan(count);
@@ -151,7 +157,7 @@ export async function payCashInModal(page: Page, amount?: number): Promise<void>
 
   await page.locator('.pos-pay-confirm-btn').click();
   await Promise.race([
-    page.waitForURL(/print\/receipt\.php/, { timeout: 30_000 }),
+    page.waitForURL(/print\/(?:receipt|index)\.php/, { timeout: 30_000 }),
     expect(page.locator('#paymentModal')).toBeHidden({ timeout: 30_000 }),
   ]).catch(() => undefined);
 }

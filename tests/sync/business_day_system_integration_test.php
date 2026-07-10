@@ -35,6 +35,7 @@ try {
         'code' => 'cash_drawer',
         'name_ar' => 'Cash drawer',
         'type' => 'cash',
+        'account_id' => 51,
     ]);
 
     $savedCutoff = $businessDays->setCutoffHourForBranch($conn, 1, 1, 6);

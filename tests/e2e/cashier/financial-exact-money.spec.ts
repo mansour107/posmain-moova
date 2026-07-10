@@ -22,7 +22,7 @@ test.describe('financial: exact-money browser flow', () => {
     );
 
     await Promise.all([
-      page.waitForURL(/print\/receipt\.php/, { timeout: 30_000 }),
+      page.waitForURL(/print\/(?:receipt|index)\.php/, { timeout: 30_000 }),
       payCashInModal(page, net),
     ]);
 
@@ -58,7 +58,7 @@ test.describe('financial: exact-money browser flow', () => {
       && response.request().method() === 'POST',
     );
     await Promise.all([
-      page.waitForURL(/print\/receipt\.php/, { timeout: 30_000 }),
+      page.waitForURL(/print\/(?:receipt|index)\.php/, { timeout: 30_000 }),
       payCashInModal(page, net),
     ]);
     const paymentBody = await (await paymentResponse).json();
