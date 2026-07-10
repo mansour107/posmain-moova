@@ -8,6 +8,11 @@ foreach ([
     'branchIdentityRequired = $isProduction && $role !== \'cloud\'',
     "'required' => \$branchIdentityRequired",
     "'role' => \$role",
+    'posmainHealthMainAuthCheck',
+    "'main_auth_mode'",
+    "'deployment_role'",
+    "'pin_secret_ready'",
+    'MAIN_AUTH_MODE_UNSAFE',
 ] as $needle) {
     if (strpos($source, $needle) === false) {
         fwrite(STDERR, "health-endpoint-contract-FAIL: missing {$needle}\n");

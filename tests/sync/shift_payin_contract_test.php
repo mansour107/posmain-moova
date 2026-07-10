@@ -11,6 +11,9 @@ shiftPayinContractAssert(strpos($endpoint, "require_csrf('shift_payin')") !== fa
 shiftPayinContractAssert(strpos($endpoint, 'auth_guard_is_pos_barcode_unlocked') !== false, 'payin endpoint should require POS unlock');
 shiftPayinContractAssert(strpos($endpoint, 'pos.drawer.payin') !== false, 'payin endpoint should reference pos.drawer.payin permission');
 
+shiftPayinContractAssert(strpos($endpoint, 'pos_shift_handover_idempotent') !== false, 'payin endpoint should wrap with handover idempotency');
+shiftPayinContractAssert(strpos($endpoint, 'pos.shift.payin') !== false, 'payin endpoint should use pos.shift.payin scope');
+
 $manifest = file_get_contents(__DIR__ . '/../../config/rbac_route_manifest.php');
 shiftPayinContractAssert(strpos($manifest, 'do/do_record_shift_payin.php') !== false, 'manifest should include payin route');
 shiftPayinContractAssert(strpos($manifest, 'shift_payin') !== false, 'manifest should include shift_payin CSRF lane');
@@ -36,6 +39,11 @@ shiftPayinContractAssert(strpos($modal, 'POSMAIN_SHIFT_PAYIN_CSRF_TOKEN') !== fa
 $js = file_get_contents(__DIR__ . '/../../js/pos_shift_expenses.js');
 shiftPayinContractAssert(strpos($js, 'do_record_shift_payin.php') !== false, 'shift cash JS should post payins');
 shiftPayinContractAssert(strpos($js, 'pos.drawer.payin') !== false, 'shift cash JS should request payin override');
+shiftPayinContractAssert(strpos($js, 'idempotency_key') !== false, 'shift cash JS should send idempotency_key');
+shiftPayinContractAssert(strpos($js, 'createShiftCashIdempotencyKey') !== false, 'shift cash JS should create mid-shift keys');
+shiftPayinContractAssert(strpos($js, 'getShiftCashIdempotencyKey') !== false, 'shift cash JS should reuse pending keys on retry');
+shiftPayinContractAssert(strpos($js, 'clearShiftCashIdempotencyKey') !== false, 'shift cash JS should clear keys after success');
+shiftPayinContractAssert(strpos($js, 'clearAllShiftCashIdempotencyKeys') !== false, 'shift cash JS should reset keys when modal opens');
 
 echo "shift-payin-contract-ok\n";
 

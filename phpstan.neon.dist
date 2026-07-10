@@ -1,6 +1,37 @@
 parameters:
+  # Barcode library (legacy) plus local PIN / security / shift-entry service surfaces.
+  # No baseline file is committed: errors must be visible rather than swallowed.
+  # If a baseline becomes necessary, generate it explicitly and document the count
+  # in the PR — do not invent ignoreErrors entries here.
+  bootstrapFiles:
+    - phpstan-bootstrap.php
   paths:
     - src
+    - classes/Security
+    - classes/Pos/Service/ShiftEntryService.php
+    - classes/Pos/Service/PosRegisterService.php
+    - classes/Pos/Service/DrawerSessionService.php
+    - classes/Pos/Service/ShiftCloseService.php
+    - classes/Pos/Service/ShiftCountService.php
+    - classes/Pos/Service/DrawerFloatExpectationService.php
+    - classes/Pos/Service/BusinessDayService.php
+    - classes/Pos/Service/CashFlowPeriodService.php
+    - includes/auth_guard.php
+    - includes/auth_session_guards.php
+    - includes/pos_main_pin_entry.php
+    - includes/pin_pad_fragment.php
+    - includes/business_day.php
+    - includes/drawer_movement_signs.php
+    - includes/shift_handover_idempotency.php
+    - ajax/main_pin_login.php
+    - ajax/pos_pin_login.php
+    - ajax/main_session_lock.php
+    - ajax/dismiss_pin_banner.php
+    - change_pin.php
+    - register_pair.php
+    - no_access.php
   excludePaths:
     - src/Twilio
   level: 4
+  reportUnmatchedIgnoredErrors: true
+  treatPhpDocTypesAsCertain: false

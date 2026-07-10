@@ -11,6 +11,9 @@ php tests/sync/cash_flow_full_day_integration_test.php
 php tests/sync/cash_flow_legacy_shop_integration_test.php
 php tests/sync/cash_flow_multi_session_integration_test.php
 php tests/sync/cash_flow_business_day_integration_test.php
+php tests/sync/business_day_service_unit_test.php
+php tests/sync/business_day_contract_test.php
+php tests/sync/business_day_system_integration_test.php
 php tests/sync/cash_flow_report_endpoint_runtime_test.php
 php tests/sync/drawer_cash_flow_integration_test.php
 php tests/sync/shift_preview_sales_drawer_integration_test.php

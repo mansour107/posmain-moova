@@ -7,6 +7,8 @@ sidebarPermAssert(strpos($sidebar, 'auth_guard_has_permission') !== false, 'side
 sidebarPermAssert(strpos($sidebar, 'posmainCanViewKds') !== false, 'sidebar should gate KDS via capabilities');
 sidebarPermAssert(strpos($sidebar, 'posmainCanViewAccounting') !== false, 'sidebar should gate accounting via capabilities');
 sidebarPermAssert(strpos($sidebar, 'posmainCanEditMenu || $posmainCanEditInventory') !== false, 'sidebar stock section should require menu or inventory permission');
+sidebarPermAssert(strpos($sidebar, 'posmainCanCloseShift') !== false, 'sidebar should gate closed sessions via pos.shift.close');
+sidebarPermAssert(strpos($sidebar, 'posmainCanViewCashFlow') !== false, 'sidebar should gate cash flow via reports.cash_flow');
 sidebarPermAssert(strpos($navbar, 'auth_guard_has_permission') !== false, 'navbar should use auth_guard_has_permission');
 
 echo "sidebar-permission-contract-ok\n";

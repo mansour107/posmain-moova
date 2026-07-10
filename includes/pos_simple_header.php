@@ -12,7 +12,19 @@ if (!isset($conn) || !($conn instanceof mysqli)) {
 }
 
 require_once __DIR__ . '/auth_guard.php';
-require_permission('pos.open', $conn);
+$posmainHeaderPermission = trim((string) ($posmainHeaderPermission ?? 'pos.open'));
+if ($posmainHeaderPermission === '') {
+    $posmainHeaderPermission = 'pos.open';
+}
+require_permission($posmainHeaderPermission, $conn);
+if ($posmainHeaderPermission === 'pos.open') {
+    require_once __DIR__ . '/pos_main_pin_entry.php';
+    posmain_apply_main_pin_pos_entry($conn, basename((string) ($_SERVER['SCRIPT_NAME'] ?? 'pos.php')));
+    if (!auth_guard_is_pos_barcode_unlocked()) {
+        include __DIR__ . '/pos_login_screen.php';
+        exit;
+    }
+}
 
 $userid = $_SESSION['userid'];
 $up = $conn->query("SELECT * FROM users where id = $userid ");
@@ -84,4 +96,5 @@ if (!$language_file_found || $lang == null || $lang == '') {
     </style>
 </head>
 <body<?= !empty($pos_body_class) ? ' class="' . htmlspecialchars($pos_body_class, ENT_QUOTES, 'UTF-8') . '"' : '' ?>>
+<?php require __DIR__ . '/main_session_lock_client.php'; ?>
 <?php if (!empty($success_message)) { include __DIR__ . '/pos_success_message.php'; } ?>

@@ -37,9 +37,15 @@
                 </form>
 
                 <?php
-                // الافتراضي: اليوم الحالي
-                $from = date('Y-m-d');
-                $to   = date('Y-m-d');
+                require_once __DIR__ . '/includes/business_day.php';
+                $businessDayContext = posmain_business_day_context(
+                    isset($conn) && $conn instanceof mysqli ? $conn : null,
+                    (int) ($_SESSION['pos_tenant'] ?? 0),
+                    (int) ($_SESSION['pos_branch'] ?? 0)
+                );
+                // الافتراضي: يوم العمل الحالي
+                $from = $businessDayContext['current_business_day'];
+                $to   = $businessDayContext['current_business_day'];
 
                 if ($_SERVER['REQUEST_METHOD'] == 'POST' && !empty($_POST['from']) && !empty($_POST['to'])) {
                     $from = $_POST['from'];

@@ -4,7 +4,9 @@ include('includes/connect.php');
 require_once __DIR__ . '/includes/auth_guard.php';
 require_once __DIR__ . '/includes/csrf.php';
 require_once __DIR__ . '/includes/pos_cache_control.php';
+require_once __DIR__ . '/includes/shift_handover_idempotency.php';
 require_once __DIR__ . '/classes/Pos/Service/ShiftSessionService.php';
+require_once __DIR__ . '/classes/Pos/Service/ShiftCloseService.php';
 
 posmain_send_no_store_headers();
 
@@ -26,23 +28,74 @@ if (PHP_SAPI !== 'cli') {
 $user_id = function_exists('pos_acting_user_id') ? pos_acting_user_id() : (int) $_SESSION['userid'];
 
 try {
-    $result = (new ShiftSessionService())->closeSimpleShift($conn, $user_id, [
+    $closePayload = [
         'expenses' => $_POST['expenses'] ?? 0,
         'exp_notes' => $_POST['exp_notes'] ?? '',
         'cash' => $_POST['cash'] ?? 0,
         'fund_after' => $_POST['fund_after'] ?? 0,
+        'counted_cash' => $_POST['counted_cash'] ?? ($_POST['fund_after'] ?? 0),
         'notes' => $_POST['notes'] ?? '',
-    ]);
+        'close_token' => $_POST['close_token'] ?? '',
+        'matched' => !empty($_POST['matched']),
+        'drawer_session_id' => (int) ($_POST['drawer_session_id'] ?? 0),
+    ];
 
-    if ((int) $result['total_orders'] > 0) {
-        $_SESSION['success_message'] = 'تم إغلاق الشيفت بنجاح - إجمالي مبيعاتك: '
-            . number_format((float) $result['total_sales'], 2)
-            . ' ج.م ('
-            . (int) $result['total_orders']
-            . ' طلب)';
-    } else {
-        $_SESSION['success_message'] = 'تم إغلاق الشيفت - لا توجد مبيعات في هذه الجلسة';
+    $response = pos_shift_handover_idempotent(
+        $conn,
+        'pos.shift.close',
+        $_POST,
+        $_SERVER,
+        $user_id,
+        static function (array $txContext = []) use ($conn, $user_id, $closePayload): array {
+            $result = (new ShiftSessionService())->closeSimpleShift($conn, $user_id, $closePayload, $txContext);
+
+            return [
+                'success' => true,
+                'result' => $result,
+            ];
+        }
+    );
+
+    if (($response['code'] ?? '') === 'IDEMPOTENCY_CONFLICT') {
+        $_SESSION['error_message'] = 'تم إرسال طلب الإغلاق مسبقاً ببيانات مختلفة';
+        header('Location: pos_barcode.php');
+        exit;
     }
+
+    $result = $response['result'] ?? [];
+    $variance = round((float) ($result['variance'] ?? 0), 3);
+    $matched = !empty($result['matched']) || abs($variance) <= 0.010;
+    $totalOrders = (int) ($result['total_orders'] ?? 0);
+    $totalSales = (float) ($result['total_sales'] ?? 0);
+
+    if ($matched) {
+        $title = 'تم إغلاق الشيفت بنجاح';
+        $detail = $totalOrders > 0
+            ? ('إجمالي مبيعاتك: ' . number_format($totalSales, 2) . ' ج.م (' . $totalOrders . ' طلب)')
+            : 'لا توجد مبيعات في هذه الجلسة';
+        $tone = 'success';
+    } elseif ($variance > 0) {
+        $title = 'تم إغلاق الشيفت — زيادة في الدرج';
+        $detail = 'الفرق: +' . number_format(abs($variance), 2) . ' ج.م (سيتم مراجعته من الإدارة)';
+        $tone = 'over';
+    } else {
+        $title = 'تم إغلاق الشيفت — عجز في الدرج';
+        $detail = 'الفرق: −' . number_format(abs($variance), 2) . ' ج.م (سيتم مراجعته من الإدارة)';
+        $tone = 'under';
+    }
+
+    $_SESSION['pos_shift_close_result'] = [
+        'tone' => $tone,
+        'title' => $title,
+        'detail' => $detail,
+        'variance' => $variance,
+        'matched' => $matched,
+        'total_orders' => $totalOrders,
+        'total_sales' => $totalSales,
+        'counted_cash' => (float) ($result['counted_cash'] ?? 0),
+    ];
+    // Keep a short flash for any non-POS surfaces that still read success_message.
+    $_SESSION['success_message'] = $title . ' — ' . $detail;
 } catch (RuntimeException $exception) {
     if ($exception->getMessage() === 'SHIFT_ALREADY_CLOSED') {
         $_SESSION['error_message'] = 'تم إغلاق هذا الشيفت مسبقاً. أعد فتح نقطة البيع لبدء شيفت جديد.';
@@ -55,5 +108,7 @@ try {
     $_SESSION['error_message'] = 'حدث خطأ أثناء إغلاق الشيفت';
 }
 
-header('Location: closed_sessions.php');
+// Stay on the POS terminal: lock out selling and show the close result on unlock screen.
+// Do not send cashiers to the admin closed_sessions page.
+header('Location: pos_barcode.php?logout=1');
 exit;

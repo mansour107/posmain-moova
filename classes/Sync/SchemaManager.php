@@ -23,10 +23,12 @@ class SyncSchemaManager
             'pos_customer_addresses' => $this->posCustomerAddressesSql(),
             'delivery_zones' => $this->deliveryZonesSql(),
             'security_audit_log' => $this->securityAuditLogSql(),
+            'security_bootstrap_state' => $this->securityBootstrapStateSql(),
             'failed_login_attempts' => $this->failedLoginAttemptsSql(),
             'user_permission_grants' => $this->userPermissionGrantsSql(),
             'role_capabilities' => $this->roleCapabilitiesSql(),
             'app_settings' => $this->appSettingsSql(),
+            'pos_registers' => $this->posRegistersSql(),
             'item_availability' => $this->itemAvailabilitySql(),
             'item_variants' => $this->itemVariantsSql(),
             'modifier_groups' => $this->modifierGroupsSql(),
@@ -43,6 +45,8 @@ class SyncSchemaManager
             'manager_approvals' => $this->managerApprovalsSql(),
             'drawer_sessions' => $this->drawerSessionsSql(),
             'drawer_movements' => $this->drawerMovementsSql(),
+            'drawer_count_attempts' => $this->drawerCountAttemptsSql(),
+            'drawer_session_resolutions' => $this->drawerSessionResolutionsSql(),
             'pos_branch_settings' => $this->posBranchSettingsSql(),
             'printers' => $this->printersSql(),
             'print_jobs' => $this->printJobsSql(),
@@ -209,7 +213,9 @@ class SyncSchemaManager
                     'pin_locked_until' => "ALTER TABLE users ADD COLUMN pin_locked_until DATETIME NULL",
                     'pin_lockout_count' => "ALTER TABLE users ADD COLUMN pin_lockout_count INT UNSIGNED NOT NULL DEFAULT 0",
                     'pin_set_at' => "ALTER TABLE users ADD COLUMN pin_set_at DATETIME NULL",
-                    'pin_enc' => "ALTER TABLE users ADD COLUMN pin_enc VARCHAR(255) NULL",
+                    'pin_must_change' => "ALTER TABLE users ADD COLUMN pin_must_change TINYINT(1) NOT NULL DEFAULT 0 AFTER pin_set_at",
+                    'pin_changed_at' => "ALTER TABLE users ADD COLUMN pin_changed_at DATETIME NULL AFTER pin_must_change",
+                    'auth_version' => "ALTER TABLE users ADD COLUMN auth_version INT UNSIGNED NOT NULL DEFAULT 1 AFTER pin_changed_at",
                 ],
                 'indexes' => [
                     'idx_users_userrole' => [
@@ -271,6 +277,62 @@ class SyncSchemaManager
                         'sql' => "ALTER TABLE closed_orders ADD KEY idx_closed_orders_drawer_session (drawer_session_id)",
                     ],
                 ],
+            ],
+            'drawer_sessions' => [
+                'columns' => [
+                    'expected_opening_cash' => "ALTER TABLE drawer_sessions ADD COLUMN expected_opening_cash DECIMAL(12,3) NULL AFTER opening_cash",
+                    'opening_variance' => "ALTER TABLE drawer_sessions ADD COLUMN opening_variance DECIMAL(12,3) NULL AFTER expected_opening_cash",
+                    'close_expected_snapshot' => "ALTER TABLE drawer_sessions ADD COLUMN close_expected_snapshot DECIMAL(12,3) NULL AFTER difference",
+                    'variance_status' => "ALTER TABLE drawer_sessions ADD COLUMN variance_status ENUM('none','unresolved','resolved') NOT NULL DEFAULT 'none' AFTER close_expected_snapshot",
+                    'variance_type' => "ALTER TABLE drawer_sessions ADD COLUMN variance_type ENUM('none','opening','closing','both') NOT NULL DEFAULT 'none' AFTER variance_status",
+                    'open_branch_lock' => "ALTER TABLE drawer_sessions ADD COLUMN open_branch_lock VARCHAR(64) NULL AFTER status",
+                    'close_token_hash' => "ALTER TABLE drawer_sessions ADD COLUMN close_token_hash CHAR(64) NULL AFTER open_branch_lock",
+                    'preceding_session_id' => "ALTER TABLE drawer_sessions ADD COLUMN preceding_session_id BIGINT UNSIGNED NULL AFTER close_token_hash",
+                    'takeover_authorized_by' => "ALTER TABLE drawer_sessions ADD COLUMN takeover_authorized_by BIGINT UNSIGNED NULL AFTER preceding_session_id",
+                    'business_day' => "ALTER TABLE drawer_sessions ADD COLUMN business_day DATE NULL AFTER opened_at",
+                    'register_id' => "ALTER TABLE drawer_sessions ADD COLUMN register_id BIGINT UNSIGNED NULL AFTER branch",
+                    'open_register_lock' => "ALTER TABLE drawer_sessions ADD COLUMN open_register_lock VARCHAR(64) NULL AFTER open_branch_lock",
+                    'open_user_lock' => "ALTER TABLE drawer_sessions ADD COLUMN open_user_lock VARCHAR(64) NULL AFTER open_register_lock",
+                ],
+                'indexes' => [
+                    'idx_drawer_sessions_variance_status' => [
+                        'columns' => ['variance_status', 'closed_at'],
+                        'sql' => "ALTER TABLE drawer_sessions ADD KEY idx_drawer_sessions_variance_status (variance_status, closed_at)",
+                    ],
+                    'uq_drawer_sessions_open_branch_lock' => [
+                        'columns' => ['open_branch_lock'],
+                        'sql' => "ALTER TABLE drawer_sessions ADD UNIQUE KEY uq_drawer_sessions_open_branch_lock (open_branch_lock)",
+                    ],
+                    'idx_drawer_sessions_preceding' => [
+                        'columns' => ['preceding_session_id'],
+                        'sql' => "ALTER TABLE drawer_sessions ADD KEY idx_drawer_sessions_preceding (preceding_session_id)",
+                    ],
+                    'idx_drawer_sessions_business_day' => [
+                        'columns' => ['tenant', 'branch', 'business_day'],
+                        'sql' => "ALTER TABLE drawer_sessions ADD KEY idx_drawer_sessions_business_day (tenant, branch, business_day)",
+                    ],
+                    'idx_drawer_sessions_register' => [
+                        'columns' => ['register_id', 'status'],
+                        'sql' => "ALTER TABLE drawer_sessions ADD KEY idx_drawer_sessions_register (register_id, status, opened_at)",
+                    ],
+                    'uq_drawer_sessions_open_register_lock' => [
+                        'columns' => ['open_register_lock'],
+                        'sql' => "ALTER TABLE drawer_sessions ADD UNIQUE KEY uq_drawer_sessions_open_register_lock (open_register_lock)",
+                    ],
+                    'uq_drawer_sessions_open_user_lock' => [
+                        'columns' => ['open_user_lock'],
+                        'sql' => "ALTER TABLE drawer_sessions ADD UNIQUE KEY uq_drawer_sessions_open_user_lock (open_user_lock)",
+                    ],
+                ],
+            ],
+            'pos_branch_settings' => [
+                'columns' => [
+                    'cash_count_tolerance' => "ALTER TABLE pos_branch_settings ADD COLUMN cash_count_tolerance DECIMAL(12,3) NOT NULL DEFAULT 0.010 AFTER business_day_cutoff_hour",
+                    'opening_float_baseline' => "ALTER TABLE pos_branch_settings ADD COLUMN opening_float_baseline DECIMAL(12,3) NULL AFTER cash_count_tolerance",
+                    'opening_float_baseline_set_by' => "ALTER TABLE pos_branch_settings ADD COLUMN opening_float_baseline_set_by BIGINT UNSIGNED NULL AFTER opening_float_baseline",
+                    'opening_float_baseline_set_at' => "ALTER TABLE pos_branch_settings ADD COLUMN opening_float_baseline_set_at DATETIME NULL AFTER opening_float_baseline_set_by",
+                ],
+                'indexes' => [],
             ],
         ];
     }
@@ -355,6 +417,23 @@ class SyncSchemaManager
 
         foreach ($this->drawerCashFlowUpgradeStatements($conn) as $label => $statement) {
             $pending[$label] = $statement;
+        }
+
+        foreach ($this->drawerHandoverUpgradeStatements($conn) as $label => $statement) {
+            $pending[$label] = $statement;
+        }
+
+        if ($this->tableExists($conn, 'users') && $this->columnExists($conn, 'users', 'pin_enc')) {
+            $legacyPins = $conn->query(
+                "SELECT COUNT(*) AS c FROM users WHERE pin_enc IS NOT NULL AND TRIM(pin_enc) <> ''"
+            );
+            $legacyPinCount = $legacyPins
+                ? (int) (($legacyPins->fetch_assoc()['c'] ?? 0))
+                : 0;
+            if ($legacyPinCount > 0) {
+                $pending['users.clear_legacy_pin_enc'] =
+                    "UPDATE users SET pin_enc = NULL WHERE pin_enc IS NOT NULL AND TRIM(pin_enc) <> ''";
+            }
         }
 
         return $pending;
@@ -544,6 +623,18 @@ class SyncSchemaManager
         $stmt->close();
 
         return $row && (int) $row['table_count'] > 0;
+    }
+
+    private function queryHasRows(mysqli $conn, string $sql): bool
+    {
+        $result = $conn->query($sql);
+        if (!($result instanceof mysqli_result)) {
+            return false;
+        }
+        $hasRows = $result->num_rows > 0;
+        $result->free();
+
+        return $hasRows;
     }
 
     private function upgradeStatements(mysqli $conn, $table)
@@ -1028,7 +1119,17 @@ ALTER TABLE {$quotedTable}
             }
 
             if ($this->columnExists($conn, 'drawer_movements', 'tenant')
-                && $this->columnExists($conn, 'drawer_sessions', 'tenant')) {
+                && $this->columnExists($conn, 'drawer_sessions', 'tenant')
+                && $this->queryHasRows($conn, "
+                    SELECT 1
+                    FROM drawer_movements dm
+                    INNER JOIN drawer_sessions ds ON ds.id = dm.drawer_session_id
+                    WHERE dm.drawer_session_id IS NOT NULL
+                      AND dm.tenant = 0
+                      AND dm.branch = 0
+                      AND (ds.tenant <> 0 OR ds.branch <> 0)
+                    LIMIT 1
+                ")) {
                 $statements['drawer_movements.backfill_tenant_branch'] = "
                     UPDATE drawer_movements dm
                     INNER JOIN drawer_sessions ds ON ds.id = dm.drawer_session_id
@@ -1038,6 +1139,239 @@ ALTER TABLE {$quotedTable}
                       AND dm.tenant = 0
                       AND dm.branch = 0
                       AND (ds.tenant <> 0 OR ds.branch <> 0)";
+            }
+        }
+
+        return $statements;
+    }
+
+    private function drawerHandoverUpgradeStatements(mysqli $conn): array
+    {
+        $statements = [];
+
+        if ($this->tableExists($conn, 'drawer_sessions')
+            && $this->columnExists($conn, 'drawer_sessions', 'variance_status')
+            && $this->queryHasRows($conn, "
+                SELECT 1
+                FROM drawer_sessions
+                WHERE variance_status = 'none'
+                  AND status IN ('closed', 'forced_closed')
+                  AND (
+                      ABS(COALESCE(opening_variance, 0)) > 0.0001
+                      OR ABS(COALESCE(difference, 0)) > 0.0001
+                  )
+                LIMIT 1
+            ")) {
+            $statements['drawer_sessions.backfill_variance_status'] = "
+                UPDATE drawer_sessions
+                SET variance_status = CASE
+                    WHEN variance_status <> 'none' THEN variance_status
+                    WHEN status IN ('closed', 'forced_closed')
+                         AND (
+                             ABS(COALESCE(opening_variance, 0)) > 0.0001
+                             OR ABS(COALESCE(difference, 0)) > 0.0001
+                         ) THEN 'resolved'
+                    ELSE 'none'
+                END
+                WHERE variance_status = 'none'
+                  AND status IN ('closed', 'forced_closed')";
+        }
+
+        if ($this->tableExists($conn, 'drawer_sessions')
+            && $this->tableExists($conn, 'drawer_session_resolutions')
+            && $this->columnExists($conn, 'drawer_sessions', 'variance_status')
+            && $this->queryHasRows($conn, "
+                SELECT 1
+                FROM drawer_sessions ds
+                WHERE ds.status IN ('closed', 'forced_closed')
+                  AND ds.variance_status = 'resolved'
+                  AND (
+                      ABS(COALESCE(ds.opening_variance, 0)) > 0.0001
+                      OR ABS(COALESCE(ds.difference, 0)) > 0.0001
+                  )
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM drawer_session_resolutions r
+                      WHERE r.drawer_session_id = ds.id
+                  )
+                LIMIT 1
+            ")) {
+            $statements['drawer_session_resolutions.backfill_pre_handover'] = "
+                INSERT INTO drawer_session_resolutions (
+                    drawer_session_id,
+                    variance_type,
+                    variance_amount,
+                    resolved_by,
+                    resolution_notes,
+                    prior_status,
+                    snapshot_json
+                )
+                SELECT
+                    ds.id,
+                    CASE
+                        WHEN ABS(COALESCE(ds.opening_variance, 0)) > 0.0001
+                             AND ABS(COALESCE(ds.difference, 0)) > 0.0001 THEN 'both'
+                        WHEN ABS(COALESCE(ds.opening_variance, 0)) > 0.0001 THEN 'opening'
+                        ELSE 'closing'
+                    END,
+                    CASE
+                        WHEN ABS(COALESCE(ds.opening_variance, 0)) > 0.0001
+                             AND ABS(COALESCE(ds.difference, 0)) > 0.0001 THEN COALESCE(ds.difference, 0)
+                        WHEN ABS(COALESCE(ds.opening_variance, 0)) > 0.0001 THEN COALESCE(ds.opening_variance, 0)
+                        ELSE COALESCE(ds.difference, 0)
+                    END,
+                    0,
+                    'Backfilled at migration (pre-handover session)',
+                    'unresolved',
+                    JSON_OBJECT(
+                        'expected_cash', ds.expected_cash,
+                        'counted_cash', ds.counted_cash,
+                        'difference', ds.difference,
+                        'opening_variance', ds.opening_variance,
+                        'expected_opening_cash', ds.expected_opening_cash
+                    )
+                FROM drawer_sessions ds
+                WHERE ds.status IN ('closed', 'forced_closed')
+                  AND ds.variance_status = 'resolved'
+                  AND (
+                      ABS(COALESCE(ds.opening_variance, 0)) > 0.0001
+                      OR ABS(COALESCE(ds.difference, 0)) > 0.0001
+                  )
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM drawer_session_resolutions r
+                      WHERE r.drawer_session_id = ds.id
+                  )";
+        }
+
+        if ($this->tableExists($conn, 'drawer_sessions')
+            && $this->columnExists($conn, 'drawer_sessions', 'open_branch_lock')
+            && $this->queryHasRows($conn, "
+                SELECT 1
+                FROM drawer_sessions
+                WHERE status = 'open'
+                  AND open_branch_lock IS NULL
+                LIMIT 1
+            ")) {
+            $statements['drawer_sessions.backfill_open_branch_lock'] = "
+                UPDATE drawer_sessions
+                SET open_branch_lock = CONCAT(tenant, ':', branch)
+                WHERE status = 'open'
+                  AND open_branch_lock IS NULL";
+        }
+
+        // Seed a default register per tenant/branch that already has drawer history,
+        // then attach open drawers and register/user locks when safe.
+        if ($this->tableExists($conn, 'pos_registers')
+            && $this->tableExists($conn, 'drawer_sessions')
+            && $this->columnExists($conn, 'drawer_sessions', 'register_id')
+        ) {
+            $statements['pos_registers.seed_default_from_drawers'] = "
+                INSERT INTO pos_registers (uuid, tenant, branch, code, name, is_active, sort_order, paired_at)
+                SELECT
+                    UUID(),
+                    ds.tenant,
+                    ds.branch,
+                    'REG1',
+                    'الصندوق 1',
+                    1,
+                    0,
+                    NOW()
+                FROM (
+                    SELECT DISTINCT tenant, branch
+                    FROM drawer_sessions
+                ) ds
+                WHERE NOT EXISTS (
+                    SELECT 1
+                    FROM pos_registers pr
+                    WHERE pr.tenant = ds.tenant
+                      AND pr.branch = ds.branch
+                      AND pr.code = 'REG1'
+                )";
+
+            if ($this->queryHasRows($conn, "
+                SELECT 1
+                FROM drawer_sessions
+                WHERE register_id IS NULL
+                LIMIT 1
+            ")) {
+                $statements['drawer_sessions.backfill_register_id'] = "
+                    UPDATE drawer_sessions ds
+                    INNER JOIN pos_registers pr
+                      ON pr.tenant = ds.tenant
+                     AND pr.branch = ds.branch
+                     AND pr.code = 'REG1'
+                     AND pr.is_active = 1
+                    SET ds.register_id = pr.id
+                    WHERE ds.register_id IS NULL";
+            }
+
+            // Only attach register/user locks when each register and user has at most one open drawer.
+            // Otherwise keep legacy branch lock until operators close conflicting sessions.
+            if ($this->columnExists($conn, 'drawer_sessions', 'open_register_lock')
+                && $this->columnExists($conn, 'drawer_sessions', 'open_user_lock')
+                && !$this->queryHasRows($conn, "
+                    SELECT 1
+                    FROM drawer_sessions
+                    WHERE status = 'open'
+                      AND register_id IS NOT NULL
+                    GROUP BY register_id
+                    HAVING COUNT(*) > 1
+                    LIMIT 1
+                ")
+                && !$this->queryHasRows($conn, "
+                    SELECT 1
+                    FROM drawer_sessions
+                    WHERE status = 'open'
+                    GROUP BY tenant, branch, user_id
+                    HAVING COUNT(*) > 1
+                    LIMIT 1
+                ")
+                && $this->queryHasRows($conn, "
+                    SELECT 1
+                    FROM drawer_sessions
+                    WHERE status = 'open'
+                      AND register_id IS NOT NULL
+                      AND (open_register_lock IS NULL OR open_user_lock IS NULL)
+                    LIMIT 1
+                ")
+            ) {
+                $statements['drawer_sessions.backfill_open_register_user_locks'] = "
+                    UPDATE drawer_sessions
+                    SET open_register_lock = CONCAT(tenant, ':', branch, ':r', register_id),
+                        open_user_lock = CONCAT(tenant, ':', branch, ':u', user_id),
+                        open_branch_lock = NULL
+                    WHERE status = 'open'
+                      AND register_id IS NOT NULL
+                      AND (open_register_lock IS NULL OR open_user_lock IS NULL)";
+            }
+        }
+
+        if ($this->tableExists($conn, 'drawer_sessions')
+            && $this->columnExists($conn, 'drawer_sessions', 'business_day')
+            && $this->queryHasRows($conn, '
+                SELECT 1
+                FROM drawer_sessions
+                WHERE business_day IS NULL
+                LIMIT 1
+            ')) {
+            $cutoffDefault = 6;
+            if ($this->tableExists($conn, 'pos_branch_settings')) {
+                $statements['drawer_sessions.backfill_business_day'] = "
+                    UPDATE drawer_sessions ds
+                    LEFT JOIN pos_branch_settings pbs
+                      ON pbs.pos_tenant = ds.tenant
+                     AND pbs.pos_branch = ds.branch
+                    SET ds.business_day = DATE(DATE_SUB(
+                        ds.opened_at,
+                        INTERVAL COALESCE(pbs.business_day_cutoff_hour, {$cutoffDefault}) HOUR
+                    ))
+                    WHERE ds.business_day IS NULL";
+            } else {
+                $statements['drawer_sessions.backfill_business_day'] = "
+                    UPDATE drawer_sessions
+                    SET business_day = DATE(DATE_SUB(opened_at, INTERVAL {$cutoffDefault} HOUR))
+                    WHERE business_day IS NULL";
             }
         }
 
@@ -1916,6 +2250,49 @@ CREATE TABLE IF NOT EXISTS security_audit_log (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
     }
 
+    private function securityBootstrapStateSql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS security_bootstrap_state (
+  id TINYINT UNSIGNED NOT NULL DEFAULT 1,
+  status ENUM('pending','completed') NOT NULL DEFAULT 'pending',
+  owner_user_id BIGINT UNSIGNED NULL,
+  started_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  completed_at DATETIME NULL,
+  completed_by BIGINT UNSIGNED NULL,
+  metadata_json JSON NULL,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
+    private function posRegistersSql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS pos_registers (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  uuid CHAR(36) NOT NULL,
+  tenant INT NOT NULL DEFAULT 0,
+  branch INT NOT NULL DEFAULT 0,
+  code VARCHAR(40) NOT NULL,
+  name VARCHAR(120) NOT NULL,
+  pairing_token_hash CHAR(64) NULL,
+  is_active TINYINT(1) NOT NULL DEFAULT 1,
+  is_cashless TINYINT(1) NOT NULL DEFAULT 0,
+  sort_order INT NOT NULL DEFAULT 0,
+  last_seen_at DATETIME NULL,
+  paired_at DATETIME NULL,
+  paired_by BIGINT UNSIGNED NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_pos_registers_uuid (uuid),
+  UNIQUE KEY uq_pos_registers_scope_code (tenant, branch, code),
+  UNIQUE KEY uq_pos_registers_pairing_hash (pairing_token_hash),
+  KEY idx_pos_registers_active (tenant, branch, is_active, sort_order)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
     private function userPermissionGrantsSql()
     {
         return "
@@ -2237,21 +2614,41 @@ CREATE TABLE IF NOT EXISTS drawer_sessions (
   user_id BIGINT UNSIGNED NOT NULL,
   tenant INT NOT NULL DEFAULT 0,
   branch INT NOT NULL DEFAULT 0,
+  register_id BIGINT UNSIGNED NULL,
   fund_account_id BIGINT UNSIGNED NULL,
   opened_at DATETIME NOT NULL,
+  business_day DATE NULL,
   opened_by BIGINT UNSIGNED NOT NULL,
   opening_cash DECIMAL(12,3) NOT NULL DEFAULT 0.000,
+  expected_opening_cash DECIMAL(12,3) NULL,
+  opening_variance DECIMAL(12,3) NULL,
   closed_at DATETIME NULL,
   closed_by BIGINT UNSIGNED NULL,
   expected_cash DECIMAL(12,3) NULL,
   counted_cash DECIMAL(12,3) NULL,
   difference DECIMAL(12,3) NULL,
+  close_expected_snapshot DECIMAL(12,3) NULL,
+  variance_status ENUM('none','unresolved','resolved') NOT NULL DEFAULT 'none',
+  variance_type ENUM('none','opening','closing','both') NOT NULL DEFAULT 'none',
   status ENUM('open','closed','forced_closed') NOT NULL DEFAULT 'open',
+  open_branch_lock VARCHAR(64) NULL,
+  open_register_lock VARCHAR(64) NULL,
+  open_user_lock VARCHAR(64) NULL,
+  close_token_hash CHAR(64) NULL,
+  preceding_session_id BIGINT UNSIGNED NULL,
+  takeover_authorized_by BIGINT UNSIGNED NULL,
   notes VARCHAR(500) NULL,
   PRIMARY KEY (id),
   UNIQUE KEY uq_drawer_sessions_uuid (uuid),
+  UNIQUE KEY uq_drawer_sessions_open_branch_lock (open_branch_lock),
+  UNIQUE KEY uq_drawer_sessions_open_register_lock (open_register_lock),
+  UNIQUE KEY uq_drawer_sessions_open_user_lock (open_user_lock),
   KEY idx_drawer_sessions_user_status (user_id, status, opened_at),
-  KEY idx_drawer_sessions_branch_status (tenant, branch, status, opened_at)
+  KEY idx_drawer_sessions_branch_status (tenant, branch, status, opened_at),
+  KEY idx_drawer_sessions_register (register_id, status, opened_at),
+  KEY idx_drawer_sessions_variance_status (variance_status, closed_at),
+  KEY idx_drawer_sessions_preceding (preceding_session_id),
+  KEY idx_drawer_sessions_business_day (tenant, branch, business_day)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
     }
 
@@ -2289,10 +2686,56 @@ CREATE TABLE IF NOT EXISTS pos_branch_settings (
   pos_tenant INT NOT NULL DEFAULT 0,
   pos_branch INT NOT NULL DEFAULT 0,
   business_day_cutoff_hour TINYINT UNSIGNED NOT NULL DEFAULT 6,
+  cash_count_tolerance DECIMAL(12,3) NOT NULL DEFAULT 0.010,
+  opening_float_baseline DECIMAL(12,3) NULL,
+  opening_float_baseline_set_by BIGINT UNSIGNED NULL,
+  opening_float_baseline_set_at DATETIME NULL,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   UNIQUE KEY uq_pos_branch_settings_scope (pos_tenant, pos_branch)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
+    private function drawerCountAttemptsSql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS drawer_count_attempts (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  drawer_session_id BIGINT UNSIGNED NULL,
+  count_phase ENUM('open','close') NOT NULL,
+  attempt_number TINYINT UNSIGNED NOT NULL,
+  counted_amount DECIMAL(12,3) NOT NULL,
+  expected_amount DECIMAL(12,3) NOT NULL,
+  variance DECIMAL(12,3) NOT NULL,
+  matched TINYINT(1) NOT NULL DEFAULT 0,
+  expected_snapshot_json JSON NULL,
+  tenant INT NOT NULL DEFAULT 0,
+  branch INT NOT NULL DEFAULT 0,
+  created_by BIGINT UNSIGNED NOT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_drawer_count_attempts_session (drawer_session_id, count_phase, attempt_number),
+  KEY idx_drawer_count_attempts_branch (tenant, branch, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
+    private function drawerSessionResolutionsSql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS drawer_session_resolutions (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  drawer_session_id BIGINT UNSIGNED NOT NULL,
+  variance_type ENUM('opening','closing','both','force_close') NOT NULL,
+  variance_amount DECIMAL(12,3) NOT NULL,
+  resolved_by BIGINT UNSIGNED NOT NULL,
+  resolved_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  resolution_notes VARCHAR(1000) NOT NULL,
+  adjustment_movement_id BIGINT UNSIGNED NULL,
+  prior_status ENUM('none','unresolved','resolved') NOT NULL DEFAULT 'unresolved',
+  snapshot_json JSON NULL,
+  PRIMARY KEY (id),
+  KEY idx_drawer_session_resolutions_session (drawer_session_id, resolved_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
     }
 
@@ -3655,6 +4098,7 @@ CREATE TABLE IF NOT EXISTS app_settings (
         $defaults = [
             'permissions_version' => '1',
             'pos_autolock_seconds' => '90',
+            'shift_opening_count_enabled' => '1',
         ];
 
         foreach ($defaults as $key => $value) {

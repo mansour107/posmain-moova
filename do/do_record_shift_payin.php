@@ -8,6 +8,7 @@ require_once __DIR__ . '/../includes/session_bootstrap.php';
 require_once __DIR__ . '/../includes/auth_guard.php';
 require_once __DIR__ . '/../includes/csrf.php';
 require_once __DIR__ . '/../includes/pos_cache_control.php';
+require_once __DIR__ . '/../includes/shift_handover_idempotency.php';
 require_once __DIR__ . '/../classes/Pos/Service/ShiftSessionService.php';
 require_once __DIR__ . '/../classes/Pos/Service/ManagerApprovalService.php';
 
@@ -78,20 +79,37 @@ try {
         }
     }
 
-    $result = $shiftService->recordShiftPayIn($conn, $userId, [
-        'amount' => $payload['amount'] ?? 0,
-        'reason' => $payload['reason'] ?? '',
-        'manager_approval_id' => $payload['manager_approval_id'] ?? null,
-    ]);
+    if (empty($_POST['idempotency_key']) && empty($payload['idempotency_key'])) {
+        $_POST['idempotency_key'] = 'pos.shift.payin:' . bin2hex(random_bytes(8));
+        $payload['idempotency_key'] = $_POST['idempotency_key'];
+    }
+
+    $response = pos_shift_handover_idempotent(
+        $conn,
+        'pos.shift.payin',
+        $_POST,
+        $_SERVER,
+        $userId,
+        static function (array $txContext = []) use ($conn, $userId, $payload, $shiftService): array {
+            $result = $shiftService->recordShiftPayIn($conn, $userId, [
+                'amount' => $payload['amount'] ?? 0,
+                'reason' => $payload['reason'] ?? '',
+                'manager_approval_id' => $payload['manager_approval_id'] ?? null,
+            ], $txContext);
+
+            return ['success' => true, 'data' => $result];
+        }
+    );
 
     while (ob_get_level()) {
         ob_end_clean();
     }
 
-    echo json_encode([
-        'success' => true,
-        'data' => $result,
-    ], JSON_UNESCAPED_UNICODE);
+    if (($response['code'] ?? '') === 'IDEMPOTENCY_CONFLICT') {
+        http_response_code(409);
+    }
+
+    echo json_encode($response, JSON_UNESCAPED_UNICODE);
     exit;
 } catch (RuntimeException $exception) {
     while (ob_get_level()) {
@@ -104,7 +122,7 @@ try {
         $status = 401;
     } elseif ($message === 'METHOD_NOT_ALLOWED') {
         $status = 405;
-    } elseif (in_array($message, ['SHIFT_WRITE_BLOCKED', 'MANAGER_APPROVAL_REQUIRED', 'PERMISSION_DENIED'], true)) {
+    } elseif (in_array($message, ['SHIFT_WRITE_BLOCKED', 'MANAGER_APPROVAL_REQUIRED', 'PERMISSION_DENIED', 'IDEMPOTENCY_IN_PROGRESS'], true)) {
         $status = 403;
     }
     http_response_code($status);

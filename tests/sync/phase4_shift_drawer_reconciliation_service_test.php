@@ -83,7 +83,8 @@ try {
     phase4ShiftReconcileAssert($summary['drawer']['movement_totals']['sale_cash'] === '110.000', 'sale cash movement total expected');
     phase4ShiftReconcileAssert($summary['drawer']['movement_totals']['refund_cash'] === '2.000', 'refund movement total expected');
     phase4ShiftReconcileAssert($summary['drawer']['expected_cash'] === '193.000', 'expected cash should use signed drawer movement math');
-    phase4ShiftReconcileAssert($summary['drawer']['movement_count'] === 4, 'drawer movement count expected');
+    // opening + sale_cash + refund_cash + paid_out + safe_drop
+    phase4ShiftReconcileAssert($summary['drawer']['movement_count'] === 5, 'drawer movement count includes opening movement');
 
     phase4ShiftReconcileAssert($summary['payments']['total'] === '165.000', 'payment total expected');
     phase4ShiftReconcileAssert($summary['payments']['cash'] === '110.000', 'cash payment total expected');

@@ -42,6 +42,10 @@ try {
     $lateSessionId = (int) $openedLate['id'];
     $lateBusinessDay = $businessDays->businessDayForTimestamp((string) $openedLate['opened_at'], 6);
     cashFlowBusinessDayAssert($lateBusinessDay === date('Y-m-d', strtotime('-2 day')), 'late night session should belong to previous business day');
+    cashFlowBusinessDayAssert(
+        (string) ($openedLate['business_day'] ?? '') === $lateBusinessDay,
+        'late night session should persist business_day on open'
+    );
 
     $_SESSION = ['userid' => 32, 'pos_tenant' => 1, 'pos_branch' => 2];
     $openedEarly = $shift->openForCashier($conn, 32, [

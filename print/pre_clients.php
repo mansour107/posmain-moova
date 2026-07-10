@@ -1,4 +1,8 @@
-<?php include('../includes/head.php')?>
+<?php
+require_once __DIR__ . '/../includes/session_bootstrap.php';
+require_once __DIR__ . '/../includes/connect.php';
+include('../includes/head.php');
+?>
           <div class="card">
             <div class="card-header">
               <h3 class="card-title">DataTable with default features</h3>

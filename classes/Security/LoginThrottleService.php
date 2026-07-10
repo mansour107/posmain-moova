@@ -17,6 +17,8 @@ class LoginThrottleService
         $maxAttempts = max(1, (int) ($options['max_attempts'] ?? 5));
         $windowSeconds = max(1, (int) ($options['window_seconds'] ?? 900));
         $lockSeconds = max(1, (int) ($options['lock_seconds'] ?? 900));
+        $maxLockSeconds = max($lockSeconds, (int) ($options['max_lock_seconds'] ?? $lockSeconds));
+        $escalate = !empty($options['escalate']);
         $username = $this->normalizeUsername($username);
         $ip = $this->normalizeIp($ip);
         $usernameHash = $this->usernameHash($username);
@@ -31,7 +33,16 @@ class LoginThrottleService
                 ? ((int) $row['attempt_count'] + 1)
                 : 1;
             $firstFailedAt = $attemptCount === 1 ? $nowSql : (string) $row['first_failed_at'];
-            $lockedUntil = $attemptCount >= $maxAttempts ? date('Y-m-d H:i:s', $now + $lockSeconds) : ($row['locked_until'] ?? null);
+            $effectiveLockSeconds = $this->effectiveLockSeconds(
+                $attemptCount,
+                $maxAttempts,
+                $lockSeconds,
+                $maxLockSeconds,
+                $escalate
+            );
+            $lockedUntil = $attemptCount >= $maxAttempts
+                ? date('Y-m-d H:i:s', $now + $effectiveLockSeconds)
+                : null;
 
             $stmt = $conn->prepare("
                 UPDATE failed_login_attempts
@@ -52,7 +63,16 @@ class LoginThrottleService
         }
 
         $attemptCount = 1;
-        $lockedUntil = $attemptCount >= $maxAttempts ? date('Y-m-d H:i:s', $now + $lockSeconds) : null;
+        $effectiveLockSeconds = $this->effectiveLockSeconds(
+            $attemptCount,
+            $maxAttempts,
+            $lockSeconds,
+            $maxLockSeconds,
+            $escalate
+        );
+        $lockedUntil = $attemptCount >= $maxAttempts
+            ? date('Y-m-d H:i:s', $now + $effectiveLockSeconds)
+            : null;
         $stmt = $conn->prepare("
             INSERT INTO failed_login_attempts (
                 username_hash, username, ip, user_agent, attempt_count, first_failed_at, last_failed_at, locked_until
@@ -126,6 +146,23 @@ class LoginThrottleService
     private function usernameHash(string $username): string
     {
         return hash('sha256', $username);
+    }
+
+    private function effectiveLockSeconds(
+        int $attemptCount,
+        int $maxAttempts,
+        int $baseLockSeconds,
+        int $maxLockSeconds,
+        bool $escalate
+    ): int {
+        if (!$escalate || $attemptCount < $maxAttempts) {
+            return $baseLockSeconds;
+        }
+
+        $tier = intdiv(max(0, $attemptCount - 1), $maxAttempts);
+        $multiplier = 2 ** min(10, $tier);
+
+        return min($maxLockSeconds, $baseLockSeconds * $multiplier);
     }
 
     private function truncate(string $value, int $limit): string

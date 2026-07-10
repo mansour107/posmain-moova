@@ -51,6 +51,8 @@ class CashFlowPeriodService
         $expectedRollup = 0.0;
         $countedRollup = 0.0;
         $closeVarianceRollup = 0.0;
+        $pendingCountSessionCount = 0;
+        $pendingCountExpectedCash = 0.0;
 
         foreach ($this->sessions($conn, $filters) as $session) {
             $sessionCount++;
@@ -60,9 +62,17 @@ class CashFlowPeriodService
                 }
             }
             $expectedRollup += (float) ($session['expected_cash'] ?? 0);
-            $countedRollup += (float) ($session['counted_cash'] ?? 0);
-            $closeVarianceRollup += (float) ($session['close_variance'] ?? 0);
-            if (array_key_exists('closing_adjustment', $totals)) {
+            if (!empty($session['count_pending'])) {
+                $pendingCountSessionCount++;
+                $pendingCountExpectedCash += (float) ($session['expected_cash'] ?? 0);
+            }
+            if ($session['counted_cash'] !== null) {
+                $countedRollup += (float) $session['counted_cash'];
+            }
+            if ($session['close_variance'] !== null) {
+                $closeVarianceRollup += (float) $session['close_variance'];
+            }
+            if (array_key_exists('closing_adjustment', $totals) && $session['close_variance'] !== null) {
                 $totals['closing_adjustment'] += (float) ($session['close_variance'] ?? 0);
             }
         }
@@ -108,6 +118,8 @@ class CashFlowPeriodService
             'counted_cash_rollup' => $this->formatDecimal($countedRollup),
             'close_variance_rollup' => $this->formatDecimal($closeVarianceRollup),
             'difference_rollup' => $this->formatDecimal($closeVarianceRollup),
+            'count_pending_session_count' => $pendingCountSessionCount,
+            'count_pending_expected_cash' => $this->formatDecimal($pendingCountExpectedCash),
         ];
     }
 
@@ -120,10 +132,14 @@ class CashFlowPeriodService
         $normalized = $this->normalizeFilters($filters);
         $joinUsers = $this->tableExists($conn, 'users');
         $joinSettings = $this->tableExists($conn, 'pos_branch_settings');
+        $hasPersistedBusinessDay = $this->columnExists($conn, 'drawer_sessions', 'business_day');
         $settingsJoin = $joinSettings ? ' ' . $this->businessDays->branchSettingsJoin('ds') : '';
-        $businessDayExpr = $joinSettings
+        $computedBusinessDayExpr = $joinSettings
             ? $this->businessDays->sessionBusinessDayExpression('ds')
             : 'DATE(ds.opened_at)';
+        $businessDayExpr = $hasPersistedBusinessDay
+            ? "COALESCE(ds.business_day, {$computedBusinessDayExpr})"
+            : $computedBusinessDayExpr;
         $params = [$normalized['date_from'], $normalized['date_to']];
         $sql = $joinUsers
             ? "
@@ -166,19 +182,26 @@ class CashFlowPeriodService
         $sessions = [];
         foreach ($this->queryAll($conn, $sql, $params) as $row) {
             $session = $this->drawerSessions->sessionById($conn, (int) $row['id']);
-            $recon = (new ShiftDrawerReconciliationService())->buildForUser($conn, [
-                'user_id' => (int) $session['user_id'],
-                'tenant' => (int) $session['tenant'],
-                'branch' => (int) $session['branch'],
-                'date' => substr((string) $session['opened_at'], 0, 10),
-                'drawer_session_id' => (int) $session['id'],
-            ]);
-            $breakdown = $this->drawerSessions->sessionCashBreakdown($conn, (int) $session['id']);
             $cutoffHour = $this->businessDays->cutoffHourForBranch(
                 $conn,
                 (int) $session['tenant'],
                 (int) $session['branch']
             );
+            $sessionBusinessDay = trim((string) ($session['business_day'] ?? ''));
+            if ($sessionBusinessDay === '') {
+                $sessionBusinessDay = $this->businessDays->businessDayForTimestamp(
+                    (string) $session['opened_at'],
+                    $cutoffHour
+                );
+            }
+            $recon = (new ShiftDrawerReconciliationService())->buildForUser($conn, [
+                'user_id' => (int) $session['user_id'],
+                'tenant' => (int) $session['tenant'],
+                'branch' => (int) $session['branch'],
+                'date' => $sessionBusinessDay,
+                'drawer_session_id' => (int) $session['id'],
+            ]);
+            $breakdown = $this->drawerSessions->sessionCashBreakdown($conn, (int) $session['id']);
 
             $sessions[] = [
                 'id' => (int) $session['id'],
@@ -186,16 +209,23 @@ class CashFlowPeriodService
                 'user_name' => (string) ($row['display_name'] ?: $row['uname'] ?: ''),
                 'tenant' => (int) $session['tenant'],
                 'branch' => (int) $session['branch'],
-                'business_day' => $this->businessDays->businessDayForTimestamp((string) $session['opened_at'], $cutoffHour),
+                'business_day' => $sessionBusinessDay,
                 'business_day_cutoff_hour' => $cutoffHour,
                 'opened_at' => (string) $session['opened_at'],
                 'closed_at' => $session['closed_at'],
                 'status' => (string) $session['status'],
                 'opening_cash' => (float) ($recon['drawer']['opening_cash'] ?? 0),
                 'expected_cash' => (float) ($breakdown['pre_close_expected_cash'] ?? 0),
-                'close_variance' => (float) ($breakdown['close_variance'] ?? 0),
-                'counted_cash' => (float) ($breakdown['counted_cash'] ?? $session['counted_cash'] ?? 0),
-                'difference' => (float) ($breakdown['close_variance'] ?? 0),
+                'close_variance' => $breakdown['close_variance'] !== null
+                    ? (float) $breakdown['close_variance']
+                    : null,
+                'counted_cash' => $breakdown['counted_cash'] !== null
+                    ? (float) $breakdown['counted_cash']
+                    : null,
+                'difference' => $breakdown['close_variance'] !== null
+                    ? (float) $breakdown['close_variance']
+                    : null,
+                'count_pending' => !empty($breakdown['count_pending']),
                 'movement_totals' => array_map('floatval', $recon['drawer']['movement_totals'] ?? []),
                 'movement_count' => (int) ($recon['drawer']['movement_count'] ?? 0),
             ];
@@ -288,11 +318,11 @@ class CashFlowPeriodService
                 'amount' => (float) $row['amount'],
                 'order_id' => $row['order_id'] !== null ? (int) $row['order_id'] : null,
                 'payment_id' => $row['payment_id'] !== null ? (int) $row['payment_id'] : null,
-                'ref_ot_head_id' => isset($row['ref_ot_head_id']) && $row['ref_ot_head_id'] !== null
+                'ref_ot_head_id' => isset($row['ref_ot_head_id'])
                     ? (int) $row['ref_ot_head_id']
                     : null,
-                'voucher_pro_id' => isset($row['voucher_pro_id']) && $row['voucher_pro_id'] !== null ? (int) $row['voucher_pro_id'] : null,
-                'voucher_info' => isset($row['voucher_info']) && $row['voucher_info'] !== null ? (string) $row['voucher_info'] : null,
+                'voucher_pro_id' => isset($row['voucher_pro_id']) ? (int) $row['voucher_pro_id'] : null,
+                'voucher_info' => isset($row['voucher_info']) ? (string) $row['voucher_info'] : null,
                 'reason' => $row['reason'] !== null ? (string) $row['reason'] : null,
                 'created_by' => (int) $row['created_by'],
                 'created_by_name' => (string) (($row['display_name'] ?? '') ?: ($row['uname'] ?? '')),
@@ -329,19 +359,43 @@ class CashFlowPeriodService
                 $parts[] = 'oh.payment_date';
             }
             if ($this->columnExists($conn, 'ot_head', 'pro_date')) {
-                $parts[] = "CONCAT(oh.pro_date, ' 00:00:00')";
+                $parts[] = "CONCAT(oh.pro_date, ' 12:00:00')";
             }
             $paidAtExpr = 'COALESCE(' . implode(', ', $parts) . ')';
+        }
+
+        $cutoffHour = $this->businessDays->cutoffHourForBranch(
+            $conn,
+            $normalized['tenant'],
+            $normalized['branch']
+        );
+        $fromBounds = $this->businessDays->windowBounds($normalized['date_from'], $cutoffHour);
+        $toBounds = $this->businessDays->windowBounds($normalized['date_to'], $cutoffHour);
+
+        // Prefer stamped order business day (pro_date); fall back to payment timestamp window.
+        $where = [];
+        $params = [];
+        if ($joinOrders && $this->columnExists($conn, 'ot_head', 'pro_date')) {
+            $where[] = "(
+                (oh.pro_date IS NOT NULL AND oh.pro_date >= ? AND oh.pro_date <= ?)
+                OR (oh.pro_date IS NULL AND {$paidAtExpr} >= ? AND {$paidAtExpr} < ?)
+            )";
+            $params[] = $normalized['date_from'];
+            $params[] = $normalized['date_to'];
+            $params[] = $fromBounds['start_at'];
+            $params[] = $toBounds['end_at'];
+        } else {
+            $where[] = "{$paidAtExpr} >= ? AND {$paidAtExpr} < ?";
+            $params[] = $fromBounds['start_at'];
+            $params[] = $toBounds['end_at'];
         }
 
         $sql = "
             SELECT op.payment_method, COALESCE(op.amount, 0) AS amount
             FROM order_payments op
             " . ($joinOrders ? 'LEFT JOIN ot_head oh ON oh.id = op.order_id' : '') . "
-            WHERE {$paidAtExpr} >= ?
-              AND {$paidAtExpr} <= ?
+            WHERE " . implode(' AND ', $where) . "
         ";
-        $params = [$normalized['date_from'], $normalized['date_to'] . ' 23:59:59'];
 
         if ($normalized['cashier_id'] > 0) {
             if ($joinOrders && $this->columnExists($conn, 'ot_head', 'user')) {
@@ -471,6 +525,8 @@ class CashFlowPeriodService
             'unassigned_count' => 0,
             'expected_cash_rollup' => '0.000',
             'counted_cash_rollup' => '0.000',
+            'count_pending_session_count' => 0,
+            'count_pending_expected_cash' => '0.000',
             'difference_rollup' => '0.000',
             'payment_breakdown' => $payments,
         ];

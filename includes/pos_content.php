@@ -46,11 +46,23 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
         <?php if (function_exists('csrf_token')): ?>
         <script>
             window.POSMAIN_SHIFT_CSRF_TOKEN = <?= json_encode(csrf_token('shift_close'), JSON_UNESCAPED_SLASHES) ?>;
+            window.POSMAIN_SHIFT_OPEN_CSRF_TOKEN = <?= json_encode(csrf_token('shift_open_count'), JSON_UNESCAPED_SLASHES) ?>;
+            window.POSMAIN_SHIFT_CLOSE_COUNT_CSRF_TOKEN = <?= json_encode(csrf_token('shift_close_count'), JSON_UNESCAPED_SLASHES) ?>;
+            window.POSMAIN_SHIFT_TAKEOVER_CSRF_TOKEN = <?= json_encode(csrf_token('shift_takeover'), JSON_UNESCAPED_SLASHES) ?>;
+            window.POSMAIN_POS_OVERRIDE_CSRF_TOKEN = <?= json_encode(csrf_token('pos_override'), JSON_UNESCAPED_SLASHES) ?>;
             if (!window.POSMAIN_CAPABILITIES) {
                 window.POSMAIN_CAPABILITIES = {};
             }
             window.POSMAIN_CAN_RECIPE_STOCK_OVERRIDE = window.POSMAIN_CAPABILITIES['pos.recipe_stock_override'] === true;
         </script>
+        <?php
+        $posHandoverCss = __DIR__ . '/../css/pos-shift-handover.css';
+        $posHandoverJs = __DIR__ . '/../js/pos_shift_count_wizard.js';
+        if (is_file($posHandoverCss) && is_file($posHandoverJs)):
+        ?>
+        <link rel="stylesheet" href="css/pos-shift-handover.css?v=<?= (int) filemtime($posHandoverCss) ?>">
+        <script src="js/pos_shift_count_wizard.js?v=<?= (int) filemtime($posHandoverJs) ?>"></script>
+        <?php endif; ?>
         <?php endif; ?>
         <div class="container-fluid h-100 pos-shell">
             <div class="row h-100 g-2 pos-layout-row">
@@ -788,7 +800,7 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                         <p class="pos-close-shift-warning-text">سيتم حساب إجمالي مبيعاتك وإغلاق الشيفت نهائياً</p>
                     </div>
 
-                    <section class="pos-close-shift-section">
+                    <section class="pos-close-shift-section pos-close-shift-wizard-step" id="pshCloseStep-summary">
                         <div class="pos-close-shift-section-header">
                             <i class="fas fa-chart-bar" aria-hidden="true"></i>
                             <h6>معاينة سريعة لمبيعات اليوم</h6>
@@ -803,26 +815,26 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                         </div>
                     </section>
 
-                    <section class="pos-close-shift-section">
+                    <section class="pos-close-shift-section pos-close-shift-wizard-step psh-hidden" id="pshCloseStep-count">
                         <div class="pos-close-shift-section-header">
                             <i class="fas fa-calculator" aria-hidden="true"></i>
-                            <h6>بيانات إغلاق الشيفت</h6>
+                            <h6>عدّ النقد في الدرج</h6>
                         </div>
-                        <div class="pos-close-shift-section-body">
-                            <div class="row g-3 pos-close-shift-fields">
-                                <div class="col-md-6">
-                                    <label class="pos-close-shift-field-label" for="shift_cash">تسليم الكاش</label>
-                                    <input type="number" class="form-control pos-close-shift-input" id="shift_cash"
-                                        placeholder="0.00" step="0.01">
-                                </div>
-                                <div class="col-md-6">
-                                    <label class="pos-close-shift-field-label" for="shift_fund_after">نهاية الدرج</label>
-                                    <input type="number" class="form-control pos-close-shift-input" id="shift_fund_after"
-                                        placeholder="0.00" step="0.01">
-                                </div>
+                        <div class="pos-close-shift-section-body pos-close-shift-count-panel">
+                            <p class="text-muted text-center mb-2" id="pshCloseAttemptLabel">كم وجدت في الدرج؟</p>
+                            <div id="pshCloseCountStep">
+                                <input type="number" id="pshCloseAmount" class="psh-amount-input" placeholder="0.00" step="0.01" min="0">
+                                <div id="pshCloseMessage" class="psh-message psh-hidden"></div>
+                            </div>
+                            <div id="pshCloseVariance" class="psh-variance-card psh-hidden">
+                                <p class="psh-variance-label" id="pshCloseVarianceLabel"></p>
+                                <p class="psh-variance-amount" id="pshCloseVarianceAmount"></p>
+                                <p class="psh-variance-label">سيتم إغلاق الشيفت وتسجيل الحالة للمراجعة</p>
+                            </div>
+                            <div class="row g-3 pos-close-shift-fields mt-2">
                                 <div class="col-12">
-                                    <label class="pos-close-shift-field-label" for="shift_notes">ملاحظات</label>
-                                    <textarea class="form-control pos-close-shift-input" id="shift_notes" rows="3"
+                                    <label class="pos-close-shift-field-label" for="shift_notes">ملاحظات (اختياري)</label>
+                                    <textarea class="form-control pos-close-shift-input" id="shift_notes" rows="2"
                                         placeholder="ملاحظات إضافية"></textarea>
                                 </div>
                             </div>
@@ -833,13 +845,22 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                     <button type="button" class="btn pos-close-shift-btn-cancel" data-bs-dismiss="modal">
                         <i class="fas fa-times me-1"></i>إلغاء
                     </button>
+                    <button type="button" class="btn pos-close-shift-btn-cancel psh-hidden" data-psh-close-back>
+                        <i class="fas fa-arrow-right me-1"></i>رجوع
+                    </button>
                     <a href="z_report.php" class="btn pos-close-shift-btn-zreport">
                         <i class="fas fa-file-invoice me-1"></i>تقرير الإغلاق (Z-Report)
                     </a>
                     <button type="button" class="btn pos-close-shift-btn-print" onclick="printShiftSalesReport()">
                         <i class="fas fa-print me-1"></i>طباعة مبيعاتي
                     </button>
-                    <button type="button" class="btn pos-close-shift-btn-confirm" onclick="closeShift()">
+                    <button type="button" class="btn pos-close-shift-btn-confirm" data-psh-close-next>
+                        <i class="fas fa-calculator me-1"></i>عدّ الدرج
+                    </button>
+                    <button type="button" class="btn pos-close-shift-btn-confirm psh-hidden" data-psh-close-submit-count>
+                        <i class="fas fa-check me-1"></i>تأكيد العد
+                    </button>
+                    <button type="button" class="btn pos-close-shift-btn-confirm psh-hidden" data-psh-close-final>
                         <i class="fas fa-power-off me-1"></i>إغلاق الشيفت
                     </button>
                 </div>
@@ -959,18 +980,19 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
 
             // ملاحظة: كود السيرش والفلترة موجود في pos_barcode.js (محسّن للأداء)
 
-            // وظيفة إغلاق الشيفت
+            // وظيفة إغلاق الشيفت (legacy fallback when handover wizard unavailable)
             window.closeShift = function () {
+                if (window.PosShiftCountWizard && typeof window.PosShiftCountWizard.finalizeClose === 'function') {
+                    window.PosShiftCountWizard.finalizeClose();
+                    return;
+                }
                 const expensePayload = (typeof window.posShiftExpenseClosePayload === 'function')
                     ? window.posShiftExpenseClosePayload()
                     : { expenses: 0, exp_notes: '' };
                 const expenses = expensePayload.expenses || 0;
                 const expNotes = expensePayload.exp_notes || '';
-                const cash = $('#shift_cash').val() || 0;
-                const fundAfter = $('#shift_fund_after').val() || 0;
+                const fundAfter = $('#pshCloseAmount').val() || $('#shift_fund_after').val() || 0;
                 const notes = $('#shift_notes').val() || '';
-
-                console.log('Shift data:', { expenses, expNotes, cash, fundAfter, notes });
 
                 if (window.posmainMarkShiftClosing) {
                     window.posmainMarkShiftClosing();
@@ -983,31 +1005,20 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                     }
                 }
 
-                // إنشاء form وإرسال البيانات
-                const form = $('<form>', {
-                    method: 'POST',
-                    action: 'close_shift.php'
-                });
-
+                const form = $('<form>', { method: 'POST', action: 'close_shift.php' });
                 form.append($('<input>', { type: 'hidden', name: 'expenses', value: expenses }));
                 form.append($('<input>', { type: 'hidden', name: 'exp_notes', value: expNotes }));
-                form.append($('<input>', { type: 'hidden', name: 'cash', value: cash }));
+                form.append($('<input>', { type: 'hidden', name: 'cash', value: fundAfter }));
                 form.append($('<input>', { type: 'hidden', name: 'fund_after', value: fundAfter }));
                 form.append($('<input>', { type: 'hidden', name: 'notes', value: notes }));
                 if (window.POSMAIN_SHIFT_CSRF_TOKEN) {
                     form.append($('<input>', { type: 'hidden', name: 'csrf_token', value: window.POSMAIN_SHIFT_CSRF_TOKEN }));
                 }
-
                 $('body').append(form);
                 form.submit();
             };
 
-            // تحميل معاينة المبيعات عند فتح modal إغلاق الشيفت
-            $('#closeShiftModal').on('show.bs.modal', function () {
-                loadShiftPreview();
-            });
-
-            function loadShiftPreview() {
+            window.loadShiftPreview = function loadShiftPreview() {
                 $.ajax({
                     url: 'do/get_shift_preview.php',
                     method: 'GET',

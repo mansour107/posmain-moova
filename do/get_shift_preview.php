@@ -65,24 +65,32 @@ try {
     $conn->set_charset('utf8mb4');
 
     require_once __DIR__ . '/../classes/Pos/Service/ShiftSessionService.php';
+    require_once __DIR__ . '/../classes/Pos/Service/ShiftCountService.php';
+    require_once __DIR__ . '/../includes/business_day.php';
     $shiftSessions = new ShiftSessionService();
-    $reportScope = [];
+    $reportScope = [
+        'tenant' => (int) ($_SESSION['pos_tenant'] ?? 0),
+        'branch' => (int) ($_SESSION['pos_branch'] ?? 0),
+    ];
     $drawerSession = $shiftSessions->currentDrawerSession($conn, (int) $user_id, $reportScope);
-    if (!$drawerSession && auth_guard_is_pos_barcode_unlocked()) {
-        try {
-            $shiftSessions->openForCashier($conn, (int) $user_id, $reportScope);
-            $drawerSession = $shiftSessions->currentDrawerSession($conn, (int) $user_id, $reportScope);
-        } catch (Throwable $drawerEnsureException) {
-            error_log('Shift preview drawer ensure failed: ' . $drawerEnsureException->getMessage());
-        }
-    }
+    $reportBusinessDay = null;
     if ($drawerSession) {
         $reportScope['shift_opened_at'] = $drawerSession['opened_at'];
         $reportScope['drawer_session_id'] = (int) $drawerSession['id'];
+        $reportScope['tenant'] = (int) ($drawerSession['tenant'] ?? $reportScope['tenant']);
+        $reportScope['branch'] = (int) ($drawerSession['branch'] ?? $reportScope['branch']);
+        $reportBusinessDay = trim((string) ($drawerSession['business_day'] ?? ''));
+    }
+    if ($reportBusinessDay === null || $reportBusinessDay === '') {
+        $reportBusinessDay = posmain_current_business_day(
+            $conn,
+            (int) $reportScope['tenant'],
+            (int) $reportScope['branch']
+        );
     }
 
     // Create ShiftReport instance scoped to the active drawer shift window.
-    $report = new ShiftReport($conn, $user_id, null, $reportScope);
+    $report = new ShiftReport($conn, $user_id, $reportBusinessDay, $reportScope);
     
     // Get Totals using the unified logic (respects time boundaries)
     $totals = $report->getTotals();
@@ -121,6 +129,21 @@ try {
         $user_stmt->close();
     }
     
+    // Blind-count integrity: only cash-flow reporters may see expected in the close preview.
+    // force_close alone must not reveal expected during a normal cashier/manager count.
+    $canSeeExpectedCash = auth_guard_has_permission('reports.cash_flow', $conn);
+    $handoverEnabled = (new ShiftCountService())->handoverEnabled($conn);
+    if ($handoverEnabled && !$canSeeExpectedCash) {
+        $canSeeExpectedCash = false;
+    }
+
+    if (!$canSeeExpectedCash) {
+        unset($expenseSummary['expected_cash'], $payInSummary['expected_cash'], $safeDropSummary['expected_cash']);
+        $expenseSummary['expected_cash'] = null;
+        $payInSummary['expected_cash'] = null;
+        $safeDropSummary['expected_cash'] = null;
+    }
+
     $response_data = [
         'success' => true,
         'data' => [
@@ -131,7 +154,8 @@ try {
             'expenses' => $expenseSummary,
             'payins' => $payInSummary,
             'safe_drops' => $safeDropSummary,
-            'expected_cash' => $expenseSummary['expected_cash'] ?? null,
+            'expected_cash' => $canSeeExpectedCash ? ($expenseSummary['expected_cash'] ?? null) : null,
+            'handover_enabled' => $handoverEnabled,
         ]
     ];
 

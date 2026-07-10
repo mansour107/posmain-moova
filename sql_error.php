@@ -1,4 +1,6 @@
 <?php
+require_once __DIR__ . '/includes/session_bootstrap.php';
+
 // منع عرض أي أخطاء PHP خام
 error_reporting(0);
 

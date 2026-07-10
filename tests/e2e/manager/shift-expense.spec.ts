@@ -29,8 +29,8 @@ test.describe('manager: mid-shift expense logging', () => {
     const openCloseShiftModal = page.locator('[data-bs-target="#closeShiftModal"], button[title="إغلاق الشيفت"]').first();
     await openCloseShiftModal.click();
     await fillCloseShiftForm(page);
-    await page.locator('#closeShiftModal .pos-close-shift-btn-confirm').click();
-    await page.waitForURL(/closed_sessions\.php/, { timeout: 20_000 });
+    await page.waitForURL(/pos_barcode\.php/, { timeout: 20_000 });
+    await expect(page.locator('#shiftCloseResultModal')).toBeVisible({ timeout: 10_000 });
 
     const res = await page.request.post('/do/do_record_shift_expense.php', {
       form: { amount: '5', reason: 'late expense', csrf_token: 'invalid' },

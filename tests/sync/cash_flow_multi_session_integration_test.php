@@ -85,6 +85,45 @@ try {
     cashFlowMultiAssert(count($openSessions) === 1, 'only branch 1 session should remain open');
     cashFlowMultiAssert((int) $openSessions[0]['id'] === $branchOneId, 'open session should be branch 1');
 
+    // Simulate an interrupted or migrated close where status was persisted but
+    // no physical closing count exists. It must remain unknown, not balanced.
+    $_SESSION = ['userid' => 23, 'pos_tenant' => 1, 'pos_branch' => 3];
+    $pending = $drawer->openSession($conn, [
+        'user_id' => 23,
+        'tenant' => 1,
+        'branch' => 3,
+        'opening_cash' => '120.000',
+    ]);
+    $pendingId = (int) $pending['id'];
+    $conn->query("UPDATE drawer_sessions SET status = 'closed', closed_at = NOW(), counted_cash = NULL, difference = NULL WHERE id = {$pendingId}");
+
+    $pendingBreakdown = $drawer->sessionCashBreakdown($conn, $pendingId);
+    cashFlowMultiAssert(($pendingBreakdown['count_pending'] ?? false) === true, 'closed session without a count should be pending');
+    cashFlowMultiAssert(array_key_exists('counted_cash', $pendingBreakdown) && $pendingBreakdown['counted_cash'] === null, 'pending close count should remain null');
+    cashFlowMultiAssert(array_key_exists('close_variance', $pendingBreakdown) && $pendingBreakdown['close_variance'] === null, 'pending close variance should remain unknown');
+
+    $pendingSessions = $period->sessions($conn, [
+        'date_from' => $today,
+        'date_to' => $today,
+        'tenant' => 1,
+        'branch' => 3,
+        'status' => 'closed',
+    ]);
+    cashFlowMultiAssert(count($pendingSessions) === 1, 'pending session should be returned by cash-flow sessions');
+    cashFlowMultiAssert(($pendingSessions[0]['count_pending'] ?? false) === true, 'cash-flow session should identify pending close count');
+    cashFlowMultiAssert($pendingSessions[0]['counted_cash'] === null, 'cash-flow session must not coerce a missing count to zero');
+    cashFlowMultiAssert($pendingSessions[0]['close_variance'] === null, 'cash-flow session must not coerce unknown variance to zero');
+
+    $pendingSummary = $period->summary($conn, [
+        'date_from' => $today,
+        'date_to' => $today,
+        'tenant' => 1,
+        'branch' => 3,
+    ]);
+    cashFlowMultiAssert((int) ($pendingSummary['count_pending_session_count'] ?? 0) === 1, 'summary should count sessions awaiting a close count');
+    cashFlowMultiAssert(abs((float) ($pendingSummary['count_pending_expected_cash'] ?? 0) - 120.0) < 0.01, 'summary should expose expected cash awaiting count');
+    cashFlowMultiAssert(abs((float) ($pendingSummary['close_variance_rollup'] ?? 0)) < 0.01, 'unknown variance must be excluded from variance rollup');
+
     echo "cash-flow-multi-session-integration-ok db={$db}\n";
 } finally {
     $conn->query("DROP DATABASE IF EXISTS `{$db}`");
@@ -128,6 +167,7 @@ function cashFlowMultiCreateSchema(mysqli $conn): void
         INSERT INTO users (id, uname, password, usrole) VALUES
             (21, 'cashier_b1', 'x', 3),
             (22, 'cashier_b2', 'x', 3),
+            (23, 'cashier_b3', 'x', 3),
             (99, 'manager_force', 'x', 2)
     ");
 }

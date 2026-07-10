@@ -1,28 +1,40 @@
 <?php
-// login.php
-// صفحة تسجيل الدخول (مصححة ومحسنة)
+// index.php — main login (PIN on local, username/password on hosted)
 
 require_once __DIR__ . '/includes/session_bootstrap.php';
 require_once __DIR__ . '/includes/db_bootstrap.php';
+require_once __DIR__ . '/includes/csrf.php';
+require_once __DIR__ . '/config/app_config.php';
 require_once __DIR__ . '/classes/PasswordService.php';
 require_once __DIR__ . '/classes/Security/LoginThrottleService.php';
 require_once __DIR__ . '/classes/Security/SecurityAuditLogger.php';
+require_once __DIR__ . '/classes/Security/PostLoginRouteService.php';
+require_once __DIR__ . '/classes/Security/LocalSecurityBootstrapService.php';
 
-// -------------------- إعدادات الداتابيس --------------------
 try {
     $conn = posmain_db_connect();
 } catch (Throwable $e) {
     $reason = posmain_db_error_is_missing_database($e) ? 'reason=db_missing' : 'error=server_down';
-    header("Location: pre_start.php?" . $reason);
+    header('Location: pre_start.php?' . $reason);
     exit;
 }
 
-// Enable SQL error reporting for debugging subsequent queries
 mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
 
-// -------------------- دوال مساعدة --------------------
+$mainAuthMode = 'password';
+try {
+    $mainAuthMode = posmain_main_auth_mode();
+} catch (Throwable $e) {
+    if ($e->getMessage() === 'MAIN_AUTH_MODE_UNSAFE') {
+        http_response_code(503);
+        echo 'Unsafe authentication configuration: PIN main login is not allowed on hosted/cloud/router deployments.';
+        exit;
+    }
+    $mainAuthMode = 'password';
+}
+
 function e($str) {
-    return htmlspecialchars($str, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+    return htmlspecialchars((string) $str, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
 }
 
 function login_security_table_exists(mysqli $conn, string $table): bool
@@ -31,14 +43,10 @@ function login_security_table_exists(mysqli $conn, string $table): bool
     if (array_key_exists($table, $cache)) {
         return $cache[$table];
     }
-
     try {
         $stmt = $conn->prepare("
-            SELECT 1
-              FROM information_schema.TABLES
-             WHERE TABLE_SCHEMA = DATABASE()
-               AND TABLE_NAME = ?
-             LIMIT 1
+            SELECT 1 FROM information_schema.TABLES
+             WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? LIMIT 1
         ");
         $stmt->bind_param('s', $table);
         $stmt->execute();
@@ -47,7 +55,6 @@ function login_security_table_exists(mysqli $conn, string $table): bool
         $cache[$table] = $exists;
         return $exists;
     } catch (Throwable $exception) {
-        error_log('Login security table check skipped: ' . $exception->getMessage());
         $cache[$table] = false;
         return false;
     }
@@ -73,11 +80,9 @@ function login_throttle_blocked(mysqli $conn, LoginThrottleService $throttle, st
     if (!login_security_table_exists($conn, 'failed_login_attempts')) {
         return false;
     }
-
     try {
         return $throttle->isBlocked($conn, $username, $ip, login_security_options());
     } catch (Throwable $exception) {
-        error_log('Login throttle check skipped: ' . $exception->getMessage());
         return false;
     }
 }
@@ -87,11 +92,9 @@ function login_throttle_failure(mysqli $conn, LoginThrottleService $throttle, st
     if (!login_security_table_exists($conn, 'failed_login_attempts')) {
         return;
     }
-
     try {
         $throttle->recordFailure($conn, $username, $ip, login_security_options());
     } catch (Throwable $exception) {
-        error_log('Login throttle failure skipped: ' . $exception->getMessage());
     }
 }
 
@@ -100,11 +103,9 @@ function login_throttle_success(mysqli $conn, LoginThrottleService $throttle, st
     if (!login_security_table_exists($conn, 'failed_login_attempts')) {
         return;
     }
-
     try {
         $throttle->recordSuccess($conn, $username, $ip);
     } catch (Throwable $exception) {
-        error_log('Login throttle clear skipped: ' . $exception->getMessage());
     }
 }
 
@@ -113,42 +114,78 @@ function login_audit(mysqli $conn, SecurityAuditLogger $auditLogger, string $eve
     if (!login_security_table_exists($conn, 'security_audit_log')) {
         return;
     }
-
     try {
         $auditLogger->record($conn, $eventType, $options);
     } catch (Throwable $exception) {
-        error_log('Login audit skipped: ' . $exception->getMessage());
     }
 }
 
 function login_user_by_uname(mysqli $conn, string $user): ?array
 {
-    $stmt = $conn->prepare("SELECT id, uname, password, userrole, usertype FROM users WHERE uname = ? AND isdeleted != 1 LIMIT 1");
-    $stmt->bind_param("s", $user);
+    $stmt = $conn->prepare('SELECT id, uname, password, userrole, usertype FROM users WHERE uname = ? AND isdeleted != 1 LIMIT 1');
+    $stmt->bind_param('s', $user);
     $stmt->execute();
     $row = $stmt->get_result()->fetch_assoc();
     $stmt->close();
-
     return $row ?: null;
 }
 
 function login_user_from_router_alias(mysqli $shopConn, array $route, string $identifier): ?array
 {
     $targetUserId = isset($route['target_user_id']) && $route['target_user_id'] !== null
-        ? (int) $route['target_user_id']
-        : 0;
+        ? (int) $route['target_user_id'] : 0;
     if ($targetUserId > 0) {
-        $stmt = $shopConn->prepare("SELECT id, uname, password, userrole, usertype FROM users WHERE id = ? AND isdeleted != 1 LIMIT 1");
+        $stmt = $shopConn->prepare('SELECT id, uname, password, userrole, usertype FROM users WHERE id = ? AND isdeleted != 1 LIMIT 1');
         $stmt->bind_param('i', $targetUserId);
         $stmt->execute();
         $row = $stmt->get_result()->fetch_assoc();
         $stmt->close();
-
         return $row ?: null;
     }
-
     $targetUname = trim((string) ($route['target_uname'] ?? ''));
     return login_user_by_uname($shopConn, $targetUname !== '' ? $targetUname : $identifier);
+}
+
+function login_auth_version_for_user(mysqli $conn, int $userId): int
+{
+    try {
+        $column = $conn->query("SHOW COLUMNS FROM users LIKE 'auth_version'");
+        if (!$column || $column->num_rows < 1) {
+            return 1;
+        }
+        $stmt = $conn->prepare(
+            'SELECT COALESCE(auth_version, 1) AS auth_version FROM users WHERE id = ? LIMIT 1'
+        );
+        $stmt->bind_param('i', $userId);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        return max(1, (int) ($row['auth_version'] ?? 1));
+    } catch (Throwable $ignored) {
+        return 1;
+    }
+}
+
+function login_pin_must_change_for_user(mysqli $conn, int $userId): bool
+{
+    try {
+        $column = $conn->query("SHOW COLUMNS FROM users LIKE 'pin_must_change'");
+        if (!$column || $column->num_rows < 1) {
+            return false;
+        }
+        $stmt = $conn->prepare(
+            'SELECT COALESCE(pin_must_change, 0) AS pin_must_change FROM users WHERE id = ? LIMIT 1'
+        );
+        $stmt->bind_param('i', $userId);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        return !empty($row['pin_must_change']);
+    } catch (Throwable $ignored) {
+        return false;
+    }
 }
 
 function login_upgrade_password_if_needed(mysqli $conn, int $userId, string $password, string $storedHash): void
@@ -156,11 +193,10 @@ function login_upgrade_password_if_needed(mysqli $conn, int $userId, string $pas
     if (!PasswordService::needsRehash($storedHash)) {
         return;
     }
-
     $newHash = PasswordService::hashPassword($password);
-    $u = $conn->prepare("UPDATE users SET password = ? WHERE id = ?");
+    $u = $conn->prepare('UPDATE users SET password = ? WHERE id = ?');
     if ($u) {
-        $u->bind_param("si", $newHash, $userId);
+        $u->bind_param('si', $newHash, $userId);
         $u->execute();
         $u->close();
     }
@@ -168,9 +204,9 @@ function login_upgrade_password_if_needed(mysqli $conn, int $userId, string $pas
 
 function login_insert_session_time(mysqli $conn, int $userId): void
 {
-    $session_stmt = $conn->prepare("INSERT INTO session_time(user) VALUES (?)");
+    $session_stmt = $conn->prepare('INSERT INTO session_time(user) VALUES (?)');
     if ($session_stmt) {
-        $session_stmt->bind_param("i", $userId);
+        $session_stmt->bind_param('i', $userId);
         $session_stmt->execute();
         $session_stmt->close();
     }
@@ -178,10 +214,7 @@ function login_insert_session_time(mysqli $conn, int $userId): void
 
 function login_redirect_with_error(string $message, string $username = ''): void
 {
-    $_SESSION['login_flash'] = [
-        'message' => $message,
-        'uname' => $username,
-    ];
+    $_SESSION['login_flash'] = ['message' => $message, 'uname' => $username];
     header('Location: ' . ($_SERVER['PHP_SELF'] ?? 'index.php'));
     exit();
 }
@@ -190,11 +223,9 @@ function login_take_error_flash(): array
 {
     $flash = $_SESSION['login_flash'] ?? null;
     unset($_SESSION['login_flash']);
-
     if (!is_array($flash)) {
         return ['message' => null, 'uname' => ''];
     }
-
     $message = trim((string) ($flash['message'] ?? ''));
     return [
         'message' => $message !== '' ? $message : null,
@@ -202,22 +233,98 @@ function login_take_error_flash(): array
     ];
 }
 
-// generate CSRF token
-if (empty($_SESSION['csrf_token'])) {
-    $_SESSION['csrf_token'] = bin2hex(random_bytes(24));
+function login_post_login_redirect(mysqli $conn, int $userId): string
+{
+    try {
+        return (new PostLoginRouteService())->resolveRedirect($conn, $userId);
+    } catch (Throwable $ignored) {
+        return 'dashboard.php';
+    }
 }
 
-// لو المستخدم مسجل بالفعل => اذهب للداشبورد
+csrf_token('default');
+csrf_token('main_pin');
+
 $routerEnabled = function_exists('posmain_router_enabled') && posmain_router_enabled();
 if (
     isset($_SESSION['login'])
     && isset($_SESSION['userid'])
-    && (!$routerEnabled || PosmainShopRouter::activeSessionShopId() > 0)
+    && (!$routerEnabled || (class_exists('PosmainShopRouter') && PosmainShopRouter::activeSessionShopId() > 0))
 ) {
-    header("Location: dashboard.php");
+    if (!empty($_SESSION['posmain_bootstrap_pending']) || !empty($_SESSION['posmain_pin_must_change'])) {
+        header('Location: change_pin.php' . (!empty($_SESSION['posmain_bootstrap_pending']) ? '?bootstrap=1' : ''));
+        exit();
+    }
+    header('Location: ' . login_post_login_redirect($conn, (int) $_SESSION['userid']));
     exit();
 }
 
+// -------------------- PIN main login (local) --------------------
+if ($mainAuthMode === 'pin') {
+    try {
+        $bootstrap = new LocalSecurityBootstrapService();
+        if ($bootstrap->tableExists($conn) && !$bootstrap->isCompleted($conn)) {
+            $bootstrap->ensureLocalBootstrap($conn);
+        }
+    } catch (Throwable $ignored) {
+    }
+
+    $pinPadId = 'mainPinPad';
+    $pinPadCsrf = csrf_token('main_pin');
+    $pinPadEndpoint = 'ajax/main_pin_login.php';
+    $pinPadTitle = 'مرحباً بك';
+    $pinPadSubtitle = 'أدخل رمز الدخول المكوّن من 4 أرقام';
+    $pinPadError = null;
+    $pinPadDigits = 4;
+    $pinPadMode = 'login';
+    $pinPadExtraFields = '';
+    ?>
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Kody POS | تسجيل الدخول</title>
+  <link rel="icon" href="assets/favicon/favicon.png" type="image/png">
+  <link rel="stylesheet" href="assets/fonts/fonts.css">
+  <?php include __DIR__ . '/includes/pin_pad_styles.php'; ?>
+  <?= csrf_meta_tag('main_pin', 'main-pin-csrf-token') ?>
+</head>
+<body class="ppm-page">
+  <div class="ppm-shell">
+    <div style="text-align:center;margin-bottom:1rem;">
+      <img src="assets/favicon/favicon.png" alt="Logo" class="ppm-brand">
+    </div>
+    <div class="ppm-offline-banner" id="mainPinOffline" role="status">لا يوجد اتصال بالشبكة</div>
+    <?php include __DIR__ . '/includes/pin_pad_fragment.php'; ?>
+    <div style="text-align:center;margin-top:1rem;color:rgba(255,255,255,.55);font-size:.8rem;">
+      &copy; <?= date('Y') ?> جميع الحقوق محفوظة
+    </div>
+  </div>
+  <script src="js/pin_pad.js"></script>
+  <script>
+  (function () {
+    var offline = document.getElementById('mainPinOffline');
+    function syncOffline() {
+      if (!offline) return;
+      if (navigator.onLine === false) offline.classList.add('is-visible');
+      else offline.classList.remove('is-visible');
+    }
+    window.addEventListener('online', syncOffline);
+    window.addEventListener('offline', syncOffline);
+    syncOffline();
+    if (window.PosmainPinPad) {
+      window.PosmainPinPad.init('mainPinPad');
+    }
+  })();
+  </script>
+</body>
+</html>
+<?php
+    exit;
+}
+
+// -------------------- Password main login (hosted) --------------------
 $error_message = null;
 $login_username = '';
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
@@ -231,22 +338,19 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 $loginThrottle = new LoginThrottleService();
 $securityAuditLogger = new SecurityAuditLogger();
 
-// -------------------- معالجة POST (تسجيل الدخول) --------------------
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    // تحقق من CSRF token (لو نموذج مرسل)
     $posted_csrf = $_POST['csrf_token'] ?? '';
-    if (!hash_equals($_SESSION['csrf_token'], $posted_csrf)) {
-        $error_message = "طلب غير صالح (CSRF). حاول مرة أخرى.";
+    if (!hash_equals((string) ($_SESSION['csrf_token'] ?? ''), (string) $posted_csrf)) {
+        $error_message = 'طلب غير صالح (CSRF). حاول مرة أخرى.';
     } else {
         $user = trim($_POST['uname'] ?? '');
         $password = $_POST['password'] ?? '';
-
         if ($user === '' || $password === '') {
-            $error_message = "يرجى إدخال اسم المستخدم وكلمة المرور";
+            $error_message = 'يرجى إدخال اسم المستخدم وكلمة المرور';
         } else {
             $clientIp = login_client_ip();
             if (login_throttle_blocked($conn, $loginThrottle, $user, $clientIp)) {
-                $error_message = "تم إيقاف محاولات الدخول مؤقتاً. حاول مرة أخرى بعد قليل.";
+                $error_message = 'تم إيقاف محاولات الدخول مؤقتاً. حاول مرة أخرى بعد قليل.';
                 login_audit($conn, $securityAuditLogger, 'login_throttled', [
                     'ip' => $clientIp,
                     'target_type' => 'user',
@@ -255,7 +359,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             } else {
                 $shopConn = $conn;
                 $route = null;
-                $router = null;
                 try {
                     if ($routerEnabled) {
                         $router = new PosmainShopRouter();
@@ -266,7 +369,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             $routerConn->close();
                         }
                         if (!$route) {
-                            $error_message = "اسم المستخدم أو كلمة المرور غير صحيحة";
+                            $error_message = 'اسم المستخدم أو كلمة المرور غير صحيحة';
                             login_throttle_failure($conn, $loginThrottle, $user, $clientIp);
                             login_audit($conn, $securityAuditLogger, 'login_failure', [
                                 'ip' => $clientIp,
@@ -285,14 +388,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     if ($row) {
                         $storedHash = $row['password'];
                         $userId = (int) $row['id'];
-
                         $password_ok = false;
-
                         if (PasswordService::verifyPassword($password, $storedHash)) {
                             $password_ok = true;
                             login_upgrade_password_if_needed($shopConn, $userId, $password, $storedHash);
                         }
-
                         if ($password_ok) {
                             login_throttle_success($conn, $loginThrottle, $user, $clientIp);
                             login_audit($conn, $securityAuditLogger, 'login_success', [
@@ -307,45 +407,43 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                     'shop_slug' => $route ? (string) $route['slug'] : null,
                                 ],
                             ]);
-
-                            // تسجيل جلسة آمن
                             posmain_session_regenerate();
                             $_SESSION['userid'] = $row['id'];
                             $_SESSION['usrole'] = $row['userrole'];
                             $_SESSION['usty'] = $row['usertype'];
                             $_SESSION['login'] = $row['uname'];
+                            $_SESSION['posmain_auth_method'] = 'password';
+                            $_SESSION['posmain_auth_version'] = login_auth_version_for_user($shopConn, $userId);
+                            $_SESSION['posmain_bootstrap_pending'] = false;
+                            $_SESSION['posmain_pin_must_change'] = login_pin_must_change_for_user($shopConn, $userId);
                             if ($routerEnabled && $route) {
                                 $_SESSION['posmain_shop_id'] = (int) $route['id'];
                                 $_SESSION['posmain_shop_slug'] = (string) $route['slug'];
                                 $_SESSION['posmain_shop_user_id'] = $userId;
                             }
-
-                            // تسجيل وقت الجلسة (prepared)
                             login_insert_session_time($shopConn, $userId);
-
-                            // هنا ممكن تستدعي logger لو معرف
-                            // if (isset($logger)) { $logger->logLogin($row['uname'], true); }
-
-                            header("Location: dashboard.php");
+                            header(
+                                'Location: ' . (
+                                    !empty($_SESSION['posmain_pin_must_change'])
+                                        ? 'change_pin.php'
+                                        : login_post_login_redirect($shopConn, $userId)
+                                )
+                            );
                             exit();
-                        } else {
-                            // رسالة عامة لا تكشف إن اليوزر غير موجود أو الباسورد خاطئ
-                            $error_message = "اسم المستخدم أو كلمة المرور غير صحيحة";
-                            login_throttle_failure($conn, $loginThrottle, $user, $clientIp);
-                            login_audit($conn, $securityAuditLogger, 'login_failure', [
-                                'ip' => $clientIp,
-                                'target_type' => 'user',
-                                'metadata' => [
-                                    'username' => $user,
-                                    'reason' => 'invalid_credentials',
-                                    'shop_id' => $route ? (int) $route['id'] : null,
-                                ],
-                            ]);
-                            // if (isset($logger)) { $logger->logLogin($user, false, "Invalid credentials"); }
                         }
+                        $error_message = 'اسم المستخدم أو كلمة المرور غير صحيحة';
+                        login_throttle_failure($conn, $loginThrottle, $user, $clientIp);
+                        login_audit($conn, $securityAuditLogger, 'login_failure', [
+                            'ip' => $clientIp,
+                            'target_type' => 'user',
+                            'metadata' => [
+                                'username' => $user,
+                                'reason' => 'invalid_credentials',
+                                'shop_id' => $route ? (int) $route['id'] : null,
+                            ],
+                        ]);
                     } else {
-                        // مستخدم غير موجود
-                        $error_message = "اسم المستخدم أو كلمة المرور غير صحيحة";
+                        $error_message = 'اسم المستخدم أو كلمة المرور غير صحيحة';
                         login_throttle_failure($conn, $loginThrottle, $user, $clientIp);
                         login_audit($conn, $securityAuditLogger, 'login_failure', [
                             'ip' => $clientIp,
@@ -356,7 +454,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                 'shop_id' => $route ? (int) $route['id'] : null,
                             ],
                         ]);
-                        // if (isset($logger)) { $logger->logLogin($user, false, "User not found"); }
                     }
                 } catch (RuntimeException $e) {
                     if ($e->getMessage() !== 'LOGIN_HANDLED') {
@@ -364,7 +461,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     }
                 } catch (Throwable $e) {
                     error_log('Router login failed: ' . $e->getMessage());
-                    $error_message = "تعذر فتح بيانات المتجر. يرجى التواصل مع الدعم الفني.";
+                    $error_message = 'تعذر فتح بيانات المتجر. يرجى التواصل مع الدعم الفني.';
                     login_audit($conn, $securityAuditLogger, 'login_failure', [
                         'ip' => $clientIp,
                         'target_type' => 'user',
@@ -378,13 +475,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
     }
-
     if ($error_message !== null) {
         login_redirect_with_error($error_message, trim($_POST['uname'] ?? ''));
     }
 }
-
-// إغلاق الاتصال بعد العرض (اتركه مفتوحًا للعمليات إذا لزم)
 ?>
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
@@ -394,286 +488,68 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
   <title>Kody POS | تسجيل الدخول</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link rel="icon" href="assets/favicon/favicon.png" type="image/png">
-
-  <!-- Fonts -->
   <link rel="stylesheet" href="assets/fonts/fonts.css">
-  
-  <!-- Icons -->
   <link rel="stylesheet" href="plugins/fontawesome-free/css/all.min.css">
-  
-  <!-- Bootstrap 5 (Local) -->
   <link href="assets/libs/bootstrap5/css/bootstrap.min.css" rel="stylesheet">
-
   <style>
     :root {
         --primary-gradient: linear-gradient(135deg, #942C21 0%, #be3e31 100%);
         --glass-bg: rgba(255, 255, 255, 0.9);
         --glass-border: rgba(255, 255, 255, 0.6);
         --input-bg: #fff5f5;
-        --theme-color: #942C21;
     }
-
     body {
         font-family: 'Inter', 'IBM Plex Sans Arabic', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
         background-image: url('assets/wallpaper/background1.jpg');
-        background-size: cover;
-        background-position: center;
-        background-repeat: no-repeat;
-        height: 100vh;
-        margin: 0;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        overflow: hidden;
+        background-size: cover; background-position: center; background-repeat: no-repeat;
+        height: 100vh; margin: 0; display: flex; align-items: center; justify-content: center; overflow: hidden;
     }
-
-    /* Dark Overlay */
     body::before {
-        content: '';
-        position: absolute;
-        top: 0;
-        left: 0;
-        right: 0;
-        bottom: 0;
-        background: rgba(0, 0, 0, 0.4);
-        z-index: -1;
-        backdrop-filter: blur(5px);
+        content: ''; position: absolute; inset: 0; background: rgba(0,0,0,.4); z-index: -1; backdrop-filter: blur(5px);
     }
-
-    .login-container {
-        width: 100%;
-        max-width: 400px;
-        padding: 20px;
-        z-index: 10;
-        animation: fadeInUp 0.8s ease-out;
-    }
-
+    .login-container { width: 100%; max-width: 400px; padding: 20px; z-index: 10; }
     .login-card {
-        background: var(--glass-bg);
-        border-radius: 20px;
-        padding: 40px 30px;
-        box-shadow: 0 15px 35px rgba(0, 0, 0, 0.2);
-        backdrop-filter: blur(20px);
-        -webkit-backdrop-filter: blur(20px);
-        border: 1px solid var(--glass-border);
-        text-align: center;
-        position: relative;
-        overflow: hidden;
+        background: var(--glass-bg); border-radius: 20px; padding: 40px 30px;
+        box-shadow: 0 15px 35px rgba(0,0,0,.2); backdrop-filter: blur(20px);
+        border: 1px solid var(--glass-border); text-align: center; position: relative; overflow: hidden;
     }
-
-    .login-card::before {
-        content: '';
-        position: absolute;
-        top: 0;
-        left: 0;
-        width: 100%;
-        height: 6px;
-        background: var(--primary-gradient);
-    }
-
-    .brand-logo {
-        width: 120px;
-        height: auto;
-        margin-bottom: 20px;
-        filter: drop-shadow(0 4px 6px rgba(0,0,0,0.1));
-        transition: transform 0.3s ease;
-    }
-    
-    .brand-logo:hover {
-        transform: scale(1.05) rotate(-5deg);
-    }
-
-    .login-title {
-        color: #333;
-        font-weight: 700;
-        margin-bottom: 5px;
-        font-size: 1.8rem;
-    }
-
-    .login-subtitle {
-        color: #666;
-        font-size: 0.95rem;
-        margin-bottom: 30px;
-    }
-
-    .form-control, .form-select {
-        background-color: var(--input-bg);
-        border: 2px solid transparent;
-        border-radius: 12px;
-        padding: 12px 15px;
-        font-size: 1rem;
-        transition: all 0.3s ease;
-    }
-
-    .form-control:focus, .form-select:focus {
-        background-color: #fff;
-        border-color: #942C21;
-        box-shadow: 0 0 0 4px rgba(148, 44, 33, 0.15);
-    }
-
-    .input-group-text {
-        background-color: var(--input-bg);
-        border: none;
-        border-radius: 12px;
-        color: #942C21;
-    }
-    
-    .form-label {
-        font-weight: 600;
-        color: #444;
-        margin-bottom: 8px;
-        display: block;
-        text-align: right;
-    }
-
+    .login-card::before { content:''; position:absolute; top:0; left:0; width:100%; height:6px; background: var(--primary-gradient); }
+    .brand-logo { width: 120px; height: auto; margin-bottom: 20px; }
+    .login-title { color:#333; font-weight:700; margin-bottom:5px; font-size:1.8rem; }
+    .login-subtitle { color:#666; font-size:.95rem; margin-bottom:30px; }
+    .form-control { background-color: var(--input-bg); border: 2px solid transparent; border-radius: 12px; padding: 12px 15px; }
+    .form-control:focus { background:#fff; border-color:#942C21; box-shadow: 0 0 0 4px rgba(148,44,33,.15); }
+    .form-label { font-weight:600; color:#444; margin-bottom:8px; display:block; text-align:right; }
     .btn-login {
-        background: var(--primary-gradient);
-        border: none;
-        border-radius: 12px;
-        padding: 14px;
-        font-weight: 700;
-        font-size: 1.1rem;
-        color: white;
-        width: 100%;
-        transition: all 0.3s ease;
-        margin-top: 20px;
-        box-shadow: 0 4px 15px rgba(148, 44, 33, 0.3);
+        background: var(--primary-gradient); border:none; border-radius:12px; padding:14px; font-weight:700;
+        font-size:1.1rem; color:white; width:100%; margin-top:20px; box-shadow: 0 4px 15px rgba(148,44,33,.3);
     }
-
-    .btn-login:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 8px 25px rgba(148, 44, 33, 0.4);
-    }
-    
-    .btn-login:active {
-        transform: translateY(0);
-    }
-
-    .form-check-input:checked {
-        background-color: #942C21;
-        border-color: #942C21;
-    }
-
-    .alert {
-        border-radius: 12px;
-        font-size: 0.9rem;
-        padding: 10px 15px;
-        border: none;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.05);
-    }
-    
-    .alert-danger {
-        background-color: #ffe5e5;
-        color: #d63031;
-    }
-
-    @keyframes fadeInUp {
-        from {
-            opacity: 0;
-            transform: translateY(20px);
-        }
-        to {
-            opacity: 1;
-            transform: translateY(0);
-        }
-    }
-    
-    /* Decoration Circles */
-    .circle {
-        position: absolute;
-        border-radius: 50%;
-        z-index: -1;
-        opacity: 0.6;
-    }
-    
-    .circle-1 {
-        top: 10%;
-        left: 20%;
-        width: 150px;
-        height: 150px;
-        background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
-        filter: blur(40px);
-        animation: float 6s ease-in-out infinite;
-    }
-    
-    .circle-2 {
-        bottom: 10%;
-        right: 20%;
-        width: 200px;
-        height: 200px;
-        background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%);
-        filter: blur(50px);
-        animation: float 8s ease-in-out infinite reverse;
-    }
-    
-    @keyframes float {
-        0%, 100% { transform: translateY(0); }
-        50% { transform: translateY(-20px); }
-    }
+    .alert-danger { background:#ffe5e5; color:#d63031; border:none; border-radius:12px; }
   </style>
 </head>
 <body>
-
-<!-- Animated Background Elements -->
-<div class="circle circle-1"></div>
-<div class="circle circle-2"></div>
-
 <div class="login-container">
-    <div class="login-card">
-        <div class="text-center">
-            <img src="assets/favicon/favicon.png" alt="Logo" class="brand-logo">
-            <h2 class="login-title">مرحباً بك مجدداً</h2>
-            <p class="login-subtitle">سجل الدخول للمتابعة إلى النظام</p>
-        </div>
-
-        <?php if (!empty($error_message)): ?>
-        <div class="alert alert-danger mb-4 fade show" role="alert">
-            <i class="fas fa-exclamation-circle me-2"></i>
-            <?= e($error_message) ?>
-        </div>
-        <?php endif; ?>
-
-        <form action="<?= e($_SERVER['PHP_SELF']) ?>" method="post" autocomplete="off" novalidate>
-            <input type="hidden" name="csrf_token" value="<?= e($_SESSION['csrf_token']) ?>">
-
-            <div class="mb-4 text-end">
-                <label for="uname" class="form-label">اسم المستخدم أو البريد أو الهاتف</label>
-                <div class="input-group">
-                    <!-- <span class="input-group-text bg-white border-0 ps-3"><i class="fas fa-user text-muted"></i></span> -->
-                    <input type="text" name="uname" id="uname" class="form-control border-start-0 ps-0" value="<?= e($login_username) ?>" placeholder="أدخل اسم المستخدم أو البريد أو الهاتف" required autocomplete="username" style="border-radius: 0 12px 12px 0;">
-                </div>
-            </div>
-
-            <div class="mb-4 text-end">
-                <label for="password" class="form-label">كلمة المرور</label>
-                <div class="input-group">
-                    <!-- <span class="input-group-text bg-white border-0 ps-3"><i class="fas fa-lock text-muted"></i></span> -->
-                    <input type="password" name="password" id="password" class="form-control border-start-0 ps-0" placeholder="أدخل كلمة المرور" required style="border-radius: 0 12px 12px 0;">
-                </div>
-            </div>
-
-            <div class="d-flex justify-content-between align-items-center mb-4">
-                <div class="form-check">
-                    <input class="form-check-input" type="checkbox" id="remember" name="remember">
-                    <label class="form-check-label text-muted small" for="remember">
-                        تذكرني
-                    </label>
-                </div>
-                <!-- <a href="#" class="text-decoration-none small text-primary fw-bold">نسيت كلمة المرور؟</a> -->
-            </div>
-
-            <button type="submit" class="btn btn-login">
-                تسجيل الدخول <i class="fas fa-arrow-left ms-2"></i>
-            </button>
-        </form>
-    </div>
-    
-    <div class="text-center mt-4 text-white-50 small">
-        &copy; <?= date('Y') ?> جميع الحقوق محفوظة
-    </div>
+  <div class="login-card">
+    <img src="assets/favicon/favicon.png" alt="Logo" class="brand-logo">
+    <h2 class="login-title">مرحباً بك مجدداً</h2>
+    <p class="login-subtitle">سجل الدخول للمتابعة إلى النظام</p>
+    <?php if (!empty($error_message)): ?>
+      <div class="alert alert-danger mb-4" role="alert"><i class="fas fa-exclamation-circle me-2"></i><?= e($error_message) ?></div>
+    <?php endif; ?>
+    <form action="<?= e($_SERVER['PHP_SELF'] ?? 'index.php') ?>" method="post" autocomplete="off" novalidate>
+      <input type="hidden" name="csrf_token" value="<?= e($_SESSION['csrf_token'] ?? '') ?>">
+      <div class="mb-4 text-end">
+        <label for="uname" class="form-label">اسم المستخدم أو البريد أو الهاتف</label>
+        <input type="text" name="uname" id="uname" class="form-control" value="<?= e($login_username) ?>" required autocomplete="username">
+      </div>
+      <div class="mb-4 text-end">
+        <label for="password" class="form-label">كلمة المرور</label>
+        <input type="password" name="password" id="password" class="form-control" required>
+      </div>
+      <button type="submit" class="btn btn-login">تسجيل الدخول <i class="fas fa-arrow-left ms-2"></i></button>
+    </form>
+  </div>
 </div>
-
-<!-- Scripts -->
 <script src="assets/libs/bootstrap5/js/bootstrap.bundle.min.js"></script>
 </body>
 </html>

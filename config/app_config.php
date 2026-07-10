@@ -154,6 +154,73 @@ if (!function_exists('posmain_pin_secret')) {
     }
 }
 
+if (!function_exists('posmain_resolve_main_auth_mode')) {
+    /**
+     * Resolve main login mode. Hosted/cloud/router deployments are forced to password.
+     *
+     * @throws RuntimeException MAIN_AUTH_MODE_UNSAFE when pin is requested on hosted/cloud/router
+     */
+    function posmain_resolve_main_auth_mode(
+        string $env = '',
+        ?bool $productionMode = null,
+        string $role = '',
+        string $routerEnabled = ''
+    ): string {
+        $configured = strtolower(trim((string) posmain_env('POSMAIN_MAIN_AUTH_MODE', '', true)));
+        if ($configured === '') {
+            $configured = 'auto';
+        }
+        if (!in_array($configured, ['auto', 'pin', 'password'], true)) {
+            throw new RuntimeException('MAIN_AUTH_MODE_INVALID');
+        }
+
+        $env = $env !== '' ? $env : (string) posmain_env('POSMAIN_ENV', 'local');
+        $role = $role !== '' ? strtolower(trim($role)) : strtolower(trim((string) posmain_env('POSMAIN_ROLE', 'branch')));
+        $productionMode = $productionMode ?? posmain_bool(posmain_env('POSMAIN_PRODUCTION_MODE', null), strtolower($env) === 'production');
+        $routerOn = posmain_bool($routerEnabled !== '' ? $routerEnabled : posmain_env('POSMAIN_ROUTER_ENABLED', '0'), false);
+        $isHosted = in_array($role, ['cloud', 'fake_cloud'], true) || $routerOn;
+
+        if ($configured === 'pin' && $isHosted) {
+            throw new RuntimeException('MAIN_AUTH_MODE_UNSAFE');
+        }
+
+        if ($configured === 'password') {
+            return 'password';
+        }
+        if ($configured === 'pin') {
+            return 'pin';
+        }
+
+        // auto: local/branch → pin, hosted/cloud/router → password
+        return $isHosted ? 'password' : 'pin';
+    }
+}
+
+if (!function_exists('posmain_main_auth_mode')) {
+    function posmain_main_auth_mode(?array $config = null): string
+    {
+        $config = $config ?? posmain_app_config();
+        $mode = strtolower(trim((string) ($config['auth']['main_login_mode'] ?? '')));
+        if ($mode === 'pin' || $mode === 'password') {
+            return $mode;
+        }
+
+        return posmain_resolve_main_auth_mode(
+            (string) ($config['env'] ?? ''),
+            !empty($config['production_mode']),
+            (string) ($config['role'] ?? 'branch'),
+            !empty($config['router']['enabled']) ? '1' : '0'
+        );
+    }
+}
+
+if (!function_exists('posmain_is_pin_main_auth')) {
+    function posmain_is_pin_main_auth(?array $config = null): bool
+    {
+        return posmain_main_auth_mode($config) === 'pin';
+    }
+}
+
 if (!function_exists('posmain_first_env')) {
     function posmain_first_env(array $names, $default = null, bool $allowEmpty = false)
     {
@@ -489,6 +556,9 @@ if (!function_exists('posmain_app_config')) {
             'role' => (string) $branchEnv(['POSMAIN_ROLE'], 'branch'),
             'timezone' => (string) $branchEnv(['POSMAIN_TIMEZONE'], 'Africa/Cairo'),
             'production_mode' => $productionMode,
+            'auth' => [
+                'main_login_mode' => posmain_resolve_main_auth_mode($env, $productionMode, $configRole, (string) posmain_env('POSMAIN_ROUTER_ENABLED', '0')),
+            ],
             'moova' => [
                 'mode' => $moovaMode,
                 'direct_apply_enabled' => $moovaDirectApply,

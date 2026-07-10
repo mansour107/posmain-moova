@@ -47,6 +47,21 @@ $pin = trim((string) ($_POST['pin'] ?? ''));
 $clearPin = isset($_POST['clear_pin']);
 $lifecycleGuard = new UserLifecycleGuardService();
 $actorUserId = function_exists('current_user_id') ? current_user_id() : (int) ($_SESSION['userid'] ?? 0);
+$previousRoleId = null;
+$previousUserType = null;
+$previousIsWaiter = null;
+$prevStmt = $conn->prepare(
+    'SELECT userrole, usertype, is_waiter FROM users WHERE id = ? LIMIT 1'
+);
+$prevStmt->bind_param('i', $id);
+$prevStmt->execute();
+$prevRow = $prevStmt->get_result()->fetch_assoc();
+$prevStmt->close();
+if ($prevRow) {
+    $previousRoleId = (int) ($prevRow['userrole'] ?? 0);
+    $previousUserType = (int) ($prevRow['usertype'] ?? 0);
+    $previousIsWaiter = (int) ($prevRow['is_waiter'] ?? 0);
+}
 
 try {
     $lifecycleGuard->assertDisplayNameUnique($conn, $displayName, $id);
@@ -86,15 +101,7 @@ if ($usertype !== '') {
 }
 
 // userrole
-$previousRoleId = null;
 if ($userrole !== '') {
-    $prevStmt = $conn->prepare('SELECT userrole FROM users WHERE id = ? LIMIT 1');
-    $prevStmt->bind_param('i', $id);
-    $prevStmt->execute();
-    $prevRow = $prevStmt->get_result()->fetch_assoc();
-    $prevStmt->close();
-    $previousRoleId = (int) ($prevRow['userrole'] ?? 0);
-
     $fields[] = "userrole = ?";
     $types .= "s";
     $values[] = $userrole;
@@ -213,6 +220,22 @@ if ($stmt->execute()) {
         ]);
         require_once __DIR__ . '/../classes/Security/PermissionService.php';
         (new PermissionService($conn))->bumpPermissionsVersion();
+    }
+
+    $securityIdentityChanged = (
+        $userrole !== ''
+        && $previousRoleId !== null
+        && (int) $userrole !== $previousRoleId
+    ) || (
+        $usertype !== ''
+        && $previousUserType !== null
+        && (int) $usertype !== $previousUserType
+    ) || (
+        $previousIsWaiter !== null
+        && $is_waiter !== $previousIsWaiter
+    );
+    if ($securityIdentityChanged && $pin === '' && !$clearPin) {
+        $pinService->bumpAuthVersion($conn, $id);
     }
 
     $stmt->close();

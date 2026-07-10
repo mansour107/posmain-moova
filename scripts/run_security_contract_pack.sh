@@ -18,6 +18,8 @@ PACK=(
   tests/sync/rbac_critical_surfaces_contract_test.php
   tests/sync/rbac_write_surface_contract_test.php
   tests/sync/rbac_manifest_coverage_test.php
+  tests/sync/rbac_manifest_completeness_contract_test.php
+  tests/sync/rbac_fail_closed_unlisted_guard_contract_test.php
   tests/sync/sidebar_permission_contract_test.php
   tests/sync/role_permission_sync_test.php
   tests/sync/rbac_runtime_denial_matrix_test.php
@@ -27,6 +29,8 @@ PACK=(
   tests/sync/user_override_deny_matrix_test.php
   tests/sync/changed_php_syntax_contract_test.php
   tests/sync/team_hub_pin_reveal_contract_test.php
+  tests/sync/local_pin_auth_contract_test.php
+  tests/sync/shift_entry_state_machine_contract_test.php
   tests/sync/user_lifecycle_drawer_guard_test.php
   tests/sync/user_lifecycle_session_guard_contract_test.php
   tests/sync/team_hub_panel_url_contract_test.php

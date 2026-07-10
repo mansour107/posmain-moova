@@ -41,8 +41,8 @@ posLocalDockerAssert(
     'Local POS web container should know where to read branch sync settings when process env is missing'
 );
 posLocalDockerAssert(
-    strpos($compose, 'POSMAIN_MOOVA_MODE: direct_widget') !== false,
-    'Local POS web container should default Moova to direct widget mode (direct apply is implied by mode)'
+    preg_match('/POSMAIN_MOOVA_MODE:\s*(disabled|direct_widget)/', $compose) === 1,
+    'Local POS web container should set an explicit Moova mode (disabled for PIN E2E stability, or direct_widget)'
 );
 posLocalDockerAssert(
     strpos($compose, '- .:/app') !== false && strpos($compose, '- .:/app:ro') === false,

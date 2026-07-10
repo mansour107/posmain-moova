@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__ . '/../includes/session_bootstrap.php';
 // Use AJAX header (no HTML output) instead of pos_simple_header
 include(__DIR__ . '/../includes/ajax_header.php');
 require_once(__DIR__ . '/../includes/auth_guard.php');

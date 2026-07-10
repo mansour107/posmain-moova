@@ -1,9 +1,11 @@
-<?php if (!isset($_COOKIE['login'])) {
+<?php
+require_once __DIR__ . '/includes/session_bootstrap.php';
+require_once __DIR__ . '/includes/connect.php';
+if (!isset($_COOKIE['login'])) {
     header('location:../indexmop.php');
   } ?>
 
 <?php include('includes/headermop.php') ?>
-<?php include('includes/connect.php') ?>
 
 
 

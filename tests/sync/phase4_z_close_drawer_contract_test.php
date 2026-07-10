@@ -21,9 +21,12 @@ phase4ZCloseAssert(strpos($source, '$conn->begin_transaction();') !== false, 'Z 
 phase4ZCloseAssert(strpos($source, 'closeSession($conn, $drawer_session_id') !== false, 'Z close should close drawer session when present');
 phase4ZCloseAssert(strpos($source, '$conn->commit();') !== false, 'Z close should commit on success');
 phase4ZCloseAssert(strpos($source, '$conn->rollback();') !== false, 'Z close should roll back on failure');
-phase4ZCloseAssert(strpos($source, "header('Location: closed_sessions.php')") !== false, 'success redirect should remain');
+phase4ZCloseAssert(strpos($source, "header('Location: pos_barcode.php?logout=1')") !== false, 'success should return to POS unlock screen');
+phase4ZCloseAssert(strpos($source, 'pos_shift_close_result') !== false, 'success should stash close result for unlock modal');
 phase4ZCloseAssert(strpos($source, "header('Location: z_report.php')") !== false, 'error redirect should remain');
 phase4ZCloseAssert(strpos($source, "require_csrf('shift_close_z');") !== false, 'CSRF validation should remain');
+phase4ZCloseAssert(strpos($source, "\$_POST['close_token']") !== false || strpos($source, '$_POST[\'close_token\']') !== false, 'Z close should read close_token when handover enabled');
+phase4ZCloseAssert(strpos($source, 'pos_shift_handover_idempotent') !== false, 'Z close should use handover idempotency when enabled');
 
 echo "phase4-z-close-drawer-contract-ok\n";
 

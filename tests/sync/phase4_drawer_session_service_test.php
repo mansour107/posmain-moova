@@ -89,7 +89,7 @@ try {
     phase4DrawerAssert($closed['status'] === 'closed', 'session should close');
     phase4DrawerAssert($closed['expected_cash'] === '124.500', 'closed expected cash should include closing adjustment');
     phase4DrawerAssert($closed['counted_cash'] === '124.500', 'counted cash mismatch');
-    phase4DrawerAssert($closed['difference'] === '0.000', 'difference should be zero after closing adjustment');
+    phase4DrawerAssert($closed['difference'] === '-0.500', 'difference should keep pre-close over/short (counted - expected before adjustment)');
     phase4DrawerAssert($service->findOpenSession($conn, 7, 3, 4) === null, 'closed session should no longer be open');
 
     phase4DrawerExpectException(function () use ($service, $conn, $session) {

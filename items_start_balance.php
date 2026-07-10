@@ -1,4 +1,6 @@
 <?php
+require_once __DIR__ . '/includes/session_bootstrap.php';
+require_once __DIR__ . '/includes/connect.php';
 require_once __DIR__ . '/config/app_config.php';
 $items_start_balance_config_for_guard = function_exists('posmain_app_config') ? posmain_app_config() : [];
 if (strtolower((string) ($items_start_balance_config_for_guard['inventory']['ledger_mode'] ?? 'off')) === 'live') {

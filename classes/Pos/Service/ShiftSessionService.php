@@ -4,6 +4,11 @@ require_once __DIR__ . '/DrawerSessionService.php';
 require_once __DIR__ . '/DrawerLedgerPostingService.php';
 require_once __DIR__ . '/../../ShiftReport.php';
 
+// Drawer session lookups depend on posmain_drawer_sessions_table_exists().
+if (!function_exists('posmain_drawer_sessions_table_exists')) {
+    require_once dirname(__DIR__, 3) . '/includes/pos_shift_guard.php';
+}
+
 class ShiftSessionService
 {
     private DrawerSessionService $drawerSessions;
@@ -76,6 +81,7 @@ class ShiftSessionService
             }
         }
 
+        $registerId = $context['register_id'] ?? ($_SESSION['pos_register_id'] ?? null);
         $session = $this->drawerSessions->openSession($conn, [
             'user_id' => $userId,
             'opened_by' => (int) ($context['opened_by'] ?? $userId),
@@ -85,6 +91,9 @@ class ShiftSessionService
             'opening_cash' => $context['opening_cash'] ?? '0',
             'opened_at' => $context['opened_at'] ?? null,
             'notes' => $context['notes'] ?? null,
+            'register_id' => $registerId,
+            'preceding_session_id' => $context['preceding_session_id'] ?? null,
+            'takeover_authorized_by' => $context['takeover_authorized_by'] ?? null,
         ]);
 
         $_SESSION['pos_drawer_session_id'] = (int) $session['id'];
@@ -122,10 +131,11 @@ class ShiftSessionService
         );
     }
 
-    public function recordShiftExpense(mysqli $conn, int $userId, array $payload): array
+    public function recordShiftExpense(mysqli $conn, int $userId, array $payload, array $context = []): array
     {
         require_once dirname(__DIR__, 3) . '/includes/auth_guard.php';
         require_once dirname(__DIR__, 3) . '/includes/pos_shift_guard.php';
+        require_once dirname(__DIR__, 3) . '/includes/db_transaction.php';
 
         if (posmain_pos_shift_write_blocked(null, $conn)) {
             throw new RuntimeException('SHIFT_WRITE_BLOCKED');
@@ -154,7 +164,7 @@ class ShiftSessionService
             $payload
         );
 
-        $conn->begin_transaction();
+        $ownsTransaction = posmain_tx_begin_if_needed($conn, posmain_tx_context_in_transaction($context));
 
         try {
             $fundAccountId = $this->ledgerPosting->resolveFundAccountId($conn, $drawerSession);
@@ -179,9 +189,9 @@ class ShiftSessionService
                 'ref_ot_head_id' => $refOtHeadId,
             ]);
 
-            $conn->commit();
+            posmain_tx_commit_if_owned($conn, $ownsTransaction);
         } catch (Throwable $exception) {
-            $conn->rollback();
+            posmain_tx_rollback_if_owned($conn, $ownsTransaction);
             throw $exception;
         }
 
@@ -193,10 +203,11 @@ class ShiftSessionService
         ];
     }
 
-    public function recordShiftPayIn(mysqli $conn, int $userId, array $payload): array
+    public function recordShiftPayIn(mysqli $conn, int $userId, array $payload, array $context = []): array
     {
         require_once dirname(__DIR__, 3) . '/includes/auth_guard.php';
         require_once dirname(__DIR__, 3) . '/includes/pos_shift_guard.php';
+        require_once dirname(__DIR__, 3) . '/includes/db_transaction.php';
 
         if (posmain_pos_shift_write_blocked(null, $conn)) {
             throw new RuntimeException('SHIFT_WRITE_BLOCKED');
@@ -219,7 +230,7 @@ class ShiftSessionService
 
         $managerApprovalId = (int) ($payload['manager_approval_id'] ?? 0) ?: null;
 
-        $conn->begin_transaction();
+        $ownsTransaction = posmain_tx_begin_if_needed($conn, posmain_tx_context_in_transaction($context));
 
         try {
             $fundAccountId = $this->ledgerPosting->resolveFundAccountId($conn, $drawerSession);
@@ -244,9 +255,9 @@ class ShiftSessionService
                 'ref_ot_head_id' => $refOtHeadId,
             ]);
 
-            $conn->commit();
+            posmain_tx_commit_if_owned($conn, $ownsTransaction);
         } catch (Throwable $exception) {
-            $conn->rollback();
+            posmain_tx_rollback_if_owned($conn, $ownsTransaction);
             throw $exception;
         }
 
@@ -258,10 +269,11 @@ class ShiftSessionService
         ];
     }
 
-    public function recordShiftSafeDrop(mysqli $conn, int $userId, array $payload): array
+    public function recordShiftSafeDrop(mysqli $conn, int $userId, array $payload, array $context = []): array
     {
         require_once dirname(__DIR__, 3) . '/includes/auth_guard.php';
         require_once dirname(__DIR__, 3) . '/includes/pos_shift_guard.php';
+        require_once dirname(__DIR__, 3) . '/includes/db_transaction.php';
 
         if (posmain_pos_shift_write_blocked(null, $conn)) {
             throw new RuntimeException('SHIFT_WRITE_BLOCKED');
@@ -284,7 +296,7 @@ class ShiftSessionService
 
         $managerApprovalId = (int) ($payload['manager_approval_id'] ?? 0) ?: null;
 
-        $conn->begin_transaction();
+        $ownsTransaction = posmain_tx_begin_if_needed($conn, posmain_tx_context_in_transaction($context));
 
         try {
             $fundAccountId = $this->ledgerPosting->resolveFundAccountId($conn, $drawerSession);
@@ -309,9 +321,9 @@ class ShiftSessionService
                 'ref_ot_head_id' => $refOtHeadId,
             ]);
 
-            $conn->commit();
+            posmain_tx_commit_if_owned($conn, $ownsTransaction);
         } catch (Throwable $exception) {
-            $conn->rollback();
+            posmain_tx_rollback_if_owned($conn, $ownsTransaction);
             throw $exception;
         }
 
@@ -529,105 +541,26 @@ class ShiftSessionService
         return substr($notes, 0, 30);
     }
 
-    public function closeSimpleShift(mysqli $conn, int $userId, array $payload): array
+    public function closeSimpleShift(mysqli $conn, int $userId, array $payload, array $context = []): array
     {
-        require_once dirname(__DIR__, 3) . '/includes/auth_guard.php';
+        require_once __DIR__ . '/ShiftCloseService.php';
+        require_once __DIR__ . '/ShiftCountService.php';
+        require_once dirname(__DIR__, 3) . '/includes/db_transaction.php';
 
-        if (!empty($_SESSION['pos_shift_closed_for_session'])) {
-            throw new RuntimeException('SHIFT_ALREADY_CLOSED');
-        }
-
-        $scope = $this->resolveScope($payload);
-        $drawerSession = $this->currentDrawerSession($conn, $userId, $scope);
-        $drawerSessionId = $drawerSession ? (int) $drawerSession['id'] : 0;
-
-        $shiftDate = date('Y-m-d');
-        $shiftTime = date('H:i:s');
-        $reportScope = $scope;
-        if ($drawerSession) {
-            $reportScope['shift_opened_at'] = $drawerSession['opened_at'];
-            $reportScope['drawer_session_id'] = $drawerSessionId;
-        }
-
-        $report = new ShiftReport($conn, $userId, $shiftDate, $reportScope);
-        $totals = $report->getTotals();
-        $totalOrders = (int) ($totals['total_orders'] ?? 0);
-        $totalSales = (float) ($totals['total_net'] ?? 0);
-
-        $username = $this->cashierUsername($conn, $userId);
-        $resolvedExpenses = $this->resolveCloseExpenses($conn, $userId, $scope, $payload);
-        $expenses = (float) $resolvedExpenses['expenses'];
-        $expNotes = (string) $resolvedExpenses['exp_notes'];
-        $expenseSummary = $resolvedExpenses['expense_summary'];
-        $payInSummary = $drawerSession
-            ? $this->shiftPayInSummary($conn, $userId, $scope)
-            : ['total' => 0.0, 'count' => 0];
-        $cash = (float) ($payload['cash'] ?? 0);
-        $fundAfter = (float) ($payload['fund_after'] ?? 0);
-        $notes = trim((string) ($payload['notes'] ?? ''));
-        $shiftSessionToken = trim((string) ($_SESSION['pos_shift_session_token'] ?? ''));
-        if ($shiftSessionToken !== '') {
-            $tokenSuffix = 'shift_token:' . $shiftSessionToken;
-            $notes = $notes === '' ? $tokenSuffix : $notes . ' | ' . $tokenSuffix;
-        }
-
-        $jsonDetails = json_encode([
-            'drawer_session_id' => $drawerSessionId,
-            'shift_opened_at' => $drawerSession['opened_at'] ?? null,
-            'total_orders' => $totalOrders,
-            'close_path' => 'close_shift.php',
-            'expense_source' => $expenseSummary['source'] ?? null,
-            'expense_count' => (int) ($expenseSummary['count'] ?? 0),
-            'payin_total' => (float) ($payInSummary['total'] ?? 0),
-            'payin_count' => (int) ($payInSummary['count'] ?? 0),
-            'drawer_expected_cash' => $expenseSummary['expected_cash'] ?? null,
-        ], JSON_UNESCAPED_UNICODE);
-
-        $shiftNumber = date('Ymd') . '_' . $userId;
-        $conn->begin_transaction();
-
-        try {
-            $closedOrderId = $this->insertClosedOrder($conn, [
-                'shift' => $shiftNumber,
-                'date' => $shiftDate,
-                'user' => $username,
-                'endtime' => $shiftTime,
-                'total_sales' => $totalSales,
-                'expenses' => $expenses,
-                'exp_notes' => $expNotes,
-                'cash' => $cash,
-                'fund_after' => $fundAfter,
-                'info' => $notes,
-                'json_details' => $jsonDetails,
-            ]);
-
-            if ($drawerSessionId > 0) {
-                $this->drawerSessions->closeSession($conn, $drawerSessionId, [
-                    'closed_by' => $userId,
-                    'counted_cash' => (string) $fundAfter,
-                    'notes' => $notes,
-                ]);
+        $countService = new ShiftCountService();
+        if ($countService->handoverEnabled($conn)) {
+            if (!empty($payload['close_token'])) {
+                $result = $countService->closeWithValidatedCount($conn, $userId, $payload, $context);
+            } elseif (!empty($_SESSION['pos_shift_close_count']) && empty($payload['bypass_count_token'])) {
+                throw new RuntimeException('CLOSE_TOKEN_REQUIRED');
+            } else {
+                $result = (new ShiftCloseService())->closeShift($conn, $userId, $payload, $context);
             }
-
-            $conn->commit();
-        } catch (Throwable $exception) {
-            $conn->rollback();
-            throw $exception;
+        } else {
+            $result = (new ShiftCloseService())->closeShift($conn, $userId, $payload, $context);
         }
 
-        posmain_clear_pos_shift_session(true);
-        unset($_SESSION['pos_drawer_session_id'], $_SESSION['pos_shift_session_token']);
-        if (function_exists('posmain_session_regenerate')) {
-            posmain_session_regenerate();
-        }
-
-        return [
-            'closed_order_id' => $closedOrderId,
-            'drawer_session_id' => $drawerSessionId,
-            'total_orders' => $totalOrders,
-            'total_sales' => $totalSales,
-            'username' => $username,
-        ];
+        return $result;
     }
 
     public function sessionStatus(?mysqli $conn, ?array $session = null): array
@@ -665,13 +598,127 @@ class ShiftSessionService
 
     private function cashierUsername(mysqli $conn, int $userId): string
     {
-        $stmt = $conn->prepare('SELECT uname FROM users WHERE id = ? LIMIT 1');
+        $stmt = $conn->prepare('SELECT uname, display_name FROM users WHERE id = ? LIMIT 1');
         $stmt->bind_param('i', $userId);
         $stmt->execute();
         $row = $stmt->get_result()->fetch_assoc();
         $stmt->close();
+        if (!is_array($row)) {
+            return (string) ($_SESSION['login'] ?? 'Unknown');
+        }
+        $display = trim((string) ($row['display_name'] ?? ''));
+        if ($display !== '') {
+            return $display;
+        }
 
-        return $row['uname'] ?? ($_SESSION['login'] ?? 'Unknown');
+        return trim((string) ($row['uname'] ?? '')) ?: (string) ($_SESSION['login'] ?? 'Unknown');
+    }
+
+    /**
+     * Identity payload for POS chrome: current cashier + optional takeover lineage.
+     *
+     * @return array{
+     *   cashier_name:string,
+     *   cashier_user_id:int,
+     *   terminal_name:?string,
+     *   terminal_user_id:int,
+     *   is_takeover:bool,
+     *   preceding_cashier_name:?string,
+     *   preceding_user_id:?int,
+     *   authorized_by_name:?string,
+     *   authorized_by_user_id:?int,
+     *   drawer_session_id:?int
+     * }
+     */
+    public function resolvePosIdentity(?mysqli $conn, ?array $session = null): array
+    {
+        $session = $session ?? $_SESSION;
+        $actingId = function_exists('pos_acting_user_id')
+            ? pos_acting_user_id()
+            : (int) ($session['pos_acting_user_id'] ?? $session['pos_user_id'] ?? 0);
+        $terminalId = function_exists('pos_terminal_user_id')
+            ? pos_terminal_user_id()
+            : (int) ($session['userid'] ?? 0);
+
+        $cashierName = trim((string) ($session['pos_acting_user_name'] ?? $session['pos_user_name'] ?? ''));
+        if ($cashierName === '' && $conn instanceof mysqli && $actingId > 0) {
+            $cashierName = $this->cashierUsername($conn, $actingId);
+        }
+        if ($cashierName === '') {
+            $cashierName = (string) ($session['login'] ?? 'الموظف');
+        }
+
+        $terminalName = null;
+        if ($terminalId > 0 && $terminalId !== $actingId) {
+            $terminalName = $conn instanceof mysqli
+                ? $this->cashierUsername($conn, $terminalId)
+                : (string) ($session['login'] ?? null);
+        }
+
+        $identity = [
+            'cashier_name' => $cashierName,
+            'cashier_user_id' => $actingId,
+            'terminal_name' => $terminalName,
+            'terminal_user_id' => $terminalId,
+            'is_takeover' => false,
+            'preceding_cashier_name' => null,
+            'preceding_user_id' => null,
+            'authorized_by_name' => null,
+            'authorized_by_user_id' => null,
+            'drawer_session_id' => null,
+        ];
+
+        if (!$conn instanceof mysqli || $actingId < 1) {
+            return $identity;
+        }
+
+        $scope = $this->resolveScope([]);
+        $drawerSession = $this->currentDrawerSession($conn, $actingId, $scope);
+        if (!$drawerSession) {
+            return $identity;
+        }
+
+        $identity['drawer_session_id'] = (int) ($drawerSession['id'] ?? 0);
+        $ownerId = (int) ($drawerSession['user_id'] ?? 0);
+        if ($ownerId > 0) {
+            $identity['cashier_user_id'] = $ownerId;
+            $identity['cashier_name'] = $this->cashierUsername($conn, $ownerId);
+        }
+
+        $precedingId = (int) ($drawerSession['preceding_session_id'] ?? 0);
+        if ($precedingId < 1) {
+            return $identity;
+        }
+
+        try {
+            $preceding = $this->drawerSessions->sessionById($conn, $precedingId);
+        } catch (Throwable $ignored) {
+            return $identity;
+        }
+
+        $precedingUserId = (int) ($preceding['user_id'] ?? 0);
+        if ($precedingUserId < 1) {
+            return $identity;
+        }
+
+        $identity['is_takeover'] = true;
+        $identity['preceding_user_id'] = $precedingUserId;
+        $identity['preceding_cashier_name'] = $this->cashierUsername($conn, $precedingUserId);
+
+        $authorizedBy = (int) ($drawerSession['takeover_authorized_by'] ?? 0);
+        if ($authorizedBy < 1) {
+            $authorizedBy = (int) ($preceding['closed_by'] ?? 0);
+            // Prefer not labeling the incoming cashier as the authorizer.
+            if ($authorizedBy === $actingId || $authorizedBy === $ownerId) {
+                $authorizedBy = 0;
+            }
+        }
+        if ($authorizedBy > 0) {
+            $identity['authorized_by_user_id'] = $authorizedBy;
+            $identity['authorized_by_name'] = $this->cashierUsername($conn, $authorizedBy);
+        }
+
+        return $identity;
     }
 
     private function insertClosedOrder(mysqli $conn, array $row): int
@@ -735,14 +782,48 @@ class ShiftSessionService
     {
         require_once dirname(__DIR__, 3) . '/includes/auth_guard.php';
         require_once __DIR__ . '/ManagerApprovalService.php';
+        require_once dirname(__DIR__, 2) . '/Security/SecurityAuditLogger.php';
 
         $session = $this->drawerSessions->sessionById($conn, $sessionId);
         if (($session['status'] ?? '') !== 'open') {
             throw new RuntimeException('DRAWER_SESSION_NOT_OPEN');
         }
 
-        if (!auth_guard_has_permission('pos.shift.force_close', $conn)) {
-            $approvalService = new ManagerApprovalService();
+        $scope = $this->resolveScope($payload);
+        $sessionTenant = (int) ($session['tenant'] ?? 0);
+        $sessionBranch = (int) ($session['branch'] ?? 0);
+        if ($sessionTenant !== $scope['tenant'] || $sessionBranch !== $scope['branch']) {
+            throw new RuntimeException('DRAWER_SESSION_SCOPE_MISMATCH');
+        }
+
+        $ownerUserId = (int) ($session['user_id'] ?? 0);
+        $reason = trim((string) ($payload['reason'] ?? ''));
+        if ($ownerUserId !== $actingUserId && $reason === '') {
+            throw new RuntimeException('FORCE_CLOSE_REASON_REQUIRED');
+        }
+        if ($reason === '') {
+            $reason = 'force_close';
+        }
+
+        $approvalId = null;
+        $approvalService = new ManagerApprovalService();
+        $isTakeover = !empty($payload['takeover']);
+
+        if ($isTakeover) {
+            // POS drawer takeover always requires a consumed manager PIN approval —
+            // never trust the unlocked POS session alone, even with force_close.
+            $approvalId = (int) ($payload['manager_approval_id'] ?? $payload['approval_id'] ?? 0);
+            if ($approvalId < 1) {
+                throw new ManagerApprovalRequiredException('pos.shift.force_close');
+            }
+            $approvalService->validateApprovedPermissionOverride(
+                $conn,
+                $approvalId,
+                'pos.shift.force_close',
+                $actingUserId
+            );
+            $approvalService->consumeApproval($conn, $approvalId, $actingUserId);
+        } elseif (!auth_guard_has_permission('pos.shift.force_close', $conn)) {
             $approval = $approvalService->requireApprovedIfNeeded(
                 $conn,
                 'pos.shift.force_close',
@@ -750,17 +831,108 @@ class ShiftSessionService
                 $sessionId,
                 1.0,
                 $payload,
-                ['user_id' => $actingUserId]
+                [
+                    'user_id' => $actingUserId,
+                    'require_manager_approval' => true,
+                ]
             );
             if ($approval) {
-                $approvalService->consumeApproval($conn, (int) $approval['id'], $actingUserId);
+                $approvalId = (int) $approval['id'];
+                $approvalService->consumeApproval($conn, $approvalId, $actingUserId);
             }
+        } else {
+            $approvalId = (int) ($payload['manager_approval_id'] ?? 0) ?: null;
         }
 
-        return $this->drawerSessions->forceCloseSession($conn, $sessionId, [
+        $expectedBefore = (float) $this->drawerSessions->expectedCash($conn, $sessionId);
+        $countedCash = trim((string) ($payload['counted_cash'] ?? ''));
+        if ($countedCash === '') {
+            $countedCash = number_format($expectedBefore, 3, '.', '');
+        }
+        if (!is_numeric($countedCash) || (float) $countedCash < 0) {
+            throw new RuntimeException('COUNTED_AMOUNT_INVALID');
+        }
+
+        $closed = $this->drawerSessions->forceCloseSession($conn, $sessionId, [
             'closed_by' => $actingUserId,
-            'reason' => trim((string) ($payload['reason'] ?? 'force_close')),
+            'counted_cash' => number_format((float) $countedCash, 3, '.', ''),
+            'notes' => $reason,
         ]);
+
+        $difference = (float) ($closed['difference'] ?? 0);
+        $openingUnresolved = (($session['variance_status'] ?? '') === 'unresolved')
+            && in_array((string) ($session['variance_type'] ?? ''), ['opening', 'both'], true);
+
+        $varianceStatus = (abs($difference) > 0.0001 || $openingUnresolved) ? 'unresolved' : 'none';
+        $varianceType = 'none';
+        if ($openingUnresolved && abs($difference) > 0.0001) {
+            $varianceType = 'both';
+        } elseif ($openingUnresolved) {
+            $varianceType = 'opening';
+        } elseif (abs($difference) > 0.0001) {
+            $varianceType = 'closing';
+        }
+
+        if ($varianceStatus === 'unresolved' && $this->drawerSessionsColumnExists($conn, 'variance_status')) {
+            $type = $varianceType;
+            $status = $varianceStatus;
+            $snapshot = number_format($expectedBefore, 3, '.', '');
+            if ($this->drawerSessionsColumnExists($conn, 'close_expected_snapshot')) {
+                $stmt = $conn->prepare("
+                    UPDATE drawer_sessions
+                    SET variance_status = ?, variance_type = ?, close_expected_snapshot = ?
+                    WHERE id = ?
+                ");
+                $stmt->bind_param('sssi', $status, $type, $snapshot, $sessionId);
+            } else {
+                $stmt = $conn->prepare("
+                    UPDATE drawer_sessions
+                    SET variance_status = ?, variance_type = ?
+                    WHERE id = ?
+                ");
+                $stmt->bind_param('ssi', $status, $type, $sessionId);
+            }
+            $stmt->execute();
+            $stmt->close();
+        }
+
+        $result = $this->drawerSessions->sessionById($conn, $sessionId);
+
+        try {
+            $eventType = !empty($payload['takeover'])
+                ? 'drawer_takeover_force_close'
+                : 'drawer_force_close';
+            (new SecurityAuditLogger())->record($conn, $eventType, [
+                'user_id' => $actingUserId,
+                'tenant' => $sessionTenant,
+                'branch' => $sessionBranch,
+                'target_type' => 'drawer_session',
+                'target_id' => $sessionId,
+                'metadata' => [
+                    'owner_user_id' => $ownerUserId,
+                    'incoming_user_id' => (int) ($payload['incoming_user_id'] ?? $actingUserId),
+                    'counted_cash' => (float) $countedCash,
+                    'expected_before' => $expectedBefore,
+                    'difference' => $difference,
+                    'variance_status' => $varianceStatus,
+                    'variance_type' => $varianceType,
+                    'reason' => $reason,
+                    'manager_approval_id' => $approvalId,
+                    'takeover' => !empty($payload['takeover']),
+                ],
+            ]);
+        } catch (Throwable $ignored) {
+            // Domain close already succeeded; audit must not roll it back.
+        }
+
+        return $result;
+    }
+
+    private function drawerSessionsColumnExists(mysqli $conn, string $column): bool
+    {
+        $result = $conn->query("SHOW COLUMNS FROM drawer_sessions LIKE '" . $conn->real_escape_string($column) . "'");
+
+        return $result instanceof mysqli_result && $result->num_rows > 0;
     }
 
     private function requirePayoutApprovalIfNeeded(

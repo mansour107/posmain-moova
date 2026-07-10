@@ -2,6 +2,7 @@
 
 require_once __DIR__ . '/DrawerSessionService.php';
 require_once __DIR__ . '/PaymentMethodService.php';
+require_once __DIR__ . '/BusinessDayService.php';
 
 class ShiftDrawerReconciliationService
 {
@@ -32,11 +33,28 @@ class ShiftDrawerReconciliationService
         $userId = $this->positiveInt($scope['user_id'] ?? 0, 'USER_ID_REQUIRED');
         $tenant = $this->nonNegativeInt($scope['tenant'] ?? $scope['pos_tenant'] ?? 0);
         $branch = $this->nonNegativeInt($scope['branch'] ?? $scope['pos_branch'] ?? 0);
-        $date = $this->date($scope['date'] ?? date('Y-m-d'));
         $session = $this->resolveDrawerSession($conn, $scope, $userId, $tenant, $branch);
         $openedAt = $session['opened_at'] ?? null;
+        $businessDays = new BusinessDayService();
+        $date = trim((string) ($scope['date'] ?? ''));
+        if ($date === '' && $session) {
+            $date = trim((string) ($session['business_day'] ?? ''));
+            if ($date === '' && !empty($session['opened_at'])) {
+                $cutoffHour = $businessDays->cutoffHourForBranch(
+                    $conn,
+                    (int) ($session['tenant'] ?? $tenant),
+                    (int) ($session['branch'] ?? $branch)
+                );
+                $date = $businessDays->businessDayForTimestamp((string) $session['opened_at'], $cutoffHour);
+            }
+        }
+        if ($date === '') {
+            $date = $businessDays->currentBusinessDayForBranch($conn, $tenant, $branch);
+        } else {
+            $date = $this->date($date);
+        }
 
-        $payments = $this->paymentSummary($conn, $userId, $date, $openedAt);
+        $payments = $this->paymentSummary($conn, $userId, $date, $openedAt, $tenant, $branch);
         $drawer = $this->drawerSummary($conn, $session);
         $cashPayments = (float) $payments['by_type']['cash'];
         $drawerSaleCash = (float) $drawer['movement_totals']['sale_cash'];
@@ -61,8 +79,14 @@ class ShiftDrawerReconciliationService
         ];
     }
 
-    private function paymentSummary(mysqli $conn, int $userId, string $date, ?string $openedAt): array
-    {
+    private function paymentSummary(
+        mysqli $conn,
+        int $userId,
+        string $date,
+        ?string $openedAt,
+        int $tenant = 0,
+        int $branch = 0
+    ): array {
         $summary = [
             'total' => '0.000',
             'cash' => '0.000',
@@ -75,19 +99,26 @@ class ShiftDrawerReconciliationService
         }
 
         $methodTypes = $this->activePaymentMethodTypes($conn);
+        $businessDays = new BusinessDayService();
+        $cutoffHour = $businessDays->cutoffHourForBranch($conn, $tenant, $branch);
+        $bounds = $businessDays->windowBounds($date, $cutoffHour);
+        $paidAtExpr = "COALESCE(op.created_at, oh.payment_date, CONCAT(oh.pro_date, ' 12:00:00'))";
         $sql = "
             SELECT
                 op.payment_method,
                 COALESCE(op.amount, 0) AS amount,
-                COALESCE(op.created_at, oh.payment_date, CONCAT(oh.pro_date, ' 00:00:00')) AS paid_at
+                {$paidAtExpr} AS paid_at
             FROM order_payments op
             LEFT JOIN ot_head oh ON oh.id = op.order_id
             WHERE (op.created_by = ? OR oh.user = ?)
-              AND DATE(COALESCE(op.created_at, oh.payment_date, oh.pro_date)) = ?
+              AND (
+                    (oh.pro_date IS NOT NULL AND oh.pro_date = ?)
+                    OR (oh.pro_date IS NULL AND {$paidAtExpr} >= ? AND {$paidAtExpr} < ?)
+              )
         ";
-        $params = [$userId, $userId, $date];
+        $params = [$userId, $userId, $date, $bounds['start_at'], $bounds['end_at']];
         if ($openedAt !== null && trim($openedAt) !== '') {
-            $sql .= " AND COALESCE(op.created_at, oh.payment_date, CONCAT(oh.pro_date, ' 00:00:00')) >= ?";
+            $sql .= " AND {$paidAtExpr} >= ?";
             $params[] = $openedAt;
         }
         $sql .= " ORDER BY paid_at, op.id";

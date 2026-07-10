@@ -235,11 +235,13 @@ if (empty($_SESSION['userid'])) {
     moova_proxy_json(401, ['error' => 'please_login_first']);
 }
 
+$userId = (int) $_SESSION['userid'];
+
 require __DIR__ . '/includes/connect.php';
 
 try {
     MoovaPosIntegration::ensureSchema($conn);
-    $link = MoovaPosIntegration::findActiveLinkForUser($conn, (int) $_SESSION['userid']);
+    $link = MoovaPosIntegration::findActiveLinkForUser($conn, $userId);
 } catch (Exception $e) {
     error_log('[Moova POS] proxy mapping unavailable: ' . $e->getMessage());
     moova_proxy_json(500, ['error' => 'moova_mapping_unavailable']);
@@ -247,6 +249,11 @@ try {
 
 if (!$link || empty($link['moova_device_token'])) {
     moova_proxy_json(401, ['error' => 'moova_link_missing']);
+}
+
+// connect.php may reopen the session; release before any outbound Moova I/O.
+if (session_status() === PHP_SESSION_ACTIVE) {
+    session_write_close();
 }
 
 $widgetUrl = trim((string) ($link['widget_url'] ?: 'https://withmoova.com/pos-widget'));
@@ -307,6 +314,12 @@ if (PHP_VERSION_ID < 80500) {
 
 if ($statusCode >= 500 && moova_proxy_is_passive_bridge_path($path)) {
     moova_proxy_json(200, moova_proxy_local_passive_bridge_payload($path, $link, 'http_status_' . $statusCode));
+}
+
+// Passive bridge polls must never forward browser redirects. A 3xx from Moova
+// would send the tab to an external origin and starve later same-tab navigations.
+if ($statusCode >= 300 && $statusCode < 400 && moova_proxy_is_passive_bridge_path($path)) {
+    moova_proxy_json(200, moova_proxy_local_passive_bridge_payload($path, $link, 'http_redirect_' . $statusCode));
 }
 
 $responseBody = moova_proxy_rewrite_browser_moova_urls($responseBody, $widgetOrigin);

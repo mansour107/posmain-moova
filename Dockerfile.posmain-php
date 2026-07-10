@@ -7,4 +7,4 @@ RUN apt-get update \
 
 WORKDIR /app
 
-CMD ["sh", "-c", "mkdir -p /app/logs /app/uploads /app/var/sessions /app/var/update_jobs /app/backup/updates && chmod -R 777 /app/logs /app/uploads /app/var && php -d display_errors=1 -d mysqli.default_socket=/run/mysqld/mysqld.sock -S 0.0.0.0:8000"]
+CMD ["sh", "-c", "mkdir -p /app/logs /app/uploads /app/var/sessions /app/var/update_jobs /app/backup/updates && chmod -R 777 /app/logs /app/uploads /app/var && PHP_CLI_SERVER_WORKERS=${PHP_CLI_SERVER_WORKERS:-4} php -d display_errors=1 -d mysqli.default_socket=/run/mysqld/mysqld.sock -S 0.0.0.0:8000"]

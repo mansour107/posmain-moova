@@ -1,4 +1,6 @@
 <?php
+require_once __DIR__ . '/includes/session_bootstrap.php';
+require_once __DIR__ . '/includes/connect.php';
 require_once __DIR__ . '/classes/Inventory/InventoryStockReadService.php';
 require_once __DIR__ . '/classes/Items/ItemCatalogStatus.php';
 require_once __DIR__ . '/classes/Items/ItemUnitCatalogLabel.php';

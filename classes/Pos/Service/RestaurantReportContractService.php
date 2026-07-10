@@ -14,6 +14,8 @@ class RestaurantReportContractService
                     'net_sales = gross_sales - discounts + service_plus + tax',
                     'paid_amount + remaining_amount = net_sales for non-void active/completed orders',
                     'fat_details active line totals reconcile to ot_head.fat_total for included orders',
+                    'date_from/date_to filter ot_head.pro_date as branch business day (stamped via business_day_cutoff_hour)',
+                    'default today for manager daily sales is currentBusinessDayForBranch, not calendar midnight',
                 ],
             ],
             'payment_method_breakdown' => [
@@ -25,6 +27,7 @@ class RestaurantReportContractService
                     'payment_total = sum(order_payments.amount) grouped by payment_methods.type',
                     'cash_total must reconcile with drawer_movements.sale_cash minus refund_cash for the same drawer scope',
                     'methods with requires_reference must expose missing_reference_count before endpoint enforcement',
+                    'period filters use stamped ot_head.pro_date business day, with payment timestamp window fallback via business_day_cutoff_hour',
                 ],
             ],
             'order_channel_split' => [
@@ -56,7 +59,8 @@ class RestaurantReportContractService
                 'totals' => ['opening_cash', 'cash_sales', 'cash_refunds', 'paid_in', 'paid_out', 'safe_drop', 'pre_close_expected_cash', 'close_variance', 'counted_cash', 'expected_cash', 'difference'],
                 'invariants' => [
                     'pre_close_expected_cash = opening_cash + sale_cash - refund_cash + paid_in - paid_out - safe_drop',
-                    'counted_cash = pre_close_expected_cash + close_variance for closed sessions',
+                    'counted_cash = pre_close_expected_cash + close_variance only when a closed session has a recorded close count',
+                    'closed sessions without counted_cash are count_pending; their variance is unknown and excluded from variance rollups',
                     'close_variance = sum(closing_adjustment movements); never folded into pre_close_expected_cash',
                     'expected_cash = opening_cash + sale_cash - refund_cash + paid_in - paid_out - safe_drop + closing_adjustment',
                     'drawer session business_day = DATE(DATE_SUB(opened_at, INTERVAL branch business_day_cutoff_hour HOUR))',

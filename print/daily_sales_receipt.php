@@ -9,7 +9,12 @@ if (!isset($_SESSION['userid'])) {
 }
 
 $user_id = $_SESSION['userid'];
-$today = date('Y-m-d');
+require_once __DIR__ . '/../includes/business_day.php';
+$today = posmain_current_business_day(
+    $conn,
+    (int) ($_SESSION['pos_tenant'] ?? 0),
+    (int) ($_SESSION['pos_branch'] ?? 0)
+);
 
 // جلب اسم المستخدم
 $user_query = $conn->query("SELECT aname FROM acc_head WHERE id = $user_id");

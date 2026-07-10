@@ -11,6 +11,14 @@ shiftCloseContractAssert(strpos($closeShiftSource, 'require_csrf') !== false, 'c
 shiftCloseContractAssert(strpos($closeShiftSource, 'require_pos_authenticated') !== false, 'close_shift should require POS auth');
 shiftCloseContractAssert(strpos($closeShiftSource, 'SHIFT_ALREADY_CLOSED') !== false, 'close_shift should handle duplicate close');
 
+$closeServiceSource = file_get_contents(__DIR__ . '/../../classes/Pos/Service/ShiftCloseService.php');
+if ($closeServiceSource === false) {
+    throw new RuntimeException('Unable to read ShiftCloseService.php');
+}
+shiftCloseContractAssert(strpos($closeServiceSource, "shift_token:") === false, 'ShiftCloseService must not append shift_token into info notes');
+shiftCloseContractAssert(strpos($closeServiceSource, 'shift_session_token') !== false, 'ShiftCloseService should store session token in json_details');
+shiftCloseContractAssert(strpos($closeServiceSource, 'truncateClosedOrderInfo') !== false, 'ShiftCloseService should bound closed_orders.info');
+
 $previewSource = file_get_contents(__DIR__ . '/../../do/get_shift_preview.php');
 if ($previewSource === false) {
     throw new RuntimeException('Unable to read get_shift_preview.php');

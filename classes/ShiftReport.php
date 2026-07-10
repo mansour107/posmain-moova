@@ -2,6 +2,7 @@
 
 require_once __DIR__ . '/Pos/Service/ShiftDrawerReconciliationService.php';
 require_once __DIR__ . '/Pos/Service/DrawerSessionService.php';
+require_once __DIR__ . '/Pos/Service/BusinessDayService.php';
 
 class ShiftReport
 {
@@ -18,10 +19,46 @@ class ShiftReport
     {
         $this->conn = $conn;
         $this->userId = (int) $userId;
-        $this->date = $date ? $date : date('Y-m-d');
         $this->drawerReconciliationService = new ShiftDrawerReconciliationService();
         $this->username = $this->getCashierUsernameById($this->userId);
         $this->resolveShiftWindow($scope);
+        $this->date = $date ? $date : $this->resolveBusinessDay($scope);
+    }
+
+    private function resolveBusinessDay(array $scope): string
+    {
+        $businessDays = new BusinessDayService();
+        $tenant = (int) ($scope['tenant'] ?? $scope['pos_tenant'] ?? $_SESSION['pos_tenant'] ?? 0);
+        $branch = (int) ($scope['branch'] ?? $scope['pos_branch'] ?? $_SESSION['pos_branch'] ?? 0);
+
+        if ($this->shiftOpenedAt !== null && trim((string) $this->shiftOpenedAt) !== '') {
+            $cutoffHour = $businessDays->cutoffHourForBranch($this->conn, $tenant, $branch);
+
+            return $businessDays->businessDayForTimestamp((string) $this->shiftOpenedAt, $cutoffHour);
+        }
+
+        if (!empty($scope['drawer_session_id'])) {
+            try {
+                $session = (new DrawerSessionService())->sessionById($this->conn, (int) $scope['drawer_session_id']);
+                $sessionDay = trim((string) ($session['business_day'] ?? ''));
+                if ($sessionDay !== '') {
+                    return $sessionDay;
+                }
+                if (!empty($session['opened_at'])) {
+                    $cutoffHour = $businessDays->cutoffHourForBranch(
+                        $this->conn,
+                        (int) ($session['tenant'] ?? $tenant),
+                        (int) ($session['branch'] ?? $branch)
+                    );
+
+                    return $businessDays->businessDayForTimestamp((string) $session['opened_at'], $cutoffHour);
+                }
+            } catch (Throwable $exception) {
+                // Fall through to current business day.
+            }
+        }
+
+        return $businessDays->currentBusinessDayForBranch($this->conn, $tenant, $branch);
     }
 
     private function getCashierUsernameById($id): string

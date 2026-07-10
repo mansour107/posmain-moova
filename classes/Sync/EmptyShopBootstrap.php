@@ -31,6 +31,17 @@ class EmptyShopBootstrap
         $this->seedSettings($conn);
         (new SyncSchemaManager())->apply($conn);
 
+        // Local PIN main-auth bootstrap (no-op when mode is password / hosted).
+        try {
+            require_once __DIR__ . '/../Security/LocalSecurityBootstrapService.php';
+            require_once __DIR__ . '/../../config/app_config.php';
+            if (function_exists('posmain_is_pin_main_auth') && posmain_is_pin_main_auth()) {
+                (new LocalSecurityBootstrapService())->ensureLocalBootstrap($conn, $userId);
+            }
+        } catch (Throwable $ignored) {
+            error_log('Local PIN bootstrap skipped: ' . $ignored->getMessage());
+        }
+
         return [
             'admin_user_id' => $userId,
             'admin_username' => $username,

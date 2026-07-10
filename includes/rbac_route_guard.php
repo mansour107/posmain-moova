@@ -64,18 +64,32 @@ if (!function_exists('rbac_guard_route')) {
         $entry = $manifest[$relativePath] ?? null;
         if (!is_array($entry)) {
             require_login();
-            return;
+            deny_json_or_redirect('RBAC_ROUTE_UNCLASSIFIED', 403);
+        }
+
+        if (!empty($entry['quarantined'])) {
+            http_response_code(410);
+            header('Content-Type: application/json; charset=utf-8');
+            echo json_encode([
+                'success' => false,
+                'error' => 'ENDPOINT_QUARANTINED',
+                'path' => $relativePath,
+            ], JSON_UNESCAPED_UNICODE);
+            exit;
         }
 
         $lane = (string) ($entry['lane'] ?? 'erp');
         $permission = trim((string) ($entry['permission'] ?? ''));
         $csrf = trim((string) ($entry['csrf'] ?? ''));
         $anyOf = $entry['any_of'] ?? [];
+        $isPublic = !empty($entry['public']);
 
-        if ($lane === 'pos') {
-            require_pos_authenticated();
-        } else {
-            require_login();
+        if (!$isPublic) {
+            if ($lane === 'pos') {
+                require_pos_authenticated();
+            } else {
+                require_login();
+            }
         }
 
         if ($permission !== '' || (is_array($anyOf) && $anyOf !== [])) {
@@ -100,14 +114,14 @@ if (!function_exists('rbac_guard_current_script')) {
     {
         $script = (string) ($_SERVER['SCRIPT_NAME'] ?? $_SERVER['PHP_SELF'] ?? '');
         $script = ltrim(str_replace('\\', '/', $script), '/');
-        $parts = explode('/', $script);
-        if (count($parts) >= 2) {
-            $relative = $parts[count($parts) - 2] . '/' . $parts[count($parts) - 1];
-            rbac_guard_route($relative, $conn);
-            return;
+        foreach (['ajax/', 'do/', 'print/'] as $prefix) {
+            $position = strpos($script, $prefix);
+            if ($position !== false) {
+                rbac_guard_route(substr($script, $position), $conn);
+                return;
+            }
         }
 
-        require_once __DIR__ . '/write_bootstrap.php';
-        require_login();
+        rbac_guard_route(basename($script), $conn);
     }
 }

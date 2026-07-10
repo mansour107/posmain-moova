@@ -281,6 +281,20 @@ $userErrorMassage = '<div class="alert alert-danger text-center">
 </div>';
 
 require_once __DIR__ . '/auth_guard.php';
+require_once __DIR__ . '/auth_session_guards.php';
 if (isset($conn) && $conn instanceof mysqli) {
     auth_guard_enforce_active_session_user($conn);
+    posmain_enforce_auth_session_guards($conn);
+
+    // Release the PHP session file lock before RBAC/business work for AJAX.
+    // Dashboard/KDS/POS keep many concurrent polls; if any of them hold the
+    // lock (including fast 403 denials), later same-session navigations hang.
+    $scriptName = (string) ($_SERVER['SCRIPT_NAME'] ?? $_SERVER['PHP_SELF'] ?? '');
+    $isAjaxScript = strpos($scriptName, '/ajax/') !== false || strpos($scriptName, 'ajax/') === 0;
+    if ($isAjaxScript && session_status() === PHP_SESSION_ACTIVE) {
+        session_write_close();
+    }
+
+    require_once __DIR__ . '/entry_permission_guard.php';
+    posmain_enforce_entry_permission($conn);
 }

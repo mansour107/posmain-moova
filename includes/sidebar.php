@@ -24,6 +24,10 @@ $posmainCanViewAccounting = isset($conn) && $conn instanceof mysqli
     && auth_guard_has_permission('accounting.view', $conn);
 $posmainCanViewReports = isset($conn) && $conn instanceof mysqli
     && auth_guard_has_permission('reports.view', $conn);
+$posmainCanCloseShift = isset($conn) && $conn instanceof mysqli
+    && auth_guard_has_permission('pos.shift.close', $conn);
+$posmainCanViewCashFlow = isset($conn) && $conn instanceof mysqli
+    && auth_guard_has_permission('reports.cash_flow', $conn);
 $posmainLegacyFlag = static function (string $flag) use ($conn): bool {
     return isset($conn) && $conn instanceof mysqli && auth_guard_has_legacy_flag($flag, $conn);
 };
@@ -437,18 +441,22 @@ $posmainLegacyFlag = static function (string $flag) use ($conn): bool {
 
 
 
+              <?php if ($posmainCanCloseShift) { ?>
               <li class="nav-item" id="myitems">
                 <a href="closed_sessions.php" class="nav-link">
                   <i class="nav-icon fas fa-list"></i>
                   <p><?= $lang_closed_sessions ?></p>
                 </a>
               </li>
+              <?php } ?>
+              <?php if ($posmainCanViewCashFlow) { ?>
               <li class="nav-item">
                 <a href="cash_flow_report.php" class="nav-link">
                   <i class="nav-icon fas fa-money-bill-wave"></i>
                   <p>تقرير التدفق النقدي</p>
                 </a>
               </li>
+              <?php } ?>
 
               <?php if ($posmainCanManagePosCustomers) { ?>
                 <li class="nav-item">

@@ -61,7 +61,10 @@ class TeamHubMutationService
             $pin = $pinService->generateAvailablePin($this->conn);
         }
         try {
-            $pinService->setPinForUser($this->conn, $newUserId, $pin);
+            $pinService->setPinForUser($this->conn, $newUserId, $pin, [
+                'must_change' => true,
+                'bump_auth_version' => true,
+            ]);
         } catch (Throwable $exception) {
             $this->conn->query('UPDATE users SET isdeleted = 1 WHERE id = ' . $newUserId);
             throw $exception;
@@ -99,6 +102,21 @@ class TeamHubMutationService
         $isWaiter = !empty($input['is_waiter']) ? 1 : 0;
         $lifecycle = new UserLifecycleGuardService();
 
+        $previousRole = 0;
+        $previousIsWaiter = 0;
+        $previousStmt = $this->conn->prepare(
+            'SELECT userrole, is_waiter FROM users WHERE id = ? LIMIT 1'
+        );
+        $previousStmt->bind_param('i', $id);
+        $previousStmt->execute();
+        $previousRow = $previousStmt->get_result()->fetch_assoc();
+        $previousStmt->close();
+        if (!$previousRow) {
+            throw new RuntimeException('USER_NOT_FOUND');
+        }
+        $previousRole = (int) ($previousRow['userrole'] ?? 0);
+        $previousIsWaiter = (int) ($previousRow['is_waiter'] ?? 0);
+
         $lifecycle->assertDisplayNameUnique($this->conn, $displayName, $id);
         if ($userrole > 0) {
             $lifecycle->assertNoPrivilegeEscalation($this->conn, $actorUserId, $id, $userrole);
@@ -133,8 +151,16 @@ class TeamHubMutationService
         if ($clearPin) {
             $pinService->clearPinForUser($this->conn, $id);
         } elseif ($pin !== '') {
-            $pinService->setPinForUser($this->conn, $id, $pin);
+            $pinService->setPinForUser($this->conn, $id, $pin, [
+                'must_change' => true,
+                'bump_auth_version' => true,
+            ]);
             $revealedPin = $pin;
+        }
+        $securityIdentityChanged = ($userrole > 0 && $userrole !== $previousRole)
+            || $isWaiter !== $previousIsWaiter;
+        if ($securityIdentityChanged && !$clearPin && $pin === '') {
+            $pinService->bumpAuthVersion($this->conn, $id);
         }
 
         (new SecurityAuditLogger())->record($this->conn, 'user_updated', [
@@ -333,18 +359,36 @@ class TeamHubMutationService
             $pin = $pinService->generateAvailablePin($this->conn, $userId);
         }
 
-        $pinService->setPinForUser($this->conn, $userId, $pin);
+        $pinService->setPinForUser($this->conn, $userId, $pin, [
+            'must_change' => true,
+            'bump_auth_version' => true,
+        ]);
         (new SecurityAuditLogger())->record($this->conn, 'user_pin_reset', [
             'target_type' => 'user',
             'target_id' => $userId,
         ]);
+
+        // One-time display only — never persisted reversibly.
+        if (session_status() === PHP_SESSION_ACTIVE) {
+            $_SESSION['posmain_one_time_pin_reveal'] = [
+                'user_id' => $userId,
+                'pin' => $pin,
+                'expires' => time() + 120,
+            ];
+        }
 
         $staff = $this->hub->staffDetail($userId);
         if (!$staff) {
             throw new RuntimeException('USER_NOT_FOUND');
         }
 
-        return ['success' => true, 'pin' => $pin, 'staff' => $staff];
+        return [
+            'success' => true,
+            'pin' => $pin,
+            'pin_once' => true,
+            'must_change' => true,
+            'staff' => $staff,
+        ];
     }
 
     /** @param array<string, mixed> $input */
@@ -380,6 +424,7 @@ class TeamHubMutationService
         auth_guard_invalidate_capabilities_cache();
         $grantService->invalidateSessionCapabilities();
         (new PermissionService($this->conn))->bumpPermissionsVersion();
+        (new PinService())->bumpAuthVersion($this->conn, $userId);
         (new SecurityAuditLogger())->record($this->conn, 'user_permissions_updated', [
             'target_type' => 'user',
             'target_id' => $userId,

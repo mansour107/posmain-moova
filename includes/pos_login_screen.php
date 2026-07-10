@@ -9,6 +9,15 @@ $pos_pin_mode = !empty($pos_pin_mode);
 $pos_legacy_fallback = !empty($pos_legacy_fallback);
 $terminalLabel = htmlspecialchars($_SESSION['login'] ?? '', ENT_QUOTES, 'UTF-8');
 $csrfPin = htmlspecialchars(csrf_token('pos_pin'), ENT_QUOTES, 'UTF-8');
+
+$shiftCloseResult = null;
+if (!empty($_SESSION['pos_shift_close_result']) && is_array($_SESSION['pos_shift_close_result'])) {
+    $shiftCloseResult = $_SESSION['pos_shift_close_result'];
+    unset($_SESSION['pos_shift_close_result'], $_SESSION['success_message']);
+}
+$closeTone = (string) ($shiftCloseResult['tone'] ?? 'success');
+$closeTitle = (string) ($shiftCloseResult['title'] ?? '');
+$closeDetail = (string) ($shiftCloseResult['detail'] ?? '');
 ?>
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
@@ -74,9 +83,75 @@ $csrfPin = htmlspecialchars(csrf_token('pos_pin'), ENT_QUOTES, 'UTF-8');
             background: #334155; color: #fff; font-weight: 600;
         }
         .hidden { display: none !important; }
+        .shift-close-backdrop {
+            position: fixed; inset: 0; z-index: 40;
+            background: rgba(15, 23, 42, 0.72);
+            display: flex; align-items: center; justify-content: center;
+            padding: 1rem;
+        }
+        .shift-close-card {
+            width: min(420px, 94vw);
+            background: #fff;
+            border-radius: 20px;
+            padding: 1.75rem 1.5rem 1.5rem;
+            box-shadow: 0 24px 60px rgba(15, 23, 42, 0.45);
+            text-align: center;
+        }
+        .shift-close-icon {
+            width: 64px; height: 64px; border-radius: 50%;
+            display: inline-flex; align-items: center; justify-content: center;
+            font-size: 1.75rem; margin-bottom: 1rem;
+        }
+        .shift-close-card.is-success .shift-close-icon { background: #ecfdf5; color: #059669; }
+        .shift-close-card.is-over .shift-close-icon { background: #fff7ed; color: #c2410c; }
+        .shift-close-card.is-under .shift-close-icon { background: #fef2f2; color: #b91c1c; }
+        .shift-close-title { font-size: 1.25rem; font-weight: 700; color: #0f172a; margin: 0 0 .5rem; }
+        .shift-close-detail { color: #475569; margin: 0 0 1.25rem; line-height: 1.6; }
+        .shift-close-hint { color: #475569; font-size: .85rem; margin: 0 0 1.25rem; }
+        .shift-close-btn {
+            width: 100%; border: none; border-radius: 12px; padding: .95rem 1rem;
+            background: linear-gradient(135deg, #6366f1, #8b5cf6); color: #fff;
+            font-weight: 700; font-size: 1rem; cursor: pointer;
+        }
     </style>
 </head>
 <body>
+<?php if ($shiftCloseResult): ?>
+<div class="shift-close-backdrop" id="shiftCloseResultModal" role="dialog" aria-modal="true" aria-labelledby="shiftCloseResultTitle">
+    <div class="shift-close-card is-<?= htmlspecialchars($closeTone, ENT_QUOTES, 'UTF-8') ?>">
+        <div class="shift-close-icon" aria-hidden="true">
+            <?php if ($closeTone === 'success'): ?>
+                <i class="fas fa-check"></i>
+            <?php elseif ($closeTone === 'over'): ?>
+                <i class="fas fa-arrow-up"></i>
+            <?php else: ?>
+                <i class="fas fa-arrow-down"></i>
+            <?php endif; ?>
+        </div>
+        <h2 class="shift-close-title" id="shiftCloseResultTitle"><?= htmlspecialchars($closeTitle, ENT_QUOTES, 'UTF-8') ?></h2>
+        <p class="shift-close-detail"><?= htmlspecialchars($closeDetail, ENT_QUOTES, 'UTF-8') ?></p>
+        <p class="shift-close-hint">الشيفت مغلق. لبدء شيفت جديد أدخل رمز PIN ثم عدّ الدرج.</p>
+        <button type="button" class="shift-close-btn" id="shiftCloseResultDismiss">متابعة لفتح نقطة البيع</button>
+    </div>
+</div>
+<script>
+(function () {
+    var modal = document.getElementById('shiftCloseResultModal');
+    var btn = document.getElementById('shiftCloseResultDismiss');
+    if (!modal || !btn) return;
+    function dismiss() {
+        modal.remove();
+        try {
+            sessionStorage.setItem('pos_locked', '1');
+            sessionStorage.removeItem('pos_shift_closed');
+        } catch (e) {}
+        var firstKey = document.querySelector('.pin-key, input[name="pos_barcode"]');
+        if (firstKey) firstKey.focus();
+    }
+    btn.addEventListener('click', dismiss);
+})();
+</script>
+<?php endif; ?>
 <div class="unlock-shell">
     <div class="unlock-card">
         <div class="unlock-title"><i class="fas fa-lock"></i> فتح نقطة البيع</div>
@@ -167,15 +242,22 @@ $csrfPin = htmlspecialchars(csrf_token('pos_pin'), ENT_QUOTES, 'UTF-8');
             .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
             .then(function (res) {
                 if (res.ok && res.j.success) {
-                    window.location.href = 'pos_barcode.php';
+                    window.location.href = res.j.redirect || 'pos_barcode.php';
                     return;
                 }
                 const code = (res.j && res.j.code) || 'PIN_INVALID';
+                if (res.j && res.j.redirect && (code === 'REGISTER_UNPAIRED' || code === 'PERMISSION_DENIED')) {
+                    window.location.href = res.j.redirect;
+                    return;
+                }
                 const messages = {
                     PIN_INVALID: 'رمز غير صحيح',
                     PIN_USER_LOCKED: 'الحساب مقفل مؤقتاً',
                     PIN_TERMINAL_FROZEN: 'الجهاز مقفل — حاول لاحقاً',
+                    PIN_RETRY_LATER: 'محاولات كثيرة — حاول لاحقاً',
                     PIN_SECRET_MISSING: 'إعداد PIN غير مكتمل',
+                    REGISTER_UNPAIRED: 'يجب ربط الجهاز بصندوق أولاً',
+                    PERMISSION_DENIED: 'لا توجد صلاحية لفتح نقطة البيع',
                 };
                 showError(messages[code] || code);
                 buffer = '';

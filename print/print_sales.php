@@ -1,5 +1,7 @@
-<?php include('includes/header.php') ?>
 <?php
+require_once __DIR__ . '/../includes/session_bootstrap.php';
+require_once __DIR__ . '/../includes/connect.php';
+include('includes/header.php');
 if (!isset($_GET['id'])) {
     echo "لا يوجد فاتورة بهذا الرقم";die;
 }else

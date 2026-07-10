@@ -1,8 +1,14 @@
 <?php
 require_once __DIR__ . '/includes/csrf.php';
+// Permission + local PIN entry are enforced inside pos_simple_header (require_permission('pos.open')).
 include('includes/pos_simple_header.php');
 
-$posdate = date('Y-m-d', strtotime('-4 hours'));
+require_once __DIR__ . '/includes/business_day.php';
+$posdate = posmain_current_business_day(
+    isset($conn) && $conn instanceof mysqli ? $conn : null,
+    (int) ($_SESSION['pos_tenant'] ?? 0),
+    (int) ($_SESSION['pos_branch'] ?? 0)
+);
 $rowstg = $conn->query("SELECT * FROM settings WHERE id = 1")->fetch_assoc();
 
 $success_message = '';

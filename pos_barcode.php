@@ -23,9 +23,12 @@ $posmainCanRecordShiftPayIn = auth_guard_has_permission('pos.drawer.payin', $con
 $posmainCanRecordShiftSafeDrop = auth_guard_has_permission('pos.drawer.safe_drop', $conn);
 $posmainCanRecordDrawerCash = $posmainCanRecordShiftExpense || $posmainCanRecordShiftPayIn || $posmainCanRecordShiftSafeDrop;
 
+require_once __DIR__ . '/config/app_config.php';
+require_once __DIR__ . '/includes/pos_main_pin_entry.php';
 $pinService = new PinService();
 $pos_pin_mode = false;
 $pos_legacy_fallback = true;
+$pos_main_pin_auth = function_exists('posmain_is_pin_main_auth') && posmain_is_pin_main_auth();
 try {
     posmain_pin_secret();
     $pos_pin_mode = $pinService->anyActiveUserHasPin($conn);
@@ -36,8 +39,16 @@ try {
     }
 }
 
+posmain_apply_main_pin_pos_entry($conn, 'pos_barcode.php');
+
 if (isset($_GET['logout'])) {
     require_once __DIR__ . '/includes/auth_guard.php';
+    if ($pos_main_pin_auth) {
+        require_once __DIR__ . '/classes/Security/MainAuthenticationService.php';
+        (new MainAuthenticationService())->lockToLoginScreen();
+        header('location:index.php');
+        exit;
+    }
     posmain_clear_pos_shift_session(false);
     header('location:pos_barcode.php');
     exit;
@@ -61,16 +72,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['pos_barcode']) && $po
     }
 
     if ($is_valid_user_code) {
-        require_once __DIR__ . '/classes/Pos/Service/ShiftSessionService.php';
+        require_once __DIR__ . '/classes/Pos/Service/ShiftEntryService.php';
         $actingId = (int) $current_user['id'];
-        pos_set_acting_user($actingId, (string) ($current_user['display_name'] ?? $current_user['uname']));
-        posmain_begin_pos_shift_session($actingId);
-        (new ShiftSessionService())->openForCashier($conn, $actingId, [
+        $entry = (new ShiftEntryService())->resolveForUser($conn, $actingId, [
             'opening_cash' => $_POST['opening_cash'] ?? '0',
         ]);
+        if (($entry['state'] ?? '') === ShiftEntryService::STATE_REGISTER_UNPAIRED) {
+            header('location:register_pair.php');
+            exit;
+        }
+        pos_set_acting_user($actingId, (string) ($current_user['display_name'] ?? $current_user['uname']));
+        $_SESSION['pos_authenticated'] = true;
+        $_SESSION['pos_user_id'] = $actingId;
+        $_SESSION['posmain_shift_entry_state'] = (string) ($entry['state'] ?? '');
+        $_SESSION['posmain_shift_entry_message'] = (string) ($entry['message'] ?? '');
+        if (!empty($entry['drawer_session']['id'])) {
+            $_SESSION['pos_drawer_session_id'] = (int) $entry['drawer_session']['id'];
+        }
         $_SESSION['pos_user_name'] = (string) ($current_user['display_name'] ?? $current_user['uname']);
         pos_touch_activity();
-        header('location:pos_barcode.php');
+        header('location:' . (string) ($entry['redirect'] ?? 'pos_barcode.php'));
         exit;
     }
 
@@ -105,11 +126,73 @@ if ($acting_user_id > 0) {
 }
 $posmainActingCanVoidPersistedItem = $acting_user_id > 0
     && PermissionService::forConnection($conn)->check($acting_user_id, 'pos.void.item_after_send');
+$posmainShiftEntryState = (string) ($_SESSION['posmain_shift_entry_state'] ?? '');
+$posmainShiftEntryMessage = (string) ($_SESSION['posmain_shift_entry_message'] ?? '');
+$posmainShiftRecoveryStates = [
+    'branch_blocked',
+    'register_transfer_required',
+    'stale_shift',
+    'permission_denied',
+    'entry_error',
+];
+$posmainShiftBlocked = in_array($posmainShiftEntryState, $posmainShiftRecoveryStates, true);
+
 try {
-    (new ShiftSessionService())->openForCashier($conn, $acting_user_id);
+    require_once __DIR__ . '/classes/Pos/Service/ShiftCountService.php';
+    $shiftCountService = new ShiftCountService();
+    $posmainHandoverEnabled = $shiftCountService->handoverEnabled($conn);
+    $posmainCanOpenShift = $acting_user_id > 0
+        && auth_guard_has_permission('pos.shift.open', $conn);
+    $needsOpeningCount = $posmainHandoverEnabled
+        && $shiftCountService->needsOpeningCount($conn, $acting_user_id);
+    $posmainNeedsOpenCount = ($needsOpeningCount && $posmainCanOpenShift)
+        || $posmainShiftEntryState === 'open_count_pending';
+    $posmainOpenCountDenied = $needsOpeningCount && !$posmainCanOpenShift
+        && $posmainShiftEntryState !== 'open_count_pending';
+
+    if ($posmainShiftBlocked) {
+        // Do not auto-open or sell until recovery completes.
+        unset($_SESSION['pos_unlocked_pending_open']);
+    } elseif ($posmainOpenCountDenied) {
+        // Waiter/kitchen (etc.): unlocked for tables, but must not open a drawer.
+        unset($_SESSION['pos_unlocked_pending_open']);
+    } elseif (!$posmainNeedsOpenCount) {
+        (new ShiftSessionService())->openForCashier($conn, $acting_user_id, [
+            'register_id' => $_SESSION['pos_register_id'] ?? null,
+        ]);
+        unset($_SESSION['posmain_shift_entry_state'], $_SESSION['posmain_shift_entry_message']);
+    } else {
+        $_SESSION['pos_unlocked_pending_open'] = true;
+    }
     pos_touch_activity();
 } catch (Throwable $drawerOpenException) {
     error_log('POS drawer session ensure failed: ' . $drawerOpenException->getMessage());
+    if (in_array($drawerOpenException->getMessage(), [
+        'BRANCH_DRAWER_ALREADY_OPEN',
+        'REGISTER_DRAWER_ALREADY_OPEN',
+        'USER_DRAWER_ALREADY_OPEN',
+    ], true)) {
+        $posmainShiftBlocked = true;
+        $posmainShiftEntryState = 'branch_blocked';
+        $posmainShiftEntryMessage = 'يوجد صندوق مفتوح لموظف آخر على هذا الجهاز';
+    }
+}
+
+$posmainIdentity = [
+    'cashier_name' => (string) ($_SESSION['pos_acting_user_name'] ?? $_SESSION['pos_user_name'] ?? $_SESSION['login'] ?? 'الموظف'),
+    'cashier_user_id' => (int) $acting_user_id,
+    'terminal_name' => null,
+    'terminal_user_id' => (int) pos_terminal_user_id(),
+    'is_takeover' => false,
+    'preceding_cashier_name' => null,
+    'preceding_user_id' => null,
+    'authorized_by_name' => null,
+    'authorized_by_user_id' => null,
+    'drawer_session_id' => null,
+];
+try {
+    $posmainIdentity = (new ShiftSessionService())->resolvePosIdentity($conn);
+} catch (Throwable $ignored) {
 }
 
 $check_tables = $conn->query("SELECT COUNT(*) as count FROM tables WHERE isdeleted = 0");
@@ -126,7 +209,12 @@ if ($check_tables) {
         $stmt->close();
     }
 }
-$posdate = date('Y-m-d', strtotime('-4 hours'));
+require_once __DIR__ . '/includes/business_day.php';
+$posdate = posmain_current_business_day(
+    $conn,
+    (int) ($_SESSION['pos_tenant'] ?? 0),
+    (int) ($_SESSION['pos_branch'] ?? 0)
+);
 if(isset($_GET['edit'])){
     $id = intval($_GET['edit']); // تأمين المدخلات
     $stmt = $conn->prepare("SELECT * FROM ot_head WHERE id = ?");
@@ -158,6 +246,9 @@ $posCapsVer = (int) (@filemtime(__DIR__ . '/js/posmain_capabilities.js') ?: 1);
 <?= posmain_render_acting_pos_context_script($conn, (int) $acting_user_id) ?>
 <script>window.POSMAIN_ACTING_CAN_VOID_PERSISTED = <?= $posmainActingCanVoidPersistedItem ? 'true' : 'false' ?>;</script>
 <script>
+window.POSMAIN_IDENTITY = <?= json_encode($posmainIdentity, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>;
+</script>
+<script>
 (function () {
     const tokenElement = document.querySelector('meta[name="posmain-csrf-token"]');
     const csrfToken = tokenElement ? tokenElement.getAttribute('content') : '';
@@ -186,6 +277,28 @@ $posCapsVer = (int) (@filemtime(__DIR__ . '/js/posmain_capabilities.js') ?: 1);
 <input type="hidden" id="posActingUserId" data-acting-user-id="<?= (int) $acting_user_id ?>">
 
 <div class="pos-corner-menu" aria-label="قائمة نقاط البيع">
+    <div id="posIdentityBadge"
+         class="pos-identity-badge<?= !empty($posmainIdentity['is_takeover']) ? ' is-takeover' : '' ?>"
+         role="status"
+         aria-live="polite"
+         data-cashier-id="<?= (int) ($posmainIdentity['cashier_user_id'] ?? 0) ?>"
+         data-takeover="<?= !empty($posmainIdentity['is_takeover']) ? '1' : '0' ?>">
+        <span class="pos-identity-avatar" aria-hidden="true">
+            <i class="fas fa-user"></i>
+        </span>
+        <span class="pos-identity-copy">
+            <span class="pos-identity-label">الكاشير</span>
+            <strong class="pos-identity-name" id="posIdentityCashierName"><?= htmlspecialchars((string) ($posmainIdentity['cashier_name'] ?? 'الموظف'), ENT_QUOTES, 'UTF-8') ?></strong>
+            <span class="pos-identity-meta<?= empty($posmainIdentity['is_takeover']) ? ' is-empty' : '' ?>" id="posIdentityMeta">
+                <?php if (!empty($posmainIdentity['is_takeover'])): ?>
+                    استلم من <?= htmlspecialchars((string) ($posmainIdentity['preceding_cashier_name'] ?? 'كاشير سابق'), ENT_QUOTES, 'UTF-8') ?>
+                    <?php if (!empty($posmainIdentity['authorized_by_name'])): ?>
+                        · اعتمد <?= htmlspecialchars((string) $posmainIdentity['authorized_by_name'], ENT_QUOTES, 'UTF-8') ?>
+                    <?php endif; ?>
+                <?php endif; ?>
+            </span>
+        </span>
+    </div>
     <button type="button" class="pos-corner-btn" id="cornerRecentOrdersBtn" title="الطلبات السابقة" aria-label="الطلبات السابقة">
         <i class="fas fa-history"></i>
     </button>
@@ -239,7 +352,7 @@ $posCapsVer = (int) (@filemtime(__DIR__ . '/js/posmain_capabilities.js') ?: 1);
                     <i class="fas fa-circle me-1"></i>الشيفت مفتوح
                 </span>
                 <span class="pos-cashier-pill">
-                    <i class="fas fa-user me-1"></i>الكاشير: <?= htmlspecialchars($_SESSION['pos_acting_user_name'] ?? $_SESSION['pos_user_name'] ?? $_SESSION['login'] ?? 'الموظف') ?>
+                    <i class="fas fa-user me-1"></i>الكاشير: <?= htmlspecialchars((string) ($posmainIdentity['cashier_name'] ?? $_SESSION['pos_acting_user_name'] ?? $_SESSION['pos_user_name'] ?? $_SESSION['login'] ?? 'الموظف'), ENT_QUOTES, 'UTF-8') ?>
                 </span>
             </div>
             <ul class="navbar-nav me-auto"></ul>
@@ -277,6 +390,8 @@ $posCapsVer = (int) (@filemtime(__DIR__ . '/js/posmain_capabilities.js') ?: 1);
 </nav>
 
 <!-- Main Content -->
+<?php include __DIR__ . '/elements/pos/shift_recovery_overlay.php'; ?>
+<?php include __DIR__ . '/elements/pos/shift_open_count_overlay.php'; ?>
 <?php 
 $action_url = "do/doadd_invoice.php";
 include('includes/pos_content.php');

@@ -171,7 +171,7 @@ class RolePermissionSyncService
     public static function permissionGroups(): array
     {
         return [
-            'POS' => ['pos.open', 'pos.sell.takeaway', 'pos.table.open', 'pos.table.move', 'pos.table.merge', 'pos.payment.take', 'pos.discount.apply', 'pos.discount.manager_override', 'pos.discount.manual_pct.limit', 'pos.price.override', 'pos.recipe_stock_override', 'pos.cancel.unpaid', 'pos.void.post_send', 'pos.void.item_after_send', 'pos.order.modify_others', 'pos.split', 'pos.shift.open', 'pos.shift.close', 'pos.shift.force_close', 'pos.shift.force_close_others', 'pos.cashdrawer.count', 'pos.drawer.no_sale', 'pos.drawer.payin', 'pos.drawer.safe_drop', 'pos.payout.over_limit', 'pos.drawer.payout.limit', 'pos.credit.sale', 'pos.credit.sell', 'pos.reprint', 'pos.refund.limit', 'pos.void.paid', 'pos.refund'],
+            'POS' => ['pos.open', 'pos.sell.takeaway', 'pos.table.open', 'pos.table.move', 'pos.table.merge', 'pos.payment.take', 'pos.discount.apply', 'pos.discount.manager_override', 'pos.discount.manual_pct.limit', 'pos.price.override', 'pos.recipe_stock_override', 'pos.cancel.unpaid', 'pos.void.post_send', 'pos.void.item_after_send', 'pos.order.modify_others', 'pos.split', 'pos.shift.open', 'pos.shift.close', 'pos.shift.force_close', 'pos.shift.force_close_others', 'pos.shift.resolve_variance', 'pos.shift.set_opening_baseline', 'pos.cashdrawer.count', 'pos.drawer.no_sale', 'pos.drawer.payin', 'pos.drawer.safe_drop', 'pos.payout.over_limit', 'pos.drawer.payout.limit', 'pos.credit.sale', 'pos.credit.sell', 'pos.reprint', 'pos.refund.limit', 'pos.void.paid', 'pos.refund'],
             'Inventory & menu' => ['menu.edit', 'inventory.edit', 'inventory.approve'],
             'Delivery & KDS' => ['moova.manage', 'moova.accept', 'delivery.dispatch', 'delivery.zones.manage', 'kds.view', 'kds.complete', 'kds.manage'],
             'Accounting & reports' => ['accounting.view', 'reports.view', 'reports.own_shift', 'reports.branch_daily', 'reports.costs', 'reports.cash_flow'],
@@ -240,7 +240,9 @@ class RolePermissionSyncService
                 'permissions' => [
                     'pos.open', 'pos.sell.takeaway', 'pos.table.open', 'pos.table.move', 'pos.table.merge',
                     'pos.payment.take', 'pos.discount.apply', 'pos.discount.manager_override', 'pos.recipe_stock_override',
-                    'pos.cancel.unpaid', 'pos.split', 'pos.shift.open', 'pos.shift.close', 'pos.cashdrawer.count',
+                    'pos.cancel.unpaid', 'pos.split', 'pos.shift.open', 'pos.shift.close', 'pos.shift.force_close',
+                    'pos.shift.force_close_others', 'pos.shift.resolve_variance', 'pos.shift.set_opening_baseline',
+                    'pos.cashdrawer.count', 'pos.drawer.no_sale', 'pos.drawer.payin', 'pos.drawer.safe_drop',
                     'menu.edit', 'inventory.edit', 'reports.view', 'reports.cash_flow', 'moova.manage', 'moova.accept',
                     'delivery.dispatch', 'delivery.zones.manage', 'kds.view', 'kds.complete',
                 ],
@@ -537,14 +539,18 @@ class RolePermissionSyncService
         }
 
         foreach (auth_guard_permission_map() as $permission => $legacyFlags) {
-            if (in_array('__admin_only', $legacyFlags, true)) {
+            $explicitlyEnabled = !empty($enabledSet[$permission]);
+            // Admin-only legacy flags still allow explicit preset grants (e.g. manager force_close).
+            if (in_array('__admin_only', $legacyFlags, true) && !$explicitlyEnabled) {
                 continue;
             }
-            $isEnabled = !empty($enabledSet[$permission]) ? 1 : 0;
+            $isEnabled = $explicitlyEnabled ? 1 : 0;
             $override = $limitsByPermission[$permission] ?? [];
-            $isUnlimited = array_key_exists('is_unlimited', $override) ? (int) (bool) $override['is_unlimited'] : 1;
-            $limitValue = $isUnlimited ? null : ($override['limit_value'] ?? null);
-            $limitParam = $limitValue !== null ? (float) $limitValue : null;
+            // Enabled limitable permissions are synced as unlimited in this path.
+            $isUnlimited = array_key_exists('is_unlimited', $override)
+                ? (int) (bool) $override['is_unlimited']
+                : 1;
+            $limitParam = null;
 
             $stmt = $conn->prepare("
                 INSERT INTO role_capabilities (role_id, permission_key, is_enabled, limit_value, is_unlimited)

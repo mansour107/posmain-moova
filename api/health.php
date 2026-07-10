@@ -18,11 +18,21 @@ if ($detailRequested && !$tokenOk) {
     ]);
 }
 
-$config = posmain_app_config();
+$configLoadError = null;
+try {
+    $config = posmain_app_config();
+} catch (Throwable $configException) {
+    $configLoadError = $configException->getMessage();
+    $config = posmainHealthFallbackConfig();
+}
+
 $scope = strtolower(trim((string) ($_GET['scope'] ?? '')));
 $updateScope = $scope === 'update';
 $checks = [];
 $healthy = true;
+
+$checks['main_auth'] = posmainHealthMainAuthCheck($config, $configLoadError);
+$healthy = $healthy && !empty($checks['main_auth']['ok']);
 
 $checks['database'] = posmainHealthDatabaseCheck();
 $healthy = $healthy && !empty($checks['database']['ok']);
@@ -84,6 +94,9 @@ $payload = [
     'ok' => $healthy,
     'healthy' => $healthy,
     'checked_at_utc' => gmdate('Y-m-d\TH:i:s\Z'),
+    'main_auth_mode' => $checks['main_auth']['main_auth_mode'] ?? null,
+    'deployment_role' => $checks['main_auth']['deployment_role'] ?? null,
+    'pin_secret_ready' => !empty($checks['main_auth']['pin_secret_ready']),
 ];
 
 if ($detailRequested) {
@@ -99,8 +112,13 @@ posmainHealthJson($healthy ? 200 : 503, $payload);
 
 function posmainHealthTokenIsValid(): bool
 {
-    $config = posmain_app_config();
-    $expected = trim((string) ($config['status_token'] ?? ''));
+    $expected = '';
+    try {
+        $config = posmain_app_config();
+        $expected = trim((string) ($config['status_token'] ?? ''));
+    } catch (Throwable $exception) {
+        $expected = trim((string) (getenv('POSMAIN_STATUS_TOKEN') ?: ($_ENV['POSMAIN_STATUS_TOKEN'] ?? '')));
+    }
     if ($expected === '') {
         return false;
     }
@@ -121,6 +139,108 @@ function posmainHealthTokenIsValid(): bool
     }
 
     return $provided !== '' && hash_equals($expected, $provided);
+}
+
+/**
+ * Resolve main auth readiness without exposing POSMAIN_PIN_SECRET.
+ *
+ * @return array{
+ *   ok: bool,
+ *   main_auth_mode: ?string,
+ *   deployment_role: string,
+ *   router_enabled: bool,
+ *   pin_secret_ready: bool,
+ *   error?: string
+ * }
+ */
+function posmainHealthMainAuthCheck(array $config, ?string $configLoadError = null): array
+{
+    $role = strtolower(trim((string) ($config['role'] ?? 'branch')));
+    $routerEnabled = !empty($config['router']['enabled']);
+    $check = [
+        'ok' => true,
+        'main_auth_mode' => null,
+        'deployment_role' => $role,
+        'router_enabled' => $routerEnabled,
+        'pin_secret_ready' => false,
+    ];
+
+    if ($configLoadError !== null && $configLoadError !== '') {
+        $check['ok'] = false;
+        $check['error'] = $configLoadError;
+        if ($configLoadError === 'MAIN_AUTH_MODE_UNSAFE') {
+            $check['error'] = 'MAIN_AUTH_MODE_UNSAFE';
+        }
+        // Still report whether the secret is present without revealing it.
+        $check['pin_secret_ready'] = posmainHealthPinSecretReady();
+        return $check;
+    }
+
+    try {
+        $mode = function_exists('posmain_main_auth_mode')
+            ? posmain_main_auth_mode($config)
+            : (string) ($config['auth']['main_login_mode'] ?? '');
+        $check['main_auth_mode'] = $mode !== '' ? $mode : null;
+    } catch (Throwable $exception) {
+        $check['ok'] = false;
+        $check['error'] = $exception->getMessage();
+        $check['pin_secret_ready'] = posmainHealthPinSecretReady();
+        return $check;
+    }
+
+    $isHosted = in_array($role, ['cloud', 'fake_cloud'], true) || $routerEnabled;
+    $configured = strtolower(trim((string) posmain_env('POSMAIN_MAIN_AUTH_MODE', '', true)));
+    if ($configured === 'pin' && $isHosted) {
+        $check['ok'] = false;
+        $check['error'] = 'MAIN_AUTH_MODE_UNSAFE';
+        $check['pin_secret_ready'] = posmainHealthPinSecretReady();
+        return $check;
+    }
+
+    $pinSecretReady = posmainHealthPinSecretReady();
+    $check['pin_secret_ready'] = $pinSecretReady;
+    if (($check['main_auth_mode'] ?? '') === 'pin' && !$pinSecretReady) {
+        $check['ok'] = false;
+        $check['error'] = 'PIN_SECRET_MISSING';
+    }
+
+    return $check;
+}
+
+function posmainHealthPinSecretReady(): bool
+{
+    try {
+        if (!function_exists('posmain_pin_secret')) {
+            return false;
+        }
+        $secret = posmain_pin_secret();
+        return is_string($secret) && trim($secret) !== '';
+    } catch (Throwable $exception) {
+        return false;
+    }
+}
+
+function posmainHealthFallbackConfig(): array
+{
+    $role = strtolower(trim((string) (getenv('POSMAIN_ROLE') ?: ($_ENV['POSMAIN_ROLE'] ?? 'branch'))));
+    $env = (string) (getenv('POSMAIN_ENV') ?: ($_ENV['POSMAIN_ENV'] ?? 'local'));
+    $routerEnabled = in_array(
+        strtolower(trim((string) (getenv('POSMAIN_ROUTER_ENABLED') ?: ($_ENV['POSMAIN_ROUTER_ENABLED'] ?? '0')))),
+        ['1', 'true', 'yes', 'on'],
+        true
+    );
+
+    return [
+        'env' => $env,
+        'role' => $role !== '' ? $role : 'branch',
+        'production_mode' => false,
+        'auth' => ['main_login_mode' => null],
+        'router' => ['enabled' => $routerEnabled],
+        'branch' => ['uuid' => ''],
+        'sync' => ['worker_enabled' => false],
+        'features' => ['cloud_sync' => false],
+        'status_token' => (string) (getenv('POSMAIN_STATUS_TOKEN') ?: ($_ENV['POSMAIN_STATUS_TOKEN'] ?? '')),
+    ];
 }
 
 function posmainHealthDatabaseCheck(): array

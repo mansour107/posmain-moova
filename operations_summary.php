@@ -4,6 +4,14 @@ include('includes/navbar.php');
 include('includes/sidebar.php'); 
 
 
+require_once __DIR__ . '/includes/business_day.php';
+$businessDayContext = posmain_business_day_context(
+    isset($conn) && $conn instanceof mysqli ? $conn : null,
+    (int) ($_SESSION['pos_tenant'] ?? 0),
+    (int) ($_SESSION['pos_branch'] ?? 0)
+);
+$today = $businessDayContext['current_business_day'];
+
 $q = isset($_GET['q']) ? $_GET['q'] : "all";  // استقبال قيمة q من GET
 $strtdate = isset($_GET['strtdate']) ? $_GET['strtdate'] : (isset($_POST['strtdate']) ? $_POST['strtdate'] : null);
 $enddate = isset($_GET['enddate']) ? $_GET['enddate'] : (isset($_POST['enddate']) ? $_POST['enddate'] : null);

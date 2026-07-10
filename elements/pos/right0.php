@@ -45,7 +45,17 @@
         <input type="hidden" name="pro_serial" value="0">
         <input type="hidden" name="pro_id" value="1">
         
-        <?php $posdate = isset($_GET['edit']) ? $rowed['pro_date'] : date('Y-m-d', strtotime('-4 hours')); ?>
+        <?php
+        if (!isset($posdate) || $posdate === '') {
+            require_once __DIR__ . '/../../includes/business_day.php';
+            $posdate = posmain_current_business_day(
+                isset($conn) && $conn instanceof mysqli ? $conn : null,
+                (int) ($_SESSION['pos_tenant'] ?? 0),
+                (int) ($_SESSION['pos_branch'] ?? 0)
+            );
+        }
+        $posdate = isset($_GET['edit']) ? $rowed['pro_date'] : $posdate;
+        ?>
 
         <!-- جميع الحقول في صف واحد -->
         <div class="row g-2">

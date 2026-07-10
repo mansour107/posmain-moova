@@ -26,19 +26,23 @@ services:
     depends_on:
       - mysql
     ports:
-      - "8010:8000"
+      - "127.0.0.1:8010:8000"
     environment:
       TZ: Africa/Cairo
-      PHP_CLI_SERVER_WORKERS: "1"
+      PHP_CLI_SERVER_WORKERS: "4"
       POSMAIN_BRANCH_WORKER_AUTODISPATCH: "0"
       POSMAIN_SESSION_DRIVER: file
       POSMAIN_BRANCH_WORKER_ENV_FILE: /app/.env.branch-worker
       POSMAIN_DISABLE_BRANCH_ENV_FILE_FALLBACK: "1"
-      POSMAIN_MOOVA_MODE: direct_widget
+      POSMAIN_MOOVA_MODE: disabled
       POSMAIN_DB_HOST: mysql
       POSMAIN_DB_PORT: "3306"
       POSMAIN_DB_NAME: kody2
       POSMAIN_PIN_SECRET: posmain-test-pin-secret-do-not-use-in-prod
+      POSMAIN_MAIN_AUTH_MODE: pin
+      POSMAIN_ROLE: branch
+      POSMAIN_ENV: local
+      POSMAIN_INACTIVITY_LOCK_SECONDS: "3600"
     volumes:
       - .:/app
       - posmain_php_logs:/app/logs

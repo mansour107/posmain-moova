@@ -1,6 +1,10 @@
 <!-- POS auto-lock + navigation lock -->
 <script>
 (function () {
+    if (window.POSMAIN_FULL_SESSION_LOCK_ACTIVE) {
+        return;
+    }
+
     function posmainIsSellingSurface() {
         return !!document.getElementById('posForm');
     }

@@ -120,8 +120,11 @@
             .removeClass('d-none is-success is-danger')
             .addClass('is-warning')
             .html('<i class="fas fa-exclamation-triangle me-1" aria-hidden="true"></i>' + message);
-        $(amountSelector + ', ' + reasonSelector).prop('disabled', !cashRecordingEnabled(summary));
-        $(saveSelector).prop('disabled', true);
+        // Keep fields + save enabled when a drawer is open so cashiers can fill the form
+        // and trigger manager override on save (message above explains the permission gap).
+        var canAttemptWithOverride = cashRecordingEnabled(summary);
+        $(amountSelector + ', ' + reasonSelector).prop('disabled', !canAttemptWithOverride);
+        $(saveSelector).prop('disabled', !canAttemptWithOverride);
     }
 
     function getCloseShiftExpensePayload() {
@@ -203,9 +206,47 @@
         return window.POSMAIN.requestManagerOverride(permissionKey, options);
     }
 
+    // Pending keys survive uncertain network retries for the same amount+reason.
+    // Cleared on success, modal reset, or when the cashier changes the payload.
+    var pendingCashKeys = {};
+
+    function createShiftCashIdempotencyKey(scope) {
+        if (typeof window.createPOSIdempotencyKey === 'function') {
+            return window.createPOSIdempotencyKey(scope);
+        }
+        if (window.crypto && typeof window.crypto.randomUUID === 'function') {
+            return scope + ':' + window.crypto.randomUUID();
+        }
+        return scope + ':' + Date.now().toString(36) + ':' + Math.random().toString(36).slice(2);
+    }
+
+    function cashPayloadFingerprint(amount, reason) {
+        return String(amount) + '|' + String(reason || '');
+    }
+
+    function getShiftCashIdempotencyKey(scope, amount, reason) {
+        var fingerprint = cashPayloadFingerprint(amount, reason);
+        var pending = pendingCashKeys[scope];
+        if (pending && pending.fingerprint === fingerprint && pending.key) {
+            return pending.key;
+        }
+        var key = createShiftCashIdempotencyKey(scope);
+        pendingCashKeys[scope] = { key: key, fingerprint: fingerprint };
+        return key;
+    }
+
+    function clearShiftCashIdempotencyKey(scope) {
+        delete pendingCashKeys[scope];
+    }
+
+    function clearAllShiftCashIdempotencyKeys() {
+        pendingCashKeys = {};
+    }
+
     function saveShiftExpense() {
         var amount = parseFloat($('#shift_expense_amount').val() || '0');
         var reason = ($('#shift_expense_reason').val() || '').trim();
+        var cashScope = 'pos.shift.payout';
 
         if ($('#shiftExpenseSaveBtn').prop('disabled')) {
             return;
@@ -222,6 +263,7 @@
             return;
         }
 
+        var idempotencyKey = getShiftCashIdempotencyKey(cashScope, amount, reason);
         $('#shiftExpenseSaveBtn').prop('disabled', true);
 
         function finishSuccess(response) {
@@ -230,6 +272,7 @@
                 throw new Error(payload.error || 'تعذر حفظ المصروف');
             }
 
+            clearShiftCashIdempotencyKey(cashScope);
             $('#shift_expense_amount').val('');
             $('#shift_expense_reason').val('');
             showPaneAlert('#shiftExpenseFormAlert', 'تم تسجيل المصروف بنجاح.', 'success');
@@ -278,6 +321,7 @@
                 amount: amount,
                 reason: reason,
                 csrf_token: window.POSMAIN_SHIFT_EXPENSE_CSRF_TOKEN || '',
+                idempotency_key: idempotencyKey,
             };
             if (approvalId) {
                 data.manager_approval_id = approvalId;
@@ -328,6 +372,7 @@
     function saveShiftPayIn() {
         var amount = parseFloat($('#shift_payin_amount').val() || '0');
         var reason = ($('#shift_payin_reason').val() || '').trim();
+        var cashScope = 'pos.shift.payin';
 
         if ($('#shiftPayinSaveBtn').prop('disabled')) {
             return;
@@ -344,6 +389,7 @@
             return;
         }
 
+        var idempotencyKey = getShiftCashIdempotencyKey(cashScope, amount, reason);
         $('#shiftPayinSaveBtn').prop('disabled', true);
 
         function finishSuccess(response) {
@@ -352,6 +398,7 @@
                 throw new Error(payload.error || 'تعذر حفظ الإيداع');
             }
 
+            clearShiftCashIdempotencyKey(cashScope);
             $('#shift_payin_amount').val('');
             $('#shift_payin_reason').val('');
             showPaneAlert('#shiftPayinFormAlert', 'تم تسجيل الإيداع بنجاح.', 'success');
@@ -401,6 +448,7 @@
                 amount: amount,
                 reason: reason,
                 csrf_token: window.POSMAIN_SHIFT_PAYIN_CSRF_TOKEN || '',
+                idempotency_key: idempotencyKey,
             };
             if (approvalId) {
                 data.manager_approval_id = approvalId;
@@ -444,6 +492,7 @@
     function saveShiftSafeDrop() {
         var amount = parseFloat($('#shift_safe_drop_amount').val() || '0');
         var reason = ($('#shift_safe_drop_reason').val() || '').trim();
+        var cashScope = 'pos.shift.safe_drop';
 
         if ($('#shiftSafeDropSaveBtn').prop('disabled')) {
             return;
@@ -460,6 +509,7 @@
             return;
         }
 
+        var idempotencyKey = getShiftCashIdempotencyKey(cashScope, amount, reason);
         $('#shiftSafeDropSaveBtn').prop('disabled', true);
 
         function finishSuccess(response) {
@@ -468,6 +518,7 @@
                 throw new Error(payload.error || 'تعذر حفظ التحويل');
             }
 
+            clearShiftCashIdempotencyKey(cashScope);
             $('#shift_safe_drop_amount').val('');
             $('#shift_safe_drop_reason').val('');
             showPaneAlert('#shiftSafeDropFormAlert', 'تم تسجيل التحويل للخزنة بنجاح.', 'success');
@@ -517,6 +568,7 @@
                 amount: amount,
                 reason: reason,
                 csrf_token: window.POSMAIN_SHIFT_SAFE_DROP_CSRF_TOKEN || '',
+                idempotency_key: idempotencyKey,
             };
             if (approvalId) {
                 data.manager_approval_id = approvalId;
@@ -595,6 +647,7 @@
 
         $('#shiftExpenseModal').on('show.bs.modal', function () {
             syncTabVisibility();
+            clearAllShiftCashIdempotencyKeys();
             $('#shiftExpenseFormAlert, #shiftPayinFormAlert, #shiftSafeDropFormAlert').addClass('d-none').text('');
             $('#shift_expense_amount, #shift_payin_amount, #shift_safe_drop_amount').val('');
             $('#shift_expense_reason, #shift_payin_reason, #shift_safe_drop_reason').val('');

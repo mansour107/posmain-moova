@@ -112,6 +112,9 @@ try {
     if ($code === 'PIN_TERMINAL_FROZEN' || $code === 'MANAGER_PIN_LOCKED') {
         $status = 429;
     }
+    $responseCode = $status === 429 ? 'PIN_RETRY_LATER' : (
+        in_array($code, $deniedCodes, true) ? 'MANAGER_OVERRIDE_DENIED' : $code
+    );
     http_response_code($status);
-    echo json_encode(['success' => false, 'code' => $code], JSON_UNESCAPED_UNICODE);
+    echo json_encode(['success' => false, 'code' => $responseCode], JSON_UNESCAPED_UNICODE);
 }

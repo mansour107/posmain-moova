@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__ . '/../includes/session_bootstrap.php';
 include(__DIR__ . '/../includes/ajax_header.php');
 require_once __DIR__ . '/../classes/Pos/Service/OrderFulfillmentService.php';
 

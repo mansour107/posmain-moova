@@ -25,5 +25,18 @@ jobs:
     - name: Install dependencies
       run: composer install --prefer-dist --no-progress --no-interaction
 
+    - name: Ensure PHPStan is available
+      run: |
+        if [[ ! -x vendor/bin/phpstan ]]; then
+          echo "phpstan/phpstan is not in composer.lock; installing for this job only."
+          echo "BLOCKER_NOTE: add phpstan/phpstan to composer require-dev to make this deterministic."
+          composer require --dev phpstan/phpstan:^2.0 --no-interaction --no-progress
+        fi
+
     - name: Run analysis
-      run: vendor/bin/phpstan --error-format=github --no-progress
+      run: |
+        vendor/bin/phpstan analyse \
+          --configuration=phpstan.neon.dist \
+          --error-format=github \
+          --no-progress \
+          --memory-limit=1G

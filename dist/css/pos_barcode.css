@@ -5521,6 +5521,87 @@ body:has(.pos-customers-admin) .main-sidebar .form-control::placeholder {
     line-height: 1.2;
 }
 
+body.pos-premium-dark .pos-identity-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.65rem;
+    min-height: var(--pos-corner-btn-size, 48px);
+    max-width: min(280px, 42vw);
+    padding: 0.35rem 0.85rem 0.35rem 0.4rem;
+    border-radius: 999px;
+    border: 1px solid rgba(232, 160, 32, 0.28);
+    background: linear-gradient(135deg, rgba(35, 45, 59, 0.96), rgba(26, 34, 45, 0.92));
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+    color: var(--pos-text, #e8edf4);
+    overflow: hidden;
+}
+
+body.pos-premium-dark .pos-identity-badge.is-takeover {
+    border-color: rgba(232, 160, 32, 0.55);
+    box-shadow: 0 8px 28px rgba(232, 160, 32, 0.12), 0 8px 24px rgba(0, 0, 0, 0.28);
+}
+
+body.pos-premium-dark .pos-identity-avatar {
+    flex: 0 0 auto;
+    width: 34px;
+    height: 34px;
+    border-radius: 999px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(232, 160, 32, 0.16);
+    color: var(--pos-accent, #e8a020);
+    font-size: 0.85rem;
+}
+
+body.pos-premium-dark .pos-identity-copy {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    line-height: 1.15;
+}
+
+body.pos-premium-dark .pos-identity-label {
+    font-size: 0.68rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    color: var(--pos-text-muted, #8b98a8);
+}
+
+body.pos-premium-dark .pos-identity-name {
+    font-size: 0.92rem;
+    font-weight: 800;
+    color: var(--pos-text, #e8edf4);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+body.pos-premium-dark .pos-identity-meta {
+    margin-top: 0.12rem;
+    font-size: 0.68rem;
+    font-weight: 600;
+    color: rgba(232, 160, 32, 0.92);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+body.pos-premium-dark .pos-identity-meta.is-empty {
+    display: none;
+}
+
+@media (max-width: 720px) {
+    body.pos-premium-dark .pos-identity-badge {
+        max-width: min(190px, 48vw);
+        padding-inline-end: 0.65rem;
+    }
+
+    body.pos-premium-dark .pos-identity-meta {
+        display: none;
+    }
+}
+
 /* Manager override PIN pad modal (RTL — matches pos_login_screen pad) */
 .pos-pin-pad-modal {
     position: fixed;

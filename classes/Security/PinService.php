@@ -5,12 +5,12 @@ require_once __DIR__ . '/../PasswordService.php';
 
 class PinService
 {
-    private const MIN_LENGTH = 4;
-    private const MAX_LENGTH = 6;
+    private const PIN_LENGTH = 4;
     private const MAX_ATTEMPTS = 5;
     private const LOCK_SECONDS = 900;
     private const TERMINAL_FREEZE_ATTEMPTS = 10;
     private const TERMINAL_FREEZE_SECONDS = 900;
+    public const BOOTSTRAP_PIN = '0000';
 
     /** @var list<string> */
     private const BLACKLIST = [
@@ -20,70 +20,60 @@ class PinService
 
     public function normalizePin(string $pin): string
     {
+        // Strict: do not strip malformed characters for validation callers.
+        // Lookup/hash still use digits-only only after format validation passes.
         return preg_replace('/\D+/', '', $pin) ?? '';
     }
 
-    public function validatePinFormat(string $pin): void
+    /**
+     * @param array{allow_bootstrap?: bool} $options
+     */
+    public function validatePinFormat(string $pin, array $options = []): void
     {
-        $normalized = $this->normalizePin($pin);
-        $length = strlen($normalized);
-        if ($length < self::MIN_LENGTH || $length > self::MAX_LENGTH) {
+        // Reject anything that is not exactly four ASCII digits (no stripping).
+        if (!preg_match('/^\d{' . self::PIN_LENGTH . '}$/', $pin)) {
             throw new InvalidArgumentException('PIN_FORMAT_INVALID');
         }
+        $normalized = $pin;
+        $allowBootstrap = !empty($options['allow_bootstrap']);
         if (in_array($normalized, self::BLACKLIST, true)) {
+            if ($allowBootstrap && $normalized === self::BOOTSTRAP_PIN) {
+                return;
+            }
             throw new InvalidArgumentException('PIN_BLACKLISTED');
         }
     }
 
-    public function pinLookup(string $pin): string
+    /**
+     * @param array{allow_bootstrap?: bool} $options
+     */
+    public function pinLookup(string $pin, array $options = []): string
     {
-        $this->validatePinFormat($pin);
-        $normalized = $this->normalizePin($pin);
+        $this->validatePinFormat($pin, $options);
         $secret = posmain_pin_secret();
 
-        return hash_hmac('sha256', $normalized, $secret);
+        return hash_hmac('sha256', $pin, $secret);
     }
 
-    public function hashPin(string $pin): string
+    /**
+     * @param array{allow_bootstrap?: bool} $options
+     */
+    public function hashPin(string $pin, array $options = []): string
     {
-        $this->validatePinFormat($pin);
+        $this->validatePinFormat($pin, $options);
 
-        return PasswordService::hashPassword($this->normalizePin($pin));
+        return PasswordService::hashPassword($pin);
     }
 
     public function encryptPinForOwnerReveal(string $pin): string
     {
-        $this->validatePinFormat($pin);
-        if (!function_exists('openssl_encrypt')) {
-            throw new RuntimeException('OPENSSL_REQUIRED');
-        }
-        $key = hash('sha256', posmain_pin_secret() . '|owner_pin_reveal', true);
-        $iv = random_bytes(12);
-        $tag = '';
-        $cipher = openssl_encrypt($this->normalizePin($pin), 'aes-256-gcm', $key, OPENSSL_RAW_DATA, $iv, $tag);
-        if ($cipher === false || strlen($tag) !== 16) {
-            throw new RuntimeException('PIN_ENCRYPT_FAILED');
-        }
-
-        return 'v1:' . base64_encode($iv . $tag . $cipher);
+        // Reversible PIN storage is retired. Keep method for compatibility but refuse.
+        throw new RuntimeException('PIN_REVEAL_DISABLED');
     }
 
     public function decryptPinForOwnerReveal(string $payload): ?string
     {
-        if ($payload === '' || strpos($payload, 'v1:') !== 0 || !function_exists('openssl_decrypt')) {
-            return null;
-        }
-        $raw = base64_decode(substr($payload, 3), true);
-        if ($raw === false || strlen($raw) < 28) {
-            return null;
-        }
-        $iv = substr($raw, 0, 12);
-        $tag = substr($raw, 12, 16);
-        $cipher = substr($raw, 28);
-        $key = hash('sha256', posmain_pin_secret() . '|owner_pin_reveal', true);
-        $plain = openssl_decrypt($cipher, 'aes-256-gcm', $key, OPENSSL_RAW_DATA, $iv, $tag);
-
-        return $plain === false ? null : $plain;
+        return null;
     }
 
     /**
@@ -91,21 +81,16 @@ class PinService
      */
     public function revealPinForOwner(array $row): ?string
     {
-        $pinEnc = trim((string) ($row['pin_enc'] ?? ''));
-        if ($pinEnc === '') {
-            return null;
-        }
-
-        return $this->decryptPinForOwnerReveal($pinEnc);
+        return null;
     }
 
     public function verifyPin(string $pin, string $storedHash): bool
     {
-        if ($storedHash === '') {
+        if ($storedHash === '' || !preg_match('/^\d{' . self::PIN_LENGTH . '}$/', $pin)) {
             return false;
         }
 
-        return PasswordService::verifyPassword($this->normalizePin($pin), $storedHash);
+        return PasswordService::verifyPassword($pin, $storedHash);
     }
 
     public function anyActiveUserHasPin(mysqli $conn): bool
@@ -223,8 +208,8 @@ class PinService
 
     public function generateAvailablePin(mysqli $conn, int $forUserId = 0): string
     {
-        for ($i = 0; $i < 30; $i++) {
-            $pin = (string) random_int(1000, 9999);
+        for ($i = 0; $i < 60; $i++) {
+            $pin = str_pad((string) random_int(0, 9999), 4, '0', STR_PAD_LEFT);
             try {
                 posmain_pin_secret();
                 $this->validatePinFormat($pin);
@@ -247,8 +232,15 @@ class PinService
         }
 
         $lookup = $this->pinLookup($pin);
+        $cols = 'id, uname, display_name, pin_hash, pin_locked_until, failed_pin_attempts, userrole, is_waiter';
+        if ($this->columnExists($conn, 'pin_must_change')) {
+            $cols .= ', pin_must_change';
+        }
+        if ($this->columnExists($conn, 'auth_version')) {
+            $cols .= ', auth_version';
+        }
         $stmt = $conn->prepare(
-            "SELECT id, uname, display_name, pin_hash, pin_locked_until, failed_pin_attempts, userrole, is_waiter
+            "SELECT {$cols}
                FROM users
               WHERE pin_lookup = ?
                 AND COALESCE(isdeleted, 0) != 1
@@ -263,7 +255,31 @@ class PinService
         return $row ?: null;
     }
 
-    public function setPinForUser(mysqli $conn, int $userId, string $pin): void
+    /**
+     * Install bootstrap PIN 0000 for owner. Private bootstrap-only path.
+     */
+    public function setBootstrapPinForOwner(mysqli $conn, int $userId, string $pin = self::BOOTSTRAP_PIN): void
+    {
+        if ($pin !== self::BOOTSTRAP_PIN) {
+            throw new InvalidArgumentException('BOOTSTRAP_PIN_INVALID');
+        }
+        $this->setPinForUser($conn, $userId, $pin, [
+            'allow_bootstrap' => true,
+            'must_change' => true,
+            'bump_auth_version' => true,
+            'clear_pin_enc' => true,
+        ]);
+    }
+
+    /**
+     * @param array{
+     *   allow_bootstrap?: bool,
+     *   must_change?: bool,
+     *   bump_auth_version?: bool,
+     *   clear_pin_enc?: bool
+     * } $options
+     */
+    public function setPinForUser(mysqli $conn, int $userId, string $pin, array $options = []): void
     {
         if ($userId < 1) {
             throw new InvalidArgumentException('USER_ID_REQUIRED');
@@ -272,45 +288,48 @@ class PinService
             throw new RuntimeException('PIN_SCHEMA_MISSING');
         }
 
-        $this->validatePinFormat($pin);
-        $lookup = $this->pinLookup($pin);
-        $hash = $this->hashPin($pin);
+        $allowBootstrap = !empty($options['allow_bootstrap']);
+        $this->validatePinFormat($pin, ['allow_bootstrap' => $allowBootstrap]);
+        $lookup = $this->pinLookup($pin, ['allow_bootstrap' => $allowBootstrap]);
+        $hash = $this->hashPin($pin, ['allow_bootstrap' => $allowBootstrap]);
         $now = date('Y-m-d H:i:s');
-        $pinEnc = null;
-        if ($this->pinEncColumnExists($conn)) {
-            try {
-                $pinEnc = $this->encryptPinForOwnerReveal($pin);
-            } catch (Throwable) {
-                $pinEnc = null;
-            }
+        $mustChange = array_key_exists('must_change', $options) ? (!empty($options['must_change']) ? 1 : 0) : 0;
+        $bumpAuth = !array_key_exists('bump_auth_version', $options) || !empty($options['bump_auth_version']);
+
+        $sets = [
+            'pin_hash = ?',
+            'pin_lookup = ?',
+            'pin_set_at = ?',
+            'failed_pin_attempts = 0',
+            'pin_locked_until = NULL',
+        ];
+        $types = 'sss';
+        $values = [$hash, $lookup, $now];
+
+        if ($this->columnExists($conn, 'pin_enc')) {
+            $sets[] = 'pin_enc = NULL';
+        }
+        if ($this->columnExists($conn, 'pin_must_change')) {
+            $sets[] = 'pin_must_change = ?';
+            $types .= 'i';
+            $values[] = $mustChange;
+        }
+        if ($this->columnExists($conn, 'pin_changed_at') && !$mustChange) {
+            $sets[] = 'pin_changed_at = ?';
+            $types .= 's';
+            $values[] = $now;
+        }
+        if ($bumpAuth && $this->columnExists($conn, 'auth_version')) {
+            $sets[] = 'auth_version = auth_version + 1';
         }
 
-        if ($pinEnc !== null) {
-            $stmt = $conn->prepare(
-                'UPDATE users
-                    SET pin_hash = ?,
-                        pin_lookup = ?,
-                        pin_set_at = ?,
-                        pin_enc = ?,
-                        failed_pin_attempts = 0,
-                        pin_locked_until = NULL
-                  WHERE id = ?
-                    AND COALESCE(isdeleted, 0) != 1'
-            );
-            $stmt->bind_param('ssssi', $hash, $lookup, $now, $pinEnc, $userId);
-        } else {
-            $stmt = $conn->prepare(
-                'UPDATE users
-                    SET pin_hash = ?,
-                        pin_lookup = ?,
-                        pin_set_at = ?,
-                        failed_pin_attempts = 0,
-                        pin_locked_until = NULL
-                  WHERE id = ?
-                    AND COALESCE(isdeleted, 0) != 1'
-            );
-            $stmt->bind_param('sssi', $hash, $lookup, $now, $userId);
-        }
+        $sql = 'UPDATE users SET ' . implode(', ', $sets)
+            . ' WHERE id = ? AND COALESCE(isdeleted, 0) != 1';
+        $types .= 'i';
+        $values[] = $userId;
+
+        $stmt = $conn->prepare($sql);
+        $stmt->bind_param($types, ...$values);
         try {
             $stmt->execute();
         } catch (mysqli_sql_exception $exception) {
@@ -334,15 +353,38 @@ class PinService
             return;
         }
 
-        $clearEnc = $this->pinEncColumnExists($conn) ? ', pin_enc = NULL' : '';
+        $sets = [
+            'pin_hash = NULL',
+            'pin_lookup = NULL',
+            'pin_set_at = NULL',
+            'failed_pin_attempts = 0',
+            'pin_locked_until = NULL',
+        ];
+        if ($this->columnExists($conn, 'pin_enc')) {
+            $sets[] = 'pin_enc = NULL';
+        }
+        if ($this->columnExists($conn, 'pin_must_change')) {
+            $sets[] = 'pin_must_change = 0';
+        }
+        if ($this->columnExists($conn, 'auth_version')) {
+            $sets[] = 'auth_version = auth_version + 1';
+        }
+
         $stmt = $conn->prepare(
-            'UPDATE users
-                SET pin_hash = NULL,
-                    pin_lookup = NULL,
-                    pin_set_at = NULL' . $clearEnc . ',
-                    failed_pin_attempts = 0,
-                    pin_locked_until = NULL
-              WHERE id = ?'
+            'UPDATE users SET ' . implode(', ', $sets) . ' WHERE id = ?'
+        );
+        $stmt->bind_param('i', $userId);
+        $stmt->execute();
+        $stmt->close();
+    }
+
+    public function bumpAuthVersion(mysqli $conn, int $userId): void
+    {
+        if ($userId < 1 || !$this->columnExists($conn, 'auth_version')) {
+            return;
+        }
+        $stmt = $conn->prepare(
+            'UPDATE users SET auth_version = auth_version + 1 WHERE id = ?'
         );
         $stmt->bind_param('i', $userId);
         $stmt->execute();
@@ -354,16 +396,15 @@ class PinService
         return 'pin_terminal:' . trim($ip);
     }
 
-    private function pinEncColumnExists(mysqli $conn): bool
-    {
-        $result = $conn->query("SHOW COLUMNS FROM users LIKE 'pin_enc'");
-
-        return $result instanceof mysqli_result && $result->num_rows > 0;
-    }
-
     private function pinColumnsExist(mysqli $conn): bool
     {
-        $result = $conn->query("SHOW COLUMNS FROM users LIKE 'pin_hash'");
+        return $this->columnExists($conn, 'pin_hash');
+    }
+
+    private function columnExists(mysqli $conn, string $column): bool
+    {
+        $column = $conn->real_escape_string($column);
+        $result = $conn->query("SHOW COLUMNS FROM users LIKE '{$column}'");
 
         return $result instanceof mysqli_result && $result->num_rows > 0;
     }

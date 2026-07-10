@@ -1,4 +1,6 @@
 <?php
+require_once __DIR__ . '/includes/session_bootstrap.php';
+
 require_once __DIR__ . '/includes/production_guard.php';
 production_guard_deny_route('pre_start.php');
 require_once __DIR__ . '/includes/db_bootstrap.php';

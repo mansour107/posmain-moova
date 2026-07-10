@@ -48,6 +48,11 @@ if ($bodyColor === '' || !preg_match('/^#[0-9A-Fa-f]{3,8}$/', $bodyColor)) {
 $assetVer = is_file(__DIR__ . '/../dist/css/custom.css')
     ? (string) filemtime(__DIR__ . '/../dist/css/custom.css')
     : '1';
+
+require_once __DIR__ . '/auth_session_guards.php';
+if (isset($conn) && $conn instanceof mysqli) {
+    posmain_enforce_auth_session_guards($conn);
+}
 ?>
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
@@ -191,4 +196,18 @@ $assetVer = is_file(__DIR__ . '/../dist/css/custom.css')
 </head>
 
 <body class="hold-transition sidebar-mini sidebar-collapse layout-fixed font-semibold" style="font-family: 'Inter', 'IBM Plex Sans Arabic', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;">
+<?php require __DIR__ . '/main_session_lock_client.php'; ?>
+  <?php
+  // Release the session lock before the heavy HTML body so concurrent AJAX
+  // (capabilities, KDS polls, team hub) cannot block behind this page render.
+  if (session_status() === PHP_SESSION_ACTIVE) {
+      session_write_close();
+  }
+  ?>
+  <?php
+  if (function_exists('posmain_render_bootstrap_pin_banner')) {
+      include_once __DIR__ . '/pin_pad_styles.php';
+      posmain_render_bootstrap_pin_banner();
+  }
+  ?>
   <div class="wrapper">

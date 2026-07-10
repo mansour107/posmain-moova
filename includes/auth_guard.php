@@ -171,6 +171,8 @@ if (!function_exists('auth_guard_permission_map')) {
             'pos.reprint.kitchen_ticket' => ['show_sales', 'sid_sales'],
             'pos.shift.force_close' => ['__admin_only'],
             'pos.shift.force_close_others' => ['edit_sales', 'sid_sales'],
+            'pos.shift.resolve_variance' => ['edit_sales', 'sid_sales', 'show_gl_reports'],
+            'pos.shift.set_opening_baseline' => ['edit_sales', 'sid_sales', 'show_gl_reports'],
             'pos.void.post_send' => ['edit_sales', 'delete_sales'],
             'pos.recipe_stock_override' => ['edit_sales', 'edit_stock'],
             'pos.cancel.unpaid' => ['delete_sales', 'edit_sales'],
@@ -704,6 +706,9 @@ if (!function_exists('deny_json_or_redirect')) {
         }
 
         http_response_code($statusCode);
+        if (session_status() === PHP_SESSION_ACTIVE) {
+            session_write_close();
+        }
 
         if (auth_guard_is_json_request()) {
             header('Content-Type: application/json; charset=utf-8');

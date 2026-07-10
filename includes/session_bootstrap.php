@@ -173,7 +173,15 @@ if (!function_exists('posmain_session_touch')) {
 
         $now = time();
         $sessionLifetime = posmain_session_lifetime_seconds();
-        $idleSeconds = (int) posmain_env('POSMAIN_SESSION_IDLE_SECONDS', $sessionLifetime);
+        $defaultIdleSeconds = $sessionLifetime;
+        try {
+            if (function_exists('posmain_is_pin_main_auth') && posmain_is_pin_main_auth()) {
+                $defaultIdleSeconds = (int) posmain_env('POSMAIN_INACTIVITY_LOCK_SECONDS', 300);
+            }
+        } catch (Throwable $ignored) {
+            // Unsafe auth configuration is handled by the entry point/health check.
+        }
+        $idleSeconds = (int) posmain_env('POSMAIN_SESSION_IDLE_SECONDS', $defaultIdleSeconds);
         $absoluteSeconds = (int) posmain_env('POSMAIN_SESSION_ABSOLUTE_SECONDS', $sessionLifetime);
 
         if (empty($_SESSION['posmain_session_started_at'])) {
@@ -237,3 +245,6 @@ if (!function_exists('posmain_session_regenerate')) {
 }
 
 posmain_session_start();
+
+require_once __DIR__ . '/entry_classification_guard.php';
+posmain_enforce_entry_classification();

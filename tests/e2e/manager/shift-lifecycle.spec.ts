@@ -25,8 +25,9 @@ test.describe('manager: real shift window lifecycle', () => {
 
     await openCloseShiftModal(page);
     await fillCloseShiftForm(page);
-    await page.locator('#closeShiftModal .pos-close-shift-btn-confirm').click();
-    await page.waitForURL(/closed_sessions\.php/, { timeout: 20_000 });
+    await page.waitForURL(/pos_barcode\.php/, { timeout: 20_000 });
+    await expect(page.locator('#shiftCloseResultModal')).toBeVisible({ timeout: 10_000 });
+    await page.locator('#shiftCloseResultDismiss').click();
 
     await unlockPos(page, 'manager');
 
@@ -36,8 +37,8 @@ test.describe('manager: real shift window lifecycle', () => {
     await openCloseShiftModal(page);
     await expect(page.locator('#closeShiftModal')).toContainText(/0|لا توجد/i);
     await fillCloseShiftForm(page);
-    await page.locator('#closeShiftModal .pos-close-shift-btn-confirm').click();
-    await page.waitForURL(/closed_sessions\.php/, { timeout: 20_000 });
+    await page.waitForURL(/pos_barcode\.php/, { timeout: 20_000 });
+    await expect(page.locator('#shiftCloseResultModal')).toBeVisible({ timeout: 10_000 });
 
     await expect(page.getByText(/لا توجد مبيعات|تم إغلاق الشيفت/i)).toBeVisible({ timeout: 10_000 });
 
@@ -57,8 +58,9 @@ test.describe('manager: real shift window lifecycle', () => {
 
     await openCloseShiftModal(page);
     await fillCloseShiftForm(page);
-    await page.locator('#closeShiftModal .pos-close-shift-btn-confirm').click();
-    await page.waitForURL(/closed_sessions\.php/, { timeout: 20_000 });
+    await page.waitForURL(/pos_barcode\.php/, { timeout: 20_000 });
+    await expect(page.locator('#shiftCloseResultModal')).toBeVisible({ timeout: 10_000 });
+    await page.locator('#shiftCloseResultDismiss').click();
 
     status = await page.evaluate(async () => {
       const r = await fetch('pos_session_status.php', { cache: 'no-store' });

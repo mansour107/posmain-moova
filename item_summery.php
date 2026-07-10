@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__ . '/includes/connect.php';
 require_once __DIR__ . '/includes/auth_guard.php';
 require_once __DIR__ . '/classes/Inventory/InventoryStockReadService.php';
 

@@ -1,6 +1,15 @@
 <?php
 require_once __DIR__ . '/includes/session_bootstrap.php';
 require_once __DIR__ . '/includes/csrf.php';
+require_once __DIR__ . '/includes/connect.php';
+require_once __DIR__ . '/includes/auth_guard.php';
+require_once __DIR__ . '/includes/pos_main_pin_entry.php';
+require_permission('pos.table.open', $conn);
+posmain_apply_main_pin_pos_entry($conn, 'pos_tables.php');
+if (!auth_guard_is_pos_barcode_unlocked()) {
+    include __DIR__ . '/includes/pos_login_screen.php';
+    exit;
+}
 include('includes/header.php');
 ?>
 <style>

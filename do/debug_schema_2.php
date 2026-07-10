@@ -1,20 +1,9 @@
 <?php
-require_once __DIR__ . '/../includes/production_guard.php';
-production_guard_deny_route('do/debug_schema_2.php');
 
-error_reporting(E_ALL);
-ini_set('display_errors', 1);
-$conn = new mysqli('localhost', 'root', '', 'focus');
-if ($conn->connect_error) {
-    die("Connection failed: " . $conn->connect_error);
-}
-
-$result = $conn->query("SHOW COLUMNS FROM ot_head");
-if ($result) {
-    while($row = $result->fetch_assoc()) {
-        echo $row['Field'] . " (" . $row['Type'] . ")\n";
-    }
-} else {
-    echo "Error: " . $conn->error;
-}
-?>
+http_response_code(410);
+header('Content-Type: application/json; charset=utf-8');
+echo json_encode([
+    'success' => false,
+    'error' => 'ENDPOINT_QUARANTINED',
+], JSON_UNESCAPED_UNICODE);
+exit;

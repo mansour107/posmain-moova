@@ -68,7 +68,7 @@ try {
         'counted_cash' => '65.000',
     ]);
     cashFlowFullDayAssert(abs((float) $closed['expected_cash'] - 65.0) < 0.01, 'close should absorb variance');
-    cashFlowFullDayAssert(abs((float) $closed['difference']) < 0.01, 'difference should be zero after adjustment');
+    cashFlowFullDayAssert(abs((float) $closed['difference'] - 5.0) < 0.01, 'difference keeps pre-close over (65-60)');
 
     $today = date('Y-m-d');
     $period = new CashFlowPeriodService();

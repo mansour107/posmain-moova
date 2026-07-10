@@ -1,23 +1,28 @@
 <?php
 
+require_once dirname(__DIR__, 3) . '/includes/drawer_movement_signs.php';
+require_once __DIR__ . '/BusinessDayService.php';
+
 class DrawerSessionService
 {
-    private const MOVEMENT_TYPES = [
-        'sale_cash' => 1,
-        'refund_cash' => -1,
-        'paid_in' => 1,
-        'paid_out' => -1,
-        'safe_drop' => -1,
-        'opening' => 1,
-        'closing_adjustment' => 1,
-        'no_sale' => 0,
-    ];
-
     /** @var array<string, bool> */
     private static array $columnCache = [];
 
+    /** @return array<string, int> */
+    private static function movementTypes(): array
+    {
+        static $types = null;
+        if ($types === null) {
+            $types = posmain_drawer_movement_signs();
+        }
+
+        return $types;
+    }
+
     public function openSession(mysqli $conn, array $request): array
     {
+        require_once dirname(__DIR__, 3) . '/includes/db_transaction.php';
+
         $userId = $this->positiveInt($request['user_id'] ?? 0, 'USER_ID_REQUIRED');
         $openedBy = $this->positiveInt($request['opened_by'] ?? $userId, 'OPENED_BY_REQUIRED');
         $tenant = $this->nonNegativeInt($request['tenant'] ?? 0, 'TENANT_INVALID');
@@ -25,45 +30,146 @@ class DrawerSessionService
         $fundAccountId = $this->optionalPositiveInt($request['fund_account_id'] ?? null);
         $openingCash = $this->decimal($request['opening_cash'] ?? '0', false, 'OPENING_CASH_INVALID');
         $notes = $this->nullableText($request['notes'] ?? null, 500);
+        $registerId = $this->optionalPositiveInt($request['register_id'] ?? null);
+        $precedingSessionId = $this->optionalPositiveInt($request['preceding_session_id'] ?? null);
+        $takeoverAuthorizedBy = $this->optionalPositiveInt($request['takeover_authorized_by'] ?? null);
+        $hasRegisterLocks = $this->drawerSessionColumnExists($conn, 'open_register_lock')
+            && $this->drawerSessionColumnExists($conn, 'open_user_lock')
+            && $registerId !== null;
 
-        if ($this->findOpenSession($conn, $userId, $tenant, $branch)) {
-            throw new RuntimeException('DRAWER_SESSION_ALREADY_OPEN');
+        $ownsTransaction = posmain_tx_begin_if_needed(
+            $conn,
+            posmain_tx_context_in_transaction($request)
+        );
+
+        try {
+            if ($this->findOpenSession($conn, $userId, $tenant, $branch)) {
+                throw new RuntimeException('DRAWER_SESSION_ALREADY_OPEN');
+            }
+
+            if ($hasRegisterLocks) {
+                $registerOpen = $this->findOpenSessionForRegister($conn, $registerId);
+                if ($registerOpen && (int) ($registerOpen['user_id'] ?? 0) !== $userId) {
+                    throw new RuntimeException('REGISTER_DRAWER_ALREADY_OPEN');
+                }
+            } else {
+                $branchOpen = $this->findOpenSessionForBranch($conn, $tenant, $branch);
+                if ($branchOpen && (int) ($branchOpen['user_id'] ?? 0) !== $userId) {
+                    throw new RuntimeException('BRANCH_DRAWER_ALREADY_OPEN');
+                }
+            }
+
+            $uuid = $this->uuid();
+            $openedAt = $this->dateTime($request['opened_at'] ?? null);
+            $businessDay = null;
+            if ($this->drawerSessionColumnExists($conn, 'business_day')) {
+                $businessDays = new BusinessDayService();
+                $cutoffHour = $businessDays->cutoffHourForBranch($conn, $tenant, $branch);
+                $businessDay = $businessDays->businessDayForTimestamp($openedAt, $cutoffHour);
+            }
+
+            $columns = [
+                'uuid', 'user_id', 'tenant', 'branch', 'fund_account_id', 'opened_at',
+                'opened_by', 'opening_cash', 'status', 'notes',
+            ];
+            $placeholders = ['?', '?', '?', '?', '?', '?', '?', '?', "'open'", '?'];
+            $types = 'siiiisiss';
+            $values = [
+                $uuid, $userId, $tenant, $branch, $fundAccountId, $openedAt,
+                $openedBy, $openingCash, $notes,
+            ];
+
+            if ($businessDay !== null) {
+                $columns[] = 'business_day';
+                $placeholders[] = '?';
+                $types .= 's';
+                $values[] = $businessDay;
+            }
+
+            if ($this->drawerSessionColumnExists($conn, 'register_id') && $registerId !== null) {
+                $columns[] = 'register_id';
+                $placeholders[] = '?';
+                $types .= 'i';
+                $values[] = $registerId;
+            }
+
+            if ($hasRegisterLocks) {
+                $openRegisterLock = $tenant . ':' . $branch . ':r' . $registerId;
+                $openUserLock = $tenant . ':' . $branch . ':u' . $userId;
+                $columns[] = 'open_register_lock';
+                $placeholders[] = '?';
+                $types .= 's';
+                $values[] = $openRegisterLock;
+                $columns[] = 'open_user_lock';
+                $placeholders[] = '?';
+                $types .= 's';
+                $values[] = $openUserLock;
+                // Keep branch lock null once register locks are active so multi-register branches can open in parallel.
+            } elseif ($this->drawerSessionColumnExists($conn, 'open_branch_lock')) {
+                $openBranchLock = $tenant . ':' . $branch;
+                $columns[] = 'open_branch_lock';
+                $placeholders[] = '?';
+                $types .= 's';
+                $values[] = $openBranchLock;
+            }
+
+            if ($this->drawerSessionColumnExists($conn, 'preceding_session_id') && $precedingSessionId !== null) {
+                $columns[] = 'preceding_session_id';
+                $placeholders[] = '?';
+                $types .= 'i';
+                $values[] = $precedingSessionId;
+            }
+            if ($this->drawerSessionColumnExists($conn, 'takeover_authorized_by') && $takeoverAuthorizedBy !== null) {
+                $columns[] = 'takeover_authorized_by';
+                $placeholders[] = '?';
+                $types .= 'i';
+                $values[] = $takeoverAuthorizedBy;
+            }
+
+            $sql = 'INSERT INTO drawer_sessions (' . implode(', ', $columns) . ') VALUES ('
+                . implode(', ', $placeholders) . ')';
+            $stmt = $conn->prepare($sql);
+            $stmt->bind_param($types, ...$values);
+
+            try {
+                $stmt->execute();
+            } catch (mysqli_sql_exception $exception) {
+                $stmt->close();
+                if ((int) $exception->getCode() === 1062) {
+                    $message = (string) $exception->getMessage();
+                    if (str_contains($message, 'open_register_lock') || str_contains($message, 'open_user_lock')) {
+                        throw new RuntimeException(
+                            str_contains($message, 'open_user_lock')
+                                ? 'USER_DRAWER_ALREADY_OPEN'
+                                : 'REGISTER_DRAWER_ALREADY_OPEN'
+                        );
+                    }
+                    throw new RuntimeException('BRANCH_DRAWER_ALREADY_OPEN');
+                }
+                throw $exception;
+            }
+            $sessionId = (int) $conn->insert_id;
+            $stmt->close();
+
+            if ($sessionId < 1) {
+                throw new RuntimeException('DRAWER_SESSION_CREATE_FAILED');
+            }
+
+            $this->recordMovement($conn, $sessionId, [
+                'movement_type' => 'opening',
+                'amount' => $openingCash,
+                'created_by' => $openedBy,
+                'allow_zero_amount' => true,
+                'reason' => 'shift_opening',
+            ]);
+
+            posmain_tx_commit_if_owned($conn, $ownsTransaction);
+        } catch (Throwable $exception) {
+            posmain_tx_rollback_if_owned($conn, $ownsTransaction);
+            throw $exception;
         }
 
-        $uuid = $this->uuid();
-        $openedAt = $this->dateTime($request['opened_at'] ?? null);
-        $stmt = $conn->prepare("
-            INSERT INTO drawer_sessions (
-                uuid, user_id, tenant, branch, fund_account_id, opened_at,
-                opened_by, opening_cash, status, notes
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'open', ?)
-        ");
-        $stmt->bind_param(
-            'siiiisiss',
-            $uuid,
-            $userId,
-            $tenant,
-            $branch,
-            $fundAccountId,
-            $openedAt,
-            $openedBy,
-            $openingCash,
-            $notes
-        );
-        $stmt->execute();
-        $id = (int) $conn->insert_id;
-        $stmt->close();
-
-        $this->recordMovement($conn, $id, [
-            'movement_type' => 'opening',
-            'amount' => $openingCash,
-            'created_by' => $openedBy,
-            'allow_zero_amount' => true,
-            'reason' => 'shift_opening',
-        ]);
-
-        return $this->sessionById($conn, $id);
+        return $this->sessionById($conn, $sessionId);
     }
 
     public function recordMovement(mysqli $conn, int $sessionId, array $request): array
@@ -245,7 +351,7 @@ class DrawerSessionService
                 continue;
             }
 
-            $sign = self::MOVEMENT_TYPES[$type] ?? 0;
+            $sign = self::movementTypes()[$type] ?? 0;
             if ($sign === 0) {
                 continue;
             }
@@ -255,12 +361,17 @@ class DrawerSessionService
 
         $countedCash = $session['counted_cash'] !== null ? (float) $session['counted_cash'] : null;
         $isClosed = in_array((string) ($session['status'] ?? ''), ['closed', 'forced_closed'], true);
+        $countPending = $isClosed && $countedCash === null;
 
         return [
             'pre_close_expected_cash' => $this->formatDecimal($preCloseExpected),
-            'close_variance' => $this->formatDecimal($closeVariance),
+            // A missing close count is not a zero variance. Keep it nullable so
+            // reporting can distinguish an uncounted close from a balanced one.
+            'close_variance' => $countPending ? null : $this->formatDecimal($closeVariance),
             'post_close_expected_cash' => $this->formatDecimal($preCloseExpected + $closeVariance),
             'counted_cash' => $countedCash !== null ? $this->formatDecimal($countedCash) : null,
+            'has_closing_count' => $countedCash !== null,
+            'count_pending' => $countPending,
             'is_closed' => $isClosed,
         ];
     }
@@ -280,7 +391,7 @@ class DrawerSessionService
         $expected = $hasOpeningMovement ? 0.0 : (float) $session['opening_cash'];
         foreach ($movements as $movement) {
             $type = (string) ($movement['movement_type'] ?? '');
-            $sign = self::MOVEMENT_TYPES[$type] ?? 0;
+            $sign = self::movementTypes()[$type] ?? 0;
             if ($sign === 0) {
                 continue;
             }
@@ -290,14 +401,14 @@ class DrawerSessionService
         return $this->formatDecimal($expected);
     }
 
-    public function closeSession(mysqli $conn, int $sessionId, array $request): array
+    public function closeSession(mysqli $conn, int $sessionId, array $request, array $context = []): array
     {
-        return $this->finishSession($conn, $sessionId, $request, 'closed');
+        return $this->finishSession($conn, $sessionId, $request, 'closed', $context);
     }
 
-    public function forceCloseSession(mysqli $conn, int $sessionId, array $request): array
+    public function forceCloseSession(mysqli $conn, int $sessionId, array $request, array $context = []): array
     {
-        return $this->finishSession($conn, $sessionId, $request, 'forced_closed');
+        return $this->finishSession($conn, $sessionId, $request, 'forced_closed', $context);
     }
 
     public function sessionById(mysqli $conn, int $sessionId): array
@@ -353,6 +464,96 @@ class DrawerSessionService
         $stmt->close();
 
         return $row ? $this->formatSession($row) : null;
+    }
+
+    public function findOpenSessionForRegister(mysqli $conn, int $registerId): ?array
+    {
+        if ($registerId < 1 || !$this->drawerSessionColumnExists($conn, 'register_id')) {
+            return null;
+        }
+
+        $stmt = $conn->prepare("
+            SELECT *
+            FROM drawer_sessions
+            WHERE register_id = ?
+              AND status = 'open'
+            ORDER BY opened_at DESC, id DESC
+            LIMIT 1
+        ");
+        $stmt->bind_param('i', $registerId);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        return $row ? $this->formatSession($row) : null;
+    }
+
+    /**
+     * Move an open drawer to another paired register after manager approval.
+     *
+     * @param array<string, mixed> $request
+     * @return array<string, mixed>
+     */
+    public function transferOpenSessionRegister(mysqli $conn, int $sessionId, int $targetRegisterId, array $request = []): array
+    {
+        require_once dirname(__DIR__, 3) . '/includes/db_transaction.php';
+
+        if ($targetRegisterId < 1) {
+            throw new RuntimeException('REGISTER_ID_REQUIRED');
+        }
+        if (!$this->drawerSessionColumnExists($conn, 'register_id')) {
+            throw new RuntimeException('REGISTER_COLUMN_MISSING');
+        }
+
+        $ownsTransaction = posmain_tx_begin_if_needed(
+            $conn,
+            posmain_tx_context_in_transaction($request)
+        );
+
+        try {
+            $session = $this->requireOpenSession($conn, $sessionId);
+            $existing = $this->findOpenSessionForRegister($conn, $targetRegisterId);
+            if ($existing && (int) $existing['id'] !== $sessionId) {
+                throw new RuntimeException('REGISTER_DRAWER_ALREADY_OPEN');
+            }
+
+            $tenant = (int) ($session['tenant'] ?? 0);
+            $branch = (int) ($session['branch'] ?? 0);
+            $userId = (int) ($session['user_id'] ?? 0);
+            $authorizedBy = $this->optionalPositiveInt($request['authorized_by'] ?? null);
+
+            $sets = ['register_id = ' . (int) $targetRegisterId];
+            if ($this->drawerSessionColumnExists($conn, 'open_register_lock')) {
+                $lock = $conn->real_escape_string($tenant . ':' . $branch . ':r' . $targetRegisterId);
+                $sets[] = "open_register_lock = '{$lock}'";
+            }
+            if ($this->drawerSessionColumnExists($conn, 'open_user_lock')) {
+                $lock = $conn->real_escape_string($tenant . ':' . $branch . ':u' . $userId);
+                $sets[] = "open_user_lock = '{$lock}'";
+            }
+            if ($this->drawerSessionColumnExists($conn, 'open_branch_lock')) {
+                // Register-scoped ownership supersedes branch lock.
+                $sets[] = 'open_branch_lock = NULL';
+            }
+            if ($authorizedBy !== null && $this->drawerSessionColumnExists($conn, 'takeover_authorized_by')) {
+                $sets[] = 'takeover_authorized_by = ' . (int) $authorizedBy;
+            }
+
+            $ok = $conn->query(
+                'UPDATE drawer_sessions SET ' . implode(', ', $sets)
+                . ' WHERE id = ' . (int) $sessionId . " AND status = 'open'"
+            );
+            if ($ok !== true || $conn->affected_rows !== 1) {
+                throw new RuntimeException('REGISTER_TRANSFER_FAILED');
+            }
+
+            posmain_tx_commit_if_owned($conn, $ownsTransaction);
+        } catch (Throwable $exception) {
+            posmain_tx_rollback_if_owned($conn, $ownsTransaction);
+            throw $exception;
+        }
+
+        return $this->sessionById($conn, $sessionId);
     }
 
     public function branchHasSessions(mysqli $conn, int $tenant = 0, int $branch = 0): bool
@@ -511,18 +712,21 @@ class DrawerSessionService
         return round($saleCash - $refundCash, 3);
     }
 
-    private function finishSession(mysqli $conn, int $sessionId, array $request, string $status): array
+    private function finishSession(mysqli $conn, int $sessionId, array $request, string $status, array $context = []): array
     {
+        require_once dirname(__DIR__, 3) . '/includes/db_transaction.php';
+
         $this->requireOpenSession($conn, $sessionId);
         $closedBy = $this->positiveInt($request['closed_by'] ?? $request['user_id'] ?? 0, 'CLOSED_BY_REQUIRED');
         $countedCash = $this->decimal($request['counted_cash'] ?? null, false, 'COUNTED_CASH_INVALID');
         $notes = $this->nullableText($request['notes'] ?? null, 500);
         $closedAt = $this->dateTime($request['closed_at'] ?? null);
 
-        $conn->begin_transaction();
+        $ownsTransaction = posmain_tx_begin_if_needed($conn, posmain_tx_context_in_transaction($context));
 
         try {
             $expectedBeforeClose = (float) $this->expectedCash($conn, $sessionId);
+            // Authoritative over/short = counted − pre-close expected (before closing_adjustment).
             $difference = round((float) $countedCash - $expectedBeforeClose, 3);
 
             if (abs($difference) > 0.0001) {
@@ -534,9 +738,21 @@ class DrawerSessionService
                 ]);
             }
 
+            // Post-close expected equals counted (float continuity); difference keeps raw over/short.
             $expectedCash = $this->expectedCash($conn, $sessionId);
-            $differenceFormatted = $this->formatDecimal((float) $countedCash - (float) $expectedCash);
+            $differenceFormatted = $this->formatDecimal($difference);
 
+            $lockClears = [];
+            if ($this->drawerSessionColumnExists($conn, 'open_branch_lock')) {
+                $lockClears[] = 'open_branch_lock = NULL';
+            }
+            if ($this->drawerSessionColumnExists($conn, 'open_register_lock')) {
+                $lockClears[] = 'open_register_lock = NULL';
+            }
+            if ($this->drawerSessionColumnExists($conn, 'open_user_lock')) {
+                $lockClears[] = 'open_user_lock = NULL';
+            }
+            $lockSql = $lockClears !== [] ? (', ' . implode(', ', $lockClears)) : '';
             $stmt = $conn->prepare("
                 UPDATE drawer_sessions
                 SET closed_at = ?,
@@ -546,6 +762,7 @@ class DrawerSessionService
                     difference = ?,
                     status = ?,
                     notes = ?
+                    {$lockSql}
                 WHERE id = ?
                   AND status = 'open'
             ");
@@ -558,9 +775,18 @@ class DrawerSessionService
                 throw new RuntimeException('DRAWER_SESSION_NOT_OPEN');
             }
 
-            $conn->commit();
+            if ($this->drawerSessionColumnExists($conn, 'close_expected_snapshot')
+                && !array_key_exists('skip_close_expected_snapshot', $request)) {
+                $snapshot = $this->formatDecimal($expectedBeforeClose);
+                $snapStmt = $conn->prepare('UPDATE drawer_sessions SET close_expected_snapshot = ? WHERE id = ?');
+                $snapStmt->bind_param('si', $snapshot, $sessionId);
+                $snapStmt->execute();
+                $snapStmt->close();
+            }
+
+            posmain_tx_commit_if_owned($conn, $ownsTransaction);
         } catch (Throwable $exception) {
-            $conn->rollback();
+            posmain_tx_rollback_if_owned($conn, $ownsTransaction);
             throw $exception;
         }
 
@@ -594,7 +820,7 @@ class DrawerSessionService
 
     private function formatSession(array $row): array
     {
-        return [
+        $session = [
             'id' => (int) $row['id'],
             'uuid' => (string) $row['uuid'],
             'user_id' => (int) $row['user_id'],
@@ -604,6 +830,9 @@ class DrawerSessionService
             'opened_at' => (string) $row['opened_at'],
             'opened_by' => (int) $row['opened_by'],
             'opening_cash' => $this->formatDecimal($row['opening_cash']),
+            'business_day' => array_key_exists('business_day', $row) && $row['business_day'] !== null
+                ? (string) $row['business_day']
+                : null,
             'closed_at' => $row['closed_at'] !== null ? (string) $row['closed_at'] : null,
             'closed_by' => $row['closed_by'] !== null ? (int) $row['closed_by'] : null,
             'expected_cash' => $row['expected_cash'] !== null ? $this->formatDecimal($row['expected_cash']) : null,
@@ -612,6 +841,54 @@ class DrawerSessionService
             'status' => (string) $row['status'],
             'notes' => $row['notes'] !== null ? (string) $row['notes'] : null,
         ];
+
+        if (array_key_exists('register_id', $row)) {
+            $session['register_id'] = $row['register_id'] !== null ? (int) $row['register_id'] : null;
+        }
+        if (array_key_exists('open_register_lock', $row)) {
+            $session['open_register_lock'] = $row['open_register_lock'] !== null
+                ? (string) $row['open_register_lock']
+                : null;
+        }
+        if (array_key_exists('open_user_lock', $row)) {
+            $session['open_user_lock'] = $row['open_user_lock'] !== null
+                ? (string) $row['open_user_lock']
+                : null;
+        }
+
+        if (array_key_exists('expected_opening_cash', $row)) {
+            $session['expected_opening_cash'] = $row['expected_opening_cash'] !== null
+                ? $this->formatDecimal($row['expected_opening_cash'])
+                : null;
+        }
+        if (array_key_exists('opening_variance', $row)) {
+            $session['opening_variance'] = $row['opening_variance'] !== null
+                ? $this->formatDecimal($row['opening_variance'])
+                : null;
+        }
+        if (array_key_exists('close_expected_snapshot', $row)) {
+            $session['close_expected_snapshot'] = $row['close_expected_snapshot'] !== null
+                ? $this->formatDecimal($row['close_expected_snapshot'])
+                : null;
+        }
+        if (array_key_exists('variance_status', $row)) {
+            $session['variance_status'] = (string) ($row['variance_status'] ?? 'none');
+        }
+        if (array_key_exists('variance_type', $row)) {
+            $session['variance_type'] = (string) ($row['variance_type'] ?? 'none');
+        }
+        if (array_key_exists('preceding_session_id', $row)) {
+            $session['preceding_session_id'] = $row['preceding_session_id'] !== null
+                ? (int) $row['preceding_session_id']
+                : null;
+        }
+        if (array_key_exists('takeover_authorized_by', $row)) {
+            $session['takeover_authorized_by'] = $row['takeover_authorized_by'] !== null
+                ? (int) $row['takeover_authorized_by']
+                : null;
+        }
+
+        return $session;
     }
 
     private function formatMovement(array $row): array
@@ -668,6 +945,24 @@ class DrawerSessionService
         return self::$columnCache[$key];
     }
 
+    private function drawerSessionColumnExists(mysqli $conn, string $column): bool
+    {
+        $safeColumn = preg_replace('/[^a-z0-9_]/i', '', $column);
+        if ($safeColumn === '') {
+            return false;
+        }
+
+        $key = spl_object_hash($conn) . ':drawer_sessions:' . $safeColumn;
+        if (array_key_exists($key, self::$columnCache)) {
+            return self::$columnCache[$key];
+        }
+
+        $result = $conn->query("SHOW COLUMNS FROM drawer_sessions LIKE '{$safeColumn}'");
+        self::$columnCache[$key] = $result instanceof mysqli_result && $result->num_rows > 0;
+
+        return self::$columnCache[$key];
+    }
+
     private function drawerMovementsTableExists(mysqli $conn): bool
     {
         $result = $conn->query("SHOW TABLES LIKE 'drawer_movements'");
@@ -678,7 +973,7 @@ class DrawerSessionService
     private function movementType($value): string
     {
         $type = strtolower(trim((string) $value));
-        if (!array_key_exists($type, self::MOVEMENT_TYPES)) {
+        if (!array_key_exists($type, self::movementTypes())) {
             throw new InvalidArgumentException('DRAWER_MOVEMENT_TYPE_INVALID');
         }
 

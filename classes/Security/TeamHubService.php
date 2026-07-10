@@ -104,13 +104,11 @@ class TeamHubService
   /** @return list<array<string, mixed>> */
   public function staffList(bool $includeDeactivated = false, bool $revealPins = false, bool $adminRevealOnly = true): array
   {
-    if ($adminRevealOnly && $revealPins && !auth_guard_is_admin_session()) {
-      $revealPins = false;
-    }
+    // Reversible PIN reveal is retired. $revealPins is accepted for API compatibility only.
+    unset($revealPins, $adminRevealOnly);
     $where = $includeDeactivated ? '1=1' : 'COALESCE(u.isdeleted, 0) != 1';
-    $pinEncSelect = $revealPins ? ', u.pin_enc' : '';
     $sql = "SELECT u.id, u.uname, u.display_name, u.phone, u.userrole, u.img, u.is_waiter,
-                   u.pin_set_at, u.pin_locked_until, COALESCE(u.isdeleted, 0) AS isdeleted{$pinEncSelect},
+                   u.pin_set_at, u.pin_locked_until, COALESCE(u.isdeleted, 0) AS isdeleted,
                    r.rollname AS role_name, r.role_key
             FROM users u
             LEFT JOIN usr_pwrs r ON r.id = u.userrole
@@ -119,12 +117,6 @@ class TeamHubService
     $result = $this->conn->query($sql);
     if (!$result) {
       return [];
-    }
-
-    $pinService = null;
-    if ($revealPins) {
-      require_once __DIR__ . '/PinService.php';
-      $pinService = new PinService();
     }
 
     $rows = [];
@@ -137,9 +129,6 @@ class TeamHubService
       $pinLocked = !empty($row['pin_locked_until']) && strtotime((string) $row['pin_locked_until']) > time();
       $hasPin = !empty($row['pin_set_at']);
       $pinDisplay = null;
-      if ($revealPins && $hasPin && !$pinLocked && $pinService) {
-        $pinDisplay = $pinService->revealPinForOwner($row);
-      }
       $rows[] = [
         'id' => (int) $row['id'],
         'uname' => (string) ($row['uname'] ?? ''),
@@ -279,11 +268,8 @@ class TeamHubService
   /** @return array<string, mixed>|null */
   public function staffDetail(int $userId, ?bool $revealPin = null): ?array
   {
-    if ($revealPin === null) {
-      $revealPin = auth_guard_is_admin_session();
-    } elseif ($revealPin && !auth_guard_is_admin_session()) {
-      $revealPin = false;
-    }
+    // Reversible PIN reveal is retired; reset-and-display-once is the only reveal path.
+    unset($revealPin);
     $stmt = $this->conn->prepare(
       "SELECT u.*, r.rollname AS role_name, r.role_key
        FROM users u
@@ -306,10 +292,6 @@ class TeamHubService
     $pinLocked = !empty($row['pin_locked_until']) && strtotime((string) $row['pin_locked_until']) > time();
     $hasPin = !empty($row['pin_set_at']);
     $pinDisplay = null;
-    if ($revealPin && $hasPin && !$pinLocked) {
-      require_once __DIR__ . '/PinService.php';
-      $pinDisplay = (new PinService())->revealPinForOwner($row);
-    }
 
     return [
       'id' => (int) $row['id'],

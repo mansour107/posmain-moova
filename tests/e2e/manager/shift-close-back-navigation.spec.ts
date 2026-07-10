@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { loginAndUnlockPos } from '../helpers/auth';
+import { loginAndUnlockPos, unlockPos } from '../helpers/auth';
 import { fillCloseShiftForm } from '../helpers/shift';
 
 async function openCloseShiftModal(page: import('@playwright/test').Page): Promise<void> {
@@ -11,16 +11,16 @@ async function openCloseShiftModal(page: import('@playwright/test').Page): Promi
 
 async function submitCloseShift(page: import('@playwright/test').Page): Promise<void> {
   await fillCloseShiftForm(page);
-  await page.locator('#closeShiftModal .pos-close-shift-btn-confirm').click();
 }
 
 test.describe('manager: shift close hardening', () => {
-  test('closing shift redirects to closed sessions list', async ({ page }) => {
+  test('closing shift stays on POS unlock with result modal', async ({ page }) => {
     await loginAndUnlockPos(page, 'manager');
     await openCloseShiftModal(page);
     await submitCloseShift(page);
 
-    await page.waitForURL(/closed_sessions\.php/, { timeout: 20_000 });
+    await page.waitForURL(/pos_barcode\.php/, { timeout: 20_000 });
+    await expect(page.locator('#shiftCloseResultModal')).toBeVisible({ timeout: 10_000 });
     await expect(page.getByText(/تم إغلاق الشيفت/i)).toBeVisible({ timeout: 10_000 });
   });
 
@@ -28,10 +28,12 @@ test.describe('manager: shift close hardening', () => {
     await loginAndUnlockPos(page, 'manager');
     await openCloseShiftModal(page);
     await submitCloseShift(page);
-    await page.waitForURL(/closed_sessions\.php/, { timeout: 20_000 });
+    await page.waitForURL(/pos_barcode\.php/, { timeout: 20_000 });
+    await expect(page.locator('#shiftCloseResultModal')).toBeVisible({ timeout: 10_000 });
+    await page.locator('#shiftCloseResultDismiss').click();
 
     await page.goto('/pos_barcode.php');
-    await expect(page.locator('input[name="pos_barcode"]')).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator('input[name="pos_barcode"], .pin-key').first()).toBeVisible({ timeout: 15_000 });
     await expect(page.locator('#posForm')).toHaveCount(0);
   });
 
@@ -39,7 +41,8 @@ test.describe('manager: shift close hardening', () => {
     await loginAndUnlockPos(page, 'manager');
     await openCloseShiftModal(page);
     await submitCloseShift(page);
-    await page.waitForURL(/closed_sessions\.php/, { timeout: 20_000 });
+    await page.waitForURL(/pos_barcode\.php/, { timeout: 20_000 });
+    await expect(page.locator('#shiftCloseResultModal')).toBeVisible({ timeout: 10_000 });
 
     await page.goBack();
     await page.waitForLoadState('domcontentloaded');
@@ -71,15 +74,11 @@ test.describe('manager: shift close hardening', () => {
     await loginAndUnlockPos(page, 'manager');
     await openCloseShiftModal(page);
     await submitCloseShift(page);
-    await page.waitForURL(/closed_sessions\.php/, { timeout: 20_000 });
+    await page.waitForURL(/pos_barcode\.php/, { timeout: 20_000 });
+    await expect(page.locator('#shiftCloseResultModal')).toBeVisible({ timeout: 10_000 });
+    await page.locator('#shiftCloseResultDismiss').click();
 
-    await page.goto('/pos_barcode.php');
-    const barcodeInput = page.locator('input[name="pos_barcode"]');
-    await expect(barcodeInput).toBeVisible({ timeout: 15_000 });
-
-    const { password } = await import('../helpers/env').then((m) => m.personaCredentials('manager'));
-    await barcodeInput.fill(password);
-    await page.getByRole('button', { name: /دخول/ }).click();
+    await unlockPos(page, 'manager');
     await expect(page.locator('#posForm')).toBeVisible({ timeout: 20_000 });
   });
 });

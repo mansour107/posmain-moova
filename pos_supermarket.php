@@ -13,6 +13,8 @@ if (!isset($_SESSION['login']) || !isset($_SESSION['userid'])) {
 
 include(__DIR__ . '/includes/connect.php');
 require_once __DIR__ . '/includes/auth_guard.php';
+require_once __DIR__ . '/includes/pos_main_pin_entry.php';
+require_once __DIR__ . '/config/app_config.php';
 require_permission('pos.open', $conn);
 
 $posmainCanCloseShift = auth_guard_has_permission('pos.shift.close', $conn);
@@ -20,8 +22,16 @@ $posmainCanRecordShiftExpense = auth_guard_has_permission('pos.cashdrawer.count'
 $posmainCanRecordShiftPayIn = auth_guard_has_permission('pos.drawer.payin', $conn);
 $posmainCanRecordShiftSafeDrop = auth_guard_has_permission('pos.drawer.safe_drop', $conn);
 $posmainCanRecordDrawerCash = $posmainCanRecordShiftExpense || $posmainCanRecordShiftPayIn || $posmainCanRecordShiftSafeDrop;
+$pos_main_pin_auth = function_exists('posmain_is_pin_main_auth') && posmain_is_pin_main_auth();
+posmain_apply_main_pin_pos_entry($conn, 'pos_supermarket.php');
 
 if (isset($_GET['logout'])) {
+    if ($pos_main_pin_auth) {
+        require_once __DIR__ . '/classes/Security/MainAuthenticationService.php';
+        (new MainAuthenticationService())->lockToLoginScreen();
+        header('location:index.php');
+        exit;
+    }
     posmain_clear_pos_shift_session(false);
     header('location:pos_supermarket.php');
     exit;
@@ -46,12 +56,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['pos_barcode'])) {
 
     if ($is_valid_user_code) {
         require_once __DIR__ . '/includes/auth_guard.php';
-        require_once __DIR__ . '/classes/Pos/Service/ShiftSessionService.php';
-        (new ShiftSessionService())->openForCashier($conn, (int) $current_user['id'], [
+        require_once __DIR__ . '/classes/Pos/Service/ShiftEntryService.php';
+        $entry = (new ShiftEntryService())->resolveForUser($conn, (int) $current_user['id'], [
             'opening_cash' => $_POST['opening_cash'] ?? '0',
         ]);
+        if (($entry['state'] ?? '') === ShiftEntryService::STATE_REGISTER_UNPAIRED) {
+            header('location:register_pair.php');
+            exit;
+        }
+        pos_set_acting_user((int) $current_user['id'], (string) $current_user['uname']);
+        $_SESSION['pos_authenticated'] = true;
+        $_SESSION['pos_user_id'] = (int) $current_user['id'];
+        $_SESSION['posmain_shift_entry_state'] = (string) ($entry['state'] ?? '');
+        $_SESSION['posmain_shift_entry_message'] = (string) ($entry['message'] ?? '');
+        if (!empty($entry['drawer_session']['id'])) {
+            $_SESSION['pos_drawer_session_id'] = (int) $entry['drawer_session']['id'];
+        }
         $_SESSION['pos_user_name'] = $current_user['uname'];
-        header('location:pos_supermarket.php');
+        header('location:' . (string) ($entry['redirect'] ?? 'pos_supermarket.php'));
         exit;
     }
 
@@ -68,15 +90,39 @@ if (
 }
 
 require_once __DIR__ . '/classes/Pos/Service/ShiftSessionService.php';
+require_once __DIR__ . '/classes/Pos/Service/ShiftCountService.php';
+$posmainHandoverEnabled = false;
+$posmainNeedsOpenCount = false;
+$posmainOpenCountDenied = false;
 try {
-    (new ShiftSessionService())->openForCashier($conn, $current_user_id);
+    $countService = new ShiftCountService();
+    $posmainHandoverEnabled = $countService->handoverEnabled($conn);
+    $posmainCanOpenShift = $current_user_id > 0
+        && function_exists('auth_guard_has_permission')
+        && auth_guard_has_permission('pos.shift.open', $conn);
+    $needsOpeningCount = $posmainHandoverEnabled
+        && $countService->needsOpeningCount($conn, $current_user_id);
+    $posmainNeedsOpenCount = $needsOpeningCount && $posmainCanOpenShift;
+    $posmainOpenCountDenied = $needsOpeningCount && !$posmainCanOpenShift;
+    if ($posmainOpenCountDenied) {
+        unset($_SESSION['pos_unlocked_pending_open']);
+    } elseif (!$posmainNeedsOpenCount) {
+        (new ShiftSessionService())->openForCashier($conn, $current_user_id);
+    } else {
+        $_SESSION['pos_unlocked_pending_open'] = true;
+    }
 } catch (Throwable $drawerOpenException) {
     error_log('POS drawer session ensure failed: ' . $drawerOpenException->getMessage());
 }
 
 $id = 0;
 $rowed = [];
-$posdate = date('Y-m-d', strtotime('-4 hours'));
+require_once __DIR__ . '/includes/business_day.php';
+$posdate = posmain_current_business_day(
+    $conn,
+    (int) ($_SESSION['pos_tenant'] ?? 0),
+    (int) ($_SESSION['pos_branch'] ?? 0)
+);
 if (isset($_GET['edit'])) {
     $id = intval($_GET['edit']);
     $stmt = $conn->prepare("SELECT * FROM ot_head WHERE id = ?");
@@ -101,6 +147,7 @@ include('includes/pos_simple_header.php');
 <?php include('includes/pos_assets.php'); ?>
 <link rel="stylesheet" href="css/pos_supermarket.css?v=<?= time() ?>">
 <?= csrf_meta_tag('pos_browser', 'posmain-csrf-token') ?>
+<?= csrf_meta_tag('pos_override', 'pos-override-csrf-token') ?>
 <script>
 (function () {
     const tokenElement = document.querySelector('meta[name="posmain-csrf-token"]');
@@ -173,6 +220,7 @@ include('includes/pos_simple_header.php');
 
 <!-- Main Content -->
 <div class="flex-grow-1 d-flex flex-column overflow-hidden">
+<?php include __DIR__ . '/elements/pos/shift_open_count_overlay.php'; ?>
 <?php
 $action_url = "do/doadd_invoice.php";
 include('includes/pos_supermarket_content.php');

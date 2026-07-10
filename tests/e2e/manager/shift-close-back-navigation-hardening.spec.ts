@@ -1,7 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import { loginAndUnlockPos, unlockPos } from '../helpers/auth';
 import { fillCloseShiftForm } from '../helpers/shift';
-import { personaCredentials } from '../helpers/env';
 
 // Full matrix for the "back button revives a closed shift" bug.
 // Covers: standard close + Z-report close, browser back navigation, direct
@@ -29,8 +28,10 @@ async function openCloseShiftModal(page: Page): Promise<void> {
 
 async function submitCloseShift(page: Page): Promise<void> {
   await fillCloseShiftForm(page);
-  await page.locator('#closeShiftModal .pos-close-shift-btn-confirm').click();
-  await page.waitForURL(/closed_sessions\.php/, { timeout: 20_000 });
+  await page.waitForURL(/pos_barcode\.php/, { timeout: 20_000 });
+  await expect(page.locator('#shiftCloseResultModal')).toBeVisible({ timeout: 10_000 });
+  await page.locator('#shiftCloseResultDismiss').click();
+  await expect(page.locator('#shiftCloseResultModal')).toBeHidden({ timeout: 5_000 });
 }
 
 async function closeShiftViaUi(page: Page): Promise<void> {
@@ -81,7 +82,7 @@ test.describe('manager: shift close back-navigation hardening (full matrix)', ()
     // re-rendered the lock screen. In no case may an interactive #posForm remain.
     const posForm = page.locator('#posForm');
     await expect(posForm).toHaveCount(0, { timeout: 10_000 });
-    await expect(page.locator('input[name="pos_barcode"]')).toBeVisible({ timeout: 10_000 });
+    await expect(page.locator('input[name="pos_barcode"], .pin-key').first()).toBeVisible({ timeout: 10_000 });
   });
 
   test('server rejects a re-close of an already-closed shift (close_shift.php)', async ({ page }) => {
@@ -145,7 +146,7 @@ test.describe('manager: shift close back-navigation hardening (full matrix)', ()
 
     await page.goto('/pos_supermarket.php');
     await expect(page.locator('#posForm')).toHaveCount(0, { timeout: 10_000 });
-    await expect(page.locator('input[name="pos_barcode"]')).toBeVisible({ timeout: 10_000 });
+    await expect(page.locator('input[name="pos_barcode"], .pin-key').first()).toBeVisible({ timeout: 10_000 });
   });
 
   test('close then Z-report response carries no-store headers', async ({ page }) => {
@@ -169,13 +170,7 @@ test.describe('manager: shift close back-navigation hardening (full matrix)', ()
     await loginAndUnlockPos(page, 'manager');
     await closeShiftViaUi(page);
 
-    await page.goto('/pos_barcode.php');
-    const barcodeInput = page.locator('input[name="pos_barcode"]');
-    await expect(barcodeInput).toBeVisible({ timeout: 15_000 });
-
-    const { password } = personaCredentials('manager');
-    await barcodeInput.fill(password);
-    await page.getByRole('button', { name: /دخول/ }).click();
+    await unlockPos(page, 'manager');
     await expect(page.locator('#posForm')).toBeVisible({ timeout: 20_000 });
   });
 });

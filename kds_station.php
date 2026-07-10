@@ -29,6 +29,7 @@ $cssVer = (int) (@filemtime(__DIR__ . '/dist/css/kds.css') ?: 1);
 $jsVer = (int) (@filemtime(__DIR__ . '/js/kds_board.js') ?: 1);
 
 $pos_body_class = 'kds-body';
+$posmainHeaderPermission = 'kds.view';
 include __DIR__ . '/includes/pos_simple_header.php';
 ?>
 <link rel="stylesheet" href="dist/css/kds.css?v=<?= $cssVer ?>">

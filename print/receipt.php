@@ -1,4 +1,7 @@
 <?php
+require_once __DIR__ . '/../includes/session_bootstrap.php';
+require_once __DIR__ . '/../includes/connect.php';
+
 
 include('includes/header.php');
 require_once __DIR__ . '/../classes/Pos/Service/OrderPrintPayloadService.php';

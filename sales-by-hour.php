@@ -38,9 +38,15 @@
 
                 <div class="card-body">
                     <?php
-                    // الافتراضي: اليوم الحالي
-                    $from = date('Y-m-d');
-                    $to   = date('Y-m-d');
+                    require_once __DIR__ . '/includes/business_day.php';
+                    $businessDayContext = posmain_business_day_context(
+                        isset($conn) && $conn instanceof mysqli ? $conn : null,
+                        (int) ($_SESSION['pos_tenant'] ?? 0),
+                        (int) ($_SESSION['pos_branch'] ?? 0)
+                    );
+                    // الافتراضي: يوم العمل الحالي
+                    $from = $businessDayContext['current_business_day'];
+                    $to   = $businessDayContext['current_business_day'];
 
                     // لو المستخدم عمل فلترة
                     if ($_SERVER['REQUEST_METHOD'] == 'POST' && !empty($_POST['from']) && !empty($_POST['to'])) {
@@ -48,12 +54,16 @@
                         $to   = $_POST['to'];
                     }
 
-                    // استعلام: تجميع المبيعات حسب الساعة من crtime
+                    $cutoffHour = (int) $businessDayContext['cutoff_hour'];
+                    $fromEsc = $conn->real_escape_string($from);
+                    $toEsc = $conn->real_escape_string($to);
+
+                    // استعلام: تجميع المبيعات حسب الساعة ضمن نافذة يوم العمل
                     $sql = "SELECT HOUR(crtime) as sales_hour,
                                    SUM(pro_value) as total_sales
                             FROM ot_head
                             WHERE (pro_tybe = 9 OR pro_tybe = 3)
-                            AND DATE(crtime) BETWEEN '$from' AND '$to'
+                            AND DATE(DATE_SUB(crtime, INTERVAL {$cutoffHour} HOUR)) BETWEEN '{$fromEsc}' AND '{$toEsc}'
                             GROUP BY sales_hour
                             ORDER BY sales_hour ASC";
 

@@ -101,6 +101,9 @@ function posmainPollDrawerStatus(maxAttempts) {
 }
 
 function posmainOverrideCsrfToken() {
+    if (window.POSMAIN_POS_OVERRIDE_CSRF_TOKEN) {
+        return String(window.POSMAIN_POS_OVERRIDE_CSRF_TOKEN);
+    }
     const meta = document.querySelector('meta[name="pos-override-csrf-token"]');
     return meta ? (meta.getAttribute('content') || '') : '';
 }
@@ -109,6 +112,56 @@ function posmainActingUserId() {
     const el = document.getElementById('posActingUserId');
     return el ? parseInt(el.getAttribute('data-acting-user-id') || '0', 10) : 0;
 }
+
+window.POSMAIN.renderIdentityBadge = function (identity) {
+    const badge = document.getElementById('posIdentityBadge');
+    if (!badge || !identity) {
+        return;
+    }
+
+    const nameEl = document.getElementById('posIdentityCashierName');
+    const metaEl = document.getElementById('posIdentityMeta');
+    const cashierName = String(identity.cashier_name || 'الموظف');
+    if (nameEl) {
+        nameEl.textContent = cashierName;
+    }
+
+    badge.setAttribute('data-cashier-id', String(identity.cashier_user_id || 0));
+    badge.classList.toggle('is-takeover', !!identity.is_takeover);
+
+    if (!metaEl) {
+        return;
+    }
+
+    if (identity.is_takeover && identity.preceding_cashier_name) {
+        let meta = 'استلم من ' + identity.preceding_cashier_name;
+        if (identity.authorized_by_name) {
+            meta += ' · اعتمد ' + identity.authorized_by_name;
+        }
+        metaEl.textContent = meta;
+        metaEl.classList.remove('is-empty');
+        badge.setAttribute('title', cashierName + ' — ' + meta);
+    } else {
+        metaEl.textContent = '';
+        metaEl.classList.add('is-empty');
+        badge.setAttribute('title', cashierName);
+    }
+
+    window.POSMAIN_IDENTITY = identity;
+};
+
+window.POSMAIN.refreshIdentityBadge = function () {
+    return $.ajax({
+        url: 'pos_session_status.php',
+        method: 'GET',
+        dataType: 'json',
+        cache: false,
+    }).done(function (status) {
+        if (status && status.identity) {
+            window.POSMAIN.renderIdentityBadge(status.identity);
+        }
+    });
+};
 
 function posmainParkedCartStorageKey(userId) {
     return 'pos_parked_cart_' + String(userId || 0);
@@ -3475,6 +3528,13 @@ $(document).ready(function() {
         console.log('Form submit handler called');
         return true;
     };
+
+    if (window.POSMAIN_IDENTITY && typeof window.POSMAIN.renderIdentityBadge === 'function') {
+        window.POSMAIN.renderIdentityBadge(window.POSMAIN_IDENTITY);
+    }
+    if (typeof window.POSMAIN.refreshIdentityBadge === 'function') {
+        window.POSMAIN.refreshIdentityBadge();
+    }
 }); // End of document.ready
 
 window.POSMainResetCartAfterPayment = function() {

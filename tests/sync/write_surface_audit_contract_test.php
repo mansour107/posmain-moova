@@ -27,10 +27,30 @@ $saveOrder = file_get_contents($root . '/ajax/save_order.php');
 $cofe = file_get_contents($root . '/ajax/cofe_create_order.php');
 $controller = file_get_contents($root . '/classes/Pos/Http/PosOrderController.php');
 $waiter = file_get_contents($root . '/do/doadd_invoice_waiter.php');
+$canonicalInvoice = file_get_contents($root . '/do/doadd_invoice.php');
+
 writeSurfaceAuditAssert(strpos($saveOrder, 'pos_api_dispatch') !== false, 'save_order should delegate without direct SQL writes');
 writeSurfaceAuditAssert(strpos($cofe, 'pos_api_dispatch') !== false, 'cofe_create_order should delegate without direct SQL writes');
 writeSurfaceAuditAssert(strpos($controller, 'INSERT INTO ot_head') === false, 'controller should not keep direct ot_head inserts');
-writeSurfaceAuditAssert(strpos($waiter, 'doadd_invoice.php') !== false, 'waiter handler should delegate to canonical cashier handler');
+
+// Canonical cashier handler remains the live write path.
+writeSurfaceAuditAssert(
+    strpos($canonicalInvoice, 'PosOrderMutationService') !== false
+        || strpos($canonicalInvoice, 'INSERT INTO ot_head') !== false,
+    'canonical doadd_invoice.php must remain an active order write surface'
+);
+
+// Legacy waiter handler is intentionally quarantined (not a live write delegate).
+writeSurfaceAuditAssert(
+    strpos($waiter, 'http_response_code(410)') !== false
+        && strpos($waiter, 'LEGACY_WAITER_AUTH_DISABLED') !== false,
+    'waiter handler should be quarantined with HTTP 410 / LEGACY_WAITER_AUTH_DISABLED'
+);
+writeSurfaceAuditAssert(
+    strpos($waiter, 'INSERT INTO ot_head') === false
+        && strpos($waiter, 'PosOrderMutationService') === false,
+    'quarantined waiter handler must not perform order writes'
+);
 
 echo "write-surface-audit-contract-ok\n";
 

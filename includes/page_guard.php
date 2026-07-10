@@ -54,6 +54,24 @@ if (!function_exists('page_guard')) {
     {
         require_login();
         if ($permission === null || $permission === '') {
+            $page = basename((string) ($_SERVER['SCRIPT_NAME'] ?? $_SERVER['PHP_SELF'] ?? ''));
+            $entry = page_guard_manifest_entry($page);
+            if (!is_array($entry)) {
+                deny_json_or_redirect('RBAC_PAGE_UNCLASSIFIED', 403);
+            }
+            if (!page_guard_permissions_satisfied($entry, $conn)) {
+                $required = trim((string) ($entry['permission'] ?? ''));
+                $anyOf = $entry['any_of'] ?? [];
+                if ($required === '' && is_array($anyOf) && $anyOf !== []) {
+                    $required = (string) $anyOf[0];
+                }
+                deny_json_or_redirect(
+                    'PERMISSION_DENIED',
+                    403,
+                    null,
+                    $required !== '' ? $required : null
+                );
+            }
             return;
         }
 
@@ -72,7 +90,7 @@ if (!function_exists('page_guard_from_manifest')) {
         require_login();
         $entry = page_guard_manifest_entry($page);
         if (!is_array($entry)) {
-            return;
+            deny_json_or_redirect('RBAC_PAGE_UNCLASSIFIED', 403);
         }
 
         if (!page_guard_permissions_satisfied($entry, $conn)) {

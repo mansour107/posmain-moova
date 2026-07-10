@@ -12,17 +12,26 @@ if ($source === false) {
     throw new RuntimeException('Unable to read z_report.php');
 }
 
-phase4ZReportAssert(strpos($source, '$report->getDrawerReconciliation()') !== false, 'z_report should read drawer reconciliation from ShiftReport');
+phase4ZReportAssert(
+    strpos($source, '$report->getDrawerReconciliation(') !== false,
+    'z_report should read drawer reconciliation from ShiftReport'
+);
 phase4ZReportAssert(strpos($source, 'name="sys_total_sales"') !== false, 'sys_total_sales hidden field should remain');
 phase4ZReportAssert(strpos($source, 'name="sys_total_cash"') !== false, 'sys_total_cash hidden field should remain');
 phase4ZReportAssert(strpos($source, 'name="sys_total_visa"') !== false, 'sys_total_visa hidden field should remain');
 phase4ZReportAssert(strpos($source, 'name="sys_expenses"') !== false, 'sys_expenses hidden field should remain');
-phase4ZReportAssert(strpos($source, 'name="expected_cash"') !== false, 'expected_cash hidden field should remain');
 phase4ZReportAssert(strpos($source, 'name="actual_cash"') !== false, 'actual_cash field should remain');
 phase4ZReportAssert(strpos($source, 'name="actual_visa"') !== false, 'actual_visa hidden field should remain');
 phase4ZReportAssert(strpos($source, 'name="drawer_session_id"') !== false, 'drawer_session_id hidden field expected');
-phase4ZReportAssert(strpos($source, 'name="drawer_expected_cash"') !== false, 'drawer_expected_cash hidden field expected');
-phase4ZReportAssert(strpos($source, 'name="drawer_cash_difference"') !== false, 'drawer_cash_difference hidden field expected');
+phase4ZReportAssert(strpos($source, '$showExpectedCashOnZ') !== false, 'Z report should gate expected cash for blind handover');
+phase4ZReportAssert(strpos($source, 'name="expected_cash"') !== false, 'expected_cash field remains for manager/legacy path');
+phase4ZReportAssert(strpos($source, 'name="drawer_expected_cash"') !== false, 'drawer_expected_cash field remains for manager/legacy path');
+phase4ZReportAssert(strpos($source, 'name="drawer_cash_difference"') !== false, 'drawer_cash_difference field remains for manager/legacy path');
+phase4ZReportAssert(strpos($source, 'عد الدرج (أعمى)') !== false, 'blind-count copy shown when expected is hidden');
+phase4ZReportAssert(strpos($source, 'name="close_token"') !== false, 'close_token hidden field expected for handover Z close');
+phase4ZReportAssert(strpos($source, 'name="matched"') !== false, 'matched hidden field expected for handover Z close');
+phase4ZReportAssert(strpos($source, 'do/do_begin_shift_close_count.php') !== false, 'Z report should begin close count before submit');
+phase4ZReportAssert(strpos($source, 'do/do_submit_shift_close_count.php') !== false, 'Z report should submit close count before final close');
 phase4ZReportAssert(strpos($source, "csrf_input('shift_close_z')") !== false, 'shift close CSRF field should remain');
 phase4ZReportAssert(strpos($source, 'action="do_close_shift_z.php"') !== false, 'Z close form action should remain');
 
@@ -85,6 +94,14 @@ try {
 
 function phase4ZReportCreateSchema(mysqli $conn): void
 {
+    $conn->query("
+        CREATE TABLE users (
+            id INT NOT NULL PRIMARY KEY,
+            uname VARCHAR(120) NULL,
+            display_name VARCHAR(120) NULL
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+    ");
+    $conn->query("INSERT INTO users (id, uname, display_name) VALUES (7, 'cashier7', 'Cashier 7')");
     $conn->query("
         CREATE TABLE acc_head (
             id INT NOT NULL PRIMARY KEY,

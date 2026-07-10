@@ -199,11 +199,43 @@ foreach ($e2ePersonaPins as $uname => $pin) {
         $clear->execute();
         $clear->close();
 
-        $pinService->setPinForUser($conn, $userId, $pin);
+        $pinService->setPinForUser($conn, $userId, $pin, ['bump_auth_version' => false]);
         $pinService->clearUserFailures($conn, $userId);
         fwrite(STDOUT, "PIN set on E2E persona {$uname}\n");
     } catch (Throwable $e) {
         fwrite(STDERR, "Skip PIN for {$uname}: " . $e->getMessage() . "\n");
+    }
+}
+
+// Test fixtures represent an already-enrolled installation. Leaving bootstrap
+// pending forces every persona into change_pin.php and makes the HTTP fixtures
+// unlike a production-ready local installation.
+$bootstrapTable = $conn->query("SHOW TABLES LIKE 'security_bootstrap_state'");
+if ($bootstrapTable && $bootstrapTable->num_rows > 0) {
+    $ownerId = 0;
+    $ownerStmt = $conn->prepare('SELECT id FROM users WHERE uname = ? AND COALESCE(isdeleted, 0) != 1 LIMIT 1');
+    $ownerUname = 'p6_admin';
+    $ownerStmt->bind_param('s', $ownerUname);
+    $ownerStmt->execute();
+    $ownerRow = $ownerStmt->get_result()->fetch_assoc();
+    $ownerStmt->close();
+    $ownerId = (int) ($ownerRow['id'] ?? 0);
+
+    if ($ownerId > 0) {
+        $completeBootstrap = $conn->prepare(
+            "INSERT INTO security_bootstrap_state
+                (id, status, owner_user_id, started_at, completed_at, completed_by)
+             VALUES (1, 'completed', ?, NOW(), NOW(), ?)
+             ON DUPLICATE KEY UPDATE
+                status = 'completed',
+                owner_user_id = VALUES(owner_user_id),
+                completed_at = COALESCE(completed_at, NOW()),
+                completed_by = VALUES(completed_by)"
+        );
+        $completeBootstrap->bind_param('ii', $ownerId, $ownerId);
+        $completeBootstrap->execute();
+        $completeBootstrap->close();
+        fwrite(STDOUT, "Marked local security bootstrap completed\n");
     }
 }
 
@@ -251,7 +283,7 @@ foreach ($rbacUsers as [$uname, $display, $roleId, $isWaiter, $pin]) {
         $clear->execute();
         $clear->close();
 
-        $pinService->setPinForUser($conn, $userId, $pin);
+        $pinService->setPinForUser($conn, $userId, $pin, ['bump_auth_version' => false]);
         $pinService->clearUserFailures($conn, $userId);
         fwrite(STDOUT, "Seeded user {$uname} (id={$userId}) with PIN\n");
     } catch (Throwable $e) {
@@ -271,6 +303,12 @@ if (posmain_drawer_sessions_table_exists($conn)) {
     if ($closed) {
         fwrite(STDOUT, 'Closed stale open drawer sessions: ' . $conn->affected_rows . "\n");
     }
+}
+
+// Clear auth throttles so E2E re-seeds are not blocked by prior failed PIN/pair attempts.
+$throttleCleared = @$conn->query('DELETE FROM failed_login_attempts');
+if ($throttleCleared) {
+    fwrite(STDOUT, 'Cleared failed_login_attempts: ' . $conn->affected_rows . "\n");
 }
 
 foreach (array_keys(RolePermissionSyncService::presetRoleDefinitions()) as $presetRoleKey) {

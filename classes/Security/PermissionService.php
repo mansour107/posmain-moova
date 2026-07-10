@@ -217,7 +217,7 @@ class PermissionService
             throw new RuntimeException('ROLE_NOT_FOUND');
         }
 
-        if (self::ADMIN_ROLE_IMMUTABLE && $this->isOwnerRole($roleId)) {
+        if ($this->isOwnerRole($roleId)) {
             throw new RuntimeException('ADMIN_ROLE_IMMUTABLE');
         }
     }
