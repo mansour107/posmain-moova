@@ -1,0 +1,79 @@
+{
+  "$schema_comment": "Machine-readable local PIN pilot evidence template. Replace pending values only after the named check was actually performed. Do not invent pass markers.",
+  "artifact": "local_pin_pilot_evidence",
+  "version": 1,
+  "generated_at_utc": "pending",
+  "completed_at_utc": "pending",
+  "operator": "pending",
+  "shop": {
+    "label": "pending",
+    "pos_tenant": null,
+    "pos_branch": null,
+    "deployment_role": "branch",
+    "main_auth_mode": "pin"
+  },
+  "environment": {
+    "app_base_url": "pending",
+    "git_sha": "pending",
+    "backup_ref": "pending"
+  },
+  "markers": {
+    "local_pin_pilot_evidence": "pending",
+    "backup_taken": "pending",
+    "schema_migrated_or_verified": "pending",
+    "local_pin_preflight_ok": "pending",
+    "bootstrap_pin_change_completed": "pending",
+    "cashier_open_sale_close_reconciles": "pending",
+    "lock_relogin_resumes_same_drawer": "pending",
+    "cross_register_transfer_audited": "pending",
+    "hosted_password_login_still_works": "pending",
+    "rbac_denials_verified": "pending",
+    "rollback_path_documented": "pending",
+    "release_gate_ci_green": "pending"
+  },
+  "evidence_details": {
+    "backup_taken": "pending",
+    "schema_migrated_or_verified": "pending — record: php tools/run_migrations.php --dry-run",
+    "local_pin_preflight_ok": "pending — record: php scripts/local_pin_auth_preflight.php --json",
+    "bootstrap_pin_change_completed": "pending",
+    "cashier_open_sale_close_reconciles": "pending",
+    "lock_relogin_resumes_same_drawer": "pending",
+    "cross_register_transfer_audited": "pending",
+    "hosted_password_login_still_works": "pending — cloud/router password login only",
+    "rbac_denials_verified": "pending — cashier/kitchen dashboard widgets / KDS manage",
+    "rollback_path_documented": "pending — POSMAIN_MAIN_AUTH_MODE=password + restart PHP/container; do not drop PIN columns; keep POSMAIN_PIN_SECRET if override PIN flows remain",
+    "release_gate_ci_green": "pending — .github/workflows/local-pin-release-gate.yml (packs-and-security, phpstan-local-pin, e2e-local-pin)"
+  },
+  "command_hints": [
+    "php tools/run_migrations.php --dry-run",
+    "php scripts/local_pin_auth_preflight.php --json",
+    "bash scripts/run_local_pin_auth_pack.sh",
+    "bash scripts/run_security_contract_pack.sh",
+    "bash scripts/run_business_day_pack.sh",
+    "bash scripts/run_cash_flow_pack.sh",
+    "vendor/bin/phpunit --filter ProductionRbacPinTest --fail-on-skipped tests/security/ProductionRbacPinTest.php",
+    "vendor/bin/phpstan analyse --configuration=phpstan.neon.dist --no-progress --memory-limit=1G",
+    "POSMAIN_TEST_HTTP_BASE=http://127.0.0.1:8010 npm run test:e2e:local-pin",
+    "POSMAIN_TEST_HTTP_BASE=<hosted-base> npm run test:e2e:hosted-password",
+    "export POSMAIN_MAIN_AUTH_MODE=password  # then restart PHP/container; do not drop PIN columns"
+  ],
+  "operator_qa_checklist": {
+    "backup_taken": false,
+    "preflight_ok": false,
+    "bootstrap_pin_change_completed": false,
+    "cashier_open_sale_close_reconciles": false,
+    "lock_relogin_resumes_same_drawer": false,
+    "cross_register_transfer_audited": false,
+    "hosted_password_login_still_works": false,
+    "rbac_denials_verified": false,
+    "rollback_rehearsed_or_documented": false,
+    "signoff_recorded": false
+  },
+  "blockers": [],
+  "signoff": {
+    "ready_for_pilot": false,
+    "signed_by": "pending",
+    "signed_at_utc": "pending",
+    "notes": "pending"
+  }
+}

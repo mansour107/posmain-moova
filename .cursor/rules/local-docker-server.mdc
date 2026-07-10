@@ -1,0 +1,20 @@
+---
+description: How to start the local POS Docker stack without long waits
+alwaysApply: true
+---
+
+# Local Docker server
+
+When asked to run/start the server for this project:
+
+1. Check `docker info` first. If the daemon is down, start Docker Desktop from:
+   `~/Applications/Docker.app`
+   (`open "/Users/ab.mansour1agmail.com/Applications/Docker.app"`).
+   Do **not** use `open -a Docker` — that fails on this machine.
+
+2. Fail fast: wait at most ~20–30s for the daemon. If it is still down, tell the user Docker Desktop needs to finish starting (or be opened manually). Do not sit in multi-minute silent wait loops.
+
+3. Once Docker is ready:
+   `docker compose -f docker-compose.posmain-test.yml up -d`
+
+4. App URL: `http://127.0.0.1:8010` (containers: `posmain-php`, `posmain-mysql` on host port `3307`).

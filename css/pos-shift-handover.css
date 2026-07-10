@@ -1,0 +1,243 @@
+/* Cashier shift handover — open/close count wizard */
+.psh-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 10050;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1rem;
+    background: linear-gradient(135deg, rgba(15, 23, 42, 0.92) 0%, rgba(30, 41, 59, 0.94) 100%);
+    backdrop-filter: blur(6px);
+}
+
+.psh-card {
+    width: min(440px, 96vw);
+    background: #fff;
+    border-radius: 20px;
+    box-shadow: 0 24px 60px rgba(15, 23, 42, 0.35);
+    overflow: hidden;
+    animation: pshSlideUp 0.35s ease;
+}
+
+@keyframes pshSlideUp {
+    from { opacity: 0; transform: translateY(16px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.psh-card-head {
+    padding: 1.5rem 1.5rem 0.75rem;
+    text-align: center;
+}
+
+.psh-card-head h2 {
+    margin: 0 0 0.35rem;
+    font-size: 1.35rem;
+    font-weight: 700;
+    color: #0f172a;
+}
+
+.psh-card-head p {
+    margin: 0;
+    color: #64748b;
+    font-size: 0.92rem;
+}
+
+.psh-card-body {
+    padding: 1rem 1.5rem 1.5rem;
+}
+
+.psh-step-dots {
+    display: flex;
+    justify-content: center;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+}
+
+.psh-step-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #e2e8f0;
+    transition: background 0.2s, transform 0.2s;
+}
+
+.psh-step-dot.is-active {
+    background: #6366f1;
+    transform: scale(1.2);
+}
+
+.psh-amount-input {
+    width: 100%;
+    text-align: center;
+    font-size: 2rem;
+    font-weight: 700;
+    padding: 0.85rem 1rem;
+    border: 2px solid #e2e8f0;
+    border-radius: 14px;
+    color: #0f172a;
+    transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.psh-amount-input:focus {
+    outline: none;
+    border-color: #6366f1;
+    box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.15);
+}
+
+.psh-message {
+    margin-top: 0.85rem;
+    padding: 0.75rem 1rem;
+    border-radius: 12px;
+    font-size: 0.9rem;
+    text-align: center;
+}
+
+.psh-message.is-info {
+    background: #eef2ff;
+    color: #4338ca;
+    border: 1px solid #c7d2fe;
+}
+
+.psh-message.is-warn {
+    background: #fffbeb;
+    color: #b45309;
+    border: 1px solid #fde68a;
+}
+
+.psh-message.is-success {
+    background: #ecfdf5;
+    color: #047857;
+    border: 1px solid #a7f3d0;
+}
+
+.psh-variance-card {
+    margin-top: 1rem;
+    padding: 1.25rem;
+    border-radius: 16px;
+    text-align: center;
+}
+
+.psh-variance-card.is-over {
+    background: linear-gradient(135deg, #ecfdf5, #d1fae5);
+    border: 1px solid #6ee7b7;
+}
+
+.psh-variance-card.is-under {
+    background: linear-gradient(135deg, #fffbeb, #fef3c7);
+    border: 1px solid #fcd34d;
+}
+
+.psh-variance-card.is-balanced {
+    background: linear-gradient(135deg, #eef2ff, #e0e7ff);
+    border: 1px solid #a5b4fc;
+}
+
+.psh-variance-amount {
+    font-size: 1.75rem;
+    font-weight: 800;
+    margin: 0.25rem 0;
+}
+
+.psh-variance-label {
+    font-size: 0.88rem;
+    color: #475569;
+    margin: 0;
+}
+
+.psh-actions {
+    display: flex;
+    gap: 0.75rem;
+    margin-top: 1.25rem;
+}
+
+.psh-btn {
+    flex: 1;
+    border: none;
+    border-radius: 12px;
+    padding: 0.85rem 1rem;
+    font-weight: 600;
+    font-size: 0.95rem;
+    cursor: pointer;
+    transition: transform 0.1s, opacity 0.15s;
+}
+
+.psh-btn:active {
+    transform: scale(0.98);
+}
+
+.psh-btn:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
+.psh-btn-primary {
+    background: linear-gradient(135deg, #6366f1, #8b5cf6);
+    color: #fff;
+}
+
+.psh-btn-secondary {
+    background: #f1f5f9;
+    color: #334155;
+}
+
+.psh-btn-danger-soft {
+    background: #fef2f2;
+    color: #b91c1c;
+}
+
+.psh-hidden {
+    display: none !important;
+}
+
+.psh-takeover-form {
+    margin-top: 1rem;
+    text-align: start;
+}
+
+.psh-takeover-label {
+    display: block;
+    margin: 0.75rem 0 0.35rem;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: #475569;
+}
+
+.psh-amount-input--sm {
+    font-size: 1.35rem;
+    padding: 0.65rem 0.85rem;
+}
+
+.psh-takeover-reason {
+    width: 100%;
+    border: 2px solid #e2e8f0;
+    border-radius: 12px;
+    padding: 0.65rem 0.85rem;
+    font-size: 0.92rem;
+    color: #0f172a;
+    resize: vertical;
+    min-height: 64px;
+}
+
+.psh-takeover-reason:focus {
+    outline: none;
+    border-color: #6366f1;
+    box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.15);
+}
+
+#pshOpenBranchBlocked .psh-actions {
+    margin-top: 1rem;
+}
+
+/* Close modal wizard integration */
+.pos-close-shift-count-panel {
+    margin-top: 0.5rem;
+}
+
+.pos-close-shift-count-panel .psh-amount-input {
+    font-size: 1.65rem;
+}
+
+.pos-close-shift-wizard-step {
+    animation: pshSlideUp 0.25s ease;
+}
