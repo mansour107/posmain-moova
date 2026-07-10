@@ -1,6 +1,8 @@
 <?php
 
 require_once __DIR__ . '/../../Sync/DocumentCounterService.php';
+require_once __DIR__ . '/../../Accounting/JournalPostingService.php';
+require_once __DIR__ . '/../../Financial/Money.php';
 
 class AccountingPostingService
 {
@@ -23,6 +25,32 @@ class AccountingPostingService
         $branch = (int) ($context['branch'] ?? $request['branch'] ?? 0);
         $date = $this->paymentDate($request);
         $tableName = trim((string) ($request['table_name'] ?? ''));
+        $idempotencyKey = trim((string) ($request['idempotency_key'] ?? ''));
+
+        if ($customerAccountId < 1) {
+            throw new InvalidArgumentException('CUSTOMER_ACCOUNT_REQUIRED');
+        }
+
+        if ($idempotencyKey !== '') {
+            $existing = JournalPostingService::findByIdempotencyKey($conn, $idempotencyKey);
+            if ($existing !== null) {
+                if (
+                    (string) ($existing['source_type'] ?? '') !== 'payment'
+                    || Money::from((string) ($existing['total'] ?? '0'))->compare(Money::from($amount)) !== 0
+                ) {
+                    throw new RuntimeException('IDEMPOTENCY_KEY_CONFLICT');
+                }
+
+                return [
+                    'receipt_id' => (int) ($existing['op_id'] ?? 0),
+                    'journal_id' => (int) ($existing['journal_id'] ?? 0),
+                    'journal_head_id' => (int) $existing['id'],
+                    'entry_count' => 2,
+                    'amount' => $amount,
+                    'replayed' => true,
+                ];
+            }
+        }
 
         $receiptId = $this->insertReceiptHeader(
             $conn,
@@ -36,14 +64,23 @@ class AccountingPostingService
             $tableName
         );
         $journalId = $this->nextJournalId($conn, $tenant, $branch);
-        $journalHeadId = $this->insertJournalHead($conn, $journalId, $receiptId, $orderId, $amount, $date, $tableName, $userId);
-        $entryCount = $this->insertPaymentEntries($conn, $journalHeadId, $orderId, $amount, $safeAccountId, $customerAccountId);
+        $journalHeadId = JournalPostingService::postBalancedHead($conn, (string) $journalId, $amount, $date, 'سند قبض - سداد طاولة ' . $tableName, $userId, [
+            ['account_id' => $safeAccountId, 'debit' => $amount, 'credit' => '0.00', 'tybe' => 0, 'op2' => $orderId],
+            ['account_id' => $customerAccountId, 'debit' => '0.00', 'credit' => $amount, 'tybe' => 1, 'op2' => $orderId],
+        ], [
+            'op_id' => $receiptId,
+            'op2' => $orderId,
+            'source_type' => 'payment',
+            'source_id' => $receiptId,
+            'posting_kind' => 'payment_receipt',
+            'idempotency_key' => $idempotencyKey,
+        ]);
 
         return [
             'receipt_id' => $receiptId,
             'journal_id' => $journalId,
             'journal_head_id' => $journalHeadId,
-            'entry_count' => $entryCount,
+            'entry_count' => 2,
             'amount' => $amount,
         ];
     }
@@ -51,7 +88,7 @@ class AccountingPostingService
     private function insertReceiptHeader(
         mysqli $conn,
         int $orderId,
-        float $amount,
+        string $amount,
         int $safeAccountId,
         int $customerAccountId,
         int $employeeId,
@@ -67,7 +104,7 @@ class AccountingPostingService
             ) VALUES (1, 1, 1, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?)
         ");
         $stmt->bind_param(
-            'ssiiiddii',
+            'ssiiissii',
             $infoText,
             $date,
             $employeeId,
@@ -83,46 +120,6 @@ class AccountingPostingService
         $stmt->close();
 
         return $receiptId;
-    }
-
-    private function insertJournalHead(mysqli $conn, int $journalId, int $receiptId, int $orderId, float $amount, string $date, string $tableName, int $userId): int
-    {
-        $details = 'سند قبض - سداد طاولة ' . $tableName;
-        $stmt = $conn->prepare("
-            INSERT INTO journal_heads (journal_id, op_id, total, jdate, details, user, op2)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        ");
-        $stmt->bind_param('iidssii', $journalId, $receiptId, $amount, $date, $details, $userId, $orderId);
-        $stmt->execute();
-        $journalHeadId = (int) $conn->insert_id;
-        $stmt->close();
-
-        return $journalHeadId;
-    }
-
-    private function insertPaymentEntries(mysqli $conn, int $journalHeadId, int $orderId, float $amount, int $safeAccountId, int $customerAccountId): int
-    {
-        $stmt = $conn->prepare("
-            INSERT INTO journal_entries (journal_id, account_id, debit, credit, tybe, op2)
-            VALUES (?, ?, ?, 0, 0, ?)
-        ");
-        $stmt->bind_param('iidi', $journalHeadId, $safeAccountId, $amount, $orderId);
-        $stmt->execute();
-        $stmt->close();
-        $entryCount = 1;
-
-        if ($customerAccountId > 0) {
-            $stmt = $conn->prepare("
-                INSERT INTO journal_entries (journal_id, account_id, debit, credit, tybe, op2)
-                VALUES (?, ?, 0, ?, 1, ?)
-            ");
-            $stmt->bind_param('iidi', $journalHeadId, $customerAccountId, $amount, $orderId);
-            $stmt->execute();
-            $stmt->close();
-            $entryCount++;
-        }
-
-        return $entryCount;
     }
 
     private function nextJournalId(mysqli $conn, int $tenant, int $branch): int
@@ -176,13 +173,13 @@ class AccountingPostingService
         return $value;
     }
 
-    private function requiredPositiveAmount(array $request, array $keys): float
+    private function requiredPositiveAmount(array $request, array $keys): string
     {
         foreach ($keys as $key) {
             if (array_key_exists($key, $request)) {
-                $amount = (float) $request[$key];
-                if ($amount > 0) {
-                    return $amount;
+                $amount = Money::fromLegacy($request[$key]);
+                if ($amount->isPositive()) {
+                    return $amount->toString();
                 }
             }
         }

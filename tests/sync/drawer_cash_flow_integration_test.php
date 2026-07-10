@@ -35,12 +35,14 @@ try {
         'name_ar' => 'Cash drawer',
         'name_en' => 'Cash drawer',
         'type' => 'cash',
+        'account_id' => 51,
     ]);
     $paymentMethods->saveMethod($conn, [
         'code' => 'card_terminal',
         'name_ar' => 'Card terminal',
         'name_en' => 'Card terminal',
         'type' => 'card',
+        'account_id' => 52,
         'requires_reference' => true,
         'sort_order' => 1,
     ]);

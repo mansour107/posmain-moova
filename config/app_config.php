@@ -556,6 +556,13 @@ if (!function_exists('posmain_app_config')) {
                     'adjustment_gain_loss_account_id' => posmain_int($branchEnv(['POSMAIN_INVENTORY_ADJUSTMENT_GAIN_LOSS_ACCOUNT_ID'], 0), 0),
                 ],
             ],
+            // VAT stays disabled until accountant-approved activation.
+            'tax' => [
+                'enabled' => posmain_bool($branchEnv(['POSMAIN_TAX_ENABLED'], '0'), false),
+                'default_rate' => (string) $branchEnv(['POSMAIN_TAX_DEFAULT_RATE'], '0'),
+                'inclusive' => posmain_bool($branchEnv(['POSMAIN_TAX_INCLUSIVE'], '0'), false),
+                'vat_payable_account_id' => posmain_int($branchEnv(['POSMAIN_TAX_VAT_PAYABLE_ACCOUNT_ID'], 0), 0),
+            ],
             'public_base_url' => (string) posmain_env('POSMAIN_PUBLIC_BASE_URL', ''),
             'delivery' => [
                 'v2_enabled' => posmain_bool($branchEnv(['POSMAIN_DELIVERY_V2'], '1'), true),

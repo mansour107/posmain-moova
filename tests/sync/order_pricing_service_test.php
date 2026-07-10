@@ -30,27 +30,47 @@ try {
 
     $service = new OrderPricingService();
     $resolved = $service->resolveTableSaveRequest($conn, [
-        'items' => [['id' => 10, 'qty' => 2, 'price' => 12.5, 'discount' => 0]],
-        'total' => 25,
-        'discount' => 0,
-        'net' => 25,
+        'items' => [['id' => 10, 'qty' => '2', 'price' => '12.5', 'discount' => '0']],
+        'total' => '25.00',
+        'discount' => '0.00',
+        'net' => '25.00',
     ]);
     orderPricingAssert(!empty($resolved['pricing_resolved']), 'pricing should mark request resolved');
-    orderPricingAssert(abs((float) $resolved['total'] - 25.0) < 0.02, 'matching totals should pass');
-    orderPricingAssert((float) $resolved['items'][0]['price'] === 12.5, 'canonical price should be used');
+    orderPricingAssert($resolved['total'] === '25.00', 'pricing must return a decimal-string total');
+    orderPricingAssert($resolved['items'][0]['price'] === '12.500000', 'canonical price should be used');
 
     $failed = false;
     try {
         $service->resolveTableSaveRequest($conn, [
-            'items' => [['id' => 10, 'qty' => 2, 'price' => 1, 'discount' => 0]],
-            'total' => 2,
-            'discount' => 0,
-            'net' => 2,
+            'items' => [['id' => 10, 'qty' => '2', 'price' => '1', 'discount' => '0']],
+            'total' => '2.00',
+            'discount' => '0.00',
+            'net' => '2.00',
         ]);
     } catch (InvalidArgumentException $e) {
         $failed = $e->getMessage() === 'PRICE_MISMATCH';
     }
     orderPricingAssert($failed, 'tampered line price should be rejected');
+
+    $discountRegression = $service->resolveTableSaveRequest($conn, [
+        'items' => [['id' => 10, 'qty' => '2', 'price' => '12.5', 'discount' => '1']],
+        'discount' => '0',
+    ]);
+    orderPricingAssert($discountRegression['net'] === '23.00', 'line discounts must be per-unit and applied consistently');
+
+    $floatCoerced = $service->resolveTableSaveRequest($conn, [
+        'items' => [['id' => 10, 'qty' => 2.0, 'price' => 12.5, 'discount' => 0.0]],
+        'discount' => 0.0,
+    ]);
+    orderPricingAssert($floatCoerced['net'] === '25.00', 'HTTP boundary must coerce JSON floats into exact decimal strings');
+
+    $kernelRejectsFloat = false;
+    try {
+        (new FinancialPricingService())->price([['id' => 1, 'qty' => 2.0, 'price' => '12.5', 'discount' => '0']]);
+    } catch (InvalidArgumentException $e) {
+        $kernelRejectsFloat = $e->getMessage() === 'FINANCIAL_DECIMAL_STRING_REQUIRED';
+    }
+    orderPricingAssert($kernelRejectsFloat, 'FinancialPricingService kernel must still reject raw PHP floats');
 
     echo "order-pricing-service-ok db={$db}\n";
 } finally {

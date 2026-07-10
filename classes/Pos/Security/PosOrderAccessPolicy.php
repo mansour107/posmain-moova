@@ -12,6 +12,7 @@ class PosOrderAccessPolicy
             'orders.delivery' => 'pos.sell.delivery',
             'orders.payment' => 'pos.payment.take',
             'orders.split-payment' => 'pos.split',
+            'orders.refund' => 'pos.refund',
             'orders.edit' => 'pos.sell.takeaway',
             'orders.table.free' => 'pos.table.open',
             'integrations.cofe.orders' => 'moova.accept',

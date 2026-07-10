@@ -4,6 +4,8 @@ require_once __DIR__ . '/InventoryDecimal.php';
 require_once __DIR__ . '/InventoryFeatureFlags.php';
 require_once __DIR__ . '/../Sync/DocumentCounterService.php';
 require_once __DIR__ . '/../Recipe/Repository/InventoryMovementRepository.php';
+require_once __DIR__ . '/../Accounting/JournalPostingService.php';
+require_once __DIR__ . '/../Financial/Money.php';
 
 class InventoryAccountingService
 {
@@ -280,8 +282,42 @@ class InventoryAccountingService
         $tenant = (int) ($context['pos_tenant'] ?? $context['tenant'] ?? 0);
         $branch = (int) ($context['pos_branch'] ?? $context['branch'] ?? 0);
         $journalId = $this->nextJournalId($conn, $tenant, $branch);
-        $journalHeadId = $this->insertJournalHead($conn, $journalId, $tenant, $branch, $journal);
-        $entryIds = $this->insertJournalEntries($conn, $journalHeadId, $tenant, $branch, $journal);
+        $total = Money::from(InventoryDecimal::normalize($journal['total'] ?? '0', 2))->toString();
+        $entries = [];
+        foreach ($journal['entries'] as $index => $entry) {
+            $entries[] = [
+                'account_id' => (int) $entry['account_id'],
+                'debit' => Money::from(InventoryDecimal::normalize($entry['debit'] ?? '0', 2))->toString(),
+                'credit' => Money::from(InventoryDecimal::normalize($entry['credit'] ?? '0', 2))->toString(),
+                'tybe' => $index,
+                'op2' => (int) ($journal['op2'] ?? 0),
+            ];
+        }
+        $journalHeadId = JournalPostingService::postBalancedHead(
+            $conn,
+            (string) $journalId,
+            $total,
+            (string) ($journal['jdate'] ?? date('Y-m-d')),
+            (string) ($journal['details'] ?? 'Inventory accounting'),
+            (int) ($journal['user_id'] ?? 0),
+            $entries,
+            [
+                'op_id' => (int) ($journal['op_id'] ?? 0),
+                'op2' => (int) ($journal['op2'] ?? 0),
+                'pro_tybe' => (int) ($journal['pro_tybe'] ?? 0),
+                'tenant' => $tenant,
+                'branch' => $branch,
+                'source_type' => 'inventory_movement',
+                'source_id' => (int) (($journal['movement_ids'][0] ?? 0)),
+                'posting_kind' => (string) ($journal['posting_kind'] ?? 'inventory_accounting'),
+                'idempotency_key' => (string) ($journal['idempotency_key'] ?? ('inventory:' . md5(json_encode($journal['movement_ids'] ?? [])))),
+            ]
+        );
+        $entryIds = [];
+        $entryResult = $conn->query('SELECT id FROM journal_entries WHERE journal_id = ' . (int) $journalHeadId . ' ORDER BY id ASC');
+        while ($row = $entryResult->fetch_assoc()) {
+            $entryIds[] = (int) $row['id'];
+        }
         $movementIds = array_values(array_map('intval', $journal['movement_ids'] ?? []));
         $this->movements->attachJournal($conn, $movementIds, $journalHeadId);
 
@@ -292,81 +328,18 @@ class InventoryAccountingService
             'entry_ids' => $entryIds,
             'entry_count' => count($entryIds),
             'movement_ids' => $movementIds,
-            'total' => InventoryDecimal::normalize($journal['total'] ?? '0'),
+            'total' => $total,
         ];
     }
 
     private function insertJournalHead(mysqli $conn, int $journalId, int $tenant, int $branch, array $journal): int
     {
-        $columns = [
-            'journal_id' => $journalId,
-            'total' => InventoryDecimal::normalize($journal['total'] ?? '0'),
-            'jdate' => (string) ($journal['jdate'] ?? date('Y-m-d')),
-            'details' => (string) ($journal['details'] ?? 'Inventory accounting'),
-            'user' => (int) ($journal['user_id'] ?? 0),
-        ];
-        foreach (['op_id', 'op2', 'pro_tybe'] as $column) {
-            if ($this->columnExists($conn, 'journal_heads', $column)) {
-                $columns[$column] = (int) ($journal[$column] ?? 0);
-            }
-        }
-        if ($this->columnExists($conn, 'journal_heads', 'tenant')) {
-            $columns['tenant'] = $tenant;
-        }
-        if ($this->columnExists($conn, 'journal_heads', 'branch')) {
-            $columns['branch'] = $branch;
-        }
-
-        $names = array_keys($columns);
-        $sql = 'INSERT INTO journal_heads (`' . implode('`, `', $names) . '`) VALUES (' . implode(', ', array_fill(0, count($names), '?')) . ')';
-        $stmt = $conn->prepare($sql);
-        $this->bindParams($stmt, array_values($columns));
-        $stmt->execute();
-        $id = (int) $conn->insert_id;
-        $stmt->close();
-
-        return $id;
+        throw new RuntimeException('JOURNAL_DIRECT_WRITE_FORBIDDEN');
     }
 
     private function insertJournalEntries(mysqli $conn, int $journalHeadId, int $tenant, int $branch, array $journal): array
     {
-        $entryIds = [];
-        $index = 0;
-        foreach ($journal['entries'] as $entry) {
-            $columns = [
-                'journal_id' => $journalHeadId,
-                'account_id' => (int) $entry['account_id'],
-                'debit' => InventoryDecimal::normalize($entry['debit'] ?? '0'),
-                'credit' => InventoryDecimal::normalize($entry['credit'] ?? '0'),
-                'tybe' => $index,
-            ];
-            if ($this->columnExists($conn, 'journal_entries', 'info')) {
-                $columns['info'] = (string) ($entry['info'] ?? $journal['details'] ?? 'Inventory accounting');
-            }
-            if ($this->columnExists($conn, 'journal_entries', 'op_id')) {
-                $columns['op_id'] = (int) ($journal['op_id'] ?? 0);
-            }
-            if ($this->columnExists($conn, 'journal_entries', 'op2')) {
-                $columns['op2'] = (int) ($journal['op2'] ?? 0);
-            }
-            if ($this->columnExists($conn, 'journal_entries', 'tenant')) {
-                $columns['tenant'] = $tenant;
-            }
-            if ($this->columnExists($conn, 'journal_entries', 'branch')) {
-                $columns['branch'] = $branch;
-            }
-
-            $names = array_keys($columns);
-            $sql = 'INSERT INTO journal_entries (`' . implode('`, `', $names) . '`) VALUES (' . implode(', ', array_fill(0, count($names), '?')) . ')';
-            $stmt = $conn->prepare($sql);
-            $this->bindParams($stmt, array_values($columns));
-            $stmt->execute();
-            $entryIds[] = (int) $conn->insert_id;
-            $stmt->close();
-            $index++;
-        }
-
-        return $entryIds;
+        throw new RuntimeException('JOURNAL_DIRECT_WRITE_FORBIDDEN');
     }
 
     private function loadMovements(mysqli $conn, array $movementIds, array $allowedTypes): array

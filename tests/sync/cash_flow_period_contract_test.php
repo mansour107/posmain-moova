@@ -28,7 +28,9 @@ cashFlowPeriodContractAssert(strpos($cashFlowPeriod, 'close_variance_rollup') !=
 cashFlowPeriodContractAssert(strpos($cashFlowPeriod, 'BusinessDayService') !== false, 'CashFlowPeriodService should use BusinessDayService');
 
 $payment = file_get_contents(__DIR__ . '/../../classes/Pos/Service/PaymentService.php');
-cashFlowPeriodContractAssert(strpos($payment, 'recordCashMovementWithFallback') !== false, 'PaymentService should use unassigned fallback');
+cashFlowPeriodContractAssert(strpos($payment, 'recordCashMovementWithFallback') !== false, 'PaymentService should keep cash movement helper');
+cashFlowPeriodContractAssert(strpos($payment, 'DRAWER_SESSION_REQUIRED') !== false, 'PaymentService must fail closed without drawer');
+cashFlowPeriodContractAssert(strpos($payment, 'recordUnassignedMovement') === false, 'PaymentService must not fall back to unassigned movements');
 
 $settle = file_get_contents(__DIR__ . '/../../do/settle_credit.php');
 cashFlowPeriodContractAssert(strpos($settle, 'findOpenSession') === false, 'settle_credit should not gate on findOpenSession');

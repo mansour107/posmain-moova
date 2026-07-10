@@ -1,6 +1,7 @@
 <?php
 
 require_once __DIR__ . '/Sync/DocumentCounterService.php';
+require_once __DIR__ . '/Financial/Money.php';
 
 class TableOrderService
 {
@@ -261,11 +262,14 @@ class TableOrderService
               AND isdeleted = 0
         ", [(int) $orderId]);
 
-        $total = (float) ($row['total'] ?? 0);
-        $profit = (float) ($row['profit'] ?? 0);
+        $total = Money::from((string) ($row['total'] ?? '0'))->toString();
+        $profit = Money::from((string) ($row['profit'] ?? '0'), true)->toString();
         $head = $this->queryOne($conn, "SELECT fat_disc FROM ot_head WHERE id = ? LIMIT 1", [(int) $orderId]);
-        $discount = (float) ($head['fat_disc'] ?? 0);
-        $net = max(0, $total - $discount);
+        $discount = Money::from((string) ($head['fat_disc'] ?? '0'))->toString();
+        $net = Money::from($total)->subtract(Money::from($discount));
+        if ($net->isNegative()) {
+            $net = Money::zero();
+        }
 
         $this->execute($conn, "
             UPDATE ot_head
@@ -274,11 +278,11 @@ class TableOrderService
                 fat_net = ?,
                 profit = ?
             WHERE id = ?
-        ", [$total, $total, $net, $profit, (int) $orderId]);
+        ", [$total, $total, $net->toString(), $profit, (int) $orderId]);
 
         return [
             'total' => $total,
-            'net' => $net,
+            'net' => $net->toString(),
             'profit' => $profit,
         ];
     }
@@ -346,14 +350,19 @@ class TableOrderService
             throw new Exception('لا يوجد طلب نشط لهذه الطاولة');
         }
 
-        $amountPaid = (float) $amountPaid;
-        if ($amountPaid <= 0) {
+        $amountPaid = Money::from($amountPaid);
+        if (!$amountPaid->isPositive()) {
             throw new Exception('يجب إدخال مبلغ الدفع');
         }
 
         if ($discount !== null) {
-            $discount = max(0, (float) $discount);
-            $net = $netOverride !== null ? max(0, (float) $netOverride) : max(0, (float) $order['fat_total'] - $discount);
+            $discount = Money::from($discount);
+            $net = $netOverride !== null
+                ? Money::from($netOverride)
+                : Money::from((string) ($order['fat_total'] ?? '0'))->subtract($discount);
+            if ($net->isNegative()) {
+                $net = Money::zero();
+            }
             $this->execute($conn, "
                 UPDATE ot_head
                 SET fat_disc = ?,
@@ -361,22 +370,23 @@ class TableOrderService
                     remaining_amount = GREATEST(0, ? - COALESCE(paid_amount, 0))
                 WHERE id = ?
                   AND table_id = ?
-            ", [$discount, $net, $net, (int) $orderId, (int) $tableId]);
-            $order['fat_disc'] = $discount;
-            $order['fat_net'] = $net;
+            ", [$discount->toString(), $net->toString(), $net->toString(), (int) $orderId, (int) $tableId]);
+            $order['fat_disc'] = $discount->toString();
+            $order['fat_net'] = $net->toString();
         }
 
-        $netAmount = $netOverride !== null ? max(0, (float) $netOverride) : (float) ($order['fat_net'] ?? 0);
-        if ($netAmount <= 0) {
+        $netAmount = $netOverride !== null ? Money::from($netOverride) : Money::from((string) ($order['fat_net'] ?? '0'));
+        if (!$netAmount->isPositive()) {
             $totals = $this->recalculateOrderTotals($conn, $orderId);
-            $netAmount = $totals['net'];
+            $netAmount = Money::from($totals['net']);
         }
 
-        $existingPaid = (float) ($order['paid_amount'] ?? 0);
-        $newPaid = min($netAmount, $existingPaid + $amountPaid);
-        $appliedAmount = max(0, $newPaid - $existingPaid);
-        $remaining = max(0, $netAmount - $newPaid);
-        $isPaid = $remaining <= 0.0001;
+        $existingPaid = Money::from((string) ($order['paid_amount'] ?? '0'));
+        $candidatePaid = $existingPaid->add($amountPaid);
+        $newPaid = $candidatePaid->compare($netAmount) > 0 ? $netAmount : $candidatePaid;
+        $appliedAmount = $newPaid->subtract($existingPaid);
+        $remaining = $netAmount->subtract($newPaid);
+        $isPaid = !$remaining->isPositive();
         $paymentStatus = $isPaid ? 'paid' : 'partial';
         $orderStatus = $isPaid ? 'completed' : 'active';
         $invoiceStatus = $isPaid ? 'completed' : 'draft';
@@ -396,8 +406,8 @@ class TableOrderService
               AND table_id = ?
               AND pro_tybe = ?
         ", [
-            $newPaid,
-            $remaining,
+            $newPaid->toString(),
+            $remaining->toString(),
             $paymentStatus,
             $orderStatus,
             $invoiceStatus,
@@ -410,7 +420,7 @@ class TableOrderService
             self::POS_TYPE,
         ]);
 
-        $paymentId = $this->insertPaymentRecord($conn, $orderId, $appliedAmount, $paymentMethod, $userId, $notes);
+        $paymentId = $this->insertPaymentRecord($conn, $orderId, $appliedAmount->toString(), $paymentMethod, $userId, $notes);
 
         if ($isPaid) {
             $this->setTableFreeIfNoActiveOrder($conn, $tableId);
@@ -421,10 +431,10 @@ class TableOrderService
         return [
             'order_id' => (int) $orderId,
             'table_id' => (int) $tableId,
-            'paid_amount' => $newPaid,
-            'applied_amount' => $appliedAmount,
+            'paid_amount' => $newPaid->toString(),
+            'applied_amount' => $appliedAmount->toString(),
             'payment_id' => $paymentId,
-            'remaining_amount' => $remaining,
+            'remaining_amount' => $remaining->toString(),
             'payment_status' => $paymentStatus,
             'order_status' => $orderStatus,
             'invoice_status' => $invoiceStatus,
@@ -444,7 +454,7 @@ class TableOrderService
             ) VALUES (?, ?, ?, ?, ?, NOW())
         ", [
             (int) $orderId,
-            (float) $amount,
+            Money::from($amount)->toString(),
             trim((string) $paymentMethod),
             trim((string) $notes),
             (int) $userId,

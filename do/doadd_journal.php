@@ -2,6 +2,9 @@
 
 require_once __DIR__ . '/../includes/rbac_route_guard.php';
 rbac_guard_route('do/doadd_journal.php');
+require_once __DIR__ . '/../includes/financial_certified_guard.php';
+financial_certified_reject_legacy_writer('do/doadd_journal.php');
+
 
 $user = current_user_id();
 

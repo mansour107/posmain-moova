@@ -6,6 +6,9 @@ require_once __DIR__ . '/RecipeDecimal.php';
 require_once __DIR__ . '/RecipeFeatureFlags.php';
 require_once __DIR__ . '/RecipeSettingsService.php';
 require_once __DIR__ . '/Repository/InventoryMovementRepository.php';
+require_once __DIR__ . '/../Accounting/JournalPostingService.php';
+require_once __DIR__ . '/../Financial/Money.php';
+require_once __DIR__ . '/../Financial/RoundingPolicy.php';
 
 class RecipeAccountingService
 {
@@ -248,8 +251,41 @@ class RecipeAccountingService
         $this->assertBalancedEntries($entries);
 
         $journalId = $this->nextJournalId($conn, $scope->posTenant, $scope->posBranch);
-        $journalHeadId = $this->insertJournalHead($conn, $journalId, $scope, $journal);
-        $entryIds = $this->insertJournalEntries($conn, $journalHeadId, $scope, $journal);
+        $total = Money::from(RoundingPolicy::halfUp(RecipeDecimal::normalize($journal['total'] ?? '0')))->toString();
+        $postedEntries = [];
+        foreach ($entries as $index => $entry) {
+            $postedEntries[] = [
+                'account_id' => (int) $entry['account_id'],
+                'debit' => Money::from(RoundingPolicy::halfUp(RecipeDecimal::normalize($entry['debit'] ?? '0')))->toString(),
+                'credit' => Money::from(RoundingPolicy::halfUp(RecipeDecimal::normalize($entry['credit'] ?? '0')))->toString(),
+                'tybe' => $index,
+                'op2' => (int) ($journal['op2'] ?? $journal['op_id'] ?? 0),
+            ];
+        }
+        $journalHeadId = JournalPostingService::postBalancedHead(
+            $conn,
+            (string) $journalId,
+            $total,
+            (string) ($journal['jdate'] ?? date('Y-m-d')),
+            (string) ($journal['details'] ?? 'Recipe accounting'),
+            (int) ($journal['user_id'] ?? 0),
+            $postedEntries,
+            [
+                'op_id' => (int) ($journal['op_id'] ?? 0),
+                'op2' => (int) ($journal['op2'] ?? 0),
+                'tenant' => $scope->posTenant,
+                'branch' => $scope->posBranch,
+                'source_type' => 'recipe_movement',
+                'source_id' => (int) (($journal['movement_ids'][0] ?? $journal['op_id'] ?? 0)),
+                'posting_kind' => (string) ($journal['posting_kind'] ?? 'recipe_accounting'),
+                'idempotency_key' => (string) ($journal['idempotency_key'] ?? ('recipe:' . md5(json_encode($journal['movement_ids'] ?? [])))),
+            ]
+        );
+        $entryIds = [];
+        $entryResult = $conn->query('SELECT id FROM journal_entries WHERE journal_id = ' . (int) $journalHeadId . ' ORDER BY id ASC');
+        while ($row = $entryResult->fetch_assoc()) {
+            $entryIds[] = (int) $row['id'];
+        }
         $movementIds = array_values(array_map('intval', $journal['movement_ids'] ?? []));
         $this->movements->attachJournal($conn, $movementIds, $journalHeadId);
 
@@ -260,81 +296,18 @@ class RecipeAccountingService
             'entry_ids' => $entryIds,
             'entry_count' => count($entryIds),
             'movement_ids' => $movementIds,
-            'total' => RecipeDecimal::normalize($journal['total'] ?? '0'),
+            'total' => $total,
         ];
     }
 
     private function insertJournalHead(mysqli $conn, int $journalId, RecipeScope $scope, array $journal): int
     {
-        $columns = [
-            'journal_id' => $journalId,
-            'total' => RecipeDecimal::normalize($journal['total'] ?? '0'),
-            'jdate' => (string) ($journal['jdate'] ?? date('Y-m-d')),
-            'details' => (string) ($journal['details'] ?? 'Recipe accounting'),
-            'user' => (int) ($journal['user_id'] ?? 0),
-        ];
-        foreach (['op_id', 'op2', 'pro_tybe'] as $column) {
-            if ($this->columnExists($conn, 'journal_heads', $column)) {
-                $columns[$column] = (int) ($journal[$column] ?? ($column === 'pro_tybe' ? 0 : 0));
-            }
-        }
-        if ($this->columnExists($conn, 'journal_heads', 'tenant')) {
-            $columns['tenant'] = $scope->posTenant;
-        }
-        if ($this->columnExists($conn, 'journal_heads', 'branch')) {
-            $columns['branch'] = $scope->posBranch;
-        }
-
-        $names = array_keys($columns);
-        $sql = 'INSERT INTO journal_heads (`' . implode('`, `', $names) . '`) VALUES (' . implode(', ', array_fill(0, count($names), '?')) . ')';
-        $stmt = $conn->prepare($sql);
-        $this->bindParams($stmt, array_values($columns));
-        $stmt->execute();
-        $id = (int) $conn->insert_id;
-        $stmt->close();
-
-        return $id;
+        throw new RuntimeException('JOURNAL_DIRECT_WRITE_FORBIDDEN');
     }
 
     private function insertJournalEntries(mysqli $conn, int $journalHeadId, RecipeScope $scope, array $journal): array
     {
-        $entryIds = [];
-        $index = 0;
-        foreach ($journal['entries'] as $entry) {
-            $columns = [
-                'journal_id' => $journalHeadId,
-                'account_id' => (int) $entry['account_id'],
-                'debit' => RecipeDecimal::normalize($entry['debit'] ?? '0'),
-                'credit' => RecipeDecimal::normalize($entry['credit'] ?? '0'),
-                'tybe' => $index,
-            ];
-            if ($this->columnExists($conn, 'journal_entries', 'info')) {
-                $columns['info'] = (string) ($entry['info'] ?? $journal['details'] ?? 'Recipe accounting');
-            }
-            if ($this->columnExists($conn, 'journal_entries', 'op_id')) {
-                $columns['op_id'] = (int) ($journal['op_id'] ?? 0);
-            }
-            if ($this->columnExists($conn, 'journal_entries', 'op2')) {
-                $columns['op2'] = (int) ($journal['op2'] ?? 0);
-            }
-            if ($this->columnExists($conn, 'journal_entries', 'tenant')) {
-                $columns['tenant'] = $scope->posTenant;
-            }
-            if ($this->columnExists($conn, 'journal_entries', 'branch')) {
-                $columns['branch'] = $scope->posBranch;
-            }
-
-            $names = array_keys($columns);
-            $sql = 'INSERT INTO journal_entries (`' . implode('`, `', $names) . '`) VALUES (' . implode(', ', array_fill(0, count($names), '?')) . ')';
-            $stmt = $conn->prepare($sql);
-            $this->bindParams($stmt, array_values($columns));
-            $stmt->execute();
-            $entryIds[] = (int) $conn->insert_id;
-            $stmt->close();
-            $index++;
-        }
-
-        return $entryIds;
+        throw new RuntimeException('JOURNAL_DIRECT_WRITE_FORBIDDEN');
     }
 
     private function loadMovements(mysqli $conn, array $movements, array $allowedTypes): array

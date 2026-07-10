@@ -1,6 +1,7 @@
 <?php
 
 require_once __DIR__ . '/TableInputValidator.php';
+require_once __DIR__ . '/../../Financial/Money.php';
 
 class PaymentInputValidator
 {
@@ -8,11 +9,13 @@ class PaymentInputValidator
     {
         $data['table_id'] = TableInputValidator::positiveInt($data['table_id'] ?? 0, 'بيانات غير صحيحة');
         $data['order_id'] = TableInputValidator::optionalPositiveInt($data['order_id'] ?? 0, 'معرف الطلب غير صحيح');
-        $data['discount'] = TableInputValidator::optionalDecimal($data['discount'] ?? null, 'قيمة الخصم غير صحيحة');
-        $data['net'] = TableInputValidator::optionalDecimal($data['net'] ?? null, 'صافي الطلب غير صحيح');
-        $data['paid'] = TableInputValidator::decimal($data['paid'] ?? $data['amount_paid'] ?? 0, 'بيانات غير صحيحة');
-        $data['payment_method'] = self::paymentMethod($data['payment_method'] ?? 'cash');
+        $data['discount'] = self::optionalMoney($data['discount'] ?? null, 'قيمة الخصم غير صحيحة');
+        $data['net'] = self::optionalMoney($data['net'] ?? null, 'صافي الطلب غير صحيح');
+        $data['paid'] = self::money($data['paid'] ?? $data['amount_paid'] ?? 0, 'بيانات غير صحيحة');
+        $data['payment_method'] = self::paymentMethod($data['payment_method_id'] ?? $data['payment_method'] ?? 'cash');
+        $data['payment_method_id'] = $data['payment_method'];
         $data['notes'] = self::notes($data['notes'] ?? '');
+        $data['reference_no'] = self::notes($data['reference_no'] ?? $data['notes'] ?? '');
 
         return $data;
     }
@@ -35,8 +38,7 @@ class PaymentInputValidator
             return 'cash';
         }
 
-        $allowed = ['cash', 'card', 'bank', 'visa', 'wallet', 'pos', 'كاش', 'صرافة', 'بطاقة'];
-        if (!in_array($value, $allowed, true)) {
+        if (!preg_match('/^(?:[1-9]\d*|[a-z0-9_]{1,40})$/i', $value)) {
             throw new InvalidArgumentException('طريقة الدفع غير صحيحة');
         }
 
@@ -74,5 +76,30 @@ class PaymentInputValidator
         $value = preg_replace('/[\x00-\x1F\x7F]/u', ' ', $value);
 
         return substr(trim((string) $value), 0, 255);
+    }
+
+    private static function money($value, string $message): string
+    {
+        try {
+            $money = Money::from($value);
+        } catch (Throwable $exception) {
+            throw new InvalidArgumentException($message);
+        }
+        if (!$money->isPositive()) {
+            throw new InvalidArgumentException($message);
+        }
+        return $money->toString();
+    }
+
+    private static function optionalMoney($value, string $message): ?string
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+        try {
+            return Money::from($value)->toString();
+        } catch (Throwable $exception) {
+            throw new InvalidArgumentException($message);
+        }
     }
 }

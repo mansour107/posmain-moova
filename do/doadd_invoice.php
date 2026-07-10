@@ -1,4 +1,7 @@
 <?php
+require_once __DIR__ . '/../includes/financial_certified_guard.php';
+financial_certified_reject_legacy_writer('do/doadd_invoice.php');
+
 require_once __DIR__ . '/../includes/production_guard.php';
 production_guard_deny_debug_request('do/doadd_invoice.php');
 require_once __DIR__ . '/../includes/pos_order_api_router_guard.php';

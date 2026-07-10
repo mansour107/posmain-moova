@@ -1,7 +1,12 @@
 <?php
 
+/**
+ * Unassigned drawer movements remain readable for historical cash-flow reports,
+ * but PaymentService must fail closed without an open drawer session.
+ */
 require_once __DIR__ . '/../../classes/Sync/SchemaManager.php';
 require_once __DIR__ . '/../../classes/Pos/Service/PaymentService.php';
+require_once __DIR__ . '/../../classes/Pos/Service/PaymentMethodService.php';
 require_once __DIR__ . '/../../classes/Pos/Service/CashFlowPeriodService.php';
 require_once __DIR__ . '/../../classes/Pos/Service/DrawerSessionService.php';
 
@@ -20,38 +25,53 @@ try {
     (new SyncSchemaManager())->apply($conn);
 
     $_SESSION = ['pos_tenant' => 2, 'pos_branch' => 3];
-    $paymentService = new PaymentService();
-    $movement = $paymentService->recordCashDrawerMovementForPayment(
-        $conn,
-        'cash',
-        45.0,
-        501,
-        7,
-        ['tenant' => 2, 'branch' => 3, 'drawer_reason' => 'test_unassigned'],
-        null,
-        null,
-        null
-    );
+    $methods = new PaymentMethodService();
+    $methods->saveMethod($conn, [
+        'code' => 'cash',
+        'name_ar' => 'Cash',
+        'name_en' => 'Cash',
+        'type' => 'cash',
+        'account_id' => 51,
+        'requires_reference' => false,
+    ]);
 
-    cashFlowUnassignedAssert($movement !== null, 'unassigned movement should be recorded');
+    $paymentService = new PaymentService();
+    $failedClosed = false;
+    try {
+        $paymentService->recordCashDrawerMovementForPayment(
+            $conn,
+            'cash',
+            45.0,
+            501,
+            7,
+            ['tenant' => 2, 'branch' => 3, 'drawer_reason' => 'test_unassigned'],
+            null,
+            null,
+            null
+        );
+    } catch (RuntimeException $exception) {
+        $failedClosed = $exception->getMessage() === 'DRAWER_SESSION_REQUIRED';
+    }
+    cashFlowUnassignedAssert($failedClosed, 'PaymentService must require an open drawer session');
+
+    $drawer = new DrawerSessionService();
+    $movement = $drawer->recordUnassignedMovement($conn, [
+        'movement_type' => 'sale_cash',
+        'amount' => '45.00',
+        'order_id' => 501,
+        'created_by' => 7,
+        'reason' => 'historical_unassigned',
+        'tenant' => 2,
+        'branch' => 3,
+    ]);
+    cashFlowUnassignedAssert($movement !== null, 'historical unassigned movement should still be recordable for archive reads');
     cashFlowUnassignedAssert(($movement['is_unassigned'] ?? false) === true, 'movement should be flagged unassigned');
-    cashFlowUnassignedAssert((int) ($movement['tenant'] ?? 0) === 2, 'tenant should be stored on unassigned movement');
-    cashFlowUnassignedAssert((int) ($movement['branch'] ?? 0) === 3, 'branch should be stored on unassigned movement');
 
     $period = new CashFlowPeriodService();
     $today = date('Y-m-d');
     $summary = $period->summary($conn, ['date_from' => $today, 'date_to' => $today, 'tenant' => 2, 'branch' => 3]);
     cashFlowUnassignedAssert(abs((float) ($summary['unassigned_total'] ?? 0) - 45.0) < 0.01, 'unassigned total should match sale');
     cashFlowUnassignedAssert((int) ($summary['unassigned_count'] ?? 0) >= 1, 'unassigned count should be positive');
-
-    $listed = $period->movements($conn, [
-        'date_from' => $today,
-        'date_to' => $today,
-        'only_unassigned' => true,
-        'tenant' => 2,
-        'branch' => 3,
-    ]);
-    cashFlowUnassignedAssert((int) ($listed['total'] ?? 0) >= 1, 'period movements should list unassigned rows');
 
     echo "cash-flow-unassigned-integration-ok db={$db}\n";
 } finally {

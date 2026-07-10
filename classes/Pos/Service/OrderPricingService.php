@@ -1,11 +1,9 @@
 <?php
 
-require_once __DIR__ . '/../../Items/ItemUnitResolver.php';
+require_once __DIR__ . '/../../Financial/FinancialPricingService.php';
 
 class OrderPricingService
 {
-    public const DEFAULT_TOLERANCE = 0.01;
-
     public function resolveTableSaveRequest(mysqli $conn, array $data, array $context = []): array
     {
         $items = is_array($data['items'] ?? null) ? $data['items'] : [];
@@ -13,72 +11,64 @@ class OrderPricingService
             throw new InvalidArgumentException('الرجاء إضافة أصناف للطلب');
         }
 
-        $tolerance = (float) ($context['price_tolerance'] ?? self::DEFAULT_TOLERANCE);
         $allowMismatch = !empty($context['allow_price_mismatch'])
             || !empty($data['manager_approval_id'])
             || !empty($data['price_override_approval_id']);
 
         $resolvedItems = [];
-        $lineSubtotal = 0.0;
         foreach ($items as $item) {
             if (!is_array($item)) {
                 throw new InvalidArgumentException('بيانات الأصناف غير صحيحة');
             }
 
             $itemId = (int) ($item['id'] ?? $item['item_id'] ?? 0);
-            $qty = (float) ($item['qty'] ?? 0);
-            $submittedPrice = (float) ($item['price'] ?? 0);
-            $discount = (float) ($item['discount'] ?? 0);
-            if ($itemId < 1 || $qty <= 0) {
+            if ($itemId < 1) {
                 throw new InvalidArgumentException('معرف الصنف أو الكمية غير صحيحة');
             }
 
             $catalog = $this->loadCatalogPrice($conn, $itemId);
-            $canonicalPrice = (float) ($catalog['price1'] ?? 0);
-            if ($canonicalPrice <= 0) {
+            $canonicalPrice = UnitPrice::fromLegacy($catalog['price1'] ?? '0')->toString();
+            $submittedPrice = UnitPrice::fromLegacy($item['price'] ?? '0')->toString();
+            if (FinancialDecimal::compare($canonicalPrice, '0', UnitPrice::SCALE) <= 0) {
                 $canonicalPrice = $submittedPrice;
             }
 
             if (
                 !$allowMismatch
-                && $submittedPrice > 0
-                && abs($submittedPrice - $canonicalPrice) > $tolerance
+                && FinancialDecimal::compare($submittedPrice, '0', UnitPrice::SCALE) > 0
+                && FinancialDecimal::compare($submittedPrice, $canonicalPrice, UnitPrice::SCALE) !== 0
             ) {
                 throw new InvalidArgumentException('PRICE_MISMATCH');
             }
 
-            $price = $canonicalPrice > 0 ? $canonicalPrice : $submittedPrice;
-            $lineTotal = max(0, ($qty * $price) - $discount);
-            $lineSubtotal += $lineTotal;
+            $price = FinancialDecimal::compare($canonicalPrice, '0', UnitPrice::SCALE) > 0 ? $canonicalPrice : $submittedPrice;
 
             $item['id'] = $itemId;
             $item['item_id'] = $itemId;
-            $item['qty'] = $qty;
+            $item['qty'] = DecimalQuantity::fromLegacy($item['qty'] ?? '0')->toString();
             $item['price'] = $price;
-            $item['discount'] = $discount;
+            $item['discount'] = UnitPrice::fromLegacy($item['discount'] ?? '0')->toString();
             $item['catalog_price'] = $canonicalPrice;
             $resolvedItems[] = $item;
         }
 
-        $discount = (float) ($data['discount'] ?? 0);
-        $submittedTotal = (float) ($data['total'] ?? 0);
-        $submittedNet = (float) ($data['net'] ?? max(0, $submittedTotal - $discount));
-        $resolvedTotal = round($lineSubtotal, 4);
-        $resolvedNet = round(max(0, $resolvedTotal - $discount), 4);
+        $pricing = (new FinancialPricingService())->price(
+            $resolvedItems,
+            Money::fromLegacy($data['discount'] ?? '0')->toString(),
+            [
+                'rate' => Money::fromLegacy($data['tax_rate'] ?? '0')->toString(),
+                'inclusive' => !empty($data['tax_inclusive']),
+            ]
+        );
+        $resolvedTotal = $pricing['totals']['gross'];
+        $resolvedNet = $pricing['totals']['net'];
 
-        if (!$allowMismatch) {
-            if ($submittedTotal > 0 && abs($submittedTotal - $resolvedTotal) > $tolerance) {
-                throw new InvalidArgumentException('TOTAL_MISMATCH');
-            }
-            if ($submittedNet > 0 && abs($submittedNet - $resolvedNet) > $tolerance) {
-                throw new InvalidArgumentException('NET_MISMATCH');
-            }
-        }
-
-        $data['items'] = $resolvedItems;
+        $data['items'] = $pricing['lines'];
         $data['total'] = $resolvedTotal;
         $data['net'] = $resolvedNet;
-        $data['discount'] = $discount;
+        $data['discount'] = $pricing['totals']['discount'];
+        $data['taxable_amount'] = $pricing['totals']['taxable'];
+        $data['tax_amount'] = $pricing['totals']['tax'];
         $data['pricing_resolved'] = true;
 
         return $data;
@@ -94,11 +84,6 @@ class OrderPricingService
 
         if (!$row) {
             throw new InvalidArgumentException('ITEM_NOT_FOUND');
-        }
-
-        $sellPrice = ItemUnitResolver::sellPriceForItem($conn, $itemId);
-        if ($sellPrice > 0) {
-            $row['price1'] = $sellPrice;
         }
 
         return $row;

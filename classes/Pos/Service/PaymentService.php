@@ -3,6 +3,7 @@
 require_once __DIR__ . '/../../TableOrderService.php';
 require_once __DIR__ . '/PaymentMethodService.php';
 require_once __DIR__ . '/DrawerSessionService.php';
+require_once __DIR__ . '/../../Financial/Money.php';
 
 class PaymentService
 {
@@ -22,11 +23,17 @@ class PaymentService
         $tableId = $this->requiredPositiveInt($request, 'table_id');
         $orderId = $this->resolveOrderId($conn, $tableId, $request);
         $amountPaid = $this->requiredPositiveAmount($request, ['paid', 'amount_paid', 'amount']);
-        $paymentMethod = $this->requiredString($request, ['payment_method', 'method'], 'PAYMENT_METHOD_REQUIRED');
-        $notes = trim((string) ($request['notes'] ?? $request['payment_notes'] ?? $request['reference_no'] ?? ''));
+        $paymentMethod = $this->requiredString($request, ['payment_method_id', 'payment_method', 'method'], 'PAYMENT_METHOD_REQUIRED');
+        $tender = $this->paymentMethodService->resolveTender(
+            $conn,
+            $paymentMethod,
+            $request['reference_no'] ?? $request['notes'] ?? $request['payment_notes'] ?? null
+        );
+        $paymentMethod = $tender['code'];
+        $notes = (string) ($tender['reference_no'] ?? '');
         $userId = $this->contextUserId($request, $context);
-        $discount = $this->optionalFloat($request, ['discount', 'fat_disc']);
-        $netOverride = $this->optionalFloat($request, ['net', 'fat_net']);
+        $discount = $this->optionalMoney($request, ['discount', 'fat_disc']);
+        $netOverride = $this->optionalMoney($request, ['net', 'fat_net']);
         $drawerContext = array_merge($request, $context, ['drawer_reason' => 'table_payment']);
         $drawerSession = $this->preflightCashDrawerForPayment($conn, $paymentMethod, $amountPaid, $userId, $drawerContext);
 
@@ -45,7 +52,7 @@ class PaymentService
         $movement = $this->recordCashDrawerMovementForPayment(
             $conn,
             $paymentMethod,
-            (float) ($result['applied_amount'] ?? 0),
+            (string) ($result['applied_amount'] ?? '0.00'),
             (int) ($result['order_id'] ?? $orderId),
             $userId,
             $drawerContext,
@@ -63,18 +70,18 @@ class PaymentService
         ];
     }
 
-    public function preflightCashDrawerForPayment(mysqli $conn, string $paymentMethod, float $amount, int $userId, array $context = []): ?array
+    public function preflightCashDrawerForPayment(mysqli $conn, string $paymentMethod, $amount, int $userId, array $context = []): ?array
     {
-        if ($amount <= 0 || !$this->isCashPaymentMethod($conn, $paymentMethod)) {
+        if (!Money::fromLegacy($amount)->isPositive() || !$this->isCashPaymentMethod($conn, $paymentMethod)) {
             return null;
         }
 
         return $this->openDrawerSessionForCashPayment($conn, $userId, $context);
     }
 
-    public function recordCashDrawerMovementForPayment(mysqli $conn, string $paymentMethod, float $amount, int $orderId, int $userId, array $context = [], ?array $preflightSession = null, ?int $paymentId = null, ?int $refOtHeadId = null): ?array
+    public function recordCashDrawerMovementForPayment(mysqli $conn, string $paymentMethod, $amount, int $orderId, int $userId, array $context = [], ?array $preflightSession = null, ?int $paymentId = null, ?int $refOtHeadId = null): ?array
     {
-        if ($amount <= 0 || !$this->isCashPaymentMethod($conn, $paymentMethod)) {
+        if (!Money::fromLegacy($amount)->isPositive() || !$this->isCashPaymentMethod($conn, $paymentMethod)) {
             return null;
         }
 
@@ -83,7 +90,7 @@ class PaymentService
 
     public function recordCashRefundMovementForPayment(
         mysqli $conn,
-        float $amount,
+        $amount,
         int $orderId,
         int $userId,
         array $context = [],
@@ -91,7 +98,7 @@ class PaymentService
         ?int $paymentId = null,
         ?int $refOtHeadId = null
     ): ?array {
-        if ($amount <= 0) {
+        if (!Money::fromLegacy($amount)->isPositive()) {
             return null;
         }
 
@@ -101,7 +108,7 @@ class PaymentService
     private function recordCashMovementWithFallback(
         mysqli $conn,
         string $movementType,
-        float $amount,
+        $amount,
         int $orderId,
         int $userId,
         array $context,
@@ -110,7 +117,7 @@ class PaymentService
         ?int $refOtHeadId
     ): ?array {
         if (!$this->tableExists($conn, 'drawer_movements')) {
-            return null;
+            throw new RuntimeException('DRAWER_MOVEMENT_SCHEMA_REQUIRED');
         }
 
         $reason = (string) ($context['drawer_reason'] ?? ($movementType === 'refund_cash' ? 'pos_cash_refund' : 'pos_cash_payment'));
@@ -128,27 +135,15 @@ class PaymentService
             $movementPayload['ref_ot_head_id'] = $refOtHeadId;
         }
 
-        try {
-            $session = $preflightSession ?: $this->openDrawerSessionForCashPayment($conn, $userId, $context);
-            if ($session) {
-                return $this->drawerSessionService->recordMovement($conn, (int) $session['id'], $movementPayload);
-            }
-
-            $movementPayload['reason'] = $reason . ':unassigned';
-
-            return $this->drawerSessionService->recordUnassignedMovement($conn, $movementPayload);
-        } catch (Throwable $exception) {
-            error_log('Drawer movement recording failed, attempting unassigned fallback: ' . $exception->getMessage());
-            try {
-                $movementPayload['reason'] = $reason . ':unassigned';
-
-                return $this->drawerSessionService->recordUnassignedMovement($conn, $movementPayload);
-            } catch (Throwable $fallbackException) {
-                error_log('Unassigned drawer movement fallback failed: ' . $fallbackException->getMessage());
-
-                return null;
-            }
+        $session = $preflightSession;
+        if ($session === null) {
+            $session = $this->openDrawerSessionForCashPayment($conn, $userId, $context);
         }
+        if (!$session) {
+            throw new RuntimeException('DRAWER_SESSION_REQUIRED');
+        }
+
+        return $this->drawerSessionService->recordMovement($conn, (int) $session['id'], $movementPayload);
     }
 
     public function netCashRecordedForOrder(mysqli $conn, int $orderId): float
@@ -159,13 +154,15 @@ class PaymentService
     public function recordCollectedOrderPayments(
         mysqli $conn,
         int $orderId,
-        float $cashAmount,
-        float $bankAmount,
+        $cashAmount,
+        $bankAmount,
         int $userId,
         array $context = [],
         string $reason = 'pos_cash_payment'
     ): void {
-        if ($cashAmount > 0) {
+        $cashAmount = Money::fromLegacy($cashAmount);
+        $bankAmount = Money::fromLegacy($bankAmount);
+        if ($cashAmount->isPositive()) {
             $drawerContext = array_merge($context, ['drawer_reason' => $reason]);
             if (session_status() === PHP_SESSION_ACTIVE) {
                 if (!array_key_exists('drawer_session_id', $drawerContext)) {
@@ -178,11 +175,11 @@ class PaymentService
                     $drawerContext['branch'] = (int) ($_SESSION['pos_branch'] ?? 0);
                 }
             }
-            $paymentId = $this->insertOrderPaymentRecordIfAvailable($conn, $orderId, $cashAmount, 'cash', $userId);
+            $paymentId = $this->insertOrderPaymentRecordIfAvailable($conn, $orderId, $cashAmount->toString(), 'cash', $userId);
             $this->recordCashDrawerMovementForPayment(
                 $conn,
                 'cash',
-                $cashAmount,
+                $cashAmount->toString(),
                 $orderId,
                 $userId,
                 $drawerContext,
@@ -191,25 +188,33 @@ class PaymentService
             );
         }
 
-        if ($bankAmount > 0) {
-            $this->insertOrderPaymentRecordIfAvailable($conn, $orderId, $bankAmount, 'bank', $userId);
+        if ($bankAmount->isPositive()) {
+            $this->insertOrderPaymentRecordIfAvailable($conn, $orderId, $bankAmount->toString(), 'bank', $userId);
         }
     }
 
     public function isCashPaymentMethod(mysqli $conn, $paymentMethod): bool
     {
-        $legacyCash = strtolower(trim((string) $paymentMethod)) === 'cash';
         if (!$this->tableExists($conn, 'payment_methods')) {
-            return $legacyCash;
+            return $this->legacyCashCode($paymentMethod);
         }
 
         try {
             $method = $this->paymentMethodService->resolveActive($conn, $paymentMethod);
-        } catch (Throwable $exception) {
-            return $legacyCash;
-        }
 
-        return ($method['type'] ?? '') === 'cash';
+            return ($method['type'] ?? '') === 'cash';
+        } catch (Throwable $exception) {
+            // Catalog may exist before cash is seeded; still classify known cash codes
+            // for drawer impact. Tender posting (resolveTender) remains fail-closed.
+            return $this->legacyCashCode($paymentMethod);
+        }
+    }
+
+    private function legacyCashCode($paymentMethod): bool
+    {
+        $code = strtolower(trim((string) $paymentMethod));
+
+        return in_array($code, ['cash', 'كاش', 'نقدي', 'نقد'], true);
     }
 
     private function resolveOrderId(mysqli $conn, int $tableId, array $request): int
@@ -240,16 +245,16 @@ class PaymentService
         return $value;
     }
 
-    private function requiredPositiveAmount(array $request, array $keys): float
+    private function requiredPositiveAmount(array $request, array $keys): string
     {
         foreach ($keys as $key) {
             if (array_key_exists($key, $request)) {
-                $amount = (float) $request[$key];
-                if ($amount <= 0) {
+                $amount = Money::fromLegacy($request[$key]);
+                if (!$amount->isPositive()) {
                     throw new InvalidArgumentException('PAYMENT_AMOUNT_INVALID');
                 }
 
-                return $amount;
+                return $amount->toString();
             }
         }
 
@@ -270,11 +275,11 @@ class PaymentService
         throw new InvalidArgumentException($code);
     }
 
-    private function optionalFloat(array $request, array $keys): ?float
+    private function optionalMoney(array $request, array $keys): ?string
     {
         foreach ($keys as $key) {
             if (array_key_exists($key, $request) && $request[$key] !== '' && $request[$key] !== null) {
-                return (float) $request[$key];
+                return Money::fromLegacy($request[$key])->toString();
             }
         }
 
@@ -295,11 +300,7 @@ class PaymentService
     {
         $hasDrawerTables = $this->tableExists($conn, 'drawer_sessions') && $this->tableExists($conn, 'drawer_movements');
         if (!$hasDrawerTables) {
-            if ($this->requiresOpenShift()) {
-                throw new RuntimeException('DRAWER_SESSION_REQUIRED');
-            }
-
-            return null;
+            throw new RuntimeException('DRAWER_SESSION_REQUIRED');
         }
 
         $tenant = $this->contextNonNegativeInt($context, ['tenant', 'pos_tenant']);
@@ -317,18 +318,11 @@ class PaymentService
         $context['branch'] = $branch;
 
         $session = $this->drawerSessionService->resolveOpenSessionForUser($conn, $userId, $context);
-        if (!$session && $this->requiresOpenShift()) {
+        if (!$session) {
             throw new RuntimeException('DRAWER_SESSION_REQUIRED');
         }
 
         return $session;
-    }
-
-    private function requiresOpenShift(): bool
-    {
-        $value = strtolower(trim((string) getenv('POSMAIN_REQUIRE_OPEN_SHIFT')));
-
-        return in_array($value, ['1', 'true', 'yes', 'on'], true);
     }
 
     private function contextNonNegativeInt(array $context, array $keys): int
@@ -350,9 +344,10 @@ class PaymentService
         return $result && $result->num_rows > 0;
     }
 
-    private function insertOrderPaymentRecordIfAvailable(mysqli $conn, int $orderId, float $amount, string $paymentMethod, int $userId): ?int
+    private function insertOrderPaymentRecordIfAvailable(mysqli $conn, int $orderId, $amount, string $paymentMethod, int $userId): ?int
     {
-        if (abs($amount) < 0.0001 || !$this->tableExists($conn, 'order_payments')) {
+        $amount = Money::fromLegacy($amount)->toString();
+        if (!$this->tableExists($conn, 'order_payments')) {
             return null;
         }
 

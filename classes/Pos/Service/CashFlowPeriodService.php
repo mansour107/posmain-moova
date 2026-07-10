@@ -4,6 +4,7 @@ require_once __DIR__ . '/DrawerSessionService.php';
 require_once __DIR__ . '/PaymentMethodService.php';
 require_once __DIR__ . '/ShiftDrawerReconciliationService.php';
 require_once __DIR__ . '/BusinessDayService.php';
+require_once __DIR__ . '/../../Financial/Money.php';
 
 class CashFlowPeriodService
 {
@@ -355,10 +356,11 @@ class CashFlowPeriodService
 
         $total = 0.0;
         foreach ($this->queryAll($conn, $sql, $params) as $row) {
-            $amount = (float) ($row['amount'] ?? 0);
-            if (abs($amount) < 0.0001) {
+            $money = Money::fromLegacy($row['amount'] ?? 0);
+            if (!$money->isPositive() && !$money->isNegative()) {
                 continue;
             }
+            $amount = (float) $money->toString();
             $method = trim((string) ($row['payment_method'] ?? ''));
             $type = $this->paymentTypeForMethod($method, $methodTypes);
             $byType[$type] = ($byType[$type] ?? 0) + $amount;

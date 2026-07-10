@@ -36,6 +36,10 @@ class SyncSchemaManager
             'order_line_notes' => $this->orderLineNotesSql(),
             'table_areas' => $this->tableAreasSql(),
             'payment_methods' => $this->paymentMethodsSql(),
+            'tax_categories' => $this->taxCategoriesSql(),
+            'credit_notes' => $this->creditNotesSql(),
+            'credit_note_lines' => $this->creditNoteLinesSql(),
+            'payment_refunds' => $this->paymentRefundsSql(),
             'manager_approvals' => $this->managerApprovalsSql(),
             'drawer_sessions' => $this->drawerSessionsSql(),
             'drawer_movements' => $this->drawerMovementsSql(),
@@ -334,6 +338,14 @@ class SyncSchemaManager
         }
 
         foreach ($this->journalPrecisionUpgradeStatements($conn) as $label => $statement) {
+            $pending[$label] = $statement;
+        }
+
+        foreach ($this->financialPostingUpgradeStatements($conn) as $label => $statement) {
+            $pending[$label] = $statement;
+        }
+
+        foreach ($this->financialCertificationSchemaUpgradeStatements($conn) as $label => $statement) {
             $pending[$label] = $statement;
         }
 
@@ -1050,6 +1062,211 @@ ALTER TABLE journal_entries
         }
 
         return $statements;
+    }
+
+    /**
+     * Adds provenance columns without rewriting historical journals. Financial
+     * certification uses a clean database; these upgrades only make the
+     * append-only posting boundary identifiable and idempotent in place.
+     */
+    private function financialPostingUpgradeStatements(mysqli $conn): array
+    {
+        $statements = [];
+        if (!$this->tableExists($conn, 'journal_heads')) {
+            return $statements;
+        }
+
+        $columns = [
+            'source_type' => 'ALTER TABLE journal_heads ADD COLUMN source_type VARCHAR(64) NULL',
+            'source_id' => 'ALTER TABLE journal_heads ADD COLUMN source_id BIGINT NULL',
+            'posting_kind' => 'ALTER TABLE journal_heads ADD COLUMN posting_kind VARCHAR(64) NULL',
+            'idempotency_key' => 'ALTER TABLE journal_heads ADD COLUMN idempotency_key VARCHAR(191) NULL',
+            'reversal_of_journal_id' => 'ALTER TABLE journal_heads ADD COLUMN reversal_of_journal_id BIGINT NULL',
+        ];
+        foreach ($columns as $column => $sql) {
+            if (!$this->columnExists($conn, 'journal_heads', $column)) {
+                $statements['journal_heads.add_' . $column] = $sql;
+            }
+        }
+
+        if (
+            !$this->indexExists($conn, 'journal_heads', 'uq_journal_heads_idempotency')
+            && !$this->indexWithColumnsExists($conn, 'journal_heads', ['idempotency_key'])
+        ) {
+            $statements['journal_heads.add_uq_journal_heads_idempotency'] =
+                'ALTER TABLE journal_heads ADD UNIQUE KEY uq_journal_heads_idempotency (idempotency_key)';
+        }
+        if (
+            !$this->indexExists($conn, 'journal_heads', 'uq_journal_heads_source_kind')
+            && !$this->indexWithColumnsExists($conn, 'journal_heads', ['source_type', 'source_id', 'posting_kind'])
+        ) {
+            $statements['journal_heads.add_uq_journal_heads_source_kind'] =
+                'ALTER TABLE journal_heads ADD UNIQUE KEY uq_journal_heads_source_kind (source_type, source_id, posting_kind)';
+        }
+
+        return $statements;
+    }
+
+    /**
+     * Exact-money certification schema: posted line snapshots, refund settlement
+     * states, and DECIMAL(19,2)/(19,6) on certified financial tables.
+     */
+    private function financialCertificationSchemaUpgradeStatements(mysqli $conn): array
+    {
+        $statements = [];
+
+        if ($this->tableExists($conn, 'fat_details')) {
+            $lineSnapshots = [
+                'posted_qty' => 'ALTER TABLE fat_details ADD COLUMN posted_qty DECIMAL(19,6) NULL',
+                'posted_unit_price' => 'ALTER TABLE fat_details ADD COLUMN posted_unit_price DECIMAL(19,6) NULL',
+                'posted_line_discount' => 'ALTER TABLE fat_details ADD COLUMN posted_line_discount DECIMAL(19,2) NULL',
+                'posted_order_discount' => 'ALTER TABLE fat_details ADD COLUMN posted_order_discount DECIMAL(19,2) NULL',
+                'posted_taxable' => 'ALTER TABLE fat_details ADD COLUMN posted_taxable DECIMAL(19,2) NULL',
+                'posted_tax' => 'ALTER TABLE fat_details ADD COLUMN posted_tax DECIMAL(19,2) NULL',
+                'posted_gross' => 'ALTER TABLE fat_details ADD COLUMN posted_gross DECIMAL(19,2) NULL',
+                'posted_net' => 'ALTER TABLE fat_details ADD COLUMN posted_net DECIMAL(19,2) NULL',
+                'posted_unit_cost' => 'ALTER TABLE fat_details ADD COLUMN posted_unit_cost DECIMAL(19,6) NULL',
+                'posted_total_cost' => 'ALTER TABLE fat_details ADD COLUMN posted_total_cost DECIMAL(19,6) NULL',
+                'tax_category_id' => 'ALTER TABLE fat_details ADD COLUMN tax_category_id BIGINT UNSIGNED NULL',
+                'tax_rate_snapshot' => 'ALTER TABLE fat_details ADD COLUMN tax_rate_snapshot DECIMAL(19,6) NULL',
+            ];
+            foreach ($lineSnapshots as $column => $sql) {
+                if (!$this->columnExists($conn, 'fat_details', $column)) {
+                    $statements['fat_details.add_' . $column] = $sql;
+                }
+            }
+            foreach (['qty_in', 'qty_out', 'price', 'cost_price'] as $column) {
+                if ($this->columnExists($conn, 'fat_details', $column)
+                    && $this->columnNeedsWiderFinancialDecimal($conn, 'fat_details', $column, 19, 6)
+                ) {
+                    $statements['fat_details.modify_' . $column . '_decimal19_6'] =
+                        "ALTER TABLE fat_details MODIFY COLUMN {$column} DECIMAL(19,6) NOT NULL DEFAULT 0.000000";
+                }
+            }
+            foreach (['discount', 'det_value', 'profit'] as $column) {
+                if ($this->columnExists($conn, 'fat_details', $column)
+                    && $this->columnNeedsWiderFinancialDecimal($conn, 'fat_details', $column, 19, 2)
+                ) {
+                    $statements['fat_details.modify_' . $column . '_decimal19_2'] =
+                        "ALTER TABLE fat_details MODIFY COLUMN {$column} DECIMAL(19,2) NOT NULL DEFAULT 0.00";
+                }
+            }
+        }
+
+        if ($this->tableExists($conn, 'ot_head')) {
+            foreach (['pro_value', 'fat_total', 'fat_net', 'fat_tax', 'discount', 'profit'] as $column) {
+                if ($this->columnExists($conn, 'ot_head', $column)
+                    && $this->columnNeedsWiderFinancialDecimal($conn, 'ot_head', $column, 19, 2)
+                ) {
+                    $statements['ot_head.modify_' . $column . '_decimal19_2'] =
+                        "ALTER TABLE ot_head MODIFY COLUMN {$column} DECIMAL(19,2) NOT NULL DEFAULT 0.00";
+                }
+            }
+        }
+
+        if ($this->tableExists($conn, 'order_payments')) {
+            if ($this->columnExists($conn, 'order_payments', 'amount')
+                && $this->columnNeedsWiderFinancialDecimal($conn, 'order_payments', 'amount', 19, 2)
+            ) {
+                $statements['order_payments.modify_amount_decimal19_2'] =
+                    'ALTER TABLE order_payments MODIFY COLUMN amount DECIMAL(19,2) NOT NULL DEFAULT 0.00';
+            }
+        }
+
+        if ($this->tableExists($conn, 'journal_entries')) {
+            foreach (['debit', 'credit'] as $column) {
+                if ($this->columnNeedsWiderFinancialDecimal($conn, 'journal_entries', $column, 19, 2)) {
+                    $statements['journal_entries.modify_' . $column . '_decimal19_2'] =
+                        "ALTER TABLE journal_entries MODIFY COLUMN {$column} DECIMAL(19,2) NOT NULL DEFAULT 0.00";
+                }
+            }
+        }
+
+        if ($this->tableExists($conn, 'credit_notes')) {
+            if ($this->columnNeedsWiderFinancialDecimal($conn, 'credit_notes', 'total_amount', 19, 2)) {
+                $statements['credit_notes.modify_total_amount_decimal19_2'] =
+                    'ALTER TABLE credit_notes MODIFY COLUMN total_amount DECIMAL(19,2) NOT NULL';
+            }
+        }
+
+        if ($this->tableExists($conn, 'credit_note_lines')) {
+            foreach (['quantity' => '6', 'unit_amount' => '6'] as $column => $scale) {
+                if ($this->columnNeedsWiderFinancialDecimal($conn, 'credit_note_lines', $column, 19, (int) $scale)) {
+                    $statements['credit_note_lines.modify_' . $column . '_decimal19_' . $scale] =
+                        "ALTER TABLE credit_note_lines MODIFY COLUMN {$column} DECIMAL(19,{$scale}) NOT NULL DEFAULT 0";
+                }
+            }
+            foreach (['line_amount', 'tax_amount'] as $column) {
+                if ($this->columnNeedsWiderFinancialDecimal($conn, 'credit_note_lines', $column, 19, 2)) {
+                    $statements['credit_note_lines.modify_' . $column . '_decimal19_2'] =
+                        "ALTER TABLE credit_note_lines MODIFY COLUMN {$column} DECIMAL(19,2) NOT NULL DEFAULT 0.00";
+                }
+            }
+            if (!$this->columnExists($conn, 'credit_note_lines', 'stock_disposition')) {
+                $statements['credit_note_lines.add_stock_disposition'] =
+                    "ALTER TABLE credit_note_lines ADD COLUMN stock_disposition ENUM('restock','waste','no_stock_return') NOT NULL DEFAULT 'no_stock_return'";
+            }
+        }
+
+        if ($this->tableExists($conn, 'payment_refunds')) {
+            if ($this->columnNeedsWiderFinancialDecimal($conn, 'payment_refunds', 'amount', 19, 2)) {
+                $statements['payment_refunds.modify_amount_decimal19_2'] =
+                    'ALTER TABLE payment_refunds MODIFY COLUMN amount DECIMAL(19,2) NOT NULL';
+            }
+            if (!$this->columnExists($conn, 'payment_refunds', 'status')) {
+                $statements['payment_refunds.add_status'] =
+                    "ALTER TABLE payment_refunds ADD COLUMN status ENUM('posted','pending_external','settled') NOT NULL DEFAULT 'posted'";
+            }
+            if (!$this->columnExists($conn, 'payment_refunds', 'idempotency_key')) {
+                $statements['payment_refunds.add_idempotency_key'] =
+                    'ALTER TABLE payment_refunds ADD COLUMN idempotency_key VARCHAR(191) NULL';
+            }
+            if (
+                !$this->indexExists($conn, 'payment_refunds', 'uq_payment_refunds_idempotency')
+                && !$this->indexWithColumnsExists($conn, 'payment_refunds', ['idempotency_key'])
+            ) {
+                $statements['payment_refunds.add_uq_idempotency'] =
+                    'ALTER TABLE payment_refunds ADD UNIQUE KEY uq_payment_refunds_idempotency (idempotency_key)';
+            }
+        }
+
+        if ($this->tableExists($conn, 'drawer_sessions')) {
+            foreach (['opening_float', 'expected_cash', 'counted_cash', 'variance_amount'] as $column) {
+                if ($this->columnExists($conn, 'drawer_sessions', $column)
+                    && $this->columnNeedsWiderFinancialDecimal($conn, 'drawer_sessions', $column, 19, 2)
+                ) {
+                    $statements['drawer_sessions.modify_' . $column . '_decimal19_2'] =
+                        "ALTER TABLE drawer_sessions MODIFY COLUMN {$column} DECIMAL(19,2) NULL";
+                }
+            }
+        }
+
+        if ($this->tableExists($conn, 'inventory_item_balances')
+            && $this->columnExists($conn, 'inventory_item_balances', 'moving_average_cost')
+            && $this->columnNeedsWiderFinancialDecimal($conn, 'inventory_item_balances', 'moving_average_cost', 19, 6)
+        ) {
+            $statements['inventory_item_balances.modify_moving_average_cost_decimal19_6'] =
+                'ALTER TABLE inventory_item_balances MODIFY COLUMN moving_average_cost DECIMAL(19,6) NOT NULL DEFAULT 0.000000';
+        }
+
+        return $statements;
+    }
+
+    private function columnNeedsWiderFinancialDecimal(mysqli $conn, string $table, string $column, int $precision, int $scale): bool
+    {
+        $info = $this->columnInfo($conn, $table, $column);
+        if (!$info) {
+            return false;
+        }
+        $type = strtolower((string) ($info['COLUMN_TYPE'] ?? ''));
+        if (strpos($type, 'float') !== false || strpos($type, 'double') !== false) {
+            return true;
+        }
+        if (!preg_match('/decimal\((\d+),(\d+)\)/', $type, $matches)) {
+            return true;
+        }
+
+        return ((int) $matches[1] < $precision) || ((int) $matches[2] !== $scale && (int) $matches[1] < $precision);
     }
 
     private function itemTypeEnumUpgradeStatements(mysqli $conn)
@@ -1899,6 +2116,93 @@ CREATE TABLE IF NOT EXISTS payment_methods (
   UNIQUE KEY uq_payment_methods_code (code),
   KEY idx_payment_methods_active (is_active, sort_order),
   KEY idx_payment_methods_account (account_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
+    private function taxCategoriesSql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS tax_categories (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  code VARCHAR(40) NOT NULL,
+  name VARCHAR(120) NOT NULL,
+  rate DECIMAL(9,6) NOT NULL DEFAULT 0.000000,
+  is_inclusive TINYINT(1) NOT NULL DEFAULT 0,
+  is_active TINYINT(1) NOT NULL DEFAULT 0,
+  effective_from DATE NULL,
+  effective_to DATE NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_tax_categories_code (code),
+  KEY idx_tax_categories_active_dates (is_active, effective_from, effective_to)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
+    private function creditNotesSql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS credit_notes (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  uuid CHAR(36) NOT NULL,
+  original_order_id BIGINT UNSIGNED NOT NULL,
+  customer_account_id BIGINT UNSIGNED NOT NULL,
+  total_amount DECIMAL(19,2) NOT NULL,
+  idempotency_key VARCHAR(191) NULL,
+  journal_head_id BIGINT UNSIGNED NULL,
+  reason VARCHAR(500) NOT NULL,
+  status ENUM('posted','void') NOT NULL DEFAULT 'posted',
+  created_by BIGINT UNSIGNED NOT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_credit_notes_uuid (uuid),
+  UNIQUE KEY uq_credit_notes_idempotency (idempotency_key),
+  KEY idx_credit_notes_order_status (original_order_id, status),
+  KEY idx_credit_notes_customer_created (customer_account_id, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
+    private function creditNoteLinesSql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS credit_note_lines (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  credit_note_id BIGINT UNSIGNED NOT NULL,
+  original_detail_id BIGINT UNSIGNED NULL,
+  quantity DECIMAL(19,6) NOT NULL DEFAULT 0.000000,
+  unit_amount DECIMAL(19,6) NOT NULL DEFAULT 0.000000,
+  line_amount DECIMAL(19,2) NOT NULL,
+  tax_rate DECIMAL(19,6) NOT NULL DEFAULT 0.000000,
+  tax_amount DECIMAL(19,2) NOT NULL DEFAULT 0.00,
+  stock_disposition ENUM('restock','waste','no_stock_return') NOT NULL DEFAULT 'no_stock_return',
+  PRIMARY KEY (id),
+  KEY idx_credit_note_lines_note (credit_note_id),
+  KEY idx_credit_note_lines_original_detail (original_detail_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
+    private function paymentRefundsSql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS payment_refunds (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  credit_note_id BIGINT UNSIGNED NOT NULL,
+  original_order_id BIGINT UNSIGNED NOT NULL,
+  original_payment_id BIGINT UNSIGNED NOT NULL,
+  payment_method_id BIGINT UNSIGNED NOT NULL,
+  account_id BIGINT UNSIGNED NOT NULL,
+  amount DECIMAL(19,2) NOT NULL,
+  external_reference VARCHAR(120) NULL,
+  status ENUM('posted','pending_external','settled') NOT NULL DEFAULT 'posted',
+  idempotency_key VARCHAR(191) NULL,
+  journal_head_id BIGINT UNSIGNED NULL,
+  created_by BIGINT UNSIGNED NOT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_payment_refunds_idempotency (idempotency_key),
+  KEY idx_payment_refunds_note (credit_note_id),
+  KEY idx_payment_refunds_order (original_order_id, created_at),
+  KEY idx_payment_refunds_original_payment (original_payment_id),
+  KEY idx_payment_refunds_status (status),
+  KEY idx_payment_refunds_journal (journal_head_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
     }
 

@@ -2,6 +2,9 @@
 require_once __DIR__ . '/../includes/rbac_route_guard.php';
 require_once __DIR__ . '/../classes/Pos/Service/PaymentService.php';
 rbac_guard_route('do/settle_credit.php');
+require_once __DIR__ . '/../includes/financial_certified_guard.php';
+financial_certified_reject_legacy_writer('do/settle_credit.php');
+
 
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     $id = isset($_POST['id']) ? intval($_POST['id']) : 0;

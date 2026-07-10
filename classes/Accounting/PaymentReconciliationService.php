@@ -1,37 +1,24 @@
 <?php
 
-require_once __DIR__ . '/../Recipe/RecipeDecimal.php';
-require_once __DIR__ . '/TaxRoundingPolicy.php';
+require_once __DIR__ . '/../Financial/FinancialPricingService.php';
 
 final class PaymentReconciliationService
 {
-    public static function assertOrderPaymentMatchesNet($orderNet, array $payments, int $scale = 6): void
+    public static function assertOrderPaymentMatchesNet($orderNet, array $payments, int $scale = 2): void
     {
-        $expected = RecipeDecimal::normalize($orderNet, $scale);
-        $paid = RecipeDecimal::zero($scale);
+        $expected = Money::from($orderNet);
+        $paid = Money::zero();
         foreach ($payments as $payment) {
-            $paid = RecipeDecimal::add($paid, $payment, $scale);
+            $paid = $paid->add(Money::from($payment));
         }
 
-        if (RecipeDecimal::compare($paid, $expected, 2) < 0) {
+        if ($paid->compare($expected) < 0) {
             throw new InvalidArgumentException('PAYMENT_LESS_THAN_NET');
         }
     }
 
-    public static function recomputeTableNetFromLines(array $lines, $headerDiscount = '0', int $scale = 6): string
+    public static function recomputeTableNetFromLines(array $lines, $headerDiscount = '0', int $scale = 2): string
     {
-        $subtotal = RecipeDecimal::zero($scale);
-        foreach ($lines as $line) {
-            $qty = RecipeDecimal::normalize($line['qty'] ?? $line['sell_qty'] ?? '0', $scale);
-            $price = RecipeDecimal::normalize($line['price'] ?? '0', $scale);
-            $discount = RecipeDecimal::normalize($line['discount'] ?? '0', $scale);
-            $subtotal = RecipeDecimal::add(
-                $subtotal,
-                RecipeDecimal::multiply($qty, RecipeDecimal::subtract($price, $discount, $scale), $scale),
-                $scale
-            );
-        }
-
-        return RecipeDecimal::subtract($subtotal, RecipeDecimal::normalize($headerDiscount, $scale), $scale);
+        return (new FinancialPricingService())->price($lines, $headerDiscount)['totals']['net'];
     }
 }

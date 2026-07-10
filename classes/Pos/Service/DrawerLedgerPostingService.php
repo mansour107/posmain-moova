@@ -1,5 +1,8 @@
 <?php
 
+require_once __DIR__ . '/../../Accounting/JournalPostingService.php';
+require_once __DIR__ . '/../../Financial/Money.php';
+
 class DrawerLedgerPostingService
 {
     private const SHIFT_EXPENSE_ACCOUNT_CODE = '511901';
@@ -162,30 +165,27 @@ class DrawerLedgerPostingService
 
         $journalNumber = $this->nextJournalNumber($conn);
         $journalDetails = 'سند شيفت POS — ' . $info;
-        $journalStmt = $conn->prepare('
-            INSERT INTO journal_heads (journal_id, total, jdate, details, op2, user)
-            VALUES (?, ?, ?, ?, ?, ?)
-        ');
-        $journalStmt->bind_param('idssis', $journalNumber, $amount, $today, $journalDetails, $otHeadId, $userId);
-        $journalStmt->execute();
-        $journalHeadId = (int) $conn->insert_id;
-        $journalStmt->close();
-
-        $debitStmt = $conn->prepare('
-            INSERT INTO journal_entries (journal_id, account_id, debit, credit, tybe, op2)
-            VALUES (?, ?, ?, 0, 0, ?)
-        ');
-        $debitStmt->bind_param('iidi', $journalHeadId, $debitAccountId, $amount, $otHeadId);
-        $debitStmt->execute();
-        $debitStmt->close();
-
-        $creditStmt = $conn->prepare('
-            INSERT INTO journal_entries (journal_id, account_id, debit, credit, tybe, op2)
-            VALUES (?, ?, 0, ?, 1, ?)
-        ');
-        $creditStmt->bind_param('iidi', $journalHeadId, $creditAccountId, $amount, $otHeadId);
-        $creditStmt->execute();
-        $creditStmt->close();
+        $postedAmount = Money::fromLegacy($amount)->toString();
+        $journalHeadId = JournalPostingService::postBalancedHead(
+            $conn,
+            (string) $journalNumber,
+            $postedAmount,
+            $today,
+            $journalDetails,
+            $userId,
+            [
+                ['account_id' => $debitAccountId, 'debit' => $postedAmount, 'credit' => '0.00', 'tybe' => 0, 'op2' => $otHeadId],
+                ['account_id' => $creditAccountId, 'debit' => '0.00', 'credit' => $postedAmount, 'tybe' => 1, 'op2' => $otHeadId],
+            ],
+            [
+                'op_id' => $otHeadId,
+                'op2' => $otHeadId,
+                'source_type' => 'drawer_voucher',
+                'source_id' => $otHeadId,
+                'posting_kind' => 'drawer_ledger',
+                'idempotency_key' => 'drawer-voucher:' . $otHeadId,
+            ]
+        );
 
         if ($this->tableExists($conn, 'process')) {
             $conn->query("INSERT INTO `process` (`type`) VALUES ('add voucher')");

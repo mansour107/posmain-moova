@@ -1255,25 +1255,35 @@ class PosOrderService
 
     private function insertMainJournal(mysqli $conn, $tenant, $branch, $orderId, $proId, array $defaults, array $totals, $proDate, $userId)
     {
+        require_once __DIR__ . '/Accounting/JournalPostingService.php';
+        require_once __DIR__ . '/Financial/Money.php';
+
         $journalId = $this->getNextJournalId($conn, $tenant, $branch);
         $details = 'فاتورة ريسيت _ ' . $orderId;
-
-        $this->execute($conn, "
-            INSERT INTO journal_heads (journal_id, total, jdate, details, user, op_id, pro_tybe, tenant, branch)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ", [$journalId, $totals['net'], $proDate, $details, $userId, $orderId, self::TYPE_POS, $tenant, $branch]);
-
-        $journalHeadId = (int) $conn->insert_id;
-
-        $this->execute($conn, "
-            INSERT INTO journal_entries (journal_id, account_id, debit, credit, tybe, op_id, tenant, branch)
-            VALUES (?, ?, ?, 0, 0, ?, ?, ?)
-        ", [$journalHeadId, $defaults['client_id'], $totals['net'], $orderId, $tenant, $branch]);
-
-        $this->execute($conn, "
-            INSERT INTO journal_entries (journal_id, account_id, debit, credit, tybe, op_id, tenant, branch)
-            VALUES (?, ?, 0, ?, 1, ?, ?, ?)
-        ", [$journalHeadId, self::SALES_ACCOUNT, $totals['net'], $orderId, $tenant, $branch]);
+        $net = Money::fromLegacy($totals['net'] ?? '0')->toString();
+        $journalHeadId = JournalPostingService::postBalancedHead(
+            $conn,
+            (string) $journalId,
+            $net,
+            (string) $proDate,
+            $details,
+            (int) $userId,
+            [
+                ['account_id' => (int) $defaults['client_id'], 'debit' => $net, 'credit' => '0.00', 'tybe' => 0, 'op2' => (int) $orderId],
+                ['account_id' => (int) self::SALES_ACCOUNT, 'debit' => '0.00', 'credit' => $net, 'tybe' => 1, 'op2' => (int) $orderId],
+            ],
+            [
+                'op_id' => (int) $orderId,
+                'op2' => (int) $orderId,
+                'pro_tybe' => (int) self::TYPE_POS,
+                'tenant' => (int) $tenant,
+                'branch' => (int) $branch,
+                'source_type' => 'invoice',
+                'source_id' => (int) $orderId,
+                'posting_kind' => 'invoice_finalization',
+                'idempotency_key' => 'pos-order-invoice:' . (int) $orderId,
+            ]
+        );
 
         return $journalHeadId;
     }

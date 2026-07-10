@@ -23,6 +23,7 @@ if (!function_exists('pos_api_browser_routes')) {
             'orders.delivery',
             'orders.payment',
             'orders.split-payment',
+            'orders.refund',
             'orders.edit',
             'orders.table.free',
         ];
@@ -44,6 +45,7 @@ if (!function_exists('pos_api_resolve_route_from_request')) {
             '#/api/pos/orders/delivery$#' => 'orders.delivery',
             '#/api/pos/orders/payment$#' => 'orders.payment',
             '#/api/pos/orders/split-payment$#' => 'orders.split-payment',
+            '#/api/pos/orders/refund$#' => 'orders.refund',
             '#/api/pos/orders/edit$#' => 'orders.edit',
             '#/api/pos/orders/table/free$#' => 'orders.table.free',
             '#/api/pos/integrations/cofe/orders$#' => 'integrations.cofe.orders',
@@ -119,6 +121,8 @@ if (!function_exists('pos_api_dispatch')) {
                 return $controller->payTable($conn, $payload, $server, $userId);
             case 'orders.split-payment':
                 return $controller->splitPayment($conn, $payload, $server, $userId);
+            case 'orders.refund':
+                return $controller->refundOrder($conn, $payload, $server, $userId);
             case 'orders.edit':
                 return $controller->updateOrder($conn, $payload, $server, $userId);
             case 'orders.table.free':

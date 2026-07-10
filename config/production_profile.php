@@ -14,27 +14,31 @@ if (!function_exists('posmain_production_profile_matrix')) {
         return [
             'inventory' => [
                 'ledger_mode' => 'live',
-                'legacy_mirror' => true,
+                'legacy_mirror' => false,
+                'strict_stock' => true,
             ],
             'recipe' => [
                 'mode' => 'full',
-                'shadow_ledger' => true,
+                'shadow_ledger' => false,
                 'reservations' => true,
                 'consumption' => true,
                 'accounting' => true,
                 'availability' => true,
                 'moova_sync' => !$isCloud,
-                'strict_stock' => false,
+                'strict_stock' => true,
             ],
             'single_store' => true,
+            'financial' => [
+                'certified_mode' => true,
+                'tax_enabled' => false,
+            ],
         ];
     }
 }
 
 if (!function_exists('posmain_production_profile_apply')) {
     /**
-     * Apply production defaults into resolved config. Legacy pilot modes are upgraded in code;
-     * explicit env overrides that already target production are left unchanged.
+     * Apply production defaults into resolved config.
      *
      * @param array<string,mixed> $config
      * @return array<string,mixed>
@@ -50,8 +54,13 @@ if (!function_exists('posmain_production_profile_apply')) {
                 $config['inventory']['ledger_mode'] = (string) $matrix['inventory']['ledger_mode'];
             }
         }
-        if (empty($config['inventory']['legacy_mirror']) && !empty($matrix['inventory']['legacy_mirror'])) {
-            $config['inventory']['legacy_mirror'] = true;
+        $config['inventory']['legacy_mirror'] = false;
+        $config['inventory']['strict_stock'] = true;
+        $config['recipe']['shadow_ledger'] = false;
+        $config['recipe']['strict_stock'] = true;
+        $config['financial']['certified_mode'] = true;
+        if (!isset($config['tax']['enabled'])) {
+            $config['tax']['enabled'] = false;
         }
 
         $recipeMode = strtolower((string) ($config['recipe']['mode'] ?? 'off'));
@@ -59,7 +68,7 @@ if (!function_exists('posmain_production_profile_apply')) {
             $config['recipe']['mode'] = (string) $matrix['recipe']['mode'];
             $config['recipe']['enabled'] = true;
         }
-        foreach (['reservations', 'consumption', 'accounting', 'availability', 'shadow_ledger'] as $flag) {
+        foreach (['reservations', 'consumption', 'accounting', 'availability'] as $flag) {
             if (empty($config['recipe'][$flag]) && !empty($matrix['recipe'][$flag])) {
                 $config['recipe'][$flag] = true;
             }

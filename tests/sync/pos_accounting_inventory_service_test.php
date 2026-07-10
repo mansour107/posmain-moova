@@ -62,6 +62,7 @@ try {
             'customer_account_id' => 200,
             'emp_id' => 8,
             'payment_date' => '2026-05-12',
+            'idempotency_key' => 'receipt-77-1',
         ], ['user_id' => 7]);
 
         posAccountingInventoryAssert($posted['receipt_id'] > 0, 'receipt id expected');
@@ -83,6 +84,20 @@ try {
         posAccountingInventoryAssert(count($entries) === 2, 'two entries should be inserted');
         posAccountingInventoryAssert((int) $entries[0]['account_id'] === 100 && abs((float) $entries[0]['debit'] - 125.0) < 0.0001, 'safe debit expected');
         posAccountingInventoryAssert((int) $entries[1]['account_id'] === 200 && abs((float) $entries[1]['credit'] - 125.0) < 0.0001, 'customer credit expected');
+
+        $replayed = $accounting->postTablePaymentReceipt($conn, [
+            'order_id' => 77,
+            'table_name' => 'T1',
+            'amount' => 125,
+            'safe_account_id' => 100,
+            'customer_account_id' => 200,
+            'emp_id' => 8,
+            'payment_date' => '2026-05-12',
+            'idempotency_key' => 'receipt-77-1',
+        ], ['user_id' => 7]);
+        posAccountingInventoryAssert($replayed['replayed'] === true, 'same payment idempotency key must replay');
+        posAccountingInventoryAssert((int) $conn->query('SELECT COUNT(*) AS c FROM ot_head')->fetch_assoc()['c'] === 1, 'receipt replay must not create another voucher');
+        posAccountingInventoryAssert((int) $conn->query('SELECT COUNT(*) AS c FROM journal_heads')->fetch_assoc()['c'] === 1, 'receipt replay must not create another journal');
     } finally {
         $conn->rollback();
     }
@@ -101,6 +116,20 @@ function posAccountingInventoryCreateSchema(mysqli $conn): void
             cost_price DECIMAL(15,4) NOT NULL DEFAULT 0,
             itmqty DECIMAL(15,4) NOT NULL DEFAULT 0,
             price1 DECIMAL(15,4) NOT NULL DEFAULT 0
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+    ");
+    $conn->query("
+        CREATE TABLE item_units (
+            id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+            item_id INT NOT NULL,
+            unit_id INT NOT NULL DEFAULT 1,
+            price1 DECIMAL(15,4) NOT NULL DEFAULT 0,
+            u_val DECIMAL(18,6) NOT NULL DEFAULT 1,
+            def_sale TINYINT(1) NOT NULL DEFAULT 1,
+            def_buy TINYINT(1) NOT NULL DEFAULT 1,
+            def_stock TINYINT(1) NOT NULL DEFAULT 1,
+            conversion_swapped TINYINT(1) NOT NULL DEFAULT 0,
+            isdeleted TINYINT(1) NOT NULL DEFAULT 0
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
     ");
     $conn->query("
@@ -145,7 +174,14 @@ function posAccountingInventoryCreateSchema(mysqli $conn): void
             jdate DATE NULL,
             details VARCHAR(255) NULL,
             user INT NULL,
-            op2 INT NULL
+            op2 INT NULL,
+            source_type VARCHAR(64) NULL,
+            source_id BIGINT NULL,
+            posting_kind VARCHAR(64) NULL,
+            idempotency_key VARCHAR(191) NULL,
+            reversal_of_journal_id BIGINT NULL,
+            UNIQUE KEY uq_journal_heads_idempotency (idempotency_key),
+            UNIQUE KEY uq_journal_heads_source_kind (source_type, source_id, posting_kind)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
     ");
     $conn->query("

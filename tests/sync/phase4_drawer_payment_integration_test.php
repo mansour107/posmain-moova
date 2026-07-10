@@ -29,12 +29,14 @@ try {
         'name_ar' => 'Cash drawer',
         'name_en' => 'Cash drawer',
         'type' => 'cash',
+        'account_id' => 51,
     ]);
     $paymentMethods->saveMethod($conn, [
         'code' => 'card_terminal',
         'name_ar' => 'Card terminal',
         'name_en' => 'Card terminal',
         'type' => 'card',
+        'account_id' => 52,
         'requires_reference' => true,
         'sort_order' => 1,
     ]);
@@ -99,7 +101,7 @@ try {
             'table_id' => 4,
             'order_id' => 103,
             'paid' => 10,
-            'payment_method' => 'cash',
+            'payment_method' => 'cash_drawer',
             'notes' => 'blocked without drawer',
         ], ['user_id' => 8, 'tenant' => 2, 'branch' => 3]);
     }, 'DRAWER_SESSION_REQUIRED');
@@ -118,7 +120,7 @@ try {
             ['detail_id' => 2001, 'qty' => 1],
         ],
         'paid_amount' => 30,
-        'payment_method' => 'cash',
+        'payment_method' => 'cash_drawer',
     ], $context);
     $childOrderId = (int) $split['data']['new_invoice_id'];
     phase4DrawerPaymentAssert($childOrderId > 0, 'split should create child order');
@@ -149,6 +151,41 @@ try {
 
 function phase4DrawerPaymentCreateLegacyTables(mysqli $conn): void
 {
+    // The split lifecycle is scoped to the configured single operational store.
+    // Keep this fixture aligned with a newly bootstrapped shop instead of relying
+    // on an implicit or missing legacy settings row.
+    $conn->query("
+        CREATE TABLE settings (
+            id INT NOT NULL PRIMARY KEY,
+            def_pos_store INT NULL,
+            def_pos_employee INT NULL,
+            def_pos_fund INT NULL,
+            def_pos_client INT NULL,
+            isdeleted TINYINT(1) NOT NULL DEFAULT 0
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+    ");
+    $conn->query("
+        CREATE TABLE acc_head (
+            id INT NOT NULL PRIMARY KEY,
+            code VARCHAR(50) NULL,
+            aname VARCHAR(255) NULL,
+            parent_id INT NOT NULL DEFAULT 0,
+            is_basic TINYINT(1) NOT NULL DEFAULT 0,
+            is_stock TINYINT(1) NOT NULL DEFAULT 0,
+            is_fund TINYINT(1) NOT NULL DEFAULT 0,
+            isdeleted TINYINT(1) NOT NULL DEFAULT 0,
+            tenant INT NULL DEFAULT 0,
+            branch INT NULL DEFAULT 0
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+    ");
+    $conn->query("
+        INSERT INTO acc_head (id, code, aname, is_stock, isdeleted)
+        VALUES (3, '123001', 'Main store', 1, 0)
+    ");
+    $conn->query("
+        INSERT INTO settings (id, def_pos_store, def_pos_employee, def_pos_fund, def_pos_client, isdeleted)
+        VALUES (1, 3, 0, 0, 0, 0)
+    ");
     $conn->query("
         CREATE TABLE tables (
             id INT NOT NULL PRIMARY KEY,
@@ -279,7 +316,7 @@ function phase4DrawerPaymentSeedOrder(mysqli $conn, int $id, int $tableId, int $
 
 function phase4DrawerPaymentMovementCount(mysqli $conn): int
 {
-    return (int) $conn->query("SELECT COUNT(*) AS c FROM drawer_movements")->fetch_assoc()['c'];
+    return (int) $conn->query("SELECT COUNT(*) AS c FROM drawer_movements WHERE movement_type IN ('sale_cash', 'refund_cash')")->fetch_assoc()['c'];
 }
 
 function phase4DrawerPaymentLatestMovement(mysqli $conn): array

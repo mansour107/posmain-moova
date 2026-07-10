@@ -1,6 +1,9 @@
 <?php
 
 require_once __DIR__ . '/TableInputValidator.php';
+require_once __DIR__ . '/../../Financial/Money.php';
+require_once __DIR__ . '/../../Financial/DecimalQuantity.php';
+require_once __DIR__ . '/../../Financial/UnitPrice.php';
 
 class OrderInputValidator
 {
@@ -13,13 +16,9 @@ class OrderInputValidator
         $data['emp_id'] = TableInputValidator::positiveInt($data['emp_id'] ?? 0, 'بيانات المخزن أو الموظف أو الصندوق ناقصة');
         $data['fund_id'] = TableInputValidator::positiveInt($data['fund_id'] ?? 0, 'بيانات المخزن أو الموظف أو الصندوق ناقصة');
         $data['items'] = self::items($data['items'] ?? null);
-        $data['total'] = TableInputValidator::decimal($data['total'] ?? 0, 'إجمالي الطلب غير صحيح', true);
-        $data['discount'] = TableInputValidator::decimal($data['discount'] ?? 0, 'قيمة الخصم غير صحيحة', true);
-        $data['net'] = TableInputValidator::decimal($data['net'] ?? max(0, $data['total'] - $data['discount']), 'صافي الطلب غير صحيح', true);
-
-        if ($data['discount'] > $data['total']) {
-            throw new InvalidArgumentException('قيمة الخصم أكبر من إجمالي الطلب');
-        }
+        $data['total'] = self::money($data['total'] ?? '0', 'إجمالي الطلب غير صحيح');
+        $data['discount'] = self::money($data['discount'] ?? '0', 'قيمة الخصم غير صحيحة');
+        $data['net'] = self::money($data['net'] ?? '0', 'صافي الطلب غير صحيح');
 
         return $data;
     }
@@ -37,9 +36,16 @@ class OrderInputValidator
             }
 
             $itemId = TableInputValidator::positiveInt($item['id'] ?? $item['item_id'] ?? 0, 'معرف الصنف غير صحيح');
-            $qty = TableInputValidator::decimal($item['qty'] ?? 0, 'كمية الصنف غير صحيحة');
-            $price = TableInputValidator::decimal($item['price'] ?? 0, 'سعر الصنف غير صحيح', true);
-            $discount = TableInputValidator::decimal($item['discount'] ?? 0, 'خصم الصنف غير صحيح', true);
+            try {
+                $qty = DecimalQuantity::from($item['qty'] ?? '0')->toString();
+                $price = UnitPrice::from($item['price'] ?? '0')->toString();
+                $discount = UnitPrice::from($item['discount'] ?? '0')->toString();
+            } catch (Throwable $exception) {
+                throw new InvalidArgumentException('بيانات سعر أو كمية الصنف غير صحيحة');
+            }
+            if (FinancialDecimal::compare($qty, '0', DecimalQuantity::SCALE) <= 0) {
+                throw new InvalidArgumentException('كمية الصنف غير صحيحة');
+            }
 
             $item['id'] = $itemId;
             $item['item_id'] = $itemId;
@@ -50,5 +56,14 @@ class OrderInputValidator
         }
 
         return $normalized;
+    }
+
+    private static function money($value, string $message): string
+    {
+        try {
+            return Money::from($value)->toString();
+        } catch (Throwable $exception) {
+            throw new InvalidArgumentException($message);
+        }
     }
 }

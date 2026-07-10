@@ -32,6 +32,15 @@ require_once __DIR__ . '/../../Items/ItemUnitResolver.php';
 require_once __DIR__ . '/../../Items/ItemUnitConversionFeatureFlags.php';
 require_once __DIR__ . '/../../Accounting/PaymentReconciliationService.php';
 require_once __DIR__ . '/DrawerSessionService.php';
+require_once __DIR__ . '/PaymentMethodService.php';
+require_once __DIR__ . '/../../Financial/Money.php';
+require_once __DIR__ . '/../../Financial/DecimalQuantity.php';
+require_once __DIR__ . '/../../Financial/UnitPrice.php';
+require_once __DIR__ . '/../../Financial/RoundingPolicy.php';
+require_once __DIR__ . '/../../Financial/FinancialCertifiedMode.php';
+require_once __DIR__ . '/../../Financial/FinancialInvoicePostingService.php';
+require_once __DIR__ . '/../../Financial/FinancialRefundService.php';
+require_once __DIR__ . '/../../Accounting/JournalPostingService.php';
 
 class PosOrderMutationService
 {
@@ -355,47 +364,39 @@ class PosOrderMutationService
                 $context
             );
 
-            $refundableCash = $this->resolveRefundableCashForOrder($conn, $orderId, $amount);
-            if ($refundableCash > 0) {
-                $request = $this->resolvePosRequestAccounts($conn, $request);
-                $customerId = (int) ($request['acc2_id'] ?? 0);
-                $fundAccountId = (int) ($request['payment_fund_id'] ?? $request['fund_id'] ?? 0);
-                if ($customerId < 1 || $fundAccountId < 1) {
-                    throw new RuntimeException('REFUND_ACCOUNTS_REQUIRED');
-                }
-
-                $refundDate = $this->requestDate($request, ['pro_date', 'order_date', 'date']);
-                $empId = (int) ($request['emp_id'] ?? 0);
-                $proId = (int) ($request['pro_id'] ?? $orderId);
-                $info = trim((string) ($request['info'] ?? 'POS refund'));
-                $refundReason = trim((string) ($request['reason'] ?? $request['refund_reason'] ?? $request['void_reason'] ?? ''));
-                if ($refundReason === '') {
-                    $refundReason = $action === 'void' ? 'paid_order_voided' : 'paid_order_refunded';
-                }
-
-                $refundVoucher = $this->insertCashRefundVoucher(
-                    $conn,
-                    $orderId,
-                    $proId,
-                    $info,
-                    $refundDate,
-                    $empId,
-                    $fundAccountId,
-                    $customerId,
-                    $refundableCash,
-                    'كاش',
-                    $userId
-                );
-                $this->recordOrderCashRefunded(
-                    $conn,
-                    $orderId,
-                    $refundableCash,
-                    $request,
-                    $context,
-                    $action === 'void' ? 'paid_order_void_cash_refund' : 'paid_order_refund_cash',
-                    (int) ($refundVoucher['voucher_id'] ?? 0) ?: null
-                );
+            $request = $this->resolvePosRequestAccounts($conn, $request);
+            $customerId = (int) ($request['acc2_id'] ?? 0);
+            $salesAccountId = (int) ($request['sales_account_id'] ?? 0);
+            if ($customerId < 1 || $salesAccountId < 1) {
+                throw new RuntimeException('REFUND_ACCOUNTS_REQUIRED');
             }
+
+            $refundReason = trim((string) ($request['reason'] ?? $request['refund_reason'] ?? $request['void_reason'] ?? ''));
+            if ($refundReason === '') {
+                $refundReason = $action === 'void' ? 'paid_order_voided' : 'paid_order_refunded';
+            }
+
+            $drawerSessionId = (int) ($request['drawer_session_id'] ?? $context['drawer_session_id'] ?? 0);
+            if ($drawerSessionId < 1 && session_status() === PHP_SESSION_ACTIVE) {
+                $drawerSessionId = (int) ($_SESSION['pos_drawer_session_id'] ?? 0);
+            }
+
+            $creditNoteRefund = (new FinancialRefundService())->createPostedRefund($conn, [
+                'original_order_id' => $orderId,
+                'customer_account_id' => $customerId,
+                'revenue_account_id' => $salesAccountId,
+                'user_id' => $userId,
+                'reason' => $refundReason,
+                'idempotency_key' => (string) ($request['idempotency_key'] ?? $context['idempotency_key'] ?? ('paid-reversal:' . $action . ':' . $orderId)),
+                'refund_stock_policy' => $request['refund_stock_policy'] ?? 'waste',
+                'drawer_session_id' => $drawerSessionId,
+            ], [
+                'user_id' => $userId,
+                'in_transaction' => true,
+                'drawer_session_id' => $drawerSessionId,
+                'tenant' => (int) ($context['tenant'] ?? $_SESSION['pos_tenant'] ?? 0),
+                'branch' => (int) ($context['branch'] ?? $_SESSION['pos_branch'] ?? 0),
+            ]);
 
             $newPaymentStatus = $action === 'void' ? 'voided' : 'refunded';
             $reason = trim((string) ($request['reason'] ?? $request['refund_reason'] ?? $request['void_reason'] ?? ''));
@@ -431,6 +432,8 @@ class PosOrderMutationService
                 'refund_stock_policy' => $policy,
                 'reason' => $reason,
                 'amount' => $amount,
+                'credit_note_id' => (int) ($creditNoteRefund['credit_note_id'] ?? 0),
+                'credit_note_total' => (string) ($creditNoteRefund['total_amount'] ?? '0.00'),
             ];
             if ($approval) {
                 $eventMetadata['manager_approval_id'] = (int) ($approval['id'] ?? 0);
@@ -1536,15 +1539,22 @@ class PosOrderMutationService
         ];
     }
 
-    private function paidStatusForNet(float $headNet, float $paidAmount): array
+    private function paidStatusForNet($headNet, $paidAmount): array
     {
-        $appliedPaid = min(max(0, $paidAmount), max(0, $headNet));
-        $remaining = max(0, $headNet - $appliedPaid);
-        if ($appliedPaid <= 0) {
+        $head = Money::fromLegacy($headNet);
+        $paid = Money::fromLegacy($paidAmount);
+        if ($paid->compare($head) > 0) {
+            $paid = $head;
+        }
+        if (!$paid->isPositive()) {
+            $paid = Money::zero();
+        }
+        $remaining = $head->subtract($paid);
+        if (!$paid->isPositive()) {
             $paymentStatus = 'unpaid';
             $invoiceStatus = 'draft';
             $orderStatus = 'active';
-        } elseif ($remaining <= 0.0001) {
+        } elseif ($remaining->compare(Money::zero()) === 0) {
             $paymentStatus = 'paid';
             $invoiceStatus = 'completed';
             $orderStatus = 'completed';
@@ -1555,47 +1565,45 @@ class PosOrderMutationService
         }
 
         return [
-            'paid_amount' => $appliedPaid,
-            'remaining_amount' => $remaining,
+            'paid_amount' => $paid->toString(),
+            'remaining_amount' => $remaining->toString(),
             'payment_status' => $paymentStatus,
             'invoice_status' => $invoiceStatus,
             'order_status' => $orderStatus,
         ];
     }
 
-    private function insertTakeawaySalesJournal(mysqli $conn, int $orderId, int $proId, float $amount, string $date, int $customerId, int $userId, int $salesAccountId = 0): array
+    private function insertTakeawaySalesJournal(mysqli $conn, int $orderId, int $proId, $amount, string $date, int $customerId, int $userId, int $salesAccountId = 0): array
     {
         $salesAccountId = posmain_ensure_sales_account($conn, $salesAccountId > 0 ? $salesAccountId : 91);
         if ($salesAccountId <= 0) {
             throw new InvalidArgumentException('لا يوجد حساب مبيعات صالح في دليل الحسابات');
         }
 
-        $journalId = $this->tableOrderService->nextJournalId($conn, 0, 0);
-        $details = 'فاتورة ريسيت _ ' . $orderId;
-        $this->tableOrderService->execute($conn, "
-            INSERT INTO journal_heads (journal_id, total, jdate, details, user, op_id)
-            VALUES (?, ?, ?, ?, ?, ?)
-        ", [$journalId, $amount, $date, $details, $userId, $orderId]);
-        $journalHeadId = (int) $conn->insert_id;
-
-        $this->tableOrderService->execute($conn, "
-            INSERT INTO journal_entries (journal_id, account_id, debit, credit, tybe, op_id)
-            VALUES (?, ?, ?, 0, 0, ?)
-        ", [$journalHeadId, $customerId, $amount, $orderId]);
-        $this->tableOrderService->execute($conn, "
-            INSERT INTO journal_entries (journal_id, account_id, debit, credit, tybe, op_id)
-            VALUES (?, ?, 0, ?, 1, ?)
-        ", [$journalHeadId, $salesAccountId, $amount, $orderId]);
+        $postedAmount = Money::from(is_string($amount) ? $amount : number_format((float) $amount, 2, '.', ''))->toString();
+        $posted = (new FinancialInvoicePostingService())->postInvoiceFinalization(
+            $conn,
+            $orderId,
+            ['net' => $postedAmount, 'tax' => '0.00'],
+            $customerId,
+            $salesAccountId,
+            $userId,
+            [
+                'jdate' => $date,
+                'idempotency_key' => 'takeaway-invoice:' . $orderId,
+            ]
+        );
 
         return [
-            'journal_id' => $journalId,
-            'journal_head_id' => $journalHeadId,
+            'journal_id' => (int) $posted['journal_id'],
+            'journal_head_id' => (int) $posted['journal_head_id'],
             'pro_id' => $proId,
         ];
     }
 
-    private function insertTakeawayReceipt(mysqli $conn, int $orderId, int $proId, string $info, string $date, int $empId, int $fundAccountId, int $customerId, float $amount, string $methodLabel, int $userId): array
+    private function insertTakeawayReceipt(mysqli $conn, int $orderId, int $proId, string $info, string $date, int $empId, int $fundAccountId, int $customerId, $amount, string $methodLabel, int $userId): array
     {
+        $postedAmount = Money::from(is_string($amount) ? $amount : number_format((float) $amount, 2, '.', ''))->toString();
         $receiptProId = $this->nextInvoiceProId($conn, 1, 0, 0);
         $receiptInfo = $info . ' - دفع ' . $methodLabel;
         $this->tableOrderService->execute($conn, "
@@ -1603,26 +1611,32 @@ class PosOrderMutationService
                 pro_id, pro_tybe, is_journal, journal_tybe, info, pro_date,
                 emp_id, acc1, acc2, pro_value, cost_center, profit, user, op2
             ) VALUES (?, 1, 1, 1, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?)
-        ", [$receiptProId, $receiptInfo, $date, $empId, $fundAccountId, $customerId, $amount, $userId, $orderId]);
+        ", [$receiptProId, $receiptInfo, $date, $empId, $fundAccountId, $customerId, $postedAmount, $userId, $orderId]);
         $receiptId = (int) $conn->insert_id;
         $this->tableOrderService->assignUuidIfPresent($conn, 'ot_head', $receiptId);
 
         $journalId = $this->tableOrderService->nextJournalId($conn, 0, 0);
         $details = 'سند قبض ' . $methodLabel . ' _ ' . $proId;
-        $this->tableOrderService->execute($conn, "
-            INSERT INTO journal_heads (journal_id, op_id, total, jdate, details, user, op2)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        ", [$journalId, $receiptId, $amount, $date, $details, $userId, $orderId]);
-        $journalHeadId = (int) $conn->insert_id;
-
-        $this->tableOrderService->execute($conn, "
-            INSERT INTO journal_entries (journal_id, account_id, debit, credit, tybe, op2)
-            VALUES (?, ?, ?, 0, 0, ?)
-        ", [$journalHeadId, $fundAccountId, $amount, $orderId]);
-        $this->tableOrderService->execute($conn, "
-            INSERT INTO journal_entries (journal_id, account_id, debit, credit, tybe, op2)
-            VALUES (?, ?, 0, ?, 1, ?)
-        ", [$journalHeadId, $customerId, $amount, $orderId]);
+        $journalHeadId = JournalPostingService::postBalancedHead(
+            $conn,
+            (string) $journalId,
+            $postedAmount,
+            $date,
+            $details,
+            $userId,
+            [
+                ['account_id' => $fundAccountId, 'debit' => $postedAmount, 'credit' => '0.00', 'tybe' => 0, 'op2' => $orderId],
+                ['account_id' => $customerId, 'debit' => '0.00', 'credit' => $postedAmount, 'tybe' => 1, 'op2' => $orderId],
+            ],
+            [
+                'op_id' => $receiptId,
+                'op2' => $orderId,
+                'source_type' => 'payment',
+                'source_id' => $receiptId,
+                'posting_kind' => 'payment_receipt',
+                'idempotency_key' => 'takeaway-receipt:' . $orderId . ':' . $receiptId,
+            ]
+        );
 
         return [
             'receipt_id' => $receiptId,
@@ -1632,65 +1646,91 @@ class PosOrderMutationService
         ];
     }
 
-    private function insertCashRefundVoucher(mysqli $conn, int $orderId, int $proId, string $info, string $date, int $empId, int $fundAccountId, int $customerId, float $amount, string $methodLabel, int $userId): array
+    private function insertCashRefundVoucher(mysqli $conn, int $orderId, int $proId, string $info, string $date, int $empId, int $fundAccountId, int $customerId, $amount, string $methodLabel, int $userId): array
     {
-        $voucherProId = $this->nextInvoiceProId($conn, 2, 0, 0);
-        $voucherInfo = $info . ' - استرداد ' . $methodLabel;
-        $this->tableOrderService->execute($conn, "
-            INSERT INTO ot_head (
-                pro_id, pro_tybe, is_journal, journal_tybe, info, pro_date,
-                emp_id, acc1, acc2, pro_value, cost_center, profit, user, op2
-            ) VALUES (?, 2, 1, 2, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?)
-        ", [$voucherProId, $voucherInfo, $date, $empId, $customerId, $fundAccountId, $amount, $userId, $orderId]);
-        $voucherId = (int) $conn->insert_id;
-        $this->tableOrderService->assignUuidIfPresent($conn, 'ot_head', $voucherId);
-
-        $journalId = $this->tableOrderService->nextJournalId($conn, 0, 0);
-        $details = 'سند صرف استرداد ' . $methodLabel . ' _ ' . $proId;
-        $this->tableOrderService->execute($conn, "
-            INSERT INTO journal_heads (journal_id, op_id, total, jdate, details, user, op2)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        ", [$journalId, $voucherId, $amount, $date, $details, $userId, $orderId]);
-        $journalHeadId = (int) $conn->insert_id;
-
-        $this->tableOrderService->execute($conn, "
-            INSERT INTO journal_entries (journal_id, account_id, debit, credit, tybe, op2)
-            VALUES (?, ?, ?, 0, 0, ?)
-        ", [$journalHeadId, $customerId, $amount, $orderId]);
-        $this->tableOrderService->execute($conn, "
-            INSERT INTO journal_entries (journal_id, account_id, debit, credit, tybe, op2)
-            VALUES (?, ?, 0, ?, 1, ?)
-        ", [$journalHeadId, $fundAccountId, $amount, $orderId]);
-
-        return [
-            'voucher_id' => $voucherId,
-            'voucher_pro_id' => $voucherProId,
-            'journal_id' => $journalId,
-            'journal_head_id' => $journalHeadId,
-        ];
+        throw new RuntimeException('LEGACY_CASH_REFUND_FORBIDDEN_USE_CREDIT_NOTE');
     }
 
     private function insertTakeawayDetailLine(mysqli $conn, int $orderId, int $storeId, array $line, array $context = []): array
     {
-        $this->tableOrderService->execute($conn, "
-            INSERT INTO fat_details (
-                pro_tybe, pro_id, item_id, u_val, qty_in, qty_out, price,
-                discount, det_value, fatid, fat_tybe, det_store, cost_price, profit
-            ) VALUES (9, ?, ?, ?, ?, ?, ?, ?, ?, ?, 9, ?, ?, ?)
-        ", [
-            $orderId,
-            (int) $line['item_id'],
-            (float) $line['u_val'],
-            (float) $line['qty_in'],
-            (float) $line['qty_out'],
-            (float) $line['price'],
-            (float) $line['discount'],
-            (float) $line['det_value'],
-            $orderId,
-            $storeId,
-            (float) $line['cost_price'],
-            (float) $line['profit'],
-        ]);
+        $qtyIn = DecimalQuantity::from(is_string($line['qty_in'] ?? null) ? (string) $line['qty_in'] : number_format((float) ($line['qty_in'] ?? 0), 6, '.', ''))->toString();
+        $qtyOut = DecimalQuantity::from(is_string($line['qty_out'] ?? null) ? (string) $line['qty_out'] : number_format((float) ($line['qty_out'] ?? 0), 6, '.', ''))->toString();
+        $price = UnitPrice::from(is_string($line['price'] ?? null) ? (string) $line['price'] : number_format((float) ($line['price'] ?? 0), 6, '.', ''))->toString();
+        $discount = UnitPrice::from(is_string($line['discount'] ?? null) ? (string) $line['discount'] : number_format((float) ($line['discount'] ?? 0), 6, '.', ''))->toString();
+        $detValue = Money::from(is_string($line['det_value'] ?? null) ? (string) $line['det_value'] : number_format((float) ($line['det_value'] ?? 0), 2, '.', ''))->toString();
+        $costPrice = UnitPrice::from(is_string($line['cost_price'] ?? null) ? (string) $line['cost_price'] : number_format((float) ($line['cost_price'] ?? 0), 6, '.', ''))->toString();
+        $profit = Money::from(is_string($line['profit'] ?? null) ? (string) $line['profit'] : number_format((float) ($line['profit'] ?? 0), 2, '.', ''))->toString();
+        $uVal = DecimalQuantity::from(is_string($line['u_val'] ?? null) ? (string) $line['u_val'] : number_format((float) ($line['u_val'] ?? 1), 6, '.', ''))->toString();
+        $postedQty = DecimalQuantity::from((string) ($line['posted_qty'] ?? FinancialDecimal::subtract($qtyOut, $qtyIn, DecimalQuantity::SCALE)))->toString();
+        if (FinancialDecimal::compare($postedQty, '0', DecimalQuantity::SCALE) < 0) {
+            $postedQty = FinancialDecimal::subtract($qtyIn, $qtyOut, DecimalQuantity::SCALE);
+        }
+        $postedNet = Money::from((string) ($line['net'] ?? $line['posted_net'] ?? $detValue))->toString();
+        $postedGross = Money::from((string) ($line['gross'] ?? $line['posted_gross'] ?? $detValue))->toString();
+        $postedTax = Money::from((string) ($line['tax_amount'] ?? $line['posted_tax'] ?? '0'))->toString();
+        $postedTaxable = Money::from((string) ($line['taxable_amount'] ?? $line['posted_taxable'] ?? $postedNet))->toString();
+        $postedLineDiscount = Money::from((string) ($line['line_discount'] ?? $line['posted_line_discount'] ?? '0'))->toString();
+        $postedOrderDiscount = Money::from((string) ($line['allocated_order_discount'] ?? $line['posted_order_discount'] ?? '0'))->toString();
+        $taxRate = (string) ($line['tax_rate'] ?? $line['tax_rate_snapshot'] ?? '0.000000');
+        $hasSnapshots = $this->fatDetailsHasPostedSnapshots($conn);
+
+        if ($hasSnapshots) {
+            $this->tableOrderService->execute($conn, "
+                INSERT INTO fat_details (
+                    pro_tybe, pro_id, item_id, u_val, qty_in, qty_out, price,
+                    discount, det_value, fatid, fat_tybe, det_store, cost_price, profit,
+                    posted_qty, posted_unit_price, posted_line_discount, posted_order_discount,
+                    posted_taxable, posted_tax, posted_gross, posted_net,
+                    posted_unit_cost, posted_total_cost, tax_rate_snapshot
+                ) VALUES (9, ?, ?, ?, ?, ?, ?, ?, ?, ?, 9, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ", [
+                $orderId,
+                (int) $line['item_id'],
+                $uVal,
+                $qtyIn,
+                $qtyOut,
+                $price,
+                $discount,
+                $detValue,
+                $orderId,
+                $storeId,
+                $costPrice,
+                $profit,
+                $postedQty,
+                $price,
+                $postedLineDiscount,
+                $postedOrderDiscount,
+                $postedTaxable,
+                $postedTax,
+                $postedGross,
+                $postedNet,
+                $costPrice,
+                Money::from(RoundingPolicy::halfUp(
+                    FinancialDecimal::multiply($postedQty, $costPrice, 6)
+                ))->toString(),
+                $taxRate,
+            ]);
+        } else {
+            $this->tableOrderService->execute($conn, "
+                INSERT INTO fat_details (
+                    pro_tybe, pro_id, item_id, u_val, qty_in, qty_out, price,
+                    discount, det_value, fatid, fat_tybe, det_store, cost_price, profit
+                ) VALUES (9, ?, ?, ?, ?, ?, ?, ?, ?, ?, 9, ?, ?, ?)
+            ", [
+                $orderId,
+                (int) $line['item_id'],
+                $uVal,
+                $qtyIn,
+                $qtyOut,
+                $price,
+                $discount,
+                $detValue,
+                $orderId,
+                $storeId,
+                $costPrice,
+                $profit,
+            ]);
+        }
         $detailId = (int) $conn->insert_id;
         $detailUuid = $this->tableOrderService->assignUuidIfPresent($conn, 'fat_details', $detailId);
         $sourceItem = is_array($line['_source_item'] ?? null) ? $line['_source_item'] : $line;
@@ -1724,6 +1764,18 @@ class PosOrderMutationService
             [],
             $context
         );
+    }
+
+    private function fatDetailsHasPostedSnapshots(mysqli $conn): bool
+    {
+        static $cache = null;
+        if ($cache !== null) {
+            return $cache;
+        }
+        $result = $conn->query("SHOW COLUMNS FROM fat_details LIKE 'posted_net'");
+        $cache = $result !== false && $result->num_rows > 0;
+
+        return $cache;
     }
 
     private function nextInvoiceProId(mysqli $conn, int $invoiceType, int $tenant, int $branch): int
@@ -1776,8 +1828,8 @@ class PosOrderMutationService
         }
         $net = (float) ($request['net'] ?? max(0, $total - $discount));
         if (ItemUnitConversionFeatureFlags::strictPosFactorResolution()) {
-            $serverNet = (float) PaymentReconciliationService::recomputeTableNetFromLines($items, (string) $discount);
-            if (abs($serverNet - $net) > self::PAYMENT_ROUNDING_TOLERANCE) {
+            $serverNet = PaymentReconciliationService::recomputeTableNetFromLines($items, (string) $discount);
+            if (Money::fromLegacy($serverNet)->compare(Money::fromLegacy($net)) !== 0) {
                 throw new InvalidArgumentException('ORDER_TOTAL_MISMATCH');
             }
             $net = $serverNet;
@@ -1888,8 +1940,8 @@ class PosOrderMutationService
                 'invoice_status' => $status['invoice_status'],
                 'remaining_amount' => $status['remaining_amount'],
                 'paid_amount' => $status['paid_amount'],
-                'total' => (float) $totals['total'],
-                'net' => (float) $totals['net'],
+                'total' => (string) $totals['total'],
+                'net' => (string) $totals['net'],
             ],
         ]);
     }
@@ -1900,11 +1952,11 @@ class PosOrderMutationService
         $tableId = (int) ($request['table_id'] ?? 0);
         $splitRequests = $this->normalizeSplitRequests($request['items'] ?? []);
         $selectedItems = array_keys($splitRequests);
-        $paidAmount = (float) ($request['paid_amount'] ?? $request['paid'] ?? 0);
+        $paidAmount = Money::fromLegacy($request['paid_amount'] ?? $request['paid'] ?? '0');
         $paymentMethod = trim((string) ($request['payment_method'] ?? 'cash'));
         $userId = $this->contextUserId($request, $context);
 
-        if ($originalOrderId <= 0 || $tableId <= 0 || !$selectedItems || $paidAmount <= 0) {
+        if ($originalOrderId <= 0 || $tableId <= 0 || !$selectedItems || !$paidAmount->isPositive()) {
             throw new InvalidArgumentException('بيانات السداد المقسم غير صحيحة');
         }
 
@@ -1920,29 +1972,36 @@ class PosOrderMutationService
         }
 
         $splitLines = $this->buildSplitLines($selectedItems, $splitRequests, $details);
-        $childTotal = 0.0;
+        $childTotal = Money::zero();
         foreach ($splitLines as $line) {
-            $childTotal += (float) $line['value'];
+            $childTotal = $childTotal->add(Money::fromLegacy($line['value']));
         }
-        if ($childTotal <= 0) {
+        if (!$childTotal->isPositive()) {
             throw new RuntimeException('قيمة الأصناف المختارة غير صحيحة');
         }
-        if ($paidAmount + self::PAYMENT_ROUNDING_TOLERANCE < $childTotal) {
+        if ($paidAmount->compare($childTotal) < 0) {
             throw new RuntimeException('المبلغ المدفوع أقل من قيمة الأصناف المختارة');
         }
 
+        $tender = (new PaymentMethodService())->resolveTender(
+            $conn,
+            $paymentMethod,
+            $request['reference_no'] ?? $request['notes'] ?? null
+        );
+        $paymentMethod = (string) $tender['code'];
+
         $drawerContext = array_merge($request, $context, ['drawer_reason' => 'split_payment']);
-        $drawerSession = $this->paymentService->preflightCashDrawerForPayment($conn, $paymentMethod, $childTotal, $userId, $drawerContext);
-        $newHeadId = $this->insertSplitChildOrder($conn, $originalOrder, $tableId, $originalOrderId, $childTotal, $paymentMethod, $userId);
+        $drawerSession = $this->paymentService->preflightCashDrawerForPayment($conn, $paymentMethod, $childTotal->toString(), $userId, $drawerContext);
+        $newHeadId = $this->insertSplitChildOrder($conn, $originalOrder, $tableId, $originalOrderId, $childTotal->toString(), $paymentMethod, $userId);
         foreach ($splitLines as $line) {
             $this->moveOrCopySplitLine($conn, $newHeadId, $line);
         }
 
         $recipeSplitAdjustments = $this->recipeSplitOriginalAdjustments($conn, $originalOrderId, $splitLines, 'table', 'dine_in', $request, $context);
         $remainingTotals = $this->tableOrderService->recalculateOrderTotals($conn, $originalOrderId);
-        $activeTableOrderId = $this->refreshOriginalAfterSplit($conn, $originalOrder, $originalOrderId, $tableId, (float) $remainingTotals['net']);
-        $paymentId = $this->insertSplitPaymentRecordIfAvailable($conn, $newHeadId, $childTotal, $paymentMethod, $userId);
-        $this->paymentService->recordCashDrawerMovementForPayment($conn, $paymentMethod, $childTotal, $newHeadId, $userId, $drawerContext, $drawerSession, $paymentId);
+        $activeTableOrderId = $this->refreshOriginalAfterSplit($conn, $originalOrder, $originalOrderId, $tableId, (string) $remainingTotals['net']);
+        $paymentId = $this->insertSplitPaymentRecordIfAvailable($conn, $newHeadId, $childTotal->toString(), $paymentMethod, $userId);
+        $this->paymentService->recordCashDrawerMovementForPayment($conn, $paymentMethod, $childTotal->toString(), $newHeadId, $userId, $drawerContext, $drawerSession, $paymentId);
         $splitRecipeLines = $this->loadRecipeOrderLineContexts($conn, $newHeadId, 'table', 'dine_in', $request, $context);
         $this->recordRecipeOrderSplit(
             $conn,
@@ -1965,7 +2024,7 @@ class PosOrderMutationService
         $this->recordOrderEvent($conn, $newHeadId, 'order.split_paid', $context['event_source'] ?? 'pos_split_payment', $context, [
             'table_id' => $tableId,
             'original_order_id' => $originalOrderId,
-            'paid_amount' => $childTotal,
+            'paid_amount' => $childTotal->toString(),
             'payment_method' => $paymentMethod,
         ]);
 
@@ -1975,7 +2034,7 @@ class PosOrderMutationService
             $crmRequest['pos_customer_id'] = (int) $parentFulfillment['pos_customer_id'];
         }
         $this->customerSideEffects()->afterOrderSaved($conn, $newHeadId, $crmRequest, 'table', [
-            'paid_amount' => $childTotal,
+            'paid_amount' => $childTotal->toString(),
             'payment_status' => 'paid',
         ]);
 
@@ -1991,7 +2050,7 @@ class PosOrderMutationService
                 'split_group_id' => $this->splitGroupIdForOrder($conn, $newHeadId),
                 'remaining_total' => (float) $remainingTotals['net'],
                 'active_order_id' => $activeTableOrderId,
-                'paid_amount' => $childTotal,
+                'paid_amount' => $childTotal->toString(),
             ],
         ];
     }
@@ -2006,7 +2065,9 @@ class PosOrderMutationService
         foreach ($items as $item) {
             if (is_array($item)) {
                 $detailId = (int) ($item['detail_id'] ?? $item['detailId'] ?? $item['id'] ?? 0);
-                $qty = isset($item['qty']) ? (float) $item['qty'] : (isset($item['quantity']) ? (float) $item['quantity'] : null);
+                $qty = isset($item['qty'])
+                    ? DecimalQuantity::fromLegacy($item['qty'])->toString()
+                    : (isset($item['quantity']) ? DecimalQuantity::fromLegacy($item['quantity'])->toString() : null);
             } else {
                 $detailId = (int) $item;
                 $qty = null;
@@ -2017,7 +2078,9 @@ class PosOrderMutationService
                     $splitRequests[$detailId] = ['qty' => null];
                 }
                 if ($qty !== null) {
-                    $splitRequests[$detailId]['qty'] = ($splitRequests[$detailId]['qty'] ?? 0) + $qty;
+                    $splitRequests[$detailId]['qty'] = isset($splitRequests[$detailId]['qty']) && $splitRequests[$detailId]['qty'] !== null
+                        ? FinancialDecimal::add($splitRequests[$detailId]['qty'], $qty, DecimalQuantity::SCALE)
+                        : $qty;
                 }
             }
         }
@@ -2055,29 +2118,39 @@ class PosOrderMutationService
                 throw new RuntimeException('بعض الأصناف المختارة لا تخص الطلب الأصلي');
             }
 
-            $availableQty = max(0, (float) ($detail['qty_out'] ?? 0) - (float) ($detail['qty_in'] ?? 0));
+            $availableQty = FinancialDecimal::subtract(
+                DecimalQuantity::from((string) ($detail['qty_out'] ?? '0'))->toString(),
+                DecimalQuantity::from((string) ($detail['qty_in'] ?? '0'))->toString(),
+                DecimalQuantity::SCALE
+            );
             $requestedQty = $splitRequests[$detailId]['qty'];
             if ($requestedQty === null) {
                 $requestedQty = $availableQty;
             }
-            if ($availableQty <= 0 || $requestedQty <= 0 || $requestedQty > $availableQty + 0.0001) {
+            if (
+                FinancialDecimal::compare($availableQty, '0', DecimalQuantity::SCALE) <= 0
+                || FinancialDecimal::compare($requestedQty, '0', DecimalQuantity::SCALE) <= 0
+                || FinancialDecimal::compare($requestedQty, $availableQty, DecimalQuantity::SCALE) > 0
+            ) {
                 throw new RuntimeException('كمية الصنف المختارة غير صحيحة');
             }
 
-            $ratio = min(1, $requestedQty / $availableQty);
+            $ratio = bcdiv($requestedQty, $availableQty, DecimalQuantity::SCALE);
+            $value = RoundingPolicy::halfUp(bcmul((string) ($detail['det_value'] ?? '0'), $ratio, 8));
+            $profit = RoundingPolicy::halfUp(bcmul((string) ($detail['profit'] ?? '0'), $ratio, 8));
             $splitLines[] = [
                 'detail' => $detail,
                 'qty' => $requestedQty,
-                'value' => round((float) ($detail['det_value'] ?? 0) * $ratio, 4),
-                'profit' => round((float) ($detail['profit'] ?? 0) * $ratio, 4),
-                'is_full' => abs($requestedQty - $availableQty) <= 0.0001,
+                'value' => $value,
+                'profit' => $profit,
+                'is_full' => FinancialDecimal::compare($requestedQty, $availableQty, DecimalQuantity::SCALE) === 0,
             ];
         }
 
         return $splitLines;
     }
 
-    private function insertSplitChildOrder(mysqli $conn, array $originalOrder, int $tableId, int $originalOrderId, float $childTotal, string $paymentMethod, int $userId): int
+    private function insertSplitChildOrder(mysqli $conn, array $originalOrder, int $tableId, int $originalOrderId, string $childTotal, string $paymentMethod, int $userId): int
     {
         $newInvoiceNum = $this->tableOrderService->nextPosProId($conn, TableOrderService::POS_TYPE, 0, 0);
         $splitGroupId = bin2hex(random_bytes(16));
@@ -2167,7 +2240,7 @@ class PosOrderMutationService
         ", [$line['qty'], $line['value'], $line['profit'], $detailId]);
     }
 
-    private function refreshOriginalAfterSplit(mysqli $conn, array $originalOrder, int $originalOrderId, int $tableId, float $remainingNet): ?int
+    private function refreshOriginalAfterSplit(mysqli $conn, array $originalOrder, int $originalOrderId, int $tableId, string $remainingNet): ?int
     {
         $remainingLines = $this->tableOrderService->queryOne($conn, "
             SELECT COUNT(*) AS c
@@ -2177,14 +2250,16 @@ class PosOrderMutationService
               AND qty_out > qty_in
         ", [$originalOrderId]);
 
-        if ((int) ($remainingLines['c'] ?? 0) > 0 && $remainingNet > 0) {
-            $originalPaid = min((float) ($originalOrder['paid_amount'] ?? 0), $remainingNet);
-            $originalRemaining = max(0, $remainingNet - $originalPaid);
-            if ($originalPaid <= 0) {
+        $remainingNet = Money::fromLegacy($remainingNet);
+        if ((int) ($remainingLines['c'] ?? 0) > 0 && $remainingNet->isPositive()) {
+            $existingPaid = Money::from((string) ($originalOrder['paid_amount'] ?? '0'));
+            $originalPaid = $existingPaid->compare($remainingNet) > 0 ? $remainingNet : $existingPaid;
+            $originalRemaining = $remainingNet->subtract($originalPaid);
+            if (!$originalPaid->isPositive()) {
                 $paymentStatus = 'unpaid';
                 $invoiceStatus = 'draft';
                 $orderStatus = 'active';
-            } elseif ($originalRemaining <= 0.0001) {
+            } elseif (!$originalRemaining->isPositive()) {
                 $paymentStatus = 'paid';
                 $invoiceStatus = 'completed';
                 $orderStatus = 'completed';
@@ -2203,7 +2278,7 @@ class PosOrderMutationService
                     remaining_amount = ?
                 WHERE id = ?
                   AND table_id = ?
-            ", [$paymentStatus, $invoiceStatus, $orderStatus, $originalPaid, $originalRemaining, $originalOrderId, $tableId]);
+            ", [$paymentStatus, $invoiceStatus, $orderStatus, $originalPaid->toString(), $originalRemaining->toString(), $originalOrderId, $tableId]);
 
             if ($orderStatus === 'completed') {
                 $this->tableOrderService->setTableFreeIfNoActiveOrder($conn, $tableId);
@@ -2230,9 +2305,10 @@ class PosOrderMutationService
         return null;
     }
 
-    private function insertOrderPaymentRecordIfAvailable(mysqli $conn, int $orderId, float $amount, string $paymentMethod, int $userId): ?int
+    private function insertOrderPaymentRecordIfAvailable(mysqli $conn, int $orderId, $amount, string $paymentMethod, int $userId): ?int
     {
-        if (abs($amount) < 0.0001) {
+        $amount = Money::fromLegacy($amount, true)->toString();
+        if (Money::from($amount, true)->compare(Money::zero()) === 0) {
             return null;
         }
 
@@ -2251,14 +2327,15 @@ class PosOrderMutationService
         return null;
     }
 
-    private function insertSplitPaymentRecordIfAvailable(mysqli $conn, int $newHeadId, float $childTotal, string $paymentMethod, int $userId): ?int
+    private function insertSplitPaymentRecordIfAvailable(mysqli $conn, int $newHeadId, $childTotal, string $paymentMethod, int $userId): ?int
     {
         return $this->insertOrderPaymentRecordIfAvailable($conn, $newHeadId, $childTotal, $paymentMethod, $userId);
     }
 
-    private function recordOrderCashCollected(mysqli $conn, int $orderId, float $cashAmount, array $request, array $context, string $reason, ?int $refOtHeadId = null): void
+    private function recordOrderCashCollected(mysqli $conn, int $orderId, $cashAmount, array $request, array $context, string $reason, ?int $refOtHeadId = null): void
     {
-        if ($cashAmount <= 0) {
+        $cashAmount = Money::fromLegacy($cashAmount);
+        if (!$cashAmount->isPositive()) {
             return;
         }
 
@@ -2275,11 +2352,11 @@ class PosOrderMutationService
                 $drawerContext['branch'] = (int) ($_SESSION['pos_branch'] ?? 0);
             }
         }
-        $paymentId = $this->insertOrderPaymentRecordIfAvailable($conn, $orderId, $cashAmount, 'cash', $userId);
+        $paymentId = $this->insertOrderPaymentRecordIfAvailable($conn, $orderId, $cashAmount->toString(), 'cash', $userId);
         $this->paymentService->recordCashDrawerMovementForPayment(
             $conn,
             'cash',
-            $cashAmount,
+            $cashAmount->toString(),
             $orderId,
             $userId,
             $drawerContext,
@@ -2299,18 +2376,19 @@ class PosOrderMutationService
         $this->insertOrderPaymentRecordIfAvailable($conn, $orderId, $bankAmount, 'bank', $userId);
     }
 
-    private function recordOrderCashRefunded(mysqli $conn, int $orderId, float $cashAmount, array $request, array $context, string $reason, ?int $refOtHeadId = null): void
+    private function recordOrderCashRefunded(mysqli $conn, int $orderId, $cashAmount, array $request, array $context, string $reason, ?int $refOtHeadId = null): void
     {
-        if ($cashAmount <= 0) {
+        $cashAmount = Money::fromLegacy($cashAmount);
+        if (!$cashAmount->isPositive()) {
             return;
         }
 
         $userId = $this->contextUserId($request, $context);
         $drawerContext = array_merge($request, $context, ['drawer_reason' => $reason]);
-        $paymentId = $this->insertOrderPaymentRecordIfAvailable($conn, $orderId, -$cashAmount, 'cash', $userId);
+        $paymentId = $this->insertOrderPaymentRecordIfAvailable($conn, $orderId, '-' . $cashAmount->toString(), 'cash', $userId);
         $this->paymentService->recordCashRefundMovementForPayment(
             $conn,
-            $cashAmount,
+            $cashAmount->toString(),
             $orderId,
             $userId,
             $drawerContext,
@@ -2320,27 +2398,30 @@ class PosOrderMutationService
         );
     }
 
-    private function recordOrderCashPaymentDelta(mysqli $conn, int $orderId, float $targetCashAmount, array $request, array $context, string $reason): void
+    private function recordOrderCashPaymentDelta(mysqli $conn, int $orderId, $targetCashAmount, array $request, array $context, string $reason): void
     {
-        $netRecorded = $this->drawerSessionService->netCashRecordedForOrder($conn, $orderId);
-        $delta = round($targetCashAmount - $netRecorded, 3);
-        if ($delta > 0.0001) {
-            $this->recordOrderCashCollected($conn, $orderId, $delta, $request, $context, $reason);
-        } elseif ($delta < -0.0001) {
-            $this->recordOrderCashRefunded($conn, $orderId, abs($delta), $request, $context, $reason . '_refund');
+        $netRecorded = Money::fromLegacy($this->drawerSessionService->netCashRecordedForOrder($conn, $orderId));
+        $target = Money::fromLegacy($targetCashAmount);
+        $delta = $target->subtract($netRecorded);
+        if ($delta->isPositive()) {
+            $this->recordOrderCashCollected($conn, $orderId, $delta->toString(), $request, $context, $reason);
+        } elseif ($delta->isNegative()) {
+            $refundAmount = Money::from(ltrim($delta->toString(), '-'))->toString();
+            $this->recordOrderCashRefunded($conn, $orderId, $refundAmount, $request, $context, $reason . '_refund');
         }
     }
 
-    private function recordOrderBankPaymentDelta(mysqli $conn, int $orderId, float $targetBankAmount, array $request, array $context): void
+    private function recordOrderBankPaymentDelta(mysqli $conn, int $orderId, $targetBankAmount, array $request, array $context): void
     {
-        $netRecorded = $this->netPaymentRecordedForOrder($conn, $orderId, 'bank');
-        $delta = round($targetBankAmount - $netRecorded, 3);
-        if (abs($delta) < 0.0001) {
+        $netRecorded = Money::fromLegacy($this->netPaymentRecordedForOrder($conn, $orderId, 'bank'));
+        $target = Money::fromLegacy($targetBankAmount);
+        $delta = $target->subtract($netRecorded);
+        if ($delta->compare(Money::zero()) === 0) {
             return;
         }
 
         $userId = $this->contextUserId($request, $context);
-        $this->insertOrderPaymentRecordIfAvailable($conn, $orderId, $delta, 'bank', $userId);
+        $this->insertOrderPaymentRecordIfAvailable($conn, $orderId, $delta->toString(), 'bank', $userId);
     }
 
     private function netPaymentRecordedForOrder(mysqli $conn, int $orderId, string $paymentMethod): float
@@ -2366,17 +2447,18 @@ class PosOrderMutationService
 
     private function resolveRefundableCashForOrder(mysqli $conn, int $orderId, float $paidAmount): float
     {
-        $netRecorded = $this->drawerSessionService->netCashRecordedForOrder($conn, $orderId);
-        if ($netRecorded > 0.0001) {
-            return min($netRecorded, max(0.0, $paidAmount));
+        $netRecorded = Money::fromLegacy($this->drawerSessionService->netCashRecordedForOrder($conn, $orderId));
+        $paid = Money::fromLegacy(max(0.0, $paidAmount));
+        if ($netRecorded->isPositive()) {
+            return (float) ($netRecorded->compare($paid) > 0 ? $paid->toString() : $netRecorded->toString());
         }
 
-        $fallback = $this->sumCashReceiptVouchersForOrder($conn, $orderId, $this->resolveFundAccountIds($conn));
-        if ($fallback <= 0.0001) {
+        $fallback = Money::fromLegacy($this->sumCashReceiptVouchersForOrder($conn, $orderId, $this->resolveFundAccountIds($conn)));
+        if (!$fallback->isPositive()) {
             return 0.0;
         }
 
-        return min($fallback, max(0.0, $paidAmount));
+        return (float) ($fallback->compare($paid) > 0 ? $paid->toString() : $fallback->toString());
     }
 
     private function resolveFundAccountIds(mysqli $conn): array
@@ -2830,7 +2912,7 @@ class PosOrderMutationService
             );
             $sourceLines[] = $oldContext;
 
-            if (!empty($splitLine['is_full']) || RecipeDecimal::compare($remainingRawQty, '0.000100') <= 0) {
+            if (!empty($splitLine['is_full']) || RecipeDecimal::compare($remainingRawQty, '0') <= 0) {
                 continue;
             }
 
@@ -3102,13 +3184,15 @@ class PosOrderMutationService
 
     private function applyPaidState(mysqli $conn, int $orderId, int $tableId, float $existingPaid, float $net): array
     {
-        $appliedPaid = min($existingPaid, $net);
-        $remaining = max(0, $net - $appliedPaid);
-        if ($appliedPaid <= 0) {
+        $paidMoney = Money::fromLegacy($existingPaid);
+        $netMoney = Money::fromLegacy($net);
+        $appliedPaid = $paidMoney->compare($netMoney) > 0 ? $netMoney : $paidMoney;
+        $remaining = $netMoney->subtract($appliedPaid);
+        if (!$appliedPaid->isPositive()) {
             $paymentStatus = 'unpaid';
             $invoiceStatus = 'draft';
             $orderStatus = 'active';
-        } elseif ($remaining <= 0.0001) {
+        } elseif (!$remaining->isPositive()) {
             $paymentStatus = 'paid';
             $invoiceStatus = 'completed';
             $orderStatus = 'completed';
@@ -3128,11 +3212,11 @@ class PosOrderMutationService
                 completed_at = CASE WHEN ? = 'completed' THEN NOW() ELSE completed_at END
             WHERE id = ?
               AND table_id = ?
-        ", [$appliedPaid, $remaining, $paymentStatus, $invoiceStatus, $orderStatus, $orderStatus, $orderId, $tableId]);
+        ", [$appliedPaid->toString(), $remaining->toString(), $paymentStatus, $invoiceStatus, $orderStatus, $orderStatus, $orderId, $tableId]);
 
         return [
-            'paid_amount' => $appliedPaid,
-            'remaining_amount' => $remaining,
+            'paid_amount' => (float) $appliedPaid->toString(),
+            'remaining_amount' => (float) $remaining->toString(),
             'payment_status' => $paymentStatus,
             'invoice_status' => $invoiceStatus,
             'order_status' => $orderStatus,
@@ -3675,13 +3759,14 @@ class PosOrderMutationService
         $incoming = $this->incomingItemQuantities($items);
         $reductions = [];
         foreach ($existing as $itemId => $existingQty) {
-            $newQty = $incoming[$itemId] ?? 0.0;
-            if ($newQty + 0.0001 < $existingQty) {
+            $newQty = DecimalQuantity::fromLegacy($incoming[$itemId] ?? 0)->toString();
+            $oldQty = DecimalQuantity::fromLegacy($existingQty)->toString();
+            if (FinancialDecimal::compare($newQty, $oldQty, DecimalQuantity::SCALE) < 0) {
                 $reductions[] = [
                     'item_id' => $itemId,
-                    'from_qty' => $existingQty,
-                    'to_qty' => $newQty,
-                    'removed_qty' => $existingQty - $newQty,
+                    'from_qty' => (float) $oldQty,
+                    'to_qty' => (float) $newQty,
+                    'removed_qty' => (float) FinancialDecimal::subtract($oldQty, $newQty, DecimalQuantity::SCALE),
                 ];
             }
         }

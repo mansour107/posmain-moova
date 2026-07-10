@@ -6,6 +6,9 @@ require_once __DIR__ . '/../Service/OrderPricingService.php';
 require_once __DIR__ . '/../Service/OrderMutationSideEffectsService.php';
 require_once __DIR__ . '/../Service/OrderAccountingService.php';
 require_once __DIR__ . '/../Service/DrawerSessionService.php';
+require_once __DIR__ . '/../Service/PaymentMethodService.php';
+require_once __DIR__ . '/../../../classes/Financial/Money.php';
+require_once __DIR__ . '/../../../classes/Financial/FinancialRefundService.php';
 require_once __DIR__ . '/../Validation/OrderInputValidator.php';
 require_once __DIR__ . '/../Validation/PaymentInputValidator.php';
 require_once __DIR__ . '/../Validation/TableInputValidator.php';
@@ -19,6 +22,32 @@ require_once __DIR__ . '/PosResponse.php';
 
 class PosOrderController
 {
+    public function refundOrder(mysqli $conn, array $data, array $server, int $userId): array
+    {
+        $idempotencyKey = trim((string) ($data['idempotency_key'] ?? $data['idempotencyKey'] ?? ''));
+        if ($idempotencyKey === '') {
+            $idempotencyKey = (new IdempotencyService())->resolveKey($data, $server);
+        }
+        $data['idempotency_key'] = $idempotencyKey;
+        $data['user_id'] = $userId;
+
+        $result = (new FinancialRefundService())->createPostedRefund($conn, $data, [
+            'user_id' => $userId,
+            'tenant' => 0,
+            'branch' => 0,
+        ]);
+
+        return [
+            'http_status' => !empty($result['replayed']) ? 200 : 201,
+            'payload' => [
+                'success' => true,
+                'code' => !empty($result['replayed']) ? 'REFUND_REPLAYED' : 'REFUND_POSTED',
+                'data' => $result,
+                'request_id' => $idempotencyKey,
+            ],
+        ];
+    }
+
     public function saveTable(mysqli $conn, array $data, array $server, int $userId, array $options = []): array
     {
         if (!$data) {
@@ -97,9 +126,10 @@ class PosOrderController
             'emp_id' => (int) ($data['emp_id'] ?? 0),
             'fund_id' => (int) ($data['fund_id'] ?? 0),
             'items' => $items,
-            'total' => (float) ($data['total'] ?? 0),
-            'discount' => (float) ($data['discount'] ?? 0),
-            'net' => (float) ($data['net'] ?? 0),
+            // Monetary API contracts stay decimal strings at the boundary.
+            'total' => (string) ($data['total'] ?? '0.00'),
+            'discount' => (string) ($data['discount'] ?? '0.00'),
+            'net' => (string) ($data['net'] ?? '0.00'),
             'user_id' => $userId,
             'pos_customer_id' => (int) ($data['pos_customer_id'] ?? $data['posCustomerId'] ?? 0) ?: null,
         ], ['user_id' => $userId, 'in_transaction' => true, 'event_source' => $eventSource]);
@@ -304,6 +334,7 @@ class PosOrderController
         $idempotencyKey = $idempotencyService->resolveKey($data, $server);
         $idempotencyHash = $idempotencyService->requestHashForPayload($data);
         $conn->begin_transaction();
+        try {
 
         $idempotency = $idempotencyService->begin($conn, PosOrderMutationService::SCOPE_TABLE_FREE, $idempotencyKey, $idempotencyHash, [
             'user_id' => $userId,
@@ -368,6 +399,10 @@ class PosOrderController
             'http_status' => 200,
             'payload' => $response,
         ];
+        } catch (Throwable $exception) {
+            $conn->rollback();
+            throw $exception;
+        }
     }
 
     public function payTable(mysqli $conn, array $data, array $server, int $userId): array
@@ -382,15 +417,16 @@ class PosOrderController
         $orderId = (int) ($paymentInput['order_id'] ?? 0);
         $discount = $paymentInput['discount'];
         $net = $paymentInput['net'];
-        $paid = (float) ($paymentInput['paid'] ?? 0);
+        $paid = Money::fromLegacy($paymentInput['paid'] ?? '0');
         $paymentMethod = (string) ($paymentInput['payment_method'] ?? 'cash');
-        $notes = (string) ($paymentInput['notes'] ?? '');
+        $referenceNo = (string) ($paymentInput['reference_no'] ?? $paymentInput['notes'] ?? '');
 
-        if ($tableId <= 0 || $paid <= 0) {
+        if ($tableId <= 0 || !$paid->isPositive()) {
             throw new InvalidArgumentException('بيانات غير صحيحة');
         }
 
         $tableOrderService = new TableOrderService();
+        $paymentMethodService = new PaymentMethodService();
         $posMutationService = new PosOrderMutationService();
         $accountingPostingService = new OrderAccountingService();
         $idempotencyService = new IdempotencyService();
@@ -432,6 +468,7 @@ class PosOrderController
         }
 
         $table = $tableOrderService->requireTable($conn, $tableId);
+        $tender = $paymentMethodService->resolveTender($conn, $paymentMethod, $referenceNo);
         $orderId = $this->resolveTableOrderIdForPayment(
             $conn,
             $data,
@@ -445,9 +482,10 @@ class PosOrderController
         $paymentEnvelope = $posMutationService->payTableOrder($conn, [
             'table_id' => $tableId,
             'order_id' => $orderId,
-            'paid' => $paid,
-            'payment_method' => $paymentMethod,
-            'notes' => $notes,
+            'paid' => $paid->toString(),
+            'payment_method_id' => $tender['id'],
+            'payment_method' => $tender['code'],
+            'reference_no' => $tender['reference_no'],
             'user_id' => $userId,
             'discount' => $discount,
             'net' => $net,
@@ -461,26 +499,24 @@ class PosOrderController
         }
 
         $receiptId = null;
-        $actualPaid = (float) ($paymentResult['applied_amount'] ?? 0);
-        if ($actualPaid > 0) {
+        $actualPaid = Money::from((string) ($paymentResult['applied_amount'] ?? '0'));
+        if ($actualPaid->isPositive()) {
             $date = date('Y-m-d');
-            $safeAcc = 51;
-            $safeRes = $conn->query("SELECT id FROM acc_head WHERE aname LIKE '%خزينة%' OR aname LIKE '%صندوق%' LIMIT 1");
-            if ($safeRes && $safeRes->num_rows > 0) {
-                $safeAcc = (int) $safeRes->fetch_assoc()['id'];
-            }
-
             $customerAcc = $tableOrderService->resolveDefaultCustomerId($conn, (int) ($order['acc2'] ?? 0));
             $empId = (int) ($order['emp_id'] ?? 0);
             $accountingResult = $accountingPostingService->postTablePaymentReceipt($conn, [
                 'order_id' => $orderId,
                 'table_name' => $table['tname'] ?? '',
-                'amount' => $actualPaid,
-                'safe_account_id' => $safeAcc,
+                'amount' => $actualPaid->toString(),
+                'safe_account_id' => (int) $tender['account_id'],
+                'payment_method_id' => (int) $tender['id'],
+                'payment_method_code' => (string) $tender['code'],
+                'reference_no' => $tender['reference_no'],
                 'customer_account_id' => $customerAcc,
                 'emp_id' => $empId,
                 'payment_date' => $date,
                 'user_id' => $userId,
+                'idempotency_key' => $idempotencyKey,
             ], ['user_id' => $userId, 'tenant' => 0, 'branch' => 0]);
             $receiptId = $accountingResult['receipt_id'] ?? null;
             $movementId = (int) ($paymentResult['drawer_movement_id'] ?? 0);

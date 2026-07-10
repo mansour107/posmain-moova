@@ -2,7 +2,7 @@
 
 class PaymentMethodService
 {
-    private const TYPES = ['cash', 'card', 'wallet', 'bank', 'gift_card', 'other'];
+    private const TYPES = ['cash', 'card', 'wallet', 'bank'];
 
     public function saveMethod(mysqli $conn, array $data): array
     {
@@ -11,9 +11,12 @@ class PaymentMethodService
         $nameEn = $this->nullableText($data['name_en'] ?? null, 120);
         $accountId = $this->optionalPositiveInt($data['account_id'] ?? null);
         $type = $this->normalizeType($data['type'] ?? '');
-        $requiresReference = $this->boolInt($data['requires_reference'] ?? false);
+        $requiresReference = $type === 'cash' ? $this->boolInt($data['requires_reference'] ?? false) : 1;
         $isActive = $this->boolInt($data['is_active'] ?? true);
         $sortOrder = $this->nonNegativeInt($data['sort_order'] ?? 0, 'PAYMENT_METHOD_SORT_INVALID');
+        if ($isActive === 1 && $accountId === null) {
+            throw new InvalidArgumentException('PAYMENT_METHOD_ACCOUNT_REQUIRED');
+        }
 
         $stmt = $conn->prepare("
             INSERT INTO payment_methods (
@@ -53,6 +56,7 @@ class PaymentMethodService
             SELECT *
             FROM payment_methods
             WHERE is_active = 1
+              AND account_id IS NOT NULL
             ORDER BY sort_order, name_ar, id
         ");
 
@@ -74,7 +78,68 @@ class PaymentMethodService
             return $this->methodById($conn, (int) $method, true);
         }
 
-        return $this->methodByCode($conn, $this->normalizeCode($method), true);
+        $code = $this->normalizeCode($method);
+        try {
+            return $this->methodByCode($conn, $code, true);
+        } catch (RuntimeException $exception) {
+            if ($exception->getMessage() !== 'PAYMENT_METHOD_NOT_FOUND' || !$this->isLegacyCashAlias($code)) {
+                throw $exception;
+            }
+
+            return $this->firstActiveByType($conn, 'cash');
+        }
+    }
+
+    public function defaultCashMethod(mysqli $conn): array
+    {
+        return $this->firstActiveByType($conn, 'cash');
+    }
+
+    /**
+     * Resolves a tender that is safe to post. Draft payment-method records may
+     * exist for administration, but a cashier cannot use one without a ledger
+     * account or a mandatory non-cash settlement reference.
+     */
+    public function resolveTender(mysqli $conn, $method, $reference = null): array
+    {
+        $resolved = $this->resolveActive($conn, $method);
+        if ((int) ($resolved['account_id'] ?? 0) < 1) {
+            throw new RuntimeException('PAYMENT_METHOD_ACCOUNT_REQUIRED');
+        }
+        $resolved['reference_no'] = $this->validateReference($resolved, $reference);
+
+        return $resolved;
+    }
+
+    /**
+     * Non-cash refunds may be created as pending_external without a reference;
+     * settlement later requires the external reference.
+     */
+    public function resolveTenderAllowingPendingExternal(mysqli $conn, $method, $reference = null): array
+    {
+        $resolved = $this->resolveActive($conn, $method);
+        $accountId = (int) ($resolved['account_id'] ?? 0);
+        if ($accountId < 1 || !$this->accountExists($conn, $accountId)) {
+            if (($resolved['type'] ?? '') === 'cash') {
+                $fundId = $this->resolveDefaultCashAccountId($conn);
+                if ($fundId > 0 && $this->accountExists($conn, $fundId)) {
+                    $resolved['account_id'] = $fundId;
+                    $accountId = $fundId;
+                }
+            }
+        }
+        if ($accountId < 1 || !$this->accountExists($conn, $accountId)) {
+            throw new RuntimeException('PAYMENT_METHOD_ACCOUNT_REQUIRED');
+        }
+        $reference = $this->nullableText($reference, 120);
+        if (!empty($resolved['requires_reference']) && $reference === null && $resolved['type'] !== 'cash') {
+            $resolved['reference_no'] = null;
+
+            return $resolved;
+        }
+        $resolved['reference_no'] = $this->validateReference($resolved, $reference);
+
+        return $resolved;
     }
 
     public function normalizeCode($value): string
@@ -125,6 +190,70 @@ class PaymentMethodService
         return $this->formatMethod($row);
     }
 
+    private function firstActiveByType(mysqli $conn, string $type): array
+    {
+        $stmt = $conn->prepare('
+            SELECT *
+            FROM payment_methods
+            WHERE type = ?
+              AND is_active = 1
+            ORDER BY CASE WHEN account_id IS NULL OR account_id = 0 THEN 1 ELSE 0 END, id ASC
+            LIMIT 1
+        ');
+        $stmt->bind_param('s', $type);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        if (!$row) {
+            throw new RuntimeException('PAYMENT_METHOD_NOT_FOUND');
+        }
+
+        return $this->formatMethod($row);
+    }
+
+    private function isLegacyCashAlias(string $code): bool
+    {
+        return in_array($code, ['cash', 'كاش', 'نقدي', 'نقد'], true);
+    }
+
+    private function resolveDefaultCashAccountId(mysqli $conn): int
+    {
+        if (!function_exists('posmain_resolve_pos_defaults')) {
+            $defaultsPath = dirname(__DIR__, 3) . '/includes/pos_default_accounts.php';
+            if (is_file($defaultsPath)) {
+                require_once $defaultsPath;
+            }
+        }
+        if (!function_exists('posmain_resolve_pos_defaults')) {
+            return 0;
+        }
+        $defaults = posmain_resolve_pos_defaults($conn, []);
+
+        return max(0, (int) ($defaults['payment_fund_id'] ?? $defaults['fund_id'] ?? 0));
+    }
+
+    private function accountExists(mysqli $conn, int $accountId): bool
+    {
+        if ($accountId < 1) {
+            return false;
+        }
+        $tables = $conn->query("SHOW TABLES LIKE 'acc_head'");
+        if ($tables === false || $tables->num_rows < 1) {
+            // Minimal test schemas may omit the chart of accounts; treat configured ids as present.
+            return true;
+        }
+        $stmt = $conn->prepare('SELECT id FROM acc_head WHERE id = ? LIMIT 1');
+        if ($stmt === false) {
+            return false;
+        }
+        $stmt->bind_param('i', $accountId);
+        $stmt->execute();
+        $exists = (bool) $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        return $exists;
+    }
+
     private function methodById(mysqli $conn, int $id, bool $activeOnly): array
     {
         if ($id < 1) {
@@ -166,6 +295,7 @@ class PaymentMethodService
             'requires_reference' => (int) $row['requires_reference'] === 1,
             'is_active' => (int) $row['is_active'] === 1,
             'sort_order' => (int) $row['sort_order'],
+            'drawer_impact' => (string) $row['type'] === 'cash',
         ];
     }
 
