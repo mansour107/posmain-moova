@@ -3,6 +3,15 @@
  * نظام نقاط البيع بالباركود
  */
 
+// Prevent mouse-wheel from accidentally changing focused number fields (amounts, qty, etc.).
+document.addEventListener('wheel', function (event) {
+    var target = event.target;
+    if (!target || target.type !== 'number') {
+        return;
+    }
+    event.preventDefault();
+}, { passive: false, capture: true });
+
 function posmainCanRecipeStockOverride() {
     if (window.POSMAIN && typeof window.POSMAIN.can === 'function') {
         return window.POSMAIN.can('pos.recipe_stock_override') === true;
@@ -242,153 +251,40 @@ window.POSMAIN.restoreParkedCartForActingUser = function (actingUserId) {
     return true;
 };
 
+/**
+ * Shared PIN modal — exact first-login PosmainPinPad (4 digits, auto-submit).
+ * Default: resolves with the PIN string after 4 digits (or Enter).
+ * Pass options.onSubmit(pin) to validate inside the pad (return {ok:false,code} or {ok:true,close:true,...}).
+ */
 window.POSMAIN.showPinPadModal = function (options) {
     options = options || {};
     const deferred = $.Deferred();
-    const title = options.title || 'اعتماد مدير';
-    const message = options.message || 'أدخل رمز PIN للمدير';
-    const maxLen = 6;
 
-    $('#posPinPadModal').remove();
-
-    const $overlay = $(
-        '<div id="posPinPadModal" class="pos-pin-pad-modal" dir="rtl" role="dialog" aria-modal="true" aria-labelledby="posPinPadTitle">' +
-            '<div class="pos-pin-pad-backdrop"></div>' +
-            '<div class="pos-pin-pad-card">' +
-                '<div class="pos-pin-pad-title" id="posPinPadTitle"></div>' +
-                '<p class="pos-pin-pad-message"></p>' +
-                '<div class="pos-pin-pad-error hidden" id="posPinPadError"></div>' +
-                '<div class="pos-pin-pad-dots" id="posPinPadDots" dir="ltr" aria-hidden="true">' +
-                    '<span class="pos-pin-pad-dot"></span>'.repeat(6) +
-                '</div>' +
-                '<div class="pos-pin-pad-grid" id="posPinPadGrid"></div>' +
-                '<button type="button" class="pos-pin-pad-cancel" data-pin-cancel>إلغاء</button>' +
-            '</div>' +
-        '</div>'
-    );
-
-    $overlay.find('.pos-pin-pad-title').text(title);
-    $overlay.find('.pos-pin-pad-message').text(message);
-
-    const keys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', 'مسح', '0', 'دخول'];
-    const $grid = $overlay.find('#posPinPadGrid');
-    keys.forEach(function (key) {
-        let cls = 'pos-pin-pad-key';
-        if (key === 'مسح') {
-            cls += ' action';
-        } else if (key === 'دخول') {
-            cls += ' enter';
-        }
-        $grid.append(
-            $('<button type="button"></button>')
-                .addClass(cls)
-                .attr('data-key', key)
-                .text(key)
-        );
-    });
-
-    $('body').append($overlay);
-
-    let buffer = '';
-    const $dots = $overlay.find('.pos-pin-pad-dot');
-    const $error = $overlay.find('#posPinPadError');
-
-    function renderDots() {
-        $dots.each(function (i) {
-            $(this).toggleClass('filled', i < buffer.length);
-        });
+    if (!window.PosmainPinPad || typeof window.PosmainPinPad.openModal !== 'function') {
+        deferred.reject({ code: 'PIN_PAD_UNAVAILABLE' });
+        return deferred.promise();
     }
 
-    function showError(msg) {
-        $error.text(msg).removeClass('hidden');
-    }
-
-    if (options.initialError) {
-        showError(String(options.initialError));
-    }
-
-    function closeModal() {
-        $(document).off('keydown.posPinPad');
-        $overlay.remove();
-    }
-
-    function submitPin() {
-        if (buffer.length < 4) {
-            showError('الرمز قصير جداً');
-            return;
-        }
-        const pin = buffer;
-        closeModal();
-        deferred.resolve(pin);
-    }
-
-    $overlay.find('[data-pin-cancel]').on('click', function () {
-        closeModal();
-        deferred.reject({ code: 'OVERRIDE_CANCELLED' });
-    });
-
-    $overlay.find('.pos-pin-pad-backdrop').on('click', function () {
-        closeModal();
-        deferred.reject({ code: 'OVERRIDE_CANCELLED' });
-    });
-
-    $grid.on('click', '[data-key]', function () {
-        const key = $(this).attr('data-key');
-        if (key === 'مسح') {
-            buffer = buffer.slice(0, -1);
-            renderDots();
-            $error.addClass('hidden');
-            return;
-        }
-        if (key === 'دخول') {
-            submitPin();
-            return;
-        }
-        if (buffer.length >= maxLen) {
-            return;
-        }
-        buffer += key;
-        renderDots();
-        $error.addClass('hidden');
-    });
-
-    function digitFromKeyboardEvent(e) {
-        if (e.key >= '0' && e.key <= '9') {
-            return e.key;
-        }
-        if (e.code && /^Numpad[0-9]$/.test(e.code)) {
-            return e.code.slice(-1);
-        }
-        if (e.code && /^Digit[0-9]$/.test(e.code)) {
-            return e.code.slice(-1);
-        }
-        return null;
-    }
-
-    $(document).on('keydown.posPinPad', function (e) {
-        if (e.key === 'Escape') {
-            closeModal();
+    window.PosmainPinPad.openModal({
+        title: options.title || 'تأكيد الهوية',
+        subtitle: options.message || options.subtitle || 'أدخل رمزك المكوّن من 4 أرقام',
+        roleHint: options.roleHint || '',
+        initialError: options.initialError || '',
+        autoSubmit: options.autoSubmit !== false,
+        onCancel: function () {
             deferred.reject({ code: 'OVERRIDE_CANCELLED' });
-            return;
-        }
-        const digit = digitFromKeyboardEvent(e);
-        if (digit && buffer.length < maxLen) {
-            e.preventDefault();
-            buffer += digit;
-            renderDots();
-            $error.addClass('hidden');
-            return;
-        }
-        if (e.key === 'Backspace' || e.key === 'Delete') {
-            e.preventDefault();
-            buffer = buffer.slice(0, -1);
-            renderDots();
-            $error.addClass('hidden');
-            return;
-        }
-        if (e.key === 'Enter') {
-            e.preventDefault();
-            submitPin();
+        },
+        onSubmit: function (pin) {
+            if (typeof options.onSubmit === 'function') {
+                return Promise.resolve(options.onSubmit(pin)).then(function (res) {
+                    if (res && res.ok !== false && res.close) {
+                        deferred.resolve(res.pin != null ? res.pin : res);
+                    }
+                    return res;
+                });
+            }
+            deferred.resolve(pin);
+            return { ok: true, close: true, pin: pin };
         }
     });
 
@@ -402,7 +298,15 @@ window.POSMAIN.overrideErrorMessage = function (err) {
     } else if (err) {
         code = String(err).trim();
     }
+    if (window.PosmainPinPad && typeof window.PosmainPinPad.mapError === 'function') {
+        const mapped = window.PosmainPinPad.mapError(code);
+        if (mapped && mapped !== 'تعذر إتمام العملية') {
+            return mapped;
+        }
+    }
     switch (code) {
+        case 'MANAGER_PIN_MISMATCH':
+            return 'يجب إدخال رمزك أنت لتأكيد العملية.';
         case 'MANAGER_PIN_INVALID':
         case 'PIN_INVALID':
         case 'PIN_BLACKLISTED':
@@ -470,6 +374,9 @@ window.POSMAIN.requestManagerOverride = function (permissionKey, options) {
         if (options.limit_permission_key) {
             postData.limit_permission_key = options.limit_permission_key;
         }
+        if (options.require_same_user) {
+            postData.require_same_user = '1';
+        }
         return $.ajax({
             url: 'ajax/pos_override_auth.php',
             method: 'POST',
@@ -479,45 +386,59 @@ window.POSMAIN.requestManagerOverride = function (permissionKey, options) {
         });
     }
 
-    function promptOverridePin(lastError) {
-        if (typeof window.POSMAIN.showPinPadModal !== 'function') {
-            const pin = window.prompt(options.message || 'رمز PIN للمدير');
-            if (!pin) {
-                deferred.reject({ code: 'OVERRIDE_CANCELLED' });
-                return;
-            }
-            submitOverridePin(pin).done(function (response) {
-                if (response && response.success && response.approval_id) {
-                    deferred.resolve(response);
-                } else {
-                    deferred.reject(response || { code: 'OVERRIDE_FAILED' });
-                }
-            }).fail(function (xhr) {
-                deferred.reject((xhr.responseJSON) || { code: 'OVERRIDE_FAILED' });
-            });
-            return;
-        }
-
-        window.POSMAIN.showPinPadModal({
-            title: '🔒 اعتماد مدير',
-            message: options.message || 'أدخل رمز PIN للمدير',
-            initialError: lastError || '',
-        }).done(function (pin) {
-            submitOverridePin(pin).done(function (response) {
-                if (response && response.success && response.approval_id) {
-                    deferred.resolve(response);
-                    return;
-                }
-                promptOverridePin(window.POSMAIN.overrideErrorMessage(response || { code: 'OVERRIDE_FAILED' }));
-            }).fail(function (xhr) {
-                promptOverridePin(window.POSMAIN.overrideErrorMessage(posmainParseOverrideAjaxError(xhr)));
-            });
-        }).fail(function () {
+    if (!window.PosmainPinPad || typeof window.PosmainPinPad.openModal !== 'function') {
+        const pin = window.prompt(options.message || 'رمز PIN للمدير');
+        if (!pin) {
             deferred.reject({ code: 'OVERRIDE_CANCELLED' });
+            return deferred.promise();
+        }
+        submitOverridePin(pin).done(function (response) {
+            if (response && response.success && response.approval_id) {
+                deferred.resolve(response);
+            } else {
+                deferred.reject(response || { code: 'OVERRIDE_FAILED' });
+            }
+        }).fail(function (xhr) {
+            deferred.reject((xhr.responseJSON) || { code: 'OVERRIDE_FAILED' });
         });
+        return deferred.promise();
     }
 
-    promptOverridePin('');
+    window.PosmainPinPad.openModal({
+        title: options.title || 'تأكيد الهوية',
+        subtitle: options.message || 'أدخل رمزك المكوّن من 4 أرقام',
+        roleHint: (typeof window.POSMAIN.formatApproverRoleHint === 'function')
+            ? window.POSMAIN.formatApproverRoleHint(permissionKey, options)
+            : (options.roleHint || ''),
+        initialError: options.initialError || '',
+        autoSubmit: true,
+        onCancel: function () {
+            deferred.reject({ code: 'OVERRIDE_CANCELLED' });
+        },
+        onSubmit: function (pin) {
+            return new Promise(function (resolve) {
+                submitOverridePin(pin).done(function (response) {
+                    if (response && response.success && response.approval_id) {
+                        deferred.resolve(response);
+                        resolve({ ok: true, close: true, approval_id: response.approval_id });
+                        return;
+                    }
+                    resolve({
+                        ok: false,
+                        code: (response && (response.code || response.error)) || 'MANAGER_PIN_INVALID',
+                        retry_after: response && (response.retry_after || response.cooldown_seconds),
+                    });
+                }).fail(function (xhr) {
+                    const payload = posmainParseOverrideAjaxError(xhr);
+                    resolve({
+                        ok: false,
+                        code: (payload && (payload.code || payload.error)) || 'OVERRIDE_FAILED',
+                        retry_after: payload && (payload.retry_after || payload.cooldown_seconds),
+                    });
+                });
+            });
+        }
+    });
 
     return deferred.promise();
 };
@@ -1119,29 +1040,70 @@ $(document).ready(function() {
         return 'هذا الصنف غير متاح حالياً.';
     }
 
+    function dismissAvailabilityWarnToast() {
+        const existing = document.getElementById('posAvailabilityWarnToast');
+        if (!existing) {
+            return;
+        }
+        if (existing._posToastTimer) {
+            window.clearTimeout(existing._posToastTimer);
+        }
+        existing.classList.remove('is-visible');
+        window.setTimeout(function() {
+            if (existing.parentNode) {
+                existing.parentNode.removeChild(existing);
+            }
+        }, 180);
+    }
+
     function showAvailabilityWarnToast(context, itemName) {
         const lowStock = context.status === 'recipe_low';
         const message = lowStock
             ? 'هذا الصنف على وشك النفاد (متبقي ' + (context.recipeQty || '0') + ').'
             : (context.reason || 'مخزون المكونات غير كافٍ — سيُسمح بالبيع مع تحذير.');
         const title = lowStock ? 'تنبيه: نفاد قريب' : 'تنبيه: مخزون غير كافٍ';
+        const safeName = String(itemName || '').trim();
 
-        if (window.Swal && typeof Swal.fire === 'function' && typeof Swal.mixin === 'function') {
-            const toast = Swal.mixin({
-                toast: true,
-                position: 'top-end',
-                showConfirmButton: false,
-                timer: 3500,
-                timerProgressBar: true
-            });
-            toast.fire({ icon: 'warning', title: title + ' — ' + itemName, text: message });
-            return;
+        dismissAvailabilityWarnToast();
+
+        const toast = document.createElement('div');
+        toast.id = 'posAvailabilityWarnToast';
+        toast.className = 'pos-availability-toast';
+        toast.setAttribute('role', 'status');
+        toast.setAttribute('aria-live', 'polite');
+        toast.innerHTML =
+            '<div class="pos-availability-toast__icon" aria-hidden="true">' +
+                '<i class="fas fa-exclamation-triangle"></i>' +
+            '</div>' +
+            '<div class="pos-availability-toast__body">' +
+                '<div class="pos-availability-toast__title"></div>' +
+                (safeName ? '<div class="pos-availability-toast__item"></div>' : '') +
+                '<div class="pos-availability-toast__message"></div>' +
+            '</div>' +
+            '<button type="button" class="pos-availability-toast__close" aria-label="إغلاق">' +
+                '<i class="fas fa-times" aria-hidden="true"></i>' +
+            '</button>';
+
+        toast.querySelector('.pos-availability-toast__title').textContent = title;
+        if (safeName) {
+            toast.querySelector('.pos-availability-toast__item').textContent = safeName;
         }
+        toast.querySelector('.pos-availability-toast__message').textContent = message;
+        toast.querySelector('.pos-availability-toast__close').addEventListener('click', function(event) {
+            event.preventDefault();
+            event.stopPropagation();
+            dismissAvailabilityWarnToast();
+        });
 
-        // Non-blocking fallback: avoid alert() so the sale flow is not interrupted.
+        document.body.appendChild(toast);
+        window.requestAnimationFrame(function() {
+            toast.classList.add('is-visible');
+        });
+        toast._posToastTimer = window.setTimeout(dismissAvailabilityWarnToast, 4500);
+
         try {
             if (window.console && console.warn) {
-                console.warn('[posmain][availability]', title, itemName, message);
+                console.warn('[posmain][availability]', title, safeName, message);
             }
         } catch (e) { /* ignore */ }
     }
@@ -1385,21 +1347,237 @@ $(document).ready(function() {
         return {};
     }
 
-    function posmainActivateTableOrderMode($tab) {
-        const targetId = 'age2';
+    function posModeLabel(modeValue) {
+        const mode = String(modeValue || '');
+        if (mode === '2') {
+            return 'طاولة';
+        }
+        if (mode === '3') {
+            return 'دليفري';
+        }
+        return 'تيك اواي';
+    }
+
+    function getPosCartItemCount() {
+        return $('#itemData .item-card-order').length;
+    }
+
+    function hasActiveSavedOrderContext() {
+        const editId = parseInt($('#edit_order_id').val() || '0', 10) || 0;
+        const selectedId = parseInt($('#selected_order_id').val() || '0', 10) || 0;
+        return editId > 0 || selectedId > 0;
+    }
+
+    function ageValueFromTargetId(targetId) {
+        if (targetId === 'age2') {
+            return '2';
+        }
+        if (targetId === 'age3') {
+            return '3';
+        }
+        return '1';
+    }
+
+    function flashPosCartTransfer() {
+        const panel = document.getElementById('itemData');
+        if (!panel) {
+            return;
+        }
+        panel.classList.remove('pos-cart-transfer-flash');
+        // Force reflow so the animation can replay on rapid switches.
+        void panel.offsetWidth;
+        panel.classList.add('pos-cart-transfer-flash');
+        window.setTimeout(function() {
+            panel.classList.remove('pos-cart-transfer-flash');
+        }, 700);
+    }
+
+    function dismissModeTransferToast() {
+        const existing = document.querySelector('.pos-mode-transfer-toast');
+        if (!existing) {
+            return;
+        }
+        existing.classList.remove('is-visible');
+        window.setTimeout(function() {
+            if (existing.parentNode) {
+                existing.parentNode.removeChild(existing);
+            }
+        }, 220);
+    }
+
+    function showModeTransferToast(itemCount, targetMode) {
+        dismissModeTransferToast();
+        const count = Math.max(0, parseInt(itemCount, 10) || 0);
+        if (count <= 0) {
+            return;
+        }
+
+        const toast = document.createElement('div');
+        toast.className = 'pos-mode-transfer-toast';
+        toast.setAttribute('role', 'status');
+        toast.innerHTML =
+            '<div class="pos-mode-transfer-toast__icon" aria-hidden="true"><i class="fas fa-exchange-alt"></i></div>' +
+            '<div class="pos-mode-transfer-toast__body">' +
+                '<div class="pos-mode-transfer-toast__title">تم نقل الأصناف</div>' +
+                '<div class="pos-mode-transfer-toast__message"></div>' +
+            '</div>' +
+            '<button type="button" class="pos-mode-transfer-toast__close" aria-label="إغلاق">' +
+                '<i class="fas fa-times"></i>' +
+            '</button>';
+
+        const message = 'نُقلت ' + count + ' ' + (count === 1 ? 'صنف' : 'أصناف') +
+            ' إلى ' + posModeLabel(targetMode);
+        toast.querySelector('.pos-mode-transfer-toast__message').textContent = message;
+        toast.querySelector('.pos-mode-transfer-toast__close').addEventListener('click', function(event) {
+            event.preventDefault();
+            dismissModeTransferToast();
+        });
+
+        document.body.appendChild(toast);
+        window.requestAnimationFrame(function() {
+            toast.classList.add('is-visible');
+        });
+        window.setTimeout(dismissModeTransferToast, 2800);
+        flashPosCartTransfer();
+    }
+
+    function confirmModeSwitchWithSavedOrder(targetMode, itemCount) {
+        const targetLabel = posModeLabel(targetMode);
+        const count = Math.max(1, parseInt(itemCount, 10) || 1);
+        const title = 'نقل الأصناف؟';
+        const text = 'لديك ' + count + ' ' + (count === 1 ? 'صنف' : 'أصناف') +
+            ' على طلب محفوظ. نقلها إلى «' + targetLabel +
+            '» يبدأ طلباً جديداً هناك، والطلب الأصلي يبقى كما هو.';
+
+        if (window.Swal && typeof window.Swal.fire === 'function') {
+            // POS ships SweetAlert2 v11 (didOpen + showDenyButton). Keep a v8 fallback.
+            const supportsDeny = typeof Swal.isValidParameter !== 'function'
+                || Swal.isValidParameter('showDenyButton');
+            const openHook = (typeof Swal.isValidParameter === 'function' && Swal.isValidParameter('didOpen'))
+                ? 'didOpen'
+                : 'onOpen';
+
+            const options = posmainSwalPremiumOptions({
+                icon: 'question',
+                type: 'question',
+                title: title,
+                text: text,
+                showCancelButton: true,
+                confirmButtonText: 'نقل الأصناف',
+                cancelButtonText: 'إلغاء',
+                reverseButtons: true,
+                focusConfirm: true,
+            });
+
+            if (supportsDeny) {
+                options.showDenyButton = true;
+                options.denyButtonText = 'بدء طلب جديد بدون نقل';
+                options.customClass = Object.assign({}, options.customClass || {}, {
+                    denyButton: 'pos-swal-premium__deny',
+                });
+            } else {
+                options.html = '<p class="pos-mode-transfer-swal__text">' + text + '</p>' +
+                    '<button type="button" class="pos-mode-transfer-swal__discard" data-pos-mode-discard="1">بدء طلب جديد بدون نقل</button>';
+                delete options.text;
+                let discarded = false;
+                options[openHook] = function(popup) {
+                    const root = popup && popup.querySelector ? popup : document;
+                    const discardBtn = root.querySelector('[data-pos-mode-discard]');
+                    if (!discardBtn) {
+                        return;
+                    }
+                    discardBtn.addEventListener('click', function(event) {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        discarded = true;
+                        if (typeof Swal.close === 'function') {
+                            Swal.close({ value: 'discard' });
+                        }
+                    });
+                };
+                options.__posDiscardFlag = function() { return discarded; };
+            }
+
+            return Swal.fire(options).then(function(result) {
+                if (options.__posDiscardFlag && options.__posDiscardFlag()) {
+                    return 'discard';
+                }
+                if (result && (result.isDenied || result.value === 'discard')) {
+                    return 'discard';
+                }
+                if (result && (result.isConfirmed || result.value === true || result.value === 'transfer')) {
+                    return 'transfer';
+                }
+                return 'cancel';
+            });
+        }
+
+        if (window.confirm(text + '\n\nموافق = نقل الأصناف')) {
+            return Promise.resolve('transfer');
+        }
+        return Promise.resolve('cancel');
+    }
+
+    function openTablesModalForModeSwitch() {
+        const tablesModal = document.getElementById('tablesModal');
+        if (tablesModal) {
+            bootstrap.Modal.getOrCreateInstance(tablesModal).show();
+        }
+    }
+
+    function activatePosOrderMode(targetId, $tab) {
         const $target = $('#' + targetId);
         if (!$target.length) {
             return;
         }
         $target.prop('checked', true).trigger('change');
-        const tablesModal = document.getElementById('tablesModal');
-        if (tablesModal) {
-            bootstrap.Modal.getOrCreateInstance(tablesModal).show();
+        if (targetId === 'age2') {
+            openTablesModalForModeSwitch();
         }
         if ($tab && $tab.length) {
             $('.pos-mode-tab').toggleClass('active', false);
             $tab.toggleClass('active', true);
         }
+    }
+
+    function posmainActivateTableOrderMode($tab) {
+        activatePosOrderMode('age2', $tab);
+    }
+
+    function requestPosOrderModeSwitch(targetId, $tab) {
+        const targetVal = ageValueFromTargetId(targetId);
+        const currentVal = String($('input[name="age"]:checked').val() || '1');
+        const itemCount = getPosCartItemCount();
+
+        const runSwitch = function(keepCart) {
+            window.__posModeSwitchKeepCart = !!keepCart;
+            activatePosOrderMode(targetId, $tab);
+        };
+
+        if (targetVal === currentVal) {
+            if (targetId === 'age2') {
+                openTablesModalForModeSwitch();
+            }
+            return;
+        }
+
+        if (itemCount <= 0) {
+            runSwitch(false);
+            return;
+        }
+
+        if (hasActiveSavedOrderContext()) {
+            confirmModeSwitchWithSavedOrder(targetVal, itemCount).then(function(action) {
+                if (action === 'cancel') {
+                    return;
+                }
+                runSwitch(action === 'transfer');
+            });
+            return;
+        }
+
+        // Unsaved draft: transfer items automatically for a smooth cashier flow.
+        runSwitch(true);
     }
 
     function syncTableModeAvailability() {
@@ -1413,6 +1591,7 @@ $(document).ready(function() {
         }
 
         if (!canTable && String($('input[name="age"]:checked').val() || '') === '2') {
+            window.__posModeSwitchKeepCart = getPosCartItemCount() > 0;
             $('#age1').prop('checked', true).trigger('change');
         }
     }
@@ -1446,21 +1625,11 @@ $(document).ready(function() {
                 if (approval && approval.approval_id) {
                     window.POSMAIN_TABLE_OPEN_OVERRIDE = approval;
                 }
-                posmainActivateTableOrderMode($tab);
+                requestPosOrderModeSwitch('age2', $tab);
             });
             return;
         }
-        const $target = $('#' + targetId);
-        if (!$target.length) {
-            return;
-        }
-        $target.prop('checked', true).trigger('change');
-        if (targetId === 'age2') {
-            const tablesModal = document.getElementById('tablesModal');
-            if (tablesModal) {
-                bootstrap.Modal.getOrCreateInstance(tablesModal).show();
-            }
-        }
+        requestPosOrderModeSwitch(targetId, $tab);
     });
     syncModeTabs();
     syncPaymentFundOptions();
@@ -2697,6 +2866,39 @@ $(document).ready(function() {
         resetPosOrderScreenCore({});
     }
 
+    function preparePosOrderContextForModeSwitch(options) {
+        options = options || {};
+        const keepCart = options.keepCart === true;
+        const itemCountBefore = getPosCartItemCount();
+
+        if (!keepCart || itemCountBefore <= 0) {
+            resetPosOrderScreenCore({});
+            return { kept: false, itemCount: 0 };
+        }
+
+        // Keep cart lines + discounts; detach order identity so the draft becomes a new order
+        // in the destination mode (saved source order stays untouched).
+        if (window.POSOrderApi && typeof window.POSOrderApi.clearCashierEditState === 'function') {
+            window.POSOrderApi.clearCashierEditState();
+        } else {
+            $('#edit_order_id').val('');
+            $('#selected_order_id').val('');
+        }
+
+        if (window.history && typeof window.history.replaceState === 'function') {
+            const params = new URLSearchParams(window.location.search);
+            params.delete('edit');
+            params.delete('table');
+            const qs = params.toString();
+            window.history.replaceState({}, '', window.location.pathname + (qs ? '?' + qs : ''));
+        }
+
+        touchOrderDraft();
+        updateTransferTableButton();
+        updatePayOrderButtonState();
+        return { kept: true, itemCount: itemCountBefore };
+    }
+
     function resetPosOrderScreenCore(options) {
         options = options || {};
         $('#itemData').empty();
@@ -2749,12 +2951,28 @@ $(document).ready(function() {
 
     let lastAgeMode = String($('input[name="age"]:checked').val() || '1');
 
-    // مسح الطاولة عند التبديل لتيك أواي أو دليفري
+    // تبديل نوع الطلب: انقل الأصناف تلقائياً بدل مسحها بصمت
     $('input[name="age"]').on('change', function() {
         const val = String($(this).val() || '');
         const prevVal = lastAgeMode;
         if (prevVal !== val) {
-            clearPosOrderContextForModeSwitch();
+            let keepCart = getPosCartItemCount() > 0;
+            if (typeof window.__posModeSwitchKeepCart === 'boolean') {
+                keepCart = window.__posModeSwitchKeepCart && getPosCartItemCount() > 0;
+                delete window.__posModeSwitchKeepCart;
+            }
+
+            const silent = window.__posModeSwitchSilent === true;
+            if (silent) {
+                delete window.__posModeSwitchSilent;
+            }
+
+            const transfer = preparePosOrderContextForModeSwitch({ keepCart: keepCart });
+            if (transfer.kept && !silent) {
+                showModeTransferToast(transfer.itemCount, val);
+            } else if (transfer.kept && silent) {
+                flashPosCartTransfer();
+            }
             lastAgeMode = val;
         }
         syncModeTabs();
@@ -2776,6 +2994,39 @@ $(document).ready(function() {
         }
     });
 
+    function bindEmptyTableToCurrentCart(tableName) {
+        $('#selected_order_id').val('');
+        $('#edit_order_id').val('');
+        if (window.POSOrderApi && typeof window.POSOrderApi.clearCashierEditState === 'function') {
+            window.POSOrderApi.clearCashierEditState();
+        }
+
+        const hasItems = getPosCartItemCount() > 0;
+        if (!hasItems) {
+            $('#itemData').empty();
+            updateItemCount();
+            updateTotal();
+            if (window.POSOrderDraft && typeof window.POSOrderDraft.reset === 'function') {
+                window.POSOrderDraft.reset();
+            }
+        } else {
+            touchOrderDraft();
+            flashPosCartTransfer();
+        }
+
+        updateTransferTableButton();
+        updatePayOrderButtonState();
+        console.log(hasItems
+            ? ('طاولة فاضية مع أصناف منقولة: ' + tableName)
+            : ('طاولة فاضية: ' + tableName + ' - طلب جديد'));
+    }
+
+    function openOccupiedTableOrder(orderId, tableName) {
+        $('#selected_order_id').val(orderId);
+        updateTransferTableButton();
+        loadExistingOrder(orderId, tableName);
+    }
+
     $(document).on('click', '.table-select-btn', function() {
         if (tableTransferMode) {
             handleTableTransferDestination($(this));
@@ -2786,38 +3037,41 @@ $(document).ready(function() {
         const tableName = $(this).data('table-name');
         const tableCase = $(this).data('table-case');
         const orderId = $(this).data('order-id');
+        const pendingCount = getPosCartItemCount();
 
-        $('#selected_table_id').val(tableId);
-        $('#selected_table_name').val(tableName);
-        $('#selected_table_case').val(tableCase ? '1' : '0');
-        $('#selected_table_display').html('<i class="fas fa-chair me-1"></i>' + tableName);
-        $('#age2').prop('checked', true);
-        syncModeTabs();
-
-        $('#tablesModal').modal('hide');
+        const applyTableSelection = function() {
+            $('#selected_table_id').val(tableId);
+            $('#selected_table_name').val(tableName);
+            $('#selected_table_case').val(tableCase ? '1' : '0');
+            $('#selected_table_display').html('<i class="fas fa-chair me-1"></i>' + tableName);
+            $('#age2').prop('checked', true);
+            lastAgeMode = '2';
+            syncModeTabs();
+            $('#tablesModal').modal('hide');
+        };
 
         if (tableCase != 0 && orderId) {
-            // طاولة فيها طلب - حمل الطلب واضيف عليه
-            $('#selected_order_id').val(orderId);
-            updateTransferTableButton();
-            loadExistingOrder(orderId, tableName);
-        } else {
-            // طاولة فاضية - طلب جديد
-            $('#selected_order_id').val('');
-            $('#edit_order_id').val('');
-            if (window.POSOrderApi && typeof window.POSOrderApi.clearCashierEditState === 'function') {
-                window.POSOrderApi.clearCashierEditState();
+            if (pendingCount > 0) {
+                confirmPOSAction(
+                    'طاولة عليها طلب',
+                    'هذه الطاولة عليها طلب محفوظ. فتحها يستبدل الأصناف الحالية (' + pendingCount + ').',
+                    'فتح طلب الطاولة'
+                ).then(function(confirmed) {
+                    if (!confirmed) {
+                        return;
+                    }
+                    applyTableSelection();
+                    openOccupiedTableOrder(orderId, tableName);
+                });
+                return;
             }
-            $('#itemData').empty();
-            updateItemCount();
-            updateTotal();
-            if (window.POSOrderDraft && typeof window.POSOrderDraft.reset === 'function') {
-                window.POSOrderDraft.reset();
-            }
-            updateTransferTableButton();
-            updatePayOrderButtonState();
-            console.log('طاولة فاضية: ' + tableName + ' - طلب جديد');
+            applyTableSelection();
+            openOccupiedTableOrder(orderId, tableName);
+            return;
         }
+
+        applyTableSelection();
+        bindEmptyTableToCurrentCart(tableName);
     });
 
     window.selectNoTable = function() {
@@ -4173,14 +4427,19 @@ function submitPaidOrderReversal(approvalId) {
     function handleApprovalRequired() {
         paidReversalState.submitting = false;
         $('#paidReversalSubmitBtn').prop('disabled', false).html('<i class="fas fa-check me-1"></i>تنفيذ');
+        const actionLabel = action === 'void' ? 'إلغاء طلب مدفوع' : 'استرداد';
         window.POSMAIN.requestManagerOverride(permissionKey, {
-            message: 'يتطلب اعتماد مدير للاسترداد/الإلغاء',
+            message: actionLabel + ' يتطلب اعتماد',
             target_type: 'order',
             target_id: orderId,
         }).done(function (approval) {
+            paidReversalState.pendingApprovalId = approval.approval_id;
             submitPaidOrderReversal(approval.approval_id);
-        }).fail(function () {
-            showPaidReversalValidation('تم إلغاء اعتماد المدير');
+        }).fail(function (err) {
+            const msg = (window.POSMAIN && typeof window.POSMAIN.overrideErrorMessage === 'function')
+                ? window.POSMAIN.overrideErrorMessage(err)
+                : 'تم إلغاء اعتماد المدير';
+            showPaidReversalValidation(msg);
         });
     }
 
@@ -4196,6 +4455,7 @@ function submitPaidOrderReversal(approvalId) {
                 }
                 if (response.success) {
                     paidReversalState.submitting = false;
+                    paidReversalState.pendingApprovalId = 0;
                     const modalEl = document.getElementById('paidOrderReversalModal');
                     if (modalEl && typeof bootstrap !== 'undefined' && bootstrap.Modal) {
                         const instance = bootstrap.Modal.getInstance(modalEl);
@@ -4213,11 +4473,11 @@ function submitPaidOrderReversal(approvalId) {
                     }
                     loadRecentOrders(false);
                     $('#paidReversalSubmitBtn').prop('disabled', false).html('<i class="fas fa-check me-1"></i>تنفيذ');
-                } else if ((response.code || '') === 'MANAGER_APPROVAL_REQUIRED' && !effectiveApprovalId) {
+                } else if (paidReversalNeedsApproval(response.code) && !effectiveApprovalId) {
                     handleApprovalRequired();
                 } else {
                     paidReversalState.submitting = false;
-                    showPaidReversalValidation(response.message || response.error || 'خطأ غير معروف');
+                    showPaidReversalValidation(paidReversalFriendlyError(response));
                     $('#paidReversalSubmitBtn').prop('disabled', false).html('<i class="fas fa-check me-1"></i>تنفيذ');
                 }
             } catch (e) {
@@ -4229,24 +4489,63 @@ function submitPaidOrderReversal(approvalId) {
         error: function(xhr) {
             let message = 'خطأ في الاتصال';
             let code = '';
+            let payload = null;
             try {
-                const payload = xhr.responseJSON || JSON.parse(xhr.responseText || '{}');
+                payload = xhr.responseJSON || JSON.parse(xhr.responseText || '{}');
                 message = payload.message || payload.code || message;
                 code = payload.code || '';
             } catch (e) {
                 // keep default message
             }
-            if (code === 'MANAGER_APPROVAL_REQUIRED' && !effectiveApprovalId) {
+            if (paidReversalNeedsApproval(code) && !effectiveApprovalId) {
                 handleApprovalRequired();
                 return;
             }
             paidReversalState.submitting = false;
-            showPaidReversalValidation(message);
+            showPaidReversalValidation(paidReversalFriendlyError(payload || { code: code, message: message }));
             $('#paidReversalSubmitBtn').prop('disabled', false).html('<i class="fas fa-check me-1"></i>تنفيذ');
         },
     });
 }
 
+function paidReversalNeedsApproval(code) {
+    return code === 'MANAGER_APPROVAL_REQUIRED'
+        || code === 'PERMISSION_DENIED';
+}
+
+function paidReversalFriendlyError(payload) {
+    const code = String((payload && (payload.code || payload.error)) || '').trim();
+    const message = String((payload && payload.message) || '').trim();
+    switch (code) {
+        case 'PERMISSION_DENIED':
+            return 'ليست لديك صلاحية لهذه العملية. يلزم اعتماد بصلاحية مناسبة.';
+        case 'MANAGER_APPROVAL_REQUIRED':
+            return 'يتطلب اعتماد مستخدم بصلاحية مناسبة.';
+        case 'MANAGER_APPROVAL_INVALID':
+        case 'MANAGER_APPROVAL_SCOPE_MISMATCH':
+            return 'اعتماد المدير غير صالح لهذه العملية. أعد الاعتماد ثم نفّذ.';
+        case 'MANAGER_APPROVAL_EXPIRED':
+        case 'APPROVAL_EXPIRED':
+            return 'انتهت صلاحية الاعتماد. أعد إدخال الرمز ثم نفّذ.';
+        case 'ORDER_ALREADY_REVERSED':
+            return 'هذا الطلب تمت معالجته مسبقاً.';
+        case 'ORDER_NOT_PAID':
+            return 'الطلب غير مدفوع ولا يمكن استرداده من هنا.';
+        case 'ORDER_NOT_FOUND':
+            return 'تعذر العثور على الطلب.';
+        default:
+            if (message && message !== code) {
+                return message;
+            }
+            if (window.POSMAIN && typeof window.POSMAIN.overrideErrorMessage === 'function' && code) {
+                const mapped = window.POSMAIN.overrideErrorMessage({ code: code });
+                if (mapped && mapped.indexOf('تعذر') !== 0) {
+                    return mapped;
+                }
+            }
+            return message || 'تعذر تنفيذ العملية';
+    }
+}
 window.reversePaidOrder = openPaidOrderReversalModal;
 
 function editOrder(orderId) {
@@ -4360,25 +4659,9 @@ $(document).ready(function() {
         const orderId = $(this).data('id');
         const refundEligible = $(this).data('refund-eligible') === 1 || $(this).data('refund-eligible') === '1';
         const voidEligible = $(this).data('void-eligible') === 1 || $(this).data('void-eligible') === '1';
-        const canRefundDirect = window.POSMAIN && window.POSMAIN.can('pos.refund') === true;
-        const canVoidDirect = window.POSMAIN && window.POSMAIN.can('pos.void.paid') === true;
-        const needsOverride = (refundEligible && !canRefundDirect) || (voidEligible && !canVoidDirect);
-        const openModal = function () {
-            openPaidOrderReversalModal(orderId, refundEligible, voidEligible);
-        };
-        if (!needsOverride) {
-            openModal();
-            return;
-        }
-        const permissionKey = voidEligible && !canVoidDirect ? 'pos.void.paid' : 'pos.refund';
-        window.POSMAIN.requestManagerOverride(permissionKey, {
-            message: 'الاسترداد/الإلغاء يتطلب اعتماد مدير',
-            target_type: 'order',
-            target_id: orderId,
-        }).done(function (approval) {
-            paidReversalState.pendingApprovalId = approval.approval_id;
-            openPaidOrderReversalModal(orderId, refundEligible, voidEligible, { keepApproval: true });
-        });
+        // Open the modal first; PIN is requested on submit for the selected action
+        // (refund vs void) so the approval permission key always matches.
+        openPaidOrderReversalModal(orderId, refundEligible, voidEligible);
     });
 
     // Handle print order button

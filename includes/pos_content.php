@@ -49,6 +49,7 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
             window.POSMAIN_SHIFT_OPEN_CSRF_TOKEN = <?= json_encode(csrf_token('shift_open_count'), JSON_UNESCAPED_SLASHES) ?>;
             window.POSMAIN_SHIFT_CLOSE_COUNT_CSRF_TOKEN = <?= json_encode(csrf_token('shift_close_count'), JSON_UNESCAPED_SLASHES) ?>;
             window.POSMAIN_SHIFT_TAKEOVER_CSRF_TOKEN = <?= json_encode(csrf_token('shift_takeover'), JSON_UNESCAPED_SLASHES) ?>;
+            window.POSMAIN_SHIFT_TAKEOVER_COUNT_CSRF_TOKEN = <?= json_encode(csrf_token('shift_takeover_count'), JSON_UNESCAPED_SLASHES) ?>;
             window.POSMAIN_POS_OVERRIDE_CSRF_TOKEN = <?= json_encode(csrf_token('pos_override'), JSON_UNESCAPED_SLASHES) ?>;
             if (!window.POSMAIN_CAPABILITIES) {
                 window.POSMAIN_CAPABILITIES = {};
@@ -63,6 +64,10 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
         <link rel="stylesheet" href="css/pos-shift-handover.css?v=<?= (int) filemtime($posHandoverCss) ?>">
         <script src="js/pos_shift_count_wizard.js?v=<?= (int) filemtime($posHandoverJs) ?>"></script>
         <?php endif; ?>
+        <?php
+        include_once __DIR__ . '/pin_pad_styles.php';
+        ?>
+        <script src="js/pin_pad.js?v=<?= (int) (@filemtime(__DIR__ . '/../js/pin_pad.js') ?: 1) ?>"></script>
         <?php endif; ?>
         <div class="container-fluid h-100 pos-shell">
             <div class="row h-100 g-2 pos-layout-row">
@@ -110,10 +115,11 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                                                 <input type="tel"
                                                     class="form-control pos-customer-phone-input"
                                                     id="posCustomerPhoneInput"
-                                                    placeholder="ربط عميل (اختياري)"
+                                                    placeholder="ابحث عن عميل برقم الهاتف…"
                                                     inputmode="tel"
                                                     autocomplete="off"
-                                                    aria-label="رقم هاتف العميل">
+                                                    aria-label="ابحث عن عميل برقم الهاتف"
+                                                    title="اختياري — اربط عميلاً بالطلب">
                                             </div>
                                         </div>
                                         <div class="pos-customer-attached d-none" id="posCustomerAttached">
@@ -1240,12 +1246,12 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
         aria-labelledby="recentOrdersModalLabel" aria-hidden="true">
         <div class="modal-dialog modal-xl modal-dialog-centered pos-recent-orders-dialog">
             <div class="modal-content pos-recent-orders-content">
-                <div class="modal-header bg-primary text-white">
+                <div class="modal-header pos-recent-orders-header">
+                    <button type="button" class="btn-close pos-recent-orders-close" data-bs-dismiss="modal"
+                        aria-label="إغلاق"></button>
                     <h5 class="modal-title" id="recentOrdersModalLabel">
                         الطلبات الأخيرة
                     </h5>
-                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"
-                        aria-label="Close"></button>
                 </div>
                 <div class="modal-body pos-recent-orders-body p-0">
                     <div class="table-responsive">
@@ -1321,16 +1327,17 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
         aria-labelledby="paidOrderReversalModalLabel" aria-hidden="true" data-bs-backdrop="static">
         <div class="modal-dialog modal-dialog-centered pos-paid-reversal-dialog">
             <div class="modal-content pos-paid-reversal-content">
-                <div class="modal-header">
-                    <h5 class="modal-title" id="paidOrderReversalModalLabel">
-                        <i class="fas fa-undo me-2"></i>استرداد أو إلغاء طلب مدفوع
-                    </h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                <div class="modal-header pos-paid-reversal-header">
+                    <button type="button" class="btn-close pos-paid-reversal-close" data-bs-dismiss="modal"
+                        aria-label="إغلاق"></button>
+                    <div class="pos-paid-reversal-heading">
+                        <h5 class="modal-title" id="paidOrderReversalModalLabel">
+                            <i class="fas fa-undo me-2"></i>استرداد أو إلغاء طلب مدفوع
+                        </h5>
+                        <p class="pos-paid-reversal-subtitle mb-0">اختر العملية وسياسة المخزون، ثم اذكر سبباً للتدقيق</p>
+                    </div>
                 </div>
                 <div class="modal-body pos-paid-reversal-body">
-                    <p class="pos-paid-reversal-hint mb-3">
-                        اختر نوع العملية وسياسة المخزون، ثم اذكر سبباً مختصراً للتدقيق.
-                    </p>
                     <div class="alert alert-danger d-none mb-3" id="paidReversalValidationAlert" role="alert"></div>
                     <label class="form-label" for="paid-reversal-action">نوع العملية</label>
                     <select id="paid-reversal-action" class="form-select pos-paid-reversal-control mb-3"></select>
@@ -1344,10 +1351,10 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                         maxlength="255" placeholder="مثال: طلب خاطئ من العميل"></textarea>
                 </div>
                 <div class="modal-footer pos-paid-reversal-footer">
-                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
+                    <button type="button" class="btn pos-paid-reversal-btn-cancel" data-bs-dismiss="modal">
                         <i class="fas fa-times me-1"></i>إلغاء
                     </button>
-                    <button type="button" class="btn btn-warning" id="paidReversalSubmitBtn">
+                    <button type="button" class="btn pos-paid-reversal-btn-submit" id="paidReversalSubmitBtn">
                         <i class="fas fa-check me-1"></i>تنفيذ
                     </button>
                 </div>

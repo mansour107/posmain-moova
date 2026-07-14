@@ -19,8 +19,8 @@
         BLOCKING_SESSION_MISMATCH: 'جلسة الدرج المفتوحة تغيّرت — أعد المحاولة',
         CANNOT_TAKEOVER_OWN_SESSION: 'لا يمكن استلام جلستك أنت',
         DRAWER_SESSION_SCOPE_MISMATCH: 'جلسة الدرج خارج نطاق الفرع الحالي',
-        DRAWER_SESSION_NOT_OPEN: 'جلسة الدرج لم تعد مفتوحة',
-        DRAWER_SESSION_REQUIRED: 'جلسة الدرج مطلوبة',
+        DRAWER_SESSION_NOT_OPEN: 'الوردية غير متاحة — حدّث الصفحة وأعد المحاولة',
+        DRAWER_SESSION_REQUIRED: 'لا توجد وردية مفتوحة',
         MANAGER_APPROVAL_REQUIRED: 'يتطلب اعتماد مدير',
         CSRF_INVALID: 'انتهت صلاحية الجلسة — أعد تحميل الصفحة',
         IDEMPOTENCY_CONFLICT: 'طلب مكرر — أعد المحاولة',
@@ -194,8 +194,14 @@
             $overlay.find('[data-psh-open-submit]').prop('disabled', true);
             $('#pshOpenAttemptLabel').text('الدرج محجوز — يلزم إغلاق أو استلام');
             $('#pshOpenTakeoverMessage').addClass('psh-hidden').text('');
-            $('#pshTakeoverAmount').val('');
+            $('#pshTakeoverAmount').val('').prop('disabled', false);
             $('#pshTakeoverReason').val('');
+            $('#pshTakeoverAttemptLabel').addClass('psh-hidden').text('');
+            $('#pshTakeoverVariance').addClass('psh-hidden').removeClass('is-over is-under is-balanced');
+            $('#pshTakeoverAmountWrap').removeClass('psh-hidden');
+            $('#pshTakeoverReasonWrap').addClass('psh-hidden');
+            $overlay.find('[data-psh-open-takeover]').attr('data-phase', 'count').text('تأكيد العد').prop('disabled', false);
+            this.takeoverCountState = { started: false, handover: true, finalized: false, countedCash: null };
         },
 
         showOpenCountStep: function ($overlay) {
@@ -309,34 +315,47 @@
                 ? Number(this.blockingSession.drawer_session_id)
                 : 0;
             const scope = 'pos.shift.takeover_drawer';
+            const phase = $btn.attr('data-phase') || 'count';
+            const countState = this.takeoverCountState || {
+                started: false, handover: true, finalized: false, countedCash: null,
+            };
+            this.takeoverCountState = countState;
 
             if (!sessionId) {
                 $message.removeClass('psh-hidden is-success is-info').addClass('is-warn')
                     .text('لا توجد جلسة مفتوحة للاستلام');
                 return;
             }
-            if (amount === '') {
-                $message.removeClass('psh-hidden is-success is-warn').addClass('is-info')
-                    .text('الرجاء إدخال المبلغ المعدود');
-                return;
-            }
-            if (reason.length < 3) {
-                $message.removeClass('psh-hidden is-success is-info').addClass('is-warn')
-                    .text('يجب إدخال سبب الاستلام');
-                return;
-            }
 
-            $btn.prop('disabled', true);
-            $message.addClass('psh-hidden');
+            const enterConfirm = function (data) {
+                countState.finalized = true;
+                countState.countedCash = data && data.counted_cash != null ? data.counted_cash : Number(amount);
+                $('#pshTakeoverAttemptLabel').addClass('psh-hidden');
+                $('#pshTakeoverAmountWrap').addClass('psh-hidden');
+                $('#pshTakeoverReasonWrap').removeClass('psh-hidden');
+                $('#pshTakeoverAmount').prop('disabled', true);
+                const direction = (data && data.variance_direction) || 'balanced';
+                const labels = { over: 'زيادة في الدرج', under: 'عجز في الدرج', balanced: 'العد متطابق' };
+                const $variance = $('#pshTakeoverVariance');
+                $variance.removeClass('psh-hidden is-over is-under is-balanced').addClass('is-' + direction);
+                $('#pshTakeoverVarianceLabel').text(labels[direction] || labels.balanced);
+                $('#pshTakeoverVarianceAmount').text(
+                    direction === 'balanced'
+                        ? '0.00'
+                        : (Math.abs(Number((data && data.variance) || 0)).toFixed(2) + ' ج.م')
+                );
+                $btn.attr('data-phase', 'confirm').text('متابعة وإدخال رمز المدير').prop('disabled', false);
+                $message.addClass('psh-hidden');
+            };
 
-            const runTakeover = function (approvalId) {
+            const runTakeover = function (approvalId, finalAmount) {
                 return $.ajax({
                     url: 'do/do_takeover_drawer_session.php',
                     method: 'POST',
                     dataType: 'json',
                     data: {
                         drawer_session_id: sessionId,
-                        counted_amount: amount,
+                        counted_amount: finalAmount,
                         reason: reason,
                         manager_approval_id: approvalId || '',
                         idempotency_key: self.getIdempotencyKey(scope),
@@ -347,11 +366,8 @@
 
             const afterSuccess = function () {
                 self.clearIdempotencyKey(scope);
-                $message.removeClass('psh-hidden is-warn is-info').addClass('is-success')
-                    .text('تم إغلاق الجلسة السابقة — أكمل عد الافتتاح');
-                self.beginOpenCount($overlay).always(function () {
-                    $btn.prop('disabled', false);
-                });
+                // Takeover already opens the manager shift from the close-count cash.
+                window.location.href = 'pos_barcode.php';
             };
 
             const afterFailure = function (xhr, response) {
@@ -362,31 +378,124 @@
                 $btn.prop('disabled', false);
             };
 
-            // Always require manager PIN step-up — never POST without approval_id.
-            self.requestTakeoverApproval(sessionId, reason).done(function (approval) {
-                const approvalId = approval && approval.approval_id;
-                if (!approvalId) {
-                    afterFailure(null, { error: 'MANAGER_APPROVAL_REQUIRED' });
+            if (phase === 'confirm' && countState.finalized) {
+                if (reason.length < 3) {
+                    $message.removeClass('psh-hidden is-success is-info').addClass('is-warn')
+                        .text('يجب إدخال سبب الاستلام');
                     return;
                 }
-                runTakeover(approvalId).done(function (resp) {
-                    if (resp && resp.success) {
-                        afterSuccess();
+                $btn.prop('disabled', true);
+                $message.addClass('psh-hidden');
+                self.requestTakeoverApproval(sessionId, reason).done(function (approval) {
+                    const approvalId = approval && approval.approval_id;
+                    if (!approvalId) {
+                        afterFailure(null, { error: 'MANAGER_APPROVAL_REQUIRED' });
                         return;
                     }
-                    afterFailure(null, resp);
-                }).fail(function (xhr2) {
-                    afterFailure(xhr2);
-                });
-            }).fail(function (deny) {
-                if (deny && deny.code === 'OVERRIDE_CANCELLED') {
+                    runTakeover(approvalId, countState.countedCash).done(function (resp) {
+                        if (resp && resp.success) {
+                            afterSuccess();
+                            return;
+                        }
+                        afterFailure(null, resp);
+                    }).fail(function (xhr2) {
+                        afterFailure(xhr2);
+                    });
+                }).fail(function (deny) {
+                    if (deny && deny.code === 'OVERRIDE_CANCELLED') {
+                        $btn.prop('disabled', false);
+                        return;
+                    }
+                    $message.removeClass('psh-hidden is-success is-info').addClass('is-warn')
+                        .text((deny && deny.message) || self.openErrorMessage(deny && deny.code, 'تعذر اعتماد المدير'));
                     $btn.prop('disabled', false);
-                    return;
-                }
-                $message.removeClass('psh-hidden is-success is-info').addClass('is-warn')
-                    .text((deny && deny.message) || self.openErrorMessage(deny && deny.code, 'تعذر اعتماد المدير'));
-                $btn.prop('disabled', false);
-            });
+                });
+                return;
+            }
+
+            if (amount === '') {
+                $message.removeClass('psh-hidden is-success is-warn').addClass('is-info')
+                    .text('الرجاء إدخال المبلغ المعدود');
+                return;
+            }
+
+            $btn.prop('disabled', true);
+            $message.addClass('psh-hidden');
+
+            const beginCount = function () {
+                return $.ajax({
+                    url: 'do/do_begin_takeover_close_count.php',
+                    method: 'GET',
+                    dataType: 'json',
+                    data: { drawer_session_id: sessionId },
+                });
+            };
+
+            const submitCount = function () {
+                return $.ajax({
+                    url: 'do/do_submit_takeover_close_count.php',
+                    method: 'POST',
+                    dataType: 'json',
+                    data: {
+                        counted_amount: amount,
+                        idempotency_key: self.getIdempotencyKey('pos.shift.takeover_close_count'),
+                        csrf_token: window.POSMAIN_SHIFT_TAKEOVER_COUNT_CSRF_TOKEN || '',
+                    },
+                });
+            };
+
+            const afterBegin = function () {
+                countState.started = true;
+                countState.handover = true;
+                return submitCount();
+            };
+
+            (countState.started ? submitCount() : beginCount().then(afterBegin))
+                .done(function (resp) {
+                    if (!resp || !resp.success) {
+                        if ((resp && resp.error) === 'HANDOVER_NOT_ENABLED') {
+                            countState.handover = false;
+                            enterConfirm({
+                                status: 'ready_to_takeover',
+                                matched: true,
+                                counted_cash: Number(amount),
+                                variance: 0,
+                                variance_direction: 'balanced',
+                            });
+                            return;
+                        }
+                        afterFailure(null, resp);
+                        return;
+                    }
+                    const data = resp.data || {};
+                    if (data.status === 'recount') {
+                        self.clearIdempotencyKey('pos.shift.takeover_close_count');
+                        $('#pshTakeoverAttemptLabel').removeClass('psh-hidden')
+                            .text('محاولة ' + (data.attempt_number || 1) + ' من ' + (data.max_attempts || 2));
+                        $message.removeClass('psh-hidden is-success is-info').addClass('is-warn')
+                            .text(data.message || 'الرجاء إعادة العد بعناية');
+                        $('#pshTakeoverAmount').val('').trigger('focus');
+                        $btn.prop('disabled', false);
+                        return;
+                    }
+                    self.clearIdempotencyKey('pos.shift.takeover_close_count');
+                    enterConfirm(data);
+                })
+                .fail(function (xhr) {
+                    const payload = self.parseAjaxPayload(xhr) || {};
+                    if (payload.error === 'HANDOVER_NOT_ENABLED') {
+                        countState.handover = false;
+                        enterConfirm({
+                            status: 'ready_to_takeover',
+                            matched: true,
+                            counted_cash: Number(amount),
+                            variance: 0,
+                            variance_direction: 'balanced',
+                        });
+                        return;
+                    }
+                    afterFailure(xhr);
+                });
         },
 
         requestTakeoverApproval: function (sessionId, reason) {
@@ -399,7 +508,9 @@
                 target_type: 'drawer_session',
                 target_id: sessionId,
                 reason: reason || 'drawer_takeover',
-                message: 'أدخل رمز PIN للمدير لاستلام الدرج',
+                message: 'أدخل رمزك المكوّن من 4 أرقام لاستلام الدرج',
+                require_same_user: true,
+                digits: 4,
             });
         },
 
@@ -411,7 +522,10 @@
                 under: 'عجز في الدرج',
                 balanced: 'متوازن',
             };
+            const attempt = Number(data.attempt_number || data.max_attempts || 2);
+            const maxAttempts = Number(data.max_attempts || 2);
 
+            $('#pshOpenAttemptLabel').text('محاولة ' + attempt + ' من ' + maxAttempts);
             $variance.removeClass('is-over is-under is-balanced').addClass('is-' + direction);
             $('#pshOpenVarianceLabel').text(labels[direction] || labels.balanced);
             $('#pshOpenVarianceAmount').text(Math.abs(Number(data.variance || 0)).toFixed(2) + ' ج.م');

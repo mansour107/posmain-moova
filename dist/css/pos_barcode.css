@@ -2175,27 +2175,57 @@ div:where(.swal2-container) div:where(.swal2-popup) {
 }
 
 #shiftExpenseModal .pos-shift-cash-tabs {
-    gap: 0.5rem;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.2rem;
+    padding: 0.25rem;
+    margin: 0;
+    list-style: none;
+    background: #f1f5f9;
+    border: 1px solid #e2e8f0;
+    border-radius: 999px;
+}
+
+#shiftExpenseModal .pos-shift-cash-tabs .nav-item {
+    flex: 1 1 auto;
+    min-width: 0;
 }
 
 #shiftExpenseModal .pos-shift-cash-tabs .nav-link {
+    width: 100%;
     border-radius: 999px;
     font-weight: 700;
-    color: #475569;
-    background: #f8fafc;
-    border: 1px solid #e2e8f0;
-    padding: 0.45rem 0.9rem;
+    color: #64748b;
+    background: transparent;
+    border: 1px solid transparent;
+    padding: 0.5rem 0.85rem;
+    transition: background-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+}
+
+#shiftExpenseModal .pos-shift-cash-tabs .nav-link:hover:not(.active) {
+    color: #334155;
+    background: rgba(255, 255, 255, 0.65);
 }
 
 #shiftExpenseModal .pos-shift-cash-tabs .nav-link.active {
-    color: #0f172a;
-    background: #fff7ed;
-    border-color: #fdba74;
+    color: #111;
+    background: #e8a020;
+    border-color: #e8a020;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.12), 0 0 0 1px rgba(232, 160, 32, 0.25);
 }
 
 #shiftExpenseModal #shiftCashPayinTab.nav-link.active {
-    background: #ecfdf5;
-    border-color: #6ee7b7;
+    color: #fff;
+    background: #10b981;
+    border-color: #10b981;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.12), 0 0 0 1px rgba(16, 185, 129, 0.28);
+}
+
+#shiftExpenseModal #shiftCashSafeDropTab.nav-link.active {
+    color: #fff;
+    background: #3b82f6;
+    border-color: #3b82f6;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.12), 0 0 0 1px rgba(59, 130, 246, 0.28);
 }
 
 #shiftExpenseModal .pos-shift-expense-summary-card.is-payin {
@@ -2861,6 +2891,21 @@ div:where(.swal2-container) div:where(.swal2-popup) {
    Premium Dark POS Theme (pos_barcode.php)
    ========================================================================== */
 
+/* Hide native number steppers; wheel changes are blocked in js/pos_barcode.js */
+body.pos-premium-dark input[type="number"],
+body.pos-immersive input[type="number"] {
+    -moz-appearance: textfield;
+    appearance: textfield;
+}
+
+body.pos-premium-dark input[type="number"]::-webkit-outer-spin-button,
+body.pos-premium-dark input[type="number"]::-webkit-inner-spin-button,
+body.pos-immersive input[type="number"]::-webkit-outer-spin-button,
+body.pos-immersive input[type="number"]::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}
+
 body.pos-premium-dark {
     --pos-bg: #0d1117;
     --pos-panel: #1a222d;
@@ -3017,6 +3062,27 @@ body.pos-premium-dark .pos-shell > .pos-layout-row {
 
 body.pos-premium-dark.pos-immersive .pos-shell {
     padding-top: calc(var(--pos-corner-btn-size) + 1.65rem);
+}
+
+/* Temporary override banner: keep shell + corner menu inside the remaining viewport */
+body.pos-override-active {
+    --pos-override-banner-height: 3.5rem;
+}
+
+body.pos-premium-dark.pos-override-active .pos-shell {
+    height: calc(100vh - var(--pos-override-banner-height)) !important;
+    max-height: calc(100vh - var(--pos-override-banner-height)) !important;
+    margin-top: var(--pos-override-banner-height);
+    box-sizing: border-box;
+    overflow: hidden;
+}
+
+body.pos-premium-dark.pos-override-active .pos-corner-menu {
+    top: calc(var(--pos-override-banner-height) + 0.75rem);
+}
+
+body.pos-premium-dark.pos-override-active #posForm {
+    min-height: 0;
 }
 
 body.pos-premium-dark .pos-order-panel,
@@ -3650,9 +3716,302 @@ body.pos-premium-dark ::-webkit-scrollbar-thumb {
 }
 
 /* Premium minimalist SweetAlert dialogs */
-.swal2-container.swal2-backdrop-show {
+/* Keep modal backdrops dark, but never paint a full-screen panel behind toasts. */
+body:not(.swal2-toast-shown) .swal2-container.swal2-backdrop-show {
     background: rgba(13, 17, 23, 0.72) !important;
     backdrop-filter: blur(4px);
+}
+
+body.swal2-toast-shown .swal2-container.swal2-backdrop-show,
+body.swal2-toast-shown .swal2-container {
+    background: transparent !important;
+    backdrop-filter: none !important;
+    pointer-events: none !important;
+}
+
+body.swal2-toast-shown .swal2-container .swal2-popup {
+    pointer-events: auto;
+}
+
+/* Compact floating stock/availability warning — not a side panel */
+.pos-availability-toast {
+    position: fixed;
+    top: 1rem;
+    right: 1rem;
+    left: auto;
+    z-index: 1085;
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75rem;
+    width: min(22rem, calc(100vw - 1.5rem));
+    max-width: calc(100vw - 1.5rem);
+    padding: 0.85rem 0.75rem 0.85rem 0.9rem;
+    border-radius: 12px;
+    background: #fff;
+    color: #1f2937;
+    border: 1px solid rgba(234, 179, 8, 0.35);
+    box-shadow: 0 12px 28px rgba(15, 23, 42, 0.22);
+    opacity: 0;
+    transform: translateY(-0.5rem);
+    transition: opacity 0.18s ease, transform 0.18s ease;
+    pointer-events: auto;
+}
+
+.pos-availability-toast.is-visible {
+    opacity: 1;
+    transform: translateY(0);
+}
+
+.pos-availability-toast__icon {
+    flex: 0 0 auto;
+    width: 1.75rem;
+    height: 1.75rem;
+    border-radius: 999px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(234, 179, 8, 0.16);
+    color: #b45309;
+    font-size: 0.85rem;
+    margin-top: 0.1rem;
+}
+
+.pos-availability-toast__body {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.pos-availability-toast__title {
+    font-size: 0.92rem;
+    font-weight: 700;
+    line-height: 1.35;
+    color: #92400e;
+    margin: 0 0 0.2rem;
+}
+
+.pos-availability-toast__item {
+    font-size: 0.82rem;
+    font-weight: 600;
+    line-height: 1.4;
+    color: #374151;
+    margin: 0 0 0.25rem;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+}
+
+.pos-availability-toast__message {
+    font-size: 0.84rem;
+    line-height: 1.45;
+    color: #4b5563;
+    margin: 0;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    white-space: normal;
+}
+
+.pos-availability-toast__close {
+    flex: 0 0 auto;
+    width: 1.75rem;
+    height: 1.75rem;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: #6b7280;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    padding: 0;
+}
+
+.pos-availability-toast__close:hover,
+.pos-availability-toast__close:focus {
+    background: rgba(15, 23, 42, 0.06);
+    color: #111827;
+    outline: none;
+}
+
+body.pos-premium-dark .pos-availability-toast {
+    background: #1a222d;
+    color: #e8edf4;
+    border-color: rgba(234, 179, 8, 0.4);
+    box-shadow: 0 16px 36px rgba(0, 0, 0, 0.45);
+}
+
+body.pos-premium-dark .pos-availability-toast__title {
+    color: #fbbf24;
+}
+
+body.pos-premium-dark .pos-availability-toast__item {
+    color: #e8edf4;
+}
+
+body.pos-premium-dark .pos-availability-toast__message {
+    color: #8b98a8;
+}
+
+body.pos-premium-dark .pos-availability-toast__close {
+    color: #8b98a8;
+}
+
+body.pos-premium-dark .pos-availability-toast__close:hover,
+body.pos-premium-dark .pos-availability-toast__close:focus {
+    background: rgba(255, 255, 255, 0.06);
+    color: #e8edf4;
+}
+
+/* Mode-switch cart transfer feedback */
+.pos-mode-transfer-toast {
+    position: fixed;
+    top: 1.1rem;
+    left: 50%;
+    z-index: 10050;
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75rem;
+    width: min(92vw, 360px);
+    padding: 0.85rem 0.9rem;
+    border-radius: 12px;
+    border: 1px solid rgba(34, 197, 94, 0.35);
+    background: #ffffff;
+    color: #111827;
+    box-shadow: 0 16px 36px rgba(15, 23, 42, 0.16);
+    transform: translate(-50%, -12px);
+    opacity: 0;
+    transition: opacity 0.2s ease, transform 0.2s ease;
+    direction: rtl;
+    pointer-events: auto;
+}
+
+.pos-mode-transfer-toast.is-visible {
+    opacity: 1;
+    transform: translate(-50%, 0);
+}
+
+.pos-mode-transfer-toast__icon {
+    flex: 0 0 auto;
+    width: 2rem;
+    height: 2rem;
+    border-radius: 999px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(34, 197, 94, 0.12);
+    color: #15803d;
+    font-size: 0.9rem;
+}
+
+.pos-mode-transfer-toast__body {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.pos-mode-transfer-toast__title {
+    font-size: 0.92rem;
+    font-weight: 700;
+    line-height: 1.35;
+    color: #166534;
+    margin: 0 0 0.15rem;
+}
+
+.pos-mode-transfer-toast__message {
+    font-size: 0.84rem;
+    line-height: 1.45;
+    color: #4b5563;
+    margin: 0;
+}
+
+.pos-mode-transfer-toast__close {
+    flex: 0 0 auto;
+    width: 1.75rem;
+    height: 1.75rem;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: #6b7280;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    padding: 0;
+}
+
+.pos-mode-transfer-toast__close:hover,
+.pos-mode-transfer-toast__close:focus {
+    background: rgba(15, 23, 42, 0.06);
+    color: #111827;
+    outline: none;
+}
+
+body.pos-premium-dark .pos-mode-transfer-toast {
+    background: #1a222d;
+    color: #e8edf4;
+    border-color: rgba(34, 197, 94, 0.4);
+    box-shadow: 0 16px 36px rgba(0, 0, 0, 0.45);
+}
+
+body.pos-premium-dark .pos-mode-transfer-toast__title {
+    color: #4ade80;
+}
+
+body.pos-premium-dark .pos-mode-transfer-toast__message {
+    color: #8b98a8;
+}
+
+body.pos-premium-dark .pos-mode-transfer-toast__close {
+    color: #8b98a8;
+}
+
+body.pos-premium-dark .pos-mode-transfer-toast__close:hover,
+body.pos-premium-dark .pos-mode-transfer-toast__close:focus {
+    background: rgba(255, 255, 255, 0.06);
+    color: #e8edf4;
+}
+
+#itemData.pos-cart-transfer-flash {
+    animation: pos-cart-transfer-flash 0.65s ease;
+}
+
+@keyframes pos-cart-transfer-flash {
+    0% {
+        box-shadow: inset 0 0 0 0 rgba(34, 197, 94, 0);
+        background-color: transparent;
+    }
+    35% {
+        box-shadow: inset 0 0 0 2px rgba(34, 197, 94, 0.45);
+        background-color: rgba(34, 197, 94, 0.08);
+    }
+    100% {
+        box-shadow: inset 0 0 0 0 rgba(34, 197, 94, 0);
+        background-color: transparent;
+    }
+}
+
+.pos-mode-transfer-swal__text {
+    margin: 0 0 0.85rem;
+    color: inherit;
+    line-height: 1.55;
+}
+
+.pos-mode-transfer-swal__discard {
+    display: block;
+    width: 100%;
+    margin: 0;
+    padding: 0.55rem 0.75rem;
+    border: 1px dashed var(--pos-border, #2d3748);
+    border-radius: 10px;
+    background: transparent;
+    color: var(--pos-text-muted, #8b98a8);
+    font-size: 0.84rem;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.pos-mode-transfer-swal__discard:hover,
+.pos-mode-transfer-swal__discard:focus {
+    color: var(--pos-text, #e8edf4);
+    border-color: var(--pos-text-muted, #8b98a8);
+    outline: none;
 }
 
 .swal2-popup.pos-swal-premium {
@@ -3688,7 +4047,8 @@ body.pos-premium-dark ::-webkit-scrollbar-thumb {
 }
 
 .swal2-popup.pos-swal-premium .pos-swal-premium__confirm,
-.swal2-popup.pos-swal-premium .pos-swal-premium__cancel {
+.swal2-popup.pos-swal-premium .pos-swal-premium__cancel,
+.swal2-popup.pos-swal-premium .pos-swal-premium__deny {
     border-radius: 10px !important;
     padding: 0.58rem 1.15rem !important;
     font-weight: 700 !important;
@@ -3716,6 +4076,25 @@ body.pos-premium-dark ::-webkit-scrollbar-thumb {
 .swal2-popup.pos-swal-premium .pos-swal-premium__cancel:hover {
     border-color: var(--pos-text-muted, #8b98a8) !important;
     color: var(--pos-text, #e8edf4) !important;
+}
+
+.swal2-popup.pos-swal-premium .pos-swal-premium__deny {
+    background: transparent !important;
+    border: 1px dashed var(--pos-border, #2d3748) !important;
+    color: var(--pos-text-muted, #8b98a8) !important;
+    width: 100%;
+    order: -1;
+    flex: 1 0 100%;
+    margin-bottom: 0.15rem !important;
+}
+
+.swal2-popup.pos-swal-premium .pos-swal-premium__deny:hover {
+    border-color: var(--pos-text-muted, #8b98a8) !important;
+    color: var(--pos-text, #e8edf4) !important;
+}
+
+.swal2-popup.pos-swal-premium .pos-swal-premium__actions {
+    flex-wrap: wrap;
 }
 
 .swal2-popup.pos-swal-premium .swal2-icon {
@@ -3782,6 +4161,90 @@ body.pos-premium-dark ::-webkit-scrollbar-thumb {
     border-radius: 16px;
     overflow: hidden;
     box-shadow: 0 24px 48px rgba(0, 0, 0, 0.45);
+    border: 1px solid rgba(15, 23, 42, 0.08);
+}
+
+#paidOrderReversalModal .pos-paid-reversal-header {
+    position: relative;
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75rem;
+    padding: 1rem 2.75rem 0.9rem 1.1rem;
+    border-bottom: 1px solid #e2e8f0;
+    background: #f8fafc;
+}
+
+#paidOrderReversalModal .pos-paid-reversal-heading {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+#paidOrderReversalModal .pos-paid-reversal-header .modal-title {
+    margin: 0;
+    font-size: 1.05rem;
+    font-weight: 700;
+    color: #0f172a;
+}
+
+#paidOrderReversalModal .pos-paid-reversal-header .modal-title i {
+    color: #e8a020;
+}
+
+#paidOrderReversalModal .pos-paid-reversal-subtitle {
+    margin-top: 0.25rem;
+    font-size: 0.8rem;
+    color: #64748b;
+    line-height: 1.45;
+}
+
+#paidOrderReversalModal .pos-paid-reversal-close {
+    position: absolute;
+    top: 0.85rem;
+    inset-inline-end: 0.85rem;
+    margin: 0;
+    opacity: 0.55;
+    z-index: 2;
+}
+
+#paidOrderReversalModal .pos-paid-reversal-body {
+    padding: 1rem 1.1rem 0.35rem;
+}
+
+#paidOrderReversalModal .pos-paid-reversal-footer {
+    display: flex;
+    justify-content: flex-start;
+    gap: 0.55rem;
+    padding: 0.85rem 1.1rem 1rem;
+    border-top: 1px solid #e2e8f0;
+    background: #f8fafc;
+}
+
+#paidOrderReversalModal .pos-paid-reversal-btn-submit {
+    background: #e8a020;
+    border: 1px solid #e8a020;
+    color: #111;
+    font-weight: 700;
+    border-radius: 10px;
+    min-width: 7.5rem;
+}
+
+#paidOrderReversalModal .pos-paid-reversal-btn-submit:hover {
+    background: #d4921c;
+    border-color: #d4921c;
+    color: #111;
+}
+
+#paidOrderReversalModal .pos-paid-reversal-btn-cancel {
+    background: #e2e8f0;
+    border: 1px solid #cbd5e1;
+    color: #334155;
+    font-weight: 600;
+    border-radius: 10px;
+}
+
+#paidOrderReversalModal .pos-paid-reversal-btn-cancel:hover {
+    background: #cbd5e1;
+    color: #0f172a;
 }
 
 #paidOrderReversalModal .pos-paid-reversal-hint {
@@ -3797,23 +4260,25 @@ body.pos-premium-dark #paidOrderReversalModal .pos-paid-reversal-content {
     color: var(--pos-text);
 }
 
-body.pos-premium-dark #paidOrderReversalModal .modal-header,
-body.pos-premium-dark #paidOrderReversalModal .pos-paid-reversal-content .modal-header {
+body.pos-premium-dark #paidOrderReversalModal .pos-paid-reversal-header,
+body.pos-premium-dark #paidOrderReversalModal .pos-paid-reversal-footer {
     background: var(--pos-panel-elevated) !important;
     color: var(--pos-text) !important;
-    border-bottom: 1px solid var(--pos-border);
+    border-color: var(--pos-border);
+}
+
+body.pos-premium-dark #paidOrderReversalModal .pos-paid-reversal-header .modal-title {
+    color: var(--pos-text);
+}
+
+body.pos-premium-dark #paidOrderReversalModal .pos-paid-reversal-subtitle {
+    color: var(--pos-text-muted, #8b98a8);
 }
 
 body.pos-premium-dark #paidOrderReversalModal .pos-paid-reversal-body,
 body.pos-premium-dark #paidOrderReversalModal .modal-body {
     background: var(--pos-panel);
     color: var(--pos-text);
-}
-
-body.pos-premium-dark #paidOrderReversalModal .pos-paid-reversal-footer,
-body.pos-premium-dark #paidOrderReversalModal .modal-footer {
-    background: var(--pos-panel);
-    border-top: 1px solid var(--pos-border);
 }
 
 body.pos-premium-dark #paidOrderReversalModal .form-label {
@@ -3846,6 +4311,36 @@ body.pos-premium-dark #paidOrderReversalModal #paidReversalValidationAlert {
     background: rgba(220, 53, 69, 0.14);
     border: 1px solid rgba(248, 113, 113, 0.35);
     color: #fecaca;
+    border-radius: 10px;
+}
+
+body.pos-premium-dark #paidOrderReversalModal .pos-paid-reversal-btn-submit {
+    background: var(--pos-accent);
+    border-color: var(--pos-accent);
+    color: #111;
+}
+
+body.pos-premium-dark #paidOrderReversalModal .pos-paid-reversal-btn-submit:hover {
+    background: var(--pos-accent-hover);
+    border-color: var(--pos-accent-hover);
+    color: #111;
+}
+
+body.pos-premium-dark #paidOrderReversalModal .pos-paid-reversal-btn-cancel {
+    background: rgba(255, 255, 255, 0.08);
+    border-color: var(--pos-border);
+    color: var(--pos-text);
+}
+
+body.pos-premium-dark #paidOrderReversalModal .pos-paid-reversal-btn-cancel:hover {
+    background: rgba(255, 255, 255, 0.14);
+    color: var(--pos-text);
+}
+
+body.pos-premium-dark #paidOrderReversalModal .pos-paid-reversal-close,
+body.pos-premium-dark #recentOrdersModal .pos-recent-orders-close {
+    filter: invert(1) grayscale(1) brightness(1.5);
+    opacity: 0.75;
 }
 
 .swal2-popup.pos-swal-premium.pos-swal-reversal .swal2-icon {
@@ -4462,6 +4957,31 @@ body.pos-premium-dark #recentOrdersModal .pos-recent-orders-content {
     box-shadow: 0 24px 48px rgba(0, 0, 0, 0.45);
 }
 
+#recentOrdersModal .pos-recent-orders-header {
+    position: relative;
+    display: flex;
+    align-items: center;
+    padding: 0.95rem 2.75rem 0.95rem 1.15rem;
+    border-bottom: 1px solid var(--pos-border, #e2e8f0);
+    background: var(--pos-panel-elevated, #f8fafc);
+}
+
+#recentOrdersModal .pos-recent-orders-header .modal-title {
+    margin: 0;
+    font-size: 1.08rem;
+    font-weight: 700;
+}
+
+#recentOrdersModal .pos-recent-orders-close {
+    position: absolute;
+    top: 0.9rem;
+    inset-inline-end: 0.9rem;
+    margin: 0;
+    opacity: 0.55;
+    z-index: 2;
+}
+
+body.pos-premium-dark #recentOrdersModal .pos-recent-orders-header,
 body.pos-premium-dark #recentOrdersModal .modal-header.bg-primary,
 body.pos-premium-dark #recentOrdersModal .pos-recent-orders-content .modal-header {
     background: var(--pos-panel-elevated) !important;
@@ -5016,6 +5536,43 @@ body.pos-premium-dark #shiftExpenseModal .pos-shift-expense-btn-save:hover:not(:
     color: #111;
 }
 
+body.pos-premium-dark #shiftExpenseModal .pos-shift-cash-tabs {
+    background: rgba(0, 0, 0, 0.28);
+    border-color: var(--pos-border);
+}
+
+body.pos-premium-dark #shiftExpenseModal .pos-shift-cash-tabs .nav-link {
+    color: var(--pos-text-muted);
+    background: transparent;
+    border-color: transparent;
+}
+
+body.pos-premium-dark #shiftExpenseModal .pos-shift-cash-tabs .nav-link:hover:not(.active) {
+    color: var(--pos-text);
+    background: rgba(255, 255, 255, 0.06);
+}
+
+body.pos-premium-dark #shiftExpenseModal .pos-shift-cash-tabs .nav-link.active {
+    color: #111;
+    background: var(--pos-accent);
+    border-color: var(--pos-accent);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(var(--pos-accent-rgb), 0.35);
+}
+
+body.pos-premium-dark #shiftExpenseModal #shiftCashPayinTab.nav-link.active {
+    color: #fff;
+    background: #10b981;
+    border-color: #10b981;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(16, 185, 129, 0.35);
+}
+
+body.pos-premium-dark #shiftExpenseModal #shiftCashSafeDropTab.nav-link.active {
+    color: #fff;
+    background: #3b82f6;
+    border-color: #3b82f6;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(59, 130, 246, 0.35);
+}
+
 /* POS customer strip (cashier) */
 body.pos-premium-dark .pos-customer-strip {
     margin-bottom: 0.65rem;
@@ -5030,8 +5587,10 @@ body.pos-premium-dark .pos-customer-search-icon {
     inset-inline-start: 0.85rem;
     top: 50%;
     transform: translateY(-50%);
-    color: var(--pos-text-muted);
+    color: #c0cad6;
+    font-size: 0.92rem;
     pointer-events: none;
+    z-index: 1;
 }
 
 body.pos-premium-dark .pos-customer-phone-input {
@@ -5042,11 +5601,35 @@ body.pos-premium-dark .pos-customer-phone-input {
     color: var(--pos-text);
     border-radius: 10px;
     font-size: 0.9rem;
+    direction: rtl;
+    text-align: right;
+}
+
+body.pos-premium-dark .pos-customer-phone-input::placeholder {
+    color: #c0cad6 !important;
+    opacity: 1 !important;
+    font-weight: 500;
+}
+
+body.pos-premium-dark .pos-customer-phone-input::-webkit-input-placeholder {
+    color: #c0cad6 !important;
+    opacity: 1 !important;
+    font-weight: 500;
+}
+
+body.pos-premium-dark .pos-customer-phone-input::-moz-placeholder {
+    color: #c0cad6 !important;
+    opacity: 1 !important;
+    font-weight: 500;
 }
 
 body.pos-premium-dark .pos-customer-phone-input:focus {
     border-color: var(--pos-accent);
     box-shadow: 0 0 0 2px rgba(232, 160, 32, 0.15);
+}
+
+body.pos-premium-dark .pos-customer-phone-input:focus::placeholder {
+    color: #a8b4c4 !important;
 }
 
 body.pos-premium-dark .pos-customer-chip {

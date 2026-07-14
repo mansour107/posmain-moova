@@ -43,9 +43,18 @@ posmain_apply_main_pin_pos_entry($conn, 'pos_barcode.php');
 
 if (isset($_GET['logout'])) {
     require_once __DIR__ . '/includes/auth_guard.php';
+    $hasShiftCloseAck = !empty($_SESSION['pos_shift_close_result']) && is_array($_SESSION['pos_shift_close_result']);
     if ($pos_main_pin_auth) {
         require_once __DIR__ . '/classes/Security/MainAuthenticationService.php';
         (new MainAuthenticationService())->lockToLoginScreen();
+        if ($hasShiftCloseAck) {
+            // Show the shift-close ack modal before landing on the main login page.
+            // Session identity is already cleared, so the ack must go straight to
+            // index.php (do_logout.php would reject the request as unauthenticated).
+            $closeAckRedirectUrl = 'index.php';
+            include('includes/pos_login_screen.php');
+            exit;
+        }
         header('location:index.php');
         exit;
     }
@@ -90,6 +99,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['pos_barcode']) && $po
             $_SESSION['pos_drawer_session_id'] = (int) $entry['drawer_session']['id'];
         }
         $_SESSION['pos_user_name'] = (string) ($current_user['display_name'] ?? $current_user['uname']);
+        unset($_SESSION['pos_shift_closed_for_session']);
         pos_touch_activity();
         header('location:' . (string) ($entry['redirect'] ?? 'pos_barcode.php'));
         exit;
@@ -128,6 +138,65 @@ $posmainActingCanVoidPersistedItem = $acting_user_id > 0
     && PermissionService::forConnection($conn)->check($acting_user_id, 'pos.void.item_after_send');
 $posmainShiftEntryState = (string) ($_SESSION['posmain_shift_entry_state'] ?? '');
 $posmainShiftEntryMessage = (string) ($_SESSION['posmain_shift_entry_message'] ?? '');
+$posmainBlockingSession = is_array($_SESSION['posmain_shift_blocking'] ?? null)
+    ? $_SESSION['posmain_shift_blocking']
+    : [];
+// After a successful takeover the drawer is closed, but a stale branch_blocked
+// entry state would re-show the busy-drawer recovery overlay on reload.
+if (!empty($_SESSION['pos_pending_takeover'])
+    && in_array($posmainShiftEntryState, ['branch_blocked', ''], true)
+) {
+    $_SESSION['posmain_shift_entry_state'] = 'open_count_pending';
+    $_SESSION['posmain_shift_entry_message'] = '';
+    unset($_SESSION['posmain_shift_blocking']);
+    $_SESSION['pos_unlocked_pending_open'] = true;
+    $posmainShiftEntryState = 'open_count_pending';
+    $posmainShiftEntryMessage = '';
+    $posmainBlockingSession = [];
+}
+
+// If branch_blocked points at a drawer that is no longer open, re-resolve from DB
+// so refresh does not keep a dead recovery gate.
+if ($posmainShiftEntryState === 'branch_blocked' && $acting_user_id > 0) {
+    $blockingId = (int) ($posmainBlockingSession['id'] ?? 0);
+    $blockingStillOpen = false;
+    if ($blockingId > 0) {
+        $blockCheck = $conn->prepare(
+            "SELECT status FROM drawer_sessions WHERE id = ? LIMIT 1"
+        );
+        if ($blockCheck) {
+            $blockCheck->bind_param('i', $blockingId);
+            $blockCheck->execute();
+            $blockRow = $blockCheck->get_result()->fetch_assoc();
+            $blockCheck->close();
+            $blockingStillOpen = (($blockRow['status'] ?? '') === 'open');
+        }
+    }
+    if (!$blockingStillOpen) {
+        require_once __DIR__ . '/classes/Pos/Service/ShiftEntryService.php';
+        try {
+            $freshEntry = (new ShiftEntryService())->resolveForUser($conn, $acting_user_id, [
+                'opening_cash' => '0',
+            ]);
+            $posmainShiftEntryState = (string) ($freshEntry['state'] ?? '');
+            $posmainShiftEntryMessage = (string) ($freshEntry['message'] ?? '');
+            $_SESSION['posmain_shift_entry_state'] = $posmainShiftEntryState;
+            $_SESSION['posmain_shift_entry_message'] = $posmainShiftEntryMessage;
+            if (!empty($freshEntry['blocking_session']) && is_array($freshEntry['blocking_session'])) {
+                $posmainBlockingSession = $freshEntry['blocking_session'];
+                $_SESSION['posmain_shift_blocking'] = $posmainBlockingSession;
+            } else {
+                $posmainBlockingSession = [];
+                unset($_SESSION['posmain_shift_blocking']);
+            }
+            if (!empty($freshEntry['drawer_session']['id'])) {
+                $_SESSION['pos_drawer_session_id'] = (int) $freshEntry['drawer_session']['id'];
+            }
+        } catch (Throwable $healException) {
+            error_log('POS branch_blocked heal failed: ' . $healException->getMessage());
+        }
+    }
+}
 $posmainShiftRecoveryStates = [
     'branch_blocked',
     'register_transfer_required',
@@ -136,6 +205,7 @@ $posmainShiftRecoveryStates = [
     'entry_error',
 ];
 $posmainShiftBlocked = in_array($posmainShiftEntryState, $posmainShiftRecoveryStates, true);
+$posmainOverrideActive = !empty($_SESSION['pos_override_period_id']);
 
 try {
     require_once __DIR__ . '/classes/Pos/Service/ShiftCountService.php';
@@ -145,13 +215,17 @@ try {
         && auth_guard_has_permission('pos.shift.open', $conn);
     $needsOpeningCount = $posmainHandoverEnabled
         && $shiftCountService->needsOpeningCount($conn, $acting_user_id);
-    $posmainNeedsOpenCount = ($needsOpeningCount && $posmainCanOpenShift)
-        || $posmainShiftEntryState === 'open_count_pending';
-    $posmainOpenCountDenied = $needsOpeningCount && !$posmainCanOpenShift
+    $posmainNeedsOpenCount = !$posmainShiftBlocked
+        && !$posmainOverrideActive
+        && (($needsOpeningCount && $posmainCanOpenShift)
+            || $posmainShiftEntryState === 'open_count_pending');
+    $posmainOpenCountDenied = !$posmainShiftBlocked
+        && !$posmainOverrideActive
+        && $needsOpeningCount && !$posmainCanOpenShift
         && $posmainShiftEntryState !== 'open_count_pending';
 
-    if ($posmainShiftBlocked) {
-        // Do not auto-open or sell until recovery completes.
+    if ($posmainShiftBlocked || $posmainOverrideActive) {
+        // Do not auto-open or sell until recovery completes / while override is bound.
         unset($_SESSION['pos_unlocked_pending_open']);
     } elseif ($posmainOpenCountDenied) {
         // Waiter/kitchen (etc.): unlocked for tables, but must not open a drawer.
@@ -175,6 +249,9 @@ try {
         $posmainShiftBlocked = true;
         $posmainShiftEntryState = 'branch_blocked';
         $posmainShiftEntryMessage = 'يوجد صندوق مفتوح لموظف آخر على هذا الجهاز';
+        unset($_SESSION['pos_unlocked_pending_open']);
+        $posmainNeedsOpenCount = false;
+        $posmainOpenCountDenied = false;
     }
 }
 
@@ -231,6 +308,9 @@ if(isset($_SESSION['success_message'])){
 }
 
 $pos_body_class = 'pos-premium-dark pos-immersive';
+if (!empty($posmainIdentity['is_override'])) {
+    $pos_body_class .= ' pos-override-active';
+}
 include('includes/pos_simple_header.php');
 ?>
 
@@ -390,6 +470,7 @@ window.POSMAIN_IDENTITY = <?= json_encode($posmainIdentity, JSON_UNESCAPED_UNICO
 </nav>
 
 <!-- Main Content -->
+<?php include __DIR__ . '/elements/pos/shift_override_banner.php'; ?>
 <?php include __DIR__ . '/elements/pos/shift_recovery_overlay.php'; ?>
 <?php include __DIR__ . '/elements/pos/shift_open_count_overlay.php'; ?>
 <?php 

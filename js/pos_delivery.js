@@ -505,6 +505,9 @@
             }
             if (!window.posDeliveryState.confirmed) {
                 clearDeliveryFormFields();
+                // Keep any transferred cart items; skip the transfer toast on this revert.
+                window.__posModeSwitchKeepCart = true;
+                window.__posModeSwitchSilent = true;
                 $('#age1').prop('checked', true).trigger('change');
             }
         });
