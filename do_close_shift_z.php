@@ -8,6 +8,7 @@ require_once __DIR__ . '/classes/Pos/Service/ShiftDrawerReconciliationService.ph
 require_once __DIR__ . '/classes/Pos/Service/DrawerSessionService.php';
 require_once __DIR__ . '/classes/Pos/Service/ShiftCountService.php';
 require_once __DIR__ . '/classes/Pos/Service/ShiftSessionService.php';
+require_once __DIR__ . '/classes/Pos/Service/DrawerSessionCloseSummaryService.php';
 require_once __DIR__ . '/classes/Pos/Service/BusinessDayService.php';
 require_once __DIR__ . '/includes/shift_handover_idempotency.php';
 require_once __DIR__ . '/includes/business_day.php';
@@ -50,9 +51,7 @@ $sys_total_cash = floatval($_POST['sys_total_cash']);
 $sys_total_visa = floatval($_POST['sys_total_visa']);
 $expenses = floatval($_POST['sys_expenses']);
 $notes = isset($_POST['notes']) ? trim((string) $_POST['notes']) : '';
-// Legacy closed_orders.info is VARCHAR(50); keep full notes for drawer/json audit.
 $info_notes = function_exists('mb_substr') ? mb_substr($notes, 0, 50) : substr($notes, 0, 50);
-$drawer_notes = function_exists('mb_substr') ? mb_substr($notes, 0, 500) : substr($notes, 0, 500);
 $shift_session_token = trim((string) ($_SESSION['pos_shift_session_token'] ?? ''));
 
 $actual_cash = floatval($_POST['actual_cash']);
@@ -157,9 +156,9 @@ if ($handoverEnabled && $drawer_session_id < 1) {
         exit;
     }
 }
-if ($handoverEnabled && $drawer_session_id > 0) {
+if ($drawer_session_id > 0) {
     $closeToken = trim((string) ($_POST['close_token'] ?? ''));
-    if ($closeToken === '') {
+    if ($handoverEnabled && $closeToken === '') {
         $_SESSION['error_message'] = 'يجب إجراء عدّ النقد وإغلاق الدرج من نقطة البيع قبل تقرير Z';
         header('Location: z_report.php');
         exit;
@@ -185,6 +184,9 @@ if ($handoverEnabled && $drawer_session_id > 0) {
     ];
 
     try {
+        // Keep deploy-before-migrate windows from blocking a cashier close.
+        // This runs before the idempotency transaction to preserve atomicity.
+        (new DrawerSessionCloseSummaryService())->ensureSchema($conn);
         $response = pos_shift_handover_idempotent(
             $conn,
             'pos.shift.close',
@@ -256,119 +258,6 @@ if ($handoverEnabled && $drawer_session_id > 0) {
     }
 }
 
-// إدخال البيانات في جدول closed_orders
-// ملاحظة: نستخدم الأعمدة الجديدة التي أضفناها في الانتقال
-// إذا لم تكن الأعمدة موجودة ستفشل العملية، لذا يجب تشغيل ملف SQL أولاً
-$hasDrawerSessionColumn = false;
-if (function_exists('posmain_drawer_sessions_table_exists')) {
-    $colRes = $conn->query("SHOW COLUMNS FROM closed_orders LIKE 'drawer_session_id'");
-    $hasDrawerSessionColumn = $colRes && $colRes->num_rows > 0;
-}
-
-if ($hasDrawerSessionColumn) {
-    $insert_query = "INSERT INTO closed_orders
-                     (shift, date, user, endtime,
-                      total_sales, expenses, cash, fund_after, info,
-                      total_cash, total_visa, total_discount,
-                      actual_cash, actual_visa, deficit, status, json_details, drawer_session_id)
-                     VALUES
-                     (?, ?, ?, ?,
-                      ?, ?, ?, ?, ?,
-                      ?, ?, 0,
-                      ?, ?, ?, 1, ?, ?)";
-    $insert_stmt = $conn->prepare($insert_query);
-    $insert_stmt->bind_param(
-        'ssssddddsdddddsi',
-        $shift_number,
-        $shift_date,
-        $username,
-        $shift_time,
-        $sys_total_sales,
-        $expenses,
-        $actual_cash,
-        $actual_cash,
-        $info_notes,
-        $sys_total_cash,
-        $sys_total_visa,
-        $actual_cash,
-        $actual_visa,
-        $total_deficit,
-        $json_details,
-        $drawer_session_id
-    );
-} else {
-    $insert_query = "INSERT INTO closed_orders
-                     (shift, date, user, endtime,
-                      total_sales, expenses, cash, fund_after, info,
-                      total_cash, total_visa, total_discount,
-                      actual_cash, actual_visa, deficit, status, json_details)
-                     VALUES
-                     (?, ?, ?, ?,
-                      ?, ?, ?, ?, ?,
-                      ?, ?, 0,
-                      ?, ?, ?, 1, ?)";
-    $insert_stmt = $conn->prepare($insert_query);
-    $insert_stmt->bind_param(
-        'ssssddddsddddds',
-        $shift_number,
-        $shift_date,
-        $username,
-        $shift_time,
-        $sys_total_sales,
-        $expenses,
-        $actual_cash,
-        $actual_cash,
-        $info_notes,
-        $sys_total_cash,
-        $sys_total_visa,
-        $actual_cash,
-        $actual_visa,
-        $total_deficit,
-        $json_details
-    );
-}
-
-try {
-    $conn->begin_transaction();
-    if (!$insert_stmt->execute()) {
-        throw new RuntimeException('SHIFT_CLOSE_INSERT_FAILED');
-    }
-
-    if ($drawer_session_id > 0) {
-        (new DrawerSessionService())->closeSession($conn, $drawer_session_id, [
-            'closed_by' => $user_id,
-            'counted_cash' => $actual_cash,
-            'notes' => $drawer_notes,
-        ]);
-    }
-
-    $conn->commit();
-    // تسجيل الخروج أو رسالة نجاح
-    // سنقوم بتوجيه لصفحة طباعة نهائية او العودة
-    $_SESSION['success_message'] = "تم إغلاق الشيفت بنجاح. العجز/الزيادة: " . number_format($total_deficit, 2);
-    $_SESSION['pos_shift_close_result'] = [
-        'tone' => abs($total_deficit) <= 0.010 ? 'success' : ($total_deficit > 0 ? 'over' : 'under'),
-        'title' => abs($total_deficit) <= 0.010
-            ? 'تم إغلاق الشيفت بنجاح'
-            : ($total_deficit > 0 ? 'تم إغلاق الشيفت — زيادة في الدرج' : 'تم إغلاق الشيفت — عجز في الدرج'),
-        'detail' => abs($total_deficit) <= 0.010
-            ? 'تم تسجيل الإغلاق من تقرير Z'
-            : ('الفرق: ' . ($total_deficit > 0 ? '+' : '−') . number_format(abs($total_deficit), 2) . ' ج.م (سيتم مراجعته من الإدارة)'),
-        'variance' => (float) $total_deficit,
-        'matched' => abs($total_deficit) <= 0.010,
-    ];
-    posmain_clear_pos_shift_session(true);
-    unset($_SESSION['pos_shift_session_token'], $_SESSION['pos_drawer_session_id']);
-    if (function_exists('posmain_session_regenerate')) {
-        posmain_session_regenerate();
-    }
-    
-    header('Location: pos_barcode.php?logout=1');
-} catch (Throwable $e) {
-    $conn->rollback();
-    error_log("Shift Close Error: " . $e->getMessage());
-    $_SESSION['error_message'] = 'حدث خطأ أثناء إغلاق الشيفت';
-    header('Location: z_report.php');
-}
-$insert_stmt->close();
-?>
+$_SESSION['error_message'] = 'لا توجد جلسة درج مفتوحة لهذا المستخدم. افتح الدرج قبل إنشاء تقرير Z.';
+header('Location: z_report.php');
+exit;

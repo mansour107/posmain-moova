@@ -460,48 +460,6 @@ CREATE TABLE `clients` (
   `branch` int(11) DEFAULT 0
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
--- --------------------------------------------------------
-
---
--- Table structure for table `closed_orders`
---
-
-CREATE TABLE `closed_orders` (
-  `id` int(11) NOT NULL,
-  `shift` varchar(20) NOT NULL,
-  `user` varchar(50) DEFAULT NULL,
-  `date` date DEFAULT NULL,
-  `strttime` datetime DEFAULT NULL,
-  `endtime` time DEFAULT NULL,
-  `total_sales` double NOT NULL DEFAULT 0,
-  `delevery` double NOT NULL DEFAULT 0,
-  `tables` double NOT NULL DEFAULT 0,
-  `takeaway` double NOT NULL DEFAULT 0,
-  `expenses` double NOT NULL DEFAULT 0,
-  `fund_before` double NOT NULL DEFAULT 0,
-  `fund_after` double NOT NULL DEFAULT 0,
-  `exp_notes` varchar(30) DEFAULT NULL,
-  `cash` double NOT NULL DEFAULT 0,
-  `info` varchar(50) DEFAULT NULL,
-  `crtime` datetime NOT NULL DEFAULT current_timestamp(),
-  `mdtime` datetime NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
-  `info2` varchar(20) DEFAULT NULL,
-  `tenant` int(11) NOT NULL DEFAULT 1,
-  `branch` int(11) NOT NULL DEFAULT 1,
-  `total_cash` decimal(10,2) DEFAULT 0.00,
-  `total_visa` decimal(10,2) DEFAULT 0.00,
-  `total_discount` decimal(10,2) DEFAULT 0.00,
-  `total_returns` decimal(10,2) DEFAULT 0.00,
-  `start_cash` decimal(10,2) DEFAULT 0.00,
-  `actual_cash` decimal(10,2) DEFAULT 0.00,
-  `actual_visa` decimal(10,2) DEFAULT 0.00,
-  `deficit` decimal(10,2) DEFAULT 0.00,
-  `status` tinyint(1) DEFAULT 1,
-  `json_details` text DEFAULT NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
-
--- --------------------------------------------------------
-
 --
 -- Table structure for table `cost_centers`
 --
@@ -3118,12 +3076,6 @@ ALTER TABLE `clients`
   ADD UNIQUE KEY `name` (`name`);
 
 --
--- Indexes for table `closed_orders`
---
-ALTER TABLE `closed_orders`
-  ADD PRIMARY KEY (`id`);
-
---
 -- Indexes for table `cost_centers`
 --
 ALTER TABLE `cost_centers`
@@ -3798,12 +3750,6 @@ ALTER TABLE `cities`
 --
 ALTER TABLE `clients`
   MODIFY `id` int(1) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=10;
-
---
--- AUTO_INCREMENT for table `closed_orders`
---
-ALTER TABLE `closed_orders`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
 
 --
 -- AUTO_INCREMENT for table `cost_centers`

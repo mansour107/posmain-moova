@@ -821,68 +821,17 @@ class ShiftSessionService
         return $identity;
     }
 
-    private function insertClosedOrder(mysqli $conn, array $row): int
-    {
-        if ($this->closedOrdersHasJsonDetails($conn)) {
-            $stmt = $conn->prepare(
-                'INSERT INTO closed_orders
-                    (shift, date, user, endtime, total_sales, expenses, exp_notes, cash, fund_after, info, json_details)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
-            );
-            $stmt->bind_param(
-                'ssssddsddss',
-                $row['shift'],
-                $row['date'],
-                $row['user'],
-                $row['endtime'],
-                $row['total_sales'],
-                $row['expenses'],
-                $row['exp_notes'],
-                $row['cash'],
-                $row['fund_after'],
-                $row['info'],
-                $row['json_details']
-            );
-        } else {
-            $stmt = $conn->prepare(
-                'INSERT INTO closed_orders
-                    (shift, date, user, endtime, total_sales, expenses, exp_notes, cash, fund_after, info)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
-            );
-            $stmt->bind_param(
-                'ssssddsdds',
-                $row['shift'],
-                $row['date'],
-                $row['user'],
-                $row['endtime'],
-                $row['total_sales'],
-                $row['expenses'],
-                $row['exp_notes'],
-                $row['cash'],
-                $row['fund_after'],
-                $row['info']
-            );
-        }
-
-        $stmt->execute();
-        $id = (int) $conn->insert_id;
-        $stmt->close();
-
-        return $id;
-    }
-
-    private function closedOrdersHasJsonDetails(mysqli $conn): bool
-    {
-        $result = $conn->query("SHOW COLUMNS FROM closed_orders LIKE 'json_details'");
-
-        return $result instanceof mysqli_result && $result->num_rows > 0;
-    }
-
     public function forceCloseDrawerForUser(mysqli $conn, int $actingUserId, int $sessionId, array $payload = []): array
     {
         require_once dirname(__DIR__, 3) . '/includes/auth_guard.php';
+        require_once dirname(__DIR__, 3) . '/includes/db_transaction.php';
         require_once __DIR__ . '/ManagerApprovalService.php';
+        require_once __DIR__ . '/DrawerSessionCloseSummaryService.php';
         require_once dirname(__DIR__, 2) . '/Security/SecurityAuditLogger.php';
+
+        if (empty($payload['in_transaction'])) {
+            (new DrawerSessionCloseSummaryService())->ensureSchema($conn);
+        }
 
         $session = $this->drawerSessions->sessionById($conn, $sessionId);
         if (($session['status'] ?? '') !== 'open') {
@@ -953,47 +902,107 @@ class ShiftSessionService
             throw new RuntimeException('COUNTED_AMOUNT_INVALID');
         }
 
-        $closed = $this->drawerSessions->forceCloseSession($conn, $sessionId, [
-            'closed_by' => $actingUserId,
-            'counted_cash' => number_format((float) $countedCash, 3, '.', ''),
-            'notes' => $reason,
+        $businessDay = (string) ($session['business_day'] ?? date('Y-m-d'));
+        $report = new ShiftReport($conn, $ownerUserId, $businessDay, [
+            'tenant' => $sessionTenant,
+            'branch' => $sessionBranch,
+            'drawer_session_id' => $sessionId,
+            'shift_opened_at' => $session['opened_at'] ?? null,
+        ]);
+        $reportTotals = $report->getTotals();
+        $reconciliation = (new ShiftDrawerReconciliationService())->buildForUser($conn, [
+            'user_id' => $ownerUserId,
+            'tenant' => $sessionTenant,
+            'branch' => $sessionBranch,
+            'date' => $businessDay,
+            'drawer_session_id' => $sessionId,
+        ]);
+        $expenseSummary = $this->shiftExpenseSummary($conn, $ownerUserId, [
+            'tenant' => $sessionTenant,
+            'branch' => $sessionBranch,
+            'drawer_session_id' => $sessionId,
         ]);
 
-        $difference = (float) ($closed['difference'] ?? 0);
-        $openingUnresolved = (($session['variance_status'] ?? '') === 'unresolved')
-            && in_array((string) ($session['variance_type'] ?? ''), ['opening', 'both'], true);
+        $ownsTransaction = posmain_tx_begin_if_needed($conn, !empty($payload['in_transaction']));
+        try {
+            $closed = $this->drawerSessions->forceCloseSession($conn, $sessionId, [
+                'closed_by' => $actingUserId,
+                'counted_cash' => number_format((float) $countedCash, 3, '.', ''),
+                'notes' => $reason,
+            ], ['in_transaction' => true]);
 
-        $varianceStatus = (abs($difference) > 0.0001 || $openingUnresolved) ? 'unresolved' : 'none';
-        $varianceType = 'none';
-        if ($openingUnresolved && abs($difference) > 0.0001) {
-            $varianceType = 'both';
-        } elseif ($openingUnresolved) {
-            $varianceType = 'opening';
-        } elseif (abs($difference) > 0.0001) {
-            $varianceType = 'closing';
-        }
+            $difference = (float) ($closed['difference'] ?? 0);
+            $openingUnresolved = (($session['variance_status'] ?? '') === 'unresolved')
+                && in_array((string) ($session['variance_type'] ?? ''), ['opening', 'both'], true);
 
-        if ($varianceStatus === 'unresolved' && $this->drawerSessionsColumnExists($conn, 'variance_status')) {
-            $type = $varianceType;
-            $status = $varianceStatus;
-            $snapshot = number_format($expectedBefore, 3, '.', '');
-            if ($this->drawerSessionsColumnExists($conn, 'close_expected_snapshot')) {
-                $stmt = $conn->prepare("
-                    UPDATE drawer_sessions
-                    SET variance_status = ?, variance_type = ?, close_expected_snapshot = ?
-                    WHERE id = ?
-                ");
-                $stmt->bind_param('sssi', $status, $type, $snapshot, $sessionId);
-            } else {
-                $stmt = $conn->prepare("
-                    UPDATE drawer_sessions
-                    SET variance_status = ?, variance_type = ?
-                    WHERE id = ?
-                ");
-                $stmt->bind_param('ssi', $status, $type, $sessionId);
+            $varianceStatus = (abs($difference) > 0.0001 || $openingUnresolved) ? 'unresolved' : 'none';
+            $varianceType = 'none';
+            if ($openingUnresolved && abs($difference) > 0.0001) {
+                $varianceType = 'both';
+            } elseif ($openingUnresolved) {
+                $varianceType = 'opening';
+            } elseif (abs($difference) > 0.0001) {
+                $varianceType = 'closing';
             }
-            $stmt->execute();
-            $stmt->close();
+
+            if ($varianceStatus === 'unresolved' && $this->drawerSessionsColumnExists($conn, 'variance_status')) {
+                $type = $varianceType;
+                $status = $varianceStatus;
+                $snapshot = number_format($expectedBefore, 3, '.', '');
+                if ($this->drawerSessionsColumnExists($conn, 'close_expected_snapshot')) {
+                    $stmt = $conn->prepare("
+                        UPDATE drawer_sessions
+                        SET variance_status = ?, variance_type = ?, close_expected_snapshot = ?
+                        WHERE id = ?
+                    ");
+                    $stmt->bind_param('sssi', $status, $type, $snapshot, $sessionId);
+                } else {
+                    $stmt = $conn->prepare("
+                        UPDATE drawer_sessions
+                        SET variance_status = ?, variance_type = ?
+                        WHERE id = ?
+                    ");
+                    $stmt->bind_param('ssi', $status, $type, $sessionId);
+                }
+                $stmt->execute();
+                $stmt->close();
+            }
+
+            $closeSummary = (new DrawerSessionCloseSummaryService())->createForSession($conn, $sessionId, [
+                'shift_number' => date('Ymd') . '_' . $ownerUserId,
+                'total_orders' => (int) ($reportTotals['total_orders'] ?? 0),
+                'total_sales' => (float) ($reportTotals['total_net'] ?? 0),
+                'cash_sales' => (float) ($reconciliation['payments']['cash'] ?? 0),
+                'non_cash_sales' => (float) ($reconciliation['payments']['non_cash'] ?? 0),
+                'discount_total' => (float) ($reportTotals['total_discount'] ?? 0),
+                'return_total' => 0,
+                'expense_total' => (float) ($expenseSummary['total'] ?? 0),
+                'expense_notes' => (string) ($expenseSummary['notes'] ?? ''),
+                'expected_non_cash' => (float) ($reconciliation['payments']['non_cash'] ?? 0),
+                'counted_non_cash' => null,
+                'non_cash_difference' => null,
+                'close_path' => !empty($payload['takeover']) ? 'drawer_takeover_force_close' : 'drawer_force_close',
+                'report_snapshot' => [
+                    'force_close_reason' => $reason,
+                    'expected_cash' => $expectedBefore,
+                    'counted_cash' => (float) $countedCash,
+                    'variance_status' => $varianceStatus,
+                    'variance_type' => $varianceType,
+                    'manager_approval_id' => $approvalId,
+                ],
+                'payment_summary' => $reconciliation['payments'] ?? [],
+            ]);
+
+            require_once dirname(__DIR__, 2) . '/Sync/OperationalSyncEventService.php';
+            (new OperationalSyncEventService())->recordShiftCloseSnapshot(
+                $conn,
+                (int) ($closeSummary['id'] ?? 0)
+            );
+
+            posmain_tx_commit_if_owned($conn, $ownsTransaction);
+        } catch (Throwable $exception) {
+            posmain_tx_rollback_if_owned($conn, $ownsTransaction);
+            throw $exception;
         }
 
         $result = $this->drawerSessions->sessionById($conn, $sessionId);

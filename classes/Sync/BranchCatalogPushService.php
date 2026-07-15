@@ -287,8 +287,8 @@ class BranchCatalogPushService
                     ? count($this->activeIds($conn, 'modifier_groups', $includeDeleted, $limit))
                     : 0;
             case 'shift_closes':
-                return $this->tableExists($conn, 'closed_orders')
-                    ? count($this->activeIds($conn, 'closed_orders', $includeDeleted, $limit))
+                return $this->tableExists($conn, 'drawer_session_close_summaries')
+                    ? count($this->activeIds($conn, 'drawer_session_close_summaries', $includeDeleted, $limit))
                     : 0;
             default:
                 return 0;
@@ -552,7 +552,7 @@ class BranchCatalogPushService
         int $limit,
         array &$queue
     ): void {
-        if (!$this->tableExists($conn, 'closed_orders')) {
+        if (!$this->tableExists($conn, 'drawer_session_close_summaries')) {
             return;
         }
 
@@ -562,9 +562,9 @@ class BranchCatalogPushService
             'config' => $pushConfig,
         ];
 
-        foreach ($this->activeIds($conn, 'closed_orders', $includeDeleted, $limit) as $closedOrderId) {
+        foreach ($this->activeIds($conn, 'drawer_session_close_summaries', $includeDeleted, $limit) as $closeSummaryId) {
             $queue['shift_closes'] = ($queue['shift_closes'] ?? 0) + 1;
-            $this->trackQueuedRow($conn, $operational->recordShiftCloseSnapshot($conn, $closedOrderId, $options), $forceResend, $queue);
+            $this->trackQueuedRow($conn, $operational->recordShiftCloseSnapshot($conn, $closeSummaryId, $options), $forceResend, $queue);
         }
     }
 

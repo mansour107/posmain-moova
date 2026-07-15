@@ -80,9 +80,9 @@ return [
 
     // POS admin
     'pos_customers.php' => ['permission' => 'customers.manage', 'admin_or' => true],
-    'closed_sessions.php' => ['permission' => 'pos.shift.close'],
-    'cash_flow_report.php' => ['permission' => 'reports.cash_flow'],
-    'drawer_session.php' => ['permission' => 'reports.cash_flow'],
+    'closed_sessions.php' => ['any_of' => ['reports.cash_flow', 'pos.shift.close']],
+    'cash_flow_report.php' => ['any_of' => ['reports.cash_flow', 'pos.shift.close']],
+    'drawer_session.php' => ['any_of' => ['reports.cash_flow', 'pos.shift.close']],
     'z_report.php' => ['permission' => 'pos.shift.close'],
     // Root POS write endpoints (classified as pages by entry_classification_guard).
     'close_shift.php' => ['permission' => 'pos.shift.close'],

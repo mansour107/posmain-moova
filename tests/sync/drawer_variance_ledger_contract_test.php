@@ -20,6 +20,7 @@ $counts = file_get_contents($root . '/classes/Pos/Service/ShiftCountService.php'
 $schema = file_get_contents($root . '/classes/Sync/SchemaManager.php');
 $endpoint = file_get_contents($root . '/do/do_resolve_drawer_session.php');
 $sessionPage = file_get_contents($root . '/drawer_session.php');
+$workspacePage = file_get_contents($root . '/cash_flow_report.php');
 $closedPage = file_get_contents($root . '/closed_sessions.php');
 
 function drawerVarianceLedgerAssert(bool $cond, string $msg): void
@@ -132,14 +133,22 @@ drawerVarianceLedgerAssert(
 
 drawerVarianceLedgerAssert(
     strpos($sessionPage, 'name="resolution_reason_code"') !== false
-        && strpos($closedPage, 'name="resolution_reason_code"') !== false,
-    'both resolve modals must offer the reason list'
+        && strpos($workspacePage, 'name="resolution_reason_code"') !== false,
+    'workspace and session detail resolve modals must offer the reason list'
 );
 
 drawerVarianceLedgerAssert(
     strpos($sessionPage, 'حساب فروقات عد الدرج') !== false
-        && strpos($closedPage, 'حساب فروقات عد الدرج') !== false,
-    'both resolve modals must disclose the automatic ledger entry'
+        && strpos($workspacePage, 'حساب فروقات عد الدرج') !== false,
+    'workspace and session detail modals must disclose the automatic ledger entry'
+);
+
+drawerVarianceLedgerAssert(
+    strpos($closedPage, "'tab' => 'shifts'") !== false
+        && strpos($closedPage, "'status' => 'needs_review'") !== false
+        && strpos($closedPage, "'scope' => 'backlog'") !== false
+        && strpos($closedPage, "header('Location: ' . posmain_cash_shift_workspace_url") !== false,
+    'legacy closed-sessions route must redirect instead of duplicating the resolve workflow'
 );
 
 echo "drawer_variance_ledger_contract_test: PASS\n";

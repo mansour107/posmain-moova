@@ -560,7 +560,7 @@ class CloudBranchRestoreExportService
         if ($this->tableExists($conn, 'moova_pos_shop_links')) {
             $segments[] = ['type' => 'moova_shop_links'];
         }
-        if ($this->tableExists($conn, 'closed_orders')) {
+        if ($this->tableExists($conn, 'drawer_session_close_summaries')) {
             $segments[] = ['type' => 'shift_closes'];
         }
 
@@ -815,7 +815,7 @@ class CloudBranchRestoreExportService
 
     private function exportShiftCloseSegment(mysqli $conn, string $branchUuid, int $rowAfterId, int $limit): array
     {
-        $stmt = $conn->prepare('SELECT id FROM closed_orders WHERE id > ? ORDER BY id ASC LIMIT ?');
+        $stmt = $conn->prepare('SELECT id FROM drawer_session_close_summaries WHERE id > ? ORDER BY id ASC LIMIT ?');
         $stmt->bind_param('ii', $rowAfterId, $limit);
         $stmt->execute();
         $result = $stmt->get_result();
@@ -823,9 +823,9 @@ class CloudBranchRestoreExportService
         $nextRowAfterId = $rowAfterId;
         $builder = new ShiftCloseSyncPayloadService();
         while ($row = $result->fetch_assoc()) {
-            $closedOrderId = (int) $row['id'];
-            $nextRowAfterId = $closedOrderId;
-            $payload = $builder->build($conn, $closedOrderId, $branchUuid, ['source_system' => 'cloud_restore']);
+            $closeSummaryId = (int) $row['id'];
+            $nextRowAfterId = $closeSummaryId;
+            $payload = $builder->build($conn, $closeSummaryId, $branchUuid, ['source_system' => 'cloud_restore']);
             if ($payload) {
                 $events[] = $this->wrapOperationalEvent('shift_close.saved', 'shift_close', 'shift_close', $payload);
             }
@@ -835,7 +835,7 @@ class CloudBranchRestoreExportService
 
         $hasMore = count($events) >= $limit;
         if (!$hasMore && $events !== []) {
-            $countStmt = $conn->prepare('SELECT COUNT(*) AS c FROM closed_orders WHERE id > ?');
+            $countStmt = $conn->prepare('SELECT COUNT(*) AS c FROM drawer_session_close_summaries WHERE id > ?');
             $countStmt->bind_param('i', $nextRowAfterId);
             $countStmt->execute();
             $hasMore = ((int) ($countStmt->get_result()->fetch_assoc()['c'] ?? 0)) > 0;

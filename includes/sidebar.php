@@ -453,19 +453,11 @@ $posmainLegacyFlag = static function (string $flag) use ($conn): bool {
 
 
 
-              <?php if ($posmainCanCloseShift) { ?>
-              <li class="nav-item" id="myitems">
-                <a href="closed_sessions.php" class="nav-link">
-                  <i class="nav-icon fas fa-list"></i>
-                  <p><?= $lang_closed_sessions ?></p>
-                </a>
-              </li>
-              <?php } ?>
-              <?php if ($posmainCanViewCashFlow) { ?>
+              <?php if ($posmainCanCloseShift || $posmainCanViewCashFlow) { ?>
               <li class="nav-item">
                 <a href="cash_flow_report.php" class="nav-link">
-                  <i class="nav-icon fas fa-money-bill-wave"></i>
-                  <p>تقرير التدفق النقدي</p>
+                  <i class="nav-icon fas fa-cash-register"></i>
+                  <p>النقد والورديات</p>
                 </a>
               </li>
               <?php } ?>

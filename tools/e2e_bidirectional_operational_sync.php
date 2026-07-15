@@ -441,24 +441,46 @@ function e2eBsyncSeedBranch(mysqli $conn, string $tag): array
         $seed['moova_shop_link'] = ['table' => 'moova_pos_shop_links', 'id' => $linkId, 'marker_column' => 'moova_shop_id'];
     }
 
-    if (e2eBsyncTableExists($conn, 'closed_orders')) {
-        $closeId = e2eBsyncInsertRow($conn, 'closed_orders', [
-            'shift' => $tag,
-            'date' => date('Y-m-d'),
-            'strttime' => date('Y-m-d') . ' 08:00:00',
-            'endtime' => '16:00:00',
-            'total_sales' => 500,
-            'delevery' => 0,
-            'tables' => 0,
-            'takeaway' => 0,
-            'expenses' => 0,
-            'fund_before' => 0,
-            'fund_after' => 100,
-            'cash' => 100,
+    if (
+        e2eBsyncTableExists($conn, 'drawer_sessions')
+        && e2eBsyncTableExists($conn, 'drawer_session_close_summaries')
+    ) {
+        $drawerUuidHex = md5($tag . '-drawer');
+        $drawerUuid = substr($drawerUuidHex, 0, 8) . '-' . substr($drawerUuidHex, 8, 4) . '-4'
+            . substr($drawerUuidHex, 13, 3) . '-a' . substr($drawerUuidHex, 17, 3) . '-' . substr($drawerUuidHex, 20, 12);
+        $drawerId = e2eBsyncInsertRow($conn, 'drawer_sessions', [
+            'uuid' => $drawerUuid,
+            'user_id' => 1,
             'tenant' => 1,
             'branch' => 1,
+            'opened_at' => date('Y-m-d') . ' 08:00:00',
+            'business_day' => date('Y-m-d'),
+            'opened_by' => 1,
+            'opening_cash' => 100,
+            'closed_at' => date('Y-m-d') . ' 16:00:00',
+            'closed_by' => 1,
+            'expected_cash' => 100,
+            'counted_cash' => 100,
+            'difference' => 0,
+            'status' => 'closed',
         ]);
-        $seed['closed_order'] = ['table' => 'closed_orders', 'id' => $closeId, 'marker_column' => 'shift'];
+        $summaryUuidHex = md5($tag . '-summary');
+        $summaryUuid = substr($summaryUuidHex, 0, 8) . '-' . substr($summaryUuidHex, 8, 4) . '-4'
+            . substr($summaryUuidHex, 13, 3) . '-a' . substr($summaryUuidHex, 17, 3) . '-' . substr($summaryUuidHex, 20, 12);
+        $closeId = e2eBsyncInsertRow($conn, 'drawer_session_close_summaries', [
+            'uuid' => $summaryUuid,
+            'drawer_session_id' => $drawerId,
+            'shift_number' => $tag,
+            'total_sales' => 500,
+            'cash_sales' => 100,
+            'non_cash_sales' => 400,
+            'close_path' => 'e2e_bidirectional_operational_sync',
+        ]);
+        $seed['shift_close'] = [
+            'table' => 'drawer_session_close_summaries',
+            'id' => $closeId,
+            'marker_column' => 'shift_number',
+        ];
     }
 
     $orderId = e2eBsyncInsertRow($conn, 'ot_head', [

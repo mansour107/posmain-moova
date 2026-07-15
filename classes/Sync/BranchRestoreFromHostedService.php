@@ -66,6 +66,7 @@ class BranchRestoreFromHostedService
             'mirrored' => 0,
             'skipped' => 0,
             'failed' => 0,
+            'legacy_shift_closes_recovered' => 0,
             'errors' => [],
         ];
 
@@ -80,6 +81,7 @@ class BranchRestoreFromHostedService
                 'mirrored' => 0,
                 'skipped' => 0,
                 'failed' => 0,
+                'legacy_shift_closes_recovered' => 0,
             ];
             $afterId = 0;
             $maxPages = max(0, (int) ($options['max_pages_per_phase'] ?? 0));
@@ -139,6 +141,10 @@ class BranchRestoreFromHostedService
                         if ($result) {
                             $phaseSummary['mirrored']++;
                             $summary['mirrored']++;
+                            if (!empty($result['recovered_legacy_shift_close'])) {
+                                $phaseSummary['legacy_shift_closes_recovered']++;
+                                $summary['legacy_shift_closes_recovered']++;
+                            }
                         } else {
                             $phaseSummary['skipped']++;
                             $summary['skipped']++;
@@ -274,9 +280,19 @@ class BranchRestoreFromHostedService
                 'ignore_errors' => true,
             ],
         ]);
-        $body = @file_get_contents($url, false, $context);
+        $stream = @fopen($url, 'rb', false, $context);
+        $body = false;
+        $responseHeaders = [];
+        if (is_resource($stream)) {
+            $body = stream_get_contents($stream);
+            $metadata = stream_get_meta_data($stream);
+            $responseHeaders = is_array($metadata['wrapper_data'] ?? null)
+                ? $metadata['wrapper_data']
+                : [];
+            fclose($stream);
+        }
         $status = 0;
-        if (isset($http_response_header[0]) && preg_match('#\s(\d{3})\s#', (string) $http_response_header[0], $matches)) {
+        if (isset($responseHeaders[0]) && preg_match('#\s(\d{3})\s#', (string) $responseHeaders[0], $matches)) {
             $status = (int) $matches[1];
         }
         $json = is_string($body) ? json_decode($body, true) : null;

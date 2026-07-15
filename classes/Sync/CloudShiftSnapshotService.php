@@ -1,5 +1,7 @@
 <?php
 
+require_once __DIR__ . '/PosOrderSnapshotBuilder.php';
+
 class CloudShiftSnapshotService
 {
     public function upsertFromBranchEvent(mysqli $conn, string $branchUuid, array $event): ?array
@@ -10,18 +12,28 @@ class CloudShiftSnapshotService
 
         $payload = $this->payload($event);
         $shift = $this->shiftPayload($payload);
-        $closeUuid = $this->closeUuid($event, $payload, $shift);
+        $closeUuid = $this->closeUuid($branchUuid, $event, $payload, $shift);
         if ($closeUuid === null) {
             throw new InvalidArgumentException('Shift sync event is missing close_uuid or aggregate_uuid.');
         }
 
         $payloadJson = $this->encodeJson($event);
         $payloadHash = $this->payloadHash($event, $payload);
+        // Payload version, not the transport event version, defines the close
+        // identifier contract. Older v1 events may still have event_version=2.
+        $schemaVersion = (int) ($payload['schema_version'] ?? 1);
+        $legacyCloseId = $schemaVersion >= 2
+            ? null
+            : $this->intOrNull($this->firstExistingValue(
+                [$shift, $payload, $event],
+                ['local_closed_order_id', 'closed_order_id', 'id', 'aggregate_local_id', 'entity_local_id']
+            ));
 
         $params = [
             $branchUuid,
             $closeUuid,
-            $this->intOrNull($this->firstExistingValue([$shift, $payload, $event], ['local_closed_order_id', 'closed_order_id', 'id', 'aggregate_local_id', 'entity_local_id'])),
+            $legacyCloseId,
+            $this->intOrNull($this->firstExistingValue([$shift, $payload, $event], ['local_drawer_session_id', 'drawer_session_id', 'aggregate_local_id'])),
             $this->intOrNull($this->firstExistingValue([$shift, $payload], ['cashier_user_id', 'user', 'user_id'])),
             $this->nullableString($this->firstExistingValue([$shift, $payload], ['shift_number', 'shift']), 100),
             $this->datetimeOrNull($this->firstExistingValue([$shift, $payload], ['opened_at', 'strttime', 'start_time'])),
@@ -43,6 +55,7 @@ class CloudShiftSnapshotService
                 branch_uuid,
                 close_uuid,
                 local_closed_order_id,
+                local_drawer_session_id,
                 cashier_user_id,
                 shift_number,
                 opened_at,
@@ -57,10 +70,11 @@ class CloudShiftSnapshotService
                 card_deficit,
                 payload_hash,
                 payload_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON DUPLICATE KEY UPDATE
                 id = LAST_INSERT_ID(id),
                 local_closed_order_id = VALUES(local_closed_order_id),
+                local_drawer_session_id = VALUES(local_drawer_session_id),
                 cashier_user_id = VALUES(cashier_user_id),
                 shift_number = VALUES(shift_number),
                 opened_at = VALUES(opened_at),
@@ -105,6 +119,7 @@ class CloudShiftSnapshotService
         $payload = $this->payload($event);
         return array_key_exists('shift', $payload)
             || array_key_exists('close_uuid', $payload)
+            || array_key_exists('local_drawer_session_id', $payload)
             || array_key_exists('local_closed_order_id', $payload);
     }
 
@@ -127,7 +142,7 @@ class CloudShiftSnapshotService
         return $payload;
     }
 
-    private function closeUuid(array $event, array $payload, array $shift): ?string
+    private function closeUuid(string $branchUuid, array $event, array $payload, array $shift): ?string
     {
         $value = $this->firstExistingValue(
             [$shift, $payload, $event],
@@ -140,10 +155,35 @@ class CloudShiftSnapshotService
 
         $aggregateType = strtolower(trim((string) ($event['aggregate_type'] ?? '')));
         if ($aggregateType === 'shift' || $aggregateType === 'shift_close') {
-            return $this->nullableUuid($event['aggregate_uuid'] ?? null);
+            $aggregateUuid = $this->nullableUuid($event['aggregate_uuid'] ?? null);
+            if ($aggregateUuid !== null) {
+                return $aggregateUuid;
+            }
         }
 
-        return null;
+        // Compatibility for already-queued v1 close events written before
+        // close_uuid became mandatory. The seed mirrors the historical writer,
+        // so retries and separate events for the same legacy close converge.
+        $legacyCloseId = $this->intOrNull($this->firstExistingValue(
+            [$shift, $payload, $event],
+            ['local_closed_order_id', 'closed_order_id', 'entity_local_id', 'aggregate_local_id', 'id']
+        ));
+        if ($legacyCloseId !== null && $legacyCloseId > 0) {
+            return PosOrderSnapshotBuilder::deterministicUuid($branchUuid, 'closed_orders:' . $legacyCloseId);
+        }
+
+        $drawerIdentity = trim((string) $this->firstExistingValue(
+            [$shift, $payload, $event],
+            ['drawer_session_uuid', 'local_drawer_session_id', 'drawer_session_id']
+        ));
+        if ($drawerIdentity !== '') {
+            return PosOrderSnapshotBuilder::deterministicUuid($branchUuid, 'drawer_sessions:' . $drawerIdentity . ':close');
+        }
+
+        $eventIdentity = trim((string) ($event['event_uuid'] ?? $event['idempotency_key'] ?? ''));
+        return $eventIdentity === ''
+            ? null
+            : PosOrderSnapshotBuilder::deterministicUuid($branchUuid, 'shift_close_event:' . $eventIdentity);
     }
 
     private function branchTimezone(array $shift, array $payload, array $event): string

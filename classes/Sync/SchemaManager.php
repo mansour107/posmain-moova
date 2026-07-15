@@ -44,6 +44,7 @@ class SyncSchemaManager
             'payment_refunds' => $this->paymentRefundsSql(),
             'manager_approvals' => $this->managerApprovalsSql(),
             'drawer_sessions' => $this->drawerSessionsSql(),
+            'drawer_session_close_summaries' => $this->drawerSessionCloseSummariesSql(),
             'drawer_movements' => $this->drawerMovementsSql(),
             'drawer_count_attempts' => $this->drawerCountAttemptsSql(),
             'drawer_session_resolutions' => $this->drawerSessionResolutionsSql(),
@@ -275,22 +276,11 @@ class SyncSchemaManager
                     ],
                 ],
             ],
-            'closed_orders' => [
-                'columns' => [
-                    'drawer_session_id' => "ALTER TABLE closed_orders ADD COLUMN drawer_session_id BIGINT UNSIGNED NULL",
-                ],
-                'indexes' => [
-                    'idx_closed_orders_drawer_session' => [
-                        'columns' => ['drawer_session_id'],
-                        'sql' => "ALTER TABLE closed_orders ADD KEY idx_closed_orders_drawer_session (drawer_session_id)",
-                    ],
-                ],
-            ],
             'drawer_sessions' => [
                 'columns' => [
-                    'expected_opening_cash' => "ALTER TABLE drawer_sessions ADD COLUMN expected_opening_cash DECIMAL(12,3) NULL AFTER opening_cash",
-                    'opening_variance' => "ALTER TABLE drawer_sessions ADD COLUMN opening_variance DECIMAL(12,3) NULL AFTER expected_opening_cash",
-                    'close_expected_snapshot' => "ALTER TABLE drawer_sessions ADD COLUMN close_expected_snapshot DECIMAL(12,3) NULL AFTER difference",
+                    'expected_opening_cash' => "ALTER TABLE drawer_sessions ADD COLUMN expected_opening_cash DECIMAL(19,3) NULL AFTER opening_cash",
+                    'opening_variance' => "ALTER TABLE drawer_sessions ADD COLUMN opening_variance DECIMAL(19,3) NULL AFTER expected_opening_cash",
+                    'close_expected_snapshot' => "ALTER TABLE drawer_sessions ADD COLUMN close_expected_snapshot DECIMAL(19,3) NULL AFTER difference",
                     'variance_status' => "ALTER TABLE drawer_sessions ADD COLUMN variance_status ENUM('none','unresolved','resolved') NOT NULL DEFAULT 'none' AFTER close_expected_snapshot",
                     'variance_type' => "ALTER TABLE drawer_sessions ADD COLUMN variance_type ENUM('none','opening','closing','both') NOT NULL DEFAULT 'none' AFTER variance_status",
                     'open_branch_lock' => "ALTER TABLE drawer_sessions ADD COLUMN open_branch_lock VARCHAR(64) NULL AFTER status",
@@ -342,6 +332,17 @@ class SyncSchemaManager
                 ],
                 'indexes' => [],
             ],
+            'cloud_shifts' => [
+                'columns' => [
+                    'local_drawer_session_id' => "ALTER TABLE cloud_shifts ADD COLUMN local_drawer_session_id BIGINT UNSIGNED NULL AFTER local_closed_order_id",
+                ],
+                'indexes' => [
+                    'idx_cloud_shifts_drawer_session' => [
+                        'columns' => ['branch_uuid', 'local_drawer_session_id'],
+                        'sql' => "ALTER TABLE cloud_shifts ADD KEY idx_cloud_shifts_drawer_session (branch_uuid, local_drawer_session_id)",
+                    ],
+                ],
+            ],
         ];
     }
 
@@ -363,10 +364,6 @@ class SyncSchemaManager
             'tables' => [
                 'column' => 'uuid',
                 'index' => 'uq_tables_uuid',
-            ],
-            'closed_orders' => [
-                'column' => 'uuid',
-                'index' => 'uq_closed_orders_uuid',
             ],
         ];
     }
@@ -431,6 +428,10 @@ class SyncSchemaManager
             $pending[$label] = $statement;
         }
 
+        foreach ($this->closedOrdersRetirementStatements($conn) as $label => $statement) {
+            $pending[$label] = $statement;
+        }
+
         if ($this->tableExists($conn, 'users') && $this->columnExists($conn, 'users', 'pin_enc')) {
             $legacyPins = $conn->query(
                 "SELECT COUNT(*) AS c FROM users WHERE pin_enc IS NOT NULL AND TRIM(pin_enc) <> ''"
@@ -445,6 +446,85 @@ class SyncSchemaManager
         }
 
         return $pending;
+    }
+
+    /**
+     * Retire the pre-drawer close ledger in two independently verifiable runs.
+     * The first run backfills only rows that are linked to a real drawer session;
+     * a later run may drop the legacy table after no linked rows remain missing.
+     */
+    private function closedOrdersRetirementStatements(mysqli $conn): array
+    {
+        if (
+            !$this->tableExists($conn, 'closed_orders')
+            || !$this->tableExists($conn, 'drawer_sessions')
+            || !$this->tableExists($conn, 'drawer_session_close_summaries')
+        ) {
+            return [];
+        }
+
+        // Very old installations cannot link this ledger to a drawer session at
+        // all. There is nothing reliable to backfill, so retire it only after the
+        // new close-summary table is present.
+        if (!$this->columnExists($conn, 'closed_orders', 'drawer_session_id')) {
+            return ['closed_orders.drop_unlinkable_legacy' => 'DROP TABLE closed_orders'];
+        }
+
+        $missingResult = $conn->query("
+            SELECT COUNT(DISTINCT co.drawer_session_id) AS c
+            FROM closed_orders co
+            INNER JOIN drawer_sessions ds ON ds.id = co.drawer_session_id
+            LEFT JOIN drawer_session_close_summaries cs ON cs.drawer_session_id = co.drawer_session_id
+            WHERE co.drawer_session_id IS NOT NULL AND cs.id IS NULL
+        ");
+        $missingLinked = $missingResult ? (int) ($missingResult->fetch_assoc()['c'] ?? 0) : 0;
+        if ($missingLinked < 1) {
+            return ['closed_orders.drop_legacy' => 'DROP TABLE closed_orders'];
+        }
+
+        $value = function (array $columns, string $fallback = 'NULL') use ($conn): string {
+            foreach ($columns as $column) {
+                if ($this->columnExists($conn, 'closed_orders', $column)) {
+                    return 'co.`' . str_replace('`', '``', $column) . '`';
+                }
+            }
+            return $fallback;
+        };
+        $totalSales = $value(['total_sales'], '0');
+        $cashSales = $value(['total_cash', 'cash'], '0');
+        $nonCashSales = $value(['total_visa'], '0');
+        $discountTotal = $value(['total_discount'], '0');
+        $expenseTotal = $value(['expenses'], '0');
+        $expenseNotes = $value(['exp_notes'], "''");
+        $countedNonCash = $value(['actual_visa']);
+        $reportSnapshot = $value(['json_details']);
+        $createdAt = $value(['crtime', 'created_at'], 'CURRENT_TIMESTAMP');
+        $shiftNumber = $value(['shift'], "CONCAT('legacy_', co.id)");
+
+        return ['closed_orders.backfill_close_summaries' => "
+INSERT INTO drawer_session_close_summaries (
+  uuid, drawer_session_id, shift_number, total_orders, total_sales,
+  cash_sales, non_cash_sales, discount_total, return_total,
+  expense_total, expense_notes, expected_non_cash, counted_non_cash,
+  non_cash_difference, close_path, report_snapshot_json,
+  payment_summary_json, created_at
+)
+SELECT
+  UUID(), co.drawer_session_id, {$shiftNumber}, 0, {$totalSales},
+  {$cashSales}, {$nonCashSales}, {$discountTotal}, 0,
+  {$expenseTotal}, {$expenseNotes}, {$nonCashSales}, {$countedNonCash},
+  CASE WHEN {$countedNonCash} IS NULL THEN NULL ELSE {$countedNonCash} - {$nonCashSales} END,
+  'legacy_backfill', {$reportSnapshot}, NULL, {$createdAt}
+FROM closed_orders co
+INNER JOIN (
+  SELECT drawer_session_id, MAX(id) AS id
+  FROM closed_orders
+  WHERE drawer_session_id IS NOT NULL
+  GROUP BY drawer_session_id
+) latest ON latest.id = co.id
+INNER JOIN drawer_sessions ds ON ds.id = co.drawer_session_id
+LEFT JOIN drawer_session_close_summaries cs ON cs.drawer_session_id = co.drawer_session_id
+WHERE cs.id IS NULL"];
     }
 
     public function apply(mysqli $conn)
@@ -1274,7 +1354,19 @@ ALTER TABLE {$quotedTable}
             && $this->tableExists($conn, 'drawer_sessions')
             && $this->columnExists($conn, 'drawer_sessions', 'register_id')
         ) {
-            $statements['pos_registers.seed_default_from_drawers'] = "
+            if ($this->queryHasRows($conn, "
+                SELECT 1
+                FROM drawer_sessions ds
+                WHERE NOT EXISTS (
+                    SELECT 1
+                    FROM pos_registers pr
+                    WHERE pr.tenant = ds.tenant
+                      AND pr.branch = ds.branch
+                      AND pr.code = 'REG1'
+                )
+                LIMIT 1
+            ")) {
+                $statements['pos_registers.seed_default_from_drawers'] = "
                 INSERT INTO pos_registers (uuid, tenant, branch, code, name, is_active, sort_order, paired_at)
                 SELECT
                     UUID(),
@@ -1296,6 +1388,7 @@ ALTER TABLE {$quotedTable}
                       AND pr.branch = ds.branch
                       AND pr.code = 'REG1'
                 )";
+            }
 
             if ($this->queryHasRows($conn, "
                 SELECT 1
@@ -1398,12 +1491,31 @@ ALTER TABLE {$quotedTable}
                 continue;
             }
 
+            $precision = $this->safeJournalDecimalPrecision($conn, $column);
             $statements['journal_entries.modify_' . $column . '_decimal'] = "
 ALTER TABLE journal_entries
-  MODIFY COLUMN {$column} DECIMAL(18,6) NOT NULL DEFAULT 0.000000";
+  MODIFY COLUMN {$column} DECIMAL({$precision},6) NOT NULL DEFAULT 0.000000";
         }
 
         return $statements;
+    }
+
+    /**
+     * Preserve the existing whole-number capacity when adding six fractional
+     * places. For example DECIMAL(19,2) safely widens to DECIMAL(23,6), while
+     * legacy integer columns use the established DECIMAL(18,6) baseline.
+     */
+    private function safeJournalDecimalPrecision(mysqli $conn, string $column): int
+    {
+        $info = $this->columnInfo($conn, 'journal_entries', $column);
+        $type = strtolower((string) ($info['COLUMN_TYPE'] ?? ''));
+        if (preg_match('/^(?:decimal|numeric)\((\d+),(\d+)\)/', $type, $matches)) {
+            $integerDigits = max(0, (int) $matches[1] - (int) $matches[2]);
+
+            return max(18, $integerDigits + 6);
+        }
+
+        return 18;
     }
 
     /**
@@ -1451,7 +1563,7 @@ ALTER TABLE journal_entries
 
     /**
      * Exact-money certification schema: posted line snapshots, refund settlement
-     * states, and DECIMAL(19,2)/(19,6) on certified financial tables.
+     * states, six-decimal costs/quantities, and three-decimal drawer currency.
      */
     private function financialCertificationSchemaUpgradeStatements(mysqli $conn): array
     {
@@ -1481,6 +1593,7 @@ ALTER TABLE journal_entries
                 if ($this->columnExists($conn, 'fat_details', $column)
                     && $this->columnNeedsWiderFinancialDecimal($conn, 'fat_details', $column, 19, 6)
                 ) {
+                    $this->appendFinancialNullNormalization($statements, $conn, 'fat_details', $column);
                     $statements['fat_details.modify_' . $column . '_decimal19_6'] =
                         "ALTER TABLE fat_details MODIFY COLUMN {$column} DECIMAL(19,6) NOT NULL DEFAULT 0.000000";
                 }
@@ -1489,6 +1602,7 @@ ALTER TABLE journal_entries
                 if ($this->columnExists($conn, 'fat_details', $column)
                     && $this->columnNeedsWiderFinancialDecimal($conn, 'fat_details', $column, 19, 2)
                 ) {
+                    $this->appendFinancialNullNormalization($statements, $conn, 'fat_details', $column);
                     $statements['fat_details.modify_' . $column . '_decimal19_2'] =
                         "ALTER TABLE fat_details MODIFY COLUMN {$column} DECIMAL(19,2) NOT NULL DEFAULT 0.00";
                 }
@@ -1500,6 +1614,7 @@ ALTER TABLE journal_entries
                 if ($this->columnExists($conn, 'ot_head', $column)
                     && $this->columnNeedsWiderFinancialDecimal($conn, 'ot_head', $column, 19, 2)
                 ) {
+                    $this->appendFinancialNullNormalization($statements, $conn, 'ot_head', $column);
                     $statements['ot_head.modify_' . $column . '_decimal19_2'] =
                         "ALTER TABLE ot_head MODIFY COLUMN {$column} DECIMAL(19,2) NOT NULL DEFAULT 0.00";
                 }
@@ -1510,17 +1625,9 @@ ALTER TABLE journal_entries
             if ($this->columnExists($conn, 'order_payments', 'amount')
                 && $this->columnNeedsWiderFinancialDecimal($conn, 'order_payments', 'amount', 19, 2)
             ) {
+                $this->appendFinancialNullNormalization($statements, $conn, 'order_payments', 'amount');
                 $statements['order_payments.modify_amount_decimal19_2'] =
                     'ALTER TABLE order_payments MODIFY COLUMN amount DECIMAL(19,2) NOT NULL DEFAULT 0.00';
-            }
-        }
-
-        if ($this->tableExists($conn, 'journal_entries')) {
-            foreach (['debit', 'credit'] as $column) {
-                if ($this->columnNeedsWiderFinancialDecimal($conn, 'journal_entries', $column, 19, 2)) {
-                    $statements['journal_entries.modify_' . $column . '_decimal19_2'] =
-                        "ALTER TABLE journal_entries MODIFY COLUMN {$column} DECIMAL(19,2) NOT NULL DEFAULT 0.00";
-                }
             }
         }
 
@@ -1534,12 +1641,14 @@ ALTER TABLE journal_entries
         if ($this->tableExists($conn, 'credit_note_lines')) {
             foreach (['quantity' => '6', 'unit_amount' => '6'] as $column => $scale) {
                 if ($this->columnNeedsWiderFinancialDecimal($conn, 'credit_note_lines', $column, 19, (int) $scale)) {
+                    $this->appendFinancialNullNormalization($statements, $conn, 'credit_note_lines', $column);
                     $statements['credit_note_lines.modify_' . $column . '_decimal19_' . $scale] =
                         "ALTER TABLE credit_note_lines MODIFY COLUMN {$column} DECIMAL(19,{$scale}) NOT NULL DEFAULT 0";
                 }
             }
             foreach (['line_amount', 'tax_amount'] as $column) {
                 if ($this->columnNeedsWiderFinancialDecimal($conn, 'credit_note_lines', $column, 19, 2)) {
+                    $this->appendFinancialNullNormalization($statements, $conn, 'credit_note_lines', $column);
                     $statements['credit_note_lines.modify_' . $column . '_decimal19_2'] =
                         "ALTER TABLE credit_note_lines MODIFY COLUMN {$column} DECIMAL(19,2) NOT NULL DEFAULT 0.00";
                 }
@@ -1552,6 +1661,7 @@ ALTER TABLE journal_entries
 
         if ($this->tableExists($conn, 'payment_refunds')) {
             if ($this->columnNeedsWiderFinancialDecimal($conn, 'payment_refunds', 'amount', 19, 2)) {
+                $this->appendFinancialNullNormalization($statements, $conn, 'payment_refunds', 'amount');
                 $statements['payment_refunds.modify_amount_decimal19_2'] =
                     'ALTER TABLE payment_refunds MODIFY COLUMN amount DECIMAL(19,2) NOT NULL';
             }
@@ -1573,12 +1683,23 @@ ALTER TABLE journal_entries
         }
 
         if ($this->tableExists($conn, 'drawer_sessions')) {
-            foreach (['opening_float', 'expected_cash', 'counted_cash', 'variance_amount'] as $column) {
+            // Drawer values support three-decimal currencies. Widen capacity without
+            // reducing the fractional scale used by counts and variance handling.
+            $drawerCashColumns = [
+                'opening_cash' => 'NOT NULL DEFAULT 0.000',
+                'expected_opening_cash' => 'NULL',
+                'opening_variance' => 'NULL',
+                'expected_cash' => 'NULL',
+                'counted_cash' => 'NULL',
+                'difference' => 'NULL',
+                'close_expected_snapshot' => 'NULL',
+            ];
+            foreach ($drawerCashColumns as $column => $definition) {
                 if ($this->columnExists($conn, 'drawer_sessions', $column)
-                    && $this->columnNeedsWiderFinancialDecimal($conn, 'drawer_sessions', $column, 19, 2)
+                    && $this->columnNeedsWiderFinancialDecimal($conn, 'drawer_sessions', $column, 19, 3)
                 ) {
-                    $statements['drawer_sessions.modify_' . $column . '_decimal19_2'] =
-                        "ALTER TABLE drawer_sessions MODIFY COLUMN {$column} DECIMAL(19,2) NULL";
+                    $statements['drawer_sessions.modify_' . $column . '_decimal19_3'] =
+                        "ALTER TABLE drawer_sessions MODIFY COLUMN {$column} DECIMAL(19,3) {$definition}";
                 }
             }
         }
@@ -1587,11 +1708,45 @@ ALTER TABLE journal_entries
             && $this->columnExists($conn, 'inventory_item_balances', 'moving_average_cost')
             && $this->columnNeedsWiderFinancialDecimal($conn, 'inventory_item_balances', 'moving_average_cost', 19, 6)
         ) {
+            $this->appendFinancialNullNormalization(
+                $statements,
+                $conn,
+                'inventory_item_balances',
+                'moving_average_cost'
+            );
             $statements['inventory_item_balances.modify_moving_average_cost_decimal19_6'] =
                 'ALTER TABLE inventory_item_balances MODIFY COLUMN moving_average_cost DECIMAL(19,6) NOT NULL DEFAULT 0.000000';
         }
 
         return $statements;
+    }
+
+    /**
+     * Old schemas allowed NULL in fields that are now certified as non-null.
+     * MySQL rejects the later ALTER under strict mode, so make that data repair
+     * an explicit, idempotent migration step immediately before the ALTER.
+     */
+    private function appendFinancialNullNormalization(
+        array &$statements,
+        mysqli $conn,
+        string $table,
+        string $column
+    ): void {
+        $safeTable = preg_replace('/[^a-zA-Z0-9_]/', '', $table);
+        $safeColumn = preg_replace('/[^a-zA-Z0-9_]/', '', $column);
+        if ($safeTable === '' || $safeColumn === '') {
+            return;
+        }
+        $info = $this->columnInfo($conn, $safeTable, $safeColumn);
+        if (strtoupper((string) ($info['IS_NULLABLE'] ?? 'NO')) !== 'YES') {
+            return;
+        }
+        if (!$this->queryHasRows($conn, "SELECT 1 FROM `{$safeTable}` WHERE `{$safeColumn}` IS NULL LIMIT 1")) {
+            return;
+        }
+
+        $statements[$safeTable . '.normalize_' . $safeColumn . '_nulls'] =
+            "UPDATE `{$safeTable}` SET `{$safeColumn}` = 0 WHERE `{$safeColumn}` IS NULL";
     }
 
     private function columnNeedsWiderFinancialDecimal(mysqli $conn, string $table, string $column, int $precision, int $scale): bool
@@ -2309,6 +2464,8 @@ CREATE TABLE IF NOT EXISTS user_permission_grants (
   user_id INT NOT NULL,
   permission_key VARCHAR(80) NOT NULL,
   effect ENUM('grant','deny') NOT NULL,
+  limit_value DECIMAL(12,3) NULL,
+  is_unlimited TINYINT(1) NOT NULL DEFAULT 1,
   reason VARCHAR(255) NULL,
   created_by INT NULL,
   expires_at DATETIME NULL,
@@ -2632,15 +2789,15 @@ CREATE TABLE IF NOT EXISTS drawer_sessions (
   opened_at DATETIME NOT NULL,
   business_day DATE NULL,
   opened_by BIGINT UNSIGNED NOT NULL,
-  opening_cash DECIMAL(12,3) NOT NULL DEFAULT 0.000,
-  expected_opening_cash DECIMAL(12,3) NULL,
-  opening_variance DECIMAL(12,3) NULL,
+  opening_cash DECIMAL(19,3) NOT NULL DEFAULT 0.000,
+  expected_opening_cash DECIMAL(19,3) NULL,
+  opening_variance DECIMAL(19,3) NULL,
   closed_at DATETIME NULL,
   closed_by BIGINT UNSIGNED NULL,
-  expected_cash DECIMAL(12,3) NULL,
-  counted_cash DECIMAL(12,3) NULL,
-  difference DECIMAL(12,3) NULL,
-  close_expected_snapshot DECIMAL(12,3) NULL,
+  expected_cash DECIMAL(19,3) NULL,
+  counted_cash DECIMAL(19,3) NULL,
+  difference DECIMAL(19,3) NULL,
+  close_expected_snapshot DECIMAL(19,3) NULL,
   variance_status ENUM('none','unresolved','resolved') NOT NULL DEFAULT 'none',
   variance_type ENUM('none','opening','closing','both') NOT NULL DEFAULT 'none',
   status ENUM('open','closed','forced_closed') NOT NULL DEFAULT 'open',
@@ -2688,6 +2845,36 @@ CREATE TABLE IF NOT EXISTS drawer_movements (
   KEY idx_drawer_movements_order (order_id, payment_id),
   KEY idx_drawer_movements_type (movement_type, created_at),
   KEY idx_drawer_movements_voucher (ref_ot_head_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
+    private function drawerSessionCloseSummariesSql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS drawer_session_close_summaries (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  uuid CHAR(36) NOT NULL,
+  drawer_session_id BIGINT UNSIGNED NOT NULL,
+  shift_number VARCHAR(64) NOT NULL,
+  total_orders INT UNSIGNED NOT NULL DEFAULT 0,
+  total_sales DECIMAL(12,3) NOT NULL DEFAULT 0.000,
+  cash_sales DECIMAL(12,3) NOT NULL DEFAULT 0.000,
+  non_cash_sales DECIMAL(12,3) NOT NULL DEFAULT 0.000,
+  discount_total DECIMAL(12,3) NOT NULL DEFAULT 0.000,
+  return_total DECIMAL(12,3) NOT NULL DEFAULT 0.000,
+  expense_total DECIMAL(12,3) NOT NULL DEFAULT 0.000,
+  expense_notes VARCHAR(500) NULL,
+  expected_non_cash DECIMAL(12,3) NULL,
+  counted_non_cash DECIMAL(12,3) NULL,
+  non_cash_difference DECIMAL(12,3) NULL,
+  close_path VARCHAR(120) NOT NULL,
+  report_snapshot_json JSON NULL,
+  payment_summary_json JSON NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_drawer_close_summary_uuid (uuid),
+  UNIQUE KEY uq_drawer_close_summary_session (drawer_session_id),
+  KEY idx_drawer_close_summary_created (created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
     }
 
@@ -3094,7 +3281,7 @@ CREATE TABLE IF NOT EXISTS inventory_item_balances (
   qty_on_hand DECIMAL(18,6) NOT NULL DEFAULT 0.000000,
   qty_reserved DECIMAL(18,6) NOT NULL DEFAULT 0.000000,
   qty_available DECIMAL(18,6) NOT NULL DEFAULT 0.000000,
-  moving_average_cost DECIMAL(18,6) NOT NULL DEFAULT 0.000000,
+  moving_average_cost DECIMAL(19,6) NOT NULL DEFAULT 0.000000,
   last_movement_id BIGINT UNSIGNED NULL,
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
@@ -3980,6 +4167,7 @@ CREATE TABLE IF NOT EXISTS cloud_shifts (
   branch_uuid CHAR(36) NOT NULL,
   close_uuid CHAR(36) NOT NULL,
   local_closed_order_id BIGINT UNSIGNED NULL,
+  local_drawer_session_id BIGINT UNSIGNED NULL,
   cashier_user_id INT NULL,
   shift_number VARCHAR(100) NULL,
   opened_at DATETIME NULL,
@@ -3997,6 +4185,7 @@ CREATE TABLE IF NOT EXISTS cloud_shifts (
   last_received_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   PRIMARY KEY (id),
   UNIQUE KEY uq_cloud_shift_branch_uuid (branch_uuid, close_uuid),
+  KEY idx_cloud_shifts_drawer_session (branch_uuid, local_drawer_session_id),
   KEY idx_cloud_shifts_closed (branch_uuid, closed_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
     }

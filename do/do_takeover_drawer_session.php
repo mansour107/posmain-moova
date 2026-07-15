@@ -6,6 +6,7 @@ rbac_guard_route('do/do_takeover_drawer_session.php');
 require_once __DIR__ . '/../includes/csrf.php';
 require_once __DIR__ . '/../includes/shift_handover_idempotency.php';
 require_once __DIR__ . '/../classes/Pos/Service/ShiftSessionService.php';
+require_once __DIR__ . '/../classes/Pos/Service/DrawerSessionCloseSummaryService.php';
 require_once __DIR__ . '/../classes/Pos/Service/DrawerSessionService.php';
 require_once __DIR__ . '/../classes/Pos/Service/ManagerApprovalService.php';
 require_once __DIR__ . '/../classes/Pos/Service/ShiftCountService.php';
@@ -79,6 +80,8 @@ try {
     if ((int) ($blocking['user_id'] ?? 0) === $userId) {
         throw new RuntimeException('CANNOT_TAKEOVER_OWN_SESSION');
     }
+
+    (new DrawerSessionCloseSummaryService())->ensureSchema($conn);
 
     $response = pos_shift_handover_idempotent(
         $conn,

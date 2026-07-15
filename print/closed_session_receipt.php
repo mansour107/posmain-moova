@@ -1,18 +1,40 @@
 <?php
-session_start();
+require_once __DIR__ . '/../includes/session_bootstrap.php';
 include('../includes/connect.php');
+require_once __DIR__ . '/../includes/auth_guard.php';
+require_login();
+if (!auth_guard_has_permission('reports.cash_flow', $conn)
+    && !auth_guard_has_permission('pos.shift.close', $conn)) {
+    deny_json_or_redirect('PERMISSION_DENIED', 403, null, 'reports.cash_flow');
+}
 
 if (!isset($_GET['id'])) {
     die("رقم الشيفت غير محدد.");
 }
 
 $id = intval($_GET['id']);
-$query = "SELECT * FROM closed_orders WHERE id = $id";
-$res = $conn->query($query);
-if ($res->num_rows == 0) {
+$tenant = (int) ($_SESSION['pos_tenant'] ?? 0);
+$branch = (int) ($_SESSION['pos_branch'] ?? 0);
+$stmt = $conn->prepare(
+    "SELECT ds.id, ds.business_day AS date, ds.closed_at, ds.counted_cash,
+            ds.notes AS info, u.uname AS user, cs.shift_number, cs.total_sales,
+            cs.expense_total AS expenses, cs.expense_notes AS exp_notes
+     FROM drawer_sessions ds
+     LEFT JOIN drawer_session_close_summaries cs ON cs.drawer_session_id = ds.id
+     LEFT JOIN users u ON u.id = ds.user_id
+     WHERE ds.id = ?
+       AND (? = 0 OR ds.tenant = ?)
+       AND (? = 0 OR ds.branch = ?)
+       AND ds.status IN ('closed', 'forced_closed') LIMIT 1"
+);
+$stmt->bind_param('iiiii', $id, $tenant, $tenant, $branch, $branch);
+$stmt->execute();
+$shift = $stmt->get_result()->fetch_assoc();
+$stmt->close();
+if (!$shift) {
     die("الشيفت غير موجود.");
 }
-$shift = $res->fetch_assoc();
+$shift['endtime'] = !empty($shift['closed_at']) ? date('H:i:s', strtotime((string) $shift['closed_at'])) : '';
 
 // جلب إعدادات النظام للترويسة
 $settings_query = $conn->query("SELECT * FROM settings WHERE id = 1");
@@ -109,17 +131,17 @@ $settings = $settings_query->fetch_assoc();
         </div>
         <div class="info-row">
             <span>رقم الشيفت:</span>
-            <span>#<?= $shift['id'] ?></span>
+            <span>#<?= htmlspecialchars((string) ($shift['shift_number'] ?: $shift['id'])) ?></span>
         </div>
 
         <div class="summary-box">
             <div class="info-row">
                 <span>إجمالي المبيعات:</span>
-                <span><?= number_format($shift['total_sales'], 2) ?></span>
+                <span><?= number_format((float) ($shift['total_sales'] ?? 0), 2) ?></span>
             </div>
             <div class="info-row">
                 <span>المصروفات:</span>
-                <span><?= number_format($shift['expenses'], 2) ?></span>
+                <span><?= number_format((float) ($shift['expenses'] ?? 0), 2) ?></span>
             </div>
             <?php if (!empty($shift['exp_notes'])): ?>
             <div style="font-size: 10px; color: #555; text-align: right; margin-bottom: 5px;">
@@ -129,11 +151,11 @@ $settings = $settings_query->fetch_assoc();
             
             <div class="total-row">
                 <span>تسليم الكاش:</span>
-                <span><?= number_format($shift['cash'], 2) ?></span>
+                <span><?= number_format((float) $shift['counted_cash'], 2) ?></span>
             </div>
             <div class="info-row mt-2" style="font-size: 11px;">
                 <span>المتبقي في الدرج:</span>
-                <span><?= number_format($shift['fund_after'], 2) ?></span>
+                <span><?= number_format((float) $shift['counted_cash'], 2) ?></span>
             </div>
         </div>
 

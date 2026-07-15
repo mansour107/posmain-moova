@@ -17,10 +17,8 @@ phase4ZCloseAssert(strpos($source, '$expected_cash = $drawer_session_id > 0 ?') 
 phase4ZCloseAssert(strpos($source, "'server_recomputed' => \$has_server_reconciliation") !== false, 'Z close should persist server recomputation flag in json_details');
 phase4ZCloseAssert(strpos($source, "'drawer_session_id' => \$drawer_session_id") !== false, 'Z close should persist drawer session id in json_details');
 phase4ZCloseAssert(strpos($source, "'drawer_expected_cash' => \$expected_cash") !== false, 'Z close should persist drawer expected cash in json_details');
-phase4ZCloseAssert(strpos($source, '$conn->begin_transaction();') !== false, 'Z close should wrap close insert and drawer close in one transaction');
-phase4ZCloseAssert(strpos($source, 'closeSession($conn, $drawer_session_id') !== false, 'Z close should close drawer session when present');
-phase4ZCloseAssert(strpos($source, '$conn->commit();') !== false, 'Z close should commit on success');
-phase4ZCloseAssert(strpos($source, '$conn->rollback();') !== false, 'Z close should roll back on failure');
+phase4ZCloseAssert(strpos($source, 'closeSimpleShift($conn') !== false, 'Z close should delegate the atomic close to ShiftSessionService');
+phase4ZCloseAssert(strpos($source, 'INSERT INTO closed_orders') === false, 'Z close must not write the retired close table');
 phase4ZCloseAssert(strpos($source, "header('Location: pos_barcode.php?logout=1')") !== false, 'success should return to POS close-ack screen');
 phase4ZCloseAssert(strpos($source, 'pos_shift_close_result') !== false, 'success should stash close result for close-ack modal');
 phase4ZCloseAssert(strpos($source, "header('Location: z_report.php')") !== false, 'error redirect should remain');

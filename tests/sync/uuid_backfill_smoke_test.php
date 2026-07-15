@@ -16,7 +16,7 @@ try {
     $conn->query("CREATE DATABASE `{$db}` CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci");
     $conn->select_db($db);
 
-    foreach (['ot_head', 'fat_details', 'order_payments', 'tables', 'closed_orders'] as $table) {
+    foreach (['ot_head', 'fat_details', 'order_payments', 'tables'] as $table) {
         $conn->query("
             CREATE TABLE `{$table}` (
                 id INT NOT NULL AUTO_INCREMENT PRIMARY KEY
@@ -37,7 +37,7 @@ try {
     $second = uuidBackfillSmokeRunTool($root, $db, '--apply --confirm-no-backup --batch-size=2');
     uuidBackfillSmokeAssertContains($second, 'Applied batch: table=ot_head updated=1 remaining=0');
 
-    foreach (['ot_head', 'fat_details', 'order_payments', 'tables', 'closed_orders'] as $table) {
+    foreach (['ot_head', 'fat_details', 'order_payments', 'tables'] as $table) {
         $row = $conn->query("
             SELECT COUNT(*) AS total_rows,
                    COUNT(uuid) AS uuid_rows,

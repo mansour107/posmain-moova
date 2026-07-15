@@ -17,15 +17,15 @@ $detail = (string) file_get_contents($root . '/drawer_session.php');
 $css = (string) file_get_contents($root . '/css/premium-report-light.css');
 
 cashFlowUiContractAssert(
-    strpos($overview, "header('Location: drawer_session.php?id='") !== false,
+    strpos($overview, "header('Location: ' . posmain_cash_shift_detail_url") !== false,
     'overview must redirect legacy drawer_session_id links'
 );
 cashFlowUiContractAssert(
-    strpos($overview, 'drawer_session.php?id=') !== false,
+    strpos($overview, 'posmain_cash_shift_detail_url') !== false,
     'overview sessions table must link to drawer_session.php'
 );
 cashFlowUiContractAssert(
-    strpos($overview, 'pr-verdict') !== false && strpos($overview, 'pr-mix') !== false && strpos($overview, 'pr-walk') !== false,
+    strpos($overview, 'pr-verdict') !== false && strpos($overview, 'pr-mix') !== false && strpos($overview, 'cash-walk') !== false,
     'overview must render verdict strip, payment mix, and cash walk'
 );
 cashFlowUiContractAssert(
@@ -33,34 +33,35 @@ cashFlowUiContractAssert(
     'overview must render payment by_type mix'
 );
 cashFlowUiContractAssert(
-    strpos($overview, 'pr-tabs') !== false && strpos($overview, 'cash-flow-tab-sessions') !== false,
-    'overview must render sessions/movements tabs at the same level'
+    strpos($overview, 'cash-shift-tabs') !== false && strpos($overview, 'CashShiftWorkspaceService::TAB_SHIFTS') !== false,
+    'workspace must render the four cash and shift tabs at the same level'
 );
 cashFlowUiContractAssert(
-    strpos($overview, 'session_page') !== false && strpos($overview, 'session_filter') !== false,
+    strpos($overview, "'page' =>") !== false && strpos($overview, "'status' =>") !== false,
     'overview must paginate and filter sessions'
 );
 cashFlowUiContractAssert(
-    strpos($overview, 'pending_count') !== false && strpos($overview, 'cash-flow-pending-count-banner') !== false,
-    'overview must make closed sessions awaiting a count visible and filterable'
-);
-cashFlowUiContractAssert(
-    strpos($overview, 'pr-walk-collapse') !== false,
-    'overview must collapse detailed cash walk'
+    strpos($overview, "'scope'=>'backlog'") !== false && strpos($overview, 'كل الفترات') !== false,
+    'workspace must make the cross-period review backlog explicit'
 );
 cashFlowUiContractAssert(
     strpos($overview, '<details class="pr-collapse"') === false,
     'overview must not bury movements in a collapsed details block'
 );
 cashFlowUiContractAssert(
-    strpos($overview, 'تقرير التدفق النقدي') !== false && strpos($overview, 'name="date_from"') !== false,
-    'overview must keep page title and date filter for e2e'
+    strpos($overview, 'النقد والورديات') !== false && strpos($overview, 'name="date_from"') !== false,
+    'workspace must keep the unified title and date filter for e2e'
+);
+cashFlowUiContractAssert(
+    strpos($overview, 'cash-shift-date-presets') !== false && strpos($overview, 'aria-current="page"') !== false,
+    'workspace must expose accessible one-click business-day ranges'
 );
 
 cashFlowUiContractAssert(
-    strpos($detail, "page_guard('reports.cash_flow'") !== false,
-    'detail page must use reports.cash_flow permission'
+    strpos($detail, 'page_guard(null, $conn)') !== false && strpos($detail, '$canReport') !== false,
+    'detail page must use route any-of authorization and fine-grained report checks'
 );
+cashFlowUiContractAssert(strpos($detail, '$returnTo') !== false, 'detail page must preserve workspace return context');
 cashFlowUiContractAssert(
     strpos($detail, 'pr-walk') !== false && strpos($detail, 'pr-timeline') !== false,
     'detail page must render cash walk and movement timeline'
@@ -82,7 +83,7 @@ cashFlowUiContractAssert(
     strpos($css, '.pr-verdict') !== false
     && strpos($css, '.pr-mix') !== false
     && strpos($css, '.pr-walk') !== false
-    && strpos($css, '.pr-tabs') !== false
+    && strpos($css, '.cash-shift-tabs') !== false
     && strpos($css, '.pr-timeline') !== false,
     'premium CSS must include new cash-flow UX classes'
 );

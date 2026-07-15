@@ -5,6 +5,7 @@ require_once __DIR__ . '/../../includes/shift_handover_idempotency.php';
 require_once __DIR__ . '/../../classes/Pos/Service/ShiftCountService.php';
 require_once __DIR__ . '/../../classes/Pos/Service/DrawerSessionService.php';
 require_once __DIR__ . '/../../classes/Pos/Service/DrawerFloatExpectationService.php';
+require_once __DIR__ . '/../../classes/Pos/Service/PosRegisterService.php';
 
 mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
 
@@ -56,6 +57,11 @@ try {
     $_SESSION['pos_branch'] = 2;
     $_SESSION['userid'] = 77;
 
+    $registerService = new PosRegisterService();
+    $register = $registerService->ensureDefaultRegister($conn, 1, 2);
+    $_COOKIE[PosRegisterService::COOKIE_NAME] = (string) ($register['_pairing_token_once'] ?? '');
+    $_SESSION['pos_register_id'] = (int) $register['id'];
+
     $countService = new ShiftCountService();
     $drawer = new DrawerSessionService();
     $floatService = new DrawerFloatExpectationService();
@@ -64,21 +70,6 @@ try {
 
     $conn->query("CREATE TABLE users (id INT PRIMARY KEY, uname VARCHAR(50) NOT NULL DEFAULT '')");
     $conn->query("INSERT INTO users (id, uname) VALUES (77, 'test-cashier')");
-    $conn->query("CREATE TABLE closed_orders (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        shift VARCHAR(50) NULL,
-        date DATE NULL,
-        user VARCHAR(50) NULL,
-        endtime TIME NULL,
-        total_sales DOUBLE NULL,
-        expenses DOUBLE NULL,
-        exp_notes VARCHAR(255) NULL,
-        cash DOUBLE NULL,
-        fund_after DOUBLE NULL,
-        info TEXT NULL,
-        json_details TEXT NULL,
-        drawer_session_id BIGINT NULL
-    )");
     $conn->query("CREATE TABLE ot_head (
         id INT AUTO_INCREMENT PRIMARY KEY,
         pro_date DATE NULL,

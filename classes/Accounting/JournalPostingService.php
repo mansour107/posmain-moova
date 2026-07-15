@@ -16,12 +16,16 @@ final class JournalPostingService
             return null;
         }
 
-        $stmt = $conn->prepare('
-            SELECT id, journal_id, total, op_id, source_type, source_id, posting_kind
-            FROM journal_heads
-            WHERE idempotency_key = ?
-            LIMIT 1
-        ');
+        $columns = ['id', 'journal_id', 'total'];
+        foreach (['op_id', 'source_type', 'source_id', 'posting_kind'] as $column) {
+            if (self::columnExists($conn, 'journal_heads', $column)) {
+                $columns[] = $column;
+            }
+        }
+        $stmt = $conn->prepare(
+            'SELECT `' . implode('`, `', $columns) . '`'
+            . ' FROM journal_heads WHERE idempotency_key = ? LIMIT 1'
+        );
         $stmt->bind_param('s', $idempotencyKey);
         $stmt->execute();
         $row = $stmt->get_result()->fetch_assoc() ?: null;
@@ -60,8 +64,14 @@ final class JournalPostingService
 
         $opId = (int) ($meta['op_id'] ?? 0);
         $op2 = (int) ($meta['op2'] ?? 0);
-        $columns = ['journal_id', 'total', 'jdate', 'details', 'user', 'op_id', 'op2'];
-        $values = [$journalId, $total, $jdate, $details, $userId, $opId, $op2];
+        $columns = ['journal_id', 'total', 'jdate', 'details', 'user'];
+        $values = [$journalId, $total, $jdate, $details, $userId];
+        foreach (['op_id' => $opId, 'op2' => $op2] as $column => $value) {
+            if (self::columnExists($conn, 'journal_heads', $column)) {
+                $columns[] = $column;
+                $values[] = $value;
+            }
+        }
         foreach (['source_type', 'source_id', 'posting_kind', 'idempotency_key', 'reversal_of_journal_id', 'tenant', 'branch', 'pro_tybe'] as $column) {
             if (self::columnExists($conn, 'journal_heads', $column)) {
                 $columns[] = $column;

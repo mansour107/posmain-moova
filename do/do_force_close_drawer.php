@@ -6,9 +6,11 @@ rbac_guard_route('do/do_force_close_drawer.php');
 require_once __DIR__ . '/../includes/csrf.php';
 require_once __DIR__ . '/../includes/shift_handover_idempotency.php';
 require_once __DIR__ . '/../classes/Pos/Service/ShiftSessionService.php';
+require_once __DIR__ . '/../classes/Pos/Service/DrawerSessionCloseSummaryService.php';
+require_once __DIR__ . '/../includes/cash_shift_navigation.php';
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
-    header('Location: ../closed_sessions.php');
+    header('Location: ../cash_flow_report.php?tab=shifts');
     exit;
 }
 
@@ -31,6 +33,8 @@ try {
     if ($reason === '') {
         throw new RuntimeException('FORCE_CLOSE_REASON_REQUIRED');
     }
+
+    (new DrawerSessionCloseSummaryService())->ensureSchema($conn);
 
     pos_shift_handover_idempotent(
         $conn,
@@ -68,5 +72,9 @@ try {
     }
 }
 
-header('Location: ../closed_sessions.php');
+$returnTo = posmain_cash_shift_safe_return_to(
+    $_POST['return_to'] ?? null,
+    'cash_flow_report.php?tab=shifts'
+);
+header('Location: ../' . $returnTo);
 exit;

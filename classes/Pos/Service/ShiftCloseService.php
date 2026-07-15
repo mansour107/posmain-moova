@@ -1,20 +1,25 @@
 <?php
 
 require_once __DIR__ . '/DrawerSessionService.php';
+require_once __DIR__ . '/DrawerSessionCloseSummaryService.php';
 require_once __DIR__ . '/ShiftSessionService.php';
 require_once __DIR__ . '/../../ShiftReport.php';
+require_once dirname(__DIR__, 2) . '/Sync/OperationalSyncEventService.php';
 
 class ShiftCloseService
 {
     private DrawerSessionService $drawerSessions;
+    private DrawerSessionCloseSummaryService $closeSummaries;
     private ShiftSessionService $shiftSessions;
 
     public function __construct(
         ?DrawerSessionService $drawerSessions = null,
-        ?ShiftSessionService $shiftSessions = null
+        ?ShiftSessionService $shiftSessions = null,
+        ?DrawerSessionCloseSummaryService $closeSummaries = null
     ) {
         $this->drawerSessions = $drawerSessions ?: new DrawerSessionService();
         $this->shiftSessions = $shiftSessions ?: new ShiftSessionService();
+        $this->closeSummaries = $closeSummaries ?: new DrawerSessionCloseSummaryService();
     }
 
     public function closeShift(mysqli $conn, int $userId, array $payload, array $context = []): array
@@ -26,9 +31,37 @@ class ShiftCloseService
             throw new RuntimeException('SHIFT_ALREADY_CLOSED');
         }
 
+        $joiningTransaction = posmain_tx_context_in_transaction($context);
+        if (!$joiningTransaction) {
+            $this->closeSummaries->ensureSchema($conn);
+        }
+        $ownsTransaction = posmain_tx_begin_if_needed($conn, $joiningTransaction);
+
+        try {
         $scope = $this->shiftSessions->resolveScope($payload);
         $drawerSession = $this->shiftSessions->currentDrawerSession($conn, $userId, $scope);
         $drawerSessionId = $drawerSession ? (int) $drawerSession['id'] : 0;
+        $recoveredDrawerSession = false;
+        if ($drawerSessionId < 1) {
+            // Compatibility for the still-supported legacy close_shift.php
+            // caller. Materialize its implicit shift window as a real drawer
+            // session, then close it in this same transaction.
+            $preliminaryReport = new ShiftReport($conn, $userId, date('Y-m-d'), $scope);
+            $openedAt = $preliminaryReport->getShiftOpenedAt();
+            if ($openedAt === null || trim($openedAt) === '') {
+                $bounds = $preliminaryReport->getSaleTimeBounds();
+                $openedAt = trim((string) ($bounds['first_sale_time'] ?? ''));
+            }
+            $drawerSession = $this->recoverLegacyDrawerSession(
+                $conn,
+                $userId,
+                $scope,
+                $payload,
+                $openedAt
+            );
+            $drawerSessionId = (int) ($drawerSession['id'] ?? 0);
+            $recoveredDrawerSession = true;
+        }
 
         $countedCash = (float) ($payload['fund_after'] ?? $payload['counted_cash'] ?? 0);
         $cash = (float) ($payload['cash'] ?? $countedCash);
@@ -71,11 +104,11 @@ class ShiftCloseService
             ? $this->shiftSessions->shiftPayInSummary($conn, $userId, $scope)
             : ['total' => 0.0, 'count' => 0];
 
-        // Legacy closed_orders.info is VARCHAR(50). Keep cashier notes bounded there;
-        // put session token + full notes in json_details so audit data is not lost.
         $shiftSessionToken = trim((string) ($_SESSION['pos_shift_session_token'] ?? ''));
-        $infoNotes = $this->truncateClosedOrderInfo($notes);
         $drawerNotes = $this->truncateDrawerSessionNotes($notes);
+        if ($recoveredDrawerSession && $drawerNotes === '') {
+            $drawerNotes = 'legacy_close_shift_recovery';
+        }
 
         $zDetails = $payload['z_details'] ?? null;
         if (is_array($zDetails)) {
@@ -102,11 +135,13 @@ class ShiftCloseService
         if ($notes !== '') {
             $details['cashier_notes'] = $notes;
         }
+        if ($recoveredDrawerSession) {
+            $details['legacy_drawer_session_recovered'] = true;
+        }
         $jsonDetails = json_encode($details, JSON_UNESCAPED_UNICODE);
 
         $zRow = is_array($payload['z_row'] ?? null) ? $payload['z_row'] : null;
         if ($zRow !== null) {
-            $zRow['info'] = $infoNotes;
             $zJson = [];
             if (!empty($zRow['json_details'])) {
                 $decoded = json_decode((string) $zRow['json_details'], true);
@@ -125,47 +160,61 @@ class ShiftCloseService
 
         $shiftNumber = date('Ymd') . '_' . $userId;
         $closedSession = null;
-        $ownsTransaction = posmain_tx_begin_if_needed($conn, posmain_tx_context_in_transaction($context));
+        $closeSummary = null;
         $childContext = ['in_transaction' => true];
 
-        try {
-            $closedOrderId = $this->insertClosedOrder($conn, [
-                'shift' => $shiftNumber,
-                'date' => $shiftDate,
-                'user' => $username,
-                'endtime' => $shiftTime,
-                'total_sales' => $totalSales,
-                'expenses' => $expenses,
-                'exp_notes' => $expNotes,
-                'cash' => $cash,
-                'fund_after' => $countedCash,
-                'info' => $infoNotes,
-                'json_details' => $jsonDetails,
-                'drawer_session_id' => $drawerSessionId,
-                'z_row' => $zRow,
+            $closedSession = $this->drawerSessions->closeSession($conn, $drawerSessionId, [
+                'closed_by' => $userId,
+                'counted_cash' => (string) $countedCash,
+                'notes' => $drawerNotes,
+                'skip_close_expected_snapshot' => $closeExpectedSnapshot !== null,
+            ], $childContext);
+
+            $this->updateSessionVarianceMetadata($conn, $drawerSessionId, [
+                'variance_status' => $varianceStatus,
+                'variance_type' => $this->mergeVarianceType(
+                    (string) ($drawerSession['variance_type'] ?? 'none'),
+                    $varianceType
+                ),
+                'close_expected_snapshot' => $closeExpectedSnapshot !== null
+                    ? $closeExpectedSnapshot
+                    : (float) ($closedSession['close_expected_snapshot'] ?? 0),
             ]);
 
-            if ($drawerSessionId > 0) {
-                $closedSession = $this->drawerSessions->closeSession($conn, $drawerSessionId, [
-                    'closed_by' => $userId,
-                    'counted_cash' => (string) $countedCash,
-                    'notes' => $drawerNotes,
-                    'skip_close_expected_snapshot' => $closeExpectedSnapshot !== null,
-                ], $childContext);
+            $this->linkCountAttemptsToSession($conn, $drawerSessionId, 'close');
 
-                $this->updateSessionVarianceMetadata($conn, $drawerSessionId, [
-                    'variance_status' => $varianceStatus,
-                    'variance_type' => $this->mergeVarianceType(
-                        (string) ($drawerSession['variance_type'] ?? 'none'),
-                        $varianceType
-                    ),
-                    'close_expected_snapshot' => $closeExpectedSnapshot !== null
-                        ? $closeExpectedSnapshot
-                        : (float) ($closedSession['close_expected_snapshot'] ?? 0),
-                ]);
+            $cashSales = (float) ($zRow['total_cash'] ?? $details['sys_cash'] ?? $cash);
+            $nonCashSales = (float) ($zRow['total_visa'] ?? $details['sys_visa'] ?? max(0, $totalSales - $cashSales));
+            $countedNonCash = array_key_exists('actual_visa', (array) $zRow)
+                ? (float) $zRow['actual_visa']
+                : null;
+            $closeSummary = $this->closeSummaries->createForSession($conn, $drawerSessionId, [
+                'shift_number' => (string) ($zRow['shift'] ?? $shiftNumber),
+                'total_orders' => $totalOrders,
+                'total_sales' => (float) ($zRow['total_sales'] ?? $totalSales),
+                'cash_sales' => $cashSales,
+                'non_cash_sales' => $nonCashSales,
+                'discount_total' => (float) ($zRow['total_discount'] ?? $totals['total_discount'] ?? 0),
+                'return_total' => (float) ($zRow['total_returns'] ?? $details['total_returns'] ?? 0),
+                'expense_total' => $expenses,
+                'expense_notes' => $expNotes,
+                'expected_non_cash' => $nonCashSales,
+                'counted_non_cash' => $countedNonCash,
+                'non_cash_difference' => $countedNonCash === null ? null : $countedNonCash - $nonCashSales,
+                'close_path' => $closePath,
+                'report_snapshot' => json_decode((string) $jsonDetails, true) ?: $details,
+                'payment_summary' => [
+                    'cash' => $cashSales,
+                    'non_cash' => $nonCashSales,
+                    'counted_cash' => $countedCash,
+                    'counted_non_cash' => $countedNonCash,
+                ],
+            ]);
 
-                $this->linkCountAttemptsToSession($conn, $drawerSessionId, 'close');
-            }
+            (new OperationalSyncEventService())->recordShiftCloseSnapshot(
+                $conn,
+                (int) ($closeSummary['id'] ?? 0)
+            );
 
             posmain_tx_commit_if_owned($conn, $ownsTransaction);
         } catch (Throwable $exception) {
@@ -199,8 +248,8 @@ class ShiftCloseService
             : round($countedCash - $expectedCash, 3);
 
         return [
-            'closed_order_id' => $closedOrderId,
             'drawer_session_id' => $drawerSessionId,
+            'close_summary_id' => (int) ($closeSummary['id'] ?? 0),
             'total_orders' => $totalOrders,
             'total_sales' => $totalSales,
             'username' => $username,
@@ -210,6 +259,7 @@ class ShiftCloseService
             'variance_status' => $varianceStatus,
             'variance_type' => $varianceType,
             'matched' => abs($variance) <= 0.010,
+            'legacy_drawer_session_recovered' => $recoveredDrawerSession,
             'clear_pos_shift_session' => !$ownsTransaction,
         ];
     }
@@ -251,14 +301,6 @@ class ShiftCloseService
     }
 
     /**
-     * Legacy closed_orders.info column is VARCHAR(50).
-     */
-    private function truncateClosedOrderInfo(string $notes): string
-    {
-        return $this->truncateUtf8($notes, 50);
-    }
-
-    /**
      * drawer_sessions.notes accepts longer text; keep a safe upper bound.
      */
     private function truncateDrawerSessionNotes(string $notes): string
@@ -290,156 +332,36 @@ class ShiftCloseService
         return $row['uname'] ?? ($_SESSION['login'] ?? 'Unknown');
     }
 
-    private function insertClosedOrder(mysqli $conn, array $row): int
-    {
-        $zRow = is_array($row['z_row'] ?? null) ? $row['z_row'] : null;
-
-        if ($zRow !== null) {
-            return $this->insertClosedOrderZ($conn, $zRow);
+    private function recoverLegacyDrawerSession(
+        mysqli $conn,
+        int $userId,
+        array $scope,
+        array $payload,
+        ?string $openedAt
+    ): array {
+        $openedAt = trim((string) $openedAt);
+        if ($openedAt === '' || strtotime($openedAt) === false || strtotime($openedAt) > time()) {
+            $openedAt = date('Y-m-d 00:00:00');
         }
 
-        if ($this->closedOrdersHasJsonDetails($conn)) {
-            $stmt = $conn->prepare(
-                'INSERT INTO closed_orders
-                    (shift, date, user, endtime, total_sales, expenses, exp_notes, cash, fund_after, info, json_details)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
-            );
-            $stmt->bind_param(
-                'ssssddsddss',
-                $row['shift'],
-                $row['date'],
-                $row['user'],
-                $row['endtime'],
-                $row['total_sales'],
-                $row['expenses'],
-                $row['exp_notes'],
-                $row['cash'],
-                $row['fund_after'],
-                $row['info'],
-                $row['json_details']
-            );
-        } else {
-            $stmt = $conn->prepare(
-                'INSERT INTO closed_orders
-                    (shift, date, user, endtime, total_sales, expenses, exp_notes, cash, fund_after, info)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
-            );
-            $stmt->bind_param(
-                'ssssddsdds',
-                $row['shift'],
-                $row['date'],
-                $row['user'],
-                $row['endtime'],
-                $row['total_sales'],
-                $row['expenses'],
-                $row['exp_notes'],
-                $row['cash'],
-                $row['fund_after'],
-                $row['info']
-            );
+        $session = $this->drawerSessions->openSession($conn, [
+            'user_id' => $userId,
+            'opened_by' => $userId,
+            'tenant' => (int) ($scope['tenant'] ?? 0),
+            'branch' => (int) ($scope['branch'] ?? 0),
+            'register_id' => (int) ($payload['register_id'] ?? $_SESSION['pos_register_id'] ?? 0) ?: null,
+            'fund_account_id' => (int) ($payload['fund_account_id'] ?? 0) ?: null,
+            'opening_cash' => $payload['opening_cash'] ?? '0',
+            'opened_at' => $openedAt,
+            'notes' => 'legacy_close_shift_recovery',
+            'in_transaction' => true,
+        ]);
+        if ((int) ($session['id'] ?? 0) < 1) {
+            throw new RuntimeException('DRAWER_SESSION_RECOVERY_FAILED');
         }
+        $_SESSION['pos_drawer_session_id'] = (int) $session['id'];
 
-        $stmt->execute();
-        $id = (int) $conn->insert_id;
-        $stmt->close();
-
-        if ($this->closedOrdersHasDrawerSessionId($conn) && (int) ($row['drawer_session_id'] ?? 0) > 0) {
-            $sessionId = (int) $row['drawer_session_id'];
-            $update = $conn->prepare('UPDATE closed_orders SET drawer_session_id = ? WHERE id = ?');
-            $update->bind_param('ii', $sessionId, $id);
-            $update->execute();
-            $update->close();
-        }
-
-        return $id;
-    }
-
-    private function insertClosedOrderZ(mysqli $conn, array $zRow): int
-    {
-        $hasDrawerSessionColumn = $this->closedOrdersHasDrawerSessionId($conn);
-
-        if ($hasDrawerSessionColumn) {
-            $insertQuery = "INSERT INTO closed_orders
-                     (shift, date, user, endtime,
-                      total_sales, expenses, cash, fund_after, info,
-                      total_cash, total_visa, total_discount,
-                      actual_cash, actual_visa, deficit, status, json_details, drawer_session_id)
-                     VALUES
-                     (?, ?, ?, ?,
-                      ?, ?, ?, ?, ?,
-                      ?, ?, 0,
-                      ?, ?, ?, 1, ?, ?)";
-            $insertStmt = $conn->prepare($insertQuery);
-            $insertStmt->bind_param(
-                'ssssddddsdddddsi',
-                $zRow['shift'],
-                $zRow['date'],
-                $zRow['user'],
-                $zRow['endtime'],
-                $zRow['total_sales'],
-                $zRow['expenses'],
-                $zRow['cash'],
-                $zRow['fund_after'],
-                $zRow['info'],
-                $zRow['total_cash'],
-                $zRow['total_visa'],
-                $zRow['actual_cash'],
-                $zRow['actual_visa'],
-                $zRow['deficit'],
-                $zRow['json_details'],
-                $zRow['drawer_session_id']
-            );
-        } else {
-            $insertQuery = "INSERT INTO closed_orders
-                     (shift, date, user, endtime,
-                      total_sales, expenses, cash, fund_after, info,
-                      total_cash, total_visa, total_discount,
-                      actual_cash, actual_visa, deficit, status, json_details)
-                     VALUES
-                     (?, ?, ?, ?,
-                      ?, ?, ?, ?, ?,
-                      ?, ?, 0,
-                      ?, ?, ?, 1, ?)";
-            $insertStmt = $conn->prepare($insertQuery);
-            $insertStmt->bind_param(
-                'ssssddddsddddds',
-                $zRow['shift'],
-                $zRow['date'],
-                $zRow['user'],
-                $zRow['endtime'],
-                $zRow['total_sales'],
-                $zRow['expenses'],
-                $zRow['cash'],
-                $zRow['fund_after'],
-                $zRow['info'],
-                $zRow['total_cash'],
-                $zRow['total_visa'],
-                $zRow['actual_cash'],
-                $zRow['actual_visa'],
-                $zRow['deficit'],
-                $zRow['json_details']
-            );
-        }
-
-        $insertStmt->execute();
-        $id = (int) $conn->insert_id;
-        $insertStmt->close();
-
-        return $id;
-    }
-
-    private function closedOrdersHasJsonDetails(mysqli $conn): bool
-    {
-        $result = $conn->query("SHOW COLUMNS FROM closed_orders LIKE 'json_details'");
-
-        return $result instanceof mysqli_result && $result->num_rows > 0;
-    }
-
-    private function closedOrdersHasDrawerSessionId(mysqli $conn): bool
-    {
-        $result = $conn->query("SHOW COLUMNS FROM closed_orders LIKE 'drawer_session_id'");
-
-        return $result instanceof mysqli_result && $result->num_rows > 0;
+        return $session;
     }
 
     private function updateSessionVarianceMetadata(mysqli $conn, int $sessionId, array $data): void

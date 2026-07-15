@@ -1,46 +1,44 @@
 <?php
-session_start();
+require_once __DIR__ . '/../includes/session_bootstrap.php';
 include('../includes/connect.php');
+require_once __DIR__ . '/../includes/auth_guard.php';
+require_login();
+if (!auth_guard_has_permission('reports.cash_flow', $conn)
+    && !auth_guard_has_permission('pos.shift.close', $conn)) {
+    deny_json_or_redirect('PERMISSION_DENIED', 403, null, 'reports.cash_flow');
+}
 
 if (!isset($_GET['id'])) {
     die("رقم الشيفت غير محدد.");
 }
 
 $id = intval($_GET['id']);
-$query = "SELECT * FROM closed_orders WHERE id = $id";
-$res = $conn->query($query);
-if ($res->num_rows == 0) {
+$tenant = (int) ($_SESSION['pos_tenant'] ?? 0);
+$branch = (int) ($_SESSION['pos_branch'] ?? 0);
+$shiftStmt = $conn->prepare(
+    "SELECT ds.id, ds.user_id, ds.business_day AS date, ds.opened_at, ds.closed_at,
+            u.uname AS user, cs.shift_number
+     FROM drawer_sessions ds
+     LEFT JOIN drawer_session_close_summaries cs ON cs.drawer_session_id = ds.id
+     LEFT JOIN users u ON u.id = ds.user_id
+     WHERE ds.id = ?
+       AND (? = 0 OR ds.tenant = ?)
+       AND (? = 0 OR ds.branch = ?)
+       AND ds.status IN ('closed', 'forced_closed') LIMIT 1"
+);
+$shiftStmt->bind_param('iiiii', $id, $tenant, $tenant, $branch, $branch);
+$shiftStmt->execute();
+$shift = $shiftStmt->get_result()->fetch_assoc();
+$shiftStmt->close();
+if (!$shift) {
     die("الشيفت غير موجود.");
 }
-$shift = $res->fetch_assoc();
 
 $user_name = $shift['user'];
 $shift_date = $shift['date'];
-$end_time = $shift['crtime'];
-
-// جلب ID المستخدم
-$user_id = 0;
-$user_stmt = $conn->prepare("SELECT id FROM acc_head WHERE aname = ? LIMIT 1");
-if ($user_stmt) {
-    $user_stmt->bind_param("s", $user_name);
-    $user_stmt->execute();
-    $u_res = $user_stmt->get_result();
-    if ($u_row = $u_res->fetch_assoc()) {
-        $user_id = $u_row['id'];
-    }
-}
-
-// جلب وقت بداية الشيفت
-$start_time = "$shift_date 00:00:00"; // افتراضي بداية اليوم
-$prev_stmt = $conn->prepare("SELECT crtime FROM closed_orders WHERE user = ? AND date = ? AND id < ? ORDER BY id DESC LIMIT 1");
-if ($prev_stmt) {
-    $prev_stmt->bind_param("ssi", $user_name, $shift_date, $id);
-    $prev_stmt->execute();
-    $p_res = $prev_stmt->get_result();
-    if ($p_row = $p_res->fetch_assoc()) {
-        $start_time = $p_row['crtime'];
-    }
-}
+$start_time = (string) $shift['opened_at'];
+$end_time = (string) $shift['closed_at'];
+$user_id = (int) $shift['user_id'];
 
 // جلب الأصناف المباعة مقسمة بالتصنيفات
 $items_query = "
@@ -53,7 +51,7 @@ $items_query = "
     JOIN ot_head h ON d.fatid = h.id
     JOIN myitems i ON d.item_id = i.id
     LEFT JOIN item_group c ON i.group1 = c.id
-    WHERE h.pro_date = ?
+    WHERE DATE(h.pro_date) = ?
       AND h.crtime > ?
       AND h.crtime <= ?
       AND h.user = ?
@@ -206,7 +204,7 @@ $settings = $settings_query->fetch_assoc();
         </div>
         <div class="info-row">
             <span>رقم الشيفت:</span>
-            <span>#<?= $shift['id'] ?></span>
+            <span>#<?= htmlspecialchars((string) ($shift['shift_number'] ?: $shift['id'])) ?></span>
         </div>
 
         <?php if (empty($items_data)): ?>

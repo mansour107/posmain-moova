@@ -287,8 +287,16 @@ return [
     'do/docreatedatabase.php' => ['permission' => 'system.tools.run', 'csrf' => 'default', 'lane' => 'erp', 'admin_or' => true, 'quarantined' => true],
     'do/dosearch.php' => ['permission' => 'reports.view', 'csrf' => 'hr_write', 'lane' => 'erp'],
     'print/br2538.php' => ['permission' => 'reports.view', 'csrf' => '', 'lane' => 'erp'],
-    'print/closed_session_items.php' => ['permission' => 'pos.shift.close', 'csrf' => '', 'lane' => 'pos'],
-    'print/closed_session_receipt.php' => ['permission' => 'pos.shift.close', 'csrf' => '', 'lane' => 'pos'],
+    'print/closed_session_items.php' => [
+        'any_of' => ['reports.cash_flow', 'pos.shift.close'],
+        'csrf' => '',
+        'lane' => 'erp',
+    ],
+    'print/closed_session_receipt.php' => [
+        'any_of' => ['reports.cash_flow', 'pos.shift.close'],
+        'csrf' => '',
+        'lane' => 'erp',
+    ],
     'print/contracta4.php' => ['permission' => 'reports.view', 'csrf' => '', 'lane' => 'erp'],
     'print/daily_sales_receipt.php' => ['permission' => 'pos.shift.close', 'csrf' => '', 'lane' => 'pos'],
     'print/freebarcode.php' => ['permission' => 'pos.reprint', 'csrf' => '', 'lane' => 'pos'],

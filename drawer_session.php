@@ -4,18 +4,22 @@ include('includes/connect.php');
 require_once __DIR__ . '/includes/page_guard.php';
 require_once __DIR__ . '/includes/pos_cache_control.php';
 require_once __DIR__ . '/includes/csrf.php';
-page_guard('reports.cash_flow', $conn);
+require_once __DIR__ . '/includes/cash_shift_navigation.php';
+page_guard(null, $conn);
 posmain_send_no_store_headers();
 
 $sessionId = (int) ($_GET['id'] ?? 0);
 $tenant = (int) ($_SESSION['pos_tenant'] ?? 0);
 $branch = (int) ($_SESSION['pos_branch'] ?? 0);
+$canReport = auth_guard_has_permission('reports.cash_flow', $conn);
+$returnTo = posmain_cash_shift_safe_return_to($_GET['return_to'] ?? null);
 
 require_once __DIR__ . '/classes/Pos/Service/CashFlowPeriodService.php';
 require_once __DIR__ . '/classes/Pos/Service/DrawerSessionService.php';
 require_once __DIR__ . '/classes/Pos/Service/ShiftDrawerReconciliationService.php';
 require_once __DIR__ . '/classes/Pos/Service/BusinessDayService.php';
 require_once __DIR__ . '/classes/Pos/Service/ShiftCountService.php';
+require_once __DIR__ . '/classes/Pos/Service/DrawerSessionCloseSummaryService.php';
 
 $movementLabels = [
     'sale_cash' => 'مبيعات نقدية',
@@ -72,6 +76,14 @@ $overrideEventLabels = [
     'drawer_override_ended' => 'إنهاء التجاوز',
     'drawer_override_expired' => 'انتهى تلقائياً',
     'drawer_override_denied' => 'محاولة مرفوضة',
+];
+
+$overrideEndReasonLabels = [
+    'shift_close' => 'إغلاق الوردية',
+    'explicit_end' => 'إنهاء يدوي',
+    'takeover' => 'تسليم الدرج',
+    'expired' => 'انتهاء المهلة',
+    'activity_timeout' => 'انتهاء بسبب عدم النشاط',
 ];
 
 $statusLabels = [
@@ -144,6 +156,7 @@ $movements = ['rows' => []];
 $userName = '';
 $businessDay = '';
 $notFound = false;
+$closeSummary = null;
 
 if ($sessionId < 1) {
     $notFound = true;
@@ -193,13 +206,17 @@ if ($session) {
     $breakdown = $drawerService->sessionCashBreakdown($conn, $sessionId);
 
     $cashFlow = new CashFlowPeriodService();
-    $movements = $cashFlow->movements($conn, [
-        'drawer_session_id' => $sessionId,
-        'limit' => 500,
-        'offset' => 0,
-        'tenant' => (int) ($session['tenant'] ?? 0),
-        'branch' => (int) ($session['branch'] ?? 0),
-    ]);
+    if ($canReport) {
+        $movements = $cashFlow->movements($conn, [
+            'drawer_session_id' => $sessionId,
+            'limit' => 500,
+            'offset' => 0,
+            'tenant' => (int) ($session['tenant'] ?? 0),
+            'branch' => (int) ($session['branch'] ?? 0),
+        ]);
+    }
+
+    $closeSummary = (new DrawerSessionCloseSummaryService())->findBySessionId($conn, $sessionId);
 
     $shiftCountService = new ShiftCountService();
     $countAttempts = $shiftCountService->countAttemptsForSession($conn, $sessionId);
@@ -219,6 +236,19 @@ $countAttempts = $countAttempts ?? [];
 $resolutionHistory = $resolutionHistory ?? [];
 $overridePeriods = $overridePeriods ?? [];
 $overrideAuditEvents = $overrideAuditEvents ?? [];
+$auditPage = max(1, (int) ($_GET['audit_page'] ?? 1));
+$auditPerPage = 25;
+$auditTotal = count($overrideAuditEvents);
+$auditPages = max(1, (int) ceil($auditTotal / $auditPerPage));
+$auditPage = min($auditPage, $auditPages);
+$pagedOverrideAuditEvents = array_slice($overrideAuditEvents, ($auditPage - 1) * $auditPerPage, $auditPerPage);
+$auditPageUrl = static function (int $page) use ($sessionId, $returnTo): string {
+    return 'drawer_session.php?' . http_build_query([
+        'id' => $sessionId,
+        'return_to' => $returnTo,
+        'audit_page' => $page,
+    ]);
+};
 
 // Resolve all override-related user names in one query instead of per-row lookups.
 $overrideUserIds = [];
@@ -244,6 +274,13 @@ $overrideUserLabel = static function ($userId) use ($overrideUserNames): string 
         return '—';
     }
     return $overrideUserNames[$userId] ?? ('#' . $userId);
+};
+$friendlyOverrideSummary = static function (?string $summary) use ($overrideEndReasonLabels): string {
+    $summary = trim((string) $summary);
+    if ($summary === '') {
+        return '—';
+    }
+    return strtr($summary, $overrideEndReasonLabels);
 };
 $openingVarianceRaw = $session['opening_variance'] ?? null;
 $openingVariance = $openingVarianceRaw !== null && $openingVarianceRaw !== ''
@@ -365,13 +402,13 @@ include('includes/header.php');
       <div class="pr-callout pr-callout--danger">
         <strong>الجلسة غير موجودة</strong> — تحقق من رقم الجلسة أو صلاحيات الفرع.
         <div class="mt-2">
-          <a href="cash_flow_report.php" class="pr-btn pr-btn-ghost">العودة للتقرير</a>
+          <a href="<?= htmlspecialchars($returnTo, ENT_QUOTES, 'UTF-8') ?>" class="pr-btn pr-btn-ghost">العودة للشيفتات</a>
         </div>
       </div>
       <?php else: ?>
 
       <nav class="pr-breadcrumb pr-no-print">
-        <a href="cash_flow_report.php">تقرير التدفق النقدي</a>
+        <a href="<?= htmlspecialchars($returnTo, ENT_QUOTES, 'UTF-8') ?>">النقد والورديات</a>
         <span>›</span>
         <strong>جلسة #<?= (int) $sessionId ?></strong>
       </nav>
@@ -391,7 +428,7 @@ include('includes/header.php');
           </p>
         </div>
         <div class="pr-detail-actions pr-no-print">
-          <a href="cash_flow_report.php" class="pr-btn pr-btn-ghost">← رجوع</a>
+          <a href="<?= htmlspecialchars($returnTo, ENT_QUOTES, 'UTF-8') ?>" class="pr-btn pr-btn-ghost">← رجوع لنفس القائمة</a>
           <button type="button" class="pr-btn pr-btn-primary" onclick="window.print()">
             <i class="fas fa-print"></i> طباعة
           </button>
@@ -463,6 +500,27 @@ include('includes/header.php');
             </div>
             <div class="pr-verdict-sub"><?= htmlspecialchars($closeDiffHint) ?></div>
           </div>
+        </div>
+      </section>
+      <?php endif; ?>
+
+      <?php if ($closeSummary): ?>
+      <section class="pr-panel" data-testid="drawer-session-z-summary">
+        <div class="pr-panel-head">
+          <div>
+            <p class="pr-eyebrow">سجل إغلاق ثابت</p>
+            <h2 class="pr-panel-title">ملخص تقرير Z</h2>
+          </div>
+          <div class="pr-detail-actions pr-no-print">
+            <a class="pr-btn pr-btn-ghost" href="print/closed_session_receipt.php?id=<?= (int) $sessionId ?>">طباعة الملخص</a>
+            <a class="pr-btn pr-btn-ghost" href="print/closed_session_items.php?id=<?= (int) $sessionId ?>">تفاصيل الأصناف</a>
+          </div>
+        </div>
+        <div class="pr-verdict pr-verdict--compact">
+          <div class="pr-verdict-card"><div class="pr-verdict-label">إجمالي المبيعات</div><div class="pr-verdict-value pr-verdict-value--sm"><?= number_format((float) ($closeSummary['total_sales'] ?? 0), 2) ?></div></div>
+          <div class="pr-verdict-card"><div class="pr-verdict-label">المبيعات النقدية</div><div class="pr-verdict-value pr-verdict-value--sm"><?= number_format((float) ($closeSummary['cash_sales'] ?? 0), 2) ?></div></div>
+          <div class="pr-verdict-card"><div class="pr-verdict-label">غير النقدي</div><div class="pr-verdict-value pr-verdict-value--sm"><?= number_format((float) ($closeSummary['non_cash_sales'] ?? 0), 2) ?></div></div>
+          <div class="pr-verdict-card"><div class="pr-verdict-label">المصروفات</div><div class="pr-verdict-value pr-verdict-value--sm"><?= number_format((float) ($closeSummary['expense_total'] ?? 0), 2) ?></div></div>
         </div>
       </section>
       <?php endif; ?>
@@ -568,7 +626,7 @@ include('includes/header.php');
       $paymentMethods = $recon['payments']['methods'] ?? [];
       $hasPayments = $paymentMethods !== [] || $paymentsTotal > 0;
       ?>
-      <?php if ($hasPayments): ?>
+      <?php if ($canReport && $hasPayments): ?>
       <section class="pr-panel" data-testid="drawer-session-payments">
         <div class="pr-panel-head">
           <h2 class="pr-panel-title">طرق الدفع</h2>
@@ -620,6 +678,7 @@ include('includes/header.php');
       </section>
       <?php endif; ?>
 
+      <?php if ($canReport): ?>
       <section class="pr-panel" data-testid="drawer-session-movements">
         <div class="pr-panel-head">
           <h2 class="pr-panel-title">سجل حركات الدرج</h2>
@@ -674,6 +733,7 @@ include('includes/header.php');
           </div>
         </div>
       </section>
+      <?php endif; ?>
 
       <?php if ($countAttempts): ?>
       <section class="pr-panel">
@@ -798,15 +858,17 @@ include('includes/header.php');
                 <td><?= htmlspecialchars((string) ($period['reason'] ?? '')) ?></td>
                 <td><?= htmlspecialchars($formatDateTime($period['started_at'] ?? null)) ?></td>
                 <td><?= htmlspecialchars($formatDateTime($period['ended_at'] ?? null)) ?></td>
-                <td><?= htmlspecialchars((string) ($period['end_reason'] ?? ($period['ended_at'] ? '' : 'نشط'))) ?></td>
+                <?php $endReason = (string) ($period['end_reason'] ?? ''); ?>
+                <td><?= htmlspecialchars($period['ended_at'] ? ($overrideEndReasonLabels[$endReason] ?? ($endReason !== '' ? $endReason : '—')) : 'نشط') ?></td>
               </tr>
               <?php endforeach; ?>
             </tbody>
           </table>
         </div>
         <?php if ($overrideAuditEvents): ?>
-        <div class="pr-panel-body pr-panel-body--divided pr-table-wrap">
-          <h3 class="pr-panel-title pr-panel-subhead">أحداث العمليات أثناء التجاوز</h3>
+        <details class="pr-panel-body pr-panel-body--divided pr-disclosure"<?= $auditPage > 1 ? ' open' : '' ?>>
+          <summary class="pr-panel-title pr-panel-subhead">سجل أحداث التشغيل المؤقت (<?= (int) $auditTotal ?>)</summary>
+          <div class="pr-table-wrap">
           <table class="pr-table">
             <thead>
               <tr>
@@ -817,18 +879,26 @@ include('includes/header.php');
               </tr>
             </thead>
             <tbody>
-              <?php foreach ($overrideAuditEvents as $event): ?>
+              <?php foreach ($pagedOverrideAuditEvents as $event): ?>
               <?php $eventType = (string) ($event['event_type'] ?? ''); ?>
               <tr>
                 <td><?= htmlspecialchars($overrideEventLabels[$eventType] ?? $eventType) ?></td>
                 <td><?= htmlspecialchars($overrideUserLabel($event['user_id'] ?? 0)) ?></td>
                 <td><?= htmlspecialchars($formatDateTime($event['created_at'] ?? null)) ?></td>
-                <td><?= htmlspecialchars((string) ($event['summary'] ?? '')) ?></td>
+                <td><?= htmlspecialchars($friendlyOverrideSummary($event['summary'] ?? null)) ?></td>
               </tr>
               <?php endforeach; ?>
             </tbody>
           </table>
-        </div>
+          </div>
+          <?php if ($auditPages > 1): ?>
+          <nav class="pr-pagination pr-no-print" aria-label="صفحات سجل التشغيل المؤقت">
+            <?php if ($auditPage > 1): ?><a class="pr-btn pr-btn-ghost" href="<?= htmlspecialchars($auditPageUrl($auditPage - 1), ENT_QUOTES, 'UTF-8') ?>">السابق</a><?php endif; ?>
+            <span>صفحة <?= (int) $auditPage ?> من <?= (int) $auditPages ?></span>
+            <?php if ($auditPage < $auditPages): ?><a class="pr-btn pr-btn-ghost" href="<?= htmlspecialchars($auditPageUrl($auditPage + 1), ENT_QUOTES, 'UTF-8') ?>">التالي</a><?php endif; ?>
+          </nav>
+          <?php endif; ?>
+        </details>
         <?php endif; ?>
       </section>
       <?php endif; ?>
@@ -915,7 +985,7 @@ include('includes/header.php');
             <form method="post" action="do/do_resolve_drawer_session.php">
               <?= csrf_input('shift_resolve') ?>
               <input type="hidden" name="drawer_session_id" value="<?= (int) $sessionId ?>">
-              <input type="hidden" name="return_to" value="drawer_session.php?id=<?= (int) $sessionId ?>">
+              <input type="hidden" name="return_to" value="<?= htmlspecialchars($returnTo, ENT_QUOTES, 'UTF-8') ?>">
               <div class="pr-modal-header">
                 <div>
                   <p class="pr-eyebrow">مراجعة</p>

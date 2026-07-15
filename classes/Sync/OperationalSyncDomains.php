@@ -56,7 +56,6 @@ class OperationalSyncDomains
             'production_batch' => self::rowDomain('production_batches', 'production_batch', 'production.batch_saved', 'production_batches'),
             'production_batch_line' => self::rowDomain('production_batch_lines', 'production_batch_line', 'production.batch_line_saved', 'production_batch_lines'),
             'recipe_order_line_usage' => self::rowDomain('recipe_order_line_usage', 'recipe_order_line_usage', 'recipe.order_line_usage_saved', 'recipe_order_line_usages'),
-            'closed_order' => self::rowDomain('closed_orders', 'shift_close', 'shift_close.saved', 'shift_closes'),
             'store' => self::rowDomain('stores', 'store', 'store.saved', 'stores'),
             'town' => self::rowDomain('towns', 'town', 'town.saved', 'towns'),
             'moova_table_link' => self::rowDomain('moova_pos_table_links', 'moova_table_link', 'moova.table_link_saved', 'moova_table_links'),

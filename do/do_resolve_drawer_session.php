@@ -6,9 +6,10 @@ rbac_guard_route('do/do_resolve_drawer_session.php');
 require_once __DIR__ . '/../includes/csrf.php';
 require_once __DIR__ . '/../includes/shift_handover_idempotency.php';
 require_once __DIR__ . '/../classes/Pos/Service/ShiftCountService.php';
+require_once __DIR__ . '/../includes/cash_shift_navigation.php';
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
-    header('Location: ../closed_sessions.php');
+    header('Location: ../cash_flow_report.php?tab=shifts');
     exit;
 }
 
@@ -64,11 +65,9 @@ try {
     }
 }
 
-$returnTo = trim((string) ($_POST['return_to'] ?? ''));
-$redirect = '../closed_sessions.php';
-if (preg_match('/^drawer_session\.php\?id=(\d+)$/', $returnTo, $matches)) {
-    $redirect = '../drawer_session.php?id=' . (int) $matches[1];
-}
-
-header('Location: ' . $redirect);
+$returnTo = posmain_cash_shift_safe_return_to(
+    $_POST['return_to'] ?? null,
+    'cash_flow_report.php?tab=shifts&status=needs_review&scope=backlog'
+);
+header('Location: ../' . $returnTo);
 exit;

@@ -1,6 +1,7 @@
 <?php
 
 require_once __DIR__ . '/OperationalSyncDomains.php';
+require_once __DIR__ . '/PosOrderSnapshotBuilder.php';
 
 class CloudOperationalMirrorService
 {
@@ -36,7 +37,7 @@ class CloudOperationalMirrorService
         }
 
         if ($snapshotType === 'shift_close') {
-            return $this->mirrorShiftClose($conn, $payload);
+            return $this->mirrorShiftClose($conn, $branchUuid, $payload);
         }
 
         return null;
@@ -175,37 +176,209 @@ class CloudOperationalMirrorService
         return ['entity_id' => 'moova_pos_shop_links:' . (int) $link['id']];
     }
 
-    private function mirrorShiftClose(mysqli $conn, array $payload): ?array
+    private function mirrorShiftClose(mysqli $conn, string $branchUuid, array $payload): ?array
     {
         $shift = $payload['shift'] ?? null;
-        if (!is_array($shift)) {
+        if (!is_array($shift) || !$this->tableExists($conn, 'drawer_session_close_summaries')) {
             return null;
         }
 
-        $legacy = $shift['legacy'] ?? null;
-        if (is_array($legacy) && !empty($legacy['id'])) {
-            $this->upsertRow($conn, 'closed_orders', $legacy);
-
-            return ['entity_id' => 'closed_orders:' . (int) $legacy['id']];
+        $schemaVersion = (int) ($payload['schema_version'] ?? 1);
+        $legacy = is_array($shift['legacy'] ?? null) ? $shift['legacy'] : [];
+        $drawerSessionId = (int) ($shift['local_drawer_session_id'] ?? $legacy['drawer_session_id'] ?? 0);
+        $drawerUuid = trim((string) ($payload['drawer_session_uuid'] ?? $shift['drawer_session_uuid'] ?? ''));
+        if ($drawerUuid !== '' && $this->tableExists($conn, 'drawer_sessions')) {
+            $lookup = $conn->prepare('SELECT id FROM drawer_sessions WHERE uuid = ? LIMIT 1');
+            $lookup->bind_param('s', $drawerUuid);
+            $lookup->execute();
+            $found = $lookup->get_result()->fetch_assoc();
+            $lookup->close();
+            if ($found) {
+                $drawerSessionId = (int) $found['id'];
+            }
+        }
+        if ($drawerSessionId > 0 && !$this->drawerSessionExists($conn, $drawerSessionId)) {
+            $drawerSessionId = 0;
         }
 
-        $closedOrderId = (int) ($shift['local_closed_order_id'] ?? 0);
-        if ($closedOrderId <= 0 || !$this->tableExists($conn, 'closed_orders')) {
-            return null;
+        $recoveredLegacyDrawer = false;
+        if ($drawerSessionId < 1 && $schemaVersion < 2) {
+            $drawerSessionId = $this->recoverLegacyShiftDrawerSession($conn, $branchUuid, $payload, $shift, $legacy);
+            $recoveredLegacyDrawer = $drawerSessionId > 0;
+        }
+        if ($drawerSessionId < 1) {
+            throw new RuntimeException(
+                $schemaVersion < 2
+                    ? 'V1_SHIFT_CLOSE_DRAWER_RECOVERY_FAILED'
+                    : 'V2_SHIFT_CLOSE_DRAWER_NOT_FOUND'
+            );
         }
 
-        $stmt = $conn->prepare('SELECT * FROM closed_orders WHERE id = ? LIMIT 1');
-        $stmt->bind_param('i', $closedOrderId);
+        $summary = $payload['close_summary'] ?? null;
+        if (!is_array($summary)) {
+            // v1 restore compatibility: convert its embedded legacy close row
+            // into the canonical summary after resolving or recovering a drawer.
+            $summary = [
+                'id' => (int) ($shift['close_summary_id'] ?? $shift['local_closed_order_id'] ?? $legacy['id'] ?? 0),
+                'uuid' => (string) ($payload['close_uuid'] ?? $shift['close_uuid'] ?? ''),
+                'drawer_session_id' => $drawerSessionId,
+                'shift_number' => (string) ($shift['shift_number'] ?? $legacy['shift'] ?? ''),
+                'total_orders' => (int) ($legacy['total_orders'] ?? 0),
+                'total_sales' => $shift['total_sales'] ?? $legacy['total_sales'] ?? 0,
+                'cash_sales' => $shift['total_cash'] ?? $legacy['total_cash'] ?? $legacy['cash'] ?? 0,
+                'non_cash_sales' => $shift['total_card'] ?? $legacy['total_visa'] ?? 0,
+                'discount_total' => $legacy['total_discount'] ?? 0,
+                'return_total' => $legacy['total_returns'] ?? 0,
+                'expense_total' => $legacy['expenses'] ?? 0,
+                'expense_notes' => $legacy['exp_notes'] ?? null,
+                'expected_non_cash' => $legacy['total_visa'] ?? null,
+                'counted_non_cash' => $legacy['actual_visa'] ?? null,
+                'non_cash_difference' => isset($legacy['actual_visa'], $legacy['total_visa'])
+                    ? (float) $legacy['actual_visa'] - (float) $legacy['total_visa']
+                    : null,
+                'close_path' => 'sync_v1_restore',
+                'report_snapshot_json' => $legacy['json_details'] ?? null,
+                'payment_summary_json' => null,
+                'created_at' => $legacy['created_at'] ?? null,
+            ];
+        }
+
+        $summary['drawer_session_id'] = $drawerSessionId;
+        if (empty($summary['uuid'])) {
+            $summary['uuid'] = (string) ($payload['close_uuid'] ?? $shift['close_uuid'] ?? '');
+        }
+        if (trim((string) $summary['uuid']) === '') {
+            $legacyIdentity = (int) ($shift['local_closed_order_id'] ?? $legacy['id'] ?? 0);
+            $summary['uuid'] = PosOrderSnapshotBuilder::deterministicUuid(
+                $branchUuid,
+                $legacyIdentity > 0
+                    ? 'closed_orders:' . $legacyIdentity
+                    : 'drawer_sessions:' . $drawerSessionId . ':close'
+            );
+        }
+        if ($schemaVersion < 2 && empty($summary['id'])) {
+            // A source id is not required after legacy recovery; UUID and the
+            // one-to-one drawer relation are the portable identities.
+            unset($summary['id']);
+        }
+        if (empty($summary['created_at'])) {
+            unset($summary['created_at']);
+        }
+        if ($schemaVersion >= 2) {
+            // V2 is UUID-linked. A source auto-increment ID is not portable and
+            // may collide with an unrelated local close during restore.
+            unset($summary['id']);
+            $this->upsertRow($conn, 'drawer_session_close_summaries', $summary, true);
+        } elseif (!empty($summary['id'])) {
+            $this->upsertRow($conn, 'drawer_session_close_summaries', $summary);
+        } else {
+            $this->upsertRow($conn, 'drawer_session_close_summaries', $summary, true);
+        }
+
+        return [
+            'entity_id' => 'drawer_session_close_summaries:' . $drawerSessionId,
+            'recovered_legacy_shift_close' => $recoveredLegacyDrawer,
+        ];
+    }
+
+    private function recoverLegacyShiftDrawerSession(
+        mysqli $conn,
+        string $branchUuid,
+        array $payload,
+        array $shift,
+        array $legacy
+    ): int {
+        if (!$this->tableExists($conn, 'drawer_sessions')) {
+            return 0;
+        }
+
+        $legacyCloseId = (int) (
+            $shift['local_closed_order_id']
+            ?? $legacy['id']
+            ?? $payload['local_closed_order_id']
+            ?? 0
+        );
+        $identity = $legacyCloseId > 0
+            ? 'closed_orders:' . $legacyCloseId
+            : 'shift_close:' . hash('sha256', json_encode([$shift, $legacy], JSON_UNESCAPED_SLASHES) ?: 'unknown');
+        $drawerUuid = PosOrderSnapshotBuilder::deterministicUuid($branchUuid, 'restored_drawer:' . $identity);
+
+        $existing = $conn->prepare('SELECT id FROM drawer_sessions WHERE uuid = ? LIMIT 1');
+        $existing->bind_param('s', $drawerUuid);
+        $existing->execute();
+        $found = $existing->get_result()->fetch_assoc();
+        $existing->close();
+        if ($found) {
+            return (int) $found['id'];
+        }
+
+        $closedAt = $this->normalizedDateTime(
+            $shift['closed_at'] ?? $legacy['endtime'] ?? $legacy['crtime'] ?? $legacy['date'] ?? null,
+            date('Y-m-d H:i:s')
+        );
+        $openedAt = $this->normalizedDateTime(
+            $shift['opened_at'] ?? $legacy['strttime'] ?? null,
+            $closedAt
+        );
+        if (strtotime($openedAt) > strtotime($closedAt)) {
+            $openedAt = $closedAt;
+        }
+        $counted = (float) ($shift['actual_cash'] ?? $legacy['actual_cash'] ?? $legacy['cash'] ?? 0);
+        $difference = (float) ($shift['cash_deficit'] ?? $legacy['deficit'] ?? 0);
+        $expected = $counted - $difference;
+        $userId = max(0, (int) ($shift['cashier_user_id'] ?? $legacy['user_id'] ?? $legacy['user'] ?? 0));
+
+        $this->upsertRow($conn, 'drawer_sessions', [
+            'uuid' => $drawerUuid,
+            'user_id' => $userId,
+            'tenant' => max(0, (int) ($shift['tenant'] ?? $legacy['tenant'] ?? 0)),
+            'branch' => max(0, (int) ($shift['branch'] ?? $legacy['branch'] ?? 0)),
+            'opened_at' => $openedAt,
+            'business_day' => substr($openedAt, 0, 10),
+            'opened_by' => $userId,
+            'opening_cash' => '0.000',
+            'closed_at' => $closedAt,
+            'closed_by' => $userId,
+            'expected_cash' => number_format($expected, 3, '.', ''),
+            'counted_cash' => number_format($counted, 3, '.', ''),
+            'difference' => number_format($difference, 3, '.', ''),
+            'status' => 'closed',
+            'variance_status' => abs($difference) > 0.0001 ? 'unresolved' : 'none',
+            'variance_type' => abs($difference) > 0.0001 ? 'closing' : 'none',
+            'notes' => 'Recovered from unlinked v1 shift-close backup',
+        ], true);
+
+        $lookup = $conn->prepare('SELECT id FROM drawer_sessions WHERE uuid = ? LIMIT 1');
+        $lookup->bind_param('s', $drawerUuid);
+        $lookup->execute();
+        $row = $lookup->get_result()->fetch_assoc();
+        $lookup->close();
+
+        return (int) ($row['id'] ?? 0);
+    }
+
+    private function drawerSessionExists(mysqli $conn, int $sessionId): bool
+    {
+        if ($sessionId < 1 || !$this->tableExists($conn, 'drawer_sessions')) {
+            return false;
+        }
+        $stmt = $conn->prepare('SELECT 1 FROM drawer_sessions WHERE id = ? LIMIT 1');
+        $stmt->bind_param('i', $sessionId);
         $stmt->execute();
-        $row = $stmt->get_result()->fetch_assoc();
+        $found = (bool) $stmt->get_result()->fetch_row();
         $stmt->close();
-        if (!$row) {
-            return null;
+
+        return $found;
+    }
+
+    private function normalizedDateTime($value, string $fallback): string
+    {
+        $timestamp = strtotime(trim((string) $value));
+        if ($timestamp === false) {
+            return $fallback;
         }
 
-        $this->upsertRow($conn, 'closed_orders', $row);
-
-        return ['entity_id' => 'closed_orders:' . $closedOrderId];
+        return date('Y-m-d H:i:s', $timestamp);
     }
 
     private function upsertJunctionRow(mysqli $conn, string $table, array $row, array $keyColumns): void
@@ -253,9 +426,9 @@ class CloudOperationalMirrorService
         $stmt->close();
     }
 
-    private function upsertRow(mysqli $conn, string $table, array $row): void
+    private function upsertRow(mysqli $conn, string $table, array $row, bool $allowAutoId = false): void
     {
-        if (!$this->tableExists($conn, $table) || empty($row['id'])) {
+        if (!$this->tableExists($conn, $table) || $row === [] || (!$allowAutoId && empty($row['id']))) {
             return;
         }
 
@@ -263,7 +436,7 @@ class CloudOperationalMirrorService
         $fields = [];
         $values = [];
         foreach ($row as $column => $value) {
-            if (!in_array($column, $columns, true)) {
+            if (($allowAutoId && $column === 'id') || !in_array($column, $columns, true)) {
                 continue;
             }
             $fields[] = '`' . $column . '`';
@@ -277,7 +450,7 @@ class CloudOperationalMirrorService
         $placeholders = implode(', ', array_fill(0, count($fields), '?'));
         $updates = [];
         foreach ($fields as $field) {
-            if ($field === '`id`') {
+            if (!$allowAutoId && $field === '`id`') {
                 continue;
             }
             $updates[] = $field . ' = VALUES(' . $field . ')';

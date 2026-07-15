@@ -1500,3 +1500,283 @@ body.premium-report-page .pr-review-meta--notes dd {
     grid-template-columns: 1fr;
   }
 }
+
+/* Cash + shifts unified operational workspace. */
+body.cash-shift-workspace-page .cash-shift-hero {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.25rem;
+}
+
+body.cash-shift-workspace-page .cash-shift-backlog {
+  display: grid;
+  min-width: 150px;
+  padding: 0.85rem 1rem;
+  border: 1px solid rgba(180, 83, 9, 0.2);
+  border-radius: 14px;
+  background: rgba(255, 247, 237, 0.9);
+  color: #92400e;
+  text-decoration: none;
+  text-align: center;
+}
+
+body.cash-shift-workspace-page .cash-shift-backlog strong {
+  font-size: 1.8rem;
+  line-height: 1.15;
+}
+
+body.cash-shift-workspace-page .cash-shift-backlog small {
+  color: #a16207;
+}
+
+body.cash-shift-workspace-page .cash-shift-tabs {
+  display: flex;
+  gap: 0.35rem;
+  margin: 0 0 1rem;
+  padding: 0.35rem;
+  overflow-x: auto;
+  border: 1px solid var(--pr-border);
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: var(--pr-shadow);
+}
+
+body.cash-shift-workspace-page .cash-shift-tab {
+  display: inline-flex;
+  flex: 1 0 auto;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  min-height: 44px;
+  padding: 0.65rem 0.9rem;
+  border-radius: 10px;
+  color: var(--pr-text-secondary);
+  font-weight: 700;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+body.cash-shift-workspace-page .cash-shift-tab.is-active {
+  background: var(--pr-navy);
+  color: #fff;
+  box-shadow: 0 4px 12px rgba(26, 47, 90, 0.16);
+}
+
+body.cash-shift-workspace-page .cash-shift-filter-panel {
+  margin-bottom: 1rem;
+}
+
+body.cash-shift-workspace-page .cash-shift-date-presets {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.85rem 1rem;
+  border-bottom: 1px solid var(--pr-border);
+  background: linear-gradient(180deg, #fff 0%, var(--pr-surface-muted) 100%);
+}
+
+body.cash-shift-workspace-page .cash-shift-date-presets__label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex: 0 0 auto;
+  color: var(--pr-text-secondary);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+body.cash-shift-workspace-page .cash-shift-date-presets__options {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+body.cash-shift-workspace-page .cash-shift-date-preset {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 34px;
+  padding: 0.4rem 0.75rem;
+  border: 1px solid var(--pr-border-strong);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--pr-text-secondary);
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: border-color 0.15s, background 0.15s, color 0.15s, box-shadow 0.15s;
+}
+
+body.cash-shift-workspace-page .cash-shift-date-preset:hover,
+body.cash-shift-workspace-page .cash-shift-date-preset:focus-visible {
+  border-color: var(--pr-accent);
+  color: var(--pr-navy);
+}
+
+body.cash-shift-workspace-page .cash-shift-date-preset.is-active {
+  border-color: var(--pr-navy);
+  background: var(--pr-navy);
+  color: #fff;
+  box-shadow: 0 3px 10px rgba(26, 47, 90, 0.14);
+}
+
+body.cash-shift-workspace-page .cash-shift-filter-panel > .pr-filters-grid {
+  padding: 1rem;
+}
+
+body.cash-shift-workspace-page .cash-shift-kpis {
+  margin-bottom: 1rem;
+}
+
+body.cash-shift-workspace-page .cash-walk-panel {
+  overflow: hidden;
+}
+
+body.cash-shift-workspace-page .cash-walk-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+body.cash-shift-workspace-page .cash-walk-step {
+  position: relative;
+  display: grid;
+  gap: 0.3rem;
+  min-width: 0;
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--pr-border);
+  border-radius: 12px;
+  background: var(--pr-surface-muted);
+}
+
+body.cash-shift-workspace-page .cash-walk-step span {
+  color: var(--pr-text-secondary);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+body.cash-shift-workspace-page .cash-walk-step strong {
+  color: var(--pr-navy);
+  font-size: 1rem;
+  overflow-wrap: anywhere;
+}
+
+body.cash-shift-workspace-page .cash-walk-step strong.is-add {
+  color: var(--pr-success);
+}
+
+body.cash-shift-workspace-page .cash-walk-step strong.is-sub {
+  color: var(--pr-danger);
+}
+
+body.cash-shift-workspace-page .cash-walk-step.is-result {
+  border-color: rgba(200, 149, 92, 0.45);
+  background: var(--pr-accent-soft);
+}
+
+body.cash-shift-workspace-page .cash-shift-settings-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+body.cash-shift-workspace-page .cash-shift-setting-form {
+  display: grid;
+  gap: 1rem;
+}
+
+body.cash-shift-workspace-page .cash-shift-actions,
+body.premium-report-page .pr-pagination {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.55rem;
+}
+
+body.cash-shift-workspace-page .cash-shift-actions {
+  justify-content: flex-start;
+}
+
+body.premium-report-page .pr-pagination {
+  margin-top: 1rem;
+}
+
+body.premium-report-page .pr-pagination .disabled {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+body.cash-shift-workspace-page .cash-shift-empty {
+  display: grid;
+  place-items: center;
+  gap: 0.4rem;
+  min-height: 170px;
+  color: var(--pr-text-secondary);
+  text-align: center;
+}
+
+body.cash-shift-workspace-page .cash-shift-empty i {
+  font-size: 1.8rem;
+  color: var(--pr-border-strong);
+}
+
+body.premium-report-page .pr-disclosure > summary {
+  cursor: pointer;
+  list-style-position: inside;
+}
+
+body.premium-report-page a:focus-visible,
+body.premium-report-page button:focus-visible,
+body.premium-report-page input:focus-visible,
+body.premium-report-page select:focus-visible,
+body.premium-report-page summary:focus-visible {
+  outline: 3px solid rgba(37, 99, 235, 0.35);
+  outline-offset: 3px;
+}
+
+@media (max-width: 768px) {
+  body.cash-shift-workspace-page .cash-shift-hero {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  body.cash-shift-workspace-page .cash-shift-backlog {
+    grid-template-columns: 1fr auto auto;
+    align-items: center;
+    gap: 0.65rem;
+    text-align: start;
+  }
+
+  body.cash-shift-workspace-page .cash-shift-date-presets {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 0.55rem;
+  }
+
+  body.cash-shift-workspace-page .cash-shift-date-presets__options {
+    margin-inline: -0.15rem;
+    padding: 0.15rem;
+  }
+
+  body.cash-shift-workspace-page .cash-shift-settings-grid {
+    grid-template-columns: 1fr;
+  }
+
+  body.cash-shift-workspace-page .cash-walk-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  body.cash-shift-workspace-page .cash-walk-step.is-result {
+    grid-column: 1 / -1;
+  }
+
+  body.cash-shift-workspace-page .cash-shift-table .pr-btn {
+    min-height: 40px;
+  }
+}

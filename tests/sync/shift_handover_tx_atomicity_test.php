@@ -6,6 +6,7 @@ require_once __DIR__ . '/../../includes/db_transaction.php';
 require_once __DIR__ . '/../../classes/Pos/Service/ShiftCountService.php';
 require_once __DIR__ . '/../../classes/Pos/Service/DrawerSessionService.php';
 require_once __DIR__ . '/../../classes/Pos/Service/DrawerFloatExpectationService.php';
+require_once __DIR__ . '/../../classes/Pos/Service/PosRegisterService.php';
 require_once __DIR__ . '/../../classes/Pos/Service/ShiftCloseService.php';
 require_once __DIR__ . '/../../classes/Pos/Service/ShiftSessionService.php';
 
@@ -38,23 +39,13 @@ try {
     $_SESSION['pos_branch'] = 2;
     $_SESSION['userid'] = 88;
 
+    $registerService = new PosRegisterService();
+    $register = $registerService->ensureDefaultRegister($conn, 1, 2);
+    $_COOKIE[PosRegisterService::COOKIE_NAME] = (string) ($register['_pairing_token_once'] ?? '');
+    $_SESSION['pos_register_id'] = (int) $register['id'];
+
     $conn->query("CREATE TABLE users (id INT PRIMARY KEY, uname VARCHAR(50) NOT NULL DEFAULT '')");
     $conn->query("INSERT INTO users (id, uname) VALUES (88, 'tx-cashier')");
-    $conn->query("CREATE TABLE closed_orders (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        shift VARCHAR(50) NULL,
-        date DATE NULL,
-        user VARCHAR(50) NULL,
-        endtime TIME NULL,
-        total_sales DOUBLE NULL,
-        expenses DOUBLE NULL,
-        exp_notes VARCHAR(255) NULL,
-        cash DOUBLE NULL,
-        fund_after DOUBLE NULL,
-        info TEXT NULL,
-        json_details TEXT NULL,
-        drawer_session_id BIGINT NULL
-    )");
     $conn->query("CREATE TABLE ot_head (
         id INT AUTO_INCREMENT PRIMARY KEY,
         pro_date DATE NULL,
@@ -141,8 +132,8 @@ try {
 
     txAtomicAssert($failed, 'handler failure propagated');
 
-    $closedOrders = (int) $conn->query('SELECT COUNT(*) AS c FROM closed_orders')->fetch_assoc()['c'];
-    txAtomicAssert($closedOrders === 0, 'closed_orders rolled back after fail-after-write');
+    $closeSummaries = (int) $conn->query('SELECT COUNT(*) AS c FROM drawer_session_close_summaries')->fetch_assoc()['c'];
+    txAtomicAssert($closeSummaries === 0, 'close summary rolled back after fail-after-write');
 
     $session = $drawer->sessionById($conn, $sessionId);
     txAtomicAssert(($session['status'] ?? '') === 'open', 'drawer still open after rollback');
@@ -190,8 +181,8 @@ try {
     );
     txAtomicAssert(($ok['success'] ?? false) === true, 'successful atomic close');
 
-    $closedOrders = (int) $conn->query('SELECT COUNT(*) AS c FROM closed_orders')->fetch_assoc()['c'];
-    txAtomicAssert($closedOrders === 1, 'closed_orders committed once');
+    $closeSummaries = (int) $conn->query('SELECT COUNT(*) AS c FROM drawer_session_close_summaries')->fetch_assoc()['c'];
+    txAtomicAssert($closeSummaries === 1, 'close summary committed once');
     $session = $drawer->sessionById($conn, $sessionId);
     txAtomicAssert(($session['status'] ?? '') === 'closed', 'drawer closed');
     txAtomicAssert(abs((float) ($session['difference'] ?? 0)) < 0.001, 'matched close difference ~0');

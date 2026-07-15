@@ -984,7 +984,7 @@ class ShiftCountService
     }
 
     /**
-     * @param array{variance_type?:string,offset?:int} $options
+     * @param array{variance_type?:string,user_id?:int,override_operator_id?:int,has_override?:bool,offset?:int} $options
      * @return list<array<string, mixed>>
      */
     public function unresolvedSessions(
@@ -1004,7 +1004,7 @@ class ShiftCountService
             LEFT JOIN users u ON u.id = ds.user_id
             WHERE ds.variance_status = 'unresolved'
         ";
-        [$sql, $params, $types] = $this->appendUnresolvedScope($sql, $tenant, $branch, $options);
+        [$sql, $params, $types] = $this->appendUnresolvedScope($conn, $sql, $tenant, $branch, $options);
 
         $limit = max(1, min(100, $limit));
         $offset = max(0, (int) ($options['offset'] ?? 0));
@@ -1042,7 +1042,7 @@ class ShiftCountService
     }
 
     /**
-     * @param array{variance_type?:string} $options
+     * @param array{variance_type?:string,user_id?:int,override_operator_id?:int,has_override?:bool} $options
      */
     public function countUnresolvedSessions(
         mysqli $conn,
@@ -1059,7 +1059,7 @@ class ShiftCountService
             FROM drawer_sessions ds
             WHERE ds.variance_status = 'unresolved'
         ";
-        [$sql, $params, $types] = $this->appendUnresolvedScope($sql, $tenant, $branch, $options);
+        [$sql, $params, $types] = $this->appendUnresolvedScope($conn, $sql, $tenant, $branch, $options);
 
         $stmt = $conn->prepare($sql);
         if ($types !== '') {
@@ -1073,10 +1073,10 @@ class ShiftCountService
     }
 
     /**
-     * @param array{variance_type?:string} $options
+     * @param array{variance_type?:string,user_id?:int,override_operator_id?:int,has_override?:bool} $options
      * @return array{0:string,1:list<mixed>,2:string}
      */
-    private function appendUnresolvedScope(string $sql, int $tenant, int $branch, array $options): array
+    private function appendUnresolvedScope(mysqli $conn, string $sql, int $tenant, int $branch, array $options): array
     {
         $params = [];
         $types = '';
@@ -1098,6 +1098,35 @@ class ShiftCountService
             $sql .= ' AND ds.variance_type = ?';
             $params[] = $varianceType;
             $types .= 's';
+        }
+
+        $userId = max(0, (int) ($options['user_id'] ?? 0));
+        if ($userId > 0) {
+            $sql .= ' AND ds.user_id = ?';
+            $params[] = $userId;
+            $types .= 'i';
+        }
+
+        $overrideOperatorId = max(0, (int) ($options['override_operator_id'] ?? 0));
+        $needsOverrideJoin = !empty($options['has_override']) || $overrideOperatorId > 0;
+        if ($needsOverrideJoin) {
+            if (!$this->tableExists($conn, 'drawer_override_periods')) {
+                // A requested override filter cannot match on a pre-feature
+                // database. Use a false predicate rather than returning rows
+                // that contradict the selected filter.
+                $sql .= ' AND 1 = 0';
+            } else {
+                $sql .= ' AND EXISTS (
+                    SELECT 1
+                    FROM drawer_override_periods dop
+                    WHERE dop.drawer_session_id = ds.id';
+                if ($overrideOperatorId > 0) {
+                    $sql .= ' AND dop.operator_user_id = ?';
+                    $params[] = $overrideOperatorId;
+                    $types .= 'i';
+                }
+                $sql .= ')';
+            }
         }
 
         return [$sql, $params, $types];

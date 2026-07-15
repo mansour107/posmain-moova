@@ -22,6 +22,7 @@ class CloudShiftSnapshotTest extends TestCase
     private const SECRET = 'phpunit-cloud-shift-secret';
 
     private static $conn;
+    private static string $dbName = '';
 
     public static function setUpBeforeClass(): void
     {
@@ -31,17 +32,29 @@ class CloudShiftSnapshotTest extends TestCase
         $port = (int) (getenv('POSMAIN_TEST_MYSQL_PORT') ?: 3307);
         $user = getenv('POSMAIN_TEST_MYSQL_USER') ?: 'root';
         $pass = getenv('POSMAIN_TEST_MYSQL_PASS') ?: '';
-        $db = getenv('POSMAIN_TEST_MYSQL_DB') ?: 'kody2';
-
-        self::$conn = @new mysqli($host, $user, $pass, $db, $port);
+        self::$conn = @new mysqli($host, $user, $pass, '', $port);
         if (self::$conn->connect_error) {
             self::$conn = null;
             return;
         }
 
-        self::$conn->set_charset('utf8mb4');
         mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
+        self::$dbName = 'posmain_cloud_shift_' . getmypid();
+        self::$conn->query('DROP DATABASE IF EXISTS `' . self::$dbName . '`');
+        self::$conn->query('CREATE DATABASE `' . self::$dbName . '` CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci');
+        self::$conn->select_db(self::$dbName);
+        self::$conn->set_charset('utf8mb4');
         (new SyncSchemaManager())->apply(self::$conn);
+    }
+
+    public static function tearDownAfterClass(): void
+    {
+        if (self::$conn) {
+            if (self::$dbName !== '') {
+                self::$conn->query('DROP DATABASE IF EXISTS `' . self::$dbName . '`');
+            }
+            self::$conn->close();
+        }
     }
 
     protected function setUp(): void
@@ -147,6 +160,66 @@ class CloudShiftSnapshotTest extends TestCase
         $this->assertSame('150.0000', $shift['actual_card']);
         $this->assertSame('0.0000', $shift['cash_deficit']);
         $this->assertSame('0.0000', $shift['card_deficit']);
+    }
+
+    public function testV2SnapshotUsesDrawerSessionIdentityWithoutPopulatingLegacyCloseId(): void
+    {
+        $payload = [
+            'schema_version' => 2,
+            'drawer_session_uuid' => '89898989-9999-4999-8999-898989898989',
+            'shift' => [
+                'close_uuid' => self::CLOSE_UUID,
+                'local_drawer_session_id' => 44,
+                'drawer_session_uuid' => '89898989-9999-4999-8999-898989898989',
+                'cashier_user_id' => 12,
+                'shift_number' => '20260510_12',
+                'total_sales' => 99,
+            ],
+        ];
+        $event = [
+            'event_uuid' => SyncBranchIdentity::generateUuidV4(),
+            'idempotency_key' => 'phpunit:cloud-shift:v2',
+            'payload_hash' => hash('sha256', json_encode($payload, JSON_UNESCAPED_SLASHES)),
+            'event_type' => 'shift.closed',
+            'event_version' => 2,
+            'source_system' => 'pos',
+            'aggregate_type' => 'shift_close',
+            'aggregate_uuid' => self::CLOSE_UUID,
+            'aggregate_local_id' => 777,
+            'entity_type' => 'shift_close',
+            'entity_uuid' => self::CLOSE_UUID,
+            'entity_local_id' => 777,
+            'payload' => $payload,
+        ];
+
+        $this->postEvent($event, true, false);
+        $shift = $this->fetchCloudShift();
+
+        $this->assertNull($shift['local_closed_order_id']);
+        $this->assertSame(44, (int) $shift['local_drawer_session_id']);
+    }
+
+    public function testQueuedV1EventsWithoutCloseUuidUseStableLegacyFallback(): void
+    {
+        $first = $this->event('missing-close-uuid-a', ['local_closed_order_id' => 501]);
+        $second = $this->event('missing-close-uuid-b', ['local_closed_order_id' => 501, 'total_sales' => 88]);
+        foreach ([$first, $second] as &$event) {
+            unset(
+                $event['aggregate_uuid'],
+                $event['entity_uuid'],
+                $event['payload']['shift']['close_uuid']
+            );
+            $event['payload_hash'] = hash('sha256', json_encode($event['payload'], JSON_UNESCAPED_SLASHES));
+        }
+        unset($event);
+
+        $this->postEvent($first, true, false);
+        $this->postEvent($second, true, false);
+
+        $this->assertSame(1, $this->cloudShiftCount());
+        $shift = $this->fetchCloudShift();
+        $this->assertSame(501, (int) $shift['local_closed_order_id']);
+        $this->assertSame('88.0000', $shift['total_sales']);
     }
 
     private function event(string $suffix, array $overrides): array

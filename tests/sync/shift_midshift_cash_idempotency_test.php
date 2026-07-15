@@ -119,21 +119,6 @@ try {
 
     $conn->query("CREATE TABLE users (id INT PRIMARY KEY, uname VARCHAR(50) NOT NULL DEFAULT '', usrole INT NULL)");
     $conn->query("INSERT INTO users (id, uname, usrole) VALUES (55, 'midshift_cashier', 3)");
-    $conn->query("CREATE TABLE closed_orders (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        shift VARCHAR(50) NULL,
-        date DATE NULL,
-        user VARCHAR(50) NULL,
-        endtime TIME NULL,
-        total_sales DOUBLE NULL,
-        expenses DOUBLE NULL,
-        exp_notes VARCHAR(255) NULL,
-        cash DOUBLE NULL,
-        fund_after DOUBLE NULL,
-        info TEXT NULL,
-        json_details TEXT NULL,
-        drawer_session_id BIGINT NULL
-    )");
     $conn->query("CREATE TABLE ot_head (
         id INT AUTO_INCREMENT PRIMARY KEY,
         pro_id INT NULL,

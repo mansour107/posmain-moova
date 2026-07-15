@@ -110,35 +110,25 @@ class ShiftReport
             }
         }
 
-        $this->setLastClosingTimeFromClosedOrders();
+        $this->setLastClosingTimeFromDrawerSessions($scope);
     }
 
-    private function setLastClosingTimeFromClosedOrders(): void
+    private function setLastClosingTimeFromDrawerSessions(array $scope): void
     {
-        if ($this->username === '') {
+        if (!function_exists('posmain_drawer_sessions_table_exists')
+            || !posmain_drawer_sessions_table_exists($this->conn)) {
             return;
         }
 
-        $checkCol = $this->conn->query("SHOW COLUMNS FROM closed_orders LIKE 'created_at'");
-        if ($checkCol && $checkCol->num_rows > 0) {
-            $query = 'SELECT MAX(created_at) AS last_time
-                      FROM closed_orders
-                      WHERE user = ? AND date = ?';
-        } else {
-            $checkCrtime = $this->conn->query("SHOW COLUMNS FROM closed_orders LIKE 'crtime'");
-            if ($checkCrtime && $checkCrtime->num_rows > 0) {
-                $query = 'SELECT MAX(crtime) AS last_time
-                          FROM closed_orders
-                          WHERE user = ? AND date = ?';
-            } else {
-                $query = "SELECT MAX(CONCAT(date, ' ', endtime)) AS last_time
-                          FROM closed_orders
-                          WHERE user = ? AND date = ?";
-            }
-        }
-
-        $stmt = $this->conn->prepare($query);
-        $stmt->bind_param('ss', $this->username, $this->date);
+        $tenant = (int) ($scope['tenant'] ?? $scope['pos_tenant'] ?? $_SESSION['pos_tenant'] ?? 0);
+        $branch = (int) ($scope['branch'] ?? $scope['pos_branch'] ?? $_SESSION['pos_branch'] ?? 0);
+        $stmt = $this->conn->prepare(
+            "SELECT MAX(closed_at) AS last_time
+             FROM drawer_sessions
+             WHERE user_id = ? AND tenant = ? AND branch = ?
+               AND status IN ('closed', 'forced_closed')"
+        );
+        $stmt->bind_param('iii', $this->userId, $tenant, $branch);
         $stmt->execute();
         $res = $stmt->get_result();
         if ($row = $res->fetch_assoc()) {

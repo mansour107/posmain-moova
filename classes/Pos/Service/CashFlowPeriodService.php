@@ -214,6 +214,8 @@ class CashFlowPeriodService
                 'opened_at' => (string) $session['opened_at'],
                 'closed_at' => $session['closed_at'],
                 'status' => (string) $session['status'],
+                'variance_status' => (string) ($session['variance_status'] ?? 'none'),
+                'variance_type' => (string) ($session['variance_type'] ?? 'none'),
                 'opening_cash' => (float) ($recon['drawer']['opening_cash'] ?? 0),
                 'expected_cash' => (float) ($breakdown['pre_close_expected_cash'] ?? 0),
                 'close_variance' => $breakdown['close_variance'] !== null

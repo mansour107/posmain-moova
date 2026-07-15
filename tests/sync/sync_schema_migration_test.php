@@ -75,6 +75,11 @@ class SyncSchemaMigrationTest extends TestCase
         $this->assertArrayHasKey('cloud_menu_items', $manager->plannedStatements());
         $this->assertArrayHasKey('cloud_sync_branch_events', $manager->plannedStatements());
         $this->assertArrayHasKey('cloud_moova_branch_events', $manager->plannedStatements());
+        $this->assertStringContainsString('limit_value DECIMAL(12,3) NULL', $manager->plannedStatements()['user_permission_grants']);
+        $this->assertStringContainsString('is_unlimited TINYINT(1) NOT NULL DEFAULT 1', $manager->plannedStatements()['user_permission_grants']);
+        $this->assertStringContainsString('expected_cash DECIMAL(19,3) NULL', $manager->plannedStatements()['drawer_sessions']);
+        $this->assertStringContainsString('counted_cash DECIMAL(19,3) NULL', $manager->plannedStatements()['drawer_sessions']);
+        $this->assertStringContainsString('moving_average_cost DECIMAL(19,6)', $manager->plannedStatements()['inventory_item_balances']);
         $this->assertStringContainsString('CREATE TABLE IF NOT EXISTS `app_sessions`', $sql);
         $this->assertStringContainsString('payload MEDIUMBLOB NOT NULL', $sql);
         $this->assertStringContainsString('KEY idx_app_sessions_expires_at (expires_at)', $sql);
@@ -180,7 +185,7 @@ class SyncSchemaMigrationTest extends TestCase
         $manager = new SyncSchemaManager();
         $targets = $manager->phase2UuidTargets();
 
-        foreach (['ot_head', 'fat_details', 'order_payments', 'tables', 'closed_orders'] as $table) {
+        foreach (['ot_head', 'fat_details', 'order_payments', 'tables'] as $table) {
             $this->assertArrayHasKey($table, $targets);
             $this->assertSame('uuid', $targets[$table]['column']);
             $this->assertStringStartsWith('uq_', $targets[$table]['index']);
@@ -237,6 +242,11 @@ class SyncSchemaMigrationTest extends TestCase
         $this->assertTrue($inspect['cloud_menu_items']['exists']);
         $this->assertTrue($inspect['cloud_sync_branch_events']['exists']);
         $this->assertTrue($inspect['cloud_moova_branch_events']['exists']);
+        $this->assertContains('limit_value', $inspect['user_permission_grants']['columns']);
+        $this->assertContains('is_unlimited', $inspect['user_permission_grants']['columns']);
+        $this->assertSame('decimal(19,3)', strtolower($this->columnType('drawer_sessions', 'expected_cash')));
+        $this->assertSame('decimal(19,3)', strtolower($this->columnType('drawer_sessions', 'counted_cash')));
+        $this->assertSame('decimal(19,6)', strtolower($this->columnType('inventory_item_balances', 'moving_average_cost')));
         $this->assertSame([], $manager->pendingStatements(self::$conn));
 
         foreach (array_keys($manager->phase2UuidTargets()) as $table) {
@@ -282,6 +292,90 @@ class SyncSchemaMigrationTest extends TestCase
         $this->assertSame([], $this->journalPrecisionPending($manager));
     }
 
+    public function testNullableLegacyFinancialValuesAreNormalizedBeforeNotNullPrecisionUpgrade(): void
+    {
+        self::$conn->query('DROP TABLE IF EXISTS fat_details');
+        self::$conn->query("
+            CREATE TABLE fat_details (
+                id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                cost_price DOUBLE(12,2) NULL
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        ");
+        self::$conn->query('INSERT INTO fat_details (cost_price) VALUES (NULL), (23.10)');
+
+        $manager = new SyncSchemaManager();
+        $pending = $manager->pendingStatements(self::$conn);
+        $normalizeKey = 'fat_details.normalize_cost_price_nulls';
+        $modifyKey = 'fat_details.modify_cost_price_decimal19_6';
+
+        $this->assertArrayHasKey($normalizeKey, $pending);
+        $this->assertArrayHasKey($modifyKey, $pending);
+        $keys = array_keys($pending);
+        $this->assertLessThan(array_search($modifyKey, $keys, true), array_search($normalizeKey, $keys, true));
+
+        self::$conn->query($pending[$normalizeKey]);
+        self::$conn->query($pending[$modifyKey]);
+
+        $this->assertSame('decimal(19,6)', strtolower($this->columnType('fat_details', 'cost_price')));
+        $values = self::$conn->query('SELECT cost_price FROM fat_details ORDER BY id')->fetch_all(MYSQLI_ASSOC);
+        $this->assertSame('0.000000', (string) ($values[0]['cost_price'] ?? ''));
+        $this->assertSame('23.100000', (string) ($values[1]['cost_price'] ?? ''));
+
+        self::$conn->query('DROP TABLE fat_details');
+    }
+
+    public function testLegacyThreeDecimalDrawerCashWidensWithoutLosingFractionalValues(): void
+    {
+        self::$conn->query("
+            ALTER TABLE drawer_sessions
+              MODIFY COLUMN opening_cash DECIMAL(12,3) NOT NULL DEFAULT 0.000,
+              MODIFY COLUMN expected_opening_cash DECIMAL(12,3) NULL,
+              MODIFY COLUMN opening_variance DECIMAL(12,3) NULL,
+              MODIFY COLUMN expected_cash DECIMAL(12,3) NULL,
+              MODIFY COLUMN counted_cash DECIMAL(12,3) NULL,
+              MODIFY COLUMN difference DECIMAL(12,3) NULL,
+              MODIFY COLUMN close_expected_snapshot DECIMAL(12,3) NULL
+        ");
+        self::$conn->query("
+            INSERT INTO drawer_sessions (
+                uuid, user_id, tenant, branch, opened_at, opened_by,
+                opening_cash, expected_opening_cash, opening_variance,
+                expected_cash, counted_cash, difference, close_expected_snapshot
+            ) VALUES (
+                '99999999-9999-4999-a999-999999999999', 1, 1, 1, NOW(), 1,
+                123.456, 123.456, 0.001, 200.123, 199.122, -1.001, 200.123
+            )
+        ");
+
+        $manager = new SyncSchemaManager();
+        $this->assertArrayHasKey('pos_registers.seed_default_from_drawers', $manager->pendingStatements(self::$conn));
+        $pending = $this->drawerPrecisionPending($manager);
+        $this->assertCount(7, $pending);
+        $this->assertStringContainsString(
+            'MODIFY COLUMN opening_cash DECIMAL(19,3) NOT NULL DEFAULT 0.000',
+            $pending['drawer_sessions.modify_opening_cash_decimal19_3']
+        );
+        foreach ($pending as $sql) {
+            self::$conn->query($sql);
+        }
+
+        $this->assertSame('decimal(19,3)', strtolower($this->columnType('drawer_sessions', 'opening_cash')));
+        $this->assertSame('decimal(19,3)', strtolower($this->columnType('drawer_sessions', 'difference')));
+        $row = self::$conn->query("
+            SELECT opening_cash, expected_cash, counted_cash, difference
+            FROM drawer_sessions
+            WHERE uuid = '99999999-9999-4999-a999-999999999999'
+        ")->fetch_assoc();
+        $this->assertSame('123.456', (string) ($row['opening_cash'] ?? ''));
+        $this->assertSame('200.123', (string) ($row['expected_cash'] ?? ''));
+        $this->assertSame('199.122', (string) ($row['counted_cash'] ?? ''));
+        $this->assertSame('-1.001', (string) ($row['difference'] ?? ''));
+        $this->assertSame([], $this->drawerPrecisionPending($manager));
+
+        self::$conn->query("DELETE FROM drawer_sessions WHERE uuid = '99999999-9999-4999-a999-999999999999'");
+        $this->assertArrayNotHasKey('pos_registers.seed_default_from_drawers', $manager->pendingStatements(self::$conn));
+    }
+
     public function testDecimalSafeJournalEntriesDoNotNeedPrecisionUpgrade(): void
     {
         $this->dropJournalEntries();
@@ -297,6 +391,40 @@ class SyncSchemaMigrationTest extends TestCase
         ");
 
         $this->assertSame([], $this->journalPrecisionPending(new SyncSchemaManager()));
+    }
+
+    public function testTwoDecimalJournalUpgradePreservesExistingWholeNumberCapacity(): void
+    {
+        $this->dropJournalEntries();
+        self::$conn->query("
+            CREATE TABLE journal_entries (
+                id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                journal_id INT NOT NULL,
+                account_id INT NOT NULL,
+                debit DECIMAL(19,2) NOT NULL DEFAULT 0.00,
+                credit DECIMAL(19,2) NOT NULL DEFAULT 0.00,
+                tybe INT NOT NULL DEFAULT 0
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        ");
+        self::$conn->query("
+            INSERT INTO journal_entries (journal_id, account_id, debit, credit)
+            VALUES (1, 1, 99999999999999999.12, 0)
+        ");
+
+        $manager = new SyncSchemaManager();
+        $pending = $this->journalPrecisionPending($manager);
+
+        $this->assertStringContainsString('MODIFY COLUMN debit DECIMAL(23,6)', $pending['journal_entries.modify_debit_decimal']);
+        $this->assertStringContainsString('MODIFY COLUMN credit DECIMAL(23,6)', $pending['journal_entries.modify_credit_decimal']);
+        foreach ($pending as $sql) {
+            self::$conn->query($sql);
+        }
+
+        $this->assertSame('decimal(23,6)', strtolower($this->columnType('journal_entries', 'debit')));
+        $this->assertSame('decimal(23,6)', strtolower($this->columnType('journal_entries', 'credit')));
+        $row = self::$conn->query('SELECT debit FROM journal_entries WHERE id = 1')->fetch_assoc();
+        $this->assertSame('99999999999999999.120000', (string) ($row['debit'] ?? ''));
+        $this->assertSame([], $this->journalPrecisionPending($manager));
     }
 
     private function tableExists(string $table): bool
@@ -361,6 +489,20 @@ class SyncSchemaMigrationTest extends TestCase
         $pending = [];
         foreach ($manager->pendingStatements(self::$conn) as $label => $sql) {
             if (strpos($label, 'journal_entries.') === 0) {
+                $pending[$label] = $sql;
+            }
+        }
+
+        return $pending;
+    }
+
+    private function drawerPrecisionPending(SyncSchemaManager $manager): array
+    {
+        $pending = [];
+        foreach ($manager->pendingStatements(self::$conn) as $label => $sql) {
+            if (strpos($label, 'drawer_sessions.modify_') === 0
+                && substr($label, -12) === '_decimal19_3'
+            ) {
                 $pending[$label] = $sql;
             }
         }

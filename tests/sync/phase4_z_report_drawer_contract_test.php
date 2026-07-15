@@ -53,6 +53,7 @@ try {
         'code' => 'cash_drawer',
         'name_ar' => 'Cash drawer',
         'type' => 'cash',
+        'account_id' => 7,
     ]);
 
     $drawer = new DrawerSessionService();
@@ -109,14 +110,6 @@ function phase4ZReportCreateSchema(mysqli $conn): void
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
     ");
     $conn->query("INSERT INTO acc_head (id, aname) VALUES (7, 'Cashier')");
-    $conn->query("
-        CREATE TABLE closed_orders (
-            id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
-            user VARCHAR(120) NULL,
-            date DATE NULL,
-            endtime TIME NULL
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
-    ");
     $conn->query("
         CREATE TABLE ot_head (
             id INT NOT NULL PRIMARY KEY,

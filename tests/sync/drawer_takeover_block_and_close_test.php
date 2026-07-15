@@ -6,6 +6,7 @@ require_once __DIR__ . '/../../classes/Pos/Service/ShiftSessionService.php';
 require_once __DIR__ . '/../../classes/Pos/Service/DrawerSessionService.php';
 require_once __DIR__ . '/../../classes/Pos/Service/DrawerFloatExpectationService.php';
 require_once __DIR__ . '/../../classes/Pos/Service/DrawerBranchBlockedException.php';
+require_once __DIR__ . '/../../classes/Pos/Service/PosRegisterService.php';
 require_once __DIR__ . '/../../classes/Pos/Service/ManagerApprovalService.php';
 require_once __DIR__ . '/../../includes/shift_handover_idempotency.php';
 require_once __DIR__ . '/../../includes/auth_guard.php';
@@ -60,6 +61,17 @@ try {
         (20, 'cashier_b', 'سارة', 2),
         (90, 'manager', 'المدير', 1)
     ");
+    $conn->query("CREATE TABLE ot_head (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        pro_date DATE NULL,
+        crtime DATETIME NULL,
+        user VARCHAR(50) NULL,
+        pro_tybe INT NULL,
+        isdeleted TINYINT NOT NULL DEFAULT 0,
+        fat_total DECIMAL(12,3) NOT NULL DEFAULT 0,
+        fat_disc DECIMAL(12,3) NOT NULL DEFAULT 0,
+        fat_net DECIMAL(12,3) NOT NULL DEFAULT 0
+    )");
 
     $_SESSION['pos_tenant'] = 3;
     $_SESSION['pos_branch'] = 7;
@@ -68,6 +80,11 @@ try {
     $_SESSION['userrole'] = 1;
     $GLOBALS['role'] = ['id' => 1, 'rollname' => 'admin', 'role_key' => 'owner'];
     $GLOBALS['conn'] = $conn;
+
+    $registerService = new PosRegisterService();
+    $register = $registerService->ensureDefaultRegister($conn, 3, 7);
+    $_COOKIE[PosRegisterService::COOKIE_NAME] = (string) ($register['_pairing_token_once'] ?? '');
+    $_SESSION['pos_register_id'] = (int) $register['id'];
 
     $count = new ShiftCountService();
     $shifts = new ShiftSessionService();
@@ -237,6 +254,9 @@ try {
     takeoverAssert(($closedRow['status'] ?? '') === 'forced_closed', 'status forced_closed');
     takeoverAssert((int) ($closedRow['user_id'] ?? 0) === 10, 'user_id immutable after takeover');
     takeoverAssert(($closedRow['open_branch_lock'] ?? null) === null || $closedRow['open_branch_lock'] === '', 'branch lock cleared');
+    $closeSummary = $conn->query('SELECT drawer_session_id, close_path FROM drawer_session_close_summaries')->fetch_assoc();
+    takeoverAssert((int) ($closeSummary['drawer_session_id'] ?? 0) === $sessionA, 'forced close creates one canonical session summary');
+    takeoverAssert(($closeSummary['close_path'] ?? '') === 'drawer_takeover_force_close', 'summary records the takeover close path');
 
     $replay = pos_shift_handover_idempotent(
         $conn,

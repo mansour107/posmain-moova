@@ -109,7 +109,6 @@ function uuidBackfillTargets(): array
         'fat_details' => ['pk' => 'id', 'column' => 'uuid'],
         'order_payments' => ['pk' => 'id', 'column' => 'uuid'],
         'tables' => ['pk' => 'id', 'column' => 'uuid'],
-        'closed_orders' => ['pk' => 'id', 'column' => 'uuid'],
     ];
 }
 

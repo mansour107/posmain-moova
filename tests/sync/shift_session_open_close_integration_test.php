@@ -106,6 +106,28 @@ try {
     shiftSessionIntegrationAssert((int) $secondClose['total_orders'] === 1, 'second shift close should count only new sale');
     shiftSessionIntegrationAssert(abs((float) $secondClose['total_sales'] - 10.0) < 0.01, 'second shift sales total expected');
 
+    // The legacy close_shift.php caller can still arrive without an explicitly
+    // opened drawer. It must materialize and close one canonical session rather
+    // than rejecting the cashier after the migration.
+    unset($_SESSION['pos_shift_closed_for_session'], $_SESSION['pos_drawer_session_id']);
+    $conn->query("
+        INSERT INTO ot_head (id, pro_date, user, pro_tybe, fat_net, isdeleted, crtime)
+        VALUES (103, '{$today}', '{$cashierId}', 9, 5.00, 0, '" . date('Y-m-d H:i:s') . "')
+    ");
+    $legacyClose = $service->closeSimpleShift($conn, $cashierId, [
+        'expenses' => 0,
+        'cash' => 5,
+        'fund_after' => 5,
+        'close_path' => 'close_shift.php',
+    ]);
+    shiftSessionIntegrationAssert(!empty($legacyClose['legacy_drawer_session_recovered']), 'legacy close without a drawer must report recovery');
+    shiftSessionIntegrationAssert((int) $legacyClose['drawer_session_id'] > 0, 'legacy close must return the recovered drawer id');
+    shiftSessionIntegrationAssert((int) $legacyClose['close_summary_id'] > 0, 'legacy close must persist a canonical close summary');
+    $legacyDrawerId = (int) $legacyClose['drawer_session_id'];
+    $legacyDrawer = $conn->query("SELECT status, notes FROM drawer_sessions WHERE id = {$legacyDrawerId}")->fetch_assoc();
+    shiftSessionIntegrationAssert(($legacyDrawer['status'] ?? '') === 'closed', 'recovered legacy drawer must be closed atomically');
+    shiftSessionIntegrationAssert(($legacyDrawer['notes'] ?? '') === 'legacy_close_shift_recovery', 'recovered drawer must retain an audit marker');
+
     shiftSessionIntegrationExpectException(function () use ($service, $conn, $cashierId) {
         $service->closeSimpleShift($conn, $cashierId, ['cash' => 0, 'fund_after' => 0]);
     }, 'SHIFT_ALREADY_CLOSED');
@@ -118,6 +140,29 @@ try {
 
 function shiftSessionIntegrationCreateSchema(mysqli $conn): void
 {
+    $conn->query("
+        CREATE TABLE settings (
+            id INT NOT NULL PRIMARY KEY,
+            def_pos_store INT NULL,
+            def_pos_employee INT NULL,
+            def_pos_fund INT NULL,
+            def_pos_client INT NULL,
+            isdeleted TINYINT(1) NOT NULL DEFAULT 0
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+    ");
+    $conn->query("INSERT INTO settings (id, isdeleted) VALUES (1, 0)");
+    $conn->query("
+        CREATE TABLE acc_head (
+            id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+            code VARCHAR(40) NULL,
+            aname VARCHAR(255) NULL,
+            parent_id INT NOT NULL DEFAULT 0,
+            is_basic TINYINT(1) NOT NULL DEFAULT 0,
+            is_stock TINYINT(1) NOT NULL DEFAULT 0,
+            is_fund TINYINT(1) NOT NULL DEFAULT 0,
+            isdeleted TINYINT(1) NOT NULL DEFAULT 0
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+    ");
     $conn->query("
         CREATE TABLE users (
             id INT NOT NULL PRIMARY KEY,
@@ -137,23 +182,6 @@ function shiftSessionIntegrationCreateSchema(mysqli $conn): void
             fat_net DECIMAL(15,4) NULL,
             isdeleted TINYINT(1) NOT NULL DEFAULT 0,
             crtime DATETIME NULL
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
-    ");
-    $conn->query("
-        CREATE TABLE closed_orders (
-            id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
-            shift VARCHAR(64) NULL,
-            date DATE NULL,
-            user VARCHAR(120) NULL,
-            endtime TIME NULL,
-            total_sales DECIMAL(15,4) NULL,
-            expenses DECIMAL(15,4) NULL,
-            exp_notes TEXT NULL,
-            cash DECIMAL(15,4) NULL,
-            fund_after DECIMAL(15,4) NULL,
-            info TEXT NULL,
-            json_details JSON NULL,
-            created_at DATETIME NULL DEFAULT CURRENT_TIMESTAMP
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
     ");
 }

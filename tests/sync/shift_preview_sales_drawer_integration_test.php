@@ -119,21 +119,6 @@ function shiftPreviewSalesCreateSchema(mysqli $conn): void
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
     ");
     $conn->query("
-        CREATE TABLE closed_orders (
-            id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
-            shift VARCHAR(64) NULL,
-            date DATE NULL,
-            user VARCHAR(120) NULL,
-            endtime TIME NULL,
-            total_sales DECIMAL(15,4) NULL,
-            expenses DECIMAL(15,4) NULL,
-            cash DECIMAL(15,4) NULL,
-            fund_after DECIMAL(15,4) NULL,
-            json_details JSON NULL,
-            created_at DATETIME NULL DEFAULT CURRENT_TIMESTAMP
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
-    ");
-    $conn->query("
         CREATE TABLE order_payments (
             id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
             order_id INT NOT NULL,

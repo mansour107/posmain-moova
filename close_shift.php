@@ -7,6 +7,7 @@ require_once __DIR__ . '/includes/pos_cache_control.php';
 require_once __DIR__ . '/includes/shift_handover_idempotency.php';
 require_once __DIR__ . '/classes/Pos/Service/ShiftSessionService.php';
 require_once __DIR__ . '/classes/Pos/Service/ShiftCloseService.php';
+require_once __DIR__ . '/classes/Pos/Service/DrawerSessionCloseSummaryService.php';
 
 posmain_send_no_store_headers();
 
@@ -28,6 +29,9 @@ if (PHP_SAPI !== 'cli') {
 $user_id = function_exists('pos_acting_user_id') ? pos_acting_user_id() : (int) $_SESSION['userid'];
 
 try {
+    // Additive mixed-version safety: provision the close snapshot before the
+    // idempotency transaction starts, never through DDL inside that transaction.
+    (new DrawerSessionCloseSummaryService())->ensureSchema($conn);
     $closePayload = [
         'expenses' => $_POST['expenses'] ?? 0,
         'exp_notes' => $_POST['exp_notes'] ?? '',

@@ -273,34 +273,45 @@ class OperationalSyncEventService
         ]);
     }
 
-    public function recordShiftCloseSnapshot(mysqli $conn, int $closedOrderId, array $options = []): ?array
+    public function recordShiftCloseSnapshot(mysqli $conn, int $closeSummaryId, array $options = []): ?array
     {
-        if (!$this->enabled($options['config'] ?? null) || $closedOrderId <= 0) {
+        if (!$this->enabled($options['config'] ?? null) || $closeSummaryId <= 0) {
             return null;
         }
 
         $config = $options['config'] ?? (function_exists('posmain_app_config') ? posmain_app_config() : []);
         $branch = $this->branchIdentity->ensure($conn, $config);
         $branchUuid = (string) $branch['branch_uuid'];
-        $payload = (new ShiftCloseSyncPayloadService())->build($conn, $closedOrderId, $branchUuid, $options);
+        $payload = (new ShiftCloseSyncPayloadService())->build($conn, $closeSummaryId, $branchUuid, $options);
         if (!$payload) {
             return null;
         }
 
-        $entityUuid = (string) ($payload['close_uuid'] ?? PosOrderSnapshotBuilder::deterministicUuid($branchUuid, 'closed_orders:' . $closedOrderId));
+        $drawerSessionId = (int) ($payload['shift']['local_drawer_session_id'] ?? 0);
+        $entityUuid = trim((string) ($payload['close_uuid'] ?? ''));
+        if ($entityUuid === '') {
+            $entityUuid = PosOrderSnapshotBuilder::deterministicUuid(
+                $branchUuid,
+                'drawer_session_close_summaries:' . $closeSummaryId
+            );
+            $payload['close_uuid'] = $entityUuid;
+            if (isset($payload['shift']) && is_array($payload['shift'])) {
+                $payload['shift']['close_uuid'] = $entityUuid;
+            }
+        }
 
         return $this->insertOutbox($conn, $config, $branch, [
             'event_type' => (string) ($options['event_type'] ?? 'shift_close.saved'),
             'source_system' => $this->sourceSystem($options['source_system'] ?? null),
             'aggregate_type' => 'shift_close',
             'entity_type' => 'shift_close',
-            'aggregate_local_id' => $closedOrderId,
-            'entity_local_id' => $closedOrderId,
+            'aggregate_local_id' => $drawerSessionId,
+            'entity_local_id' => $closeSummaryId,
             'aggregate_uuid' => $entityUuid,
             'entity_uuid' => $entityUuid,
-            'aggregate_id' => 'closed_orders:' . $closedOrderId,
+            'aggregate_id' => 'drawer_sessions:' . $drawerSessionId . ':close',
             'payload' => $payload,
-            'event_version' => 1,
+            'event_version' => 2,
             'idempotency_suffix' => 'shift_close.saved',
         ]);
     }

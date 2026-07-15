@@ -61,9 +61,9 @@ try {
     ]);
     shiftExpenseIntegrationAssert(abs((float) $closed['total_sales'] >= 0), 'close should succeed');
 
-    $row = $conn->query('SELECT expenses, exp_notes FROM closed_orders ORDER BY id DESC LIMIT 1')->fetch_assoc();
-    shiftExpenseIntegrationAssert(abs((float) $row['expenses'] - 20.0) < 0.01, 'close should persist drawer expense total not POST override');
-    shiftExpenseIntegrationAssert($row['exp_notes'] === 'ignored when drawer active', 'close should keep provided notes when present');
+    $row = $conn->query('SELECT expense_total, expense_notes FROM drawer_session_close_summaries ORDER BY id DESC LIMIT 1')->fetch_assoc();
+    shiftExpenseIntegrationAssert(abs((float) $row['expense_total'] - 20.0) < 0.01, 'close should persist drawer expense total not POST override');
+    shiftExpenseIntegrationAssert($row['expense_notes'] === 'ignored when drawer active', 'close should keep provided notes when present');
 
     shiftExpenseIntegrationExpectException(function () use ($service, $conn, $cashierId) {
         $service->recordShiftExpense($conn, $cashierId, ['amount' => 1, 'reason' => 'late']);
@@ -86,22 +86,6 @@ function shiftExpenseIntegrationCreateSchema(mysqli $conn): void
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
     ");
     $conn->query("INSERT INTO users (id, uname, password, usrole) VALUES (9, 'expense_cashier', 'x', 3)");
-    $conn->query("
-        CREATE TABLE closed_orders (
-            id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
-            shift VARCHAR(64) NULL,
-            date DATE NULL,
-            user VARCHAR(120) NULL,
-            endtime TIME NULL,
-            total_sales DECIMAL(15,4) NULL,
-            expenses DECIMAL(15,4) NULL,
-            exp_notes VARCHAR(30) NULL,
-            cash DECIMAL(15,4) NULL,
-            fund_after DECIMAL(15,4) NULL,
-            info TEXT NULL,
-            json_details JSON NULL
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
-    ");
     $conn->query("
         CREATE TABLE ot_head (
             id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -133,6 +117,7 @@ function shiftExpenseIntegrationCreateSchema(mysqli $conn): void
             total DECIMAL(15,4) NULL,
             jdate DATE NULL,
             details VARCHAR(255) NULL,
+            op_id INT NULL,
             op2 INT NULL,
             user INT NULL
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci

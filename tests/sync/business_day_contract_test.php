@@ -49,7 +49,7 @@ businessDayContractAssert(strpos($cashFlow, 'COALESCE(ds.business_day') !== fals
 
 $cashFlowPage = file_get_contents(__DIR__ . '/../../cash_flow_report.php');
 businessDayContractAssert(strpos($cashFlowPage, 'posmain_business_day_context') !== false, 'cash flow page should use business day context');
-businessDayContractAssert(strpos($cashFlowPage, 'currentBusinessDay') !== false, 'cash flow presets should use business day');
+businessDayContractAssert(strpos($cashFlowPage, "['current_business_day']") !== false, 'cash flow presets should use business day');
 
 $closeShift = file_get_contents(__DIR__ . '/../../do_close_shift_z.php');
 businessDayContractAssert(strpos($closeShift, 'BusinessDayService') !== false, 'close shift should use BusinessDayService');
@@ -81,10 +81,12 @@ $routeManifest = file_get_contents(__DIR__ . '/../../config/rbac_route_manifest.
 businessDayContractAssert(strpos($routeManifest, 'do/do_set_business_day_cutoff.php') !== false, 'cutoff route should be in rbac manifest');
 
 $closedSessions = file_get_contents(__DIR__ . '/../../closed_sessions.php');
-businessDayContractAssert(strpos($closedSessions, 'businessDayCutoffForm') !== false, 'closed_sessions should expose cutoff UI');
+businessDayContractAssert(strpos($cashFlowPage, 'businessDayCutoffForm') !== false, 'cash workspace settings should expose cutoff UI');
 businessDayContractAssert(
-    strpos($closedSessions, '$canConfigureBusinessDay && $branchTenant > 0 && $branchId > 0') === false,
-    'closed_sessions must not hide business day panel when branch scope is empty'
+    strpos($closedSessions, "'tab' => 'shifts'") !== false
+        && strpos($closedSessions, "'status' => 'needs_review'") !== false
+        && strpos($closedSessions, "'scope' => 'backlog'") !== false,
+    'closed_sessions should redirect to the unified backlog'
 );
 
 $contracts = new RestaurantReportContractService();

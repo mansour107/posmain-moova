@@ -55,10 +55,10 @@ try {
         'cash' => 125,
         'fund_after' => 125,
     ]);
-    shiftPayinIntegrationAssert($closed['closed_order_id'] > 0, 'close should succeed');
+    shiftPayinIntegrationAssert($closed['close_summary_id'] > 0, 'close should create a close summary');
 
-    $json = $conn->query('SELECT json_details FROM closed_orders ORDER BY id DESC LIMIT 1')->fetch_assoc();
-    $details = json_decode((string) ($json['json_details'] ?? '{}'), true);
+    $json = $conn->query('SELECT report_snapshot_json FROM drawer_session_close_summaries ORDER BY id DESC LIMIT 1')->fetch_assoc();
+    $details = json_decode((string) ($json['report_snapshot_json'] ?? '{}'), true);
     shiftPayinIntegrationAssert(abs((float) ($details['payin_total'] ?? 0) - 25.0) < 0.01, 'close json should include payin total');
     shiftPayinIntegrationAssert((int) ($details['payin_count'] ?? 0) === 1, 'close json should include payin count');
 
@@ -83,22 +83,6 @@ function shiftPayinIntegrationCreateSchema(mysqli $conn): void
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
     ");
     $conn->query("INSERT INTO users (id, uname, password, usrole) VALUES (11, 'payin_cashier', 'x', 3)");
-    $conn->query("
-        CREATE TABLE closed_orders (
-            id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
-            shift VARCHAR(64) NULL,
-            date DATE NULL,
-            user VARCHAR(120) NULL,
-            endtime TIME NULL,
-            total_sales DECIMAL(15,4) NULL,
-            expenses DECIMAL(15,4) NULL,
-            exp_notes VARCHAR(30) NULL,
-            cash DECIMAL(15,4) NULL,
-            fund_after DECIMAL(15,4) NULL,
-            info TEXT NULL,
-            json_details JSON NULL
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
-    ");
     $conn->query("
         CREATE TABLE ot_head (
             id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -130,6 +114,7 @@ function shiftPayinIntegrationCreateSchema(mysqli $conn): void
             total DECIMAL(15,4) NULL,
             jdate DATE NULL,
             details VARCHAR(255) NULL,
+            op_id INT NULL,
             op2 INT NULL,
             user INT NULL
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci

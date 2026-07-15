@@ -230,14 +230,6 @@ function businessDaySystemCreateSchema(mysqli $conn): void
             created_at DATETIME NULL
         ) ENGINE=InnoDB
     ");
-    $conn->query("
-        CREATE TABLE closed_orders (
-            id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
-            user VARCHAR(120) NULL,
-            date DATE NULL,
-            endtime TIME NULL
-        ) ENGINE=InnoDB
-    ");
 }
 
 function businessDaySystemAssert(bool $condition, string $message): void

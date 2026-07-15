@@ -17,7 +17,9 @@ if ($closeServiceSource === false) {
 }
 shiftCloseContractAssert(strpos($closeServiceSource, "shift_token:") === false, 'ShiftCloseService must not append shift_token into info notes');
 shiftCloseContractAssert(strpos($closeServiceSource, 'shift_session_token') !== false, 'ShiftCloseService should store session token in json_details');
-shiftCloseContractAssert(strpos($closeServiceSource, 'truncateClosedOrderInfo') !== false, 'ShiftCloseService should bound closed_orders.info');
+shiftCloseContractAssert(strpos($closeServiceSource, 'DrawerSessionCloseSummaryService') !== false, 'ShiftCloseService should create the canonical close summary');
+shiftCloseContractAssert(strpos($closeServiceSource, "'close_summary_id'") !== false, 'ShiftCloseService should return the canonical close summary id');
+shiftCloseContractAssert(strpos($closeServiceSource, 'INSERT INTO closed_orders') === false, 'ShiftCloseService must not write the retired close table');
 
 $previewSource = file_get_contents(__DIR__ . '/../../do/get_shift_preview.php');
 if ($previewSource === false) {
