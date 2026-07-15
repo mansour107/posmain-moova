@@ -349,6 +349,7 @@ $posmainPosDefaults = posmain_resolve_pos_defaults($conn, is_array($rowstg ?? nu
     window.POSMAIN_SHIFT_OPEN_CSRF_TOKEN = <?= json_encode(csrf_token('shift_open_count'), JSON_UNESCAPED_SLASHES) ?>;
     window.POSMAIN_SHIFT_CLOSE_COUNT_CSRF_TOKEN = <?= json_encode(csrf_token('shift_close_count'), JSON_UNESCAPED_SLASHES) ?>;
     window.POSMAIN_SHIFT_TAKEOVER_CSRF_TOKEN = <?= json_encode(csrf_token('shift_takeover'), JSON_UNESCAPED_SLASHES) ?>;
+    window.POSMAIN_SHIFT_TAKEOVER_COUNT_CSRF_TOKEN = <?= json_encode(csrf_token('shift_takeover_count'), JSON_UNESCAPED_SLASHES) ?>;
     window.POSMAIN_POS_OVERRIDE_CSRF_TOKEN = <?= json_encode(csrf_token('pos_override'), JSON_UNESCAPED_SLASHES) ?>;
 </script>
 <?php
@@ -359,6 +360,8 @@ if (is_file($posHandoverCss) && is_file($posHandoverJs)):
 <link rel="stylesheet" href="css/pos-shift-handover.css?v=<?= (int) filemtime($posHandoverCss) ?>">
 <script src="js/pos_shift_count_wizard.js?v=<?= (int) filemtime($posHandoverJs) ?>"></script>
 <?php endif; ?>
+<?php include_once __DIR__ . '/pin_pad_styles.php'; ?>
+<script src="js/pin_pad.js?v=<?= (int) (@filemtime(__DIR__ . '/../js/pin_pad.js') ?: 1) ?>"></script>
 <?php endif; ?>
 <div class="modal fade pos-close-shift-modal-fade" id="closeShiftModal" tabindex="-1"
     aria-labelledby="closeShiftModalLabel" aria-hidden="true">

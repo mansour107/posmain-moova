@@ -241,7 +241,7 @@ class RolePermissionSyncService
                     'pos.open', 'pos.sell.takeaway', 'pos.table.open', 'pos.table.move', 'pos.table.merge',
                     'pos.payment.take', 'pos.discount.apply', 'pos.discount.manager_override', 'pos.recipe_stock_override',
                     'pos.cancel.unpaid', 'pos.split', 'pos.shift.open', 'pos.shift.close', 'pos.shift.force_close',
-                    'pos.shift.force_close_others', 'pos.shift.resolve_variance', 'pos.shift.set_opening_baseline',
+                    'pos.shift.force_close_others', 'pos.shift.override', 'pos.shift.resolve_variance', 'pos.shift.set_opening_baseline',
                     'pos.cashdrawer.count', 'pos.drawer.no_sale', 'pos.drawer.payin', 'pos.drawer.safe_drop',
                     'menu.edit', 'inventory.edit', 'reports.view', 'reports.cash_flow', 'moova.manage', 'moova.accept',
                     'delivery.dispatch', 'delivery.zones.manage', 'kds.view', 'kds.complete',
@@ -257,6 +257,7 @@ class RolePermissionSyncService
                     'pos.open', 'pos.sell.takeaway', 'pos.table.open', 'pos.payment.take',
                     'pos.discount.apply', 'pos.cancel.unpaid', 'pos.split',
                     'pos.shift.open', 'pos.shift.close', 'pos.cashdrawer.count',
+                    'moova.accept',
                 ],
                 'capabilities' => [
                     'pos.discount.apply' => ['limit_value' => 10.0, 'is_unlimited' => false],
@@ -351,6 +352,22 @@ class RolePermissionSyncService
             if ((int) ($capRow['is_enabled'] ?? 0) === 1) {
                 $needsRepair = true;
                 break;
+            }
+        }
+
+        if (!$needsRepair) {
+            foreach (array_keys($allowed) as $permission) {
+                $capStmt = $conn->prepare(
+                    'SELECT is_enabled FROM role_capabilities WHERE role_id = ? AND permission_key = ? LIMIT 1'
+                );
+                $capStmt->bind_param('is', $roleId, $permission);
+                $capStmt->execute();
+                $capRow = $capStmt->get_result()->fetch_assoc();
+                $capStmt->close();
+                if ((int) ($capRow['is_enabled'] ?? 0) !== 1) {
+                    $needsRepair = true;
+                    break;
+                }
             }
         }
 

@@ -76,7 +76,16 @@
     border: 2px solid #e2e8f0;
     border-radius: 14px;
     color: #0f172a;
+    background: #fff;
     transition: border-color 0.15s, box-shadow 0.15s;
+    -moz-appearance: textfield;
+    appearance: textfield;
+}
+
+.psh-amount-input::-webkit-outer-spin-button,
+.psh-amount-input::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
 }
 
 .psh-amount-input:focus {
@@ -137,12 +146,38 @@
     font-size: 1.75rem;
     font-weight: 800;
     margin: 0.25rem 0;
+    color: #0f172a;
+    letter-spacing: 0.01em;
+}
+
+.psh-variance-card.is-over .psh-variance-amount {
+    color: #065f46;
+}
+
+.psh-variance-card.is-under .psh-variance-amount {
+    color: #92400e;
+}
+
+.psh-variance-card.is-balanced .psh-variance-amount {
+    color: #3730a3;
 }
 
 .psh-variance-label {
     font-size: 0.88rem;
-    color: #475569;
+    color: #334155;
     margin: 0;
+}
+
+.psh-variance-card.is-over .psh-variance-label {
+    color: #047857;
+}
+
+.psh-variance-card.is-under .psh-variance-label {
+    color: #b45309;
+}
+
+.psh-variance-card.is-balanced .psh-variance-label {
+    color: #4338ca;
 }
 
 .psh-actions {

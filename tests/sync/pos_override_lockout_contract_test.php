@@ -25,11 +25,22 @@ posOverrideLockoutContractAssert(strpos($approvalService, 'clearUserFailures') !
 posOverrideLockoutContractAssert(strpos($approvalService, 'ManagerApprovalRequiredException') !== false, 'approval service should throw typed approval-required exception');
 posOverrideLockoutContractAssert(strpos($approvalService, 'InvalidArgumentException') !== false, 'approval service should treat invalid PIN format as manager PIN invalid');
 
+posOverrideLockoutContractAssert(strpos($approvalService, 'MANAGER_PIN_MISMATCH') !== false, 'approval service should reject another user PIN for same-user step-up');
+posOverrideLockoutContractAssert(strpos($approvalService, 'pos.shift.override') !== false, 'approval service should step-up for shift override');
+posOverrideLockoutContractAssert(strpos($overrideAuth, 'MANAGER_PIN_MISMATCH') !== false, 'override auth should surface same-user mismatch');
+
 $posJs = file_get_contents($root . '/js/pos_barcode.js');
 posOverrideLockoutContractAssert(strpos($posJs, 'overrideErrorMessage') !== false, 'POS JS should map override failure codes to user messages');
 posOverrideLockoutContractAssert(strpos($posJs, 'MANAGER_PIN_INVALID') !== false, 'POS JS should handle invalid manager PIN feedback');
+posOverrideLockoutContractAssert(strpos($posJs, 'MANAGER_PIN_MISMATCH') !== false, 'POS JS should handle same-user PIN mismatch feedback');
 posOverrideLockoutContractAssert(strpos($posJs, 'MANAGER_PERMISSION_DENIED') !== false, 'POS JS should handle manager permission denial feedback');
-posOverrideLockoutContractAssert(strpos($posJs, 'initialError') !== false, 'PIN pad modal should accept initial error text');
-posOverrideLockoutContractAssert(strpos($posJs, 'promptOverridePin') !== false, 'override flow should re-prompt after failed PIN attempts');
+posOverrideLockoutContractAssert(strpos($posJs, 'PosmainPinPad') !== false, 'POS override flow must use shared PosmainPinPad');
+posOverrideLockoutContractAssert(strpos($posJs, 'openModal') !== false, 'POS override flow must open shared pin modal');
+posOverrideLockoutContractAssert(strpos($posJs, "'.repeat(6)") === false, 'PIN pad modal must not use 6-digit dots');
+
+$pinPadJs = file_get_contents($root . '/js/pin_pad.js');
+posOverrideLockoutContractAssert(strpos($pinPadJs, 'autoSubmit') !== false, 'shared pin pad must support auto-submit');
+posOverrideLockoutContractAssert(strpos($pinPadJs, 'openModal') !== false, 'shared pin pad must expose openModal');
+posOverrideLockoutContractAssert(strpos($pinPadJs, 'ppm-shell') !== false, 'modal must reuse first-login ppm markup');
 
 echo "pos-override-lockout-contract-ok\n";

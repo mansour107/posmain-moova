@@ -39,7 +39,7 @@ export const RBAC_ALLOWED_PAGE_MATRIX: Array<{ role: PersonaRole; path: string; 
   { role: 'admin', path: '/users.php', permission: 'users.manage', hint: /الفريق|الموظفون/i },
   { role: 'admin', path: '/myroles.php', permission: 'roles.manage', hint: /الفريق|الأدوار/i },
   { role: 'manager', path: '/myitems.php', permission: 'menu.edit' },
-  { role: 'cashier', path: '/dashboard.php', permission: 'pos.open' },
+  { role: 'cashier', path: '/change_password.php', permission: 'pos.open' },
 ];
 
 export const RBAC_CRITICAL_POST_HANDLERS: Array<{

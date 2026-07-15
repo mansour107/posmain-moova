@@ -10,6 +10,8 @@ sidebarPermAssert(strpos($sidebar, 'posmainCanEditMenu || $posmainCanEditInvento
 sidebarPermAssert(strpos($sidebar, 'posmainCanCloseShift') !== false, 'sidebar should gate closed sessions via pos.shift.close');
 sidebarPermAssert(strpos($sidebar, 'posmainCanViewCashFlow') !== false, 'sidebar should gate cash flow via reports.cash_flow');
 sidebarPermAssert(strpos($navbar, 'auth_guard_has_permission') !== false, 'navbar should use auth_guard_has_permission');
+sidebarPermAssert(strpos($navbar, 'app-identity-badge') !== false, 'navbar should show logged-in user identity badge');
+sidebarPermAssert(strpos($navbar, 'display_name') !== false, 'navbar identity should prefer display_name');
 
 echo "sidebar-permission-contract-ok\n";
 

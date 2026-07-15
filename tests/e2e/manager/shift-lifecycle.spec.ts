@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { loginAndUnlockPos, unlockPos } from '../helpers/auth';
+import { loginAndUnlockPos } from '../helpers/auth';
 import { fillCloseShiftForm } from '../helpers/shift';
 
 async function openCloseShiftModal(page: import('@playwright/test').Page): Promise<void> {
@@ -27,9 +27,12 @@ test.describe('manager: real shift window lifecycle', () => {
     await fillCloseShiftForm(page);
     await page.waitForURL(/pos_barcode\.php/, { timeout: 20_000 });
     await expect(page.locator('#shiftCloseResultModal')).toBeVisible({ timeout: 10_000 });
-    await page.locator('#shiftCloseResultDismiss').click();
+    await Promise.all([
+      page.waitForURL(/do_logout\.php|index\.php|login\.php/, { timeout: 15_000, waitUntil: 'commit' }),
+      page.locator('#shiftCloseResultDismiss').click(),
+    ]);
 
-    await unlockPos(page, 'manager');
+    await loginAndUnlockPos(page, 'manager');
 
     const ordersAfterReopen = await readShiftPreviewOrders(page);
     expect(ordersAfterReopen).toBe(0);
@@ -60,16 +63,20 @@ test.describe('manager: real shift window lifecycle', () => {
     await fillCloseShiftForm(page);
     await page.waitForURL(/pos_barcode\.php/, { timeout: 20_000 });
     await expect(page.locator('#shiftCloseResultModal')).toBeVisible({ timeout: 10_000 });
-    await page.locator('#shiftCloseResultDismiss').click();
+    await Promise.all([
+      page.waitForURL(/do_logout\.php|index\.php|login\.php/, { timeout: 15_000, waitUntil: 'commit' }),
+      page.locator('#shiftCloseResultDismiss').click(),
+    ]);
 
+    // Fully logged out after close-ack dismiss.
     status = await page.evaluate(async () => {
       const r = await fetch('pos_session_status.php', { cache: 'no-store' });
-      return r.json();
+      return r.json().catch(() => ({ authenticated: false, shift_open: false }));
     });
     expect(status.authenticated).toBe(false);
     expect(status.shift_open).toBe(false);
 
-    await unlockPos(page, 'manager');
+    await loginAndUnlockPos(page, 'manager');
     status = await page.evaluate(async () => {
       const r = await fetch('pos_session_status.php', { cache: 'no-store' });
       return r.json();

@@ -19,6 +19,7 @@ $businessDayContext = posmain_business_day_context($conn, $tenant, $branch);
 $dateFrom = $_GET['date_from'] ?? $businessDayContext['current_business_day'];
 $dateTo = $_GET['date_to'] ?? $dateFrom;
 $cashierId = (int) ($_GET['cashier_id'] ?? 0);
+$overrideOperatorId = (int) ($_GET['override_operator_id'] ?? 0);
 $movementType = trim((string) ($_GET['movement_type'] ?? ''));
 $activeTab = ($_GET['view'] ?? 'sessions') === 'movements' ? 'movements' : 'sessions';
 $sessionFilter = (string) ($_GET['session_filter'] ?? 'all');
@@ -44,6 +45,19 @@ $summary = $service->summary($conn, $filters);
 $sessions = $service->sessions($conn, $filters);
 $movements = $service->movements($conn, array_merge($filters, ['limit' => 200, 'offset' => 0]));
 $payments = $service->paymentBreakdown($conn, $filters);
+$overridePeriodFilters = [
+    'date_from' => $dateFrom,
+    'date_to' => $dateTo,
+    'tenant' => $tenant,
+    'branch' => $branch,
+];
+if ($overrideOperatorId > 0) {
+    $overridePeriodFilters['operator_user_id'] = $overrideOperatorId;
+}
+if ($cashierId > 0) {
+    $overridePeriodFilters['original_owner_user_id'] = $cashierId;
+}
+$overridePeriods = $service->overridePeriods($conn, $overridePeriodFilters);
 
 $cashiers = [];
 $cashierRes = $conn->query('SELECT id, uname, display_name FROM users WHERE isdeleted = 0 ORDER BY uname');
@@ -230,6 +244,17 @@ $premiumCssVer = is_file(__DIR__ . '/css/premium-report-light.css')
                 <?php endforeach; ?>
               </select>
             </div>
+            <div class="pr-field">
+              <label for="override_operator_id">مشغّل التجاوز</label>
+              <select id="override_operator_id" name="override_operator_id" class="form-control">
+                <option value="0">الكل</option>
+                <?php foreach ($cashiers as $cashier): ?>
+                  <option value="<?= (int) $cashier['id'] ?>" <?= $overrideOperatorId === (int) $cashier['id'] ? 'selected' : '' ?>>
+                    <?= htmlspecialchars((string) ($cashier['display_name'] ?: $cashier['uname'])) ?>
+                  </option>
+                <?php endforeach; ?>
+              </select>
+            </div>
             <div class="pr-field pr-field--submit">
               <label>&nbsp;</label>
               <button type="submit" class="pr-btn pr-btn-primary w-100">
@@ -239,6 +264,59 @@ $premiumCssVer = is_file(__DIR__ . '/css/premium-report-light.css')
           </form>
         </div>
       </section>
+
+      <?php if (!empty($overridePeriods)): ?>
+      <section class="pr-panel" data-testid="cash-flow-override-periods">
+        <div class="pr-panel-head">
+          <h2 class="pr-panel-title">فترات التجاوز المؤقت</h2>
+          <span class="pr-pill pr-pill--muted"><?= count($overridePeriods) ?> فترة</span>
+        </div>
+        <div class="pr-panel-body pr-table-wrap">
+          <table class="pr-table pr-table--compact">
+            <thead>
+              <tr>
+                <th>الجلسة</th>
+                <th>المشغّل</th>
+                <th>صاحب الوردية</th>
+                <th>السبب</th>
+                <th>البداية</th>
+                <th>النهاية</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              <?php foreach ($overridePeriods as $period): ?>
+              <?php
+                $opId = (int) ($period['operator_user_id'] ?? 0);
+                $owId = (int) ($period['original_owner_user_id'] ?? 0);
+                $opName = (string) $opId;
+                $owName = (string) $owId;
+                foreach ($cashiers as $cashier) {
+                    if ((int) $cashier['id'] === $opId) {
+                        $opName = (string) ($cashier['display_name'] ?: $cashier['uname']);
+                    }
+                    if ((int) $cashier['id'] === $owId) {
+                        $owName = (string) ($cashier['display_name'] ?: $cashier['uname']);
+                    }
+                }
+              ?>
+              <tr>
+                <td>#<?= (int) ($period['drawer_session_id'] ?? 0) ?></td>
+                <td><?= htmlspecialchars($opName) ?></td>
+                <td><?= htmlspecialchars($owName) ?></td>
+                <td><?= htmlspecialchars((string) ($period['reason'] ?? '')) ?></td>
+                <td><?= htmlspecialchars((string) ($period['started_at'] ?? '')) ?></td>
+                <td><?= htmlspecialchars((string) ($period['ended_at'] ?? 'نشط')) ?></td>
+                <td>
+                  <a href="drawer_session.php?id=<?= (int) ($period['drawer_session_id'] ?? 0) ?>" class="pr-btn pr-btn-ghost">تفاصيل</a>
+                </td>
+              </tr>
+              <?php endforeach; ?>
+            </tbody>
+          </table>
+        </div>
+      </section>
+      <?php endif; ?>
 
       <div class="pr-verdict">
         <div class="pr-verdict-card pr-verdict-card--hero pr-verdict-card--<?= htmlspecialchars($varianceClass, ENT_QUOTES, 'UTF-8') ?>">

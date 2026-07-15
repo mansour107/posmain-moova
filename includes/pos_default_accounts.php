@@ -563,6 +563,112 @@ if (!function_exists('posmain_acc_head_active_id')) {
     }
 }
 
+if (!function_exists('posmain_recipe_chart_account_specs')) {
+    /**
+     * Stable chart-of-accounts contract for recipe GL postings.
+     * Env POSMAIN_RECIPE_*_ACCOUNT_ID overrides still win when set to an active account.
+     *
+     * @return array<string,array{preferred_ids:int[],codes:string[],names:string[]}>
+     */
+    function posmain_recipe_chart_account_specs(): array
+    {
+        $inventory = [
+            'preferred_ids' => [20],
+            'codes' => ['123'],
+            'names' => ['المخزون'],
+        ];
+        $salesCost = [
+            'preferred_ids' => [15],
+            'codes' => ['41'],
+            'names' => ['تكاليف المبيعات'],
+        ];
+
+        return [
+            'cogs_account_id' => [
+                'preferred_ids' => [16],
+                'codes' => ['42'],
+                'names' => ['تكلفه البضاعه المباعه', 'تكلفة البضاعة المباعة'],
+            ],
+            'raw_inventory_account_id' => $inventory,
+            'prepared_inventory_account_id' => $inventory,
+            'packaging_inventory_account_id' => $inventory,
+            'inventory_account_id' => $inventory,
+            'waste_expense_account_id' => $salesCost,
+            'production_variance_account_id' => $salesCost,
+        ];
+    }
+}
+
+if (!function_exists('posmain_find_recipe_chart_account_id')) {
+    /**
+     * Resolve a recipe accounting account from the live chart of accounts.
+     * Does not create accounts; returns 0 when the chart contract is missing.
+     */
+    function posmain_find_recipe_chart_account_id(mysqli $conn, string $key): int
+    {
+        $specs = posmain_recipe_chart_account_specs();
+        if (!isset($specs[$key])) {
+            return 0;
+        }
+
+        $tableCheck = @$conn->query("SHOW TABLES LIKE 'acc_head'");
+        if (!$tableCheck || $tableCheck->num_rows < 1) {
+            return 0;
+        }
+
+        $spec = $specs[$key];
+        foreach ($spec['preferred_ids'] as $candidateId) {
+            if (posmain_acc_head_active_id($conn, (int) $candidateId)) {
+                return (int) $candidateId;
+            }
+        }
+
+        foreach ($spec['codes'] as $code) {
+            $code = trim((string) $code);
+            if ($code === '') {
+                continue;
+            }
+            $resolved = posmain_resolve_default_account_id($conn, 0, "code = '" . $conn->real_escape_string($code) . "'");
+            if ($resolved > 0) {
+                return $resolved;
+            }
+        }
+
+        foreach ($spec['names'] as $name) {
+            $name = trim((string) $name);
+            if ($name === '') {
+                continue;
+            }
+            $resolved = posmain_resolve_default_account_id(
+                $conn,
+                0,
+                "aname = '" . $conn->real_escape_string($name) . "'"
+            );
+            if ($resolved > 0) {
+                return $resolved;
+            }
+        }
+
+        return 0;
+    }
+}
+
+if (!function_exists('posmain_resolve_recipe_accounting_account_id')) {
+    /**
+     * Prefer an explicit configured account id; otherwise resolve from the chart contract.
+     * Explicit overrides are trusted as-is so env/test mappings keep working; chart lookup
+     * only fills missing mappings and still returns 0 when the chart contract is absent.
+     */
+    function posmain_resolve_recipe_accounting_account_id(mysqli $conn, string $key, int $configuredId = 0): int
+    {
+        if ($configuredId > 0) {
+            return $configuredId;
+        }
+
+        return posmain_find_recipe_chart_account_id($conn, $key);
+    }
+}
+
 if (!function_exists('posmain_resolve_default_account_id')) {
     /**
      * Resolve a default acc_head id, preferring settings when that account still exists.

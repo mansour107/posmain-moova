@@ -11,7 +11,31 @@ if (!function_exists('csrf_token')) {
         }
 
         if (empty($_SESSION['posmain_csrf_tokens'][$namespace])) {
-            $_SESSION['posmain_csrf_tokens'][$namespace] = bin2hex(random_bytes(32));
+            $token = bin2hex(random_bytes(32));
+            // header.php calls session_write_close() before body HTML. After that,
+            // session_id() is still set but the session is inactive — reopen briefly
+            // so a newly minted namespace is actually stored for the next POST.
+            $shouldPersistClosedSession = session_status() !== PHP_SESSION_ACTIVE
+                && session_id() !== '';
+
+            if ($shouldPersistClosedSession) {
+                if (function_exists('posmain_session_start')) {
+                    posmain_session_start();
+                } elseif (session_status() !== PHP_SESSION_ACTIVE) {
+                    @session_start();
+                }
+                if (!isset($_SESSION['posmain_csrf_tokens']) || !is_array($_SESSION['posmain_csrf_tokens'])) {
+                    $_SESSION['posmain_csrf_tokens'] = [];
+                }
+            }
+
+            if (empty($_SESSION['posmain_csrf_tokens'][$namespace])) {
+                $_SESSION['posmain_csrf_tokens'][$namespace] = $token;
+            }
+
+            if ($shouldPersistClosedSession && session_status() === PHP_SESSION_ACTIVE) {
+                session_write_close();
+            }
         }
 
         if ($namespace === 'default') {

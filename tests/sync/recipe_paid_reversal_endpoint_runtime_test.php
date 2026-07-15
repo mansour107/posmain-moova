@@ -112,6 +112,8 @@ function recipePaidReversalEndpointRuntimeChild(string $json): void
     $_SESSION['usrole'] = 1;
     $_SESSION['userrole'] = 1;
     $_SESSION['usty'] = 2;
+    $_SESSION['pos_authenticated'] = true;
+    $_SESSION['pos_user_id'] = 1;
     $_SESSION['posmain_csrf_tokens'] = [
         'pos_browser' => $csrf,
     ];
@@ -198,6 +200,10 @@ function recipePaidReversalEndpointRuntimeCreateSchema(mysqli $conn): void
         CREATE TABLE usr_pwrs (
             id INT NOT NULL PRIMARY KEY,
             rollname VARCHAR(191) NULL,
+            role_key VARCHAR(40) NULL,
+            info TEXT NULL,
+            is_system TINYINT(1) NOT NULL DEFAULT 0,
+            is_active TINYINT(1) NOT NULL DEFAULT 1,
             edit_payment TINYINT(1) NOT NULL DEFAULT 0,
             delete_payment TINYINT(1) NOT NULL DEFAULT 0,
             isdeleted TINYINT(1) NOT NULL DEFAULT 0
@@ -285,12 +291,19 @@ function recipePaidReversalEndpointRuntimeCreateSchema(mysqli $conn): void
             KEY idx_order_created (order_id, created_at)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
     ");
+    $conn->query("
+        CREATE TABLE recipe_order_line_usage (
+            id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+            order_id BIGINT UNSIGNED NOT NULL,
+            status VARCHAR(40) NOT NULL DEFAULT 'previewed'
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+    ");
 }
 
 function recipePaidReversalEndpointRuntimeSeedCommonRows(mysqli $conn): void
 {
     $conn->query("INSERT INTO users (id, uname, password, userrole, usertype, isdeleted) VALUES (1, 'endpoint_smoke', '', 1, 2, 0)");
-    $conn->query("INSERT INTO usr_pwrs (id, rollname, edit_payment, delete_payment, isdeleted) VALUES (1, 'admin', 1, 1, 0)");
+    $conn->query("INSERT INTO usr_pwrs (id, rollname, role_key, is_system, is_active, edit_payment, delete_payment, isdeleted) VALUES (1, 'admin', 'owner', 1, 1, 1, 1, 0)");
 }
 
 function recipePaidReversalEndpointRuntimeSeedOrder(mysqli $conn, int $orderId, string $orderType): void

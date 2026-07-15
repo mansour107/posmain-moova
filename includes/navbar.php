@@ -11,6 +11,29 @@ $posmainNavbarCanManageMoova = isset($conn) && $conn instanceof mysqli
     && auth_guard_has_permission('moova.manage', $conn);
 $posmainNavbarCanViewCrm = isset($conn) && $conn instanceof mysqli
     && (auth_guard_has_legacy_flag('sid_crm', $conn) || auth_guard_has_permission('reports.view', $conn));
+
+$posmainNavbarUserName = '';
+if (isset($up) && is_array($up)) {
+    $posmainNavbarUserName = trim((string) ($up['display_name'] ?? ''));
+    if ($posmainNavbarUserName === '') {
+        $posmainNavbarUserName = trim((string) ($up['uname'] ?? ''));
+    }
+}
+if ($posmainNavbarUserName === '') {
+    $posmainNavbarUserName = trim((string) (
+        $_SESSION['pos_acting_user_name']
+        ?? $_SESSION['pos_user_name']
+        ?? $_SESSION['login']
+        ?? ''
+    ));
+}
+if ($posmainNavbarUserName === '') {
+    $posmainNavbarUserName = 'الموظف';
+}
+$posmainNavbarUserInitial = function_exists('mb_substr')
+    ? mb_substr($posmainNavbarUserName, 0, 1, 'UTF-8')
+    : substr($posmainNavbarUserName, 0, 1);
+$posmainNavbarUserInitial = $posmainNavbarUserInitial !== '' ? $posmainNavbarUserInitial : 'م';
 ?>
   <div class="container-fluid d-flex justify-content-between align-items-center">
     
@@ -57,7 +80,14 @@ $posmainNavbarCanViewCrm = isset($conn) && $conn instanceof mysqli
     </ul>
 
     <div class="d-flex align-items-center gap-3 ms-auto">
-      
+      <div class="app-identity-badge" role="status" aria-label="المستخدم الحالي: <?= htmlspecialchars($posmainNavbarUserName, ENT_QUOTES, 'UTF-8') ?>">
+        <span class="app-identity-avatar" aria-hidden="true"><?= htmlspecialchars($posmainNavbarUserInitial, ENT_QUOTES, 'UTF-8') ?></span>
+        <span class="app-identity-copy">
+          <span class="app-identity-label">مرحباً</span>
+          <strong class="app-identity-name"><?= htmlspecialchars($posmainNavbarUserName, ENT_QUOTES, 'UTF-8') ?></strong>
+        </span>
+      </div>
+
       <?php if ($posmainNavbarCanRunTools) { ?>
       <button id="exportDB" class="btn btn-primary rounded-pill px-3 py-1 fw-semibold d-none d-lg-flex">
         <i class="fas fa-database me-1"></i> حفظ نسخة احتياطية

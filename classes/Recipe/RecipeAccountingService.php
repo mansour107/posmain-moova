@@ -9,6 +9,7 @@ require_once __DIR__ . '/Repository/InventoryMovementRepository.php';
 require_once __DIR__ . '/../Accounting/JournalPostingService.php';
 require_once __DIR__ . '/../Financial/Money.php';
 require_once __DIR__ . '/../Financial/RoundingPolicy.php';
+require_once __DIR__ . '/../../includes/pos_default_accounts.php';
 
 class RecipeAccountingService
 {
@@ -51,8 +52,8 @@ class RecipeAccountingService
             return $this->noop('recipe consumption total is zero');
         }
 
-        $cogsAccountId = $this->requiredAccount($orderContext, 'cogs_account_id');
-        $inventoryAccountId = $this->requiredInventoryAccount($orderContext);
+        $cogsAccountId = $this->requiredAccount($conn, $orderContext, 'cogs_account_id');
+        $inventoryAccountId = $this->requiredInventoryAccount($conn, $orderContext);
         $details = (string) ($orderContext['details'] ?? ('Recipe COGS for order ' . (int) ($orderContext['order_id'] ?? 0)));
 
         return $this->postBalancedJournal($conn, $scope, [
@@ -92,8 +93,8 @@ class RecipeAccountingService
             return $this->noop('production movement total is zero');
         }
 
-        $rawAccountId = $this->requiredAccount($batchContext, 'raw_inventory_account_id');
-        $preparedAccountId = $this->requiredAccount($batchContext, 'prepared_inventory_account_id');
+        $rawAccountId = $this->requiredAccount($conn, $batchContext, 'raw_inventory_account_id');
+        $preparedAccountId = $this->requiredAccount($conn, $batchContext, 'prepared_inventory_account_id');
         $entries = [
             ['account_id' => $preparedAccountId, 'debit' => $outputTotal, 'credit' => '0.000000', 'info' => 'Production output'],
             ['account_id' => $rawAccountId, 'debit' => '0.000000', 'credit' => $inputTotal, 'info' => 'Production input'],
@@ -101,7 +102,7 @@ class RecipeAccountingService
 
         $comparison = RecipeDecimal::compare($inputTotal, $outputTotal);
         if ($comparison !== 0) {
-            $varianceAccountId = $this->requiredAccount($batchContext, 'production_variance_account_id');
+            $varianceAccountId = $this->requiredAccount($conn, $batchContext, 'production_variance_account_id');
             if ($comparison > 0) {
                 $entries[] = [
                     'account_id' => $varianceAccountId,
@@ -146,8 +147,8 @@ class RecipeAccountingService
         }
 
         $total = $this->movementTotal($rows);
-        $wasteAccountId = $this->requiredAccount($wasteContext, 'waste_expense_account_id');
-        $inventoryAccountId = $this->requiredInventoryAccount($wasteContext);
+        $wasteAccountId = $this->requiredAccount($conn, $wasteContext, 'waste_expense_account_id');
+        $inventoryAccountId = $this->requiredInventoryAccount($conn, $wasteContext);
 
         return $this->postBalancedJournal($conn, $scope, [
             'details' => (string) ($wasteContext['details'] ?? 'Recipe waste'),
@@ -189,8 +190,8 @@ class RecipeAccountingService
         }
 
         $total = $this->movementTotal($rows);
-        $inventoryAccountId = $this->requiredInventoryAccount($adjustmentContext);
-        $varianceAccountId = $this->requiredAccount($adjustmentContext, 'production_variance_account_id');
+        $inventoryAccountId = $this->requiredInventoryAccount($conn, $adjustmentContext);
+        $varianceAccountId = $this->requiredAccount($conn, $adjustmentContext, 'production_variance_account_id');
         $entries = $hasQtyIn
             ? [
                 ['account_id' => $inventoryAccountId, 'debit' => $total, 'credit' => '0.000000', 'info' => 'Recipe stock adjustment inventory debit'],
@@ -228,8 +229,8 @@ class RecipeAccountingService
         }
 
         $total = $this->movementTotal($rows);
-        $cogsAccountId = $this->requiredAccount($refundContext, 'cogs_account_id');
-        $inventoryAccountId = $this->requiredInventoryAccount($refundContext);
+        $cogsAccountId = $this->requiredAccount($conn, $refundContext, 'cogs_account_id');
+        $inventoryAccountId = $this->requiredInventoryAccount($conn, $refundContext);
 
         return $this->postBalancedJournal($conn, $scope, [
             'details' => (string) ($refundContext['details'] ?? ('Recipe refund reversal for order ' . (int) ($refundContext['order_id'] ?? 0))),
@@ -460,24 +461,50 @@ WHERE COALESCE(tenant, 0) = ?
         return (int) ($row['max_id'] ?? 0);
     }
 
-    private function requiredInventoryAccount(array $context): int
+    private function requiredInventoryAccount(mysqli $conn, array $context): int
     {
-        $value = $this->settings->inventoryAccountId($context);
-        if ($value > 0) {
-            return $value;
+        // Prefer explicit context/config mappings first so a specific raw/prepared
+        // override is not shadowed by chart resolution of inventory_account_id.
+        $configured = $this->settings->inventoryAccountId($context);
+        if ($configured > 0) {
+            return $configured;
+        }
+
+        $inventoryType = strtolower(trim((string) ($context['recipe_inventory_account_type'] ?? '')));
+        $keys = $inventoryType === 'prepared'
+            ? ['inventory_account_id', 'prepared_inventory_account_id', 'raw_inventory_account_id', 'packaging_inventory_account_id']
+            : ['inventory_account_id', 'raw_inventory_account_id', 'prepared_inventory_account_id', 'packaging_inventory_account_id'];
+
+        foreach ($keys as $key) {
+            $value = function_exists('posmain_find_recipe_chart_account_id')
+                ? posmain_find_recipe_chart_account_id($conn, $key)
+                : 0;
+            if ($value > 0) {
+                return $value;
+            }
         }
 
         throw new InvalidArgumentException('Recipe accounting inventory account is required.');
     }
 
-    private function requiredAccount(array $context, string $key): int
+    private function requiredAccount(mysqli $conn, array $context, string $key): int
     {
-        $value = $this->settings->accountId($key, $context);
+        $value = $this->resolveAccountId($conn, $context, $key);
         if ($value < 1) {
             throw new InvalidArgumentException('Recipe accounting account is required: ' . $key);
         }
 
         return $value;
+    }
+
+    private function resolveAccountId(mysqli $conn, array $context, string $key): int
+    {
+        $configured = $this->settings->accountId($key, $context);
+        if (function_exists('posmain_resolve_recipe_accounting_account_id')) {
+            return posmain_resolve_recipe_accounting_account_id($conn, $key, $configured);
+        }
+
+        return $configured > 0 ? $configured : 0;
     }
 
     private function scopeFromContext(array $context): RecipeScope

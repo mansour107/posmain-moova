@@ -1,8 +1,8 @@
 <?php 
 require_once __DIR__ . '/../../includes/session_bootstrap.php';
 if (!isset($_SESSION['login'])) {
-
-  header('location:index.php');
+  header('Location: ../index.php');
+  exit;
 }
 include('connect.php');
 $userid = $_SESSION['userid'];

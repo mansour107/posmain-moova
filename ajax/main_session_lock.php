@@ -24,8 +24,30 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 require_login();
 require_csrf('main_lock');
 
+// write_bootstrap/connect may close the session for other AJAX; this endpoint
+// must persist identity clears, so ensure the session is writable first.
+if (session_status() !== PHP_SESSION_ACTIVE) {
+    if (function_exists('posmain_session_start')) {
+        posmain_session_start();
+    } else {
+        session_start();
+    }
+}
+
 $auth = new MainAuthenticationService();
 $userId = (int) ($_SESSION['userid'] ?? 0);
+
+try {
+    require_once __DIR__ . '/../classes/Pos/Service/DrawerOverrideService.php';
+    (new DrawerOverrideService())->endActiveForOperator(
+        $conn,
+        $userId,
+        DrawerOverrideService::END_REASON_LOCK,
+        true
+    );
+} catch (Throwable $ignored) {
+}
+
 $auth->lockToLoginScreen();
 
 try {

@@ -1,95 +1,48 @@
-<?php 
+<?php
 require_once __DIR__ . '/includes/session_bootstrap.php';
 include('includes/connect.php');
 require_once __DIR__ . '/includes/page_guard.php';
 page_guard('reports.view', $conn);
+require_once __DIR__ . '/includes/auth_guard.php';
+require_once __DIR__ . '/classes/Pos/Service/ShiftSessionService.php';
+require_once __DIR__ . '/classes/ShiftReport.php';
 
-
-// التحقق من تسجيل الدخول
 if (!isset($_SESSION['userid'])) {
     header('Location: index.php');
     exit;
 }
 
-$user_id = $_SESSION['userid'];
-require_once __DIR__ . '/includes/business_day.php';
-$today = posmain_current_business_day(
-    $conn,
-    (int) ($_SESSION['pos_tenant'] ?? 0),
-    (int) ($_SESSION['pos_branch'] ?? 0)
-);
+$user_id = function_exists('pos_acting_user_id') ? pos_acting_user_id() : (int) $_SESSION['userid'];
+$shiftSessions = new ShiftSessionService();
+$reportContext = $shiftSessions->buildShiftReportContext($conn, (int) $user_id);
+$report = new ShiftReport($conn, (int) $user_id, $reportContext['business_day'], $reportContext['scope']);
 
-// جلب اسم المستخدم من نفس جدول تسجيل الدخول
-$user_query = $conn->query("SELECT uname FROM users WHERE id = $user_id");
-$user_data = $user_query->fetch_assoc();
-$cashier_name = $user_data['uname'] ?? 'الكاشير';
+$totals = $report->getTotals();
+$timeBounds = $report->getSaleTimeBounds();
+$items_query = $report->getItemsBreakdown();
+$cashier_name = $report->getCashierUsername() ?: 'الكاشير';
 
-// جلب إعدادات الشركة
-$settings_query = $conn->query("SELECT * FROM settings WHERE id = 1");
-$settings = $settings_query->fetch_assoc();
+$settings_query = $conn->query('SELECT * FROM settings WHERE id = 1');
+$settings = $settings_query ? $settings_query->fetch_assoc() : [];
 
-// جلب إجمالي مبيعات اليوم للمستخدم المسجل فقط
-$sales_query = $conn->query("SELECT 
-    COUNT(*) as total_invoices,
-    COALESCE(SUM(fat_total), 0) as total_sales,
-    COALESCE(SUM(fat_disc), 0) as total_discounts,
-    COALESCE(SUM(fat_net), 0) as net_sales,
-    MIN(crtime) as first_sale_time,
-    MAX(crtime) as last_sale_time
-    FROM ot_head
-    WHERE DATE(pro_date) = '$today'
-    AND user = '$user_id'
-    AND pro_tybe = 9
-    AND payment_status = 'paid'
-    AND order_status = 'completed'
-    AND isdeleted = 0");
-$sales_data = $sales_query->fetch_assoc();
+$sales_data = [
+    'total_invoices' => (int) ($totals['total_orders'] ?? 0),
+    'total_sales' => (float) ($totals['total_gross'] ?? 0),
+    'total_discounts' => (float) ($totals['total_discount'] ?? 0),
+    'net_sales' => (float) ($totals['total_net'] ?? 0),
+    'first_sale_time' => $timeBounds['first_sale_time'],
+    'last_sale_time' => $timeBounds['last_sale_time'],
+];
 
-// جلب تفاصيل أصناف اليوم للمستخدم المسجل فقط
-$items_query = $conn->query("SELECT 
-    mi.iname,
-    mi.barcode,
-    SUM(fd.qty_out - fd.qty_in) as total_qty,
-    fd.price,
-    SUM(fd.det_value) as total_value,
-    COUNT(DISTINCT oh.id) as order_count
-    FROM ot_head oh
-    JOIN fat_details fd ON oh.id = fd.fatid
-    JOIN myitems mi ON fd.item_id = mi.id
-    WHERE DATE(oh.pro_date) = '$today'
-    AND oh.user = '$user_id'
-    AND oh.pro_tybe = 9
-    AND oh.payment_status = 'paid'
-    AND oh.order_status = 'completed'
-    AND oh.isdeleted = 0
-    AND fd.isdeleted = 0
-    GROUP BY fd.item_id, fd.price
-    ORDER BY total_value DESC");
+$shiftOpenedAt = $report->getShiftOpenedAt();
+$shift_start = $shiftOpenedAt
+    ? date('H:i', strtotime($shiftOpenedAt))
+    : ($sales_data['first_sale_time'] ? date('H:i', strtotime((string) $sales_data['first_sale_time'])) : date('H:i'));
+$shift_end = $sales_data['last_sale_time']
+    ? date('H:i', strtotime((string) $sales_data['last_sale_time']))
+    : date('H:i');
 
-// جلب تفاصيل الفواتير
-$invoices_query = $conn->query("SELECT 
-    oh.id,
-    oh.crtime,
-    oh.fat_net,
-    oh.info,
-    CASE
-        WHEN oh.order_type = 'table' THEN 'طاولة'
-        WHEN oh.order_type = 'delivery' THEN 'دليفري'
-        WHEN oh.order_type = 'takeaway' THEN 'تيك أواي'
-        ELSE 'غير محدد'
-    END as order_type
-    FROM ot_head oh
-    WHERE DATE(oh.pro_date) = '$today'
-    AND oh.user = '$user_id'
-    AND oh.pro_tybe = 9
-    AND oh.payment_status = 'paid'
-    AND oh.order_status = 'completed'
-    AND oh.isdeleted = 0
-    ORDER BY oh.crtime DESC");
-
-// حساب أوقات الشيفت
-$shift_start = $sales_data['first_sale_time'] ? date('H:i', strtotime($sales_data['first_sale_time'])) : date('H:i', strtotime('today'));
-$shift_end = $sales_data['last_sale_time'] ? date('H:i', strtotime($sales_data['last_sale_time'])) : date('H:i');
+$invoices_query = $report->getInvoices();
 
 include('includes/header.php');
 ?>

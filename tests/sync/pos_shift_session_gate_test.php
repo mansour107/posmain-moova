@@ -49,6 +49,11 @@ posmain_clear_pos_shift_session(true);
 posShiftSessionGateAssertTrue(!empty($_SESSION['pos_shift_closed_for_session']), 'clear with markClosed sets closed flag');
 posShiftSessionGateAssertTrue(empty($_SESSION['pos_authenticated']), 'clear removes barcode auth');
 
+$_SESSION['pos_authenticated'] = true;
+$_SESSION['pos_user_id'] = 42;
+posmain_clear_pos_shift_session(false);
+posShiftSessionGateAssertTrue(empty($_SESSION['pos_shift_closed_for_session']), 'clear without markClosed drops closed flag');
+
 echo "pos-shift-session-gate-ok\n";
 
 function posShiftSessionGateResetSession(): void

@@ -23,6 +23,8 @@ $allowlist = [
     // Shared helpers required by inventory ajax endpoints; not standalone routes.
     'ajax/inventory_count_common.php' => 'internal include helper for inventory count endpoints',
     'ajax/inventory_transfer_common.php' => 'internal include helper for inventory transfer endpoints',
+    // Static analysis bootstrap; never served as an HTTP entry point.
+    'phpstan-bootstrap.php' => 'PHPStan bootstrap include, not an HTTP entry point',
 ];
 
 $classified = [];
@@ -32,6 +34,26 @@ foreach (array_keys($pageManifest) as $path) {
 foreach (array_keys($routeManifest) as $path) {
     $classified[$path] = isset($classified[$path]) ? 'page+route' : 'route';
 }
+
+// Root-level route entries are enforced by entry_classification_guard via the
+// *page* manifest (basename), not the route manifest. Keep both in sync.
+$rootRouteOnly = [];
+foreach (array_keys($routeManifest) as $path) {
+    if (str_starts_with($path, 'ajax/')
+        || str_starts_with($path, 'do/')
+        || str_starts_with($path, 'print/')
+    ) {
+        continue;
+    }
+    if (!isset($pageManifest[$path])) {
+        $rootRouteOnly[] = $path;
+    }
+}
+rbacCompletenessAssert(
+    $rootRouteOnly === [],
+    'root route entries missing from page manifest (RBAC_PAGE_UNCLASSIFIED at runtime): '
+        . implode(', ', $rootRouteOnly)
+);
 
 $scanned = [];
 foreach (rbacCompletenessListPhpFiles($root) as $relative) {

@@ -248,6 +248,122 @@ class PermissionService
         return strtolower((string) ($row['role_key'] ?? '')) === 'owner';
     }
 
+    /**
+     * Roles that can approve a manager override for this permission
+     * (same gate as authenticateManagerOverride, without user-level grants).
+     *
+     * @return list<array{id: int, role_key: ?string, name: string}>
+     */
+    public function approverRolesForPermission(string $permissionKey): array
+    {
+        $permissionKey = trim($permissionKey);
+        if ($permissionKey === '' || !isset($this->permissionMap()[$permissionKey])) {
+            return [];
+        }
+
+        if (!function_exists('auth_guard_session_has_permission')) {
+            require_once __DIR__ . '/../../includes/auth_guard.php';
+        }
+
+        $holders = [];
+        foreach ($this->activeRoles() as $role) {
+            $roleId = (int) ($role['id'] ?? 0);
+            if ($roleId < 1) {
+                continue;
+            }
+            $session = ['userid' => 0, 'login' => true, 'usrole' => $roleId];
+            if (!auth_guard_is_admin_session($session, $role)
+                && !auth_guard_session_has_permission($permissionKey, $role, $session, $this->conn)) {
+                continue;
+            }
+            $name = trim((string) ($role['rollname'] ?? ''));
+            $roleKey = trim((string) ($role['role_key'] ?? ''));
+            $holders[] = [
+                'id' => $roleId,
+                'role_key' => $roleKey !== '' ? $roleKey : null,
+                'name' => $name !== '' ? $name : ('دور #' . $roleId),
+            ];
+        }
+
+        return $this->sortApproverRoles($holders);
+    }
+
+    /**
+     * Compact permission → approver role labels for POS override PIN UI.
+     *
+     * @return array<string, list<array{role_key: ?string, name: string}>>
+     */
+    public function approverRoleIndex(): array
+    {
+        $index = [];
+        foreach (array_keys($this->permissionMap()) as $permissionKey) {
+            $roles = $this->approverRolesForPermission($permissionKey);
+            if ($roles === []) {
+                continue;
+            }
+            $index[$permissionKey] = array_map(static function (array $role): array {
+                return [
+                    'role_key' => $role['role_key'],
+                    'name' => $role['name'],
+                ];
+            }, $roles);
+        }
+
+        return $index;
+    }
+
+    /**
+     * @return list<array<string, mixed>>
+     */
+    private function activeRoles(): array
+    {
+        $result = $this->conn->query(
+            'SELECT *
+               FROM usr_pwrs
+              WHERE COALESCE(isdeleted, 0) != 1
+                AND COALESCE(is_active, 1) = 1
+              ORDER BY id ASC'
+        );
+        if (!$result instanceof mysqli_result) {
+            return [];
+        }
+
+        $roles = [];
+        while ($row = $result->fetch_assoc()) {
+            $roles[] = $row;
+        }
+
+        return $roles;
+    }
+
+    /**
+     * @param list<array{id: int, role_key: ?string, name: string}> $roles
+     * @return list<array{id: int, role_key: ?string, name: string}>
+     */
+    private function sortApproverRoles(array $roles): array
+    {
+        $rank = [
+            'owner' => 0,
+            'manager' => 1,
+            'cashier' => 2,
+            'waiter' => 3,
+            'kitchen' => 4,
+        ];
+        usort($roles, static function (array $a, array $b) use ($rank): int {
+            $keyA = strtolower((string) ($a['role_key'] ?? ''));
+            $keyB = strtolower((string) ($b['role_key'] ?? ''));
+            $rankA = $rank[$keyA] ?? 100;
+            $rankB = $rank[$keyB] ?? 100;
+            if ($rankA !== $rankB) {
+                return $rankA <=> $rankB;
+            }
+
+            return strcasecmp((string) $a['name'], (string) $b['name']);
+        });
+
+        return $roles;
+    }
+
     private function permissionMap(): array
     {
         if (!function_exists('auth_guard_permission_map')) {

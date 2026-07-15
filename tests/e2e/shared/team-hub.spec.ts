@@ -41,6 +41,7 @@ test.describe('Team Hub UI', () => {
     await expect(page.locator('#teamHubRoot')).toBeVisible();
     await expect(page.locator('#tabStaff')).toBeVisible();
     await expect(page.locator('#tabRoles')).toBeVisible();
+    await expect(page.locator('#tabLogins')).toBeVisible();
     await expect(page.locator('.team-hub-breadcrumb strong')).toHaveText('الفريق');
     await expect(page.locator('#staffGrid .team-hub-card, #addStaffCard').first()).toBeVisible();
   });
@@ -69,7 +70,7 @@ test.describe('Team Hub UI', () => {
     await expect(page.locator('#teamPanel.is-open')).toBeVisible({ timeout: 10_000 });
     await page.locator('#staffDisplayName').fill(displayName);
     await page.locator('#rolePickRow .team-hub-role-pick').filter({ hasText: 'مدير' }).first().click();
-    await expect(page.locator('#pinDisplay')).not.toHaveText('····');
+    await expect(page.locator('#pinDisplay')).toHaveValue(/^\d{4}$/);
     await page.locator('#staffSaveBtn').click();
 
     await expect(page.locator('#teamToast.is-visible')).toBeVisible({ timeout: 15_000 });
@@ -266,10 +267,9 @@ test.describe('Team Hub UI', () => {
     const cardPin = (await card.locator('.team-hub-pin-code').textContent())?.trim() || '';
     const pinDisplay = page.locator('#pinDisplay');
     if (/^\d{4}$/.test(cardPin)) {
-      await expect(pinDisplay).toHaveText(cardPin);
+      await expect(pinDisplay).toHaveValue(cardPin);
     } else {
-      await expect(pinDisplay).not.toHaveText('····');
-      await expect(pinDisplay).not.toHaveText('—');
+      await expect(pinDisplay).toHaveValue(/^\d{4}$/);
       await page.locator('#staffSaveBtn').click();
       await expect(page.locator('#teamToast.is-visible')).toBeVisible({ timeout: 15_000 });
     }
@@ -281,7 +281,7 @@ test.describe('Team Hub UI', () => {
     await expect(refreshed.locator('.team-hub-pin-code')).toHaveText(/^\d{4}$/);
     const savedPin = (await refreshed.locator('.team-hub-pin-code').textContent())?.trim() || '';
     await refreshed.click();
-    await expect(pinDisplay).toHaveText(savedPin);
+    await expect(pinDisplay).toHaveValue(savedPin);
   });
 
   test('user permission deny blocks POS access for owner persona', async ({ browser }) => {

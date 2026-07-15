@@ -7,6 +7,7 @@ class DrawerLedgerPostingService
 {
     private const SHIFT_EXPENSE_ACCOUNT_CODE = '511901';
     private const SHIFT_PAYIN_ACCOUNT_CODE = '121901';
+    private const SHIFT_OVER_SHORT_ACCOUNT_CODE = '511902';
 
     public function canPost(mysqli $conn): bool
     {
@@ -107,6 +108,49 @@ class DrawerLedgerPostingService
         $info = $this->buildInfo('POS-SHIFT-PAYIN', $drawerSessionId, $reason);
 
         return $this->postVoucher($conn, 1, $amount, $fundAccountId, $sourceAccountId, $info, $userId);
+    }
+
+    /**
+     * Book an accepted drawer count variance against the fund account.
+     *
+     * Signed amount, positive = over (counted > expected):
+     *   over  → debit fund, credit over/short account (cash gain)
+     *   short → debit over/short account, credit fund (cash loss)
+     * The fund's ledger balance is trued to the physically counted cash;
+     * the over/short account carries the gain/loss for reporting.
+     */
+    public function postCashOverShort(
+        mysqli $conn,
+        float $signedVariance,
+        string $reason,
+        int $userId,
+        int $fundAccountId,
+        int $drawerSessionId
+    ): int {
+        if (!$this->canPost($conn)) {
+            throw new RuntimeException('LEDGER_SUBSYSTEM_UNAVAILABLE');
+        }
+        if ($fundAccountId < 1) {
+            throw new RuntimeException('FUND_ACCOUNT_REQUIRED');
+        }
+        $amount = round(abs($signedVariance), 3);
+        if ($amount <= 0) {
+            throw new RuntimeException('LEDGER_AMOUNT_REQUIRED');
+        }
+
+        $overShortAccountId = $this->ensureShiftOverShortAccount($conn);
+        $isOver = $signedVariance > 0;
+        $info = $this->buildInfo(
+            $isOver ? 'POS-SHIFT-CASH-OVER' : 'POS-SHIFT-CASH-SHORT',
+            $drawerSessionId,
+            $reason
+        );
+
+        if ($isOver) {
+            return $this->postVoucher($conn, 1, $amount, $fundAccountId, $overShortAccountId, $info, $userId);
+        }
+
+        return $this->postVoucher($conn, 2, $amount, $overShortAccountId, $fundAccountId, $info, $userId);
     }
 
     private function postVoucher(
@@ -247,6 +291,19 @@ class DrawerLedgerPostingService
         return posmain_insert_acc_head_if_missing($conn, [
             'code' => self::SHIFT_SAFE_DROP_ACCOUNT_CODE,
             'aname' => 'خزنة الدرج',
+            'parent_id' => 0,
+            'is_basic' => 0,
+            'is_fund' => 0,
+        ]);
+    }
+
+    private function ensureShiftOverShortAccount(mysqli $conn): int
+    {
+        require_once dirname(__DIR__, 3) . '/includes/pos_default_accounts.php';
+
+        return posmain_insert_acc_head_if_missing($conn, [
+            'code' => self::SHIFT_OVER_SHORT_ACCOUNT_CODE,
+            'aname' => 'فروقات عد الدرج (عجز/زيادة)',
             'parent_id' => 0,
             'is_basic' => 0,
             'is_fund' => 0,

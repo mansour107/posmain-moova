@@ -6,6 +6,7 @@ require_once __DIR__ . '/RolePermissionSyncService.php';
 class PostLoginRouteService
 {
     public const WORKSPACE_DASHBOARD = 'dashboard';
+    public const WORKSPACE_BACKOFFICE = 'backoffice';
     public const WORKSPACE_POS = 'pos';
     public const WORKSPACE_KDS = 'kds';
     public const WORKSPACE_CHOOSER = 'chooser';
@@ -21,21 +22,16 @@ class PostLoginRouteService
             return ['workspace' => self::WORKSPACE_NONE, 'url' => 'no_access.php'];
         }
 
-        if (!empty($options['must_change_pin']) || !empty($options['bootstrap_pending'])) {
+        if (!empty($options['bootstrap_pending'])) {
             return [
                 'workspace' => self::WORKSPACE_PIN_CHANGE,
-                'url' => !empty($options['bootstrap_pending']) ? 'change_pin.php?bootstrap=1' : 'change_pin.php',
+                'url' => 'change_pin.php?bootstrap=1',
             ];
         }
 
         $roleKey = $this->roleKeyForUser($conn, $userId);
-        $permissions = $this->effectivePermissionSet($conn, $userId);
 
-        // Owner / manager always land on dashboard (even if they also have POS/KDS).
-        if (in_array($roleKey, ['owner', 'manager'], true) || $this->isAdminUser($conn, $userId, $roleKey)) {
-            return ['workspace' => self::WORKSPACE_DASHBOARD, 'url' => 'dashboard.php'];
-        }
-
+        // Frontline presets stay on their lane regardless of extra grants.
         if ($roleKey === 'cashier') {
             return ['workspace' => self::WORKSPACE_POS, 'url' => $this->posEntryUrl()];
         }
@@ -48,48 +44,54 @@ class PostLoginRouteService
             return ['workspace' => self::WORKSPACE_POS, 'url' => $this->posEntryUrl()];
         }
 
-        // Custom / mixed roles: chooser when more than one workspace is permitted.
-        $choices = [];
-        if (!empty($permissions['pos.open'])) {
-            $choices[] = [
-                'key' => self::WORKSPACE_POS,
-                'url' => $this->posEntryUrl(),
-                'label' => 'نقطة البيع',
-            ];
-        }
-        if (!empty($permissions['kds.view'])) {
-            $choices[] = [
-                'key' => self::WORKSPACE_KDS,
-                'url' => 'kds.php',
-                'label' => 'شاشات المطبخ',
-            ];
-        }
-        if (!empty($permissions['reports.view'])
-            || !empty($permissions['accounting.view'])
-            || !empty($permissions['users.manage'])
-            || !empty($permissions['roles.manage'])
-            || !empty($permissions['erp.dashboard.main_cards'])
-        ) {
-            $choices[] = [
-                'key' => self::WORKSPACE_DASHBOARD,
-                'url' => 'dashboard.php',
-                'label' => 'لوحة التحكم',
-            ];
+        $permissions = $this->effectivePermissionSet($conn, $userId);
+
+        return $this->resolveBestLanding($permissions);
+    }
+
+    /**
+     * Pure permission → landing resolver (back-office first, then POS/KDS).
+     *
+     * @param array<string, bool> $permissions
+     * @return array{workspace: string, url: string, choices?: list<array{key: string, url: string, label: string}>}
+     */
+    public function resolveBestLanding(array $permissions): array
+    {
+        $backOffice = $this->firstBackOfficeLanding($permissions);
+        if ($backOffice !== null) {
+            return $backOffice;
         }
 
-        if (count($choices) > 1) {
+        $hasPos = !empty($permissions['pos.open']);
+        $hasKds = !empty($permissions['kds.view']);
+
+        if ($hasPos && $hasKds) {
+            $choices = [
+                [
+                    'key' => self::WORKSPACE_POS,
+                    'url' => $this->posEntryUrl(),
+                    'label' => 'نقطة البيع',
+                ],
+                [
+                    'key' => self::WORKSPACE_KDS,
+                    'url' => 'kds.php',
+                    'label' => 'شاشات المطبخ',
+                ],
+            ];
+
             return [
                 'workspace' => self::WORKSPACE_CHOOSER,
                 'url' => 'workspace.php',
                 'choices' => $choices,
             ];
         }
-        if (count($choices) === 1) {
-            return [
-                'workspace' => $choices[0]['key'],
-                'url' => $choices[0]['url'],
-                'choices' => $choices,
-            ];
+
+        if ($hasPos) {
+            return ['workspace' => self::WORKSPACE_POS, 'url' => $this->posEntryUrl()];
+        }
+
+        if ($hasKds) {
+            return ['workspace' => self::WORKSPACE_KDS, 'url' => 'kds.php'];
         }
 
         return ['workspace' => self::WORKSPACE_NONE, 'url' => 'no_access.php'];
@@ -104,6 +106,58 @@ class PostLoginRouteService
     {
         // Prefer restaurant barcode POS; supermarket/clothes share the same auth contract later.
         return 'pos_barcode.php';
+    }
+
+    /**
+     * @param array<string, bool> $permissions
+     * @return array{workspace: string, url: string}|null
+     */
+    private function firstBackOfficeLanding(array $permissions): ?array
+    {
+        $has = static function (string $key) use ($permissions): bool {
+            return !empty($permissions[$key]);
+        };
+
+        if ($has('erp.dashboard.main_cards')
+            || $has('erp.dashboard.main_elements')
+            || $has('erp.dashboard.main_tables')
+        ) {
+            return ['workspace' => self::WORKSPACE_DASHBOARD, 'url' => 'dashboard.php'];
+        }
+
+        if ($has('system.tools.run')) {
+            return ['workspace' => self::WORKSPACE_BACKOFFICE, 'url' => 'setting.php'];
+        }
+
+        if ($has('users.manage') || $has('roles.manage')) {
+            return ['workspace' => self::WORKSPACE_BACKOFFICE, 'url' => 'team.php'];
+        }
+
+        if ($has('reports.view')) {
+            return ['workspace' => self::WORKSPACE_BACKOFFICE, 'url' => 'sales-reports.php'];
+        }
+
+        if ($has('reports.cash_flow')) {
+            return ['workspace' => self::WORKSPACE_BACKOFFICE, 'url' => 'cash_flow_report.php'];
+        }
+
+        if ($has('accounting.view')) {
+            return ['workspace' => self::WORKSPACE_BACKOFFICE, 'url' => 'daily_journal.php'];
+        }
+
+        if ($has('inventory.edit')) {
+            return ['workspace' => self::WORKSPACE_BACKOFFICE, 'url' => 'inventory_dashboard.php'];
+        }
+
+        if ($has('menu.edit')) {
+            return ['workspace' => self::WORKSPACE_BACKOFFICE, 'url' => 'myitems.php'];
+        }
+
+        if ($has('delivery.dispatch')) {
+            return ['workspace' => self::WORKSPACE_BACKOFFICE, 'url' => 'delivery_board.php'];
+        }
+
+        return null;
     }
 
     private function roleKeyForUser(mysqli $conn, int $userId): string
@@ -153,21 +207,5 @@ class PostLoginRouteService
         }
 
         return $map;
-    }
-
-    private function isAdminUser(mysqli $conn, int $userId, string $roleKey): bool
-    {
-        if ($roleKey === 'owner') {
-            return true;
-        }
-        $stmt = $conn->prepare(
-            'SELECT usertype, userrole FROM users WHERE id = ? AND COALESCE(isdeleted, 0) != 1 LIMIT 1'
-        );
-        $stmt->bind_param('i', $userId);
-        $stmt->execute();
-        $row = $stmt->get_result()->fetch_assoc();
-        $stmt->close();
-
-        return (int) ($row['usertype'] ?? 0) === 2 || (int) ($row['userrole'] ?? 0) === 1;
     }
 }

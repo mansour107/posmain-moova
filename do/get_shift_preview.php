@@ -68,26 +68,10 @@ try {
     require_once __DIR__ . '/../classes/Pos/Service/ShiftCountService.php';
     require_once __DIR__ . '/../includes/business_day.php';
     $shiftSessions = new ShiftSessionService();
-    $reportScope = [
-        'tenant' => (int) ($_SESSION['pos_tenant'] ?? 0),
-        'branch' => (int) ($_SESSION['pos_branch'] ?? 0),
-    ];
-    $drawerSession = $shiftSessions->currentDrawerSession($conn, (int) $user_id, $reportScope);
-    $reportBusinessDay = null;
-    if ($drawerSession) {
-        $reportScope['shift_opened_at'] = $drawerSession['opened_at'];
-        $reportScope['drawer_session_id'] = (int) $drawerSession['id'];
-        $reportScope['tenant'] = (int) ($drawerSession['tenant'] ?? $reportScope['tenant']);
-        $reportScope['branch'] = (int) ($drawerSession['branch'] ?? $reportScope['branch']);
-        $reportBusinessDay = trim((string) ($drawerSession['business_day'] ?? ''));
-    }
-    if ($reportBusinessDay === null || $reportBusinessDay === '') {
-        $reportBusinessDay = posmain_current_business_day(
-            $conn,
-            (int) $reportScope['tenant'],
-            (int) $reportScope['branch']
-        );
-    }
+    $reportContext = $shiftSessions->buildShiftReportContext($conn, (int) $user_id);
+    $reportScope = $reportContext['scope'];
+    $drawerSession = $reportContext['drawer_session'];
+    $reportBusinessDay = $reportContext['business_day'];
 
     // Create ShiftReport instance scoped to the active drawer shift window.
     $report = new ShiftReport($conn, $user_id, $reportBusinessDay, $reportScope);

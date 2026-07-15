@@ -148,6 +148,46 @@ class RecipeAccountingServiceTest extends TestCase
         $this->assertSame(120, (int) $entries[1]['account_id']);
     }
 
+    public function testSaleCogsResolvesMissingAccountsFromChartOfAccounts(): void
+    {
+        $this->seedRecipeChartAccounts();
+        $repo = new InventoryMovementRepository();
+        $movementId = $this->movement($repo, [
+            'movement_uuid' => '00000000-0000-4000-8000-000000000112',
+            'item_id' => 3002,
+            'movement_type' => 'recipe_consumption',
+            'source_type' => 'recipe_order_line_usage',
+            'order_id' => 7012,
+            'total_cost' => '8.500000',
+            'idempotency_key' => 'acct-sale-chart-defaults',
+        ]);
+        $service = new RecipeAccountingService(
+            $this->accountingFlags(),
+            null,
+            $repo,
+            new RecipeSettingsService([
+                'recipe' => [
+                    'accounts' => [
+                        'cogs_account_id' => 0,
+                        'raw_inventory_account_id' => 0,
+                        'prepared_inventory_account_id' => 0,
+                        'packaging_inventory_account_id' => 0,
+                    ],
+                ],
+            ])
+        );
+
+        $posted = $service->postSaleCogs(self::$conn, [
+            'order_id' => 7012,
+            'sellable_item_id' => 1001,
+        ], [$movementId]);
+        $entries = $this->journalEntries($posted['journal_head_id']);
+
+        $this->assertFalse($posted['noop']);
+        $this->assertSame(16, (int) $entries[0]['account_id']);
+        $this->assertSame(20, (int) $entries[1]['account_id']);
+    }
+
     public function testProductionBatchPostsPreparedInventoryAndVariance(): void
     {
         $repo = new InventoryMovementRepository();
@@ -489,6 +529,29 @@ class RecipeAccountingServiceTest extends TestCase
                 tenant INT NULL DEFAULT 0,
                 branch INT NULL DEFAULT 0
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+        ");
+    }
+
+    private function seedRecipeChartAccounts(): void
+    {
+        self::$conn->query("
+            CREATE TABLE IF NOT EXISTS acc_head (
+                id INT NOT NULL PRIMARY KEY,
+                code VARCHAR(32) NOT NULL,
+                aname VARCHAR(255) NOT NULL,
+                isdeleted TINYINT NOT NULL DEFAULT 0,
+                is_basic TINYINT NOT NULL DEFAULT 0,
+                is_stock TINYINT NOT NULL DEFAULT 0,
+                is_fund TINYINT NOT NULL DEFAULT 0,
+                parent_id INT NOT NULL DEFAULT 0
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+        ");
+        self::$conn->query('DELETE FROM acc_head');
+        self::$conn->query("
+            INSERT INTO acc_head (id, code, aname, isdeleted, is_basic) VALUES
+            (15, '41', 'تكاليف المبيعات', 0, 1),
+            (16, '42', 'تكلفه البضاعه المباعه', 0, 1),
+            (20, '123', 'المخزون', 0, 1)
         ");
     }
 }

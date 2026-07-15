@@ -12,6 +12,17 @@ if (!isset($_SESSION['login']) || !isset($_SESSION['userid'])) {
 $user = $_SESSION['login'];
 $user_id = $_SESSION['userid'];
 
+try {
+    require_once __DIR__ . '/../classes/Pos/Service/DrawerOverrideService.php';
+    (new DrawerOverrideService())->endActiveForOperator(
+        $conn,
+        (int) $user_id,
+        DrawerOverrideService::END_REASON_LOGOUT,
+        true
+    );
+} catch (Throwable $ignored) {
+}
+
 $stmt = $conn->prepare("INSERT INTO `process`(`type`) VALUES (?)");
 $process_type = "logout >> " . $user;
 $stmt->bind_param("s", $process_type);

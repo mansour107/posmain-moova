@@ -30,8 +30,12 @@ async function submitCloseShift(page: Page): Promise<void> {
   await fillCloseShiftForm(page);
   await page.waitForURL(/pos_barcode\.php/, { timeout: 20_000 });
   await expect(page.locator('#shiftCloseResultModal')).toBeVisible({ timeout: 10_000 });
-  await page.locator('#shiftCloseResultDismiss').click();
-  await expect(page.locator('#shiftCloseResultModal')).toBeHidden({ timeout: 5_000 });
+  await expect(page.locator('#pinPadSection, .unlock-shell')).toHaveCount(0);
+  await expect(page.locator('#shiftCloseResultTimerBar')).toBeVisible();
+  await Promise.all([
+    page.waitForURL(/do_logout\.php|index\.php|login\.php/, { timeout: 15_000, waitUntil: 'commit' }),
+    page.locator('#shiftCloseResultDismiss').click(),
+  ]);
 }
 
 async function closeShiftViaUi(page: Page): Promise<void> {
@@ -82,7 +86,7 @@ test.describe('manager: shift close back-navigation hardening (full matrix)', ()
     // re-rendered the lock screen. In no case may an interactive #posForm remain.
     const posForm = page.locator('#posForm');
     await expect(posForm).toHaveCount(0, { timeout: 10_000 });
-    await expect(page.locator('input[name="pos_barcode"], .pin-key').first()).toBeVisible({ timeout: 10_000 });
+    await expect(page.locator('input[name="pos_barcode"], #posUnlockPinPad').first()).toBeVisible({ timeout: 10_000 });
   });
 
   test('server rejects a re-close of an already-closed shift (close_shift.php)', async ({ page }) => {
@@ -146,7 +150,7 @@ test.describe('manager: shift close back-navigation hardening (full matrix)', ()
 
     await page.goto('/pos_supermarket.php');
     await expect(page.locator('#posForm')).toHaveCount(0, { timeout: 10_000 });
-    await expect(page.locator('input[name="pos_barcode"], .pin-key').first()).toBeVisible({ timeout: 10_000 });
+    await expect(page.locator('input[name="pos_barcode"], #posUnlockPinPad').first()).toBeVisible({ timeout: 10_000 });
   });
 
   test('close then Z-report response carries no-store headers', async ({ page }) => {

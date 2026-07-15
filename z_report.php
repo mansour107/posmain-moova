@@ -37,26 +37,10 @@ $shiftCloseCountCsrf = csrf_token('shift_close_count');
 require_once __DIR__ . '/classes/Pos/Service/ShiftSessionService.php';
 require_once __DIR__ . '/includes/business_day.php';
 $shiftSessions = new ShiftSessionService();
-$reportScope = [
-    'tenant' => (int) ($_SESSION['pos_tenant'] ?? 0),
-    'branch' => (int) ($_SESSION['pos_branch'] ?? 0),
-];
-$activeDrawerSession = $shiftSessions->currentDrawerSession($conn, (int) $user_id, $reportScope);
-$reportBusinessDay = null;
-if ($activeDrawerSession) {
-    $reportScope['shift_opened_at'] = $activeDrawerSession['opened_at'];
-    $reportScope['drawer_session_id'] = (int) $activeDrawerSession['id'];
-    $reportScope['tenant'] = (int) ($activeDrawerSession['tenant'] ?? $reportScope['tenant']);
-    $reportScope['branch'] = (int) ($activeDrawerSession['branch'] ?? $reportScope['branch']);
-    $reportBusinessDay = trim((string) ($activeDrawerSession['business_day'] ?? ''));
-}
-if ($reportBusinessDay === null || $reportBusinessDay === '') {
-    $reportBusinessDay = posmain_current_business_day(
-        $conn,
-        (int) $reportScope['tenant'],
-        (int) $reportScope['branch']
-    );
-}
+$reportContext = $shiftSessions->buildShiftReportContext($conn, (int) $user_id);
+$reportScope = $reportContext['scope'];
+$activeDrawerSession = $reportContext['drawer_session'];
+$reportBusinessDay = $reportContext['business_day'];
 
 // تهيئة التقرير — scoped to the active drawer session when handover is in use
 $report = new ShiftReport($conn, $user_id, $reportBusinessDay, $reportScope);

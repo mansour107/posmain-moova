@@ -62,7 +62,7 @@ class TeamHubMutationService
         }
         try {
             $pinService->setPinForUser($this->conn, $newUserId, $pin, [
-                'must_change' => true,
+                'must_change' => false,
                 'bump_auth_version' => true,
             ]);
         } catch (Throwable $exception) {
@@ -152,7 +152,7 @@ class TeamHubMutationService
             $pinService->clearPinForUser($this->conn, $id);
         } elseif ($pin !== '') {
             $pinService->setPinForUser($this->conn, $id, $pin, [
-                'must_change' => true,
+                'must_change' => false,
                 'bump_auth_version' => true,
             ]);
             $revealedPin = $pin;
@@ -360,7 +360,7 @@ class TeamHubMutationService
         }
 
         $pinService->setPinForUser($this->conn, $userId, $pin, [
-            'must_change' => true,
+            'must_change' => false,
             'bump_auth_version' => true,
         ]);
         (new SecurityAuditLogger())->record($this->conn, 'user_pin_reset', [
@@ -386,7 +386,7 @@ class TeamHubMutationService
             'success' => true,
             'pin' => $pin,
             'pin_once' => true,
-            'must_change' => true,
+            'must_change' => false,
             'staff' => $staff,
         ];
     }

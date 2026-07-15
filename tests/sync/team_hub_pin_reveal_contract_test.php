@@ -22,8 +22,12 @@ teamHubPinRevealAssert(
     'resetPin must stash one-time reveal in session'
 );
 teamHubPinRevealAssert(
-    strpos($sourceMutations, "'must_change' => true") !== false,
-    'resetPin must force change on next login'
+    strpos($sourceMutations, "'must_change' => false") !== false,
+    'Team Hub PIN set/reset must apply immediately (no forced change on next login)'
+);
+teamHubPinRevealAssert(
+    strpos($sourceMutations, "'must_change' => true") === false,
+    'Team Hub must not force pin_must_change after PIN save'
 );
 teamHubPinRevealAssert(
     strpos($sourcePin, 'PIN_REVEAL_DISABLED') !== false,

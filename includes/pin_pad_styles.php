@@ -54,6 +54,14 @@
     color: var(--ppm-muted);
     font-size: .95rem;
 }
+.ppm-role-hint {
+    margin: .55rem 0 0;
+    text-align: center;
+    color: #0f172a;
+    font-size: .92rem;
+    font-weight: 700;
+    line-height: 1.35;
+}
 .ppm-dots {
     display: flex;
     justify-content: center;
@@ -135,18 +143,43 @@
     border-radius: 999px; padding: .25rem .75rem; cursor: pointer;
 }
 .ppm-busy .ppm-key { pointer-events: none; opacity: .7; }
-.ppm-offline-banner {
-    display: none;
-    margin: 0 0 .85rem;
-    background: #fff7ed;
-    color: #9a3412;
-    border: 1px solid #fed7aa;
-    border-radius: 12px;
-    padding: .65rem .85rem;
-    text-align: center;
-    font-size: .9rem;
+.ppm-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 10060;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1rem;
+    font-family: 'IBM Plex Sans Arabic', 'Inter', system-ui, sans-serif;
 }
-.ppm-offline-banner.is-visible { display: block; }
+.ppm-modal__backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(15, 23, 42, .72);
+    backdrop-filter: blur(6px);
+}
+.ppm-modal__dialog {
+    position: relative;
+    width: min(420px, 94vw);
+    z-index: 1;
+}
+.ppm-modal__dialog .ppm-shell { width: 100%; }
+.ppm-modal__cancel {
+    display: block;
+    width: 100%;
+    margin-top: .85rem;
+    border: 0;
+    border-radius: 14px;
+    padding: .85rem 1rem;
+    background: rgba(255,255,255,.92);
+    color: #475569;
+    font-weight: 600;
+    font-size: .95rem;
+    cursor: pointer;
+    box-shadow: 0 10px 28px rgba(2,6,23,.2);
+}
+.ppm-modal__cancel:hover { color: #0f172a; }
 .ppm-workspace-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
@@ -176,5 +209,48 @@
 }
 @media (prefers-reduced-motion: reduce) {
     .ppm-key, .ppm-dot, .ppm-workspace-card { transition: none !important; }
+}
+
+/* POS terminal unlock — cooler slate/teal, distinct from primary login terracotta */
+.ppm-page--pos-unlock {
+    background:
+        radial-gradient(1000px 520px at 85% -15%, rgba(14, 165, 233, .16), transparent 55%),
+        radial-gradient(800px 480px at 0% 100%, rgba(45, 212, 191, .10), transparent 50%),
+        linear-gradient(165deg, #07111f 0%, #0f2744 48%, #0a1628 100%);
+}
+.ppm-page--pos-unlock .ppm-card {
+    border: 1px solid rgba(148, 163, 184, .28);
+    background: rgba(248, 250, 252, .97);
+    box-shadow: 0 28px 64px rgba(2, 12, 27, .45);
+}
+.ppm-page--pos-unlock .ppm-eyebrow {
+    display: inline-block;
+    margin: 0 auto .65rem;
+    padding: .28rem .7rem;
+    border-radius: 999px;
+    background: rgba(14, 165, 233, .12);
+    color: #0369a1;
+    font-size: .78rem;
+    font-weight: 700;
+    letter-spacing: .04em;
+}
+.ppm-page--pos-unlock .ppm-title {
+    font-size: 1.4rem;
+    font-weight: 750;
+}
+.ppm-page--pos-unlock .ppm-dot.filled {
+    background: #0ea5e9;
+    border-color: #0284c7;
+}
+.ppm-page--pos-unlock .ppm-key:focus-visible {
+    outline-color: rgba(14, 165, 233, .45);
+}
+.ppm-page--pos-unlock .ppm-key.action {
+    background: #e0f2fe;
+    color: #0369a1;
+}
+.ppm-page--pos-unlock .ppm-key.enter {
+    background: linear-gradient(135deg, #0ea5e9, #0284c7);
+    box-shadow: 0 10px 24px rgba(2, 132, 199, .32);
 }
 </style>

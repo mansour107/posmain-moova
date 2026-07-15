@@ -1,66 +1,50 @@
 <?php
 require_once __DIR__ . '/../includes/session_bootstrap.php';
 include('../includes/connect.php');
+require_once __DIR__ . '/../includes/auth_guard.php';
+require_once __DIR__ . '/../classes/Pos/Service/ShiftSessionService.php';
+require_once __DIR__ . '/../classes/ShiftReport.php';
 
-// التحقق من تسجيل الدخول
 if (!isset($_SESSION['userid'])) {
     header('Location: ../index.php');
     exit;
 }
 
-$user_id = $_SESSION['userid'];
-require_once __DIR__ . '/../includes/business_day.php';
-$today = posmain_current_business_day(
-    $conn,
-    (int) ($_SESSION['pos_tenant'] ?? 0),
-    (int) ($_SESSION['pos_branch'] ?? 0)
-);
+$user_id = function_exists('pos_acting_user_id') ? pos_acting_user_id() : (int) $_SESSION['userid'];
+$shiftSessions = new ShiftSessionService();
+$reportContext = $shiftSessions->buildShiftReportContext($conn, (int) $user_id);
+$report = new ShiftReport($conn, (int) $user_id, $reportContext['business_day'], $reportContext['scope']);
 
-// جلب اسم المستخدم
-$user_query = $conn->query("SELECT aname FROM acc_head WHERE id = $user_id");
-$user_data = $user_query->fetch_assoc();
-$cashier_name = $user_data['aname'] ?? 'الكاشير';
+$totals = $report->getTotals();
+$timeBounds = $report->getSaleTimeBounds();
+$items_query = $report->getItemsBreakdown();
+$cashier_name = $report->getCashierUsername() ?: 'الكاشير';
 
-// جلب إجمالي مبيعات اليوم للمستخدم المسجل فقط
-$sales_query = $conn->query("SELECT
-    COUNT(*) as total_invoices,
-    COALESCE(SUM(fat_total), 0) as total_sales,
-    COALESCE(SUM(fat_disc), 0) as total_discounts,
-    COALESCE(SUM(fat_net), 0) as net_sales
-	    FROM ot_head
-	    WHERE DATE(pro_date) = '$today'
-	    AND user = '$user_id'
-	    AND pro_tybe = 9
-	    AND payment_status = 'paid'
-	    AND order_status = 'completed'
-	    AND isdeleted = 0");
-$sales_data = $sales_query->fetch_assoc();
+$sales_data = [
+    'total_invoices' => (int) ($totals['total_orders'] ?? 0),
+    'total_sales' => (float) ($totals['total_gross'] ?? 0),
+    'total_discounts' => (float) ($totals['total_discount'] ?? 0),
+    'net_sales' => (float) ($totals['total_net'] ?? 0),
+];
 
-// جلب تفاصيل أصناف اليوم للمستخدم المسجل فقط
-$items_query = $conn->query("SELECT
-    mi.iname,
-    SUM(fd.qty_out - fd.qty_in) as total_qty,
-    fd.price,
-    SUM(fd.det_value) as total_value
-    FROM ot_head oh
-	    JOIN fat_details fd ON oh.id = fd.fatid
-    JOIN myitems mi ON fd.item_id = mi.id
-    WHERE DATE(oh.pro_date) = '$today'
-	    AND oh.user = '$user_id'
-	    AND oh.pro_tybe = 9
-	    AND oh.payment_status = 'paid'
-	    AND oh.order_status = 'completed'
-	    AND oh.isdeleted = 0
-    AND fd.isdeleted = 0
-    GROUP BY fd.item_id, fd.price
-    ORDER BY total_value DESC");
-
-// إضافة بيانات وهمية للاختبار إذا لم توجد بيانات
-if ($items_query->num_rows == 0) {
+$dummy_items = [];
+if (!$items_query || $items_query->num_rows == 0) {
     $dummy_items = [
-        ['iname' => 'لا توجد مبيعات لك اليوم', 'total_qty' => 0, 'price' => 0, 'total_value' => 0]
+        ['iname' => 'لا توجد مبيعات في الشيفت الحالي', 'total_qty' => 0, 'price' => 0, 'total_value' => 0],
     ];
 }
+
+$shiftOpenedAt = $report->getShiftOpenedAt();
+$shift_start = $shiftOpenedAt
+    ? date('H:i', strtotime($shiftOpenedAt))
+    : ($timeBounds['first_sale_time'] ? date('H:i', strtotime((string) $timeBounds['first_sale_time'])) : date('H:i'));
+$shift_end = $timeBounds['last_sale_time']
+    ? date('H:i', strtotime((string) $timeBounds['last_sale_time']))
+    : date('H:i');
+$report_day_label = $report->getBusinessDay();
+$shift_number = ($reportContext['drawer_session']['id'] ?? null)
+    ? ((int) $reportContext['drawer_session']['id'] . '_' . str_replace('-', '', $report_day_label))
+    : (str_replace('-', '', $report_day_label) . '_' . (int) $user_id);
 ?>
 
 <!DOCTYPE html>
@@ -117,10 +101,10 @@ if (file_exists($logo_path)) {
 
 <div class="col-sm-12 invoice-col">
 <address>
-<b>التاريخ:</b> <?= date('Y-m-d') ?><br>
+<b>التاريخ:</b> <?= htmlspecialchars($report_day_label, ENT_QUOTES, 'UTF-8') ?><br>
 <b>الوقت:</b> <?= date('H:i:s') ?><br>
-<b>الكاشير:</b> <?= $cashier_name ?><br>
-<b>رقم الشيفت:</b> <?= date('Ymd') . '_' . $user_id ?><br>
+<b>الكاشير:</b> <?= htmlspecialchars($cashier_name, ENT_QUOTES, 'UTF-8') ?><br>
+<b>رقم الشيفت:</b> <?= htmlspecialchars((string) $shift_number, ENT_QUOTES, 'UTF-8') ?><br>
 </address>
 </div>
 
@@ -205,12 +189,12 @@ if (file_exists($logo_path)) {
 
 <tr class="bg-slate-100 border-b-2 border-l-2 border-slate-900">
 <th>وقت بداية الشيفت:</th>
-<td class="float-right"><?= date('H:i', strtotime('today')) ?></td>
+<td class="float-right"><?= htmlspecialchars($shift_start, ENT_QUOTES, 'UTF-8') ?></td>
 </tr>
 
 <tr class="bg-slate-100 border-b-2 border-l-2 border-slate-900">
 <th>وقت إنهاء الشيفت:</th>
-<td class="float-right"><?= date('H:i') ?></td>
+<td class="float-right"><?= htmlspecialchars($shift_end, ENT_QUOTES, 'UTF-8') ?></td>
 </tr>
 </tbody>
 </table>

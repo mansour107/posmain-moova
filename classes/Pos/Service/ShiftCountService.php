@@ -374,6 +374,331 @@ class ShiftCountService
         ];
     }
 
+    /**
+     * Blind recount before force-closing someone else's open drawer (takeover).
+     *
+     * @return array{phase:string,attempt_number:int,max_attempts:int,drawer_session_id:int}
+     */
+    public function beginTakeoverCloseCount(mysqli $conn, int $userId, int $blockingSessionId, array $context = []): array
+    {
+        if (!$this->handoverEnabled($conn)) {
+            throw new RuntimeException('HANDOVER_NOT_ENABLED');
+        }
+        if ($blockingSessionId < 1) {
+            throw new RuntimeException('DRAWER_SESSION_REQUIRED');
+        }
+
+        $scope = $this->shiftSessions->resolveScope($context);
+        $drawerSession = $this->drawerSessions->sessionById($conn, $blockingSessionId);
+        if (($drawerSession['status'] ?? '') !== 'open') {
+            throw new RuntimeException('DRAWER_SESSION_NOT_OPEN');
+        }
+        if ((int) ($drawerSession['user_id'] ?? 0) === $userId) {
+            throw new RuntimeException('CANNOT_TAKEOVER_OWN_SESSION');
+        }
+        $sessionTenant = (int) ($drawerSession['tenant'] ?? 0);
+        $sessionBranch = (int) ($drawerSession['branch'] ?? 0);
+        if ($sessionTenant !== (int) $scope['tenant'] || $sessionBranch !== (int) $scope['branch']) {
+            throw new RuntimeException('DRAWER_SESSION_SCOPE_MISMATCH');
+        }
+
+        $expected = (float) $this->drawerSessions->expectedCash($conn, $blockingSessionId);
+        $tolerance = $this->floatExpectation->toleranceForBranch($conn, $scope['tenant'], $scope['branch']);
+
+        $_SESSION['pos_shift_takeover_close_count'] = [
+            'user_id' => $userId,
+            'drawer_session_id' => $blockingSessionId,
+            'expected' => $expected,
+            'tolerance' => $tolerance,
+            'attempt_number' => 0,
+            'attempt_ids' => [],
+            'finalized' => false,
+            'started_at' => time(),
+        ];
+
+        return [
+            'phase' => 'takeover_close',
+            'attempt_number' => 0,
+            'max_attempts' => self::MAX_ATTEMPTS,
+            'drawer_session_id' => $blockingSessionId,
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    public function submitTakeoverCloseCount(mysqli $conn, int $userId, string $countedAmount, array $context = []): array
+    {
+        if (!$this->handoverEnabled($conn)) {
+            throw new RuntimeException('HANDOVER_NOT_ENABLED');
+        }
+
+        $state = $_SESSION['pos_shift_takeover_close_count'] ?? null;
+        if (!is_array($state) || (int) ($state['user_id'] ?? 0) !== $userId) {
+            throw new RuntimeException('TAKEOVER_CLOSE_COUNT_NOT_STARTED');
+        }
+
+        $sessionId = (int) ($state['drawer_session_id'] ?? 0);
+        $drawerSession = $this->drawerSessions->sessionById($conn, $sessionId);
+        if (($drawerSession['status'] ?? '') !== 'open') {
+            throw new RuntimeException('DRAWER_SESSION_NOT_OPEN');
+        }
+        if ((int) ($drawerSession['user_id'] ?? 0) === $userId) {
+            throw new RuntimeException('CANNOT_TAKEOVER_OWN_SESSION');
+        }
+
+        $currentExpected = (float) $this->drawerSessions->expectedCash($conn, $sessionId);
+        $snapshotExpected = (float) ($state['expected'] ?? 0);
+        $tolerance = (float) ($state['tolerance'] ?? 0.010);
+
+        if (!$this->floatExpectation->amountsMatch($currentExpected, $snapshotExpected, $tolerance)) {
+            unset($_SESSION['pos_shift_takeover_close_count']);
+            throw new RuntimeException('CLOSE_EXPECTED_DRIFTED');
+        }
+
+        $attemptNumber = (int) ($state['attempt_number'] ?? 0) + 1;
+        if ($attemptNumber > self::MAX_ATTEMPTS) {
+            throw new RuntimeException('TAKEOVER_CLOSE_COUNT_MAX_ATTEMPTS');
+        }
+
+        $counted = round((float) $countedAmount, 3);
+        if ($counted < 0) {
+            throw new RuntimeException('COUNTED_AMOUNT_INVALID');
+        }
+
+        $variance = round($counted - $snapshotExpected, 3);
+        $matched = $this->floatExpectation->amountsMatch($counted, $snapshotExpected, $tolerance);
+
+        $attemptId = $this->recordCountAttempt($conn, [
+            'drawer_session_id' => $sessionId,
+            'count_phase' => 'close',
+            'attempt_number' => $attemptNumber,
+            'counted_amount' => $counted,
+            'expected_amount' => $snapshotExpected,
+            'variance' => $variance,
+            'matched' => $matched,
+            'expected_snapshot_json' => [
+                'expected_cash' => $snapshotExpected,
+                'takeover' => true,
+            ],
+            'tenant' => (int) ($drawerSession['tenant'] ?? 0),
+            'branch' => (int) ($drawerSession['branch'] ?? 0),
+            'created_by' => $userId,
+        ]);
+
+        $state['attempt_number'] = $attemptNumber;
+        $state['attempt_ids'][] = $attemptId;
+        $_SESSION['pos_shift_takeover_close_count'] = $state;
+
+        if ($matched || $attemptNumber >= self::MAX_ATTEMPTS) {
+            $direction = $variance > 0.0001 ? 'over' : ($variance < -0.0001 ? 'under' : 'balanced');
+            $state['finalized'] = true;
+            $state['counted_cash'] = $counted;
+            $state['matched'] = $matched;
+            $state['variance'] = $variance;
+            $state['variance_direction'] = $direction;
+            $_SESSION['pos_shift_takeover_close_count'] = $state;
+
+            $message = $matched
+                ? 'العد متطابق — يمكن متابعة إغلاق وردية الموظف'
+                : ($direction === 'over'
+                    ? 'زيادة في الدرج: ' . number_format(abs($variance), 2) . ' — سيتم التسجيل والمتابعة'
+                    : 'عجز في الدرج: ' . number_format(abs($variance), 2) . ' — سيتم التسجيل والمتابعة');
+
+            return [
+                'status' => $matched ? 'ready_to_takeover' : 'takeover_with_variance',
+                'phase' => 'takeover_close',
+                'attempt_number' => $attemptNumber,
+                'max_attempts' => self::MAX_ATTEMPTS,
+                'matched' => $matched,
+                'counted_cash' => $counted,
+                'expected_cash' => $snapshotExpected,
+                'variance' => $variance,
+                'variance_direction' => $direction,
+                'drawer_session_id' => $sessionId,
+                'message' => $message,
+            ];
+        }
+
+        return [
+            'status' => 'recount',
+            'phase' => 'takeover_close',
+            'attempt_number' => $attemptNumber,
+            'max_attempts' => self::MAX_ATTEMPTS,
+            'message' => 'الرجاء إعادة العد بعناية',
+        ];
+    }
+
+    /**
+     * Final counted cash from a completed takeover close-count phase (if any).
+     *
+     * @return array{counted_cash:float,matched:bool,variance:float,attempt_ids:array}|null
+     */
+    public function peekTakeoverCloseCount(int $userId, int $sessionId): ?array
+    {
+        $state = $_SESSION['pos_shift_takeover_close_count'] ?? null;
+        if (!is_array($state)
+            || empty($state['finalized'])
+            || (int) ($state['user_id'] ?? 0) !== $userId
+            || (int) ($state['drawer_session_id'] ?? 0) !== $sessionId) {
+            return null;
+        }
+
+        return [
+            'counted_cash' => (float) ($state['counted_cash'] ?? 0),
+            'matched' => !empty($state['matched']),
+            'variance' => (float) ($state['variance'] ?? 0),
+            'attempt_ids' => $state['attempt_ids'] ?? [],
+        ];
+    }
+
+    public function clearTakeoverCloseCount(): void
+    {
+        unset($_SESSION['pos_shift_takeover_close_count']);
+    }
+
+    /**
+     * @deprecated use peekTakeoverCloseCount + clearTakeoverCloseCount
+     */
+    public function consumeTakeoverCloseCount(int $userId, int $sessionId): ?array
+    {
+        $result = $this->peekTakeoverCloseCount($userId, $sessionId);
+        if ($result !== null) {
+            $this->clearTakeoverCloseCount();
+        }
+
+        return $result;
+    }
+
+    /**
+     * Open the incoming manager shift using the cash already counted during
+     * takeover close — avoids a second blind count of the same drawer.
+     *
+     * Requires $_SESSION['pos_pending_takeover'] so preceding_session lineage is linked.
+     *
+     * @return array<string, mixed>
+     */
+    public function openFromTakeoverCountedCash(
+        mysqli $conn,
+        int $userId,
+        float $countedCash,
+        array $context = []
+    ): array {
+        $counted = round($countedCash, 3);
+        if ($counted < 0) {
+            throw new RuntimeException('COUNTED_AMOUNT_INVALID');
+        }
+
+        $scope = $this->shiftSessions->resolveScope($context);
+        $scope['register_id'] = $this->resolvePairedRegisterId($conn, $scope, $context);
+        $this->assertNoBlockingOpenSession($conn, $userId, $scope);
+
+        if (!$this->handoverEnabled($conn)) {
+            require_once dirname(__DIR__, 3) . '/includes/db_transaction.php';
+            require_once dirname(__DIR__, 3) . '/includes/auth_guard.php';
+
+            $ownsTransaction = posmain_tx_begin_if_needed($conn, posmain_tx_context_in_transaction($context));
+            try {
+                $openRequest = [
+                    'user_id' => $userId,
+                    'opened_by' => $userId,
+                    'tenant' => $scope['tenant'],
+                    'branch' => $scope['branch'],
+                    'register_id' => (int) ($scope['register_id'] ?? 0) ?: null,
+                    'opening_cash' => number_format($counted, 3, '.', ''),
+                    'in_transaction' => true,
+                ];
+                $pendingTakeover = $_SESSION['pos_pending_takeover'] ?? null;
+                if (is_array($pendingTakeover)
+                    && (int) ($pendingTakeover['incoming_user_id'] ?? 0) === $userId
+                    && (int) ($pendingTakeover['preceding_session_id'] ?? 0) > 0
+                ) {
+                    $openRequest['preceding_session_id'] = (int) $pendingTakeover['preceding_session_id'];
+                    if (!empty($pendingTakeover['authorized_by'])) {
+                        $openRequest['takeover_authorized_by'] = (int) $pendingTakeover['authorized_by'];
+                    }
+                }
+                $session = $this->drawerSessions->openSession($conn, $openRequest);
+                $_SESSION['pos_drawer_session_id'] = (int) $session['id'];
+                posmain_begin_pos_shift_session($userId);
+                unset(
+                    $_SESSION['pos_shift_open_count'],
+                    $_SESSION['pos_unlocked_pending_open'],
+                    $_SESSION['pos_pending_takeover']
+                );
+                posmain_tx_commit_if_owned($conn, $ownsTransaction);
+
+                return [
+                    'status' => 'opened',
+                    'phase' => 'open',
+                    'matched' => true,
+                    'variance' => 0.0,
+                    'variance_direction' => 'balanced',
+                    'counted_cash' => $counted,
+                    'expected_cash' => $counted,
+                    'attempt_number' => 1,
+                    'max_attempts' => self::MAX_ATTEMPTS,
+                    'drawer_session_id' => (int) ($session['id'] ?? 0),
+                    'message' => 'تم فتح الشيفت بنجاح',
+                    'variance_status' => 'none',
+                ];
+            } catch (Throwable $exception) {
+                posmain_tx_rollback_if_owned($conn, $ownsTransaction);
+                throw $exception;
+            }
+        }
+
+        $breakdown = $this->floatExpectation->expectedOpeningFloat($conn, $scope['tenant'], $scope['branch']);
+        if (!empty($breakdown['baseline_required'])) {
+            throw new RuntimeException('OPENING_BASELINE_REQUIRED');
+        }
+
+        $expected = (float) ($breakdown['expected'] ?? 0);
+        $tolerance = $this->floatExpectation->toleranceForBranch($conn, $scope['tenant'], $scope['branch']);
+        $variance = round($counted - $expected, 3);
+        $matched = $this->floatExpectation->amountsMatch($counted, $expected, $tolerance);
+
+        $attemptId = $this->recordCountAttempt($conn, [
+            'drawer_session_id' => null,
+            'count_phase' => 'open',
+            'attempt_number' => 1,
+            'counted_amount' => $counted,
+            'expected_amount' => $expected,
+            'variance' => $variance,
+            'matched' => $matched,
+            'expected_snapshot_json' => [
+                'expected_cash' => $expected,
+                'takeover_auto_open' => true,
+            ],
+            'tenant' => (int) $scope['tenant'],
+            'branch' => (int) $scope['branch'],
+            'created_by' => $userId,
+        ]);
+
+        $state = [
+            'user_id' => $userId,
+            'tenant' => $scope['tenant'],
+            'branch' => $scope['branch'],
+            'register_id' => $scope['register_id'],
+            'expected' => $expected,
+            'tolerance' => $tolerance,
+            'attempt_number' => 1,
+            'attempt_ids' => [$attemptId],
+        ];
+
+        return $this->finalizeOpen(
+            $conn,
+            $userId,
+            $counted,
+            $expected,
+            $variance,
+            $matched,
+            $scope,
+            $state,
+            $context
+        );
+    }
+
     public function validateCloseToken(string $token, int $sessionId, int $userId, float $countedCash, bool $matched, ?mysqli $conn = null): bool
     {
         $payload = $this->extractTokenPayload($token);
@@ -475,6 +800,24 @@ class ShiftCountService
         ]), $context);
     }
 
+    /**
+     * Manager-facing causes for accepting a drawer count variance.
+     * Stored as codes so variance reports can aggregate by cause.
+     *
+     * @return array<string, string> code => Arabic label
+     */
+    public static function resolutionReasonCodes(): array
+    {
+        return [
+            'recount_confirmed' => 'أُعيد العد والفرق مؤكد',
+            'previous_shift' => 'خطأ من الوردية السابقة',
+            'change_rounding' => 'فكة / فرق تقريب بسيط',
+            'unrecorded_movement' => 'إيداع أو مصروف لم يُسجل وقته',
+            'under_investigation' => 'الفرق قيد التحقيق',
+            'other' => 'سبب آخر',
+        ];
+    }
+
     public function resolveSession(mysqli $conn, int $actingUserId, int $sessionId, array $payload, array $context = []): array
     {
         require_once dirname(__DIR__, 3) . '/includes/auth_guard.php';
@@ -494,8 +837,14 @@ class ShiftCountService
             throw new RuntimeException('VARIANCE_NOT_UNRESOLVED');
         }
 
+        $reasonCodes = self::resolutionReasonCodes();
+        $reasonCode = trim((string) ($payload['resolution_reason_code'] ?? ''));
+        if ($reasonCode === '' || !isset($reasonCodes[$reasonCode])) {
+            throw new RuntimeException('RESOLUTION_REASON_CODE_REQUIRED');
+        }
+
         $notes = trim((string) ($payload['resolution_notes'] ?? ''));
-        if ($notes === '') {
+        if ($notes === '' && $reasonCode === 'other') {
             throw new RuntimeException('RESOLUTION_NOTES_REQUIRED');
         }
 
@@ -528,24 +877,52 @@ class ShiftCountService
         $ownsTransaction = posmain_tx_begin_if_needed($conn, posmain_tx_context_in_transaction($context));
 
         try {
-            $stmt = $conn->prepare('
-                INSERT INTO drawer_session_resolutions (
-                    drawer_session_id, variance_type, variance_amount,
-                    resolved_by, resolution_notes, prior_status, snapshot_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
-            ');
+            $hasReasonCodeColumn = $this->columnExists($conn, 'drawer_session_resolutions', 'resolution_reason_code');
+            // Legacy schema without the code column: keep the cause in the notes
+            // text so no accepted variance is ever stored without a recorded reason.
+            $storedNotes = $hasReasonCodeColumn
+                ? $notes
+                : trim($reasonCodes[$reasonCode] . ($notes !== '' ? ' — ' . $notes : ''));
+
             $snapshotJson = json_encode($snapshot, JSON_UNESCAPED_UNICODE);
             $varianceFormatted = number_format($varianceAmount, 3, '.', '');
-            $stmt->bind_param(
-                'isidsss',
-                $sessionId,
-                $varianceType,
-                $varianceFormatted,
-                $actingUserId,
-                $notes,
-                $priorStatus,
-                $snapshotJson
-            );
+
+            if ($hasReasonCodeColumn) {
+                $stmt = $conn->prepare('
+                    INSERT INTO drawer_session_resolutions (
+                        drawer_session_id, variance_type, variance_amount,
+                        resolved_by, resolution_notes, resolution_reason_code, prior_status, snapshot_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ');
+                $stmt->bind_param(
+                    'isidssss',
+                    $sessionId,
+                    $varianceType,
+                    $varianceFormatted,
+                    $actingUserId,
+                    $storedNotes,
+                    $reasonCode,
+                    $priorStatus,
+                    $snapshotJson
+                );
+            } else {
+                $stmt = $conn->prepare('
+                    INSERT INTO drawer_session_resolutions (
+                        drawer_session_id, variance_type, variance_amount,
+                        resolved_by, resolution_notes, prior_status, snapshot_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ');
+                $stmt->bind_param(
+                    'isidsss',
+                    $sessionId,
+                    $varianceType,
+                    $varianceFormatted,
+                    $actingUserId,
+                    $storedNotes,
+                    $priorStatus,
+                    $snapshotJson
+                );
+            }
             $stmt->execute();
             $resolutionId = (int) $conn->insert_id;
             $stmt->close();
@@ -561,6 +938,34 @@ class ShiftCountService
                 $update->close();
             }
 
+            // Book the accepted over/short into the ledger so the fund account
+            // matches the physically counted cash. Same transaction as the
+            // resolution row: either both are recorded or neither is.
+            // Skipped on installs without the accounting subsystem.
+            $ledgerOtHeadId = null;
+            if (round(abs($varianceAmount), 3) >= 0.001) {
+                require_once __DIR__ . '/DrawerLedgerPostingService.php';
+                $ledgerPosting = new DrawerLedgerPostingService();
+                if ($ledgerPosting->canPost($conn)) {
+                    $fundAccountId = $ledgerPosting->resolveFundAccountId($conn, $session);
+                    $ledgerReason = $reasonCodes[$reasonCode] . ($notes !== '' ? ' — ' . $notes : '');
+                    $ledgerOtHeadId = $ledgerPosting->postCashOverShort(
+                        $conn,
+                        $varianceAmount,
+                        $ledgerReason,
+                        $actingUserId,
+                        $fundAccountId,
+                        $sessionId
+                    );
+                    if ($ledgerOtHeadId > 0 && $this->columnExists($conn, 'drawer_session_resolutions', 'ledger_ot_head_id')) {
+                        $link = $conn->prepare('UPDATE drawer_session_resolutions SET ledger_ot_head_id = ? WHERE id = ?');
+                        $link->bind_param('ii', $ledgerOtHeadId, $resolutionId);
+                        $link->execute();
+                        $link->close();
+                    }
+                }
+            }
+
             posmain_tx_commit_if_owned($conn, $ownsTransaction);
         } catch (Throwable $exception) {
             posmain_tx_rollback_if_owned($conn, $ownsTransaction);
@@ -573,6 +978,8 @@ class ShiftCountService
             'variance_status' => 'resolved',
             'variance_amount' => $varianceFormatted,
             'variance_type' => $varianceType,
+            'resolution_reason_code' => $reasonCode,
+            'ledger_ot_head_id' => $ledgerOtHeadId,
         ];
     }
 
@@ -818,6 +1225,8 @@ class ShiftCountService
             'variance_direction' => $variance > 0 ? 'over' : ($variance < 0 ? 'under' : 'balanced'),
             'counted_cash' => $counted,
             'expected_cash' => $expected,
+            'attempt_number' => (int) ($state['attempt_number'] ?? self::MAX_ATTEMPTS),
+            'max_attempts' => self::MAX_ATTEMPTS,
             'drawer_session_id' => (int) ($session['id'] ?? 0),
             'message' => $matched
                 ? 'تم فتح الشيفت بنجاح'

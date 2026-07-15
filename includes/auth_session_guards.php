@@ -18,7 +18,10 @@ function posmain_enforce_auth_session_guards(mysqli $conn): void
         if (function_exists('auth_guard_is_json_request') && auth_guard_is_json_request()) {
             deny_json_or_redirect('AUTH_VERSION_STALE', 401);
         }
-        header('Location: index.php?error=session_revoked');
+        $loginHref = function_exists('posmain_app_href')
+            ? posmain_app_href('index.php?error=session_revoked')
+            : '../index.php?error=session_revoked';
+        header('Location: ' . $loginHref);
         exit;
     }
 
@@ -44,14 +47,17 @@ function posmain_enforce_auth_session_guards(mysqli $conn): void
             exit;
         }
         $bootstrap = !empty($_SESSION['posmain_bootstrap_pending']) ? '?bootstrap=1' : '';
-        header('Location: change_pin.php' . $bootstrap);
+        $changePinHref = function_exists('posmain_app_href')
+            ? posmain_app_href('change_pin.php' . $bootstrap)
+            : '../change_pin.php' . $bootstrap;
+        header('Location: ' . $changePinHref);
         exit;
     }
 }
 
 function posmain_render_bootstrap_pin_banner(): void
 {
-    if (empty($_SESSION['posmain_bootstrap_pending']) && empty($_SESSION['posmain_pin_must_change'])) {
+    if (empty($_SESSION['posmain_bootstrap_pending'])) {
         return;
     }
     if (!empty($_SESSION['posmain_pin_banner_dismissed'])) {
@@ -61,13 +67,10 @@ function posmain_render_bootstrap_pin_banner(): void
     if ($dismissed) {
         return;
     }
-    $isBootstrap = !empty($_SESSION['posmain_bootstrap_pending']);
-    $msg = $isBootstrap
-        ? 'أنشئ رمز المالك الجديد. الرمز الابتدائي 0000 مؤقت ولن يعمل بعد التغيير.'
-        : 'يرجى تغيير رمز الدخول المؤقت قبل المتابعة.';
+    $msg = 'أنشئ رمز المالك الجديد. الرمز الابتدائي 0000 مؤقت ولن يعمل بعد التغيير.';
     echo '<div class="ppm-banner" id="posmainPinBanner" role="status">'
         . '<div><strong>تنبيه أمان:</strong> ' . htmlspecialchars($msg, ENT_QUOTES, 'UTF-8')
-        . ' <a href="change_pin.php' . ($isBootstrap ? '?bootstrap=1' : '') . '">تغيير الرمز الآن</a></div>'
+        . ' <a href="change_pin.php?bootstrap=1">تغيير الرمز الآن</a></div>'
         . '<button type="button" id="posmainPinBannerDismiss" aria-label="إخفاء">إخفاء</button>'
         . '</div>';
     echo '<script>(function(){var b=document.getElementById("posmainPinBannerDismiss");'

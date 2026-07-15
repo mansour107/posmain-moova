@@ -43,13 +43,24 @@ $openCountDenied = !empty($posmainOpenCountDenied);
                 <p id="pshOpenBranchBlockedText" class="mb-2"></p>
                 <p class="mb-0 text-muted" style="font-size:0.9rem">يمكن للمدير استلام الدرج من هنا بعد عدّ النقد وإدخال رمز PIN.</p>
                 <div id="pshOpenTakeoverForm" class="psh-takeover-form">
-                    <label class="psh-takeover-label" for="pshTakeoverAmount">المبلغ المعدود في الدرج</label>
-                    <input type="number" id="pshTakeoverAmount" class="psh-amount-input psh-amount-input--sm" placeholder="0.00" step="0.01" min="0">
-                    <label class="psh-takeover-label" for="pshTakeoverReason">سبب الاستلام / الإغلاق</label>
-                    <textarea id="pshTakeoverReason" class="psh-takeover-reason" rows="2" placeholder="مثال: الكاشير السابق غادر دون إغلاق"></textarea>
+                    <p id="pshTakeoverAttemptLabel" class="psh-takeover-label psh-hidden"></p>
+                    <div id="pshTakeoverAmountWrap">
+                        <label class="psh-takeover-label" for="pshTakeoverAmount">المبلغ المعدود في الدرج</label>
+                        <input type="text" id="pshTakeoverAmount" class="psh-amount-input psh-amount-input--sm"
+                               inputmode="decimal" autocomplete="off" placeholder="0.00">
+                    </div>
+                    <div id="pshTakeoverVariance" class="psh-variance-card psh-hidden">
+                        <p class="psh-variance-label" id="pshTakeoverVarianceLabel"></p>
+                        <p class="psh-variance-amount" id="pshTakeoverVarianceAmount"></p>
+                        <p class="psh-variance-label">سيتم تسجيل الفرق والمتابعة بفتح ورديتك</p>
+                    </div>
+                    <div id="pshTakeoverReasonWrap" class="psh-hidden">
+                        <label class="psh-takeover-label" for="pshTakeoverReason">سبب الاستلام / الإغلاق</label>
+                        <textarea id="pshTakeoverReason" class="psh-takeover-reason" rows="2" placeholder="مثال: الكاشير السابق غادر دون إغلاق"></textarea>
+                    </div>
                     <div id="pshOpenTakeoverMessage" class="psh-message psh-hidden"></div>
                     <div class="psh-actions">
-                        <button type="button" class="psh-btn psh-btn-primary" data-psh-open-takeover>استلام الدرج بواسطة المدير</button>
+                        <button type="button" class="psh-btn psh-btn-primary" data-psh-open-takeover data-phase="count">تأكيد العد</button>
                     </div>
                 </div>
             </div>

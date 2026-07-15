@@ -84,6 +84,9 @@ return [
     'cash_flow_report.php' => ['permission' => 'reports.cash_flow'],
     'drawer_session.php' => ['permission' => 'reports.cash_flow'],
     'z_report.php' => ['permission' => 'pos.shift.close'],
+    // Root POS write endpoints (classified as pages by entry_classification_guard).
+    'close_shift.php' => ['permission' => 'pos.shift.close'],
+    'do_close_shift_z.php' => ['permission' => 'pos.shift.close'],
 
     // delivery / moova / kds
     'moova_integration.php' => ['permission' => 'moova.manage'],
@@ -213,8 +216,9 @@ return [
     'logs_viewer.php' => ['permission' => 'system.tools.run', 'admin_or' => true, 'quarantined' => true],
     'machinelog.php' => ['permission' => 'system.tools.run', 'admin_or' => true, 'quarantined' => true],
     'manualattandance.php' => ['permission' => 'reports.view'],
-    'moova_pos_proxy.php' => ['permission' => 'moova.manage'],
-    'moova_pos_widget.php' => ['permission' => 'moova.manage'],
+    // Cashier POS chrome (speaker/bell) — not integration admin. Anyone who can open POS.
+    'moova_pos_proxy.php' => ['permission' => 'pos.open'],
+    'moova_pos_widget.php' => ['permission' => 'pos.open'],
     'mop.php' => ['permission' => 'pos.open'],
     'mygroups.php' => ['permission' => 'menu.edit'],
     'myrentables.php' => ['permission' => 'accounting.view'],
@@ -261,7 +265,8 @@ return [
     'sales-by-month.php' => ['permission' => 'reports.view'],
     'sales-by-week.php' => ['permission' => 'reports.view'],
     'sales-reports.php' => ['permission' => 'reports.view'],
-    'sales.php' => ['permission' => 'reports.view'],
+    // Invoice entry (sales + purchases share this page via ?q=).
+    'sales.php' => ['any_of' => ['erp.module.sales', 'erp.module.purchases']],
     'save_start_balance.php' => ['permission' => 'inventory.edit'],
     'scan_att.php' => ['permission' => 'reports.view'],
     'setup_demo_data.php' => ['permission' => 'system.tools.run', 'admin_or' => true, 'quarantined' => true],

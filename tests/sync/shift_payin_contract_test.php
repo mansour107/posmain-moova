@@ -10,6 +10,9 @@ shiftPayinContractAssert(strpos($endpoint, 'recordShiftPayIn') !== false, 'payin
 shiftPayinContractAssert(strpos($endpoint, "require_csrf('shift_payin')") !== false, 'payin endpoint should require shift_payin CSRF');
 shiftPayinContractAssert(strpos($endpoint, 'auth_guard_is_pos_barcode_unlocked') !== false, 'payin endpoint should require POS unlock');
 shiftPayinContractAssert(strpos($endpoint, 'pos.drawer.payin') !== false, 'payin endpoint should reference pos.drawer.payin permission');
+shiftPayinContractAssert(strpos($endpoint, 'validateApprovedPermissionOverride') !== false, 'payin override must validate by permission_key');
+shiftPayinContractAssert(strpos($endpoint, "requireApprovedIfNeeded") === false, 'payin must not use drawer_session requireApprovedIfNeeded (scope mismatch with PIN override)');
+shiftPayinContractAssert(strpos($endpoint, 'ManagerApprovalRequiredException') !== false, 'payin should request manager approval when permission missing');
 
 shiftPayinContractAssert(strpos($endpoint, 'pos_shift_handover_idempotent') !== false, 'payin endpoint should wrap with handover idempotency');
 shiftPayinContractAssert(strpos($endpoint, 'pos.shift.payin') !== false, 'payin endpoint should use pos.shift.payin scope');

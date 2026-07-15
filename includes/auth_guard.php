@@ -171,6 +171,7 @@ if (!function_exists('auth_guard_permission_map')) {
             'pos.reprint.kitchen_ticket' => ['show_sales', 'sid_sales'],
             'pos.shift.force_close' => ['__admin_only'],
             'pos.shift.force_close_others' => ['edit_sales', 'sid_sales'],
+            'pos.shift.override' => ['edit_sales', 'sid_sales'],
             'pos.shift.resolve_variance' => ['edit_sales', 'sid_sales', 'show_gl_reports'],
             'pos.shift.set_opening_baseline' => ['edit_sales', 'sid_sales', 'show_gl_reports'],
             'pos.void.post_send' => ['edit_sales', 'delete_sales'],
@@ -648,7 +649,7 @@ if (!function_exists('auth_guard_enforce_active_session_user')) {
         }
 
         if (!headers_sent()) {
-            header('Location: index.php?error=user_deactivated');
+            header('Location: ' . posmain_app_href('index.php?error=user_deactivated'));
         }
         exit;
     }
@@ -697,6 +698,33 @@ if (!function_exists('pos_enforce_active_pos_lane')) {
     }
 }
 
+if (!function_exists('posmain_app_href')) {
+    /**
+     * Resolve an app-root-relative path for Location headers.
+     * Bare "index.php" from /print/receipt.php wrongly becomes /print/index.php.
+     */
+    function posmain_app_href(string $target): string
+    {
+        $target = str_replace('\\', '/', $target);
+        if ($target === '' || $target[0] === '/' || preg_match('#^[a-z][a-z0-9+.-]*:#i', $target) === 1) {
+            return $target;
+        }
+
+        $script = str_replace('\\', '/', (string) ($_SERVER['SCRIPT_NAME'] ?? '/'));
+        $dir = rtrim(str_replace('\\', '/', dirname($script)), '/');
+        while ($dir !== '' && $dir !== '/' && preg_match('#/(ajax|do|print|update)$#', $dir) === 1) {
+            $dir = substr($dir, 0, (int) strrpos($dir, '/'));
+        }
+
+        $path = ltrim($target, '/');
+        if ($dir === '' || $dir === '/') {
+            return '/' . $path;
+        }
+
+        return $dir . '/' . $path;
+    }
+}
+
 if (!function_exists('deny_json_or_redirect')) {
     function deny_json_or_redirect(string $message = 'AUTH_REQUIRED', int $statusCode = 401, ?string $redirect = null, ?string $permission = null): void
     {
@@ -720,7 +748,7 @@ if (!function_exists('deny_json_or_redirect')) {
             exit;
         }
 
-        $redirect = $redirect ?: 'index.php';
+        $redirect = posmain_app_href($redirect ?: 'index.php');
         header('Location: ' . $redirect);
         exit;
     }
@@ -744,7 +772,47 @@ if (!function_exists('require_pos_authenticated')) {
         }
 
         if (!auth_guard_is_pos_write_authorized()) {
+            if (isset($conn) && $conn instanceof mysqli && !empty($_SESSION['pos_override_period_id'])) {
+                try {
+                    require_once dirname(__DIR__) . '/classes/Pos/Service/DrawerOverrideService.php';
+                    (new DrawerOverrideService())->auditPosWrite($conn, basename((string) ($_SERVER['SCRIPT_NAME'] ?? '')), false, [
+                        'deny_code' => 'POS_AUTH_REQUIRED',
+                    ]);
+                } catch (Throwable $ignored) {
+                }
+            }
             deny_json_or_redirect('POS_AUTH_REQUIRED', 403, 'pos_barcode.php?logout=1');
+        }
+
+        if (isset($conn) && $conn instanceof mysqli && !empty($_SESSION['pos_override_period_id'])) {
+            try {
+                require_once dirname(__DIR__) . '/classes/Pos/Service/DrawerOverrideService.php';
+                $overrides = new DrawerOverrideService();
+                $periodId = (int) $_SESSION['pos_override_period_id'];
+                $period = $overrides->periodById($conn, $periodId);
+                if (!empty($period['ended_at'])) {
+                    $overrides->clearSessionBinding($period);
+                    deny_json_or_redirect('OVERRIDE_ENDED', 403, 'pos_barcode.php');
+                }
+                $operatorId = function_exists('pos_acting_user_id') ? pos_acting_user_id() : (int) ($_SESSION['userid'] ?? 0);
+                if ((int) ($period['operator_user_id'] ?? 0) !== $operatorId) {
+                    deny_json_or_redirect('OVERRIDE_OPERATOR_MISMATCH', 403, 'pos_barcode.php');
+                }
+                // Re-validate from DB (also expires stale inactivity).
+                $active = $overrides->findActiveForDrawer($conn, (int) ($period['drawer_session_id'] ?? 0), true);
+                if (!$active || (int) ($active['id'] ?? 0) !== $periodId) {
+                    $overrides->clearSessionBinding($period);
+                    deny_json_or_redirect('OVERRIDE_ENDED', 403, 'pos_barcode.php');
+                }
+                $overrides->auditPosWrite($conn, basename((string) ($_SERVER['SCRIPT_NAME'] ?? '')), true, [
+                    'target_id' => isset($_POST['id']) ? (int) $_POST['id'] : (isset($_POST['order_id']) ? (int) $_POST['order_id'] : null),
+                ]);
+            } catch (Throwable $exception) {
+                if ($exception instanceof RuntimeException && str_starts_with($exception->getMessage(), 'OVERRIDE_')) {
+                    deny_json_or_redirect($exception->getMessage(), 403, 'pos_barcode.php');
+                }
+                // Non-fatal audit/validation errors must not block POS writes.
+            }
         }
     }
 }
@@ -817,6 +885,8 @@ if (!function_exists('posmain_clear_pos_shift_session')) {
     {
         if ($markClosed) {
             $_SESSION['pos_shift_closed_for_session'] = true;
+        } else {
+            unset($_SESSION['pos_shift_closed_for_session']);
         }
         unset(
             $_SESSION['pos_authenticated'],

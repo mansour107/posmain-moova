@@ -1,24 +1,32 @@
 <?php
+if (defined('POSMAIN_MOOVA_WIDGET_RENDERED')) {
+    return;
+}
+define('POSMAIN_MOOVA_WIDGET_RENDERED', true);
+
 require_once __DIR__ . '/../../classes/MoovaPosIntegration.php';
 
 $moovaWidgetLink = null;
 try {
-    if (isset($conn) && $conn instanceof mysqli && isset($_SESSION['userid'])) {
+    $moovaUserId = 0;
+    if (function_exists('auth_guard_user_id_from_session')) {
+        $moovaUserId = auth_guard_user_id_from_session();
+    } elseif (isset($_SESSION['userid'])) {
+        $moovaUserId = (int) $_SESSION['userid'];
+    }
+    if (isset($conn) && $conn instanceof mysqli && $moovaUserId > 0) {
         MoovaPosIntegration::ensureSchema($conn);
-        $moovaWidgetLink = MoovaPosIntegration::findActiveLinkForUser($conn, (int) $_SESSION['userid']);
+        $moovaWidgetLink = MoovaPosIntegration::findActiveLinkForUser($conn, $moovaUserId);
     }
 } catch (Exception $e) {
     error_log('[Moova POS] widget mapping unavailable: ' . $e->getMessage());
     $moovaWidgetLink = null;
 }
 
-if (!$moovaWidgetLink || empty($moovaWidgetLink['moova_device_token'])) {
-    return;
-}
-
-$moovaDeviceToken = (string) $moovaWidgetLink['moova_device_token'];
-$moovaBranchId = (string) $moovaWidgetLink['moova_branch_id'];
-$moovaLocale = trim((string) ($moovaWidgetLink['locale'] ?: 'ar'));
+$moovaConnected = is_array($moovaWidgetLink) && !empty($moovaWidgetLink['moova_device_token']);
+$moovaDeviceToken = $moovaConnected ? (string) $moovaWidgetLink['moova_device_token'] : '';
+$moovaBranchId = $moovaConnected ? (string) $moovaWidgetLink['moova_branch_id'] : '';
+$moovaLocale = $moovaConnected ? trim((string) ($moovaWidgetLink['locale'] ?: 'ar')) : 'ar';
 $localWidgetUrl = 'moova_pos_widget.php';
 ?>
 	<style>
@@ -52,11 +60,60 @@ $localWidgetUrl = 'moova_pos_widget.php';
 
   #cofe-pos-widget.moova-widget-panel-open {
     position: fixed;
+    margin: 0;
     background: transparent;
     z-index: 999999;
   }
+
+  .moova-navbar-widget .moova-host-controls {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.15rem;
+    width: 74px;
+    height: 38px;
+  }
+
+  .moova-navbar-widget .pw-bell,
+  .moova-navbar-widget .pw-sound-toggle {
+    width: 34px;
+    height: 34px;
+    border: 0;
+    border-radius: 50%;
+    background: transparent;
+    color: rgba(248, 250, 252, 0.82);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    cursor: pointer;
+  }
+
+  .moova-navbar-widget .pw-bell-icon,
+  .moova-navbar-widget .pw-sound-icon {
+    display: inline-flex;
+    width: 20px;
+    height: 20px;
+  }
+
+  .moova-navbar-widget .pw-bell-icon svg,
+  .moova-navbar-widget .pw-sound-icon svg {
+    width: 20px;
+    height: 20px;
+    fill: currentColor;
+  }
+
+  .moova-navbar-widget .pw-sound-toggle .pw-sound-icon-off {
+    display: none;
+  }
+
+  .moova-navbar-widget .moova-host-controls[data-connected="false"] .pw-bell,
+  .moova-navbar-widget .moova-host-controls[data-connected="false"] .pw-sound-toggle {
+    opacity: 0.72;
+  }
 </style>
 
+<?php if ($moovaConnected): ?>
 <iframe
   id="cofe-pos-widget"
   src="<?= htmlspecialchars($localWidgetUrl, ENT_QUOTES, 'UTF-8') ?>"
@@ -101,6 +158,51 @@ $localWidgetUrl = 'moova_pos_widget.php';
       if (!frame.classList.contains('moova-widget-panel-open')) {
         widgetClosedRect = frame.getBoundingClientRect();
       }
+    }
+
+    /**
+     * Ancestors with backdrop-filter/filter/transform (e.g. .pos-corner-menu)
+     * become the containing block for position:fixed descendants. Viewport
+     * coordinates then misplace the iframe and the bell/speaker jump.
+     * Return the padding-edge rect — that is the origin for fixed top/right.
+     */
+    function getFixedContainingBlockRect(el) {
+      let parent = el.parentElement;
+      while (parent && parent !== document.documentElement) {
+        const cs = window.getComputedStyle(parent);
+        const createsContainingBlock =
+          (cs.transform && cs.transform !== 'none')
+          || (cs.filter && cs.filter !== 'none')
+          || (cs.perspective && cs.perspective !== 'none')
+          || (cs.backdropFilter && cs.backdropFilter !== 'none')
+          || (cs.willChange && /transform|filter|perspective|backdrop-filter/.test(cs.willChange));
+        if (createsContainingBlock) {
+          const rect = parent.getBoundingClientRect();
+          const borderTop = Number.parseFloat(cs.borderTopWidth) || 0;
+          const borderRight = Number.parseFloat(cs.borderRightWidth) || 0;
+          const borderBottom = Number.parseFloat(cs.borderBottomWidth) || 0;
+          const borderLeft = Number.parseFloat(cs.borderLeftWidth) || 0;
+          return {
+            top: rect.top + borderTop,
+            left: rect.left + borderLeft,
+            right: rect.right - borderRight,
+            bottom: rect.bottom - borderBottom,
+            width: rect.width - borderLeft - borderRight,
+            height: rect.height - borderTop - borderBottom,
+          };
+        }
+        parent = parent.parentElement;
+      }
+      const layoutViewportWidth = document.documentElement.clientWidth || window.innerWidth;
+      const layoutViewportHeight = document.documentElement.clientHeight || window.innerHeight;
+      return {
+        top: 0,
+        left: 0,
+        right: layoutViewportWidth,
+        bottom: layoutViewportHeight,
+        width: layoutViewportWidth,
+        height: layoutViewportHeight,
+      };
     }
 
     function closeWidgetSurface() {
@@ -348,6 +450,8 @@ $localWidgetUrl = 'moova_pos_widget.php';
           frame.style.background = 'transparent';
           frame.style.top = '';
           frame.style.right = '';
+          frame.style.left = '';
+          frame.style.bottom = '';
           window.requestAnimationFrame(rememberClosedWidgetRect);
           return;
         }
@@ -355,14 +459,16 @@ $localWidgetUrl = 'moova_pos_widget.php';
         rememberClosedWidgetRect();
         const width = Math.max(260, Math.min(window.innerWidth - 36, requestedWidth));
         const slotRect = widgetClosedRect || frame.getBoundingClientRect();
-        const layoutViewportWidth = document.documentElement.clientWidth || window.innerWidth;
-        const top = Math.max(0, Math.round(slotRect.top));
-        const right = Math.max(8, Math.round(layoutViewportWidth - slotRect.right));
-        const height = Math.max(220, Math.min(window.innerHeight - top - 18, requestedHeight));
+        const containingBlock = getFixedContainingBlockRect(frame);
+        const top = Math.max(0, slotRect.top - containingBlock.top);
+        const right = Math.max(0, containingBlock.right - slotRect.right);
+        const height = Math.max(220, Math.min(window.innerHeight - slotRect.top - 18, requestedHeight));
 
         frame.classList.add('moova-widget-panel-open');
         frame.style.top = top + 'px';
         frame.style.right = right + 'px';
+        frame.style.left = 'auto';
+        frame.style.bottom = 'auto';
         frame.style.width = width + 'px';
         frame.style.height = height + 'px';
         frame.style.background = 'transparent';
@@ -556,3 +662,26 @@ $localWidgetUrl = 'moova_pos_widget.php';
     }, true);
   })();
 </script>
+
+<?php else: ?>
+<div class="moova-host-controls" data-connected="false" aria-label="Moova speaker and bell">
+  <button type="button" class="pw-sound-toggle" data-muted="false" aria-label="تشغيل صوت الإشعارات" title="Moova غير متصل — الصوت">
+    <span class="pw-sound-icon" aria-hidden="true">
+      <svg class="pw-sound-icon-on" viewBox="0 0 24 24" role="presentation">
+        <path d="M4 9.5h3.2L12 5.7v12.6l-4.8-3.8H4v-5Zm10.2-.8 1.1-1.1A6.1 6.1 0 0 1 17 12c0 1.7-.7 3.3-1.8 4.4l-1.1-1.1a4.5 4.5 0 0 0 1.3-3.3c0-1.3-.5-2.5-1.2-3.3Zm2.4-2.4 1.1-1.1A9.6 9.6 0 0 1 20.5 12c0 2.6-1.1 5-2.8 6.8l-1.1-1.1A8 8 0 0 0 19 12c0-2.2-.9-4.2-2.4-5.7Z"></path>
+      </svg>
+      <svg class="pw-sound-icon-off" viewBox="0 0 24 24" role="presentation">
+        <path d="M4 9.5h3.2L12 5.7v12.6l-4.8-3.8H4v-5Zm11.1-.6 1.2-1.2 2.2 2.2 2.2-2.2 1.2 1.2-2.2 2.2 2.2 2.2-1.2 1.2-2.2-2.2-2.2 2.2-1.2-1.2 2.2-2.2-2.2-2.2Z"></path>
+      </svg>
+    </span>
+  </button>
+  <button type="button" class="pw-bell" aria-label="الطلبات المعلّقة" title="Moova غير متصل — الجرس">
+    <span class="pw-bell-icon" aria-hidden="true">
+      <svg viewBox="0 0 24 24" role="presentation">
+        <path d="M12 3a4 4 0 0 0-4 4v1.07a7.5 7.5 0 0 1-1.72 4.8L5 14.5V16h14v-1.5l-1.28-1.63A7.5 7.5 0 0 1 16 8.07V7a4 4 0 0 0-4-4Zm0 18a2.75 2.75 0 0 1-2.58-1.8h5.16A2.75 2.75 0 0 1 12 21Z"></path>
+      </svg>
+    </span>
+  </button>
+</div>
+<?php endif; ?>
+

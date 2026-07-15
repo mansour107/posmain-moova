@@ -162,6 +162,8 @@ function shiftPreviewSalesSeed(mysqli $conn): void
         'name_ar' => 'Cash',
         'name_en' => 'Cash',
         'type' => 'cash',
+        'account_id' => 51,
+        'requires_reference' => false,
     ]);
 }
 

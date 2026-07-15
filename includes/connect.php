@@ -289,9 +289,22 @@ if (isset($conn) && $conn instanceof mysqli) {
     // Release the PHP session file lock before RBAC/business work for AJAX.
     // Dashboard/KDS/POS keep many concurrent polls; if any of them hold the
     // lock (including fast 403 denials), later same-session navigations hang.
+    // Keep the session open for endpoints that must persist $_SESSION writes.
     $scriptName = (string) ($_SERVER['SCRIPT_NAME'] ?? $_SERVER['PHP_SELF'] ?? '');
+    $scriptBase = basename($scriptName);
     $isAjaxScript = strpos($scriptName, '/ajax/') !== false || strpos($scriptName, 'ajax/') === 0;
-    if ($isAjaxScript && session_status() === PHP_SESSION_ACTIVE) {
+    $sessionMutatingAjax = [
+        'main_session_lock.php' => true,
+        'main_session_heartbeat.php' => true,
+        'pos_lock.php' => true,
+        'pos_pin_login.php' => true,
+        'dismiss_pin_banner.php' => true,
+    ];
+    if (
+        $isAjaxScript
+        && session_status() === PHP_SESSION_ACTIVE
+        && empty($sessionMutatingAjax[$scriptBase])
+    ) {
         session_write_close();
     }
 

@@ -24,7 +24,10 @@ $conn->query(
     "UPDATE drawer_sessions
         SET status = 'closed',
             closed_at = COALESCE(closed_at, NOW()),
+            counted_cash = COALESCE(counted_cash, opening_cash, 0),
             open_branch_lock = NULL,
+            open_register_lock = NULL,
+            open_user_lock = NULL,
             variance_status = CASE
                 WHEN variance_status IS NULL OR variance_status = '' THEN 'none'
                 ELSE variance_status
@@ -33,6 +36,17 @@ $conn->query(
 );
 
 $affected = (int) $conn->affected_rows;
+
+$overrideTable = $conn->query("SHOW TABLES LIKE 'drawer_override_periods'");
+if ($overrideTable && $overrideTable->num_rows > 0) {
+    $conn->query(
+        "UPDATE drawer_override_periods
+            SET ended_at = COALESCE(ended_at, NOW()),
+                end_reason = COALESCE(end_reason, 'force_close'),
+                active_drawer_lock = NULL
+          WHERE ended_at IS NULL"
+    );
+}
 
 // Clear orphaned branch locks left on non-open rows (blocks next open).
 $conn->query(

@@ -136,6 +136,8 @@ try {
         $_SESSION['pos_drawer_session_id'] = (int) $entry['drawer_session']['id'];
     }
     $_SESSION['pos_user_name'] = $displayName !== '' ? $displayName : (string) $user['uname'];
+    // Successful POS unlock starts a new selling attempt — drop the post-close lockout.
+    unset($_SESSION['pos_shift_closed_for_session']);
     pos_touch_activity();
 
     try {

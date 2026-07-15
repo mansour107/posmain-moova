@@ -34,7 +34,7 @@
         if (element.type === 'hidden' || element.type === 'password') {
             return false;
         }
-        if (element.closest('.pos-pin-pad-modal, .pos-pin-pad-card, #pinPadSection')) {
+        if (element.closest('.pos-pin-pad-modal, .pos-pin-pad-card, #pinPadSection, .ppm-modal, .ppm-shell, .ppm-card, .ppm-grid')) {
             return false;
         }
         if (element.closest('.d-none, [hidden]')) {

@@ -10,6 +10,7 @@ require_once __DIR__ . '/../includes/csrf.php';
 require_once __DIR__ . '/../includes/pos_cache_control.php';
 require_once __DIR__ . '/../includes/shift_handover_idempotency.php';
 require_once __DIR__ . '/../classes/Pos/Service/ShiftSessionService.php';
+require_once __DIR__ . '/../classes/Pos/Service/ManagerApprovalService.php';
 
 register_shutdown_function(function () {
     $error = error_get_last();
@@ -48,14 +49,31 @@ try {
 
     require_csrf('shift_safe_drop');
 
-    if (!auth_guard_has_permission('pos.drawer.safe_drop', $conn)) {
-        throw new RuntimeException('PERMISSION_DENIED');
+    if (!isset($conn) || $conn->connect_error) {
+        throw new RuntimeException('DB_CONNECTION_FAILED');
     }
 
     $conn->set_charset('utf8mb4');
     $userId = function_exists('pos_acting_user_id') ? pos_acting_user_id() : (int) $_SESSION['userid'];
     $payload = $_POST;
     $shiftService = new ShiftSessionService();
+
+    // Same permission-key override path as payin — PIN auth defaults to pos_action.
+    if (!auth_guard_has_permission('pos.drawer.safe_drop', $conn)) {
+        $approvalId = (int) ($payload['manager_approval_id'] ?? $payload['approval_id'] ?? 0);
+        if ($approvalId < 1) {
+            throw new ManagerApprovalRequiredException('pos.drawer.safe_drop');
+        }
+        $approvalService = new ManagerApprovalService();
+        $approval = $approvalService->validateApprovedPermissionOverride(
+            $conn,
+            $approvalId,
+            'pos.drawer.safe_drop',
+            $userId
+        );
+        $approvalService->consumeApproval($conn, (int) $approval['id'], $userId);
+        $payload['manager_approval_id'] = (int) $approval['id'];
+    }
 
     if (empty($_POST['idempotency_key']) && empty($payload['idempotency_key'])) {
         $_POST['idempotency_key'] = 'pos.shift.safe_drop:' . bin2hex(random_bytes(8));
@@ -94,10 +112,20 @@ try {
         ob_end_clean();
     }
     header('Content-Type: application/json; charset=utf-8');
-    http_response_code(400);
+    $message = $exception->getMessage();
+    $status = 400;
+    if (in_array($message, ['LOGIN_REQUIRED', 'POS_UNLOCK_REQUIRED'], true)) {
+        $status = 401;
+    } elseif ($message === 'METHOD_NOT_ALLOWED') {
+        $status = 405;
+    } elseif (in_array($message, ['SHIFT_WRITE_BLOCKED', 'MANAGER_APPROVAL_REQUIRED', 'PERMISSION_DENIED', 'IDEMPOTENCY_IN_PROGRESS'], true)) {
+        $status = 403;
+    }
+    http_response_code($status);
     echo json_encode([
         'success' => false,
-        'code' => $exception->getMessage(),
+        'error' => $message,
+        'code' => $message,
     ], JSON_UNESCAPED_UNICODE);
     exit;
 }

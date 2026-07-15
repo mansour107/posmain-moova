@@ -18,11 +18,7 @@
         window.location.replace(POS_LOGOUT_URL);
     }
 
-    function clearShiftClosedFlagIfLockedOut() {
-        if (isPosSellingSurface()) {
-            return;
-        }
-
+    function clearShiftClosedFlag() {
         try {
             sessionStorage.removeItem('pos_shift_closed');
         } catch (e) {
@@ -76,6 +72,8 @@
                 if (!data || data.authenticated !== true || data.shift_open !== true) {
                     forcePosReauth();
                 } else {
+                    // Live open shift after history restore — drop any stale close flag.
+                    clearShiftClosedFlag();
                     reauthInFlight = false;
                 }
             })
@@ -86,12 +84,23 @@
             });
     }
 
-    clearShiftClosedFlagIfLockedOut();
+    // Fresh server render of an open selling surface means this shift is live.
+    // A leftover pos_shift_closed flag from an earlier close must not force logout
+    // (that was logging managers out right after takeover / force-close success).
+    if (isPosSellingSurface()) {
+        clearShiftClosedFlag();
+    }
 
     window.addEventListener('pageshow', function (event) {
-        // Fast path: known-closed flag → immediate re-auth without a round trip.
+        var backFwd = isBackForwardNavigation(event);
+
+        // Fast path only for history restore of a page marked closed — not fresh loads.
         try {
-            if (sessionStorage.getItem('pos_shift_closed') === '1' && isPosSellingSurface()) {
+            if (
+                backFwd
+                && sessionStorage.getItem('pos_shift_closed') === '1'
+                && isPosSellingSurface()
+            ) {
                 forcePosReauth();
                 return;
             }
@@ -99,14 +108,14 @@
             // ignore storage failures
         }
 
-        // Authoritative path: any history restore of the selling surface is verified
-        // against the server so a closed shift can never be revived from cache.
-        if (isBackForwardNavigation(event) && isPosSellingSurface()) {
+        if (backFwd && isPosSellingSurface()) {
             verifyServerSessionThenMaybeReauth();
             return;
         }
 
-        clearShiftClosedFlagIfLockedOut();
+        if (isPosSellingSurface()) {
+            clearShiftClosedFlag();
+        }
     });
 
     window.addEventListener('popstate', function () {

@@ -58,25 +58,23 @@ try {
     $payload = $_POST;
     $shiftService = new ShiftSessionService();
 
+    // Permission-gap overrides come from ajax/pos_override_auth.php with
+    // target_type=pos_action. Validate by permission_key (not drawer_session),
+    // matching takeover/transfer and auth_guard lane override helpers.
     if (!auth_guard_has_permission('pos.drawer.payin', $conn)) {
-        $drawerSession = $shiftService->currentDrawerSession($conn, $userId, $shiftService->resolveScope($payload));
-        $approvalService = new ManagerApprovalService();
-        $approval = $approvalService->requireApprovedIfNeeded(
-            $conn,
-            'pos.drawer.payin',
-            'drawer_session',
-            $drawerSession ? (int) $drawerSession['id'] : null,
-            (float) ($payload['amount'] ?? 0),
-            $payload,
-            [
-                'user_id' => $userId,
-                'require_manager_approval' => true,
-            ]
-        );
-        if ($approval) {
-            $approvalService->consumeApproval($conn, (int) $approval['id'], $userId);
-            $payload['manager_approval_id'] = (int) $approval['id'];
+        $approvalId = (int) ($payload['manager_approval_id'] ?? $payload['approval_id'] ?? 0);
+        if ($approvalId < 1) {
+            throw new ManagerApprovalRequiredException('pos.drawer.payin');
         }
+        $approvalService = new ManagerApprovalService();
+        $approval = $approvalService->validateApprovedPermissionOverride(
+            $conn,
+            $approvalId,
+            'pos.drawer.payin',
+            $userId
+        );
+        $approvalService->consumeApproval($conn, (int) $approval['id'], $userId);
+        $payload['manager_approval_id'] = (int) $approval['id'];
     }
 
     if (empty($_POST['idempotency_key']) && empty($payload['idempotency_key'])) {

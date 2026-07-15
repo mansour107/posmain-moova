@@ -220,6 +220,69 @@ class ShiftReport
         return $row;
     }
 
+    public function getOrderTypeCounts(): array
+    {
+        $params = [$this->date, (string) $this->userId];
+        $query = "SELECT
+                    SUM(CASE WHEN order_type = 'table' THEN 1 ELSE 0 END) as table_count,
+                    SUM(CASE WHEN order_type = 'delivery' THEN 1 ELSE 0 END) as delivery_count,
+                    SUM(CASE WHEN order_type = 'takeaway' THEN 1 ELSE 0 END) as takeaway_count
+                  FROM ot_head
+                  WHERE DATE(pro_date) = ?
+                  AND user = ?
+                  AND pro_tybe = 9
+                  AND isdeleted = 0";
+        $query = $this->appendShiftWindow($query, $params);
+
+        $stmt = $this->conn->prepare($query);
+        $stmt->bind_param(str_repeat('s', count($params)), ...$params);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc() ?: [];
+        $stmt->close();
+
+        return [
+            'table_count' => (int) ($row['table_count'] ?? 0),
+            'delivery_count' => (int) ($row['delivery_count'] ?? 0),
+            'takeaway_count' => (int) ($row['takeaway_count'] ?? 0),
+        ];
+    }
+
+    public function getSaleTimeBounds(): array
+    {
+        $params = [$this->date, (string) $this->userId];
+        $timestampExpr = $this->shiftWindowTimestampExpression();
+        $query = "SELECT
+                    MIN({$timestampExpr}) as first_sale_time,
+                    MAX({$timestampExpr}) as last_sale_time
+                  FROM ot_head
+                  WHERE DATE(pro_date) = ?
+                  AND user = ?
+                  AND pro_tybe = 9
+                  AND isdeleted = 0";
+        $query = $this->appendShiftWindow($query, $params);
+
+        $stmt = $this->conn->prepare($query);
+        $stmt->bind_param(str_repeat('s', count($params)), ...$params);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc() ?: [];
+        $stmt->close();
+
+        return [
+            'first_sale_time' => $row['first_sale_time'] ?? null,
+            'last_sale_time' => $row['last_sale_time'] ?? null,
+        ];
+    }
+
+    public function getBusinessDay(): string
+    {
+        return (string) $this->date;
+    }
+
+    public function getCashierUsername(): string
+    {
+        return $this->username;
+    }
+
     public function getPaymentBreakdown()
     {
         $params = [$this->date, (string) $this->userId];
@@ -297,8 +360,10 @@ class ShiftReport
         $query = 'SELECT
                     mi.iname,
                     mi.barcode,
-                    SUM(fd.qty_out) as qty,
-                    SUM(fd.det_value) as value
+                    fd.price,
+                    SUM(fd.qty_out - fd.qty_in) as total_qty,
+                    SUM(fd.det_value) as total_value,
+                    COUNT(DISTINCT oh.id) as order_count
                    FROM fat_details fd
                    JOIN ot_head oh ON fd.fatid = oh.id
                    JOIN myitems mi ON fd.item_id = mi.id
@@ -307,8 +372,40 @@ class ShiftReport
                    AND oh.pro_tybe = 9
                    AND oh.isdeleted = 0
                    AND fd.isdeleted = 0';
-        $query = $this->appendShiftWindow($query, $params, 'oh.crtime');
-        $query .= ' GROUP BY fd.item_id ORDER BY value DESC';
+        $query = $this->appendShiftWindow($query, $params, 'oh');
+        $query .= ' GROUP BY fd.item_id, fd.price ORDER BY total_value DESC';
+
+        $stmt = $this->conn->prepare($query);
+        $stmt->bind_param(str_repeat('s', count($params)), ...$params);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        $stmt->close();
+
+        return $result;
+    }
+
+    public function getInvoices()
+    {
+        $params = [$this->date, (string) $this->userId];
+        $query = "SELECT
+                    oh.id,
+                    oh.crtime,
+                    oh.payment_date,
+                    oh.fat_net,
+                    oh.info,
+                    CASE
+                        WHEN oh.order_type = 'table' THEN 'طاولة'
+                        WHEN oh.order_type = 'delivery' THEN 'دليفري'
+                        WHEN oh.order_type = 'takeaway' THEN 'تيك أواي'
+                        ELSE 'غير محدد'
+                    END as order_type
+                  FROM ot_head oh
+                  WHERE DATE(oh.pro_date) = ?
+                  AND oh.user = ?
+                  AND oh.pro_tybe = 9
+                  AND oh.isdeleted = 0";
+        $query = $this->appendShiftWindow($query, $params, 'oh');
+        $query .= ' ORDER BY COALESCE(oh.crtime, oh.payment_date, TIMESTAMP(oh.pro_date)) DESC';
 
         $stmt = $this->conn->prepare($query);
         $stmt->bind_param(str_repeat('s', count($params)), ...$params);

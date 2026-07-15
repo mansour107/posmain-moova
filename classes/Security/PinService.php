@@ -12,12 +12,6 @@ class PinService
     private const TERMINAL_FREEZE_SECONDS = 900;
     public const BOOTSTRAP_PIN = '0000';
 
-    /** @var list<string> */
-    private const BLACKLIST = [
-        '0000', '1111', '2222', '3333', '4444', '5555', '6666', '7777', '8888', '9999',
-        '1234', '4321', '1212', '1010', '2580', '6969', '1122', '1313',
-    ];
-
     public function normalizePin(string $pin): string
     {
         // Strict: do not strip malformed characters for validation callers.
@@ -30,17 +24,10 @@ class PinService
      */
     public function validatePinFormat(string $pin, array $options = []): void
     {
-        // Reject anything that is not exactly four ASCII digits (no stripping).
+        // Format only: any exact 4-digit PIN is allowed (no strength blacklist).
+        // $options retained for call-site compatibility (e.g. allow_bootstrap).
         if (!preg_match('/^\d{' . self::PIN_LENGTH . '}$/', $pin)) {
             throw new InvalidArgumentException('PIN_FORMAT_INVALID');
-        }
-        $normalized = $pin;
-        $allowBootstrap = !empty($options['allow_bootstrap']);
-        if (in_array($normalized, self::BLACKLIST, true)) {
-            if ($allowBootstrap && $normalized === self::BOOTSTRAP_PIN) {
-                return;
-            }
-            throw new InvalidArgumentException('PIN_BLACKLISTED');
         }
     }
 

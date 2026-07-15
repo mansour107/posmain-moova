@@ -10,6 +10,7 @@ $runtimeTest = paidReversalContractSource($root . '/tests/sync/recipe_paid_rever
 
 paidReversalContractAssertContains("require_csrf('pos_browser')", $endpoint, 'paid reversal endpoint must use POS CSRF protection');
 paidReversalContractAssertContains('require_pos_authenticated()', $endpoint, 'paid reversal endpoint must require POS authentication');
+paidReversalContractAssertContains('require_pos_lane_permission', $endpoint, 'paid reversal endpoint should enforce action-specific POS lane permission');
 paidReversalContractAssertContains('reversePaidOrder', $endpoint, 'paid reversal endpoint should delegate to the POS mutation service');
 paidReversalContractAssertNotContains("require_permission(\$action === 'void' ? 'pos.void.paid' : 'pos.refund'", $endpoint, 'paid reversal endpoint should defer permission to manager approval service');
 paidReversalContractAssertContains('recordOrderSnapshot', $endpoint, 'paid reversal endpoint should emit order sync snapshot');

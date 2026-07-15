@@ -24,9 +24,9 @@ if ($previewSource === false) {
     throw new RuntimeException('Unable to read get_shift_preview.php');
 }
 
-shiftCloseContractAssert(strpos($previewSource, 'currentDrawerSession') !== false, 'shift preview should scope to drawer session');
+shiftCloseContractAssert(strpos($previewSource, 'buildShiftReportContext') !== false, 'shift preview should use shared shift report context');
 shiftCloseContractAssert(strpos($previewSource, 'pos_acting_user_id') !== false, 'shift preview should scope to acting cashier');
-shiftCloseContractAssert(strpos($previewSource, 'shift_opened_at') !== false, 'shift preview should pass shift_opened_at to ShiftReport');
+shiftCloseContractAssert(strpos($previewSource, 'new ShiftReport') !== false, 'shift preview should build ShiftReport from shared context');
 
 $barcodeSource = file_get_contents(__DIR__ . '/../../pos_barcode.php');
 shiftCloseContractAssert(strpos($barcodeSource, 'openForCashier') !== false, 'pos_barcode unlock should open drawer shift');

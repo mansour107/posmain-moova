@@ -155,7 +155,8 @@ test.describe('RBAC full suite: navigation visibility', () => {
   test('cashier navbar hides users link when lacking users.manage', async ({ page }) => {
     await loginAs(page, 'cashier');
     const permissions = await fetchCapabilities(page.request);
-    await page.goto('/dashboard.php', { waitUntil: 'domcontentloaded' });
+    // ERP chrome page that does not redirect cashiers away (dashboard empties to POS).
+    await page.goto('/change_password.php', { waitUntil: 'domcontentloaded' });
 
     if (permissions['users.manage']) {
       test.fail(true, 'cashier has users.manage — navbar will show admin links (demo seed or role misconfiguration)');
@@ -172,7 +173,7 @@ test.describe('RBAC full suite: navigation visibility', () => {
   test('cashier sidebar hides add item when lacking menu.edit', async ({ page }) => {
     await loginAs(page, 'cashier');
     const permissions = await fetchCapabilities(page.request);
-    await page.goto('/dashboard.php', { waitUntil: 'domcontentloaded' });
+    await page.goto('/change_password.php', { waitUntil: 'domcontentloaded' });
 
     if (permissions['menu.edit']) {
       test.fail(true, 'cashier has menu.edit — sidebar will show item editor links');
@@ -184,6 +185,7 @@ test.describe('RBAC full suite: navigation visibility', () => {
     await loginAs(page, 'manager');
     const permissions = await fetchCapabilities(page.request);
     expect(permissions['menu.edit']).toBe(true);
+    // May redirect from blank dashboard to a reports landing; sidebar should still render.
     await page.goto('/dashboard.php', { waitUntil: 'domcontentloaded' });
     expect(await page.locator('.main-sidebar a[href="add_item.php"]').count()).toBeGreaterThan(0);
   });

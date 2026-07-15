@@ -251,8 +251,8 @@ if (
     && isset($_SESSION['userid'])
     && (!$routerEnabled || (class_exists('PosmainShopRouter') && PosmainShopRouter::activeSessionShopId() > 0))
 ) {
-    if (!empty($_SESSION['posmain_bootstrap_pending']) || !empty($_SESSION['posmain_pin_must_change'])) {
-        header('Location: change_pin.php' . (!empty($_SESSION['posmain_bootstrap_pending']) ? '?bootstrap=1' : ''));
+    if (!empty($_SESSION['posmain_bootstrap_pending'])) {
+        header('Location: change_pin.php?bootstrap=1');
         exit();
     }
     header('Location: ' . login_post_login_redirect($conn, (int) $_SESSION['userid']));
@@ -295,7 +295,6 @@ if ($mainAuthMode === 'pin') {
     <div style="text-align:center;margin-bottom:1rem;">
       <img src="assets/favicon/favicon.png" alt="Logo" class="ppm-brand">
     </div>
-    <div class="ppm-offline-banner" id="mainPinOffline" role="status">لا يوجد اتصال بالشبكة</div>
     <?php include __DIR__ . '/includes/pin_pad_fragment.php'; ?>
     <div style="text-align:center;margin-top:1rem;color:rgba(255,255,255,.55);font-size:.8rem;">
       &copy; <?= date('Y') ?> جميع الحقوق محفوظة
@@ -304,15 +303,6 @@ if ($mainAuthMode === 'pin') {
   <script src="js/pin_pad.js"></script>
   <script>
   (function () {
-    var offline = document.getElementById('mainPinOffline');
-    function syncOffline() {
-      if (!offline) return;
-      if (navigator.onLine === false) offline.classList.add('is-visible');
-      else offline.classList.remove('is-visible');
-    }
-    window.addEventListener('online', syncOffline);
-    window.addEventListener('offline', syncOffline);
-    syncOffline();
     if (window.PosmainPinPad) {
       window.PosmainPinPad.init('mainPinPad');
     }
@@ -415,7 +405,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             $_SESSION['posmain_auth_method'] = 'password';
                             $_SESSION['posmain_auth_version'] = login_auth_version_for_user($shopConn, $userId);
                             $_SESSION['posmain_bootstrap_pending'] = false;
-                            $_SESSION['posmain_pin_must_change'] = login_pin_must_change_for_user($shopConn, $userId);
+                            $_SESSION['posmain_pin_must_change'] = false;
                             if ($routerEnabled && $route) {
                                 $_SESSION['posmain_shop_id'] = (int) $route['id'];
                                 $_SESSION['posmain_shop_slug'] = (string) $route['slug'];
@@ -423,11 +413,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             }
                             login_insert_session_time($shopConn, $userId);
                             header(
-                                'Location: ' . (
-                                    !empty($_SESSION['posmain_pin_must_change'])
-                                        ? 'change_pin.php'
-                                        : login_post_login_redirect($shopConn, $userId)
-                                )
+                                'Location: ' . login_post_login_redirect($shopConn, $userId)
                             );
                             exit();
                         }

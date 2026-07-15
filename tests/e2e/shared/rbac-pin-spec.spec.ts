@@ -129,7 +129,7 @@ test.describe('§8.2.5 PIN reset', () => {
       await cashierCard.click();
       await expect(page.locator('#teamPanel.is-open')).toBeVisible();
       await page.locator('#regenPinBtn').click();
-      await expect(page.locator('#pinDisplay')).not.toHaveText('····', { timeout: 10_000 });
+      await expect(page.locator('#pinDisplay')).toHaveValue(/^\d{4}$/, { timeout: 10_000 });
       await page.locator('#staffSaveBtn').click();
       await expect(page.locator('#teamToast.is-visible')).toBeVisible({ timeout: 15_000 });
     }
@@ -265,11 +265,10 @@ test.describe('§8.2.12–8.2.13 PIN lockout responses', () => {
     }
     for (let i = 0; i < 3; i++) {
       for (const digit of '5891'.split('')) {
-        await page.locator(`#pinGrid [data-key="${digit}"]`).click();
+        await page.locator(`#posUnlockPinPad [data-key="${digit}"]`).click();
       }
-      await page.locator('#pinGrid [data-key="دخول"]').click();
       await page.waitForTimeout(300);
-      const errorText = (await page.locator('#posUnlockError').textContent()) ?? '';
+      const errorText = (await page.locator('#posUnlockPinPadError').textContent()) ?? '';
       expect(errorText).not.toMatch(/p6_|rbac_pin_/i);
       expect(errorText).toMatch(/رمز غير صحيح|مقفل|PIN/i);
     }
@@ -309,9 +308,8 @@ test.describe('§8.2.16 session fixation hardening', () => {
     const before = (await page.context().cookies()).find((c) => c.name === 'PHPSESSID')?.value;
     const pin = process.env.POSMAIN_TEST_PIN_CASHIER || '9753';
     for (const digit of pin.split('')) {
-      await page.locator(`#pinGrid [data-key="${digit}"]`).click();
+      await page.locator(`#posUnlockPinPad [data-key="${digit}"]`).click();
     }
-    await page.locator('#pinGrid [data-key="دخول"]').click();
     await page.waitForLoadState('domcontentloaded');
     const after = (await page.context().cookies()).find((c) => c.name === 'PHPSESSID')?.value;
     expect(before).toBeTruthy();
@@ -370,9 +368,9 @@ test.describe('§8.2.19 RTL layout at 1024 and 1366', () => {
       await loginAs(page, 'cashier');
       await gotoAfterLogin(page, '/pos_barcode.php');
       await expect(page.locator('html')).toHaveAttribute('dir', 'rtl');
-      const pinPad = page.locator('#pinPadSection');
+      const pinPad = page.locator('#posUnlockPinPad');
       const legacyGate = page.locator('input[name="pos_barcode"]');
-      const registerPair = page.locator('.pair-title, #showPinBtn, #manager_pin');
+      const registerPair = page.locator('.pair-title, #showPinBtn, #registerPairPinPad');
       await expect(pinPad.or(legacyGate).or(registerPair).first()).toBeVisible();
     });
   }

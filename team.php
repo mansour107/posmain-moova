@@ -16,12 +16,18 @@ require_once __DIR__ . '/classes/Security/SecurityAuditLogger.php';
 $hub = new TeamHubService($conn);
 $isAdminSession = auth_guard_is_admin_session();
 
-$initialTab = ($_GET['tab'] ?? 'staff') === 'roles' && $canRoles ? 'roles' : 'staff';
-if (!$canUsers) {
+$requestedTab = (string) ($_GET['tab'] ?? 'staff');
+$initialTab = 'staff';
+if ($requestedTab === 'roles' && $canRoles) {
     $initialTab = 'roles';
-}
-if (!$canRoles) {
+} elseif ($requestedTab === 'logins' && $canUsers) {
+    $initialTab = 'logins';
+} elseif ($requestedTab === 'staff' && $canUsers) {
     $initialTab = 'staff';
+} elseif ($canUsers) {
+    $initialTab = 'staff';
+} elseif ($canRoles) {
+    $initialTab = 'roles';
 }
 
 $showDeactivated = isset($_GET['show_deactivated']);
@@ -34,6 +40,8 @@ if ($isAdminSession && $canUsers && $staffList !== []) {
 }
 $rolesList = $canRoles ? $hub->loadRoles() : [];
 $stats = $hub->stats();
+$loginSummary = $canUsers ? $hub->loginActivitySummary() : ['total' => 0, 'available' => false];
+$recentLogins = $canUsers ? $hub->recentLogins(50) : [];
 
 $defaultRoleId = 0;
 foreach ($rolesList as $r) {
@@ -65,11 +73,29 @@ $hubConfig = [
     'roles' => $rolesList,
     'defaultRoleId' => $defaultRoleId,
     'pinReveal' => $pinReveal,
+    'loginTotal' => (int) ($loginSummary['total'] ?? 0),
+    'loginAvailable' => !empty($loginSummary['available']),
+    'recentLogins' => $recentLogins,
 ];
 
 $assetVer = is_file(__DIR__ . '/css/team-hub.css') ? (string) filemtime(__DIR__ . '/css/team-hub.css') : '1';
 
 include 'includes/header.php';
+
+$teamHubUserName = '';
+if (isset($up) && is_array($up)) {
+    $teamHubUserName = trim((string) ($up['display_name'] ?? ''));
+    if ($teamHubUserName === '') {
+        $teamHubUserName = trim((string) ($up['uname'] ?? ''));
+    }
+}
+if ($teamHubUserName === '') {
+    $teamHubUserName = trim((string) ($_SESSION['login'] ?? 'الموظف'));
+}
+$teamHubUserInitial = function_exists('mb_substr')
+    ? mb_substr($teamHubUserName, 0, 1, 'UTF-8')
+    : substr($teamHubUserName, 0, 1);
+$teamHubUserInitial = $teamHubUserInitial !== '' ? $teamHubUserInitial : 'م';
 ?>
 <script>document.body.classList.add('team-hub-page');</script>
 <link rel="stylesheet" href="css/team-hub.css?v=<?= htmlspecialchars($assetVer, ENT_QUOTES, 'UTF-8') ?>">
@@ -86,13 +112,27 @@ include 'includes/header.php';
     <div class="team-hub-breadcrumb">
       <a href="index.php">الإعدادات</a> › <strong>الفريق</strong>
     </div>
-    <?php if ($canUsers && $canRoles): ?>
+    <?php if ($canUsers || $canRoles): ?>
     <div class="team-hub-tabs">
+      <?php if ($canUsers): ?>
       <button type="button" class="team-hub-tab" id="tabStaff">الموظفون</button>
+      <button type="button" class="team-hub-tab" id="tabLogins">نشاط الدخول</button>
+      <?php endif; ?>
+      <?php if ($canRoles): ?>
       <button type="button" class="team-hub-tab" id="tabRoles">الأدوار</button>
+      <?php endif; ?>
     </div>
     <?php endif; ?>
-    <a href="index.php" class="team-hub-btn team-hub-btn-ghost">← رجوع</a>
+    <div class="team-hub-top-actions">
+      <div class="team-hub-identity" role="status" aria-label="المستخدم الحالي: <?= htmlspecialchars($teamHubUserName, ENT_QUOTES, 'UTF-8') ?>">
+        <span class="team-hub-identity-avatar" aria-hidden="true"><?= htmlspecialchars($teamHubUserInitial, ENT_QUOTES, 'UTF-8') ?></span>
+        <span class="team-hub-identity-copy">
+          <span class="team-hub-identity-label">مرحباً</span>
+          <strong class="team-hub-identity-name"><?= htmlspecialchars($teamHubUserName, ENT_QUOTES, 'UTF-8') ?></strong>
+        </span>
+      </div>
+      <a href="index.php" class="team-hub-btn team-hub-btn-ghost">← رجوع</a>
+    </div>
   </div>
 
   <div class="team-hub-stats">
@@ -106,6 +146,10 @@ include 'includes/header.php';
     <div class="team-hub-stat">
       <div class="team-hub-stat-label">الموظفون النشطون</div>
       <div class="team-hub-stat-value" id="statStaff"><?= (int) $stats['staff_count'] ?></div>
+    </div>
+    <div class="team-hub-stat">
+      <div class="team-hub-stat-label">مرات الدخول</div>
+      <div class="team-hub-stat-value" id="statLogins"><?= !empty($loginSummary['available']) ? (int) $loginSummary['total'] : '—' ?></div>
     </div>
     <?php endif; ?>
     <div class="team-hub-stat">
@@ -136,6 +180,41 @@ include 'includes/header.php';
     </div>
     <div class="team-hub-grid" id="rolesGrid"></div>
   </section>
+
+  <?php if ($canUsers): ?>
+  <section id="sectionLogins" class="<?= $initialTab !== 'logins' ? 'team-hub-hidden' : '' ?>" data-testid="team-login-activity">
+    <div class="team-hub-toolbar">
+      <input type="search" class="team-hub-search" id="loginsSearch" placeholder="ابحث عن مستخدم...">
+      <span class="team-hub-muted">آخر <?= count($recentLogins) ?> تسجيل دخول</span>
+    </div>
+    <div class="team-hub-login-table-wrap">
+      <table class="team-hub-login-table">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>المستخدم</th>
+            <th>وقت الدخول</th>
+          </tr>
+        </thead>
+        <tbody id="loginsTableBody">
+          <?php if ($recentLogins === []): ?>
+          <tr>
+            <td colspan="3"><?= !empty($loginSummary['available']) ? 'لا توجد تسجيلات دخول بعد' : 'غير متاح' ?></td>
+          </tr>
+          <?php else: ?>
+          <?php foreach ($recentLogins as $i => $login): ?>
+          <tr data-uname="<?= htmlspecialchars((string) $login['uname'], ENT_QUOTES, 'UTF-8') ?>">
+            <td><?= $i + 1 ?></td>
+            <td><?= htmlspecialchars((string) $login['uname'], ENT_QUOTES, 'UTF-8') ?></td>
+            <td><?= htmlspecialchars((string) $login['crtime'], ENT_QUOTES, 'UTF-8') ?></td>
+          </tr>
+          <?php endforeach; ?>
+          <?php endif; ?>
+        </tbody>
+      </table>
+    </div>
+  </section>
+  <?php endif; ?>
 
   <div class="team-hub-panel-backdrop" id="panelBackdrop"></div>
   <aside class="team-hub-panel" id="teamPanel" aria-hidden="true">

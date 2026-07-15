@@ -1,0 +1,35 @@
+---
+description: Prefer path-tracing and live UI proof over "code exists" claims when debugging or shipping behavior
+alwaysApply: true
+---
+
+# Real-life verification
+
+Do not treat "the feature exists in source" or a passing string/contract check as proof it works in the UI.
+
+## Reasoning
+
+1. Trace the **actual user click path** end-to-end (handler → redirect → auth mode → rendered page), not only the happy-path file that looks correct.
+2. When the user says "it doesn't appear," believe the UI. Find which hop drops the intended screen (redirect, session clear, wrong auth branch, silent auto-dismiss).
+3. Fix the gap, then chase the **next** failure in the same path (e.g. redirect target invalid after identity clear).
+4. Prefer proving under the **auth mode this machine uses** (main PIN vs legacy unlock), not a generic alternate path.
+
+## Testing
+
+Prefer evidence that mirrors real life. Stack layers until the claim is proven:
+
+| Layer | When |
+|--------|------|
+| Live Docker app (`:8010`) | Default for POS/auth/shift UI bugs |
+| Browser (MCP or Playwright) | Login → act → screenshot / assert the element |
+| Redirect/HTML inspect | Confirm the response body contains the expected modal/page |
+| Access logs / DB | Confirm the write + which URLs returned 200/302 |
+| Playwright e2e | Lock the path after live proof |
+| Contract/string tests | Fast guards only — never sole proof of UI |
+
+## Hard rules
+
+- **"Already implemented" is not done** if the user cannot see it. Reproduce first.
+- If e2e fails for an unrelated helper bug, fix the helper so the suite can protect the real path — do not declare the product fixed while the only life-like test is red.
+- Prefer `waitFor` / real waits over Playwright `isVisible({ timeout })` (timeout is ignored).
+- After a redirect-based UX change, prove with live HTML or a browser assertion on the destination, not only that the source file contains markup.

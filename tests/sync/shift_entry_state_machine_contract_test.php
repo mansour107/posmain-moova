@@ -34,6 +34,19 @@ shiftEntryAssert(strpos($drawerSource, 'REGISTER_DRAWER_ALREADY_OPEN') !== false
 $entrySource = (string) file_get_contents($root . '/classes/Pos/Service/ShiftEntryService.php');
 shiftEntryAssert(strpos($entrySource, 'currentBusinessDayForBranch') !== false, 'business-day aware');
 shiftEntryAssert(strpos($entrySource, 'requirePairedRegister') !== false, 'register pairing required');
+shiftEntryAssert(strpos($entrySource, 'can_override') !== false, 'blocking can_override metadata');
+shiftEntryAssert(strpos($entrySource, 'findLegacyNullRegisterOpenSession') !== false, 'legacy null-register fallback');
+
+$overrideSource = (string) file_get_contents($root . '/classes/Pos/Service/DrawerOverrideService.php');
+shiftEntryAssert(strpos($overrideSource, 'drawer_override_periods') !== false, 'override periods table');
+shiftEntryAssert(strpos($overrideSource, 'pos.shift.override') !== false, 'override permission');
+shiftEntryAssert(strpos($overrideSource, 'drawer_override_started') !== false, 'override started audit');
+
+$schemaSource = (string) file_get_contents($root . '/classes/Sync/SchemaManager.php');
+shiftEntryAssert(strpos($schemaSource, 'drawer_override_periods') !== false, 'schema includes override periods');
+
+$authSource = (string) file_get_contents($root . '/includes/auth_guard.php');
+shiftEntryAssert(strpos($authSource, "'pos.shift.override'") !== false, 'auth map has override permission');
 
 echo "shift-entry-state-machine-contract-ok\n";
 

@@ -1,72 +1,54 @@
-<?php 
+<?php
 require_once __DIR__ . '/../includes/session_bootstrap.php';
 include('../includes/connect.php');
+require_once __DIR__ . '/../includes/auth_guard.php';
+require_once __DIR__ . '/../classes/Pos/Service/ShiftSessionService.php';
+require_once __DIR__ . '/../classes/ShiftReport.php';
 
-// التحقق من تسجيل الدخول
 if (!isset($_SESSION['userid'])) {
     header('Location: ../index.php');
     exit;
 }
 
-$user_id = $_SESSION['userid'];
-require_once __DIR__ . '/../includes/business_day.php';
-$today = posmain_current_business_day(
-    $conn,
-    (int) ($_SESSION['pos_tenant'] ?? 0),
-    (int) ($_SESSION['pos_branch'] ?? 0)
-);
+$user_id = function_exists('pos_acting_user_id') ? pos_acting_user_id() : (int) $_SESSION['userid'];
+$shiftSessions = new ShiftSessionService();
+$reportContext = $shiftSessions->buildShiftReportContext($conn, (int) $user_id);
+$reportScope = $reportContext['scope'];
+$today = $reportContext['business_day'];
+$report = new ShiftReport($conn, (int) $user_id, $today, $reportScope);
 
-// جلب اسم المستخدم
-$user_query = $conn->query("SELECT uname FROM users WHERE id = $user_id");
-$user_data = $user_query->fetch_assoc();
-$cashier_name = $user_data['uname'] ?? 'الكاشير';
+$totals = $report->getTotals();
+$orderTypes = $report->getOrderTypeCounts();
+$timeBounds = $report->getSaleTimeBounds();
+$items_query = $report->getItemsBreakdown();
 
-// جلب إعدادات الشركة
-$settings_query = $conn->query("SELECT * FROM settings WHERE id = 1");
-$settings = $settings_query->fetch_assoc();
+$cashier_name = $report->getCashierUsername() ?: 'الكاشير';
+$settings_query = $conn->query('SELECT * FROM settings WHERE id = 1');
+$settings = $settings_query ? $settings_query->fetch_assoc() : [];
 
-// جلب إجمالي مبيعات اليوم للمستخدم المسجل فقط
-$sales_query = $conn->query("SELECT 
-    COUNT(*) as total_invoices,
-    COALESCE(SUM(fat_total), 0) as total_sales,
-    COALESCE(SUM(fat_disc), 0) as total_discounts,
-    COALESCE(SUM(fat_net), 0) as net_sales,
-    MIN(crtime) as first_sale_time,
-    MAX(crtime) as last_sale_time,
-	    SUM(CASE WHEN order_type = 'table' THEN 1 ELSE 0 END) as table_count,
-	    SUM(CASE WHEN order_type = 'delivery' THEN 1 ELSE 0 END) as delivery_count,
-	    SUM(CASE WHEN order_type = 'takeaway' THEN 1 ELSE 0 END) as takeaway_count
-    FROM ot_head 
-    WHERE DATE(pro_date) = '$today'
-	    AND user = '$user_id'
-	    AND pro_tybe = 9
-	    AND payment_status = 'paid'
-	    AND order_status = 'completed'
-	    AND isdeleted = 0");
-$sales_data = $sales_query->fetch_assoc();
+$sales_data = [
+    'total_invoices' => (int) ($totals['total_orders'] ?? 0),
+    'total_sales' => (float) ($totals['total_gross'] ?? 0),
+    'total_discounts' => (float) ($totals['total_discount'] ?? 0),
+    'net_sales' => (float) ($totals['total_net'] ?? 0),
+    'table_count' => $orderTypes['table_count'],
+    'delivery_count' => $orderTypes['delivery_count'],
+    'takeaway_count' => $orderTypes['takeaway_count'],
+    'first_sale_time' => $timeBounds['first_sale_time'],
+    'last_sale_time' => $timeBounds['last_sale_time'],
+];
 
-// جلب تفاصيل أصناف اليوم للمستخدم المسجل فقط
-$items_query = $conn->query("SELECT 
-    mi.iname,
-    SUM(fd.qty_out - fd.qty_in) as total_qty,
-    fd.price,
-    SUM(fd.det_value) as total_value
-    FROM ot_head oh
-	    JOIN fat_details fd ON oh.id = fd.fatid
-    JOIN myitems mi ON fd.item_id = mi.id
-    WHERE DATE(oh.pro_date) = '$today'
-	    AND oh.user = '$user_id'
-	    AND oh.pro_tybe = 9
-	    AND oh.payment_status = 'paid'
-	    AND oh.order_status = 'completed'
-	    AND oh.isdeleted = 0
-    AND fd.isdeleted = 0
-    GROUP BY fd.item_id, fd.price
-    ORDER BY total_value DESC");
-
-// حساب أوقات الشيفت
-$shift_start = $sales_data['first_sale_time'] ? date('H:i', strtotime($sales_data['first_sale_time'])) : date('H:i', strtotime('today'));
-$shift_end = $sales_data['last_sale_time'] ? date('H:i', strtotime($sales_data['last_sale_time'])) : date('H:i');
+$shiftOpenedAt = $report->getShiftOpenedAt();
+$shift_start = $shiftOpenedAt
+    ? date('H:i', strtotime($shiftOpenedAt))
+    : ($sales_data['first_sale_time'] ? date('H:i', strtotime((string) $sales_data['first_sale_time'])) : date('H:i'));
+$shift_end = $sales_data['last_sale_time']
+    ? date('H:i', strtotime((string) $sales_data['last_sale_time']))
+    : date('H:i');
+$shift_number = ($reportContext['drawer_session']['id'] ?? null)
+    ? ((int) $reportContext['drawer_session']['id'] . '_' . str_replace('-', '', $today))
+    : (str_replace('-', '', $today) . '_' . (int) $user_id);
+$report_day_label = $today;
 ?>
 
 <!DOCTYPE html>
@@ -74,7 +56,7 @@ $shift_end = $sales_data['last_sale_time'] ? date('H:i', strtotime($sales_data['
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>تقرير مبيعات الشيفت - <?= $cashier_name ?></title>
+    <title>تقرير مبيعات الشيفت - <?= htmlspecialchars($cashier_name, ENT_QUOTES, 'UTF-8') ?></title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <style>
         @media print {
@@ -111,14 +93,14 @@ $shift_end = $sales_data['last_sale_time'] ? date('H:i', strtotime($sales_data['
 
 <!-- رأس الشركة -->
 <div class="company-header text-center">
-    <?php 
+    <?php
     $logo_path = '../assets/logo/logo.jpg';
     if (file_exists($logo_path)) {
         echo '<img src="' . $logo_path . '" alt="" class="img-fluid mb-2" style="max-height: 60px;">';
     }
     ?>
-    <h4 class="mb-1"><?= $settings['company_name'] ?? 'اسم الشركة' ?></h4>
-    <small class="text-muted"><?= $settings['company_address'] ?? '' ?></small>
+    <h4 class="mb-1"><?= htmlspecialchars((string) ($settings['company_name'] ?? 'اسم الشركة'), ENT_QUOTES, 'UTF-8') ?></h4>
+    <small class="text-muted"><?= htmlspecialchars((string) ($settings['company_address'] ?? ''), ENT_QUOTES, 'UTF-8') ?></small>
 </div>
 
 <!-- عنوان التقرير -->
@@ -133,23 +115,23 @@ $shift_end = $sales_data['last_sale_time'] ? date('H:i', strtotime($sales_data['
         <div class="border p-2 rounded">
             <div class="row">
                 <div class="col-6"><strong>التاريخ:</strong></div>
-                <div class="col-6 text-end"><?= date('Y-m-d') ?></div>
+                <div class="col-6 text-end"><?= htmlspecialchars($report_day_label, ENT_QUOTES, 'UTF-8') ?></div>
             </div>
             <div class="row">
                 <div class="col-6"><strong>الكاشير:</strong></div>
-                <div class="col-6 text-end"><?= $cashier_name ?></div>
+                <div class="col-6 text-end"><?= htmlspecialchars($cashier_name, ENT_QUOTES, 'UTF-8') ?></div>
             </div>
             <div class="row">
                 <div class="col-6"><strong>رقم الشيفت:</strong></div>
-                <div class="col-6 text-end"><?= date('Ymd') . '_' . $user_id ?></div>
+                <div class="col-6 text-end"><?= htmlspecialchars((string) $shift_number, ENT_QUOTES, 'UTF-8') ?></div>
             </div>
             <div class="row">
                 <div class="col-6"><strong>بداية الشيفت:</strong></div>
-                <div class="col-6 text-end"><?= $shift_start ?></div>
+                <div class="col-6 text-end"><?= htmlspecialchars($shift_start, ENT_QUOTES, 'UTF-8') ?></div>
             </div>
             <div class="row">
                 <div class="col-6"><strong>نهاية الشيفت:</strong></div>
-                <div class="col-6 text-end"><?= $shift_end ?></div>
+                <div class="col-6 text-end"><?= htmlspecialchars($shift_end, ENT_QUOTES, 'UTF-8') ?></div>
             </div>
         </div>
     </div>
@@ -158,7 +140,7 @@ $shift_end = $sales_data['last_sale_time'] ? date('H:i', strtotime($sales_data['
 <div class="section-divider"></div>
 
 <!-- تفاصيل الأصناف -->
-<?php if ($items_query->num_rows > 0): ?>
+<?php if ($items_query && $items_query->num_rows > 0): ?>
 <div class="mb-3">
     <h6 class="text-center mb-2">تفاصيل الأصناف المباعة</h6>
     <table class="table table-sm table-bordered receipt-fixed-table">
@@ -179,12 +161,12 @@ $shift_end = $sales_data['last_sale_time'] ? date('H:i', strtotime($sales_data['
         <tbody>
             <?php while ($item = $items_query->fetch_assoc()): ?>
             <tr style="font-size: 10px;">
-                <td class="receipt-item-name-cell" title="<?= $item['iname'] ?>">
-                    <?= $item['iname'] ?>
+                <td class="receipt-item-name-cell" title="<?= htmlspecialchars((string) $item['iname'], ENT_QUOTES, 'UTF-8') ?>">
+                    <?= htmlspecialchars((string) $item['iname'], ENT_QUOTES, 'UTF-8') ?>
                 </td>
-                <td class="text-center"><?= number_format($item['total_qty'], 1) ?></td>
-                <td class="text-center"><?= number_format($item['price'], 2) ?></td>
-                <td class="text-center"><?= number_format($item['total_value'], 2) ?></td>
+                <td class="text-center"><?= number_format((float) $item['total_qty'], 1) ?></td>
+                <td class="text-center"><?= number_format((float) $item['price'], 2) ?></td>
+                <td class="text-center"><?= number_format((float) $item['total_value'], 2) ?></td>
             </tr>
             <?php endwhile; ?>
         </tbody>
@@ -193,7 +175,7 @@ $shift_end = $sales_data['last_sale_time'] ? date('H:i', strtotime($sales_data['
 <?php else: ?>
 <div class="text-center text-muted mb-3">
     <i class="fas fa-info-circle"></i>
-    <p>لا توجد مبيعات لك اليوم</p>
+    <p>لا توجد مبيعات في الشيفت الحالي</p>
 </div>
 <?php endif; ?>
 
@@ -201,38 +183,38 @@ $shift_end = $sales_data['last_sale_time'] ? date('H:i', strtotime($sales_data['
 
 <!-- ملخص المبيعات -->
 <div class="total-section">
-    <h6 class="text-center mb-2">ملخص مبيعاتك اليوم</h6>
+    <h6 class="text-center mb-2">ملخص مبيعات الشيفت</h6>
     <table class="table table-sm mb-0">
         <tbody>
             <tr>
                 <td><strong>عدد الفواتير:</strong></td>
-                <td class="text-end"><?= $sales_data['total_invoices'] ?></td>
+                <td class="text-end"><?= (int) $sales_data['total_invoices'] ?></td>
             </tr>
             <tr>
                 <td><strong>عدد الطاولات:</strong></td>
-                <td class="text-end"><?= $sales_data['table_count'] ?></td>
+                <td class="text-end"><?= (int) $sales_data['table_count'] ?></td>
             </tr>
             <tr>
                 <td><strong>عدد الدليفري:</strong></td>
-                <td class="text-end"><?= $sales_data['delivery_count'] ?></td>
+                <td class="text-end"><?= (int) $sales_data['delivery_count'] ?></td>
             </tr>
             <tr>
                 <td><strong>عدد تيك أواي:</strong></td>
-                <td class="text-end"><?= $sales_data['takeaway_count'] ?></td>
+                <td class="text-end"><?= (int) $sales_data['takeaway_count'] ?></td>
             </tr>
             <tr>
                 <td><strong>الإجمالي:</strong></td>
-                <td class="text-end"><?= number_format($sales_data['total_sales'], 2) ?> ج.م</td>
+                <td class="text-end"><?= number_format((float) $sales_data['total_sales'], 2) ?> ج.م</td>
             </tr>
-            <?php if ($sales_data['total_discounts'] > 0): ?>
+            <?php if ((float) $sales_data['total_discounts'] > 0): ?>
             <tr>
                 <td><strong>الخصم:</strong></td>
-                <td class="text-end"><?= number_format($sales_data['total_discounts'], 2) ?> ج.م</td>
+                <td class="text-end"><?= number_format((float) $sales_data['total_discounts'], 2) ?> ج.م</td>
             </tr>
             <?php endif; ?>
             <tr class="table-success">
                 <td><strong>الصافي:</strong></td>
-                <td class="text-end"><strong><?= number_format($sales_data['net_sales'], 2) ?> ج.م</strong></td>
+                <td class="text-end"><strong><?= number_format((float) $sales_data['net_sales'], 2) ?> ج.م</strong></td>
             </tr>
         </tbody>
     </table>
@@ -267,35 +249,17 @@ $shift_end = $sales_data['last_sale_time'] ? date('H:i', strtotime($sales_data['
 
 <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
 <script>
-// علّم أن صفحة الطباعة تم فتحها
-sessionStorage.setItem('pos_print_page_opened', 'true');
-console.log('Print page opened, flag set');
-
-// استخدام JavaScript عادي بدلاً من jQuery
-document.addEventListener('DOMContentLoaded', function() {
-    var printButton = document.getElementById('printButton');
-    
-    if (printButton) {
-        printButton.addEventListener('click', function() {
-            console.log('Print button clicked');
-            window.print();
-        });
-    }
+document.getElementById('printButton').addEventListener('click', function () {
+    window.print();
 });
-</script>
-
-document.addEventListener('keydown', function(event) {
-    if (event.key === "Escape") {
+document.addEventListener('keydown', function (event) {
+    if (event.key === 'Escape') {
         document.getElementById('back').click();
     }
-    if (event.key === "Enter" || event.key === " ") {
+    if (event.key === 'Enter' || event.key === ' ') {
         window.print();
     }
 });
-
-// طباعة تلقائية عند التحميل (اختياري)
-// window.onload = function() { window.print(); };
 </script>
-
 </body>
 </html>

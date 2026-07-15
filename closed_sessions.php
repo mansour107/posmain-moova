@@ -11,7 +11,14 @@ $premiumCssVer = is_file(__DIR__ . '/css/premium-report-light.css')
     ? (string) filemtime(__DIR__ . '/css/premium-report-light.css')
     : '1';
 ?>
-<?php include('includes/header.php') ?>
+<?php
+// Mint before header.php session_write_close() so modal POSTs can verify tokens.
+csrf_token('shift_resolve');
+csrf_token('shift_close');
+csrf_token('shift_baseline');
+csrf_token('business_day_cutoff');
+include('includes/header.php');
+?>
 <?php include('includes/navbar.php') ?>
 <?php include('includes/sidebar.php') ?>
 <script>document.body.classList.add('premium-report-page');</script>
@@ -572,8 +579,19 @@ $premiumCssVer = is_file(__DIR__ . '/css/premium-report-light.css')
                 <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
               </div>
               <div class="modal-body">
-                <label class="form-label" for="resolveNotes">ملاحظات الحل (مطلوبة)</label>
-                <textarea class="form-control" name="resolution_notes" id="resolveNotes" rows="3" required></textarea>
+                <?php require_once __DIR__ . '/classes/Pos/Service/ShiftCountService.php'; ?>
+                <label class="form-label" for="resolveReasonCode">سبب الفرق (مطلوب)</label>
+                <select class="form-control mb-3" name="resolution_reason_code" id="resolveReasonCode" required>
+                  <option value="" selected disabled>اختر السبب…</option>
+                  <?php foreach (ShiftCountService::resolutionReasonCodes() as $resolveReasonCode => $resolveReasonLabel): ?>
+                  <option value="<?= htmlspecialchars($resolveReasonCode, ENT_QUOTES, 'UTF-8') ?>"><?= htmlspecialchars($resolveReasonLabel) ?></option>
+                  <?php endforeach; ?>
+                </select>
+                <label class="form-label" for="resolveNotes">تفاصيل إضافية <span id="resolveNotesOptional">(اختياري)</span></label>
+                <textarea class="form-control" name="resolution_notes" id="resolveNotes" rows="3" placeholder="أي توضيح يساعد عند مراجعة هذه الجلسة لاحقاً"></textarea>
+                <p class="text-muted mt-3 mb-0" style="font-size:0.85rem">
+                  عند التأكيد يُسجَّل الفرق تلقائياً في الحسابات (حساب فروقات عد الدرج) حتى يطابق رصيد الصندوق النقد الفعلي.
+                </p>
               </div>
               <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">إلغاء</button>
@@ -591,7 +609,20 @@ $premiumCssVer = is_file(__DIR__ . '/css/premium-report-light.css')
         document.getElementById('resolveVarianceType').value = btn.getAttribute('data-variance-type') || '';
         document.getElementById('resolveVarianceAmount').value = btn.getAttribute('data-variance-amount') || '';
         document.getElementById('resolveNotes').value = '';
+        const reasonSelect = document.getElementById('resolveReasonCode');
+        if (reasonSelect) reasonSelect.selectedIndex = 0;
       });
+      (function () {
+        const reasonSelect = document.getElementById('resolveReasonCode');
+        const notesField = document.getElementById('resolveNotes');
+        const optionalTag = document.getElementById('resolveNotesOptional');
+        if (!reasonSelect || !notesField) return;
+        reasonSelect.addEventListener('change', function () {
+          const isOther = reasonSelect.value === 'other';
+          notesField.required = isOther;
+          if (optionalTag) optionalTag.textContent = isOther ? '(مطلوب — اكتب التفاصيل)' : '(اختياري)';
+        });
+      })();
       </script>
       <?php endif; ?>
 

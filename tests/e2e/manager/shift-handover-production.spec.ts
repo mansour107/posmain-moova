@@ -116,7 +116,7 @@ test.describe.serial('manager: shift handover production scenarios', () => {
     await expectSessionNotUnresolved(page, sessionId);
 
     await page.goto(`/drawer_session.php?id=${sessionId}`);
-    await expect(page.getByRole('heading', { name: /محاولات العد|سجل الحركات|سجل الحلول/i }).first()).toBeVisible({
+    await expect(page.getByRole('heading', { name: /محاولات العد|سجل الحركات|سجل حركات الدرج|سجل الحلول/i }).first()).toBeVisible({
       timeout: 10_000,
     });
   });

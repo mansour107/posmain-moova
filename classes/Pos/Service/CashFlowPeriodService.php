@@ -776,6 +776,95 @@ class CashFlowPeriodService
         return $rows;
     }
 
+    /**
+     * Security audit rows correlated to override periods for a drawer session.
+     *
+     * @return list<array{event_type:string,user_id:?int,created_at:?string,summary:string,metadata:array}>
+     */
+    public function overrideAuditEvents(mysqli $conn, int $drawerSessionId): array
+    {
+        if ($drawerSessionId < 1 || !$this->tableExists($conn, 'security_audit_log')) {
+            return [];
+        }
+
+        $eventTypes = [
+            'drawer_override_started',
+            'drawer_override_operation',
+            'drawer_override_ended',
+            'drawer_override_expired',
+            'drawer_override_denied',
+        ];
+        $placeholders = implode(',', array_fill(0, count($eventTypes), '?'));
+        // LIKE narrows in SQL so the LIMIT is a cap, not the selection; the exact
+        // drawer_session_id check below removes prefix false-positives (460 vs 4601).
+        $sql = "
+            SELECT event_type, user_id, created_at, metadata_json
+              FROM security_audit_log
+             WHERE event_type IN ({$placeholders})
+               AND metadata_json LIKE ?
+             ORDER BY created_at DESC, id DESC
+             LIMIT 500
+        ";
+        $stmt = $conn->prepare($sql);
+        $params = $eventTypes;
+        $params[] = '%"drawer_session_id":' . $drawerSessionId . '%';
+        $types = str_repeat('s', count($params));
+        $stmt->bind_param($types, ...$params);
+        $stmt->execute();
+        $rows = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+        $stmt->close();
+
+        $events = [];
+        foreach ($rows ?: [] as $row) {
+            $metadata = [];
+            $raw = (string) ($row['metadata_json'] ?? '');
+            if ($raw !== '') {
+                $decoded = json_decode($raw, true);
+                if (is_array($decoded)) {
+                    $metadata = $decoded;
+                }
+            }
+            if ((int) ($metadata['drawer_session_id'] ?? 0) !== $drawerSessionId) {
+                continue;
+            }
+            $summaryParts = [];
+            if (array_key_exists('success', $metadata)) {
+                $summaryParts[] = !empty($metadata['success']) ? 'نجحت' : 'مرفوضة';
+            }
+            if (!empty($metadata['reason'])) {
+                $summaryParts[] = (string) $metadata['reason'];
+            }
+            if (!empty($metadata['end_reason'])) {
+                $summaryParts[] = 'سبب الإنهاء: ' . $metadata['end_reason'];
+            }
+            if (!empty($metadata['override_period_id'])) {
+                $summaryParts[] = 'فترة #' . (int) $metadata['override_period_id'];
+            }
+            if (!empty($metadata['route'])) {
+                $summaryParts[] = (string) $metadata['route'];
+            }
+            $events[] = [
+                'event_type' => (string) ($row['event_type'] ?? ''),
+                'user_id' => $row['user_id'] !== null ? (int) $row['user_id'] : null,
+                'created_at' => $row['created_at'] !== null ? (string) $row['created_at'] : null,
+                'summary' => implode(' · ', $summaryParts),
+                'metadata' => $metadata,
+            ];
+        }
+
+        return $events;
+    }
+
+    /**
+     * @return list<array<string, mixed>>
+     */
+    public function overridePeriods(mysqli $conn, array $filters = []): array
+    {
+        require_once __DIR__ . '/DrawerOverrideService.php';
+
+        return (new DrawerOverrideService())->listPeriods($conn, $filters);
+    }
+
     private function bindParams(mysqli_stmt $stmt, array $params): void
     {
         $types = '';

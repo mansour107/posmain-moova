@@ -77,7 +77,7 @@ class MainAuthenticationService
                 throw new RuntimeException('PIN_INVALID');
             }
             if (!$this->pinService->verifyPin($pin, (string) ($user['pin_hash'] ?? ''))) {
-                // Allow bootstrap verify even if blacklist would block set.
+                // Bootstrap owner may still hold a legacy hash that verifyPin alone misses.
                 if (!$this->verifyBootstrapPinHash($pin, (string) ($user['pin_hash'] ?? ''))) {
                     $this->recordMainPinFailure($conn, $throttleBuckets);
                     $this->pinService->recordUserFailure($conn, $ownerId);
@@ -158,11 +158,14 @@ class MainAuthenticationService
         $this->recordMainPinSuccess($conn, $throttleBuckets);
         $this->pinService->clearUserFailures($conn, (int) $user['id']);
 
-        $mustChange = !empty($user['pin_must_change']) || $bootstrapPending;
+        // PIN changes for staff are owned by Team Hub. Only first-time owner
+        // bootstrap still forces the login-screen change_pin panel.
+        $forceChangePin = $bootstrapPending
+            && (int) $user['id'] === (int) ($bootstrap->currentState($conn)['owner_user_id'] ?? 0);
         $this->establishSession($conn, $user, [
-            'bootstrap_pending' => $bootstrapPending && (int) $user['id'] === (int) ($bootstrap->currentState($conn)['owner_user_id'] ?? 0),
+            'bootstrap_pending' => $forceChangePin,
             'auth_method' => 'main_pin',
-            'must_change_pin' => $mustChange,
+            'must_change_pin' => $forceChangePin,
         ]);
 
         $this->auditSafe($conn, 'main_pin_login_success', [
@@ -170,15 +173,13 @@ class MainAuthenticationService
             'target_type' => 'user',
             'target_id' => (int) $user['id'],
             'ip' => $ip,
-            'metadata' => ['must_change_pin' => $mustChange],
+            'metadata' => ['must_change_pin' => $forceChangePin],
         ]);
 
         require_once __DIR__ . '/PostLoginRouteService.php';
         $router = new PostLoginRouteService();
-        if ($mustChange) {
-            $redirect = !empty($_SESSION['posmain_bootstrap_pending'])
-                ? 'change_pin.php?bootstrap=1'
-                : 'change_pin.php';
+        if ($forceChangePin) {
+            $redirect = 'change_pin.php?bootstrap=1';
         } else {
             $route = $router->resolve($conn, (int) $user['id']);
             $redirect = (string) ($route['url'] ?? 'dashboard.php');
@@ -222,9 +223,8 @@ class MainAuthenticationService
         $_SESSION['posmain_auth_version'] = (int) ($user['auth_version'] ?? 1);
         $_SESSION['posmain_auth_method'] = (string) ($options['auth_method'] ?? 'password');
         $_SESSION['posmain_bootstrap_pending'] = !empty($options['bootstrap_pending']);
-        $_SESSION['posmain_pin_must_change'] = !empty($options['must_change_pin'])
-            || !empty($user['pin_must_change'])
-            || !empty($options['bootstrap_pending']);
+        // Staff PIN changes happen in Team Hub; only bootstrap uses the login change panel.
+        $_SESSION['posmain_pin_must_change'] = !empty($options['bootstrap_pending']);
 
         // Local PIN main auth: acting user is the same as the session user.
         if ($_SESSION['posmain_auth_method'] === 'main_pin'
@@ -241,6 +241,8 @@ class MainAuthenticationService
                 // Defer shift open to ShiftEntryService; only mark acting identity.
                 $_SESSION['pos_authenticated'] = false;
             }
+            // Seed heartbeat so soft-lock grace starts after login, before JS runs.
+            $_SESSION['posmain_heartbeat_last_at'] = time();
         }
 
         if (function_exists('auth_guard_invalidate_capabilities_cache')) {
@@ -264,9 +266,12 @@ class MainAuthenticationService
             'posmain_bootstrap_pending', 'posmain_pin_must_change',
             'posmain_capabilities_cache', 'posmain_capabilities_version',
             'posmain_shop_id', 'posmain_shop_slug', 'posmain_shop_user_id',
+            'posmain_heartbeat_last_at',
             'pos_acting_user_id', 'pos_acting_user_name',
             'pos_authenticated', 'pos_user_id', 'pos_user_name',
+            'pos_drawer_session_id',
             'pos_shift_session_token', 'pos_last_activity_at',
+            'pos_shift_closed_for_session',
             'pos_unlocked_pending_open', 'pos_pending_takeover',
             'pos_cart_park_required', 'pos_previous_acting_user_id',
         ] as $key) {
@@ -342,8 +347,7 @@ class MainAuthenticationService
 
     public function isBootstrapRestrictedSession(): bool
     {
-        return !empty($_SESSION['posmain_bootstrap_pending'])
-            || !empty($_SESSION['posmain_pin_must_change']);
+        return !empty($_SESSION['posmain_bootstrap_pending']);
     }
 
     /**

@@ -15,6 +15,18 @@ require_login();
 require_csrf('pos_pin');
 
 $actingId = pos_acting_user_id();
+
+try {
+    require_once __DIR__ . '/../classes/Pos/Service/DrawerOverrideService.php';
+    (new DrawerOverrideService())->endActiveForOperator(
+        $conn,
+        $actingId,
+        DrawerOverrideService::END_REASON_LOCK,
+        true
+    );
+} catch (Throwable $ignored) {
+}
+
 posmain_clear_pos_shift_session(false);
 pos_clear_acting_user();
 

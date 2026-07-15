@@ -22,12 +22,16 @@
   const els = {
     tabStaff: document.getElementById('tabStaff'),
     tabRoles: document.getElementById('tabRoles'),
+    tabLogins: document.getElementById('tabLogins'),
     sectionStaff: document.getElementById('sectionStaff'),
     sectionRoles: document.getElementById('sectionRoles'),
+    sectionLogins: document.getElementById('sectionLogins'),
     staffGrid: document.getElementById('staffGrid'),
     rolesGrid: document.getElementById('rolesGrid'),
     staffSearch: document.getElementById('staffSearch'),
     rolesSearch: document.getElementById('rolesSearch'),
+    loginsSearch: document.getElementById('loginsSearch'),
+    loginsTableBody: document.getElementById('loginsTableBody'),
     backdrop: document.getElementById('panelBackdrop'),
     panel: document.getElementById('teamPanel'),
     panelTitle: document.getElementById('panelTitle'),
@@ -262,13 +266,26 @@
   function setTab(tab) {
     activeTab = tab;
     const isStaff = tab === 'staff';
+    const isRoles = tab === 'roles';
+    const isLogins = tab === 'logins';
     if (els.tabStaff) els.tabStaff.classList.toggle('is-active', isStaff);
-    if (els.tabRoles) els.tabRoles.classList.toggle('is-active', !isStaff);
+    if (els.tabRoles) els.tabRoles.classList.toggle('is-active', isRoles);
+    if (els.tabLogins) els.tabLogins.classList.toggle('is-active', isLogins);
     if (els.sectionStaff) els.sectionStaff.classList.toggle('team-hub-hidden', !isStaff);
-    if (els.sectionRoles) els.sectionRoles.classList.toggle('team-hub-hidden', isStaff);
+    if (els.sectionRoles) els.sectionRoles.classList.toggle('team-hub-hidden', !isRoles);
+    if (els.sectionLogins) els.sectionLogins.classList.toggle('team-hub-hidden', !isLogins);
     const urlParams = new URLSearchParams(window.location.search);
     urlParams.set('tab', tab);
     history.replaceState(null, '', '?' + urlParams.toString());
+  }
+
+  function filterLogins() {
+    if (!els.loginsTableBody || !els.loginsSearch) return;
+    const q = (els.loginsSearch.value || '').trim().toLowerCase();
+    els.loginsTableBody.querySelectorAll('tr[data-uname]').forEach(function (row) {
+      const uname = (row.getAttribute('data-uname') || '').toLowerCase();
+      row.style.display = !q || uname.indexOf(q) >= 0 ? '' : 'none';
+    });
   }
 
   function renderStaff() {
@@ -524,14 +541,21 @@
 
   let panelStaffSection = 'basics';
 
-  function pinPanelInitialText(s, isEdit) {
+  function pinPanelInitialValue(s) {
     if (s && s.pin_display) {
       return String(s.pin_display);
+    }
+    return '';
+  }
+
+  function pinPanelPlaceholder(s, isEdit) {
+    if (s && s.pin_display) {
+      return '';
     }
     if (isEdit && s && s.has_pin) {
       return '····';
     }
-    return '—';
+    return '----';
   }
 
   function staffBasicsHtml(s, isEdit) {
@@ -543,16 +567,17 @@
       + '<div class="team-hub-field"><label class="team-hub-label">الهاتف</label>'
       + '<input class="team-hub-input" id="staffPhone" value="' + esc(s ? s.phone : '') + '"></div>'
       + '<div class="team-hub-field"><label class="team-hub-label">الدور</label>' + rolePickHtml(s ? s.role_id : selectedRoleId) + '</div>'
-      + '<div class="team-hub-field"><label class="team-hub-label">رمز PIN</label>'
-      + '<div class="team-hub-pin-display" id="pinDisplay">' + esc(pinPanelInitialText(s, isEdit)) + '</div>'
+      + '<div class="team-hub-field"><label class="team-hub-label" for="pinDisplay">رمز PIN</label>'
+      + '<input class="team-hub-pin-display" id="pinDisplay" type="text" inputmode="numeric" autocomplete="off" maxlength="4" pattern="\\d{4}"'
+      + ' value="' + esc(pinPanelInitialValue(s)) + '"'
+      + ' placeholder="' + esc(pinPanelPlaceholder(s, isEdit)) + '">'
       + '<div class="team-hub-pin-actions">'
       + '<button type="button" class="team-hub-btn" id="regenPinBtn">توليد رمز جديد</button>'
-      + '<button type="button" class="team-hub-btn" id="manualPinBtn">تعديل يدوي</button>'
       + '</div><p class="team-hub-hint">' + (isEdit
         ? (s && s.has_pin
-          ? 'لتغيير PIN: ولّد رمزاً جديداً أو عدّل يدوياً ثم اضغط حفظ'
+          ? 'لتغيير PIN: ولّد رمزاً جديداً أو اكتب 4 أرقام في الحقل ثم اضغط حفظ'
           : 'لا يوجد PIN — تم توليد رمز جديد، اضغط حفظ لتفعيله')
-        : 'مطلوب — يُولَّد تلقائياً ويُعرض مرة واحدة بعد الحفظ') + '</p></div>';
+        : 'مطلوب — 4 أرقام، يُولَّد تلقائياً أو اكتبه في الحقل ثم احفظ') + '</p></div>';
   }
 
   const STAFF_PERM_SECTION = 'permissions';
@@ -693,13 +718,22 @@
     generatedPin = '';
     const pinEl = document.getElementById('pinDisplay');
     if (isEdit && s && s.pin_display) {
-      if (pinEl) pinEl.textContent = String(s.pin_display);
+      if (pinEl) {
+        pinEl.value = String(s.pin_display);
+        pinEl.placeholder = '';
+      }
     } else if (isEdit && s && s.has_pin) {
-      if (pinEl) pinEl.textContent = '····';
+      if (pinEl) {
+        pinEl.value = '';
+        pinEl.placeholder = '····';
+      }
     } else {
       fetchPin(isEdit ? (panelEntityId || 0) : 0).then(function (data) {
         generatedPin = data.pin || '';
-        if (pinEl) pinEl.textContent = generatedPin || '—';
+        if (pinEl) {
+          pinEl.value = generatedPin || '';
+          pinEl.placeholder = generatedPin ? '' : '----';
+        }
       });
     }
 
@@ -789,16 +823,23 @@
     document.getElementById('regenPinBtn').onclick = function () {
       fetchPin(panelEntityId || 0).then(function (data) {
         generatedPin = data.pin || '';
-        document.getElementById('pinDisplay').textContent = generatedPin;
+        const pinEl = document.getElementById('pinDisplay');
+        if (pinEl) {
+          pinEl.value = generatedPin;
+          pinEl.placeholder = '';
+        }
       });
     };
-    document.getElementById('manualPinBtn').onclick = function () {
-      const v = prompt('أدخل PIN من 4-6 أرقام');
-      if (v) {
-        generatedPin = v.replace(/\D/g, '');
-        document.getElementById('pinDisplay').textContent = generatedPin;
-      }
-    };
+    const pinInput = document.getElementById('pinDisplay');
+    if (pinInput) {
+      pinInput.addEventListener('input', function () {
+        const digits = String(pinInput.value || '').replace(/\D/g, '').slice(0, 4);
+        if (pinInput.value !== digits) {
+          pinInput.value = digits;
+        }
+        generatedPin = digits;
+      });
+    }
     document.querySelectorAll('#rolePickRow .team-hub-role-pick[data-role-id]').forEach(function (btn) {
       btn.onclick = function () {
         setRolePickSelected(Number(btn.dataset.roleId));
@@ -816,8 +857,15 @@
           uname = 'user_' + Date.now().toString().slice(-6) + '_' + Math.random().toString(36).slice(2, 6);
         }
       }
-      if (!isEdit && (!generatedPin || generatedPin.length < 4)) {
-        alert('رمز PIN مطلوب — اضغط توليد رمز جديد');
+      if (pinInput) {
+        generatedPin = String(pinInput.value || '').replace(/\D/g, '').slice(0, 4);
+      }
+      if (!isEdit && generatedPin.length !== 4) {
+        alert('رمز PIN مطلوب — أدخل 4 أرقام أو اضغط توليد رمز جديد');
+        return;
+      }
+      if (isEdit && generatedPin && generatedPin.length !== 4) {
+        alert('رمز PIN يجب أن يكون 4 أرقام');
         return;
       }
       const body = {
@@ -830,7 +878,7 @@
       if (!isEdit) {
         body.pin = generatedPin;
         body.generate_pin = '1';
-      } else if (generatedPin && generatedPin.length >= 4) {
+      } else if (generatedPin.length === 4) {
         body.pin = generatedPin;
       }
       const action = isEdit ? 'update_staff' : 'create_staff';
@@ -1054,8 +1102,10 @@
 
   if (els.tabStaff) els.tabStaff.onclick = function () { setTab('staff'); };
   if (els.tabRoles) els.tabRoles.onclick = function () { setTab('roles'); };
+  if (els.tabLogins) els.tabLogins.onclick = function () { setTab('logins'); };
   if (els.staffSearch) els.staffSearch.oninput = renderStaff;
   if (els.rolesSearch) els.rolesSearch.oninput = renderRoles;
+  if (els.loginsSearch) els.loginsSearch.oninput = filterLogins;
   if (els.backdrop) els.backdrop.onclick = closePanel;
 
   const btnAddStaff = document.getElementById('btnAddStaff');

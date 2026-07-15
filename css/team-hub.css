@@ -81,6 +81,64 @@ body.team-hub-page .wrapper {
   flex-wrap: wrap;
 }
 
+.team-hub-top-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-inline-start: auto;
+}
+
+.team-hub-identity {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  max-width: min(220px, 42vw);
+  min-height: 42px;
+  padding: 0.3rem 0.85rem 0.3rem 0.35rem;
+  padding-inline: 0.35rem 0.85rem;
+  border-radius: 999px;
+  border: 1px solid var(--th-border);
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.02));
+  overflow: hidden;
+}
+
+.team-hub-identity-avatar {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(145deg, rgba(212, 165, 116, 0.35), rgba(212, 165, 116, 0.18));
+  color: var(--th-accent);
+  font-size: 0.78rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.team-hub-identity-copy {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.15;
+}
+
+.team-hub-identity-label {
+  font-size: 0.64rem;
+  font-weight: 600;
+  color: var(--th-muted);
+}
+
+.team-hub-identity-name {
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: var(--th-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .team-hub-breadcrumb {
   color: var(--th-muted);
   font-size: 0.9rem;
@@ -664,15 +722,32 @@ body.team-hub-page .wrapper {
 }
 
 .team-hub-pin-display {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
   font-size: 2rem;
   letter-spacing: 0.35em;
   font-weight: 700;
+  font-family: inherit;
   color: var(--th-accent);
   text-align: center;
   padding: 0.75rem;
   background: rgba(212, 165, 116, 0.08);
+  border: 1px solid transparent;
   border-radius: 12px;
   direction: ltr;
+}
+
+.team-hub-pin-display:focus {
+  outline: none;
+  border-color: rgba(212, 165, 116, 0.45);
+  background: rgba(212, 165, 116, 0.12);
+}
+
+.team-hub-pin-display::placeholder {
+  color: var(--th-accent);
+  opacity: 0.55;
+  letter-spacing: 0.35em;
 }
 
 .team-hub-pin-actions {
@@ -1053,4 +1128,38 @@ body.team-hub-page .wrapper {
   .team-hub-grid {
     grid-template-columns: 1fr 1fr;
   }
+}
+
+.team-hub-muted {
+  color: var(--th-muted, #94a3b8);
+  font-size: 0.9rem;
+}
+
+.team-hub-login-table-wrap {
+  overflow: auto;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  border-radius: 12px;
+  background: rgba(15, 23, 42, 0.35);
+}
+
+.team-hub-login-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.95rem;
+}
+
+.team-hub-login-table th,
+.team-hub-login-table td {
+  padding: 0.75rem 1rem;
+  text-align: right;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.15);
+}
+
+.team-hub-login-table th {
+  color: var(--th-muted, #94a3b8);
+  font-weight: 600;
+}
+
+.team-hub-login-table tbody tr:last-child td {
+  border-bottom: none;
 }

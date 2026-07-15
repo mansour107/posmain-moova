@@ -17,7 +17,7 @@ require_pos_authenticated();
 require_csrf('pos_override');
 
 $pin = trim((string) ($_POST['manager_pin'] ?? $_POST['pin'] ?? ''));
-$permissionKey = trim((string) ($_POST['permission_key'] ?? ''));
+$permissionKey = trim((string) ($_POST['permission_key'] ?? $_POST['permission'] ?? ''));
 $actionType = trim((string) ($_POST['action_type'] ?? ''));
 if ($actionType === '') {
     $actionType = $permissionKey !== '' ? $permissionKey : 'manager.override';
@@ -65,6 +65,9 @@ try {
     if ($limitPermissionKey !== '') {
         $overrideContext['limit_permission_key'] = $limitPermissionKey;
     }
+    if (!empty($_POST['require_same_user'])) {
+        $overrideContext['require_same_user'] = true;
+    }
 
     $approval = $service->authenticateManagerOverride($conn, $pin, $permissionKey, pos_acting_user_id(), $overrideContext);
 
@@ -88,6 +91,7 @@ try {
     $code = $exception->getMessage();
     $deniedCodes = [
         'MANAGER_PIN_INVALID',
+        'MANAGER_PIN_MISMATCH',
         'MANAGER_PERMISSION_DENIED',
         'APPROVER_LIMIT_EXCEEDED',
         'MANAGER_PIN_LOCKED',

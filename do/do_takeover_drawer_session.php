@@ -8,6 +8,7 @@ require_once __DIR__ . '/../includes/shift_handover_idempotency.php';
 require_once __DIR__ . '/../classes/Pos/Service/ShiftSessionService.php';
 require_once __DIR__ . '/../classes/Pos/Service/DrawerSessionService.php';
 require_once __DIR__ . '/../classes/Pos/Service/ManagerApprovalService.php';
+require_once __DIR__ . '/../classes/Pos/Service/ShiftCountService.php';
 
 header('Content-Type: application/json; charset=utf-8');
 
@@ -40,6 +41,13 @@ try {
     }
     if (mb_strlen($reason) < 3) {
         throw new RuntimeException('FORCE_CLOSE_REASON_REQUIRED');
+    }
+
+    // Prefer server-side finalized takeover close-count (recount + variance logged).
+    $countService = new ShiftCountService();
+    $finalCount = $countService->peekTakeoverCloseCount($userId, $sessionId);
+    if (is_array($finalCount)) {
+        $countedAmount = number_format((float) $finalCount['counted_cash'], 3, '.', '');
     }
 
     // Always require a consumed manager PIN approval — even if the unlocked POS
@@ -87,7 +95,8 @@ try {
             $managerApprovalId,
             $authorizedBy,
             $scope,
-            $blocking
+            $blocking,
+            $countService
         ): array {
             $closed = (new ShiftSessionService())->forceCloseDrawerForUser($conn, $userId, $sessionId, [
                 'tenant' => $scope['tenant'],
@@ -100,6 +109,8 @@ try {
                 'in_transaction' => !empty($txContext['in_transaction']),
             ]);
 
+            $countService->clearTakeoverCloseCount();
+
             $_SESSION['pos_pending_takeover'] = [
                 'preceding_session_id' => (int) ($closed['id'] ?? $sessionId),
                 'preceding_user_id' => (int) ($blocking['user_id'] ?? $closed['user_id'] ?? 0),
@@ -107,6 +118,23 @@ try {
                 'incoming_user_id' => $userId,
                 'closed_at' => time(),
             ];
+
+            // Reuse the close-count cash as the manager opening float — no second count.
+            $opened = $countService->openFromTakeoverCountedCash(
+                $conn,
+                $userId,
+                (float) $countedAmount,
+                [
+                    'tenant' => $scope['tenant'],
+                    'branch' => $scope['branch'],
+                    'in_transaction' => !empty($txContext['in_transaction']),
+                ]
+            );
+
+            unset($_SESSION['posmain_shift_blocking']);
+            $_SESSION['posmain_shift_entry_state'] = 'selling_ready';
+            $_SESSION['posmain_shift_entry_message'] = '';
+            unset($_SESSION['pos_unlocked_pending_open']);
 
             return [
                 'success' => true,
@@ -117,6 +145,10 @@ try {
                     'status' => (string) ($closed['status'] ?? 'forced_closed'),
                     'preceding_user_id' => (int) ($blocking['user_id'] ?? 0),
                     'authorized_by' => $authorizedBy,
+                    'opened_session_id' => (int) ($opened['drawer_session_id'] ?? 0),
+                    'open_status' => (string) ($opened['status'] ?? 'opened'),
+                    'next_state' => 'selling_ready',
+                    'redirect' => 'pos_barcode.php',
                 ],
             ];
         }

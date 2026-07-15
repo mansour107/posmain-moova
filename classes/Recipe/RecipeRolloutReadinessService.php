@@ -4,6 +4,7 @@ require_once __DIR__ . '/RecipeFeatureFlags.php';
 require_once __DIR__ . '/RecipeOperationalDashboardService.php';
 require_once __DIR__ . '/RecipePilotEvidenceService.php';
 require_once __DIR__ . '/RecipeRuntimePreflightService.php';
+require_once __DIR__ . '/../../includes/pos_default_accounts.php';
 
 class RecipeRolloutReadinessService
 {
@@ -42,7 +43,7 @@ class RecipeRolloutReadinessService
 
         $checks = [
             'schema' => $this->schemaCheck($conn),
-            'configuration' => $this->configurationCheck($flags, $allowFullMode, $allowCostPublicPayloads),
+            'configuration' => $this->configurationCheck($flags, $allowFullMode, $allowCostPublicPayloads, $conn),
         ];
 
         foreach (['schema', 'configuration'] as $checkKey) {
@@ -142,7 +143,12 @@ class RecipeRolloutReadinessService
         ];
     }
 
-    private function configurationCheck(RecipeFeatureFlags $flags, bool $allowFullMode, bool $allowCostPublicPayloads): array
+    private function configurationCheck(
+        RecipeFeatureFlags $flags,
+        bool $allowFullMode,
+        bool $allowCostPublicPayloads,
+        ?mysqli $conn = null
+    ): array
     {
         $config = $flags->config();
         $mode = $flags->mode();
@@ -200,7 +206,12 @@ class RecipeRolloutReadinessService
         }
         if ($this->boolValue($config['accounting'] ?? false)) {
             foreach ($this->requiredAccountingAccountKeys() as $accountKey) {
-                if ((int) (($config['accounts'] ?? [])[$accountKey] ?? 0) <= 0) {
+                $configured = (int) (($config['accounts'] ?? [])[$accountKey] ?? 0);
+                $resolved = $configured;
+                if ($resolved <= 0 && $conn instanceof mysqli && function_exists('posmain_resolve_recipe_accounting_account_id')) {
+                    $resolved = posmain_resolve_recipe_accounting_account_id($conn, $accountKey, 0);
+                }
+                if ($resolved <= 0) {
                     $blockers[] = 'recipe_account_missing_' . $accountKey;
                 }
             }

@@ -164,6 +164,26 @@ if (!function_exists('posmain_session_start')) {
     }
 }
 
+if (!function_exists('posmain_is_background_session_request')) {
+    /**
+     * Heartbeat-gap soft-lock is for abandoned tabs (XHR/fetch still firing, or polls).
+     * Full document navigations are user presence — enforce idle/absolute only.
+     */
+    function posmain_is_background_session_request(): bool
+    {
+        $accept = strtolower((string) ($_SERVER['HTTP_ACCEPT'] ?? ''));
+        $contentType = strtolower((string) ($_SERVER['CONTENT_TYPE'] ?? ''));
+        $requestedWith = strtolower((string) ($_SERVER['HTTP_X_REQUESTED_WITH'] ?? ''));
+        $script = (string) ($_SERVER['SCRIPT_NAME'] ?? $_SERVER['PHP_SELF'] ?? '');
+
+        return strpos($accept, 'application/json') !== false
+            || strpos($contentType, 'application/json') !== false
+            || $requestedWith === 'xmlhttprequest'
+            || strpos($script, '/ajax/') !== false
+            || strpos($script, 'ajax/') === 0;
+    }
+}
+
 if (!function_exists('posmain_session_touch')) {
     function posmain_session_touch(): void
     {
@@ -174,8 +194,10 @@ if (!function_exists('posmain_session_touch')) {
         $now = time();
         $sessionLifetime = posmain_session_lifetime_seconds();
         $defaultIdleSeconds = $sessionLifetime;
+        $isPinMainAuth = false;
         try {
             if (function_exists('posmain_is_pin_main_auth') && posmain_is_pin_main_auth()) {
+                $isPinMainAuth = true;
                 $defaultIdleSeconds = (int) posmain_env('POSMAIN_INACTIVITY_LOCK_SECONDS', 300);
             }
         } catch (Throwable $ignored) {
@@ -183,9 +205,22 @@ if (!function_exists('posmain_session_touch')) {
         }
         $idleSeconds = (int) posmain_env('POSMAIN_SESSION_IDLE_SECONDS', $defaultIdleSeconds);
         $absoluteSeconds = (int) posmain_env('POSMAIN_SESSION_ABSOLUTE_SECONDS', $sessionLifetime);
+        $heartbeatGraceSeconds = max(30, min(600, (int) posmain_env('POSMAIN_HEARTBEAT_GRACE_SECONDS', 60)));
 
         if (empty($_SESSION['posmain_session_started_at'])) {
             $_SESSION['posmain_session_started_at'] = $now;
+        }
+
+        // Chrome throttles background timers to ~60s+; a document click after that
+        // must not look like "logout". Soft-lock stale heartbeats on XHR/polls only.
+        if (
+            $isPinMainAuth
+            && posmain_is_background_session_request()
+            && !empty($_SESSION['posmain_heartbeat_last_at'])
+            && ($now - (int) $_SESSION['posmain_heartbeat_last_at']) > $heartbeatGraceSeconds
+        ) {
+            posmain_session_soft_lock();
+            return;
         }
 
         if (
@@ -193,7 +228,11 @@ if (!function_exists('posmain_session_touch')) {
             && !empty($_SESSION['posmain_session_last_seen_at'])
             && ($now - (int) $_SESSION['posmain_session_last_seen_at']) > $idleSeconds
         ) {
-            posmain_session_expire();
+            if ($isPinMainAuth) {
+                posmain_session_soft_lock();
+            } else {
+                posmain_session_expire();
+            }
             return;
         }
 
@@ -207,6 +246,52 @@ if (!function_exists('posmain_session_touch')) {
         }
 
         $_SESSION['posmain_session_last_seen_at'] = $now;
+        // Document navigation is live presence — refresh heartbeat so the next
+        // poll does not soft-lock immediately after a throttled background tab.
+        if ($isPinMainAuth && !posmain_is_background_session_request()) {
+            $_SESSION['posmain_heartbeat_last_at'] = $now;
+        }
+    }
+}
+
+if (!function_exists('posmain_session_soft_lock')) {
+    function posmain_session_soft_lock(): void
+    {
+        if (session_status() !== PHP_SESSION_ACTIVE) {
+            return;
+        }
+
+        $authPath = __DIR__ . '/../classes/Security/MainAuthenticationService.php';
+        if (is_file($authPath)) {
+            require_once $authPath;
+        }
+
+        if (class_exists('MainAuthenticationService', false)) {
+            (new MainAuthenticationService())->lockToLoginScreen();
+            return;
+        }
+
+        // Fallback if the auth service cannot be loaded: clear identity keys only.
+        foreach ([
+            'login', 'userid', 'usrole', 'usty', 'userrole',
+            'posmain_auth_version', 'posmain_auth_method',
+            'posmain_bootstrap_pending', 'posmain_pin_must_change',
+            'posmain_capabilities_cache', 'posmain_capabilities_version',
+            'posmain_shop_id', 'posmain_shop_slug', 'posmain_shop_user_id',
+            'posmain_heartbeat_last_at',
+            'pos_acting_user_id', 'pos_acting_user_name',
+            'pos_authenticated', 'pos_user_id', 'pos_user_name',
+            'pos_drawer_session_id',
+            'pos_shift_session_token', 'pos_last_activity_at',
+            'pos_unlocked_pending_open', 'pos_pending_takeover',
+            'pos_cart_park_required', 'pos_previous_acting_user_id',
+        ] as $key) {
+            unset($_SESSION[$key]);
+        }
+
+        if (function_exists('posmain_session_regenerate')) {
+            posmain_session_regenerate();
+        }
     }
 }
 

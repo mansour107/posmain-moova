@@ -17,6 +17,7 @@ $pinPadId = preg_replace('/[^a-zA-Z0-9_-]/', '', (string) ($pinPadId ?? 'pinPad'
 $pinPadDigits = max(4, min(4, (int) ($pinPadDigits ?? 4)));
 $pinPadTitle = (string) ($pinPadTitle ?? 'أدخل الرمز');
 $pinPadSubtitle = (string) ($pinPadSubtitle ?? '');
+$pinPadEyebrow = trim((string) ($pinPadEyebrow ?? ''));
 $pinPadError = trim((string) ($pinPadError ?? ''));
 $pinPadCsrf = (string) ($pinPadCsrf ?? '');
 $pinPadEndpoint = (string) ($pinPadEndpoint ?? '');
@@ -30,6 +31,9 @@ $pinPadMode = (string) ($pinPadMode ?? 'login');
      role="group"
      aria-label="<?= htmlspecialchars($pinPadTitle, ENT_QUOTES, 'UTF-8') ?>">
     <div class="ppm-card">
+        <?php if ($pinPadEyebrow !== ''): ?>
+            <div class="ppm-eyebrow" style="text-align:center"><?= htmlspecialchars($pinPadEyebrow, ENT_QUOTES, 'UTF-8') ?></div>
+        <?php endif; ?>
         <h1 class="ppm-title"><?= htmlspecialchars($pinPadTitle, ENT_QUOTES, 'UTF-8') ?></h1>
         <?php if ($pinPadSubtitle !== ''): ?>
             <p class="ppm-sub"><?= htmlspecialchars($pinPadSubtitle, ENT_QUOTES, 'UTF-8') ?></p>

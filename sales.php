@@ -260,7 +260,6 @@ if (!empty($elements['add_item_modal'])) {
 </div>
 
 <script>
-<script>
 // إظهار/إخفاء نافذة المساعدة بالضغط على الزر
 document.getElementById('showKeyboardHelp')?.addEventListener('click', function(e) {
     e.preventDefault();
@@ -299,7 +298,3 @@ ob_end_flush();
 <script src="js/sales.js" defer></script>
 <script src="js/sales0.js" defer></script>
 <script src="js/keyboard_navigation.js" defer></script>
-
-<!-- Prefetch للصفحات المحتملة -->
-<link rel="prefetch" href="do/doadd_invoice.php">
-<link rel="prefetch" href="do/doedit_invoice.php">

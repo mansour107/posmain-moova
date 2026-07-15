@@ -47,6 +47,7 @@ class SyncSchemaManager
             'drawer_movements' => $this->drawerMovementsSql(),
             'drawer_count_attempts' => $this->drawerCountAttemptsSql(),
             'drawer_session_resolutions' => $this->drawerSessionResolutionsSql(),
+            'drawer_override_periods' => $this->drawerOverridePeriodsSql(),
             'pos_branch_settings' => $this->posBranchSettingsSql(),
             'printers' => $this->printersSql(),
             'print_jobs' => $this->printJobsSql(),
@@ -114,6 +115,13 @@ class SyncSchemaManager
                         'sql' => "ALTER TABLE `tables` ADD KEY idx_tables_area_order (area_id, display_order)",
                     ],
                 ],
+            ],
+            'drawer_session_resolutions' => [
+                'columns' => [
+                    'resolution_reason_code' => "ALTER TABLE drawer_session_resolutions ADD COLUMN resolution_reason_code VARCHAR(40) NULL AFTER resolution_notes",
+                    'ledger_ot_head_id' => "ALTER TABLE drawer_session_resolutions ADD COLUMN ledger_ot_head_id BIGINT UNSIGNED NULL AFTER adjustment_movement_id",
+                ],
+                'indexes' => [],
             ],
             'ot_head' => [
                 'columns' => [
@@ -2596,12 +2604,17 @@ CREATE TABLE IF NOT EXISTS manager_approvals (
   status ENUM('requested','approved','declined','expired') NOT NULL DEFAULT 'requested',
   reason VARCHAR(500) NULL,
   metadata_json JSON NULL,
+  permission_key VARCHAR(80) NULL,
+  expires_at DATETIME NULL,
+  consumed_at DATETIME NULL,
+  performed_by BIGINT UNSIGNED NULL,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   decided_at DATETIME NULL,
   PRIMARY KEY (id),
   KEY idx_manager_approvals_status (status, created_at),
   KEY idx_manager_approvals_target (target_type, target_id),
-  KEY idx_manager_approvals_action (action_type, status)
+  KEY idx_manager_approvals_action (action_type, status),
+  KEY idx_manager_approvals_permission (permission_key, status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
     }
 
@@ -2731,11 +2744,41 @@ CREATE TABLE IF NOT EXISTS drawer_session_resolutions (
   resolved_by BIGINT UNSIGNED NOT NULL,
   resolved_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   resolution_notes VARCHAR(1000) NOT NULL,
+  resolution_reason_code VARCHAR(40) NULL,
   adjustment_movement_id BIGINT UNSIGNED NULL,
+  ledger_ot_head_id BIGINT UNSIGNED NULL,
   prior_status ENUM('none','unresolved','resolved') NOT NULL DEFAULT 'unresolved',
   snapshot_json JSON NULL,
   PRIMARY KEY (id),
   KEY idx_drawer_session_resolutions_session (drawer_session_id, resolved_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
+    private function drawerOverridePeriodsSql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS drawer_override_periods (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  drawer_session_id BIGINT UNSIGNED NOT NULL,
+  original_owner_user_id BIGINT UNSIGNED NOT NULL,
+  operator_user_id BIGINT UNSIGNED NOT NULL,
+  approved_by_user_id BIGINT UNSIGNED NOT NULL,
+  manager_approval_id BIGINT UNSIGNED NULL,
+  reason VARCHAR(500) NOT NULL,
+  started_at DATETIME NOT NULL,
+  last_activity_at DATETIME NOT NULL,
+  ended_at DATETIME NULL,
+  end_reason VARCHAR(80) NULL,
+  active_drawer_lock VARCHAR(64) NULL,
+  tenant INT NOT NULL DEFAULT 0,
+  branch INT NOT NULL DEFAULT 0,
+  register_id BIGINT UNSIGNED NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_drawer_override_active_drawer (active_drawer_lock),
+  KEY idx_drawer_override_session (drawer_session_id, ended_at),
+  KEY idx_drawer_override_operator (operator_user_id, ended_at),
+  KEY idx_drawer_override_owner (original_owner_user_id, started_at),
+  KEY idx_drawer_override_started (tenant, branch, started_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
     }
 

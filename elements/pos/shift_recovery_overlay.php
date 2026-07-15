@@ -220,6 +220,7 @@ $condensedMeta = implode(' · ', $metaBits);
     background: rgba(15, 23, 42, .72); backdrop-filter: blur(6px);
     padding: 1rem;
 }
+.pos-shift-recovery.is-deferred-for-close { display: none !important; }
 .pos-shift-recovery__card {
     width: min(460px, 96vw);
     background: #fff; border-radius: 18px; padding: 1.75rem 1.5rem;
@@ -388,6 +389,21 @@ $condensedMeta = implode(' · ', $metaBits);
 </style>
 <script>
 (function () {
+    // Recovery is z-index 2000; Bootstrap #closeShiftModal is ~1055 and loads later in the page.
+    var recoveryOverlay = document.getElementById('posShiftRecoveryOverlay');
+    if (recoveryOverlay) {
+        document.addEventListener('show.bs.modal', function (e) {
+            if (e.target && e.target.id === 'closeShiftModal') {
+                recoveryOverlay.classList.add('is-deferred-for-close');
+            }
+        });
+        document.addEventListener('hidden.bs.modal', function (e) {
+            if (e.target && e.target.id === 'closeShiftModal') {
+                recoveryOverlay.classList.remove('is-deferred-for-close');
+            }
+        });
+    }
+
     var RECOVERY_ERROR_AR = {
         DRAWER_SESSION_NOT_OPEN: 'الوردية غير متاحة — حدّث الصفحة وأعد المحاولة',
         DRAWER_SESSION_REQUIRED: 'لا توجد وردية مفتوحة',

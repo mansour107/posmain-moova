@@ -22,6 +22,49 @@ require_once __DIR__ . '/classes/Security/PermissionService.php';
 require_once __DIR__ . '/classes/Security/PinService.php';
 require_once __DIR__ . '/classes/Security/LoginThrottleService.php';
 
+/**
+ * Re-pairing requires a manager/owner PIN (docs/local_pin_auth_runbook.md).
+ * users.manage alone is too narrow — preset managers do not have it.
+ */
+function posmain_user_can_approve_register_pair(mysqli $conn, int $userId, array $approver = []): bool
+{
+    if ($userId < 1) {
+        return false;
+    }
+
+    $permissionService = PermissionService::forConnection($conn);
+    if ($permissionService->check($userId, 'users.manage')
+        || $permissionService->check($userId, 'pos.shift.force_close')
+    ) {
+        return true;
+    }
+
+    $roleId = (int) ($approver['userrole'] ?? 0);
+    if ($roleId === 1) {
+        return true;
+    }
+
+    $stmt = $conn->prepare(
+        'SELECT u.usertype, r.role_key
+           FROM users u
+      LEFT JOIN usr_pwrs r ON r.id = u.userrole AND COALESCE(r.isdeleted, 0) != 1
+          WHERE u.id = ? AND COALESCE(u.isdeleted, 0) != 1
+          LIMIT 1'
+    );
+    $stmt->bind_param('i', $userId);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc() ?: [];
+    $stmt->close();
+
+    if ((int) ($row['usertype'] ?? 0) === 2) {
+        return true;
+    }
+
+    $roleKey = strtolower(trim((string) ($row['role_key'] ?? '')));
+
+    return in_array($roleKey, ['owner', 'manager'], true);
+}
+
 $userId = (int) ($_SESSION['userid'] ?? 0);
 $tenant = (int) ($_SESSION['pos_tenant'] ?? 0);
 $branch = (int) ($_SESSION['pos_branch'] ?? 0);
@@ -89,10 +132,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $canPair) {
                 throw new RuntimeException('MANAGER_PIN_INVALID');
             }
             $approverId = (int) $approver['id'];
-            if (!PermissionService::forConnection($conn)->check($approverId, 'users.manage')
-                && (int) ($approver['usertype'] ?? 0) !== 2
-                && (int) ($approver['userrole'] ?? 0) !== 1
-            ) {
+            if (!posmain_user_can_approve_register_pair($conn, $approverId, $approver)) {
                 throw new RuntimeException('MANAGER_PIN_REQUIRED');
             }
             $throttle->recordSuccess($conn, $throttleIdentity, $throttleIp);
@@ -140,6 +180,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $canPair) {
 }
 
 $csrf = htmlspecialchars(csrf_token('register_pair'), ENT_QUOTES, 'UTF-8');
+$showPinStep = $error !== '' && $activeRegisters !== [] && $canPair;
+$selectedRegisterId = (int) ($_POST['register_id'] ?? (($activeRegisters[0]['id'] ?? 0)));
 ?>
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
@@ -182,14 +224,29 @@ $csrf = htmlspecialchars(csrf_token('register_pair'), ENT_QUOTES, 'UTF-8');
             width: 100%; border: 0; border-radius: 12px; padding: .9rem 1rem;
             background: linear-gradient(135deg, #6366f1, #8b5cf6); color: #fff; font-weight: 700;
         }
-        .manager-pin {
-            margin-top: .75rem;
-            display: none;
+        .pair-back {
+            display: block;
+            width: 100%;
+            margin-top: .85rem;
+            border: 0;
+            background: transparent;
+            color: #94a3b8;
+            font-weight: 600;
+            cursor: pointer;
         }
-        .manager-pin.is-open { display: block; }
+        .pair-back:hover { color: #e2e8f0; }
+        .is-hidden { display: none !important; }
     </style>
 </head>
 <body>
+<?php if (!$canPair): ?>
+<div class="pair-shell">
+    <div class="pair-card">
+        <h1 class="pair-title">ربط هذا الجهاز بصندوق</h1>
+        <p class="pair-sub">اطلب من المالك أو المدير ربط هذا الجهاز.</p>
+    </div>
+</div>
+<?php elseif ($activeRegisters === []): ?>
 <div class="pair-shell">
     <div class="pair-card">
         <h1 class="pair-title">ربط هذا الجهاز بصندوق</h1>
@@ -197,54 +254,108 @@ $csrf = htmlspecialchars(csrf_token('register_pair'), ENT_QUOTES, 'UTF-8');
         <?php if ($error !== ''): ?>
             <div class="error-box"><?= htmlspecialchars($error, ENT_QUOTES, 'UTF-8') ?></div>
         <?php endif; ?>
-
-        <?php if (!$canPair): ?>
-            <p class="pair-sub">اطلب من المالك أو المدير ربط هذا الجهاز.</p>
-        <?php elseif ($activeRegisters === []): ?>
-            <form method="post">
-                <input type="hidden" name="csrf_token" value="<?= $csrf ?>">
-                <input type="hidden" name="action" value="create">
-                <button type="submit" class="btn-pair">إنشاء وربط الصندوق الأول</button>
-            </form>
-        <?php else: ?>
-            <form method="post" id="claimForm">
-                <input type="hidden" name="csrf_token" value="<?= $csrf ?>">
-                <input type="hidden" name="action" value="claim">
-                <div class="reg-list">
-                    <?php foreach ($activeRegisters as $index => $reg): ?>
-                        <label class="reg-item">
-                            <span>
-                                <strong><?= htmlspecialchars((string) $reg['name'], ENT_QUOTES, 'UTF-8') ?></strong>
-                                <small class="text-muted d-block"><?= htmlspecialchars((string) $reg['code'], ENT_QUOTES, 'UTF-8') ?></small>
-                            </span>
-                            <input type="radio" name="register_id" value="<?= (int) $reg['id'] ?>" <?= $index === 0 ? 'checked' : '' ?>>
-                        </label>
-                    <?php endforeach; ?>
-                </div>
-                <button type="button" class="btn-pair" id="showPinBtn">متابعة بموافقة المدير</button>
-                <div class="manager-pin" id="managerPinBox">
-                    <label class="form-label mt-3" for="manager_pin">رمز المدير (4 أرقام)</label>
-                    <input class="form-control text-center" type="password" inputmode="numeric" maxlength="4"
-                           pattern="\d{4}" name="manager_pin" id="manager_pin" autocomplete="one-time-code">
-                    <button type="submit" class="btn-pair mt-3">تأكيد الربط</button>
-                </div>
-            </form>
-        <?php endif; ?>
+        <form method="post">
+            <input type="hidden" name="csrf_token" value="<?= $csrf ?>">
+            <input type="hidden" name="action" value="create">
+            <button type="submit" class="btn-pair">إنشاء وربط الصندوق الأول</button>
+        </form>
     </div>
 </div>
+<?php else: ?>
+<div class="pair-shell<?= $showPinStep ? ' is-hidden' : '' ?>" id="pairSelectStep">
+    <div class="pair-card">
+        <h1 class="pair-title">ربط هذا الجهاز بصندوق</h1>
+        <p class="pair-sub">لا يمكن البيع قبل ربط المتصفح بصندوق معتمد في الفرع.</p>
+        <div class="reg-list" id="regList">
+            <?php foreach ($activeRegisters as $index => $reg): ?>
+                <?php $regId = (int) $reg['id']; ?>
+                <label class="reg-item">
+                    <span>
+                        <strong><?= htmlspecialchars((string) $reg['name'], ENT_QUOTES, 'UTF-8') ?></strong>
+                        <small class="text-muted d-block"><?= htmlspecialchars((string) $reg['code'], ENT_QUOTES, 'UTF-8') ?></small>
+                    </span>
+                    <input type="radio" name="register_pick" value="<?= $regId ?>"
+                        <?= $regId === $selectedRegisterId || ($selectedRegisterId < 1 && $index === 0) ? 'checked' : '' ?>>
+                </label>
+            <?php endforeach; ?>
+        </div>
+        <button type="button" class="btn-pair" id="showPinBtn">متابعة بموافقة المدير</button>
+    </div>
+</div>
+
+<div class="<?= $showPinStep ? '' : 'is-hidden' ?>" id="pairPinStep">
+    <?php
+    $pinPadId = 'registerPairPinPad';
+    $pinPadCsrf = csrf_token('register_pair');
+    $pinPadEndpoint = '';
+    $pinPadTitle = 'موافقة المدير';
+    $pinPadSubtitle = 'أدخل رمز المدير المكوّن من 4 أرقام';
+    $pinPadError = $error !== '' ? $error : null;
+    $pinPadDigits = 4;
+    $pinPadMode = 'login';
+    $pinPadExtraFields = '';
+    require __DIR__ . '/includes/pin_pad_fragment.php';
+    ?>
+    <button type="button" class="pair-back" id="pairPinBack">رجوع لاختيار الصندوق</button>
+</div>
+
+<form method="post" id="claimForm" class="is-hidden" autocomplete="off">
+    <input type="hidden" name="csrf_token" value="<?= $csrf ?>">
+    <input type="hidden" name="action" value="claim">
+    <input type="hidden" name="register_id" id="claim_register_id" value="<?= (int) $selectedRegisterId ?>">
+    <input type="hidden" name="manager_pin" id="manager_pin" value="">
+</form>
+
+<script src="js/pin_pad.js"></script>
 <script>
 (function () {
-    var btn = document.getElementById('showPinBtn');
-    var box = document.getElementById('managerPinBox');
-    if (btn && box) {
-        btn.addEventListener('click', function () {
-            box.classList.add('is-open');
-            btn.style.display = 'none';
-            var input = document.getElementById('manager_pin');
-            if (input) input.focus();
+    var selectStep = document.getElementById('pairSelectStep');
+    var pinStep = document.getElementById('pairPinStep');
+    var showPinBtn = document.getElementById('showPinBtn');
+    var backBtn = document.getElementById('pairPinBack');
+    var claimForm = document.getElementById('claimForm');
+    var claimRegisterId = document.getElementById('claim_register_id');
+    var managerPin = document.getElementById('manager_pin');
+
+    function selectedRegisterId() {
+        var picked = document.querySelector('input[name="register_pick"]:checked');
+        return picked ? picked.value : (claimRegisterId ? claimRegisterId.value : '');
+    }
+
+    function showPinStep() {
+        if (claimRegisterId) claimRegisterId.value = selectedRegisterId();
+        if (selectStep) selectStep.classList.add('is-hidden');
+        if (pinStep) pinStep.classList.remove('is-hidden');
+    }
+
+    function showSelectStep() {
+        if (pinStep) pinStep.classList.add('is-hidden');
+        if (selectStep) selectStep.classList.remove('is-hidden');
+        if (window.registerPairPinPadApi && typeof window.registerPairPinPadApi.reset === 'function') {
+            window.registerPairPinPadApi.reset();
+        }
+    }
+
+    if (showPinBtn) {
+        showPinBtn.addEventListener('click', showPinStep);
+    }
+    if (backBtn) {
+        backBtn.addEventListener('click', showSelectStep);
+    }
+
+    if (window.PosmainPinPad && claimForm && managerPin) {
+        window.registerPairPinPadApi = window.PosmainPinPad.init('registerPairPinPad', {
+            onSubmit: function (pin) {
+                if (claimRegisterId) claimRegisterId.value = selectedRegisterId();
+                managerPin.value = pin;
+                claimForm.submit();
+                // Stay busy until navigation; form POST handles success/error.
+                return new Promise(function () {});
+            }
         });
     }
 })();
 </script>
+<?php endif; ?>
 </body>
 </html>

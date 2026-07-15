@@ -44,9 +44,13 @@ posPremiumDarkUiAssert(strpos($css, 'body.pos-premium-dark') !== false, 'Premium
 posPremiumDarkUiAssert(strpos($css, 'pos-compact-card') !== false, 'Compact product card styles should exist');
 posPremiumDarkUiAssert(strpos($css, '#tablesModal .pos-tables-state') !== false, 'Tables modal should style empty/error states for dark theme');
 posPremiumDarkUiAssert(strpos($css, 'pos-cart-price-display') !== false, 'Mockup cart price display styles should exist');
+posPremiumDarkUiAssert(strpos($css, 'input[type="number"]::-webkit-inner-spin-button') !== false, 'Number inputs should hide native spinner arrows');
+posPremiumDarkUiAssert(strpos($css, '-moz-appearance: textfield') !== false, 'Number inputs should use textfield appearance on Firefox');
 
 posPremiumDarkUiAssert(strpos($js, 'pos-cart-price-display') !== false, 'JS cart template should render mockup price display');
 posPremiumDarkUiAssert(strpos($js, 'function addItemToOrder') !== false || strpos($js, 'addItemToOrder(') !== false, 'Cart mutation function should remain');
+posPremiumDarkUiAssert(strpos($js, "target.type !== 'number'") !== false, 'JS should ignore non-number wheel targets');
+posPremiumDarkUiAssert(strpos($js, "addEventListener('wheel'") !== false, 'JS should block mouse-wheel on number fields');
 
 posPremiumDarkUiAssert(strpos($itemCard, 'function pos_render_item_card_compact') !== false, 'Compact card renderer should exist');
 posPremiumDarkUiAssert(strpos($itemCard, 'data-item-id') !== false, 'Compact cards should preserve data-item-id');

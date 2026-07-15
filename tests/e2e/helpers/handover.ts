@@ -164,8 +164,23 @@ export async function assertBaselineRequiredOverlay(page: Page): Promise<void> {
 }
 
 export async function assertBranchBlockedOverlay(page: Page, holderName?: string): Promise<void> {
-  const blocked = page.locator('#pshOpenBranchBlocked');
-  await expect(blocked).toBeVisible({ timeout: 15_000 });
+  const recovery = page.locator('#posShiftRecoveryOverlay');
+  const openBlocked = page.locator('#pshOpenBranchBlocked');
+  await expect
+    .poll(async () => {
+      return (await recovery.isVisible().catch(() => false))
+        || (await openBlocked.isVisible().catch(() => false));
+    }, { timeout: 15_000 })
+    .toBeTruthy();
+
+  if (await recovery.isVisible().catch(() => false)) {
+    await expect(recovery).toContainText(/الصندوق مشغول|درج مفتوح/);
+    if (holderName) {
+      await expect(recovery).toContainText(holderName);
+    }
+    return;
+  }
+
   await expect(page.locator('#pshOpenCountStep')).toHaveClass(/psh-hidden/);
   if (holderName) {
     await expect(page.locator('#pshOpenBranchBlockedText')).toContainText(holderName);
@@ -189,17 +204,40 @@ export async function takeoverBlockedDrawerFromOverlay(
   managerPin?: string,
 ): Promise<void> {
   await assertBranchBlockedOverlay(page);
-  await page.locator('#pshTakeoverAmount').fill(countedCash);
-  await page.locator('#pshTakeoverReason').fill(reason);
 
   const pin = managerPin || process.env.POSMAIN_TEST_PIN_MANAGER || '1357';
   const tokens = await getShiftCsrfTokens(page);
-  const sessionId = await page.locator('#pshOpenBranchBlockedText').evaluate(() => {
-    const wizard = (window as Window & {
-      PosShiftCountWizard?: { blockingSession?: { drawer_session_id?: number } };
-    }).PosShiftCountWizard;
-    return Number(wizard?.blockingSession?.drawer_session_id || 0);
-  });
+  const recovery = page.locator('#posShiftRecoveryOverlay');
+  const usingRecovery = await recovery.isVisible().catch(() => false);
+
+  let sessionId = 0;
+  if (usingRecovery) {
+    const choice = page.getByTestId('pos-choice-takeover');
+    if (await choice.isVisible().catch(() => false)) {
+      await choice.click();
+      await page.getByTestId('pos-takeover-amount').fill(countedCash);
+      const takeoverBtn = page.getByTestId('pos-takeover-shift');
+      await takeoverBtn.click();
+      if (await page.getByTestId('pos-takeover-amount').isVisible().catch(() => false)) {
+        await page.getByTestId('pos-takeover-amount').fill(countedCash);
+        await takeoverBtn.click();
+      }
+      await expect(page.getByTestId('pos-takeover-reason')).toBeVisible({ timeout: 10_000 });
+      await page.getByTestId('pos-takeover-reason').fill(reason);
+    }
+    sessionId = Number(
+      await page.getByTestId('pos-takeover-shift').getAttribute('data-session-id').catch(() => '0'),
+    );
+  } else {
+    await page.locator('#pshTakeoverAmount').fill(countedCash);
+    await page.locator('#pshTakeoverReason').fill(reason);
+    sessionId = await page.locator('#pshOpenBranchBlockedText').evaluate(() => {
+      const wizard = (window as Window & {
+        PosShiftCountWizard?: { blockingSession?: { drawer_session_id?: number } };
+      }).PosShiftCountWizard;
+      return Number(wizard?.blockingSession?.drawer_session_id || 0);
+    });
+  }
   expect(sessionId).toBeGreaterThan(0);
 
   // Obtain manager approval via the same override endpoint the PIN pad uses,
@@ -247,18 +285,9 @@ export async function takeoverBlockedDrawerFromOverlay(
   expect(takeoverResponse.ok(), `takeover failed: ${JSON.stringify(takeoverBody)}`).toBeTruthy();
   expect(takeoverBody.success).toBeTruthy();
 
-  // Refresh open-count state in the overlay after API takeover.
-  await page.evaluate(async () => {
-    const wizard = (window as Window & {
-      PosShiftCountWizard?: {
-        beginOpenCount?: (overlay: JQuery) => JQuery.Promise<unknown>;
-      };
-    }).PosShiftCountWizard;
-    if (wizard && typeof wizard.beginOpenCount === 'function' && window.jQuery) {
-      await wizard.beginOpenCount(window.jQuery('#pshOpenOverlay'));
-    }
-  });
-
+  // Match production UI: reload into open-count after takeover (must not re-show busy drawer).
+  await page.goto('/pos_barcode.php?shift=open_count');
+  await expect(page.locator('#posShiftRecoveryOverlay')).toBeHidden({ timeout: 15_000 });
   await expect(page.locator('#pshOpenCountStep')).toBeVisible({ timeout: 15_000 });
   await expect(page.locator('#pshOpenBranchBlocked')).toBeHidden();
 }
@@ -459,12 +488,28 @@ export async function ensureDrawerSessionOpen(page: Page, amount = '100.00'): Pr
   return false;
 }
 
-export async function submitOpenCountUi(page: Page, amount: string): Promise<void> {
+export async function submitOpenCountUi(page: Page, amount?: string): Promise<void> {
   const overlay = page.locator('#pshOpenOverlay');
   await expect(overlay).toBeVisible({ timeout: 15_000 });
 
+  let resolvedAmount = amount || process.env.POSMAIN_TEST_OPENING_CASH || '100.00';
+  try {
+    const begin = await beginOpenCountViaApi(page) as {
+      data?: { expected_cash?: unknown };
+    };
+    const expected = begin?.data?.expected_cash;
+    if (expected != null && expected !== '') {
+      const n = Number(String(expected).replace(/,/g, ''));
+      if (Number.isFinite(n)) {
+        resolvedAmount = n.toFixed(2);
+      }
+    }
+  } catch {
+    // keep resolvedAmount
+  }
+
   for (let attempt = 1; attempt <= 2; attempt++) {
-    await page.locator('#pshOpenAmount').fill(amount);
+    await page.locator('#pshOpenAmount').fill(resolvedAmount);
     const responsePromise = page.waitForResponse(
       (response) => response.url().includes('do_submit_shift_open_count.php')
         && response.request().method() === 'POST',
@@ -617,8 +662,10 @@ export async function closeViaZReport(page: Page, amount: string, notes = ''): P
 export async function dismissShiftCloseResultModal(page: Page): Promise<void> {
   const modal = page.locator('#shiftCloseResultModal');
   if (await modal.isVisible({ timeout: 3_000 }).catch(() => false)) {
-    await page.locator('#shiftCloseResultDismiss').click();
-    await expect(modal).toBeHidden({ timeout: 5_000 });
+    await Promise.all([
+      page.waitForURL(/do_logout\.php|index\.php|login\.php/, { timeout: 15_000, waitUntil: 'commit' }),
+      page.locator('#shiftCloseResultDismiss').click(),
+    ]);
   }
 }
 

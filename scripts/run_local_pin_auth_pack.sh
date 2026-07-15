@@ -7,6 +7,7 @@ cd "$ROOT"
 # Contract/source checks first (no MySQL). Disposable-DB integrations last.
 PACK=(
   tests/sync/local_pin_auth_contract_test.php
+  tests/sync/heartbeat_gap_expiry_contract_test.php
   tests/sync/main_auth_mode_matrix_test.php
   tests/sync/health_auth_readiness_contract_test.php
   tests/sync/shift_entry_state_machine_contract_test.php

@@ -33,7 +33,7 @@ test.describe('owner/manager: shift review and money tracking surfaces', () => {
     await sessionLink.click();
     await expect(page).toHaveURL(/drawer_session\.php\?id=\d+/);
     await expect(
-      page.getByRole('heading', { name: /محاولات العد|سجل الحركات/i }).first(),
+      page.getByRole('heading', { name: /محاولات العد|سجل الحركات|سجل حركات الدرج/i }).first(),
     ).toBeVisible({ timeout: 15_000 });
   });
 
@@ -49,7 +49,7 @@ test.describe('owner/manager: shift review and money tracking surfaces', () => {
     const body = await page.content();
     assertNoFatalText(body);
     await expect(
-      page.getByRole('heading', { name: /سجل الحلول|محاولات العد|سجل الحركات/i }).first(),
+      page.getByRole('heading', { name: /سجل الحلول|محاولات العد|سجل الحركات|سجل حركات الدرج/i }).first(),
     ).toBeVisible({ timeout: 15_000 });
   });
 

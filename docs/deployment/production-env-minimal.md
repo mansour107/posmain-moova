@@ -29,7 +29,8 @@ When `POSMAIN_ROLE=cloud`, recipe Moova sync stays off by default. Do **not** se
 
 - Database and router credentials
 - `POSMAIN_PUBLIC_BASE_URL`
-- Recipe account ID mappings (`POSMAIN_RECIPE_*_ACCOUNT_ID`)
+- Recipe account ID mappings (`POSMAIN_RECIPE_*_ACCOUNT_ID`) when you need accountant-chosen overrides
+  (otherwise the app resolves COGS=`42`, inventory=`123`, waste/variance=`41` from `acc_head`)
 - Moova/sync worker settings that match your deployment topology
 
 ## Hosted Playwright login

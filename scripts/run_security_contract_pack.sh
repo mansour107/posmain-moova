@@ -30,6 +30,7 @@ PACK=(
   tests/sync/changed_php_syntax_contract_test.php
   tests/sync/team_hub_pin_reveal_contract_test.php
   tests/sync/local_pin_auth_contract_test.php
+  tests/sync/heartbeat_gap_expiry_contract_test.php
   tests/sync/shift_entry_state_machine_contract_test.php
   tests/sync/user_lifecycle_drawer_guard_test.php
   tests/sync/user_lifecycle_session_guard_contract_test.php

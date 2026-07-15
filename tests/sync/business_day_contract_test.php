@@ -55,11 +55,15 @@ $closeShift = file_get_contents(__DIR__ . '/../../do_close_shift_z.php');
 businessDayContractAssert(strpos($closeShift, 'BusinessDayService') !== false, 'close shift should use BusinessDayService');
 businessDayContractAssert(strpos($closeShift, 'sessionBusinessDay') !== false, 'close shift should prefer session business day');
 
+$shiftSessionService = file_get_contents(__DIR__ . '/../../classes/Pos/Service/ShiftSessionService.php');
+businessDayContractAssert(strpos($shiftSessionService, 'function buildShiftReportContext') !== false, 'shift report context helper required');
+businessDayContractAssert(strpos($shiftSessionService, 'posmain_current_business_day') !== false, 'shift report context should default to business day');
+
 $zReport = file_get_contents(__DIR__ . '/../../z_report.php');
-businessDayContractAssert(strpos($zReport, 'posmain_current_business_day') !== false, 'z_report should default to business day');
+businessDayContractAssert(strpos($zReport, 'buildShiftReportContext') !== false, 'z_report should default to business day via shared context');
 
 $preview = file_get_contents(__DIR__ . '/../../do/get_shift_preview.php');
-businessDayContractAssert(strpos($preview, 'posmain_current_business_day') !== false, 'shift preview should default to business day');
+businessDayContractAssert(strpos($preview, 'buildShiftReportContext') !== false, 'shift preview should default to business day via shared context');
 
 $ops = file_get_contents(__DIR__ . '/../../operations_summary.php');
 businessDayContractAssert(strpos($ops, 'posmain_business_day_context') !== false, 'operations_summary should use business day');

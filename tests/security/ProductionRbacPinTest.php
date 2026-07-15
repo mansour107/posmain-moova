@@ -64,20 +64,22 @@ final class ProductionRbacPinTest extends TestCase
         $this->assertSame('1234', $svc->normalizePin('12-34'));
     }
 
-    public function test_pin_blacklist_rejects_1234(): void
+    public function test_pin_format_accepts_any_four_digits(): void
     {
-        $this->expectException(InvalidArgumentException::class);
-        (new PinService())->validatePinFormat('1234');
+        $svc = new PinService();
+        $svc->validatePinFormat('1234');
+        $svc->validatePinFormat('0000');
+        $this->assertSame('1234', $svc->normalizePin('1234'));
     }
 
-    public function test_manager_override_blacklisted_pin_surfaces_invalid(): void
+    public function test_manager_override_unknown_pin_surfaces_invalid(): void
     {
         $service = new ManagerApprovalService();
         $this->expectException(RuntimeException::class);
         $this->expectExceptionMessage('MANAGER_PIN_INVALID');
         $service->authenticateManagerOverride(
             self::$conn,
-            '0000',
+            '0199',
             'pos.table.open',
             1
         );

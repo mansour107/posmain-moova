@@ -21,8 +21,8 @@ phase4ZCloseAssert(strpos($source, '$conn->begin_transaction();') !== false, 'Z 
 phase4ZCloseAssert(strpos($source, 'closeSession($conn, $drawer_session_id') !== false, 'Z close should close drawer session when present');
 phase4ZCloseAssert(strpos($source, '$conn->commit();') !== false, 'Z close should commit on success');
 phase4ZCloseAssert(strpos($source, '$conn->rollback();') !== false, 'Z close should roll back on failure');
-phase4ZCloseAssert(strpos($source, "header('Location: pos_barcode.php?logout=1')") !== false, 'success should return to POS unlock screen');
-phase4ZCloseAssert(strpos($source, 'pos_shift_close_result') !== false, 'success should stash close result for unlock modal');
+phase4ZCloseAssert(strpos($source, "header('Location: pos_barcode.php?logout=1')") !== false, 'success should return to POS close-ack screen');
+phase4ZCloseAssert(strpos($source, 'pos_shift_close_result') !== false, 'success should stash close result for close-ack modal');
 phase4ZCloseAssert(strpos($source, "header('Location: z_report.php')") !== false, 'error redirect should remain');
 phase4ZCloseAssert(strpos($source, "require_csrf('shift_close_z');") !== false, 'CSRF validation should remain');
 phase4ZCloseAssert(strpos($source, "\$_POST['close_token']") !== false || strpos($source, '$_POST[\'close_token\']') !== false, 'Z close should read close_token when handover enabled');

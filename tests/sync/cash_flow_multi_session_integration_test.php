@@ -84,6 +84,15 @@ try {
     ]);
     cashFlowMultiAssert(count($openSessions) === 1, 'only branch 1 session should remain open');
     cashFlowMultiAssert((int) $openSessions[0]['id'] === $branchOneId, 'open session should be branch 1');
+    cashFlowMultiAssert(
+        array_key_exists('close_variance', $openSessions[0]) && $openSessions[0]['close_variance'] === null,
+        'open session close variance must be unknown, not zero'
+    );
+    $openBreakdown = $drawer->sessionCashBreakdown($conn, $branchOneId);
+    cashFlowMultiAssert(
+        array_key_exists('close_variance', $openBreakdown) && $openBreakdown['close_variance'] === null,
+        'open sessionCashBreakdown close_variance must stay null until counted'
+    );
 
     // Simulate an interrupted or migrated close where status was persisted but
     // no physical closing count exists. It must remain unknown, not balanced.

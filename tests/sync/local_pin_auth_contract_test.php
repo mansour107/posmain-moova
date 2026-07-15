@@ -6,8 +6,16 @@ $checks = [
     'config/app_config.php' => ['posmain_resolve_main_auth_mode', 'posmain_is_pin_main_auth'],
     'classes/Security/MainAuthenticationService.php' => ['authenticateWithPin', 'lockToLoginScreen', 'sessionAuthVersionValid'],
     'classes/Security/LocalSecurityBootstrapService.php' => ['BOOTSTRAP', '0000', 'completed'],
-    'classes/Security/PostLoginRouteService.php' => ['WORKSPACE_DASHBOARD', 'WORKSPACE_POS', 'WORKSPACE_KDS', 'WORKSPACE_CHOOSER'],
-    'classes/Security/PinService.php' => ['PIN_LENGTH = 4', 'PIN_BLACKLISTED', 'PIN_REVEAL_DISABLED', 'auth_version'],
+    'classes/Security/PostLoginRouteService.php' => [
+        'WORKSPACE_DASHBOARD',
+        'WORKSPACE_BACKOFFICE',
+        'WORKSPACE_POS',
+        'WORKSPACE_KDS',
+        'WORKSPACE_CHOOSER',
+        'resolveBestLanding',
+        'sales-reports.php',
+    ],
+    'classes/Security/PinService.php' => ['PIN_LENGTH = 4', 'PIN_REVEAL_DISABLED', 'auth_version'],
     'classes/Pos/Service/PosRegisterService.php' => ['COOKIE_NAME', 'requirePairedRegister', 'pairing_token_hash'],
     'classes/Pos/Service/ShiftEntryService.php' => [
         'STATE_SELLING_READY',
@@ -17,12 +25,24 @@ $checks = [
     ],
     'classes/Pos/Service/DrawerSessionService.php' => ['open_register_lock', 'open_user_lock', 'transferOpenSessionRegister'],
     'ajax/main_pin_login.php' => ['main_pin', 'MainAuthenticationService'],
+    'ajax/main_session_lock.php' => ['lockToLoginScreen', 'MainAuthenticationService'],
+    'ajax/main_session_heartbeat.php' => ['posmain_heartbeat_last_at', 'posmain_is_pin_main_auth'],
+    'includes/connect.php' => ['main_session_lock.php', 'main_session_heartbeat.php', 'session_write_close'],
+    'includes/main_session_lock_client.php' => ['main_session_heartbeat.php', 'skipInactivityLock'],
+    'includes/session_bootstrap.php' => ['POSMAIN_HEARTBEAT_GRACE_SECONDS', 'posmain_session_soft_lock'],
     'includes/pos_main_pin_entry.php' => ['posmain_apply_main_pin_pos_entry', 'ShiftEntryService'],
     'includes/pin_pad_fragment.php' => ['ppm-dot', 'data-digits'],
-    'js/pin_pad.js' => ['PIN_RATE_LIMITED', 'OFFLINE', 'PosmainPinPad'],
+    'js/pin_pad.js' => ['PIN_RATE_LIMITED', 'PosmainPinPad', 'Local PIN auth must always attempt'],
     'scripts/recover_owner_pin.php' => ['CLI only', 'must_change', 'owner_pin_recovered_cli'],
-    'register_pair.php' => ['ربط هذا الجهاز بصندوق', 'register_pair'],
     'elements/pos/shift_recovery_overlay.php' => ['register_transfer_required', 'do_transfer_drawer_register'],
+    'register_pair.php' => [
+        'ربط هذا الجهاز بصندوق',
+        'register_pair',
+        'registerPairPinPad',
+        'pin_pad.js',
+        'posmain_user_can_approve_register_pair',
+        'pos.shift.force_close',
+    ],
 ];
 
 foreach ($checks as $relative => $needles) {
@@ -76,6 +96,20 @@ localPinAssert(
     strpos($docker, 'POSMAIN_MAIN_AUTH_MODE') !== false && preg_match('/POSMAIN_MAIN_AUTH_MODE[=:].*pin/', $docker) === 1,
     'local docker must set PIN main auth'
 );
+
+$pinPadJs = (string) file_get_contents($root . '/js/pin_pad.js');
+localPinAssert(
+    preg_match('/navigator\.onLine\s*===\s*false/', $pinPadJs) !== 1,
+    'PIN pad must not gate login on browser offline status (local auth works offline)'
+);
+localPinAssert(
+    strpos($pinPadJs, "mapError('OFFLINE')") === false && strpos($pinPadJs, 'mapError("OFFLINE")') === false,
+    'PIN pad must not surface browser-offline as a login block'
+);
+
+$indexSource = (string) file_get_contents($root . '/index.php');
+localPinAssert(strpos($indexSource, 'mainPinOffline') === false, 'main PIN screen must not show a network-offline banner');
+localPinAssert(strpos($indexSource, 'لا يوجد اتصال بالشبكة') === false, 'main PIN screen must not claim network is required');
 
 echo "local-pin-auth-contract-ok\n";
 

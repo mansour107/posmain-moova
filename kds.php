@@ -12,6 +12,7 @@ $isAdmin = kds_is_admin($conn);
 $stationService = new KdsStationService();
 $stations = $stationService->stationsForUser($conn, current_user_id(), $isAdmin);
 
+$posmainSkipInactivityLock = true;
 include __DIR__ . '/includes/header.php';
 include __DIR__ . '/includes/navbar.php';
 include __DIR__ . '/includes/sidebar.php';

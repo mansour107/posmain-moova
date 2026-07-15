@@ -89,14 +89,27 @@ if (!function_exists('posmain_render_layout_capabilities_script')) {
     }
 }
 
+if (!function_exists('posmain_approver_role_index')) {
+    function posmain_approver_role_index(mysqli $conn): array
+    {
+        if (!class_exists('PermissionService', false)) {
+            require_once __DIR__ . '/../classes/Security/PermissionService.php';
+        }
+
+        return (new PermissionService($conn))->approverRoleIndex();
+    }
+}
+
 if (!function_exists('posmain_render_acting_pos_context_script')) {
     function posmain_render_acting_pos_context_script(mysqli $conn, int $actingUserId): string
     {
         $capabilities = posmain_acting_user_permissions($conn, $actingUserId);
         $limits = posmain_acting_user_limits($conn, $actingUserId);
+        $approverRoles = posmain_approver_role_index($conn);
         $capsJson = json_encode($capabilities, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT);
         $limitsJson = json_encode($limits, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT);
+        $rolesJson = json_encode($approverRoles, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT);
 
-        return '<script>window.POSMAIN_CAPABILITIES = ' . $capsJson . ';window.POSMAIN_LIMITS = ' . $limitsJson . ';</script>';
+        return '<script>window.POSMAIN_CAPABILITIES = ' . $capsJson . ';window.POSMAIN_LIMITS = ' . $limitsJson . ';window.POSMAIN_APPROVER_ROLES = ' . $rolesJson . ';</script>';
     }
 }

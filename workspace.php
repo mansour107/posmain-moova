@@ -53,7 +53,7 @@ if (($resolved['workspace'] ?? '') !== PostLoginRouteService::WORKSPACE_CHOOSER 
         <?php endforeach; ?>
       </div>
       <p class="ppm-sub" style="margin-top:1.25rem;">
-        <a href="do/do_logout.php" style="color:#64748b;">قفل / تسجيل الخروج</a>
+        <a href="do/do_logout.php" style="color:#64748b;" data-posmain-leave-page>مغادرة الصفحة</a>
       </p>
     </div>
   </div>

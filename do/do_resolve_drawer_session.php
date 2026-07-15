@@ -35,6 +35,7 @@ try {
         static function (array $txContext = []) use ($conn, $userId, $sessionId): array {
             $service = new ShiftCountService();
             $data = $service->resolveSession($conn, $userId, $sessionId, [
+                'resolution_reason_code' => $_POST['resolution_reason_code'] ?? '',
                 'resolution_notes' => $_POST['resolution_notes'] ?? '',
             ], $txContext);
 
@@ -52,10 +53,22 @@ try {
 } catch (RuntimeException $exception) {
     if ($exception->getMessage() === 'PERMISSION_DENIED') {
         $_SESSION['error_message'] = 'يتطلب صلاحية مدير لحل حالات الفرق';
+    } elseif ($exception->getMessage() === 'RESOLUTION_REASON_CODE_REQUIRED') {
+        $_SESSION['error_message'] = 'اختر سبب الفرق من القائمة قبل التأكيد';
+    } elseif ($exception->getMessage() === 'RESOLUTION_NOTES_REQUIRED') {
+        $_SESSION['error_message'] = 'اخترت "سبب آخر" — اكتب التفاصيل قبل التأكيد';
+    } elseif ($exception->getMessage() === 'LEDGER_SUBSYSTEM_UNAVAILABLE' || $exception->getMessage() === 'FUND_ACCOUNT_REQUIRED') {
+        $_SESSION['error_message'] = 'تعذر تسجيل قيد الفرق في الحسابات — لم يتم اعتماد المراجعة';
     } else {
         $_SESSION['error_message'] = 'تعذر حل الحالة: ' . $exception->getMessage();
     }
 }
 
-header('Location: ../closed_sessions.php');
+$returnTo = trim((string) ($_POST['return_to'] ?? ''));
+$redirect = '../closed_sessions.php';
+if (preg_match('/^drawer_session\.php\?id=(\d+)$/', $returnTo, $matches)) {
+    $redirect = '../drawer_session.php?id=' . (int) $matches[1];
+}
+
+header('Location: ' . $redirect);
 exit;

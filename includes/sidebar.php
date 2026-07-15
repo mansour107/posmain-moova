@@ -48,7 +48,19 @@ $posmainLegacyFlag = static function (string $flag) use ($conn): bool {
             onerror="this.onerror=null; this.src='assets/logo/hors.png';">
         </div>
         <div class="info flex-grow-1">
-          <a href="" class="d-block" style="margin-bottom: 0;"><?php echo "اهلا يا " . $_SESSION['login'] ?></a>
+          <?php
+          $posmainSidebarUserName = '';
+          if (isset($up) && is_array($up)) {
+              $posmainSidebarUserName = trim((string) ($up['display_name'] ?? ''));
+              if ($posmainSidebarUserName === '') {
+                  $posmainSidebarUserName = trim((string) ($up['uname'] ?? ''));
+              }
+          }
+          if ($posmainSidebarUserName === '') {
+              $posmainSidebarUserName = trim((string) ($_SESSION['login'] ?? 'الموظف'));
+          }
+          ?>
+          <a href="" class="d-block" style="margin-bottom: 0;"><?php echo 'اهلا يا ' . htmlspecialchars($posmainSidebarUserName, ENT_QUOTES, 'UTF-8'); ?></a>
         </div>
       </div>
       <div class="search-wrapper" style="position: relative;">

@@ -30,6 +30,47 @@ class ShiftSessionService
         ];
     }
 
+    /**
+     * Shared scope for close-shift preview, Z-report, and cashier sales receipts.
+     * Always prefers the active drawer session window when one is open.
+     *
+     * @return array{scope: array, business_day: string, drawer_session: ?array}
+     */
+    public function buildShiftReportContext(mysqli $conn, int $userId, array $context = []): array
+    {
+        $scope = $this->resolveScope($context);
+        if (!empty($context['drawer_session_id'])) {
+            $scope['drawer_session_id'] = (int) $context['drawer_session_id'];
+        }
+
+        $drawerSession = $this->currentDrawerSession($conn, $userId, $scope);
+        $businessDay = null;
+        if ($drawerSession) {
+            $scope['shift_opened_at'] = $drawerSession['opened_at'];
+            $scope['drawer_session_id'] = (int) $drawerSession['id'];
+            $scope['tenant'] = (int) ($drawerSession['tenant'] ?? $scope['tenant']);
+            $scope['branch'] = (int) ($drawerSession['branch'] ?? $scope['branch']);
+            $businessDay = trim((string) ($drawerSession['business_day'] ?? ''));
+        }
+
+        if ($businessDay === null || $businessDay === '') {
+            if (!function_exists('posmain_current_business_day')) {
+                require_once dirname(__DIR__, 3) . '/includes/business_day.php';
+            }
+            $businessDay = posmain_current_business_day(
+                $conn,
+                (int) $scope['tenant'],
+                (int) $scope['branch']
+            );
+        }
+
+        return [
+            'scope' => $scope,
+            'business_day' => (string) $businessDay,
+            'drawer_session' => $drawerSession,
+        ];
+    }
+
     public function drawerSubsystemActive(mysqli $conn, int $tenant = 0, int $branch = 0): bool
     {
         if (!function_exists('posmain_drawer_sessions_table_exists')
@@ -118,17 +159,51 @@ class ShiftSessionService
                 if ($session['status'] === 'open' && (int) $session['user_id'] === $userId) {
                     return $session;
                 }
+                // Temporary manager/owner override: non-owner may use the open drawer.
+                if ($session['status'] === 'open' && $this->operatorHasActiveOverride($conn, $userId, $sessionId)) {
+                    return $session;
+                }
             } catch (Throwable $exception) {
                 // fall through to lookup
             }
         }
 
-        return $this->drawerSessions->findOpenSession(
+        $owned = $this->drawerSessions->findOpenSession(
             $conn,
             $userId,
             $scope['tenant'],
             $scope['branch']
         );
+        if ($owned) {
+            return $owned;
+        }
+
+        $overrideSessionId = (int) ($_SESSION['pos_override_drawer_session_id'] ?? 0);
+        if ($overrideSessionId > 0 && $this->operatorHasActiveOverride($conn, $userId, $overrideSessionId)) {
+            try {
+                $session = $this->drawerSessions->sessionById($conn, $overrideSessionId);
+                if ($session['status'] === 'open') {
+                    return $session;
+                }
+            } catch (Throwable $ignored) {
+            }
+        }
+
+        return null;
+    }
+
+    private function operatorHasActiveOverride(mysqli $conn, int $operatorUserId, int $drawerSessionId): bool
+    {
+        if ($operatorUserId < 1 || $drawerSessionId < 1) {
+            return false;
+        }
+        require_once __DIR__ . '/DrawerOverrideService.php';
+        try {
+            $override = (new DrawerOverrideService())->findActiveForDrawer($conn, $drawerSessionId, true);
+            return $override !== null && (int) ($override['operator_user_id'] ?? 0) === $operatorUserId;
+        } catch (Throwable $ignored) {
+            return false;
+        }
     }
 
     public function recordShiftExpense(mysqli $conn, int $userId, array $payload, array $context = []): array
@@ -661,11 +736,18 @@ class ShiftSessionService
             'terminal_name' => $terminalName,
             'terminal_user_id' => $terminalId,
             'is_takeover' => false,
+            'is_override' => false,
             'preceding_cashier_name' => null,
             'preceding_user_id' => null,
             'authorized_by_name' => null,
             'authorized_by_user_id' => null,
             'drawer_session_id' => null,
+            'override_period_id' => null,
+            'override_owner_name' => null,
+            'override_owner_user_id' => null,
+            'override_operator_name' => null,
+            'override_operator_user_id' => null,
+            'override_started_at' => null,
         ];
 
         if (!$conn instanceof mysqli || $actingId < 1) {
@@ -683,6 +765,24 @@ class ShiftSessionService
         if ($ownerId > 0) {
             $identity['cashier_user_id'] = $ownerId;
             $identity['cashier_name'] = $this->cashierUsername($conn, $ownerId);
+        }
+
+        require_once __DIR__ . '/DrawerOverrideService.php';
+        $overrideService = new DrawerOverrideService();
+        $activeOverride = $overrideService->findActiveForDrawer($conn, (int) $identity['drawer_session_id'], true);
+        if ($activeOverride && (int) ($activeOverride['operator_user_id'] ?? 0) === $actingId) {
+            $operatorId = (int) ($activeOverride['operator_user_id'] ?? 0);
+            $identity['is_override'] = true;
+            $identity['override_period_id'] = (int) ($activeOverride['id'] ?? 0);
+            $identity['override_owner_user_id'] = (int) ($activeOverride['original_owner_user_id'] ?? $ownerId);
+            $identity['override_owner_name'] = $this->cashierUsername($conn, (int) $identity['override_owner_user_id']);
+            $identity['override_operator_user_id'] = $operatorId;
+            $identity['override_operator_name'] = $this->cashierUsername($conn, $operatorId);
+            $identity['override_started_at'] = (string) ($activeOverride['started_at'] ?? '');
+            $identity['authorized_by_user_id'] = (int) ($activeOverride['approved_by_user_id'] ?? 0) ?: null;
+            if ($identity['authorized_by_user_id']) {
+                $identity['authorized_by_name'] = $this->cashierUsername($conn, (int) $identity['authorized_by_user_id']);
+            }
         }
 
         $precedingId = (int) ($drawerSession['preceding_session_id'] ?? 0);
@@ -713,7 +813,7 @@ class ShiftSessionService
                 $authorizedBy = 0;
             }
         }
-        if ($authorizedBy > 0) {
+        if ($authorizedBy > 0 && empty($identity['authorized_by_user_id'])) {
             $identity['authorized_by_user_id'] = $authorizedBy;
             $identity['authorized_by_name'] = $this->cashierUsername($conn, $authorizedBy);
         }
@@ -964,27 +1064,22 @@ class ShiftSessionService
             return null;
         }
 
-        $approvalService = new ManagerApprovalService();
-        $approval = $approvalService->requireApprovedIfNeeded(
-            $conn,
-            'pos.payout.over_limit',
-            'drawer_session',
-            $drawerSessionId,
-            $amount,
-            $request,
-            [
-                'user_id' => $userId,
-                'limit_permission_key' => 'pos.payout.over_limit',
-                'escalation_permission_key' => 'pos.payout.over_limit',
-            ]
-        );
-        if ($approval) {
-            $approvalService->consumeApproval($conn, (int) $approval['id'], $userId);
-
-            return (int) $approval['id'];
+        // PIN override creates permission_key approvals (target_type=pos_action).
+        // Validate by permission key so mid-shift payouts match the override UI.
+        $approvalId = (int) ($request['manager_approval_id'] ?? $request['approval_id'] ?? 0);
+        if ($approvalId < 1) {
+            throw new ManagerApprovalRequiredException('pos.payout.over_limit');
         }
+        $approvalService = new ManagerApprovalService();
+        $approvalService->validateApprovedPermissionOverride(
+            $conn,
+            $approvalId,
+            'pos.payout.over_limit',
+            $userId
+        );
+        $approvalService->consumeApproval($conn, $approvalId, $userId);
 
-        return null;
+        return $approvalId;
     }
 
     private function payoutLimitInfrastructureAvailable(mysqli $conn): bool

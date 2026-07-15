@@ -505,6 +505,54 @@ class RecipeRolloutReadinessServiceTest extends TestCase
         $this->assertContains('recipe_account_missing_production_variance_account_id', $result['blockers']);
     }
 
+    public function testAccountingRolloutAcceptsChartResolvedAccountsWhenEnvUnset(): void
+    {
+        self::$conn->query("
+            CREATE TABLE IF NOT EXISTS acc_head (
+                id INT NOT NULL PRIMARY KEY,
+                code VARCHAR(32) NOT NULL,
+                aname VARCHAR(255) NOT NULL,
+                isdeleted TINYINT NOT NULL DEFAULT 0,
+                is_basic TINYINT NOT NULL DEFAULT 0,
+                is_stock TINYINT NOT NULL DEFAULT 0,
+                is_fund TINYINT NOT NULL DEFAULT 0,
+                parent_id INT NOT NULL DEFAULT 0
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+        ");
+        self::$conn->query('DELETE FROM acc_head');
+        self::$conn->query("
+            INSERT INTO acc_head (id, code, aname, isdeleted, is_basic) VALUES
+            (15, '41', 'تكاليف المبيعات', 0, 1),
+            (16, '42', 'تكلفه البضاعه المباعه', 0, 1),
+            (20, '123', 'المخزون', 0, 1)
+        ");
+
+        $result = $this->service()->check(self::$conn, $this->flags([
+            'enabled' => true,
+            'mode' => 'accounting_pilot',
+            'consumption' => true,
+            'accounting' => true,
+            'accounts' => [
+                'cogs_account_id' => 0,
+                'raw_inventory_account_id' => 0,
+                'prepared_inventory_account_id' => 0,
+                'packaging_inventory_account_id' => 0,
+                'waste_expense_account_id' => 0,
+                'production_variance_account_id' => 0,
+            ],
+            'pilot' => [
+                'item_ids' => [101],
+            ],
+        ]));
+
+        $this->assertNotContains('recipe_account_missing_cogs_account_id', $result['blockers']);
+        $this->assertNotContains('recipe_account_missing_raw_inventory_account_id', $result['blockers']);
+        $this->assertNotContains('recipe_account_missing_prepared_inventory_account_id', $result['blockers']);
+        $this->assertNotContains('recipe_account_missing_packaging_inventory_account_id', $result['blockers']);
+        $this->assertNotContains('recipe_account_missing_waste_expense_account_id', $result['blockers']);
+        $this->assertNotContains('recipe_account_missing_production_variance_account_id', $result['blockers']);
+    }
+
     public function testPostVariancePolicyRequiresActiveRecipeAccounting(): void
     {
         $result = $this->service()->check(self::$conn, $this->flags([

@@ -157,7 +157,7 @@ class ShiftDrawerReconciliationService
         $summary = [
             'opening_cash' => '0.000',
             'pre_close_expected_cash' => '0.000',
-            'close_variance' => '0.000',
+            'close_variance' => null,
             'post_close_expected_cash' => '0.000',
             'counted_cash' => null,
             'expected_cash' => '0.000',
@@ -235,7 +235,21 @@ class ShiftDrawerReconciliationService
             return $methodTypes[$code];
         }
 
-        return strtolower(trim($method)) === 'cash' ? 'cash' : 'other';
+        $normalized = strtolower(trim($method));
+        if ($normalized === 'cash' || $normalized === 'نقدي') {
+            return 'cash';
+        }
+        if ($normalized === 'bank' || $normalized === 'بنك') {
+            return 'bank';
+        }
+        if ($normalized === 'card' || $normalized === 'card_terminal' || $normalized === 'بطاقة') {
+            return 'card';
+        }
+        if ($normalized === 'wallet' || $normalized === 'محفظة') {
+            return 'wallet';
+        }
+
+        return 'other';
     }
 
     private function normalizePaymentCodeOrNull(string $method): ?string

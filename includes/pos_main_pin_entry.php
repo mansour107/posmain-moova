@@ -36,7 +36,7 @@ function posmain_apply_main_pin_pos_entry(mysqli $conn, string $fallbackUnlockPa
         }
         return $result;
     }
-    if (!empty($_SESSION['posmain_pin_must_change']) || !empty($_SESSION['posmain_bootstrap_pending'])) {
+    if (!empty($_SESSION['posmain_bootstrap_pending'])) {
         return $result;
     }
     require_once dirname(__DIR__) . '/classes/Pos/Service/ShiftEntryService.php';

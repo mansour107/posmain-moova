@@ -201,6 +201,22 @@ class ManagerApprovalService
             throw new RuntimeException('MANAGER_PERMISSION_DENIED');
         }
 
+        // Step-up re-auth for shift join/takeover (and explicit callers):
+        // if the acting user already holds this permission, the PIN must belong
+        // to that same user — another manager cannot authorize under their session.
+        $requireSameUser = !empty($context['require_same_user']);
+        $sameUserPermissions = ['pos.shift.override', 'pos.shift.force_close'];
+        if (!$requireSameUser && $requestedBy > 0 && in_array($permissionKey, $sameUserPermissions, true)) {
+            if (!class_exists('PermissionService', false)) {
+                require_once __DIR__ . '/../../Security/PermissionService.php';
+            }
+            $requireSameUser = PermissionService::forConnection($conn)->check($requestedBy, $permissionKey);
+        }
+        if ($requireSameUser && $requestedBy > 0 && $managerId !== $requestedBy) {
+            $pinService->recordTerminalFailure($conn, $ip);
+            throw new RuntimeException('MANAGER_PIN_MISMATCH');
+        }
+
         $limitCheck = $this->resolveApproverLimitCheck($permissionKey, $context);
         if ($limitCheck !== null) {
             if (!class_exists('PermissionService', false)) {

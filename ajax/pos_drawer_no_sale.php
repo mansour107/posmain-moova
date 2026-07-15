@@ -29,22 +29,18 @@ $reason = trim((string) ($_POST['reason'] ?? 'فتح درج بدون بيع'));
 
 try {
     if (!auth_guard_has_permission('pos.drawer.no_sale', $conn)) {
-        $approvalService = new ManagerApprovalService();
-        $approval = $approvalService->requireApprovedIfNeeded(
-            $conn,
-            'pos.drawer.no_sale',
-            'drawer_session',
-            (int) ($_SESSION['pos_drawer_session_id'] ?? 0) ?: null,
-            1.0,
-            $_POST,
-            [
-                'user_id' => $userId,
-                'require_manager_approval' => true,
-            ]
-        );
-        if ($approval) {
-            $approvalService->consumeApproval($conn, (int) $approval['id'], $userId);
+        $approvalId = (int) ($_POST['manager_approval_id'] ?? $_POST['approval_id'] ?? 0);
+        if ($approvalId < 1) {
+            throw new ManagerApprovalRequiredException('pos.drawer.no_sale');
         }
+        $approvalService = new ManagerApprovalService();
+        $approvalService->validateApprovedPermissionOverride(
+            $conn,
+            $approvalId,
+            'pos.drawer.no_sale',
+            $userId
+        );
+        $approvalService->consumeApproval($conn, $approvalId, $userId);
     }
 
     $shiftService = new ShiftSessionService();

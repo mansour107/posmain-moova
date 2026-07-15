@@ -362,13 +362,18 @@ class DrawerSessionService
         $countedCash = $session['counted_cash'] !== null ? (float) $session['counted_cash'] : null;
         $isClosed = in_array((string) ($session['status'] ?? ''), ['closed', 'forced_closed'], true);
         $countPending = $isClosed && $countedCash === null;
+        // No closing count yet (open session or interrupted close) is unknown over/short,
+        // not a balanced 0.00 — same rule as count_pending closed sessions.
+        $closeVarianceKnown = $countedCash !== null;
 
         return [
             'pre_close_expected_cash' => $this->formatDecimal($preCloseExpected),
             // A missing close count is not a zero variance. Keep it nullable so
             // reporting can distinguish an uncounted close from a balanced one.
-            'close_variance' => $countPending ? null : $this->formatDecimal($closeVariance),
-            'post_close_expected_cash' => $this->formatDecimal($preCloseExpected + $closeVariance),
+            'close_variance' => $closeVarianceKnown ? $this->formatDecimal($closeVariance) : null,
+            'post_close_expected_cash' => $this->formatDecimal(
+                $closeVarianceKnown ? ($preCloseExpected + $closeVariance) : $preCloseExpected
+            ),
             'counted_cash' => $countedCash !== null ? $this->formatDecimal($countedCash) : null,
             'has_closing_count' => $countedCash !== null,
             'count_pending' => $countPending,
@@ -788,6 +793,15 @@ class DrawerSessionService
         } catch (Throwable $exception) {
             posmain_tx_rollback_if_owned($conn, $ownsTransaction);
             throw $exception;
+        }
+
+        try {
+            require_once __DIR__ . '/DrawerOverrideService.php';
+            $endReason = $status === 'forced_closed'
+                ? DrawerOverrideService::END_REASON_FORCE_CLOSE
+                : DrawerOverrideService::END_REASON_SHIFT_CLOSE;
+            (new DrawerOverrideService())->endActiveForDrawer($conn, $sessionId, $endReason, $closedBy);
+        } catch (Throwable $ignored) {
         }
 
         return $this->sessionById($conn, $sessionId);

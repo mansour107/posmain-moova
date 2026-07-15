@@ -419,6 +419,74 @@ class TeamHubService
     ];
   }
 
+  /**
+   * @return array{total: int, available: bool}
+   */
+  public function loginActivitySummary(): array
+  {
+    if (!$this->tableExists('session_time')) {
+      return ['total' => 0, 'available' => false];
+    }
+
+    try {
+      $result = $this->conn->query('SELECT COUNT(*) AS c FROM session_time');
+      $row = $result ? $result->fetch_assoc() : null;
+
+      return [
+        'total' => (int) ($row['c'] ?? 0),
+        'available' => true,
+      ];
+    } catch (Throwable $e) {
+      return ['total' => 0, 'available' => false];
+    }
+  }
+
+  /**
+   * Recent login rows with usernames (single JOIN, no N+1).
+   *
+   * @return list<array{id: int, user_id: int, uname: string, crtime: string}>
+   */
+  public function recentLogins(int $limit = 50): array
+  {
+    $limit = max(1, min(100, $limit));
+    if (!$this->tableExists('session_time') || !$this->tableExists('users')) {
+      return [];
+    }
+
+    try {
+      $sql = 'SELECT st.id, st.`user` AS user_id, COALESCE(u.uname, \'__\') AS uname, st.crtime
+              FROM session_time st
+              LEFT JOIN users u ON u.id = st.`user`
+              ORDER BY st.crtime DESC, st.id DESC
+              LIMIT ' . (int) $limit;
+      $result = $this->conn->query($sql);
+      if (!$result) {
+        return [];
+      }
+      $rows = [];
+      while ($row = $result->fetch_assoc()) {
+        $rows[] = [
+          'id' => (int) ($row['id'] ?? 0),
+          'user_id' => (int) ($row['user_id'] ?? 0),
+          'uname' => (string) ($row['uname'] ?? '__'),
+          'crtime' => (string) ($row['crtime'] ?? ''),
+        ];
+      }
+
+      return $rows;
+    } catch (Throwable $e) {
+      return [];
+    }
+  }
+
+  private function tableExists(string $table): bool
+  {
+    $safe = $this->conn->real_escape_string($table);
+    $result = @$this->conn->query("SHOW TABLES LIKE '{$safe}'");
+
+    return $result instanceof mysqli_result && $result->num_rows > 0;
+  }
+
   private function countActiveStaffForRole(int $roleId): int
   {
     $stmt = $this->conn->prepare(

@@ -81,7 +81,10 @@ test.describe.serial('shift real-user campaign (all roles)', () => {
         minRatio: 3.0,
       });
       await captureShiftShot(page, 'c1-cashier-close-result');
-      await page.locator('#shiftCloseResultDismiss').click();
+      await Promise.all([
+        page.waitForURL(/do_logout\.php|index\.php|login\.php/, { timeout: 15_000, waitUntil: 'commit' }),
+        page.locator('#shiftCloseResultDismiss').click(),
+      ]);
     } else {
       await expect(page.getByText(/تم إغلاق الشيفت|إغلاق الشيفت/i).first()).toBeVisible({ timeout: 10_000 });
     }
@@ -256,7 +259,7 @@ test.describe.serial('shift real-user campaign (all roles)', () => {
     if (drilled) {
       await assertPageHealthy(page);
       await expect(
-        page.getByRole('heading', { name: /محاولات العد|سجل الحركات|سجل الحلول/i }).first(),
+        page.getByRole('heading', { name: /محاولات العد|سجل الحركات|سجل حركات الدرج|سجل الحلول/i }).first(),
       ).toBeVisible({ timeout: 15_000 });
       await captureShiftShot(page, 'o1-drawer-session-detail');
     }
