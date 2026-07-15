@@ -4,7 +4,7 @@ require_once __DIR__ . '/../Router/ShopRouter.php';
 require_once __DIR__ . '/BranchIdentity.php';
 require_once __DIR__ . '/CloudAuthService.php';
 require_once __DIR__ . '/CloudBranchRegistryService.php';
-require_once __DIR__ . '/SchemaManager.php';
+require_once __DIR__ . '/SchemaReadinessGuard.php';
 require_once __DIR__ . '/SyncHttpClient.php';
 require_once __DIR__ . '/SyncRuntimeCrypto.php';
 require_once __DIR__ . '/SyncRuntimeSettings.php';
@@ -64,6 +64,8 @@ class BranchPairingService
                 } else {
                     $shopId = $this->resolveShopId($router, $routerConn, $config, $input, $contextConn);
                 }
+                $shopConn = $router->connectShopById($routerConn, $shopId);
+                (new SyncSchemaReadinessGuard())->assertReady($shopConn);
                 $route = $router->pairBranchRoute($routerConn, [
                     'shop_id' => $shopId,
                     'branch_uuid' => $branchUuid,
@@ -71,11 +73,11 @@ class BranchPairingService
                     'status' => (string) ($input['branch_status'] ?? $input['status'] ?? 'active'),
                     'require_encryption' => true,
                 ]);
-                $shopConn = $router->connectShopById($routerConn, $shopId);
             } finally {
                 $routerConn->close();
             }
         } else {
+            (new SyncSchemaReadinessGuard())->assertReady($contextConn);
             $legacyRegistered = (new CloudBranchRegistryService())->register($contextConn, [
                 'branch_uuid' => $branchUuid,
                 'secret' => $secret,
@@ -90,7 +92,6 @@ class BranchPairingService
         }
 
         try {
-            (new SyncSchemaManager())->apply($shopConn);
             (new SyncRuntimeSettings())->savePartial($shopConn, self::HOSTED_SYNC_DEFAULTS, [
                 'POSMAIN_CLOUD_APPLY_ENABLED',
                 'POSMAIN_CLOUD_PULL_ENABLED',
@@ -134,6 +135,8 @@ class BranchPairingService
             throw new InvalidArgumentException('Cloud base URL must start with http:// or https://.');
         }
 
+        (new SyncSchemaReadinessGuard())->assertReady($conn);
+
         if ((new SyncRuntimeCrypto())->available()) {
             (new SyncRuntimeSettings())->save($conn, array_merge(self::LOCAL_SYNC_DEFAULTS, [
                 'role' => 'branch',
@@ -156,8 +159,6 @@ class BranchPairingService
                 'cloud_base_url' => $cloudBaseUrl,
             ],
         ]);
-        (new SyncSchemaManager())->apply($conn);
-
         $dashboard = (new PairingStatusService())->localDashboard($conn, $config, [
             'branch_uuid' => $branchUuid,
             'branch_secret' => $secret,

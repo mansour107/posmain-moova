@@ -3,23 +3,35 @@
 require_once __DIR__ . '/../../Recipe/RecipeAvailabilityService.php';
 require_once __DIR__ . '/../../Recipe/RecipeFeatureFlags.php';
 require_once __DIR__ . '/../../Recipe/RecipeSettingsService.php';
+require_once __DIR__ . '/../../Inventory/InventoryFeatureFlags.php';
+require_once __DIR__ . '/../../Inventory/NegativeStockSalePolicyService.php';
 
 class ItemAvailabilityService
 {
     private ?RecipeFeatureFlags $recipeFlags;
     private ?RecipeAvailabilityService $recipeAvailabilityService;
     private RecipeSettingsService $recipeSettingsService;
+    private NegativeStockSalePolicyService $negativeStockPolicy;
+    private InventoryFeatureFlags $inventoryFlags;
     private array $itemCategoryCache = [];
 
     public function __construct(
         ?RecipeFeatureFlags $recipeFlags = null,
         ?RecipeAvailabilityService $recipeAvailabilityService = null,
-        ?RecipeSettingsService $recipeSettingsService = null
+        ?RecipeSettingsService $recipeSettingsService = null,
+        ?NegativeStockSalePolicyService $negativeStockPolicy = null,
+        ?InventoryFeatureFlags $inventoryFlags = null
     )
     {
         $this->recipeFlags = $recipeFlags ?: new RecipeFeatureFlags();
         $this->recipeAvailabilityService = $recipeAvailabilityService ?: new RecipeAvailabilityService($this->recipeFlags);
         $this->recipeSettingsService = $recipeSettingsService ?: new RecipeSettingsService(
+            method_exists($this->recipeFlags, 'appConfig') ? $this->recipeFlags->appConfig() : null
+        );
+        $this->negativeStockPolicy = $negativeStockPolicy ?: new NegativeStockSalePolicyService(
+            method_exists($this->recipeFlags, 'appConfig') ? $this->recipeFlags->appConfig() : null
+        );
+        $this->inventoryFlags = $inventoryFlags ?: new InventoryFeatureFlags(
             method_exists($this->recipeFlags, 'appConfig') ? $this->recipeFlags->appConfig() : null
         );
     }
@@ -73,14 +85,18 @@ class ItemAvailabilityService
             ?: $this->fetchAvailabilityRow($conn, $itemId, $tenant, $branch, 'all');
 
         if (!$row) {
-            return $this->withCashierPresentation($this->withRecipeAvailability(
+            return $this->withCashierPresentation($conn, $this->withInventoryAvailability($conn, $this->withRecipeAvailability(
                 $conn,
                 $this->defaultAvailability($itemId, $tenant, $branch, $channel),
                 $scope
-            ));
+            ), $scope));
         }
 
-        return $this->withCashierPresentation($this->withRecipeAvailability($conn, $this->formatAvailability($row, $tenant, $branch, $channel), $scope));
+        return $this->withCashierPresentation($conn, $this->withInventoryAvailability(
+            $conn,
+            $this->withRecipeAvailability($conn, $this->formatAvailability($row, $tenant, $branch, $channel), $scope),
+            $scope
+        ));
     }
 
     public function assertSellable(mysqli $conn, int $itemId, array $scope = []): array
@@ -131,6 +147,9 @@ class ItemAvailabilityService
                 'recipe_effective_is_available',
                 'recipe_unavailable_reason',
                 'recipe_availability_revision',
+                'inventory_stock_tracked',
+                'inventory_qty_available',
+                'inventory_stock_shortage',
             ] as $recipeKey) {
                 if (array_key_exists($recipeKey, $availability)) {
                     $item[$recipeKey] = $availability[$recipeKey];
@@ -203,13 +222,17 @@ class ItemAvailabilityService
         $stmt->close();
 
         foreach ($availability as $itemId => $itemAvailability) {
-            $availability[$itemId] = $this->withCashierPresentation($this->withRecipeAvailability($conn, $itemAvailability, $scope));
+            $availability[$itemId] = $this->withCashierPresentation($conn, $this->withInventoryAvailability(
+                $conn,
+                $this->withRecipeAvailability($conn, $itemAvailability, $scope),
+                $scope
+            ));
         }
 
         return $availability;
     }
 
-    private function withCashierPresentation(array $availability): array
+    private function withCashierPresentation(mysqli $conn, array $availability): array
     {
         $availability['availability_can_add'] = (bool) ($availability['is_available'] ?? false);
         $availability['availability_low_stock'] = false;
@@ -226,26 +249,17 @@ class ItemAvailabilityService
                 ? (bool) $availability['manual_is_available']
                 : false;
             if ($manualAvailable && !empty($availability['recipe_enabled'])) {
-                $strictStock = $this->recipeFlags->isStrictStockEnabled();
-                $overrideAllowed = !$strictStock
-                    && $this->recipeSettingsService->allowNegativeStockWithApproval();
+                $policy = $this->negativeStockPolicy->resolve($conn);
                 $availability['availability_status'] = 'recipe_unavailable';
-
-                if ($strictStock) {
-                    // Strict mode: keep the manager-approval gate (hard override path).
-                    $availability['availability_requires_manager_override'] = true;
-                    $availability['availability_override_allowed'] = $overrideAllowed;
-                    $availability['availability_can_add'] = $overrideAllowed;
-                    $availability['availability_override_permission'] = 'pos.recipe_stock_override';
-                } else {
-                    // Non-strict + allow-negative-with-approval: TRUE warn-only. The sale is
-                    // allowed with a warning toast; no manager-approval modal is opened.
-                    $availability['availability_warn_only'] = $overrideAllowed;
-                    $availability['availability_can_add'] = $overrideAllowed;
-                    if (!$overrideAllowed) {
-                        $availability['availability_requires_manager_override'] = false;
-                    }
+                if ($policy === NegativeStockSalePolicyService::ALLOW_WITH_WARNING) {
+                    $availability['availability_warn_only'] = true;
+                    $availability['availability_can_add'] = true;
                 }
+
+                return $availability;
+            }
+            if ($manualAvailable && !empty($availability['inventory_stock_shortage'])) {
+                $availability['availability_status'] = 'inventory_unavailable';
 
                 return $availability;
             }
@@ -267,7 +281,76 @@ class ItemAvailabilityService
             }
         }
 
+        if (!empty($availability['inventory_stock_shortage'])) {
+            $availability['availability_status'] = 'inventory_shortage';
+            $availability['availability_low_stock'] = true;
+            $availability['availability_warn_only'] = true;
+
+            return $availability;
+        }
+
         $availability['availability_status'] = 'available';
+
+        return $availability;
+    }
+
+    private function withInventoryAvailability(mysqli $conn, array $availability, array $scope): array
+    {
+        if (!$this->inventoryFlags->canWriteLedger() || !empty($availability['recipe_enabled'])) {
+            return $availability;
+        }
+
+        $itemId = (int) ($availability['item_id'] ?? 0);
+        $tenant = (int) ($availability['tenant'] ?? $scope['tenant'] ?? $scope['pos_tenant'] ?? 0);
+        $branch = (int) ($availability['branch'] ?? $scope['branch'] ?? $scope['pos_branch'] ?? 0);
+        $storeId = (int) ($scope['store_id'] ?? $scope['det_store'] ?? 0);
+        if ($itemId < 1 || $storeId < 1 || !$this->columnExists($conn, 'myitems', 'track_stock')) {
+            return $availability;
+        }
+
+        $availability['manual_is_available'] = (bool) ($availability['is_available'] ?? false);
+        if (!$availability['manual_is_available']) {
+            return $availability;
+        }
+
+        $stmt = $conn->prepare('SELECT track_stock FROM myitems WHERE id = ? LIMIT 1');
+        $stmt->bind_param('i', $itemId);
+        $stmt->execute();
+        $item = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        if (!$item || (int) ($item['track_stock'] ?? 0) !== 1) {
+            return $availability;
+        }
+        if (!$this->tableExists($conn, 'inventory_item_balances')) {
+            return $availability;
+        }
+
+        $stmt = $conn->prepare("
+            SELECT qty_available
+            FROM inventory_item_balances
+            WHERE pos_tenant = ?
+              AND pos_branch = ?
+              AND store_id = ?
+              AND item_id = ?
+            LIMIT 1
+        ");
+        $stmt->bind_param('iiii', $tenant, $branch, $storeId, $itemId);
+        $stmt->execute();
+        $balance = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        $qtyAvailable = (string) ($balance['qty_available'] ?? '0.000000');
+        $availability['inventory_stock_tracked'] = true;
+        $availability['inventory_qty_available'] = $qtyAvailable;
+        $availability['inventory_stock_shortage'] = (float) $qtyAvailable <= 0.0;
+        if (!$availability['inventory_stock_shortage']) {
+            return $availability;
+        }
+
+        if ($this->negativeStockPolicy->resolve($conn) === NegativeStockSalePolicyService::BLOCK) {
+            $availability['is_available'] = false;
+            $availability['unavailable_reason'] = 'Item out of stock.';
+        }
 
         return $availability;
     }

@@ -18,6 +18,7 @@ require_once $projectRoot . '/classes/Pos/Service/PosOrderMutationService.php';
 final class ProductionRbacPinTest extends TestCase
 {
     private static ?mysqli $conn = null;
+    private static string $dbName = '';
 
     public static function setUpBeforeClass(): void
     {
@@ -29,17 +30,38 @@ final class ProductionRbacPinTest extends TestCase
         $port = (int) (getenv('POSMAIN_TEST_MYSQL_PORT') ?: 3307);
         $user = getenv('POSMAIN_TEST_MYSQL_USER') ?: 'root';
         $pass = getenv('POSMAIN_TEST_MYSQL_PASS') ?: '';
-        $db = getenv('POSMAIN_TEST_MYSQL_DB') ?: 'kody2';
+        $sourceDb = getenv('POSMAIN_TEST_MYSQL_DB') ?: 'kody2';
+        if (!preg_match('/^[A-Za-z0-9_]+$/', $sourceDb)) {
+            self::$conn = null;
+            return;
+        }
 
-        self::$conn = @new mysqli($host, $user, $pass, $db, $port);
+        self::$conn = @new mysqli($host, $user, $pass, '', $port);
         if (self::$conn->connect_error) {
             self::$conn = null;
 
             return;
         }
 
+        self::$dbName = 'posmain_rbac_pin_' . getmypid();
+        self::$conn->query('DROP DATABASE IF EXISTS `' . self::$dbName . '`');
+        self::$conn->query('CREATE DATABASE `' . self::$dbName . '` CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci');
+        self::$conn->query('CREATE TABLE `' . self::$dbName . '`.usr_pwrs LIKE `' . $sourceDb . '`.usr_pwrs');
+        self::$conn->query('CREATE TABLE `' . self::$dbName . '`.users LIKE `' . $sourceDb . '`.users');
+        self::$conn->query('INSERT INTO `' . self::$dbName . '`.usr_pwrs SELECT * FROM `' . $sourceDb . '`.usr_pwrs WHERE id = 1');
+        self::$conn->query('INSERT INTO `' . self::$dbName . '`.users SELECT * FROM `' . $sourceDb . '`.users WHERE id = 1');
+        self::$conn->select_db(self::$dbName);
+
         require_once dirname(__DIR__, 2) . '/classes/Sync/SchemaManager.php';
         (new SyncSchemaManager())->apply(self::$conn);
+    }
+
+    public static function tearDownAfterClass(): void
+    {
+        if (self::$conn && self::$dbName !== '') {
+            self::$conn->query('DROP DATABASE IF EXISTS `' . self::$dbName . '`');
+            self::$conn->close();
+        }
     }
 
     protected function setUp(): void
@@ -534,11 +556,10 @@ final class ProductionRbacPinTest extends TestCase
         $stmt->execute();
         $managerId = (int) self::$conn->insert_id;
         $stmt->close();
+        self::$conn->query("DELETE FROM user_permission_grants WHERE user_id = {$managerId}");
+        self::$conn->query("UPDATE users SET permission_mode = 'role_only' WHERE id = {$managerId}");
 
-        $pin = (string) random_int(5000, 8999);
-        while (strlen($pin) < 4) {
-            $pin = (string) random_int(5000, 8999);
-        }
+        $pin = $this->uniquePin();
         $pinSvc->setPinForUser(self::$conn, $managerId, $pin);
 
         $service = new ManagerApprovalService();
@@ -576,8 +597,10 @@ final class ProductionRbacPinTest extends TestCase
         $stmt->execute();
         $managerId = (int) self::$conn->insert_id;
         $stmt->close();
+        self::$conn->query("DELETE FROM user_permission_grants WHERE user_id = {$managerId}");
+        self::$conn->query("UPDATE users SET permission_mode = 'role_only' WHERE id = {$managerId}");
 
-        $pin = (string) random_int(5000, 8999);
+        $pin = $this->uniquePin();
         $pinSvc->setPinForUser(self::$conn, $managerId, $pin);
 
         $service = new ManagerApprovalService();
@@ -1298,9 +1321,13 @@ final class ProductionRbacPinTest extends TestCase
 
     private function uniquePin(): string
     {
+        $pinService = new PinService();
         do {
             $pin = (string) random_int(5000, 9899);
-        } while (in_array($pin, ['1234', '5678', '2468', '9753'], true));
+        } while (
+            in_array($pin, ['1234', '5678', '2468', '9753'], true)
+            || $pinService->findUserByPin(self::$conn, $pin) !== null
+        );
 
         return $pin;
     }

@@ -1,7 +1,7 @@
 <?php
 
 require_once __DIR__ . '/BranchIdentity.php';
-require_once __DIR__ . '/SchemaManager.php';
+require_once __DIR__ . '/SchemaReadinessGuard.php';
 require_once __DIR__ . '/SyncRuntimeCrypto.php';
 
 class SyncRuntimeSettings
@@ -69,7 +69,7 @@ class SyncRuntimeSettings
 
     public function save(mysqli $conn, array $input): array
     {
-        (new SyncSchemaManager())->apply($conn);
+        (new SyncSchemaReadinessGuard())->assertReady($conn);
 
         $role = $this->normalizeRole($input['role'] ?? 'branch');
         $values = [
@@ -132,7 +132,7 @@ class SyncRuntimeSettings
 
     public function savePartial(mysqli $conn, array $input, array $allowedKeys): array
     {
-        (new SyncSchemaManager())->apply($conn);
+        (new SyncSchemaReadinessGuard())->assertReady($conn);
 
         $allowed = array_flip($allowedKeys);
         $values = [];

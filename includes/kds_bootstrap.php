@@ -1,6 +1,6 @@
 <?php
 
-require_once __DIR__ . '/../classes/Sync/SchemaManager.php';
+require_once __DIR__ . '/../classes/Sync/SchemaReadinessGuard.php';
 require_once __DIR__ . '/../classes/Pos/Service/KdsStationService.php';
 
 if (!function_exists('posmain_ensure_kds_schema')) {
@@ -13,13 +13,7 @@ if (!function_exists('posmain_ensure_kds_schema')) {
         }
         $ensured[$key] = true;
 
-        try {
-            $schema = new SyncSchemaManager();
-            $schema->applyKdsSchema($conn);
-            (new KdsStationService($schema))->ensureDefaultStation($conn);
-            $conn->query("UPDATE kds_tickets SET status = 'in_progress' WHERE status = 'ready'");
-        } catch (Throwable $exception) {
-            error_log('KDS schema ensure skipped: ' . $exception->getMessage());
-        }
+        (new SyncSchemaReadinessGuard())->assertReady($conn);
+        (new KdsStationService())->ensureDefaultStation($conn);
     }
 }

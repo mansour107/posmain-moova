@@ -14,6 +14,12 @@ if (!function_exists('posmain_acc_head_has_column')) {
             return $cache[$key];
         }
 
+        $accountTable = $conn->query("SHOW TABLES LIKE 'acc_head'");
+        if (!$accountTable || $accountTable->num_rows < 1) {
+            $cache[$key] = false;
+
+            return false;
+        }
         $result = $conn->query("SHOW COLUMNS FROM acc_head LIKE '{$safeColumn}'");
         $cache[$key] = $result && $result->num_rows > 0;
 
@@ -382,6 +388,12 @@ if (!function_exists('posmain_settings_column_exists')) {
             return $cache[$key];
         }
 
+        $settingsTable = $conn->query("SHOW TABLES LIKE 'settings'");
+        if (!$settingsTable || $settingsTable->num_rows < 1) {
+            $cache[$key] = false;
+
+            return false;
+        }
         $result = $conn->query("SHOW COLUMNS FROM settings LIKE '{$safeColumn}'");
         $cache[$key] = $result && $result->num_rows > 0;
 
@@ -675,6 +687,10 @@ if (!function_exists('posmain_resolve_default_account_id')) {
      */
     function posmain_resolve_default_account_id(mysqli $conn, int $preferredId, string $whereSql): int
     {
+        $accountTable = $conn->query("SHOW TABLES LIKE 'acc_head'");
+        if (!$accountTable || $accountTable->num_rows < 1) {
+            return 0;
+        }
         $whereSql = posmain_acc_head_normalize_where($conn, $whereSql);
 
         if ($preferredId > 0) {

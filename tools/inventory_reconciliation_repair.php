@@ -13,6 +13,7 @@ $options = getopt('', [
     'rehearse',
     'apply',
     'backup-file:',
+    'manifest-hash:',
     'tenant:',
     'branch:',
     'store:',
@@ -42,6 +43,7 @@ if ($itemId > 0) {
 }
 
 $backupFile = trim((string) ($options['backup-file'] ?? ''));
+$manifestHash = strtolower(trim((string) ($options['manifest-hash'] ?? '')));
 $conn = null;
 $connected = false;
 
@@ -65,8 +67,16 @@ try {
                 'repaired_items' => [],
                 'blockers' => ['readable_database_backup_file_required_for_reconciliation_repair_apply'],
             ];
+        } elseif (!preg_match('/^[a-f0-9]{64}$/', $manifestHash)) {
+            $result = [
+                'ok' => false,
+                'mode' => 'apply',
+                'summary' => [],
+                'repaired_items' => [],
+                'blockers' => ['reviewed_manifest_hash_required_for_reconciliation_repair_apply'],
+            ];
         } else {
-            $result = $service->applyMirrorRepair($conn, $filters);
+            $result = $service->applyMirrorRepair($conn, $filters, $manifestHash);
         }
     } elseif ($rehearse) {
         $result = $service->rehearseMirrorRepair($conn, $filters);
@@ -112,7 +122,7 @@ function inventoryReconciliationRepairUsage(): void
 {
     fwrite(STDOUT, "Usage: php tools/inventory_reconciliation_repair.php --dry-run [--tenant=0] [--branch=0] [--store=0] [--item=123] [--limit=1000] [--json]\n");
     fwrite(STDOUT, "Rehearse: php tools/inventory_reconciliation_repair.php --rehearse [--tenant=0] [--branch=0] [--store=0] [--item=123] [--limit=1000] [--json]\n");
-    fwrite(STDOUT, "Apply: php tools/inventory_reconciliation_repair.php --apply --backup-file=/absolute/path/to/recent.sql [--tenant=0] [--branch=0] [--store=0] [--item=123] [--limit=1000] [--json]\n");
+    fwrite(STDOUT, "Apply: php tools/inventory_reconciliation_repair.php --apply --backup-file=/absolute/path/to/recent.sql --manifest-hash=<dry-run-sha256> [--tenant=0] [--branch=0] [--store=0] [--item=123] [--limit=1000] [--json]\n");
     fwrite(STDOUT, "\n");
     fwrite(STDOUT, "Plans or repairs only safe myitems.itmqty compatibility-mirror rows where fat_details, inventory_movements, and inventory_item_balances already agree.\n");
 }
@@ -133,6 +143,9 @@ function inventoryReconciliationRepairPrint(array $result): void
     fwrite(STDOUT, '- differences: ' . (int) ($summary['difference_count'] ?? 0) . PHP_EOL);
     fwrite(STDOUT, '- repair candidates: ' . (int) ($summary['repair_candidate_count'] ?? 0) . PHP_EOL);
     fwrite(STDOUT, '- unhandled differences: ' . (int) ($summary['unhandled_difference_count'] ?? 0) . PHP_EOL);
+    if (!empty($result['manifest_hash'])) {
+        fwrite(STDOUT, '- manifest hash: ' . (string) $result['manifest_hash'] . PHP_EOL);
+    }
     if (($result['mode'] ?? '') === 'rehearse') {
         fwrite(STDOUT, '- rehearsed repairs: ' . (int) ($summary['rehearsed_count'] ?? 0) . PHP_EOL);
     } elseif (($result['mode'] ?? '') === 'apply') {

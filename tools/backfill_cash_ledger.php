@@ -1,6 +1,6 @@
 <?php
 
-require_once __DIR__ . '/../classes/Sync/SchemaManager.php';
+require_once __DIR__ . '/../classes/Sync/SchemaReadinessGuard.php';
 require_once __DIR__ . '/../classes/Pos/Service/DrawerSessionService.php';
 
 if (PHP_SAPI !== 'cli') {
@@ -18,7 +18,12 @@ $db = getenv('POSMAIN_TEST_MYSQL_DB') ?: 'posmain';
 
 $conn = new mysqli($host, $user, $pass, $db, $port);
 $conn->set_charset('utf8mb4');
-(new SyncSchemaManager())->apply($conn);
+(new SyncSchemaReadinessGuard())->assertReady($conn);
+
+if ($synthesize) {
+    fwrite(STDERR, "SYNTHETIC_HISTORICAL_DRAWER_MOVEMENTS_FORBIDDEN: reconstruct payments through the reviewed financial baseline workflow; do not invent drawer custody.\n");
+    exit(2);
+}
 
 $drawer = new DrawerSessionService();
 $actions = 0;
@@ -67,43 +72,6 @@ while ($row = $sessionRows->fetch_assoc()) {
         'reason' => 'backfill_opening',
     ]);
     $actions++;
-}
-
-if ($synthesize) {
-    $sql = "
-        SELECT op.id, op.order_id, op.amount, op.created_by, op.created_at
-        FROM order_payments op
-        WHERE op.payment_method = 'cash'
-          AND op.amount > 0
-          AND NOT EXISTS (
-              SELECT 1 FROM drawer_movements dm
-              WHERE dm.movement_type = 'sale_cash'
-                AND (
-                    (dm.payment_id IS NOT NULL AND dm.payment_id = op.id)
-                    OR (
-                        dm.payment_id IS NULL
-                        AND dm.order_id = op.order_id
-                        AND ABS(dm.amount - op.amount) < 0.001
-                    )
-                )
-          )
-    ";
-    $result = $conn->query($sql);
-    while ($row = $result->fetch_assoc()) {
-        if ($dryRun) {
-            echo "[dry-run] synthesize sale_cash for order_payment {$row['id']}\n";
-            continue;
-        }
-        $drawer->recordUnassignedMovement($conn, [
-            'movement_type' => 'sale_cash',
-            'amount' => (float) $row['amount'],
-            'order_id' => (int) $row['order_id'],
-            'payment_id' => (int) $row['id'],
-            'created_by' => (int) $row['created_by'],
-            'reason' => 'backfill:order_payment:' . (int) $row['id'],
-        ]);
-        $actions++;
-    }
 }
 
 echo "backfill-cash-ledger-ok actions={$actions}" . ($dryRun ? ' dry-run' : '') . "\n";

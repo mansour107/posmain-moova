@@ -187,6 +187,7 @@ return [
     'do/do_restore_role_preset.php' => ['permission' => 'roles.manage', 'csrf' => 'roles_write', 'lane' => 'erp', 'admin_or' => true],
     'do/doedit_service.php' => ['permission' => 'reports.view', 'csrf' => 'hr_write', 'lane' => 'erp'],
     'do/doedit_settings.php' => ['permission' => 'system.tools.run', 'csrf' => 'settings_write', 'lane' => 'erp', 'admin_or' => true],
+    'do/doedit_inventory_policy.php' => ['permission' => 'inventory.policy.manage', 'csrf' => 'inventory_policy_write', 'lane' => 'erp', 'admin_or' => true],
     'do/doedit_shift.php' => ['permission' => 'reports.view', 'csrf' => 'hr_write', 'lane' => 'erp'],
     'do/doedit_town.php' => ['permission' => 'reports.view', 'csrf' => 'hr_write', 'lane' => 'erp'],
     'do/doedit_unit.php' => ['permission' => 'menu.edit', 'csrf' => 'menu_write', 'lane' => 'erp'],

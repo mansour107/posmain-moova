@@ -7,6 +7,10 @@ class EmptyShopBootstrap
 {
     public function bootstrap(mysqli $conn, array $options = []): array
     {
+        if (!$this->databaseIsEmpty($conn)) {
+            throw new RuntimeException('EMPTY_SHOP_BOOTSTRAP_REQUIRES_EMPTY_DATABASE');
+        }
+
         $sqlFile = trim((string) ($options['schema_file'] ?? ''));
         if ($sqlFile === '') {
             $sqlFile = dirname(__DIR__, 2) . '/db/DB.sql';
@@ -48,6 +52,15 @@ class EmptyShopBootstrap
             'schema_file' => $sqlFile,
             'empty_shop' => true,
         ];
+    }
+
+    private function databaseIsEmpty(mysqli $conn): bool
+    {
+        $result = $conn->query(
+            "SELECT COUNT(*) AS c FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE()"
+        );
+
+        return (int) ($result->fetch_assoc()['c'] ?? 0) === 0;
     }
 
     public function importSchemaOnly(mysqli $conn, string $filePath): void

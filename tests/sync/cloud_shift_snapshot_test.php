@@ -166,6 +166,7 @@ class CloudShiftSnapshotTest extends TestCase
     {
         $payload = [
             'schema_version' => 2,
+            'snapshot_type' => 'shift_close',
             'drawer_session_uuid' => '89898989-9999-4999-8999-898989898989',
             'shift' => [
                 'close_uuid' => self::CLOSE_UUID,
@@ -173,6 +174,9 @@ class CloudShiftSnapshotTest extends TestCase
                 'drawer_session_uuid' => '89898989-9999-4999-8999-898989898989',
                 'cashier_user_id' => 12,
                 'shift_number' => '20260510_12',
+                'opened_at' => '2026-05-10 09:00:00',
+                'closed_at' => '2026-05-10 22:30:00',
+                'status' => 'closed',
                 'total_sales' => 99,
             ],
         ];
@@ -197,6 +201,9 @@ class CloudShiftSnapshotTest extends TestCase
 
         $this->assertNull($shift['local_closed_order_id']);
         $this->assertSame(44, (int) $shift['local_drawer_session_id']);
+        $drawer = self::$conn->query("SELECT * FROM drawer_sessions WHERE uuid = '89898989-9999-4999-8999-898989898989'")->fetch_assoc();
+        $this->assertSame('closed', $drawer['status']);
+        $this->assertSame(1, (int) self::$conn->query('SELECT COUNT(*) AS c FROM drawer_session_close_summaries WHERE drawer_session_id = ' . (int) $drawer['id'])->fetch_assoc()['c']);
     }
 
     public function testQueuedV1EventsWithoutCloseUuidUseStableLegacyFallback(): void

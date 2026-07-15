@@ -41,6 +41,7 @@ class RecipeReconciliationSyncPayloadServiceTest extends TestCase
                 id BIGINT UNSIGNED NOT NULL PRIMARY KEY,
                 uuid CHAR(36) NULL,
                 code VARCHAR(64) NOT NULL DEFAULT '',
+                barcode VARCHAR(191) NOT NULL DEFAULT '',
                 iname VARCHAR(255) NOT NULL DEFAULT '',
                 item_type VARCHAR(64) NOT NULL DEFAULT 'sellable',
                 track_stock TINYINT(1) NOT NULL DEFAULT 1,

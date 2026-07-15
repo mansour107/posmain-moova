@@ -66,7 +66,7 @@ CREATE TABLE `acc_head` (
   `start_balance` decimal(3,0) NOT NULL DEFAULT 0,
   `credit` decimal(3,0) NOT NULL DEFAULT 0,
   `debit` decimal(3,0) NOT NULL DEFAULT 0,
-  `balance` decimal(12,3) NOT NULL DEFAULT 0.000,
+  `balance` decimal(24,6) NOT NULL DEFAULT 0.000000,
   `secret` int(1) NOT NULL DEFAULT 0,
   `crtime` timestamp NOT NULL DEFAULT current_timestamp(),
   `mdtime` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
@@ -2353,15 +2353,16 @@ CREATE TABLE `settings` (
   `logo` varchar(255) DEFAULT NULL,
   `show_all_tasks` int(1) DEFAULT NULL,
   `pos_type` varchar(20) DEFAULT 'barcode' COMMENT 'نوع نظام POS: barcode أو clothes',
-  `pos_has_password` tinyint(1) NOT NULL DEFAULT 0 COMMENT '1 = POS محمي بباركود، 0 = POS مفتوح'
+  `pos_has_password` tinyint(1) NOT NULL DEFAULT 0 COMMENT '1 = POS محمي بباركود، 0 = POS مفتوح',
+  `negative_stock_sale_policy` enum('block','allow_with_warning') DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 --
 -- Dumping data for table `settings`
 --
 
-INSERT INTO `settings` (`id`, `company_name`, `company_add`, `company_email`, `company_tel`, `edit_pass`, `lic`, `updateline`, `acc_rent`, `startdate`, `enddate`, `lang`, `bodycolor`, `showhr`, `showclinc`, `showatt`, `showpayroll`, `showrent`, `showpay`, `showtsk`, `def_pos_client`, `def_pos_store`, `def_pos_employee`, `def_pos_fund`, `isdeleted`, `tenant`, `branch`, `logo`, `show_all_tasks`, `pos_type`, `pos_has_password`) VALUES
-(1, 'FOCUS HOUSE', 'سمنود - برج زايد - الدور الخامس', 'abdelhadeeladawy@gmail.com', '010053662038', '125', 'd35c99e7485691ea14f829029dc03e69A67b8d2f92148f52cad46e331936922e8', '', 99, '2024-01-01', '2024-12-31', 'ar', '#f0f0f0', 1, 1, 1, 1, 1, 1, 1, 155, 27, 131, 21, 0, 0, 0, NULL, NULL, 'barcode', 1);
+INSERT INTO `settings` (`id`, `company_name`, `company_add`, `company_email`, `company_tel`, `edit_pass`, `lic`, `updateline`, `acc_rent`, `startdate`, `enddate`, `lang`, `bodycolor`, `showhr`, `showclinc`, `showatt`, `showpayroll`, `showrent`, `showpay`, `showtsk`, `def_pos_client`, `def_pos_store`, `def_pos_employee`, `def_pos_fund`, `isdeleted`, `tenant`, `branch`, `logo`, `show_all_tasks`, `pos_type`, `pos_has_password`, `negative_stock_sale_policy`) VALUES
+(1, 'FOCUS HOUSE', 'سمنود - برج زايد - الدور الخامس', 'abdelhadeeladawy@gmail.com', '010053662038', '125', 'd35c99e7485691ea14f829029dc03e69A67b8d2f92148f52cad46e331936922e8', '', 99, '2024-01-01', '2024-12-31', 'ar', '#f0f0f0', 1, 1, 1, 1, 1, 1, 1, 155, 27, 131, 21, 0, 0, 0, NULL, NULL, 'barcode', 1, NULL);
 
 -- --------------------------------------------------------
 

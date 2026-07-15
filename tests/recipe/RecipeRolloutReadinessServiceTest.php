@@ -148,6 +148,8 @@ class RecipeRolloutReadinessServiceTest extends TestCase
             'Recipe stock reconciliation reviewed: pass',
             'POS/table recipe smoke passed: pass',
             'Recipe rollback flags documented: pass',
+            'Recipe reservation lifecycle smoke passed: pass',
+            'Recipe reservation lifecycle runtime proof: php tests/sync/recipe_reservation_lifecycle_runtime_test.php -> recipe-reservation-lifecycle-runtime-ok',
             'Recipe COGS accountant review: pass',
             'Recipe availability and menu sync smoke passed: pass',
             'Recipe schema evidence: tools/run_migrations.php --dry-run -> 0 pending sync schema change(s)',
@@ -163,6 +165,7 @@ class RecipeRolloutReadinessServiceTest extends TestCase
             'Waste and stock adjustment evidence: inventory_adjustments.php waste movement 601 and stock adjustment 602 reviewed',
             'Paid refund/void evidence: ajax/refund_order.php paid order 1003 refund and void dialogs exercised with policy selection',
             'Recipe rollback evidence: POSMAIN_RECIPE_MODE=off rollback path documented',
+            'Recipe reservation evidence: tests/sync/recipe_reservation_lifecycle_runtime_test.php -> recipe-reservation-lifecycle-runtime-ok',
             'Recipe COGS accountant evidence: accountant reviewed COGS journal sample 2001',
             'Recipe availability and menu sync evidence: menu availability revision 3001 reached Moova smoke',
             'Moova/Cofe recipe replay evidence: Moova replay event mv-3001 and Cofe replay event cf-3002 consumed once',
@@ -174,6 +177,7 @@ class RecipeRolloutReadinessServiceTest extends TestCase
             '- [x] POS/table lifecycle smoke',
             '- [x] Migrated runtime write smoke',
             '- [x] Paid refund/void smoke',
+            '- [x] Recipe reservation lifecycle smoke',
             '- [x] Recipe accounting journal review',
             '- [x] Recipe availability POS and menu sync smoke',
             '- [x] Moova/Cofe recipe replay smoke',
@@ -368,7 +372,7 @@ class RecipeRolloutReadinessServiceTest extends TestCase
         $this->assertNotContains('recipe_moova_sync_requires_outbox_or_cloud_publish', $result['blockers']);
     }
 
-    public function testStrictStockConflictsWithNegativeStockApprovalOverride(): void
+    public function testLegacyStrictStockWinsWhenResolvingSinglePolicy(): void
     {
         $result = $this->service()->check(self::$conn, $this->flags([
             'enabled' => true,
@@ -378,8 +382,8 @@ class RecipeRolloutReadinessServiceTest extends TestCase
             'allow_negative_stock_with_approval' => true,
         ]));
 
-        $this->assertFalse($result['ready_for_recipe_rollout']);
-        $this->assertContains('recipe_negative_stock_approval_conflicts_with_strict_stock', $result['blockers']);
+        $this->assertSame('block', $result['checks']['configuration']['negative_stock_sale_policy']);
+        $this->assertNotContains('recipe_negative_stock_approval_conflicts_with_strict_stock', $result['blockers']);
         $this->assertNotContains('strict_stock_requires_recipe_availability', $result['blockers']);
     }
 
@@ -401,7 +405,7 @@ class RecipeRolloutReadinessServiceTest extends TestCase
         $this->assertNotContains('strict_stock_requires_recipe_availability', $result['blockers']);
     }
 
-    public function testNegativeStockApprovalOverrideRequiresRecipeAvailability(): void
+    public function testLegacyNegativeStockApprovalMapsToAllowWithWarning(): void
     {
         $result = $this->service()->check(self::$conn, $this->flags([
             'enabled' => true,
@@ -411,7 +415,8 @@ class RecipeRolloutReadinessServiceTest extends TestCase
         ]));
 
         $this->assertFalse($result['ready_for_recipe_rollout']);
-        $this->assertContains('recipe_negative_stock_approval_requires_recipe_availability', $result['blockers']);
+        $this->assertContains('availability_pilot_requires_recipe_availability', $result['blockers']);
+        $this->assertSame('allow_with_warning', $result['checks']['configuration']['negative_stock_sale_policy']);
         $this->assertNotContains('recipe_negative_stock_approval_conflicts_with_strict_stock', $result['blockers']);
     }
 
@@ -430,6 +435,8 @@ class RecipeRolloutReadinessServiceTest extends TestCase
             'Recipe stock reconciliation reviewed: pass',
             'POS/table recipe smoke passed: pass',
             'Recipe rollback flags documented: pass',
+            'Recipe reservation lifecycle smoke passed: pass',
+            'Recipe reservation lifecycle runtime proof: php tests/sync/recipe_reservation_lifecycle_runtime_test.php -> recipe-reservation-lifecycle-runtime-ok',
             'Recipe schema evidence: local migration dry-run 0 pending at 2026-05-24T00:00:00Z',
             'Recipe runtime preflight evidence: local tools/recipe_runtime_preflight.php ready',
             'Pilot fixture verification evidence: tools/recipe_pilot_fixture.php --verify --json fixture_ready_for_operator_qa=true',
@@ -443,6 +450,7 @@ class RecipeRolloutReadinessServiceTest extends TestCase
             'Waste and stock adjustment evidence: inventory_adjustments.php waste movement 601 and stock adjustment 602 reviewed locally',
             'Paid refund/void evidence: paid order 1003 refund and void dialogs exercised locally',
             'Recipe rollback evidence: POSMAIN_RECIPE_MODE=off rollback path documented',
+            'Recipe reservation evidence: tests/sync/recipe_reservation_lifecycle_runtime_test.php -> recipe-reservation-lifecycle-runtime-ok',
             '- [x] Recipe management UI smoke',
             '- [x] Modifier substitution recipe UI smoke',
             '- [x] Recipe report export and role QA smoke',
@@ -451,6 +459,7 @@ class RecipeRolloutReadinessServiceTest extends TestCase
             '- [x] POS/table lifecycle smoke',
             '- [x] Migrated runtime write smoke',
             '- [x] Paid refund/void smoke',
+            '- [x] Recipe reservation lifecycle smoke',
             'POS takeaway cashier payment runtime proof: php tests/sync/pos_takeaway_order_service_test.php -> pos-takeaway-order-service-ok',
             'POS takeaway invoice handler runtime proof: php tests/sync/pos_takeaway_invoice_handler_test.php -> pos-takeaway-invoice-handler-ok',
             'POS table save recipe endpoint runtime proof: php tests/sync/pos_table_save_recipe_endpoint_runtime_test.php -> pos-table-save-recipe-endpoint-runtime-ok',
@@ -630,6 +639,8 @@ class RecipeRolloutReadinessServiceTest extends TestCase
             'Recipe stock reconciliation reviewed: pass',
             'POS/table recipe smoke passed: pass',
             'Recipe rollback flags documented: pass',
+            'Recipe reservation lifecycle smoke passed: pass',
+            'Recipe reservation lifecycle runtime proof: php tests/sync/recipe_reservation_lifecycle_runtime_test.php -> recipe-reservation-lifecycle-runtime-ok',
             'Recipe schema evidence: migration dry-run 0 pending at 2026-05-24T00:00:00Z',
             'Recipe runtime preflight evidence: tools/recipe_runtime_preflight.php --json ready_for_recipe_operator_qa=true pending_count=0',
             'Pilot fixture verification evidence: tools/recipe_pilot_fixture.php --verify --json fixture_ready_for_operator_qa=true',
@@ -643,6 +654,7 @@ class RecipeRolloutReadinessServiceTest extends TestCase
             'Waste and stock adjustment evidence: inventory_adjustments.php waste movement 601 and stock adjustment 602 reviewed',
             'Paid refund/void evidence: paid order 1003 refund and void dialogs exercised with policy selection',
             'Recipe rollback evidence: POSMAIN_RECIPE_MODE=off rollback path documented',
+            'Recipe reservation evidence: tests/sync/recipe_reservation_lifecycle_runtime_test.php -> recipe-reservation-lifecycle-runtime-ok',
             '- [x] Recipe management UI smoke',
             '- [x] Modifier substitution recipe UI smoke',
             '- [x] Recipe report export and role QA smoke',
@@ -651,6 +663,7 @@ class RecipeRolloutReadinessServiceTest extends TestCase
             '- [x] POS/table lifecycle smoke',
             '- [x] Migrated runtime write smoke',
             '- [x] Paid refund/void smoke',
+            '- [x] Recipe reservation lifecycle smoke',
         ]));
 
         try {

@@ -23,8 +23,9 @@ recipeStockOverrideAssert(strpos($runtimeProof, 'CSRF_INVALID') !== false, 'runt
 recipeStockOverrideAssert(strpos($runtimeProof, 'PERMISSION_DENIED') !== false, 'runtime proof should cover permission denial');
 
 recipeStockOverrideAssert(strpos($itemAvailability, 'availability_requires_manager_override') !== false, 'availability service should expose manager override requirement');
-recipeStockOverrideAssert(strpos($itemAvailability, 'allowNegativeStockWithApproval') !== false, 'availability service should honor negative-stock approval setting');
-recipeStockOverrideAssert(strpos($itemAvailability, 'isStrictStockEnabled') !== false, 'availability service should keep strict stock as a hard block');
+recipeStockOverrideAssert(strpos($itemAvailability, 'NegativeStockSalePolicyService') !== false, 'availability service should resolve the single shop stock policy');
+recipeStockOverrideAssert(strpos($itemAvailability, 'ALLOW_WITH_WARNING') !== false, 'availability service should expose the warning-only sale mode');
+recipeStockOverrideAssert(strpos($itemAvailability, 'isStrictStockEnabled') === false, 'availability service must not bypass the saved shop policy with a legacy strict flag');
 
 recipeStockOverrideAssert(strpos($mutationService, "'recipe.stock_override'") !== false, 'mutation service should verify recipe stock override approval');
 recipeStockOverrideAssert(strpos($mutationService, 'recordRecipeStockOverrideAudit') !== false, 'mutation service should audit approved stock overrides');
@@ -32,7 +33,7 @@ recipeStockOverrideAssert(strpos($mutationService, 'RecipeAuditService') !== fal
 recipeStockOverrideAssert(strpos($mutationService, "'itmmanagerapproval'") !== false, 'mutation service should read posted line approval ids');
 
 recipeStockOverrideAssert(strpos($posContent, 'POSMAIN_CAN_RECIPE_STOCK_OVERRIDE') !== false, 'POS page should expose current user override capability');
-recipeStockOverrideAssert(strpos($barcodeJs, 'ajax/manager_approval.php') !== false, 'POS JS should call manager approval endpoint');
+recipeStockOverrideAssert(strpos($barcodeJs, "requestManagerOverride('pos.recipe_stock_override'") !== false, 'POS JS should route recipe override through the shared manager approval client');
 recipeStockOverrideAssert(strpos($barcodeJs, 'requestRecipeStockOverride') !== false, 'POS JS should centralize recipe stock override prompt');
 recipeStockOverrideAssert(strpos($barcodeJs, 'name="itmmanagerapproval[]"') !== false, 'POS JS should post manager approval id with line item');
 

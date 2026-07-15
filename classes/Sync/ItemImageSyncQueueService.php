@@ -1,13 +1,13 @@
 <?php
 
 require_once __DIR__ . '/ItemImagePathService.php';
-require_once __DIR__ . '/SchemaManager.php';
+require_once __DIR__ . '/SchemaReadinessGuard.php';
 
 class ItemImageSyncQueueService
 {
     public function ensureSchema(mysqli $conn): void
     {
-        (new SyncSchemaManager())->apply($conn);
+        (new SyncSchemaReadinessGuard())->assertReady($conn);
     }
 
     public function enqueueFromImgsRow(

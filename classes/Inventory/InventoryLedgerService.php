@@ -4,6 +4,8 @@ require_once __DIR__ . '/DTO/InventoryMovementRequest.php';
 require_once __DIR__ . '/InventoryDecimal.php';
 require_once __DIR__ . '/InventoryFeatureFlags.php';
 require_once __DIR__ . '/InventoryItemPolicyService.php';
+require_once __DIR__ . '/NegativeStockSalePolicyService.php';
+require_once __DIR__ . '/../Security/SecurityAuditLogger.php';
 require_once __DIR__ . '/../Recipe/Repository/InventoryBalanceRepository.php';
 require_once __DIR__ . '/../Recipe/Repository/InventoryMovementRepository.php';
 require_once __DIR__ . '/../Recipe/RecipeAffectedItemCostService.php';
@@ -18,17 +20,23 @@ class InventoryLedgerService
     private InventoryMovementRepository $movements;
     private InventoryBalanceRepository $balances;
     private InventoryItemPolicyService $itemPolicy;
+    private NegativeStockSalePolicyService $negativeStockPolicy;
+    private SecurityAuditLogger $securityAudit;
 
     public function __construct(
         ?InventoryFeatureFlags $flags = null,
         ?InventoryMovementRepository $movements = null,
         ?InventoryBalanceRepository $balances = null,
-        ?InventoryItemPolicyService $itemPolicy = null
+        ?InventoryItemPolicyService $itemPolicy = null,
+        ?NegativeStockSalePolicyService $negativeStockPolicy = null,
+        ?SecurityAuditLogger $securityAudit = null
     ) {
         $this->flags = $flags ?: new InventoryFeatureFlags();
         $this->movements = $movements ?: new InventoryMovementRepository();
         $this->balances = $balances ?: new InventoryBalanceRepository();
         $this->itemPolicy = $itemPolicy ?: new InventoryItemPolicyService();
+        $this->negativeStockPolicy = $negativeStockPolicy ?: new NegativeStockSalePolicyService($this->flags->appConfig());
+        $this->securityAudit = $securityAudit ?: new SecurityAuditLogger();
     }
 
     public function previewMovement(array $movement): array
@@ -117,14 +125,16 @@ class InventoryLedgerService
                         'inventory_movements' => [(int) $existing['id']],
                         'inventory_item_balances' => [],
                         'recipe_audit_log' => [],
+                        'security_audit_log' => [],
                     ],
                 ];
             }
 
             $balance = $this->lockBalance($conn, $request);
             $newBalance = $this->applyBalance($balance, $request);
+            $negativeStockWarning = false;
             if ($enforceNegativePolicy) {
-                $this->assertNegativePolicy($newBalance, $request);
+                $negativeStockWarning = $this->assertNegativePolicy($conn, $newBalance, $request);
             }
 
             $movementId = $this->movements->createMovement($conn, $request->movementRow());
@@ -141,6 +151,9 @@ class InventoryLedgerService
                 'last_movement_id' => $movementId,
             ]);
             $auditId = $this->writeAudit($conn, $request, $movementId, $balance, $newBalance);
+            $securityAuditId = $negativeStockWarning
+                ? $this->writeNegativeStockWarning($conn, $request, $movementId, $balance, $newBalance)
+                : 0;
             if (!$isShadowWrite && $this->flags->shouldMirrorLegacyStock()) {
                 $this->updateLegacyMirror($conn, $request, $newBalance);
             }
@@ -171,6 +184,7 @@ class InventoryLedgerService
                     'inventory_movements' => [$movementId],
                     'inventory_item_balances' => [$balanceId],
                     'recipe_audit_log' => $auditId > 0 ? [$auditId] : [],
+                    'security_audit_log' => $securityAuditId > 0 ? [$securityAuditId] : [],
                 ],
             ];
         } catch (Throwable $exception) {
@@ -314,18 +328,63 @@ FOR UPDATE");
         return InventoryDecimal::divide(InventoryDecimal::add($oldValue, $newValue), $totalQty);
     }
 
-    private function assertNegativePolicy(array $newBalance, InventoryMovementRequest $request): void
+    private function assertNegativePolicy(mysqli $conn, array $newBalance, InventoryMovementRequest $request): bool
     {
-        if (!$this->flags->isStrictStockEnabled()) {
-            return;
+        $negativeOnHand = InventoryDecimal::compare($newBalance['qty_on_hand'], '0') < 0;
+        $negativeAvailable = InventoryDecimal::compare($newBalance['qty_available'], '0') < 0;
+        if (!$negativeOnHand && !$negativeAvailable) {
+            return false;
         }
 
-        if (InventoryDecimal::compare($newBalance['qty_on_hand'], '0') < 0) {
-            throw new RuntimeException('Inventory strict stock blocks negative on-hand balance.');
+        if ($this->isSaleRelatedMovement($request)) {
+            $policy = $this->negativeStockPolicy->resolve($conn);
+            if ($policy === NegativeStockSalePolicyService::ALLOW_WITH_WARNING) {
+                return true;
+            }
+
+            throw new RuntimeException('Negative-stock sale policy blocks this inventory movement.');
         }
-        if (InventoryDecimal::compare($newBalance['qty_available'], '0') < 0) {
+
+        if ($this->flags->isStrictStockEnabled()) {
             throw new RuntimeException('Inventory strict stock blocks negative available balance.');
         }
+
+        return false;
+    }
+
+    private function isSaleRelatedMovement(InventoryMovementRequest $request): bool
+    {
+        return in_array($request->movementType, ['sale_direct', 'recipe_consumption', 'reservation'], true);
+    }
+
+    private function writeNegativeStockWarning(
+        mysqli $conn,
+        InventoryMovementRequest $request,
+        int $movementId,
+        array $before,
+        array $after
+    ): int {
+        $audit = $this->securityAudit->record($conn, 'negative_stock_sale_warning', [
+            'user_id' => $request->createdBy,
+            'tenant' => $request->posTenant(),
+            'branch' => $request->posBranch(),
+            'target_type' => 'inventory_movement',
+            'target_id' => $movementId,
+            'metadata' => [
+                'policy' => NegativeStockSalePolicyService::ALLOW_WITH_WARNING,
+                'movement_type' => $request->movementType,
+                'item_id' => $request->itemId,
+                'store_id' => $request->storeId(),
+                'order_id' => $request->orderId,
+                'source_type' => $request->sourceType,
+                'source_id' => $request->sourceId,
+                'idempotency_key' => $request->idempotencyKey,
+                'before' => $before,
+                'after' => $after,
+            ],
+        ]);
+
+        return (int) ($audit['id'] ?? 0);
     }
 
     private function writeAudit(

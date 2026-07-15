@@ -64,23 +64,35 @@ try {
         'qty_in' => '2.000000',
         'idempotency_key' => 'mirror-repair:9103',
     ], ['item_id' => 9103, 'item_type' => 'ingredient', 'track_stock' => 1]);
+    $conn->query('UPDATE myitems SET itmqty = 4.000000 WHERE id = 9101');
 
     $service = new InventoryReconciliationRepairService();
-    $filters = ['pos_tenant' => 0, 'pos_branch' => 0, 'store_id' => 0, 'limit' => 10];
+    $filters = ['pos_tenant' => 0, 'pos_branch' => 0, 'store_id' => 3, 'limit' => 10];
     $plan = $service->mirrorRepairPlan($conn, $filters);
-    inventoryReconciliationRepairAssert((int) $plan['summary']['repair_candidate_count'] === 1, 'only stale mirror rows with agreeing stock sources should be repair candidates');
+    inventoryReconciliationRepairAssert((int) $plan['summary']['repair_candidate_count'] === 1, 'only stale mirror rows with agreeing stock sources should be repair candidates: ' . json_encode($plan));
     inventoryReconciliationRepairAssert((int) $plan['repair_candidates'][0]['item_id'] === 9101, 'stale mirror item should be selected');
     inventoryReconciliationRepairAssert((int) $plan['summary']['unhandled_difference_count'] === 2, 'non-stock and real ledger mismatches should remain unhandled');
+    inventoryReconciliationRepairAssert((bool) preg_match('/^[a-f0-9]{64}$/', (string) $plan['manifest_hash']), 'dry-run should produce a review manifest hash');
 
     $rehearsal = $service->rehearseMirrorRepair($conn, $filters);
     inventoryReconciliationRepairAssert((int) $rehearsal['summary']['rehearsed_count'] === 1, 'rehearsal should count safe mirror repair');
     $qtyAfterRehearsal = $conn->query('SELECT itmqty FROM myitems WHERE id = 9101')->fetch_assoc()['itmqty'];
     inventoryReconciliationRepairAssert((string) $qtyAfterRehearsal === '4.000000', 'rehearsal should roll back myitems mirror update');
 
-    $apply = $service->applyMirrorRepair($conn, $filters);
+    $manifestMismatchRejected = false;
+    try {
+        $service->applyMirrorRepair($conn, $filters, str_repeat('0', 64));
+    } catch (RuntimeException $exception) {
+        $manifestMismatchRejected = $exception->getMessage() === 'INVENTORY_REPAIR_MANIFEST_CHANGED';
+    }
+    inventoryReconciliationRepairAssert($manifestMismatchRejected, 'apply should reject a stale or mismatched reviewed manifest');
+
+    $apply = $service->applyMirrorRepair($conn, $filters, (string) $plan['manifest_hash']);
     inventoryReconciliationRepairAssert((int) $apply['summary']['repaired_count'] === 1, 'apply should update safe mirror repair');
     $qtyAfterApply = $conn->query('SELECT itmqty FROM myitems WHERE id = 9101')->fetch_assoc()['itmqty'];
     inventoryReconciliationRepairAssert((string) $qtyAfterApply === '5.000000', 'apply should refresh legacy mirror quantity');
+    $replayed = $service->applyMirrorRepair($conn, $filters, (string) $plan['manifest_hash']);
+    inventoryReconciliationRepairAssert(($replayed['replayed'] ?? false) === true, 'repeating an applied manifest must return its recorded result without mutating again');
 
     echo "inventory-reconciliation-repair-service-ok\n";
 } finally {
@@ -97,6 +109,7 @@ function inventoryReconciliationRepairAssertSourceContracts(string $root): void
         '--dry-run',
         '--rehearse',
         '--apply --backup-file',
+        '--manifest-hash',
         'Plans or repairs only safe myitems.itmqty compatibility-mirror rows',
         'posmain_db_connect',
     ] as $needle) {
@@ -141,6 +154,21 @@ function inventoryReconciliationRepairAssertSourceContracts(string $root): void
 
 function inventoryReconciliationRepairCreateLegacyTables(mysqli $conn): void
 {
+    $conn->query("
+        CREATE TABLE IF NOT EXISTS acc_head (
+            id BIGINT UNSIGNED NOT NULL PRIMARY KEY,
+            isdeleted TINYINT(1) NOT NULL DEFAULT 0,
+            is_stock TINYINT(1) NOT NULL DEFAULT 0
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ");
+    $conn->query("INSERT INTO acc_head (id, is_stock) VALUES (3, 1)");
+    $conn->query("
+        CREATE TABLE IF NOT EXISTS settings (
+            id BIGINT UNSIGNED NOT NULL PRIMARY KEY,
+            def_pos_store BIGINT UNSIGNED NOT NULL DEFAULT 0
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ");
+    $conn->query("INSERT INTO settings (id, def_pos_store) VALUES (1, 3)");
     $conn->query("
         CREATE TABLE IF NOT EXISTS myitems (
             id BIGINT UNSIGNED NOT NULL PRIMARY KEY,

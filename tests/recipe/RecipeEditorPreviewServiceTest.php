@@ -41,6 +41,8 @@ class RecipeEditorPreviewServiceTest extends TestCase
             CREATE TABLE myitems (
                 id BIGINT UNSIGNED NOT NULL PRIMARY KEY,
                 iname VARCHAR(255) NULL,
+                barcode VARCHAR(191) NULL,
+                group1 BIGINT UNSIGNED NOT NULL DEFAULT 0,
                 cost_price DECIMAL(18,6) NOT NULL DEFAULT 0.000000
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
         ");

@@ -34,6 +34,20 @@ class RecipeEditorLookupServiceTest extends TestCase
 
         (new SyncSchemaManager())->apply(self::$conn);
         self::$conn->query("
+            CREATE TABLE item_units (
+                id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                item_id BIGINT UNSIGNED NOT NULL,
+                unit_id BIGINT UNSIGNED NOT NULL,
+                u_val DECIMAL(18,6) NOT NULL DEFAULT 1.000000,
+                unit_barcode VARCHAR(128) NULL,
+                def_sale TINYINT(1) NOT NULL DEFAULT 0,
+                def_buy TINYINT(1) NOT NULL DEFAULT 0,
+                def_stock TINYINT(1) NOT NULL DEFAULT 0,
+                conversion_swapped TINYINT(1) NOT NULL DEFAULT 0,
+                isdeleted TINYINT(1) NOT NULL DEFAULT 0
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        ");
+        self::$conn->query("
             CREATE TABLE myitems (
                 id BIGINT UNSIGNED NOT NULL PRIMARY KEY,
                 iname VARCHAR(255) NULL,

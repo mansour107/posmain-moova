@@ -1,6 +1,7 @@
 <?php
 
 require_once __DIR__ . '/Money.php';
+require_once __DIR__ . '/FinancialCertificationBaselineService.php';
 
 /**
  * Exact-money financial reconciliations.
@@ -16,21 +17,40 @@ final class FinancialReconciliationService
      */
     public function runAll(mysqli $conn): array
     {
-        $differences = [
-            'invoice_vs_lines' => $this->invoiceVersusLines($conn),
-            'invoice_vs_payments_refunds' => $this->invoiceVersusPaymentsAndRefunds($conn),
-            'payment_methods_vs_accounts' => $this->paymentMethodsVersusAccounts($conn),
-            'cash_vs_drawer' => $this->cashVersusDrawer($conn),
-            'journal_debit_vs_credit' => $this->journalDebitVersusCredit($conn),
-            'journal_vs_sources' => $this->journalVersusSources($conn),
-            'account_balance_vs_journals' => $this->accountBalanceVersusJournals($conn),
-            'inventory_vs_movements' => $this->inventoryVersusMovements($conn),
-            'vat_vs_tax_snapshots' => $this->vatVersusTaxSnapshots($conn),
-            'orphaned_journals' => $this->orphanedJournals($conn),
+        $checks = [
+            'invoice_vs_lines' => fn (): int => $this->invoiceVersusLines($conn),
+            'invoice_vs_payments_refunds' => fn (): int => $this->invoiceVersusPaymentsAndRefunds($conn),
+            'payment_methods_vs_accounts' => fn (): int => $this->paymentMethodsVersusAccounts($conn),
+            'cash_vs_drawer' => fn (): int => $this->cashVersusDrawer($conn),
+            'journal_debit_vs_credit' => fn (): int => $this->journalDebitVersusCredit($conn),
+            'journal_vs_sources' => fn (): int => $this->journalVersusSources($conn),
+            'account_balance_vs_journals' => fn (): int => $this->accountBalanceVersusJournals($conn),
+            'inventory_vs_movements' => fn (): int => $this->inventoryVersusMovements($conn),
+            'vat_vs_tax_snapshots' => fn (): int => $this->vatVersusTaxSnapshots($conn),
+            'orphaned_journals' => fn (): int => $this->orphanedJournals($conn),
         ];
-        $liabilities = [
-            'pending_external_refunds' => $this->pendingExternalRefunds($conn),
-        ];
+        $differences = [];
+        $errors = [];
+        foreach ($checks as $name => $check) {
+            try {
+                $differences[$name] = $check();
+            } catch (Throwable $exception) {
+                $differences[$name] = 0;
+                $errors[$name] = $exception->getMessage();
+            }
+        }
+        try {
+            $liabilities = ['pending_external_refunds' => $this->pendingExternalRefunds($conn)];
+        } catch (Throwable $exception) {
+            $liabilities = ['pending_external_refunds' => 0];
+            $errors['pending_external_refunds'] = $exception->getMessage();
+        }
+        $historical = null;
+        try {
+            $historical = (new FinancialCertificationBaselineService())->active($conn);
+        } catch (Throwable $exception) {
+            $errors['historical_baseline'] = $exception->getMessage();
+        }
 
         $blockers = [];
         foreach ($differences as $name => $count) {
@@ -38,12 +58,17 @@ final class FinancialReconciliationService
                 $blockers[] = $name;
             }
         }
+        if ($errors !== []) {
+            $blockers[] = 'reconciliation_check_failed';
+        }
 
         return [
             'ok' => $blockers === [],
             'checked_at_utc' => gmdate('Y-m-d\TH:i:s\Z'),
             'differences' => $differences,
             'liabilities' => $liabilities,
+            'errors' => $errors,
+            'historical' => $historical,
             'blockers' => $blockers,
             'certified_mode' => true,
         ];
@@ -51,36 +76,31 @@ final class FinancialReconciliationService
 
     public function invoiceVersusLines(mysqli $conn): int
     {
-        if (!$this->tableExists($conn, 'ot_head') || !$this->tableExists($conn, 'fat_details')) {
-            return 0;
+        $this->requireTables($conn, ['ot_head', 'fat_details']);
+        if (!$this->columnExists($conn, 'fat_details', 'posted_net')) {
+            throw new RuntimeException('POSTED_LINE_SNAPSHOTS_REQUIRED');
         }
-        $hasSnapshots = $this->columnExists($conn, 'fat_details', 'posted_net');
-        $lineExpr = $hasSnapshots
-            ? 'COALESCE(SUM(fd.posted_net), 0)'
-            : 'COALESCE(SUM(fd.det_value), 0)';
         $sql = "
-            SELECT COUNT(*) AS c
-            FROM ot_head oh
-            LEFT JOIN fat_details fd
-              ON fd.fatid = oh.id AND COALESCE(fd.isdeleted, 0) = 0
-            WHERE oh.pro_tybe = 9
-              AND COALESCE(oh.isdeleted, 0) = 0
-              AND COALESCE(oh.payment_status, '') IN ('paid', 'partial', 'unpaid', 'open', '')
-            GROUP BY oh.id, oh.fat_net
-            HAVING ROUND(COALESCE(oh.fat_net, 0), 2) <> ROUND({$lineExpr}, 2)
+            SELECT COUNT(*) AS c FROM (
+                SELECT oh.id
+                FROM ot_head oh
+                LEFT JOIN fat_details fd
+                  ON fd.fatid = oh.id AND COALESCE(fd.isdeleted, 0) = 0
+                WHERE oh.pro_tybe = 9
+                  AND COALESCE(oh.isdeleted, 0) = 0
+                  AND COALESCE(oh.payment_status, '') = 'paid'
+                GROUP BY oh.id, oh.fat_net
+                HAVING SUM(CASE WHEN fd.id IS NOT NULL AND fd.posted_net IS NULL THEN 1 ELSE 0 END) > 0
+                    OR ROUND(COALESCE(oh.fat_net, 0), 2) <> ROUND(COALESCE(SUM(fd.posted_net), 0), 2)
+            ) finalized_line_differences
         ";
         return $this->countRows($conn, $sql);
     }
 
     public function invoiceVersusPaymentsAndRefunds(mysqli $conn): int
     {
-        if (!$this->tableExists($conn, 'ot_head') || !$this->tableExists($conn, 'order_payments')) {
-            return 0;
-        }
-        $hasRefunds = $this->tableExists($conn, 'payment_refunds');
-        $refundExpr = $hasRefunds
-            ? '(SELECT COALESCE(SUM(pr.amount), 0) FROM payment_refunds pr WHERE pr.original_order_id = oh.id AND COALESCE(pr.status, \"posted\") = \"posted\")'
-            : '0';
+        $this->requireTables($conn, ['ot_head', 'order_payments', 'payment_refunds']);
+        $refundExpr = '(SELECT COALESCE(SUM(pr.amount), 0) FROM payment_refunds pr WHERE pr.original_order_id = oh.id AND COALESCE(pr.status, \"posted\") = \"posted\")';
         $sql = "
             SELECT COUNT(*) AS c
             FROM ot_head oh
@@ -97,9 +117,7 @@ final class FinancialReconciliationService
 
     public function paymentMethodsVersusAccounts(mysqli $conn): int
     {
-        if (!$this->tableExists($conn, 'payment_methods')) {
-            return 0;
-        }
+        $this->requireTables($conn, ['payment_methods']);
         $row = $conn->query("
             SELECT COUNT(*) AS c
             FROM payment_methods
@@ -116,33 +134,31 @@ final class FinancialReconciliationService
 
     public function cashVersusDrawer(mysqli $conn): int
     {
-        if (!$this->tableExists($conn, 'order_payments') || !$this->tableExists($conn, 'drawer_movements')) {
-            return 0;
-        }
-        if (!$this->tableExists($conn, 'payment_methods')) {
-            return 0;
+        $this->requireTables($conn, ['order_payments', 'drawer_movements', 'payment_methods', 'drawer_sessions', 'financial_certification_baselines']);
+        if (!$this->columnExists($conn, 'drawer_movements', 'payment_id')) {
+            throw new RuntimeException('DRAWER_MOVEMENT_PAYMENT_ID_REQUIRED');
         }
         $sql = "
             SELECT COUNT(*) AS c
             FROM order_payments op
             INNER JOIN payment_methods pm ON pm.code = op.payment_method AND pm.type = 'cash'
             LEFT JOIN drawer_movements dm
-              ON dm.ref_payment_id = op.id
+              ON dm.payment_id = op.id
              AND dm.movement_type IN ('sale_cash', 'payment_cash')
-            WHERE dm.id IS NULL
+            LEFT JOIN drawer_sessions ds ON ds.id = dm.drawer_session_id
+            WHERE op.created_at > COALESCE(
+                    (SELECT MAX(cutoff_time) FROM financial_certification_baselines WHERE invalidated_at IS NULL),
+                    '1970-01-01 00:00:00'
+                  )
+              AND (dm.id IS NULL OR dm.drawer_session_id IS NULL OR ds.id IS NULL)
         ";
-        if (!$this->columnExists($conn, 'drawer_movements', 'ref_payment_id')) {
-            return 0;
-        }
 
         return $this->countRows($conn, $sql);
     }
 
     public function journalDebitVersusCredit(mysqli $conn): int
     {
-        if (!$this->tableExists($conn, 'journal_entries')) {
-            return 0;
-        }
+        $this->requireTables($conn, ['journal_entries']);
         $sql = "
             SELECT COUNT(*) AS c
             FROM (
@@ -158,8 +174,11 @@ final class FinancialReconciliationService
 
     public function journalVersusSources(mysqli $conn): int
     {
-        if (!$this->tableExists($conn, 'journal_heads') || !$this->columnExists($conn, 'journal_heads', 'source_type')) {
-            return 0;
+        $this->requireTables($conn, ['journal_heads', 'ot_head', 'credit_notes', 'payment_refunds']);
+        foreach (['source_type', 'source_id', 'posting_kind'] as $column) {
+            if (!$this->columnExists($conn, 'journal_heads', $column)) {
+                throw new RuntimeException('JOURNAL_SOURCE_COLUMNS_REQUIRED');
+            }
         }
         $sql = "
             SELECT COUNT(*) AS c
@@ -179,11 +198,9 @@ final class FinancialReconciliationService
 
     public function accountBalanceVersusJournals(mysqli $conn): int
     {
-        if (!$this->tableExists($conn, 'acc_head') || !$this->tableExists($conn, 'journal_entries')) {
-            return 0;
-        }
+        $this->requireTables($conn, ['acc_head', 'journal_entries']);
         if (!$this->columnExists($conn, 'acc_head', 'balance')) {
-            return 0;
+            throw new RuntimeException('ACCOUNT_BALANCE_COLUMN_REQUIRED');
         }
         $sql = "
             SELECT COUNT(*) AS c
@@ -201,19 +218,20 @@ final class FinancialReconciliationService
 
     public function inventoryVersusMovements(mysqli $conn): int
     {
-        if (!$this->tableExists($conn, 'inventory_item_balances') || !$this->tableExists($conn, 'inventory_movements')) {
-            return 0;
-        }
+        $this->requireTables($conn, ['inventory_item_balances', 'inventory_movements']);
         $sql = "
             SELECT COUNT(*) AS c
             FROM inventory_item_balances b
             LEFT JOIN (
-                SELECT item_id, store_id,
+                SELECT pos_tenant, pos_branch, store_id, item_id,
                        ROUND(SUM(qty_in - qty_out), 6) AS qty
                 FROM inventory_movements
-                GROUP BY item_id, store_id
-            ) m ON m.item_id = b.item_id AND m.store_id = b.store_id
-            WHERE ROUND(COALESCE(b.on_hand_qty, 0), 6) <> ROUND(COALESCE(m.qty, 0), 6)
+                GROUP BY pos_tenant, pos_branch, store_id, item_id
+            ) m ON m.pos_tenant = b.pos_tenant
+               AND m.pos_branch = b.pos_branch
+               AND m.store_id = b.store_id
+               AND m.item_id = b.item_id
+            WHERE ROUND(COALESCE(b.qty_on_hand, 0), 6) <> ROUND(COALESCE(m.qty, 0), 6)
         ";
 
         return $this->countRows($conn, $sql);
@@ -221,18 +239,23 @@ final class FinancialReconciliationService
 
     public function vatVersusTaxSnapshots(mysqli $conn): int
     {
-        if (!$this->tableExists($conn, 'ot_head') || !$this->columnExists($conn, 'fat_details', 'posted_tax')) {
-            return 0;
+        $this->requireTables($conn, ['ot_head', 'fat_details']);
+        if (!$this->columnExists($conn, 'fat_details', 'posted_tax')) {
+            throw new RuntimeException('POSTED_TAX_SNAPSHOTS_REQUIRED');
         }
         $sql = "
-            SELECT COUNT(*) AS c
-            FROM ot_head oh
-            LEFT JOIN fat_details fd
-              ON fd.fatid = oh.id AND COALESCE(fd.isdeleted, 0) = 0
-            WHERE oh.pro_tybe = 9
-              AND COALESCE(oh.isdeleted, 0) = 0
-            GROUP BY oh.id, oh.fat_tax
-            HAVING ROUND(COALESCE(oh.fat_tax, 0), 2) <> ROUND(COALESCE(SUM(fd.posted_tax), 0), 2)
+            SELECT COUNT(*) AS c FROM (
+                SELECT oh.id
+                FROM ot_head oh
+                LEFT JOIN fat_details fd
+                  ON fd.fatid = oh.id AND COALESCE(fd.isdeleted, 0) = 0
+                WHERE oh.pro_tybe = 9
+                  AND COALESCE(oh.isdeleted, 0) = 0
+                  AND COALESCE(oh.payment_status, '') = 'paid'
+                GROUP BY oh.id, oh.fat_tax
+                HAVING SUM(CASE WHEN fd.id IS NOT NULL AND fd.posted_tax IS NULL THEN 1 ELSE 0 END) > 0
+                    OR ROUND(COALESCE(oh.fat_tax, 0), 2) <> ROUND(COALESCE(SUM(fd.posted_tax), 0), 2)
+            ) finalized_tax_differences
         ";
 
         return $this->countRows($conn, $sql);
@@ -240,8 +263,11 @@ final class FinancialReconciliationService
 
     public function orphanedJournals(mysqli $conn): int
     {
-        if (!$this->tableExists($conn, 'journal_heads') || !$this->columnExists($conn, 'journal_heads', 'source_type')) {
-            return 0;
+        $this->requireTables($conn, ['journal_heads']);
+        foreach (['source_type', 'posting_kind', 'idempotency_key'] as $column) {
+            if (!$this->columnExists($conn, 'journal_heads', $column)) {
+                throw new RuntimeException('JOURNAL_SOURCE_COLUMNS_REQUIRED');
+            }
         }
         $sql = "
             SELECT COUNT(*) AS c
@@ -262,8 +288,9 @@ final class FinancialReconciliationService
 
     public function pendingExternalRefunds(mysqli $conn): int
     {
-        if (!$this->tableExists($conn, 'payment_refunds') || !$this->columnExists($conn, 'payment_refunds', 'status')) {
-            return 0;
+        $this->requireTables($conn, ['payment_refunds']);
+        if (!$this->columnExists($conn, 'payment_refunds', 'status')) {
+            throw new RuntimeException('PAYMENT_REFUND_STATUS_REQUIRED');
         }
         $row = $conn->query("
             SELECT COUNT(*) AS c FROM payment_refunds WHERE status = 'pending_external'
@@ -274,19 +301,29 @@ final class FinancialReconciliationService
 
     private function countRows(mysqli $conn, string $sql): int
     {
-        try {
-            $result = $conn->query($sql);
-            if ($result === false) {
-                return 1;
-            }
-            $count = 0;
-            while ($result->fetch_assoc()) {
-                $count++;
-            }
+        $result = $conn->query($sql);
+        if ($result === false) {
+            throw new RuntimeException('RECONCILIATION_QUERY_FAILED:' . $conn->error);
+        }
+        $row = $result->fetch_assoc();
+        if (!is_array($row) || !array_key_exists('c', $row)) {
+            throw new RuntimeException('RECONCILIATION_COUNT_RESULT_INVALID');
+        }
 
-            return $count;
-        } catch (Throwable $e) {
-            return 1;
+        return (int) $row['c'];
+    }
+
+    /** @param list<string> $tables */
+    private function requireTables(mysqli $conn, array $tables): void
+    {
+        $missing = [];
+        foreach ($tables as $table) {
+            if (!$this->tableExists($conn, $table)) {
+                $missing[] = $table;
+            }
+        }
+        if ($missing !== []) {
+            throw new RuntimeException('RECONCILIATION_SCHEMA_MISSING:' . implode(',', $missing));
         }
     }
 

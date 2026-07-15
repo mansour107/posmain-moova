@@ -148,7 +148,7 @@ class RecipeItemAvailabilityDecoratorTest extends TestCase
         ]);
 
         $this->assertFalse($availability['availability_can_add']);
-        $this->assertTrue($availability['availability_requires_manager_override']);
+        $this->assertFalse($availability['availability_requires_manager_override']);
         $this->assertFalse($availability['availability_override_allowed']);
     }
 
@@ -214,6 +214,75 @@ class RecipeItemAvailabilityDecoratorTest extends TestCase
         $this->assertArrayHasKey('availability_override_permission', $decorated[1]);
         $this->assertSame('', $decorated[1]['availability_override_permission']);
         $this->assertArrayNotHasKey('recipe_enabled', $decorated[1]);
+    }
+
+    public function testTrackedNonRecipeItemUsesSavedShopPolicyAndManualDisableStillWins(): void
+    {
+        $itemId = $this->nextItemId();
+        self::$conn->query("CREATE TABLE IF NOT EXISTS settings (
+            id INT NOT NULL PRIMARY KEY,
+            negative_stock_sale_policy ENUM('block','allow_with_warning') NULL
+        ) ENGINE=InnoDB");
+        self::$conn->query("INSERT INTO settings (id, negative_stock_sale_policy)
+            VALUES (1, 'block')
+            ON DUPLICATE KEY UPDATE negative_stock_sale_policy = VALUES(negative_stock_sale_policy)");
+        self::$conn->query("CREATE TABLE IF NOT EXISTS myitems (
+            id INT NOT NULL PRIMARY KEY,
+            track_stock TINYINT(1) NOT NULL DEFAULT 0
+        ) ENGINE=InnoDB");
+        self::$conn->query("INSERT INTO myitems (id, track_stock) VALUES ({$itemId}, 1)
+            ON DUPLICATE KEY UPDATE track_stock = VALUES(track_stock)");
+        (new InventoryBalanceRepository())->putBalance(self::$conn, [
+            'pos_tenant' => 2,
+            'pos_branch' => 3,
+            'store_id' => 9,
+            'item_id' => $itemId,
+            'qty_on_hand' => '0.000000',
+            'qty_reserved' => '0.000000',
+            'qty_available' => '0.000000',
+        ]);
+
+        try {
+            $service = new ItemAvailabilityService(new RecipeFeatureFlags([
+                'recipe' => ['enabled' => false],
+                'inventory' => [
+                    'ledger_mode' => 'live',
+                    'strict_stock' => false,
+                ],
+            ]));
+            $scope = [
+                'tenant' => 2,
+                'branch' => 3,
+                'store_id' => 9,
+                'channel' => 'pos',
+                'order_type' => 'takeaway',
+            ];
+
+            $blocked = $service->availabilityForItem(self::$conn, $itemId, $scope);
+            $this->assertFalse($blocked['availability_can_add']);
+            $this->assertSame('inventory_unavailable', $blocked['availability_status']);
+            $this->assertTrue($blocked['inventory_stock_tracked']);
+            $this->assertSame('0.000000', $blocked['inventory_qty_available']);
+
+            self::$conn->query("UPDATE settings SET negative_stock_sale_policy = 'allow_with_warning' WHERE id = 1");
+            $warned = $service->availabilityForItem(self::$conn, $itemId, $scope);
+            $this->assertTrue($warned['availability_can_add']);
+            $this->assertTrue($warned['availability_warn_only']);
+            $this->assertSame('inventory_shortage', $warned['availability_status']);
+
+            $service->setAvailability(self::$conn, $itemId, false, [
+                'tenant' => 2,
+                'branch' => 3,
+                'channel' => 'pos',
+            ], 'Disabled by manager', 77);
+            $manualBlock = $service->availabilityForItem(self::$conn, $itemId, $scope);
+            $this->assertFalse($manualBlock['availability_can_add']);
+            $this->assertSame('manual_unavailable', $manualBlock['availability_status']);
+            $this->assertSame('Disabled by manager', $manualBlock['unavailable_reason']);
+        } finally {
+            self::$conn->query('DROP TABLE IF EXISTS settings');
+            self::$conn->query("DELETE FROM myitems WHERE id = {$itemId}");
+        }
     }
 
     private function createActiveRecipe(int $sellableItemId, int $ingredientItemId): void

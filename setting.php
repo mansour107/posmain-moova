@@ -3,6 +3,7 @@ require_once __DIR__ . '/includes/auth_guard.php';
 require_once __DIR__ . '/includes/csrf.php';
 include('includes/connect.php');
 require_once __DIR__ . '/includes/pos_default_accounts.php';
+require_once __DIR__ . '/classes/Inventory/NegativeStockSalePolicyService.php';
 require_admin_or_permission('system.tools.run', $conn);
 
 $sittingpass = $sittingpass ?? 'hadi@1234';
@@ -43,6 +44,7 @@ if ($settingsStockResult) {
     }
 }
 $settingsCurrentPosStore = (int) ($rowstg['def_pos_store'] ?? 0);
+$settingsNegativeStockPolicy = (new NegativeStockSalePolicyService($appConfig ?? []))->resolve($conn);
 
 include('includes/header.php');
 ?>
@@ -389,6 +391,16 @@ if ($syncDefaultCloudUrl === '' && !empty($_SERVER['HTTP_HOST'])) {
                     <option value="clothes" <?= (($rowstg['pos_type'] ?? 'barcode') === 'clothes') ? 'selected' : '' ?>>POS ملابس</option>
                   </select>
                   <small class="form-text text-muted">يحدد نوع واجهة POS من القائمة.</small>
+                </div>
+              </div>
+              <div class="col-lg-12">
+                <div class="form-group">
+                  <label for="negative_stock_sale_policy">سياسة البيع عند عدم كفاية المخزون</label>
+                  <select class="form-control" id="negative_stock_sale_policy" name="negative_stock_sale_policy">
+                    <option value="block" <?= $settingsNegativeStockPolicy === 'block' ? 'selected' : '' ?>>منع البيع</option>
+                    <option value="allow_with_warning" <?= $settingsNegativeStockPolicy === 'allow_with_warning' ? 'selected' : '' ?>>السماح مع تحذير وتسجيل الحدث</option>
+                  </select>
+                  <small class="form-text text-muted">العناصر المعطلة يدويا تظل ممنوعة في الحالتين.</small>
                 </div>
               </div>
             </div>

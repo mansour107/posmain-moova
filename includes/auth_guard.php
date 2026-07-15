@@ -187,6 +187,7 @@ if (!function_exists('auth_guard_permission_map')) {
             'menu.edit' => ['add_items', 'edit_items', 'add_item_groups', 'edit_item_groups'],
             'inventory.edit' => ['add_stock', 'edit_stock', 'add_items', 'edit_items'],
             'inventory.approve' => ['delete_stock'],
+            'inventory.policy.manage' => ['__admin_only'],
             'reports.view' => ['sid_reports', 'show_gl_reports', 'show_hr_report', 'show_payroll_report'],
             'reports.own_shift' => ['sid_reports', 'show_gl_reports'],
             'reports.branch_daily' => ['sid_reports', 'show_gl_reports'],

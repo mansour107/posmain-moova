@@ -39,6 +39,18 @@ class RecipeOrderLifecycleServiceTest extends TestCase
         self::$conn->set_charset('utf8mb4');
 
         (new SyncSchemaManager())->apply(self::$conn);
+        self::$conn->query("CREATE TABLE settings (
+            id INT NOT NULL PRIMARY KEY,
+            def_pos_store INT NULL,
+            negative_stock_sale_policy ENUM('block','allow_with_warning') NULL
+        ) ENGINE=InnoDB");
+        self::$conn->query("INSERT INTO settings (id, def_pos_store, negative_stock_sale_policy) VALUES (1, 1, 'block')");
+        self::$conn->query("CREATE TABLE acc_head (
+            id INT NOT NULL PRIMARY KEY,
+            isdeleted TINYINT(1) NOT NULL DEFAULT 0,
+            is_stock TINYINT(1) NOT NULL DEFAULT 0
+        ) ENGINE=InnoDB");
+        self::$conn->query("INSERT INTO acc_head (id, is_stock) VALUES (1, 1)");
         self::$conn->query("
             CREATE TABLE item_group (
                 id BIGINT UNSIGNED NOT NULL PRIMARY KEY,
@@ -1114,18 +1126,18 @@ class RecipeOrderLifecycleServiceTest extends TestCase
     {
         $setup = $this->recipeWithIngredient('10.000000');
         $service = $this->consumeService();
-        $lineA = $this->lineContext(9055, 955, $setup['sellable_item_id'], '1.000000');
+        $lineA = $this->lineContext(9061, 961, $setup['sellable_item_id'], '1.000000');
         $lineA['channel'] = 'moova';
         $lineA['order_type'] = 'delivery';
         $lineA['order_line_uuid'] = '00000000-0000-4000-8000-000000009555';
-        $lineA['source_order_uuid'] = 'moova-order-9055';
+        $lineA['source_order_uuid'] = 'moova-order-9061';
         $lineA['source_line_uuid'] = 'moova:provider-line-a';
         $lineB = $lineA;
         $lineB['source_line_uuid'] = 'moova:provider-line-b';
 
         $service->onOrderLineAdded($lineA);
         $service->onOrderLineAdded($lineB);
-        $usageRows = $this->rows('recipe_order_line_usage', 'order_id = 9055');
+        $usageRows = $this->rows('recipe_order_line_usage', 'order_id = 9061');
 
         $this->assertCount(2, $usageRows);
         $this->assertSame(
@@ -1661,6 +1673,7 @@ class RecipeOrderLifecycleServiceTest extends TestCase
         $ingredientItemId = $this->item('Lifecycle ingredient', '4.000000');
         (new InventoryBalanceRepository())->putBalance(self::$conn, [
             'pos_branch' => $posBranch,
+            'store_id' => 1,
             'item_id' => $ingredientItemId,
             'qty_on_hand' => $stock,
             'qty_reserved' => '0.000000',
@@ -1726,6 +1739,7 @@ class RecipeOrderLifecycleServiceTest extends TestCase
     {
         (new InventoryBalanceRepository())->putBalance(self::$conn, [
             'pos_branch' => $posBranch,
+            'store_id' => 1,
             'item_id' => $itemId,
             'qty_on_hand' => $onHand,
             'qty_reserved' => '0.000000',
@@ -1880,7 +1894,7 @@ class RecipeOrderLifecycleServiceTest extends TestCase
 
     private function balance(int $itemId, int $posBranch = 0): array
     {
-        return (new InventoryBalanceRepository())->findBalance(self::$conn, 0, $posBranch, 0, $itemId);
+        return (new InventoryBalanceRepository())->findBalance(self::$conn, 0, $posBranch, 1, $itemId);
     }
 
     private function availabilityCache(int $itemId, string $orderType = 'takeaway', string $channel = 'pos'): array

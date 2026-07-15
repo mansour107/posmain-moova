@@ -29,6 +29,7 @@ class TeamHubService
     'pos.discount.manual_pct.limit' => 'حد الخصم اليدوي',
     'pos.price.override' => 'تجاوز السعر',
     'pos.recipe_stock_override' => 'تجاوز مخزون الوصفة',
+    'inventory.policy.manage' => 'إدارة سياسة المخزون السالب',
     'pos.cancel.unpaid' => 'إلغاء غير مدفوع',
     'pos.void.post_send' => 'إلغاء بعد الإرسال',
     'pos.void.item_after_send' => 'إلغاء صنف بعد الإرسال',

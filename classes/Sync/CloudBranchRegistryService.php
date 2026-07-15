@@ -1,13 +1,15 @@
 <?php
 
 require_once __DIR__ . '/BranchIdentity.php';
-require_once __DIR__ . '/SchemaManager.php';
+require_once __DIR__ . '/SchemaReadinessGuard.php';
 require_once __DIR__ . '/SyncRuntimeCrypto.php';
 
 class CloudBranchRegistryService
 {
     public function register(mysqli $conn, array $options): array
     {
+        (new SyncSchemaReadinessGuard())->assertReady($conn);
+
         $branchUuid = strtolower(trim((string) ($options['branch-uuid'] ?? $options['branch_uuid'] ?? '')));
         $secret = (string) ($options['secret'] ?? '');
         if (!SyncBranchIdentity::isUuid($branchUuid)) {
@@ -30,8 +32,6 @@ class CloudBranchRegistryService
         $status = $status === 'disabled' ? 'disabled' : 'active';
         $secretHash = hash('sha256', $secret);
         $encryptedSecret = $crypto->available() ? $crypto->encrypt($secret) : null;
-
-        (new SyncSchemaManager())->apply($conn);
 
         if (!empty($options['replace_existing_branches']) || !empty($options['replace-existing-branches'])) {
             $this->disableOtherBranches($conn, $branchUuid);

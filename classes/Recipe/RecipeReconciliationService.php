@@ -35,7 +35,7 @@ class RecipeReconciliationService
             'pos_branch' => $posBranch,
             'store_id' => $storeId,
             'item_id' => $itemId,
-            'item_barcode' => (string) ($item['barcode'] ?? ''),
+            'item_barcode' => (string) ($item['barcode'] ?? $item['code'] ?? ''),
             'item_name' => (string) ($item['iname'] ?? ''),
             'item_type' => (string) ($item['item_type'] ?? ''),
             'track_stock' => array_key_exists('track_stock', $item) ? (int) $item['track_stock'] : null,
@@ -117,7 +117,7 @@ class RecipeReconciliationService
         }
 
         $columns = ['id'];
-        foreach (['code', 'iname', 'item_type', 'track_stock'] as $column) {
+        foreach (['barcode', 'code', 'iname', 'item_type', 'track_stock'] as $column) {
             if ($this->columnExists($conn, 'myitems', $column)) {
                 $columns[] = $column;
             }
@@ -366,7 +366,7 @@ WHERE TABLE_SCHEMA = DATABASE()
         if ($nonStockItem && ($this->isNonZero($fatBalance) || $this->isNonZero($ledgerBalance) || $this->isNonZero($balanceQty))) {
             $reasons[] = 'non_stock_item_has_stock_movement';
         }
-        if ($storeId <= 0 && $this->decimalCompare($legacyVsFat, '0') !== 0) {
+        if ($this->decimalCompare($legacyVsFat, '0') !== 0) {
             $reasons[] = 'legacy_summary_mismatch';
         }
         if ($this->decimalCompare($ledgerVsBalance, '0') !== 0) {

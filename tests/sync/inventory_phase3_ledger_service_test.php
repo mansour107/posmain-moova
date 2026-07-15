@@ -195,6 +195,82 @@ try {
         ], $trackedItem);
     }, 'strict stock should block over-reservation');
 
+    $conn->query("CREATE TABLE settings (
+        id INT NOT NULL PRIMARY KEY,
+        negative_stock_sale_policy ENUM('block','allow_with_warning') NULL
+    ) ENGINE=InnoDB");
+    $conn->query("INSERT INTO settings (id, negative_stock_sale_policy) VALUES (1, 'block')");
+
+    $savedBlockLedger = new InventoryLedgerService(new InventoryFeatureFlags([
+        'inventory' => [
+            'ledger_mode' => 'bridge',
+            'strict_stock' => false,
+        ],
+        'recipe' => [
+            'allow_negative_stock_with_approval' => true,
+        ],
+    ]));
+    inventoryPhase3ExpectException(static function () use ($savedBlockLedger, $conn, $scope): void {
+        $savedBlockLedger->recordMovement($conn, [
+            'scope' => $scope,
+            'item_id' => 1101,
+            'movement_type' => 'sale_direct',
+            'source_type' => 'order_line',
+            'source_id' => 1101,
+            'qty_out' => '1.000000',
+            'idempotency_key' => 'phase3:sale:saved-policy-block',
+        ], ['item_id' => 1101, 'item_type' => 'sellable', 'track_stock' => 1]);
+    }, 'saved block policy should override legacy allow flags');
+    inventoryPhase3Assert(
+        (int) $conn->query("SELECT COUNT(*) AS c FROM inventory_movements WHERE idempotency_key = 'phase3:sale:saved-policy-block'")->fetch_assoc()['c'] === 0,
+        'blocked saved policy should roll back the movement'
+    );
+
+    $conn->query("UPDATE settings SET negative_stock_sale_policy = 'allow_with_warning' WHERE id = 1");
+    $savedAllowLedger = new InventoryLedgerService(new InventoryFeatureFlags(['inventory' => [
+        'ledger_mode' => 'bridge',
+        'strict_stock' => true,
+    ]]));
+    $savedAllowResult = $savedAllowLedger->recordMovement($conn, [
+        'scope' => $scope,
+        'item_id' => 1102,
+        'movement_type' => 'sale_direct',
+        'source_type' => 'order_line',
+        'source_id' => 1102,
+        'order_id' => 7002,
+        'qty_out' => '2.000000',
+        'idempotency_key' => 'phase3:sale:saved-policy-warn',
+        'created_by' => 9,
+    ], ['item_id' => 1102, 'item_type' => 'sellable', 'track_stock' => 1]);
+    inventoryPhase3Assert(
+        inventoryPhase3DecimalEquals($savedAllowResult['balance']['qty_on_hand'], '-2.000000'),
+        'saved allow-with-warning policy should override legacy strict stock for sales'
+    );
+    inventoryPhase3Assert(
+        count($savedAllowResult['writes']['security_audit_log']) === 1,
+        'allowed negative sale should return its security audit write'
+    );
+    $warningAudit = inventoryPhase3One($conn, "SELECT * FROM security_audit_log WHERE event_type = 'negative_stock_sale_warning' ORDER BY id DESC LIMIT 1");
+    inventoryPhase3Assert((int) $warningAudit['target_id'] === (int) $savedAllowResult['movement_id'], 'negative warning should identify the inventory movement');
+    inventoryPhase3Assert(strpos((string) $warningAudit['metadata_json'], 'allow_with_warning') !== false, 'negative warning should record resolved policy');
+
+    $savedAllowReplay = $savedAllowLedger->recordMovement($conn, [
+        'scope' => $scope,
+        'item_id' => 1102,
+        'movement_type' => 'sale_direct',
+        'source_type' => 'order_line',
+        'source_id' => 1102,
+        'order_id' => 7002,
+        'qty_out' => '2.000000',
+        'idempotency_key' => 'phase3:sale:saved-policy-warn',
+        'created_by' => 9,
+    ], ['item_id' => 1102, 'item_type' => 'sellable', 'track_stock' => 1]);
+    inventoryPhase3Assert(!empty($savedAllowReplay['idempotent_replay']), 'allowed negative sale should remain idempotent');
+    inventoryPhase3Assert(
+        (int) $conn->query("SELECT COUNT(*) AS c FROM security_audit_log WHERE event_type = 'negative_stock_sale_warning'")->fetch_assoc()['c'] === 1,
+        'idempotent replay should not duplicate the negative-stock audit'
+    );
+
     $serviceResult = $ledger->recordMovement($conn, [
         'scope' => $scope,
         'item_id' => 2002,
@@ -215,7 +291,7 @@ try {
 function inventoryPhase3AssertSourceContracts(string $root): void
 {
     $source = inventoryPhase3Source($root . '/classes/Inventory/InventoryLedgerService.php');
-    foreach (['FOR UPDATE', 'payload_hash', 'findByIdempotencyKey', 'isStrictStockEnabled', 'shouldMirrorLegacyStock'] as $needle) {
+    foreach (['FOR UPDATE', 'payload_hash', 'findByIdempotencyKey', 'NegativeStockSalePolicyService', 'negative_stock_sale_warning', 'shouldMirrorLegacyStock'] as $needle) {
         inventoryPhase3Assert(strpos($source, $needle) !== false, 'ledger service should contain phase3 guard: ' . $needle);
     }
     $balanceRepository = inventoryPhase3Source($root . '/classes/Recipe/Repository/InventoryBalanceRepository.php');

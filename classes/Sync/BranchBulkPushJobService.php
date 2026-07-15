@@ -4,7 +4,7 @@ require_once __DIR__ . '/BranchCatalogPushService.php';
 require_once __DIR__ . '/BranchIdentity.php';
 require_once __DIR__ . '/BranchImageSyncService.php';
 require_once __DIR__ . '/ItemImageSyncQueueService.php';
-require_once __DIR__ . '/SchemaManager.php';
+require_once __DIR__ . '/SchemaReadinessGuard.php';
 
 class BranchBulkPushJobService
 {
@@ -22,7 +22,7 @@ class BranchBulkPushJobService
 
     public function start(mysqli $conn, array $config, int $shopId = 0, string $shopDbName = ''): array
     {
-        (new SyncSchemaManager())->apply($conn);
+        (new SyncSchemaReadinessGuard())->assertReady($conn);
 
         $active = $this->findActiveJob($conn);
         if ($active) {
@@ -65,7 +65,7 @@ class BranchBulkPushJobService
 
     public function getLatestJob(mysqli $conn, ?string $jobUuid = null): ?array
     {
-        (new SyncSchemaManager())->apply($conn);
+        (new SyncSchemaReadinessGuard())->assertReady($conn);
 
         if ($jobUuid !== null && trim($jobUuid) !== '') {
             $job = $this->findJob($conn, trim($jobUuid));
@@ -133,7 +133,7 @@ class BranchBulkPushJobService
 
     public function runToCompletion(mysqli $conn, array $config, string $jobUuid): void
     {
-        (new SyncSchemaManager())->apply($conn);
+        (new SyncSchemaReadinessGuard())->assertReady($conn);
 
         $jobUuid = trim($jobUuid);
         if ($jobUuid === '') {

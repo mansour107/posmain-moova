@@ -27,15 +27,21 @@ try {
     $conn->query("CREATE DATABASE `{$db}` CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci");
     $conn->select_db($db);
     createCloseSummarySchema($conn);
-    // Simulate code deployment arriving before the migration runner. The
-    // close-path preflight must add only its new table and continue safely.
+    // Simulate code deployment arriving before the migration runner. Runtime
+    // close handling must fail closed and leave DDL to explicit provisioning.
     $conn->query('DROP TABLE drawer_session_close_summaries');
     $service = new DrawerSessionCloseSummaryService();
-    $service->ensureSchema($conn);
+    try {
+        $service->ensureSchema($conn);
+        throw new RuntimeException('runtime close path must reject pending schema');
+    } catch (RuntimeException $exception) {
+        closeSummaryAssert($exception->getMessage() === 'SCHEMA_MIGRATIONS_PENDING', 'runtime close path must report pending schema');
+    }
     closeSummaryAssert(
-        $conn->query("SHOW TABLES LIKE 'drawer_session_close_summaries'")->num_rows === 1,
-        'close summary schema preflight must provision the additive table'
+        $conn->query("SHOW TABLES LIKE 'drawer_session_close_summaries'")->num_rows === 0,
+        'runtime close path must not create schema'
     );
+    (new SyncSchemaManager())->apply($conn);
     $service->ensureSchema($conn);
     $conn->query("INSERT INTO drawer_sessions
         (id, uuid, user_id, tenant, branch, opened_at, closed_at, expected_cash, counted_cash, difference, status, variance_status, variance_type)
@@ -83,6 +89,7 @@ try {
     );
     closeSummaryAssert((int) ($payload['schema_version'] ?? 0) === 2, 'new close payload must be v2');
     closeSummaryAssert(($payload['drawer_session_uuid'] ?? '') === '11111111-1111-4111-a111-111111111111', 'payload must use drawer_session_uuid');
+    closeSummaryAssert(($payload['drawer_session']['status'] ?? '') === 'closed', 'v2 close must carry a terminal drawer snapshot');
     closeSummaryAssert(!isset($payload['shift']['legacy']), 'v2 writer must not emit a legacy close row');
 
     $remotePayload = $payload;
@@ -101,6 +108,54 @@ try {
     closeSummaryAssert($restored !== null, 'v2 restore must resolve the local drawer by UUID');
     closeSummaryAssert((int) ($restored['id'] ?? 0) !== (int) ($summary['id'] ?? 0), 'v2 restore must allocate a local close-summary id');
     closeSummaryAssert(($service->findBySessionId($conn, 1)['uuid'] ?? '') === ($summary['uuid'] ?? ''), 'v2 restore must not overwrite an id collision');
+
+    $missingDrawerPayload = $payload;
+    $missingDrawerPayload['drawer_session_uuid'] = '44444444-4444-4444-a444-444444444444';
+    $missingDrawerPayload['close_uuid'] = 'cccccccc-cccc-4ccc-accc-cccccccccccc';
+    $missingDrawerPayload['drawer_session']['uuid'] = $missingDrawerPayload['drawer_session_uuid'];
+    $missingDrawerPayload['shift']['drawer_session_uuid'] = $missingDrawerPayload['drawer_session_uuid'];
+    $missingDrawerPayload['shift']['close_uuid'] = $missingDrawerPayload['close_uuid'];
+    $missingDrawerPayload['close_summary']['uuid'] = $missingDrawerPayload['close_uuid'];
+    (new CloudOperationalMirrorService())->applyFromBranchEvent($conn, 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa', [
+        'payload' => $missingDrawerPayload,
+    ]);
+    $createdDrawer = $conn->query("SELECT * FROM drawer_sessions WHERE uuid = '44444444-4444-4444-a444-444444444444'")->fetch_assoc();
+    closeSummaryAssert((int) ($createdDrawer['id'] ?? 0) > 0, 'v2 close must create a drawer that was not catalog-pushed');
+    closeSummaryAssert(($createdDrawer['status'] ?? '') === 'closed', 'created v2 drawer must be terminal');
+    closeSummaryAssert($createdDrawer['open_branch_lock'] === null && $createdDrawer['open_register_lock'] === null && $createdDrawer['open_user_lock'] === null, 'close mirror must clear open locks');
+    closeSummaryAssert($service->findBySessionId($conn, (int) $createdDrawer['id']) !== null, 'created v2 drawer must own its close summary');
+
+    $queuedV2 = $missingDrawerPayload;
+    unset($queuedV2['drawer_session']);
+    $queuedV2['drawer_session_uuid'] = '55555555-5555-4555-a555-555555555555';
+    $queuedV2['close_uuid'] = 'dddddddd-dddd-4ddd-addd-dddddddddddd';
+    $queuedV2['shift']['drawer_session_uuid'] = $queuedV2['drawer_session_uuid'];
+    $queuedV2['shift']['close_uuid'] = $queuedV2['close_uuid'];
+    $queuedV2['close_summary']['uuid'] = $queuedV2['close_uuid'];
+    (new CloudOperationalMirrorService())->applyFromBranchEvent($conn, 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa', [
+        'payload' => $queuedV2,
+    ]);
+    $recoveredV2Drawer = $conn->query("SELECT * FROM drawer_sessions WHERE uuid = '55555555-5555-4555-a555-555555555555'")->fetch_assoc();
+    closeSummaryAssert((int) ($recoveredV2Drawer['id'] ?? 0) > 0, 'already queued v2 close must recover a missing drawer from shift fields');
+
+    (new CloudOperationalMirrorService())->applyFromBranchEvent($conn, 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa', [
+        'payload' => [
+            'snapshot_type' => 'operational_row',
+            'domain' => 'drawer_session',
+            'table' => 'drawer_sessions',
+            'row' => [
+                'id' => 9999,
+                'uuid' => $queuedV2['drawer_session_uuid'],
+                'status' => 'open',
+                'open_branch_lock' => 'stale-branch-lock',
+                'open_register_lock' => 'stale-register-lock',
+                'open_user_lock' => 'stale-user-lock',
+            ],
+        ],
+    ]);
+    $afterStaleOpen = $conn->query("SELECT * FROM drawer_sessions WHERE uuid = '55555555-5555-4555-a555-555555555555'")->fetch_assoc();
+    closeSummaryAssert(($afterStaleOpen['status'] ?? '') === 'closed', 'stale drawer event must never reopen a terminal drawer');
+    closeSummaryAssert($afterStaleOpen['open_branch_lock'] === null, 'stale drawer event must not restore an open lock');
 
     $legacyRestore = (new CloudOperationalMirrorService())->applyFromBranchEvent(
         $conn,
@@ -133,15 +188,8 @@ try {
         ('ORPHAN', NULL, 10, 10, 0, 0, 0, NULL, NULL)");
     $schema = new SyncSchemaManager();
     $pending = $schema->pendingStatements($conn);
-    closeSummaryAssert(isset($pending['closed_orders.backfill_close_summaries']), 'first retirement pass must backfill linked close rows');
-    closeSummaryAssert(!isset($pending['closed_orders.drop_legacy']), 'legacy table must not drop in the same pass as backfill');
-    $conn->query($pending['closed_orders.backfill_close_summaries']);
-    closeSummaryAssert((int) $conn->query('SELECT COUNT(*) c FROM drawer_session_close_summaries')->fetch_assoc()['c'] === 4, 'linked legacy session must be backfilled once');
-
-    $pending = $schema->pendingStatements($conn);
-    closeSummaryAssert(isset($pending['closed_orders.drop_legacy']), 'second verified pass may retire the legacy table');
-    $conn->query($pending['closed_orders.drop_legacy']);
-    closeSummaryAssert($conn->query("SHOW TABLES LIKE 'closed_orders'")->num_rows === 0, 'legacy table must be absent after retirement');
+    closeSummaryAssert(!array_filter(array_keys($pending), static fn (string $label): bool => str_starts_with($label, 'closed_orders.')), 'normal schema planning must not backfill or drop closed_orders');
+    closeSummaryAssert((int) $conn->query('SELECT COUNT(*) c FROM closed_orders')->fetch_assoc()['c'] === 2, 'normal schema inspection must preserve every legacy close row');
 
     echo "drawer-close-summary-integration-ok db={$db}\n";
 } finally {

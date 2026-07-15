@@ -2,6 +2,7 @@
 
 require_once __DIR__ . '/../Sync/SchemaManager.php';
 require_once __DIR__ . '/RecipeFeatureFlags.php';
+require_once __DIR__ . '/../Inventory/NegativeStockSalePolicyService.php';
 
 class RecipeRuntimePreflightService
 {
@@ -36,7 +37,7 @@ class RecipeRuntimePreflightService
         $checks = [
             'runtime_dependencies' => $this->runtimeDependencyCheck(),
             'schema' => $this->schemaCheck($conn),
-            'feature_flags' => $this->featureFlagCheck($flags),
+            'feature_flags' => $this->featureFlagCheck($conn, $flags),
             'operator_surfaces' => $this->operatorSurfaceCheck(),
             'source_guards' => $this->sourceGuardCheck(),
             'report_links' => $this->reportLinkCheck(),
@@ -117,7 +118,7 @@ class RecipeRuntimePreflightService
         ];
     }
 
-    private function featureFlagCheck(RecipeFeatureFlags $flags): array
+    private function featureFlagCheck(mysqli $conn, RecipeFeatureFlags $flags): array
     {
         $config = $flags->config();
         $mode = $flags->mode();
@@ -139,7 +140,8 @@ class RecipeRuntimePreflightService
         if ($this->pilotModeWithoutExplicitScope($config, $mode)) {
             $blockers[] = 'recipe_runtime_pilot_mode_without_explicit_pilot_scope';
         }
-        foreach ($this->stockPolicyBlockers($config, $mode, $flags) as $blocker) {
+        $negativeStockPolicy = (new NegativeStockSalePolicyService($flags->appConfig()))->resolve($conn);
+        foreach ($this->stockPolicyBlockers($config, $mode, $negativeStockPolicy) as $blocker) {
             $blockers[] = $blocker;
         }
 
@@ -152,6 +154,7 @@ class RecipeRuntimePreflightService
             'availability_enabled' => $this->boolValue($config['availability'] ?? false),
             'accounting_enabled' => $this->boolValue($config['accounting'] ?? false),
             'moova_sync_enabled' => $flags->isMoovaSyncEnabled(),
+            'negative_stock_sale_policy' => $negativeStockPolicy,
             'blockers' => $blockers,
             'warnings' => $warnings,
         ];
@@ -209,25 +212,20 @@ class RecipeRuntimePreflightService
             && $this->intList($pilot['category_ids'] ?? []) === [];
     }
 
-    private function stockPolicyBlockers(array $config, string $mode, RecipeFeatureFlags $flags): array
+    private function stockPolicyBlockers(array $config, string $mode, string $policy): array
     {
         $blockers = [];
-        $strictStock = $flags->isStrictStockEnabled();
-        $negativeApproval = $this->boolValue($config['allow_negative_stock_with_approval'] ?? false);
+        $blocksNegativeStock = $policy === NegativeStockSalePolicyService::BLOCK;
+        $policyRelevant = !in_array($mode, ['off', 'schema_only', 'read_only'], true);
         $availabilityConfigured = $this->boolValue($config['availability'] ?? false);
         $availabilityEffective = $availabilityConfigured && in_array($mode, ['availability_pilot', 'full'], true);
 
-        if ($strictStock && !$availabilityConfigured) {
+        $modeAlreadyRequiresAvailability = in_array($mode, ['availability_pilot', 'full'], true);
+        if ($policyRelevant && $blocksNegativeStock && !$availabilityConfigured && !$modeAlreadyRequiresAvailability) {
             $blockers[] = 'recipe_runtime_strict_stock_requires_recipe_availability';
         }
-        if ($strictStock && $availabilityConfigured && !$availabilityEffective) {
+        if ($policyRelevant && $blocksNegativeStock && $availabilityConfigured && !$availabilityEffective && !$modeAlreadyRequiresAvailability) {
             $blockers[] = 'recipe_runtime_strict_stock_requires_effective_recipe_availability';
-        }
-        if ($strictStock && $negativeApproval) {
-            $blockers[] = 'recipe_runtime_negative_stock_approval_conflicts_with_strict_stock';
-        }
-        if ($negativeApproval && in_array($mode, ['availability_pilot', 'full'], true) && !$availabilityConfigured) {
-            $blockers[] = 'recipe_runtime_negative_stock_approval_requires_recipe_availability';
         }
 
         return $blockers;
@@ -349,7 +347,7 @@ class RecipeRuntimePreflightService
             ],
             'ajax/refund_order.php' => [
                 "require_csrf('pos_browser')",
-                'require_permission(',
+                'require_pos_lane_permission(',
                 'reversePaidOrder',
                 'IdempotencyService',
             ],

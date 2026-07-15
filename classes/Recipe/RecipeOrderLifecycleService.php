@@ -13,6 +13,8 @@ require_once __DIR__ . '/RecipeReservationService.php';
 require_once __DIR__ . '/RecipeScopeResolver.php';
 require_once __DIR__ . '/RecipeSettingsService.php';
 require_once __DIR__ . '/../Sync/SyncOutboxEventService.php';
+require_once __DIR__ . '/../Inventory/NegativeStockSalePolicyService.php';
+require_once __DIR__ . '/../Security/SecurityAuditLogger.php';
 require_once __DIR__ . '/Repository/InventoryMovementRepository.php';
 require_once __DIR__ . '/Repository/RecipeOrderLineUsageRepository.php';
 
@@ -30,6 +32,7 @@ class RecipeOrderLifecycleService
     private RecipeAvailabilityService $availabilityService;
     private SyncOutboxEventService $syncOutbox;
     private RecipeSettingsService $settings;
+    private NegativeStockSalePolicyService $negativeStockPolicy;
     private array $itemCategoryCache = [];
 
     public function __construct(
@@ -44,7 +47,8 @@ class RecipeOrderLifecycleService
         ?RecipeAccountingService $accountingService = null,
         ?RecipeAvailabilityService $availabilityService = null,
         ?SyncOutboxEventService $syncOutbox = null,
-        ?RecipeSettingsService $settings = null
+        ?RecipeSettingsService $settings = null,
+        ?NegativeStockSalePolicyService $negativeStockPolicy = null
     ) {
         $this->flags = $flags ?: new RecipeFeatureFlags();
         $this->scopeResolver = $scopeResolver ?: new RecipeScopeResolver();
@@ -58,6 +62,7 @@ class RecipeOrderLifecycleService
         $this->availabilityService = $availabilityService ?: new RecipeAvailabilityService($this->flags, $this->explosionService);
         $this->syncOutbox = $syncOutbox ?: new SyncOutboxEventService();
         $this->settings = $settings ?: new RecipeSettingsService($this->flags->appConfig());
+        $this->negativeStockPolicy = $negativeStockPolicy ?: new NegativeStockSalePolicyService($this->flags->appConfig());
     }
 
     public function onOrderLineAdded($ctx): array
@@ -67,7 +72,7 @@ class RecipeOrderLifecycleService
             return $this->noopResult('order_line_added', $ctx);
         }
 
-        $lineContext = new RecipeOrderLineContext((array) $ctx);
+        $lineContext = $this->normalizedLineContext($conn, (array) $ctx);
         $explosion = $this->explosionService->explodeOrderLine($conn, $lineContext);
         if (!$explosion->hasRecipe) {
             return $this->result('order_line_added', $ctx, true, [], $explosion->warnings, $explosion->toArray(), $conn);
@@ -140,7 +145,7 @@ class RecipeOrderLifecycleService
             return $this->noopResult('order_line_cancelled', ['context' => $ctx, 'reason' => $reason], $conn);
         }
 
-        $context = new RecipeOrderLineContext((array) $ctx);
+        $context = $this->normalizedLineContext($conn, (array) $ctx);
         $targetUsages = $this->cancelTargetUsages($conn, $context);
         $usageIds = array_map(static function (array $usage): int {
             return (int) ($usage['id'] ?? 0);
@@ -235,7 +240,7 @@ class RecipeOrderLifecycleService
         $paidAny = false;
 
         foreach ($lines as $line) {
-            $lineContext = new RecipeOrderLineContext(array_merge((array) $order, $line));
+            $lineContext = $this->normalizedLineContext($conn, array_merge((array) $order, $line));
             if ($this->hasConsumedExternalUsageForLine($conn, $lineContext)) {
                 continue;
             }
@@ -496,7 +501,24 @@ class RecipeOrderLifecycleService
 
     private function assertStrictAvailability(mysqli $conn, RecipeOrderLineContext $context): void
     {
-        if (!$this->flags->isStrictStockEnabled()) {
+        if ($this->negativeStockPolicy->resolve($conn) === NegativeStockSalePolicyService::ALLOW_WITH_WARNING) {
+            try {
+                $this->availabilityService->assertAvailableForOrderLine($conn, $context);
+            } catch (RuntimeException $exception) {
+                (new SecurityAuditLogger())->record($conn, 'negative_stock_sale_warning', [
+                    'tenant' => $context->posTenant,
+                    'branch' => $context->posBranch,
+                    'target_type' => 'item',
+                    'target_id' => $context->sellableItemId,
+                    'metadata' => [
+                        'order_id' => $context->orderId,
+                        'order_type' => $context->orderType,
+                        'channel' => $context->channel,
+                        'reason' => $exception->getMessage(),
+                        'policy' => NegativeStockSalePolicyService::ALLOW_WITH_WARNING,
+                    ],
+                ]);
+            }
             return;
         }
 
@@ -588,7 +610,7 @@ class RecipeOrderLifecycleService
 
         foreach ($pending as $usage) {
             $lineContextData = $this->lineContextFromUsage($conn, $order, $usage);
-            $lineContext = new RecipeOrderLineContext($lineContextData);
+            $lineContext = $this->normalizedLineContext($conn, $lineContextData);
             $itemCategoryId = $this->itemCategoryId($conn, $lineContext->sellableItemId, $lineContext->itemCategoryId);
             if (!$this->flags->isConsumptionEnabledForItem(
                 $this->resolveScope($conn, $lineContextData),
@@ -813,7 +835,7 @@ class RecipeOrderLifecycleService
             ]);
             $this->refreshAvailabilityCache(
                 $conn,
-                new RecipeOrderLineContext($this->lineContextFromUsage($conn, $order, $usage))
+                $this->normalizedLineContext($conn, $this->lineContextFromUsage($conn, $order, $usage))
             );
         }
 
@@ -1172,6 +1194,20 @@ WHERE TABLE_SCHEMA = DATABASE()
     private function resolveScope(mysqli $conn, array $context, string $mode = 'write'): RecipeScope
     {
         return $this->scopeResolver->resolveForConn($conn, $context, $mode);
+    }
+
+    private function normalizedLineContext(mysqli $conn, array $context): RecipeOrderLineContext
+    {
+        $scope = $this->resolveScope($conn, $context, 'write');
+        $context['pos_tenant'] = $scope->posTenant;
+        $context['pos_branch'] = $scope->posBranch;
+        $context['branch_uuid'] = $scope->branchUuid;
+        $context['store_id'] = $scope->storeId;
+        $context['channel'] = $scope->channel;
+        $context['order_type'] = $scope->orderType;
+        $context['source'] = $scope->source;
+
+        return new RecipeOrderLineContext($context);
     }
 
     private function result(string $action, array $context, bool $noop, array $writes, array $warnings, ?array $preview, ?mysqli $conn = null): array

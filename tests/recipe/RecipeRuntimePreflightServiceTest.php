@@ -153,7 +153,7 @@ class RecipeRuntimePreflightServiceTest extends TestCase
         $this->assertContains('recipe_runtime_pilot_mode_without_explicit_pilot_scope', $result['checks']['feature_flags']['blockers']);
     }
 
-    public function testPreflightBlocksContradictoryStockPolicyFlags(): void
+    public function testPreflightResolvesLegacyStockFlagsToOnePolicy(): void
     {
         (new SyncSchemaManager())->apply(self::$conn);
 
@@ -167,9 +167,9 @@ class RecipeRuntimePreflightServiceTest extends TestCase
         ]));
 
         $this->assertFalse($result['ready_for_recipe_operator_qa']);
-        $this->assertContains('recipe_runtime_strict_stock_requires_recipe_availability', $result['blockers']);
-        $this->assertContains('recipe_runtime_negative_stock_approval_conflicts_with_strict_stock', $result['blockers']);
-        $this->assertContains('recipe_runtime_negative_stock_approval_requires_recipe_availability', $result['blockers']);
+        $this->assertContains('recipe_runtime_availability_pilot_requires_recipe_availability', $result['blockers']);
+        $this->assertSame('block', $result['checks']['feature_flags']['negative_stock_sale_policy']);
+        $this->assertNotContains('recipe_runtime_negative_stock_approval_conflicts_with_strict_stock', $result['blockers']);
     }
 
     public function testPreflightBlocksStrictStockWhenAvailabilityFlagIsNotEffectiveForMode(): void

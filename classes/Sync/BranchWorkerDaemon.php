@@ -30,6 +30,7 @@ if (!class_exists('BranchMoovaAckWorker')) {
 if (!class_exists('SyncSchemaManager')) {
     require_once __DIR__ . '/SchemaManager.php';
 }
+require_once __DIR__ . '/SchemaReadinessGuard.php';
 
 class BranchWorkerDaemon
 {
@@ -104,6 +105,8 @@ class BranchWorkerDaemon
 
     public function runCycle(mysqli $conn, array $config = [], array $options = []): array
     {
+        (new SyncSchemaReadinessGuard())->assertReady($conn);
+
         if (!$config && function_exists('posmain_app_config')) {
             $config = posmain_app_config();
         }

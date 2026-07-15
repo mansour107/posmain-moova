@@ -1,6 +1,7 @@
 <?php
 
 require_once __DIR__ . '/../../Sync/BranchIdentity.php';
+require_once __DIR__ . '/../../Sync/SchemaReadinessGuard.php';
 
 /**
  * Immutable, one-to-one close snapshot for a drawer session.
@@ -10,24 +11,9 @@ require_once __DIR__ . '/../../Sync/BranchIdentity.php';
  */
 class DrawerSessionCloseSummaryService
 {
-    /**
-     * Provision only this additive table for mixed-version deployments.
-     * Call before starting a money transaction because MySQL DDL commits
-     * implicitly. The regular migration runner remains authoritative for all
-     * upgrades and for retiring legacy structures.
-     */
     public function ensureSchema(mysqli $conn): void
     {
-        if ($this->tableExists($conn, 'drawer_session_close_summaries')) {
-            return;
-        }
-
-        require_once dirname(__DIR__, 2) . '/Sync/SchemaManager.php';
-        $statement = (new SyncSchemaManager())->plannedStatements()['drawer_session_close_summaries'] ?? null;
-        if (!is_string($statement) || trim($statement) === '') {
-            throw new RuntimeException('DRAWER_CLOSE_SUMMARY_SCHEMA_UNAVAILABLE');
-        }
-        $conn->query($statement);
+        (new SyncSchemaReadinessGuard())->assertReady($conn);
         if (!$this->tableExists($conn, 'drawer_session_close_summaries')) {
             throw new RuntimeException('DRAWER_CLOSE_SUMMARY_SCHEMA_MISSING');
         }

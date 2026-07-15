@@ -47,6 +47,9 @@ class CloudOperationalMirrorService
     {
         $table = (string) ($payload['table'] ?? '');
         $row = $payload['row'] ?? null;
+        if ($table === 'drawer_sessions' && is_array($row)) {
+            return $this->mirrorDrawerSessionRow($conn, $row);
+        }
         if ($table === '' || !is_array($row) || empty($row['id'])) {
             return null;
         }
@@ -185,33 +188,28 @@ class CloudOperationalMirrorService
 
         $schemaVersion = (int) ($payload['schema_version'] ?? 1);
         $legacy = is_array($shift['legacy'] ?? null) ? $shift['legacy'] : [];
-        $drawerSessionId = (int) ($shift['local_drawer_session_id'] ?? $legacy['drawer_session_id'] ?? 0);
         $drawerUuid = trim((string) ($payload['drawer_session_uuid'] ?? $shift['drawer_session_uuid'] ?? ''));
-        if ($drawerUuid !== '' && $this->tableExists($conn, 'drawer_sessions')) {
-            $lookup = $conn->prepare('SELECT id FROM drawer_sessions WHERE uuid = ? LIMIT 1');
-            $lookup->bind_param('s', $drawerUuid);
-            $lookup->execute();
-            $found = $lookup->get_result()->fetch_assoc();
-            $lookup->close();
-            if ($found) {
-                $drawerSessionId = (int) $found['id'];
-            }
-        }
-        if ($drawerSessionId > 0 && !$this->drawerSessionExists($conn, $drawerSessionId)) {
-            $drawerSessionId = 0;
-        }
-
         $recoveredLegacyDrawer = false;
-        if ($drawerSessionId < 1 && $schemaVersion < 2) {
-            $drawerSessionId = $this->recoverLegacyShiftDrawerSession($conn, $branchUuid, $payload, $shift, $legacy);
-            $recoveredLegacyDrawer = $drawerSessionId > 0;
-        }
-        if ($drawerSessionId < 1) {
-            throw new RuntimeException(
-                $schemaVersion < 2
-                    ? 'V1_SHIFT_CLOSE_DRAWER_RECOVERY_FAILED'
-                    : 'V2_SHIFT_CLOSE_DRAWER_NOT_FOUND'
-            );
+        if ($schemaVersion >= 2) {
+            $drawerSessionId = $this->upsertClosedDrawerSession($conn, $drawerUuid, $payload, $shift);
+        } else {
+            $drawerSessionId = (int) ($shift['local_drawer_session_id'] ?? $legacy['drawer_session_id'] ?? 0);
+            if ($drawerUuid !== '') {
+                $found = $this->findDrawerByUuid($conn, $drawerUuid, true);
+                if ($found) {
+                    $drawerSessionId = (int) $found['id'];
+                }
+            }
+            if ($drawerSessionId > 0 && !$this->drawerSessionExists($conn, $drawerSessionId)) {
+                $drawerSessionId = 0;
+            }
+            if ($drawerSessionId < 1) {
+                $drawerSessionId = $this->recoverLegacyShiftDrawerSession($conn, $branchUuid, $payload, $shift, $legacy);
+                $recoveredLegacyDrawer = $drawerSessionId > 0;
+            }
+            if ($drawerSessionId < 1) {
+                throw new RuntimeException('V1_SHIFT_CLOSE_DRAWER_RECOVERY_FAILED');
+            }
         }
 
         $summary = $payload['close_summary'] ?? null;
@@ -264,6 +262,7 @@ class CloudOperationalMirrorService
         if (empty($summary['created_at'])) {
             unset($summary['created_at']);
         }
+        $this->assertCloseSummaryIdentity($conn, (string) $summary['uuid'], $drawerSessionId);
         if ($schemaVersion >= 2) {
             // V2 is UUID-linked. A source auto-increment ID is not portable and
             // may collide with an unrelated local close during restore.
@@ -279,6 +278,182 @@ class CloudOperationalMirrorService
             'entity_id' => 'drawer_session_close_summaries:' . $drawerSessionId,
             'recovered_legacy_shift_close' => $recoveredLegacyDrawer,
         ];
+    }
+
+    private function upsertClosedDrawerSession(
+        mysqli $conn,
+        string $drawerUuid,
+        array $payload,
+        array $shift
+    ): int {
+        if (!$this->tableExists($conn, 'drawer_sessions')) {
+            throw new RuntimeException('SCHEMA_MIGRATIONS_PENDING');
+        }
+        if (!$this->isUuid($drawerUuid)) {
+            throw new RuntimeException('SHIFT_CLOSE_DRAWER_UUID_INVALID');
+        }
+
+        $snapshot = is_array($payload['drawer_session'] ?? null) ? $payload['drawer_session'] : [];
+        $closedAt = $this->nullableDateTime($snapshot['closed_at'] ?? $shift['closed_at'] ?? null);
+        if ($closedAt === null) {
+            throw new RuntimeException('SHIFT_CLOSE_CLOSED_AT_REQUIRED');
+        }
+
+        $status = (string) ($snapshot['status'] ?? $shift['status'] ?? 'closed');
+        if (!in_array($status, ['closed', 'forced_closed'], true)) {
+            throw new RuntimeException('SHIFT_CLOSE_STATUS_NOT_TERMINAL');
+        }
+
+        $existing = $this->findDrawerByUuid($conn, $drawerUuid, true);
+        $this->assertDrawerScopeCompatible($existing, $snapshot, $shift);
+        if (($existing['status'] ?? '') === 'forced_closed') {
+            $status = 'forced_closed';
+        }
+
+        $userId = max(0, (int) ($snapshot['user_id'] ?? $shift['cashier_user_id'] ?? 0));
+        $openedAt = $this->nullableDateTime($snapshot['opened_at'] ?? $shift['opened_at'] ?? null) ?: $closedAt;
+        if (strtotime($openedAt) > strtotime($closedAt)) {
+            throw new RuntimeException('SHIFT_CLOSE_TIME_RANGE_INVALID');
+        }
+
+        $row = array_merge($snapshot, [
+            'uuid' => $drawerUuid,
+            'user_id' => $userId,
+            'tenant' => max(0, (int) ($snapshot['tenant'] ?? $shift['tenant'] ?? 0)),
+            'branch' => max(0, (int) ($snapshot['branch'] ?? $shift['branch'] ?? 0)),
+            'opened_at' => $openedAt,
+            'business_day' => (string) ($snapshot['business_day'] ?? substr($openedAt, 0, 10)),
+            'opened_by' => max(0, (int) ($snapshot['opened_by'] ?? $userId)),
+            'opening_cash' => $snapshot['opening_cash'] ?? 0,
+            'closed_at' => $closedAt,
+            'closed_by' => max(0, (int) ($snapshot['closed_by'] ?? $userId)),
+            'expected_cash' => $snapshot['expected_cash'] ?? $this->expectedCashFromShift($shift),
+            'counted_cash' => $snapshot['counted_cash'] ?? $shift['actual_cash'] ?? null,
+            'difference' => $snapshot['difference'] ?? $shift['cash_deficit'] ?? null,
+            'status' => $status,
+            'variance_status' => (string) ($snapshot['variance_status'] ?? $shift['variance_status'] ?? 'none'),
+            'variance_type' => (string) ($snapshot['variance_type'] ?? $shift['variance_type'] ?? 'none'),
+            'open_branch_lock' => null,
+            'open_register_lock' => null,
+            'open_user_lock' => null,
+            'close_token_hash' => null,
+        ]);
+        unset($row['id']);
+        $this->upsertRow($conn, 'drawer_sessions', $row, true);
+
+        $saved = $this->findDrawerByUuid($conn, $drawerUuid, true);
+        if (!$saved) {
+            throw new RuntimeException('SHIFT_CLOSE_DRAWER_UPSERT_FAILED');
+        }
+
+        return (int) $saved['id'];
+    }
+
+    private function mirrorDrawerSessionRow(mysqli $conn, array $row): ?array
+    {
+        $uuid = trim((string) ($row['uuid'] ?? ''));
+        if (!$this->isUuid($uuid)) {
+            throw new RuntimeException('DRAWER_SESSION_UUID_INVALID');
+        }
+
+        $existing = $this->findDrawerByUuid($conn, $uuid, true);
+        $this->assertDrawerScopeCompatible($existing, $row, []);
+        $incomingStatus = (string) ($row['status'] ?? 'open');
+        if ($existing && $this->isTerminalDrawerStatus((string) ($existing['status'] ?? '')) && !$this->isTerminalDrawerStatus($incomingStatus)) {
+            return ['entity_id' => 'drawer_sessions:' . (int) $existing['id'], 'stale_open_ignored' => true];
+        }
+        if ($existing && ($existing['status'] ?? '') === 'forced_closed' && $incomingStatus === 'closed') {
+            $row['status'] = 'forced_closed';
+        }
+        if ($this->isTerminalDrawerStatus((string) ($row['status'] ?? ''))) {
+            $row['open_branch_lock'] = null;
+            $row['open_register_lock'] = null;
+            $row['open_user_lock'] = null;
+            $row['close_token_hash'] = null;
+        }
+
+        unset($row['id']);
+        $this->upsertRow($conn, 'drawer_sessions', $row, true);
+        $saved = $this->findDrawerByUuid($conn, $uuid, false);
+
+        return $saved ? ['entity_id' => 'drawer_sessions:' . (int) $saved['id']] : null;
+    }
+
+    private function assertCloseSummaryIdentity(mysqli $conn, string $summaryUuid, int $drawerSessionId): void
+    {
+        $stmt = $conn->prepare(
+            'SELECT uuid, drawer_session_id FROM drawer_session_close_summaries '
+            . 'WHERE uuid = ? OR drawer_session_id = ? FOR UPDATE'
+        );
+        $stmt->bind_param('si', $summaryUuid, $drawerSessionId);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        while ($row = $result->fetch_assoc()) {
+            if ((string) $row['uuid'] !== $summaryUuid || (int) $row['drawer_session_id'] !== $drawerSessionId) {
+                $stmt->close();
+                throw new RuntimeException('DRAWER_CLOSE_SUMMARY_IDENTITY_CONFLICT');
+            }
+        }
+        $stmt->close();
+    }
+
+    private function assertDrawerScopeCompatible(?array $existing, array $snapshot, array $shift): void
+    {
+        if (!$existing) {
+            return;
+        }
+        foreach (['tenant', 'branch'] as $field) {
+            $incoming = (int) ($snapshot[$field] ?? $shift[$field] ?? 0);
+            $current = (int) ($existing[$field] ?? 0);
+            if ($incoming > 0 && $current > 0 && $incoming !== $current) {
+                throw new RuntimeException('DRAWER_SESSION_UUID_SCOPE_CONFLICT');
+            }
+        }
+    }
+
+    private function findDrawerByUuid(mysqli $conn, string $uuid, bool $forUpdate): ?array
+    {
+        if (!$this->tableExists($conn, 'drawer_sessions')) {
+            return null;
+        }
+        $sql = 'SELECT * FROM drawer_sessions WHERE uuid = ? LIMIT 1' . ($forUpdate ? ' FOR UPDATE' : '');
+        $stmt = $conn->prepare($sql);
+        $stmt->bind_param('s', $uuid);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        return $row ?: null;
+    }
+
+    private function expectedCashFromShift(array $shift)
+    {
+        if (!isset($shift['actual_cash'], $shift['cash_deficit'])) {
+            return null;
+        }
+
+        return (float) $shift['actual_cash'] - (float) $shift['cash_deficit'];
+    }
+
+    private function nullableDateTime($value): ?string
+    {
+        $value = trim((string) $value);
+        if ($value === '') {
+            return null;
+        }
+        $timestamp = strtotime($value);
+
+        return $timestamp === false ? null : date('Y-m-d H:i:s', $timestamp);
+    }
+
+    private function isTerminalDrawerStatus(string $status): bool
+    {
+        return in_array($status, ['closed', 'forced_closed'], true);
+    }
+
+    private function isUuid(string $value): bool
+    {
+        return preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i', $value) === 1;
     }
 
     private function recoverLegacyShiftDrawerSession(

@@ -4,6 +4,7 @@ require_once __DIR__ . '/RecipeFeatureFlags.php';
 require_once __DIR__ . '/RecipeOperationalDashboardService.php';
 require_once __DIR__ . '/RecipePilotEvidenceService.php';
 require_once __DIR__ . '/RecipeRuntimePreflightService.php';
+require_once __DIR__ . '/../Inventory/NegativeStockSalePolicyService.php';
 require_once __DIR__ . '/../../includes/pos_default_accounts.php';
 
 class RecipeRolloutReadinessService
@@ -167,17 +168,14 @@ class RecipeRolloutReadinessService
         $availabilityConfigured = $this->boolValue($config['availability'] ?? false);
         $availabilityEffective = $availabilityConfigured && in_array($mode, ['availability_pilot', 'full'], true);
 
-        if ($flags->isStrictStockEnabled() && !$availabilityConfigured) {
+        $negativeStockPolicy = (new NegativeStockSalePolicyService($flags->appConfig()))->resolve($conn);
+        $negativeStockPolicyRelevant = !in_array($mode, ['off', 'schema_only', 'read_only'], true);
+        $modeAlreadyRequiresAvailability = in_array($mode, ['availability_pilot', 'full'], true);
+        if ($negativeStockPolicyRelevant && $negativeStockPolicy === NegativeStockSalePolicyService::BLOCK && !$availabilityConfigured && !$modeAlreadyRequiresAvailability) {
             $blockers[] = 'strict_stock_requires_recipe_availability';
         }
-        if ($flags->isStrictStockEnabled() && $availabilityConfigured && !$availabilityEffective) {
+        if ($negativeStockPolicyRelevant && $negativeStockPolicy === NegativeStockSalePolicyService::BLOCK && $availabilityConfigured && !$availabilityEffective && !$modeAlreadyRequiresAvailability) {
             $blockers[] = 'strict_stock_requires_effective_recipe_availability';
-        }
-        if ($this->negativeStockApprovalRequestedForAvailabilityMode($config, $mode) && !$availabilityConfigured) {
-            $blockers[] = 'recipe_negative_stock_approval_requires_recipe_availability';
-        }
-        if ($flags->isStrictStockEnabled() && $this->boolValue($config['allow_negative_stock_with_approval'] ?? false)) {
-            $blockers[] = 'recipe_negative_stock_approval_conflicts_with_strict_stock';
         }
         if ($this->boolValue($config['cost_public_payloads'] ?? false) && !$allowCostPublicPayloads) {
             $blockers[] = 'public_cost_payloads_enabled';
@@ -235,6 +233,7 @@ class RecipeRolloutReadinessService
             'recipe_enabled_effective' => $flags->isEnabled(),
             'allow_full_mode' => $allowFullMode,
             'allow_cost_public_payloads' => $allowCostPublicPayloads,
+            'negative_stock_sale_policy' => $negativeStockPolicy,
             'pilot_scope' => [
                 'pos_branch' => $pilotBranch,
                 'item_count' => count($pilotItems),
@@ -406,12 +405,6 @@ class RecipeRolloutReadinessService
     private function recipeMoovaSyncRequestedForAvailabilityMode(array $recipeConfig, string $mode): bool
     {
         return $this->boolValue($recipeConfig['moova_sync'] ?? false)
-            && in_array($mode, ['availability_pilot', 'full'], true);
-    }
-
-    private function negativeStockApprovalRequestedForAvailabilityMode(array $recipeConfig, string $mode): bool
-    {
-        return $this->boolValue($recipeConfig['allow_negative_stock_with_approval'] ?? false)
             && in_array($mode, ['availability_pilot', 'full'], true);
     }
 

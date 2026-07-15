@@ -9,7 +9,7 @@ require_once __DIR__ . '/../../classes/Recipe/RecipeSettingsService.php';
 
 class RecipeFeatureFlagsTest extends TestCase
 {
-    public function testAppConfigDefaultsRecipesOff(): void
+    public function testAppConfigProductionProfilePromotesLegacyOffModeToFull(): void
     {
         $this->withRecipeEnv([
             'POSMAIN_RECIPE_MODE' => 'off',
@@ -27,18 +27,19 @@ class RecipeFeatureFlagsTest extends TestCase
             'POSMAIN_RECIPE_DEFAULT_SAFETY_STOCK_QTY' => '0',
             'POSMAIN_RECIPE_REFUND_STOCK_POLICY' => 'waste',
             'POSMAIN_RECIPE_PRODUCTION_VARIANCE_POLICY' => 'adjust_unit_cost',
+            'POSMAIN_DISABLE_UI_RUNTIME_CONFIG' => '1',
         ], function (): void {
             $config = posmain_app_config();
 
             $this->assertArrayHasKey('recipe', $config);
-            $this->assertFalse($config['recipe']['enabled']);
-            $this->assertSame('off', $config['recipe']['mode']);
+            $this->assertTrue($config['recipe']['enabled']);
+            $this->assertSame('full', $config['recipe']['mode']);
             $this->assertFalse($config['recipe']['shadow_ledger']);
-            $this->assertFalse($config['recipe']['reservations']);
-            $this->assertFalse($config['recipe']['consumption']);
-            $this->assertFalse($config['recipe']['accounting']);
-            $this->assertFalse($config['recipe']['availability']);
-            $this->assertFalse($config['recipe']['moova_sync']);
+            $this->assertTrue($config['recipe']['reservations']);
+            $this->assertTrue($config['recipe']['consumption']);
+            $this->assertTrue($config['recipe']['accounting']);
+            $this->assertTrue($config['recipe']['availability']);
+            $this->assertTrue($config['recipe']['moova_sync']);
             $this->assertFalse($config['recipe']['strict_stock']);
             $this->assertFalse($config['recipe']['cost_public_payloads']);
             $this->assertSame(0, $config['recipe']['accounts']['cogs_account_id']);
@@ -188,6 +189,11 @@ class RecipeFeatureFlagsTest extends TestCase
                 'mode' => 'consume_pilot',
                 'reservations' => false,
                 'consumption' => true,
+                'pilot' => [
+                    'pos_branch' => '',
+                    'item_ids' => [10],
+                    'category_ids' => [],
+                ],
             ],
         ]);
 

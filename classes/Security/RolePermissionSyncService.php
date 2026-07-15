@@ -172,7 +172,7 @@ class RolePermissionSyncService
     {
         return [
             'POS' => ['pos.open', 'pos.sell.takeaway', 'pos.table.open', 'pos.table.move', 'pos.table.merge', 'pos.payment.take', 'pos.discount.apply', 'pos.discount.manager_override', 'pos.discount.manual_pct.limit', 'pos.price.override', 'pos.recipe_stock_override', 'pos.cancel.unpaid', 'pos.void.post_send', 'pos.void.item_after_send', 'pos.order.modify_others', 'pos.split', 'pos.shift.open', 'pos.shift.close', 'pos.shift.force_close', 'pos.shift.force_close_others', 'pos.shift.resolve_variance', 'pos.shift.set_opening_baseline', 'pos.cashdrawer.count', 'pos.drawer.no_sale', 'pos.drawer.payin', 'pos.drawer.safe_drop', 'pos.payout.over_limit', 'pos.drawer.payout.limit', 'pos.credit.sale', 'pos.credit.sell', 'pos.reprint', 'pos.refund.limit', 'pos.void.paid', 'pos.refund'],
-            'Inventory & menu' => ['menu.edit', 'inventory.edit', 'inventory.approve'],
+            'Inventory & menu' => ['menu.edit', 'inventory.edit', 'inventory.approve', 'inventory.policy.manage'],
             'Delivery & KDS' => ['moova.manage', 'moova.accept', 'delivery.dispatch', 'delivery.zones.manage', 'kds.view', 'kds.complete', 'kds.manage'],
             'Accounting & reports' => ['accounting.view', 'reports.view', 'reports.own_shift', 'reports.branch_daily', 'reports.costs', 'reports.cash_flow'],
             'Administration' => ['users.manage', 'roles.manage', 'customers.manage', 'system.health.view', 'system.tools.run'],
@@ -239,7 +239,7 @@ class RolePermissionSyncService
                 'rollname' => 'مدير',
                 'permissions' => [
                     'pos.open', 'pos.sell.takeaway', 'pos.table.open', 'pos.table.move', 'pos.table.merge',
-                    'pos.payment.take', 'pos.discount.apply', 'pos.discount.manager_override', 'pos.recipe_stock_override',
+                    'pos.payment.take', 'pos.discount.apply', 'pos.discount.manager_override', 'pos.discount.manual_pct.limit', 'pos.recipe_stock_override',
                     'pos.cancel.unpaid', 'pos.split', 'pos.shift.open', 'pos.shift.close', 'pos.shift.force_close',
                     'pos.shift.force_close_others', 'pos.shift.override', 'pos.shift.resolve_variance', 'pos.shift.set_opening_baseline',
                     'pos.cashdrawer.count', 'pos.drawer.no_sale', 'pos.drawer.payin', 'pos.drawer.safe_drop',
@@ -412,7 +412,13 @@ class RolePermissionSyncService
             }
         }
 
-        $columns = array_merge(['rollname' => $rollname, 'is_active' => 1, 'role_key' => $roleKey, 'is_system' => 1], $legacyValues);
+        $columns = ['rollname' => $rollname, 'is_active' => 1, 'role_key' => $roleKey, 'is_system' => 1];
+        foreach ($legacyValues as $column => $value) {
+            if (preg_match('/^[a-z_][a-z0-9_]*$/i', (string) $column)
+                && self::usrPwrsColumnExists($conn, (string) $column)) {
+                $columns[$column] = (int) $value;
+            }
+        }
         $columnNames = array_keys($columns);
         $placeholders = implode(', ', array_fill(0, count($columnNames), '?'));
         $sql = 'INSERT INTO usr_pwrs (' . implode(', ', $columnNames) . ') VALUES (' . $placeholders . ')';
@@ -443,16 +449,19 @@ class RolePermissionSyncService
     private static function usrPwrsColumnExists(mysqli $conn, string $column): bool
     {
         static $cache = [];
-        if ($cache === []) {
+        $databaseRow = $conn->query('SELECT DATABASE() AS db_name')->fetch_assoc();
+        $cacheKey = (string) $conn->thread_id . ':' . (string) ($databaseRow['db_name'] ?? '');
+        if (!isset($cache[$cacheKey])) {
+            $cache[$cacheKey] = [];
             $result = $conn->query('SHOW COLUMNS FROM usr_pwrs');
             if ($result instanceof mysqli_result) {
                 while ($row = $result->fetch_assoc()) {
-                    $cache[(string) ($row['Field'] ?? '')] = true;
+                    $cache[$cacheKey][(string) ($row['Field'] ?? '')] = true;
                 }
             }
         }
 
-        return isset($cache[$column]);
+        return isset($cache[$cacheKey][$column]);
     }
 
     public static function applyLegacyFlagValuesToRole(
@@ -657,6 +666,7 @@ class RolePermissionSyncService
                 INSERT INTO role_capabilities (role_id, permission_key, is_enabled, limit_value, is_unlimited)
                 VALUES (?, ?, 1, ?, ?)
                 ON DUPLICATE KEY UPDATE
+                    is_enabled = VALUES(is_enabled),
                     limit_value = VALUES(limit_value),
                     is_unlimited = VALUES(is_unlimited)
             ");

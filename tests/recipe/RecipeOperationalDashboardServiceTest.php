@@ -199,7 +199,7 @@ class RecipeOperationalDashboardServiceTest extends TestCase
         $this->assertStringContainsString('reserve_only requires explicit pilot branch, item, or category scope', $this->healthRow($dashboard, 'active_mode_flags')['detail']);
     }
 
-    public function testDashboardSurfacesStockPolicyMismatches(): void
+    public function testDashboardReportsOneResolvedStockPolicy(): void
     {
         $dashboard = (new RecipeOperationalDashboardService())->dashboard(self::$conn, new RecipeFeatureFlags([
             'recipe' => [
@@ -211,11 +211,9 @@ class RecipeOperationalDashboardServiceTest extends TestCase
             ],
         ]));
 
-        $this->assertSame(3, $dashboard['summary']['stock_policy_mismatches']);
-        $this->assertSame('mismatch', $this->healthRow($dashboard, 'stock_policy_flags')['status']);
-        $this->assertStringContainsString('strict stock requires recipe availability', $this->healthRow($dashboard, 'stock_policy_flags')['detail']);
-        $this->assertStringContainsString('strict stock conflicts with manager negative-stock approval', $this->healthRow($dashboard, 'stock_policy_flags')['detail']);
-        $this->assertStringContainsString('manager negative-stock approval requires recipe availability', $this->healthRow($dashboard, 'stock_policy_flags')['detail']);
+        $this->assertSame('block', $dashboard['config']['negative_stock_sale_policy']);
+        $this->assertSame(0, $dashboard['summary']['stock_policy_mismatches']);
+        $this->assertSame('ok', $this->healthRow($dashboard, 'stock_policy_flags')['status']);
     }
 
     public function testDashboardSurfacesStrictStockWhenAvailabilityFlagIsNotEffectiveForMode(): void

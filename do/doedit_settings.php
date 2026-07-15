@@ -7,23 +7,17 @@ require_once __DIR__ . '/../includes/csrf.php';
 require_once __DIR__ . '/../includes/pos_default_accounts.php';
 require_once __DIR__ . '/../includes/pos_operational_store.php';
 require_once __DIR__ . '/../classes/Security/SecurityAuditLogger.php';
+require_once __DIR__ . '/../classes/Inventory/NegativeStockSalePolicyService.php';
+require_once __DIR__ . '/../classes/Sync/SchemaReadinessGuard.php';
 
 require_admin_or_permission('system.tools.run', $conn);
-
-function doedit_settings_audit(mysqli $conn, string $eventType, array $options = []): void
-{
-    try {
-        (new SecurityAuditLogger())->record($conn, $eventType, $options);
-    } catch (Throwable $exception) {
-        error_log('Settings audit skipped: ' . $exception->getMessage());
-    }
-}
 
 // التحقق من طريقة الطلب
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     die("Invalid request method");
 }
 require_csrf('settings_write');
+(new SyncSchemaReadinessGuard())->assertReady($conn);
 
 // التحقق من تسجيل الدخول
 if (!isset($_SESSION['login']) || !isset($_SESSION['userid'])) {
@@ -52,6 +46,13 @@ $def_pos_employee = (int)($_POST['def_pos_employee'] ?? 0);
 $def_pos_fund = (int)($_POST['def_pos_fund'] ?? 0);
 $pos_type = trim($_POST['pos_type'] ?? 'barcode');
 $pos_has_password = isset($_POST['pos_has_password']) ? 1 : 0;
+$policyService = new NegativeStockSalePolicyService($appConfig ?? []);
+$oldNegativeStockPolicy = $policyService->resolve($conn);
+$negativeStockSalePolicy = $policyService->normalize($_POST['negative_stock_sale_policy'] ?? $oldNegativeStockPolicy);
+if ($negativeStockSalePolicy !== $oldNegativeStockPolicy && !auth_guard_has_permission('inventory.policy.manage', $conn)) {
+    http_response_code(403);
+    die('INVENTORY_POLICY_PERMISSION_REQUIRED');
+}
 
 // التحقق من صحة البيانات المطلوبة
 if (empty($companyname)) {
@@ -87,31 +88,37 @@ SET company_name = ?,
     def_pos_employee = ?, 
     def_pos_fund = ?,
     pos_type = ?,
-    pos_has_password = ? 
+    pos_has_password = ?,
+    negative_stock_sale_policy = ?
 WHERE 1";
 
 $stmt = $conn->prepare($sql);
-$stmt->bind_param("sssssiiiiiisiiiiiisi", 
+$stmt->bind_param("sssssiiiiiisiiiiiisis",
     $companyname, $companyadd, $companytel, $edit_pass, $lang,
     $acc_rent, $showhr, $showpulse, $show_customer_visits, $showatt, $showpayroll, $bodycolor,
     $showrent, $showclinc, $def_pos_client, $def_pos_store, 
-    $def_pos_employee, $def_pos_fund, $pos_type, $pos_has_password
+    $def_pos_employee, $def_pos_fund, $pos_type, $pos_has_password, $negativeStockSalePolicy
 );
 
-if ($stmt->execute()) {
+$conn->begin_transaction();
+try {
+    $stmt->execute();
     posmain_sync_operational_store_flags($conn);
-    doedit_settings_audit($conn, 'settings_updated', [
+    (new SecurityAuditLogger())->record($conn, 'settings_updated', [
         'target_type' => 'settings',
         'metadata' => [
             'companyname' => $companyname,
             'lang' => $lang,
             'pos_type' => $pos_type,
             'def_pos_store' => $def_pos_store,
+            'negative_stock_sale_policy_old' => $oldNegativeStockPolicy,
+            'negative_stock_sale_policy_new' => $negativeStockSalePolicy,
         ],
     ]);
+    $conn->commit();
     header('location:../dashboard.php');
-} else {
-    $settingsException = new RuntimeException($conn->error ?: 'settings update failed');
+} catch (Throwable $settingsException) {
+    $conn->rollback();
     echo htmlspecialchars(posmain_safe_exception_message($settingsException, 'حدث خطأ أثناء تحديث الإعدادات', false), ENT_QUOTES, 'UTF-8');
 }
 

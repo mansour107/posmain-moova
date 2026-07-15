@@ -45,6 +45,9 @@ class SyncSchemaManager
             'manager_approvals' => $this->managerApprovalsSql(),
             'drawer_sessions' => $this->drawerSessionsSql(),
             'drawer_session_close_summaries' => $this->drawerSessionCloseSummariesSql(),
+            'legacy_closed_orders_archive' => $this->legacyClosedOrdersArchiveSql(),
+            'financial_certification_baselines' => $this->financialCertificationBaselinesSql(),
+            'data_repair_runs' => $this->dataRepairRunsSql(),
             'drawer_movements' => $this->drawerMovementsSql(),
             'drawer_count_attempts' => $this->drawerCountAttemptsSql(),
             'drawer_session_resolutions' => $this->drawerSessionResolutionsSql(),
@@ -244,6 +247,12 @@ class SyncSchemaManager
                 ],
                 'indexes' => [],
             ],
+            'settings' => [
+                'columns' => [
+                    'negative_stock_sale_policy' => "ALTER TABLE settings ADD COLUMN negative_stock_sale_policy ENUM('block','allow_with_warning') NULL AFTER pos_has_password",
+                ],
+                'indexes' => [],
+            ],
             'manager_approvals' => [
                 'columns' => [
                     'expires_at' => "ALTER TABLE manager_approvals ADD COLUMN expires_at DATETIME NULL",
@@ -428,10 +437,6 @@ class SyncSchemaManager
             $pending[$label] = $statement;
         }
 
-        foreach ($this->closedOrdersRetirementStatements($conn) as $label => $statement) {
-            $pending[$label] = $statement;
-        }
-
         if ($this->tableExists($conn, 'users') && $this->columnExists($conn, 'users', 'pin_enc')) {
             $legacyPins = $conn->query(
                 "SELECT COUNT(*) AS c FROM users WHERE pin_enc IS NOT NULL AND TRIM(pin_enc) <> ''"
@@ -446,85 +451,6 @@ class SyncSchemaManager
         }
 
         return $pending;
-    }
-
-    /**
-     * Retire the pre-drawer close ledger in two independently verifiable runs.
-     * The first run backfills only rows that are linked to a real drawer session;
-     * a later run may drop the legacy table after no linked rows remain missing.
-     */
-    private function closedOrdersRetirementStatements(mysqli $conn): array
-    {
-        if (
-            !$this->tableExists($conn, 'closed_orders')
-            || !$this->tableExists($conn, 'drawer_sessions')
-            || !$this->tableExists($conn, 'drawer_session_close_summaries')
-        ) {
-            return [];
-        }
-
-        // Very old installations cannot link this ledger to a drawer session at
-        // all. There is nothing reliable to backfill, so retire it only after the
-        // new close-summary table is present.
-        if (!$this->columnExists($conn, 'closed_orders', 'drawer_session_id')) {
-            return ['closed_orders.drop_unlinkable_legacy' => 'DROP TABLE closed_orders'];
-        }
-
-        $missingResult = $conn->query("
-            SELECT COUNT(DISTINCT co.drawer_session_id) AS c
-            FROM closed_orders co
-            INNER JOIN drawer_sessions ds ON ds.id = co.drawer_session_id
-            LEFT JOIN drawer_session_close_summaries cs ON cs.drawer_session_id = co.drawer_session_id
-            WHERE co.drawer_session_id IS NOT NULL AND cs.id IS NULL
-        ");
-        $missingLinked = $missingResult ? (int) ($missingResult->fetch_assoc()['c'] ?? 0) : 0;
-        if ($missingLinked < 1) {
-            return ['closed_orders.drop_legacy' => 'DROP TABLE closed_orders'];
-        }
-
-        $value = function (array $columns, string $fallback = 'NULL') use ($conn): string {
-            foreach ($columns as $column) {
-                if ($this->columnExists($conn, 'closed_orders', $column)) {
-                    return 'co.`' . str_replace('`', '``', $column) . '`';
-                }
-            }
-            return $fallback;
-        };
-        $totalSales = $value(['total_sales'], '0');
-        $cashSales = $value(['total_cash', 'cash'], '0');
-        $nonCashSales = $value(['total_visa'], '0');
-        $discountTotal = $value(['total_discount'], '0');
-        $expenseTotal = $value(['expenses'], '0');
-        $expenseNotes = $value(['exp_notes'], "''");
-        $countedNonCash = $value(['actual_visa']);
-        $reportSnapshot = $value(['json_details']);
-        $createdAt = $value(['crtime', 'created_at'], 'CURRENT_TIMESTAMP');
-        $shiftNumber = $value(['shift'], "CONCAT('legacy_', co.id)");
-
-        return ['closed_orders.backfill_close_summaries' => "
-INSERT INTO drawer_session_close_summaries (
-  uuid, drawer_session_id, shift_number, total_orders, total_sales,
-  cash_sales, non_cash_sales, discount_total, return_total,
-  expense_total, expense_notes, expected_non_cash, counted_non_cash,
-  non_cash_difference, close_path, report_snapshot_json,
-  payment_summary_json, created_at
-)
-SELECT
-  UUID(), co.drawer_session_id, {$shiftNumber}, 0, {$totalSales},
-  {$cashSales}, {$nonCashSales}, {$discountTotal}, 0,
-  {$expenseTotal}, {$expenseNotes}, {$nonCashSales}, {$countedNonCash},
-  CASE WHEN {$countedNonCash} IS NULL THEN NULL ELSE {$countedNonCash} - {$nonCashSales} END,
-  'legacy_backfill', {$reportSnapshot}, NULL, {$createdAt}
-FROM closed_orders co
-INNER JOIN (
-  SELECT drawer_session_id, MAX(id) AS id
-  FROM closed_orders
-  WHERE drawer_session_id IS NOT NULL
-  GROUP BY drawer_session_id
-) latest ON latest.id = co.id
-INNER JOIN drawer_sessions ds ON ds.id = co.drawer_session_id
-LEFT JOIN drawer_session_close_summaries cs ON cs.drawer_session_id = co.drawer_session_id
-WHERE cs.id IS NULL"];
     }
 
     public function apply(mysqli $conn)
@@ -1568,6 +1494,15 @@ ALTER TABLE journal_entries
     private function financialCertificationSchemaUpgradeStatements(mysqli $conn): array
     {
         $statements = [];
+
+        if ($this->tableExists($conn, 'acc_head')
+            && $this->columnExists($conn, 'acc_head', 'balance')
+            && $this->columnNeedsWiderFinancialDecimal($conn, 'acc_head', 'balance', 24, 6)
+        ) {
+            $this->appendFinancialNullNormalization($statements, $conn, 'acc_head', 'balance');
+            $statements['acc_head.modify_balance_decimal24_6'] =
+                'ALTER TABLE acc_head MODIFY COLUMN balance DECIMAL(24,6) NOT NULL DEFAULT 0.000000';
+        }
 
         if ($this->tableExists($conn, 'fat_details')) {
             $lineSnapshots = [
@@ -2875,6 +2810,61 @@ CREATE TABLE IF NOT EXISTS drawer_session_close_summaries (
   UNIQUE KEY uq_drawer_close_summary_uuid (uuid),
   UNIQUE KEY uq_drawer_close_summary_session (drawer_session_id),
   KEY idx_drawer_close_summary_created (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
+    private function legacyClosedOrdersArchiveSql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS legacy_closed_orders_archive (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  batch_id CHAR(36) NOT NULL,
+  legacy_row_id VARCHAR(191) NOT NULL,
+  raw_json JSON NOT NULL,
+  row_hash CHAR(64) NOT NULL,
+  link_status ENUM('linked','backfilled','missing_drawer','unlinkable','approved_unlinkable') NOT NULL,
+  resolved_drawer_uuid CHAR(36) NULL,
+  resolved_summary_uuid CHAR(36) NULL,
+  manifest_hash CHAR(64) NOT NULL,
+  source_created_at DATETIME NULL,
+  archived_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_legacy_closed_orders_archive_row (legacy_row_id, row_hash),
+  KEY idx_legacy_closed_orders_archive_batch (batch_id, link_status),
+  KEY idx_legacy_closed_orders_archive_manifest (manifest_hash)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
+    private function financialCertificationBaselinesSql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS financial_certification_baselines (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  cutoff_time DATETIME NOT NULL,
+  manifest_hash CHAR(64) NOT NULL,
+  approver VARCHAR(191) NOT NULL,
+  historical_exceptions_json JSON NOT NULL,
+  approved_at DATETIME NOT NULL,
+  invalidated_at DATETIME NULL,
+  invalidation_reason VARCHAR(500) NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_financial_certification_baseline_manifest (manifest_hash),
+  KEY idx_financial_certification_baseline_active (invalidated_at, approved_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
+    private function dataRepairRunsSql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS data_repair_runs (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  repair_type VARCHAR(100) NOT NULL,
+  manifest_hash CHAR(64) NOT NULL,
+  result_json JSON NOT NULL,
+  applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_data_repair_run_manifest (repair_type, manifest_hash),
+  KEY idx_data_repair_runs_applied (applied_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
     }
 

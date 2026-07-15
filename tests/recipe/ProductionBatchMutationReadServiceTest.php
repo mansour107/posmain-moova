@@ -38,6 +38,17 @@ class ProductionBatchMutationReadServiceTest extends TestCase
         self::$conn->set_charset('utf8mb4');
 
         (new SyncSchemaManager())->apply(self::$conn);
+        self::$conn->query("CREATE TABLE settings (
+            id INT NOT NULL PRIMARY KEY,
+            def_pos_store INT NULL
+        ) ENGINE=InnoDB");
+        self::$conn->query("INSERT INTO settings (id, def_pos_store) VALUES (1, 2)");
+        self::$conn->query("CREATE TABLE acc_head (
+            id INT NOT NULL PRIMARY KEY,
+            isdeleted TINYINT(1) NOT NULL DEFAULT 0,
+            is_stock TINYINT(1) NOT NULL DEFAULT 0
+        ) ENGINE=InnoDB");
+        self::$conn->query("INSERT INTO acc_head (id, is_stock) VALUES (2, 1)");
         self::$conn->query("
             CREATE TABLE myitems (
                 id BIGINT UNSIGNED NOT NULL PRIMARY KEY,
@@ -170,6 +181,7 @@ class ProductionBatchMutationReadServiceTest extends TestCase
         $outputItemId = $this->item('Prepared sauce', '0.000000');
         $inputItemId = $this->item('Tomato', '4.000000');
         (new InventoryBalanceRepository())->putBalance(self::$conn, [
+            'store_id' => 2,
             'item_id' => $inputItemId,
             'qty_on_hand' => '50.000000',
             'qty_reserved' => '0.000000',

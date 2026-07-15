@@ -1,6 +1,7 @@
 <?php
 
 require_once __DIR__ . '/RecipeFeatureFlags.php';
+require_once __DIR__ . '/../Inventory/NegativeStockSalePolicyService.php';
 
 class RecipeOperationalDashboardService
 {
@@ -20,7 +21,7 @@ class RecipeOperationalDashboardService
             'menu_sync_outbox_issues' => $this->menuSyncOutboxIssues($conn, $filters, $limit),
         ];
 
-        $config = $this->configSummary($flags);
+        $config = $this->configSummary($conn, $flags);
         $summary = $this->summary($sections, $config);
         $summary['recipe_mode'] = $flags->mode();
         $summary['recipe_enabled'] = $flags->isEnabled();
@@ -35,7 +36,7 @@ class RecipeOperationalDashboardService
         ];
     }
 
-    private function configSummary(RecipeFeatureFlags $flags): array
+    private function configSummary(mysqli $conn, RecipeFeatureFlags $flags): array
     {
         $config = $flags->config();
 
@@ -52,10 +53,9 @@ class RecipeOperationalDashboardService
                 && $flags->isEnabled()
                 && in_array($flags->mode(), ['availability_pilot', 'full'], true),
             'moova_sync' => $flags->isMoovaSyncEnabled(),
-            'strict_stock' => $flags->isStrictStockEnabled(),
+            'negative_stock_sale_policy' => (new NegativeStockSalePolicyService($flags->appConfig()))->resolve($conn),
             'cost_public_payloads' => $this->boolValue($config['cost_public_payloads'] ?? false),
             'refund_stock_policy' => (string) ($config['refund_stock_policy'] ?? 'waste'),
-            'allow_negative_stock_with_approval' => $this->boolValue($config['allow_negative_stock_with_approval'] ?? false),
             'default_reservation_minutes' => (int) ($config['default_reservation_minutes'] ?? 90),
             'production_variance_policy' => $this->productionVariancePolicy($config),
             'pilot_pos_branch' => (string) (($config['pilot'] ?? [])['pos_branch'] ?? ''),
@@ -753,23 +753,18 @@ LIMIT " . $limit,
     private function stockPolicyMismatches(array $config): array
     {
         $mode = (string) ($config['mode'] ?? 'off');
-        $strictStock = !empty($config['strict_stock']);
-        $negativeApproval = !empty($config['allow_negative_stock_with_approval']);
+        $blocksNegativeStock = ($config['negative_stock_sale_policy'] ?? NegativeStockSalePolicyService::BLOCK) === NegativeStockSalePolicyService::BLOCK;
         $availabilityConfigured = !empty($config['availability_configured']);
         $availabilityEffective = !empty($config['availability_effective']);
         $mismatches = [];
 
-        if ($strictStock && !$availabilityConfigured) {
+        $policyRelevant = !in_array($mode, ['off', 'schema_only', 'read_only'], true);
+        $modeAlreadyRequiresAvailability = in_array($mode, ['availability_pilot', 'full'], true);
+        if ($policyRelevant && $blocksNegativeStock && !$availabilityConfigured && !$modeAlreadyRequiresAvailability) {
             $mismatches[] = 'strict stock requires recipe availability';
         }
-        if ($strictStock && $availabilityConfigured && !$availabilityEffective) {
+        if ($policyRelevant && $blocksNegativeStock && $availabilityConfigured && !$availabilityEffective && !$modeAlreadyRequiresAvailability) {
             $mismatches[] = 'strict stock requires effective recipe availability mode';
-        }
-        if ($strictStock && $negativeApproval) {
-            $mismatches[] = 'strict stock conflicts with manager negative-stock approval';
-        }
-        if ($negativeApproval && in_array($mode, ['availability_pilot', 'full'], true) && !$availabilityConfigured) {
-            $mismatches[] = 'manager negative-stock approval requires recipe availability';
         }
 
         return $mismatches;

@@ -55,9 +55,7 @@ if (!function_exists('posmain_production_profile_apply')) {
             }
         }
         $config['inventory']['legacy_mirror'] = false;
-        $config['inventory']['strict_stock'] = true;
         $config['recipe']['shadow_ledger'] = false;
-        $config['recipe']['strict_stock'] = true;
         $config['financial']['certified_mode'] = true;
         if (!isset($config['tax']['enabled'])) {
             $config['tax']['enabled'] = false;

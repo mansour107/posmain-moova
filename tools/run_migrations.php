@@ -25,21 +25,11 @@ if ($dryRun === $apply) {
 $backupFile = isset($options['backup-file']) ? trim((string) $options['backup-file']) : '';
 $hasBackup = $backupFile !== '' && is_file($backupFile) && is_readable($backupFile) && filesize($backupFile) > 0;
 
-if ($apply && !$hasBackup && !isset($options['confirm-no-backup'])) {
-    fwrite(STDERR, "--apply requires --backup-file=/absolute/path/to/recent.sql, or --confirm-no-backup for local/dev only.\n");
-    exit(1);
-}
-
 mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
 $conn = syncMigrationConnect();
 $manager = new SyncSchemaManager();
 $pending = $manager->pendingStatements($conn);
 $tracking = syncMigrationTrackingStatus($conn);
-
-if (syncMigrationContainsDestructiveStatement($pending) && (!isset($options['allow-destructive']) || !$hasBackup)) {
-    fwrite(STDERR, "Pending statements include destructive operations. Re-run with --allow-destructive and --backup-file=/absolute/path/to/recent.sql.\n");
-    exit(1);
-}
 
 if ($dryRun) {
     echo "Migration tracking: " . ($tracking['exists'] ? 'ready' : 'missing; will be created on apply') . ".\n";
@@ -50,11 +40,28 @@ if ($dryRun) {
     exit(0);
 }
 
-syncMigrationEnsureTrackingTable($conn);
-$applied = $manager->apply($conn);
-if ($applied) {
-    syncMigrationRecord($conn, 'sync_schema_manager', $manager->plannedStatements(), $backupFile);
+$hasRewrite = syncMigrationContainsDataRewriteStatement($pending);
+$production = in_array(strtolower(trim((string) getenv('POSMAIN_PRODUCTION_MODE'))), ['1', 'true', 'yes', 'on'], true);
+if (!$hasBackup && ($production || $hasRewrite || !isset($options['confirm-no-backup']))) {
+    fwrite(STDERR, "--apply requires a readable --backup-file in production and for every destructive or data-rewrite statement. Additive local/dev apply also requires --confirm-no-backup.\n");
+    exit(1);
 }
+if (syncMigrationContainsDestructiveStatement($pending) && (!isset($options['allow-destructive']) || !$hasBackup)) {
+    fwrite(STDERR, "Pending statements include destructive operations. Re-run with --allow-destructive and a readable --backup-file.\n");
+    exit(1);
+}
+
+syncMigrationEnsureTrackingTable($conn);
+syncMigrationReconcileStarted($conn, $pending);
+$applied = [];
+foreach ($pending as $label => $sql) {
+    syncMigrationAssertChecksumCompatible($conn, (string) $label, (string) $sql);
+    syncMigrationRecord($conn, (string) $label, (string) $sql, $backupFile, 'started');
+    $conn->query($sql);
+    syncMigrationRecord($conn, (string) $label, (string) $sql, $backupFile, 'applied');
+    $applied[] = (string) $label;
+}
+$manager->apply($conn);
 echo "Applied " . count($applied) . " sync schema change(s): " . ($applied ? implode(', ', $applied) : 'none') . "\n";
 
 function syncMigrationConnect()
@@ -95,45 +102,90 @@ function syncMigrationEnsureTrackingTable(mysqli $conn): void
     $conn->query("
         CREATE TABLE IF NOT EXISTS schema_migrations (
             id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
-            version VARCHAR(100) NOT NULL,
+            version VARCHAR(191) NOT NULL,
             filename VARCHAR(255) NOT NULL,
             checksum CHAR(64) NOT NULL,
             applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
             applied_by VARCHAR(100) NULL,
+            status VARCHAR(20) NOT NULL DEFAULT 'applied',
             metadata_json JSON NULL,
             UNIQUE KEY uq_schema_migrations_version (version)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     ");
+    $columns = $conn->query("SHOW COLUMNS FROM schema_migrations LIKE 'status'");
+    if (!($columns instanceof mysqli_result) || $columns->num_rows < 1) {
+        $conn->query("ALTER TABLE schema_migrations ADD COLUMN status VARCHAR(20) NOT NULL DEFAULT 'applied' AFTER applied_by");
+    }
 }
 
-function syncMigrationRecord(mysqli $conn, string $version, array $statements, string $backupFile): void
+function syncMigrationRecord(mysqli $conn, string $version, string $statement, string $backupFile, string $status): void
 {
     $filename = 'classes/Sync/SchemaManager.php';
-    $checksum = hash('sha256', json_encode($statements, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+    $checksum = hash('sha256', $statement);
     $appliedBy = getenv('USER') ?: getenv('USERNAME') ?: 'cli';
     $metadata = json_encode([
-        'statement_count' => count($statements),
+        'statement_label' => $version,
         'backup_file' => $backupFile !== '' ? $backupFile : null,
     ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
 
     $stmt = $conn->prepare("
-        INSERT INTO schema_migrations (version, filename, checksum, applied_by, metadata_json)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO schema_migrations (version, filename, checksum, applied_by, status, metadata_json)
+        VALUES (?, ?, ?, ?, ?, ?)
         ON DUPLICATE KEY UPDATE
             checksum = VALUES(checksum),
             applied_at = CURRENT_TIMESTAMP,
             applied_by = VALUES(applied_by),
+            status = VALUES(status),
             metadata_json = VALUES(metadata_json)
     ");
-    $stmt->bind_param('sssss', $version, $filename, $checksum, $appliedBy, $metadata);
+    $stmt->bind_param('ssssss', $version, $filename, $checksum, $appliedBy, $status, $metadata);
     $stmt->execute();
     $stmt->close();
+}
+
+function syncMigrationReconcileStarted(mysqli $conn, array $pending): void
+{
+    $pendingLabels = array_fill_keys(array_map('strval', array_keys($pending)), true);
+    $result = $conn->query("SELECT version FROM schema_migrations WHERE status = 'started'");
+    while ($row = $result->fetch_assoc()) {
+        $version = (string) ($row['version'] ?? '');
+        if ($version !== '' && !isset($pendingLabels[$version])) {
+            $stmt = $conn->prepare("UPDATE schema_migrations SET status = 'applied', applied_at = CURRENT_TIMESTAMP WHERE version = ? AND status = 'started'");
+            $stmt->bind_param('s', $version);
+            $stmt->execute();
+            $stmt->close();
+        }
+    }
+}
+
+function syncMigrationAssertChecksumCompatible(mysqli $conn, string $version, string $statement): void
+{
+    $checksum = hash('sha256', $statement);
+    $stmt = $conn->prepare('SELECT checksum FROM schema_migrations WHERE version = ? LIMIT 1');
+    $stmt->bind_param('s', $version);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    if ($row && !hash_equals((string) $row['checksum'], $checksum)) {
+        throw new RuntimeException('SCHEMA_MIGRATION_CHECKSUM_MISMATCH:' . $version);
+    }
 }
 
 function syncMigrationContainsDestructiveStatement(array $statements): bool
 {
     foreach ($statements as $sql) {
         if (preg_match('/\b(DROP|TRUNCATE|DELETE\s+FROM|UPDATE\s+\w+\s+SET)\b/i', (string) $sql) === 1) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+function syncMigrationContainsDataRewriteStatement(array $statements): bool
+{
+    foreach ($statements as $sql) {
+        if (preg_match('/^\s*(DROP|TRUNCATE|DELETE\s+FROM|UPDATE\s+|INSERT\s+INTO)/i', (string) $sql) === 1) {
             return true;
         }
     }

@@ -41,6 +41,8 @@ class RecipeEditorItemCostServiceTest extends TestCase
             CREATE TABLE myitems (
                 id BIGINT UNSIGNED NOT NULL PRIMARY KEY,
                 iname VARCHAR(255) NULL,
+                barcode VARCHAR(191) NULL,
+                group1 BIGINT UNSIGNED NOT NULL DEFAULT 0,
                 cost_price DECIMAL(18,6) NOT NULL DEFAULT 0.000000,
                 manual_cost_edit TINYINT(1) NOT NULL DEFAULT 0
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
@@ -89,7 +91,7 @@ class RecipeEditorItemCostServiceTest extends TestCase
 
         $row = $this->fetchItem($sellableId);
         $this->assertSame('2.000000', $row['cost_price']);
-        $this->assertSame('0', $row['manual_cost_edit']);
+        $this->assertSame(0, (int) $row['manual_cost_edit']);
     }
 
     public function testVariationCostUsesVariationRecipeLines(): void
@@ -172,7 +174,7 @@ class RecipeEditorItemCostServiceTest extends TestCase
                 ({$recipe['id']}, {$variantItemId}, '00000000-0000-4000-8000-000000012998', {$flourId}, 'ingredient', 200.000000, 1.00000000, 0.0000, 1, 1)
         ");
         $definition = new RecipeDefinitionService();
-        $actor = new RecipeActorContext(1, 0, 0, null, ['recipe.manage'], null, null);
+        $actor = new RecipeActorContext(1, 0, 0, null, ['recipe.manage', 'recipe.approve'], null, null);
         $definition->approve(self::$conn, (int) $recipe['id'], $actor);
         $definition->activate(self::$conn, (int) $recipe['id'], $actor);
 

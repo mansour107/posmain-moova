@@ -20,6 +20,8 @@ $posmainCanEditMenu = isset($conn) && $conn instanceof mysqli
     && auth_guard_has_permission('menu.edit', $conn);
 $posmainCanEditInventory = isset($conn) && $conn instanceof mysqli
     && auth_guard_has_permission('inventory.edit', $conn);
+$posmainCanManageInventoryPolicy = isset($conn) && $conn instanceof mysqli
+    && auth_guard_has_permission('inventory.policy.manage', $conn);
 $posmainCanViewAccounting = isset($conn) && $conn instanceof mysqli
     && auth_guard_has_permission('accounting.view', $conn);
 $posmainCanViewReports = isset($conn) && $conn instanceof mysqli
@@ -292,6 +294,15 @@ $posmainLegacyFlag = static function (string $flag) use ($conn): bool {
                   <p>إعداد المخازن</p>
                 </a>
               </li>
+
+              <?php if ($posmainCanManageInventoryPolicy) { ?>
+              <li class="nav-item">
+                <a href="inventory_policy.php" class="nav-link">
+                  <i class="nav-icon fas fa-shield-alt"></i>
+                  <p>سياسة البيع والمخزون</p>
+                </a>
+              </li>
+              <?php } ?>
 
               <li class="nav-item">
                 <a href="inventory_reason_codes.php" class="nav-link">

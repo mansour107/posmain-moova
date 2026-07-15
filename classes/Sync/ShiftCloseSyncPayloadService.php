@@ -33,7 +33,16 @@ class ShiftCloseSyncPayloadService
             $summary['session_status'],
             $summary['variance_status'],
             $summary['variance_type'],
-            $summary['session_notes']
+            $summary['session_notes'],
+            $summary['drawer_register_id'],
+            $summary['drawer_fund_account_id'],
+            $summary['drawer_business_day'],
+            $summary['drawer_opened_by'],
+            $summary['drawer_opening_cash'],
+            $summary['drawer_expected_opening_cash'],
+            $summary['drawer_opening_variance'],
+            $summary['drawer_closed_by'],
+            $summary['drawer_close_expected_snapshot']
         );
 
         $shift = [
@@ -57,6 +66,31 @@ class ShiftCloseSyncPayloadService
             'variance_type' => (string) ($row['variance_type'] ?? 'none'),
         ];
 
+        $drawerSession = [
+            'uuid' => $drawerSessionUuid,
+            'user_id' => (int) $row['user_id'],
+            'tenant' => (int) $row['tenant'],
+            'branch' => (int) $row['branch'],
+            'register_id' => $this->intOrNull($row['drawer_register_id'] ?? null),
+            'fund_account_id' => $this->intOrNull($row['drawer_fund_account_id'] ?? null),
+            'opened_at' => $this->datetimeOrNull($row['opened_at'] ?? null),
+            'business_day' => $row['drawer_business_day'] ?? null,
+            'opened_by' => (int) ($row['drawer_opened_by'] ?? $row['user_id']),
+            'opening_cash' => $row['drawer_opening_cash'] ?? 0,
+            'expected_opening_cash' => $row['drawer_expected_opening_cash'] ?? null,
+            'opening_variance' => $row['drawer_opening_variance'] ?? null,
+            'closed_at' => $this->datetimeOrNull($row['closed_at'] ?? null),
+            'closed_by' => $this->intOrNull($row['drawer_closed_by'] ?? null),
+            'expected_cash' => $row['expected_cash'] ?? null,
+            'counted_cash' => $row['counted_cash'] ?? null,
+            'difference' => $row['difference'] ?? null,
+            'close_expected_snapshot' => $row['drawer_close_expected_snapshot'] ?? null,
+            'status' => (string) ($row['session_status'] ?? 'closed'),
+            'variance_status' => (string) ($row['variance_status'] ?? 'none'),
+            'variance_type' => (string) ($row['variance_type'] ?? 'none'),
+            'notes' => $row['session_notes'] ?? null,
+        ];
+
         return [
             'schema_version' => 2,
             'snapshot_type' => 'shift_close',
@@ -66,6 +100,7 @@ class ShiftCloseSyncPayloadService
             'close_uuid' => $closeUuid,
             'drawer_session_uuid' => $drawerSessionUuid,
             'shift' => $shift,
+            'drawer_session' => $drawerSession,
             'close_summary' => $summary,
         ];
     }
@@ -75,6 +110,15 @@ class ShiftCloseSyncPayloadService
         $stmt = $conn->prepare(
             'SELECT cs.*, cs.uuid AS close_uuid,
                     ds.uuid AS drawer_session_uuid, ds.user_id, ds.tenant, ds.branch,
+                    ds.register_id AS drawer_register_id,
+                    ds.fund_account_id AS drawer_fund_account_id,
+                    ds.business_day AS drawer_business_day,
+                    ds.opened_by AS drawer_opened_by,
+                    ds.opening_cash AS drawer_opening_cash,
+                    ds.expected_opening_cash AS drawer_expected_opening_cash,
+                    ds.opening_variance AS drawer_opening_variance,
+                    ds.closed_by AS drawer_closed_by,
+                    ds.close_expected_snapshot AS drawer_close_expected_snapshot,
                     ds.opened_at, ds.closed_at, ds.expected_cash, ds.counted_cash,
                     ds.difference, ds.status AS session_status, ds.variance_status,
                     ds.variance_type, ds.notes AS session_notes
@@ -98,6 +142,11 @@ class ShiftCloseSyncPayloadService
         $timestamp = strtotime((string) $value);
 
         return $timestamp === false ? null : date('Y-m-d H:i:s', $timestamp);
+    }
+
+    private function intOrNull($value): ?int
+    {
+        return $value === null || $value === '' ? null : (int) $value;
     }
 
     private function tableExists(mysqli $conn, string $table): bool
