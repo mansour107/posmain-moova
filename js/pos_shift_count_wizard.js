@@ -25,6 +25,8 @@
         CSRF_INVALID: 'انتهت صلاحية الجلسة — أعد تحميل الصفحة',
         IDEMPOTENCY_CONFLICT: 'طلب مكرر — أعد المحاولة',
         PERMISSION_DENIED: 'ليس لديك صلاحية لهذا الإجراء',
+        SCHEMA_MIGRATIONS_PENDING: 'تحديث قاعدة البيانات مطلوب قبل إتمام العملية',
+        DRAWER_CLOSE_SUMMARY_SCHEMA_MISSING: 'تحديث إغلاق الورديات غير مثبت — تواصل مع مسؤول النظام',
     };
 
     const wizard = {
@@ -546,9 +548,6 @@
 
             $modal.on('show.bs.modal', function () {
                 self.resetCloseWizard();
-                if (typeof window.loadShiftPreview === 'function') {
-                    window.loadShiftPreview();
-                }
             });
 
             $modal.find('[data-psh-close-next]').on('click', function () {

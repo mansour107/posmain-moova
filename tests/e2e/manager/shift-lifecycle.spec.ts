@@ -38,7 +38,8 @@ test.describe('manager: real shift window lifecycle', () => {
     expect(ordersAfterReopen).toBe(0);
 
     await openCloseShiftModal(page);
-    await expect(page.locator('#closeShiftModal')).toContainText(/0|لا توجد/i);
+    await expect(page.getByTestId('close-shift-guidance')).toBeVisible();
+    await expect(page.locator('#closeShiftModal')).not.toContainText(/عدد الطلبات|إجمالي المبيعات|النقدية المتوقعة/i);
     await fillCloseShiftForm(page);
     await page.waitForURL(/pos_barcode\.php/, { timeout: 20_000 });
     await expect(page.locator('#shiftCloseResultModal')).toBeVisible({ timeout: 10_000 });

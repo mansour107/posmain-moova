@@ -5,6 +5,9 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
 php tests/sync/cash_flow_period_contract_test.php
+php tests/sync/cash_flow_accountability_contract_test.php
+php tests/sync/cash_flow_accountability_integration_test.php
+php tests/sync/close_shift_modal_full_blind_contract_test.php
 php tests/sync/drawer_cash_flow_contract_test.php
 php tests/sync/cash_flow_unassigned_integration_test.php
 php tests/sync/cash_flow_full_day_integration_test.php

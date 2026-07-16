@@ -1,7 +1,6 @@
 <?php
 
 require_once __DIR__ . '/../../Sync/BranchIdentity.php';
-require_once __DIR__ . '/../../Sync/SchemaReadinessGuard.php';
 
 /**
  * Immutable, one-to-one close snapshot for a drawer session.
@@ -13,7 +12,6 @@ class DrawerSessionCloseSummaryService
 {
     public function ensureSchema(mysqli $conn): void
     {
-        (new SyncSchemaReadinessGuard())->assertReady($conn);
         if (!$this->tableExists($conn, 'drawer_session_close_summaries')) {
             throw new RuntimeException('DRAWER_CLOSE_SUMMARY_SCHEMA_MISSING');
         }

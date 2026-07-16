@@ -33,19 +33,19 @@ This matrix defines named permissions for POSMAIN's restaurant/cafe rollout whil
 
 | Permission | Existing `usr_pwrs` bridge | Typical roles | Notes |
 |---|---|---|---|
-| `pos.open` | `show_sales`, `sid_sales` | admin, manager, cashier, waiter | Opens POS surface. |
-| `pos.sell.takeaway` | `add_sales`, `show_sales`, `sid_sales` | admin, manager, cashier | Creates takeaway cashier sale. |
+| `pos.open` | `show_sales`, `sid_sales` | admin, manager, cashier, waiter | Opens POS and includes takeaway/delivery create, edit, payment, split payment, and receipt printing. |
+| `pos.sell.takeaway` | `add_sales`, `show_sales`, `sid_sales` | admin, manager, cashier | Legacy compatibility key; core selling is included with `pos.open` and this key is hidden from Team Hub. |
 | `pos.table.open` | `add_sales`, `show_sales`, `sid_sales` | admin, manager, cashier, waiter | Creates or updates active table order. |
 | `pos.table.move` | `edit_sales`, `show_sales`, `sid_sales` | admin, manager | Move table order. |
 | `pos.table.merge` | `edit_sales`, `show_sales`, `sid_sales` | admin, manager | Merge table orders. |
-| `pos.payment.take` | `add_payment`, `show_payment`, `add_sales` | admin, manager, cashier | Take table/takeaway payment. |
+| `pos.payment.take` | `add_payment`, `show_payment`, `add_sales` | admin, manager, cashier | Legacy compatibility key; taking payment is included with `pos.open` and this key is hidden from Team Hub. |
 | `pos.discount.apply` | `edit_sales`, `add_sales` | admin, manager, cashier | Ordinary discount within policy. |
 | `pos.discount.manager_override` | `edit_sales` | admin, manager | Discount beyond cashier policy. |
 | `pos.recipe_stock_override` | `edit_sales`, `edit_stock` | admin, manager, inventory manager | Allow a recipe-backed item sale when computed ingredient availability is unavailable and strict stock is off. |
 | `pos.cancel.unpaid` | `delete_sales`, `edit_sales` | admin, manager, cashier | Cancel unpaid active order with reason. |
 | `pos.void.paid` | `__admin_only` | admin | Paid void; admin only from POS order history. |
 | `pos.refund` | `__admin_only` | admin | Paid refund; admin only from POS order history. |
-| `pos.split` | `add_payment`, `add_sales` | admin, manager, cashier | Split selected item payment. |
+| `pos.split` | `add_payment`, `add_sales` | admin, manager, cashier | Legacy compatibility key; split payment is included with `pos.open` and this key is hidden from Team Hub. |
 | `pos.shift.open` | `add_sales`, `sid_sales` | admin, manager, cashier | Open shift/drawer. |
 | `pos.shift.close` | `edit_sales`, `sid_sales` | admin, manager, cashier | Close shift/drawer. |
 | `pos.cashdrawer.count` | `edit_payment`, `show_payment` | admin, manager, cashier | Drawer count/close. |

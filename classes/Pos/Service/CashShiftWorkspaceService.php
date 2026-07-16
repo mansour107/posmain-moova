@@ -153,6 +153,10 @@ class CashShiftWorkspaceService
                 $row['count_pending'] = false;
                 $row['variance_status'] = 'unresolved';
                 $row['has_override'] = isset($overrideIds[(int) $row['id']]);
+                $row = array_merge(
+                    $row,
+                    $this->cashFlow->accountabilityForSession($conn, (int) ($row['id'] ?? 0))
+                );
             }
             unset($row);
 

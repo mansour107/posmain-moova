@@ -22,6 +22,14 @@ class CashFlowPeriodService
     private DrawerSessionService $drawerSessions;
     private PaymentMethodService $paymentMethods;
     private BusinessDayService $businessDays;
+    /** @var array<string, string> */
+    private array $userNameCache = [];
+    /** @var array<string, array<string, int|string|null>> */
+    private array $accountabilityCache = [];
+    /** @var array<string, bool> */
+    private array $tableExistsCache = [];
+    /** @var array<string, bool> */
+    private array $columnExistsCache = [];
 
     public function __construct(
         ?DrawerSessionService $drawerSessions = null,
@@ -36,6 +44,23 @@ class CashFlowPeriodService
     public function drawerSubsystemAvailable(mysqli $conn): bool
     {
         return $this->tableExists($conn, 'drawer_sessions') && $this->tableExists($conn, 'drawer_movements');
+    }
+
+    /** @return array<string, int|string|null> */
+    public function accountabilityForSession(mysqli $conn, int $sessionId): array
+    {
+        if ($sessionId < 1 || !$this->tableExists($conn, 'drawer_sessions')) {
+            return [];
+        }
+
+        $session = $this->drawerSessions->sessionById($conn, $sessionId);
+        $accountability = $this->sessionAccountability($conn, $session);
+        $ownerId = (int) ($session['user_id'] ?? 0);
+
+        return [
+            'shift_owner_user_id' => $ownerId ?: null,
+            'shift_owner_name' => $this->userName($conn, $ownerId),
+        ] + $accountability;
     }
 
     public function summary(mysqli $conn, array $filters): array
@@ -202,11 +227,12 @@ class CashFlowPeriodService
                 'drawer_session_id' => (int) $session['id'],
             ]);
             $breakdown = $this->drawerSessions->sessionCashBreakdown($conn, (int) $session['id']);
+            $accountability = $this->sessionAccountability($conn, $session);
 
             $sessions[] = [
                 'id' => (int) $session['id'],
                 'user_id' => (int) $session['user_id'],
-                'user_name' => (string) ($row['display_name'] ?: $row['uname'] ?: ''),
+                'user_name' => (string) (($row['display_name'] ?? '') ?: ($row['uname'] ?? '')),
                 'tenant' => (int) $session['tenant'],
                 'branch' => (int) $session['branch'],
                 'business_day' => $sessionBusinessDay,
@@ -230,6 +256,23 @@ class CashFlowPeriodService
                 'count_pending' => !empty($breakdown['count_pending']),
                 'movement_totals' => array_map('floatval', $recon['drawer']['movement_totals'] ?? []),
                 'movement_count' => (int) ($recon['drawer']['movement_count'] ?? 0),
+                'shift_owner_user_id' => (int) $session['user_id'],
+                'shift_owner_name' => (string) (($row['display_name'] ?? '') ?: ($row['uname'] ?? '')),
+                'opened_by_user_id' => $accountability['opened_by_user_id'],
+                'opened_by_name' => $accountability['opened_by_name'],
+                'closed_by_user_id' => $accountability['closed_by_user_id'],
+                'closed_by_name' => $accountability['closed_by_name'],
+                'counted_by_user_id' => $accountability['counted_by_user_id'],
+                'counted_by_name' => $accountability['counted_by_name'],
+                'counted_at' => $accountability['counted_at'],
+                'takeover_authorized_by_user_id' => $accountability['takeover_authorized_by_user_id'],
+                'takeover_authorized_by_name' => $accountability['takeover_authorized_by_name'],
+                'preceding_session_id' => $accountability['preceding_session_id'],
+                'preceding_shift_owner_user_id' => $accountability['preceding_shift_owner_user_id'],
+                'preceding_shift_owner_name' => $accountability['preceding_shift_owner_name'],
+                'succeeding_session_id' => $accountability['succeeding_session_id'],
+                'succeeding_shift_owner_user_id' => $accountability['succeeding_shift_owner_user_id'],
+                'succeeding_shift_owner_name' => $accountability['succeeding_shift_owner_name'],
             ];
         }
 
@@ -290,22 +333,41 @@ class CashFlowPeriodService
         $joinUsers = $this->tableExists($conn, 'users');
         $joinVouchers = $this->tableExists($conn, 'ot_head')
             && $this->columnExists($conn, 'drawer_movements', 'ref_ot_head_id');
+        $joinApprovals = $this->columnExists($conn, 'drawer_movements', 'manager_approval_id')
+            && $this->tableExists($conn, 'manager_approvals');
+        $approvalHasApprovedBy = $joinApprovals && $this->columnExists($conn, 'manager_approvals', 'approved_by');
+        $approvalHasPerformedBy = $joinApprovals && $this->columnExists($conn, 'manager_approvals', 'performed_by');
+        $approvalHasPermission = $joinApprovals && $this->columnExists($conn, 'manager_approvals', 'permission_key');
+        $approvalHasAction = $joinApprovals && $this->columnExists($conn, 'manager_approvals', 'action_type');
+        $approvalHasStatus = $joinApprovals && $this->columnExists($conn, 'manager_approvals', 'status');
         $voucherProIdSelect = $joinVouchers && $this->columnExists($conn, 'ot_head', 'pro_id')
             ? ', oh.pro_id AS voucher_pro_id'
             : '';
         $voucherInfoSelect = $joinVouchers && $this->columnExists($conn, 'ot_head', 'info')
             ? ', oh.info AS voucher_info'
             : '';
+        $approvalSelect = $joinApprovals ? ', ma.id AS approval_record_id' : '';
+        $approvalSelect .= $approvalHasApprovedBy ? ', ma.approved_by AS approval_approved_by' : '';
+        $approvalSelect .= $approvalHasPerformedBy ? ', ma.performed_by AS approval_performed_by' : '';
+        $approvalSelect .= $approvalHasPermission ? ', ma.permission_key AS approval_permission_key' : '';
+        $approvalSelect .= $approvalHasAction ? ', ma.action_type AS approval_action_type' : '';
+        $approvalSelect .= $approvalHasStatus ? ', ma.status AS approval_status' : '';
+        $approvalSelect .= $joinUsers && $approvalHasApprovedBy
+            ? ', approver.uname AS approver_uname, approver.display_name AS approver_display_name'
+            : '';
         $sql = "
             SELECT dm.*"
             . ($joinUsers ? ', u.uname, u.display_name' : '')
             . $voucherProIdSelect
             . $voucherInfoSelect
+            . $approvalSelect
             . "
             FROM drawer_movements dm
             {$settingsJoin}
             " . ($joinUsers ? 'LEFT JOIN users u ON u.id = dm.created_by' : '') . "
             " . ($joinVouchers ? 'LEFT JOIN ot_head oh ON oh.id = dm.ref_ot_head_id' : '') . "
+            " . ($joinApprovals ? 'LEFT JOIN manager_approvals ma ON ma.id = dm.manager_approval_id' : '') . "
+            " . ($joinUsers && $approvalHasApprovedBy ? 'LEFT JOIN users approver ON approver.id = ma.approved_by' : '') . "
             WHERE {$whereSql}
             ORDER BY dm.created_at DESC, dm.id DESC
             LIMIT {$limit} OFFSET {$offset}
@@ -328,6 +390,19 @@ class CashFlowPeriodService
                 'reason' => $row['reason'] !== null ? (string) $row['reason'] : null,
                 'created_by' => (int) $row['created_by'],
                 'created_by_name' => (string) (($row['display_name'] ?? '') ?: ($row['uname'] ?? '')),
+                'manager_approval_id' => isset($row['manager_approval_id']) && $row['manager_approval_id'] !== null
+                    ? (int) $row['manager_approval_id']
+                    : null,
+                'manager_approval_status' => isset($row['approval_status']) ? (string) $row['approval_status'] : null,
+                'manager_approval_permission' => isset($row['approval_permission_key']) ? (string) $row['approval_permission_key'] : null,
+                'manager_approval_action' => isset($row['approval_action_type']) ? (string) $row['approval_action_type'] : null,
+                'manager_approved_by_user_id' => isset($row['approval_approved_by']) && $row['approval_approved_by'] !== null
+                    ? (int) $row['approval_approved_by']
+                    : null,
+                'manager_approved_by_name' => (string) (($row['approver_display_name'] ?? '') ?: ($row['approver_uname'] ?? '')),
+                'manager_approval_performed_by_user_id' => isset($row['approval_performed_by']) && $row['approval_performed_by'] !== null
+                    ? (int) $row['approval_performed_by']
+                    : null,
                 'created_at' => (string) $row['created_at'],
                 'is_unassigned' => $row['drawer_session_id'] === null,
                 'tenant' => isset($row['tenant']) ? (int) $row['tenant'] : 0,
@@ -735,21 +810,144 @@ class CashFlowPeriodService
         return strtolower(trim($method)) === 'cash' ? 'cash' : 'other';
     }
 
+    /**
+     * Build the custody trail for one drawer session without requiring every
+     * optional handover column to exist on legacy installations.
+     *
+     * @return array<string, int|string|null>
+     */
+    private function sessionAccountability(mysqli $conn, array $session): array
+    {
+        $sessionId = (int) ($session['id'] ?? 0);
+        $cacheKey = spl_object_id($conn) . ':' . $sessionId;
+        if ($sessionId > 0 && isset($this->accountabilityCache[$cacheKey])) {
+            return $this->accountabilityCache[$cacheKey];
+        }
+        $openedBy = (int) ($session['opened_by'] ?? $session['user_id'] ?? 0);
+        $closedBy = isset($session['closed_by']) && $session['closed_by'] !== null
+            ? (int) $session['closed_by']
+            : null;
+        $precedingSessionId = isset($session['preceding_session_id']) && $session['preceding_session_id'] !== null
+            ? (int) $session['preceding_session_id']
+            : null;
+        $authorizedBy = isset($session['takeover_authorized_by']) && $session['takeover_authorized_by'] !== null
+            ? (int) $session['takeover_authorized_by']
+            : null;
+
+        $counter = null;
+        if ($sessionId > 0 && $this->tableExists($conn, 'drawer_count_attempts')) {
+            $counter = $this->queryOne($conn, '
+                SELECT created_by, created_at
+                FROM drawer_count_attempts
+                WHERE drawer_session_id = ? AND count_phase = ?
+                ORDER BY attempt_number DESC, id DESC
+                LIMIT 1
+            ', [$sessionId, 'close']);
+        }
+
+        $preceding = null;
+        $succeeding = null;
+        if ($this->columnExists($conn, 'drawer_sessions', 'preceding_session_id')) {
+            if ($precedingSessionId !== null) {
+                $preceding = $this->queryOne(
+                    $conn,
+                    'SELECT id, user_id FROM drawer_sessions WHERE id = ? LIMIT 1',
+                    [$precedingSessionId]
+                );
+            }
+            if ($sessionId > 0) {
+                $successorSelect = $this->columnExists($conn, 'drawer_sessions', 'takeover_authorized_by')
+                    ? 'id, user_id, takeover_authorized_by'
+                    : 'id, user_id';
+                $succeeding = $this->queryOne(
+                    $conn,
+                    "SELECT {$successorSelect} FROM drawer_sessions WHERE preceding_session_id = ? ORDER BY id ASC LIMIT 1",
+                    [$sessionId]
+                );
+            }
+        }
+
+        // The authorization is persisted on the newly opened takeover session.
+        // Surface it on the closed predecessor too so the custody story is visible
+        // from either session in the admin report.
+        if ($authorizedBy === null && isset($succeeding['takeover_authorized_by'])) {
+            $authorizedBy = $succeeding['takeover_authorized_by'] !== null
+                ? (int) $succeeding['takeover_authorized_by']
+                : null;
+        }
+
+        $countedBy = isset($counter['created_by']) ? (int) $counter['created_by'] : null;
+        $precedingOwnerId = isset($preceding['user_id']) ? (int) $preceding['user_id'] : null;
+        $succeedingOwnerId = isset($succeeding['user_id']) ? (int) $succeeding['user_id'] : null;
+
+        $accountability = [
+            'opened_by_user_id' => $openedBy > 0 ? $openedBy : null,
+            'opened_by_name' => $this->userName($conn, $openedBy),
+            'closed_by_user_id' => $closedBy,
+            'closed_by_name' => $this->userName($conn, (int) $closedBy),
+            'counted_by_user_id' => $countedBy,
+            'counted_by_name' => $this->userName($conn, (int) $countedBy),
+            'counted_at' => isset($counter['created_at']) ? (string) $counter['created_at'] : null,
+            'takeover_authorized_by_user_id' => $authorizedBy,
+            'takeover_authorized_by_name' => $this->userName($conn, (int) $authorizedBy),
+            'preceding_session_id' => $precedingSessionId,
+            'preceding_shift_owner_user_id' => $precedingOwnerId,
+            'preceding_shift_owner_name' => $this->userName($conn, (int) $precedingOwnerId),
+            'succeeding_session_id' => isset($succeeding['id']) ? (int) $succeeding['id'] : null,
+            'succeeding_shift_owner_user_id' => $succeedingOwnerId,
+            'succeeding_shift_owner_name' => $this->userName($conn, (int) $succeedingOwnerId),
+        ];
+        if ($sessionId > 0) {
+            $this->accountabilityCache[$cacheKey] = $accountability;
+        }
+
+        return $accountability;
+    }
+
+    private function userName(mysqli $conn, int $userId): string
+    {
+        if ($userId < 1 || !$this->tableExists($conn, 'users')) {
+            return '';
+        }
+        $cacheKey = spl_object_id($conn) . ':' . $userId;
+        if (array_key_exists($cacheKey, $this->userNameCache)) {
+            return $this->userNameCache[$cacheKey];
+        }
+
+        $row = $this->queryOne(
+            $conn,
+            'SELECT uname, display_name FROM users WHERE id = ? LIMIT 1',
+            [$userId]
+        );
+        $name = (string) (($row['display_name'] ?? '') ?: ($row['uname'] ?? ''));
+        $this->userNameCache[$cacheKey] = $name;
+
+        return $name;
+    }
+
     private function tableExists(mysqli $conn, string $table): bool
     {
-        $table = $conn->real_escape_string($table);
-        $result = $conn->query("SHOW TABLES LIKE '{$table}'");
+        $cacheKey = spl_object_id($conn) . ':' . $table;
+        if (array_key_exists($cacheKey, $this->tableExistsCache)) {
+            return $this->tableExistsCache[$cacheKey];
+        }
+        $escapedTable = $conn->real_escape_string($table);
+        $result = $conn->query("SHOW TABLES LIKE '{$escapedTable}'");
 
-        return $result instanceof mysqli_result && $result->num_rows > 0;
+        return $this->tableExistsCache[$cacheKey] = $result instanceof mysqli_result && $result->num_rows > 0;
     }
 
     private function columnExists(mysqli $conn, string $table, string $column): bool
     {
-        $table = $conn->real_escape_string($table);
-        $column = $conn->real_escape_string($column);
-        $result = $conn->query("SHOW COLUMNS FROM `{$table}` LIKE '{$column}'");
+        $cacheKey = spl_object_id($conn) . ':' . $table . ':' . $column;
+        if (array_key_exists($cacheKey, $this->columnExistsCache)) {
+            return $this->columnExistsCache[$cacheKey];
+        }
+        $escapedTable = $conn->real_escape_string($table);
+        $escapedColumn = $conn->real_escape_string($column);
+        $result = $conn->query("SHOW COLUMNS FROM `{$escapedTable}` LIKE '{$escapedColumn}'");
 
-        return $result instanceof mysqli_result && $result->num_rows > 0;
+        return $this->columnExistsCache[$cacheKey] = $result instanceof mysqli_result && $result->num_rows > 0;
     }
 
     private function queryOne(mysqli $conn, string $sql, array $params): ?array

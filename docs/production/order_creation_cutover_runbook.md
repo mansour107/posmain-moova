@@ -37,7 +37,7 @@ See `docs/production/active_route_map.md` for the full action matrix.
 | Symptom | Check |
 |--------|--------|
 | Save still reloads | Hard-refresh POS; confirm `pos_barcode.js` calls `POSOrderApi.submitFromForm` |
-| 403 PERMISSION_DENIED | User role lacks `pos.sell.takeaway` / `pos.table.open` / etc. |
+| 403 PERMISSION_DENIED | User role lacks `pos.open`, or a specialized action such as table access lacks its separate permission. |
 | 400 IDEMPOTENCY_REQUIRED | Frontend must send `idempotency_key` on every write |
 | 409 IDEMPOTENCY_CONFLICT | Same key, different payload — use a new key for intentional retry |
 | 423 IDEMPOTENCY_PROCESSING | Duplicate in-flight request — safe to retry after short delay |

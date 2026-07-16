@@ -9,11 +9,11 @@ Generated: 2026-05-12
 | Route | Permission | Notes |
 |---|---|---|
 | `orders.table` | `pos.table.open` | Table save/update |
-| `orders.takeaway` | `pos.sell.takeaway` | Paid takeaway create |
-| `orders.delivery` | `pos.sell.delivery` | Delivery create |
-| `orders.payment` | `pos.payment.take` | Table payment |
-| `orders.split-payment` | `pos.split` | Split line payment |
-| `orders.edit` | `pos.sell.takeaway` | Takeaway/delivery edit/update |
+| `orders.takeaway` | `pos.open` | Paid takeaway create; included with POS access |
+| `orders.delivery` | `pos.open` | Delivery create; included with POS access |
+| `orders.payment` | `pos.open` | Table payment; included with POS access |
+| `orders.split-payment` | `pos.open` | Split line payment; included with POS access |
+| `orders.edit` | `pos.open` | Takeaway/delivery edit/update; included with POS access |
 | `orders.table.free` | `pos.table.open` | Empty held table without active order |
 | `integrations.cofe.orders` | `moova.accept` | Cofe HMAC integration |
 

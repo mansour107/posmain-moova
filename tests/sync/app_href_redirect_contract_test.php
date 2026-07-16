@@ -30,7 +30,7 @@ $manifest = require __DIR__ . '/../../config/rbac_route_manifest.php';
 $receipt = $manifest['print/receipt.php'] ?? null;
 appHrefContractAssert(is_array($receipt), 'print/receipt.php must be classified');
 $anyOf = $receipt['any_of'] ?? [];
-appHrefContractAssert(is_array($anyOf) && in_array('pos.payment.take', $anyOf, true), 'receipt route must allow payment-takers for pay-and-print');
+appHrefContractAssert(is_array($anyOf) && in_array('pos.open', $anyOf, true), 'receipt route must allow every POS operator for pay-and-print');
 appHrefContractAssert(in_array('pos.reprint', $anyOf, true), 'receipt route must still allow reprint capability');
 
 if ($originalScript === null) {

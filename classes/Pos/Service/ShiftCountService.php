@@ -1139,12 +1139,15 @@ class ShiftCountService
             return [];
         }
 
-        $stmt = $conn->prepare('
-            SELECT *
-            FROM drawer_count_attempts
-            WHERE drawer_session_id = ?
-            ORDER BY count_phase, attempt_number, id
-        ');
+        $joinUsers = $this->tableExists($conn, 'users');
+        $sql = '
+            SELECT dca.*' . ($joinUsers ? ', u.uname, u.display_name' : '') . '
+            FROM drawer_count_attempts dca
+            ' . ($joinUsers ? 'LEFT JOIN users u ON u.id = dca.created_by' : '') . '
+            WHERE dca.drawer_session_id = ?
+            ORDER BY dca.count_phase, dca.attempt_number, dca.id
+        ';
+        $stmt = $conn->prepare($sql);
         $stmt->bind_param('i', $sessionId);
         $stmt->execute();
         $result = $stmt->get_result();

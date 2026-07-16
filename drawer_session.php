@@ -157,6 +157,7 @@ $userName = '';
 $businessDay = '';
 $notFound = false;
 $closeSummary = null;
+$accountability = [];
 
 if ($sessionId < 1) {
     $notFound = true;
@@ -206,6 +207,7 @@ if ($session) {
     $breakdown = $drawerService->sessionCashBreakdown($conn, $sessionId);
 
     $cashFlow = new CashFlowPeriodService();
+    $accountability = $cashFlow->accountabilityForSession($conn, $sessionId);
     if ($canReport) {
         $movements = $cashFlow->movements($conn, [
             'drawer_session_id' => $sessionId,
@@ -450,6 +452,55 @@ include('includes/header.php');
       <div class="pr-callout pr-callout--warn" role="alert" data-testid="drawer-session-pending-count-banner">
         هذه الجلسة مغلقة لكن لم يُسجَّل عد الإغلاق بعد. فرق الدرج غير معروف، وليس صفراً أو حالة توازن.
       </div>
+      <?php endif; ?>
+
+      <?php if ($canReport): ?>
+      <section class="pr-panel" data-testid="drawer-session-accountability">
+        <div class="pr-panel-head">
+          <div>
+            <p class="pr-eyebrow">سلسلة العهدة</p>
+            <h2 class="pr-panel-title">من عدّ ومن اعتمد ومن استلم؟</h2>
+          </div>
+        </div>
+        <div class="pr-panel-body">
+          <div class="pr-verdict pr-verdict--compact">
+            <div class="pr-verdict-card">
+              <div class="pr-verdict-label">صاحب الشيفت</div>
+              <div class="pr-verdict-value pr-verdict-value--sm"><?= htmlspecialchars((string) ($accountability['shift_owner_name'] ?? $userName ?: '—')) ?></div>
+            </div>
+            <div class="pr-verdict-card">
+              <div class="pr-verdict-label">قام بالعد</div>
+              <div class="pr-verdict-value pr-verdict-value--sm"><?= htmlspecialchars((string) ($accountability['counted_by_name'] ?? '') ?: '—') ?></div>
+            </div>
+            <div class="pr-verdict-card">
+              <div class="pr-verdict-label">أغلق الشيفت</div>
+              <div class="pr-verdict-value pr-verdict-value--sm"><?= htmlspecialchars((string) ($accountability['closed_by_name'] ?? '') ?: '—') ?></div>
+            </div>
+            <div class="pr-verdict-card">
+              <div class="pr-verdict-label">اعتمد الاستلام</div>
+              <div class="pr-verdict-value pr-verdict-value--sm"><?= htmlspecialchars((string) ($accountability['takeover_authorized_by_name'] ?? '') ?: '—') ?></div>
+            </div>
+          </div>
+          <?php if (!empty($accountability['succeeding_session_id'])): ?>
+          <div class="pr-callout pr-callout--success mt-3">
+            انتقلت العهدة إلى
+            <a href="<?= htmlspecialchars(posmain_cash_shift_detail_url((int) $accountability['succeeding_session_id'], $returnTo), ENT_QUOTES, 'UTF-8') ?>">
+              جلسة #<?= (int) $accountability['succeeding_session_id'] ?>
+            </a>
+            — <?= htmlspecialchars((string) ($accountability['succeeding_shift_owner_name'] ?? '') ?: 'مستخدم غير معروف') ?>
+          </div>
+          <?php endif; ?>
+          <?php if (!empty($accountability['preceding_session_id'])): ?>
+          <div class="pr-callout mt-3">
+            استلمت هذه الجلسة العهدة من
+            <a href="<?= htmlspecialchars(posmain_cash_shift_detail_url((int) $accountability['preceding_session_id'], $returnTo), ENT_QUOTES, 'UTF-8') ?>">
+              جلسة #<?= (int) $accountability['preceding_session_id'] ?>
+            </a>
+            — <?= htmlspecialchars((string) ($accountability['preceding_shift_owner_name'] ?? '') ?: 'مستخدم غير معروف') ?>
+          </div>
+          <?php endif; ?>
+        </div>
+      </section>
       <?php endif; ?>
 
       <?php if (!$isOpen): ?>
@@ -708,6 +759,12 @@ include('includes/header.php');
               if (!empty($row['created_by_name'])) {
                   $detailBits[] = (string) $row['created_by_name'];
               }
+              if (!empty($row['manager_approval_id'])) {
+                  $approvalLabel = !empty($row['manager_approved_by_name'])
+                      ? (string) $row['manager_approved_by_name']
+                      : 'مستخدم #' . (int) ($row['manager_approved_by_user_id'] ?? 0);
+                  $detailBits[] = 'اعتماد مدير #' . (int) $row['manager_approval_id'] . ': ' . $approvalLabel;
+              }
               $hasDetails = $detailBits !== [];
             ?>
             <details class="pr-timeline-item pr-timeline-item--expandable">
@@ -751,6 +808,7 @@ include('includes/header.php');
                 <th>المتوقع</th>
                 <th>فرق العد</th>
                 <th>مطابق</th>
+                <th>قام بالعد</th>
                 <th>الوقت</th>
               </tr>
             </thead>
@@ -769,6 +827,7 @@ include('includes/header.php');
                   <div class="pr-amount-dir-label"><?= htmlspecialchars($attemptVarianceDisplay['label']) ?></div>
                 </td>
                 <td><?= !empty($attempt['matched']) ? 'نعم' : 'لا' ?></td>
+                <td><?= htmlspecialchars((string) (($attempt['display_name'] ?? '') ?: ($attempt['uname'] ?? '') ?: ('مستخدم #' . (int) ($attempt['created_by'] ?? 0)))) ?></td>
                 <td><?= htmlspecialchars((string) ($attempt['created_at'] ?? '')) ?></td>
               </tr>
               <?php endforeach; ?>

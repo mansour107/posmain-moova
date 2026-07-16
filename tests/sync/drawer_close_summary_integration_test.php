@@ -27,15 +27,21 @@ try {
     $conn->query("CREATE DATABASE `{$db}` CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci");
     $conn->select_db($db);
     createCloseSummarySchema($conn);
-    // Simulate code deployment arriving before the migration runner. Runtime
+    $service = new DrawerSessionCloseSummaryService();
+    closeSummaryAssert(
+        (new SyncSchemaManager())->pendingStatements($conn) !== [],
+        'fixture must retain unrelated pending migrations for the scoped readiness proof'
+    );
+    $service->ensureSchema($conn);
+
+    // Simulate the close-summary migration itself not being applied. Runtime
     // close handling must fail closed and leave DDL to explicit provisioning.
     $conn->query('DROP TABLE drawer_session_close_summaries');
-    $service = new DrawerSessionCloseSummaryService();
     try {
         $service->ensureSchema($conn);
         throw new RuntimeException('runtime close path must reject pending schema');
     } catch (RuntimeException $exception) {
-        closeSummaryAssert($exception->getMessage() === 'SCHEMA_MIGRATIONS_PENDING', 'runtime close path must report pending schema');
+        closeSummaryAssert($exception->getMessage() === 'DRAWER_CLOSE_SUMMARY_SCHEMA_MISSING', 'runtime close path must report its missing required schema');
     }
     closeSummaryAssert(
         $conn->query("SHOW TABLES LIKE 'drawer_session_close_summaries'")->num_rows === 0,

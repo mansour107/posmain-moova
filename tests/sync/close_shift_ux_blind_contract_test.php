@@ -9,6 +9,7 @@ require_once __DIR__ . '/../../classes/Sync/SchemaManager.php';
 require_once __DIR__ . '/../../classes/Pos/Service/ShiftCountService.php';
 require_once __DIR__ . '/../../classes/Pos/Service/DrawerSessionService.php';
 require_once __DIR__ . '/../../classes/Pos/Service/DrawerFloatExpectationService.php';
+require_once __DIR__ . '/../../classes/Pos/Service/PosRegisterService.php';
 
 mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
 
@@ -73,6 +74,9 @@ try {
     $_SESSION['pos_tenant'] = 1;
     $_SESSION['pos_branch'] = 3;
     $_SESSION['userid'] = 91;
+    $register = (new PosRegisterService())->ensureDefaultRegister($conn, 1, 3);
+    $_COOKIE[PosRegisterService::COOKIE_NAME] = (string) ($register['_pairing_token_once'] ?? '');
+    $_SESSION['pos_register_id'] = (int) $register['id'];
 
     $count = new ShiftCountService();
     $drawer = new DrawerSessionService();

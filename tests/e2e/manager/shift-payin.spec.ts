@@ -27,7 +27,7 @@ test.describe('manager: mid-shift pay-in logging', () => {
     await expect(page.locator('#shiftPayinList')).toContainText(/30\.00|30,00/);
   });
 
-  test('close preview shows pay-in total after recording', async ({ page }) => {
+  test('close modal hides pay-in total after recording', async ({ page }) => {
     await loginAndUnlockPos(page, 'manager');
 
     await openDrawerCashModal(page);
@@ -40,7 +40,7 @@ test.describe('manager: mid-shift pay-in logging', () => {
     const closeButton = page.locator('[data-bs-target="#closeShiftModal"], button[title="إغلاق الشيفت"]').first();
     await closeButton.click();
     await expect(page.locator('#closeShiftModal')).toBeVisible({ timeout: 10_000 });
-    await expect(page.locator('#shiftPreview')).toContainText(/إيداعات الشيفت/i, { timeout: 15_000 });
-    await expect(page.locator('#shiftPreview')).toContainText(/18\.75|18,75/);
+    await expect(page.getByTestId('close-shift-guidance')).toBeVisible();
+    await expect(page.locator('#closeShiftModal')).not.toContainText(/إيداعات الشيفت|18\.75|18,75/);
   });
 });

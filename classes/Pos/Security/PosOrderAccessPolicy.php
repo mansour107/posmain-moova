@@ -8,12 +8,12 @@ class PosOrderAccessPolicy
     {
         $map = [
             'orders.table' => 'pos.table.open',
-            'orders.takeaway' => 'pos.sell.takeaway',
-            'orders.delivery' => 'pos.sell.delivery',
-            'orders.payment' => 'pos.payment.take',
-            'orders.split-payment' => 'pos.split',
+            'orders.takeaway' => 'pos.open',
+            'orders.delivery' => 'pos.open',
+            'orders.payment' => 'pos.open',
+            'orders.split-payment' => 'pos.open',
             'orders.refund' => 'pos.refund',
-            'orders.edit' => 'pos.sell.takeaway',
+            'orders.edit' => 'pos.open',
             'orders.table.free' => 'pos.table.open',
             'integrations.cofe.orders' => 'moova.accept',
         ];

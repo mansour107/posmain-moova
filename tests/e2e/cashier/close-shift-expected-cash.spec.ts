@@ -22,8 +22,8 @@ function parseMoney(value: unknown): number {
   return Number(String(value ?? '0').replace(/,/g, ''));
 }
 
-test.describe('cashier: close-shift expected cash includes sales', () => {
-  test('cash sale increases expected cash and sales in close-shift preview', async ({ page }) => {
+test.describe('cashier: close-shift ledger stays correct while modal is blind', () => {
+  test('cash sale updates the ledger but remains hidden in the close modal', async ({ page }) => {
     await loginAndUnlockPos(page, 'manager');
 
     const previewBefore = await page.request.get('/do/get_shift_preview.php');
@@ -46,11 +46,12 @@ test.describe('cashier: close-shift expected cash includes sales', () => {
     expect(salesAfter).toBeGreaterThan(salesBefore);
 
     await openCloseShiftModal(page);
-    await expect(page.locator('#shiftPreview')).toContainText(/المبيعات|النقدية المتوقعة/i, { timeout: 15_000 });
-    await expect(page.locator('#shiftPreview')).toContainText(String(expectedAfterSale));
+    await expect(page.getByTestId('close-shift-guidance')).toBeVisible();
+    await expect(page.locator('#closeShiftModal')).not.toContainText(/إجمالي المبيعات|النقدية المتوقعة|عدد الطلبات/i);
+    await expect(page.locator('#closeShiftModal')).not.toContainText(String(expectedAfterSale));
   });
 
-  test('pay-in and payout update expected cash in close-shift preview', async ({ page }) => {
+  test('pay-in and payout update expected cash without leaking it in the close modal', async ({ page }) => {
     await loginAndUnlockPos(page, 'manager');
 
     const previewBefore = await page.request.get('/do/get_shift_preview.php');
@@ -81,9 +82,8 @@ test.describe('cashier: close-shift expected cash includes sales', () => {
     expect(expectedAfterExpense).toBeCloseTo(expectedAfterPayin - 5, 1);
 
     await openCloseShiftModal(page);
-    await expect(page.locator('#shiftPreview')).toContainText(/إيداعات الشيفت|مصروفات الشيفت|النقدية المتوقعة/i, {
-      timeout: 15_000,
-    });
-    await expect(page.locator('#shiftPreview')).toContainText(String(expectedAfterExpense));
+    await expect(page.getByTestId('close-shift-guidance')).toBeVisible();
+    await expect(page.locator('#closeShiftModal')).not.toContainText(/إيداعات الشيفت|مصروفات الشيفت|النقدية المتوقعة/i);
+    await expect(page.locator('#closeShiftModal')).not.toContainText(String(expectedAfterExpense));
   });
 });

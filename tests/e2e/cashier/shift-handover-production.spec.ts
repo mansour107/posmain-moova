@@ -49,6 +49,9 @@ test.describe('cashier: shift handover production scenarios', () => {
     }
 
     await openCloseShiftModal(page);
+    await expect(page.getByTestId('close-shift-guidance')).toBeVisible();
+    await expect(page.locator('#closeShiftModal')).not.toContainText(/عدد الطلبات|إجمالي المبيعات|النقدية المتوقعة/i);
+    await expect(page.locator('#closeShiftModal a[href*="z_report"], #closeShiftModal [onclick*="printShiftSalesReport"]')).toHaveCount(0);
     await expect(page.locator('#closeShiftModal [data-psh-close-submit-count]')).toBeHidden();
     await expect(page.locator('#closeShiftModal [data-psh-close-next]')).toBeVisible();
     await goToCloseCountStep(page);
