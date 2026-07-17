@@ -42,7 +42,16 @@ php cli/branch_worker_daemon.php --list
 php cli/branch_worker_daemon.php --preflight --strict
 php tools/branch_go_live_readiness.php --json --env-file=/etc/posmain/branch-worker.env --backup-file=/absolute/path/to/posmain-backup.sql
 POSMAIN_TEST_MYSQL_PORT=3307 php tools/e2e_mock_online_offline_sync.php
+php tests/sync/e2e_bidirectional_operational_sync_contract_test.php
+php tools/e2e_bidirectional_operational_sync.php
 ```
+
+The last command is the lean offline/cloud certification described in
+`docs/bidirectional_operational_sync_certification.md`. Require
+`disposable_certification_pass=true` before staging a release. Its
+`production_ready=false` field is intentional: live hosted parity, secrets,
+service supervision, backup/rollback evidence, and authenticated smoke tests
+remain separate go-live gates.
 
 The readiness command returns exit code `0` only when:
 
@@ -109,11 +118,12 @@ For first rollout, prefer restoring the dump into a temporary database first and
 2. Copy `deploy/branch-worker/branch-worker.env.example` to the target machine env path and replace placeholders.
 3. Run the readiness tool with `--env-file` and `--backup-file`.
 4. Run the two-mock online/offline E2E harness.
-5. Copy the matching service template from `deploy/branch-worker/`.
-6. Run `php cli/branch_worker_daemon.php --preflight --strict` in the same service environment.
-7. For Windows, copy `deploy/branch-worker/windows/posmain-branch-worker-wrapper.ps1.example` to the path referenced by the scheduled task so strict preflight runs before the loop.
-8. For Docker Compose, keep the strict preflight healthcheck in the compose example enabled.
-9. Start with `POSMAIN_MOOVA_APPLY_ENABLED=0`.
-10. Run `php cli/branch_worker_daemon.php --once --only=moova_apply` and confirm it skips safely.
-11. Complete and retain the Moova cashier acceptance evidence file.
-12. Enable automatic Moova apply only after cashier acceptance of queued new/edit/cancel behavior, then rerun readiness with `--moova-acceptance-file`.
+5. Run the three-database lean offline/cloud certification and retain its JSON report.
+6. Copy the matching service template from `deploy/branch-worker/`.
+7. Run `php cli/branch_worker_daemon.php --preflight --strict` in the same service environment.
+8. For Windows, copy `deploy/branch-worker/windows/posmain-branch-worker-wrapper.ps1.example` to the path referenced by the scheduled task so strict preflight runs before the loop.
+9. For Docker Compose, keep the strict preflight healthcheck in the compose example enabled.
+10. Start with `POSMAIN_MOOVA_APPLY_ENABLED=0`.
+11. Run `php cli/branch_worker_daemon.php --once --only=moova_apply` and confirm it skips safely.
+12. Complete and retain the Moova cashier acceptance evidence file.
+13. Enable automatic Moova apply only after cashier acceptance of queued new/edit/cancel behavior, then rerun readiness with `--moova-acceptance-file`.

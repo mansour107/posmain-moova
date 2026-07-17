@@ -162,6 +162,12 @@ class ShiftCloseService
         $closedSession = null;
         $closeSummary = null;
         $childContext = ['in_transaction' => true];
+        $syncConfig = is_array($context['sync_config'] ?? null)
+            ? $context['sync_config']
+            : (is_array($payload['sync_config'] ?? null) ? $payload['sync_config'] : null);
+        if ($syncConfig !== null) {
+            $childContext['sync_config'] = $syncConfig;
+        }
 
             $closedSession = $this->drawerSessions->closeSession($conn, $drawerSessionId, [
                 'closed_by' => $userId,
@@ -180,6 +186,11 @@ class ShiftCloseService
                     ? $closeExpectedSnapshot
                     : (float) ($closedSession['close_expected_snapshot'] ?? 0),
             ]);
+            $closedSession = $this->drawerSessions->captureExternalSessionMutation(
+                $conn,
+                $drawerSessionId,
+                $childContext
+            );
 
             $this->linkCountAttemptsToSession($conn, $drawerSessionId, 'close');
 
@@ -211,9 +222,14 @@ class ShiftCloseService
                 ],
             ]);
 
+            $shiftCloseOptions = [];
+            if ($syncConfig !== null) {
+                $shiftCloseOptions['config'] = $syncConfig;
+            }
             (new OperationalSyncEventService())->recordShiftCloseSnapshot(
                 $conn,
-                (int) ($closeSummary['id'] ?? 0)
+                (int) ($closeSummary['id'] ?? 0),
+                $shiftCloseOptions
             );
 
             posmain_tx_commit_if_owned($conn, $ownsTransaction);

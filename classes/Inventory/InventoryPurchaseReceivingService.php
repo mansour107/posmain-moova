@@ -7,6 +7,7 @@ require_once __DIR__ . '/InventoryItemPolicyService.php';
 require_once __DIR__ . '/InventoryLedgerService.php';
 require_once __DIR__ . '/InventoryScopeResolver.php';
 require_once __DIR__ . '/../Items/ItemUnitResolver.php';
+require_once __DIR__ . '/../Sync/OperationalSyncEventService.php';
 
 class InventoryPurchaseReceivingService
 {
@@ -15,19 +16,22 @@ class InventoryPurchaseReceivingService
     private InventoryAccountingService $accounting;
     private InventoryScopeResolver $scopeResolver;
     private InventoryItemPolicyService $itemPolicy;
+    private OperationalSyncEventService $syncEvents;
 
     public function __construct(
         ?InventoryFeatureFlags $flags = null,
         ?InventoryLedgerService $ledger = null,
         ?InventoryAccountingService $accounting = null,
         ?InventoryScopeResolver $scopeResolver = null,
-        ?InventoryItemPolicyService $itemPolicy = null
+        ?InventoryItemPolicyService $itemPolicy = null,
+        ?OperationalSyncEventService $syncEvents = null
     ) {
         $this->flags = $flags ?: new InventoryFeatureFlags();
         $this->ledger = $ledger ?: new InventoryLedgerService($this->flags);
         $this->accounting = $accounting ?: new InventoryAccountingService($this->flags);
         $this->scopeResolver = $scopeResolver ?: new InventoryScopeResolver($this->flags->appConfig());
         $this->itemPolicy = $itemPolicy ?: new InventoryItemPolicyService();
+        $this->syncEvents = $syncEvents ?: new OperationalSyncEventService();
     }
 
     public function receive(mysqli $conn, array $request, array $context = []): array
@@ -49,6 +53,13 @@ class InventoryPurchaseReceivingService
             $existing = $this->findReceiptByUuid($conn, $receiptUuid);
             if ($existing) {
                 $this->assertExistingReceiptReplay($conn, $existing, $request, $lines, 'received_qty', ['received', 'posted']);
+                if ((string) ($existing['status'] ?? '') === 'posted') {
+                    $purchaseOrderId = (int) ($existing['purchase_order_id'] ?? 0);
+                    if ($purchaseOrderId > 0) {
+                        $this->recordPurchaseOrderSyncSnapshot($conn, $purchaseOrderId);
+                    }
+                    $this->recordSyncSnapshot($conn, (int) $existing['id']);
+                }
                 if ($ownsTransaction) {
                     $conn->commit();
                 }
@@ -127,6 +138,11 @@ class InventoryPurchaseReceivingService
                 'user_id' => $this->userId($context),
                 'details' => 'Inventory purchase receipt #' . $receiptId,
             ], $movementIds);
+            $purchaseOrderId = (int) ($request['purchase_order_id'] ?? 0);
+            if ($purchaseOrderId > 0) {
+                $this->recordPurchaseOrderSyncSnapshot($conn, $purchaseOrderId);
+            }
+            $this->recordSyncSnapshot($conn, $receiptId);
 
             if ($ownsTransaction) {
                 $conn->commit();
@@ -167,6 +183,7 @@ class InventoryPurchaseReceivingService
             $existing = $this->findReceiptByUuid($conn, $receiptUuid);
             if ($existing) {
                 $this->assertExistingReceiptReplay($conn, $existing, $request, $lines, 'returned_qty', ['returned']);
+                $this->recordSyncSnapshot($conn, (int) $existing['id']);
                 if ($ownsTransaction) {
                     $conn->commit();
                 }
@@ -240,6 +257,7 @@ class InventoryPurchaseReceivingService
                 'user_id' => $this->userId($context),
                 'details' => 'Inventory purchase return #' . $receiptId,
             ], $movementIds);
+            $this->recordSyncSnapshot($conn, $receiptId);
 
             if ($ownsTransaction) {
                 $conn->commit();
@@ -266,6 +284,22 @@ class InventoryPurchaseReceivingService
         if (!$this->flags->canWriteLedger()) {
             throw new RuntimeException('INVENTORY_LEDGER_NOT_READY');
         }
+    }
+
+    private function recordSyncSnapshot(mysqli $conn, int $receiptId): void
+    {
+        $this->syncEvents->recordPurchaseReceiptSnapshot($conn, $receiptId, [
+            'config' => $this->flags->appConfig(),
+            'source_system' => 'inventory_purchase_receiving',
+        ]);
+    }
+
+    private function recordPurchaseOrderSyncSnapshot(mysqli $conn, int $orderId): void
+    {
+        $this->syncEvents->recordPurchaseOrderSnapshot($conn, $orderId, [
+            'config' => $this->flags->appConfig(),
+            'source_system' => 'inventory_purchase_receiving',
+        ]);
     }
 
     private function assertTables(mysqli $conn): void
@@ -571,7 +605,7 @@ WHERE purchase_order_id = ?");
             return;
         }
 
-        $stmt = $conn->prepare("UPDATE inventory_purchase_orders SET status = ? WHERE id = ? AND status IN ('approved','partially_received')");
+        $stmt = $conn->prepare("UPDATE inventory_purchase_orders SET status = ?, sync_revision = GREATEST(sync_revision, 1) + 1 WHERE id = ? AND status IN ('approved','partially_received')");
         $stmt->bind_param('si', $status, $purchaseOrderId);
         $stmt->execute();
         $stmt->close();

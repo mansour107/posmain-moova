@@ -1,5 +1,7 @@
 <?php
 
+require_once __DIR__ . '/../Financial/Money.php';
+
 class PosOrderSnapshotBuilder
 {
     public function build(mysqli $conn, string $branchUuid, int $orderId, array $options = []): array
@@ -18,7 +20,7 @@ class PosOrderSnapshotBuilder
         $timezone = $this->stringOrDefault($options['branch_timezone'] ?? null, date_default_timezone_get() ?: 'Africa/Cairo');
 
         $snapshot = [
-            'schema_version' => 1,
+            'schema_version' => 4,
             'snapshot_type' => 'pos_order',
             'source_system' => $sourceSystem,
             'branch_uuid' => $branchUuid,
@@ -29,11 +31,289 @@ class PosOrderSnapshotBuilder
             'lines' => $this->linePayloads($conn, $branchUuid, $orderId, $orderUuid),
             'payments' => $this->paymentPayloads($conn, $branchUuid, $orderId, $orderUuid),
             'receipts' => $this->receiptPayloads($conn, $branchUuid, $orderId, $orderUuid),
+            'financial_bundle' => $this->financialBundle($conn, $orderId),
+            'fulfillment' => $this->fulfillmentPayload($conn, $orderId),
         ];
 
         $snapshot['payload_hash'] = hash('sha256', $this->encodeJson($snapshot));
 
         return $snapshot;
+    }
+
+    public static function assertFinancialBundle(array $bundle, int $orderId): array
+    {
+        if (($bundle['complete'] ?? null) !== true || (int) ($bundle['local_order_id'] ?? 0) !== $orderId) {
+            throw new RuntimeException('ORDER_FINANCIAL_BUNDLE_SCOPE_INVALID');
+        }
+
+        foreach (['accounts', 'journal_heads', 'journal_entries', 'totals'] as $key) {
+            if (!isset($bundle[$key]) || !is_array($bundle[$key])) {
+                throw new RuntimeException('ORDER_FINANCIAL_BUNDLE_SHAPE_INVALID');
+            }
+        }
+
+        $accounts = [];
+        foreach ($bundle['accounts'] as $account) {
+            $accountId = is_array($account) ? (int) ($account['id'] ?? 0) : 0;
+            if ($accountId <= 0 || isset($accounts[$accountId])) {
+                throw new RuntimeException('ORDER_FINANCIAL_ACCOUNT_INVALID');
+            }
+            foreach (['balance', 'debit', 'credit', 'phone', 'address', 'e_mail', 'info'] as $excluded) {
+                if (array_key_exists($excluded, $account)) {
+                    throw new RuntimeException('ORDER_FINANCIAL_ACCOUNT_SENSITIVE_FIELD');
+                }
+            }
+            $accounts[$accountId] = true;
+        }
+
+        $heads = [];
+        foreach ($bundle['journal_heads'] as $head) {
+            $headId = is_array($head) ? (int) ($head['id'] ?? 0) : 0;
+            if ($headId <= 0 || isset($heads[$headId])) {
+                throw new RuntimeException('ORDER_FINANCIAL_JOURNAL_HEAD_INVALID');
+            }
+            $heads[$headId] = $head;
+        }
+
+        $entriesByHead = [];
+        foreach ($bundle['journal_entries'] as $entry) {
+            $entryId = is_array($entry) ? (int) ($entry['id'] ?? 0) : 0;
+            $headId = is_array($entry) ? (int) ($entry['journal_id'] ?? 0) : 0;
+            $accountId = is_array($entry) ? (int) ($entry['account_id'] ?? 0) : 0;
+            if ($entryId <= 0 || $headId <= 0 || !isset($heads[$headId]) || !isset($accounts[$accountId])) {
+                throw new RuntimeException('ORDER_FINANCIAL_JOURNAL_ENTRY_INVALID');
+            }
+            if (isset($entriesByHead[$headId][$entryId])) {
+                throw new RuntimeException('ORDER_FINANCIAL_JOURNAL_ENTRY_DUPLICATE');
+            }
+            $entriesByHead[$headId][$entryId] = $entry;
+        }
+
+        $bundleDebit = Money::zero();
+        $bundleCredit = Money::zero();
+        foreach ($heads as $headId => $head) {
+            $entries = $entriesByHead[$headId] ?? [];
+            if (count($entries) < 2) {
+                throw new RuntimeException('ORDER_FINANCIAL_JOURNAL_ENTRIES_REQUIRED');
+            }
+            $sourceType = strtolower(trim((string) ($head['source_type'] ?? '')));
+            if (!in_array($sourceType, ['', 'invoice', 'payment'], true)) {
+                throw new RuntimeException('ORDER_FINANCIAL_JOURNAL_SCOPE_INVALID');
+            }
+            $headLinked = (int) ($head['op2'] ?? 0) === $orderId;
+            if (!$headLinked && (int) ($head['op_id'] ?? 0) === $orderId) {
+                foreach ($entries as $entry) {
+                    if ((int) ($entry['op2'] ?? 0) === $orderId || (int) ($entry['op_id'] ?? 0) === $orderId) {
+                        $headLinked = true;
+                        break;
+                    }
+                }
+            }
+            if (!$headLinked) {
+                throw new RuntimeException('ORDER_FINANCIAL_JOURNAL_SCOPE_INVALID');
+            }
+            $headDebit = Money::zero();
+            $headCredit = Money::zero();
+            foreach ($entries as $entry) {
+                $headDebit = $headDebit->add(Money::from((string) ($entry['debit'] ?? '0')));
+                $headCredit = $headCredit->add(Money::from((string) ($entry['credit'] ?? '0')));
+            }
+            if (!$headDebit->isPositive() || $headDebit->compare($headCredit) !== 0) {
+                throw new RuntimeException('ORDER_FINANCIAL_JOURNAL_UNBALANCED');
+            }
+            if ($headDebit->compare(Money::from((string) ($head['total'] ?? '0'))) !== 0) {
+                throw new RuntimeException('ORDER_FINANCIAL_JOURNAL_TOTAL_MISMATCH');
+            }
+            $bundleDebit = $bundleDebit->add($headDebit);
+            $bundleCredit = $bundleCredit->add($headCredit);
+        }
+
+        $declared = $bundle['totals'];
+        if (
+            (int) ($declared['journal_count'] ?? -1) !== count($heads)
+            || (int) ($declared['entry_count'] ?? -1) !== count($bundle['journal_entries'])
+            || $bundleDebit->compare(Money::from((string) ($declared['debit'] ?? '0'))) !== 0
+            || $bundleCredit->compare(Money::from((string) ($declared['credit'] ?? '0'))) !== 0
+        ) {
+            throw new RuntimeException('ORDER_FINANCIAL_TOTALS_INVALID');
+        }
+
+        $expectedHash = trim((string) ($bundle['bundle_hash'] ?? ''));
+        $hashPayload = $bundle;
+        unset($hashPayload['bundle_hash']);
+        $actualHash = hash('sha256', self::encodeStaticJson($hashPayload));
+        if ($expectedHash === '' || !hash_equals($expectedHash, $actualHash)) {
+            throw new RuntimeException('ORDER_FINANCIAL_BUNDLE_HASH_INVALID');
+        }
+
+        return [
+            'journal_count' => count($heads),
+            'entry_count' => count($bundle['journal_entries']),
+            'account_count' => count($accounts),
+            'debit' => $bundleDebit->toString(),
+            'credit' => $bundleCredit->toString(),
+        ];
+    }
+
+    public static function assertFinancialSnapshotScope(array $payload, int $orderId, string $orderUuid): void
+    {
+        $normalizedOrderUuid = strtolower(trim($orderUuid));
+        if ($orderId <= 0 || $normalizedOrderUuid === '') {
+            throw new RuntimeException('ORDER_FINANCIAL_SNAPSHOT_SCOPE_INVALID');
+        }
+        foreach (['payments', 'receipts'] as $key) {
+            if (array_key_exists($key, $payload) && !is_array($payload[$key])) {
+                throw new RuntimeException('ORDER_FINANCIAL_SNAPSHOT_SHAPE_INVALID');
+            }
+        }
+
+        $receiptAmounts = [];
+        $receiptUuids = [];
+        foreach ($payload['receipts'] ?? [] as $receipt) {
+            if (!is_array($receipt)) {
+                throw new RuntimeException('ORDER_FINANCIAL_RECEIPT_INVALID');
+            }
+            $receiptId = (int) ($receipt['local_receipt_id'] ?? 0);
+            $receiptUuid = strtolower(trim((string) ($receipt['receipt_uuid'] ?? '')));
+            $receiptOrderUuid = strtolower(trim((string) ($receipt['order_uuid'] ?? '')));
+            if (
+                $receiptId <= 0
+                || isset($receiptAmounts[$receiptId])
+                || $receiptUuid === ''
+                || isset($receiptUuids[$receiptUuid])
+                || (int) ($receipt['local_order_id'] ?? 0) !== $orderId
+                || $receiptOrderUuid !== $normalizedOrderUuid
+            ) {
+                throw new RuntimeException('ORDER_FINANCIAL_RECEIPT_SCOPE_INVALID');
+            }
+            $receiptUuids[$receiptUuid] = true;
+            $receiptAmounts[$receiptId] = Money::from((string) ($receipt['amount'] ?? '0'))->toString();
+        }
+
+        $receiptPaymentAmounts = [];
+        $paymentKeys = [];
+        $paymentUuids = [];
+        foreach ($payload['payments'] ?? [] as $payment) {
+            if (!is_array($payment)) {
+                throw new RuntimeException('ORDER_FINANCIAL_PAYMENT_INVALID');
+            }
+            $source = strtolower(trim((string) ($payment['source'] ?? '')));
+            $paymentId = (int) ($payment['local_payment_id'] ?? 0);
+            $paymentUuid = strtolower(trim((string) ($payment['payment_uuid'] ?? '')));
+            $paymentOrderUuid = strtolower(trim((string) ($payment['order_uuid'] ?? '')));
+            $key = $source . ':' . $paymentId;
+            if (
+                !in_array($source, ['ot_head', 'order_payments'], true)
+                || $paymentId <= 0
+                || isset($paymentKeys[$key])
+                || $paymentUuid === ''
+                || isset($paymentUuids[$paymentUuid])
+                || $paymentOrderUuid !== $normalizedOrderUuid
+            ) {
+                throw new RuntimeException('ORDER_FINANCIAL_PAYMENT_SCOPE_INVALID');
+            }
+            $paymentKeys[$key] = true;
+            $paymentUuids[$paymentUuid] = true;
+            if ($source === 'ot_head') {
+                $receiptPaymentAmounts[$paymentId] = Money::from((string) ($payment['amount'] ?? '0'))->toString();
+            }
+        }
+
+        ksort($receiptAmounts, SORT_NUMERIC);
+        ksort($receiptPaymentAmounts, SORT_NUMERIC);
+        if ($receiptAmounts !== $receiptPaymentAmounts) {
+            throw new RuntimeException('ORDER_FINANCIAL_RECEIPT_PAYMENT_MISMATCH');
+        }
+    }
+
+    public static function assertFulfillmentSnapshotScope(array $payload, int $orderId): ?array
+    {
+        $schemaVersion = (int) ($payload['schema_version'] ?? 1);
+        if ($schemaVersion < 3 && !array_key_exists('fulfillment', $payload)) {
+            return null;
+        }
+        if (!array_key_exists('fulfillment', $payload)) {
+            throw new RuntimeException('ORDER_FULFILLMENT_SNAPSHOT_REQUIRED');
+        }
+
+        $fulfillment = $payload['fulfillment'];
+        if ($fulfillment === null) {
+            return null;
+        }
+        if (!is_array($fulfillment)) {
+            throw new RuntimeException('ORDER_FULFILLMENT_SNAPSHOT_INVALID');
+        }
+
+        $allowed = [
+            'id', 'order_id', 'order_channel', 'fulfillment_type', 'external_provider',
+            'external_order_id', 'customer_name', 'customer_phone', 'customer_address',
+            'delivery_client_id', 'pos_customer_id', 'delivery_zone', 'delivery_fee',
+            'delivery_status', 'promised_at', 'crm_rollup_paid_amount',
+            'crm_rollup_counted', 'metadata', 'created_at', 'updated_at',
+        ];
+        if (array_diff(array_keys($fulfillment), $allowed) !== []
+            || (int) ($fulfillment['id'] ?? 0) < 1
+            || (int) ($fulfillment['order_id'] ?? 0) !== $orderId
+        ) {
+            throw new RuntimeException('ORDER_FULFILLMENT_SCOPE_INVALID');
+        }
+
+        $channels = ['cashier', 'waiter', 'moova_qr', 'moova_delivery', 'call_center', 'online', 'kiosk', 'import'];
+        $types = ['takeaway', 'table', 'delivery', 'pickup', 'staff_meal', 'waste'];
+        $statuses = ['none', 'pending', 'accepted', 'preparing', 'ready', 'picked_up', 'delivered', 'cancelled', 'failed'];
+        if (!in_array((string) ($fulfillment['order_channel'] ?? ''), $channels, true)
+            || !in_array((string) ($fulfillment['fulfillment_type'] ?? ''), $types, true)
+            || !in_array((string) ($fulfillment['delivery_status'] ?? ''), $statuses, true)
+        ) {
+            throw new RuntimeException('ORDER_FULFILLMENT_STATE_INVALID');
+        }
+
+        foreach (['delivery_client_id', 'pos_customer_id'] as $identityField) {
+            if (($fulfillment[$identityField] ?? null) !== null && (int) $fulfillment[$identityField] < 1) {
+                throw new RuntimeException('ORDER_FULFILLMENT_CUSTOMER_ID_INVALID');
+            }
+        }
+        if ((int) ($fulfillment['crm_rollup_counted'] ?? 0) < 0
+            || (int) ($fulfillment['crm_rollup_counted'] ?? 0) > 1
+        ) {
+            throw new RuntimeException('ORDER_FULFILLMENT_ROLLUP_INVALID');
+        }
+
+        $metadata = $fulfillment['metadata'] ?? null;
+        if ($metadata !== null && !is_array($metadata)) {
+            throw new RuntimeException('ORDER_FULFILLMENT_METADATA_INVALID');
+        }
+        if ($metadata !== null) {
+            self::assertSafeFulfillmentMetadata($metadata);
+            $encoded = self::encodeStaticJson($metadata);
+            if (strlen($encoded) > 16384) {
+                throw new RuntimeException('ORDER_FULFILLMENT_METADATA_TOO_LARGE');
+            }
+        }
+
+        return $fulfillment;
+    }
+
+    private static function assertSafeFulfillmentMetadata(array $metadata, int $depth = 0): void
+    {
+        if ($depth > 6) {
+            throw new RuntimeException('ORDER_FULFILLMENT_METADATA_TOO_DEEP');
+        }
+        $forbidden = [
+            'authorization', 'cookie', 'password', 'pin', 'secret', 'token',
+            'request_payload', 'response_payload', 'raw_payload', 'last_pos_state_payload',
+        ];
+        foreach ($metadata as $key => $value) {
+            $normalizedKey = strtolower(trim((string) $key));
+            if (in_array($normalizedKey, $forbidden, true)) {
+                throw new RuntimeException('ORDER_FULFILLMENT_METADATA_SENSITIVE');
+            }
+            if (is_array($value)) {
+                self::assertSafeFulfillmentMetadata($value, $depth + 1);
+            } elseif (!is_null($value) && !is_scalar($value)) {
+                throw new RuntimeException('ORDER_FULFILLMENT_METADATA_INVALID');
+            }
+        }
     }
 
     public static function deterministicUuid(string $namespace, string $name): string
@@ -99,12 +379,14 @@ class PosOrderSnapshotBuilder
             'completed_at' => $completedAt,
             'payment_date' => $this->datetimeOrNull($order['payment_date'] ?? null),
             'branch_timezone' => $timezone,
-            'pro_value' => $this->decimalString($order['pro_value'] ?? null),
-            'fat_total' => $this->decimalString($order['fat_total'] ?? null),
-            'fat_net' => $this->decimalString($order['fat_net'] ?? null),
-            'fat_disc' => $this->decimalString($order['fat_disc'] ?? null),
-            'paid_amount' => $this->decimalString($order['paid_amount'] ?? null),
-            'remaining_amount' => $this->decimalString($order['remaining_amount'] ?? null),
+            'pro_value' => $this->decimalString($order['pro_value'] ?? null, 4),
+            'fat_total' => $this->decimalString($order['fat_total'] ?? null, 4),
+            'fat_net' => $this->decimalString($order['fat_net'] ?? null, 4),
+            'fat_disc' => $this->decimalString($order['fat_disc'] ?? null, 4),
+            'fat_tax' => $this->decimalString($order['fat_tax'] ?? null, 4),
+            'profit' => $this->decimalString($order['profit'] ?? null, 6),
+            'paid_amount' => $this->decimalString($order['paid_amount'] ?? null, 4),
+            'remaining_amount' => $this->decimalString($order['remaining_amount'] ?? null, 4),
             'payment_status' => $this->nullableString($order['payment_status'] ?? null),
             'invoice_status' => $this->nullableString($order['invoice_status'] ?? null),
             'order_status' => $this->nullableString($order['order_status'] ?? null),
@@ -151,13 +433,13 @@ class PosOrderSnapshotBuilder
                 'item_uuid' => $itemId ? self::deterministicUuid($branchUuid, 'myitems:' . $itemId) : null,
                 'item_name' => $this->nullableString($row['item_name'] ?? null),
                 'barcode' => $this->nullableString($row['item_barcode'] ?? null),
-                'qty_in' => $this->decimalString($row['qty_in'] ?? null),
-                'qty_out' => $this->decimalString($row['qty_out'] ?? null),
-                'price' => $this->decimalString($row['price'] ?? null),
-                'cost_price' => $this->decimalString($row['cost_price'] ?? null),
-                'discount' => $this->decimalString($row['discount'] ?? null),
-                'det_value' => $this->decimalString($row['det_value'] ?? null),
-                'profit' => $this->decimalString($row['profit'] ?? null),
+                'qty_in' => $this->decimalString($row['qty_in'] ?? null, 6),
+                'qty_out' => $this->decimalString($row['qty_out'] ?? null, 6),
+                'price' => $this->decimalString($row['price'] ?? null, 6),
+                'cost_price' => $this->decimalString($row['cost_price'] ?? null, 6),
+                'discount' => $this->decimalString($row['discount'] ?? null, 4),
+                'det_value' => $this->decimalString($row['det_value'] ?? null, 4),
+                'profit' => $this->decimalString($row['profit'] ?? null, 6),
                 'isdeleted' => (int) ($row['isdeleted'] ?? 0),
                 'modifiers' => $modifiers,
                 'notes' => $notes,
@@ -166,6 +448,45 @@ class PosOrderSnapshotBuilder
         $stmt->close();
 
         return $lines;
+    }
+
+    private function fulfillmentPayload(mysqli $conn, int $orderId): ?array
+    {
+        if (!$this->tableExists($conn, 'order_fulfillment')) {
+            return null;
+        }
+
+        $stmt = $conn->prepare('SELECT * FROM order_fulfillment WHERE order_id = ? LIMIT 1');
+        $stmt->bind_param('i', $orderId);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        if (!$row) {
+            return null;
+        }
+
+        $metadata = null;
+        if (($row['metadata_json'] ?? null) !== null && trim((string) $row['metadata_json']) !== '') {
+            $metadata = json_decode((string) $row['metadata_json'], true);
+            if (!is_array($metadata)) {
+                throw new RuntimeException('ORDER_FULFILLMENT_METADATA_INVALID');
+            }
+        }
+
+        $payload = $this->selectFields($row, [
+            'id', 'order_id', 'order_channel', 'fulfillment_type', 'external_provider',
+            'external_order_id', 'customer_name', 'customer_phone', 'customer_address',
+            'delivery_client_id', 'pos_customer_id', 'delivery_zone', 'delivery_fee',
+            'delivery_status', 'promised_at', 'crm_rollup_paid_amount',
+            'crm_rollup_counted', 'created_at', 'updated_at',
+        ]);
+        $payload['metadata'] = $metadata;
+        self::assertFulfillmentSnapshotScope([
+            'schema_version' => 3,
+            'fulfillment' => $payload,
+        ], $orderId);
+
+        return $payload;
     }
 
     private function lineModifiers(mysqli $conn, int $orderId, int $detailId): array
@@ -205,9 +526,9 @@ class PosOrderSnapshotBuilder
                 'modifier_group_id' => $this->nullableInt($row['modifier_group_id'] ?? null),
                 'modifier_option_id' => $this->nullableInt($row['modifier_option_id'] ?? null),
                 'option_id' => $this->nullableInt($row['modifier_option_id'] ?? null),
-                'qty' => $this->decimalString($qty),
-                'price_delta' => $this->decimalString($priceDelta),
-                'line_delta' => $this->decimalString($qty * $priceDelta),
+                'qty' => $this->decimalString($qty, 6),
+                'price_delta' => $this->decimalString($priceDelta, 6),
+                'line_delta' => $this->decimalString($qty * $priceDelta, 4),
                 'name_ar' => $this->nullableString($row['name_ar'] ?? null),
                 'name_en' => $this->nullableString($row['name_en'] ?? null),
             ];
@@ -259,8 +580,9 @@ class PosOrderSnapshotBuilder
             $payments[] = [
                 'payment_uuid' => self::deterministicUuid($branchUuid, $uuidSeed),
                 'order_uuid' => $orderUuid,
+                'source' => $source,
                 'local_payment_id' => $localPaymentId,
-                'amount' => $this->decimalString($row['pro_value'] ?? ($row['amount'] ?? null)),
+                'amount' => $this->decimalString($row['pro_value'] ?? ($row['amount'] ?? null), 4),
                 'payment_method' => $this->paymentMethod($row),
                 'reference_no' => $this->nullableString($row['pro_id'] ?? ($row['reference_no'] ?? null)),
                 'paid_by_customer_id' => $this->nullableInt($row['acc2'] ?? null),
@@ -284,10 +606,15 @@ class PosOrderSnapshotBuilder
                 'local_order_id' => $orderId,
                 'pro_id' => $this->nullableString($row['pro_id'] ?? null),
                 'pro_tybe' => $this->nullableInt($row['pro_tybe'] ?? null),
-                'amount' => $this->decimalString($row['pro_value'] ?? null),
+                'amount' => $this->decimalString($row['pro_value'] ?? null, 4),
                 'acc_fund' => $this->nullableInt($row['acc1'] ?? null),
                 'payment_method' => $this->paymentMethod($row),
                 'payment_date' => $this->datetimeOrNull($row['payment_date'] ?? null) ?: $this->dateOrNull($row['pro_date'] ?? null),
+                'acc_customer' => $this->nullableInt($row['acc2'] ?? null),
+                'employee_id' => $this->nullableInt($row['emp_id'] ?? null),
+                'created_by' => $this->nullableInt($row['user'] ?? null),
+                'info' => $this->nullableString($row['info'] ?? null),
+                'isdeleted' => (int) ($row['isdeleted'] ?? 0),
             ];
         }
 
@@ -342,6 +669,169 @@ class PosOrderSnapshotBuilder
         $stmt->close();
 
         return $rows;
+    }
+
+    private function financialBundle(mysqli $conn, int $orderId): array
+    {
+        $heads = $this->orderJournalHeads($conn, $orderId);
+        $headIds = array_values(array_map('intval', array_column($heads, 'id')));
+        $entries = $this->journalEntries($conn, $headIds);
+        $accountIds = [];
+        foreach ($entries as $entry) {
+            $accountId = (int) ($entry['account_id'] ?? 0);
+            if ($accountId > 0) {
+                $accountIds[$accountId] = $accountId;
+            }
+        }
+        $accounts = $this->accountIdentitiesWithAncestors($conn, array_values($accountIds));
+
+        $debit = Money::zero();
+        $credit = Money::zero();
+        foreach ($entries as $entry) {
+            $debit = $debit->add(Money::from((string) ($entry['debit'] ?? '0')));
+            $credit = $credit->add(Money::from((string) ($entry['credit'] ?? '0')));
+        }
+
+        $bundle = [
+            'schema_version' => 1,
+            'scope' => 'pos_order',
+            'complete' => true,
+            'local_order_id' => $orderId,
+            'accounts' => $accounts,
+            'journal_heads' => $heads,
+            'journal_entries' => $entries,
+            'totals' => [
+                'journal_count' => count($heads),
+                'entry_count' => count($entries),
+                'debit' => $debit->toString(),
+                'credit' => $credit->toString(),
+            ],
+        ];
+        $bundle['bundle_hash'] = hash('sha256', self::encodeStaticJson($bundle));
+        self::assertFinancialBundle($bundle, $orderId);
+
+        return $bundle;
+    }
+
+    private function orderJournalHeads(mysqli $conn, int $orderId): array
+    {
+        if (!$this->tableExists($conn, 'journal_heads') || !$this->tableExists($conn, 'journal_entries')) {
+            return [];
+        }
+
+        $headHasOp2 = $this->columnExists($conn, 'journal_heads', 'op2');
+        $headHasOpId = $this->columnExists($conn, 'journal_heads', 'op_id');
+        $entryLinks = [];
+        if ($this->columnExists($conn, 'journal_entries', 'op2')) {
+            $entryLinks[] = 'COALESCE(je.op2, 0) = ' . $orderId;
+        }
+        if ($this->columnExists($conn, 'journal_entries', 'op_id')) {
+            $entryLinks[] = 'COALESCE(je.op_id, 0) = ' . $orderId;
+        }
+
+        $scope = [];
+        if ($headHasOp2) {
+            $scope[] = 'COALESCE(h.op2, 0) = ' . $orderId;
+        }
+        if ($headHasOpId && $entryLinks !== []) {
+            $scope[] = '(COALESCE(h.op_id, 0) = ' . $orderId
+                . ' AND EXISTS (SELECT 1 FROM journal_entries je WHERE je.journal_id = h.id AND ('
+                . implode(' OR ', $entryLinks) . ')))';
+        }
+        if ($scope === []) {
+            return [];
+        }
+
+        $sourceFilter = '';
+        if ($this->columnExists($conn, 'journal_heads', 'source_type')) {
+            $sourceFilter = " AND COALESCE(h.source_type, '') IN ('', 'invoice', 'payment')";
+        }
+        $result = $conn->query(
+            'SELECT h.* FROM journal_heads h WHERE (' . implode(' OR ', $scope) . ')' . $sourceFilter . ' ORDER BY h.id ASC'
+        );
+
+        $rows = [];
+        while ($row = $result->fetch_assoc()) {
+            $rows[] = $this->selectFields($row, [
+                'id', 'journal_id', 'total', 'jdate', 'op_id', 'pro_tybe', 'details', 'op2',
+                'isdeleted', 'user', 'tenant', 'branch', 'source_type', 'source_id',
+                'posting_kind', 'idempotency_key', 'reversal_of_journal_id',
+            ]);
+        }
+
+        return $rows;
+    }
+
+    private function journalEntries(mysqli $conn, array $headIds): array
+    {
+        if ($headIds === []) {
+            return [];
+        }
+        $ids = implode(', ', array_map('intval', $headIds));
+        $result = $conn->query("SELECT * FROM journal_entries WHERE journal_id IN ({$ids}) ORDER BY id ASC");
+        $rows = [];
+        while ($row = $result->fetch_assoc()) {
+            $rows[] = $this->selectFields($row, [
+                'id', 'journal_id', 'account_id', 'debit', 'credit', 'tybe', 'op2', 'op_id',
+                'isdeleted', 'tenant', 'branch',
+            ]);
+        }
+
+        return $rows;
+    }
+
+    private function accountIdentitiesWithAncestors(mysqli $conn, array $accountIds): array
+    {
+        if ($accountIds === [] || !$this->tableExists($conn, 'acc_head')) {
+            return [];
+        }
+
+        $accounts = [];
+        $pending = array_fill_keys(array_map('intval', $accountIds), true);
+        while ($pending !== []) {
+            $ids = implode(', ', array_map('intval', array_keys($pending)));
+            $pending = [];
+            $result = $conn->query("SELECT * FROM acc_head WHERE id IN ({$ids}) ORDER BY id ASC");
+            while ($row = $result->fetch_assoc()) {
+                $accountId = (int) ($row['id'] ?? 0);
+                if ($accountId <= 0 || isset($accounts[$accountId])) {
+                    continue;
+                }
+                $accounts[$accountId] = $this->selectFields($row, [
+                    'id', 'code', 'deletable', 'editable', 'aname', 'constant', 'is_stock',
+                    'is_fund', 'rentable', 'parent_id', 'nature', 'kind', 'is_basic', 'secret',
+                    'isdeleted', 'tenant', 'branch',
+                ]);
+                $parentId = (int) ($row['parent_id'] ?? 0);
+                if ($parentId > 0 && !isset($accounts[$parentId])) {
+                    $pending[$parentId] = true;
+                }
+            }
+        }
+        ksort($accounts, SORT_NUMERIC);
+
+        return array_values($accounts);
+    }
+
+    private function selectFields(array $row, array $allowed): array
+    {
+        $selected = [];
+        foreach ($allowed as $field) {
+            if (array_key_exists($field, $row)) {
+                $selected[$field] = $row[$field];
+            }
+        }
+
+        return $selected;
+    }
+
+    private function columnExists(mysqli $conn, string $table, string $column): bool
+    {
+        $escapedTable = $conn->real_escape_string($table);
+        $escapedColumn = $conn->real_escape_string($column);
+        $result = $conn->query("SHOW COLUMNS FROM `{$escapedTable}` LIKE '{$escapedColumn}'");
+
+        return $result && $result->num_rows > 0;
     }
 
     private function tableExists(mysqli $conn, string $table): bool
@@ -402,13 +892,23 @@ class PosOrderSnapshotBuilder
         return $json;
     }
 
-    private function decimalString($value): string
+    private static function encodeStaticJson($value): string
     {
-        if ($value === null || $value === '') {
-            return '0.00';
+        $json = json_encode($value, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        if (!is_string($json)) {
+            throw new RuntimeException('Unable to encode POS order financial bundle.');
         }
 
-        return number_format((float) $value, 2, '.', '');
+        return $json;
+    }
+
+    private function decimalString($value, int $scale = 4): ?string
+    {
+        if ($value === null || $value === '' || !is_numeric($value)) {
+            return null;
+        }
+
+        return number_format((float) $value, $scale, '.', '');
     }
 
     private function nullableInt($value): ?int

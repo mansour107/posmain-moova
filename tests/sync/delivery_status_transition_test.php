@@ -19,6 +19,16 @@ try {
     $conn->query($manager->plannedStatements()['order_fulfillment']);
 
     $service = new OrderFulfillmentService();
+    $transitionOptions = [
+        'actor_user_id' => 1,
+        'config' => [
+            'role' => 'branch',
+            'sync' => [
+                'outbox_enabled' => false,
+                'cloud_to_branch_publish_enabled' => false,
+            ],
+        ],
+    ];
     $service->upsertForOrder($conn, 501, [
         'order_channel' => 'cashier',
         'fulfillment_type' => 'delivery',
@@ -28,18 +38,18 @@ try {
         'delivery_status' => 'pending',
     ], ['require_table' => true]);
 
-    $accepted = $service->transitionDeliveryStatus($conn, 501, 'accepted', ['actor_user_id' => 1]);
+    $accepted = $service->transitionDeliveryStatus($conn, 501, 'accepted', $transitionOptions);
     deliveryStatusAssert(($accepted['delivery_status'] ?? '') === 'accepted', 'pending -> accepted should work');
 
-    $preparing = $service->transitionDeliveryStatus($conn, 501, 'preparing', ['actor_user_id' => 1]);
+    $preparing = $service->transitionDeliveryStatus($conn, 501, 'preparing', $transitionOptions);
     deliveryStatusAssert(($preparing['delivery_status'] ?? '') === 'preparing', 'accepted -> preparing should work');
 
-    $ready = $service->transitionDeliveryStatus($conn, 501, 'ready', ['actor_user_id' => 1]);
+    $ready = $service->transitionDeliveryStatus($conn, 501, 'ready', $transitionOptions);
     deliveryStatusAssert(($ready['delivery_status'] ?? '') === 'ready', 'preparing -> ready should work');
 
     $failed = false;
     try {
-        $service->transitionDeliveryStatus($conn, 501, 'pending', ['actor_user_id' => 1]);
+        $service->transitionDeliveryStatus($conn, 501, 'pending', $transitionOptions);
     } catch (Throwable $e) {
         $failed = true;
     }

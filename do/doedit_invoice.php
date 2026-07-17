@@ -31,6 +31,7 @@ require_once('../classes/Recipe/LegacyInvoiceRecipeLifecycleBridge.php');
 require_once('../classes/Inventory/InventoryInvoiceBridge.php');
 require_once('../classes/Pos/Service/PosOrderMutationService.php');
 require_once('../classes/Pos/Service/OrderFulfillmentService.php');
+require_once('../classes/Sync/SyncOutboxEventService.php');
 require_once('../classes/Accounting/JournalPostingGuard.php');
 require_once('../includes/pos_default_accounts.php');
 
@@ -715,6 +716,17 @@ try {
         $stmt->bind_param("di", $ot_profit, $ot_id);
         $stmt->execute();
         $stmt->close();
+    }
+
+    if ((int) $pro_tybe === INVOICE_TYPES['POS']) {
+        $syncConfig = function_exists('posmain_app_config') ? posmain_app_config() : [];
+        if ((string) ($syncConfig['role'] ?? 'branch') === 'branch') {
+            (new SyncOutboxEventService())->recordOrderSnapshot($conn, (int) $ot_id, [
+                'event_type' => 'order.updated',
+                'source_system' => 'legacy_pos_invoice_edit',
+                'config' => $syncConfig,
+            ]);
+        }
     }
     
     // إتمام المعاملة

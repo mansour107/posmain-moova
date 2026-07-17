@@ -6,21 +6,25 @@ require_once __DIR__ . '/../Sync/DocumentCounterService.php';
 require_once __DIR__ . '/../Recipe/Repository/InventoryMovementRepository.php';
 require_once __DIR__ . '/../Accounting/JournalPostingService.php';
 require_once __DIR__ . '/../Financial/Money.php';
+require_once __DIR__ . '/../Sync/OperationalSyncEventService.php';
 
 class InventoryAccountingService
 {
     private InventoryFeatureFlags $flags;
     private DocumentCounterService $counterService;
     private InventoryMovementRepository $movements;
+    private OperationalSyncEventService $syncEvents;
 
     public function __construct(
         ?InventoryFeatureFlags $flags = null,
         ?DocumentCounterService $counterService = null,
-        ?InventoryMovementRepository $movements = null
+        ?InventoryMovementRepository $movements = null,
+        ?OperationalSyncEventService $syncEvents = null
     ) {
         $this->flags = $flags ?: new InventoryFeatureFlags();
         $this->counterService = $counterService ?: new DocumentCounterService();
         $this->movements = $movements ?: new InventoryMovementRepository();
+        $this->syncEvents = $syncEvents ?: new OperationalSyncEventService();
     }
 
     public function postPurchaseReceipt(mysqli $conn, array $context, array $movementIds): array
@@ -34,7 +38,7 @@ class InventoryAccountingService
             return $this->noop('no purchase movements to post');
         }
         if ($existing = $this->existingJournalResult($conn, $rows)) {
-            return $existing;
+            return $this->captureJournalResult($conn, $existing, $context);
         }
 
         $total = $this->movementTotal($rows);
@@ -66,7 +70,7 @@ class InventoryAccountingService
         }
         $this->assertSingleDirection($rows, false);
         if ($existing = $this->existingJournalResult($conn, $rows)) {
-            return $existing;
+            return $this->captureJournalResult($conn, $existing, $context);
         }
 
         $total = $this->movementTotal($rows);
@@ -125,7 +129,7 @@ class InventoryAccountingService
     private function postAdjustmentRows(mysqli $conn, array $context, array $rows, bool $hasQtyIn): array
     {
         if ($existing = $this->existingJournalResult($conn, $rows)) {
-            return $existing;
+            return $this->captureJournalResult($conn, $existing, $context);
         }
 
         $total = $this->movementTotal($rows);
@@ -223,7 +227,7 @@ class InventoryAccountingService
             return $this->noop('no refund reversal movements to post');
         }
         if ($existing = $this->existingJournalResult($conn, $rows)) {
-            return $existing;
+            return $this->captureJournalResult($conn, $existing, $context);
         }
 
         $total = $this->movementTotal($rows);
@@ -254,7 +258,7 @@ class InventoryAccountingService
             return $this->noop('no outbound movements to post');
         }
         if ($existing = $this->existingJournalResult($conn, $rows)) {
-            return $existing;
+            return $this->captureJournalResult($conn, $existing, $context);
         }
 
         $total = $this->movementTotal($rows);
@@ -276,60 +280,117 @@ class InventoryAccountingService
 
     private function postBalancedJournal(mysqli $conn, array $context, array $journal): array
     {
-        $this->assertJournalTables($conn);
-        $this->assertBalancedEntries($journal['entries'] ?? []);
-
-        $tenant = (int) ($context['pos_tenant'] ?? $context['tenant'] ?? 0);
-        $branch = (int) ($context['pos_branch'] ?? $context['branch'] ?? 0);
-        $journalId = $this->nextJournalId($conn, $tenant, $branch);
-        $total = Money::from(InventoryDecimal::normalize($journal['total'] ?? '0', 2))->toString();
-        $entries = [];
-        foreach ($journal['entries'] as $index => $entry) {
-            $entries[] = [
-                'account_id' => (int) $entry['account_id'],
-                'debit' => Money::from(InventoryDecimal::normalize($entry['debit'] ?? '0', 2))->toString(),
-                'credit' => Money::from(InventoryDecimal::normalize($entry['credit'] ?? '0', 2))->toString(),
-                'tybe' => $index,
-                'op2' => (int) ($journal['op2'] ?? 0),
-            ];
+        $ownsTransaction = !$this->connectionInTransaction($conn);
+        $savepoint = 'inventory_accounting_post';
+        if ($ownsTransaction) {
+            $conn->begin_transaction();
+        } else {
+            $conn->query('SAVEPOINT ' . $savepoint);
         }
-        $journalHeadId = JournalPostingService::postBalancedHead(
-            $conn,
-            (string) $journalId,
-            $total,
-            (string) ($journal['jdate'] ?? date('Y-m-d')),
-            (string) ($journal['details'] ?? 'Inventory accounting'),
-            (int) ($journal['user_id'] ?? 0),
-            $entries,
-            [
-                'op_id' => (int) ($journal['op_id'] ?? 0),
-                'op2' => (int) ($journal['op2'] ?? 0),
-                'pro_tybe' => (int) ($journal['pro_tybe'] ?? 0),
-                'tenant' => $tenant,
-                'branch' => $branch,
-                'source_type' => 'inventory_movement',
-                'source_id' => (int) (($journal['movement_ids'][0] ?? 0)),
-                'posting_kind' => (string) ($journal['posting_kind'] ?? 'inventory_accounting'),
-                'idempotency_key' => (string) ($journal['idempotency_key'] ?? ('inventory:' . md5(json_encode($journal['movement_ids'] ?? [])))),
-            ]
-        );
-        $entryIds = [];
-        $entryResult = $conn->query('SELECT id FROM journal_entries WHERE journal_id = ' . (int) $journalHeadId . ' ORDER BY id ASC');
-        while ($row = $entryResult->fetch_assoc()) {
-            $entryIds[] = (int) $row['id'];
-        }
-        $movementIds = array_values(array_map('intval', $journal['movement_ids'] ?? []));
-        $this->movements->attachJournal($conn, $movementIds, $journalHeadId);
 
-        return [
-            'noop' => false,
-            'journal_id' => $journalId,
-            'journal_head_id' => $journalHeadId,
-            'entry_ids' => $entryIds,
-            'entry_count' => count($entryIds),
-            'movement_ids' => $movementIds,
-            'total' => $total,
-        ];
+        try {
+            $this->assertJournalTables($conn);
+            $this->assertBalancedEntries($journal['entries'] ?? []);
+
+            $tenant = (int) ($context['pos_tenant'] ?? $context['tenant'] ?? 0);
+            $branch = (int) ($context['pos_branch'] ?? $context['branch'] ?? 0);
+            $journalId = $this->nextJournalId($conn, $tenant, $branch);
+            $total = Money::from(InventoryDecimal::normalize($journal['total'] ?? '0', 2))->toString();
+            $entries = [];
+            foreach ($journal['entries'] as $index => $entry) {
+                $entries[] = [
+                    'account_id' => (int) $entry['account_id'],
+                    'debit' => Money::from(InventoryDecimal::normalize($entry['debit'] ?? '0', 2))->toString(),
+                    'credit' => Money::from(InventoryDecimal::normalize($entry['credit'] ?? '0', 2))->toString(),
+                    'tybe' => $index,
+                    'op2' => (int) ($journal['op2'] ?? 0),
+                ];
+            }
+            $journalHeadId = JournalPostingService::postBalancedHead(
+                $conn,
+                (string) $journalId,
+                $total,
+                (string) ($journal['jdate'] ?? date('Y-m-d')),
+                (string) ($journal['details'] ?? 'Inventory accounting'),
+                (int) ($journal['user_id'] ?? 0),
+                $entries,
+                [
+                    'op_id' => (int) ($journal['op_id'] ?? 0),
+                    'op2' => (int) ($journal['op2'] ?? 0),
+                    'pro_tybe' => (int) ($journal['pro_tybe'] ?? 0),
+                    'tenant' => $tenant,
+                    'branch' => $branch,
+                    'source_type' => 'inventory_movement',
+                    'source_id' => (int) (($journal['movement_ids'][0] ?? 0)),
+                    'posting_kind' => (string) ($journal['posting_kind'] ?? 'inventory_accounting'),
+                    'idempotency_key' => (string) ($journal['idempotency_key'] ?? ('inventory:' . md5(json_encode($journal['movement_ids'] ?? [])))),
+                ]
+            );
+            $entryIds = [];
+            $entryResult = $conn->query('SELECT id FROM journal_entries WHERE journal_id = ' . (int) $journalHeadId . ' ORDER BY id ASC');
+            while ($row = $entryResult->fetch_assoc()) {
+                $entryIds[] = (int) $row['id'];
+            }
+            $movementIds = array_values(array_map('intval', $journal['movement_ids'] ?? []));
+            $this->movements->attachJournal($conn, $movementIds, $journalHeadId);
+
+            $result = $this->captureJournalResult($conn, [
+                'noop' => false,
+                'journal_id' => $journalId,
+                'journal_head_id' => $journalHeadId,
+                'entry_ids' => $entryIds,
+                'entry_count' => count($entryIds),
+                'movement_ids' => $movementIds,
+                'total' => $total,
+            ], $context);
+
+            if ($ownsTransaction) {
+                $conn->commit();
+            } else {
+                $conn->query('RELEASE SAVEPOINT ' . $savepoint);
+            }
+
+            return $result;
+        } catch (Throwable $exception) {
+            if ($ownsTransaction) {
+                $conn->rollback();
+            } else {
+                $conn->query('ROLLBACK TO SAVEPOINT ' . $savepoint);
+                $conn->query('RELEASE SAVEPOINT ' . $savepoint);
+            }
+            throw $exception;
+        }
+    }
+
+    private function captureJournalResult(mysqli $conn, array $result, array $context): array
+    {
+        if (!empty($result['noop'])) {
+            return $result;
+        }
+
+        $journalHeadId = (int) ($result['journal_head_id'] ?? 0);
+        $movementIds = array_values(array_filter(
+            array_map('intval', $result['movement_ids'] ?? []),
+            static fn(int $id): bool => $id > 0
+        ));
+        if ($journalHeadId < 1 || $movementIds === []) {
+            throw new RuntimeException('INVENTORY_JOURNAL_SYNC_RESULT_INVALID');
+        }
+
+        $syncConfig = $context['sync_config'] ?? $context['config'] ?? $this->flags->appConfig();
+        $this->syncEvents->recordInventoryAccountingSnapshot($conn, $journalHeadId, $movementIds, [
+            'config' => $syncConfig,
+            'source_system' => (string) ($context['sync_source_system'] ?? 'inventory_accounting'),
+        ]);
+
+        return $result;
+    }
+
+    private function connectionInTransaction(mysqli $conn): bool
+    {
+        $row = $conn->query('SELECT @@session.in_transaction AS active')->fetch_assoc();
+
+        return (int) ($row['active'] ?? 0) === 1;
     }
 
     private function insertJournalHead(mysqli $conn, int $journalId, int $tenant, int $branch, array $journal): int

@@ -168,8 +168,7 @@ class BranchSyncWorker
 
         $error = $response['error'] ?: 'cloud response unavailable';
         if (!$this->shouldRetryTransportFailure($response, $error, count($rows), $boostTimeout)) {
-            $immediateRetry = $this->isRetryableTransportFailure($response, $error) && $boostTimeout;
-            $this->markRowsFailed($conn, $rows, $error, $immediateRetry);
+            $this->markRowsFailed($conn, $rows, $error, false);
 
             return [
                 'synced' => 0,

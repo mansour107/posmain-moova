@@ -2,6 +2,7 @@
 
 require_once dirname(__DIR__, 3) . '/includes/drawer_movement_signs.php';
 require_once __DIR__ . '/BusinessDayService.php';
+require_once __DIR__ . '/../../Sync/OperationalSyncEventService.php';
 
 class DrawerSessionService
 {
@@ -125,6 +126,10 @@ class DrawerSessionService
                 $types .= 'i';
                 $values[] = $takeoverAuthorizedBy;
             }
+            if ($this->drawerSessionColumnExists($conn, 'sync_revision')) {
+                $columns[] = 'sync_revision';
+                $placeholders[] = '1';
+            }
 
             $sql = 'INSERT INTO drawer_sessions (' . implode(', ', $columns) . ') VALUES ('
                 . implode(', ', $placeholders) . ')';
@@ -161,7 +166,9 @@ class DrawerSessionService
                 'created_by' => $openedBy,
                 'allow_zero_amount' => true,
                 'reason' => 'shift_opening',
+                'sync_config' => $request['sync_config'] ?? null,
             ]);
+            $this->recordSessionSyncSnapshot($conn, $sessionId, $request);
 
             posmain_tx_commit_if_owned($conn, $ownsTransaction);
         } catch (Throwable $exception) {
@@ -174,59 +181,73 @@ class DrawerSessionService
 
     public function recordMovement(mysqli $conn, int $sessionId, array $request): array
     {
-        $session = $this->requireOpenSession($conn, $sessionId);
-        $type = $this->movementType($request['movement_type'] ?? $request['type'] ?? '');
-        $allowZeroAmount = !empty($request['allow_zero_amount']);
-        $positiveOnly = $type !== 'closing_adjustment';
-        $amount = $this->decimal($request['amount'] ?? null, $positiveOnly, 'DRAWER_AMOUNT_INVALID', $allowZeroAmount);
-        $orderId = $this->optionalPositiveInt($request['order_id'] ?? null);
-        $paymentId = $this->optionalPositiveInt($request['payment_id'] ?? null);
-        $reason = $this->nullableText($request['reason'] ?? null, 500);
-        $createdBy = $this->positiveInt($request['created_by'] ?? $session['user_id'], 'CREATED_BY_REQUIRED');
-        $managerApprovalId = $this->optionalPositiveInt($request['manager_approval_id'] ?? null);
-        $refOtHeadId = $this->optionalPositiveInt($request['ref_ot_head_id'] ?? null);
-        $tenant = (int) ($session['tenant'] ?? 0);
-        $branch = (int) ($session['branch'] ?? 0);
+        $ownsTransaction = $this->beginTransactionIfNeeded($conn);
+        try {
+            $session = $this->requireOpenSession($conn, $sessionId);
+            $type = $this->movementType($request['movement_type'] ?? $request['type'] ?? '');
+            $allowZeroAmount = !empty($request['allow_zero_amount']);
+            $positiveOnly = $type !== 'closing_adjustment';
+            $amount = $this->decimal($request['amount'] ?? null, $positiveOnly, 'DRAWER_AMOUNT_INVALID', $allowZeroAmount);
+            $orderId = $this->optionalPositiveInt($request['order_id'] ?? null);
+            $paymentId = $this->optionalPositiveInt($request['payment_id'] ?? null);
+            $reason = $this->nullableText($request['reason'] ?? null, 500);
+            $createdBy = $this->positiveInt($request['created_by'] ?? $session['user_id'], 'CREATED_BY_REQUIRED');
+            $managerApprovalId = $this->optionalPositiveInt($request['manager_approval_id'] ?? null);
+            $refOtHeadId = $this->optionalPositiveInt($request['ref_ot_head_id'] ?? null);
+            $tenant = (int) ($session['tenant'] ?? 0);
+            $branch = (int) ($session['branch'] ?? 0);
 
-        $columns = ['drawer_session_id', 'movement_type', 'amount', 'order_id', 'payment_id', 'reason', 'created_by'];
-        $placeholders = ['?', '?', '?', '?', '?', '?', '?'];
-        $types = 'issiisi';
-        $values = [$sessionId, $type, $amount, $orderId, $paymentId, $reason, $createdBy];
+            $columns = ['drawer_session_id', 'movement_type', 'amount', 'order_id', 'payment_id', 'reason', 'created_by'];
+            $placeholders = ['?', '?', '?', '?', '?', '?', '?'];
+            $types = 'issiisi';
+            $values = [$sessionId, $type, $amount, $orderId, $paymentId, $reason, $createdBy];
 
-        if ($this->movementColumnExists($conn, 'tenant')) {
-            $columns[] = 'tenant';
-            $placeholders[] = '?';
-            $types .= 'i';
-            $values[] = $tenant;
+            if ($this->movementColumnExists($conn, 'tenant')) {
+                $columns[] = 'tenant';
+                $placeholders[] = '?';
+                $types .= 'i';
+                $values[] = $tenant;
+            }
+            if ($this->movementColumnExists($conn, 'branch')) {
+                $columns[] = 'branch';
+                $placeholders[] = '?';
+                $types .= 'i';
+                $values[] = $branch;
+            }
+
+            if ($this->movementColumnExists($conn, 'manager_approval_id')) {
+                $columns[] = 'manager_approval_id';
+                $placeholders[] = '?';
+                $types .= 'i';
+                $values[] = $managerApprovalId;
+            }
+            if ($this->movementColumnExists($conn, 'ref_ot_head_id')) {
+                $columns[] = 'ref_ot_head_id';
+                $placeholders[] = '?';
+                $types .= 'i';
+                $values[] = $refOtHeadId;
+            }
+
+            $sql = 'INSERT INTO drawer_movements (' . implode(', ', $columns) . ') VALUES (' . implode(', ', $placeholders) . ')';
+            $stmt = $conn->prepare($sql);
+            $stmt->bind_param($types, ...$values);
+            $stmt->execute();
+            $id = (int) $conn->insert_id;
+            $stmt->close();
+
+            $movement = $this->movementById($conn, $id);
+            $this->recordMovementSyncSnapshot($conn, $id, $request);
+            if ($ownsTransaction) {
+                $conn->commit();
+            }
+
+            return $movement;
+        } catch (Throwable $exception) {
+            if ($ownsTransaction) {
+                $conn->rollback();
+            }
+            throw $exception;
         }
-        if ($this->movementColumnExists($conn, 'branch')) {
-            $columns[] = 'branch';
-            $placeholders[] = '?';
-            $types .= 'i';
-            $values[] = $branch;
-        }
-
-        if ($this->movementColumnExists($conn, 'manager_approval_id')) {
-            $columns[] = 'manager_approval_id';
-            $placeholders[] = '?';
-            $types .= 'i';
-            $values[] = $managerApprovalId;
-        }
-        if ($this->movementColumnExists($conn, 'ref_ot_head_id')) {
-            $columns[] = 'ref_ot_head_id';
-            $placeholders[] = '?';
-            $types .= 'i';
-            $values[] = $refOtHeadId;
-        }
-
-        $sql = 'INSERT INTO drawer_movements (' . implode(', ', $columns) . ') VALUES (' . implode(', ', $placeholders) . ')';
-        $stmt = $conn->prepare($sql);
-        $stmt->bind_param($types, ...$values);
-        $stmt->execute();
-        $id = (int) $conn->insert_id;
-        $stmt->close();
-
-        return $this->movementById($conn, $id);
     }
 
     public function recordUnassignedMovement(mysqli $conn, array $request): ?array
@@ -235,99 +256,140 @@ class DrawerSessionService
             return null;
         }
 
-        $type = $this->movementType($request['movement_type'] ?? $request['type'] ?? '');
-        $allowZeroAmount = !empty($request['allow_zero_amount']);
-        $amount = $this->decimal($request['amount'] ?? null, true, 'DRAWER_AMOUNT_INVALID', $allowZeroAmount);
-        $orderId = $this->optionalPositiveInt($request['order_id'] ?? null);
-        $paymentId = $this->optionalPositiveInt($request['payment_id'] ?? null);
-        $reason = $this->nullableText($request['reason'] ?? null, 500);
-        $createdBy = $this->positiveInt($request['created_by'] ?? 0, 'CREATED_BY_REQUIRED');
-        $refOtHeadId = $this->optionalPositiveInt($request['ref_ot_head_id'] ?? null);
-        $tenant = $this->nonNegativeInt($request['tenant'] ?? $request['pos_tenant'] ?? 0, 'TENANT_INVALID');
-        $branch = $this->nonNegativeInt($request['branch'] ?? $request['pos_branch'] ?? 0, 'BRANCH_INVALID');
-        if (session_status() === PHP_SESSION_ACTIVE) {
-            if ($tenant < 1) {
-                $tenant = (int) ($_SESSION['pos_tenant'] ?? 0);
+        $ownsTransaction = $this->beginTransactionIfNeeded($conn);
+        try {
+            $type = $this->movementType($request['movement_type'] ?? $request['type'] ?? '');
+            $allowZeroAmount = !empty($request['allow_zero_amount']);
+            $amount = $this->decimal($request['amount'] ?? null, true, 'DRAWER_AMOUNT_INVALID', $allowZeroAmount);
+            $orderId = $this->optionalPositiveInt($request['order_id'] ?? null);
+            $paymentId = $this->optionalPositiveInt($request['payment_id'] ?? null);
+            $reason = $this->nullableText($request['reason'] ?? null, 500);
+            $createdBy = $this->positiveInt($request['created_by'] ?? 0, 'CREATED_BY_REQUIRED');
+            $refOtHeadId = $this->optionalPositiveInt($request['ref_ot_head_id'] ?? null);
+            $tenant = $this->nonNegativeInt($request['tenant'] ?? $request['pos_tenant'] ?? 0, 'TENANT_INVALID');
+            $branch = $this->nonNegativeInt($request['branch'] ?? $request['pos_branch'] ?? 0, 'BRANCH_INVALID');
+            if (session_status() === PHP_SESSION_ACTIVE) {
+                if ($tenant < 1) {
+                    $tenant = (int) ($_SESSION['pos_tenant'] ?? 0);
+                }
+                if ($branch < 1) {
+                    $branch = (int) ($_SESSION['pos_branch'] ?? 0);
+                }
             }
-            if ($branch < 1) {
-                $branch = (int) ($_SESSION['pos_branch'] ?? 0);
+
+            $columns = ['drawer_session_id', 'movement_type', 'amount', 'order_id', 'payment_id', 'reason', 'created_by'];
+            $placeholders = ['?', '?', '?', '?', '?', '?', '?'];
+            $types = 'issiisi';
+            $values = [null, $type, $amount, $orderId, $paymentId, $reason, $createdBy];
+
+            if ($this->movementColumnExists($conn, 'tenant')) {
+                $columns[] = 'tenant';
+                $placeholders[] = '?';
+                $types .= 'i';
+                $values[] = $tenant;
             }
-        }
+            if ($this->movementColumnExists($conn, 'branch')) {
+                $columns[] = 'branch';
+                $placeholders[] = '?';
+                $types .= 'i';
+                $values[] = $branch;
+            }
+            if ($this->movementColumnExists($conn, 'ref_ot_head_id')) {
+                $columns[] = 'ref_ot_head_id';
+                $placeholders[] = '?';
+                $types .= 'i';
+                $values[] = $refOtHeadId;
+            }
 
-        $columns = ['drawer_session_id', 'movement_type', 'amount', 'order_id', 'payment_id', 'reason', 'created_by'];
-        $placeholders = ['?', '?', '?', '?', '?', '?', '?'];
-        $types = 'issiisi';
-        $values = [null, $type, $amount, $orderId, $paymentId, $reason, $createdBy];
+            $sql = 'INSERT INTO drawer_movements (' . implode(', ', $columns) . ') VALUES (' . implode(', ', $placeholders) . ')';
+            $stmt = $conn->prepare($sql);
+            $stmt->bind_param($types, ...$values);
+            $stmt->execute();
+            $id = (int) $conn->insert_id;
+            $stmt->close();
 
-        if ($this->movementColumnExists($conn, 'tenant')) {
-            $columns[] = 'tenant';
-            $placeholders[] = '?';
-            $types .= 'i';
-            $values[] = $tenant;
-        }
-        if ($this->movementColumnExists($conn, 'branch')) {
-            $columns[] = 'branch';
-            $placeholders[] = '?';
-            $types .= 'i';
-            $values[] = $branch;
-        }
-        if ($this->movementColumnExists($conn, 'ref_ot_head_id')) {
-            $columns[] = 'ref_ot_head_id';
-            $placeholders[] = '?';
-            $types .= 'i';
-            $values[] = $refOtHeadId;
-        }
+            $movement = $this->movementById($conn, $id);
+            $this->recordMovementSyncSnapshot($conn, $id, $request);
+            if ($ownsTransaction) {
+                $conn->commit();
+            }
 
-        $sql = 'INSERT INTO drawer_movements (' . implode(', ', $columns) . ') VALUES (' . implode(', ', $placeholders) . ')';
-        $stmt = $conn->prepare($sql);
-        $stmt->bind_param($types, ...$values);
-        $stmt->execute();
-        $id = (int) $conn->insert_id;
-        $stmt->close();
-
-        return $this->movementById($conn, $id);
+            return $movement;
+        } catch (Throwable $exception) {
+            if ($ownsTransaction) {
+                $conn->rollback();
+            }
+            throw $exception;
+        }
     }
 
-    public function linkLatestSaleMovementToVoucher(mysqli $conn, int $orderId, int $voucherId): bool
+    public function linkLatestSaleMovementToVoucher(mysqli $conn, int $orderId, int $voucherId, array $context = []): bool
     {
         if ($orderId < 1 || $voucherId < 1 || !$this->movementColumnExists($conn, 'ref_ot_head_id')) {
             return false;
         }
 
-        $stmt = $conn->prepare("
-            SELECT id
-            FROM drawer_movements
-            WHERE order_id = ?
-              AND movement_type = 'sale_cash'
-              AND ref_ot_head_id IS NULL
-            ORDER BY id DESC
-            LIMIT 1
-        ");
-        $stmt->bind_param('i', $orderId);
-        $stmt->execute();
-        $row = $stmt->get_result()->fetch_assoc();
-        $stmt->close();
+        $ownsTransaction = $this->beginTransactionIfNeeded($conn);
+        try {
+            $stmt = $conn->prepare("
+                SELECT id
+                FROM drawer_movements
+                WHERE order_id = ?
+                  AND movement_type = 'sale_cash'
+                  AND ref_ot_head_id IS NULL
+                ORDER BY id DESC
+                LIMIT 1
+                FOR UPDATE
+            ");
+            $stmt->bind_param('i', $orderId);
+            $stmt->execute();
+            $row = $stmt->get_result()->fetch_assoc();
+            $stmt->close();
 
-        if (!$row) {
-            return false;
+            $linked = $row
+                ? $this->linkMovementToVoucher($conn, (int) $row['id'], $voucherId, $context)
+                : false;
+            if ($ownsTransaction) {
+                $conn->commit();
+            }
+
+            return $linked;
+        } catch (Throwable $exception) {
+            if ($ownsTransaction) {
+                $conn->rollback();
+            }
+            throw $exception;
         }
-
-        return $this->linkMovementToVoucher($conn, (int) $row['id'], $voucherId);
     }
 
-    public function linkMovementToVoucher(mysqli $conn, int $movementId, int $voucherId): bool
+    public function linkMovementToVoucher(mysqli $conn, int $movementId, int $voucherId, array $context = []): bool
     {
         if ($movementId < 1 || $voucherId < 1 || !$this->movementColumnExists($conn, 'ref_ot_head_id')) {
             return false;
         }
 
-        $update = $conn->prepare('UPDATE drawer_movements SET ref_ot_head_id = ? WHERE id = ?');
-        $update->bind_param('ii', $voucherId, $movementId);
-        $update->execute();
-        $affected = $update->affected_rows;
-        $update->close();
+        $ownsTransaction = $this->beginTransactionIfNeeded($conn);
+        try {
+            $update = $conn->prepare('UPDATE drawer_movements SET ref_ot_head_id = ? WHERE id = ? AND ref_ot_head_id IS NULL');
+            $update->bind_param('ii', $voucherId, $movementId);
+            $update->execute();
+            $affected = $update->affected_rows;
+            $update->close();
 
-        return $affected === 1;
+            if ($affected === 1) {
+                $this->recordMovementSyncSnapshot($conn, $movementId, $context);
+            }
+            if ($ownsTransaction) {
+                $conn->commit();
+            }
+
+            return $affected === 1;
+        } catch (Throwable $exception) {
+            if ($ownsTransaction) {
+                $conn->rollback();
+            }
+            throw $exception;
+        }
     }
 
     public function sessionCashBreakdown(mysqli $conn, int $sessionId): array
@@ -414,6 +476,48 @@ class DrawerSessionService
     public function forceCloseSession(mysqli $conn, int $sessionId, array $request, array $context = []): array
     {
         return $this->finishSession($conn, $sessionId, $request, 'forced_closed', $context);
+    }
+
+    /**
+     * Version and capture a drawer-session mutation already made by a higher-level
+     * workflow. The caller must own or join the surrounding business transaction;
+     * starting a transaction here would be too late to make the preceding write
+     * and its outbox event atomic.
+     *
+     * @param array<string, mixed> $context
+     * @return array<string, mixed>
+     */
+    public function captureExternalSessionMutation(mysqli $conn, int $sessionId, array $context = []): array
+    {
+        $sessionId = $this->positiveInt($sessionId, 'DRAWER_SESSION_REQUIRED');
+        if (!$this->connectionInTransaction($conn)) {
+            throw new RuntimeException('DRAWER_SESSION_SYNC_TRANSACTION_REQUIRED');
+        }
+
+        if (!$this->drawerSessionColumnExists($conn, 'sync_revision')) {
+            // Disabled sync remains compatible with older schemas. When sync is
+            // enabled, the typed recorder fails closed on the missing revision.
+            $this->recordSessionSyncSnapshot($conn, $sessionId, $context);
+
+            return $this->sessionById($conn, $sessionId);
+        }
+
+        $stmt = $conn->prepare('
+            UPDATE drawer_sessions
+            SET sync_revision = sync_revision + 1
+            WHERE id = ?
+        ');
+        $stmt->bind_param('i', $sessionId);
+        $stmt->execute();
+        $affected = $stmt->affected_rows;
+        $stmt->close();
+        if ($affected !== 1) {
+            throw new RuntimeException('DRAWER_SESSION_NOT_FOUND');
+        }
+
+        $this->recordSessionSyncSnapshot($conn, $sessionId, $context);
+
+        return $this->sessionById($conn, $sessionId);
     }
 
     public function sessionById(mysqli $conn, int $sessionId): array
@@ -543,6 +647,9 @@ class DrawerSessionService
             if ($authorizedBy !== null && $this->drawerSessionColumnExists($conn, 'takeover_authorized_by')) {
                 $sets[] = 'takeover_authorized_by = ' . (int) $authorizedBy;
             }
+            if ($this->drawerSessionColumnExists($conn, 'sync_revision')) {
+                $sets[] = 'sync_revision = sync_revision + 1';
+            }
 
             $ok = $conn->query(
                 'UPDATE drawer_sessions SET ' . implode(', ', $sets)
@@ -551,6 +658,7 @@ class DrawerSessionService
             if ($ok !== true || $conn->affected_rows !== 1) {
                 throw new RuntimeException('REGISTER_TRANSFER_FAILED');
             }
+            $this->recordSessionSyncSnapshot($conn, $sessionId, $request);
 
             posmain_tx_commit_if_owned($conn, $ownsTransaction);
         } catch (Throwable $exception) {
@@ -740,6 +848,7 @@ class DrawerSessionService
                     'amount' => $this->formatDecimal($difference),
                     'created_by' => $closedBy,
                     'reason' => 'shift_close_variance',
+                    'sync_config' => $context['sync_config'] ?? $request['sync_config'] ?? null,
                 ]);
             }
 
@@ -758,6 +867,9 @@ class DrawerSessionService
                 $lockClears[] = 'open_user_lock = NULL';
             }
             $lockSql = $lockClears !== [] ? (', ' . implode(', ', $lockClears)) : '';
+            $revisionSql = $this->drawerSessionColumnExists($conn, 'sync_revision')
+                ? ', sync_revision = sync_revision + 1'
+                : '';
             $stmt = $conn->prepare("
                 UPDATE drawer_sessions
                 SET closed_at = ?,
@@ -768,6 +880,7 @@ class DrawerSessionService
                     status = ?,
                     notes = ?
                     {$lockSql}
+                    {$revisionSql}
                 WHERE id = ?
                   AND status = 'open'
             ");
@@ -788,6 +901,12 @@ class DrawerSessionService
                 $snapStmt->execute();
                 $snapStmt->close();
             }
+
+            $syncContext = $context;
+            if (!isset($syncContext['sync_config']) && isset($request['sync_config'])) {
+                $syncContext['sync_config'] = $request['sync_config'];
+            }
+            $this->recordSessionSyncSnapshot($conn, $sessionId, $syncContext);
 
             posmain_tx_commit_if_owned($conn, $ownsTransaction);
         } catch (Throwable $exception) {
@@ -901,6 +1020,9 @@ class DrawerSessionService
                 ? (int) $row['takeover_authorized_by']
                 : null;
         }
+        if (array_key_exists('sync_revision', $row)) {
+            $session['sync_revision'] = (int) $row['sync_revision'];
+        }
 
         return $session;
     }
@@ -939,6 +1061,50 @@ class DrawerSessionService
         }
 
         return $movement;
+    }
+
+    private function beginTransactionIfNeeded(mysqli $conn): bool
+    {
+        if ($this->connectionInTransaction($conn)) {
+            return false;
+        }
+
+        $conn->begin_transaction();
+        return true;
+    }
+
+    private function connectionInTransaction(mysqli $conn): bool
+    {
+        $result = $conn->query('SELECT @@session.in_transaction AS active_transaction');
+        $row = $result->fetch_assoc() ?: [];
+
+        return !empty($row['active_transaction']);
+    }
+
+    private function recordMovementSyncSnapshot(mysqli $conn, int $movementId, array $context): void
+    {
+        $options = [
+            'event_type' => 'drawer_movement.saved',
+            'source_system' => 'drawer',
+        ];
+        if (isset($context['sync_config']) && is_array($context['sync_config'])) {
+            $options['config'] = $context['sync_config'];
+        }
+
+        (new OperationalSyncEventService())->recordDrawerMovementSnapshot($conn, $movementId, $options);
+    }
+
+    private function recordSessionSyncSnapshot(mysqli $conn, int $sessionId, array $context): void
+    {
+        $options = [
+            'event_type' => 'drawer_session.saved',
+            'source_system' => 'drawer',
+        ];
+        if (isset($context['sync_config']) && is_array($context['sync_config'])) {
+            $options['config'] = $context['sync_config'];
+        }
+
+        (new OperationalSyncEventService())->recordDrawerSessionSnapshot($conn, $sessionId, $options);
     }
 
     private function movementColumnExists(mysqli $conn, string $column): bool

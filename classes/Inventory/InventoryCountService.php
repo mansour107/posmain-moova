@@ -7,6 +7,7 @@ require_once __DIR__ . '/InventoryItemPolicyService.php';
 require_once __DIR__ . '/InventoryLedgerService.php';
 require_once __DIR__ . '/InventoryScopeResolver.php';
 require_once __DIR__ . '/../Items/ItemUnitResolver.php';
+require_once __DIR__ . '/../Sync/OperationalSyncEventService.php';
 
 class InventoryCountService
 {
@@ -15,28 +16,28 @@ class InventoryCountService
     private InventoryAccountingService $accounting;
     private InventoryScopeResolver $scopeResolver;
     private InventoryItemPolicyService $itemPolicy;
+    private OperationalSyncEventService $syncEvents;
 
     public function __construct(
         ?InventoryFeatureFlags $flags = null,
         ?InventoryLedgerService $ledger = null,
         ?InventoryAccountingService $accounting = null,
         ?InventoryScopeResolver $scopeResolver = null,
-        ?InventoryItemPolicyService $itemPolicy = null
+        ?InventoryItemPolicyService $itemPolicy = null,
+        ?OperationalSyncEventService $syncEvents = null
     ) {
         $this->flags = $flags ?: new InventoryFeatureFlags();
         $this->ledger = $ledger ?: new InventoryLedgerService($this->flags);
         $this->accounting = $accounting ?: new InventoryAccountingService($this->flags);
         $this->scopeResolver = $scopeResolver ?: new InventoryScopeResolver($this->flags->appConfig());
         $this->itemPolicy = $itemPolicy ?: new InventoryItemPolicyService();
+        $this->syncEvents = $syncEvents ?: new OperationalSyncEventService();
     }
 
     public function createDraft(mysqli $conn, array $request, array $context = []): array
     {
         $this->assertTables($conn);
-        $ownsTransaction = empty($context['in_transaction']);
-        if ($ownsTransaction) {
-            $conn->begin_transaction();
-        }
+        $boundary = $this->beginBoundary($conn, 'inventory_count_create');
 
         try {
             $countUuid = $this->uuidFromRequest($request, 'count_uuid');
@@ -45,9 +46,8 @@ class InventoryCountService
             $existing = $this->findCountByUuid($conn, $countUuid);
             if ($existing) {
                 $this->assertExistingCountReplay($conn, $existing, $request, $scope, $requestLines);
-                if ($ownsTransaction) {
-                    $conn->commit();
-                }
+                $this->captureCountSnapshot($conn, (int) $existing['id'], false, $context);
+                $this->commitBoundary($conn, $boundary);
 
                 return [
                     'success' => true,
@@ -64,9 +64,8 @@ class InventoryCountService
                 $this->insertSnapshotLine($conn, $countId, $scope, $line, $context);
             }
 
-            if ($ownsTransaction) {
-                $conn->commit();
-            }
+            $this->captureCountSnapshot($conn, $countId, true, $context);
+            $this->commitBoundary($conn, $boundary);
 
             return [
                 'success' => true,
@@ -76,9 +75,7 @@ class InventoryCountService
                 'status' => 'draft',
             ];
         } catch (Throwable $exception) {
-            if ($ownsTransaction) {
-                $conn->rollback();
-            }
+            $this->rollbackBoundary($conn, $boundary);
             throw $exception;
         }
     }
@@ -90,10 +87,7 @@ class InventoryCountService
             throw new InvalidArgumentException('COUNT_REQUIRED');
         }
 
-        $ownsTransaction = empty($context['in_transaction']);
-        if ($ownsTransaction) {
-            $conn->begin_transaction();
-        }
+        $boundary = $this->beginBoundary($conn, 'inventory_count_lines');
 
         try {
             $count = $this->lockCount($conn, $countId);
@@ -111,15 +105,17 @@ class InventoryCountService
                 'store_id' => (int) $count['store_id'],
             ];
             $saved = 0;
+            $mutated = false;
             foreach ($this->normalizeLines($lines) as $line) {
+                $existingLineId = $this->findCountLineId($conn, $countId, (int) $line['item_id']);
                 $lineId = $this->ensureCountLine($conn, $countId, $scope, $line, $context);
-                $this->updateCountedLine($conn, $lineId, $line, $context);
+                $countedLineUpdated = $this->updateCountedLine($conn, $lineId, $line, $context);
+                $mutated = $existingLineId < 1 || $countedLineUpdated || $mutated;
                 $saved++;
             }
 
-            if ($ownsTransaction) {
-                $conn->commit();
-            }
+            $this->captureCountSnapshot($conn, $countId, $mutated, $context);
+            $this->commitBoundary($conn, $boundary);
 
             return [
                 'success' => true,
@@ -128,9 +124,7 @@ class InventoryCountService
                 'status' => 'draft',
             ];
         } catch (Throwable $exception) {
-            if ($ownsTransaction) {
-                $conn->rollback();
-            }
+            $this->rollbackBoundary($conn, $boundary);
             throw $exception;
         }
     }
@@ -153,10 +147,7 @@ class InventoryCountService
             throw new InvalidArgumentException('COUNT_REQUIRED');
         }
 
-        $ownsTransaction = empty($context['in_transaction']);
-        if ($ownsTransaction) {
-            $conn->begin_transaction();
-        }
+        $boundary = $this->beginBoundary($conn, 'inventory_count_close');
 
         try {
             $count = $this->lockCount($conn, $countId);
@@ -164,9 +155,8 @@ class InventoryCountService
                 throw new InvalidArgumentException('COUNT_NOT_FOUND');
             }
             if ((string) $count['status'] === 'closed') {
-                if ($ownsTransaction) {
-                    $conn->commit();
-                }
+                $this->captureCountSnapshot($conn, $countId, false, $context);
+                $this->commitBoundary($conn, $boundary);
                 return [
                     'success' => true,
                     'idempotent_replay' => true,
@@ -228,18 +218,17 @@ class InventoryCountService
             $stmt->bind_param('ii', $userId, $countId);
             $stmt->execute();
             $stmt->close();
-            $accounting = $this->accounting->postAdjustment($conn, [
+            $accounting = $this->accounting->postAdjustment($conn, array_merge([
                 'pos_tenant' => (int) $count['pos_tenant'],
                 'pos_branch' => (int) $count['pos_branch'],
                 'store_id' => (int) $count['store_id'],
                 'count_id' => $countId,
                 'user_id' => $userId,
                 'details' => 'Inventory count variance #' . $countId,
-            ], $movementIds);
+            ], $this->syncAccountingContext($context)), $movementIds);
 
-            if ($ownsTransaction) {
-                $conn->commit();
-            }
+            $this->captureCountSnapshot($conn, $countId, true, $context);
+            $this->commitBoundary($conn, $boundary);
 
             return [
                 'success' => true,
@@ -251,9 +240,7 @@ class InventoryCountService
                 'accounting' => $accounting,
             ];
         } catch (Throwable $exception) {
-            if ($ownsTransaction) {
-                $conn->rollback();
-            }
+            $this->rollbackBoundary($conn, $boundary);
             throw $exception;
         }
     }
@@ -266,10 +253,7 @@ class InventoryCountService
             throw new InvalidArgumentException('COUNT_REQUIRED');
         }
 
-        $ownsTransaction = empty($context['in_transaction']);
-        if ($ownsTransaction) {
-            $conn->begin_transaction();
-        }
+        $boundary = $this->beginBoundary($conn, 'inventory_count_reverse');
 
         try {
             $count = $this->lockCount($conn, $countId);
@@ -277,9 +261,8 @@ class InventoryCountService
                 throw new InvalidArgumentException('COUNT_NOT_FOUND');
             }
             if ((string) $count['status'] === 'cancelled') {
-                if ($ownsTransaction) {
-                    $conn->commit();
-                }
+                $this->captureCountSnapshot($conn, $countId, false, $context);
+                $this->commitBoundary($conn, $boundary);
 
                 return [
                     'success' => true,
@@ -324,18 +307,17 @@ WHERE id = ?");
             $stmt->execute();
             $stmt->close();
 
-            $accounting = $this->accounting->postAdjustment($conn, [
+            $accounting = $this->accounting->postAdjustment($conn, array_merge([
                 'pos_tenant' => (int) $count['pos_tenant'],
                 'pos_branch' => (int) $count['pos_branch'],
                 'store_id' => (int) $count['store_id'],
                 'count_id' => $countId,
                 'user_id' => $userId,
                 'details' => 'Inventory count reversal #' . $countId,
-            ], $movementIds);
+            ], $this->syncAccountingContext($context)), $movementIds);
 
-            if ($ownsTransaction) {
-                $conn->commit();
-            }
+            $this->captureCountSnapshot($conn, $countId, true, $context);
+            $this->commitBoundary($conn, $boundary);
 
             return [
                 'success' => true,
@@ -346,9 +328,7 @@ WHERE id = ?");
                 'accounting' => $accounting,
             ];
         } catch (Throwable $exception) {
-            if ($ownsTransaction) {
-                $conn->rollback();
-            }
+            $this->rollbackBoundary($conn, $boundary);
             throw $exception;
         }
     }
@@ -367,10 +347,7 @@ WHERE id = ?");
             throw new InvalidArgumentException('COUNT_REQUIRED');
         }
 
-        $ownsTransaction = empty($context['in_transaction']);
-        if ($ownsTransaction) {
-            $conn->begin_transaction();
-        }
+        $boundary = $this->beginBoundary($conn, 'inventory_count_transition');
 
         try {
             $count = $this->lockCount($conn, $countId);
@@ -379,9 +356,8 @@ WHERE id = ?");
             }
             $status = (string) $count['status'];
             if ($status === $nextStatus) {
-                if ($ownsTransaction) {
-                    $conn->commit();
-                }
+                $this->captureCountSnapshot($conn, $countId, false, $context);
+                $this->commitBoundary($conn, $boundary);
                 return ['success' => true, 'idempotent_replay' => true, 'count_id' => $countId, 'status' => $nextStatus];
             }
             if (!in_array($status, $allowedStatuses, true)) {
@@ -398,15 +374,12 @@ WHERE id = ?");
             $stmt->execute();
             $stmt->close();
 
-            if ($ownsTransaction) {
-                $conn->commit();
-            }
+            $this->captureCountSnapshot($conn, $countId, true, $context);
+            $this->commitBoundary($conn, $boundary);
 
             return ['success' => true, 'idempotent_replay' => false, 'count_id' => $countId, 'status' => $nextStatus];
         } catch (Throwable $exception) {
-            if ($ownsTransaction) {
-                $conn->rollback();
-            }
+            $this->rollbackBoundary($conn, $boundary);
             throw $exception;
         }
     }
@@ -488,10 +461,10 @@ ON DUPLICATE KEY UPDATE
         return $this->insertSnapshotLine($conn, $countId, $scope, $line, $context);
     }
 
-    private function updateCountedLine(mysqli $conn, int $lineId, array $line, array $context): void
+    private function updateCountedLine(mysqli $conn, int $lineId, array $line, array $context): bool
     {
         if (!array_key_exists('counted_qty', $line)) {
-            return;
+            return false;
         }
 
         $existing = $this->loadCountLine($conn, $lineId);
@@ -516,6 +489,8 @@ WHERE id = ?");
         $stmt->bind_param('ssssisi', $line['counted_qty'], $varianceQty, $variancePercent, $varianceCost, $userId, $notes, $lineId);
         $stmt->execute();
         $stmt->close();
+
+        return true;
     }
 
     private function recordCloseMovement(mysqli $conn, array $count, array $line, array $scope, string $variance, array $balance, array $context): array
@@ -1090,8 +1065,8 @@ LIMIT 1");
 
     private function uuidFromRequest(array $request, string $key): string
     {
-        $uuid = trim((string) ($request[$key] ?? ''));
-        if (preg_match('/^[0-9a-fA-F-]{36}$/', $uuid) === 1) {
+        $uuid = strtolower(trim((string) ($request[$key] ?? '')));
+        if (SyncBranchIdentity::isUuid($uuid)) {
             return strtolower($uuid);
         }
 
@@ -1159,6 +1134,83 @@ LIMIT 1");
         }
 
         return $conversion;
+    }
+
+    private function captureCountSnapshot(mysqli $conn, int $countId, bool $changed, array $context): void
+    {
+        $stmt = $conn->prepare('SELECT sync_revision FROM inventory_counts WHERE id = ? LIMIT 1 FOR UPDATE');
+        $stmt->bind_param('i', $countId);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        if (!$row) {
+            throw new RuntimeException('INVENTORY_COUNT_SYNC_COUNT_MISSING');
+        }
+
+        $revision = max(0, (int) ($row['sync_revision'] ?? 0));
+        if ($changed || $revision < 1) {
+            $stmt = $conn->prepare('UPDATE inventory_counts SET sync_revision = sync_revision + 1 WHERE id = ?');
+            $stmt->bind_param('i', $countId);
+            $stmt->execute();
+            $stmt->close();
+        }
+
+        $this->syncEvents->recordInventoryCountSnapshot($conn, $countId, [
+            'config' => $context['sync_config'] ?? $context['config'] ?? $this->flags->appConfig(),
+            'source_system' => (string) ($context['sync_source_system'] ?? 'inventory_count'),
+        ]);
+    }
+
+    private function syncAccountingContext(array $context): array
+    {
+        return [
+            'sync_config' => $context['sync_config'] ?? $context['config'] ?? $this->flags->appConfig(),
+            'sync_source_system' => (string) ($context['sync_source_system'] ?? 'inventory_accounting'),
+        ];
+    }
+
+    private function beginBoundary(mysqli $conn, string $name): array
+    {
+        if (!$this->connectionInTransaction($conn)) {
+            $conn->begin_transaction();
+            return ['owns_transaction' => true, 'savepoint' => null];
+        }
+
+        $savepoint = preg_replace('/[^a-z0-9_]/i', '_', $name) . '_' . substr(hash('sha256', $name . ':' . microtime(true)), 0, 10);
+        $conn->query('SAVEPOINT ' . $savepoint);
+
+        return ['owns_transaction' => false, 'savepoint' => $savepoint];
+    }
+
+    private function commitBoundary(mysqli $conn, array $boundary): void
+    {
+        if (!empty($boundary['owns_transaction'])) {
+            $conn->commit();
+            return;
+        }
+
+        $conn->query('RELEASE SAVEPOINT ' . (string) $boundary['savepoint']);
+    }
+
+    private function rollbackBoundary(mysqli $conn, array $boundary): void
+    {
+        if (!empty($boundary['owns_transaction'])) {
+            $conn->rollback();
+            return;
+        }
+
+        $savepoint = (string) ($boundary['savepoint'] ?? '');
+        if ($savepoint !== '') {
+            $conn->query('ROLLBACK TO SAVEPOINT ' . $savepoint);
+            $conn->query('RELEASE SAVEPOINT ' . $savepoint);
+        }
+    }
+
+    private function connectionInTransaction(mysqli $conn): bool
+    {
+        $row = $conn->query('SELECT @@session.in_transaction AS active')->fetch_assoc();
+
+        return (int) ($row['active'] ?? 0) === 1;
     }
 
     private function tableExists(mysqli $conn, string $table): bool

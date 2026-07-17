@@ -6,6 +6,13 @@ require_once __DIR__ . '/PosOrderSnapshotBuilder.php';
 require_once __DIR__ . '/ShopSettingsSyncPayloadService.php';
 require_once __DIR__ . '/ModifierGroupSyncPayloadService.php';
 require_once __DIR__ . '/ShiftCloseSyncPayloadService.php';
+require_once __DIR__ . '/PosCustomerSyncPayloadService.php';
+require_once __DIR__ . '/InventoryAccountingSyncPayloadService.php';
+require_once __DIR__ . '/InventoryCountSyncPayloadService.php';
+require_once __DIR__ . '/ProductionBatchSyncPayloadService.php';
+require_once __DIR__ . '/PurchaseReceiptSyncPayloadService.php';
+require_once __DIR__ . '/PurchaseOrderSyncPayloadService.php';
+require_once __DIR__ . '/DocumentCounterService.php';
 require_once __DIR__ . '/CloudBranchSyncPublisher.php';
 require_once __DIR__ . '/../Recipe/Repository/RecipeRepository.php';
 require_once __DIR__ . '/../Recipe/Repository/RecipeLineRepository.php';
@@ -22,6 +29,12 @@ class OperationalSyncEventService
 
     public function recordRowSnapshot(mysqli $conn, string $domain, int $rowId, array $options = []): ?array
     {
+        if ($domain === 'drawer_movement') {
+            return $this->recordDrawerMovementSnapshot($conn, $rowId, $options);
+        }
+        if ($domain === 'drawer_session') {
+            throw new InvalidArgumentException('Drawer sessions require the typed movement or shift-close sync contract.');
+        }
         if (!$this->enabled($options['config'] ?? null)) {
             return null;
         }
@@ -40,7 +53,6 @@ class OperationalSyncEventService
         if (!$row) {
             return null;
         }
-
         return $this->recordRowPayload($conn, $domain, $definition, $row, $options);
     }
 
@@ -88,6 +100,292 @@ class OperationalSyncEventService
             'event_version' => 1,
             'idempotency_suffix' => $eventType . ':delete',
         ]);
+    }
+
+    public function recordCustomerSnapshot(mysqli $conn, int $customerId, array $options = []): ?array
+    {
+        if ($customerId < 1) {
+            throw new InvalidArgumentException('CUSTOMER_SYNC_ID_REQUIRED');
+        }
+        if (!$this->enabled($options['config'] ?? null)) {
+            return null;
+        }
+
+        $config = $options['config'] ?? (function_exists('posmain_app_config') ? posmain_app_config() : []);
+        // Customer edits made on the hosted management surface are not an
+        // automatic reverse-sync feed. Cloud-to-branch remains the guarded,
+        // explicit disaster-recovery workflow.
+        if ((string) ($config['role'] ?? 'branch') !== 'branch') {
+            return null;
+        }
+
+        $this->assertOutboxTableExists($conn);
+        if (!$this->tableExists($conn, 'document_counters')) {
+            throw new RuntimeException('document_counters table is missing. Run tools/run_migrations.php --apply before enabling branch sync.');
+        }
+
+        $branch = $this->branchIdentity->ensure($conn, $config);
+        $branchUuid = (string) $branch['branch_uuid'];
+        $posTenant = $this->intOrZero($branch['pos_tenant'] ?? ($config['branch']['pos_tenant'] ?? 0));
+        $posBranch = $this->intOrZero($branch['pos_branch'] ?? ($config['branch']['pos_branch'] ?? 0));
+        $customerUuid = PosOrderSnapshotBuilder::deterministicUuid($branchUuid, 'pos_customers:' . $customerId);
+        $eventType = (string) ($options['event_type'] ?? 'customer.snapshot');
+        $sourceSystem = $this->sourceSystem($options['source_system'] ?? null);
+
+        $stmt = $conn->prepare("
+            SELECT COALESCE(MAX(event_version), 0) AS max_version
+            FROM sync_outbox
+            WHERE aggregate_type = 'pos_customer'
+              AND aggregate_uuid = ?
+        ");
+        $stmt->bind_param('s', $customerUuid);
+        $stmt->execute();
+        $highestRevision = (int) ($stmt->get_result()->fetch_assoc()['max_version'] ?? 0);
+        $stmt->close();
+
+        $counter = new DocumentCounterService();
+        $counterKey = 'customer:' . $branchUuid . ':' . $customerId;
+        $counter->ensureCounterRow(
+            $conn,
+            $posTenant,
+            $posBranch,
+            'customer_sync',
+            $counterKey,
+            $highestRevision
+        );
+        $revision = $counter->nextCounter(
+            $conn,
+            $posTenant,
+            $posBranch,
+            'customer_sync',
+            $counterKey
+        );
+
+        $payload = (new PosCustomerSyncPayloadService())->build(
+            $conn,
+            $branchUuid,
+            $customerId,
+            $revision,
+            ['source_system' => $sourceSystem]
+        );
+
+        return $this->insertOutbox($conn, $config, $branch, [
+            'event_type' => $eventType,
+            'source_system' => $sourceSystem,
+            'aggregate_type' => 'pos_customer',
+            'entity_type' => 'pos_customer',
+            'aggregate_local_id' => $customerId,
+            'entity_local_id' => $customerId,
+            'aggregate_uuid' => $customerUuid,
+            'entity_uuid' => $customerUuid,
+            'aggregate_id' => 'pos_customers:' . $customerId,
+            'payload' => $payload,
+            'event_version' => $revision,
+            'idempotency_suffix' => $eventType . ':v' . $revision,
+        ]);
+    }
+
+    public function recordInventoryAccountingSnapshot(
+        mysqli $conn,
+        int $journalHeadId,
+        array $movementIds,
+        array $options = []
+    ): ?array {
+        if ($journalHeadId < 1) {
+            throw new InvalidArgumentException('INVENTORY_JOURNAL_SYNC_IDENTITY_INVALID');
+        }
+        if (!$this->enabled($options['config'] ?? null)) {
+            return null;
+        }
+
+        $config = $options['config'] ?? (function_exists('posmain_app_config') ? posmain_app_config() : []);
+        if ((string) ($config['role'] ?? 'branch') !== 'branch') {
+            return null;
+        }
+
+        $this->assertOutboxTableExists($conn);
+        $branch = $this->branchIdentity->ensure($conn, $config);
+        $branchUuid = (string) $branch['branch_uuid'];
+        $payload = (new InventoryAccountingSyncPayloadService())->build(
+            $conn,
+            $branchUuid,
+            $journalHeadId,
+            $movementIds
+        );
+        $eventType = (string) ($options['event_type'] ?? 'inventory.accounting_journal_saved');
+        $sourceSystem = $this->sourceSystem($options['source_system'] ?? 'inventory_accounting');
+        $aggregateUuid = PosOrderSnapshotBuilder::deterministicUuid($branchUuid, 'journal_heads:' . $journalHeadId);
+
+        return $this->insertOutbox($conn, $config, $branch, [
+            'event_type' => $eventType,
+            'source_system' => $sourceSystem,
+            'aggregate_type' => 'inventory_journal',
+            'entity_type' => 'inventory_journal',
+            'aggregate_local_id' => $journalHeadId,
+            'entity_local_id' => $journalHeadId,
+            'aggregate_uuid' => $aggregateUuid,
+            'entity_uuid' => $aggregateUuid,
+            'aggregate_id' => 'journal_heads:' . $journalHeadId,
+            'payload' => $payload,
+            'event_version' => 1,
+            'idempotency_suffix' => $eventType . ':v1',
+        ]);
+    }
+
+    public function recordInventoryCountSnapshot(mysqli $conn, int $countId, array $options = []): ?array
+    {
+        if ($countId < 1) {
+            throw new InvalidArgumentException('INVENTORY_COUNT_SYNC_IDENTITY_INVALID');
+        }
+        if (!$this->enabled($options['config'] ?? null)) {
+            return null;
+        }
+
+        $config = $options['config'] ?? (function_exists('posmain_app_config') ? posmain_app_config() : []);
+        if ((string) ($config['role'] ?? 'branch') !== 'branch') {
+            return null;
+        }
+
+        $this->assertOutboxTableExists($conn);
+        $branch = $this->branchIdentity->ensure($conn, $config);
+        $branchUuid = (string) $branch['branch_uuid'];
+        $legacyIdentity = $conn->prepare("UPDATE inventory_counts
+            SET branch_uuid = ?
+            WHERE id = ?
+              AND sync_revision <= 1
+              AND (branch_uuid IS NULL OR branch_uuid = '')");
+        $legacyIdentity->bind_param('si', $branchUuid, $countId);
+        $legacyIdentity->execute();
+        $legacyIdentity->close();
+        $payload = (new InventoryCountSyncPayloadService())->build($conn, $branchUuid, $countId);
+        $count = $payload['inventory_count'];
+        $countUuid = strtolower(trim((string) $count['count_uuid']));
+        $revision = (int) $payload['sync_revision'];
+        $eventType = (string) ($options['event_type'] ?? 'inventory.count_snapshot');
+        $sourceSystem = $this->sourceSystem($options['source_system'] ?? 'inventory_count');
+
+        return $this->insertOutbox($conn, $config, $branch, [
+            'event_type' => $eventType,
+            'source_system' => $sourceSystem,
+            'aggregate_type' => 'inventory_count',
+            'entity_type' => 'inventory_count',
+            'aggregate_local_id' => $countId,
+            'entity_local_id' => $countId,
+            'aggregate_uuid' => $countUuid,
+            'entity_uuid' => $countUuid,
+            'aggregate_id' => 'inventory_counts:' . $countId,
+            'payload' => $payload,
+            'event_version' => $revision,
+            'idempotency_suffix' => $eventType . ':v' . $revision,
+        ]);
+    }
+
+    public function recordProductionBatchSnapshot(mysqli $conn, int $batchId, array $options = []): ?array
+    {
+        if ($batchId < 1) {
+            throw new InvalidArgumentException('PRODUCTION_BATCH_SYNC_IDENTITY_INVALID');
+        }
+        if (!$this->enabled($options['config'] ?? null)) {
+            return null;
+        }
+
+        $config = $options['config'] ?? (function_exists('posmain_app_config') ? posmain_app_config() : []);
+        if ((string) ($config['role'] ?? 'branch') !== 'branch') {
+            return null;
+        }
+
+        $this->assertOutboxTableExists($conn);
+        $branch = $this->branchIdentity->ensure($conn, $config);
+        $branchUuid = (string) $branch['branch_uuid'];
+        $legacyIdentity = $conn->prepare("UPDATE production_batches
+            SET branch_uuid = ?
+            WHERE id = ?
+              AND sync_revision <= 1
+              AND (branch_uuid IS NULL OR branch_uuid = '')");
+        $legacyIdentity->bind_param('si', $branchUuid, $batchId);
+        $legacyIdentity->execute();
+        $legacyIdentity->close();
+        $payload = (new ProductionBatchSyncPayloadService())->build($conn, $branchUuid, $batchId);
+        $batch = $payload['production_batch'];
+        $batchUuid = strtolower(trim((string) $batch['batch_uuid']));
+        $revision = (int) $payload['sync_revision'];
+        $eventType = (string) ($options['event_type'] ?? 'production.batch_snapshot');
+        $sourceSystem = $this->sourceSystem($options['source_system'] ?? 'production_batch');
+
+        return $this->insertOutbox($conn, $config, $branch, [
+            'event_type' => $eventType,
+            'source_system' => $sourceSystem,
+            'aggregate_type' => 'production_batch',
+            'entity_type' => 'production_batch',
+            'aggregate_local_id' => $batchId,
+            'entity_local_id' => $batchId,
+            'aggregate_uuid' => $batchUuid,
+            'entity_uuid' => $batchUuid,
+            'aggregate_id' => 'production_batches:' . $batchId,
+            'payload' => $payload,
+            'event_version' => $revision,
+            'idempotency_suffix' => $eventType . ':v' . $revision,
+        ]);
+    }
+
+    public function recordPurchaseReceiptSnapshot(mysqli $conn, int $receiptId, array $options = []): ?array
+    {
+        if ($receiptId < 1) {
+            throw new InvalidArgumentException('PURCHASE_RECEIPT_SYNC_IDENTITY_INVALID');
+        }
+        if (!$this->enabled($options['config'] ?? null)) {
+            return null;
+        }
+
+        $config = $options['config'] ?? (function_exists('posmain_app_config') ? posmain_app_config() : []);
+        if ((string) ($config['role'] ?? 'branch') !== 'branch') {
+            return null;
+        }
+
+        $this->assertOutboxTableExists($conn);
+        $branch = $this->branchIdentity->ensure($conn, $config);
+        $branchUuid = (string) $branch['branch_uuid'];
+        $legacyIdentity = $conn->prepare("UPDATE inventory_purchase_receipts
+            SET branch_uuid = ?
+            WHERE id = ?
+              AND (branch_uuid IS NULL OR branch_uuid = '')");
+        $legacyIdentity->bind_param('si', $branchUuid, $receiptId);
+        $legacyIdentity->execute();
+        $legacyIdentity->close();
+        $payload = (new PurchaseReceiptSyncPayloadService())->build($conn, $branchUuid, $receiptId);
+        $receipt = $payload['purchase_receipt'];
+        $receiptUuid = strtolower(trim((string) $receipt['purchase_receipt_uuid']));
+        $eventType = (string) ($options['event_type'] ?? 'inventory.purchase_receipt_snapshot');
+        $sourceSystem = $this->sourceSystem($options['source_system'] ?? 'inventory_purchase_receiving');
+
+        return $this->insertOutbox($conn, $config, $branch, [
+            'event_type' => $eventType,
+            'source_system' => $sourceSystem,
+            'aggregate_type' => 'purchase_receipt',
+            'entity_type' => 'purchase_receipt',
+            'aggregate_local_id' => $receiptId,
+            'entity_local_id' => $receiptId,
+            'aggregate_uuid' => $receiptUuid,
+            'entity_uuid' => $receiptUuid,
+            'aggregate_id' => 'inventory_purchase_receipts:' . $receiptId,
+            'payload' => $payload,
+            'event_version' => 1,
+            'idempotency_suffix' => $eventType . ':v1',
+        ]);
+    }
+
+    public function recordPurchaseOrderSnapshot(mysqli $conn, int $orderId, array $options = []): ?array
+    {
+        if ($orderId < 1) throw new InvalidArgumentException('PURCHASE_ORDER_SYNC_IDENTITY_INVALID');
+        if (!$this->enabled($options['config'] ?? null)) return null;
+        $config=$options['config']??(function_exists('posmain_app_config')?posmain_app_config():[]);
+        if ((string)($config['role']??'branch')!=='branch') return null;
+        $this->assertOutboxTableExists($conn); $branch=$this->branchIdentity->ensure($conn,$config); $branchUuid=(string)$branch['branch_uuid'];
+        $stmt=$conn->prepare("UPDATE inventory_purchase_orders SET branch_uuid = ?, sync_revision = GREATEST(sync_revision, 1) WHERE id = ? AND (branch_uuid IS NULL OR branch_uuid = '')");
+        $stmt->bind_param('si',$branchUuid,$orderId);$stmt->execute();$stmt->close();
+        $payload=(new PurchaseOrderSyncPayloadService())->build($conn,$branchUuid,$orderId);$order=$payload['purchase_order'];$revision=(int)$payload['sync_revision'];
+        $eventType=(string)($options['event_type']??'inventory.purchase_order_snapshot');
+        return $this->insertOutbox($conn,$config,$branch,['event_type'=>$eventType,'source_system'=>$this->sourceSystem($options['source_system']??'inventory_purchase_order'),'aggregate_type'=>'purchase_order','entity_type'=>'purchase_order','aggregate_local_id'=>$orderId,'entity_local_id'=>$orderId,'aggregate_uuid'=>strtolower((string)$order['purchase_order_uuid']),'entity_uuid'=>strtolower((string)$order['purchase_order_uuid']),'aggregate_id'=>'inventory_purchase_orders:'.$orderId,'payload'=>$payload,'event_version'=>$revision,'idempotency_suffix'=>$eventType.':v'.$revision]);
     }
 
     public function recordRecipeSnapshot(mysqli $conn, int $recipeId, array $options = []): ?array
@@ -243,6 +541,7 @@ class OperationalSyncEventService
         if (!$row) {
             return null;
         }
+        unset($row['moova_device_token_hash']);
 
         $config = $options['config'] ?? (function_exists('posmain_app_config') ? posmain_app_config() : []);
         $branch = $this->branchIdentity->ensure($conn, $config);
@@ -316,6 +615,227 @@ class OperationalSyncEventService
         ]);
     }
 
+    public function recordDrawerMovementSnapshot(mysqli $conn, int $movementId, array $options = []): ?array
+    {
+        if (!$this->enabled($options['config'] ?? null) || $movementId <= 0) {
+            return null;
+        }
+
+        $movement = $this->fetchRow($conn, 'drawer_movements', $movementId);
+        if (!$movement) {
+            return null;
+        }
+
+        $drawerSession = null;
+        $drawerSessionUuid = null;
+        $drawerSessionId = (int) ($movement['drawer_session_id'] ?? 0);
+        if ($drawerSessionId > 0) {
+            $drawerSession = $this->fetchRow($conn, 'drawer_sessions', $drawerSessionId);
+            if (!$drawerSession || (int) ($drawerSession['id'] ?? 0) !== $drawerSessionId) {
+                throw new RuntimeException('DRAWER_MOVEMENT_SESSION_NOT_FOUND');
+            }
+            $drawerSessionUuid = trim((string) ($drawerSession['uuid'] ?? ''));
+            if (!SyncBranchIdentity::isUuid($drawerSessionUuid)) {
+                throw new RuntimeException('DRAWER_MOVEMENT_SESSION_UUID_INVALID');
+            }
+            $drawerSession = array_intersect_key($drawerSession, array_flip([
+                'id',
+                'uuid',
+                'user_id',
+                'tenant',
+                'branch',
+                'fund_account_id',
+                'opened_at',
+                'opened_by',
+                'opening_cash',
+                'business_day',
+            ]));
+        }
+
+        $config = $options['config'] ?? (function_exists('posmain_app_config') ? posmain_app_config() : []);
+        $branch = $this->branchIdentity->ensure($conn, $config);
+        $branchUuid = (string) $branch['branch_uuid'];
+        $entityUuid = PosOrderSnapshotBuilder::deterministicUuid($branchUuid, 'drawer_movements:' . $movementId);
+        $eventType = (string) ($options['event_type'] ?? 'drawer_movement.saved');
+        $sourceSystem = $this->sourceSystem($options['source_system'] ?? null);
+        $revision = (int) ($movement['ref_ot_head_id'] ?? 0) > 0 ? 2 : 1;
+
+        $payload = [
+            'schema_version' => 1,
+            'snapshot_type' => 'drawer_movement_bundle',
+            'domain' => 'drawer_movement',
+            'branch_uuid' => $branchUuid,
+            'source_system' => $sourceSystem,
+            'sync_revision' => $revision,
+            'movement' => $movement,
+            'drawer_session_uuid' => $drawerSessionUuid,
+            'drawer_session' => $drawerSession,
+        ];
+        $payload['payload_hash'] = hash('sha256', $this->encodeJson($payload));
+
+        return $this->insertOutbox($conn, $config, $branch, [
+            'event_type' => $eventType,
+            'source_system' => $sourceSystem,
+            'aggregate_type' => 'drawer_movement',
+            'entity_type' => 'drawer_movement',
+            'aggregate_local_id' => $movementId,
+            'entity_local_id' => $movementId,
+            'aggregate_uuid' => $entityUuid,
+            'entity_uuid' => $entityUuid,
+            'aggregate_id' => 'drawer_movements:' . $movementId,
+            'payload' => $payload,
+            'event_version' => $revision,
+            'idempotency_suffix' => $eventType . ':v' . $revision,
+        ]);
+    }
+
+    public function recordDrawerSessionSnapshot(mysqli $conn, int $sessionId, array $options = []): ?array
+    {
+        if (!$this->enabled($options['config'] ?? null) || $sessionId <= 0) {
+            return null;
+        }
+
+        $session = $this->fetchRow($conn, 'drawer_sessions', $sessionId);
+        if (!$session) {
+            return null;
+        }
+        if (!array_key_exists('sync_revision', $session)) {
+            throw new RuntimeException('DRAWER_SESSION_SYNC_REVISION_SCHEMA_REQUIRED');
+        }
+        $revision = (int) $session['sync_revision'];
+        if ($revision < 1) {
+            throw new RuntimeException('DRAWER_SESSION_SYNC_REVISION_INVALID');
+        }
+        $sessionUuid = trim((string) ($session['uuid'] ?? ''));
+        if (!SyncBranchIdentity::isUuid($sessionUuid)) {
+            throw new RuntimeException('DRAWER_SESSION_UUID_INVALID');
+        }
+        $session = $this->sanitizeRow($session, [
+            'close_token_hash',
+            'open_branch_lock',
+            'open_register_lock',
+            'open_user_lock',
+            'preceding_session_id',
+        ]);
+
+        $config = $options['config'] ?? (function_exists('posmain_app_config') ? posmain_app_config() : []);
+        $branch = $this->branchIdentity->ensure($conn, $config);
+        $branchUuid = (string) $branch['branch_uuid'];
+        $eventType = (string) ($options['event_type'] ?? 'drawer_session.saved');
+        $sourceSystem = $this->sourceSystem($options['source_system'] ?? null);
+        $payload = [
+            'schema_version' => 1,
+            'snapshot_type' => 'drawer_session_snapshot',
+            'domain' => 'drawer_session',
+            'branch_uuid' => $branchUuid,
+            'source_system' => $sourceSystem,
+            'sync_revision' => $revision,
+            'drawer_session' => $session,
+            'count_attempts' => $this->fetchRowsByForeignKey(
+                $conn,
+                'drawer_count_attempts',
+                'drawer_session_id',
+                $sessionId
+            ),
+            'resolutions' => $this->fetchRowsByForeignKey(
+                $conn,
+                'drawer_session_resolutions',
+                'drawer_session_id',
+                $sessionId
+            ),
+        ];
+        $payload['payload_hash'] = hash('sha256', $this->encodeJson($payload));
+
+        return $this->insertOutbox($conn, $config, $branch, [
+            'event_type' => $eventType,
+            'source_system' => $sourceSystem,
+            'aggregate_type' => 'drawer_session',
+            'entity_type' => 'drawer_session',
+            'aggregate_local_id' => $sessionId,
+            'entity_local_id' => $sessionId,
+            'aggregate_uuid' => $sessionUuid,
+            'entity_uuid' => $sessionUuid,
+            'aggregate_id' => 'drawer_sessions:' . $sessionId,
+            'payload' => $payload,
+            'event_version' => $revision,
+            'idempotency_suffix' => $eventType . ':v' . $revision,
+        ]);
+    }
+
+    public function recordFinancialRefundSnapshot(mysqli $conn, int $creditNoteId, array $options = []): ?array
+    {
+        if (!$this->enabled($options['config'] ?? null) || $creditNoteId <= 0) {
+            return null;
+        }
+
+        $creditNote = $this->fetchRow($conn, 'credit_notes', $creditNoteId);
+        if (!$creditNote) {
+            return null;
+        }
+
+        $creditNoteUuid = trim((string) ($creditNote['uuid'] ?? ''));
+        if (!SyncBranchIdentity::isUuid($creditNoteUuid)) {
+            throw new RuntimeException('FINANCIAL_REFUND_UUID_INVALID');
+        }
+
+        $lines = $this->fetchRowsByForeignKey($conn, 'credit_note_lines', 'credit_note_id', $creditNoteId);
+        $refunds = $this->fetchRowsByForeignKey($conn, 'payment_refunds', 'credit_note_id', $creditNoteId);
+        $journalIds = [];
+        foreach (array_merge([$creditNote], $refunds) as $row) {
+            $journalId = (int) ($row['journal_head_id'] ?? 0);
+            if ($journalId > 0) {
+                $journalIds[$journalId] = $journalId;
+            }
+        }
+        ksort($journalIds, SORT_NUMERIC);
+
+        $journalHeads = $this->fetchRowsByIds($conn, 'journal_heads', array_values($journalIds));
+        $journalEntries = $this->fetchRowsByForeignKeyIds(
+            $conn,
+            'journal_entries',
+            'journal_id',
+            array_values($journalIds)
+        );
+
+        $config = $options['config'] ?? (function_exists('posmain_app_config') ? posmain_app_config() : []);
+        $branch = $this->branchIdentity->ensure($conn, $config);
+        $branchUuid = (string) $branch['branch_uuid'];
+        $eventType = (string) ($options['event_type'] ?? 'financial.refund_snapshot');
+        $sourceSystem = $this->sourceSystem($options['source_system'] ?? null);
+        $revision = $this->financialRefundRevision($creditNote, $refunds);
+
+        $payload = [
+            'schema_version' => 1,
+            'snapshot_type' => 'financial_refund_bundle',
+            'domain' => 'financial_refund',
+            'branch_uuid' => $branchUuid,
+            'source_system' => $sourceSystem,
+            'captured_at_utc' => gmdate('Y-m-d\TH:i:s\Z'),
+            'sync_revision' => $revision,
+            'credit_note' => $creditNote,
+            'credit_note_lines' => $lines,
+            'payment_refunds' => $refunds,
+            'journal_heads' => $journalHeads,
+            'journal_entries' => $journalEntries,
+        ];
+        $payload['payload_hash'] = hash('sha256', $this->encodeJson($payload));
+
+        return $this->insertOutbox($conn, $config, $branch, [
+            'event_type' => $eventType,
+            'source_system' => $sourceSystem,
+            'aggregate_type' => 'financial_refund',
+            'entity_type' => 'financial_refund',
+            'aggregate_local_id' => $creditNoteId,
+            'entity_local_id' => $creditNoteId,
+            'aggregate_uuid' => $creditNoteUuid,
+            'entity_uuid' => $creditNoteUuid,
+            'aggregate_id' => 'credit_notes:' . $creditNoteId,
+            'payload' => $payload,
+            'event_version' => $revision,
+            'idempotency_suffix' => $eventType . ':v' . $revision,
+        ]);
+    }
+
     private function recordRowPayload(mysqli $conn, string $domain, array $definition, array $row, array $options): ?array
     {
         $config = $options['config'] ?? (function_exists('posmain_app_config') ? posmain_app_config() : []);
@@ -342,6 +862,9 @@ class OperationalSyncEventService
             'source_system' => $sourceSystem,
             'captured_at_utc' => gmdate('Y-m-d\TH:i:s\Z'),
         ];
+        if (isset($options['event_version']) && is_numeric($options['event_version'])) {
+            $payload['sync_revision'] = max(1, (int) $options['event_version']);
+        }
         $payload['payload_hash'] = hash('sha256', $this->encodeJson($payload));
 
         return $this->insertOutbox($conn, $config, $branch, [
@@ -355,7 +878,9 @@ class OperationalSyncEventService
             'entity_uuid' => $entityUuid,
             'aggregate_id' => $definition['table'] . ':' . $rowId,
             'payload' => $payload,
-            'event_version' => $this->revisionFromRow($sanitizedRow),
+            'event_version' => isset($options['event_version']) && is_numeric($options['event_version'])
+                ? max(1, (int) $options['event_version'])
+                : $this->revisionFromRow($sanitizedRow),
             'idempotency_suffix' => $eventType,
         ]);
     }
@@ -501,6 +1026,64 @@ class OperationalSyncEventService
         $stmt->close();
 
         return $row ?: null;
+    }
+
+    private function fetchRowsByForeignKey(mysqli $conn, string $table, string $column, int $value): array
+    {
+        if (!$this->tableExists($conn, $table)) {
+            return [];
+        }
+
+        $stmt = $conn->prepare("SELECT * FROM `{$table}` WHERE `{$column}` = ? ORDER BY id ASC");
+        $stmt->bind_param('i', $value);
+        $stmt->execute();
+        $rows = [];
+        $result = $stmt->get_result();
+        while ($row = $result->fetch_assoc()) {
+            $rows[] = $row;
+        }
+        $stmt->close();
+
+        return $rows;
+    }
+
+    private function fetchRowsByIds(mysqli $conn, string $table, array $ids): array
+    {
+        return $this->fetchRowsByForeignKeyIds($conn, $table, 'id', $ids);
+    }
+
+    private function fetchRowsByForeignKeyIds(mysqli $conn, string $table, string $column, array $ids): array
+    {
+        $ids = array_values(array_unique(array_filter(array_map('intval', $ids), static fn (int $id): bool => $id > 0)));
+        if ($ids === [] || !$this->tableExists($conn, $table)) {
+            return [];
+        }
+
+        $sqlIds = implode(',', $ids);
+        $result = $conn->query("SELECT * FROM `{$table}` WHERE `{$column}` IN ({$sqlIds}) ORDER BY id ASC");
+        $rows = [];
+        while ($row = $result->fetch_assoc()) {
+            $rows[] = $row;
+        }
+
+        return $rows;
+    }
+
+    private function financialRefundRevision(array $creditNote, array $refunds): int
+    {
+        $revision = 1;
+        foreach ($refunds as $refund) {
+            $revision += [
+                'pending_external' => 0,
+                'posted' => 1,
+                'settled' => 2,
+            ][(string) ($refund['status'] ?? '')] ?? 0;
+        }
+        if ((string) ($creditNote['status'] ?? '') === 'void') {
+            $revision += 1000;
+        }
+
+        return $revision;
     }
 
     private function sanitizeRow(array $row, array $excludeColumns): array

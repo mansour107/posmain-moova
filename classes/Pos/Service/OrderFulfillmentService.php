@@ -1,10 +1,18 @@
 <?php
 
+require_once __DIR__ . '/../../Sync/SyncOutboxEventService.php';
+
 class OrderFulfillmentService
 {
     private const CHANNELS = ['cashier', 'waiter', 'moova_qr', 'moova_delivery', 'call_center', 'online', 'kiosk', 'import'];
     private const FULFILLMENT_TYPES = ['takeaway', 'table', 'delivery', 'pickup', 'staff_meal', 'waste'];
     private const DELIVERY_STATUSES = ['none', 'pending', 'accepted', 'preparing', 'ready', 'picked_up', 'delivered', 'cancelled', 'failed'];
+    private SyncOutboxEventService $syncOutbox;
+
+    public function __construct(?SyncOutboxEventService $syncOutbox = null)
+    {
+        $this->syncOutbox = $syncOutbox ?: new SyncOutboxEventService();
+    }
 
     public function upsertMoovaFulfillment(mysqli $conn, int $orderId, array $payload, array $options = []): array
     {
@@ -228,12 +236,38 @@ class OrderFulfillmentService
 
     public function transitionDeliveryStatus(mysqli $conn, int $orderId, string $newStatus, array $options = []): array
     {
+        $ownsTransaction = empty($options['in_transaction']) && empty($options['transaction_started']);
+        if ($ownsTransaction) {
+            $conn->begin_transaction();
+        }
+        try {
+            $result = $this->transitionDeliveryStatusInsideTransaction($conn, $orderId, $newStatus, $options);
+            if ($ownsTransaction) {
+                $conn->commit();
+            }
+
+            return $result;
+        } catch (Throwable $exception) {
+            if ($ownsTransaction) {
+                $conn->rollback();
+            }
+            throw $exception;
+        }
+    }
+
+    private function transitionDeliveryStatusInsideTransaction(
+        mysqli $conn,
+        int $orderId,
+        string $newStatus,
+        array $options
+    ): array
+    {
         $newStatus = $this->deliveryStatus($newStatus, 'delivery');
         if ($newStatus === 'none') {
             throw new InvalidArgumentException('INVALID_DELIVERY_STATUS');
         }
 
-        $current = $this->fulfillmentForOrder($conn, $orderId);
+        $current = $this->fulfillmentForOrder($conn, $orderId, true);
         if (!$current) {
             throw new RuntimeException('FULFILLMENT_NOT_FOUND');
         }
@@ -258,7 +292,7 @@ class OrderFulfillmentService
             $metadata['last_status_actor_user_id'] = (int) $options['actor_user_id'];
         }
 
-        return $this->upsertForOrder($conn, $orderId, [
+        $updated = $this->upsertForOrder($conn, $orderId, [
             'order_channel' => $current['order_channel'],
             'fulfillment_type' => $current['fulfillment_type'],
             'external_provider' => $current['external_provider'],
@@ -274,6 +308,17 @@ class OrderFulfillmentService
             'promised_at' => $current['promised_at'],
             'metadata_json' => $metadata,
         ], ['require_table' => true]);
+
+        $config = $options['config'] ?? (function_exists('posmain_app_config') ? posmain_app_config() : []);
+        if ((string) ($config['role'] ?? 'branch') === 'branch') {
+            $this->syncOutbox->recordOrderSnapshot($conn, $orderId, [
+                'event_type' => (string) ($options['event_type'] ?? 'order.fulfillment_updated'),
+                'source_system' => (string) ($options['source_system'] ?? 'pos_delivery_dispatch'),
+                'config' => $config,
+            ]);
+        }
+
+        return $updated;
     }
 
     private function allowedDeliveryTransitions(): array
@@ -403,13 +448,15 @@ class OrderFulfillmentService
         return $row && (int) $row['column_count'] > 0;
     }
 
-    public function fulfillmentForOrder(mysqli $conn, int $orderId): ?array
+    public function fulfillmentForOrder(mysqli $conn, int $orderId, bool $forUpdate = false): ?array
     {
+        $lockSql = $forUpdate ? ' FOR UPDATE' : '';
         $stmt = $conn->prepare("
             SELECT *
             FROM order_fulfillment
             WHERE order_id = ?
             LIMIT 1
+            {$lockSql}
         ");
         $stmt->bind_param('i', $orderId);
         $stmt->execute();

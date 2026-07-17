@@ -172,7 +172,7 @@ class ShiftEntryService
         $openingCountEnabled = $this->openingCountEnabled($conn);
         $currentRegisterId = (int) ($register['id'] ?? 0);
 
-        $blocking = $this->resolveBlockingSession($conn, $tenant, $branch, $currentRegisterId, $userId);
+        $blocking = $this->resolveBlockingSession($conn, $tenant, $branch, $currentRegisterId, $userId, $context);
         if ($blocking && (int) ($blocking['user_id'] ?? 0) !== $userId) {
             $enriched = $this->enrichBlockingSession(
                 $conn,
@@ -273,7 +273,8 @@ class ShiftEntryService
         int $tenant,
         int $branch,
         int $currentRegisterId,
-        int $userId
+        int $userId,
+        array $context = []
     ): ?array {
         if ($currentRegisterId > 0 && method_exists($this->drawers, 'findOpenSessionForRegister')) {
             $blocking = $this->drawers->findOpenSessionForRegister($conn, $currentRegisterId);
@@ -292,7 +293,14 @@ class ShiftEntryService
             if (count($activeRegisters) === 1) {
                 $onlyRegisterId = (int) ($activeRegisters[0]['id'] ?? 0);
                 if ($onlyRegisterId === $currentRegisterId) {
-                    $this->backfillLegacyRegisterId($conn, (int) $legacy['id'], $onlyRegisterId, $tenant, $branch);
+                    $this->backfillLegacyRegisterId(
+                        $conn,
+                        (int) $legacy['id'],
+                        $onlyRegisterId,
+                        $tenant,
+                        $branch,
+                        $context
+                    );
 
                     return $this->drawers->sessionById($conn, (int) $legacy['id']);
                 }
@@ -342,11 +350,14 @@ class ShiftEntryService
         int $sessionId,
         int $registerId,
         int $tenant,
-        int $branch
+        int $branch,
+        array $context = []
     ): void {
         if ($sessionId < 1 || $registerId < 1) {
             return;
         }
+
+        require_once dirname(__DIR__, 3) . '/includes/db_transaction.php';
 
         $sets = ['register_id = ?'];
         $types = 'i';
@@ -361,14 +372,53 @@ class ShiftEntryService
         $types .= 'i';
         $params[] = $sessionId;
         $sql = 'UPDATE drawer_sessions SET ' . implode(', ', $sets) . ' WHERE id = ? AND status = \'open\'';
-        $stmt = $conn->prepare($sql);
-        $stmt->bind_param($types, ...$params);
+
+        $ownsTransaction = posmain_tx_begin_if_needed($conn, $this->connectionInTransaction($conn));
+        $stmt = null;
         try {
-            $stmt->execute();
-        } catch (Throwable $ignored) {
-            // Unique lock race: caller still treats the legacy session as blocking.
+            $stmt = $conn->prepare($sql);
+            $stmt->bind_param($types, ...$params);
+            try {
+                $stmt->execute();
+            } catch (Throwable $ignored) {
+                // Unique lock race: caller still treats the legacy session as blocking.
+                $stmt->close();
+                $stmt = null;
+                posmain_tx_rollback_if_owned($conn, $ownsTransaction);
+
+                return;
+            }
+
+            $affected = $stmt->affected_rows;
+            $stmt->close();
+            $stmt = null;
+            if ($affected !== 1) {
+                posmain_tx_commit_if_owned($conn, $ownsTransaction);
+
+                return;
+            }
+
+            $syncContext = ['in_transaction' => true];
+            if (isset($context['sync_config']) && is_array($context['sync_config'])) {
+                $syncContext['sync_config'] = $context['sync_config'];
+            }
+            $this->drawers->captureExternalSessionMutation($conn, $sessionId, $syncContext);
+            posmain_tx_commit_if_owned($conn, $ownsTransaction);
+        } catch (Throwable $exception) {
+            if ($stmt instanceof mysqli_stmt) {
+                $stmt->close();
+            }
+            posmain_tx_rollback_if_owned($conn, $ownsTransaction);
+            throw $exception;
         }
-        $stmt->close();
+    }
+
+    private function connectionInTransaction(mysqli $conn): bool
+    {
+        $result = $conn->query('SELECT @@session.in_transaction AS active_transaction');
+        $row = $result->fetch_assoc() ?: [];
+
+        return !empty($row['active_transaction']);
     }
 
     /**

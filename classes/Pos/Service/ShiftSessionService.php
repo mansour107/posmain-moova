@@ -925,11 +925,15 @@ class ShiftSessionService
 
         $ownsTransaction = posmain_tx_begin_if_needed($conn, !empty($payload['in_transaction']));
         try {
+            $syncContext = ['in_transaction' => true];
+            if (is_array($payload['sync_config'] ?? null)) {
+                $syncContext['sync_config'] = $payload['sync_config'];
+            }
             $closed = $this->drawerSessions->forceCloseSession($conn, $sessionId, [
                 'closed_by' => $actingUserId,
                 'counted_cash' => number_format((float) $countedCash, 3, '.', ''),
                 'notes' => $reason,
-            ], ['in_transaction' => true]);
+            ], $syncContext);
 
             $difference = (float) ($closed['difference'] ?? 0);
             $openingUnresolved = (($session['variance_status'] ?? '') === 'unresolved')
@@ -967,6 +971,11 @@ class ShiftSessionService
                 $stmt->execute();
                 $stmt->close();
             }
+            $closed = $this->drawerSessions->captureExternalSessionMutation(
+                $conn,
+                $sessionId,
+                $syncContext
+            );
 
             $closeSummary = (new DrawerSessionCloseSummaryService())->createForSession($conn, $sessionId, [
                 'shift_number' => date('Ymd') . '_' . $ownerUserId,
@@ -994,9 +1003,14 @@ class ShiftSessionService
             ]);
 
             require_once dirname(__DIR__, 2) . '/Sync/OperationalSyncEventService.php';
+            $shiftCloseOptions = [];
+            if (isset($syncContext['sync_config'])) {
+                $shiftCloseOptions['config'] = $syncContext['sync_config'];
+            }
             (new OperationalSyncEventService())->recordShiftCloseSnapshot(
                 $conn,
-                (int) ($closeSummary['id'] ?? 0)
+                (int) ($closeSummary['id'] ?? 0),
+                $shiftCloseOptions
             );
 
             posmain_tx_commit_if_owned($conn, $ownsTransaction);

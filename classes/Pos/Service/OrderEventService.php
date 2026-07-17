@@ -1,5 +1,7 @@
 <?php
 
+require_once __DIR__ . '/../../Sync/OperationalSyncEventService.php';
+
 class OrderEventService
 {
     public function recordIfAvailable(mysqli $conn, int $orderId, string $eventType, string $eventSource, array $options = []): ?array
@@ -56,6 +58,20 @@ class OrderEventService
         $stmt->execute();
         $eventId = (int) $conn->insert_id;
         $stmt->close();
+
+        $syncOptions = [
+            'source_system' => 'pos_order_event',
+            'event_type' => 'order_event.saved',
+        ];
+        if (isset($options['sync_config']) && is_array($options['sync_config'])) {
+            $syncOptions['config'] = $options['sync_config'];
+        }
+        (new OperationalSyncEventService())->recordRowSnapshot(
+            $conn,
+            'order_event',
+            $eventId,
+            $syncOptions
+        );
 
         return [
             'id' => $eventId,

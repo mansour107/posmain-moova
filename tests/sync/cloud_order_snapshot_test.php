@@ -99,7 +99,10 @@ class CloudOrderSnapshotTest extends TestCase
         $this->assertSame(200, $result['status_code']);
         $this->assertSame('shadow_apply', $result['body']['mode']);
         $this->assertSame('accepted_shadow', $result['body']['results'][0]['status']);
-        $this->assertTrue($result['body']['results'][0]['applied']);
+        $this->assertTrue(
+            $result['body']['results'][0]['applied'],
+            json_encode($result['body']['results'][0], JSON_UNESCAPED_SLASHES) ?: 'projection was not applied'
+        );
         $this->assertFalse($result['body']['results'][0]['report_trusted']);
         $this->assertStringStartsWith('cloud_order:', (string) $result['body']['results'][0]['cloud_entity_id']);
 
@@ -112,6 +115,8 @@ class CloudOrderSnapshotTest extends TestCase
         $this->assertSame(12, (int) $order['cashier_user_id']);
         $this->assertSame(7, (int) $order['table_id']);
         $this->assertSame('55.2500', $order['fat_total']);
+        $this->assertSame('1.2345', $order['fat_tax']);
+        $this->assertSame('20.123456', $order['profit']);
         $this->assertSame('10.0000', $order['paid_amount']);
         $this->assertSame('partial', $order['payment_status']);
         $this->assertSame(3, (int) $order['sync_revision']);
@@ -119,8 +124,9 @@ class CloudOrderSnapshotTest extends TestCase
         $line = $this->fetchCloudLine();
         $this->assertSame(self::LINE_UUID, $line['line_uuid']);
         $this->assertSame('Temp Tea', $line['item_name']);
-        $this->assertSame('2.0000', $line['qty_out']);
-        $this->assertSame('18.0000', $line['price']);
+        $this->assertSame('2.123456', $line['qty_out']);
+        $this->assertSame('18.123456', $line['price']);
+        $this->assertSame('20.123456', $line['profit']);
         $payment = $this->fetchCloudPayment();
         $this->assertSame(self::PAYMENT_UUID, $payment['payment_uuid']);
         $this->assertSame('10.0000', $payment['amount']);
@@ -205,6 +211,131 @@ class CloudOrderSnapshotTest extends TestCase
         $this->assertSame('RCPT-43', $this->fetchCloudReceipt()['pro_id']);
     }
 
+    public function testVersion4ProjectionPreservesUnknownHeaderFinancialValuesAsNull(): void
+    {
+        $event = $this->event('nullable-financials', [
+            'fat_total' => null,
+            'fat_tax' => null,
+            'profit' => null,
+            'sync_revision' => 4,
+        ]);
+        $event['payload']['schema_version'] = 4;
+        $event['payload']['lines'] = $event['payload']['order']['lines'];
+        $event['payload']['payments'] = $event['payload']['order']['payments'];
+        $event['payload']['receipts'] = $event['payload']['order']['receipts'];
+        $event['payload']['payments'][0]['source'] = 'ot_head';
+        $event['payload']['payments'][0]['order_uuid'] = self::ORDER_UUID;
+        $event['payload']['receipts'][0]['local_receipt_id'] = 601;
+        $event['payload']['receipts'][0]['order_uuid'] = self::ORDER_UUID;
+        $event['payload']['fulfillment'] = null;
+        $event['payload']['financial_bundle'] = $this->financialBundle();
+
+        $result = $this->postEvent($event, true, false);
+
+        $this->assertSame(200, $result['status_code']);
+        $this->assertTrue(
+            $result['body']['results'][0]['applied'],
+            json_encode($result['body']['results'][0], JSON_UNESCAPED_SLASHES) ?: 'version-4 projection was not applied'
+        );
+        $order = $this->fetchCloudOrder();
+        $this->assertNotNull($order);
+        $this->assertNull($order['fat_total']);
+        $this->assertNull($order['fat_tax']);
+        $this->assertNull($order['profit']);
+    }
+
+    public function testSchemaV2RejectsUnbalancedFinancialBundleBeforeProjection(): void
+    {
+        $event = $this->event('invalid-financial', ['sync_revision' => 8]);
+        $event['payload'] = [
+            'schema_version' => 2,
+            'order' => $event['payload']['order'],
+            'payments' => [[
+                'payment_uuid' => self::PAYMENT_UUID,
+                'order_uuid' => self::ORDER_UUID,
+                'source' => 'ot_head',
+                'local_payment_id' => 701,
+                'amount' => '10.00',
+            ]],
+            'receipts' => [[
+                'receipt_uuid' => self::RECEIPT_UUID,
+                'order_uuid' => self::ORDER_UUID,
+                'local_receipt_id' => 701,
+                'local_order_id' => 4201,
+                'amount' => '10.00',
+            ]],
+        ];
+        $bundle = $this->financialBundle();
+        $bundle['journal_entries'][1]['credit'] = '9.00';
+        unset($bundle['bundle_hash']);
+        $bundle['bundle_hash'] = hash('sha256', json_encode($bundle, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+        $event['payload']['financial_bundle'] = $bundle;
+
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('ORDER_FINANCIAL_JOURNAL_UNBALANCED');
+        (new CloudOrderSnapshotService())->upsertFromBranchEvent(self::$conn, self::BRANCH_UUID, $event);
+    }
+
+    public function testSchemaV2RejectsReceiptFromAnotherOrderBeforeProjection(): void
+    {
+        $event = $this->event('invalid-receipt-scope', ['sync_revision' => 9]);
+        $event['payload'] = [
+            'schema_version' => 2,
+            'order' => $event['payload']['order'],
+            'payments' => [[
+                'payment_uuid' => self::PAYMENT_UUID,
+                'order_uuid' => self::ORDER_UUID,
+                'source' => 'ot_head',
+                'local_payment_id' => 701,
+                'amount' => '10.00',
+            ]],
+            'receipts' => [[
+                'receipt_uuid' => self::RECEIPT_UUID,
+                'order_uuid' => self::ORDER_UUID,
+                'local_receipt_id' => 701,
+                'local_order_id' => 9999,
+                'amount' => '10.00',
+            ]],
+            'financial_bundle' => $this->financialBundle(),
+        ];
+
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('ORDER_FINANCIAL_RECEIPT_SCOPE_INVALID');
+        (new CloudOrderSnapshotService())->upsertFromBranchEvent(self::$conn, self::BRANCH_UUID, $event);
+    }
+
+    private function financialBundle(): array
+    {
+        $bundle = [
+            'schema_version' => 1,
+            'scope' => 'pos_order',
+            'complete' => true,
+            'local_order_id' => 4201,
+            'accounts' => [
+                ['id' => 51, 'code' => '121', 'aname' => 'Cash', 'parent_id' => 0, 'is_basic' => 0],
+                ['id' => 91, 'code' => '31', 'aname' => 'Sales', 'parent_id' => 0, 'is_basic' => 0],
+            ],
+            'journal_heads' => [[
+                'id' => 801,
+                'journal_id' => 901,
+                'total' => '10.00',
+                'jdate' => '2026-05-10',
+                'op_id' => 4201,
+                'op2' => 4201,
+                'source_type' => 'invoice',
+                'posting_kind' => 'invoice_finalization',
+            ]],
+            'journal_entries' => [
+                ['id' => 811, 'journal_id' => 801, 'account_id' => 51, 'debit' => '10.00', 'credit' => '0.00', 'tybe' => 0, 'op2' => 4201],
+                ['id' => 812, 'journal_id' => 801, 'account_id' => 91, 'debit' => '0.00', 'credit' => '10.00', 'tybe' => 1, 'op2' => 4201],
+            ],
+            'totals' => ['journal_count' => 1, 'entry_count' => 2, 'debit' => '10.00', 'credit' => '10.00'],
+        ];
+        $bundle['bundle_hash'] = hash('sha256', json_encode($bundle, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+
+        return $bundle;
+    }
+
     private function event(string $suffix, array $overrides): array
     {
         $order = array_merge([
@@ -226,6 +357,8 @@ class CloudOrderSnapshotTest extends TestCase
             'fat_total' => 55.25,
             'fat_net' => 55.25,
             'fat_disc' => 0,
+            'fat_tax' => 1.2345,
+            'profit' => 20.123456,
             'paid_amount' => 0,
             'remaining_amount' => 55.25,
             'payment_status' => 'unpaid',
@@ -241,12 +374,12 @@ class CloudOrderSnapshotTest extends TestCase
                 'item_uuid' => '44444444-7777-4777-8777-444444444444',
                 'item_name' => 'Temp Tea',
                 'barcode' => 'TEMPTEA',
-                'qty_out' => 2,
-                'price' => 18,
+                'qty_out' => 2.123456,
+                'price' => 18.123456,
                 'cost_price' => 8,
                 'discount' => 0,
                 'det_value' => 36,
-                'profit' => 20,
+                'profit' => 20.123456,
             ]],
             'payments' => [[
                 'payment_uuid' => self::PAYMENT_UUID,
@@ -484,6 +617,7 @@ class CloudOrderSnapshotTest extends TestCase
         self::$conn->query("DELETE FROM cloud_order_payments WHERE branch_uuid = '" . self::$conn->real_escape_string(self::BRANCH_UUID) . "'");
         self::$conn->query("DELETE FROM cloud_order_lines WHERE branch_uuid = '" . self::$conn->real_escape_string(self::BRANCH_UUID) . "'");
         self::$conn->query("DELETE FROM cloud_orders WHERE branch_uuid = '" . self::$conn->real_escape_string(self::BRANCH_UUID) . "'");
+        self::$conn->query("DELETE FROM sync_projection_versions WHERE branch_uuid = '" . self::$conn->real_escape_string(self::BRANCH_UUID) . "'");
         self::$conn->query("DELETE FROM sync_inbox WHERE idempotency_key LIKE 'phpunit:cloud-order:%'");
         self::$conn->query("DELETE FROM sync_conflicts WHERE branch_uuid = '" . self::$conn->real_escape_string(self::BRANCH_UUID) . "'");
         self::$conn->query("DELETE FROM cloud_branches WHERE branch_uuid = '" . self::$conn->real_escape_string(self::BRANCH_UUID) . "'");

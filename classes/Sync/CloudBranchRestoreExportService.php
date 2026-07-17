@@ -33,12 +33,13 @@ class CloudBranchRestoreExportService
 
     public function hasInboxEvents(mysqli $conn, string $branchUuid): bool
     {
+        $eligibleDecision = $this->restorableInboxDecisionSql();
         $stmt = $conn->prepare("
             SELECT COUNT(*) AS c
             FROM sync_inbox
             WHERE branch_uuid = ?
               AND direction = 'branch_to_cloud'
-              AND status IN ('processed', 'duplicate')
+              AND {$eligibleDecision}
             LIMIT 1
         ");
         $stmt->bind_param('s', $branchUuid);
@@ -61,6 +62,7 @@ class CloudBranchRestoreExportService
         $cursor = $afterId;
         $nextAfterId = $afterId;
         $scanLimit = max($limit, min(800, $limit * self::MAX_SCAN_MULTIPLIER));
+        $eligibleDecision = $this->restorableInboxDecisionSql();
 
         while (count($events) < $limit) {
             $stmt = $conn->prepare("
@@ -68,7 +70,7 @@ class CloudBranchRestoreExportService
                 FROM sync_inbox
                 WHERE branch_uuid = ?
                   AND direction = 'branch_to_cloud'
-                  AND status IN ('processed', 'duplicate')
+                  AND {$eligibleDecision}
                   AND id > ?
                 ORDER BY id ASC
                 LIMIT ?
@@ -411,6 +413,7 @@ class CloudBranchRestoreExportService
     {
         $cursor = $afterId;
         $scanLimit = 200;
+        $eligibleDecision = $this->restorableInboxDecisionSql();
 
         while (true) {
             $stmt = $conn->prepare("
@@ -418,7 +421,7 @@ class CloudBranchRestoreExportService
                 FROM sync_inbox
                 WHERE branch_uuid = ?
                   AND direction = 'branch_to_cloud'
-                  AND status IN ('processed', 'duplicate')
+                  AND {$eligibleDecision}
                   AND id > ?
                 ORDER BY id ASC
                 LIMIT ?
@@ -449,6 +452,21 @@ class CloudBranchRestoreExportService
                 return false;
             }
         }
+    }
+
+    private function restorableInboxDecisionSql(): string
+    {
+        return "(
+            status = 'duplicate'
+            OR (
+                status = 'processed'
+                AND CASE
+                    WHEN JSON_VALID(result_json) = 1
+                    THEN COALESCE(JSON_UNQUOTE(JSON_EXTRACT(result_json, '$.status')), '') <> 'stale'
+                    ELSE TRUE
+                END
+            )
+        )";
     }
 
     private function emptyPage(string $source, string $phase, int $afterId): array
@@ -784,6 +802,7 @@ class CloudBranchRestoreExportService
         $nextRowAfterId = $rowAfterId;
         while ($row = $result->fetch_assoc()) {
             $nextRowAfterId = (int) $row['id'];
+            unset($row['moova_device_token_hash']);
             $payload = [
                 'schema_version' => 1,
                 'snapshot_type' => 'moova_shop_link',

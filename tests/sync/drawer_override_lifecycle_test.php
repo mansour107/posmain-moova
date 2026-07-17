@@ -5,6 +5,7 @@
  */
 
 require_once __DIR__ . '/../../classes/Sync/SchemaManager.php';
+require_once __DIR__ . '/../../classes/Sync/BranchIdentity.php';
 require_once __DIR__ . '/../../classes/Pos/Service/ShiftCountService.php';
 require_once __DIR__ . '/../../classes/Pos/Service/ShiftSessionService.php';
 require_once __DIR__ . '/../../classes/Pos/Service/ShiftEntryService.php';
@@ -112,7 +113,20 @@ try {
     ]);
     $registerId = (int) $register['id'];
     $_SESSION['pos_register_id'] = $registerId;
-
+    $syncConfig = [
+        'role' => 'branch',
+        'branch' => [
+            'uuid' => '9ab7d40a-e8f2-4d30-98a9-c79e86e7b06f',
+            'name' => 'Legacy register repair test',
+            'pos_tenant' => 3,
+            'pos_branch' => 7,
+        ],
+        'sync' => [
+            'branch_sync_enabled' => true,
+            'outbox_enabled' => true,
+            'operational_sync_enabled' => true,
+        ],
+    ];
     $count = new ShiftCountService();
     $shifts = new ShiftSessionService();
     $drawer = new DrawerSessionService();
@@ -162,14 +176,54 @@ try {
     overrideAssert(!empty($blockedManager['blocking_session']['can_override']), 'manager can_override');
 
     // Legacy null-register session blocks rather than allowing a second open.
+    $syncIdentity = new SyncBranchIdentity();
+    $currentIdentity = $syncIdentity->find($conn);
+    if ($currentIdentity) {
+        $syncConfig['branch']['uuid'] = (string) $currentIdentity['branch_uuid'];
+    }
+    $syncIdentity->ensure($conn, $syncConfig);
     $conn->query("UPDATE drawer_sessions SET register_id = NULL, open_register_lock = NULL WHERE id = {$sessionA}");
-    $legacyBlocked = $entry->resolveForUser($conn, 80);
+    $beforeLegacy = $drawer->sessionById($conn, $sessionA);
+    $beforeLegacyRevision = (int) ($beforeLegacy['sync_revision'] ?? 0);
+
+    $conn->begin_transaction();
+    $legacyRollback = $entry->resolveForUser($conn, 80, ['sync_config' => $syncConfig]);
+    overrideAssert(($legacyRollback['state'] ?? '') === ShiftEntryService::STATE_BRANCH_BLOCKED, 'legacy repair keeps manager blocked inside caller transaction');
+    $insideLegacy = $drawer->sessionById($conn, $sessionA);
+    overrideAssert((int) ($insideLegacy['register_id'] ?? 0) === $registerId, 'legacy repair is visible inside caller transaction');
+    overrideAssert((int) ($insideLegacy['sync_revision'] ?? 0) === $beforeLegacyRevision + 1, 'legacy repair advances revision inside caller transaction');
+    $insideLegacyEvents = (int) $conn->query(
+        "SELECT COUNT(*) AS c FROM sync_outbox WHERE aggregate_type = 'drawer_session'"
+        . " AND aggregate_local_id = {$sessionA} AND event_version = " . ($beforeLegacyRevision + 1)
+    )->fetch_assoc()['c'];
+    overrideAssert($insideLegacyEvents === 1, 'legacy repair event is visible inside caller transaction');
+    $conn->rollback();
+
+    $afterLegacyRollback = $drawer->sessionById($conn, $sessionA);
+    overrideAssert(empty($afterLegacyRollback['register_id']), 'caller rollback restores null legacy register');
+    overrideAssert(empty($afterLegacyRollback['open_register_lock']), 'caller rollback restores null legacy register lock');
+    overrideAssert((int) ($afterLegacyRollback['sync_revision'] ?? 0) === $beforeLegacyRevision, 'caller rollback restores legacy revision');
+    $rolledBackLegacyEvents = (int) $conn->query(
+        "SELECT COUNT(*) AS c FROM sync_outbox WHERE aggregate_type = 'drawer_session'"
+        . " AND aggregate_local_id = {$sessionA} AND event_version = " . ($beforeLegacyRevision + 1)
+    )->fetch_assoc()['c'];
+    overrideAssert($rolledBackLegacyEvents === 0, 'caller rollback removes legacy repair event');
+
+    $legacyBlocked = $entry->resolveForUser($conn, 80, ['sync_config' => $syncConfig]);
     overrideAssert(($legacyBlocked['state'] ?? '') === ShiftEntryService::STATE_BRANCH_BLOCKED, 'legacy null register blocks');
     // Backfill when single active register.
-    $legacySession = $drawer->sessionById($conn, $sessionA);
-    // resolveBlockingSession backfills — re-check register after resolve.
     $afterLegacy = $drawer->sessionById($conn, $sessionA);
     overrideAssert((int) ($afterLegacy['register_id'] ?? 0) === $registerId, 'legacy register backfilled');
+    overrideAssert((int) ($afterLegacy['sync_revision'] ?? 0) === $beforeLegacyRevision + 1, 'legacy register backfill commits the next revision');
+    $legacyEvent = $conn->query(
+        "SELECT payload_json FROM sync_outbox WHERE aggregate_type = 'drawer_session'"
+        . " AND aggregate_local_id = {$sessionA} AND event_version = " . ($beforeLegacyRevision + 1)
+        . " ORDER BY id DESC LIMIT 1"
+    )->fetch_assoc();
+    overrideAssert($legacyEvent !== null, 'legacy register backfill commits one typed event');
+    $legacyPayload = json_decode((string) $legacyEvent['payload_json'], true, 512, JSON_THROW_ON_ERROR);
+    overrideAssert((int) ($legacyPayload['drawer_session']['register_id'] ?? 0) === $registerId, 'legacy repair event carries repaired register');
+    overrideAssert(!array_key_exists('open_register_lock', $legacyPayload['drawer_session'] ?? []), 'legacy repair event excludes register lock');
 
     // Start override requires approval + reason.
     $noApproval = false;

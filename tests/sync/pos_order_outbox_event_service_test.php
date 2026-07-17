@@ -30,6 +30,9 @@ class PosOrderOutboxEventServiceTest extends TestCase
     private static $conn;
     private $orderId;
     private $itemId;
+    private $tableId;
+    private $accountIds = [];
+    private $journalHeadIds = [];
     private $originalIdentity;
 
     public static function setUpBeforeClass(): void
@@ -78,6 +81,13 @@ class PosOrderOutboxEventServiceTest extends TestCase
                 INSERT INTO sync_branch_identity (
                     id, branch_uuid, branch_name, pos_tenant, pos_branch, cloud_base_url, current_menu_version
                 ) VALUES (1, ?, ?, ?, ?, ?, ?)
+                ON DUPLICATE KEY UPDATE
+                    branch_uuid = VALUES(branch_uuid),
+                    branch_name = VALUES(branch_name),
+                    pos_tenant = VALUES(pos_tenant),
+                    pos_branch = VALUES(pos_branch),
+                    cloud_base_url = VALUES(cloud_base_url),
+                    current_menu_version = VALUES(current_menu_version)
             ");
             $branchUuid = (string) $this->originalIdentity['branch_uuid'];
             $branchName = $this->originalIdentity['branch_name'];
@@ -107,6 +117,7 @@ class PosOrderOutboxEventServiceTest extends TestCase
         $this->assertSame(self::BRANCH_UUID, $outbox['branch_uuid']);
         $this->assertSame('order.saved', $outbox['event_type']);
         $this->assertSame('pos_cashier', $outbox['source_system']);
+        $this->assertSame((int) $payload['order']['sync_revision'], (int) $outbox['event_version']);
         $this->assertSame($payload['order_uuid'], $outbox['aggregate_uuid']);
         $this->assertSame($this->orderId, (int) $payload['order']['local_order_id']);
         $this->assertSame('paid', $payload['order']['payment_status']);
@@ -114,6 +125,126 @@ class PosOrderOutboxEventServiceTest extends TestCase
         $this->assertCount(1, $payload['payments']);
         $this->assertCount(1, $payload['receipts']);
         $this->assertNotEmpty($payload['lines'][0]['line_uuid']);
+        $this->assertSame(4, (int) $payload['schema_version']);
+        $this->assertSame('1.2345', $payload['order']['fat_tax']);
+        $this->assertSame('7.123456', $payload['order']['profit']);
+        $this->assertSame('1.123456', $payload['lines'][0]['qty_out']);
+        $this->assertSame('7.123456', $payload['lines'][0]['profit']);
+        $this->assertArrayHasKey('fulfillment', $payload);
+        $this->assertNull($payload['fulfillment']);
+        $this->assertTrue($payload['financial_bundle']['complete']);
+        $this->assertCount(1, $payload['financial_bundle']['journal_heads']);
+        $this->assertCount(2, $payload['financial_bundle']['journal_entries']);
+        $this->assertCount(2, $payload['financial_bundle']['accounts']);
+        $this->assertSame('12.00', $payload['financial_bundle']['totals']['debit']);
+        $this->assertSame('12.00', $payload['financial_bundle']['totals']['credit']);
+        $this->assertArrayNotHasKey('balance', $payload['financial_bundle']['accounts'][0]);
+        $this->assertArrayNotHasKey('phone', $payload['financial_bundle']['accounts'][0]);
+        $this->assertSame('invoice', $payload['financial_bundle']['journal_heads'][0]['source_type']);
+    }
+
+    public function testRapidOrderSnapshotsUseStrictlyIncreasingFinancialVersions(): void
+    {
+        $service = new SyncOutboxEventService();
+        $first = $service->recordOrderSnapshot(self::$conn, $this->orderId, [
+            'event_type' => 'order.payment_recorded',
+            'source_system' => 'pos_table_payment',
+            'config' => $this->branchConfig(),
+        ]);
+        $counterKey = self::$conn->real_escape_string('order:' . self::BRANCH_UUID . ':' . $this->orderId);
+        self::$conn->query("DELETE FROM document_counters WHERE counter_type = 'order_sync' AND counter_key = '{$counterKey}'");
+        $second = $service->recordOrderSnapshot(self::$conn, $this->orderId, [
+            'event_type' => 'order.payment_recorded',
+            'source_system' => 'pos_table_payment',
+            'config' => $this->branchConfig(),
+        ]);
+
+        $firstOutbox = $this->fetchOutbox((int) $first['outbox_id']);
+        $secondOutbox = $this->fetchOutbox((int) $second['outbox_id']);
+        $this->assertSame((int) $firstOutbox['event_version'] + 1, (int) $secondOutbox['event_version']);
+        $this->assertNotSame($firstOutbox['idempotency_key'], $secondOutbox['idempotency_key']);
+    }
+
+    public function testVersion4SnapshotPreservesUnknownHeaderFinancialValuesAsNull(): void
+    {
+        self::$conn->query(
+            'UPDATE ot_head SET fat_total = NULL, fat_tax = NULL, profit = NULL WHERE id = ' . (int) $this->orderId
+        );
+
+        $result = (new SyncOutboxEventService())->recordOrderSnapshot(self::$conn, $this->orderId, [
+            'event_type' => 'order.updated',
+            'source_system' => 'pos_cashier',
+            'config' => $this->branchConfig(),
+        ]);
+        $payload = json_decode($this->fetchOutbox((int) $result['outbox_id'])['payload_json'], true);
+
+        $this->assertSame(4, (int) $payload['schema_version']);
+        $this->assertNull($payload['order']['fat_total']);
+        $this->assertNull($payload['order']['fat_tax']);
+        $this->assertNull($payload['order']['profit']);
+    }
+
+    public function testInvalidFinancialBundleRollsBackOwningBusinessTransaction(): void
+    {
+        $before = self::$conn->query('SELECT info FROM ot_head WHERE id = ' . (int) $this->orderId)->fetch_assoc();
+        $badKey = 'phpunit-invalid-order-financial:' . $this->orderId;
+        self::$conn->begin_transaction();
+        self::$conn->query("UPDATE ot_head SET info = 'must rollback' WHERE id = " . (int) $this->orderId);
+        $stmt = self::$conn->prepare("
+            INSERT INTO journal_heads (
+                journal_id, total, jdate, details, user, op_id, op2,
+                source_type, source_id, posting_kind, idempotency_key
+            ) VALUES (990003, 4.00, CURDATE(), 'Invalid one-sided journal', 1, ?, ?,
+                'payment', ?, 'test_invalid_one_sided', ?)
+        ");
+        $stmt->bind_param('iiis', $this->orderId, $this->orderId, $this->orderId, $badKey);
+        $stmt->execute();
+        $badHeadId = (int) self::$conn->insert_id;
+        $stmt->close();
+        $stmt = self::$conn->prepare("
+            INSERT INTO journal_entries (journal_id, account_id, debit, credit, tybe, op2)
+            VALUES (?, ?, 4.00, 0.00, 0, ?)
+        ");
+        $stmt->bind_param('iii', $badHeadId, $this->accountIds[0], $this->orderId);
+        $stmt->execute();
+        $stmt->close();
+
+        try {
+            (new SyncOutboxEventService())->recordOrderSnapshot(self::$conn, $this->orderId, [
+                'event_type' => 'order.updated',
+                'source_system' => 'pos_cashier',
+                'config' => $this->branchConfig(),
+            ]);
+            $this->fail('Expected invalid financial bundle failure.');
+        } catch (RuntimeException $exception) {
+            $this->assertSame('ORDER_FINANCIAL_JOURNAL_ENTRIES_REQUIRED', $exception->getMessage());
+            self::$conn->rollback();
+        }
+
+        $after = self::$conn->query('SELECT info FROM ot_head WHERE id = ' . (int) $this->orderId)->fetch_assoc();
+        $this->assertSame($before['info'], $after['info']);
+        $this->assertSame(0, (int) self::$conn->query('SELECT COUNT(*) AS c FROM journal_heads WHERE id = ' . $badHeadId)->fetch_assoc()['c']);
+    }
+
+    public function testRecordTableSnapshotStoresPayloadRevisionInOutboxEnvelope(): void
+    {
+        $tableName = 'PHPUnit Sync Table ' . bin2hex(random_bytes(3));
+        $stmt = self::$conn->prepare("INSERT INTO tables (tname, table_case) VALUES (?, 0)");
+        $stmt->bind_param('s', $tableName);
+        $stmt->execute();
+        $this->tableId = (int) self::$conn->insert_id;
+        $stmt->close();
+
+        $result = (new SyncOutboxEventService())->recordTableSnapshot(self::$conn, $this->tableId, [
+            'event_type' => 'table.updated',
+            'source_system' => 'pos_cashier',
+            'config' => $this->branchConfig(),
+        ]);
+
+        $outbox = $this->fetchOutbox((int) $result['outbox_id']);
+        $payload = json_decode($outbox['payload_json'], true);
+        $this->assertSame((int) $payload['table']['sync_revision'], (int) $outbox['event_version']);
+        $this->assertGreaterThanOrEqual(1, (int) $outbox['event_version']);
     }
 
     public function testGeneratedOutboxEventSyncsThroughWorkerIntoCloudOrderSnapshot(): void
@@ -154,6 +285,8 @@ class PosOrderOutboxEventServiceTest extends TestCase
         $this->assertNotNull($cloudOrder);
         $this->assertSame((string) $this->orderId, (string) $cloudOrder['local_order_id']);
         $this->assertSame('paid', $cloudOrder['payment_status']);
+        $this->assertSame('1.2345', $cloudOrder['fat_tax']);
+        $this->assertSame('7.123456', $cloudOrder['profit']);
         $this->assertSame(1, $this->cloudChildCount('cloud_order_lines', (string) $event['order_uuid']));
         $this->assertSame(1, $this->cloudChildCount('cloud_order_payments', (string) $event['order_uuid']));
         $this->assertSame(1, $this->cloudChildCount('cloud_payment_receipts', (string) $event['order_uuid']));
@@ -178,12 +311,12 @@ class PosOrderOutboxEventServiceTest extends TestCase
                 pro_id, pro_tybe, is_stock, is_journal, journal_tybe, info, pro_date,
                 accural_date, pro_pattren, pro_serial, price_list, store_id, emp_id,
                 emp2_id, acc1, acc2, pro_value, fat_total, fat_disc, fat_plus,
-                fat_net, paid_amount, remaining_amount, payment_status, invoice_status,
+                fat_net, fat_tax, profit, paid_amount, remaining_amount, payment_status, invoice_status,
                 order_status, payment_date, user
             ) VALUES (?, 9, 1, 1, 9, 'phpunit sync order', CURDATE(),
                 CURDATE(), 1, '', 1, 1, 1,
                 1, 1, 1, 12.00, 12.00, 0, 0,
-                12.00, 12.00, 0.00, 'paid', 'completed',
+                12.00, 1.2345, 7.123456, 12.00, 0.00, 'paid', 'completed',
                 'completed', NOW(), 1)
         ");
         $stmt->bind_param('i', $proId);
@@ -195,7 +328,7 @@ class PosOrderOutboxEventServiceTest extends TestCase
             INSERT INTO fat_details (
                 pro_tybe, pro_id, item_id, u_val, qty_in, qty_out, price,
                 discount, det_value, fatid, fat_tybe, det_store, cost_price, profit
-            ) VALUES (9, ?, ?, 1, 0, 1, 12, 0, 12, ?, 9, 1, 5, 7)
+            ) VALUES (9, ?, ?, 1, 0, 1.123456, 12, 0, 12, ?, 9, 1, 5, 7.123456)
         ");
         $stmt->bind_param('iii', $this->orderId, $this->itemId, $this->orderId);
         $stmt->execute();
@@ -210,6 +343,73 @@ class PosOrderOutboxEventServiceTest extends TestCase
                 1, 1, 1, 12.00, 1, 0, 1, ?)
         ");
         $stmt->bind_param('ii', $paymentProId, $this->orderId);
+        $stmt->execute();
+        $stmt->close();
+
+        $accountSuffix = bin2hex(random_bytes(4));
+        foreach ([['SYNC-AR-' . $accountSuffix, 'PHPUnit Sync Customer ' . $accountSuffix], ['SYNC-SALES-' . $accountSuffix, 'PHPUnit Sync Sales ' . $accountSuffix]] as $account) {
+            $stmt = self::$conn->prepare('INSERT INTO acc_head (code, aname, parent_id, is_basic) VALUES (?, ?, 0, 0)');
+            $stmt->bind_param('ss', $account[0], $account[1]);
+            $stmt->execute();
+            $this->accountIds[] = (int) self::$conn->insert_id;
+            $stmt->close();
+        }
+
+        $idempotencyKey = 'phpunit-order-financial:' . $this->orderId;
+        $stmt = self::$conn->prepare("
+            INSERT INTO journal_heads (
+                journal_id, total, jdate, details, user, op_id, op2,
+                source_type, source_id, posting_kind, idempotency_key
+            ) VALUES (990001, 12.00, CURDATE(), 'PHPUnit order financial', 1, ?, ?,
+                'invoice', ?, 'invoice_finalization', ?)
+        ");
+        $stmt->bind_param('iiis', $this->orderId, $this->orderId, $this->orderId, $idempotencyKey);
+        $stmt->execute();
+        $journalHeadId = (int) self::$conn->insert_id;
+        $this->journalHeadIds[] = $journalHeadId;
+        $stmt->close();
+        $stmt = self::$conn->prepare("
+            INSERT INTO journal_entries (journal_id, account_id, debit, credit, tybe, op2)
+            VALUES (?, ?, 12.00, 0.00, 0, ?), (?, ?, 0.00, 12.00, 1, ?)
+        ");
+        $stmt->bind_param(
+            'iiiiii',
+            $journalHeadId,
+            $this->accountIds[0],
+            $this->orderId,
+            $journalHeadId,
+            $this->accountIds[1],
+            $this->orderId
+        );
+        $stmt->execute();
+        $stmt->close();
+
+        $unrelatedKey = 'phpunit-order-financial-refund:' . $this->orderId;
+        $stmt = self::$conn->prepare("
+            INSERT INTO journal_heads (
+                journal_id, total, jdate, details, user, op_id, op2,
+                source_type, source_id, posting_kind, idempotency_key
+            ) VALUES (990002, 3.00, CURDATE(), 'Unrelated refund', 1, ?, ?,
+                'financial_refund', ?, 'credit_note', ?)
+        ");
+        $stmt->bind_param('iiis', $this->orderId, $this->orderId, $this->orderId, $unrelatedKey);
+        $stmt->execute();
+        $unrelatedHeadId = (int) self::$conn->insert_id;
+        $this->journalHeadIds[] = $unrelatedHeadId;
+        $stmt->close();
+        $stmt = self::$conn->prepare("
+            INSERT INTO journal_entries (journal_id, account_id, debit, credit, tybe, op2)
+            VALUES (?, ?, 3.00, 0.00, 0, ?), (?, ?, 0.00, 3.00, 1, ?)
+        ");
+        $stmt->bind_param(
+            'iiiiii',
+            $unrelatedHeadId,
+            $this->accountIds[1],
+            $this->orderId,
+            $unrelatedHeadId,
+            $this->accountIds[0],
+            $this->orderId
+        );
         $stmt->execute();
         $stmt->close();
     }
@@ -323,12 +523,20 @@ class PosOrderOutboxEventServiceTest extends TestCase
         self::$conn->query("DELETE FROM cloud_order_payments WHERE branch_uuid = '{$branchUuid}'");
         self::$conn->query("DELETE FROM cloud_payment_receipts WHERE branch_uuid = '{$branchUuid}'");
         self::$conn->query("DELETE FROM cloud_orders WHERE branch_uuid = '{$branchUuid}'");
+        self::$conn->query("DELETE FROM sync_projection_versions WHERE branch_uuid = '{$branchUuid}'");
         self::$conn->query("DELETE FROM sync_inbox WHERE branch_uuid = '{$branchUuid}'");
         self::$conn->query("DELETE FROM sync_conflicts WHERE branch_uuid = '{$branchUuid}'");
         self::$conn->query("DELETE FROM sync_outbox WHERE branch_uuid = '{$branchUuid}'");
+        self::$conn->query("DELETE FROM document_counters WHERE counter_type = 'order_sync' AND counter_key LIKE 'order:" . $branchUuid . ":%'");
         self::$conn->query("DELETE FROM sync_worker_logs WHERE worker_name = 'sync_worker' AND metrics_json LIKE '%phpunit-pos-order-outbox%'");
         self::$conn->query("DELETE FROM cloud_branches WHERE branch_uuid = '{$branchUuid}'");
         self::$conn->query('DELETE FROM sync_branch_identity WHERE id = 1');
+
+        foreach ($this->journalHeadIds as $journalHeadId) {
+            self::$conn->query('DELETE FROM journal_entries WHERE journal_id = ' . (int) $journalHeadId);
+            self::$conn->query('DELETE FROM journal_heads WHERE id = ' . (int) $journalHeadId);
+        }
+        $this->journalHeadIds = [];
 
         if ($this->orderId) {
             $orderId = (int) $this->orderId;
@@ -340,6 +548,13 @@ class PosOrderOutboxEventServiceTest extends TestCase
         if ($this->itemId) {
             self::$conn->query('DELETE FROM myitems WHERE id = ' . (int) $this->itemId);
         }
+        if ($this->tableId) {
+            self::$conn->query('DELETE FROM tables WHERE id = ' . (int) $this->tableId);
+        }
+        foreach ($this->accountIds as $accountId) {
+            self::$conn->query('DELETE FROM acc_head WHERE id = ' . (int) $accountId);
+        }
+        $this->accountIds = [];
     }
 
     private function nullableInt($value): ?int

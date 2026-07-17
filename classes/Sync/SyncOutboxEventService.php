@@ -3,6 +3,7 @@
 require_once __DIR__ . '/../../config/app_config.php';
 require_once __DIR__ . '/BranchIdentity.php';
 require_once __DIR__ . '/CloudBranchSyncPublisher.php';
+require_once __DIR__ . '/DocumentCounterService.php';
 require_once __DIR__ . '/PosOrderSnapshotBuilder.php';
 require_once __DIR__ . '/../Pos/Service/ItemVariantService.php';
 require_once __DIR__ . '/../Recipe/RecipeFeatureFlags.php';
@@ -44,12 +45,36 @@ class SyncOutboxEventService
             'source_system' => $sourceSystem,
             'branch_timezone' => $config['timezone'] ?? null,
         ]);
+        $orderUuid = (string) $payload['order_uuid'];
+        if ($outboxEnabled) {
+            $baseRevision = max(1, (int) ($payload['order']['sync_revision'] ?? 1));
+            $existingRevision = $this->highestOrderEventVersion($conn, $orderUuid);
+            $counter = new DocumentCounterService();
+            $counterKey = 'order:' . $branchUuid . ':' . $orderId;
+            $counter->ensureCounterRow(
+                $conn,
+                $posTenant,
+                $posBranch,
+                'order_sync',
+                $counterKey,
+                max(0, $baseRevision - 1, $existingRevision)
+            );
+            $payload['order']['sync_revision'] = $counter->nextCounter(
+                $conn,
+                $posTenant,
+                $posBranch,
+                'order_sync',
+                $counterKey
+            );
+            unset($payload['payload_hash']);
+            $payload['payload_hash'] = hash('sha256', $this->encodeJson($payload));
+        }
         $payloadJson = $this->encodeJson($payload);
         $payloadHash = hash('sha256', $payloadJson);
-        $orderUuid = (string) $payload['order_uuid'];
         $eventUuid = SyncBranchIdentity::generateUuidV4();
         $aggregateId = 'ot_head:' . $orderId;
         $idempotencyKey = $this->idempotencyKey($branchUuid, $orderId, $eventType, $payloadHash);
+        $eventVersion = max(1, (int) ($payload['order']['sync_revision'] ?? 1));
 
         $outboxId = null;
         if ($outboxEnabled) {
@@ -75,7 +100,7 @@ class SyncOutboxEventService
                 payload_hash,
                 status,
                 attempts
-            ) VALUES (?, ?, ?, ?, 'order', ?, ?, ?, 'order', ?, ?, ?, 1, ?, NULL, ?, ?, ?, 'pending', 0)
+            ) VALUES (?, ?, ?, ?, 'order', ?, ?, ?, 'order', ?, ?, ?, ?, ?, NULL, ?, ?, ?, 'pending', 0)
             ON DUPLICATE KEY UPDATE
                 id = LAST_INSERT_ID(id),
                 payload_json = VALUES(payload_json),
@@ -94,6 +119,7 @@ class SyncOutboxEventService
                 $orderUuid,
                 $orderId,
                 $eventType,
+                $eventVersion,
                 $sourceSystem,
                 $idempotencyKey,
                 $payloadJson,
@@ -108,7 +134,7 @@ class SyncOutboxEventService
         $cloudBranchEvents = $this->publishCloudBranchEvent($conn, $config, [
             'branch_uuid' => $branchUuid,
             'event_type' => $eventType,
-            'event_version' => (int) ($payload['order']['sync_revision'] ?? 1),
+            'event_version' => $eventVersion,
             'source_system' => $sourceSystem,
             'aggregate_type' => 'order',
             'aggregate_uuid' => $orderUuid,
@@ -130,6 +156,22 @@ class SyncOutboxEventService
             'payload_hash' => $payloadHash,
             'cloud_branch_events' => $cloudBranchEvents,
         ];
+    }
+
+    private function highestOrderEventVersion(mysqli $conn, string $orderUuid): int
+    {
+        $stmt = $conn->prepare("
+            SELECT COALESCE(MAX(event_version), 0) AS max_version
+            FROM sync_outbox
+            WHERE aggregate_type = 'order'
+              AND aggregate_uuid = ?
+        ");
+        $stmt->bind_param('s', $orderUuid);
+        $stmt->execute();
+        $version = (int) ($stmt->get_result()->fetch_assoc()['max_version'] ?? 0);
+        $stmt->close();
+
+        return $version;
     }
 
     public function recordTableSnapshot(mysqli $conn, int $tableId, array $options = []): ?array
@@ -166,6 +208,7 @@ class SyncOutboxEventService
         $eventUuid = SyncBranchIdentity::generateUuidV4();
         $aggregateId = 'tables:' . $tableId;
         $idempotencyKey = $this->tableIdempotencyKey($branchUuid, $tableId, $eventType, $payloadHash);
+        $eventVersion = max(1, (int) ($payload['table']['sync_revision'] ?? 1));
 
         $outboxId = null;
         if ($outboxEnabled) {
@@ -191,7 +234,7 @@ class SyncOutboxEventService
                 payload_hash,
                 status,
                 attempts
-            ) VALUES (?, ?, ?, ?, 'table', ?, ?, ?, 'table', ?, ?, ?, 1, ?, NULL, ?, ?, ?, 'pending', 0)
+            ) VALUES (?, ?, ?, ?, 'table', ?, ?, ?, 'table', ?, ?, ?, ?, ?, NULL, ?, ?, ?, 'pending', 0)
             ON DUPLICATE KEY UPDATE
                 id = LAST_INSERT_ID(id),
                 payload_json = VALUES(payload_json),
@@ -210,6 +253,7 @@ class SyncOutboxEventService
                 $tableUuid,
                 $tableId,
                 $eventType,
+                $eventVersion,
                 $sourceSystem,
                 $idempotencyKey,
                 $payloadJson,
@@ -224,7 +268,7 @@ class SyncOutboxEventService
         $cloudBranchEvents = $this->publishCloudBranchEvent($conn, $config, [
             'branch_uuid' => $branchUuid,
             'event_type' => $eventType,
-            'event_version' => (int) ($payload['table']['sync_revision'] ?? 1),
+            'event_version' => $eventVersion,
             'source_system' => $sourceSystem,
             'aggregate_type' => 'table',
             'aggregate_uuid' => $tableUuid,

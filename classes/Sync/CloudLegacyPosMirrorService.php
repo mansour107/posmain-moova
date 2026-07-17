@@ -1,5 +1,7 @@
 <?php
 
+require_once __DIR__ . '/PosOrderSnapshotBuilder.php';
+
 class CloudLegacyPosMirrorService
 {
     private array $columnExistsCache = [];
@@ -44,14 +46,20 @@ class CloudLegacyPosMirrorService
             ];
         }
 
-        $sourceMdtime = $this->incomingDatetime($event, [$order, $payload]);
-        $legacy = isset($order['legacy']) && is_array($order['legacy']) ? $order['legacy'] : [];
         $orderUuid = $this->nullableString($this->firstExistingValue([$order, $payload, $event], [
             'order_uuid',
             'pos_order_uuid',
             'entity_uuid',
             'aggregate_uuid',
         ]), 36);
+        $financialBundle = $this->financialBundleForRestore($payload, $orderId, $orderUuid);
+        $fulfillment = PosOrderSnapshotBuilder::assertFulfillmentSnapshotScope($payload, $orderId);
+        if ($financialBundle !== null) {
+            $this->restoreFinancialAccounts($conn, $financialBundle);
+        }
+
+        $sourceMdtime = $this->incomingDatetime($event, [$order, $payload]);
+        $legacy = isset($order['legacy']) && is_array($order['legacy']) ? $order['legacy'] : [];
         $proTybe = $this->intOrNull($this->firstValue([$order, $payload], 'pro_tybe')) ?: 9;
         $orderType = $this->orderType($this->firstValue([$order, $payload], 'order_type'));
         $proDate = $this->dateOrNull($this->firstExistingValue([$order, $payload], ['pro_date', 'created_at']));
@@ -78,12 +86,27 @@ class CloudLegacyPosMirrorService
             $createdAt,
             $completedAt,
             $paymentDate,
-            $this->decimal($this->firstValue([$order, $payload], 'pro_value')),
-            $this->decimal($this->firstValue([$order, $payload], 'fat_total')),
-            $this->decimal($this->firstValue([$order, $payload], 'fat_net')),
-            $this->decimal($this->firstValue([$order, $payload], 'fat_disc')),
-            $this->decimal($this->firstValue([$order, $payload], 'paid_amount')),
-            $this->decimal($this->firstValue([$order, $payload], 'remaining_amount')),
+            $this->nullableDecimal($this->firstValue([$order, $payload], 'pro_value'), 4),
+            $this->nullableDecimal($this->firstValue([$order, $payload], 'fat_total'), 4),
+            $this->nullableDecimal($this->firstValue([$order, $payload], 'fat_net'), 4),
+            $this->nullableDecimal($this->firstValue([$order, $payload], 'fat_disc'), 4),
+        ];
+        $optionalFinancialColumns = '';
+        $optionalFinancialUpdates = '';
+        if ($this->columnExists($conn, 'ot_head', 'fat_tax')) {
+            $optionalFinancialColumns .= ",\n                fat_tax";
+            $optionalFinancialUpdates .= ",\n                fat_tax = VALUES(fat_tax)";
+            $params[] = $this->nullableDecimal($this->firstValue([$order, $payload], 'fat_tax'), 4);
+        }
+        if ($this->columnExists($conn, 'ot_head', 'profit')) {
+            $optionalFinancialColumns .= ",\n                profit";
+            $optionalFinancialUpdates .= ",\n                profit = VALUES(profit)";
+            $params[] = $this->nullableDecimal($this->firstValue([$order, $payload], 'profit'), 6);
+        }
+        array_push(
+            $params,
+            $this->nullableDecimal($this->firstValue([$order, $payload], 'paid_amount'), 4),
+            $this->nullableDecimal($this->firstValue([$order, $payload], 'remaining_amount'), 4),
             $this->paymentStatus($this->firstValue([$order, $payload], 'payment_status')),
             $this->invoiceStatus($this->firstValue([$order, $payload], 'invoice_status')),
             $this->orderStatus($this->firstValue([$order, $payload], 'order_status')),
@@ -96,8 +119,10 @@ class CloudLegacyPosMirrorService
             $this->intOrNull($this->firstValue([$legacy, $order], 'store_id')),
             $this->intOrNull($this->firstValue([$legacy, $order], 'acc1')),
             $this->intOrNull($this->firstValue([$legacy, $order], 'acc2')),
-            $sourceMdtime,
-        ];
+            $sourceMdtime
+        );
+        $valuePlaceholders = implode(', ', array_fill(0, count($params) - 1, '?'))
+            . ', COALESCE(?, CURRENT_TIMESTAMP)';
 
         $stmt = $conn->prepare("
             INSERT INTO ot_head (
@@ -115,7 +140,7 @@ class CloudLegacyPosMirrorService
                 pro_value,
                 fat_total,
                 fat_net,
-                fat_disc,
+                fat_disc{$optionalFinancialColumns},
                 paid_amount,
                 remaining_amount,
                 payment_status,
@@ -131,7 +156,7 @@ class CloudLegacyPosMirrorService
                 acc1,
                 acc2,
                 mdtime
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))
+            ) VALUES ({$valuePlaceholders})
             ON DUPLICATE KEY UPDATE
                 id = LAST_INSERT_ID(id),
                 uuid = VALUES(uuid),
@@ -146,7 +171,7 @@ class CloudLegacyPosMirrorService
                 pro_value = VALUES(pro_value),
                 fat_total = VALUES(fat_total),
                 fat_net = VALUES(fat_net),
-                fat_disc = VALUES(fat_disc),
+                fat_disc = VALUES(fat_disc){$optionalFinancialUpdates},
                 paid_amount = VALUES(paid_amount),
                 remaining_amount = VALUES(remaining_amount),
                 payment_status = VALUES(payment_status),
@@ -168,11 +193,319 @@ class CloudLegacyPosMirrorService
         $stmt->close();
 
         $lineCount = $this->mirrorOrderLines($conn, $payload, $order, $orderId, $proTybe, $tenant, $branch, $sourceMdtime);
+        $financial = $financialBundle === null
+            ? ['receipt_count' => 0, 'payment_count' => 0, 'journal_count' => 0, 'entry_count' => 0]
+            : $this->restoreOrderFinancialRows($conn, $payload, $financialBundle, $orderId);
+        $fulfillmentCount = $this->mirrorOrderFulfillment($conn, $orderId, $fulfillment);
 
         return [
             'legacy_entity_id' => 'ot_head:' . $orderId,
             'line_count' => $lineCount,
+            'receipt_count' => $financial['receipt_count'],
+            'payment_count' => $financial['payment_count'],
+            'journal_count' => $financial['journal_count'],
+            'journal_entry_count' => $financial['entry_count'],
+            'fulfillment_count' => $fulfillmentCount,
         ];
+    }
+
+    private function mirrorOrderFulfillment(mysqli $conn, int $orderId, ?array $fulfillment): int
+    {
+        if ($fulfillment === null) {
+            // Absence is not a deletion signal. This avoids clearing a valid
+            // hosted/restored row because an older branch lacked the table.
+            return 0;
+        }
+        if (!$this->tableExists($conn, 'order_fulfillment')) {
+            throw new RuntimeException('ORDER_FULFILLMENT_SCHEMA_REQUIRED');
+        }
+        $requiredColumns = [
+            'id', 'order_id', 'order_channel', 'fulfillment_type', 'external_provider',
+            'external_order_id', 'customer_name', 'customer_phone', 'customer_address',
+            'delivery_client_id', 'pos_customer_id', 'crm_rollup_paid_amount',
+            'crm_rollup_counted', 'delivery_zone', 'delivery_fee', 'delivery_status',
+            'promised_at', 'metadata_json', 'created_at', 'updated_at',
+        ];
+        foreach ($requiredColumns as $column) {
+            if (!$this->columnExists($conn, 'order_fulfillment', $column)) {
+                throw new RuntimeException('ORDER_FULFILLMENT_SCHEMA_REQUIRED');
+            }
+        }
+
+        $fulfillmentId = (int) $fulfillment['id'];
+        $identity = $conn->prepare(
+            'SELECT id, order_id FROM order_fulfillment WHERE id = ? OR order_id = ? FOR UPDATE'
+        );
+        $identity->bind_param('ii', $fulfillmentId, $orderId);
+        $identity->execute();
+        $result = $identity->get_result();
+        while ($existing = $result->fetch_assoc()) {
+            if ((int) $existing['id'] !== $fulfillmentId || (int) $existing['order_id'] !== $orderId) {
+                $identity->close();
+                throw new RuntimeException('ORDER_FULFILLMENT_IDENTITY_CONFLICT');
+            }
+        }
+        $identity->close();
+
+        $metadataJson = $fulfillment['metadata'] === null
+            ? null
+            : $this->encodeJson($fulfillment['metadata']);
+        $params = [
+            $fulfillmentId,
+            $orderId,
+            $fulfillment['order_channel'],
+            $fulfillment['fulfillment_type'],
+            $fulfillment['external_provider'] ?? null,
+            $fulfillment['external_order_id'] ?? null,
+            $fulfillment['customer_name'] ?? null,
+            $fulfillment['customer_phone'] ?? null,
+            $fulfillment['customer_address'] ?? null,
+            $fulfillment['delivery_client_id'] ?? null,
+            $fulfillment['pos_customer_id'] ?? null,
+            $fulfillment['crm_rollup_paid_amount'] ?? '0.00',
+            $fulfillment['crm_rollup_counted'] ?? 0,
+            $fulfillment['delivery_zone'] ?? null,
+            $fulfillment['delivery_fee'] ?? '0.000',
+            $fulfillment['delivery_status'],
+            $fulfillment['promised_at'] ?? null,
+            $metadataJson,
+            $fulfillment['created_at'] ?? null,
+            $fulfillment['updated_at'] ?? null,
+        ];
+        $stmt = $conn->prepare("
+            INSERT INTO order_fulfillment (
+                id, order_id, order_channel, fulfillment_type, external_provider,
+                external_order_id, customer_name, customer_phone, customer_address,
+                delivery_client_id, pos_customer_id, crm_rollup_paid_amount,
+                crm_rollup_counted, delivery_zone, delivery_fee, delivery_status,
+                promised_at, metadata_json, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON DUPLICATE KEY UPDATE
+                order_channel = VALUES(order_channel),
+                fulfillment_type = VALUES(fulfillment_type),
+                external_provider = VALUES(external_provider),
+                external_order_id = VALUES(external_order_id),
+                customer_name = VALUES(customer_name),
+                customer_phone = VALUES(customer_phone),
+                customer_address = VALUES(customer_address),
+                delivery_client_id = VALUES(delivery_client_id),
+                pos_customer_id = VALUES(pos_customer_id),
+                crm_rollup_paid_amount = VALUES(crm_rollup_paid_amount),
+                crm_rollup_counted = VALUES(crm_rollup_counted),
+                delivery_zone = VALUES(delivery_zone),
+                delivery_fee = VALUES(delivery_fee),
+                delivery_status = VALUES(delivery_status),
+                promised_at = VALUES(promised_at),
+                metadata_json = VALUES(metadata_json),
+                created_at = COALESCE(VALUES(created_at), created_at),
+                updated_at = COALESCE(VALUES(updated_at), updated_at)
+        ");
+        $this->bindParams($stmt, str_repeat('s', count($params)), $params);
+        $stmt->execute();
+        $stmt->close();
+
+        return 1;
+    }
+
+    private function financialBundleForRestore(array $payload, int $orderId, ?string $orderUuid): ?array
+    {
+        $schemaVersion = (int) ($payload['schema_version'] ?? 1);
+        if ($schemaVersion < 2 && !array_key_exists('financial_bundle', $payload)) {
+            return null;
+        }
+        $bundle = $payload['financial_bundle'] ?? null;
+        if (!is_array($bundle)) {
+            throw new RuntimeException('ORDER_FINANCIAL_BUNDLE_REQUIRED');
+        }
+        if ($orderUuid === null) {
+            throw new RuntimeException('ORDER_FINANCIAL_SNAPSHOT_SCOPE_INVALID');
+        }
+        PosOrderSnapshotBuilder::assertFinancialSnapshotScope($payload, $orderId, $orderUuid);
+        PosOrderSnapshotBuilder::assertFinancialBundle($bundle, $orderId);
+
+        return $bundle;
+    }
+
+    private function restoreFinancialAccounts(mysqli $conn, array $bundle): void
+    {
+        foreach ($bundle['accounts'] as $account) {
+            if (!is_array($account) || empty($account['id'])) {
+                throw new RuntimeException('ORDER_FINANCIAL_ACCOUNT_INVALID');
+            }
+            $this->insertImmutableRow($conn, 'acc_head', $account, 'ORDER_FINANCIAL_ACCOUNT_CONFLICT');
+        }
+    }
+
+    private function restoreOrderFinancialRows(mysqli $conn, array $payload, array $bundle, int $orderId): array
+    {
+        $receiptCount = 0;
+        foreach ($payload['receipts'] ?? [] as $receipt) {
+            if (!is_array($receipt) || (int) ($receipt['local_order_id'] ?? 0) !== $orderId) {
+                throw new RuntimeException('ORDER_FINANCIAL_RECEIPT_SCOPE_INVALID');
+            }
+            $receiptId = (int) ($receipt['local_receipt_id'] ?? 0);
+            if ($receiptId <= 0) {
+                throw new RuntimeException('ORDER_FINANCIAL_RECEIPT_INVALID');
+            }
+            $this->insertImmutableRow($conn, 'ot_head', [
+                'id' => $receiptId,
+                'pro_id' => $receipt['pro_id'] ?? null,
+                'pro_tybe' => $receipt['pro_tybe'] ?? 1,
+                'is_journal' => 1,
+                'journal_tybe' => $receipt['pro_tybe'] ?? 1,
+                'info' => $receipt['info'] ?? ('Restored payment receipt for order ' . $orderId),
+                'pro_date' => !empty($receipt['payment_date']) ? substr((string) $receipt['payment_date'], 0, 10) : null,
+                'payment_date' => $receipt['payment_date'] ?? null,
+                'emp_id' => $receipt['employee_id'] ?? null,
+                'acc1' => $receipt['acc_fund'] ?? null,
+                'acc2' => $receipt['acc_customer'] ?? null,
+                'pro_value' => $receipt['amount'] ?? '0.00',
+                'fat_net' => $receipt['amount'] ?? '0.00',
+                'user' => $receipt['created_by'] ?? null,
+                'op2' => $orderId,
+                'isdeleted' => $receipt['isdeleted'] ?? 0,
+            ], 'ORDER_FINANCIAL_RECEIPT_CONFLICT');
+            $receiptCount++;
+        }
+
+        $paymentCount = 0;
+        foreach ($payload['payments'] ?? [] as $payment) {
+            if (!is_array($payment) || (string) ($payment['source'] ?? '') !== 'order_payments') {
+                continue;
+            }
+            $paymentId = (int) ($payment['local_payment_id'] ?? 0);
+            if ($paymentId <= 0) {
+                throw new RuntimeException('ORDER_FINANCIAL_PAYMENT_INVALID');
+            }
+            $this->insertImmutableRow($conn, 'order_payments', [
+                'id' => $paymentId,
+                'order_id' => $orderId,
+                'amount' => $payment['amount'] ?? '0.00',
+                'payment_method' => $payment['payment_method'] ?? null,
+                'reference_no' => $payment['reference_no'] ?? null,
+                'paid_by_customer_id' => $payment['paid_by_customer_id'] ?? null,
+                'created_by' => $payment['created_by'] ?? null,
+                'is_voided' => $payment['voided'] ?? 0,
+            ], 'ORDER_FINANCIAL_PAYMENT_CONFLICT');
+            $paymentCount++;
+        }
+
+        foreach ($bundle['journal_heads'] as $head) {
+            $this->insertImmutableRow($conn, 'journal_heads', $head, 'ORDER_FINANCIAL_JOURNAL_HEAD_CONFLICT');
+        }
+        foreach ($bundle['journal_entries'] as $entry) {
+            $this->insertImmutableRow($conn, 'journal_entries', $entry, 'ORDER_FINANCIAL_JOURNAL_ENTRY_CONFLICT');
+        }
+
+        $accountIds = array_values(array_unique(array_map(
+            static fn (array $entry): int => (int) ($entry['account_id'] ?? 0),
+            $bundle['journal_entries']
+        )));
+        $accountIds = array_values(array_filter($accountIds, static fn (int $id): bool => $id > 0));
+        if ($accountIds !== []) {
+            $ids = implode(', ', array_map('intval', $accountIds));
+            $entryActiveFilter = $this->columnExists($conn, 'journal_entries', 'isdeleted')
+                ? ' AND COALESCE(e.isdeleted, 0) = 0'
+                : '';
+            $conn->query("
+                UPDATE acc_head a
+                SET balance = (
+                    SELECT COALESCE(SUM(e.debit), 0) - COALESCE(SUM(e.credit), 0)
+                    FROM journal_entries e
+                    WHERE e.account_id = a.id
+                      {$entryActiveFilter}
+                )
+                WHERE a.id IN ({$ids})
+            ");
+        }
+
+        return [
+            'receipt_count' => $receiptCount,
+            'payment_count' => $paymentCount,
+            'journal_count' => count($bundle['journal_heads']),
+            'entry_count' => count($bundle['journal_entries']),
+        ];
+    }
+
+    private function insertImmutableRow(mysqli $conn, string $table, array $row, string $conflictCode): void
+    {
+        $id = (int) ($row['id'] ?? 0);
+        if ($id <= 0) {
+            throw new RuntimeException($conflictCode);
+        }
+        $columns = $this->availableColumns($conn, $table, array_keys($row));
+        if (!in_array('id', $columns, true)) {
+            throw new RuntimeException($conflictCode);
+        }
+
+        $stmt = $conn->prepare('SELECT * FROM `' . $table . '` WHERE id = ? LIMIT 1');
+        $stmt->bind_param('i', $id);
+        $stmt->execute();
+        $existing = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        if ($existing) {
+            foreach ($columns as $column) {
+                if ($column === 'id') {
+                    continue;
+                }
+                if ($this->normalizedImmutableValue($existing[$column] ?? null) !== $this->normalizedImmutableValue($row[$column] ?? null)) {
+                    throw new RuntimeException($conflictCode);
+                }
+            }
+            return;
+        }
+
+        $this->insertAvailableRow($conn, $table, $row);
+    }
+
+    private function insertAvailableRow(mysqli $conn, string $table, array $row): void
+    {
+        $columns = $this->availableColumns($conn, $table, array_keys($row));
+        if ($columns === []) {
+            throw new RuntimeException('ORDER_FINANCIAL_RESTORE_TABLE_INVALID');
+        }
+        $values = [];
+        foreach ($columns as $column) {
+            $values[] = $row[$column] ?? null;
+        }
+        $fields = '`' . implode('`, `', $columns) . '`';
+        $placeholders = implode(', ', array_fill(0, count($columns), '?'));
+        $stmt = $conn->prepare("INSERT INTO `{$table}` ({$fields}) VALUES ({$placeholders})");
+        $this->bindParams($stmt, str_repeat('s', count($values)), $values);
+        $stmt->execute();
+        $stmt->close();
+    }
+
+    private function availableColumns(mysqli $conn, string $table, array $requested): array
+    {
+        $columns = [];
+        foreach ($requested as $column) {
+            if ($this->columnExists($conn, $table, (string) $column)) {
+                $columns[] = (string) $column;
+            }
+        }
+
+        return $columns;
+    }
+
+    private function normalizedImmutableValue($value): string
+    {
+        if ($value === null) {
+            return '';
+        }
+        $text = trim((string) $value);
+        if (preg_match('/^-?\d+(?:\.\d+)?$/', $text)) {
+            $negative = str_starts_with($text, '-');
+            $unsigned = ltrim($text, '+-');
+            [$whole, $fraction] = array_pad(explode('.', $unsigned, 2), 2, '');
+            $whole = ltrim($whole, '0');
+            $whole = $whole === '' ? '0' : $whole;
+            $fraction = rtrim($fraction, '0');
+            $normalized = $whole . ($fraction !== '' ? '.' . $fraction : '');
+            return $negative && $normalized !== '0' ? '-' . $normalized : $normalized;
+        }
+
+        return $text;
     }
 
     private function mirrorOrderLines(
@@ -210,7 +543,7 @@ class CloudLegacyPosMirrorService
                 $this->decimal($this->firstValue([$line], 'cost_price')),
                 $this->decimal($this->firstExistingValue([$line], ['discount', 'disc'])),
                 $this->decimal($this->firstExistingValue([$line], ['det_value', 'line_total'])),
-                $this->decimal($this->firstValue([$line], 'profit')),
+                $this->decimal($this->firstValue([$line], 'profit'), 6),
                 $orderId,
                 $proTybe,
                 $this->boolInt($this->firstValue([$line], 'isdeleted'), 0),
@@ -1195,13 +1528,22 @@ class CloudLegacyPosMirrorService
         return 1;
     }
 
-    private function decimal($value): string
+    private function decimal($value, int $scale = 4): string
     {
         if ($value === null || $value === '' || !is_numeric($value)) {
-            return '0.0000';
+            return number_format(0, $scale, '.', '');
         }
 
-        return number_format((float) $value, 4, '.', '');
+        return number_format((float) $value, $scale, '.', '');
+    }
+
+    private function nullableDecimal($value, int $scale): ?string
+    {
+        if ($value === null || $value === '' || !is_numeric($value)) {
+            return null;
+        }
+
+        return number_format((float) $value, $scale, '.', '');
     }
 
     private function dateOrNull($value): ?string
@@ -1369,6 +1711,16 @@ class CloudLegacyPosMirrorService
 
         $timestamp = strtotime($value);
         return $timestamp === false ? null : (int) $timestamp;
+    }
+
+    private function encodeJson($value): string
+    {
+        $json = json_encode($value, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        if (!is_string($json)) {
+            throw new RuntimeException('ORDER_FULFILLMENT_METADATA_INVALID');
+        }
+
+        return $json;
     }
 
     private function bindParams(mysqli_stmt $stmt, string $types, array &$params): void

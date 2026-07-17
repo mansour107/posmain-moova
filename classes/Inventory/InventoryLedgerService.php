@@ -9,6 +9,7 @@ require_once __DIR__ . '/../Security/SecurityAuditLogger.php';
 require_once __DIR__ . '/../Recipe/Repository/InventoryBalanceRepository.php';
 require_once __DIR__ . '/../Recipe/Repository/InventoryMovementRepository.php';
 require_once __DIR__ . '/../Recipe/RecipeAffectedItemCostService.php';
+require_once __DIR__ . '/../Sync/OperationalSyncEventService.php';
 
 class InventoryLedgerService
 {
@@ -22,6 +23,7 @@ class InventoryLedgerService
     private InventoryItemPolicyService $itemPolicy;
     private NegativeStockSalePolicyService $negativeStockPolicy;
     private SecurityAuditLogger $securityAudit;
+    private OperationalSyncEventService $syncEvents;
 
     public function __construct(
         ?InventoryFeatureFlags $flags = null,
@@ -29,7 +31,8 @@ class InventoryLedgerService
         ?InventoryBalanceRepository $balances = null,
         ?InventoryItemPolicyService $itemPolicy = null,
         ?NegativeStockSalePolicyService $negativeStockPolicy = null,
-        ?SecurityAuditLogger $securityAudit = null
+        ?SecurityAuditLogger $securityAudit = null,
+        ?OperationalSyncEventService $syncEvents = null
     ) {
         $this->flags = $flags ?: new InventoryFeatureFlags();
         $this->movements = $movements ?: new InventoryMovementRepository();
@@ -37,6 +40,7 @@ class InventoryLedgerService
         $this->itemPolicy = $itemPolicy ?: new InventoryItemPolicyService();
         $this->negativeStockPolicy = $negativeStockPolicy ?: new NegativeStockSalePolicyService($this->flags->appConfig());
         $this->securityAudit = $securityAudit ?: new SecurityAuditLogger();
+        $this->syncEvents = $syncEvents ?: new OperationalSyncEventService();
     }
 
     public function previewMovement(array $movement): array
@@ -110,6 +114,21 @@ class InventoryLedgerService
             );
             if ($existing) {
                 $this->assertExistingPayloadMatches($existing, $request);
+                if (!$isShadowWrite) {
+                    $balance = $this->balances->findBalance(
+                        $conn,
+                        $request->posTenant(),
+                        $request->posBranch(),
+                        $request->storeId(),
+                        $request->itemId
+                    );
+                    $this->recordSyncSnapshots(
+                        $conn,
+                        (int) $existing['id'],
+                        (int) ($balance['id'] ?? 0),
+                        max((int) $existing['id'], (int) ($balance['last_movement_id'] ?? 0))
+                    );
+                }
                 if ($manageTransaction) {
                     $conn->commit();
                 }
@@ -158,16 +177,12 @@ class InventoryLedgerService
                 $this->updateLegacyMirror($conn, $request, $newBalance);
             }
 
-            if ($manageTransaction) {
-                $conn->commit();
+            if (!$isShadowWrite) {
+                $this->recordSyncSnapshots($conn, $movementId, $balanceId, $movementId);
             }
 
-            if (!$isShadowWrite && !empty($movementId)) {
-                require_once __DIR__ . '/../Sync/OperationalSyncRecorder.php';
-                posmain_record_operational_row_sync($conn, 'inventory_movement', (int) $movementId, 'inventory_ledger');
-                if (!empty($balanceId)) {
-                    posmain_record_operational_row_sync($conn, 'inventory_balance', (int) $balanceId, 'inventory_ledger');
-                }
+            if ($manageTransaction) {
+                $conn->commit();
             }
 
             return [
@@ -193,6 +208,80 @@ class InventoryLedgerService
             }
             throw $exception;
         }
+    }
+
+    private function recordSyncSnapshots(mysqli $conn, int $movementId, int $balanceId, int $balanceRevision): void
+    {
+        if ($movementId < 1) {
+            return;
+        }
+
+        $config = $this->syncConfig();
+        if (!$this->syncCaptureEnabled($config)) {
+            return;
+        }
+        $usesOutbox = (string) ($config['role'] ?? 'branch') === 'branch';
+        $options = [
+            'source_system' => 'inventory_ledger',
+            'config' => $config,
+            'event_version' => $movementId,
+        ];
+        if (!$usesOutbox || !$this->outboxRevisionExists($conn, 'inventory_movement', $movementId, $movementId)) {
+            $this->syncEvents->recordRowSnapshot($conn, 'inventory_movement', $movementId, $options);
+        }
+
+        $balanceRevision = max(1, $balanceRevision);
+        if ($balanceId > 0 && (!$usesOutbox || !$this->outboxRevisionExists($conn, 'inventory_balance', $balanceId, $balanceRevision))) {
+            $options['event_version'] = $balanceRevision;
+            $this->syncEvents->recordRowSnapshot($conn, 'inventory_balance', $balanceId, $options);
+        }
+    }
+
+    private function outboxRevisionExists(mysqli $conn, string $aggregateType, int $localId, int $revision): bool
+    {
+        $stmt = $conn->prepare(
+            'SELECT id FROM sync_outbox'
+            . ' WHERE aggregate_type = ? AND aggregate_local_id = ? AND event_version = ?'
+            . ' AND branch_uuid = (SELECT branch_uuid FROM sync_branch_identity WHERE id = 1)'
+            . ' LIMIT 1'
+        );
+        $stmt->bind_param('sii', $aggregateType, $localId, $revision);
+        $stmt->execute();
+        $exists = (bool) $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        return $exists;
+    }
+
+    private function syncConfig(): array
+    {
+        $config = $this->flags->appConfig();
+        if (!is_array($config)) {
+            $config = [];
+        }
+        $config['role'] = (string) ($config['role'] ?? 'branch');
+        $config['sync'] = array_merge([
+            'outbox_enabled' => true,
+            'branch_sync_enabled' => true,
+            'operational_sync_enabled' => true,
+        ], is_array($config['sync'] ?? null) ? $config['sync'] : []);
+
+        return $config;
+    }
+
+    private function syncCaptureEnabled(array $config): bool
+    {
+        if (empty($config['sync']['operational_sync_enabled'])) {
+            return false;
+        }
+
+        $role = (string) ($config['role'] ?? 'branch');
+        if ($role === 'branch') {
+            return !empty($config['sync']['outbox_enabled']) && !empty($config['sync']['branch_sync_enabled']);
+        }
+
+        return in_array($role, ['cloud', 'fake_cloud'], true)
+            && !empty($config['sync']['cloud_to_branch_publish_enabled']);
     }
 
     private function validateRequest(InventoryMovementRequest $request): void

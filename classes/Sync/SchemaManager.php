@@ -81,6 +81,7 @@ class SyncSchemaManager
             'external_order_line_map' => $this->externalOrderLineMapSql(),
             'sync_outbox' => $this->syncOutboxSql(),
             'sync_inbox' => $this->syncInboxSql(),
+            'sync_projection_versions' => $this->syncProjectionVersionsSql(),
             'sync_checkpoints' => $this->syncCheckpointsSql(),
             'sync_conflicts' => $this->syncConflictsSql(),
             'sync_worker_logs' => $this->syncWorkerLogsSql(),
@@ -300,6 +301,7 @@ class SyncSchemaManager
                     'register_id' => "ALTER TABLE drawer_sessions ADD COLUMN register_id BIGINT UNSIGNED NULL AFTER branch",
                     'open_register_lock' => "ALTER TABLE drawer_sessions ADD COLUMN open_register_lock VARCHAR(64) NULL AFTER open_branch_lock",
                     'open_user_lock' => "ALTER TABLE drawer_sessions ADD COLUMN open_user_lock VARCHAR(64) NULL AFTER open_register_lock",
+                    'sync_revision' => "ALTER TABLE drawer_sessions ADD COLUMN sync_revision BIGINT UNSIGNED NOT NULL DEFAULT 0 AFTER notes",
                 ],
                 'indexes' => [
                     'idx_drawer_sessions_variance_status' => [
@@ -673,6 +675,18 @@ class SyncSchemaManager
             return $this->inventoryCountLinesUpgradeStatements($conn);
         }
 
+        if ($table === 'inventory_counts') {
+            return $this->inventoryCountsUpgradeStatements($conn);
+        }
+
+        if ($table === 'inventory_purchase_orders') {
+            return $this->inventoryPurchaseOrdersUpgradeStatements($conn);
+        }
+
+        if ($table === 'production_batches') {
+            return $this->productionBatchesUpgradeStatements($conn);
+        }
+
         if ($table === 'inventory_transfers') {
             return $this->inventoryTransfersUpgradeStatements($conn);
         }
@@ -691,6 +705,14 @@ class SyncSchemaManager
 
         if ($table === 'cloud_branches') {
             return $this->cloudBranchesUpgradeStatements($conn);
+        }
+
+        if ($table === 'cloud_orders') {
+            return $this->cloudOrdersUpgradeStatements($conn);
+        }
+
+        if ($table === 'cloud_order_lines') {
+            return $this->cloudOrderLinesUpgradeStatements($conn);
         }
 
         if ($table === 'moova_pos_inbound_events') {
@@ -733,6 +755,66 @@ class SyncSchemaManager
             $statements['sync_branch_identity.add_uq_sync_branch_identity_uuid'] = "
 ALTER TABLE sync_branch_identity
   ADD UNIQUE KEY uq_sync_branch_identity_uuid (branch_uuid)";
+        }
+
+        return $statements;
+    }
+
+    private function cloudOrdersUpgradeStatements(mysqli $conn): array
+    {
+        $statements = [];
+        $columns = [
+            'fat_tax' => 'ALTER TABLE cloud_orders ADD COLUMN fat_tax DECIMAL(19,4) NULL DEFAULT NULL AFTER fat_disc',
+            'profit' => 'ALTER TABLE cloud_orders ADD COLUMN profit DECIMAL(19,6) NULL DEFAULT NULL AFTER fat_tax',
+        ];
+        foreach ($columns as $column => $sql) {
+            if (!$this->columnExists($conn, 'cloud_orders', $column)) {
+                $statements['cloud_orders.add_' . $column] = $sql;
+            }
+        }
+
+        $moneyColumns = [
+            'pro_value' => 4,
+            'fat_total' => 4,
+            'fat_net' => 4,
+            'fat_disc' => 4,
+            'fat_tax' => 4,
+            'profit' => 6,
+            'paid_amount' => 4,
+            'remaining_amount' => 4,
+        ];
+        foreach ($moneyColumns as $column => $scale) {
+            if (!$this->columnExists($conn, 'cloud_orders', $column)) {
+                continue;
+            }
+            if ($this->columnNeedsFinancialDecimalDefinition($conn, 'cloud_orders', $column, 19, $scale, true)) {
+                $statements['cloud_orders.modify_' . $column . '_decimal19_' . $scale . '_nullable'] =
+                    "ALTER TABLE cloud_orders MODIFY COLUMN {$column} DECIMAL(19,{$scale}) NULL DEFAULT NULL";
+            }
+        }
+
+        return $statements;
+    }
+
+    private function cloudOrderLinesUpgradeStatements(mysqli $conn): array
+    {
+        $statements = [];
+        $columns = [
+            'qty_in' => 6,
+            'qty_out' => 6,
+            'price' => 6,
+            'cost_price' => 6,
+            'discount' => 4,
+            'det_value' => 4,
+            'profit' => 6,
+        ];
+        foreach ($columns as $column => $scale) {
+            if ($this->columnExists($conn, 'cloud_order_lines', $column)
+                && $this->columnNeedsFinancialDecimalDefinition($conn, 'cloud_order_lines', $column, 19, $scale, true)
+            ) {
+                $statements['cloud_order_lines.modify_' . $column . '_decimal19_' . $scale . '_nullable'] =
+                    "ALTER TABLE cloud_order_lines MODIFY COLUMN {$column} DECIMAL(19,{$scale}) NULL DEFAULT NULL";
+            }
         }
 
         return $statements;
@@ -902,6 +984,43 @@ INNER JOIN item_units iu
  WHERE l.unit_id IS NOT NULL
    AND iu.u_val > 0";
             }
+        }
+
+        return $statements;
+    }
+
+    private function inventoryCountsUpgradeStatements(mysqli $conn)
+    {
+        $statements = [];
+
+        if (!$this->columnExists($conn, 'inventory_counts', 'sync_revision')) {
+            $statements['inventory_counts.add_sync_revision'] = "
+ALTER TABLE inventory_counts
+  ADD COLUMN sync_revision BIGINT UNSIGNED NOT NULL DEFAULT 0 AFTER notes";
+        }
+
+        return $statements;
+    }
+
+    private function inventoryPurchaseOrdersUpgradeStatements(mysqli $conn)
+    {
+        $statements = [];
+        if (!$this->columnExists($conn, 'inventory_purchase_orders', 'sync_revision')) {
+            $statements['inventory_purchase_orders.add_sync_revision'] = "
+ALTER TABLE inventory_purchase_orders
+  ADD COLUMN sync_revision BIGINT UNSIGNED NOT NULL DEFAULT 0 AFTER notes";
+        }
+        return $statements;
+    }
+
+    private function productionBatchesUpgradeStatements(mysqli $conn)
+    {
+        $statements = [];
+
+        if (!$this->columnExists($conn, 'production_batches', 'sync_revision')) {
+            $statements['production_batches.add_sync_revision'] = "
+ALTER TABLE production_batches
+  ADD COLUMN sync_revision BIGINT UNSIGNED NOT NULL DEFAULT 0 AFTER notes";
         }
 
         return $statements;
@@ -1533,7 +1652,7 @@ ALTER TABLE journal_entries
                         "ALTER TABLE fat_details MODIFY COLUMN {$column} DECIMAL(19,6) NOT NULL DEFAULT 0.000000";
                 }
             }
-            foreach (['discount', 'det_value', 'profit'] as $column) {
+            foreach (['discount', 'det_value'] as $column) {
                 if ($this->columnExists($conn, 'fat_details', $column)
                     && $this->columnNeedsWiderFinancialDecimal($conn, 'fat_details', $column, 19, 2)
                 ) {
@@ -1542,10 +1661,16 @@ ALTER TABLE journal_entries
                         "ALTER TABLE fat_details MODIFY COLUMN {$column} DECIMAL(19,2) NOT NULL DEFAULT 0.00";
                 }
             }
+            if ($this->columnExists($conn, 'fat_details', 'profit')
+                && $this->columnNeedsFinancialDecimalDefinition($conn, 'fat_details', 'profit', 19, 6, false)
+            ) {
+                $statements['fat_details.modify_profit_decimal19_6'] =
+                    'ALTER TABLE fat_details MODIFY COLUMN profit DECIMAL(19,6) NOT NULL DEFAULT 0.000000';
+            }
         }
 
         if ($this->tableExists($conn, 'ot_head')) {
-            foreach (['pro_value', 'fat_total', 'fat_net', 'fat_tax', 'discount', 'profit'] as $column) {
+            foreach (['pro_value', 'fat_net', 'discount'] as $column) {
                 if ($this->columnExists($conn, 'ot_head', $column)
                     && $this->columnNeedsWiderFinancialDecimal($conn, 'ot_head', $column, 19, 2)
                 ) {
@@ -1553,6 +1678,20 @@ ALTER TABLE journal_entries
                     $statements['ot_head.modify_' . $column . '_decimal19_2'] =
                         "ALTER TABLE ot_head MODIFY COLUMN {$column} DECIMAL(19,2) NOT NULL DEFAULT 0.00";
                 }
+            }
+            foreach (['fat_total', 'fat_tax'] as $column) {
+                if ($this->columnExists($conn, 'ot_head', $column)
+                    && $this->columnNeedsFinancialDecimalDefinition($conn, 'ot_head', $column, 19, 4, true)
+                ) {
+                    $statements['ot_head.modify_' . $column . '_decimal19_4_nullable'] =
+                        "ALTER TABLE ot_head MODIFY COLUMN {$column} DECIMAL(19,4) NULL DEFAULT NULL";
+                }
+            }
+            if ($this->columnExists($conn, 'ot_head', 'profit')
+                && $this->columnNeedsFinancialDecimalDefinition($conn, 'ot_head', 'profit', 19, 6, true)
+            ) {
+                $statements['ot_head.modify_profit_decimal19_6_nullable'] =
+                    'ALTER TABLE ot_head MODIFY COLUMN profit DECIMAL(19,6) NULL DEFAULT NULL';
             }
         }
 
@@ -1699,6 +1838,25 @@ ALTER TABLE journal_entries
         }
 
         return ((int) $matches[1] < $precision) || ((int) $matches[2] !== $scale && (int) $matches[1] < $precision);
+    }
+
+    private function columnNeedsFinancialDecimalDefinition(
+        mysqli $conn,
+        string $table,
+        string $column,
+        int $precision,
+        int $scale,
+        bool $nullable
+    ): bool {
+        $info = $this->columnInfo($conn, $table, $column);
+        if (!$info) {
+            return false;
+        }
+        $type = strtolower((string) ($info['COLUMN_TYPE'] ?? ''));
+        $expectedType = 'decimal(' . $precision . ',' . $scale . ')';
+        $isNullable = strtoupper((string) ($info['IS_NULLABLE'] ?? 'NO')) === 'YES';
+
+        return $type !== $expectedType || $isNullable !== $nullable;
     }
 
     private function itemTypeEnumUpgradeStatements(mysqli $conn)
@@ -2743,6 +2901,7 @@ CREATE TABLE IF NOT EXISTS drawer_sessions (
   preceding_session_id BIGINT UNSIGNED NULL,
   takeover_authorized_by BIGINT UNSIGNED NULL,
   notes VARCHAR(500) NULL,
+  sync_revision BIGINT UNSIGNED NOT NULL DEFAULT 0,
   PRIMARY KEY (id),
   UNIQUE KEY uq_drawer_sessions_uuid (uuid),
   UNIQUE KEY uq_drawer_sessions_open_branch_lock (open_branch_lock),
@@ -3359,6 +3518,7 @@ CREATE TABLE IF NOT EXISTS inventory_counts (
   closed_at DATETIME NULL,
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   notes TEXT NULL,
+  sync_revision BIGINT UNSIGNED NOT NULL DEFAULT 0,
   PRIMARY KEY (id),
   UNIQUE KEY uq_inventory_count_uuid (count_uuid),
   KEY idx_inventory_count_scope_status (pos_tenant, pos_branch, store_id, status, created_at),
@@ -3483,6 +3643,7 @@ CREATE TABLE IF NOT EXISTS inventory_purchase_orders (
   closed_at DATETIME NULL,
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   notes TEXT NULL,
+  sync_revision BIGINT UNSIGNED NOT NULL DEFAULT 0,
   PRIMARY KEY (id),
   UNIQUE KEY uq_inventory_purchase_order_uuid (purchase_order_uuid),
   KEY idx_inventory_purchase_order_scope_status (pos_tenant, pos_branch, status, created_at),
@@ -3631,6 +3792,7 @@ CREATE TABLE IF NOT EXISTS production_batches (
   committed_by BIGINT UNSIGNED NULL,
   variance_reason VARCHAR(255) NULL,
   notes TEXT NULL,
+  sync_revision BIGINT UNSIGNED NOT NULL DEFAULT 0,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
@@ -3812,6 +3974,26 @@ CREATE TABLE IF NOT EXISTS sync_inbox (
   UNIQUE KEY uq_sync_inbox_idempotency (branch_uuid, direction, idempotency_key),
   KEY idx_sync_inbox_status (status, received_at),
   KEY idx_sync_inbox_event_uuid (event_uuid)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
+    private function syncProjectionVersionsSql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS sync_projection_versions (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  branch_uuid CHAR(36) NOT NULL,
+  aggregate_type VARCHAR(50) NOT NULL,
+  aggregate_uuid CHAR(36) NOT NULL,
+  last_event_version BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  last_payload_hash CHAR(64) NOT NULL DEFAULT '',
+  last_event_uuid CHAR(36) NULL,
+  last_event_type VARCHAR(80) NULL,
+  created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_sync_projection_versions_aggregate (branch_uuid, aggregate_type, aggregate_uuid),
+  KEY idx_sync_projection_versions_updated (updated_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
     }
 
@@ -4025,12 +4207,14 @@ CREATE TABLE IF NOT EXISTS cloud_orders (
   completed_at DATETIME NULL,
   payment_date DATETIME NULL,
   branch_timezone VARCHAR(100) NOT NULL DEFAULT 'Africa/Cairo',
-  pro_value DECIMAL(15,4) NOT NULL DEFAULT 0,
-  fat_total DECIMAL(15,4) NOT NULL DEFAULT 0,
-  fat_net DECIMAL(15,4) NOT NULL DEFAULT 0,
-  fat_disc DECIMAL(15,4) NOT NULL DEFAULT 0,
-  paid_amount DECIMAL(15,4) NOT NULL DEFAULT 0,
-  remaining_amount DECIMAL(15,4) NOT NULL DEFAULT 0,
+  pro_value DECIMAL(19,4) NULL DEFAULT NULL,
+  fat_total DECIMAL(19,4) NULL DEFAULT NULL,
+  fat_net DECIMAL(19,4) NULL DEFAULT NULL,
+  fat_disc DECIMAL(19,4) NULL DEFAULT NULL,
+  fat_tax DECIMAL(19,4) NULL DEFAULT NULL,
+  profit DECIMAL(19,6) NULL DEFAULT NULL,
+  paid_amount DECIMAL(19,4) NULL DEFAULT NULL,
+  remaining_amount DECIMAL(19,4) NULL DEFAULT NULL,
   payment_status VARCHAR(50) NULL,
   invoice_status VARCHAR(50) NULL,
   order_status VARCHAR(50) NULL,
@@ -4062,13 +4246,13 @@ CREATE TABLE IF NOT EXISTS cloud_order_lines (
   item_uuid CHAR(36) NULL,
   item_name VARCHAR(255) NULL,
   barcode VARCHAR(191) NULL,
-  qty_in DECIMAL(15,4) NOT NULL DEFAULT 0,
-  qty_out DECIMAL(15,4) NOT NULL DEFAULT 0,
-  price DECIMAL(15,4) NOT NULL DEFAULT 0,
-  cost_price DECIMAL(15,4) NOT NULL DEFAULT 0,
-  discount DECIMAL(15,4) NOT NULL DEFAULT 0,
-  det_value DECIMAL(15,4) NOT NULL DEFAULT 0,
-  profit DECIMAL(15,4) NOT NULL DEFAULT 0,
+  qty_in DECIMAL(19,6) NULL DEFAULT NULL,
+  qty_out DECIMAL(19,6) NULL DEFAULT NULL,
+  price DECIMAL(19,6) NULL DEFAULT NULL,
+  cost_price DECIMAL(19,6) NULL DEFAULT NULL,
+  discount DECIMAL(19,4) NULL DEFAULT NULL,
+  det_value DECIMAL(19,4) NULL DEFAULT NULL,
+  profit DECIMAL(19,6) NULL DEFAULT NULL,
   isdeleted TINYINT(1) NOT NULL DEFAULT 0,
   payload_hash CHAR(64) NOT NULL,
   payload_json LONGTEXT NOT NULL,

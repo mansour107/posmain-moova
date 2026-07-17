@@ -60,6 +60,7 @@ class SyncSchemaMigrationTest extends TestCase
         $this->assertArrayHasKey('item_variants', $manager->plannedStatements());
         $this->assertArrayHasKey('sync_outbox', $manager->plannedStatements());
         $this->assertArrayHasKey('sync_inbox', $manager->plannedStatements());
+        $this->assertArrayHasKey('sync_projection_versions', $manager->plannedStatements());
         $this->assertArrayHasKey('sync_checkpoints', $manager->plannedStatements());
         $this->assertArrayHasKey('sync_conflicts', $manager->plannedStatements());
         $this->assertArrayHasKey('sync_worker_logs', $manager->plannedStatements());
@@ -79,6 +80,10 @@ class SyncSchemaMigrationTest extends TestCase
         $this->assertStringContainsString('is_unlimited TINYINT(1) NOT NULL DEFAULT 1', $manager->plannedStatements()['user_permission_grants']);
         $this->assertStringContainsString('expected_cash DECIMAL(19,3) NULL', $manager->plannedStatements()['drawer_sessions']);
         $this->assertStringContainsString('counted_cash DECIMAL(19,3) NULL', $manager->plannedStatements()['drawer_sessions']);
+        $this->assertStringContainsString('sync_revision BIGINT UNSIGNED NOT NULL DEFAULT 0', $manager->plannedStatements()['drawer_sessions']);
+        $this->assertStringContainsString('sync_revision BIGINT UNSIGNED NOT NULL DEFAULT 0', $manager->plannedStatements()['inventory_counts']);
+        $this->assertStringContainsString('sync_revision BIGINT UNSIGNED NOT NULL DEFAULT 0', $manager->plannedStatements()['production_batches']);
+        $this->assertStringContainsString('sync_revision BIGINT UNSIGNED NOT NULL DEFAULT 0', $manager->plannedStatements()['inventory_purchase_orders']);
         $this->assertStringContainsString('moving_average_cost DECIMAL(19,6)', $manager->plannedStatements()['inventory_item_balances']);
         $this->assertStringContainsString('CREATE TABLE IF NOT EXISTS `app_sessions`', $sql);
         $this->assertStringContainsString('payload MEDIUMBLOB NOT NULL', $sql);
@@ -121,6 +126,8 @@ class SyncSchemaMigrationTest extends TestCase
         $this->assertStringContainsString('CREATE TABLE IF NOT EXISTS sync_inbox', $sql);
         $this->assertStringContainsString("direction ENUM('branch_to_cloud','cloud_to_branch','moova_to_branch') NOT NULL", $sql);
         $this->assertStringContainsString('UNIQUE KEY uq_sync_inbox_idempotency (branch_uuid, direction, idempotency_key)', $sql);
+        $this->assertStringContainsString('CREATE TABLE IF NOT EXISTS sync_projection_versions', $sql);
+        $this->assertStringContainsString('UNIQUE KEY uq_sync_projection_versions_aggregate (branch_uuid, aggregate_type, aggregate_uuid)', $sql);
         $this->assertStringContainsString('CREATE TABLE IF NOT EXISTS sync_checkpoints', $sql);
         $this->assertStringContainsString('UNIQUE KEY uq_sync_checkpoint (branch_uuid, stream_name)', $sql);
         $this->assertStringContainsString('CREATE TABLE IF NOT EXISTS sync_conflicts', $sql);
@@ -147,10 +154,14 @@ class SyncSchemaMigrationTest extends TestCase
         $this->assertStringContainsString('sync_secret_encrypted TEXT NULL', $sql);
         $this->assertStringContainsString('CREATE TABLE IF NOT EXISTS cloud_orders', $sql);
         $this->assertStringContainsString('order_uuid CHAR(36) NOT NULL', $sql);
-        $this->assertStringContainsString('pro_value DECIMAL(15,4) NOT NULL DEFAULT 0', $sql);
+        $this->assertStringContainsString('pro_value DECIMAL(19,4) NULL DEFAULT NULL', $sql);
+        $this->assertStringContainsString('fat_tax DECIMAL(19,4) NULL DEFAULT NULL', $sql);
+        $this->assertStringContainsString('profit DECIMAL(19,6) NULL DEFAULT NULL', $sql);
         $this->assertStringContainsString('UNIQUE KEY uq_cloud_order_branch_uuid (branch_uuid, order_uuid)', $sql);
         $this->assertStringContainsString('KEY idx_cloud_orders_status (branch_uuid, order_status, payment_status)', $sql);
         $this->assertStringContainsString('CREATE TABLE IF NOT EXISTS cloud_order_lines', $sql);
+        $this->assertStringContainsString('qty_out DECIMAL(19,6) NULL DEFAULT NULL', $sql);
+        $this->assertStringContainsString('profit DECIMAL(19,6) NULL DEFAULT NULL', $sql);
         $this->assertStringContainsString('UNIQUE KEY uq_cloud_line_branch_uuid (branch_uuid, line_uuid)', $sql);
         $this->assertStringContainsString('KEY idx_cloud_lines_order (branch_uuid, order_uuid)', $sql);
         $this->assertStringContainsString('CREATE TABLE IF NOT EXISTS cloud_order_payments', $sql);
@@ -215,6 +226,9 @@ class SyncSchemaMigrationTest extends TestCase
         $this->assertContains('idx_tenant_branch_created', $inspect['order_events']['indexes']);
         $this->assertTrue($inspect['sync_outbox']['exists']);
         $this->assertTrue($inspect['sync_inbox']['exists']);
+        $this->assertTrue($inspect['sync_projection_versions']['exists']);
+        $this->assertContains('last_event_version', $inspect['sync_projection_versions']['columns']);
+        $this->assertContains('uq_sync_projection_versions_aggregate', $inspect['sync_projection_versions']['indexes']);
         $this->assertTrue($inspect['sync_checkpoints']['exists']);
         $this->assertTrue($inspect['sync_conflicts']['exists']);
         $this->assertTrue($inspect['sync_worker_logs']['exists']);
@@ -246,6 +260,10 @@ class SyncSchemaMigrationTest extends TestCase
         $this->assertContains('is_unlimited', $inspect['user_permission_grants']['columns']);
         $this->assertSame('decimal(19,3)', strtolower($this->columnType('drawer_sessions', 'expected_cash')));
         $this->assertSame('decimal(19,3)', strtolower($this->columnType('drawer_sessions', 'counted_cash')));
+        $this->assertContains('sync_revision', $inspect['drawer_sessions']['columns']);
+        $this->assertContains('sync_revision', $inspect['inventory_counts']['columns']);
+        $this->assertContains('sync_revision', $inspect['production_batches']['columns']);
+        $this->assertContains('sync_revision', $inspect['inventory_purchase_orders']['columns']);
         $this->assertSame('decimal(19,6)', strtolower($this->columnType('inventory_item_balances', 'moving_average_cost')));
         $this->assertSame([], $manager->pendingStatements(self::$conn));
 
@@ -292,6 +310,73 @@ class SyncSchemaMigrationTest extends TestCase
         $this->assertSame([], $this->journalPrecisionPending($manager));
     }
 
+    public function testExistingInventoryCountsGainRevisionWithoutLosingRows(): void
+    {
+        self::$conn->query("DELETE FROM inventory_count_lines WHERE count_id = 98761");
+        self::$conn->query("DELETE FROM inventory_counts WHERE id = 98761");
+        self::$conn->query("INSERT INTO inventory_counts (
+            id, count_uuid, pos_tenant, pos_branch, branch_uuid, store_id, status, count_type, notes
+        ) VALUES (
+            98761, '98761987-6198-4198-8198-761987619876', 1, 1,
+            '98760987-6098-4098-8098-760987609876', 1, 'draft', 'selected', 'legacy count'
+        )");
+        self::$conn->query('ALTER TABLE inventory_counts DROP COLUMN sync_revision');
+
+        $manager = new SyncSchemaManager();
+        $pending = $manager->pendingStatements(self::$conn);
+        $this->assertArrayHasKey('inventory_counts.add_sync_revision', $pending);
+        self::$conn->query($pending['inventory_counts.add_sync_revision']);
+
+        $row = self::$conn->query('SELECT notes, sync_revision FROM inventory_counts WHERE id = 98761')->fetch_assoc();
+        $this->assertSame('legacy count', (string) ($row['notes'] ?? ''));
+        $this->assertSame(0, (int) ($row['sync_revision'] ?? -1));
+        $this->assertArrayNotHasKey('inventory_counts.add_sync_revision', $manager->pendingStatements(self::$conn));
+
+        self::$conn->query('DELETE FROM inventory_counts WHERE id = 98761');
+    }
+
+    public function testExistingProductionBatchesGainRevisionWithoutLosingRows(): void
+    {
+        self::$conn->query('DELETE FROM production_batch_lines WHERE batch_id = 98762');
+        self::$conn->query('DELETE FROM production_batches WHERE id = 98762');
+        self::$conn->query("INSERT INTO production_batches (
+            id, batch_uuid, pos_tenant, pos_branch, branch_uuid, store_id, recipe_id,
+            output_item_id, planned_output_qty, status, notes
+        ) VALUES (
+            98762, '98762987-6298-4298-8298-762987629876', 1, 1,
+            '98760987-6098-4098-8098-760987609876', 1, 12, 22,
+            '4.000000', 'draft', 'legacy production batch'
+        )");
+        self::$conn->query('ALTER TABLE production_batches DROP COLUMN sync_revision');
+
+        $manager = new SyncSchemaManager();
+        $pending = $manager->pendingStatements(self::$conn);
+        $this->assertArrayHasKey('production_batches.add_sync_revision', $pending);
+        self::$conn->query($pending['production_batches.add_sync_revision']);
+
+        $row = self::$conn->query('SELECT notes, sync_revision FROM production_batches WHERE id = 98762')->fetch_assoc();
+        $this->assertSame('legacy production batch', (string) ($row['notes'] ?? ''));
+        $this->assertSame(0, (int) ($row['sync_revision'] ?? -1));
+        $this->assertArrayNotHasKey('production_batches.add_sync_revision', $manager->pendingStatements(self::$conn));
+
+        self::$conn->query('DELETE FROM production_batches WHERE id = 98762');
+    }
+
+    public function testExistingPurchaseOrdersGainRevisionWithoutLosingRows(): void
+    {
+        self::$conn->query('DELETE FROM inventory_purchase_order_lines WHERE purchase_order_id = 98763');
+        self::$conn->query('DELETE FROM inventory_purchase_orders WHERE id = 98763');
+        self::$conn->query("INSERT INTO inventory_purchase_orders (id,purchase_order_uuid,destination_store_id,status,notes) VALUES (98763,'98763987-6398-4398-8398-763987639876',1,'draft','legacy purchase order')");
+        self::$conn->query('ALTER TABLE inventory_purchase_orders DROP COLUMN sync_revision');
+        $manager=new SyncSchemaManager();$pending=$manager->pendingStatements(self::$conn);
+        $this->assertArrayHasKey('inventory_purchase_orders.add_sync_revision',$pending);
+        self::$conn->query($pending['inventory_purchase_orders.add_sync_revision']);
+        $row=self::$conn->query('SELECT notes,sync_revision FROM inventory_purchase_orders WHERE id=98763')->fetch_assoc();
+        $this->assertSame('legacy purchase order',(string)$row['notes']);$this->assertSame(0,(int)$row['sync_revision']);
+        $this->assertArrayNotHasKey('inventory_purchase_orders.add_sync_revision',$manager->pendingStatements(self::$conn));
+        self::$conn->query('DELETE FROM inventory_purchase_orders WHERE id=98763');
+    }
+
     public function testNullableLegacyFinancialValuesAreNormalizedBeforeNotNullPrecisionUpgrade(): void
     {
         self::$conn->query('DROP TABLE IF EXISTS fat_details');
@@ -322,6 +407,66 @@ class SyncSchemaMigrationTest extends TestCase
         $this->assertSame('23.100000', (string) ($values[1]['cost_price'] ?? ''));
 
         self::$conn->query('DROP TABLE fat_details');
+    }
+
+    public function testPolymorphicHeaderUnknownsRemainNullableDuringFinancialPrecisionUpgrade(): void
+    {
+        self::$conn->query('DROP TABLE IF EXISTS ot_head');
+        self::$conn->query("CREATE TABLE ot_head (
+            id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+            fat_total DOUBLE NULL,
+            fat_tax DOUBLE NULL,
+            profit FLOAT NULL
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+        self::$conn->query('INSERT INTO ot_head (fat_total, fat_tax, profit) VALUES (NULL, NULL, NULL), (12.3456, 1.2345, 11.111111)');
+
+        $manager = new SyncSchemaManager();
+        $pending = $manager->pendingStatements(self::$conn);
+        foreach (['fat_total', 'fat_tax', 'profit'] as $column) {
+            $this->assertArrayNotHasKey('ot_head.normalize_' . $column . '_nulls', $pending);
+        }
+        $this->assertArrayHasKey('ot_head.modify_fat_total_decimal19_4_nullable', $pending);
+        $this->assertArrayHasKey('ot_head.modify_fat_tax_decimal19_4_nullable', $pending);
+        $this->assertArrayHasKey('ot_head.modify_profit_decimal19_6_nullable', $pending);
+
+        self::$conn->query($pending['ot_head.modify_fat_total_decimal19_4_nullable']);
+        self::$conn->query($pending['ot_head.modify_fat_tax_decimal19_4_nullable']);
+        self::$conn->query($pending['ot_head.modify_profit_decimal19_6_nullable']);
+
+        $unknown = self::$conn->query('SELECT fat_total, fat_tax, profit FROM ot_head WHERE id = 1')->fetch_assoc();
+        $this->assertNull($unknown['fat_total']);
+        $this->assertNull($unknown['fat_tax']);
+        $this->assertNull($unknown['profit']);
+        $this->assertSame('decimal(19,4)', strtolower($this->columnType('ot_head', 'fat_total')));
+        $this->assertSame('decimal(19,4)', strtolower($this->columnType('ot_head', 'fat_tax')));
+        $this->assertSame('decimal(19,6)', strtolower($this->columnType('ot_head', 'profit')));
+
+        self::$conn->query('DROP TABLE ot_head');
+    }
+
+    public function testExistingCloudOrderProjectionGetsAdditiveFinancialFidelityUpgrade(): void
+    {
+        self::$conn->query('ALTER TABLE cloud_orders DROP COLUMN fat_tax, DROP COLUMN profit');
+        self::$conn->query('ALTER TABLE cloud_orders MODIFY COLUMN fat_total DECIMAL(15,4) NOT NULL DEFAULT 0');
+        self::$conn->query('ALTER TABLE cloud_order_lines MODIFY COLUMN qty_out DECIMAL(15,4) NOT NULL DEFAULT 0, MODIFY COLUMN profit DECIMAL(15,4) NOT NULL DEFAULT 0');
+
+        $manager = new SyncSchemaManager();
+        $pending = $manager->pendingStatements(self::$conn);
+        $this->assertArrayHasKey('cloud_orders.add_fat_tax', $pending);
+        $this->assertArrayHasKey('cloud_orders.add_profit', $pending);
+        $this->assertArrayHasKey('cloud_orders.modify_fat_total_decimal19_4_nullable', $pending);
+        $this->assertArrayHasKey('cloud_order_lines.modify_qty_out_decimal19_6_nullable', $pending);
+        $this->assertArrayHasKey('cloud_order_lines.modify_profit_decimal19_6_nullable', $pending);
+
+        foreach ($pending as $label => $sql) {
+            if (strpos($label, 'cloud_orders.') === 0 || strpos($label, 'cloud_order_lines.') === 0) {
+                self::$conn->query($sql);
+            }
+        }
+        $this->assertSame('decimal(19,4)', strtolower($this->columnType('cloud_orders', 'fat_tax')));
+        $this->assertSame('decimal(19,6)', strtolower($this->columnType('cloud_orders', 'profit')));
+        $this->assertSame('decimal(19,6)', strtolower($this->columnType('cloud_order_lines', 'qty_out')));
+        $this->assertSame('decimal(19,6)', strtolower($this->columnType('cloud_order_lines', 'profit')));
     }
 
     public function testLegacyThreeDecimalDrawerCashWidensWithoutLosingFractionalValues(): void

@@ -1,14 +1,20 @@
 <?php
 
 require_once __DIR__ . '/PosCustomerPhoneService.php';
+require_once __DIR__ . '/../../Sync/OperationalSyncEventService.php';
 
 class PosCustomerService
 {
     private PosCustomerPhoneService $phoneService;
+    private OperationalSyncEventService $syncEventService;
 
-    public function __construct(?PosCustomerPhoneService $phoneService = null)
+    public function __construct(
+        ?PosCustomerPhoneService $phoneService = null,
+        ?OperationalSyncEventService $syncEventService = null
+    )
     {
         $this->phoneService = $phoneService ?: new PosCustomerPhoneService();
+        $this->syncEventService = $syncEventService ?: new OperationalSyncEventService();
     }
 
     public function tablesReady(mysqli $conn): bool
@@ -161,7 +167,13 @@ class PosCustomerService
         return $stats;
     }
 
-    public function applyRollupDelta(mysqli $conn, int $customerId, float $paidDelta, bool $incrementOrderCount): void
+    public function applyRollupDelta(
+        mysqli $conn,
+        int $customerId,
+        float $paidDelta,
+        bool $incrementOrderCount,
+        array $options = []
+    ): void
     {
         if ($customerId < 1 || !$this->tablesReady($conn)) {
             return;
@@ -202,17 +214,38 @@ class PosCustomerService
             return;
         }
 
-        $stmt->execute();
-        $stmt->close();
+        $ownsTransaction = $this->ownsTransaction($options);
+        if ($ownsTransaction) {
+            $conn->begin_transaction();
+        }
+        try {
+            $stmt->execute();
+            $stmt->close();
+            if (empty($options['defer_sync'])) {
+                $this->recordSyncSnapshot($conn, $customerId, $options + [
+                    'event_type' => 'customer.rollup_updated',
+                    'source_system' => 'pos_customer_rollup',
+                ]);
+            }
+            if ($ownsTransaction) {
+                $conn->commit();
+            }
+        } catch (Throwable $exception) {
+            if ($ownsTransaction) {
+                $conn->rollback();
+            }
+            throw $exception;
+        }
     }
 
-    public function saveCustomer(mysqli $conn, array $payload): array
+    public function saveCustomer(mysqli $conn, array $payload, array $options = []): array
     {
         if (!$this->tablesReady($conn)) {
             throw new RuntimeException('POS_CUSTOMER_TABLES_MISSING');
         }
 
         $customerId = (int) ($payload['id'] ?? $payload['customer_id'] ?? 0);
+        $isNew = $customerId < 1;
         $displayName = trim((string) ($payload['display_name'] ?? $payload['name'] ?? ''));
         $notes = trim((string) ($payload['notes'] ?? ''));
 
@@ -220,7 +253,10 @@ class PosCustomerService
             throw new InvalidArgumentException('CUSTOMER_NAME_REQUIRED');
         }
 
-        $conn->begin_transaction();
+        $ownsTransaction = $this->ownsTransaction($options);
+        if ($ownsTransaction) {
+            $conn->begin_transaction();
+        }
         try {
             if ($customerId > 0) {
                 $stmt = $conn->prepare('UPDATE pos_customers SET display_name = ?, notes = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND isdeleted = 0');
@@ -254,21 +290,37 @@ class PosCustomerService
             }
 
             $this->refreshPrimaryPhoneId($conn, $customerId);
-            $conn->commit();
-        } catch (Throwable $exception) {
-            $conn->rollback();
-            throw $exception;
-        }
+            $this->recordSyncSnapshot($conn, $customerId, $options + [
+                'event_type' => $isNew ? 'customer.created' : 'customer.saved',
+                'source_system' => 'pos_customer',
+            ]);
 
-        $profile = $this->getProfile($conn, $customerId, true);
-        if (!$profile) {
-            throw new RuntimeException('CUSTOMER_SAVE_VERIFY_FAILED');
+            $profile = $this->getProfile($conn, $customerId, true);
+            if (!$profile) {
+                throw new RuntimeException('CUSTOMER_SAVE_VERIFY_FAILED');
+            }
+
+            if ($ownsTransaction) {
+                $conn->commit();
+            }
+        } catch (Throwable $exception) {
+            if ($ownsTransaction) {
+                $conn->rollback();
+            }
+            throw $exception;
         }
 
         return $profile;
     }
 
-    public function upsertForDelivery(mysqli $conn, string $phone, string $name, string $address, ?int $zoneId = null): array
+    public function upsertForDelivery(
+        mysqli $conn,
+        string $phone,
+        string $name,
+        string $address,
+        ?int $zoneId = null,
+        array $options = []
+    ): array
     {
         $normalized = $this->phoneService->normalizePhone($phone);
         if (!$this->phoneService->isValidPhone($phone)) {
@@ -289,7 +341,7 @@ class PosCustomerService
                     'zone_id' => $zoneId,
                     'is_default' => true,
                 ]] : [],
-            ]);
+            ], $options + ['source_system' => 'pos_delivery_customer']);
         }
 
         return $this->saveCustomer($conn, [
@@ -300,30 +352,48 @@ class PosCustomerService
                 'zone_id' => $zoneId,
                 'is_default' => true,
             ]] : [],
-        ]);
+        ], $options + ['source_system' => 'pos_delivery_customer']);
     }
 
-    public function recordOrderPaid(mysqli $conn, int $customerId, float $paidAmount): void
+    public function recordOrderPaid(mysqli $conn, int $customerId, float $paidAmount, array $options = []): void
     {
         if ($customerId < 1 || $paidAmount <= 0 || !$this->tablesReady($conn)) {
             return;
         }
 
-        $stmt = $conn->prepare("
-            UPDATE pos_customers
-            SET orders_count = orders_count + 1,
-                lifetime_paid = lifetime_paid + ?,
-                last_order_at = NOW(),
-                updated_at = CURRENT_TIMESTAMP
-            WHERE id = ?
-              AND isdeleted = 0
-        ");
-        $stmt->bind_param('di', $paidAmount, $customerId);
-        $stmt->execute();
-        $stmt->close();
+        $ownsTransaction = $this->ownsTransaction($options);
+        if ($ownsTransaction) {
+            $conn->begin_transaction();
+        }
+        try {
+            $stmt = $conn->prepare("
+                UPDATE pos_customers
+                SET orders_count = orders_count + 1,
+                    lifetime_paid = lifetime_paid + ?,
+                    last_order_at = NOW(),
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                  AND isdeleted = 0
+            ");
+            $stmt->bind_param('di', $paidAmount, $customerId);
+            $stmt->execute();
+            $stmt->close();
+            $this->recordSyncSnapshot($conn, $customerId, $options + [
+                'event_type' => 'customer.order_paid',
+                'source_system' => 'pos_customer_rollup',
+            ]);
+            if ($ownsTransaction) {
+                $conn->commit();
+            }
+        } catch (Throwable $exception) {
+            if ($ownsTransaction) {
+                $conn->rollback();
+            }
+            throw $exception;
+        }
     }
 
-    public function mergeCustomers(mysqli $conn, int $sourceId, int $targetId): array
+    public function mergeCustomers(mysqli $conn, int $sourceId, int $targetId, array $options = []): array
     {
         if (!$this->tablesReady($conn)) {
             throw new RuntimeException('POS_CUSTOMER_TABLES_MISSING');
@@ -338,7 +408,10 @@ class PosCustomerService
             throw new InvalidArgumentException('CUSTOMER_NOT_FOUND');
         }
 
-        $conn->begin_transaction();
+        $ownsTransaction = $this->ownsTransaction($options);
+        if ($ownsTransaction) {
+            $conn->begin_transaction();
+        }
         try {
             $stmt = $conn->prepare('SELECT id, phone_normalized FROM pos_customer_phones WHERE customer_id = ? AND isdeleted = 0');
             $stmt->bind_param('i', $sourceId);
@@ -422,7 +495,7 @@ class PosCustomerService
                 $stmt->close();
             }
 
-            $stmt = $conn->prepare('UPDATE pos_customers SET isdeleted = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?');
+            $stmt = $conn->prepare('UPDATE pos_customers SET primary_phone_id = NULL, isdeleted = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?');
             $stmt->bind_param('i', $sourceId);
             $stmt->execute();
             $stmt->close();
@@ -440,9 +513,21 @@ class PosCustomerService
             }
 
             $this->refreshPrimaryPhoneId($conn, $targetId);
-            $conn->commit();
+            $this->recordSyncSnapshot($conn, $targetId, $options + [
+                'event_type' => 'customer.merged_target',
+                'source_system' => 'pos_customer_merge',
+            ]);
+            $this->recordSyncSnapshot($conn, $sourceId, $options + [
+                'event_type' => 'customer.merged_source',
+                'source_system' => 'pos_customer_merge',
+            ]);
+            if ($ownsTransaction) {
+                $conn->commit();
+            }
         } catch (Throwable $exception) {
-            $conn->rollback();
+            if ($ownsTransaction) {
+                $conn->rollback();
+            }
             throw $exception;
         }
 
@@ -454,7 +539,7 @@ class PosCustomerService
         return $profile;
     }
 
-    public function softDeleteCustomer(mysqli $conn, int $customerId): void
+    public function softDeleteCustomer(mysqli $conn, int $customerId, array $options = []): void
     {
         if ($customerId < 1 || !$this->tablesReady($conn)) {
             throw new InvalidArgumentException('CUSTOMER_ID_REQUIRED');
@@ -465,9 +550,12 @@ class PosCustomerService
             throw new InvalidArgumentException('CUSTOMER_NOT_FOUND');
         }
 
-        $conn->begin_transaction();
+        $ownsTransaction = $this->ownsTransaction($options);
+        if ($ownsTransaction) {
+            $conn->begin_transaction();
+        }
         try {
-            $stmt = $conn->prepare('UPDATE pos_customers SET isdeleted = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?');
+            $stmt = $conn->prepare('UPDATE pos_customers SET primary_phone_id = NULL, isdeleted = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?');
             $stmt->bind_param('i', $customerId);
             $stmt->execute();
             $stmt->close();
@@ -484,9 +572,17 @@ class PosCustomerService
                 $stmt->close();
             }
 
-            $conn->commit();
+            $this->recordSyncSnapshot($conn, $customerId, $options + [
+                'event_type' => 'customer.deleted',
+                'source_system' => 'pos_customer',
+            ]);
+            if ($ownsTransaction) {
+                $conn->commit();
+            }
         } catch (Throwable $exception) {
-            $conn->rollback();
+            if ($ownsTransaction) {
+                $conn->rollback();
+            }
             throw $exception;
         }
     }
@@ -573,19 +669,42 @@ class PosCustomerService
         }
     }
 
-    public function setPrimaryPhone(mysqli $conn, int $customerId, int $phoneId): void
+    public function setPrimaryPhone(mysqli $conn, int $customerId, int $phoneId, array $options = []): void
     {
-        $stmt = $conn->prepare('UPDATE pos_customer_phones SET is_primary = 0 WHERE customer_id = ? AND isdeleted = 0');
-        $stmt->bind_param('i', $customerId);
-        $stmt->execute();
-        $stmt->close();
+        $ownsTransaction = $this->ownsTransaction($options);
+        if ($ownsTransaction) {
+            $conn->begin_transaction();
+        }
+        try {
+            $stmt = $conn->prepare('UPDATE pos_customer_phones SET is_primary = 0 WHERE customer_id = ? AND isdeleted = 0');
+            $stmt->bind_param('i', $customerId);
+            $stmt->execute();
+            $stmt->close();
 
-        $stmt = $conn->prepare('UPDATE pos_customer_phones SET is_primary = 1 WHERE id = ? AND customer_id = ? AND isdeleted = 0');
-        $stmt->bind_param('ii', $phoneId, $customerId);
-        $stmt->execute();
-        $stmt->close();
+            $stmt = $conn->prepare('UPDATE pos_customer_phones SET is_primary = 1 WHERE id = ? AND customer_id = ? AND isdeleted = 0');
+            $stmt->bind_param('ii', $phoneId, $customerId);
+            $stmt->execute();
+            $stmt->close();
 
-        $this->refreshPrimaryPhoneId($conn, $customerId);
+            $this->refreshPrimaryPhoneId($conn, $customerId);
+            $this->recordSyncSnapshot($conn, $customerId, $options + [
+                'event_type' => 'customer.primary_phone_changed',
+                'source_system' => 'pos_customer',
+            ]);
+            if ($ownsTransaction) {
+                $conn->commit();
+            }
+        } catch (Throwable $exception) {
+            if ($ownsTransaction) {
+                $conn->rollback();
+            }
+            throw $exception;
+        }
+    }
+
+    public function recordSyncSnapshot(mysqli $conn, int $customerId, array $options = []): ?array
+    {
+        return $this->syncEventService->recordCustomerSnapshot($conn, $customerId, $options);
     }
 
     private function syncAddresses(mysqli $conn, int $customerId, array $addresses): void
@@ -654,6 +773,11 @@ class PosCustomerService
 
         if ($row) {
             $phoneId = (int) $row['id'];
+            $stmt = $conn->prepare('UPDATE pos_customer_phones SET is_primary = CASE WHEN id = ? THEN 1 ELSE 0 END WHERE customer_id = ? AND isdeleted = 0');
+            $stmt->bind_param('ii', $phoneId, $customerId);
+            $stmt->execute();
+            $stmt->close();
+
             $stmt = $conn->prepare('UPDATE pos_customers SET primary_phone_id = ? WHERE id = ?');
             $stmt->bind_param('ii', $phoneId, $customerId);
             $stmt->execute();
@@ -749,5 +873,10 @@ class PosCustomerService
         $stmt->close();
 
         return $row && (int) $row['table_count'] > 0;
+    }
+
+    private function ownsTransaction(array $options): bool
+    {
+        return empty($options['in_transaction']) && empty($options['transaction_started']);
     }
 }

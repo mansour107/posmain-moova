@@ -10,6 +10,7 @@ require_once __DIR__ . '/../Accounting/JournalPostingService.php';
 require_once __DIR__ . '/../Pos/Service/DrawerSessionService.php';
 require_once __DIR__ . '/../Pos/Service/PaymentMethodService.php';
 require_once __DIR__ . '/../Sync/DocumentCounterService.php';
+require_once __DIR__ . '/../Sync/OperationalSyncEventService.php';
 
 /**
  * Certified refund boundary: credit notes reverse revenue from stored line
@@ -221,6 +222,8 @@ final class FinancialRefundService
                 $refundIds[] = $refundId;
             }
 
+            $this->recordSyncSnapshot($conn, $creditNoteId, $context);
+
             if ($ownsTransaction) {
                 $conn->commit();
             }
@@ -301,6 +304,7 @@ final class FinancialRefundService
             $update->bind_param('sii', $externalReference, $journal, $refundId);
             $update->execute();
             $update->close();
+            $this->recordSyncSnapshot($conn, (int) $refund['credit_note_id'], $context);
             $conn->commit();
 
             return [
@@ -325,6 +329,19 @@ final class FinancialRefundService
         if (!$row) {
             throw new InvalidArgumentException('ORIGINAL_ORDER_NOT_FOUND');
         }
+    }
+
+    private function recordSyncSnapshot(mysqli $conn, int $creditNoteId, array $context): void
+    {
+        $options = [
+            'event_type' => 'financial.refund_snapshot',
+            'source_system' => 'financial_refund',
+        ];
+        if (isset($context['sync_config']) && is_array($context['sync_config'])) {
+            $options['config'] = $context['sync_config'];
+        }
+
+        (new OperationalSyncEventService())->recordFinancialRefundSnapshot($conn, $creditNoteId, $options);
     }
 
     private function normalizeLinesFromSnapshots(mysqli $conn, int $orderId, $lines, string $defaultDisposition = 'no_stock_return'): array

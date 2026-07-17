@@ -1,5 +1,7 @@
 <?php
 
+require_once __DIR__ . '/PosOrderSnapshotBuilder.php';
+
 class CloudOrderSnapshotService
 {
     public function upsertFromBranchEvent(mysqli $conn, string $branchUuid, array $event): ?array
@@ -14,6 +16,8 @@ class CloudOrderSnapshotService
         if ($orderUuid === null) {
             throw new InvalidArgumentException('Order sync event is missing order_uuid or aggregate_uuid.');
         }
+        $this->assertFinancialPayload($payload, $order, $orderUuid);
+        $fulfillment = $this->assertFulfillmentPayload($payload, $order);
 
         $payloadJson = $this->encodeJson($event);
         $payloadHash = $this->payloadHash($event, $payload);
@@ -41,12 +45,14 @@ class CloudOrderSnapshotService
             $this->datetimeOrNull($this->firstExistingValue([$order, $payload], ['completed_at', 'closed_at'])),
             $this->datetimeOrNull($this->firstValue([$order, $payload], 'payment_date')),
             $this->branchTimezone($order, $payload, $event),
-            $this->decimal($this->firstValue([$order, $payload], 'pro_value')),
-            $this->decimal($this->firstValue([$order, $payload], 'fat_total')),
-            $this->decimal($this->firstValue([$order, $payload], 'fat_net')),
-            $this->decimal($this->firstValue([$order, $payload], 'fat_disc')),
-            $this->decimal($this->firstValue([$order, $payload], 'paid_amount')),
-            $this->decimal($this->firstValue([$order, $payload], 'remaining_amount')),
+            $this->nullableDecimal($this->firstValue([$order, $payload], 'pro_value'), 4),
+            $this->nullableDecimal($this->firstValue([$order, $payload], 'fat_total'), 4),
+            $this->nullableDecimal($this->firstValue([$order, $payload], 'fat_net'), 4),
+            $this->nullableDecimal($this->firstValue([$order, $payload], 'fat_disc'), 4),
+            $this->nullableDecimal($this->firstValue([$order, $payload], 'fat_tax'), 4),
+            $this->nullableDecimal($this->firstValue([$order, $payload], 'profit'), 6),
+            $this->nullableDecimal($this->firstValue([$order, $payload], 'paid_amount'), 4),
+            $this->nullableDecimal($this->firstValue([$order, $payload], 'remaining_amount'), 4),
             $this->nullableString($this->firstValue([$order, $payload], 'payment_status'), 50),
             $this->nullableString($this->firstValue([$order, $payload], 'invoice_status'), 50),
             $this->nullableString($this->firstValue([$order, $payload], 'order_status'), 50),
@@ -81,6 +87,8 @@ class CloudOrderSnapshotService
                 fat_total,
                 fat_net,
                 fat_disc,
+                fat_tax,
+                profit,
                 paid_amount,
                 remaining_amount,
                 payment_status,
@@ -92,7 +100,7 @@ class CloudOrderSnapshotService
                 payload_hash,
                 payload_json,
                 last_event_uuid
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON DUPLICATE KEY UPDATE
                 id = LAST_INSERT_ID(id),
                 local_order_id = VALUES(local_order_id),
@@ -114,6 +122,8 @@ class CloudOrderSnapshotService
                 fat_total = VALUES(fat_total),
                 fat_net = VALUES(fat_net),
                 fat_disc = VALUES(fat_disc),
+                fat_tax = VALUES(fat_tax),
+                profit = VALUES(profit),
                 paid_amount = VALUES(paid_amount),
                 remaining_amount = VALUES(remaining_amount),
                 payment_status = VALUES(payment_status),
@@ -142,7 +152,38 @@ class CloudOrderSnapshotService
             'line_count' => $lineCount,
             'payment_count' => $paymentCount,
             'receipt_count' => $receiptCount,
+            'fulfillment_count' => $fulfillment === null ? 0 : 1,
         ];
+    }
+
+    private function assertFulfillmentPayload(array $payload, array $order): ?array
+    {
+        if ((int) ($payload['schema_version'] ?? 1) < 3 && !array_key_exists('fulfillment', $payload)) {
+            return null;
+        }
+        $orderId = (int) ($order['local_order_id'] ?? $payload['local_order_id'] ?? 0);
+        if ($orderId < 1) {
+            throw new RuntimeException('ORDER_FULFILLMENT_SCOPE_INVALID');
+        }
+
+        return PosOrderSnapshotBuilder::assertFulfillmentSnapshotScope($payload, $orderId);
+    }
+
+    private function assertFinancialPayload(array $payload, array $order, string $orderUuid): void
+    {
+        $schemaVersion = (int) ($payload['schema_version'] ?? 1);
+        $hasBundle = array_key_exists('financial_bundle', $payload);
+        if ($schemaVersion < 2 && !$hasBundle) {
+            return;
+        }
+
+        $bundle = $payload['financial_bundle'] ?? null;
+        $orderId = (int) ($order['local_order_id'] ?? $payload['local_order_id'] ?? 0);
+        if (!is_array($bundle) || $orderId <= 0) {
+            throw new RuntimeException('ORDER_FINANCIAL_BUNDLE_REQUIRED');
+        }
+        PosOrderSnapshotBuilder::assertFinancialSnapshotScope($payload, $orderId, $orderUuid);
+        PosOrderSnapshotBuilder::assertFinancialBundle($bundle, $orderId);
     }
 
     private function upsertLines(mysqli $conn, string $branchUuid, string $orderUuid, array $payload, array $order): int
@@ -168,13 +209,13 @@ class CloudOrderSnapshotService
                 $this->nullableUuid($this->firstValue([$line], 'item_uuid')),
                 $this->nullableString($this->firstExistingValue([$line], ['item_name', 'name']), 255),
                 $this->nullableString($this->firstValue([$line], 'barcode'), 191),
-                $this->decimal($this->firstValue([$line], 'qty_in')),
-                $this->decimal($this->firstValue([$line], 'qty_out')),
-                $this->decimal($this->firstValue([$line], 'price')),
-                $this->decimal($this->firstValue([$line], 'cost_price')),
-                $this->decimal($this->firstExistingValue([$line], ['discount', 'disc'])),
-                $this->decimal($this->firstExistingValue([$line], ['det_value', 'line_total'])),
-                $this->decimal($this->firstValue([$line], 'profit')),
+                $this->nullableDecimal($this->firstValue([$line], 'qty_in'), 6),
+                $this->nullableDecimal($this->firstValue([$line], 'qty_out'), 6),
+                $this->nullableDecimal($this->firstValue([$line], 'price'), 6),
+                $this->nullableDecimal($this->firstValue([$line], 'cost_price'), 6),
+                $this->nullableDecimal($this->firstExistingValue([$line], ['discount', 'disc']), 4),
+                $this->nullableDecimal($this->firstExistingValue([$line], ['det_value', 'line_total']), 4),
+                $this->nullableDecimal($this->firstValue([$line], 'profit'), 6),
                 $this->boolInt($this->firstValue([$line], 'isdeleted')),
                 $this->rowPayloadHash($line, $payloadJson),
                 $payloadJson,
@@ -528,6 +569,15 @@ class CloudOrderSnapshotService
         }
 
         return number_format((float) $value, 4, '.', '');
+    }
+
+    private function nullableDecimal($value, int $scale): ?string
+    {
+        if ($value === null || $value === '' || !is_numeric($value)) {
+            return null;
+        }
+
+        return number_format((float) $value, $scale, '.', '');
     }
 
     private function datetimeOrNull($value): ?string

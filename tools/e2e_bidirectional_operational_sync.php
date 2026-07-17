@@ -6,11 +6,12 @@ require_once __DIR__ . '/../classes/Sync/BranchIdentity.php';
 require_once __DIR__ . '/../classes/Sync/BranchCatalogPushService.php';
 require_once __DIR__ . '/../classes/Sync/BranchSyncWorker.php';
 require_once __DIR__ . '/../classes/Sync/BranchRestoreFromHostedService.php';
-require_once __DIR__ . '/../classes/Sync/BranchCloudSyncPollWorker.php';
 require_once __DIR__ . '/../classes/Sync/OperationalSyncEventService.php';
 require_once __DIR__ . '/../classes/Sync/OperationalSyncDomains.php';
 require_once __DIR__ . '/../classes/Sync/SyncOutboxEventService.php';
 require_once __DIR__ . '/../classes/Sync/RestoreEventPhase.php';
+require_once __DIR__ . '/../classes/Sync/SyncApplyMode.php';
+require_once __DIR__ . '/../classes/Sync/SyncInboxService.php';
 
 if (PHP_SAPI !== 'cli') {
     fwrite(STDERR, "CLI only.\n");
@@ -18,7 +19,10 @@ if (PHP_SAPI !== 'cli') {
 }
 
 if (in_array('--help', $argv, true)) {
-    fwrite(STDOUT, "Usage: php tools/e2e_bidirectional_operational_sync.php\n");
+    fwrite(STDOUT, "Usage: php tools/e2e_bidirectional_operational_sync.php [--keep-databases]\n");
+    fwrite(STDOUT, "Creates disposable branch, hosted, and empty-recovery databases.\n");
+    fwrite(STDOUT, "Proves automatic branch-to-hosted delivery and guarded manual hosted-to-branch recovery.\n");
+    fwrite(STDOUT, "Automatic cloud-to-branch polling is intentionally disabled.\n");
     fwrite(STDOUT, "Requires Docker posmain-mysql on 3307 and PHP extensions curl,mysqli,pcntl,posix.\n");
     exit(0);
 }
@@ -28,38 +32,46 @@ assertE2eBidirectionalRequirements();
 $runId = 'bsync:' . date('YmdHis');
 $branchUuid = 'bbbbbbbb-cccc-4ddd-8eee-ffffffffffff';
 $branchSecret = 'e2e-bidirectional-branch-secret';
-$branchDb = 'posmain_e2e_bsync_branch';
-$cloudDb = 'posmain_e2e_bsync_cloud';
+$dbSuffix = (string) getmypid();
+$branchDb = 'posmain_e2e_bsync_branch_' . $dbSuffix;
+$cloudDb = 'posmain_e2e_bsync_cloud_' . $dbSuffix;
+$recoveryDb = 'posmain_e2e_bsync_recovery_' . $dbSuffix;
+$databaseNames = [$branchDb, $cloudDb, $recoveryDb];
+$keepDatabases = in_array('--keep-databases', $argv, true);
 $tag = 'E2E-BSYNC';
 $tmpRoot = sys_get_temp_dir() . '/posmain-bsync-e2e-' . preg_replace('/[^A-Za-z0-9_-]/', '-', $runId);
 mkdir($tmpRoot, 0777, true);
 
 $children = [];
 $results = [];
+$branchConn = null;
+$cloudConn = null;
+$recoveryConn = null;
+$cloudUrl = null;
+$summary = null;
+$exitCode = 2;
 
 try {
     fwrite(STDERR, "[e2e] setup\n");
     e2eBsyncLog($tmpRoot, 'setup_databases');
-    e2eBsyncCloneSchema($branchDb, $cloudDb);
+    e2eBsyncCloneSchema($databaseNames);
 
     $branchConn = e2eBsyncConnect($branchDb);
     $cloudConn = e2eBsyncConnect($cloudDb);
-    (new SyncSchemaManager())->apply($branchConn);
-    (new SyncSchemaManager())->apply($cloudConn);
+    $recoveryConn = e2eBsyncConnect($recoveryDb);
+    foreach ([$branchConn, $cloudConn, $recoveryConn] as $conn) {
+        (new SyncSchemaManager())->apply($conn);
+    }
     e2eBsyncRegisterPairing($branchConn, $cloudConn, $branchUuid, $branchSecret, $tag);
 
     $cloudPort = e2eBsyncFreePort();
     $cloudUrl = 'http://127.0.0.1:' . $cloudPort;
     $cloud = e2eBsyncStartCloudServer($cloudPort, $cloudDb, $branchUuid, $branchSecret, $tmpRoot);
     $children[] = $cloud;
-
-    $stmt = $branchConn->prepare('UPDATE sync_branch_identity SET cloud_base_url = ? WHERE id = 1');
-    $stmt->bind_param('s', $cloudUrl);
-    $stmt->execute();
-    $stmt->close();
+    e2eBsyncConfigureBranchIdentity($branchConn, $branchUuid, $tag . ' Branch', $cloudUrl);
+    e2eBsyncConfigureBranchIdentity($recoveryConn, $branchUuid, $tag . ' Recovery', $cloudUrl);
 
     $branchConfig = e2eBsyncBranchConfig($branchUuid, $branchSecret, $cloudUrl);
-    $cloudConfig = e2eBsyncCloudConfig($branchUuid, $branchSecret);
 
     $seed = e2eBsyncSeedBranch($branchConn, $tag);
     e2eBsyncLog($tmpRoot, 'seed_complete', $seed);
@@ -108,7 +120,8 @@ try {
         return e2eBsyncResult($checks, ['push_summary' => $summary, 'cloud_inbox_events' => $inboxCount]);
     });
 
-    $results[] = e2eBsyncScenario('worker_push_new_local_change', function () use ($branchConn, $branchConfig, $cloudConn, $tag) {
+    $workerZoneId = 0;
+    $results[] = e2eBsyncScenario('worker_push_new_local_change', function () use ($branchConn, $branchConfig, $cloudConn, $tag, &$workerZoneId, &$seed) {
         $zoneId = e2eBsyncInsertRow($branchConn, 'delivery_zones', [
             'name' => $tag . '-worker-zone',
             'fee' => '3.500',
@@ -120,12 +133,19 @@ try {
         $recorded = (new OperationalSyncEventService())->recordRowSnapshot($branchConn, 'delivery_zone', $zoneId, [
             'config' => $branchConfig,
             'source_system' => 'e2e_worker',
+            'event_version' => 1,
         ]);
         $worker = (new BranchSyncWorker())->runOnce($branchConn, $branchConfig, [
             'batch_size' => 25,
             'worker_id' => 'e2e-bsync-worker',
         ]);
         $cloudRow = e2eBsyncFetchRow($cloudConn, 'delivery_zones', $zoneId);
+        $workerZoneId = $zoneId;
+        $seed['worker_delivery_zone'] = [
+            'table' => 'delivery_zones',
+            'id' => $zoneId,
+            'marker_column' => 'name',
+        ];
 
         return e2eBsyncResult([
             $recorded !== null,
@@ -134,83 +154,264 @@ try {
         ], ['zone_id' => $zoneId, 'worker' => $worker]);
     });
 
-    $results[] = e2eBsyncScenario('manual_restore_hosted_to_local', function () use ($branchConn, $branchConfig, $seed, $tag) {
-        foreach ($seed as $meta) {
-            if (e2eBsyncTableExists($branchConn, $meta['table'])) {
-                $branchConn->query('DELETE FROM `' . $meta['table'] . '` WHERE id = ' . (int) $meta['id']);
-            }
-        }
-        $restore = (new BranchRestoreFromHostedService())->restore($branchConn, $branchConfig, [
-            'apply' => true,
+    $outageEventId = 0;
+    $results[] = e2eBsyncScenario('hosted_outage_retry_and_recovery', function () use (
+        $branchConn,
+        $cloudConn,
+        $recoveryConn,
+        $cloudDb,
+        $branchUuid,
+        $branchSecret,
+        $tag,
+        $tmpRoot,
+        &$cloud,
+        &$cloudUrl,
+        &$branchConfig,
+        &$children,
+        &$outageEventId
+    ) {
+        $zoneId = e2eBsyncInsertRow($branchConn, 'delivery_zones', [
+            'name' => $tag . '-outage-zone',
+            'fee' => '4.250',
+            'is_active' => 1,
+            'sort_order' => 100,
+            'tenant' => 0,
+            'branch' => 0,
+        ]);
+        $recorded = (new OperationalSyncEventService())->recordRowSnapshot($branchConn, 'delivery_zone', $zoneId, [
+            'config' => $branchConfig,
+            'source_system' => 'e2e_outage',
+            'event_version' => 1,
+        ]);
+        $outageEventId = (int) ($recorded['outbox_id'] ?? 0);
+
+        $stoppedCloudPid = (int) ($cloud['pid'] ?? 0);
+        e2eBsyncStopServer($cloud);
+        $children = array_values(array_filter(
+            $children,
+            static fn (array $child): bool => (int) ($child['pid'] ?? 0) !== $stoppedCloudPid
+        ));
+        $failedRun = (new BranchSyncWorker())->runOnce($branchConn, $branchConfig, [
+            'batch_size' => 25,
+            'worker_id' => 'e2e-bsync-outage',
+        ]);
+        $failedRow = $branchConn->query('SELECT status, attempts, last_error FROM sync_outbox WHERE id = ' . $outageEventId)->fetch_assoc();
+
+        $newPort = e2eBsyncFreePort();
+        $cloudUrl = 'http://127.0.0.1:' . $newPort;
+        $cloud = e2eBsyncStartCloudServer($newPort, $cloudDb, $branchUuid, $branchSecret, $tmpRoot);
+        $children[] = $cloud;
+        e2eBsyncConfigureBranchIdentity($branchConn, $branchUuid, $tag . ' Branch', $cloudUrl);
+        e2eBsyncConfigureBranchIdentity($recoveryConn, $branchUuid, $tag . ' Recovery', $cloudUrl);
+        $branchConfig = e2eBsyncBranchConfig($branchUuid, $branchSecret, $cloudUrl);
+        $branchConn->query("UPDATE sync_outbox SET next_retry_at = NOW(6), locked_until = NULL, locked_by = NULL WHERE id = {$outageEventId}");
+        $recoveredRun = (new BranchSyncWorker())->runOnce($branchConn, $branchConfig, [
+            'batch_size' => 25,
+            'worker_id' => 'e2e-bsync-recovered',
+        ]);
+        $recoveredRow = $branchConn->query('SELECT status, attempts, locked_until, locked_by FROM sync_outbox WHERE id = ' . $outageEventId)->fetch_assoc();
+        $cloudRow = e2eBsyncFetchRow($cloudConn, 'delivery_zones', $zoneId);
+
+        return e2eBsyncResult([
+            $recorded !== null,
+            (int) ($failedRun['failed'] ?? 0) >= 1,
+            in_array((string) ($failedRow['status'] ?? ''), ['failed', 'pending'], true),
+            (int) ($failedRow['attempts'] ?? 0) >= 1,
+            (int) ($recoveredRun['synced'] ?? 0) >= 1,
+            (string) ($recoveredRow['status'] ?? '') === 'synced',
+            empty($recoveredRow['locked_until']) && empty($recoveredRow['locked_by']),
+            $cloudRow && strpos((string) ($cloudRow['name'] ?? ''), $tag . '-outage-zone') !== false,
+        ], [
+            'zone_id' => $zoneId,
+            'failed_worker' => $failedRun,
+            'failed_row' => $failedRow,
+            'recovered_worker' => $recoveredRun,
+            'recovered_row' => $recoveredRow,
+        ]);
+    });
+
+    $results[] = e2eBsyncScenario('duplicate_stale_and_same_version_safety', function () use (
+        $branchConn,
+        $cloudConn,
+        &$branchConfig,
+        $branchUuid,
+        $outageEventId,
+        $seed
+    ) {
+        $duplicateBefore = e2eBsyncCount($cloudConn, "SELECT COUNT(*) AS c FROM sync_inbox WHERE branch_uuid = '" . $cloudConn->real_escape_string($branchUuid) . "'");
+        $branchConn->query("UPDATE sync_outbox SET status = 'pending', attempts = 0, next_retry_at = NULL, locked_until = NULL, locked_by = NULL WHERE id = {$outageEventId}");
+        $duplicateRun = (new BranchSyncWorker())->runOnce($branchConn, $branchConfig, [
+            'batch_size' => 25,
+            'worker_id' => 'e2e-bsync-duplicate',
+        ]);
+        $duplicateAfter = e2eBsyncCount($cloudConn, "SELECT COUNT(*) AS c FROM sync_inbox WHERE branch_uuid = '" . $cloudConn->real_escape_string($branchUuid) . "'");
+
+        $orderId = (int) ($seed['order']['id'] ?? 0);
+        $oldRow = $branchConn->query("SELECT * FROM sync_outbox WHERE aggregate_type = 'order' AND aggregate_local_id = {$orderId} ORDER BY event_version ASC, id ASC LIMIT 1")->fetch_assoc();
+        $branchConn->query("UPDATE ot_head SET pro_tybe = 8 WHERE id = {$orderId}");
+        $newRecord = (new SyncOutboxEventService())->recordOrderSnapshot($branchConn, $orderId, [
+            'config' => $branchConfig,
+            'source_system' => 'e2e_version_guard',
+            'event_type' => 'order.updated',
+        ]);
+        $newRun = (new BranchSyncWorker())->runOnce($branchConn, $branchConfig, [
+            'batch_size' => 25,
+            'worker_id' => 'e2e-bsync-v2',
+        ]);
+        $newRow = $branchConn->query('SELECT * FROM sync_outbox WHERE id = ' . (int) ($newRecord['outbox_id'] ?? 0))->fetch_assoc();
+        $staleEvent = e2eBsyncEventFromOutboxRow($oldRow);
+        e2eBsyncGiveEventNewIdentity($staleEvent, 'stale');
+        $stale = (new SyncInboxService())->receiveBranchEvent($cloudConn, $branchUuid, $staleEvent, SyncApplyMode::LIVE_APPLY);
+
+        $conflictEvent = e2eBsyncEventFromOutboxRow($newRow);
+        e2eBsyncGiveEventNewIdentity($conflictEvent, 'same-version');
+        $conflictEvent['payload']['order']['pro_tybe'] = 7;
+        e2eBsyncRehashEvent($conflictEvent);
+        $conflict = (new SyncInboxService())->receiveBranchEvent($cloudConn, $branchUuid, $conflictEvent, SyncApplyMode::LIVE_APPLY);
+        $cloudRow = e2eBsyncFetchRow($cloudConn, 'ot_head', $orderId);
+
+        return e2eBsyncResult([
+            (int) ($duplicateRun['synced'] ?? 0) >= 1,
+            $duplicateAfter === $duplicateBefore,
+            (int) ($newRun['synced'] ?? 0) >= 1,
+            (string) ($stale['status'] ?? '') === 'stale',
+            (string) ($conflict['status'] ?? '') === 'conflict',
+            (int) ($cloudRow['pro_tybe'] ?? 0) === 8,
+        ], [
+            'duplicate_worker' => $duplicateRun,
+            'inbox_count_before_duplicate' => $duplicateBefore,
+            'inbox_count_after_duplicate' => $duplicateAfter,
+            'newer_worker' => $newRun,
+            'stale_result' => $stale,
+            'same_version_result' => $conflict,
+        ]);
+    });
+
+    $results[] = e2eBsyncScenario('manual_restore_active_branch_is_blocked', function () use ($branchConn, $branchConfig) {
+        $service = new BranchRestoreFromHostedService();
+        $restore = $service->restore($branchConn, $branchConfig, [
+            'apply' => false,
             'limit' => 25,
             'max_pages_per_phase' => 10,
             'phases' => RestoreEventPhase::all(),
         ]);
-        $checks = [
-            (int) ($restore['failed'] ?? 1) === 0,
-            (int) ($restore['mirrored'] ?? 0) > 0,
-        ];
-        foreach ($seed as $domain => $meta) {
-            if (!e2eBsyncTableExists($branchConn, $meta['table'])) {
-                continue;
-            }
-            $checks[] = e2eBsyncRowExists($branchConn, $meta['table'], (int) $meta['id'], $tag, $meta['marker_column'] ?? null);
+        $blocked = false;
+        try {
+            $service->restore($branchConn, $branchConfig, [
+                'apply' => true,
+                'limit' => 25,
+                'max_pages_per_phase' => 10,
+                'phases' => RestoreEventPhase::all(),
+            ]);
+        } catch (Throwable $e) {
+            $blocked = strpos($e->getMessage(), 'Restore apply blocked:') === 0;
         }
+        $checks = [
+            (int) ($restore['fetched'] ?? 0) > 0,
+            empty($restore['safety']['business_database_empty']),
+            empty($restore['safety']['apply_allowed']),
+            $blocked,
+        ];
 
         return e2eBsyncResult($checks, ['restore' => $restore]);
     });
 
-    $results[] = e2eBsyncScenario('automatic_poll_hosted_change_to_local', function () use ($branchConn, $cloudConn, $branchConfig, $cloudConfig, $tag) {
-        $clientId = e2eBsyncInsertRow($cloudConn, 'delivery_clients', [
-            'client_name' => $tag . '-cloud-client',
-            'phone' => '0599' . random_int(100000, 999999),
-            'address' => 'cloud street',
-            'isdeleted' => 0,
+    $recoveryConfig = e2eBsyncBranchConfig($branchUuid, $branchSecret, $cloudUrl);
+    $results[] = e2eBsyncScenario('guarded_manual_restore_to_empty_recovery', function () use (
+        $recoveryConn,
+        $recoveryConfig,
+        $seed,
+        $branchConn,
+        $cloudConn,
+        $tmpRoot,
+        $tag
+    ) {
+        $service = new BranchRestoreFromHostedService();
+        $plan = $service->restore($recoveryConn, $recoveryConfig, [
+            'apply' => false,
+            'limit' => 25,
+            'max_pages_per_phase' => 50,
+            'phases' => RestoreEventPhase::all(),
         ]);
-        $branchConn->query('DELETE FROM delivery_clients WHERE id = ' . (int) $clientId);
-
-        $published = (new OperationalSyncEventService())->recordRowSnapshot($cloudConn, 'delivery_client', $clientId, [
-            'config' => $cloudConfig,
-            'source_system' => 'e2e_cloud',
+        $backup = $tmpRoot . '/disposable-recovery-backup.sql';
+        file_put_contents($backup, "-- disposable empty recovery database backup evidence\n");
+        $applied = $service->restore($recoveryConn, $recoveryConfig, [
+            'apply' => true,
+            'scope' => 'empty',
+            'workers_stopped' => true,
+            'expected_events' => (int) ($plan['safety']['expected_events'] ?? -1),
+            'dry_run_manifest' => (string) ($plan['safety']['manifest_hash'] ?? ''),
+            'confirmation_token' => (string) ($plan['safety']['confirmation_token'] ?? ''),
+            'backup_file' => $backup,
+            'limit' => 25,
+            'max_pages_per_phase' => 50,
+            'phases' => RestoreEventPhase::all(),
         ]);
-
-        $metrics = (new BranchCloudSyncPollWorker())->runOnce($branchConn, $branchConfig, [
-            'batch_size' => 25,
-        ]);
-        $local = e2eBsyncFetchRow($branchConn, 'delivery_clients', $clientId);
+        $reconciliation = e2eBsyncReconcileSeed($branchConn, $cloudConn, $recoveryConn, $seed, $tag);
+        $exclusions = e2eBsyncRestoreExclusions($recoveryConn);
 
         return e2eBsyncResult([
-            $published !== null,
-            !empty($published['cloud_branch_events']),
-            (int) ($metrics['applied'] ?? 0) >= 1,
-            $local && strpos((string) ($local['client_name'] ?? ''), $tag . '-cloud-client') !== false,
-        ], ['client_id' => $clientId, 'published' => $published, 'poller' => $metrics]);
+            !empty($plan['safety']['apply_allowed']),
+            !empty($plan['safety']['business_database_empty']),
+            (int) ($plan['fetched'] ?? 0) > 0,
+            !empty($applied['reconciliation']['ok']),
+            (int) ($applied['failed'] ?? 1) === 0,
+            (int) ($applied['skipped'] ?? 1) === 0,
+            !empty($reconciliation['ok']),
+            !empty($exclusions['ok']),
+        ], [
+            'dry_run' => $plan,
+            'apply' => $applied,
+            'business_reconciliation' => $reconciliation,
+            'restore_exclusions' => $exclusions,
+        ]);
     });
 
+    $outboxHealth = e2eBsyncOutboxHealth($branchConn);
+    $coverage = e2eBsyncCertificationCoverage();
+
     $summary = [
+        'certification_contract' => 'posmain_lean_offline_cloud_sync_v1',
         'run_id' => $runId,
         'branch_uuid' => $branchUuid,
-        'databases' => ['branch' => $branchDb, 'cloud' => $cloudDb],
+        'direction_policy' => [
+            'branch_to_hosted' => 'automatic',
+            'hosted_to_branch' => 'manual_guarded_empty_recovery_only',
+            'automatic_cloud_pull_enabled' => false,
+        ],
+        'databases' => ['branch' => $branchDb, 'hosted' => $cloudDb, 'recovery' => $recoveryDb],
+        'databases_disposable' => true,
+        'databases_kept' => $keepDatabases,
         'cloud_url' => $cloudUrl,
         'seed' => $seed,
         'results' => $results,
-        'pass' => !e2eBsyncHasFailures($results),
+        'outbox_health' => $outboxHealth,
+        'coverage' => $coverage,
+        'disposable_certification_pass' => !e2eBsyncHasFailures($results) && !empty($outboxHealth['ok']),
+        'production_ready' => false,
     ];
+    $summary['pass'] = $summary['disposable_certification_pass'];
     $report = $tmpRoot . '/report.json';
     file_put_contents($report, json_encode($summary, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
     echo json_encode($summary + ['report_path' => $report], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
-
-    $branchConn->close();
-    $cloudConn->close();
-    exit($summary['pass'] ? 0 : 1);
+    $exitCode = $summary['pass'] ? 0 : 1;
 } catch (Throwable $e) {
     fwrite(STDERR, $e->getMessage() . PHP_EOL);
-    exit(2);
+    $exitCode = 2;
 } finally {
     foreach ($children as $child) {
         e2eBsyncStopServer($child);
     }
+    foreach ([$branchConn, $cloudConn, $recoveryConn] as $conn) {
+        if ($conn instanceof mysqli) {
+            $conn->close();
+        }
+    }
+    if (!$keepDatabases) {
+        e2eBsyncDropDatabases($databaseNames);
+    }
 }
+exit($exitCode);
 
 function e2eBsyncScenario(string $name, callable $runner): array
 {
@@ -263,11 +464,21 @@ function e2eBsyncConnect(string $db): mysqli
     return $conn;
 }
 
-function e2eBsyncCloneSchema(string $branchDb, string $cloudDb): void
+function e2eBsyncCloneSchema(array $databaseNames): void
 {
     $source = getenv('POSMAIN_TEST_MYSQL_DB') ?: 'kody2';
-    $sql = 'DROP DATABASE IF EXISTS ' . $branchDb . '; DROP DATABASE IF EXISTS ' . $cloudDb
-        . '; CREATE DATABASE ' . $branchDb . '; CREATE DATABASE ' . $cloudDb . ';';
+    if ($databaseNames === []) {
+        throw new InvalidArgumentException('At least one disposable database is required.');
+    }
+    $statements = [];
+    foreach ($databaseNames as $databaseName) {
+        if (!preg_match('/^[A-Za-z0-9_]+$/', (string) $databaseName)) {
+            throw new InvalidArgumentException('Unsafe disposable database name.');
+        }
+        $statements[] = 'DROP DATABASE IF EXISTS ' . $databaseName;
+        $statements[] = 'CREATE DATABASE ' . $databaseName;
+    }
+    $sql = implode('; ', $statements) . ';';
     $initCmd = sprintf(
         'docker exec posmain-mysql mariadb -uroot -e %s',
         escapeshellarg($sql)
@@ -277,7 +488,7 @@ function e2eBsyncCloneSchema(string $branchDb, string $cloudDb): void
         throw new RuntimeException('Failed to create e2e databases: ' . implode("\n", $out1));
     }
 
-    foreach ([$branchDb, $cloudDb] as $targetDb) {
+    foreach ($databaseNames as $targetDb) {
         $dumpCmd = sprintf(
             'docker exec posmain-mysql sh -c %s',
             escapeshellarg('mariadb-dump -uroot --no-data ' . $source . ' | mariadb -uroot ' . $targetDb)
@@ -286,6 +497,27 @@ function e2eBsyncCloneSchema(string $branchDb, string $cloudDb): void
         if ($code2 !== 0) {
             throw new RuntimeException('Failed to clone schema into ' . $targetDb . ': ' . implode("\n", $out2));
         }
+    }
+}
+
+function e2eBsyncDropDatabases(array $databaseNames): void
+{
+    try {
+        $admin = new mysqli(
+            e2eBsyncDbHost(),
+            getenv('POSMAIN_TEST_MYSQL_USER') ?: 'root',
+            getenv('POSMAIN_TEST_MYSQL_PASS') ?: '',
+            '',
+            e2eBsyncDbPort()
+        );
+        foreach ($databaseNames as $databaseName) {
+            if (preg_match('/^posmain_e2e_bsync_(branch|cloud|recovery)_[0-9]+$/', (string) $databaseName)) {
+                $admin->query('DROP DATABASE IF EXISTS `' . $databaseName . '`');
+            }
+        }
+        $admin->close();
+    } catch (Throwable $e) {
+        fwrite(STDERR, '[e2e] cleanup failed: ' . $e->getMessage() . PHP_EOL);
     }
 }
 
@@ -314,6 +546,19 @@ function e2eBsyncRegisterPairing(mysqli $branchConn, mysqli $cloudConn, string $
     $stmt->close();
 }
 
+function e2eBsyncConfigureBranchIdentity(mysqli $conn, string $branchUuid, string $name, string $cloudUrl): void
+{
+    $conn->query('DELETE FROM sync_branch_identity WHERE id = 1');
+    $stmt = $conn->prepare("
+        INSERT INTO sync_branch_identity (
+            id, branch_uuid, branch_name, pos_tenant, pos_branch, cloud_base_url, current_menu_version
+        ) VALUES (1, ?, ?, 0, 0, ?, 0)
+    ");
+    $stmt->bind_param('sss', $branchUuid, $name, $cloudUrl);
+    $stmt->execute();
+    $stmt->close();
+}
+
 function e2eBsyncBranchConfig(string $branchUuid, string $secret, string $cloudUrl): array
 {
     return posmain_app_config([
@@ -329,26 +574,11 @@ function e2eBsyncBranchConfig(string $branchUuid, string $secret, string $cloudU
             'worker_enabled' => true,
             'outbox_enabled' => true,
             'operational_sync_enabled' => true,
-            'cloud_pull_enabled' => true,
+            'cloud_pull_enabled' => false,
             'cloud_apply_enabled' => true,
             'legacy_pos_mirror_enabled' => true,
-        ],
-    ]);
-}
-
-function e2eBsyncCloudConfig(string $branchUuid, string $secret): array
-{
-    return posmain_app_config([
-        'role' => 'fake_cloud',
-        'branch' => [
-            'uuid' => $branchUuid,
-        ],
-        'sync' => [
-            'cloud_branch_secrets' => [$branchUuid => $secret],
-            'cloud_apply_enabled' => true,
-            'legacy_pos_mirror_enabled' => true,
-            'cloud_to_branch_publish_enabled' => true,
-            'operational_sync_enabled' => true,
+            'http_timeout_seconds' => 2,
+            'image_sync_enabled' => false,
         ],
     ]);
 }
@@ -567,6 +797,253 @@ function e2eBsyncCount(mysqli $conn, string $sql): int
     return (int) ($row['c'] ?? $row['COUNT(*)'] ?? 0);
 }
 
+function e2eBsyncEventFromOutboxRow(array $row): array
+{
+    if ($row === []) {
+        throw new RuntimeException('Expected outbox row is missing.');
+    }
+
+    return [
+        'event_uuid' => (string) $row['event_uuid'],
+        'idempotency_key' => (string) $row['idempotency_key'],
+        'aggregate_type' => (string) $row['aggregate_type'],
+        'aggregate_uuid' => (string) $row['aggregate_uuid'],
+        'aggregate_local_id' => (int) $row['aggregate_local_id'],
+        'aggregate_id' => (string) $row['aggregate_id'],
+        'entity_type' => (string) $row['entity_type'],
+        'entity_uuid' => (string) $row['entity_uuid'],
+        'entity_local_id' => (int) $row['entity_local_id'],
+        'event_type' => (string) $row['event_type'],
+        'event_version' => (int) $row['event_version'],
+        'source_system' => (string) $row['source_system'],
+        'payload_hash' => (string) $row['payload_hash'],
+        'payload' => json_decode((string) $row['payload_json'], true, 512, JSON_THROW_ON_ERROR),
+    ];
+}
+
+function e2eBsyncGiveEventNewIdentity(array &$event, string $suffix): void
+{
+    $event['event_uuid'] = SyncBranchIdentity::generateUuidV4();
+    $event['idempotency_key'] = hash('sha256', 'e2e:' . $suffix . ':' . $event['event_uuid']);
+}
+
+function e2eBsyncRehashEvent(array &$event): void
+{
+    unset($event['payload']['payload_hash']);
+    $event['payload']['payload_hash'] = hash('sha256', e2eBsyncJson($event['payload']));
+    $event['payload_hash'] = hash('sha256', e2eBsyncJson($event['payload']));
+}
+
+function e2eBsyncJson($value): string
+{
+    return json_encode($value, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
+}
+
+function e2eBsyncReconcileSeed(
+    mysqli $branchConn,
+    mysqli $cloudConn,
+    mysqli $recoveryConn,
+    array $seed,
+    string $tag
+): array {
+    $rows = [];
+    $ok = true;
+    foreach ($seed as $domain => $meta) {
+        $table = (string) ($meta['table'] ?? '');
+        $id = (int) ($meta['id'] ?? 0);
+        $marker = isset($meta['marker_column']) ? (string) $meta['marker_column'] : null;
+        if ($table === '' || $id < 1) {
+            $ok = false;
+            $rows[$domain] = ['ok' => false, 'reason' => 'invalid_fixture_identity'];
+            continue;
+        }
+
+        $branch = e2eBsyncFetchRow($branchConn, $table, $id);
+        $hosted = e2eBsyncFetchRow($cloudConn, $table, $id);
+        $recovery = e2eBsyncFetchRow($recoveryConn, $table, $id);
+        $columns = e2eBsyncCanonicalColumns($table, $branch, $hosted, $recovery, $marker);
+        $hashes = [
+            'branch' => e2eBsyncCanonicalHash($branch, $columns),
+            'hosted' => e2eBsyncCanonicalHash($hosted, $columns),
+            'recovery' => e2eBsyncCanonicalHash($recovery, $columns),
+        ];
+        $markerOk = $marker === null
+            || (
+                $branch && strpos((string) ($branch[$marker] ?? ''), $tag) !== false
+                && $hosted && strpos((string) ($hosted[$marker] ?? ''), $tag) !== false
+                && $recovery && strpos((string) ($recovery[$marker] ?? ''), $tag) !== false
+            );
+        $rowOk = $branch !== null
+            && $hosted !== null
+            && $recovery !== null
+            && count(array_unique(array_values($hashes))) === 1
+            && $markerOk;
+        $ok = $ok && $rowOk;
+        $rows[$domain] = [
+            'ok' => $rowOk,
+            'table' => $table,
+            'id' => $id,
+            'columns' => $columns,
+            'hashes' => $hashes,
+        ];
+    }
+
+    return ['ok' => $ok, 'fixtures' => $rows];
+}
+
+function e2eBsyncCanonicalColumns(
+    string $table,
+    ?array $branch,
+    ?array $hosted,
+    ?array $recovery,
+    ?string $marker
+): array {
+    $preferred = [
+        'item_group' => ['id', 'gname', 'isdeleted'],
+        'myitems' => ['id', 'iname', 'barcode', 'group1', 'price1', 'cost_price', 'isdeleted'],
+        'tables' => ['id', 'tname', 'isdeleted'],
+        'delivery_zones' => ['id', 'name', 'fee', 'is_active', 'sort_order'],
+        'delivery_clients' => ['id', 'client_name', 'phone', 'address', 'isdeleted'],
+        'payment_methods' => ['id', 'code', 'name_ar', 'type', 'is_active'],
+        'modifier_groups' => ['id', 'name_ar', 'name_en', 'selection_min', 'selection_max', 'is_active'],
+        'settings' => ['id', 'company_name'],
+        'moova_pos_shop_links' => ['id', 'moova_shop_id', 'moova_branch_id', 'status'],
+        'drawer_session_close_summaries' => ['id', 'shift_number', 'total_sales', 'cash_sales', 'non_cash_sales'],
+        'ot_head' => ['id', 'pro_tybe', 'pro_date', 'isdeleted'],
+    ];
+    $candidates = $preferred[$table] ?? array_values(array_filter(['id', $marker]));
+    $rows = array_values(array_filter([$branch, $hosted, $recovery], 'is_array'));
+    if (count($rows) !== 3) {
+        return $candidates;
+    }
+    return array_values(array_filter($candidates, static function (string $column) use ($rows): bool {
+        foreach ($rows as $row) {
+            if (!array_key_exists($column, $row)) {
+                return false;
+            }
+        }
+        return true;
+    }));
+}
+
+function e2eBsyncCanonicalHash(?array $row, array $columns): ?string
+{
+    if ($row === null || $columns === []) {
+        return null;
+    }
+    $canonical = [];
+    foreach ($columns as $column) {
+        $value = $row[$column] ?? null;
+        if (is_string($value) && is_numeric($value)) {
+            $value = rtrim(rtrim(number_format((float) $value, 6, '.', ''), '0'), '.');
+        }
+        $canonical[$column] = $value;
+    }
+    return hash('sha256', e2eBsyncJson($canonical));
+}
+
+function e2eBsyncRestoreExclusions(mysqli $conn): array
+{
+    $checks = [];
+    foreach (['sync_outbox', 'sync_inbox', 'sync_worker_logs', 'cloud_branch_events', 'cloud_branches'] as $table) {
+        if (!e2eBsyncTableExists($conn, $table)) {
+            continue;
+        }
+        $count = e2eBsyncCount($conn, 'SELECT COUNT(*) AS c FROM `' . $table . '`');
+        $checks[$table . '_rows'] = ['count' => $count, 'ok' => $count === 0];
+    }
+    foreach (['sessions', 'user_sessions', 'remember_tokens', 'password_reset_tokens'] as $table) {
+        if (!e2eBsyncTableExists($conn, $table)) {
+            continue;
+        }
+        $count = e2eBsyncCount($conn, 'SELECT COUNT(*) AS c FROM `' . $table . '`');
+        $checks[$table . '_rows'] = ['count' => $count, 'ok' => $count === 0];
+    }
+    if (e2eBsyncTableExists($conn, 'employees') && in_array('password', e2eBsyncTableColumns($conn, 'employees'), true)) {
+        $count = e2eBsyncCount($conn, "SELECT COUNT(*) AS c FROM employees WHERE COALESCE(password, '') <> ''");
+        $checks['employee_password_values'] = ['count' => $count, 'ok' => $count === 0];
+    }
+    if (e2eBsyncTableExists($conn, 'moova_pos_shop_links') && in_array('moova_device_token_hash', e2eBsyncTableColumns($conn, 'moova_pos_shop_links'), true)) {
+        $count = e2eBsyncCount($conn, "SELECT COUNT(*) AS c FROM moova_pos_shop_links WHERE COALESCE(moova_device_token_hash, '') <> ''");
+        $checks['moova_device_token_hash_values'] = ['count' => $count, 'ok' => $count === 0];
+    }
+    $ok = true;
+    foreach ($checks as $check) {
+        $ok = $ok && !empty($check['ok']);
+    }
+    return ['ok' => $ok, 'checks' => $checks];
+}
+
+function e2eBsyncOutboxHealth(mysqli $conn): array
+{
+    $counts = [];
+    foreach (['pending', 'syncing', 'failed', 'dead', 'synced'] as $status) {
+        $counts[$status] = e2eBsyncCount(
+            $conn,
+            "SELECT COUNT(*) AS c FROM sync_outbox WHERE status = '" . $conn->real_escape_string($status) . "'"
+        );
+    }
+    $expiredLocks = e2eBsyncCount(
+        $conn,
+        "SELECT COUNT(*) AS c FROM sync_outbox
+         WHERE status = 'syncing'
+           AND locked_until IS NOT NULL
+           AND locked_until < NOW(6)"
+    );
+    return [
+        'ok' => $counts['pending'] === 0
+            && $counts['syncing'] === 0
+            && $counts['failed'] === 0
+            && $counts['dead'] === 0
+            && $expiredLocks === 0,
+        'counts' => $counts,
+        'expired_locks' => $expiredLocks,
+    ];
+}
+
+function e2eBsyncCertificationCoverage(): array
+{
+    return [
+        'end_to_end_transport_and_restore' => [
+            'menu_item',
+            'table',
+            'order',
+            'item_category',
+            'delivery_client',
+            'delivery_zone',
+            'payment_method',
+            'modifier_group',
+            'shop_settings',
+            'moova_shop_link_sanitized',
+            'shift_close_and_drawer_session',
+        ],
+        'required_focused_typed_gates' => [
+            'tests/sync/branch_restore_financial_bundle_test.php',
+            'tests/sync/branch_restore_customer_bundle_test.php',
+            'tests/sync/branch_restore_order_fulfillment_test.php',
+            'tests/sync/branch_restore_inventory_accounting_test.php',
+            'tests/sync/branch_restore_inventory_count_test.php',
+            'tests/sync/branch_restore_production_batch_test.php',
+            'tests/sync/branch_restore_purchase_receipt_test.php',
+            'tests/sync/branch_restore_purchase_order_test.php',
+            'tests/sync/cloud_shift_snapshot_test.php',
+        ],
+        'deployment_blockers_or_operator_prerequisites' => [
+            'cross_branch_transfer_document_requires_source_destination_handoff_policy',
+            'manual_legacy_journal_writers_require_separate_non_duplicate_ownership_audit',
+            'enabled_operational_masters_require_writer_coverage_inventory',
+            'sanitized_user_role_grant_recovery_requires_secret_free_contract',
+            'hosted_code_schema_parity_backup_secret_service_and_live_smoke_not_proven_by_disposable_run',
+        ],
+        'intentionally_excluded_from_restore' => [
+            'passwords_pins_tokens_and_secret_hashes',
+            'login_sessions_and_password_reset_state',
+            'worker_leases_locks_and_runtime_logs',
+            'caches_device_state_and_raw_provider_payloads',
+        ],
+    ];
+}
+
 function e2eBsyncStartCloudServer(int $port, string $cloudDb, string $branchUuid, string $secret, string $tmpRoot): array
 {
     $pid = pcntl_fork();
@@ -583,7 +1060,7 @@ function e2eBsyncStartCloudServer(int $port, string $cloudDb, string $branchUuid
             'POSMAIN_DB_PASS' => getenv('POSMAIN_TEST_MYSQL_PASS') ?: '',
             'POSMAIN_CLOUD_APPLY_ENABLED' => '1',
             'POSMAIN_CLOUD_LEGACY_POS_MIRROR_ENABLED' => '1',
-            'POSMAIN_CLOUD_TO_BRANCH_PUBLISH_ENABLED' => '1',
+            'POSMAIN_CLOUD_TO_BRANCH_PUBLISH_ENABLED' => '0',
             'POSMAIN_OPERATIONAL_SYNC_ENABLED' => '1',
             'POSMAIN_BRANCH_UUID' => $branchUuid,
             'POSMAIN_CLOUD_BRANCH_SECRETS' => $branchUuid . '=' . $secret,
@@ -595,11 +1072,23 @@ function e2eBsyncStartCloudServer(int $port, string $cloudDb, string $branchUuid
         }
         chdir(dirname(__DIR__));
         $router = __DIR__ . '/e2e_pos_sync_router.php';
-        $log = fopen($tmpRoot . '/cloud-server.log', 'a');
-        fclose($log);
+        $logPath = $tmpRoot . '/cloud-server.log';
         cli_set_process_title('posmain-e2e-cloud');
-        passthru(PHP_BINARY . ' -d display_errors=0 -S 127.0.0.1:' . $port . ' ' . escapeshellarg($router) . ' 2>/dev/null');
-        exit(0);
+        fclose(STDOUT);
+        fclose(STDERR);
+        $stdout = fopen($logPath, 'a');
+        $stderr = fopen($logPath, 'a');
+        pcntl_exec(PHP_BINARY, [
+            '-d',
+            'display_errors=0',
+            '-S',
+            '127.0.0.1:' . $port,
+            $router,
+        ]);
+        fwrite($stderr, "Failed to exec disposable cloud server.\n");
+        fclose($stdout);
+        fclose($stderr);
+        exit(1);
     }
 
     e2eBsyncWaitForPort($port);
@@ -612,7 +1101,16 @@ function e2eBsyncStopServer(array $server): void
         return;
     }
     @posix_kill((int) $server['pid'], SIGTERM);
-    pcntl_waitpid((int) $server['pid'], $status, WNOHANG);
+    $deadline = microtime(true) + 2;
+    do {
+        $waited = pcntl_waitpid((int) $server['pid'], $status, WNOHANG);
+        if ($waited === (int) $server['pid'] || $waited === -1) {
+            return;
+        }
+        usleep(20000);
+    } while (microtime(true) < $deadline);
+    @posix_kill((int) $server['pid'], SIGKILL);
+    pcntl_waitpid((int) $server['pid'], $status);
 }
 
 function e2eBsyncFreePort(): int

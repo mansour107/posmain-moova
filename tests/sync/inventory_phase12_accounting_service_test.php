@@ -208,6 +208,26 @@ try {
 
 function inventoryPhase12CreateLegacyTables(mysqli $conn): void
 {
+    $conn->query("CREATE TABLE acc_head (
+        id INT NOT NULL PRIMARY KEY,
+        code VARCHAR(20) NOT NULL,
+        aname VARCHAR(100) NOT NULL,
+        is_stock TINYINT(1) NOT NULL DEFAULT 0,
+        isdeleted TINYINT(1) NOT NULL DEFAULT 0
+    ) ENGINE=InnoDB");
+    $conn->query("INSERT INTO acc_head (id, code, aname, is_stock, isdeleted) VALUES
+        (3, '1303', 'Phase 12 operational store', 1, 0),
+        (1100, '1100', 'Inventory asset', 0, 0),
+        (2100, '2100', 'Purchase clearing', 0, 0),
+        (2101, '2101', 'Supplier', 0, 0),
+        (5100, '5100', 'COGS', 0, 0),
+        (5200, '5200', 'Waste expense', 0, 0),
+        (5300, '5300', 'Adjustment gain loss', 0, 0)");
+    $conn->query("CREATE TABLE settings (
+        id INT NOT NULL PRIMARY KEY,
+        def_pos_store INT NULL
+    ) ENGINE=InnoDB");
+    $conn->query('INSERT INTO settings (id, def_pos_store) VALUES (1, 3)');
     $conn->query("
 CREATE TABLE myitems (
   id INT NOT NULL PRIMARY KEY,
@@ -228,10 +248,19 @@ CREATE TABLE journal_heads (
   op_id BIGINT UNSIGNED NULL,
   total DECIMAL(18,6) NOT NULL DEFAULT 0,
   jdate DATE NULL,
+  pro_tybe INT NULL,
   details VARCHAR(255) NULL,
+  op2 BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  isdeleted TINYINT(1) NOT NULL DEFAULT 0,
   user BIGINT UNSIGNED NULL,
   tenant INT NULL,
-  branch INT NULL
+  branch INT NULL,
+  source_type VARCHAR(64) NULL,
+  source_id BIGINT UNSIGNED NULL,
+  posting_kind VARCHAR(64) NULL,
+  idempotency_key VARCHAR(191) NULL,
+  reversal_of_journal_id BIGINT UNSIGNED NULL,
+  UNIQUE KEY uq_phase12_journal_idempotency (idempotency_key)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
     $conn->query("
 CREATE TABLE journal_entries (
@@ -242,6 +271,9 @@ CREATE TABLE journal_entries (
   credit DECIMAL(18,6) NOT NULL DEFAULT 0,
   tybe INT NOT NULL DEFAULT 0,
   info VARCHAR(255) NULL,
+  op_id BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  op2 BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  isdeleted TINYINT(1) NOT NULL DEFAULT 0,
   tenant INT NULL,
   branch INT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");

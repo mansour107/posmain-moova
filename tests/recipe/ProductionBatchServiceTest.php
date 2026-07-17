@@ -8,6 +8,14 @@ require_once __DIR__ . '/../../classes/Recipe/ProductionBatchService.php';
 require_once __DIR__ . '/../../classes/Recipe/RecipeDefinitionService.php';
 require_once __DIR__ . '/../../classes/Recipe/Repository/InventoryBalanceRepository.php';
 
+final class FailingProductionBatchSyncEventService extends OperationalSyncEventService
+{
+    public function recordProductionBatchSnapshot(mysqli $conn, int $batchId, array $options = []): ?array
+    {
+        throw new RuntimeException('PRODUCTION_BATCH_SYNC_CAPTURE_FAILED');
+    }
+}
+
 class ProductionBatchServiceTest extends TestCase
 {
     private static $conn;
@@ -326,6 +334,85 @@ class ProductionBatchServiceTest extends TestCase
         ], $this->actor(['recipe.manage']));
     }
 
+    public function testProductionBatchSyncIsStrictlyVersionedOrderedAndAtomic(): void
+    {
+        $setup = $this->productionRecipe();
+        $config = $this->productionSyncConfig('branch');
+        (new SyncBranchIdentity())->ensure(self::$conn, $config);
+        $service = $this->syncProductionService($config);
+        self::$conn->query('DELETE FROM sync_outbox');
+
+        $draft = $service->createDraft(self::$conn, [
+            'recipe_id' => $setup['recipe_id'],
+            'output_item_id' => $setup['output_item_id'],
+            'planned_output_qty' => '10.000000',
+        ], $this->actor(['recipe.manage']));
+        $batchId = (int) $draft['id'];
+        $this->assertSame(1, (int) $draft['sync_revision']);
+        $draftEvent = $this->productionSyncEvent($batchId, 1);
+        $this->assertSame('production_batch_bundle', $draftEvent['payload']['snapshot_type']);
+        $this->assertSame('draft', $draftEvent['payload']['production_batch']['status']);
+        $this->assertSame([], $draftEvent['payload']['production_batch_lines']);
+
+        $beforeCommitOutbox = (int) self::$conn->query('SELECT COALESCE(MAX(id), 0) AS id FROM sync_outbox')->fetch_assoc()['id'];
+        $committed = $service->commit(self::$conn, $batchId, [
+            'actual_output_qty' => '10.000000',
+        ], $this->actor(['recipe.approve']));
+        $this->assertSame(2, (int) $committed['batch']['sync_revision']);
+        $commitEvent = $this->productionSyncEvent($batchId, 2);
+        $this->assertSame('committed', $commitEvent['payload']['production_batch']['status']);
+        $this->assertCount(3, $commitEvent['payload']['production_batch_lines']);
+        $this->assertContains('input', array_column($commitEvent['payload']['production_batch_lines'], 'line_type'));
+        $this->assertContains('output', array_column($commitEvent['payload']['production_batch_lines'], 'line_type'));
+        $afterCommit = self::$conn->query("SELECT aggregate_type FROM sync_outbox WHERE id > {$beforeCommitOutbox} ORDER BY id")->fetch_all(MYSQLI_ASSOC);
+        $this->assertNotEmpty($afterCommit);
+        $this->assertSame('production_batch', (string) end($afterCommit)['aggregate_type']);
+
+        $cancelDraft = $service->createDraft(self::$conn, [
+            'recipe_id' => $setup['recipe_id'],
+            'output_item_id' => $setup['output_item_id'],
+            'planned_output_qty' => '2.000000',
+        ], $this->actor(['recipe.manage']));
+        $cancelId = (int) $cancelDraft['id'];
+        $service->cancel(self::$conn, $cancelId, 'Operator cancelled', $this->actor(['recipe.manage']));
+        $cancelEvent = $this->productionSyncEvent($cancelId, 2);
+        $this->assertSame('cancelled', $cancelEvent['payload']['production_batch']['status']);
+        $this->assertSame([], $cancelEvent['payload']['production_batch_lines']);
+
+        $failureDraft = $service->createDraft(self::$conn, [
+            'recipe_id' => $setup['recipe_id'],
+            'output_item_id' => $setup['output_item_id'],
+            'planned_output_qty' => '3.000000',
+        ], $this->actor(['recipe.manage']));
+        $failureId = (int) $failureDraft['id'];
+        self::$conn->query('DELETE FROM sync_outbox');
+        $failing = $this->syncProductionService($config, new FailingProductionBatchSyncEventService());
+        try {
+            $failing->commit(self::$conn, $failureId, [
+                'actual_output_qty' => '3.000000',
+            ], $this->actor(['recipe.approve']));
+            $this->fail('Expected production sync capture failure.');
+        } catch (RuntimeException $exception) {
+            $this->assertSame('PRODUCTION_BATCH_SYNC_CAPTURE_FAILED', $exception->getMessage());
+        }
+        $failedBatch = $this->rows('production_batches', 'id = ' . $failureId)[0];
+        $this->assertSame('draft', $failedBatch['status']);
+        $this->assertSame(1, (int) $failedBatch['sync_revision']);
+        $this->assertSame([], $this->rows('production_batch_lines', 'batch_id = ' . $failureId));
+        $this->assertSame([], $this->rows('inventory_movements', 'production_batch_id = ' . $failureId));
+        $this->assertSame(0, (int) self::$conn->query('SELECT COUNT(*) AS c FROM sync_outbox')->fetch_assoc()['c']);
+
+        $hostedConfig = $this->productionSyncConfig('cloud');
+        $hosted = $this->syncProductionService($hostedConfig);
+        $hostedDraft = $hosted->createDraft(self::$conn, [
+            'recipe_id' => $setup['recipe_id'],
+            'output_item_id' => $setup['output_item_id'],
+            'planned_output_qty' => '1.000000',
+        ], $this->actor(['recipe.manage']));
+        $this->assertSame(1, (int) $hostedDraft['sync_revision']);
+        $this->assertSame(0, (int) self::$conn->query("SELECT COUNT(*) AS c FROM sync_outbox WHERE aggregate_type = 'production_batch'")->fetch_assoc()['c']);
+    }
+
     public function testShadowModeDoesNotAllowProductionStockWrites(): void
     {
         $setup = $this->productionRecipe();
@@ -468,6 +555,84 @@ class ProductionBatchServiceTest extends TestCase
                 ],
             ],
         ]));
+    }
+
+    private function syncProductionService(
+        array $config,
+        ?OperationalSyncEventService $syncEvents = null
+    ): ProductionBatchService {
+        $recipeFlags = new RecipeFeatureFlags($config);
+        $inventoryFlags = new InventoryFeatureFlags($config);
+        $movements = new RecipeInventoryMovementService(
+            $recipeFlags,
+            null,
+            null,
+            $inventoryFlags,
+            new InventoryLedgerService($inventoryFlags)
+        );
+
+        return new ProductionBatchService(
+            $recipeFlags,
+            null,
+            null,
+            null,
+            $movements,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            $syncEvents
+        );
+    }
+
+    private function productionSyncConfig(string $role): array
+    {
+        return [
+            'role' => $role,
+            'branch' => [
+                'uuid' => '96969696-9696-4696-8696-969696969696',
+                'name' => 'Production Sync Test',
+                'pos_tenant' => 0,
+                'pos_branch' => 0,
+            ],
+            'sync' => [
+                'outbox_enabled' => true,
+                'branch_sync_enabled' => true,
+                'operational_sync_enabled' => true,
+                'cloud_to_branch_publish_enabled' => true,
+            ],
+            'inventory' => [
+                'ledger_mode' => 'live',
+                'sync' => true,
+            ],
+            'recipe' => [
+                'enabled' => true,
+                'mode' => 'consume_pilot',
+                'consumption' => true,
+                'pilot' => [
+                    'pos_branch' => '0',
+                    'item_ids' => [],
+                    'category_ids' => [],
+                ],
+            ],
+        ];
+    }
+
+    private function productionSyncEvent(int $batchId, int $revision): array
+    {
+        $row = self::$conn->query("SELECT * FROM sync_outbox
+            WHERE aggregate_type = 'production_batch'
+              AND aggregate_local_id = {$batchId}
+              AND event_version = {$revision}
+            LIMIT 1")->fetch_assoc();
+        $this->assertIsArray($row);
+
+        return [
+            'row' => $row,
+            'payload' => json_decode((string) $row['payload_json'], true, 512, JSON_THROW_ON_ERROR),
+        ];
     }
 
     private function strictService(): ProductionBatchService

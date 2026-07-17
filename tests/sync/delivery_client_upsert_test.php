@@ -18,10 +18,32 @@ try {
     (new SyncSchemaManager())->applyPosCustomerSchema($conn);
 
     $service = new PosCustomerService();
-    $first = $service->upsertForDelivery($conn, '01001234567', 'Ahmed', 'Maadi');
+    $syncDisabled = [
+        'role' => 'branch',
+        'sync' => [
+            'outbox_enabled' => false,
+            'operational_sync_enabled' => false,
+            'branch_sync_enabled' => false,
+        ],
+    ];
+    $first = $service->upsertForDelivery(
+        $conn,
+        '01001234567',
+        'Ahmed',
+        'Maadi',
+        null,
+        ['config' => $syncDisabled]
+    );
     deliveryClientAssert((int) ($first['id'] ?? 0) > 0, 'first upsert should return customer id');
 
-    $second = $service->upsertForDelivery($conn, '01001234567', 'Ahmed Updated', 'Nasr City');
+    $second = $service->upsertForDelivery(
+        $conn,
+        '01001234567',
+        'Ahmed Updated',
+        'Nasr City',
+        null,
+        ['config' => $syncDisabled]
+    );
     deliveryClientAssert((int) $second['id'] === (int) $first['id'], 'duplicate phone should upsert same customer id');
 
     $search = $service->searchByPhone($conn, '01001234567');

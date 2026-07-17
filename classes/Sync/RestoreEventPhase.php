@@ -117,6 +117,15 @@ class RestoreEventPhase
             'modifier_group_bundle',
             'moova_shop_link',
             'shift_close',
+            'drawer_session_snapshot',
+            'drawer_movement_bundle',
+            'financial_refund_bundle',
+            'customer_bundle',
+            'inventory_journal_bundle',
+            'inventory_count_bundle',
+            'production_batch_bundle',
+            'purchase_receipt_bundle',
+            'purchase_order_bundle',
         ];
     }
 

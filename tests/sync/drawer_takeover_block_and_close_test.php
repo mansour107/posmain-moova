@@ -80,7 +80,20 @@ try {
     $_SESSION['userrole'] = 1;
     $GLOBALS['role'] = ['id' => 1, 'rollname' => 'admin', 'role_key' => 'owner'];
     $GLOBALS['conn'] = $conn;
-
+    $syncConfig = [
+        'role' => 'branch',
+        'branch' => [
+            'uuid' => '08b21475-22d8-4ad5-8975-416a2d57052d',
+            'name' => 'Takeover close test',
+            'pos_tenant' => 3,
+            'pos_branch' => 7,
+        ],
+        'sync' => [
+            'branch_sync_enabled' => true,
+            'outbox_enabled' => true,
+            'operational_sync_enabled' => true,
+        ],
+    ];
     $registerService = new PosRegisterService();
     $register = $registerService->ensureDefaultRegister($conn, 3, 7);
     $_COOKIE[PosRegisterService::COOKIE_NAME] = (string) ($register['_pairing_token_once'] ?? '');
@@ -208,13 +221,18 @@ try {
         'reason' => 'كاشير غادر دون إغلاق',
         'manager_approval_id' => $approvalId,
     ];
+    // Manager-approval consumption records inside the same outer transaction
+    // using process config. Use that already-provisioned identity for the
+    // drawer events too, so the test models one stable production branch.
+    $currentSyncIdentity = (new SyncBranchIdentity())->current($conn);
+    $syncConfig['branch']['uuid'] = (string) $currentSyncIdentity['branch_uuid'];
     $first = pos_shift_handover_idempotent(
         $conn,
         'pos.shift.takeover_drawer',
         $post,
         [],
         20,
-        static function () use ($conn, $shifts, $sessionA, $approvalId): array {
+        static function () use ($conn, $shifts, $sessionA, $approvalId, $syncConfig): array {
             $closed = $shifts->forceCloseDrawerForUser($conn, 20, $sessionA, [
                 'tenant' => 3,
                 'branch' => 7,
@@ -223,6 +241,7 @@ try {
                 'manager_approval_id' => $approvalId,
                 'takeover' => true,
                 'incoming_user_id' => 20,
+                'sync_config' => $syncConfig,
             ]);
 
             $_SESSION['pos_pending_takeover'] = [
@@ -253,10 +272,80 @@ try {
     $closedRow = $drawer->sessionById($conn, $sessionA);
     takeoverAssert(($closedRow['status'] ?? '') === 'forced_closed', 'status forced_closed');
     takeoverAssert((int) ($closedRow['user_id'] ?? 0) === 10, 'user_id immutable after takeover');
+    takeoverAssert((int) ($closedRow['sync_revision'] ?? 0) === 4, 'forced close follows opening metadata with core and final session revisions');
+    $forcedSessionEvents = $conn->query(
+        "SELECT id, event_version, payload_json FROM sync_outbox WHERE aggregate_type = 'drawer_session'"
+        . " AND aggregate_local_id = {$sessionA} ORDER BY event_version ASC"
+    )->fetch_all(MYSQLI_ASSOC);
+    $forcedCloseSessionEvents = array_slice($forcedSessionEvents, -2);
+    takeoverAssert(array_map('intval', array_column($forcedCloseSessionEvents, 'event_version')) === [3, 4], 'forced close emits core then final session revisions');
+    $forcedFinalPayload = json_decode((string) $forcedCloseSessionEvents[1]['payload_json'], true, 512, JSON_THROW_ON_ERROR);
+    takeoverAssert(($forcedFinalPayload['drawer_session']['status'] ?? '') === 'forced_closed', 'final forced-close event is terminal');
+    takeoverAssert(($forcedFinalPayload['drawer_session']['variance_status'] ?? '') === 'unresolved', 'final forced-close event carries final variance status');
+    takeoverAssert(($forcedFinalPayload['drawer_session']['variance_type'] ?? '') === 'closing', 'final forced-close event carries final variance type');
+    $forcedShiftCloseEvent = $conn->query(
+        "SELECT id FROM sync_outbox WHERE aggregate_type = 'shift_close'"
+        . " AND aggregate_local_id = {$sessionA} LIMIT 1"
+    )->fetch_assoc();
+    takeoverAssert(is_array($forcedShiftCloseEvent), 'forced close emits shift-close bundle');
+    takeoverAssert((int) $forcedCloseSessionEvents[1]['id'] < (int) $forcedShiftCloseEvent['id'], 'final forced-close session revision is queued before shift-close bundle');
     takeoverAssert(($closedRow['open_branch_lock'] ?? null) === null || $closedRow['open_branch_lock'] === '', 'branch lock cleared');
     $closeSummary = $conn->query('SELECT drawer_session_id, close_path FROM drawer_session_close_summaries')->fetch_assoc();
     takeoverAssert((int) ($closeSummary['drawer_session_id'] ?? 0) === $sessionA, 'forced close creates one canonical session summary');
     takeoverAssert(($closeSummary['close_path'] ?? '') === 'drawer_takeover_force_close', 'summary records the takeover close path');
+
+    $conn->begin_transaction();
+    $rolledBackResolution = $count->resolveSession($conn, 90, $sessionA, [
+        'resolution_reason_code' => 'recount_confirmed',
+        'resolution_notes' => 'atomic rollback proof',
+    ], [
+        'in_transaction' => true,
+        'sync_config' => $syncConfig,
+    ]);
+    takeoverAssert((int) ($rolledBackResolution['resolution_id'] ?? 0) > 0, 'resolution is visible inside caller transaction');
+    $resolutionEventInTransaction = (int) $conn->query(
+        "SELECT COUNT(*) AS c FROM sync_outbox WHERE aggregate_type = 'drawer_session'"
+        . " AND aggregate_local_id = {$sessionA} AND event_version = 5"
+    )->fetch_assoc()['c'];
+    takeoverAssert($resolutionEventInTransaction === 1, 'resolution event is written inside caller transaction');
+    $conn->rollback();
+    $afterResolutionRollback = $drawer->sessionById($conn, $sessionA);
+    takeoverAssert(($afterResolutionRollback['variance_status'] ?? '') === 'unresolved', 'caller rollback restores unresolved status');
+    takeoverAssert((int) ($afterResolutionRollback['sync_revision'] ?? 0) === 4, 'caller rollback restores pre-resolution revision');
+    takeoverAssert((int) $conn->query(
+        "SELECT COUNT(*) AS c FROM drawer_session_resolutions WHERE drawer_session_id = {$sessionA}"
+    )->fetch_assoc()['c'] === 0, 'caller rollback removes resolution row');
+    takeoverAssert((int) $conn->query(
+        "SELECT COUNT(*) AS c FROM sync_outbox WHERE aggregate_type = 'drawer_session'"
+        . " AND aggregate_local_id = {$sessionA} AND event_version = 5"
+    )->fetch_assoc()['c'] === 0, 'caller rollback removes resolution event');
+
+    $resolution = $count->resolveSession($conn, 90, $sessionA, [
+        'resolution_reason_code' => 'recount_confirmed',
+        'resolution_notes' => 'manager confirmed recount',
+    ], ['sync_config' => $syncConfig]);
+    takeoverAssert((int) ($resolution['resolution_id'] ?? 0) > 0, 'manager resolution commits');
+    $resolvedSession = $drawer->sessionById($conn, $sessionA);
+    takeoverAssert(($resolvedSession['variance_status'] ?? '') === 'resolved', 'committed session is resolved');
+    takeoverAssert((int) ($resolvedSession['sync_revision'] ?? 0) === 5, 'manager resolution commits the next session revision');
+    $resolvedEvent = $conn->query(
+        "SELECT payload_json FROM sync_outbox WHERE aggregate_type = 'drawer_session'"
+        . " AND aggregate_local_id = {$sessionA} AND event_version = 5 LIMIT 1"
+    )->fetch_assoc();
+    $resolvedPayload = json_decode((string) ($resolvedEvent['payload_json'] ?? ''), true, 512, JSON_THROW_ON_ERROR);
+    takeoverAssert(($resolvedPayload['drawer_session']['variance_status'] ?? '') === 'resolved', 'resolution event carries resolved status');
+    takeoverAssert(count($resolvedPayload['resolutions'] ?? []) === 1, 'resolution event carries one append-only manager record');
+    $resolutionPayload = $resolvedPayload['resolutions'][0] ?? [];
+    takeoverAssert((int) ($resolutionPayload['drawer_session_id'] ?? 0) === $sessionA, 'resolution record belongs to source drawer');
+    takeoverAssert((int) ($resolutionPayload['resolved_by'] ?? 0) === 90, 'resolution record carries manager actor');
+    takeoverAssert(($resolutionPayload['resolution_reason_code'] ?? '') === 'recount_confirmed', 'resolution record carries structured reason');
+    takeoverAssert(($resolutionPayload['resolution_notes'] ?? '') === 'manager confirmed recount', 'resolution record carries manager notes');
+    takeoverAssert(
+        ($resolutionPayload['ledger_ot_head_id'] ?? null) === ($resolution['ledger_ot_head_id'] ?? null),
+        'resolution record carries the committed ledger link when accounting is available'
+    );
+    $resolutionSnapshot = json_decode((string) ($resolutionPayload['snapshot_json'] ?? '{}'), true, 512, JSON_THROW_ON_ERROR);
+    takeoverAssert(array_key_exists('difference', $resolutionSnapshot), 'resolution record carries the accepted variance snapshot');
 
     $replay = pos_shift_handover_idempotent(
         $conn,

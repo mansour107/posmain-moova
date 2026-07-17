@@ -65,6 +65,16 @@ $mirror = file_get_contents(__DIR__ . '/../../classes/Sync/CloudOperationalMirro
 operationalSyncContractAssert(strpos($mirror, 'shop_settings') !== false, 'CloudOperationalMirrorService should apply shop settings');
 operationalSyncContractAssert(strpos($mirror, 'modifier_group_bundle') !== false, 'CloudOperationalMirrorService should apply modifier bundles');
 operationalSyncContractAssert(strpos($mirror, 'moova_shop_link') !== false, 'CloudOperationalMirrorService should apply Moova shop links');
+operationalSyncContractAssert(strpos($mirror, "\$link['moova_device_token_hash'] = ''") !== false, 'Moova recovery must force secure re-pairing');
+
+$events = file_get_contents(__DIR__ . '/../../classes/Sync/OperationalSyncEventService.php');
+operationalSyncContractAssert(strpos($events, "unset(\$row['moova_device_token_hash'])") !== false, 'Moova snapshots must strip token hashes');
+
+$restoreExport = file_get_contents(__DIR__ . '/../../classes/Sync/CloudBranchRestoreExportService.php');
+operationalSyncContractAssert(strpos($restoreExport, 'restorableInboxDecisionSql') !== false, 'restore export must use one inbox eligibility predicate');
+operationalSyncContractAssert(substr_count($restoreExport, 'AND {$eligibleDecision}') === 3, 'all inbox restore queries must use the stale-safe predicate');
+operationalSyncContractAssert(strpos($restoreExport, "<> 'stale'") !== false, 'restore export must exclude explicit stale decisions');
+operationalSyncContractAssert(strpos($restoreExport, "unset(\$row['moova_device_token_hash'])") !== false, 'legacy restore export must strip token hashes');
 
 echo "operational-sync-contract-ok\n";
 

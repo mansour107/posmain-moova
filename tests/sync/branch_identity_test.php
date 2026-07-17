@@ -131,6 +131,42 @@ class BranchIdentityTest extends TestCase
         $this->assertSame('33333333-3333-4333-8333-333333333333', $service->current(self::$conn)['branch_uuid']);
     }
 
+    public function testConfiguredUuidMismatchCannotRotateInsideCallerTransaction(): void
+    {
+        $service = new SyncBranchIdentity();
+        $originalUuid = '55555555-5555-4555-8555-555555555555';
+        $service->ensure(self::$conn, [
+            'branch' => [
+                'uuid' => $originalUuid,
+                'name' => 'Stable Branch',
+            ],
+        ]);
+
+        self::$conn->begin_transaction();
+        self::$conn->query("UPDATE sync_branch_identity SET branch_name = 'Uncommitted name' WHERE id = 1");
+        $error = null;
+        try {
+            $service->ensure(self::$conn, [
+                'branch' => [
+                    'uuid' => '66666666-6666-4666-8666-666666666666',
+                ],
+            ]);
+        } catch (RuntimeException $exception) {
+            $error = $exception->getMessage();
+        }
+
+        $transactionRow = self::$conn->query(
+            'SELECT @@session.in_transaction AS active_transaction'
+        )->fetch_assoc();
+        $this->assertSame('SYNC_BRANCH_IDENTITY_ROTATION_IN_TRANSACTION', $error);
+        $this->assertSame(1, (int) ($transactionRow['active_transaction'] ?? 0));
+        self::$conn->rollback();
+
+        $current = $service->current(self::$conn);
+        $this->assertSame($originalUuid, $current['branch_uuid']);
+        $this->assertSame('Stable Branch', $current['branch_name']);
+    }
+
     public function testMissingConfiguredUuidGeneratesAndPersistsStableIdentity(): void
     {
         $service = new SyncBranchIdentity();

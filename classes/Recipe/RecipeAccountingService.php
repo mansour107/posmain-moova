@@ -9,6 +9,7 @@ require_once __DIR__ . '/Repository/InventoryMovementRepository.php';
 require_once __DIR__ . '/../Accounting/JournalPostingService.php';
 require_once __DIR__ . '/../Financial/Money.php';
 require_once __DIR__ . '/../Financial/RoundingPolicy.php';
+require_once __DIR__ . '/../Sync/OperationalSyncEventService.php';
 require_once __DIR__ . '/../../includes/pos_default_accounts.php';
 
 class RecipeAccountingService
@@ -17,18 +18,21 @@ class RecipeAccountingService
     private $counterService;
     private $movements;
     private $settings;
+    private OperationalSyncEventService $syncEvents;
     private array $itemCategoryCache = [];
 
     public function __construct(
         ?RecipeFeatureFlags $flags = null,
         ?DocumentCounterService $counterService = null,
         ?InventoryMovementRepository $movements = null,
-        ?RecipeSettingsService $settings = null
+        ?RecipeSettingsService $settings = null,
+        ?OperationalSyncEventService $syncEvents = null
     ) {
         $this->flags = $flags ?: new RecipeFeatureFlags();
         $this->counterService = $counterService ?: new DocumentCounterService();
         $this->movements = $movements ?: new InventoryMovementRepository();
         $this->settings = $settings ?: new RecipeSettingsService();
+        $this->syncEvents = $syncEvents ?: new OperationalSyncEventService();
     }
 
     public function postSaleCogs(mysqli $conn, array $orderContext, array $consumptionMovements): array
@@ -44,7 +48,7 @@ class RecipeAccountingService
             return $this->noop('no recipe consumption movements to post');
         }
         if ($existing = $this->existingJournalResult($conn, $rows)) {
-            return $existing;
+            return $this->captureJournalResult($conn, $existing, $orderContext);
         }
 
         $total = $this->movementTotal($rows);
@@ -66,7 +70,7 @@ class RecipeAccountingService
                 ['account_id' => $inventoryAccountId, 'debit' => '0.000000', 'credit' => $total, 'info' => 'Recipe inventory credit'],
             ],
             'movement_ids' => array_column($rows, 'id'),
-        ]);
+        ], $orderContext);
     }
 
     public function postProductionBatch(mysqli $conn, array $batchContext, array $inputMovements, array $outputMovements): array
@@ -84,7 +88,7 @@ class RecipeAccountingService
             return $this->noop('production input and output movements are required');
         }
         if ($existing = $this->existingJournalResult($conn, $rows)) {
-            return $existing;
+            return $this->captureJournalResult($conn, $existing, $batchContext);
         }
 
         $inputTotal = $this->movementTotal($inputs);
@@ -127,7 +131,7 @@ class RecipeAccountingService
             'op_id' => (int) ($batchContext['batch_id'] ?? 0),
             'entries' => $entries,
             'movement_ids' => array_column($rows, 'id'),
-        ]);
+        ], $batchContext);
     }
 
     public function postWaste(mysqli $conn, array $wasteContext, array $wasteMovements): array
@@ -143,7 +147,7 @@ class RecipeAccountingService
             return $this->noop('no waste movements to post');
         }
         if ($existing = $this->existingJournalResult($conn, $rows)) {
-            return $existing;
+            return $this->captureJournalResult($conn, $existing, $wasteContext);
         }
 
         $total = $this->movementTotal($rows);
@@ -160,7 +164,7 @@ class RecipeAccountingService
                 ['account_id' => $inventoryAccountId, 'debit' => '0.000000', 'credit' => $total, 'info' => 'Recipe waste inventory credit'],
             ],
             'movement_ids' => array_column($rows, 'id'),
-        ]);
+        ], $wasteContext);
     }
 
     public function postStockAdjustment(mysqli $conn, array $adjustmentContext, array $adjustmentMovements): array
@@ -176,7 +180,7 @@ class RecipeAccountingService
             return $this->noop('no stock adjustment movements to post');
         }
         if ($existing = $this->existingJournalResult($conn, $rows)) {
-            return $existing;
+            return $this->captureJournalResult($conn, $existing, $adjustmentContext);
         }
 
         $hasQtyIn = false;
@@ -209,7 +213,7 @@ class RecipeAccountingService
             'op_id' => (int) ($adjustmentContext['adjustment_id'] ?? 0),
             'entries' => $entries,
             'movement_ids' => array_column($rows, 'id'),
-        ]);
+        ], $adjustmentContext);
     }
 
     public function postRefundReversal(mysqli $conn, array $refundContext, array $reversalMovements): array
@@ -225,7 +229,7 @@ class RecipeAccountingService
             return $this->noop('no refund reversal movements to post');
         }
         if ($existing = $this->existingJournalResult($conn, $rows)) {
-            return $existing;
+            return $this->captureJournalResult($conn, $existing, $refundContext);
         }
 
         $total = $this->movementTotal($rows);
@@ -242,63 +246,121 @@ class RecipeAccountingService
                 ['account_id' => $cogsAccountId, 'debit' => '0.000000', 'credit' => $total, 'info' => 'Recipe COGS reversal'],
             ],
             'movement_ids' => array_column($rows, 'id'),
-        ]);
+        ], $refundContext);
     }
 
-    private function postBalancedJournal(mysqli $conn, RecipeScope $scope, array $journal): array
+    private function postBalancedJournal(mysqli $conn, RecipeScope $scope, array $journal, array $syncContext): array
     {
-        $this->assertJournalPrecisionIsSafe($conn);
-        $entries = $journal['entries'] ?? [];
-        $this->assertBalancedEntries($entries);
-
-        $journalId = $this->nextJournalId($conn, $scope->posTenant, $scope->posBranch);
-        $total = Money::from(RoundingPolicy::halfUp(RecipeDecimal::normalize($journal['total'] ?? '0')))->toString();
-        $postedEntries = [];
-        foreach ($entries as $index => $entry) {
-            $postedEntries[] = [
-                'account_id' => (int) $entry['account_id'],
-                'debit' => Money::from(RoundingPolicy::halfUp(RecipeDecimal::normalize($entry['debit'] ?? '0')))->toString(),
-                'credit' => Money::from(RoundingPolicy::halfUp(RecipeDecimal::normalize($entry['credit'] ?? '0')))->toString(),
-                'tybe' => $index,
-                'op2' => (int) ($journal['op2'] ?? $journal['op_id'] ?? 0),
-            ];
+        $ownsTransaction = !$this->connectionInTransaction($conn);
+        $savepoint = 'recipe_accounting_post';
+        if ($ownsTransaction) {
+            $conn->begin_transaction();
+        } else {
+            $conn->query('SAVEPOINT ' . $savepoint);
         }
-        $journalHeadId = JournalPostingService::postBalancedHead(
-            $conn,
-            (string) $journalId,
-            $total,
-            (string) ($journal['jdate'] ?? date('Y-m-d')),
-            (string) ($journal['details'] ?? 'Recipe accounting'),
-            (int) ($journal['user_id'] ?? 0),
-            $postedEntries,
-            [
-                'op_id' => (int) ($journal['op_id'] ?? 0),
-                'op2' => (int) ($journal['op2'] ?? 0),
-                'tenant' => $scope->posTenant,
-                'branch' => $scope->posBranch,
-                'source_type' => 'recipe_movement',
-                'source_id' => (int) (($journal['movement_ids'][0] ?? $journal['op_id'] ?? 0)),
-                'posting_kind' => (string) ($journal['posting_kind'] ?? 'recipe_accounting'),
-                'idempotency_key' => (string) ($journal['idempotency_key'] ?? ('recipe:' . md5(json_encode($journal['movement_ids'] ?? [])))),
-            ]
-        );
-        $entryIds = [];
-        $entryResult = $conn->query('SELECT id FROM journal_entries WHERE journal_id = ' . (int) $journalHeadId . ' ORDER BY id ASC');
-        while ($row = $entryResult->fetch_assoc()) {
-            $entryIds[] = (int) $row['id'];
-        }
-        $movementIds = array_values(array_map('intval', $journal['movement_ids'] ?? []));
-        $this->movements->attachJournal($conn, $movementIds, $journalHeadId);
 
-        return [
-            'noop' => false,
-            'journal_id' => $journalId,
-            'journal_head_id' => $journalHeadId,
-            'entry_ids' => $entryIds,
-            'entry_count' => count($entryIds),
-            'movement_ids' => $movementIds,
-            'total' => $total,
-        ];
+        try {
+            $this->assertJournalPrecisionIsSafe($conn);
+            $entries = $journal['entries'] ?? [];
+            $this->assertBalancedEntries($entries);
+
+            $journalId = $this->nextJournalId($conn, $scope->posTenant, $scope->posBranch);
+            $total = Money::from(RoundingPolicy::halfUp(RecipeDecimal::normalize($journal['total'] ?? '0')))->toString();
+            $postedEntries = [];
+            foreach ($entries as $index => $entry) {
+                $postedEntries[] = [
+                    'account_id' => (int) $entry['account_id'],
+                    'debit' => Money::from(RoundingPolicy::halfUp(RecipeDecimal::normalize($entry['debit'] ?? '0')))->toString(),
+                    'credit' => Money::from(RoundingPolicy::halfUp(RecipeDecimal::normalize($entry['credit'] ?? '0')))->toString(),
+                    'tybe' => $index,
+                    'op2' => (int) ($journal['op2'] ?? $journal['op_id'] ?? 0),
+                ];
+            }
+            $journalHeadId = JournalPostingService::postBalancedHead(
+                $conn,
+                (string) $journalId,
+                $total,
+                (string) ($journal['jdate'] ?? date('Y-m-d')),
+                (string) ($journal['details'] ?? 'Recipe accounting'),
+                (int) ($journal['user_id'] ?? 0),
+                $postedEntries,
+                [
+                    'op_id' => (int) ($journal['op_id'] ?? 0),
+                    'op2' => (int) ($journal['op2'] ?? 0),
+                    'tenant' => $scope->posTenant,
+                    'branch' => $scope->posBranch,
+                    'source_type' => 'recipe_movement',
+                    'source_id' => (int) (($journal['movement_ids'][0] ?? $journal['op_id'] ?? 0)),
+                    'posting_kind' => (string) ($journal['posting_kind'] ?? 'recipe_accounting'),
+                    'idempotency_key' => (string) ($journal['idempotency_key'] ?? ('recipe:' . md5(json_encode($journal['movement_ids'] ?? [])))),
+                ]
+            );
+            $entryIds = [];
+            $entryResult = $conn->query('SELECT id FROM journal_entries WHERE journal_id = ' . (int) $journalHeadId . ' ORDER BY id ASC');
+            while ($row = $entryResult->fetch_assoc()) {
+                $entryIds[] = (int) $row['id'];
+            }
+            $movementIds = array_values(array_map('intval', $journal['movement_ids'] ?? []));
+            $this->movements->attachJournal($conn, $movementIds, $journalHeadId);
+
+            $result = $this->captureJournalResult($conn, [
+                'noop' => false,
+                'journal_id' => $journalId,
+                'journal_head_id' => $journalHeadId,
+                'entry_ids' => $entryIds,
+                'entry_count' => count($entryIds),
+                'movement_ids' => $movementIds,
+                'total' => $total,
+            ], $syncContext);
+
+            if ($ownsTransaction) {
+                $conn->commit();
+            } else {
+                $conn->query('RELEASE SAVEPOINT ' . $savepoint);
+            }
+
+            return $result;
+        } catch (Throwable $exception) {
+            if ($ownsTransaction) {
+                $conn->rollback();
+            } else {
+                $conn->query('ROLLBACK TO SAVEPOINT ' . $savepoint);
+                $conn->query('RELEASE SAVEPOINT ' . $savepoint);
+            }
+            throw $exception;
+        }
+    }
+
+    private function captureJournalResult(mysqli $conn, array $result, array $context): array
+    {
+        if (!empty($result['noop'])) {
+            return $result;
+        }
+
+        $journalHeadId = (int) ($result['journal_head_id'] ?? 0);
+        $movementIds = array_values(array_filter(
+            array_map('intval', $result['movement_ids'] ?? []),
+            static fn(int $id): bool => $id > 0
+        ));
+        if ($journalHeadId < 1 || $movementIds === []) {
+            throw new RuntimeException('INVENTORY_JOURNAL_SYNC_RESULT_INVALID');
+        }
+
+        $syncConfig = $context['sync_config'] ?? $context['config'] ?? $this->flags->appConfig();
+        $this->syncEvents->recordInventoryAccountingSnapshot($conn, $journalHeadId, $movementIds, [
+            'config' => $syncConfig,
+            'source_system' => (string) ($context['sync_source_system'] ?? 'recipe_accounting'),
+            'event_type' => (string) ($context['sync_event_type'] ?? 'recipe.accounting_journal_saved'),
+        ]);
+
+        return $result;
+    }
+
+    private function connectionInTransaction(mysqli $conn): bool
+    {
+        $row = $conn->query('SELECT @@session.in_transaction AS active')->fetch_assoc();
+
+        return (int) ($row['active'] ?? 0) === 1;
     }
 
     private function insertJournalHead(mysqli $conn, int $journalId, RecipeScope $scope, array $journal): int

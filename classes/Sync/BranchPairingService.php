@@ -10,15 +10,14 @@ require_once __DIR__ . '/SyncRuntimeCrypto.php';
 require_once __DIR__ . '/SyncRuntimeSettings.php';
 require_once __DIR__ . '/ShopProvisioningService.php';
 require_once __DIR__ . '/PairingStatusService.php';
-require_once __DIR__ . '/BranchRestoreFromHostedService.php';
 
 class BranchPairingService
 {
     private const HOSTED_SYNC_DEFAULTS = [
         'POSMAIN_ROLE' => 'cloud',
         'POSMAIN_CLOUD_APPLY_ENABLED' => '1',
-        'POSMAIN_CLOUD_PULL_ENABLED' => '1',
-        'POSMAIN_CLOUD_TO_BRANCH_PUBLISH_ENABLED' => '1',
+        'POSMAIN_CLOUD_PULL_ENABLED' => '0',
+        'POSMAIN_CLOUD_TO_BRANCH_PUBLISH_ENABLED' => '0',
         'POSMAIN_SYNC_WORKER_ENABLED' => '1',
     ];
 
@@ -27,7 +26,7 @@ class BranchPairingService
         'POSMAIN_SYNC_OUTBOX_ENABLED' => '1',
         'POSMAIN_BRANCH_SYNC_ENABLED' => '1',
         'POSMAIN_SYNC_WORKER_ENABLED' => '1',
-        'POSMAIN_CLOUD_PULL_ENABLED' => '1',
+        'POSMAIN_CLOUD_PULL_ENABLED' => '0',
     ];
 
     public function pairHosted(mysqli $contextConn, array $config, array $input): array
@@ -165,28 +164,6 @@ class BranchPairingService
             'cloud_base_url' => $cloudBaseUrl,
         ]);
 
-        $restoreFromHosted = null;
-        $autoRestore = !array_key_exists('auto_restore_from_hosted', $input) || !empty($input['auto_restore_from_hosted']);
-        if ($autoRestore && !empty($dashboard['pairing_ok']) && BranchRestoreFromHostedService::localNeedsRestore($conn)) {
-            try {
-                $restoreFromHosted = (new BranchRestoreFromHostedService())->restore($conn, array_merge($config, [
-                    'branch' => array_merge((array) ($config['branch'] ?? []), [
-                        'uuid' => $branchUuid,
-                        'cloud_base_url' => $cloudBaseUrl,
-                    ]),
-                    'sync' => array_merge((array) ($config['sync'] ?? []), [
-                        'branch_secret' => $secret,
-                    ]),
-                ]), ['apply' => true]);
-            } catch (Throwable $e) {
-                $restoreFromHosted = [
-                    'apply' => true,
-                    'failed' => 1,
-                    'errors' => [['message' => $e->getMessage()]],
-                ];
-            }
-        }
-
         return [
             'branch_uuid' => $branchUuid,
             'cloud_base_url' => $cloudBaseUrl,
@@ -196,7 +173,12 @@ class BranchPairingService
                 'remote' => $dashboard['remote'] ?? null,
             ],
             'dashboard' => $dashboard,
-            'restore_from_hosted' => $restoreFromHosted,
+            'restore_from_hosted' => [
+                'apply' => false,
+                'automatic' => false,
+                'manual_required' => true,
+                'message' => 'Pairing never restores hosted data automatically. Use the guarded CLI dry-run and empty-branch restore workflow.',
+            ],
         ];
     }
 

@@ -465,6 +465,11 @@ class BranchCatalogPushService
         $domainCounters = OperationalSyncDomains::pushCounterMap();
 
         foreach (OperationalSyncDomains::bulkRowDomains() as $domain => $definition) {
+            if ($domain === 'drawer_session') {
+                // Drawer identity is seeded by typed opening-movement bundles and
+                // terminal state by shift_close. Generic rows have no safe revision.
+                continue;
+            }
             $counter = $domainCounters[$domain] ?? null;
             if ($counter === null) {
                 continue;
@@ -477,10 +482,13 @@ class BranchCatalogPushService
 
             foreach ($this->activeIds($conn, $table, $includeDeleted, $limit) as $rowId) {
                 $queue[$counter] = ($queue[$counter] ?? 0) + 1;
-                $result = $operational->recordRowSnapshot($conn, $domain, $rowId, [
+                $options = [
                     'source_system' => 'settings_supported_data_push',
                     'config' => $pushConfig,
-                ]);
+                ];
+                $result = $domain === 'drawer_movement'
+                    ? $operational->recordDrawerMovementSnapshot($conn, $rowId, $options)
+                    : $operational->recordRowSnapshot($conn, $domain, $rowId, $options);
                 $this->trackQueuedRow($conn, $result, $forceResend, $queue);
             }
         }

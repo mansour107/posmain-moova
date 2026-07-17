@@ -23,6 +23,9 @@ class SyncBranchIdentity
                 if (!self::isUuid($configuredUuid)) {
                     throw new InvalidArgumentException('Branch UUID must be a valid UUID string.');
                 }
+                if ($this->connectionInTransaction($conn)) {
+                    throw new RuntimeException('SYNC_BRANCH_IDENTITY_ROTATION_IN_TRANSACTION');
+                }
 
                 $this->updateIdentity($conn, $branchConfig, $configuredUuid, $existingUuid);
                 return $this->find($conn);
@@ -141,6 +144,14 @@ class SyncBranchIdentity
             $conn->rollback();
             throw $e;
         }
+    }
+
+    private function connectionInTransaction(mysqli $conn): bool
+    {
+        $result = $conn->query('SELECT @@session.in_transaction AS active_transaction');
+        $row = $result->fetch_assoc() ?: [];
+
+        return !empty($row['active_transaction']);
     }
 
     private function migrateBranchUuidReferences(mysqli $conn, string $fromUuid, string $toUuid): void

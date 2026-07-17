@@ -105,6 +105,7 @@ class PosOrderMutationService
             $this->customerSideEffects()->afterOrderSaved($conn, $orderId, $request, 'table', [
                 'paid_amount' => (float) ($result['data']['paid_amount'] ?? 0),
                 'payment_status' => (string) ($result['data']['payment_status'] ?? 'unpaid'),
+                'config' => $context['config'] ?? null,
             ]);
             $this->recordOrderEvent($conn, $orderId, 'order.payment_recorded', $context['event_source'] ?? 'pos_table_payment', $context, [
                 'payment_status' => $result['data']['payment_status'] ?? null,
@@ -846,7 +847,14 @@ class PosOrderMutationService
                 $request['pos_customer_id'] = $postedCustomerId;
             } else {
                 $zoneId = (int) ($request['delivery_zone_id'] ?? 0);
-                $upserted = $posCustomerService->upsertForDelivery($conn, $deliveryPhone, $deliveryName, $deliveryAddress, $zoneId > 0 ? $zoneId : null);
+                $upserted = $posCustomerService->upsertForDelivery(
+                    $conn,
+                    $deliveryPhone,
+                    $deliveryName,
+                    $deliveryAddress,
+                    $zoneId > 0 ? $zoneId : null,
+                    ['in_transaction' => true, 'config' => $context['config'] ?? null]
+                );
                 $request['pos_customer_id'] = (int) ($upserted['id'] ?? 0);
             }
             $resolvedTotals = $this->resolveDeliveryPostedTotals($conn, $request);
@@ -962,6 +970,8 @@ class PosOrderMutationService
         $this->customerSideEffects()->afterOrderSaved($conn, $orderId, $request, $channel, [
             'paid_amount' => (float) $status['paid_amount'],
             'payment_status' => (string) $status['payment_status'],
+            'in_transaction' => true,
+            'config' => $context['config'] ?? null,
         ]);
 
         if (!array_key_exists('record_outbox', $context) || $context['record_outbox']) {
@@ -1161,6 +1171,8 @@ class PosOrderMutationService
         $this->customerSideEffects()->afterOrderSaved($conn, $orderId, $request, 'takeaway', [
             'paid_amount' => (float) $status['paid_amount'],
             'payment_status' => (string) $status['payment_status'],
+            'in_transaction' => true,
+            'config' => $context['config'] ?? null,
         ]);
 
         $outboxResult = null;
@@ -1240,7 +1252,14 @@ class PosOrderMutationService
             $request['pos_customer_id'] = $postedCustomerId;
         } else {
             $zoneId = (int) ($request['delivery_zone_id'] ?? 0);
-            $upserted = $posCustomerService->upsertForDelivery($conn, $deliveryPhone, $deliveryName, $deliveryAddress, $zoneId > 0 ? $zoneId : null);
+            $upserted = $posCustomerService->upsertForDelivery(
+                $conn,
+                $deliveryPhone,
+                $deliveryName,
+                $deliveryAddress,
+                $zoneId > 0 ? $zoneId : null,
+                ['in_transaction' => true, 'config' => $context['config'] ?? null]
+            );
             $request['pos_customer_id'] = (int) ($upserted['id'] ?? 0);
         }
         $deliveryCustomerId = (int) ($request['pos_customer_id'] ?? 0);
@@ -1378,6 +1397,8 @@ class PosOrderMutationService
         $this->customerSideEffects()->afterOrderSaved($conn, $orderId, $request, 'delivery', [
             'paid_amount' => (float) $status['paid_amount'],
             'payment_status' => (string) $status['payment_status'],
+            'in_transaction' => true,
+            'config' => $context['config'] ?? null,
         ]);
 
         $outboxResult = null;
@@ -1925,6 +1946,8 @@ class PosOrderMutationService
         $this->customerSideEffects()->afterOrderSaved($conn, $orderId, $request, 'table', [
             'paid_amount' => (float) $status['paid_amount'],
             'payment_status' => (string) $status['payment_status'],
+            'in_transaction' => true,
+            'config' => $context['config'] ?? null,
         ]);
 
         return $this->attachKitchenRevision($conn, $orderId, [
@@ -2036,6 +2059,8 @@ class PosOrderMutationService
         $this->customerSideEffects()->afterOrderSaved($conn, $newHeadId, $crmRequest, 'table', [
             'paid_amount' => $childTotal->toString(),
             'payment_status' => 'paid',
+            'in_transaction' => true,
+            'config' => $context['config'] ?? null,
         ]);
 
         return [

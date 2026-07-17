@@ -8,6 +8,7 @@ It runs these existing workers in one supervised cycle:
 | --- | --- | --- |
 | `sync_outbox` | `BranchSyncWorker` | Sends local `sync_outbox` events to the cloud receive API. |
 | `moova_poller` | `BranchMoovaPollWorker` | Pulls cloud Moova order events into the local inbound queue. |
+| `cloud_sync_poller` | `BranchCloudSyncPollWorker` | Optional generic hosted-to-branch POS editing; disabled for the offline-first production profile. |
 | `moova_apply` | `BranchMoovaApplyWorker` | Applies queued Moova events to POS table orders. |
 | `moova_ack` | `BranchMoovaAckWorker` | Acknowledges terminal Moova event results back to cloud. |
 
@@ -57,6 +58,7 @@ php cli/branch_worker_daemon.php --once --only=sync_outbox
 - `--preflight` returns exit code `2` when sync schema work is pending.
 - Missing cloud URL, branch UUID, wrong role, or branch secret is reported as a warning in normal `--preflight`; use `--preflight --strict` before service enablement so those warnings fail the gate.
 - Keep `POSMAIN_MOOVA_APPLY_ENABLED=0` until the branch is ready to apply queued Moova events automatically.
+- Keep `POSMAIN_CLOUD_PULL_ENABLED=0` for the offline-first production profile. Pairing never restores automatically, and disaster recovery uses the guarded manual restore command instead of the worker.
 - Before installing or enabling any supervisor service, run the non-destructive go-live checklist in `docs/branch_go_live_readiness.md`.
 
 ## Service Templates
@@ -84,8 +86,11 @@ POSMAIN_DB_PASS=change-me-outside-git
 POSMAIN_BRANCH_UUID=replace-with-branch-uuid
 POSMAIN_CLOUD_BASE_URL=https://cloud.example.com
 POSMAIN_BRANCH_SYNC_SECRET=replace-with-protected-secret
+POSMAIN_CLOUD_PULL_ENABLED=0
 POSMAIN_MOOVA_APPLY_ENABLED=0
 ```
+
+Before a hosted-to-branch recovery, stop the branch worker service and run `php tools/restore_branch_from_hosted.php --all` first. The dry-run prints the empty-target decision, manifest, event count, and confirmation token. Apply is accepted only when all phases are selected, generic cloud pull is disabled, the business database is empty, a fresh backup and stopped-worker acknowledgement are supplied, the dry-run values still match, and a new receipt path is provided.
 
 Before enabling a service, verify:
 

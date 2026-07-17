@@ -206,14 +206,20 @@ try {
             break;
 
         case 'restore_from_hosted':
+            if (!empty($_POST['apply'])) {
+                throw new RuntimeException(
+                    'Hosted restore apply is disabled in the web UI. Run the guarded CLI dry-run, backup, stopped-worker and empty-branch workflow.'
+                );
+            }
             syncCredentialsJson([
                 'ok' => true,
                 'restore' => (new BranchRestoreFromHostedService())->restore(
                     $conn,
                     syncCredentialsBranchRuntimeConfig($appConfig, $_POST),
                     [
-                        'apply' => !empty($_POST['apply']),
+                        'apply' => false,
                         'limit' => isset($_POST['limit']) ? max(1, (int) $_POST['limit']) : 50,
+                        'phases' => RestoreEventPhase::all(),
                     ]
                 ),
             ]);

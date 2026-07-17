@@ -727,7 +727,7 @@ if ($syncDefaultCloudUrl === '' && !empty($_SERVER['HTTP_HOST'])) {
                         <i class="fas fa-upload mr-1"></i> Sync all data to hosted
                       </button>
                       <button type="button" class="btn btn-outline-warning mb-3 js-sync-restore-hosted" data-form="#sync-local-form" dir="ltr">
-                        <i class="fas fa-cloud-download-alt mr-1"></i> Restore from hosted
+                        <i class="fas fa-clipboard-check mr-1"></i> Preview hosted restore
                       </button>
                     </div>
                   </div>
@@ -767,7 +767,6 @@ if ($syncDefaultCloudUrl === '' && !empty($_SERVER['HTTP_HOST'])) {
                         'POSMAIN_BRANCH_SYNC_ENABLED' => ['تفعيل مزامنة الفرع', true, 'Enables sending local branch events to the hosted POS.', true],
                         'POSMAIN_SYNC_WORKER_ENABLED' => ['تشغيل عامل المزامنة', true, 'Enables the background sync worker on the local machine.', true],
                         'POSMAIN_MENU_SYNC_ENABLED' => ['مزامنة المنيو', true, 'Sends menu item and price changes through sync when enabled.', true],
-                        'POSMAIN_CLOUD_PULL_ENABLED' => ['سحب أحداث السحابة', true, 'Allows the local branch to receive cloud-to-branch updates.', false],
                     ];
                     foreach ($localToggles as $toggleKey => [$label, $default, $help, $controlledByMaster]):
                     ?>
@@ -779,6 +778,10 @@ if ($syncDefaultCloudUrl === '' && !empty($_SERVER['HTTP_HOST'])) {
                       </div>
                     </div>
                     <?php endforeach; ?>
+                  </div>
+                  <input type="hidden" name="POSMAIN_CLOUD_PULL_ENABLED" value="0">
+                  <div class="alert alert-light border mb-0">
+                    Generic hosted-to-branch pull is disabled. Recovery is manual and uses the guarded CLI dry-run, backup, empty-database and reconciliation workflow.
                   </div>
                 </div>
 
@@ -798,11 +801,7 @@ if ($syncDefaultCloudUrl === '' && !empty($_SERVER['HTTP_HOST'])) {
               <div id="sync-cloud-form" class="sync-subsection">
                 <input type="hidden" name="action" value="save_cloud">
                 <?php
-                $hostedSyncToggleKeys = [
-                    'POSMAIN_CLOUD_APPLY_ENABLED',
-                    'POSMAIN_CLOUD_PULL_ENABLED',
-                    'POSMAIN_CLOUD_TO_BRANCH_PUBLISH_ENABLED',
-                ];
+                $hostedSyncToggleKeys = ['POSMAIN_CLOUD_APPLY_ENABLED'];
                 $hostedSyncEnabled = true;
                 foreach ($hostedSyncToggleKeys as $toggleKey) {
                     $hostedSyncEnabled = $hostedSyncEnabled && $syncBool($toggleKey, true);
@@ -822,6 +821,8 @@ if ($syncDefaultCloudUrl === '' && !empty($_SERVER['HTTP_HOST'])) {
                   <?php foreach ($hostedSyncToggleKeys as $toggleKey): ?>
                     <input type="hidden" class="js-hosted-sync-core-toggle" name="<?= htmlspecialchars($toggleKey, ENT_QUOTES, 'UTF-8') ?>" value="<?= $hostedSyncEnabled ? '1' : '0' ?>">
                   <?php endforeach; ?>
+                  <input type="hidden" name="POSMAIN_CLOUD_PULL_ENABLED" value="0">
+                  <input type="hidden" name="POSMAIN_CLOUD_TO_BRANCH_PUBLISH_ENABLED" value="0">
                 </div>
                 <span class="sync-action-result text-muted"></span>
               </div>
@@ -1838,23 +1839,22 @@ document.addEventListener('DOMContentLoaded', function () {
   $('.js-sync-restore-hosted').on('click', function () {
     const $form = $($(this).data('form'));
     const confirmed = window.confirm(
-      'Restore menu, tables, orders, and all synced operational data (customers, settings, inventory, modifiers, shifts, and more) from the hosted cloud into this local database? Stop branch sync workers first. Existing local data may be updated or overwritten depending on event history.'
+      'Preview the hosted recovery plan? This is a read-only dry run. It will not change local data. Actual recovery is available only through the guarded CLI workflow on an empty replacement database.'
     );
     if (!confirmed) {
       return;
     }
 
     const payload = formData($form, 'restore_from_hosted');
-    payload.append('apply', '1');
     ajaxSync(payload).done(function (response) {
       const restore = response.restore || {};
-      const mirrored = restore.mirrored || 0;
-      const failed = restore.failed || 0;
-      const skipped = restore.skipped || 0;
-      const message = failed > 0
-        ? 'Restore finished with errors. Mirrored: ' + mirrored + ', skipped: ' + skipped + ', failed: ' + failed + '.'
-        : 'Restore finished. Mirrored: ' + mirrored + ', skipped: ' + skipped + '.';
-      showResult($form, message, failed === 0);
+      const safety = restore.safety || {};
+      const fetched = restore.fetched || 0;
+      const ready = !!safety.apply_allowed;
+      const message = ready
+        ? 'Dry run complete: ' + fetched + ' hosted events. The target is empty and eligible for the guarded CLI restore. No local data changed.'
+        : 'Dry run complete: ' + fetched + ' hosted events. Apply is blocked because this is not an empty recovery target or generic cloud pull is enabled. No local data changed.';
+      showResult($form, message, true);
     }).fail(function (xhr) {
       showResult($form, (xhr.responseJSON && xhr.responseJSON.message) || 'Hosted restore failed.', false);
     });

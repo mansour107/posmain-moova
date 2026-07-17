@@ -296,6 +296,7 @@ class CloudMenuSnapshotTest extends TestCase
     private function cleanup(): void
     {
         self::$conn->query("DELETE FROM cloud_menu_items WHERE branch_uuid = '" . self::$conn->real_escape_string(self::BRANCH_UUID) . "'");
+        self::$conn->query("DELETE FROM sync_projection_versions WHERE branch_uuid = '" . self::$conn->real_escape_string(self::BRANCH_UUID) . "'");
         self::$conn->query("DELETE FROM sync_inbox WHERE idempotency_key LIKE 'phpunit:cloud-menu:%'");
         self::$conn->query("DELETE FROM sync_conflicts WHERE branch_uuid = '" . self::$conn->real_escape_string(self::BRANCH_UUID) . "'");
         self::$conn->query("DELETE FROM cloud_branches WHERE branch_uuid = '" . self::$conn->real_escape_string(self::BRANCH_UUID) . "'");

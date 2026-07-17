@@ -32,6 +32,10 @@ if (!function_exists('posmain_production_profile_matrix')) {
                 'certified_mode' => true,
                 'tax_enabled' => false,
             ],
+            'sync' => [
+                'cloud_pull_enabled' => false,
+                'cloud_to_branch_publish_enabled' => false,
+            ],
         ];
     }
 }
@@ -60,6 +64,14 @@ if (!function_exists('posmain_production_profile_apply')) {
         if (!isset($config['tax']['enabled'])) {
             $config['tax']['enabled'] = false;
         }
+        if (!empty($config['sync']['cloud_pull_enabled'])) {
+            $warnings[] = 'production_profile_automatic_cloud_pull_disabled';
+        }
+        if (!empty($config['sync']['cloud_to_branch_publish_enabled'])) {
+            $warnings[] = 'production_profile_automatic_reverse_publish_disabled';
+        }
+        $config['sync']['cloud_pull_enabled'] = false;
+        $config['sync']['cloud_to_branch_publish_enabled'] = false;
 
         $recipeMode = strtolower((string) ($config['recipe']['mode'] ?? 'off'));
         if ($recipeMode !== 'full' && in_array($recipeMode, ['off', 'schema_only', 'read_only', 'shadow', 'reserve_only', 'consume_pilot', 'accounting_pilot', 'availability_pilot'], true)) {

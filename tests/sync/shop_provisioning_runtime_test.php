@@ -35,6 +35,7 @@ require_once __DIR__ . '/../../includes/db_bootstrap.php';
 require_once __DIR__ . '/../../classes/Sync/BranchPairingService.php';
 require_once __DIR__ . '/../../classes/Sync/PairingStatusService.php';
 require_once __DIR__ . '/../../classes/Sync/ShopProvisioningService.php';
+require_once __DIR__ . '/../../classes/Sync/SyncRuntimeSettings.php';
 
 mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
 $root = new mysqli($host, $user, $pass, '', $port);
@@ -70,6 +71,10 @@ try {
     $probe = (new PairingStatusService())->hostedProbe($shopConn, $config, $branchUuid);
     shopProvisioningAssert($probe['shop_db_name'] === $newShopDb, 'hosted probe should return provisioned db name');
     shopProvisioningAssert(!empty($probe['sync_schema_ready']), 'provisioned shop should have sync schema applied');
+    $runtime = (new SyncRuntimeSettings())->loadForUi($shopConn);
+    shopProvisioningAssert((string) ($runtime['POSMAIN_CLOUD_APPLY_ENABLED']['value'] ?? '') === '1', 'hosted apply should remain enabled');
+    shopProvisioningAssert((string) ($runtime['POSMAIN_CLOUD_PULL_ENABLED']['value'] ?? '') === '0', 'hosted pull must default off');
+    shopProvisioningAssert((string) ($runtime['POSMAIN_CLOUD_TO_BRANCH_PUBLISH_ENABLED']['value'] ?? '') === '0', 'hosted publish must default off');
     $shopConn->close();
 
     $contextConn->close();

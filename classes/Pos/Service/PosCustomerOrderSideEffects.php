@@ -57,6 +57,29 @@ class PosCustomerOrderSideEffects
      */
     public function applyPaymentRollup(mysqli $conn, int $orderId, array $options = []): array
     {
+        $ownsTransaction = $this->ownsTransaction($options);
+        if ($ownsTransaction) {
+            $conn->begin_transaction();
+        }
+        try {
+            $result = $this->applyPaymentRollupInsideTransaction($conn, $orderId, array_merge($options, [
+                'in_transaction' => true,
+            ]));
+            if ($ownsTransaction) {
+                $conn->commit();
+            }
+
+            return $result;
+        } catch (Throwable $exception) {
+            if ($ownsTransaction) {
+                $conn->rollback();
+            }
+            throw $exception;
+        }
+    }
+
+    private function applyPaymentRollupInsideTransaction(mysqli $conn, int $orderId, array $options = []): array
+    {
         if ($orderId < 1 || !$this->customerService->tablesReady($conn)) {
             return ['applied' => false, 'customer_id' => 0, 'paid_delta' => 0.0, 'orders_counted' => false, 'reason' => 'NOT_READY'];
         }
@@ -79,7 +102,8 @@ class PosCustomerOrderSideEffects
                 $conn,
                 $orderId,
                 $options['request'],
-                (string) ($options['fulfillment_type'] ?? 'takeaway')
+                (string) ($options['fulfillment_type'] ?? 'takeaway'),
+                $options
             );
             if ($link['linked']) {
                 $fulfillment = $this->fulfillmentService->fulfillmentForOrder($conn, $orderId);
@@ -101,13 +125,19 @@ class PosCustomerOrderSideEffects
         $ordersCounted = false;
 
         if ($delta > 0) {
-            $this->customerService->applyRollupDelta($conn, $customerId, $delta, false);
+            $this->customerService->applyRollupDelta($conn, $customerId, $delta, false, array_merge($options, [
+                'in_transaction' => true,
+                'defer_sync' => true,
+            ]));
             $rollupPaid += $delta;
             $this->updateRollupPaidAmount($conn, $orderId, $rollupPaid);
         }
 
         if ($isFullyPaid && !$rollupCounted) {
-            $this->customerService->applyRollupDelta($conn, $customerId, 0.0, true);
+            $this->customerService->applyRollupDelta($conn, $customerId, 0.0, true, array_merge($options, [
+                'in_transaction' => true,
+                'defer_sync' => true,
+            ]));
             $this->updateRollupCounted($conn, $orderId, true);
             $ordersCounted = true;
         }
@@ -115,6 +145,11 @@ class PosCustomerOrderSideEffects
         if ($delta <= 0 && !$ordersCounted) {
             return ['applied' => false, 'customer_id' => $customerId, 'paid_delta' => 0.0, 'orders_counted' => false, 'reason' => 'ALREADY_ROLLED_UP'];
         }
+
+        $this->customerService->recordSyncSnapshot($conn, $customerId, $options + [
+            'event_type' => 'customer.order_rollup',
+            'source_system' => 'pos_order_customer_rollup',
+        ]);
 
         return [
             'applied' => true,
@@ -135,18 +170,33 @@ class PosCustomerOrderSideEffects
         string $fulfillmentType,
         array $options = []
     ): array {
-        $link = $this->linkFromRequest($conn, $orderId, $request, $fulfillmentType, $options);
-        $rollup = $this->applyPaymentRollup($conn, $orderId, [
-            'request' => $request,
-            'fulfillment_type' => $fulfillmentType,
-            'paid_amount' => $options['paid_amount'] ?? null,
-            'payment_status' => $options['payment_status'] ?? null,
-        ]);
+        $ownsTransaction = $this->ownsTransaction($options);
+        if ($ownsTransaction) {
+            $conn->begin_transaction();
+        }
+        try {
+            $link = $this->linkFromRequest($conn, $orderId, $request, $fulfillmentType, $options);
+            $rollup = $this->applyPaymentRollup($conn, $orderId, array_merge($options, [
+                'in_transaction' => true,
+                'request' => $request,
+                'fulfillment_type' => $fulfillmentType,
+                'paid_amount' => $options['paid_amount'] ?? null,
+                'payment_status' => $options['payment_status'] ?? null,
+            ]));
+            if ($ownsTransaction) {
+                $conn->commit();
+            }
 
-        return ['link' => $link, 'rollup' => $rollup];
+            return ['link' => $link, 'rollup' => $rollup];
+        } catch (Throwable $exception) {
+            if ($ownsTransaction) {
+                $conn->rollback();
+            }
+            throw $exception;
+        }
     }
 
-    public function rebuildCustomerRollups(mysqli $conn, int $customerId): array
+    public function rebuildCustomerRollups(mysqli $conn, int $customerId, array $options = []): array
     {
         if ($customerId < 1 || !$this->customerService->tablesReady($conn)) {
             return ['orders_count' => 0, 'lifetime_paid' => 0.0, 'last_order_at' => null, 'orders_reset' => 0];
@@ -159,27 +209,32 @@ class PosCustomerOrderSideEffects
 
         $hasRollupColumns = $this->columnExists($conn, 'order_fulfillment', 'crm_rollup_paid_amount');
 
-        $stmt = $conn->prepare("
-            SELECT
-                o.id AS order_id,
-                o.paid_amount,
-                o.payment_status,
-                COALESCE(o.mdtime, o.crtime, o.pro_date) AS order_time
-            FROM order_fulfillment f
-            INNER JOIN ot_head o ON o.id = f.order_id AND o.isdeleted = 0
-            WHERE f.pos_customer_id = ?
-            ORDER BY order_time ASC
-        ");
-        $stmt->bind_param('i', $customerId);
-        $stmt->execute();
-        $result = $stmt->get_result();
+        $ownsTransaction = $this->ownsTransaction($options);
+        if ($ownsTransaction) {
+            $conn->begin_transaction();
+        }
+        try {
+            $stmt = $conn->prepare("
+                SELECT
+                    o.id AS order_id,
+                    o.paid_amount,
+                    o.payment_status,
+                    COALESCE(o.mdtime, o.crtime, o.pro_date) AS order_time
+                FROM order_fulfillment f
+                INNER JOIN ot_head o ON o.id = f.order_id AND o.isdeleted = 0
+                WHERE f.pos_customer_id = ?
+                ORDER BY order_time ASC
+            ");
+            $stmt->bind_param('i', $customerId);
+            $stmt->execute();
+            $result = $stmt->get_result();
 
-        $ordersCount = 0;
-        $lifetimePaid = 0.0;
-        $lastOrderAt = null;
-        $ordersReset = 0;
+            $ordersCount = 0;
+            $lifetimePaid = 0.0;
+            $lastOrderAt = null;
+            $ordersReset = 0;
 
-        while ($row = $result->fetch_assoc()) {
+            while ($row = $result->fetch_assoc()) {
             $orderId = (int) $row['order_id'];
             $paid = (float) ($row['paid_amount'] ?? 0);
             $isPaid = strtolower((string) ($row['payment_status'] ?? '')) === 'paid';
@@ -200,10 +255,10 @@ class PosCustomerOrderSideEffects
                 $this->updateRollupCounted($conn, $orderId, $isPaid);
                 $ordersReset++;
             }
-        }
-        $stmt->close();
+            }
+            $stmt->close();
 
-        $update = $conn->prepare("
+            $update = $conn->prepare("
             UPDATE pos_customers
             SET orders_count = ?,
                 lifetime_paid = ?,
@@ -212,16 +267,31 @@ class PosCustomerOrderSideEffects
             WHERE id = ?
               AND isdeleted = 0
         ");
-        $update->bind_param('idsi', $ordersCount, $lifetimePaid, $lastOrderAt, $customerId);
-        $update->execute();
-        $update->close();
+            $update->bind_param('idsi', $ordersCount, $lifetimePaid, $lastOrderAt, $customerId);
+            $update->execute();
+            $update->close();
 
-        return [
-            'orders_count' => $ordersCount,
-            'lifetime_paid' => $lifetimePaid,
-            'last_order_at' => $lastOrderAt,
-            'orders_reset' => $ordersReset,
-        ];
+            $this->customerService->recordSyncSnapshot($conn, $customerId, $options + [
+                'event_type' => 'customer.rollup_rebuilt',
+                'source_system' => 'pos_customer_rollup_rebuild',
+            ]);
+
+            if ($ownsTransaction) {
+                $conn->commit();
+            }
+
+            return [
+                'orders_count' => $ordersCount,
+                'lifetime_paid' => $lifetimePaid,
+                'last_order_at' => $lastOrderAt,
+                'orders_reset' => $ordersReset,
+            ];
+        } catch (Throwable $exception) {
+            if ($ownsTransaction) {
+                $conn->rollback();
+            }
+            throw $exception;
+        }
     }
 
     public function liveStatsFromFulfillment(mysqli $conn, int $customerId): ?array
@@ -360,5 +430,10 @@ class PosCustomerOrderSideEffects
         $stmt->close();
 
         return $exists;
+    }
+
+    private function ownsTransaction(array $options): bool
+    {
+        return empty($options['in_transaction']) && empty($options['transaction_started']);
     }
 }

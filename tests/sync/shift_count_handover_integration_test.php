@@ -35,6 +35,21 @@ try {
     $_SESSION['pos_tenant'] = 1;
     $_SESSION['pos_branch'] = 2;
     $_SESSION['userid'] = 55;
+    $syncConfig = [
+        'role' => 'branch',
+        'branch' => [
+            'uuid' => 'b3786b3b-4483-43d5-adb4-31a82e1ccfe1',
+            'name' => 'Opening variance test',
+            'pos_tenant' => 1,
+            'pos_branch' => 2,
+        ],
+        'sync' => [
+            'branch_sync_enabled' => true,
+            'outbox_enabled' => true,
+            'operational_sync_enabled' => true,
+        ],
+    ];
+    (new SyncBranchIdentity())->ensure($conn, $syncConfig);
     $registerService = new PosRegisterService();
     $register = $registerService->ensureDefaultRegister($conn, 1, 2);
     $_COOKIE[PosRegisterService::COOKIE_NAME] = (string) ($register['_pairing_token_once'] ?? '');
@@ -50,7 +65,7 @@ try {
     $floatService->setOpeningBaseline($conn, 1, 2, 0.0, 55);
 
     $countService->beginOpenCount($conn, 55);
-    $openMatch = $countService->submitOpenCount($conn, 55, '0.000');
+    $openMatch = $countService->submitOpenCount($conn, 55, '0.000', ['sync_config' => $syncConfig]);
     handoverAssert(($openMatch['status'] ?? '') === 'opened', 'opening match on first attempt when expected is zero');
     handoverAssert((int) ($openMatch['drawer_session_id'] ?? 0) > 0, 'drawer session created');
 
@@ -60,10 +75,26 @@ try {
         (int) ($openedSession['register_id'] ?? 0) === (int) $register['id'],
         'opening count must preserve paired register ownership'
     );
+    handoverAssert((int) ($openedSession['sync_revision'] ?? 0) === 2, 'matched opening metadata must commit as revision 2');
+    $matchedOpenEvents = $conn->query(
+        "SELECT event_version, payload_json FROM sync_outbox WHERE aggregate_type = 'drawer_session'"
+        . " AND aggregate_local_id = {$sessionId} ORDER BY event_version ASC"
+    )->fetch_all(MYSQLI_ASSOC);
+    handoverAssert(array_map('intval', array_column($matchedOpenEvents, 'event_version')) === [1, 2], 'matched opening emits base and metadata revisions');
+    $matchedOpenPayload = json_decode((string) $matchedOpenEvents[1]['payload_json'], true, 512, JSON_THROW_ON_ERROR);
+    handoverAssert(($matchedOpenPayload['drawer_session']['expected_opening_cash'] ?? null) === '0.000', 'matched opening event carries expected opening cash');
+    handoverAssert(($matchedOpenPayload['drawer_session']['opening_variance'] ?? null) === '0.000', 'matched opening event carries zero variance');
+    handoverAssert(count($matchedOpenPayload['count_attempts'] ?? []) === 1, 'matched opening bundle carries its linked count attempt');
+    handoverAssert(
+        (int) ($matchedOpenPayload['count_attempts'][0]['drawer_session_id'] ?? 0) === $sessionId,
+        'matched opening attempt is linked before capture'
+    );
+    handoverAssert(($matchedOpenPayload['resolutions'] ?? null) === [], 'opening bundle has no manager resolution');
     $drawer->recordMovement($conn, $sessionId, [
         'movement_type' => 'sale_cash',
         'amount' => '40.000',
         'created_by' => 55,
+        'sync_config' => $syncConfig,
     ]);
 
     require_once __DIR__ . '/../../includes/auth_guard.php';
@@ -82,13 +113,16 @@ try {
     $drawer->closeSession($conn, $sessionId, [
         'closed_by' => 55,
         'counted_cash' => '40.000',
-    ]);
+    ], ['sync_config' => $syncConfig]);
     unset($_SESSION['pos_drawer_session_id'], $_SESSION['pos_shift_close_count'], $_SESSION['pos_shift_open_count']);
+
+    $currentSyncIdentity = (new SyncBranchIdentity())->current($conn);
+    $syncConfig['branch']['uuid'] = (string) $currentSyncIdentity['branch_uuid'];
 
     $countService->beginOpenCount($conn, 55);
     $openVarianceFirst = $countService->submitOpenCount($conn, 55, '50.000');
     handoverAssert(($openVarianceFirst['status'] ?? '') === 'recount', 'first opening mismatch should recount');
-    $openVarianceFinal = $countService->submitOpenCount($conn, 55, '45.000');
+    $openVarianceFinal = $countService->submitOpenCount($conn, 55, '45.000', ['sync_config' => $syncConfig]);
     handoverAssert(in_array($openVarianceFinal['status'] ?? '', ['opened_with_variance', 'opened'], true), 'second opening attempt completes');
 
     $varianceSessionId = (int) ($openVarianceFinal['drawer_session_id'] ?? 0);
@@ -96,6 +130,23 @@ try {
         handoverAssert($varianceSessionId > 0, 'variance session created');
         $sessionRow = $drawer->sessionById($conn, $varianceSessionId);
         handoverAssert(($sessionRow['variance_status'] ?? '') === 'unresolved', 'opening variance unresolved');
+        handoverAssert((int) ($sessionRow['sync_revision'] ?? 0) === 2, 'mismatched opening metadata must commit as revision 2');
+        $varianceEvents = $conn->query(
+            "SELECT event_version, payload_json FROM sync_outbox WHERE aggregate_type = 'drawer_session'"
+            . " AND aggregate_local_id = {$varianceSessionId} ORDER BY event_version ASC"
+        )->fetch_all(MYSQLI_ASSOC);
+        handoverAssert(array_map('intval', array_column($varianceEvents, 'event_version')) === [1, 2], 'mismatched opening emits base and metadata revisions');
+        $variancePayload = json_decode((string) $varianceEvents[1]['payload_json'], true, 512, JSON_THROW_ON_ERROR);
+        handoverAssert(($variancePayload['drawer_session']['variance_status'] ?? '') === 'unresolved', 'mismatched opening event carries unresolved status');
+        handoverAssert(($variancePayload['drawer_session']['variance_type'] ?? '') === 'opening', 'mismatched opening event carries opening variance type');
+        handoverAssert(count($variancePayload['count_attempts'] ?? []) === 2, 'mismatched opening bundle carries both completed attempts');
+        handoverAssert(
+            array_values(array_unique(array_map(
+                'intval',
+                array_column($variancePayload['count_attempts'], 'drawer_session_id')
+            ))) === [$varianceSessionId],
+            'mismatched opening bundle excludes unlinked attempts'
+        );
     }
 
     echo "shift_count_handover_integration_test: OK\n";

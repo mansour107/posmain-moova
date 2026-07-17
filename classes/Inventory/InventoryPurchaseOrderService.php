@@ -3,16 +3,19 @@
 require_once __DIR__ . '/InventoryDecimal.php';
 require_once __DIR__ . '/InventoryFeatureFlags.php';
 require_once __DIR__ . '/InventoryScopeResolver.php';
+require_once __DIR__ . '/../Sync/OperationalSyncEventService.php';
 
 class InventoryPurchaseOrderService
 {
     private InventoryFeatureFlags $flags;
     private InventoryScopeResolver $scopeResolver;
+    private OperationalSyncEventService $syncEvents;
 
-    public function __construct(?InventoryFeatureFlags $flags = null, ?InventoryScopeResolver $scopeResolver = null)
+    public function __construct(?InventoryFeatureFlags $flags = null, ?InventoryScopeResolver $scopeResolver = null, ?OperationalSyncEventService $syncEvents = null)
     {
         $this->flags = $flags ?: new InventoryFeatureFlags();
         $this->scopeResolver = $scopeResolver ?: new InventoryScopeResolver($this->flags->appConfig());
+        $this->syncEvents = $syncEvents ?: new OperationalSyncEventService();
     }
 
     public function createDraft(mysqli $conn, array $request, array $context = []): array
@@ -32,6 +35,7 @@ class InventoryPurchaseOrderService
             $existing = $this->findOrderByUuid($conn, $uuid);
             if ($existing) {
                 $this->assertExistingOrderReplay($conn, $existing, $request, $lines);
+                $this->recordSyncSnapshot($conn, (int) $existing['id']);
                 if ($ownsTransaction) {
                     $conn->commit();
                 }
@@ -63,6 +67,7 @@ class InventoryPurchaseOrderService
             foreach ($lines as $line) {
                 $this->insertOrderLine($conn, $orderId, $line);
             }
+            $this->recordSyncSnapshot($conn, $orderId);
 
             if ($ownsTransaction) {
                 $conn->commit();
@@ -146,6 +151,7 @@ class InventoryPurchaseOrderService
             }
             $status = (string) ($order['status'] ?? '');
             if ($status === $nextStatus) {
+                $this->recordSyncSnapshot($conn, $purchaseOrderId);
                 if ($ownsTransaction) {
                     $conn->commit();
                 }
@@ -164,11 +170,12 @@ class InventoryPurchaseOrderService
             }
 
             $userId = $this->userId($context);
-            $sql = "UPDATE inventory_purchase_orders SET status = ?, {$userColumn} = ?, {$dateColumn} = NOW() WHERE id = ?";
+            $sql = "UPDATE inventory_purchase_orders SET status = ?, {$userColumn} = ?, {$dateColumn} = NOW(), sync_revision = GREATEST(sync_revision, 1) + 1 WHERE id = ?";
             $stmt = $conn->prepare($sql);
             $stmt->bind_param('sii', $nextStatus, $userId, $purchaseOrderId);
             $stmt->execute();
             $stmt->close();
+            $this->recordSyncSnapshot($conn, $purchaseOrderId);
 
             if ($ownsTransaction) {
                 $conn->commit();
@@ -192,8 +199,8 @@ class InventoryPurchaseOrderService
     {
         $stmt = $conn->prepare("
 INSERT INTO inventory_purchase_orders
-  (purchase_order_uuid, pos_tenant, pos_branch, branch_uuid, supplier_account_id, destination_store_id, expected_at, created_by, notes)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
+  (purchase_order_uuid, pos_tenant, pos_branch, branch_uuid, supplier_account_id, destination_store_id, expected_at, created_by, notes, sync_revision)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)");
         $posTenant = (int) $scope['pos_tenant'];
         $posBranch = (int) $scope['pos_branch'];
         $branchUuid = $scope['branch_uuid'];
@@ -209,6 +216,11 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
         $stmt->close();
 
         return $orderId;
+    }
+
+    private function recordSyncSnapshot(mysqli $conn, int $orderId): void
+    {
+        $this->syncEvents->recordPurchaseOrderSnapshot($conn, $orderId, ['config'=>$this->flags->appConfig(),'source_system'=>'inventory_purchase_order']);
     }
 
     private function insertOrderLine(mysqli $conn, int $orderId, array $line): int

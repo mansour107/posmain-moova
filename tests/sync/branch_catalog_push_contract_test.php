@@ -80,6 +80,8 @@ foreach ([
     'shift_closes',
     'delivery_clients',
     'catalog_inventory_refs',
+    'if ($domain === \'drawer_session\')',
+    'recordDrawerMovementSnapshot($conn, $rowId, $options)',
 ] as $snippet) {
     branchCatalogPushContractAssert(strpos($service, $snippet) !== false, 'BranchCatalogPushService missing snippet: ' . $snippet);
 }

@@ -130,6 +130,18 @@ try {
     closeSummaryAssert(($createdDrawer['status'] ?? '') === 'closed', 'created v2 drawer must be terminal');
     closeSummaryAssert($createdDrawer['open_branch_lock'] === null && $createdDrawer['open_register_lock'] === null && $createdDrawer['open_user_lock'] === null, 'close mirror must clear open locks');
     closeSummaryAssert($service->findBySessionId($conn, (int) $createdDrawer['id']) !== null, 'created v2 drawer must own its close summary');
+    $conn->query(
+        "UPDATE drawer_sessions SET variance_status = 'resolved'"
+        . " WHERE uuid = '44444444-4444-4444-a444-444444444444'"
+    );
+    (new CloudOperationalMirrorService())->applyFromBranchEvent($conn, 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa', [
+        'payload' => $missingDrawerPayload,
+    ]);
+    $afterDelayedClose = $conn->query(
+        "SELECT variance_status FROM drawer_sessions"
+        . " WHERE uuid = '44444444-4444-4444-a444-444444444444'"
+    )->fetch_assoc();
+    closeSummaryAssert(($afterDelayedClose['variance_status'] ?? '') === 'resolved', 'delayed shift-close replay must not downgrade manager-resolved variance');
 
     $queuedV2 = $missingDrawerPayload;
     unset($queuedV2['drawer_session']);

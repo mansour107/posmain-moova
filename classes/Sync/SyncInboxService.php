@@ -6,6 +6,7 @@ require_once __DIR__ . '/CloudOrderSnapshotService.php';
 require_once __DIR__ . '/CloudLegacyPosMirrorService.php';
 require_once __DIR__ . '/CloudShiftSnapshotService.php';
 require_once __DIR__ . '/CloudTableSnapshotService.php';
+require_once __DIR__ . '/SyncProjectionVersionGuard.php';
 
 class SyncInboxService
 {
@@ -62,15 +63,71 @@ class SyncInboxService
             $cloudEntityId = $this->cloudEntityId($event);
             $message = $mode . ' receive';
             if ($mode !== SyncApplyMode::RECEIVE_ONLY) {
+                if ($this->snapshotType($event) === 'operational_delete') {
+                    $error = 'unsafe operational delete requires a versioned tombstone contract';
+                    $result = $this->conflictResult($eventUuid, $idempotencyKey, $error);
+                    $this->insertConflict(
+                        $conn,
+                        $branchUuid,
+                        $event,
+                        null,
+                        $payloadJson,
+                        'unsafe_operational_delete'
+                    );
+                    $this->updateInboxResult($conn, $inboxId, 'conflict', $result, $error);
+                    $conn->commit();
+                    return $result;
+                }
+
+                $versionGuard = new SyncProjectionVersionGuard();
+                $versionDecision = null;
+                if ($versionGuard->supports($event)) {
+                    $versionDecision = $versionGuard->evaluateAndLock($conn, $branchUuid, $event);
+                    $decision = (string) ($versionDecision['decision'] ?? 'conflict');
+                    if ($decision !== 'apply') {
+                        $result = $this->projectionDecisionResult(
+                            $eventUuid,
+                            $idempotencyKey,
+                            $mode,
+                            $versionDecision
+                        );
+                        $inboxStatus = $decision === 'conflict' ? 'conflict' : ($decision === 'duplicate' ? 'duplicate' : 'processed');
+                        if ($decision === 'conflict') {
+                            $this->insertConflict(
+                                $conn,
+                                $branchUuid,
+                                $event,
+                                $this->encodeJson($versionDecision),
+                                $payloadJson,
+                                'projection_revision_conflict',
+                                (int) ($versionDecision['stored_revision'] ?? 0),
+                                (int) ($versionDecision['effective_revision'] ?? 0)
+                            );
+                        }
+                        $this->updateInboxResult(
+                            $conn,
+                            $inboxId,
+                            $inboxStatus,
+                            $result,
+                            $decision === 'conflict' ? (string) ($versionDecision['message'] ?? 'projection revision conflict') : null
+                        );
+                        $conn->commit();
+                        return $result;
+                    }
+                }
+
                 $legacyMirror = null;
+                $versionedProjectionApplied = false;
                 $snapshot = (new CloudOrderSnapshotService())->upsertFromBranchEvent($conn, $branchUuid, $event);
                 if ($snapshot) {
+                    $versionedProjectionApplied = true;
                     $cloudEntityId = 'cloud_order:' . (int) $snapshot['cloud_order_id'];
                     $message = $mode . ' order snapshot';
                     $legacyMirror = $this->mirrorLegacyPosTables($conn, $branchUuid, $event, $config);
                 } else {
                     $tableSnapshot = (new CloudTableSnapshotService())->upsertFromBranchEvent($conn, $branchUuid, $event);
                     if ($tableSnapshot) {
+                        $versionedProjectionApplied = true;
                         $cloudEntityId = 'cloud_table:' . (int) $tableSnapshot['cloud_table_id'];
                         $message = $mode . ' table snapshot';
                         $legacyMirror = $this->mirrorLegacyPosTables($conn, $branchUuid, $event, $config);
@@ -86,6 +143,7 @@ class SyncInboxService
                         } else {
                             $menuSnapshot = (new CloudMenuSnapshotService())->upsertFromBranchEvent($conn, $branchUuid, $event);
                             if ($menuSnapshot) {
+                                $versionedProjectionApplied = true;
                                 $cloudEntityId = 'cloud_menu_item:' . (int) $menuSnapshot['cloud_menu_item_id'];
                                 $message = $mode . ' menu snapshot';
                                 $legacyMirror = $this->mirrorLegacyPosTables($conn, $branchUuid, $event, $config);
@@ -94,10 +152,17 @@ class SyncInboxService
                                 if ($operational && !empty($operational['entity_id'])) {
                                     $cloudEntityId = (string) $operational['entity_id'];
                                     $message = $mode . ' operational snapshot';
+                                    $versionedProjectionApplied = true;
                                 }
                             }
                         }
                     }
+                }
+                if ($versionDecision !== null) {
+                    if (!$versionedProjectionApplied) {
+                        throw new RuntimeException('Version-gated sync event did not reach a supported projector.');
+                    }
+                    $versionGuard->markApplied($conn, $branchUuid, $event, $versionDecision);
                 }
                 if ($legacyMirror && isset($legacyMirror['legacy_entity_id'])) {
                     $message .= ' + legacy POS mirror';
@@ -172,8 +237,11 @@ class SyncInboxService
         mysqli $conn,
         string $branchUuid,
         array $event,
-        string $localPayloadJson,
-        string $remotePayloadJson
+        ?string $localPayloadJson,
+        ?string $remotePayloadJson,
+        string $conflictType = 'idempotency_hash_mismatch',
+        ?int $localRevision = null,
+        ?int $remoteRevision = null
     ): void {
         $aggregateType = $this->nullableString($event['aggregate_type'] ?? null);
         $aggregateUuid = $this->nullableString($event['aggregate_uuid'] ?? null);
@@ -186,17 +254,22 @@ class SyncInboxService
                 aggregate_type,
                 aggregate_uuid,
                 remote_entity_id,
+                local_revision,
+                remote_revision,
                 local_payload_json,
                 remote_payload_json,
                 resolution_status
-            ) VALUES (?, 'idempotency_hash_mismatch', ?, ?, ?, ?, ?, 'open')
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'open')
         ");
         $stmt->bind_param(
-            'ssssss',
+            'sssssiiss',
             $branchUuid,
+            $conflictType,
             $aggregateType,
             $aggregateUuid,
             $remoteEntityId,
+            $localRevision,
+            $remoteRevision,
             $localPayloadJson,
             $remotePayloadJson
         );
@@ -230,6 +303,33 @@ class SyncInboxService
             'cloud_entity_id' => null,
             'message' => $message,
         ];
+    }
+
+    private function projectionDecisionResult(
+        string $eventUuid,
+        string $idempotencyKey,
+        string $mode,
+        array $decision
+    ): array {
+        $status = (string) ($decision['decision'] ?? 'conflict');
+        return [
+            'event_uuid' => $eventUuid,
+            'idempotency_key' => $idempotencyKey,
+            'status' => $status,
+            'stored' => true,
+            'applied' => false,
+            'report_trusted' => $mode === SyncApplyMode::LIVE_APPLY && $status !== 'conflict',
+            'cloud_entity_id' => null,
+            'effective_revision' => (int) ($decision['effective_revision'] ?? 0),
+            'stored_revision' => (int) ($decision['stored_revision'] ?? 0),
+            'message' => (string) ($decision['message'] ?? $status),
+        ];
+    }
+
+    private function snapshotType(array $event): string
+    {
+        $payload = is_array($event['payload'] ?? null) ? $event['payload'] : [];
+        return trim((string) ($payload['snapshot_type'] ?? $event['snapshot_type'] ?? ''));
     }
 
     private function payloadHash(array $event): string

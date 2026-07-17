@@ -927,6 +927,7 @@ class ShiftCountService
             $resolutionId = (int) $conn->insert_id;
             $stmt->close();
 
+            $sessionStatusUpdated = false;
             if ($this->columnExists($conn, 'drawer_sessions', 'variance_status')) {
                 $update = $conn->prepare("UPDATE drawer_sessions SET variance_status = 'resolved' WHERE id = ? AND variance_status = 'unresolved'");
                 $update->bind_param('i', $sessionId);
@@ -935,6 +936,7 @@ class ShiftCountService
                     $update->close();
                     throw new RuntimeException('VARIANCE_NOT_UNRESOLVED');
                 }
+                $sessionStatusUpdated = true;
                 $update->close();
             }
 
@@ -964,6 +966,18 @@ class ShiftCountService
                         $link->close();
                     }
                 }
+            }
+
+            if ($sessionStatusUpdated) {
+                $syncContext = ['in_transaction' => true];
+                if (is_array($context['sync_config'] ?? null)) {
+                    $syncContext['sync_config'] = $context['sync_config'];
+                }
+                $this->drawerSessions->captureExternalSessionMutation(
+                    $conn,
+                    $sessionId,
+                    $syncContext
+                );
             }
 
             posmain_tx_commit_if_owned($conn, $ownsTransaction);
@@ -1226,6 +1240,12 @@ class ShiftCountService
                 }
             }
 
+            $syncContext = ['in_transaction' => true];
+            if (is_array($context['sync_config'] ?? null)) {
+                $syncContext['sync_config'] = $context['sync_config'];
+                $openRequest['sync_config'] = $context['sync_config'];
+            }
+
             $session = $this->drawerSessions->openSession($conn, $openRequest);
 
             $_SESSION['pos_drawer_session_id'] = (int) $session['id'];
@@ -1233,8 +1253,21 @@ class ShiftCountService
 
             $sessionId = (int) ($session['id'] ?? 0);
             if ($sessionId > 0) {
-                $this->updateOpeningVariance($conn, $sessionId, $expected, $variance, $matched);
+                $openingVarianceUpdated = $this->updateOpeningVariance(
+                    $conn,
+                    $sessionId,
+                    $expected,
+                    $variance,
+                    $matched
+                );
                 $this->linkOpenAttempts($conn, $sessionId, $state['attempt_ids'] ?? []);
+                if ($openingVarianceUpdated) {
+                    $session = $this->drawerSessions->captureExternalSessionMutation(
+                        $conn,
+                        $sessionId,
+                        $syncContext
+                    );
+                }
             }
 
             posmain_tx_commit_if_owned($conn, $ownsTransaction);
@@ -1269,10 +1302,10 @@ class ShiftCountService
         ];
     }
 
-    private function updateOpeningVariance(mysqli $conn, int $sessionId, float $expected, float $variance, bool $matched): void
+    private function updateOpeningVariance(mysqli $conn, int $sessionId, float $expected, float $variance, bool $matched): bool
     {
         if (!$this->columnExists($conn, 'drawer_sessions', 'expected_opening_cash')) {
-            return;
+            return false;
         }
 
         $varianceStatus = $matched ? 'none' : 'unresolved';
@@ -1290,7 +1323,10 @@ class ShiftCountService
         $varianceFormatted = number_format($variance, 3, '.', '');
         $stmt->bind_param('ssssi', $expectedFormatted, $varianceFormatted, $varianceStatus, $varianceType, $sessionId);
         $stmt->execute();
+        $updated = $stmt->affected_rows === 1;
         $stmt->close();
+
+        return $updated;
     }
 
     private function linkOpenAttempts(mysqli $conn, int $sessionId, array $attemptIds): void

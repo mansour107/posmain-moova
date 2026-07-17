@@ -2,13 +2,14 @@
 
 require_once __DIR__ . '/../includes/db_bootstrap.php';
 require_once __DIR__ . '/../classes/Sync/SchemaManager.php';
+require_once __DIR__ . '/../classes/Sync/SyncMigrationPlan.php';
 
 if (PHP_SAPI !== 'cli') {
     fwrite(STDERR, "This tool must be run from the command line.\n");
     exit(1);
 }
 
-$options = getopt('', ['dry-run', 'apply', 'backup-file:', 'confirm-no-backup', 'allow-destructive', 'help']);
+$options = getopt('', ['dry-run', 'apply', 'backup-file:', 'confirm-no-backup', 'allow-destructive', 'scope:', 'labels:', 'help']);
 if (isset($options['help'])) {
     syncMigrationUsage();
     exit(0);
@@ -24,45 +25,90 @@ if ($dryRun === $apply) {
 
 $backupFile = isset($options['backup-file']) ? trim((string) $options['backup-file']) : '';
 $hasBackup = $backupFile !== '' && is_file($backupFile) && is_readable($backupFile) && filesize($backupFile) > 0;
+$scope = isset($options['scope']) ? strtolower(trim((string) $options['scope'])) : SyncMigrationPlan::SCOPE_ALL;
+$labels = [];
+if (isset($options['labels'])) {
+    $labels = array_values(array_filter(array_map('trim', explode(',', (string) $options['labels'])), 'strlen'));
+}
+if ($apply && $scope === SyncMigrationPlan::SCOPE_ADDITIVE && $labels === []) {
+    fwrite(STDERR, "MIGRATION_LABELS_REQUIRED_FOR_ADDITIVE_APPLY\n");
+    exit(1);
+}
+if ($scope === SyncMigrationPlan::SCOPE_REVIEWED && $labels === []) {
+    fwrite(STDERR, "MIGRATION_LABELS_REQUIRED_FOR_REVIEWED_SCOPE\n");
+    exit(1);
+}
 
 mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
 $conn = syncMigrationConnect();
 $manager = new SyncSchemaManager();
 $pending = $manager->pendingStatements($conn);
 $tracking = syncMigrationTrackingStatus($conn);
+$planner = new SyncMigrationPlan();
+try {
+    $plan = $planner->select($pending, $scope, $labels);
+} catch (InvalidArgumentException $e) {
+    fwrite(STDERR, $e->getMessage() . "\n");
+    exit(1);
+}
+$selected = $plan['selected'];
+$deferred = $plan['deferred'];
 
 if ($dryRun) {
     echo "Migration tracking: " . ($tracking['exists'] ? 'ready' : 'missing; will be created on apply') . ".\n";
-    echo "Dry run: " . count($pending) . " pending sync schema change(s).\n";
-    foreach ($pending as $table => $sql) {
+    if ($scope === SyncMigrationPlan::SCOPE_ALL) {
+        echo "Dry run: " . count($pending) . " pending sync schema change(s).\n";
+    } else {
+        echo "Dry run scope: {$scope}; pending=" . count($pending)
+            . ", selected=" . count($selected) . ", deferred=" . count($deferred) . ".\n";
+    }
+    foreach ($selected as $table => $sql) {
         echo "\n-- {$table}\n{$sql};\n";
+    }
+    if ($scope !== SyncMigrationPlan::SCOPE_ALL && $deferred !== []) {
+        echo "\nDeferred statements (not executable in this scope):\n";
+        foreach (array_keys($deferred) as $label) {
+            echo "- {$label} [" . ($plan['classifications'][$label] ?? SyncMigrationPlan::AMBIGUOUS) . "]\n";
+        }
     }
     exit(0);
 }
 
-$hasRewrite = syncMigrationContainsDataRewriteStatement($pending);
+if ($selected === []) {
+    echo "Applied 0 selected sync schema change(s): none\n";
+    exit(0);
+}
+
+$hasRewrite = syncMigrationContainsDataRewriteStatement($selected);
 $production = in_array(strtolower(trim((string) getenv('POSMAIN_PRODUCTION_MODE'))), ['1', 'true', 'yes', 'on'], true);
 if (!$hasBackup && ($production || $hasRewrite || !isset($options['confirm-no-backup']))) {
     fwrite(STDERR, "--apply requires a readable --backup-file in production and for every destructive or data-rewrite statement. Additive local/dev apply also requires --confirm-no-backup.\n");
     exit(1);
 }
-if (syncMigrationContainsDestructiveStatement($pending) && (!isset($options['allow-destructive']) || !$hasBackup)) {
+if (syncMigrationContainsDestructiveStatement($selected) && (!isset($options['allow-destructive']) || !$hasBackup)) {
     fwrite(STDERR, "Pending statements include destructive operations. Re-run with --allow-destructive and a readable --backup-file.\n");
     exit(1);
 }
 
 syncMigrationEnsureTrackingTable($conn);
 syncMigrationReconcileStarted($conn, $pending);
-$applied = [];
-foreach ($pending as $label => $sql) {
+foreach ($selected as $label => $sql) {
     syncMigrationAssertChecksumCompatible($conn, (string) $label, (string) $sql);
+}
+$applied = [];
+foreach ($selected as $label => $sql) {
     syncMigrationRecord($conn, (string) $label, (string) $sql, $backupFile, 'started');
     $conn->query($sql);
     syncMigrationRecord($conn, (string) $label, (string) $sql, $backupFile, 'applied');
     $applied[] = (string) $label;
 }
-$manager->apply($conn);
-echo "Applied " . count($applied) . " sync schema change(s): " . ($applied ? implode(', ', $applied) : 'none') . "\n";
+if ($scope === SyncMigrationPlan::SCOPE_ALL) {
+    // All pending statements were already tracked and applied above. This call
+    // now only performs the manager's existing post-migration seed behavior.
+    $manager->apply($conn);
+}
+echo "Applied " . count($applied) . ($scope === SyncMigrationPlan::SCOPE_ALL ? ' sync' : ' selected sync')
+    . " schema change(s): " . ($applied ? implode(', ', $applied) : 'none') . "\n";
 
 function syncMigrationConnect()
 {
@@ -73,6 +119,8 @@ function syncMigrationUsage($stream = null): void
 {
     $stream = $stream ?: STDOUT;
     fwrite($stream, "Usage: php tools/run_migrations.php --dry-run | --apply --backup-file=/absolute/path/to/recent.sql\n");
+    fwrite($stream, "Additive discovery/subset: add --scope=additive [--labels=label.one,label.two].\n");
+    fwrite($stream, "Reviewed exact subset: add --scope=reviewed --labels=label.one,label.two.\n");
     fwrite($stream, "Local/dev override: php tools/run_migrations.php --apply --confirm-no-backup\n");
     fwrite($stream, "Destructive statements, if ever present, also require --allow-destructive and a readable --backup-file.\n");
 }
@@ -112,9 +160,22 @@ function syncMigrationEnsureTrackingTable(mysqli $conn): void
             UNIQUE KEY uq_schema_migrations_version (version)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     ");
-    $columns = $conn->query("SHOW COLUMNS FROM schema_migrations LIKE 'status'");
-    if (!($columns instanceof mysqli_result) || $columns->num_rows < 1) {
+    $columns = [];
+    $result = $conn->query('SHOW COLUMNS FROM schema_migrations');
+    while ($row = $result->fetch_assoc()) {
+        $columns[] = (string) ($row['Field'] ?? '');
+    }
+    foreach (['version', 'filename', 'checksum', 'applied_at', 'applied_by'] as $required) {
+        if (!in_array($required, $columns, true)) {
+            throw new RuntimeException('SCHEMA_MIGRATION_TRACKING_INCOMPATIBLE:missing_' . $required);
+        }
+    }
+    if (!in_array('status', $columns, true)) {
         $conn->query("ALTER TABLE schema_migrations ADD COLUMN status VARCHAR(20) NOT NULL DEFAULT 'applied' AFTER applied_by");
+        $columns[] = 'status';
+    }
+    if (!in_array('metadata_json', $columns, true)) {
+        $conn->query('ALTER TABLE schema_migrations ADD COLUMN metadata_json JSON NULL AFTER status');
     }
 }
 
@@ -173,8 +234,9 @@ function syncMigrationAssertChecksumCompatible(mysqli $conn, string $version, st
 
 function syncMigrationContainsDestructiveStatement(array $statements): bool
 {
+    $planner = new SyncMigrationPlan();
     foreach ($statements as $sql) {
-        if (preg_match('/\b(DROP|TRUNCATE|DELETE\s+FROM|UPDATE\s+\w+\s+SET)\b/i', (string) $sql) === 1) {
+        if ($planner->requiresDestructiveOptIn((string) $sql)) {
             return true;
         }
     }
@@ -184,8 +246,9 @@ function syncMigrationContainsDestructiveStatement(array $statements): bool
 
 function syncMigrationContainsDataRewriteStatement(array $statements): bool
 {
+    $planner = new SyncMigrationPlan();
     foreach ($statements as $sql) {
-        if (preg_match('/^\s*(DROP|TRUNCATE|DELETE\s+FROM|UPDATE\s+|INSERT\s+INTO)/i', (string) $sql) === 1) {
+        if (in_array($planner->classify((string) $sql), [SyncMigrationPlan::REWRITE, SyncMigrationPlan::DESTRUCTIVE], true)) {
             return true;
         }
     }

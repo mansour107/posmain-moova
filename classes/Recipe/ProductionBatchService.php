@@ -15,6 +15,7 @@ require_once __DIR__ . '/RecipeTransactionRetryService.php';
 require_once __DIR__ . '/Repository/InventoryBalanceRepository.php';
 require_once __DIR__ . '/Repository/ProductionBatchRepository.php';
 require_once __DIR__ . '/Repository/RecipeRepository.php';
+require_once dirname(__DIR__) . '/Sync/OperationalSyncEventService.php';
 
 class ProductionBatchService
 {
@@ -29,6 +30,7 @@ class ProductionBatchService
     private $balances;
     private $permissions;
     private $transactionRetry;
+    private $syncEvents;
 
     public function __construct(
         ?RecipeFeatureFlags $flags = null,
@@ -41,7 +43,8 @@ class ProductionBatchService
         ?RecipePermissionService $permissions = null,
         ?RecipeTransactionRetryService $transactionRetry = null,
         ?RecipeAvailabilityService $availability = null,
-        ?RecipeSettingsService $settings = null
+        ?RecipeSettingsService $settings = null,
+        ?OperationalSyncEventService $syncEvents = null
     ) {
         $this->flags = $flags ?: new RecipeFeatureFlags();
         $this->batches = $batches ?: new ProductionBatchRepository();
@@ -59,6 +62,7 @@ class ProductionBatchService
         $this->balances = $balances ?: new InventoryBalanceRepository();
         $this->permissions = $permissions ?: new RecipePermissionService();
         $this->transactionRetry = $transactionRetry ?: new RecipeTransactionRetryService();
+        $this->syncEvents = $syncEvents ?: new OperationalSyncEventService();
     }
 
     public function createDraft(mysqli $conn, array $data, RecipeActorContext $actor): array
@@ -76,16 +80,19 @@ class ProductionBatchService
             (int) ($data['store_id'] ?? 0)
         );
 
-        $batchId = $this->batches->createBatch($conn, array_merge([
-            'batch_uuid' => $this->uuid(),
-            'pos_tenant' => $actor->posTenant,
-            'pos_branch' => $actor->posBranch,
-            'branch_uuid' => $actor->branchUuid,
-            'store_id' => 0,
-            'created_by' => $actor->userId,
-        ], $data));
+        return $this->transactionRetry->run($conn, function () use ($conn, $data, $actor): array {
+            $batchId = $this->batches->createBatch($conn, array_merge([
+                'batch_uuid' => $this->uuid(),
+                'pos_tenant' => $actor->posTenant,
+                'pos_branch' => $actor->posBranch,
+                'branch_uuid' => $actor->branchUuid,
+                'store_id' => 0,
+                'created_by' => $actor->userId,
+            ], $data));
+            $this->captureSyncSnapshot($conn, $batchId);
 
-        return $this->requireBatch($conn, $batchId);
+            return $this->requireBatch($conn, $batchId);
+        });
     }
 
     public function preview(mysqli $conn, int $batchId): array
@@ -205,6 +212,7 @@ class ProductionBatchService
             );
             $availabilityRefreshes = $this->refreshAvailabilityForProduction($conn, $batch, $explosion->requirements);
             $this->batches->updateCommitted($conn, $batchId, $actualOutputQty, $actor->userId, $varianceReason !== '' ? $varianceReason : null);
+            $this->captureSyncSnapshot($conn, $batchId);
             $committed = $this->requireBatch($conn, $batchId);
             $lines = $this->batches->findLinesByBatchId($conn, $batchId);
             return [
@@ -224,19 +232,27 @@ class ProductionBatchService
     public function cancel(mysqli $conn, int $batchId, string $reason, RecipeActorContext $actor): void
     {
         $this->permissions->assertCanEdit($actor);
-        $batch = $this->requireBatch($conn, $batchId);
-        $this->assertProductionWritesEnabled(
-            $conn,
-            (int) $batch['output_item_id'],
-            (int) $batch['pos_tenant'],
-            (int) $batch['pos_branch'],
-            $batch['branch_uuid'] ?? null,
-            (int) $batch['store_id']
-        );
-        if ($batch['status'] !== 'draft') {
-            throw new RuntimeException('Only draft production batches can be cancelled.');
-        }
-        $this->batches->cancel($conn, $batchId, $reason);
+        $this->transactionRetry->run($conn, function () use ($conn, $batchId, $reason): void {
+            $batch = $this->batches->findBatchByIdForUpdate($conn, $batchId);
+            if (!$batch) {
+                throw new RuntimeException('Production batch not found.');
+            }
+            $this->assertProductionWritesEnabled(
+                $conn,
+                (int) $batch['output_item_id'],
+                (int) $batch['pos_tenant'],
+                (int) $batch['pos_branch'],
+                $batch['branch_uuid'] ?? null,
+                (int) $batch['store_id']
+            );
+            if ($batch['status'] !== 'draft') {
+                throw new RuntimeException('Only draft production batches can be cancelled.');
+            }
+            if ($this->batches->cancel($conn, $batchId, $reason) !== 1) {
+                throw new RuntimeException('Production batch cancellation did not change the draft batch.');
+            }
+            $this->captureSyncSnapshot($conn, $batchId);
+        });
     }
 
     private function explodeBatch(mysqli $conn, array $batch): RecipeExplosionResult
@@ -359,7 +375,17 @@ class ProductionBatchService
             'recipe_id' => (int) $batch['recipe_id'],
             'output_item_id' => (int) $batch['output_item_id'],
             'created_by' => $actor->userId,
+            'sync_config' => $this->flags->appConfig(),
         ];
+    }
+
+    private function captureSyncSnapshot(mysqli $conn, int $batchId): void
+    {
+        $this->batches->advanceSyncRevision($conn, $batchId);
+        $this->syncEvents->recordProductionBatchSnapshot($conn, $batchId, [
+            'config' => $this->flags->appConfig(),
+            'source_system' => 'production_batch',
+        ]);
     }
 
     private function productionOutputTotalCost(array $batch, string $actualOutputQty, string $totalInputCost): string

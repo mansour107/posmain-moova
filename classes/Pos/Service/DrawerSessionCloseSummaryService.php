@@ -1,6 +1,7 @@
 <?php
 
 require_once __DIR__ . '/../../Sync/BranchIdentity.php';
+require_once __DIR__ . '/../../Sync/SchemaReadinessGuard.php';
 
 /**
  * Immutable, one-to-one close snapshot for a drawer session.
@@ -10,9 +11,20 @@ require_once __DIR__ . '/../../Sync/BranchIdentity.php';
  */
 class DrawerSessionCloseSummaryService
 {
+    private SyncSchemaReadinessGuard $schemaGuard;
+
+    public function __construct(?SyncSchemaReadinessGuard $schemaGuard = null)
+    {
+        $this->schemaGuard = $schemaGuard ?: new SyncSchemaReadinessGuard();
+    }
+
     public function ensureSchema(mysqli $conn): void
     {
-        if (!$this->tableExists($conn, 'drawer_session_close_summaries')) {
+        $status = $this->schemaGuard->inspect($conn);
+        if (
+            !$this->tableExists($conn, 'drawer_session_close_summaries')
+            || in_array('drawer_session_close_summaries', $status['pending_labels'] ?? [], true)
+        ) {
             throw new RuntimeException('DRAWER_CLOSE_SUMMARY_SCHEMA_MISSING');
         }
     }
@@ -22,9 +34,7 @@ class DrawerSessionCloseSummaryService
         if ($drawerSessionId < 1) {
             throw new InvalidArgumentException('DRAWER_SESSION_REQUIRED');
         }
-        if (!$this->tableExists($conn, 'drawer_session_close_summaries')) {
-            throw new RuntimeException('DRAWER_CLOSE_SUMMARY_SCHEMA_MISSING');
-        }
+        $this->ensureSchema($conn);
 
         $existing = $this->findBySessionId($conn, $drawerSessionId);
         if ($existing) {

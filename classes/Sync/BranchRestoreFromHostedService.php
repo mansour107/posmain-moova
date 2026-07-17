@@ -8,14 +8,19 @@ require_once __DIR__ . '/BranchIdentity.php';
 require_once __DIR__ . '/BranchImageSyncService.php';
 require_once __DIR__ . '/ItemImageSyncQueueService.php';
 require_once __DIR__ . '/SyncRuntimeSettings.php';
+require_once __DIR__ . '/BranchRestoreSafetyGuard.php';
 
 class BranchRestoreFromHostedService
 {
     private BranchRestoreEventApplyService $applyService;
+    private BranchRestoreSafetyGuard $safetyGuard;
 
-    public function __construct(?BranchRestoreEventApplyService $applyService = null)
-    {
+    public function __construct(
+        ?BranchRestoreEventApplyService $applyService = null,
+        ?BranchRestoreSafetyGuard $safetyGuard = null
+    ) {
         $this->applyService = $applyService ?: new BranchRestoreEventApplyService();
+        $this->safetyGuard = $safetyGuard ?: new BranchRestoreSafetyGuard();
     }
 
     public static function localNeedsRestore(mysqli $conn): bool
@@ -42,15 +47,94 @@ class BranchRestoreFromHostedService
         }
 
         $apply = !empty($options['apply']);
+        $streamOptions = $options;
+        $streamOptions['apply'] = false;
+        $plan = $this->restoreStream($conn, $config, $streamOptions);
+        $phases = array_map(
+            static fn (array $phase): string => (string) ($phase['phase'] ?? ''),
+            (array) ($plan['phases'] ?? [])
+        );
+
+        if (!$apply) {
+            $plan['safety'] = $this->safetyGuard->describePlan(
+                $conn,
+                (string) $plan['branch_uuid'],
+                $phases,
+                $plan,
+                $config
+            );
+            return $plan;
+        }
+
+        $authorization = $this->safetyGuard->assertApplyAuthorized(
+            $conn,
+            (string) $plan['branch_uuid'],
+            $phases,
+            $plan,
+            $config,
+            $options
+        );
+
+        $applyOptions = $options;
+        $applyOptions['apply'] = true;
+        $summary = $this->restoreStream($conn, $config, $applyOptions);
+        $summary['safety'] = $authorization;
+        $summary['dry_run'] = [
+            'manifest_hash' => (string) $authorization['manifest_hash'],
+            'expected_events' => (int) $authorization['expected_events'],
+        ];
+        $summary['reconciliation'] = [
+            'ok' => (int) ($summary['failed'] ?? 0) === 0
+                && (int) ($summary['skipped'] ?? 0) === 0
+                && (int) ($summary['fetched'] ?? -1) === (int) $authorization['expected_events']
+                && (int) ($summary['mirrored'] ?? -1) === (int) $authorization['expected_events'],
+            'expected_events' => (int) $authorization['expected_events'],
+            'fetched' => (int) ($summary['fetched'] ?? 0),
+            'mirrored' => (int) ($summary['mirrored'] ?? 0),
+            'skipped' => (int) ($summary['skipped'] ?? 0),
+            'failed' => (int) ($summary['failed'] ?? 0),
+        ];
+
+        if (!empty($summary['reconciliation']['ok'])) {
+            $this->recordRestoreCheckpoint($conn, (string) $summary['branch_uuid'], $summary);
+            $summary['images'] = $this->startBackgroundImageDownload(
+                $conn,
+                $config,
+                (string) $summary['branch_uuid']
+            );
+        } else {
+            $summary['images'] = [
+                'enabled' => false,
+                'reason' => 'restore_reconciliation_failed',
+            ];
+        }
+
+        return $summary;
+    }
+
+    private function restoreStream(mysqli $conn, array $config, array $options): array
+    {
+        if (!$config && function_exists('posmain_app_config')) {
+            $config = posmain_app_config();
+        }
+
+        $apply = !empty($options['apply']);
         $limit = max(1, min(100, (int) ($options['limit'] ?? 50)));
         $phases = $options['phases'] ?? RestoreEventPhase::all();
         if (!is_array($phases) || $phases === []) {
             $phases = RestoreEventPhase::all();
         }
 
-        $identity = (new SyncBranchIdentity())->ensure($conn, $config);
-        $branchUuid = strtolower(trim((string) ($identity['branch_uuid'] ?? '')));
-        $cloudBaseUrl = rtrim(trim((string) ($identity['cloud_base_url'] ?? ($config['branch']['cloud_base_url'] ?? ''))), '/');
+        $storedIdentity = (new SyncBranchIdentity())->find($conn);
+        $configuredBranchUuid = strtolower(trim((string) ($config['branch']['uuid'] ?? '')));
+        $storedBranchUuid = strtolower(trim((string) ($storedIdentity['branch_uuid'] ?? '')));
+        if ($storedBranchUuid !== '' && $configuredBranchUuid !== '' && $storedBranchUuid !== $configuredBranchUuid) {
+            throw new RuntimeException('Configured branch UUID does not match the persisted branch identity.');
+        }
+        $branchUuid = $storedBranchUuid !== '' ? $storedBranchUuid : $configuredBranchUuid;
+        $cloudBaseUrl = rtrim(trim((string) (
+            $storedIdentity['cloud_base_url'] ?? ($config['branch']['cloud_base_url'] ?? '')
+        )), '/');
         $branchSecret = (string) ($config['sync']['branch_secret'] ?? '');
 
         if ($branchUuid === '' || $cloudBaseUrl === '' || $branchSecret === '') {
@@ -171,11 +255,6 @@ class BranchRestoreFromHostedService
             } while ($hasMore);
 
             $summary['phases'][] = $phaseSummary;
-        }
-
-        if ($apply) {
-            $this->recordRestoreCheckpoint($conn, $branchUuid, $summary);
-            $summary['images'] = $this->startBackgroundImageDownload($conn, $config, $branchUuid);
         }
 
         return $summary;

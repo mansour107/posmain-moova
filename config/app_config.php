@@ -694,7 +694,7 @@ if (!function_exists('posmain_app_config')) {
                 'cloud_apply_enabled' => posmain_bool($branchEnv(['POSMAIN_CLOUD_APPLY_ENABLED'], '1'), true),
                 'legacy_pos_mirror_enabled' => posmain_bool($branchEnv(['POSMAIN_CLOUD_LEGACY_POS_MIRROR_ENABLED'], '0'), false),
                 'cloud_to_branch_publish_enabled' => posmain_bool($branchEnv(['POSMAIN_CLOUD_TO_BRANCH_PUBLISH_ENABLED'], '0'), false),
-                'cloud_pull_enabled' => posmain_bool($branchEnv(['POSMAIN_CLOUD_PULL_ENABLED'], '1'), true),
+                'cloud_pull_enabled' => posmain_bool($branchEnv(['POSMAIN_CLOUD_PULL_ENABLED'], '0'), false),
                 'shadow_mode' => posmain_bool($branchEnv(['POSMAIN_SYNC_SHADOW_MODE'], '0'), false),
                 'moova_poller_enabled' => posmain_bool($branchEnv(['POSMAIN_MOOVA_POLLER_ENABLED'], '1'), true),
                 'moova_apply_enabled' => $moovaWorkerApply,

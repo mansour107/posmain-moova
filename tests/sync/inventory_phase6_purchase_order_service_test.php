@@ -38,6 +38,9 @@ try {
     ");
 
     $flags = new InventoryFeatureFlags([
+        'role' => 'branch',
+        'branch' => ['uuid'=>'57575757-5757-4757-8757-575757575757','name'=>'PO Test Branch','pos_tenant'=>0,'pos_branch'=>0],
+        'sync' => ['outbox_enabled'=>true,'branch_sync_enabled'=>true,'operational_sync_enabled'=>true],
         'inventory' => [
             'ledger_mode' => 'bridge',
             'legacy_mirror' => '1',
@@ -56,6 +59,7 @@ try {
         ],
     ], ['user_id' => 7]);
     inventoryPhase6PoAssert($draft['success'] === true && $draft['status'] === 'draft', 'purchase order should start as draft');
+    inventoryPhase6PoAssert((int) inventoryPhase6PoOne($conn, 'SELECT sync_revision FROM inventory_purchase_orders WHERE id = '.(int)$draft['purchase_order_id'])['sync_revision'] === 1, 'draft should start at sync revision 1');
     $line = inventoryPhase6PoOne($conn, 'SELECT * FROM inventory_purchase_order_lines WHERE purchase_order_id = ' . (int) $draft['purchase_order_id'] . ' LIMIT 1');
     inventoryPhase6PoAssert(inventoryPhase6PoDecimalEquals($line['ordered_qty'], '10.000000'), 'draft order line should preserve ordered qty');
     inventoryPhase6PoAssert(inventoryPhase6PoDecimalEquals($line['unit_cost'], '7.500000'), 'draft order line should preserve unit cost');
@@ -104,11 +108,13 @@ try {
 
     $submitted = $orderService->submit($conn, (int) $draft['purchase_order_id'], ['user_id' => 8]);
     inventoryPhase6PoAssert($submitted['status'] === 'submitted', 'draft order should submit');
+    inventoryPhase6PoAssert((int) inventoryPhase6PoOne($conn, 'SELECT sync_revision FROM inventory_purchase_orders WHERE id = '.(int)$draft['purchase_order_id'])['sync_revision'] === 2, 'submit should advance sync revision once');
     $submittedRow = inventoryPhase6PoOne($conn, 'SELECT status, submitted_by, submitted_at FROM inventory_purchase_orders WHERE id = ' . (int) $draft['purchase_order_id'] . ' LIMIT 1');
     inventoryPhase6PoAssert($submittedRow['status'] === 'submitted' && (int) $submittedRow['submitted_by'] === 8 && $submittedRow['submitted_at'] !== null, 'submitted order should store reviewer trail');
 
     $approved = $orderService->approve($conn, (int) $draft['purchase_order_id'], ['user_id' => 9]);
     inventoryPhase6PoAssert($approved['status'] === 'approved', 'submitted order should approve');
+    inventoryPhase6PoAssert((int) inventoryPhase6PoOne($conn, 'SELECT sync_revision FROM inventory_purchase_orders WHERE id = '.(int)$draft['purchase_order_id'])['sync_revision'] === 3, 'approve should advance sync revision once');
     $approvedRow = inventoryPhase6PoOne($conn, 'SELECT status, approved_by, approved_at FROM inventory_purchase_orders WHERE id = ' . (int) $draft['purchase_order_id'] . ' LIMIT 1');
     inventoryPhase6PoAssert($approvedRow['status'] === 'approved' && (int) $approvedRow['approved_by'] === 9 && $approvedRow['approved_at'] !== null, 'approved order should store approval trail');
 
@@ -126,6 +132,7 @@ try {
     $partialOrder = inventoryPhase6PoOne($conn, 'SELECT status FROM inventory_purchase_orders WHERE id = ' . (int) $draft['purchase_order_id'] . ' LIMIT 1');
     inventoryPhase6PoAssert(inventoryPhase6PoDecimalEquals($partialLine['received_qty'], '4.000000'), 'partial PO receipt should update line received qty');
     inventoryPhase6PoAssert($partialOrder['status'] === 'partially_received', 'partial PO receipt should update order status');
+    inventoryPhase6PoAssert((int) inventoryPhase6PoOne($conn, 'SELECT sync_revision FROM inventory_purchase_orders WHERE id = '.(int)$draft['purchase_order_id'])['sync_revision'] === 4, 'partial receipt should advance sync revision once');
 
     try {
         $receivingService->receive($conn, [
@@ -156,6 +163,34 @@ try {
     $receivedLine = inventoryPhase6PoOne($conn, 'SELECT received_qty FROM inventory_purchase_order_lines WHERE id = ' . (int) $line['id'] . ' LIMIT 1');
     inventoryPhase6PoAssert($receivedOrder['status'] === 'received', 'fully received PO should move to received');
     inventoryPhase6PoAssert(inventoryPhase6PoDecimalEquals($receivedLine['received_qty'], '10.000000'), 'fully received PO should match ordered quantity');
+    inventoryPhase6PoAssert((int) inventoryPhase6PoOne($conn, 'SELECT sync_revision FROM inventory_purchase_orders WHERE id = '.(int)$draft['purchase_order_id'])['sync_revision'] === 5, 'final receipt should advance sync revision once');
+    inventoryPhase6PoAssert((int)$conn->query("SELECT COUNT(*) AS c FROM sync_outbox WHERE aggregate_type='purchase_order' AND aggregate_local_id=".(int)$draft['purchase_order_id'])->fetch_assoc()['c'] === 5, 'each authoritative PO revision should have one deterministic event');
+
+    $failingEvents = new class extends OperationalSyncEventService {
+        public function recordPurchaseOrderSnapshot(mysqli $conn, int $orderId, array $options = []): ?array
+        {
+            throw new RuntimeException('PURCHASE_ORDER_SYNC_CAPTURE_FAILED_FOR_TEST');
+        }
+    };
+    $failingOrderService = new InventoryPurchaseOrderService($flags, null, $failingEvents);
+    $ordersBeforeFailure = (int)$conn->query('SELECT COUNT(*) c FROM inventory_purchase_orders')->fetch_assoc()['c'];
+    try {
+        $failingOrderService->createDraft($conn, ['purchase_order_uuid'=>'58585858-5858-4858-8858-585858585858','supplier_account_id'=>2101,'destination_store_id'=>3,'lines'=>[['item_id'=>6302,'qty'=>'2.000000','unit_cost'=>'4.000000']]], ['user_id'=>7]);
+        inventoryPhase6PoAssert(false,'required PO capture failure should fail create');
+    } catch (RuntimeException $e) { inventoryPhase6PoAssert($e->getMessage()==='PURCHASE_ORDER_SYNC_CAPTURE_FAILED_FOR_TEST','PO capture failure should propagate'); }
+    inventoryPhase6PoAssert((int)$conn->query('SELECT COUNT(*) c FROM inventory_purchase_orders')->fetch_assoc()['c']===$ordersBeforeFailure,'failed PO capture should roll back header and lines');
+
+    $progressOrder=$orderService->createDraft($conn,['purchase_order_uuid'=>'59595959-5959-4959-8959-595959595959','supplier_account_id'=>2101,'destination_store_id'=>3,'lines'=>[['item_id'=>6302,'qty'=>'2.000000','unit_cost'=>'4.000000']]],['user_id'=>7]);
+    $progressId=(int)$progressOrder['purchase_order_id'];$progressLine=(int)inventoryPhase6PoOne($conn,'SELECT id FROM inventory_purchase_order_lines WHERE purchase_order_id='.$progressId)['id'];$orderService->submit($conn,$progressId,['user_id'=>8]);$orderService->approve($conn,$progressId,['user_id'=>9]);
+    $failingReceiving = new InventoryPurchaseReceivingService($flags,null,null,null,null,$failingEvents);
+    $movementsBeforeFailure=(int)$conn->query('SELECT COUNT(*) c FROM inventory_movements')->fetch_assoc()['c'];
+    try {
+        $failingReceiving->receive($conn,['purchase_receipt_uuid'=>'60606060-6060-4060-8060-606060606060','purchase_order_id'=>$progressId,'supplier_account_id'=>2101,'destination_store_id'=>3,'lines'=>[['purchase_order_line_id'=>$progressLine,'item_id'=>6302,'qty'=>'1.000000','unit_cost'=>'4.000000']]],['user_id'=>10]);
+        inventoryPhase6PoAssert(false,'PO progress capture failure should fail receipt');
+    } catch (RuntimeException $e) { inventoryPhase6PoAssert($e->getMessage()==='PURCHASE_ORDER_SYNC_CAPTURE_FAILED_FOR_TEST','PO progress capture failure should propagate'); }
+    $failedProgress=inventoryPhase6PoOne($conn,'SELECT o.status,o.sync_revision,l.received_qty FROM inventory_purchase_orders o JOIN inventory_purchase_order_lines l ON l.purchase_order_id=o.id WHERE o.id='.$progressId);
+    inventoryPhase6PoAssert($failedProgress['status']==='approved'&&(int)$failedProgress['sync_revision']===3&&inventoryPhase6PoDecimalEquals($failedProgress['received_qty'],'0.000000'),'failed progress capture should roll back PO state');
+    inventoryPhase6PoAssert((int)$conn->query('SELECT COUNT(*) c FROM inventory_movements')->fetch_assoc()['c']===$movementsBeforeFailure,'failed PO progress capture should roll back stock movement');
 
     echo "inventory-phase6-purchase-order-service-ok\n";
 } finally {
@@ -165,6 +200,10 @@ try {
 
 function inventoryPhase6PoCreateLegacyItemTable(mysqli $conn): void
 {
+    $conn->query("CREATE TABLE acc_head (id INT PRIMARY KEY, code VARCHAR(20) NOT NULL, aname VARCHAR(100) NOT NULL, is_stock TINYINT NOT NULL DEFAULT 0, isdeleted TINYINT NOT NULL DEFAULT 0) ENGINE=InnoDB");
+    $conn->query("INSERT INTO acc_head (id,code,aname,is_stock,isdeleted) VALUES (3,'1303','PO operational store',1,0)");
+    $conn->query("CREATE TABLE settings (id INT PRIMARY KEY, def_pos_store INT NULL) ENGINE=InnoDB");
+    $conn->query("INSERT INTO settings (id,def_pos_store) VALUES (1,3)");
     $conn->query("
 CREATE TABLE myitems (
   id INT NOT NULL PRIMARY KEY,

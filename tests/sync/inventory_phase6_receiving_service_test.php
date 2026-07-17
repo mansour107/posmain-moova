@@ -54,12 +54,25 @@ try {
           (7101, 7001, 6202, 10.000000, 0.000000, 5.000000, 50.000000)
     ");
 
-    $service = new InventoryPurchaseReceivingService(new InventoryFeatureFlags([
+    $receivingConfig = [
+        'role' => 'branch',
+        'branch' => [
+            'uuid' => 'abababab-abab-4bab-8bab-abababababab',
+            'name' => 'Receiving Test Branch',
+            'pos_tenant' => 0,
+            'pos_branch' => 0,
+        ],
+        'sync' => [
+            'outbox_enabled' => true,
+            'branch_sync_enabled' => true,
+            'operational_sync_enabled' => true,
+        ],
         'inventory' => [
             'ledger_mode' => 'bridge',
             'legacy_mirror' => '1',
         ],
-    ]));
+    ];
+    $service = new InventoryPurchaseReceivingService(new InventoryFeatureFlags($receivingConfig));
 
     $receipt = $service->receive($conn, [
         'purchase_receipt_uuid' => '22222222-2222-4222-8222-222222222222',
@@ -71,6 +84,13 @@ try {
         ],
     ], ['user_id' => 7]);
     inventoryPhase6ReceivingAssert($receipt['success'] === true && $receipt['movement_ids'] !== [], 'direct receipt should create movement');
+    inventoryPhase6ReceivingAssert(
+        (int) $conn->query("SELECT COUNT(*) AS c FROM sync_outbox WHERE aggregate_type = 'purchase_receipt' AND aggregate_local_id = " . (int) $receipt['receipt_id'])->fetch_assoc()['c'] === 1,
+        'posted receipt should capture one immutable sync bundle in the same transaction'
+    );
+    $receiptEventId = (int) $conn->query("SELECT id FROM sync_outbox WHERE aggregate_type = 'purchase_receipt' AND aggregate_local_id = " . (int) $receipt['receipt_id'])->fetch_assoc()['id'];
+    $effectEventId = (int) $conn->query("SELECT COALESCE(MAX(id), 0) AS id FROM sync_outbox WHERE aggregate_type IN ('inventory_movement', 'inventory_balance', 'inventory_journal')")->fetch_assoc()['id'];
+    inventoryPhase6ReceivingAssert($receiptEventId > $effectEventId, 'final receipt event should follow its stock, balance and optional accounting events');
     $balance = inventoryPhase6ReceivingOne($conn, 'SELECT * FROM inventory_item_balances WHERE item_id = 6201 AND store_id = 3 LIMIT 1');
     inventoryPhase6ReceivingAssert(inventoryPhase6ReceivingDecimalEquals($balance['qty_on_hand'], '4.000000'), 'direct receipt should increase stock');
     inventoryPhase6ReceivingAssert(inventoryPhase6ReceivingDecimalEquals($balance['moving_average_cost'], '6.000000'), 'direct receipt should set average cost');
@@ -84,6 +104,10 @@ try {
         ],
     ], ['user_id' => 7]);
     inventoryPhase6ReceivingAssert(!empty($replay['idempotent_replay']), 'same receipt uuid should replay');
+    inventoryPhase6ReceivingAssert(
+        (int) $conn->query("SELECT COUNT(*) AS c FROM sync_outbox WHERE aggregate_type = 'purchase_receipt' AND aggregate_local_id = " . (int) $receipt['receipt_id'])->fetch_assoc()['c'] === 1,
+        'exact receipt replay should heal but never duplicate its deterministic sync event'
+    );
     inventoryPhase6ReceivingAssert((int) $conn->query("SELECT COUNT(*) AS c FROM inventory_movements WHERE item_id = 6201 AND movement_type = 'purchase'")->fetch_assoc()['c'] === 1, 'receipt replay should not duplicate purchase movement');
 
     try {
@@ -194,10 +218,82 @@ try {
         ],
     ], ['user_id' => 7]);
     inventoryPhase6ReceivingAssert($return['success'] === true && $return['movement_ids'] !== [], 'purchase return should create movement');
+    inventoryPhase6ReceivingAssert(
+        (int) $conn->query("SELECT COUNT(*) AS c FROM sync_outbox WHERE aggregate_type = 'purchase_receipt' AND aggregate_local_id = " . (int) $return['receipt_id'])->fetch_assoc()['c'] === 1,
+        'purchase return should capture one immutable sync bundle in the same transaction'
+    );
     $balance = inventoryPhase6ReceivingOne($conn, 'SELECT * FROM inventory_item_balances WHERE item_id = 6201 AND store_id = 3 LIMIT 1');
     inventoryPhase6ReceivingAssert(inventoryPhase6ReceivingDecimalEquals($balance['qty_on_hand'], '3.000000'), 'purchase return should decrease stock');
     $returnMovement = inventoryPhase6ReceivingOne($conn, "SELECT movement_type, qty_out FROM inventory_movements WHERE source_uuid LIKE 'purchase-return:%' LIMIT 1");
     inventoryPhase6ReceivingAssert($returnMovement['movement_type'] === 'purchase_return', 'purchase return should use dedicated outbound purchase_return movement type');
+
+    $receiptCountBeforeFailedCapture = (int) $conn->query('SELECT COUNT(*) AS c FROM inventory_purchase_receipts')->fetch_assoc()['c'];
+    $movementCountBeforeFailedCapture = (int) $conn->query('SELECT COUNT(*) AS c FROM inventory_movements')->fetch_assoc()['c'];
+    $failingSyncEvents = new class extends OperationalSyncEventService {
+        public function recordPurchaseReceiptSnapshot(mysqli $conn, int $receiptId, array $options = []): ?array
+        {
+            throw new RuntimeException('PURCHASE_RECEIPT_SYNC_CAPTURE_FAILED_FOR_TEST');
+        }
+    };
+    $atomicService = new InventoryPurchaseReceivingService(
+        new InventoryFeatureFlags($receivingConfig),
+        null,
+        null,
+        null,
+        null,
+        $failingSyncEvents
+    );
+    try {
+        $atomicService->receive($conn, [
+            'purchase_receipt_uuid' => '85858585-8585-4585-8585-858585858585',
+            'supplier_account_id' => 2101,
+            'destination_store_id' => 3,
+            'supplier_invoice_no' => 'SUP-ATOMIC-FAIL',
+            'lines' => [
+                ['item_id' => 6201, 'qty' => '1.000000', 'unit_cost' => '6.000000'],
+            ],
+        ], ['user_id' => 7]);
+        inventoryPhase6ReceivingAssert(false, 'required sync capture failure should fail the receipt transaction');
+    } catch (RuntimeException $exception) {
+        inventoryPhase6ReceivingAssert($exception->getMessage() === 'PURCHASE_RECEIPT_SYNC_CAPTURE_FAILED_FOR_TEST', 'capture failure should remain visible to the caller');
+    }
+    inventoryPhase6ReceivingAssert(
+        (int) $conn->query('SELECT COUNT(*) AS c FROM inventory_purchase_receipts')->fetch_assoc()['c'] === $receiptCountBeforeFailedCapture,
+        'capture failure must roll back the receipt header and lines'
+    );
+    inventoryPhase6ReceivingAssert(
+        (int) $conn->query('SELECT COUNT(*) AS c FROM inventory_movements')->fetch_assoc()['c'] === $movementCountBeforeFailedCapture,
+        'capture failure must roll back its stock movement'
+    );
+
+    $conn->begin_transaction();
+    try {
+        $atomicService->receive($conn, [
+            'purchase_receipt_uuid' => '86868686-8686-4686-8686-868686868686',
+            'supplier_account_id' => 2101,
+            'destination_store_id' => 3,
+            'supplier_invoice_no' => 'SUP-CALLER-TX-FAIL',
+            'lines' => [
+                ['item_id' => 6201, 'qty' => '1.000000', 'unit_cost' => '6.000000'],
+            ],
+        ], ['user_id' => 7, 'in_transaction' => true]);
+        inventoryPhase6ReceivingAssert(false, 'caller-owned transaction should still see required capture failure');
+    } catch (RuntimeException $exception) {
+        inventoryPhase6ReceivingAssert($exception->getMessage() === 'PURCHASE_RECEIPT_SYNC_CAPTURE_FAILED_FOR_TEST', 'caller-owned capture failure should propagate');
+        inventoryPhase6ReceivingAssert(
+            (int) $conn->query("SELECT COUNT(*) AS c FROM inventory_purchase_receipts WHERE supplier_invoice_no = 'SUP-CALLER-TX-FAIL'")->fetch_assoc()['c'] === 1,
+            'service must leave the caller-owned transaction open for the caller to roll back'
+        );
+        $conn->rollback();
+    }
+    inventoryPhase6ReceivingAssert(
+        (int) $conn->query('SELECT COUNT(*) AS c FROM inventory_purchase_receipts')->fetch_assoc()['c'] === $receiptCountBeforeFailedCapture,
+        'caller rollback must remove the failed receipt transaction'
+    );
+    inventoryPhase6ReceivingAssert(
+        (int) $conn->query('SELECT COUNT(*) AS c FROM inventory_movements')->fetch_assoc()['c'] === $movementCountBeforeFailedCapture,
+        'caller rollback must remove the failed receipt movement'
+    );
 
     echo "inventory-phase6-receiving-service-ok\n";
 } finally {
@@ -207,6 +303,20 @@ try {
 
 function inventoryPhase6ReceivingCreateLegacyTables(mysqli $conn): void
 {
+    $conn->query("CREATE TABLE acc_head (
+        id INT NOT NULL PRIMARY KEY,
+        code VARCHAR(20) NOT NULL,
+        aname VARCHAR(100) NOT NULL,
+        is_stock TINYINT(1) NOT NULL DEFAULT 0,
+        isdeleted TINYINT(1) NOT NULL DEFAULT 0
+    ) ENGINE=InnoDB");
+    $conn->query("INSERT INTO acc_head (id, code, aname, is_stock, isdeleted) VALUES
+        (3, '1303', 'Receiving operational store', 1, 0)");
+    $conn->query("CREATE TABLE settings (
+        id INT NOT NULL PRIMARY KEY,
+        def_pos_store INT NULL
+    ) ENGINE=InnoDB");
+    $conn->query('INSERT INTO settings (id, def_pos_store) VALUES (1, 3)');
     $conn->query("
 CREATE TABLE myitems (
   id INT NOT NULL PRIMARY KEY,

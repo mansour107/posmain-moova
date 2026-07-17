@@ -1,5 +1,7 @@
 <?php
 
+require_once __DIR__ . '/../../Sync/OperationalSyncEventService.php';
+
 class ManagerApprovalRequiredException extends RuntimeException
 {
     private string $permissionKey;
@@ -32,18 +34,32 @@ class ManagerApprovalService
         $permissionKey = $this->nullableText($data['permission_key'] ?? null, 80);
         $expiresAt = $this->resolveExpiresAt($data['expires_at'] ?? null);
 
-        $stmt = $conn->prepare("
-            INSERT INTO manager_approvals (
-                action_type, target_type, target_id, requested_by, reason, metadata_json,
-                permission_key, expires_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        ");
-        $stmt->bind_param('ssiissss', $actionType, $targetType, $targetId, $requestedBy, $reason, $metadataJson, $permissionKey, $expiresAt);
-        $stmt->execute();
-        $id = (int) $conn->insert_id;
-        $stmt->close();
+        $ownsTransaction = $this->beginTransactionIfNeeded($conn);
+        try {
+            $stmt = $conn->prepare("
+                INSERT INTO manager_approvals (
+                    action_type, target_type, target_id, requested_by, reason, metadata_json,
+                    permission_key, expires_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ");
+            $stmt->bind_param('ssiissss', $actionType, $targetType, $targetId, $requestedBy, $reason, $metadataJson, $permissionKey, $expiresAt);
+            $stmt->execute();
+            $id = (int) $conn->insert_id;
+            $stmt->close();
 
-        return $this->approvalById($conn, $id, false);
+            $approval = $this->approvalById($conn, $id, false);
+            $this->recordSyncSnapshot($conn, $id, 1, $data);
+            if ($ownsTransaction) {
+                $conn->commit();
+            }
+
+            return $approval;
+        } catch (Throwable $e) {
+            if ($ownsTransaction) {
+                $conn->rollback();
+            }
+            throw $e;
+        }
     }
 
     public function decide(mysqli $conn, int $approvalId, array $data): array
@@ -56,23 +72,42 @@ class ManagerApprovalService
         }
         $reason = $this->nullableText($data['reason'] ?? null, 500);
 
-        $stmt = $conn->prepare("
-            UPDATE manager_approvals
-            SET approved_by = ?,
-                status = ?,
-                reason = COALESCE(?, reason),
-                decided_at = CURRENT_TIMESTAMP
-            WHERE id = ?
-        ");
-        $stmt->bind_param('issi', $approvedBy, $status, $reason, $approvalId);
-        $stmt->execute();
-        $affected = $stmt->affected_rows;
-        $stmt->close();
-        if ($affected < 1) {
-            throw new RuntimeException('APPROVAL_NOT_FOUND');
-        }
+        $ownsTransaction = $this->beginTransactionIfNeeded($conn);
+        try {
+            $stmt = $conn->prepare("
+                UPDATE manager_approvals
+                SET approved_by = ?,
+                    status = ?,
+                    reason = COALESCE(?, reason),
+                    decided_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                  AND status = 'requested'
+            ");
+            $stmt->bind_param('issi', $approvedBy, $status, $reason, $approvalId);
+            $stmt->execute();
+            $affected = $stmt->affected_rows;
+            $stmt->close();
+            if ($affected < 1) {
+                $existing = $this->approvalById($conn, $approvalId, true);
+                if ((string) ($existing['status'] ?? '') !== 'requested') {
+                    throw new RuntimeException('APPROVAL_ALREADY_DECIDED');
+                }
+                throw new RuntimeException('APPROVAL_NOT_FOUND');
+            }
 
-        return $this->approvalById($conn, $approvalId, false);
+            $approval = $this->approvalById($conn, $approvalId, false);
+            $this->recordSyncSnapshot($conn, $approvalId, 2, $data);
+            if ($ownsTransaction) {
+                $conn->commit();
+            }
+
+            return $approval;
+        } catch (Throwable $e) {
+            if ($ownsTransaction) {
+                $conn->rollback();
+            }
+            throw $e;
+        }
     }
 
     public function requireApprovedIfNeeded(
@@ -120,33 +155,51 @@ class ManagerApprovalService
         return $approval;
     }
 
-    public function consumeApproval(mysqli $conn, int $approvalId, int $performedBy): array
+    public function consumeApproval(mysqli $conn, int $approvalId, int $performedBy, array $context = []): array
     {
         $approvalId = $this->positiveInt($approvalId, 'APPROVAL_ID_REQUIRED');
         $performedBy = $this->positiveInt($performedBy, 'APPROVAL_PERFORMER_REQUIRED');
-        $approval = $this->approvalById($conn, $approvalId, true);
+        $ownsTransaction = $this->beginTransactionIfNeeded($conn);
+        try {
+            $approval = $this->approvalById($conn, $approvalId, true);
 
-        if (!empty($approval['consumed_at'])) {
-            throw new RuntimeException('APPROVAL_ALREADY_CONSUMED');
-        }
-        $this->assertNotExpired($approval);
+            if ((string) ($approval['status'] ?? '') !== 'approved') {
+                throw new RuntimeException('MANAGER_APPROVAL_NOT_APPROVED');
+            }
+            if (!empty($approval['consumed_at'])) {
+                throw new RuntimeException('APPROVAL_ALREADY_CONSUMED');
+            }
+            $this->assertNotExpired($approval);
 
-        $stmt = $conn->prepare("
-            UPDATE manager_approvals
-               SET consumed_at = CURRENT_TIMESTAMP,
-                   performed_by = ?
-             WHERE id = ?
-               AND consumed_at IS NULL
-        ");
-        $stmt->bind_param('ii', $performedBy, $approvalId);
-        $stmt->execute();
-        if ($stmt->affected_rows < 1) {
+            $stmt = $conn->prepare("
+                UPDATE manager_approvals
+                   SET consumed_at = CURRENT_TIMESTAMP,
+                       performed_by = ?
+                 WHERE id = ?
+                   AND status = 'approved'
+                   AND consumed_at IS NULL
+            ");
+            $stmt->bind_param('ii', $performedBy, $approvalId);
+            $stmt->execute();
+            if ($stmt->affected_rows < 1) {
+                $stmt->close();
+                throw new RuntimeException('APPROVAL_NOT_FOUND');
+            }
             $stmt->close();
-            throw new RuntimeException('APPROVAL_NOT_FOUND');
-        }
-        $stmt->close();
 
-        return $this->approvalById($conn, $approvalId, false);
+            $approval = $this->approvalById($conn, $approvalId, false);
+            $this->recordSyncSnapshot($conn, $approvalId, 3, $context);
+            if ($ownsTransaction) {
+                $conn->commit();
+            }
+
+            return $approval;
+        } catch (Throwable $e) {
+            if ($ownsTransaction) {
+                $conn->rollback();
+            }
+            throw $e;
+        }
     }
 
     public function authenticateManagerOverride(mysqli $conn, string $pin, string $permissionKey, int $requestedBy, array $context = []): array
@@ -352,6 +405,32 @@ class ManagerApprovalService
         }
 
         return $row;
+    }
+
+    private function beginTransactionIfNeeded(mysqli $conn): bool
+    {
+        $result = $conn->query('SELECT @@session.in_transaction AS active_transaction');
+        $row = $result->fetch_assoc() ?: [];
+        if (!empty($row['active_transaction'])) {
+            return false;
+        }
+
+        $conn->begin_transaction();
+        return true;
+    }
+
+    private function recordSyncSnapshot(mysqli $conn, int $approvalId, int $revision, array $context): void
+    {
+        $options = [
+            'event_type' => 'manager_approval.saved',
+            'source_system' => 'manager_approval',
+            'event_version' => $revision,
+        ];
+        if (isset($context['sync_config']) && is_array($context['sync_config'])) {
+            $options['config'] = $context['sync_config'];
+        }
+
+        (new OperationalSyncEventService())->recordRowSnapshot($conn, 'manager_approval', $approvalId, $options);
     }
 
   /**

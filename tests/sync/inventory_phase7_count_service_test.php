@@ -29,6 +29,7 @@ $conn->set_charset('utf8mb4');
 
 try {
     (new SyncSchemaManager())->apply($conn);
+    inventoryPhase7CreateOperationalStoreSchema($conn);
     inventoryPhase7CreateLegacyItemTable($conn);
     $conn->query("
         INSERT INTO myitems (id, iname, itmqty, cost_price, last_price, item_type, track_stock)
@@ -323,6 +324,23 @@ CREATE TABLE item_units (
   cost_price DECIMAL(18,6) NOT NULL DEFAULT 0.000000,
   isdeleted TINYINT(1) NOT NULL DEFAULT 0
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
+}
+
+function inventoryPhase7CreateOperationalStoreSchema(mysqli $conn): void
+{
+    $conn->query("CREATE TABLE acc_head (
+        id INT NOT NULL PRIMARY KEY,
+        code VARCHAR(20) NOT NULL,
+        aname VARCHAR(100) NOT NULL,
+        is_stock TINYINT(1) NOT NULL DEFAULT 0,
+        isdeleted TINYINT(1) NOT NULL DEFAULT 0
+    ) ENGINE=InnoDB");
+    $conn->query("INSERT INTO acc_head (id, code, aname, is_stock, isdeleted) VALUES (3, '1303', 'Phase 7 operational store', 1, 0)");
+    $conn->query("CREATE TABLE settings (
+        id INT NOT NULL PRIMARY KEY,
+        def_pos_store INT NULL
+    ) ENGINE=InnoDB");
+    $conn->query('INSERT INTO settings (id, def_pos_store) VALUES (1, 3)');
 }
 
 function inventoryPhase7AssertSourceContracts(string $root): void

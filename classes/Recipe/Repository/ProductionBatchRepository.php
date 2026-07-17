@@ -128,6 +128,32 @@ WHERE id = ?
         );
     }
 
+    public function advanceSyncRevision(mysqli $conn, int $batchId): int
+    {
+        if ($batchId < 1) {
+            throw new InvalidArgumentException('Production batch id must be positive.');
+        }
+
+        $changed = $this->executeStatement(
+            $conn,
+            'UPDATE production_batches
+             SET sync_revision = CASE WHEN sync_revision < 1 THEN 1 ELSE sync_revision + 1 END
+             WHERE id = ?',
+            [$batchId]
+        );
+        if ($changed !== 1) {
+            throw new RuntimeException('Production batch sync revision could not be advanced.');
+        }
+
+        $batch = $this->findBatchById($conn, $batchId);
+        $revision = (int) ($batch['sync_revision'] ?? 0);
+        if ($revision < 1) {
+            throw new RuntimeException('Production batch sync revision is invalid.');
+        }
+
+        return $revision;
+    }
+
     private function assertValidBatch(array $row): void
     {
         if (trim((string) ($row['batch_uuid'] ?? '')) === '') {

@@ -38,7 +38,20 @@ try {
     $_SESSION['pos_tenant'] = 1;
     $_SESSION['pos_branch'] = 2;
     $_SESSION['userid'] = 88;
-
+    $syncConfig = [
+        'role' => 'branch',
+        'branch' => [
+            'uuid' => 'c7258dd1-e78b-43a5-8654-fc3c7422a730',
+            'name' => 'Atomic close test',
+            'pos_tenant' => 1,
+            'pos_branch' => 2,
+        ],
+        'sync' => [
+            'branch_sync_enabled' => true,
+            'outbox_enabled' => true,
+            'operational_sync_enabled' => true,
+        ],
+    ];
     $registerService = new PosRegisterService();
     $register = $registerService->ensureDefaultRegister($conn, 1, 2);
     $_COOKIE[PosRegisterService::COOKIE_NAME] = (string) ($register['_pairing_token_once'] ?? '');
@@ -103,8 +116,21 @@ try {
         'drawer_session_id' => (string) $sessionId,
         'idempotency_key' => 'tx-close-fail-' . getmypid(),
     ];
+    // Use the identity already provisioned by the process-default opening
+    // events so close capture does not perform provisioning inside the TX.
+    $currentSyncIdentity = (new SyncBranchIdentity())->current($conn);
+    $syncConfig['branch']['uuid'] = (string) $currentSyncIdentity['branch_uuid'];
+    $baselineSessionEventCount = (int) $conn->query(
+        "SELECT COUNT(*) AS c FROM sync_outbox WHERE aggregate_type = 'drawer_session'"
+        . " AND aggregate_local_id = {$sessionId}"
+    )->fetch_assoc()['c'];
+    $baselineShiftCloseEventCount = (int) $conn->query(
+        "SELECT COUNT(*) AS c FROM sync_outbox WHERE aggregate_type = 'shift_close'"
+        . " AND aggregate_local_id = {$sessionId}"
+    )->fetch_assoc()['c'];
 
     $failed = false;
+    $failureMessage = '';
     try {
         pos_shift_handover_idempotent(
             $conn,
@@ -112,7 +138,8 @@ try {
             $_POST,
             [],
             88,
-            static function (array $txContext = []) use ($conn, $token, $sessionId): array {
+            static function (array $txContext = []) use ($conn, $token, $sessionId, $syncConfig): array {
+                $txContext['sync_config'] = $syncConfig;
                 (new ShiftSessionService())->closeSimpleShift($conn, 88, [
                     'close_token' => $token,
                     'counted_cash' => 140.0,
@@ -127,16 +154,27 @@ try {
             }
         );
     } catch (RuntimeException $exception) {
+        $failureMessage = $exception->getMessage();
         $failed = $exception->getMessage() === 'FORCED_FAIL_AFTER_MONEY_WRITES';
     }
 
-    txAtomicAssert($failed, 'handler failure propagated');
+    txAtomicAssert($failed, 'handler failure propagated; got ' . $failureMessage);
 
     $closeSummaries = (int) $conn->query('SELECT COUNT(*) AS c FROM drawer_session_close_summaries')->fetch_assoc()['c'];
     txAtomicAssert($closeSummaries === 0, 'close summary rolled back after fail-after-write');
 
     $session = $drawer->sessionById($conn, $sessionId);
     txAtomicAssert(($session['status'] ?? '') === 'open', 'drawer still open after rollback');
+    $rolledBackSessionEvents = (int) $conn->query(
+        "SELECT COUNT(*) AS c FROM sync_outbox WHERE aggregate_type = 'drawer_session'"
+        . " AND aggregate_local_id = {$sessionId}"
+    )->fetch_assoc()['c'];
+    $rolledBackShiftCloseEvents = (int) $conn->query(
+        "SELECT COUNT(*) AS c FROM sync_outbox WHERE aggregate_type = 'shift_close'"
+        . " AND aggregate_local_id = {$sessionId}"
+    )->fetch_assoc()['c'];
+    txAtomicAssert($rolledBackSessionEvents === $baselineSessionEventCount, 'failed outer close rolls back core and final session events');
+    txAtomicAssert($rolledBackShiftCloseEvents === $baselineShiftCloseEventCount, 'failed outer close rolls back shift-close event');
 
     $keyStatus = $conn->query("
         SELECT status FROM pos_request_keys
@@ -166,7 +204,8 @@ try {
         $_POST,
         [],
         88,
-        static function (array $txContext = []) use ($conn, $token2, $sessionId): array {
+        static function (array $txContext = []) use ($conn, $token2, $sessionId, $syncConfig): array {
+            $txContext['sync_config'] = $syncConfig;
             $result = (new ShiftSessionService())->closeSimpleShift($conn, 88, [
                 'close_token' => $token2,
                 'counted_cash' => 140.0,
@@ -186,6 +225,23 @@ try {
     $session = $drawer->sessionById($conn, $sessionId);
     txAtomicAssert(($session['status'] ?? '') === 'closed', 'drawer closed');
     txAtomicAssert(abs((float) ($session['difference'] ?? 0)) < 0.001, 'matched close difference ~0');
+    txAtomicAssert((int) ($session['sync_revision'] ?? 0) === 4, 'normal close follows opening metadata with core and final session revisions');
+    $sessionEvents = $conn->query(
+        "SELECT id, event_version, payload_json FROM sync_outbox WHERE aggregate_type = 'drawer_session'"
+        . " AND aggregate_local_id = {$sessionId} ORDER BY event_version ASC"
+    )->fetch_all(MYSQLI_ASSOC);
+    $closeSessionEvents = array_slice($sessionEvents, -2);
+    txAtomicAssert(array_map('intval', array_column($closeSessionEvents, 'event_version')) === [3, 4], 'normal close emits core then final session revisions');
+    $finalSessionPayload = json_decode((string) $closeSessionEvents[1]['payload_json'], true, 512, JSON_THROW_ON_ERROR);
+    txAtomicAssert(($finalSessionPayload['drawer_session']['status'] ?? '') === 'closed', 'final normal-close event is terminal');
+    txAtomicAssert(($finalSessionPayload['drawer_session']['variance_status'] ?? '') === 'none', 'final normal-close event carries final variance status');
+    txAtomicAssert(($finalSessionPayload['drawer_session']['variance_type'] ?? '') === 'none', 'final normal-close event carries final variance type');
+    $shiftCloseEvent = $conn->query(
+        "SELECT id, payload_json FROM sync_outbox WHERE aggregate_type = 'shift_close'"
+        . " AND aggregate_local_id = {$sessionId} LIMIT 1"
+    )->fetch_assoc();
+    txAtomicAssert(is_array($shiftCloseEvent), 'normal close emits shift-close bundle');
+    txAtomicAssert((int) $closeSessionEvents[1]['id'] < (int) $shiftCloseEvent['id'], 'final session revision is queued before shift-close bundle');
 
     // Nested begin must not fire when in_transaction is set (contract on helpers).
     $owns = posmain_tx_begin_if_needed($conn, true);
