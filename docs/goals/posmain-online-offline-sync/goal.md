@@ -1,56 +1,32 @@
-# POSMAIN Online/Offline Sync Implementation
+# POSMAIN lean reliable offline/cloud sync
 
-## Objective
+## Outcome
 
-Apply the regenerated POSMAIN online/offline sync plan in the local `posmain` repository, incorporating the five blocking findings before any implementation reaches shared sync, counter, cloud, or Moova flows.
+Make POSMAIN production-ready as an offline-first shop system:
 
-## Goal Kind
+- Shop-to-cloud synchronization is automatic and reliable.
+- Cloud-to-shop recovery is manual, guarded and resource-bounded.
+- Managers can monitor the shop remotely from hosted data.
+- A lost local installation can recover authoritative current state without clearing a working shop or replaying unnecessary full history.
+- All logically required business domains are covered, including items, orders, payments, money tracking, shifts, drawers, logs, staff, customers, fulfillment, inventory, accounting, recipes, production and purchasing.
 
-`specific`
+## Operating model
 
-## Current Tranche
+- Local POS remains authoritative while operating offline.
+- Accepted local changes upload automatically when connectivity returns.
+- Cloud retains complete history and current projections.
+- Normal recovery restores current masters, open work, active operational state and recent closed history, then applies post-checkpoint changes.
+- Older history is viewed remotely or hydrated separately at low priority when explicitly required.
 
-Continue from the completed foundation, runtime-prerequisite, first branch/cloud delivery, branch-provisioning, first cloud order snapshot apply, cloud Moova pull/ack API, local Moova inbound queue, cloud order line/payment/receipt snapshots, cloud table/shift/menu snapshot slices, cloud report summary, and branch Moova inbound poller into the next production-readiness slice. The next decision should focus on local Moova application/decline semantics, deployment/smoke readiness, and rollback/backup evidence, while still avoiding production-secret, destructive-migration, or deployment assumptions.
+## Non-negotiable safety
 
-## Non-Negotiable Constraints
+- No automatic reverse restore.
+- No restore into a non-empty live shop unless a future entity-scoped conflict workflow is explicitly designed and certified.
+- No stale event may overwrite newer state.
+- Recovery must be resumable, bounded to one writer, small pages and bounded memory/response sizes.
+- Large-volume testing runs on hosted/staging infrastructure, never on limited shop hardware or this Mac.
+- Deploy hosted compatibility first, then client changes, with backup, dry-run and health checks.
 
-- Follow the Global Major Change Safety Rule in `AGENTS.md` before each implementation slice.
-- Treat the provided plan file as the baseline: `/Users/ab.mansour1agmail.com/Desktop/POSMAIN_online_offline_sync_modification_plan_for_codex_REGENERATED_2026-05-10.txt`.
-- Preserve existing local POS behavior unless the sync plan intentionally changes it.
-- Do not overwrite unrelated dirty worktree changes. Understand and work with them.
-- Reclaim expired worker claims: outbox claiming must include `status='syncing' AND locked_until < now` so crashed workers cannot leave rows stuck forever.
-- Allocate document counters with a safe two-step `LAST_INSERT_ID(current_value + 1)` update pattern after ensuring the counter row exists. Do not rely on first-insert auto-increment behavior.
-- Resolve HMAC storage before implementation: cloud HMAC validation requires the actual secret or equivalent protected HMAC key, not only `sync_secret_hash`.
-- Keep shadow mode distinct from receive-only mode: shadow mode should apply snapshots and mark reports untrusted; `POSMAIN_CLOUD_APPLY_ENABLED=0` means receive-only. Worker response handling must accept `accepted_shadow`.
-- Fix the Moova branch-event cursor design so it does not require a non-null `cursor_value` before the auto-generated `id` exists.
-- Add or update focused tests for changed behavior, especially worker reclaim, counter allocation, HMAC validation, shadow responses, and Moova cursor behavior.
+## Current position
 
-## Stop Rule
-
-Stop when the tranche audit passes, all safe local work is blocked, or continuing would require owner input, credentials, destructive operations, live production secrets, or strategy the board cannot decide.
-
-## Canonical Board
-
-Machine truth lives at:
-
-`docs/goals/posmain-online-offline-sync/state.yaml`
-
-If this charter and `state.yaml` disagree, `state.yaml` wins for task status, active task, receipts, verification freshness, and completion truth.
-
-## Run Command
-
-```text
-/goal Follow docs/goals/posmain-online-offline-sync/goal.md
-```
-
-## PM Loop
-
-On every `/goal` continuation:
-
-1. Read this charter.
-2. Read `state.yaml`.
-3. Work only on the active board task.
-4. Assign Scout, Judge, Worker, or PM according to the task.
-5. Write a compact task receipt.
-6. Update the board.
-7. Select the next active task or finish with a Judge/PM audit receipt.
+Forward synchronization is deployed and active for Focus House. Recovery-v2 resource limits and signed checkpoint work are locally implemented but not fully verified or deployed. The compact current state and exact remaining steps live in `state.yaml`.

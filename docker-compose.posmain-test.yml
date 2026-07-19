@@ -2,6 +2,7 @@ services:
   mysql:
     image: mariadb:10.11
     container_name: posmain-mysql
+    restart: unless-stopped
     environment:
       MARIADB_ALLOW_EMPTY_ROOT_PASSWORD: "1"
       MARIADB_DATABASE: kody2
@@ -23,6 +24,7 @@ services:
       context: .
       dockerfile: Dockerfile.posmain-php
     container_name: posmain-php
+    restart: unless-stopped
     depends_on:
       - mysql
     ports:
