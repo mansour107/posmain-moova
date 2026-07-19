@@ -17,6 +17,8 @@ foreach ([
 ] as $needle) {
     e2eBsyncContractAssert(strpos($harness, $needle) !== false, 'missing disposable topology/cleanup contract: ' . $needle);
 }
+e2eBsyncContractAssert(strpos($harness, 'e2eBsyncCloneSchemaNative') !== false, 'hosted staging must support native MariaDB without Docker');
+e2eBsyncContractAssert(strpos($harness, 'POSMAIN_TEST_MYSQL_RUNTIME') !== false, 'database runtime selection must be explicit and fail closed');
 
 e2eBsyncContractAssert(strpos($harness, 'BranchCloudSyncPollWorker') === false, 'certification must not wire automatic cloud pull');
 e2eBsyncContractAssert(strpos($harness, "'cloud_pull_enabled' => false") !== false, 'branch config must disable automatic cloud pull');

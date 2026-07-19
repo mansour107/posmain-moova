@@ -470,6 +470,9 @@ function e2eBsyncCloneSchema(array $databaseNames): void
     if ($databaseNames === []) {
         throw new InvalidArgumentException('At least one disposable database is required.');
     }
+    if (!preg_match('/^[A-Za-z0-9_]+$/', (string) $source)) {
+        throw new InvalidArgumentException('Unsafe source database name.');
+    }
     $statements = [];
     foreach ($databaseNames as $databaseName) {
         if (!preg_match('/^[A-Za-z0-9_]+$/', (string) $databaseName)) {
@@ -478,6 +481,19 @@ function e2eBsyncCloneSchema(array $databaseNames): void
         $statements[] = 'DROP DATABASE IF EXISTS ' . $databaseName;
         $statements[] = 'CREATE DATABASE ' . $databaseName;
     }
+
+    $runtime = strtolower(trim((string) (getenv('POSMAIN_TEST_MYSQL_RUNTIME') ?: '')));
+    if ($runtime === '') {
+        $runtime = trim((string) shell_exec('command -v docker 2>/dev/null')) !== '' ? 'docker' : 'native';
+    }
+    if ($runtime === 'native') {
+        e2eBsyncCloneSchemaNative($source, $databaseNames, $statements);
+        return;
+    }
+    if ($runtime !== 'docker') {
+        throw new RuntimeException('Unsupported POSMAIN_TEST_MYSQL_RUNTIME: ' . $runtime);
+    }
+
     $sql = implode('; ', $statements) . ';';
     $initCmd = sprintf(
         'docker exec posmain-mysql mariadb -uroot -e %s',
@@ -496,6 +512,68 @@ function e2eBsyncCloneSchema(array $databaseNames): void
         exec($dumpCmd, $out2, $code2);
         if ($code2 !== 0) {
             throw new RuntimeException('Failed to clone schema into ' . $targetDb . ': ' . implode("\n", $out2));
+        }
+    }
+}
+
+function e2eBsyncCloneSchemaNative(string $source, array $databaseNames, array $statements): void
+{
+    $password = (string) (getenv('POSMAIN_TEST_MYSQL_PASS') ?: '');
+    if ($password !== '') {
+        throw new RuntimeException('Native MariaDB staging proof requires socket authentication without a CLI password.');
+    }
+
+    $admin = new mysqli(
+        e2eBsyncDbHost(),
+        getenv('POSMAIN_TEST_MYSQL_USER') ?: 'root',
+        '',
+        '',
+        e2eBsyncDbPort()
+    );
+    foreach ($statements as $statement) {
+        $admin->query($statement);
+    }
+    $admin->close();
+
+    $host = escapeshellarg(e2eBsyncDbHost());
+    $port = e2eBsyncDbPort();
+    $user = escapeshellarg(getenv('POSMAIN_TEST_MYSQL_USER') ?: 'root');
+    foreach ($databaseNames as $targetDb) {
+        $schemaFile = tempnam(sys_get_temp_dir(), 'posmain-e2e-schema-');
+        $errorFile = tempnam(sys_get_temp_dir(), 'posmain-e2e-schema-error-');
+        if (!is_string($schemaFile) || !is_string($errorFile)) {
+            throw new RuntimeException('Unable to create native MariaDB schema-clone fixtures.');
+        }
+        $dumpCmd = sprintf(
+            'mariadb-dump --no-data --host=%s --port=%d --user=%s %s > %s 2> %s',
+            $host,
+            $port,
+            $user,
+            $source,
+            escapeshellarg($schemaFile),
+            escapeshellarg($errorFile)
+        );
+        $importCmd = sprintf(
+            'mariadb --host=%s --port=%d --user=%s %s < %s 2> %s',
+            $host,
+            $port,
+            $user,
+            $targetDb,
+            escapeshellarg($schemaFile),
+            escapeshellarg($errorFile)
+        );
+        try {
+            exec($dumpCmd, $dumpOutput, $dumpCode);
+            if ($dumpCode !== 0) {
+                throw new RuntimeException('Failed to dump source schema: ' . trim((string) file_get_contents($errorFile)));
+            }
+            exec($importCmd, $importOutput, $importCode);
+            if ($importCode !== 0) {
+                throw new RuntimeException('Failed to clone schema into ' . $targetDb . ': ' . trim((string) file_get_contents($errorFile)));
+            }
+        } finally {
+            @unlink($schemaFile);
+            @unlink($errorFile);
         }
     }
 }
