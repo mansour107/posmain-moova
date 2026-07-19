@@ -19,6 +19,7 @@ foreach ([
 }
 e2eBsyncContractAssert(strpos($harness, 'e2eBsyncCloneSchemaNative') !== false, 'hosted staging must support native MariaDB without Docker');
 e2eBsyncContractAssert(strpos($harness, 'POSMAIN_TEST_MYSQL_RUNTIME') !== false, 'database runtime selection must be explicit and fail closed');
+e2eBsyncContractAssert(strpos($harness, '--protocol=socket') !== false, 'native hosted proof must support MariaDB socket authentication');
 
 e2eBsyncContractAssert(strpos($harness, 'BranchCloudSyncPollWorker') === false, 'certification must not wire automatic cloud pull');
 e2eBsyncContractAssert(strpos($harness, "'cloud_pull_enabled' => false") !== false, 'branch config must disable automatic cloud pull');

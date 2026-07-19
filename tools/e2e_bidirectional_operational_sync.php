@@ -538,6 +538,9 @@ function e2eBsyncCloneSchemaNative(string $source, array $databaseNames, array $
     $host = escapeshellarg(e2eBsyncDbHost());
     $port = e2eBsyncDbPort();
     $user = escapeshellarg(getenv('POSMAIN_TEST_MYSQL_USER') ?: 'root');
+    $connectionArgs = e2eBsyncDbHost() === 'localhost'
+        ? '--protocol=socket --user=' . $user
+        : '--host=' . $host . ' --port=' . $port . ' --user=' . $user;
     foreach ($databaseNames as $targetDb) {
         $schemaFile = tempnam(sys_get_temp_dir(), 'posmain-e2e-schema-');
         $errorFile = tempnam(sys_get_temp_dir(), 'posmain-e2e-schema-error-');
@@ -545,19 +548,15 @@ function e2eBsyncCloneSchemaNative(string $source, array $databaseNames, array $
             throw new RuntimeException('Unable to create native MariaDB schema-clone fixtures.');
         }
         $dumpCmd = sprintf(
-            'mariadb-dump --no-data --host=%s --port=%d --user=%s %s > %s 2> %s',
-            $host,
-            $port,
-            $user,
+            'mariadb-dump --no-data %s %s > %s 2> %s',
+            $connectionArgs,
             $source,
             escapeshellarg($schemaFile),
             escapeshellarg($errorFile)
         );
         $importCmd = sprintf(
-            'mariadb --host=%s --port=%d --user=%s %s < %s 2> %s',
-            $host,
-            $port,
-            $user,
+            'mariadb %s %s < %s 2> %s',
+            $connectionArgs,
             $targetDb,
             escapeshellarg($schemaFile),
             escapeshellarg($errorFile)
