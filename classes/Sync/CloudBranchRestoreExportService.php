@@ -13,7 +13,15 @@ class CloudBranchRestoreExportService
     private const MAX_SCAN_MULTIPLIER = 8;
     private const OPERATIONAL_CURSOR_SCALE = 1000000000;
 
-    public function exportPage(mysqli $conn, string $branchUuid, string $phase, int $afterId, int $limit, string $source = 'auto'): array
+    public function exportPage(
+        mysqli $conn,
+        string $branchUuid,
+        string $phase,
+        int $afterId,
+        int $limit,
+        string $source = 'auto',
+        array $recovery = []
+    ): array
     {
         $phase = RestoreEventPhase::normalize($phase);
         $afterId = max(0, $afterId);
@@ -28,7 +36,7 @@ class CloudBranchRestoreExportService
             return $this->exportFromSyncInbox($conn, $branchUuid, $phase, $afterId, $limit, $source);
         }
 
-        return $this->exportFromCloudSnapshot($conn, $branchUuid, $phase, $afterId, $limit, $source);
+        return $this->exportFromCloudSnapshot($conn, $branchUuid, $phase, $afterId, $limit, $source, $recovery);
     }
 
     public function hasInboxEvents(mysqli $conn, string $branchUuid): bool
@@ -48,6 +56,24 @@ class CloudBranchRestoreExportService
         $stmt->close();
 
         return $count > 0;
+    }
+
+    public function latestInboxCheckpoint(mysqli $conn, string $branchUuid): int
+    {
+        $eligibleDecision = $this->restorableInboxDecisionSql();
+        $stmt = $conn->prepare("
+            SELECT COALESCE(MAX(id), 0) AS checkpoint
+            FROM sync_inbox
+            WHERE branch_uuid = ?
+              AND direction = 'branch_to_cloud'
+              AND {$eligibleDecision}
+        ");
+        $stmt->bind_param('s', $branchUuid);
+        $stmt->execute();
+        $checkpoint = (int) ($stmt->get_result()->fetch_assoc()['checkpoint'] ?? 0);
+        $stmt->close();
+
+        return max(0, $checkpoint);
     }
 
     private function exportFromSyncInbox(
@@ -131,7 +157,8 @@ class CloudBranchRestoreExportService
         string $phase,
         int $afterId,
         int $limit,
-        string $source
+        string $source,
+        array $recovery
     ): array {
         if ($phase === RestoreEventPhase::MENU) {
             return $this->exportCloudMenuItems($conn, $branchUuid, $afterId, $limit, $source, $phase);
@@ -142,7 +169,15 @@ class CloudBranchRestoreExportService
         }
 
         if ($phase === RestoreEventPhase::ORDERS) {
-            return $this->exportCloudOrders($conn, $branchUuid, $afterId, $limit, $source, $phase);
+            return $this->exportCloudOrders(
+                $conn,
+                $branchUuid,
+                $afterId,
+                $limit,
+                $source,
+                $phase,
+                isset($recovery['history_since_utc']) ? (string) $recovery['history_since_utc'] : null
+            );
         }
 
         if ($phase === RestoreEventPhase::OPERATIONAL) {
@@ -200,7 +235,8 @@ class CloudBranchRestoreExportService
         int $afterId,
         int $limit,
         string $source,
-        string $phase
+        string $phase,
+        ?string $historySinceUtc = null
     ): array {
         if (!$this->tableExists($conn, 'cloud_tables')) {
             return $this->emptyPage($source, $phase, $afterId);
@@ -246,21 +282,35 @@ class CloudBranchRestoreExportService
         int $afterId,
         int $limit,
         string $source,
-        string $phase
+        string $phase,
+        ?string $historySinceUtc = null
     ): array {
         if (!$this->tableExists($conn, 'cloud_orders')) {
             return $this->emptyPage($source, $phase, $afterId);
         }
 
+        $historySince = $historySinceUtc !== null
+            ? str_replace(['T', 'Z'], [' ', ''], $historySinceUtc)
+            : '1000-01-01 00:00:00';
         $stmt = $conn->prepare("
             SELECT id, payload_json, order_uuid, local_order_id
             FROM cloud_orders
             WHERE branch_uuid = ?
               AND id > ?
+              AND (
+                  COALESCE(closed, 0) = 0
+                  OR order_status IN ('draft', 'active')
+                  OR GREATEST(
+                      COALESCE(completed_at, '1000-01-01 00:00:00'),
+                      COALESCE(payment_date, '1000-01-01 00:00:00'),
+                      COALESCE(pro_date, '1000-01-01 00:00:00'),
+                      COALESCE(last_received_at, '1000-01-01 00:00:00')
+                  ) >= ?
+              )
             ORDER BY id ASC
             LIMIT ?
         ");
-        $stmt->bind_param('sii', $branchUuid, $afterId, $limit);
+        $stmt->bind_param('sisi', $branchUuid, $afterId, $historySince, $limit);
         $stmt->execute();
         $result = $stmt->get_result();
         $events = [];

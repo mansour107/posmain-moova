@@ -61,6 +61,7 @@ class SyncSchemaMigrationTest extends TestCase
         $this->assertArrayHasKey('sync_outbox', $manager->plannedStatements());
         $this->assertArrayHasKey('sync_inbox', $manager->plannedStatements());
         $this->assertArrayHasKey('sync_projection_versions', $manager->plannedStatements());
+        $this->assertArrayHasKey('sync_branch_restore_runs', $manager->plannedStatements());
         $this->assertArrayHasKey('sync_checkpoints', $manager->plannedStatements());
         $this->assertArrayHasKey('sync_conflicts', $manager->plannedStatements());
         $this->assertArrayHasKey('sync_worker_logs', $manager->plannedStatements());
@@ -128,6 +129,9 @@ class SyncSchemaMigrationTest extends TestCase
         $this->assertStringContainsString('UNIQUE KEY uq_sync_inbox_idempotency (branch_uuid, direction, idempotency_key)', $sql);
         $this->assertStringContainsString('CREATE TABLE IF NOT EXISTS sync_projection_versions', $sql);
         $this->assertStringContainsString('UNIQUE KEY uq_sync_projection_versions_aggregate (branch_uuid, aggregate_type, aggregate_uuid)', $sql);
+        $this->assertStringContainsString('CREATE TABLE IF NOT EXISTS sync_branch_restore_runs', $sql);
+        $this->assertStringContainsString('UNIQUE KEY uq_sync_branch_restore_run_uuid (run_uuid)', $sql);
+        $this->assertStringContainsString('KEY idx_sync_branch_restore_branch_status (branch_uuid, status, updated_at)', $sql);
         $this->assertStringContainsString('CREATE TABLE IF NOT EXISTS sync_checkpoints', $sql);
         $this->assertStringContainsString('UNIQUE KEY uq_sync_checkpoint (branch_uuid, stream_name)', $sql);
         $this->assertStringContainsString('CREATE TABLE IF NOT EXISTS sync_conflicts', $sql);
@@ -229,6 +233,9 @@ class SyncSchemaMigrationTest extends TestCase
         $this->assertTrue($inspect['sync_projection_versions']['exists']);
         $this->assertContains('last_event_version', $inspect['sync_projection_versions']['columns']);
         $this->assertContains('uq_sync_projection_versions_aggregate', $inspect['sync_projection_versions']['indexes']);
+        $this->assertTrue($inspect['sync_branch_restore_runs']['exists']);
+        $this->assertContains('phase_state_json', $inspect['sync_branch_restore_runs']['columns']);
+        $this->assertContains('uq_sync_branch_restore_run_uuid', $inspect['sync_branch_restore_runs']['indexes']);
         $this->assertTrue($inspect['sync_checkpoints']['exists']);
         $this->assertTrue($inspect['sync_conflicts']['exists']);
         $this->assertTrue($inspect['sync_worker_logs']['exists']);

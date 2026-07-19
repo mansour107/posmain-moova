@@ -64,11 +64,17 @@ $tool = file_get_contents($root . '/tools/restore_branch_from_hosted.php');
 $ajax = file_get_contents($root . '/ajax/sync_credentials.php');
 $settings = file_get_contents($root . '/setting.php');
 $config = file_get_contents($root . '/config/app_config.php');
+$exportEventService = file_get_contents($root . '/classes/Sync/CloudBranchRestoreEventService.php');
 
 restoreEventPhaseAssert(strpos($service, 'assertApplyAuthorized') !== false, 'service-level apply must pass the safety guard');
 restoreEventPhaseAssert(strpos($service, 'restoreStream') !== false, 'apply must rerun a current dry-run before mutation');
 restoreEventPhaseAssert(strpos($service, "'reconciliation'") !== false, 'apply must report reconciliation');
+restoreEventPhaseAssert(strpos($service, 'curl_close(') === false, 'restore CLI must remain warning-free on PHP versions where curl_close is deprecated');
+restoreEventPhaseAssert(strpos($exportEventService, 'CONTRACT_V2') !== false, 'hosted export must expose an additive recovery-v2 contract');
+restoreEventPhaseAssert(strpos($service, "'cloud_snapshot'") !== false, 'manual recovery must explicitly select compact hosted projections');
 restoreEventPhaseAssert(strpos($guard, 'restore_target_business_database_is_not_empty') !== false, 'guard must block non-empty business databases');
+restoreEventPhaseAssert(strpos($guard, 'restore_resume_snapshot_binding_mismatch') !== false, 'resume must bind the exact snapshot metadata');
+restoreEventPhaseAssert(strpos($guard, 'restore_resume_backup_mismatch') !== false, 'resume must bind the original backup hash');
 restoreEventPhaseAssert(strpos($guard, 'restore_backup_file_too_old') !== false, 'guard must validate backup freshness');
 restoreEventPhaseAssert(strpos($guard, 'restore_worker_process_is_still_active') !== false, 'guard must reject an active worker pid');
 restoreEventPhaseAssert(strpos($guard, 'restore_dry_run_manifest_mismatch') !== false, 'guard must bind apply to the dry-run manifest');

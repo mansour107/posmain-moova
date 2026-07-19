@@ -2,6 +2,7 @@
 
 require_once __DIR__ . '/../../classes/Sync/BranchRestoreFromHostedService.php';
 require_once __DIR__ . '/../../classes/Sync/RestoreEventPhase.php';
+require_once __DIR__ . '/../../classes/Sync/SchemaManager.php';
 
 $host = getenv('POSMAIN_TEST_MYSQL_HOST') ?: '127.0.0.1';
 $port = (int) (getenv('POSMAIN_TEST_MYSQL_PORT') ?: 3307);
@@ -33,6 +34,8 @@ try {
             PRIMARY KEY (id)
         ) ENGINE=InnoDB
     ");
+    $schema = new SyncSchemaManager();
+    $conn->query($schema->plannedStatements()['sync_branch_restore_runs']);
 
     $config = [
         'role' => 'branch',
@@ -52,7 +55,11 @@ try {
             'status' => 200,
             'json' => [
                 'ok' => true,
-                'source' => 'inbox',
+                'source' => 'cloud_snapshot',
+                'contract_version' => 2,
+                'recovery_profile' => 'operational_v1',
+                'snapshot_checkpoint' => 123,
+                'history_since_utc' => '2026-06-17T00:00:00Z',
                 'events' => [],
                 'next_after_id' => 0,
                 'has_more' => false,
@@ -73,6 +80,43 @@ try {
         (int) $conn->query('SELECT COUNT(*) AS c FROM sync_branch_identity')->fetch_assoc()['c'] === 0,
         'dry-run must not create or update branch identity'
     );
+
+    $retryCalls = 0;
+    $retryingHttpGet = static function () use (&$retryCalls): array {
+        $retryCalls++;
+        if ($retryCalls < 3) {
+            return [
+                'ok' => false,
+                'status' => 503,
+                'json' => null,
+            ];
+        }
+
+        return [
+            'ok' => true,
+            'status' => 200,
+            'json' => [
+                'ok' => true,
+                'source' => 'cloud_snapshot',
+                'contract_version' => 2,
+                'recovery_profile' => 'operational_v1',
+                'snapshot_checkpoint' => 123,
+                'history_since_utc' => '2026-06-17T00:00:00Z',
+                'events' => [],
+                'next_after_id' => 0,
+                'has_more' => false,
+            ],
+        ];
+    };
+    $retryPlan = $service->restore($conn, $config, [
+        'apply' => false,
+        'phases' => [RestoreEventPhase::MENU],
+        'http_get' => $retryingHttpGet,
+        'http_retry_delay_ms' => 0,
+    ]);
+    branchRestoreSafetyAssert($retryCalls === 3, 'restore export should retry a transient hosted response');
+    branchRestoreSafetyAssert((int) $retryPlan['http_retries'] === 2, 'restore summary should report transient retries');
+    branchRestoreSafetyAssert((int) $retryPlan['failed'] === 0, 'successful retry must not become a restore failure');
 
     branchRestoreSafetyExpectBlocked(
         static fn () => $service->restore($conn, $config, [
@@ -95,6 +139,36 @@ try {
         'expected_events' => $dryRun['safety']['expected_events'],
         'confirmation_token' => $dryRun['safety']['confirmation_token'],
     ];
+
+    $interruptCalls = 0;
+    $interruptingHttpGet = static function (...$args) use (&$interruptCalls, $httpGet): array {
+        $interruptCalls++;
+        if ($interruptCalls === 6) {
+            return ['ok' => false, 'status' => 500, 'json' => null];
+        }
+        return $httpGet(...$args);
+    };
+    $interruptedRunUuid = 'cccccccc-3333-4333-8333-cccccccccccc';
+    branchRestoreSafetyExpectBlocked(
+        static fn () => $service->restore($conn, $config, array_merge($authorized, [
+            'restore_run_uuid' => $interruptedRunUuid,
+            'http_get' => $interruptingHttpGet,
+            'http_max_attempts' => 1,
+        ])),
+        'Hosted restore export failed'
+    );
+    $interruptedRun = (new BranchRestoreRunService())->find($conn, $interruptedRunUuid);
+    branchRestoreSafetyAssert(($interruptedRun['status'] ?? '') === BranchRestoreRunService::STATUS_RUNNING, 'interrupted restore must remain resumable');
+    branchRestoreSafetyAssert(!empty($interruptedRun['phase_state'][RestoreEventPhase::MENU]['complete']), 'completed phase cursor must survive interruption');
+    branchRestoreSafetyAssert(empty($interruptedRun['phase_state'][RestoreEventPhase::TABLES]['complete']), 'unreached phase must remain incomplete');
+
+    $resumed = $service->restore($conn, $config, array_merge($authorized, [
+        'resume_run_uuid' => $interruptedRunUuid,
+        'http_get' => $httpGet,
+    ]));
+    branchRestoreSafetyAssert(($resumed['restore_run']['status'] ?? '') === BranchRestoreRunService::STATUS_COMPLETED, 'exact interrupted run must resume to completion');
+    branchRestoreSafetyAssert((int) ($resumed['phases'][0]['pages'] ?? 0) === 1, 'completed phase progress must be preserved without replay');
+
     $applied = $service->restore($conn, $config, $authorized);
     branchRestoreSafetyAssert(!empty($applied['apply']), 'authorized restore should enter apply mode');
     branchRestoreSafetyAssert(!empty($applied['reconciliation']['ok']), 'authorized empty restore should reconcile');

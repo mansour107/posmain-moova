@@ -52,9 +52,76 @@ class BranchRestoreSafetyGuard
         array $config,
         array $options
     ): array {
+        $evidence = $this->authorizationEvidence($conn, $branchUuid, $phases, $plan, $config, $options, true);
+        if ($evidence['errors'] !== []) {
+            throw new RuntimeException('Restore apply blocked: ' . implode(', ', $evidence['errors']));
+        }
+
+        return $evidence['safety'] + [
+            'backup' => $evidence['backup'],
+            'worker_pid' => $evidence['worker_pid'],
+        ];
+    }
+
+    public function assertResumeAuthorized(
+        mysqli $conn,
+        string $branchUuid,
+        array $phases,
+        array $plan,
+        array $config,
+        array $options,
+        array $run
+    ): array {
+        $evidence = $this->authorizationEvidence($conn, $branchUuid, $phases, $plan, $config, $options, false);
+        $errors = $evidence['errors'];
+        if (($run['status'] ?? '') !== 'running') {
+            $errors[] = 'restore_resume_run_is_not_running';
+        }
+        if (strtolower((string) ($run['branch_uuid'] ?? '')) !== strtolower($branchUuid)) {
+            $errors[] = 'restore_resume_branch_mismatch';
+        }
+        if ((int) ($run['contract_version'] ?? 0) !== (int) ($plan['contract_version'] ?? 0)
+            || (string) ($run['source'] ?? '') !== 'cloud_snapshot'
+            || (string) ($run['recovery_profile'] ?? '') !== (string) ($plan['recovery_profile'] ?? '')
+            || (int) ($run['snapshot_checkpoint'] ?? -1) !== (int) ($plan['snapshot_checkpoint'] ?? -2)
+            || (string) ($run['history_since_utc'] ?? '') !== (string) ($plan['history_since_utc'] ?? '')) {
+            $errors[] = 'restore_resume_snapshot_binding_mismatch';
+        }
+        if (!hash_equals((string) ($run['manifest_hash'] ?? ''), (string) $evidence['safety']['manifest_hash'])) {
+            $errors[] = 'restore_resume_manifest_mismatch';
+        }
+        if ((int) ($run['expected_events'] ?? -1) !== (int) $evidence['safety']['expected_events']) {
+            $errors[] = 'restore_resume_expected_events_mismatch';
+        }
+        if (!hash_equals((string) ($run['confirmation_token'] ?? ''), (string) $evidence['safety']['confirmation_token'])) {
+            $errors[] = 'restore_resume_confirmation_mismatch';
+        }
+        if (empty($evidence['backup']['ok'])
+            || !hash_equals((string) ($run['backup_sha256'] ?? ''), (string) ($evidence['backup']['sha256'] ?? ''))) {
+            $errors[] = 'restore_resume_backup_mismatch';
+        }
+        if ($errors !== []) {
+            throw new RuntimeException('Restore resume blocked: ' . implode(', ', array_values(array_unique($errors))));
+        }
+
+        return $evidence['safety'] + [
+            'backup' => $evidence['backup'],
+            'worker_pid' => $evidence['worker_pid'],
+            'resume_run_uuid' => (string) ($run['run_uuid'] ?? ''),
+        ];
+    }
+
+    private function authorizationEvidence(
+        mysqli $conn,
+        string $branchUuid,
+        array $phases,
+        array $plan,
+        array $config,
+        array $options,
+        bool $requireEmpty
+    ): array {
         $safety = $this->describePlan($conn, $branchUuid, $phases, $plan, $config);
         $errors = [];
-
         if (($options['scope'] ?? '') !== self::SCOPE_EMPTY) {
             $errors[] = 'restore_scope_must_be_empty';
         }
@@ -64,7 +131,7 @@ class BranchRestoreSafetyGuard
         if (empty($safety['cloud_pull_disabled'])) {
             $errors[] = 'generic_cloud_pull_must_be_disabled';
         }
-        if (empty($safety['business_database_empty'])) {
+        if ($requireEmpty && empty($safety['business_database_empty'])) {
             $errors[] = 'restore_target_business_database_is_not_empty';
         }
         if (empty($options['workers_stopped'])) {
@@ -75,7 +142,6 @@ class BranchRestoreSafetyGuard
         if (!empty($pidCheck['active'])) {
             $errors[] = 'restore_worker_process_is_still_active';
         }
-
         $expectedEvents = filter_var($options['expected_events'] ?? null, FILTER_VALIDATE_INT, [
             'options' => ['min_range' => 0],
         ]);
@@ -84,7 +150,6 @@ class BranchRestoreSafetyGuard
         } elseif ((int) $expectedEvents !== (int) $safety['expected_events']) {
             $errors[] = 'restore_event_count_changed_since_dry_run';
         }
-
         if (!hash_equals((string) $safety['manifest_hash'], trim((string) ($options['dry_run_manifest'] ?? '')))) {
             $errors[] = 'restore_dry_run_manifest_mismatch';
         }
@@ -102,11 +167,9 @@ class BranchRestoreSafetyGuard
             $errors[] = (string) ($backup['blocker'] ?? 'restore_backup_invalid');
         }
 
-        if ($errors !== []) {
-            throw new RuntimeException('Restore apply blocked: ' . implode(', ', array_values(array_unique($errors))));
-        }
-
-        return $safety + [
+        return [
+            'safety' => $safety,
+            'errors' => array_values(array_unique($errors)),
             'backup' => $backup,
             'worker_pid' => $pidCheck,
         ];

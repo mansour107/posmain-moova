@@ -82,6 +82,7 @@ class SyncSchemaManager
             'sync_outbox' => $this->syncOutboxSql(),
             'sync_inbox' => $this->syncInboxSql(),
             'sync_projection_versions' => $this->syncProjectionVersionsSql(),
+            'sync_branch_restore_runs' => $this->syncBranchRestoreRunsSql(),
             'sync_checkpoints' => $this->syncCheckpointsSql(),
             'sync_conflicts' => $this->syncConflictsSql(),
             'sync_worker_logs' => $this->syncWorkerLogsSql(),
@@ -4034,6 +4035,39 @@ CREATE TABLE IF NOT EXISTS sync_checkpoints (
   updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
   PRIMARY KEY (id),
   UNIQUE KEY uq_sync_checkpoint (branch_uuid, stream_name)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
+    private function syncBranchRestoreRunsSql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS sync_branch_restore_runs (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  run_uuid CHAR(36) NOT NULL,
+  branch_uuid CHAR(36) NOT NULL,
+  contract_version TINYINT UNSIGNED NOT NULL,
+  source VARCHAR(40) NOT NULL,
+  recovery_profile VARCHAR(80) NOT NULL,
+  snapshot_checkpoint BIGINT UNSIGNED NOT NULL,
+  history_since_utc VARCHAR(30) NOT NULL,
+  manifest_hash CHAR(64) NOT NULL,
+  expected_events BIGINT UNSIGNED NOT NULL,
+  confirmation_token VARCHAR(100) NOT NULL,
+  backup_sha256 CHAR(64) NOT NULL,
+  status VARCHAR(20) NOT NULL DEFAULT 'prepared',
+  phase_state_json LONGTEXT NOT NULL,
+  fetched BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  mirrored BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  skipped BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  failed BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  last_error TEXT NULL,
+  started_at DATETIME(6) NULL,
+  completed_at DATETIME(6) NULL,
+  created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_sync_branch_restore_run_uuid (run_uuid),
+  KEY idx_sync_branch_restore_branch_status (branch_uuid, status, updated_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
     }
 
