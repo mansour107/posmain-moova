@@ -243,7 +243,7 @@ class CloudBranchRestoreExportService
         }
 
         $stmt = $conn->prepare("
-            SELECT id, payload_json, table_uuid, local_table_id, table_name, isdeleted
+            SELECT id, payload_json, table_uuid, local_table_id, tname AS table_name, isdeleted
             FROM cloud_tables
             WHERE branch_uuid = ?
               AND id > ?

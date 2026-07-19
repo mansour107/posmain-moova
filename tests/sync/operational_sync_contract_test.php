@@ -72,7 +72,7 @@ operationalSyncContractAssert(strpos($events, "unset(\$row['moova_device_token_h
 
 $restoreExport = file_get_contents(__DIR__ . '/../../classes/Sync/CloudBranchRestoreExportService.php');
 operationalSyncContractAssert(strpos($restoreExport, 'restorableInboxDecisionSql') !== false, 'restore export must use one inbox eligibility predicate');
-operationalSyncContractAssert(substr_count($restoreExport, 'AND {$eligibleDecision}') === 3, 'all inbox restore queries must use the stale-safe predicate');
+operationalSyncContractAssert(substr_count($restoreExport, 'AND {$eligibleDecision}') === 4, 'all inbox restore queries must use the stale-safe predicate');
 operationalSyncContractAssert(strpos($restoreExport, "<> 'stale'") !== false, 'restore export must exclude explicit stale decisions');
 operationalSyncContractAssert(strpos($restoreExport, "unset(\$row['moova_device_token_hash'])") !== false, 'legacy restore export must strip token hashes');
 

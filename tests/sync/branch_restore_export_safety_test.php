@@ -48,6 +48,27 @@ try {
     restoreExportSafetyAssert($exporter->hasInboxEvents($conn, $branch), 'normal and duplicate rows should keep inbox restore available');
     restoreExportSafetyAssert(!$exporter->hasInboxEvents($conn, $onlyStaleBranch), 'stale-only inbox must not become a restore source');
 
+    $tableUuid = '46464646-4646-4646-8646-464646464646';
+    $tableName = 'Recovery Table';
+    $emptyPayload = '{}';
+    $emptyPayloadHash = hash('sha256', $emptyPayload);
+    $stmt = $conn->prepare("
+        INSERT INTO cloud_tables (
+            branch_uuid, table_uuid, local_table_id, tname, table_case, isdeleted,
+            sync_revision, payload_hash, payload_json
+        ) VALUES (?, ?, 17, ?, 0, 0, 1, ?, ?)
+    ");
+    $stmt->bind_param('sssss', $branch, $tableUuid, $tableName, $emptyPayloadHash, $emptyPayload);
+    $stmt->execute();
+    $stmt->close();
+
+    $tablePage = $exporter->exportPage($conn, $branch, RestoreEventPhase::TABLES, 0, 5, 'cloud_snapshot');
+    restoreExportSafetyAssert((int) $tablePage['count'] === 1, 'cloud table snapshot should export canonical cloud_tables rows');
+    restoreExportSafetyAssert(
+        ($tablePage['events'][0]['event']['payload']['table_name'] ?? '') === $tableName,
+        'cloud table snapshot fallback should map canonical tname to table_name'
+    );
+
     $first = $exporter->exportPage($conn, $branch, RestoreEventPhase::ORDERS, 0, 1, 'sync_inbox');
     restoreExportSafetyAssert((int) $first['count'] === 1, 'first page should contain one eligible event');
     restoreExportSafetyAssert(($first['events'][0]['event']['payload']['marker'] ?? '') === 'normal', 'first page should contain normal applied event');
