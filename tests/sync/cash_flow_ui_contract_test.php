@@ -25,8 +25,8 @@ cashFlowUiContractAssert(
     'overview sessions table must link to drawer_session.php'
 );
 cashFlowUiContractAssert(
-    strpos($overview, 'pr-verdict') !== false && strpos($overview, 'pr-mix') !== false && strpos($overview, 'cash-walk') !== false,
-    'overview must render verdict strip, payment mix, and cash walk'
+    strpos($overview, 'operations-metrics') !== false && strpos($overview, 'operations-payment-stack') !== false && strpos($overview, 'cash-walk') !== false,
+    'overview must render sales metrics, payment mix, and cash walk'
 );
 cashFlowUiContractAssert(
     strpos($overview, "payments['by_type']") !== false || strpos($overview, '$byType') !== false,
@@ -34,7 +34,7 @@ cashFlowUiContractAssert(
 );
 cashFlowUiContractAssert(
     strpos($overview, 'cash-shift-tabs') !== false && strpos($overview, 'CashShiftWorkspaceService::TAB_SHIFTS') !== false,
-    'workspace must render the four cash and shift tabs at the same level'
+    'workspace must render its canonical report tabs at the same level'
 );
 cashFlowUiContractAssert(
     strpos($overview, "'page' =>") !== false && strpos($overview, "'status' =>") !== false,
@@ -49,12 +49,39 @@ cashFlowUiContractAssert(
     'overview must not bury movements in a collapsed details block'
 );
 cashFlowUiContractAssert(
-    strpos($overview, 'النقد والورديات') !== false && strpos($overview, 'name="date_from"') !== false,
+    strpos($overview, 'تقارير التشغيل') !== false && strpos($overview, 'name="date_from"') !== false,
     'workspace must keep the unified title and date filter for e2e'
+);
+cashFlowUiContractAssert(
+    strpos($overview, 'جميع موظفي الكاشير') !== false
+    && strpos($overview, 'الكاشيرين') === false,
+    'cashier filter must use clear, standard Arabic wording'
 );
 cashFlowUiContractAssert(
     strpos($overview, 'cash-shift-date-presets') !== false && strpos($overview, 'aria-current="page"') !== false,
     'workspace must expose accessible one-click business-day ranges'
+);
+cashFlowUiContractAssert(
+    strpos($overview, 'FOCUS_ORDER_CANCELLED') !== false
+    && strpos($overview, 'FOCUS_PAYMENT_REFUNDS') !== false
+    && strpos($overview, '$attentionUrl($alert)') !== false,
+    'attention cards must open a focused, meaningful destination'
+);
+cashFlowUiContractAssert(
+    strpos($overview, 'طلبات أُلغيت بعد إنشائها') !== false
+    && strpos($overview, 'عرض الطلبات الملغاة فقط') !== false,
+    'attention copy must explain the condition and the destination in plain Arabic'
+);
+cashFlowUiContractAssert(
+    strpos($overview, 'ملغى محاسبيًا') === false
+    && strpos($overview, 'يُسجل التأكيد الفرق محاسبيًا') === false
+    && strpos($overview, 'تسجيل سبب الفرق') !== false,
+    'manager-facing actions and order states must avoid unexplained accounting jargon'
+);
+cashFlowUiContractAssert(
+    strpos($css, '.operations-metric--primary') !== false
+    && strpos($css, 'background: linear-gradient(145deg, #1a2f5a, #294774)') === false,
+    'net totals must use the same light metric-card language as the other totals'
 );
 
 cashFlowUiContractAssert(

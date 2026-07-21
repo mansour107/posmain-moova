@@ -1,13 +1,15 @@
 <?php
 
+require_once __DIR__ . '/../Pos/Service/OperationsReportService.php';
+
 /**
  * Aggregates ERP dashboard KPIs, attention rows, sales strip, and quick actions.
  * Templates must not run ad-hoc SQL; call build() once from dashboard.php.
  */
 class DashboardOverviewService
 {
-    public const SALES_TYPES_SQL = 'pro_tybe IN (3, 9) AND isdeleted = 0';
-    public const REPORTS_URL = 'operations_summary.php?q=buy';
+    public const SALES_TYPES_SQL = "pro_tybe = 9 AND COALESCE(isdeleted, 0) = 0 AND payment_status IN ('paid', 'refunded')";
+    public const REPORTS_URL = 'cash_flow_report.php?tab=overview';
     public const UNAVAILABLE_LABEL = 'غير متاح';
 
     /**
@@ -22,7 +24,7 @@ class DashboardOverviewService
      */
     public function build(mysqli $conn, array $flags): array
     {
-        $sales = $this->loadSalesMetrics($conn);
+        $sales = $this->loadSalesMetrics($conn, $flags);
         $kpis = $this->buildKpis($sales);
         $attention = $this->buildAttention($conn, $flags);
         $salesStrip = $this->buildSalesStrip($sales);
@@ -30,7 +32,7 @@ class DashboardOverviewService
 
         return [
             'context' => [
-                'business_date' => date('Y-m-d'),
+                'business_date' => (string) ($flags['business_day'] ?? date('Y-m-d')),
                 'generated_at' => date('Y-m-d H:i:s'),
                 'currency' => 'ج.م.',
             ],
@@ -249,7 +251,7 @@ class DashboardOverviewService
     /**
      * @return array{available: bool, today_count: int, today_sum: float, week_sum: float, month_sum: float, last_invoice: ?float}
      */
-    public function loadSalesMetrics(mysqli $conn): array
+    public function loadSalesMetrics(mysqli $conn, array $scope = []): array
     {
         $empty = [
             'available' => false,
@@ -265,42 +267,50 @@ class DashboardOverviewService
         }
 
         try {
-            $today = $this->fetchAssoc(
-                $conn,
-                'SELECT COUNT(*) AS c, COALESCE(SUM(pro_value), 0) AS s
-                 FROM ot_head
-                 WHERE ' . self::SALES_TYPES_SQL . ' AND DATE(pro_date) = CURDATE()'
-            );
-            $week = $this->fetchAssoc(
-                $conn,
-                'SELECT COALESCE(SUM(pro_value), 0) AS s
-                 FROM ot_head
-                 WHERE ' . self::SALES_TYPES_SQL . '
-                   AND pro_date BETWEEN DATE_SUB(CURDATE(), INTERVAL 6 DAY) AND CURDATE()'
-            );
-            $month = $this->fetchAssoc(
-                $conn,
-                'SELECT COALESCE(SUM(pro_value), 0) AS s
-                 FROM ot_head
-                 WHERE ' . self::SALES_TYPES_SQL . '
-                   AND pro_date BETWEEN DATE_SUB(CURDATE(), INTERVAL 29 DAY) AND CURDATE()'
-            );
-            $last = $this->fetchAssoc(
-                $conn,
-                'SELECT pro_value
-                 FROM ot_head
-                 WHERE ' . self::SALES_TYPES_SQL . '
-                 ORDER BY id DESC
-                 LIMIT 1'
-            );
+            $businessDay = (string) ($scope['business_day'] ?? date('Y-m-d'));
+            if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $businessDay)) {
+                $businessDay = date('Y-m-d');
+            }
+            $base = [
+                'tenant' => max(0, (int) ($scope['tenant'] ?? 0)),
+                'branch' => max(0, (int) ($scope['branch'] ?? 0)),
+                'cashier_id' => 0,
+            ];
+            $reports = new OperationsReportService();
+            $today = $reports->salesSummary($conn, $base + [
+                'date_from' => $businessDay,
+                'date_to' => $businessDay,
+            ]);
+            $weekFrom = date('Y-m-d', strtotime($businessDay . ' -6 days'));
+            $monthFrom = date('Y-m-d', strtotime($businessDay . ' -29 days'));
+            $week = $reports->salesSummary($conn, $base + [
+                'date_from' => $weekFrom,
+                'date_to' => $businessDay,
+            ]);
+            $month = $reports->salesSummary($conn, $base + [
+                'date_from' => $monthFrom,
+                'date_to' => $businessDay,
+            ]);
+            $recentOrders = $reports->orders($conn, $base + [
+                'date_from' => $monthFrom,
+                'date_to' => $businessDay,
+            ], 50);
+            $lastInvoice = null;
+            foreach ($recentOrders as $order) {
+                if ((int) ($order['isdeleted'] ?? 0) === 0
+                    && in_array((string) ($order['payment_status'] ?? ''), ['paid', 'refunded'], true)) {
+                    $lastInvoice = (float) ($order['fat_net'] ?? 0);
+                    break;
+                }
+            }
 
             return [
                 'available' => true,
-                'today_count' => (int) ($today['c'] ?? 0),
-                'today_sum' => (float) ($today['s'] ?? 0),
-                'week_sum' => (float) ($week['s'] ?? 0),
-                'month_sum' => (float) ($month['s'] ?? 0),
-                'last_invoice' => $last !== null ? (float) ($last['pro_value'] ?? 0) : null,
+                'today_count' => (int) ($today['order_count'] ?? 0),
+                'today_sum' => (float) ($today['net_sales'] ?? 0),
+                'week_sum' => (float) ($week['net_sales'] ?? 0),
+                'month_sum' => (float) ($month['net_sales'] ?? 0),
+                'last_invoice' => $lastInvoice,
             ];
         } catch (Throwable $e) {
             return $empty;

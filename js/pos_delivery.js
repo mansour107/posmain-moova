@@ -17,6 +17,9 @@
         zoneId: null,
         zoneName: '',
         fee: 0,
+        workerId: null,
+        workerName: '',
+        collectionMode: 'prepaid',
         isExistingClient: false,
     };
 
@@ -41,6 +44,9 @@
             phone: $('#customer_phone').val().trim(),
             name: ($('#customer_name').val() || '').trim(),
             address: ($('#customer_address').val() || '').trim(),
+            workerId: $('#delivery_worker_id').val() || null,
+            workerName: $('#delivery_worker_id option:selected').text() || '',
+            collectionMode: $('#delivery_collection_mode').val() || 'prepaid',
         };
     }
 
@@ -67,7 +73,7 @@
     }
 
     function removeDeliveryHiddenFields() {
-        $('#posForm input[name="delivery_customer_name"], #posForm input[name="delivery_customer_phone"], #posForm input[name="delivery_customer_address"], #posForm input[name="delivery_zone_id"], #posForm input[name="delivery_zone_name"], #posForm input[name="delivery_fee"]').remove();
+        $('#posForm input[name="delivery_customer_name"], #posForm input[name="delivery_customer_phone"], #posForm input[name="delivery_customer_address"], #posForm input[name="delivery_zone_id"], #posForm input[name="delivery_zone_name"], #posForm input[name="delivery_fee"], #posForm input[name="delivery_worker_id"], #posForm input[name="collection_mode"], #posForm input[name="courier_source"]').remove();
     }
 
     function syncHiddenFieldsToForm() {
@@ -83,6 +89,9 @@
             delivery_zone_id: state.zoneId || '',
             delivery_zone_name: state.zoneName || '',
             delivery_fee: state.fee || 0,
+            delivery_worker_id: state.workerId || '',
+            collection_mode: state.collectionMode || 'prepaid',
+            courier_source: 'in_house',
         };
         Object.keys(fields).forEach(function (name) {
             $('<input>').attr({ type: 'hidden', name: name, value: fields[name] }).appendTo('#posForm');
@@ -119,12 +128,14 @@
                 : state.phone;
             const zoneLabel = state.zoneName ? ' — ' + escapeHtml(state.zoneName) : '';
             const feeLabel = state.fee > 0 ? ' — رسوم: ' + Number(state.fee).toFixed(2) : '';
+            const workerLabel = state.workerName ? ' — ' + escapeHtml(state.workerName) : ' — التعيين لاحقاً';
+            const collectionLabel = state.collectionMode === 'cod' ? ' — تحصيل عند التسليم' : '';
             $bar.html(
                 '<div class="pos-delivery-bar pos-delivery-bar--confirmed">' +
                 '<span class="pos-delivery-bar__badge"><i class="fas fa-motorcycle me-1"></i>دليفري</span>' +
                 '<span class="pos-delivery-bar__summary">' +
                 escapeHtml(state.name) + ' — ' + escapeHtml(phoneShort) + ' — ' + escapeHtml(state.address) +
-                zoneLabel + feeLabel +
+                zoneLabel + feeLabel + workerLabel + collectionLabel +
                 '</span>' +
                 '<span class="pos-delivery-bar__actions">' +
                 '<button type="button" class="btn btn-sm btn-outline-primary" id="posDeliveryEditBtn"><i class="fas fa-edit"></i> تعديل</button>' +
@@ -176,6 +187,9 @@
             zoneId: $('#delivery_zone_id').val() || window.posDeliveryState.zoneId || null,
             zoneName: $('#delivery_zone_id option:selected').text() || window.posDeliveryState.zoneName || '',
             fee: parseFloat($('#delivery_zone_id option:selected').data('fee') || window.posDeliveryState.fee || 0) || 0,
+            workerId: data.workerId || $('#delivery_worker_id').val() || window.posDeliveryState.workerId || null,
+            workerName: data.workerName || $('#delivery_worker_id option:selected').text() || window.posDeliveryState.workerName || '',
+            collectionMode: data.collectionMode || $('#delivery_collection_mode').val() || window.posDeliveryState.collectionMode || 'prepaid',
             isExistingClient: !!data.isExistingClient,
         };
         syncHiddenFieldsToForm();
@@ -212,6 +226,9 @@
             zoneId: null,
             zoneName: '',
             fee: 0,
+            workerId: null,
+            workerName: '',
+            collectionMode: 'prepaid',
             isExistingClient: false,
         };
         removeDeliveryHiddenFields();
@@ -241,6 +258,7 @@
         if (!$select.length) {
             return;
         }
+        ensureDeliveryOperationsFields();
         $.getJSON('ajax/delivery_zones_list.php')
             .done(function (response) {
                 const zones = (response && response.zones) || [];
@@ -253,6 +271,27 @@
             })
             .fail(function () {
                 $select.html('<option value=""></option>');
+            });
+    }
+
+    function ensureDeliveryOperationsFields() {
+        if (!$('#delivery_collection_mode').length) {
+            $('#delivery_zone_id').closest('.mb-3').after(
+                '<div class="row g-2 mb-3" id="delivery_operations_fields">' +
+                '<div class="col-md-6"><label class="form-label fw-bold">التحصيل</label>' +
+                '<select class="form-select" id="delivery_collection_mode"><option value="prepaid">مدفوع الآن</option><option value="cod">تحصيل عند التسليم</option></select></div>' +
+                '<div class="col-md-6"><label class="form-label fw-bold">عامل التوصيل <small class="text-muted">اختياري</small></label>' +
+                '<select class="form-select" id="delivery_worker_id"><option value="">يُعيّن لاحقاً</option></select></div></div>'
+            );
+        }
+        $('#delivery_collection_mode').val(window.posDeliveryState.collectionMode || 'prepaid');
+        $.getJSON('ajax/delivery_workers.php')
+            .done(function (response) {
+                let html = '<option value="">يُعيّن لاحقاً</option>';
+                ((response && response.workers) || []).forEach(function (worker) {
+                    html += '<option value="' + worker.id + '">' + escapeHtml(worker.name) + '</option>';
+                });
+                $('#delivery_worker_id').html(html).val(window.posDeliveryState.workerId || '');
             });
     }
 
@@ -358,6 +397,9 @@
                 name: values.name,
                 address: values.address,
                 isExistingClient: true,
+                workerId: values.workerId,
+                workerName: values.workerName,
+                collectionMode: values.collectionMode,
             });
             $('#deliveryModal').modal('hide');
             Swal.fire({
@@ -368,10 +410,25 @@
                 showConfirmButton: false,
             });
         }).fail(function (xhr) {
+            let message = 'تعذر حفظ بيانات العميل';
+            const response = xhr && xhr.responseJSON ? xhr.responseJSON : null;
+            if (response && response.message) {
+                message = response.message;
+            } else if (xhr && xhr.responseText) {
+                try {
+                    const parsed = JSON.parse(xhr.responseText);
+                    message = parsed.message || parsed.error || message;
+                } catch (ignored) {}
+            }
+            if (message === 'SCHEMA_MIGRATIONS_PENDING' || message === 'POS_CUSTOMER_SCHEMA_MIGRATIONS_PENDING') {
+                message = 'يلزم تطبيق تحديث قاعدة بيانات العملاء قبل الحفظ. اطلب من المدير تشغيل التحديثات ثم أعد المحاولة.';
+            } else if (message === 'CSRF_INVALID') {
+                message = 'انتهت صلاحية جلسة العمل. حدّث الصفحة ثم حاول مرة أخرى.';
+            }
             Swal.fire({
                 icon: 'error',
-                title: 'خطأ في الاتصال',
-                text: xhr.responseText ? xhr.responseText.substring(0, 120) : 'تعذر حفظ بيانات العميل',
+                title: 'تعذر حفظ العميل',
+                text: message,
             });
         });
     }
@@ -476,6 +533,15 @@
                 renderDeliveryFeeRow();
             }
         });
+        $(document).on('change', '#delivery_worker_id, #delivery_collection_mode', function () {
+            window.posDeliveryState.workerId = $('#delivery_worker_id').val() || null;
+            window.posDeliveryState.workerName = $('#delivery_worker_id option:selected').text() || '';
+            window.posDeliveryState.collectionMode = $('#delivery_collection_mode').val() || 'prepaid';
+            if (window.posDeliveryState.confirmed) {
+                syncHiddenFieldsToForm();
+                renderDeliveryBar();
+            }
+        });
 
         $('#customer_phone').on('input', function () {
             const phone = $(this).val().trim();
@@ -535,7 +601,9 @@
             window.posDeliveryOnModeChange($(this).val());
         });
 
-        refreshDeliveryPendingBadge();
-        setInterval(refreshDeliveryPendingBadge, 30000);
+        if (window.POSMAIN && window.POSMAIN.can('delivery.dispatch')) {
+            refreshDeliveryPendingBadge();
+            setInterval(refreshDeliveryPendingBadge, 30000);
+        }
     });
 })(window, window.jQuery);

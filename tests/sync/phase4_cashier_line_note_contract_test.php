@@ -27,7 +27,7 @@ phase4CashierLineNoteAssert(strpos($jsSource, 'saveLineNoteDraft') !== false, 'l
 phase4CashierLineNoteAssert(strpos($jsSource, 'getLineNoteDraft') !== false, 'cart rows should restore local draft notes');
 phase4CashierLineNoteAssert(strpos($jsSource, "addItemToOrder(id, name, price, barcode, qty = 1, imageHtml = '', lineNote = '', options = {})") !== false, 'addItemToOrder should accept optional line note and row options');
 phase4CashierLineNoteAssert(strpos($jsSource, 'item.note || item.kitchen_note || item.notes ||') !== false, 'loaded table items should preserve note fields when provided');
-phase4CashierLineNoteAssert(strpos($jsSource, '{ uVal: item.u_val || 1 }') !== false, 'loaded table items should preserve u_val when provided');
+phase4CashierLineNoteAssert(strpos($jsSource, 'uVal: item.u_val || 1,') !== false, 'loaded table items should preserve u_val when provided');
 
 phase4CashierLineNoteAssert(strpos($posLineMarkup, 'lineNoteInput') !== false, 'edit-mode cashier rows should include lineNoteInput');
 phase4CashierLineNoteAssert(strpos($posLineMarkup, 'name="itmnote[]"') !== false, 'edit-mode cashier rows should submit itmnote[]');

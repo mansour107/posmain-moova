@@ -46,7 +46,7 @@ $strip = $service->buildSalesStrip([
     'month_sum' => 300.0,
 ]);
 dashboardUnitAssert($strip['last_invoice_formatted'] === '12.50', 'sales strip last invoice');
-dashboardUnitAssert($strip['reports_url'] === 'operations_summary.php?q=buy', 'sales strip reports url');
+dashboardUnitAssert($strip['reports_url'] === 'cash_flow_report.php?tab=overview', 'sales strip reports url');
 
 $actionsAdmin = $service->filterQuickActions([
     'is_admin' => true,
@@ -65,12 +65,12 @@ $actionsNone = $service->filterQuickActions([]);
 dashboardUnitAssert($actionsNone === [], 'no permissions yields no quick actions');
 
 dashboardUnitAssert(
-    strpos(DashboardOverviewService::SALES_TYPES_SQL, 'pro_tybe IN (3, 9)') !== false,
-    'sales filter uses IN clause'
+    strpos(DashboardOverviewService::SALES_TYPES_SQL, 'pro_tybe = 9') !== false,
+    'dashboard is scoped to POS orders'
 );
 dashboardUnitAssert(
-    strpos(DashboardOverviewService::SALES_TYPES_SQL, 'isdeleted = 0') !== false,
-    'sales filter requires isdeleted = 0'
+    strpos(DashboardOverviewService::SALES_TYPES_SQL, 'payment_status') !== false,
+    'sales filter requires a completed payment state'
 );
 
 echo "dashboard-overview-service-unit-ok\n";

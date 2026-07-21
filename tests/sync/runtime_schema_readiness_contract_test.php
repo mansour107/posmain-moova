@@ -11,7 +11,6 @@ $surfaces = [
     'classes/Pos/Service/DrawerSessionCloseSummaryService.php',
     'classes/Pos/Service/KdsStationService.php',
     'includes/kds_bootstrap.php',
-    'includes/pos_customer_bootstrap.php',
     'do/doedit_settings.php',
     'do/doedit_inventory_policy.php',
 ];
@@ -24,6 +23,13 @@ foreach ($surfaces as $relative) {
         runtimeSchemaAssert(strpos($source, $forbidden) === false, $relative . ' must not execute runtime DDL: ' . $forbidden);
     }
 }
+
+$customerBootstrap = file_get_contents($root . '/includes/pos_customer_bootstrap.php');
+runtimeSchemaAssert(strpos($customerBootstrap, 'pendingPosCustomerStatements') !== false, 'customer runtime writes must use the scoped customer schema readiness check');
+$ensureStart = strpos($customerBootstrap, "function posmain_ensure_pos_customer_schema");
+$ensureSource = $ensureStart === false ? '' : substr($customerBootstrap, $ensureStart);
+runtimeSchemaAssert(strpos($ensureSource, 'applyPosCustomerSchema') === false, 'customer request-time readiness must not execute DDL');
+runtimeSchemaAssert(strpos($ensureSource, 'SCHEMA_MIGRATIONS_PENDING') === false || strpos($ensureSource, 'POS_CUSTOMER_SCHEMA_MIGRATIONS_PENDING') !== false, 'customer writes must not depend on unrelated global migrations');
 
 $schemaManager = file_get_contents($root . '/classes/Sync/SchemaManager.php');
 runtimeSchemaAssert(strpos($schemaManager, 'DROP TABLE closed_orders') === false, 'generic schema manager must never drop closed_orders');

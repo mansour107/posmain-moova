@@ -173,7 +173,7 @@ class RolePermissionSyncService
         return [
             'POS' => ['pos.open', 'pos.table.open', 'pos.table.move', 'pos.table.merge', 'pos.discount.apply', 'pos.discount.manager_override', 'pos.discount.manual_pct.limit', 'pos.price.override', 'pos.recipe_stock_override', 'pos.cancel.unpaid', 'pos.void.post_send', 'pos.void.item_after_send', 'pos.order.modify_others', 'pos.shift.open', 'pos.shift.close', 'pos.shift.force_close', 'pos.shift.force_close_others', 'pos.shift.resolve_variance', 'pos.shift.set_opening_baseline', 'pos.cashdrawer.count', 'pos.drawer.no_sale', 'pos.drawer.payin', 'pos.drawer.safe_drop', 'pos.payout.over_limit', 'pos.drawer.payout.limit', 'pos.credit.sale', 'pos.credit.sell', 'pos.reprint', 'pos.refund.limit', 'pos.void.paid', 'pos.refund'],
             'Inventory & menu' => ['menu.edit', 'inventory.edit', 'inventory.approve', 'inventory.policy.manage'],
-            'Delivery & KDS' => ['moova.manage', 'moova.accept', 'delivery.dispatch', 'delivery.zones.manage', 'kds.view', 'kds.complete', 'kds.manage'],
+            'Delivery & KDS' => ['moova.manage', 'moova.accept', 'delivery.dispatch', 'delivery.assign', 'delivery.zones.manage', 'delivery.workers.manage', 'delivery.compensation.manage', 'delivery.settlements.manage', 'delivery.settlements.reverse', 'delivery.reports.view', 'kds.view', 'kds.complete', 'kds.manage'],
             'Accounting & reports' => ['accounting.view', 'reports.view', 'reports.own_shift', 'reports.branch_daily', 'reports.costs', 'reports.cash_flow'],
             'Administration' => ['users.manage', 'roles.manage', 'customers.manage', 'system.health.view', 'system.tools.run'],
         ];
@@ -244,7 +244,9 @@ class RolePermissionSyncService
                     'pos.shift.force_close_others', 'pos.shift.override', 'pos.shift.resolve_variance', 'pos.shift.set_opening_baseline',
                     'pos.cashdrawer.count', 'pos.drawer.no_sale', 'pos.drawer.payin', 'pos.drawer.safe_drop',
                     'menu.edit', 'inventory.edit', 'reports.view', 'reports.cash_flow', 'moova.manage', 'moova.accept',
-                    'delivery.dispatch', 'delivery.zones.manage', 'kds.view', 'kds.complete',
+                    'delivery.dispatch', 'delivery.assign', 'delivery.zones.manage', 'delivery.workers.manage',
+                    'delivery.compensation.manage', 'delivery.settlements.manage', 'delivery.reports.view',
+                    'kds.view', 'kds.complete',
                 ],
                 'capabilities' => [
                     'pos.discount.apply' => ['limit_value' => 25.0, 'is_unlimited' => false],
@@ -258,6 +260,7 @@ class RolePermissionSyncService
                     'pos.discount.apply', 'pos.cancel.unpaid', 'pos.split',
                     'pos.shift.open', 'pos.shift.close', 'pos.cashdrawer.count',
                     'moova.accept',
+                    'delivery.assign',
                 ],
                 'capabilities' => [
                     'pos.discount.apply' => ['limit_value' => 10.0, 'is_unlimited' => false],

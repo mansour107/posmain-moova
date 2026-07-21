@@ -291,6 +291,7 @@ class BranchMoovaApplyWorker
         return in_array($code, [
             'TABLE_REQUIRED',
             'TABLE_NOT_FOUND',
+            'TABLE_MAPPING_REQUIRED',
             'TABLE_MAPPING_AMBIGUOUS',
             'ITEM_NOT_FOUND',
             'NO_VALID_ITEMS',
@@ -315,6 +316,7 @@ class BranchMoovaApplyWorker
             'ITEM_NOT_FOUND',
             'NO_VALID_ITEMS',
             'TABLE_NOT_FOUND',
+            'TABLE_MAPPING_REQUIRED',
             'IDEMPOTENCY_PAYLOAD_CONFLICT',
         ], true);
     }

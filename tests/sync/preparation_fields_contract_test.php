@@ -3,6 +3,7 @@
 require_once __DIR__ . '/../../classes/Pos/DTO/OrderCreateRequest.php';
 require_once __DIR__ . '/../../classes/Pos/Service/PreparationSelectionService.php';
 require_once __DIR__ . '/../../classes/Recipe/DTO/RecipeOrderLineContext.php';
+require_once __DIR__ . '/../../classes/Recipe/RecipeExplosionService.php';
 require_once __DIR__ . '/../../classes/Sync/SchemaManager.php';
 
 function preparation_contract_assert(bool $condition, string $message): void
@@ -42,6 +43,12 @@ $recipeLine = new RecipeOrderLineContext([
 ]);
 preparation_contract_assert(count($recipeLine->preparationValues) === 1, 'recipe line context must retain preparation snapshots');
 
+$preparationRequirementsMethod = new ReflectionMethod(RecipeExplosionService::class, 'preparationRequirements');
+$preparationRequirements = $preparationRequirementsMethod->invoke(new RecipeExplosionService(), $recipeLine);
+preparation_contract_assert(count($preparationRequirements) === 1, 'mapped sugar must create one inventory requirement');
+preparation_contract_assert(($preparationRequirements[0]->ingredientItemId ?? 0) === 99, 'mapped sugar must consume the configured inventory item');
+preparation_contract_assert(($preparationRequirements[0]->requiredQtyBase ?? '') === '0.024000', 'inventory usage must multiply order quantity by spoon count and per-spoon quantity');
+
 $schema = new SyncSchemaManager();
 $planned = $schema->plannedStatements();
 preparation_contract_assert(isset($planned['item_preparation_configs']), 'preparation config schema must be planned');
@@ -78,12 +85,16 @@ preparation_contract_assert(strpos($receiptSource, 'بدون سكر') !== false,
 preparation_contract_assert(strpos($kotSource, 'بدون سكر') !== false, 'KOT must render explicit zero as no sugar');
 
 $categorySource = file_get_contents(__DIR__ . '/../../mygroups.php');
-preparation_contract_assert(strpos($categorySource, 'name="sugar_spoons_enabled"') !== false, 'existing category rows must expose the sugar allowance');
-preparation_contract_assert(strpos($categorySource, 'تحضير المشروب') === false, 'category flow must not introduce a separate preparation-management surface');
+preparation_contract_assert(strpos($categorySource, 'sugar_spoons_enabled') === false, 'category rows must not expose repetitive sugar controls');
 
 $itemsSource = file_get_contents(__DIR__ . '/../../myitems.php');
-preparation_contract_assert(strpos($itemsSource, 'item-sugar-toggle') !== false, 'existing item rows must expose direct sugar allowance');
-preparation_contract_assert(strpos($itemsSource, 'من التصنيف') !== false, 'item rows must explain inherited category allowance');
+preparation_contract_assert(strpos($itemsSource, 'إعداد السكر') !== false, 'item catalog must expose one sugar assignment button');
+preparation_contract_assert(strpos($itemsSource, 'id="sugarAssignmentsModal"') !== false, 'the assignment flow must stay in one modal');
+preparation_contract_assert(strpos($itemsSource, 'sugar-category-choice') !== false, 'the modal must support whole-category selection');
+preparation_contract_assert(strpos($itemsSource, 'sugar-item-checkbox') !== false, 'the modal must support searchable individual-item selection');
+preparation_contract_assert(strpos($itemsSource, '$sugarItemRows') !== false, 'the assignment modal must use a full catalog independent of table filters');
+preparation_contract_assert(strpos($itemsSource, 'item-sugar-toggle') === false, 'item rows must not expose repetitive sugar checkboxes');
+preparation_contract_assert(strpos($itemsSource, 'ajax/sugar_spoons_assignments_save.php') !== false, 'the modal must save all selections in one request');
 
 $editorSource = file_get_contents(__DIR__ . '/../../add_item.php');
 preparation_contract_assert(strpos($editorSource, 'sugar_spoons_inventory_item_id') === false, 'item editor must not mix inventory mapping into sugar allowance');
@@ -94,8 +105,12 @@ $cashierSource = file_get_contents(__DIR__ . '/../../js/pos_barcode.js');
 $apiSource = file_get_contents(__DIR__ . '/../../js/pos_order_api.js');
 preparation_contract_assert(strpos($cardSource, 'data-sugar-spoons') !== false, 'cashier item cards must carry sugar eligibility');
 preparation_contract_assert(strpos($cashierSource, 'بدون سكر') !== false, 'cashier must be able to explicitly choose zero sugar');
-preparation_contract_assert(strpos($cashierSource, 'sugarSpoonsChoice') !== false, 'cashier must get one-tap sugar choices');
+preparation_contract_assert(strpos($cashierSource, 'id="sugarSpoonsDecrease"') !== false, 'cashier sugar quantity must have a decrement control');
+preparation_contract_assert(strpos($cashierSource, 'id="sugarSpoonsIncrease"') !== false, 'cashier sugar quantity must have an increment control');
+preparation_contract_assert(strpos($cashierSource, 'id="sugarSpoonsValue"') !== false, 'cashier must be able to enter a spoon quantity directly');
+preparation_contract_assert(strpos($cashierSource, 'sugarSpoonsChoice') === false, 'cashier must not be constrained to fixed preset quantities');
 preparation_contract_assert(strpos($cashierSource, 'name="itmpreparation[]"') !== false, 'cashier cart must persist preparation values');
+preparation_contract_assert(strpos($cashierSource, "find('.preparationValuesInput').val() || '[]'") !== false, 'cart line grouping must include preparation values so different spoon counts remain separate');
 preparation_contract_assert(strpos($apiSource, 'payload.itmpreparation') !== false, 'POS API payload must carry preparation values');
 
 $kdsSource = file_get_contents(__DIR__ . '/../../classes/Pos/Service/KdsTicketService.php');
@@ -104,5 +119,11 @@ preparation_contract_assert(strpos($kdsSource, 'بدون سكر') !== false, 'KD
 
 $appConfigSource = file_get_contents(__DIR__ . '/../../config/app_config.php');
 preparation_contract_assert(strpos($appConfigSource, "['POSMAIN_PREPARATION_FIELDS_ENABLED'], '1'") !== false, 'sugar preparation must be enabled by default');
+
+$routeManifest = require __DIR__ . '/../../config/rbac_route_manifest.php';
+preparation_contract_assert(
+    ($routeManifest['ajax/sugar_spoons_assignments_save.php']['permission'] ?? '') === 'menu.edit',
+    'bulk sugar assignment must require menu editing permission'
+);
 
 echo "preparation_fields_contract_test: OK\n";

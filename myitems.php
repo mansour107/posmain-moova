@@ -92,9 +92,28 @@ $preparationService = new PreparationSelectionService();
 $preparationFieldsEnabled = $preparationService->isEnabled();
 $itemSugarStates = [];
 $categorySugarStates = [];
+$sugarCategoryRows = [];
+$sugarItemRows = [];
 if ($preparationFieldsEnabled) {
-    $itemSugarStates = $preparationService->itemSugarDirectStates($conn, array_column($itemRows, 'id'));
-    $categorySugarStates = $preparationService->categorySugarStates($conn, array_column($itemRows, 'group1'));
+    $sugarItemWhere = ['COALESCE(isdeleted, 0) = 0'];
+    if ($hasVariantTable) {
+        $sugarItemWhere[] = 'NOT EXISTS (
+            SELECT 1
+            FROM item_variants ivc
+            WHERE ivc.variant_item_id = myitems.id
+              AND ivc.is_active = 1
+        )';
+    }
+    $sugarItemResult = $conn->query(
+        'SELECT * FROM myitems WHERE ' . implode(' AND ', $sugarItemWhere) . ' ORDER BY iname ASC, id ASC'
+    );
+    $sugarItemRows = $sugarItemResult ? $sugarItemResult->fetch_all(MYSQLI_ASSOC) : [];
+    $itemSugarStates = $preparationService->itemSugarDirectStates($conn, array_column($sugarItemRows, 'id'));
+    $categoryResult = $conn->query('SELECT id, gname FROM item_group WHERE COALESCE(isdeleted, 0) = 0 ORDER BY gname, id');
+    while ($categoryResult && ($categoryRow = $categoryResult->fetch_assoc())) {
+        $sugarCategoryRows[] = $categoryRow;
+    }
+    $categorySugarStates = $preparationService->categorySugarStates($conn, array_column($sugarCategoryRows, 'id'));
 }
 ?>
 <div class="content-wrapper">
@@ -150,6 +169,12 @@ if ($preparationFieldsEnabled) {
                             <i class="fas fa-plus"></i>
                             صنف جديد
                         </a>
+                        <?php if ($preparationFieldsEnabled): ?>
+                            <button type="button" class="btn btn-outline-success" data-toggle="modal" data-target="#sugarAssignmentsModal">
+                                <i class="fas fa-cubes"></i>
+                                إعداد السكر
+                            </button>
+                        <?php endif; ?>
                         <a href="do/recost.php" class="btn btn-outline-secondary">
                             <i class="fas fa-calculator"></i>
                             إعادة حساب
@@ -197,9 +222,6 @@ if ($preparationFieldsEnabled) {
                                 <th>سعر البيع</th>
                                 <th>سعر الشراء</th>
                                 <th>سعر التكلفة</th>
-                                <?php if ($preparationFieldsEnabled): ?>
-                                    <th class="text-center">ملاعق السكر</th>
-                                <?php endif; ?>
                                 <th>عمليات</th>
                             </tr>
                         </thead>
@@ -209,8 +231,6 @@ if ($preparationFieldsEnabled) {
                             $itemid = (int) $rowitm['id'];
                             $editUrl = 'add_item.php?edit=' . $itemid;
                             $isActive = (int) ($rowitm['catalog_is_active'] ?? $rowitm['is_active'] ?? 1) === 1;
-                            $itemSugarEnabled = !empty($itemSugarStates[$itemid]);
-                            $categorySugarEnabled = !empty($categorySugarStates[(int) ($rowitm['group1'] ?? 0)]);
                             $resunt = $conn->query("SELECT iu.*, u.uname FROM item_units iu LEFT JOIN myunits u ON u.id = iu.unit_id WHERE iu.item_id = $itemid AND COALESCE(iu.isdeleted, 0) = 0 ORDER BY iu.id ASC");
                             $unitRows = [];
                             while ($r = $resunt->fetch_assoc()) {
@@ -278,20 +298,6 @@ if ($preparationFieldsEnabled) {
                                     <i class="fas fa-lock" aria-hidden="true"></i>
                                     <?= item_catalog_h(item_catalog_number($rowitm['cost_price'] ?? 0)) ?>
                                 </td>
-                                <?php if ($preparationFieldsEnabled): ?>
-                                    <td class="sugar-cell text-center">
-                                        <label class="sugar-toggle mb-0" title="<?= $categorySugarEnabled ? 'مسموح من التصنيف' : 'السماح للكاشير باختيار عدد ملاعق السكر' ?>">
-                                            <input
-                                                type="checkbox"
-                                                class="item-sugar-toggle"
-                                                data-item-id="<?= $itemid ?>"
-                                                <?= ($itemSugarEnabled || $categorySugarEnabled) ? 'checked' : '' ?>
-                                                <?= $categorySugarEnabled ? 'disabled' : '' ?>
-                                            >
-                                            <span><?= $categorySugarEnabled ? 'من التصنيف' : 'مسموح' ?></span>
-                                        </label>
-                                    </td>
-                                <?php endif; ?>
                                 <td class="ops-cell">
                                     <a class="catalog-op history-op" href="item_summery.php?id=<?= $itemid ?>" title="سجل الحركة">
                                         <i class="fas fa-history"></i>
@@ -339,7 +345,7 @@ if ($preparationFieldsEnabled) {
                         <?php endforeach; ?>
                         <?php if (count($itemRows) === 0): ?>
                             <tr>
-                                <td colspan="<?= $preparationFieldsEnabled ? 9 : 8 ?>" class="text-center text-muted py-4">
+                                <td colspan="8" class="text-center text-muted py-4">
                                     لا توجد أصناف بعد. أضف أول صنف من <a href="add_item.php">صفحة إضافة صنف</a>.
                                 </td>
                             </tr>
@@ -352,6 +358,93 @@ if ($preparationFieldsEnabled) {
         </div>
     </section>
 </div>
+
+<?php if ($preparationFieldsEnabled): ?>
+<div class="modal fade sugar-assignment-modal" id="sugarAssignmentsModal" tabindex="-1" role="dialog" aria-labelledby="sugarAssignmentsModalTitle" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-centered" role="document">
+        <div class="modal-content">
+            <div class="modal-header">
+                <div>
+                    <h4 class="modal-title" id="sugarAssignmentsModalTitle">الأصناف التي تسمح بإضافة السكر</h4>
+                    <p>اختر تصنيفاً كاملاً، أو اختر أصنافاً محددة فقط.</p>
+                </div>
+                <button type="button" class="close" data-dismiss="modal" aria-label="إغلاق">
+                    <span aria-hidden="true">&times;</span>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div id="sugarAssignmentsMessage" class="alert d-none" role="alert"></div>
+                <section class="sugar-assignment-section" aria-labelledby="sugarCategoryHeading">
+                    <div class="sugar-section-heading">
+                        <div>
+                            <h5 id="sugarCategoryHeading">التصنيفات</h5>
+                            <small>اختيار التصنيف يشمل أصنافه الحالية وأي صنف يضاف إليه مستقبلاً.</small>
+                        </div>
+                        <span class="sugar-selection-count" id="sugarCategoryCount">0 محدد</span>
+                    </div>
+                    <div class="sugar-category-grid">
+                        <?php foreach ($sugarCategoryRows as $categoryRow): ?>
+                            <?php $categoryId = (int) $categoryRow['id']; ?>
+                            <label class="sugar-choice-card">
+                                <input type="checkbox" class="sugar-category-choice" value="<?= $categoryId ?>" <?= !empty($categorySugarStates[$categoryId]) ? 'checked' : '' ?>>
+                                <span class="sugar-choice-check"><i class="fas fa-check"></i></span>
+                                <span><?= item_catalog_h($categoryRow['gname'] ?? '') ?></span>
+                            </label>
+                        <?php endforeach; ?>
+                        <?php if (!$sugarCategoryRows): ?>
+                            <p class="text-muted mb-0">لا توجد تصنيفات متاحة.</p>
+                        <?php endif; ?>
+                    </div>
+                </section>
+
+                <section class="sugar-assignment-section" aria-labelledby="sugarItemHeading">
+                    <div class="sugar-section-heading">
+                        <div>
+                            <h5 id="sugarItemHeading">أصناف محددة</h5>
+                            <small>استخدم البحث للوصول إلى أي صنف خارج التصنيفات المختارة.</small>
+                        </div>
+                        <span class="sugar-selection-count" id="sugarItemCount">0 محدد</span>
+                    </div>
+                    <div class="sugar-modal-search">
+                        <i class="fas fa-search"></i>
+                        <input type="search" id="sugarItemSearch" class="form-control" placeholder="ابحث باسم الصنف أو الباركود">
+                    </div>
+                    <div class="sugar-item-list" id="sugarItemList">
+                        <?php foreach ($sugarItemRows as $rowitm): ?>
+                            <?php
+                            $itemId = (int) $rowitm['id'];
+                            $itemGroupId = (int) ($rowitm['group1'] ?? 0);
+                            $itemSearch = item_catalog_h(implode(' ', [
+                                (string) ($rowitm['iname'] ?? ''),
+                                (string) ($rowitm['barcode'] ?? ''),
+                                (string) ($rowitm['name2'] ?? ''),
+                            ]));
+                            ?>
+                            <label class="sugar-item-choice" data-search="<?= $itemSearch ?>" data-group-id="<?= $itemGroupId ?>">
+                                <input type="checkbox" class="sugar-item-checkbox" value="<?= $itemId ?>" <?= !empty($itemSugarStates[$itemId]) ? 'checked' : '' ?>>
+                                <span class="sugar-choice-check"><i class="fas fa-check"></i></span>
+                                <span class="sugar-item-copy">
+                                    <strong><?= item_catalog_h($rowitm['iname'] ?? '') ?></strong>
+                                    <?php if (!empty($rowitm['barcode'])): ?><small><?= item_catalog_h($rowitm['barcode']) ?></small><?php endif; ?>
+                                </span>
+                                <span class="sugar-inherited-label">مشمول بالتصنيف</span>
+                            </label>
+                        <?php endforeach; ?>
+                        <p class="text-muted text-center py-3 mb-0 d-none" id="sugarNoSearchResults">لا توجد أصناف مطابقة للبحث.</p>
+                    </div>
+                </section>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-light" data-dismiss="modal">إلغاء</button>
+                <button type="button" class="btn btn-success" id="saveSugarAssignments">
+                    <span class="sugar-save-label"><i class="fas fa-check"></i> حفظ</span>
+                    <span class="sugar-save-progress d-none"><i class="fas fa-spinner fa-spin"></i> جارٍ الحفظ</span>
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+<?php endif; ?>
 
 <style>
 .item-catalog-page {
@@ -592,27 +685,6 @@ if ($preparationFieldsEnabled) {
     margin-left: 5px;
 }
 
-.sugar-toggle {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 6px;
-    color: #475569;
-    font-size: 12px;
-    font-weight: 800;
-    white-space: nowrap;
-}
-
-.sugar-toggle input {
-    width: 18px;
-    height: 18px;
-    accent-color: #0f766e;
-}
-
-.sugar-toggle input:disabled + span {
-    color: #0f766e;
-}
-
 .ops-cell {
     min-width: 270px;
     white-space: nowrap;
@@ -667,6 +739,253 @@ if ($preparationFieldsEnabled) {
     background: #fff1f2;
 }
 
+.sugar-assignment-modal {
+    direction: rtl;
+}
+
+.sugar-assignment-modal .modal-content {
+    border: 0;
+    border-radius: 14px;
+    overflow: hidden;
+    box-shadow: 0 24px 70px rgba(15, 23, 42, 0.22);
+}
+
+.sugar-assignment-modal .modal-header {
+    align-items: flex-start;
+    padding: 22px 24px;
+    color: #f8fafc;
+    background: #134e4a;
+    border: 0;
+}
+
+.sugar-assignment-modal .modal-header .close {
+    margin: -6px auto -6px -8px;
+    color: #ffffff;
+    opacity: 0.9;
+    text-shadow: none;
+}
+
+.sugar-assignment-modal .modal-title {
+    font-size: 21px;
+    font-weight: 900;
+}
+
+.sugar-assignment-modal .modal-header p {
+    margin: 5px 0 0;
+    color: #ccfbf1;
+    font-size: 13px;
+}
+
+.sugar-assignment-modal .modal-body {
+    padding: 22px 24px;
+    background: #f8fafc;
+}
+
+.sugar-assignment-section {
+    padding: 18px;
+    background: #ffffff;
+    border: 1px solid #dfe7ee;
+    border-radius: 12px;
+}
+
+.sugar-assignment-section + .sugar-assignment-section {
+    margin-top: 16px;
+}
+
+.sugar-section-heading {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 14px;
+    margin-bottom: 14px;
+}
+
+.sugar-section-heading h5 {
+    margin: 0 0 4px;
+    color: #0f172a;
+    font-size: 16px;
+    font-weight: 900;
+}
+
+.sugar-section-heading small {
+    color: #64748b;
+}
+
+.sugar-selection-count {
+    flex: 0 0 auto;
+    padding: 5px 9px;
+    color: #0f766e;
+    background: #ccfbf1;
+    border-radius: 8px;
+    font-size: 12px;
+    font-weight: 900;
+}
+
+.sugar-category-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 9px;
+}
+
+.sugar-choice-card,
+.sugar-item-choice {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 0;
+    color: #334155;
+    background: #ffffff;
+    border: 1px solid #d7e0ea;
+    border-radius: 9px;
+    cursor: pointer;
+    transition: border-color 0.15s ease, background-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.sugar-choice-card {
+    min-height: 46px;
+    padding: 9px 11px;
+    font-weight: 800;
+}
+
+.sugar-choice-card:hover,
+.sugar-item-choice:hover {
+    border-color: #5eead4;
+    box-shadow: 0 3px 12px rgba(15, 118, 110, 0.08);
+}
+
+.sugar-choice-card.is-selected,
+.sugar-item-choice.is-selected {
+    color: #115e59;
+    background: #f0fdfa;
+    border-color: #5eead4;
+}
+
+.sugar-choice-card input,
+.sugar-item-choice input {
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+}
+
+.sugar-choice-check {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 21px;
+    width: 21px;
+    height: 21px;
+    color: transparent;
+    border: 2px solid #cbd5e1;
+    border-radius: 6px;
+    font-size: 10px;
+}
+
+.sugar-choice-card input:checked + .sugar-choice-check,
+.sugar-item-choice input:checked + .sugar-choice-check {
+    color: #ffffff;
+    background: #0f766e;
+    border-color: #0f766e;
+}
+
+.sugar-modal-search {
+    position: relative;
+    margin-bottom: 10px;
+}
+
+.sugar-modal-search i {
+    position: absolute;
+    top: 50%;
+    right: 13px;
+    transform: translateY(-50%);
+    color: #64748b;
+}
+
+.sugar-modal-search .form-control {
+    height: 42px;
+    padding-right: 39px;
+    border-color: #d7e0ea;
+    border-radius: 9px;
+}
+
+.sugar-item-list {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+    max-height: 330px;
+    padding: 2px;
+    overflow: auto;
+}
+
+.sugar-item-choice {
+    min-height: 54px;
+    padding: 8px 10px;
+}
+
+.sugar-item-copy {
+    min-width: 0;
+}
+
+.sugar-item-copy strong,
+.sugar-item-copy small {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.sugar-item-copy strong {
+    color: #0f172a;
+    font-size: 13px;
+}
+
+.sugar-item-copy small {
+    margin-top: 2px;
+    color: #64748b;
+    direction: ltr;
+    text-align: right;
+}
+
+.sugar-item-choice.is-inherited {
+    background: #f8fafc;
+    border-color: #d7e0ea;
+    cursor: default;
+}
+
+.sugar-item-choice.is-inherited .sugar-choice-check {
+    color: #ffffff;
+    background: #0f766e;
+    border-color: #0f766e;
+}
+
+.sugar-inherited-label {
+    display: none;
+    margin-right: auto;
+    padding: 3px 6px;
+    color: #0f766e;
+    background: #ccfbf1;
+    border-radius: 6px;
+    font-size: 10px;
+    font-weight: 900;
+    white-space: nowrap;
+}
+
+.sugar-item-choice.is-inherited .sugar-inherited-label {
+    display: inline-flex;
+}
+
+.sugar-assignment-modal .modal-footer {
+    padding: 14px 24px;
+    background: #ffffff;
+    border-top-color: #e5eaf0;
+}
+
+.sugar-assignment-modal .modal-footer .btn {
+    min-width: 112px;
+    border-radius: 8px;
+    font-weight: 800;
+}
+
 @media (max-width: 991px) {
     .item-catalog-toolbar {
         align-items: stretch;
@@ -680,36 +999,107 @@ if ($preparationFieldsEnabled) {
     .item-catalog-search {
         min-width: 100%;
     }
+
+    .sugar-category-grid,
+    .sugar-item-list {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+@media (max-width: 575px) {
+    .sugar-category-grid,
+    .sugar-item-list {
+        grid-template-columns: 1fr;
+    }
 }
 </style>
 
 <script>
 $(document).ready(function() {
-    $('.item-sugar-toggle').on('change', function() {
-        var toggle = $(this);
-        var enabled = toggle.is(':checked');
-        toggle.prop('disabled', true);
+    function selectedSugarCategoryIds() {
+        return $('.sugar-category-choice:checked').map(function() { return String(this.value); }).get();
+    }
+
+    function selectedSugarItemIds() {
+        return $('.sugar-item-checkbox:checked').map(function() { return String(this.value); }).get();
+    }
+
+    function refreshSugarAssignmentState() {
+        var selectedCategories = selectedSugarCategoryIds();
+        var selectedCategoryMap = {};
+        selectedCategories.forEach(function(id) { selectedCategoryMap[id] = true; });
+
+        $('.sugar-choice-card').each(function() {
+            var card = $(this);
+            card.toggleClass('is-selected', card.find('.sugar-category-choice').prop('checked'));
+        });
+
+        $('.sugar-item-choice').each(function() {
+            var row = $(this);
+            var inherited = !!selectedCategoryMap[String(row.data('group-id') || '')];
+            row.toggleClass('is-inherited', inherited);
+            var checkbox = row.find('.sugar-item-checkbox');
+            row.toggleClass('is-selected', checkbox.prop('checked'));
+            checkbox.prop('disabled', inherited);
+        });
+
+        $('#sugarCategoryCount').text(selectedCategories.length + ' محدد');
+        $('#sugarItemCount').text(selectedSugarItemIds().length + ' محدد');
+    }
+
+    $('.sugar-category-choice, .sugar-item-checkbox').on('change', refreshSugarAssignmentState);
+
+    $('#sugarItemSearch').on('input', function() {
+        var query = String($(this).val() || '').trim().toLocaleLowerCase('ar');
+        var visibleCount = 0;
+        $('.sugar-item-choice').each(function() {
+            var row = $(this);
+            var matches = query === '' || String(row.data('search') || '').toLocaleLowerCase('ar').indexOf(query) !== -1;
+            row.toggleClass('d-none', !matches);
+            if (matches) {
+                visibleCount += 1;
+            }
+        });
+        $('#sugarNoSearchResults').toggleClass('d-none', visibleCount !== 0);
+    });
+
+    $('#saveSugarAssignments').on('click', function() {
+        var button = $(this);
+        var message = $('#sugarAssignmentsMessage');
+        button.prop('disabled', true);
+        button.find('.sugar-save-label').addClass('d-none');
+        button.find('.sugar-save-progress').removeClass('d-none');
+        message.addClass('d-none').removeClass('alert-danger alert-success').text('');
+
         $.ajax({
-            url: 'ajax/item_sugar_spoons_toggle.php',
+            url: 'ajax/sugar_spoons_assignments_save.php',
             method: 'POST',
             dataType: 'json',
             headers: { 'X-CSRF-Token': <?= json_encode(csrf_token('menu_write')) ?> },
             data: {
-                item_id: toggle.data('item-id'),
-                enabled: enabled ? 1 : 0
+                category_ids: selectedSugarCategoryIds(),
+                item_ids: selectedSugarItemIds()
             }
         }).done(function(response) {
             if (!response || response.success !== true) {
-                toggle.prop('checked', !enabled);
-                alert((response && response.message) || 'تعذر حفظ إعداد ملاعق السكر');
+                message.removeClass('d-none').addClass('alert-danger').text((response && response.message) || 'تعذر حفظ إعداد السكر.');
+                return;
             }
-        }).fail(function() {
-            toggle.prop('checked', !enabled);
-            alert('تعذر حفظ إعداد ملاعق السكر');
+            message.removeClass('d-none').addClass('alert-success').text('تم حفظ الأصناف التي تسمح بإضافة السكر.');
+            window.setTimeout(function() {
+                $('#sugarAssignmentsModal').modal('hide');
+            }, 450);
+        }).fail(function(xhr) {
+            var response = xhr.responseJSON || {};
+            message.removeClass('d-none').addClass('alert-danger').text(response.message || 'تعذر حفظ إعداد السكر. لم يتم تطبيق أي تغيير.');
         }).always(function() {
-            toggle.prop('disabled', false);
+            button.prop('disabled', false);
+            button.find('.sugar-save-label').removeClass('d-none');
+            button.find('.sugar-save-progress').addClass('d-none');
         });
     });
+
+    refreshSugarAssignmentState();
 
     $('#reset-manual-prices').click(function() {
         if (confirm('هل أنت متأكد من إعادة تعيين حماية الأسعار؟ سيتم إعادة حساب جميع الأسعار عند الضغط على إعادة حساب')) {

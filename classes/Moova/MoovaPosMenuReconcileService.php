@@ -17,6 +17,11 @@ class MoovaPosMenuReconcileService
 
     public function reconcileAfterIntegrationSave(mysqli $conn, array $savedLink, string $deviceToken, string $posOrigin): array
     {
+        return $this->reconcile($conn, $savedLink, $deviceToken, $posOrigin, 'posmain_integration_save');
+    }
+
+    public function reconcile(mysqli $conn, array $savedLink, string $deviceToken, string $posOrigin, string $source = 'posmain_catalog_worker'): array
+    {
         $token = trim($deviceToken);
         $moovaOrigin = $this->originFromWidgetUrl((string) ($savedLink['widget_url'] ?? ''));
         $publicOrigin = trim($posOrigin);
@@ -47,15 +52,10 @@ class MoovaPosMenuReconcileService
             ];
         }
 
+        // An empty authoritative snapshot is valid: it removes/deactivates all
+        // previously published items. Rejecting it would leave stale products
+        // orderable in Moova.
         $itemCount = count($menuPayload['menu']['items'] ?? []);
-        if ($itemCount < 1) {
-            return [
-                'attempted' => true,
-                'ok' => false,
-                'reason' => 'empty_menu',
-                'message' => 'لا توجد أصناف قابلة للبيع في الـ POS لمزامنتها مع Moova.',
-            ];
-        }
 
         $base = rtrim($publicOrigin, '/');
         $body = [
@@ -64,7 +64,7 @@ class MoovaPosMenuReconcileService
             'categoriesUrl' => $base . '/api/categories.php',
             'itemsUrl' => $base . '/api/items.php',
             'menuSyncMode' => 'full',
-            'source' => 'posmain_integration_save',
+            'source' => $source,
             'catalogVersion' => $menuPayload['catalogVersion'] ?? $menuPayload['fingerprint'] ?? null,
             'fingerprint' => $menuPayload['fingerprint'] ?? $menuPayload['catalogVersion'] ?? null,
             'menu' => $menuPayload['menu'] ?? ['categories' => [], 'items' => []],
@@ -78,28 +78,22 @@ class MoovaPosMenuReconcileService
             'summary' => $menuPayload['summary'] ?? null,
         ];
 
-        $registerResult = $this->postJson(
-            rtrim($moovaOrigin, '/') . self::REGISTER_PATH,
-            $token,
-            $publicOrigin,
-            $body
-        );
-        if ($registerResult['ok']) {
-            return $this->finalizeResult($registerResult, $moovaOrigin, $publicOrigin, 'register', $itemCount);
-        }
-
+        // Push the full snapshot directly. Moova never needs network access to
+        // the local POS, and sync therefore does not depend on the widget being
+        // open or on a routable shop URL.
         $reconcileResult = $this->postJson(
             rtrim($moovaOrigin, '/') . self::RECONCILE_PATH,
             $token,
             $publicOrigin,
             [
-                'source' => 'posmain_integration_save',
+                'source' => $source,
                 'force' => true,
                 'catalogVersion' => $body['catalogVersion'],
                 'fingerprint' => $body['fingerprint'],
                 'menu' => $body['menu'],
                 'rawPayload' => $body['rawPayload'],
                 'summary' => $body['summary'],
+                'publicOrigin' => $publicOrigin,
             ]
         );
 

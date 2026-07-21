@@ -83,7 +83,7 @@ businessDayContractAssert(strpos($routeManifest, 'do/do_set_business_day_cutoff.
 $closedSessions = file_get_contents(__DIR__ . '/../../closed_sessions.php');
 businessDayContractAssert(strpos($cashFlowPage, 'businessDayCutoffForm') !== false, 'cash workspace settings should expose cutoff UI');
 businessDayContractAssert(
-    strpos($closedSessions, "'tab' => 'shifts'") !== false
+    strpos($closedSessions, "'tab' => CashShiftWorkspaceService::TAB_SHIFTS") !== false
         && strpos($closedSessions, "'status' => 'needs_review'") !== false
         && strpos($closedSessions, "'scope' => 'backlog'") !== false,
     'closed_sessions should redirect to the unified backlog'

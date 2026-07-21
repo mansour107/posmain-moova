@@ -25,8 +25,9 @@ $activeMoovaLink = $moovaScope ? MoovaPosIntegration::findActiveLinkForScope($co
 $moovaCsrf = csrf_token('moova_integration');
 $moovaSyncCsrf = csrf_token('sync_credentials');
 
-$defaultWidgetUrl = $activeMoovaLink['widget_url'] ?? 'https://withmoova.com/pos-widget';
-$visibleDeviceToken = ($canManageMoova && $activeMoovaLink) ? (string) ($activeMoovaLink['moova_device_token'] ?? '') : '';
+$maskedDeviceToken = $activeMoovaLink
+    ? '•••• ' . htmlspecialchars((string) ($activeMoovaLink['moova_device_token_last4'] ?? ''), ENT_QUOTES, 'UTF-8')
+    : '';
 $moovaSyncSettings = (new SyncRuntimeSettings())->loadForUi($conn, true);
 $moovaSyncBool = static function (string $key, bool $default = false) use ($moovaSyncSettings): bool {
     if (isset($moovaSyncSettings[$key]) && !empty($moovaSyncSettings[$key]['configured'])) {
@@ -48,23 +49,6 @@ $moovaSyncBool = static function (string $key, bool $default = false) use ($moov
     return $default;
 };
 
-if ($visibleDeviceToken !== '') {
-    try {
-        (new SecurityAuditLogger())->record($conn, 'moova_device_token_viewed', [
-            'user_id' => $moovaUserId,
-            'tenant' => (int) ($moovaScope['tenant'] ?? 0),
-            'branch' => (int) ($moovaScope['branch'] ?? 0),
-            'target_type' => 'moova_pos_shop_link',
-            'target_id' => (int) ($activeMoovaLink['id'] ?? 0),
-            'metadata' => [
-                'moova_branch_id' => (string) ($activeMoovaLink['moova_branch_id'] ?? ''),
-                'device_token_last4' => (string) ($activeMoovaLink['moova_device_token_last4'] ?? substr($visibleDeviceToken, -4)),
-            ],
-        ]);
-    } catch (Throwable $ignored) {
-        error_log('[Moova POS] token view audit failed: ' . $ignored->getMessage());
-    }
-}
 ?>
 
 <div class="content-wrapper">
@@ -112,21 +96,13 @@ if ($visibleDeviceToken !== '') {
                   <div class="form-group">
                     <label for="moovaDeviceToken">Moova Device Token <?= $activeMoovaLink ? '' : '<span class="text-danger">*</span>' ?></label>
                     <input type="text" class="form-control" id="moovaDeviceToken"
-                           value="<?= htmlspecialchars($visibleDeviceToken, ENT_QUOTES, 'UTF-8') ?>"
-                           placeholder="الصق التوكن من صفحة Moova Admin"
+                           value=""
+                           placeholder="<?= $activeMoovaLink ? 'اتركه فارغاً للإبقاء على ' . $maskedDeviceToken : 'الصق التوكن من Moova' ?>"
                            dir="ltr" spellcheck="false" <?= $activeMoovaLink ? '' : 'required' ?>>
-                    <small class="form-text text-muted">هذا التوكن يحدد فرع Moova المرتبط بهذا الـ POS وسيظل ظاهرا هنا بعد الحفظ.</small>
+                    <small class="form-text text-muted">التوكن وحده يحدد المتجر والفرع. يُحفظ مشفراً ولا يظهر مرة أخرى.</small>
                   </div>
 
                   <div class="row">
-                    <div class="col-md-8">
-                      <div class="form-group">
-                        <label for="moovaWidgetUrl">Widget URL <span class="text-danger">*</span></label>
-                        <input type="url" class="form-control" id="moovaWidgetUrl" required
-                               value="<?= htmlspecialchars((string)$defaultWidgetUrl, ENT_QUOTES, 'UTF-8') ?>"
-                               placeholder="https://withmoova.com/pos-widget">
-                      </div>
-                    </div>
                     <div class="col-md-4">
                       <div class="form-group">
                         <label for="moovaLocale">لغة الودجت</label>
@@ -209,7 +185,17 @@ if ($visibleDeviceToken !== '') {
                   </dd>
                   <?php if ($activeMoovaLink): ?>
                     <dt class="col-5">Token</dt>
-                    <dd class="col-7 text-break" dir="ltr"><?= htmlspecialchars($visibleDeviceToken, ENT_QUOTES, 'UTF-8') ?></dd>
+                    <dd class="col-7 text-break" dir="ltr"><?= $maskedDeviceToken ?></dd>
+                    <dt class="col-5">متجر Moova</dt>
+                    <dd class="col-7"><?= htmlspecialchars((string)($activeMoovaLink['moova_shop_name'] ?: $activeMoovaLink['moova_shop_id']), ENT_QUOTES, 'UTF-8') ?></dd>
+                    <dt class="col-5">فرع Moova</dt>
+                    <dd class="col-7"><?= htmlspecialchars((string)($activeMoovaLink['moova_branch_name'] ?: $activeMoovaLink['moova_branch_id']), ENT_QUOTES, 'UTF-8') ?></dd>
+                    <dt class="col-5">آخر مزامنة</dt>
+                    <dd class="col-7"><?= htmlspecialchars((string)($activeMoovaLink['last_catalog_synced_at'] ?? 'لم تكتمل بعد'), ENT_QUOTES, 'UTF-8') ?></dd>
+                    <?php if (!empty($activeMoovaLink['last_catalog_error'])): ?>
+                      <dt class="col-5">حالة المزامنة</dt>
+                      <dd class="col-7 text-danger"><?= htmlspecialchars((string)$activeMoovaLink['last_catalog_error'], ENT_QUOTES, 'UTF-8') ?></dd>
+                    <?php endif; ?>
                     <dt class="col-5">آخر تعديل</dt>
                     <dd class="col-7"><?= htmlspecialchars((string)$activeMoovaLink['updated_at'], ENT_QUOTES, 'UTF-8') ?></dd>
                   <?php endif; ?>
@@ -248,7 +234,6 @@ document.addEventListener('DOMContentLoaded', function () {
     return {
       csrf: document.getElementById('moovaCsrf').value,
       deviceToken: document.getElementById('moovaDeviceToken').value.trim(),
-      widgetUrl: document.getElementById('moovaWidgetUrl').value.trim(),
       locale: document.getElementById('moovaLocale').value
     };
   }

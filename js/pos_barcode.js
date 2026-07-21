@@ -1997,6 +1997,15 @@ $(document).ready(function() {
 
     let activeVariantContext = null;
     let activeSugarContext = null;
+    const SUGAR_SPOONS_SAFETY_LIMIT = 999;
+
+    function normalizeSugarSpoons(value) {
+        const parsed = parseInt(value, 10);
+        if (!Number.isFinite(parsed)) {
+            return 0;
+        }
+        return Math.max(0, Math.min(SUGAR_SPOONS_SAFETY_LIMIT, parsed));
+    }
 
     function fetchItemVariants(itemId) {
         return $.ajax({
@@ -2066,24 +2075,49 @@ $(document).ready(function() {
             return;
         }
 
+        if ($('#sugarSpoonsModalStyles').length === 0) {
+            $('head').append(`
+                <style id="sugarSpoonsModalStyles">
+                    #sugarSpoonsModal { direction: rtl; }
+                    #sugarSpoonsModal .modal-content { border:0; border-radius:14px; overflow:hidden; box-shadow:0 24px 70px rgba(15,23,42,.24); }
+                    #sugarSpoonsModal .modal-header { align-items:flex-start; padding:20px 22px; color:#f8fafc; background:#134e4a; border:0; }
+                    #sugarSpoonsModal .modal-title { font-size:20px; font-weight:900; }
+                    #sugarSpoonsModal .sugar-item-name { margin-top:5px; color:#ccfbf1; font-size:13px; }
+                    #sugarSpoonsModal .modal-body { padding:28px 22px; text-align:center; background:#f8fafc; }
+                    #sugarSpoonsModal .sugar-counter { display:grid; grid-template-columns:64px minmax(110px,1fr) 64px; gap:10px; max-width:330px; margin:0 auto; direction:ltr; }
+                    #sugarSpoonsModal .sugar-counter button { height:58px; border-radius:11px; font-size:27px; font-weight:900; }
+                    #sugarSpoonsModal .sugar-counter input { height:58px; color:#0f172a; background:#fff; border:2px solid #99f6e4; border-radius:11px; font-size:25px; font-weight:900; text-align:center; }
+                    #sugarSpoonsModal .sugar-counter input::-webkit-inner-spin-button { display:none; }
+                    #sugarSpoonsModal .sugar-counter-state { min-height:24px; margin-top:12px; color:#0f766e; font-weight:900; }
+                    #sugarSpoonsModal .sugar-counter-error { min-height:20px; margin-top:5px; color:#b91c1c; font-size:12px; font-weight:800; }
+                    #sugarSpoonsModal .modal-footer { padding:13px 22px; background:#fff; border-top-color:#e5eaf0; }
+                    #sugarSpoonsModal .modal-footer .btn { min-width:105px; border-radius:8px; font-weight:800; }
+                </style>
+            `);
+        }
         $('body').append(`
             <div class="modal" id="sugarSpoonsModal" tabindex="-1" aria-labelledby="sugarSpoonsModalLabel" aria-hidden="true">
                 <div class="modal-dialog modal-dialog-centered">
                     <div class="modal-content">
                         <div class="modal-header">
-                            <h5 class="modal-title" id="sugarSpoonsModalLabel">عدد ملاعق السكر</h5>
-                            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="إغلاق"></button>
+                            <div>
+                                <h5 class="modal-title" id="sugarSpoonsModalLabel">عدد ملاعق السكر</h5>
+                                <div class="sugar-item-name" id="sugarSpoonsItemName"></div>
+                            </div>
+                            <button type="button" class="close text-white" data-dismiss="modal" data-bs-dismiss="modal" aria-label="إغلاق"><span aria-hidden="true">&times;</span></button>
                         </div>
                         <div class="modal-body">
-                            <div class="fw-bold mb-3" id="sugarSpoonsItemName"></div>
-                            <div class="d-grid gap-2" style="grid-template-columns:repeat(3,minmax(0,1fr))">
-                                <button type="button" class="btn btn-outline-secondary sugarSpoonsChoice" data-value="0">بدون سكر</button>
-                                <button type="button" class="btn btn-outline-primary sugarSpoonsChoice" data-value="1">1</button>
-                                <button type="button" class="btn btn-outline-primary sugarSpoonsChoice" data-value="2">2</button>
-                                <button type="button" class="btn btn-outline-primary sugarSpoonsChoice" data-value="3">3</button>
-                                <button type="button" class="btn btn-outline-primary sugarSpoonsChoice" data-value="4">4</button>
-                                <button type="button" class="btn btn-outline-primary sugarSpoonsChoice" data-value="5">5</button>
+                            <div class="sugar-counter">
+                                <button type="button" class="btn btn-outline-secondary" id="sugarSpoonsDecrease" aria-label="تقليل عدد ملاعق السكر">−</button>
+                                <input type="number" id="sugarSpoonsValue" value="0" min="0" step="1" inputmode="numeric" aria-label="عدد ملاعق السكر">
+                                <button type="button" class="btn btn-success" id="sugarSpoonsIncrease" aria-label="زيادة عدد ملاعق السكر">+</button>
                             </div>
+                            <div class="sugar-counter-state" id="sugarSpoonsState">بدون سكر</div>
+                            <div class="sugar-counter-error" id="sugarSpoonsError" aria-live="polite"></div>
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-light" data-dismiss="modal" data-bs-dismiss="modal">إلغاء</button>
+                            <button type="button" class="btn btn-success" id="sugarSpoonsConfirm">إضافة للصنف</button>
                         </div>
                     </div>
                 </div>
@@ -2121,6 +2155,9 @@ $(document).ready(function() {
                 options: options
             };
             $('#sugarSpoonsItemName').text(name || '');
+            $('#sugarSpoonsValue').val(0);
+            $('#sugarSpoonsState').text('بدون سكر');
+            $('#sugarSpoonsError').text('');
             toggleSugarSpoonsModal(true);
             return;
         }
@@ -2134,7 +2171,7 @@ $(document).ready(function() {
         for (let index = 0; index < values.length; index += 1) {
             const value = values[index] || {};
             if (String(value.code || value.field_code || '') === 'sugar_spoons') {
-                return Math.max(0, Math.min(5, parseInt(value.value !== undefined ? value.value : value.selected_value, 10) || 0));
+                return normalizeSugarSpoons(value.value !== undefined ? value.value : value.selected_value);
             }
         }
         return null;
@@ -2232,7 +2269,7 @@ $(document).ready(function() {
             && options.sugarSpoons !== null
             && options.sugarSpoons !== undefined;
         const sugarSpoons = hasSugarSelection
-            ? Math.max(0, Math.min(5, parseInt(options.sugarSpoons, 10) || 0))
+            ? normalizeSugarSpoons(options.sugarSpoons)
             : null;
         const preparationValues = sugarSpoons === null
             ? []
@@ -3602,13 +3639,57 @@ $(document).ready(function() {
         activeVariantContext = null;
     });
 
-    $(document).on('click', '.sugarSpoonsChoice', function() {
+    function refreshSugarSpoonsCounter(value) {
+        const normalized = normalizeSugarSpoons(value);
+        $('#sugarSpoonsValue').val(normalized);
+        $('#sugarSpoonsState').text(normalized === 0 ? 'بدون سكر' : normalized + ' ملعقة سكر');
+        $('#sugarSpoonsError').text('');
+        return normalized;
+    }
+
+    $(document).on('click', '#sugarSpoonsDecrease', function() {
+        refreshSugarSpoonsCounter(normalizeSugarSpoons($('#sugarSpoonsValue').val()) - 1);
+    });
+
+    $(document).on('click', '#sugarSpoonsIncrease', function() {
+        refreshSugarSpoonsCounter(normalizeSugarSpoons($('#sugarSpoonsValue').val()) + 1);
+    });
+
+    $(document).on('input', '#sugarSpoonsValue', function() {
+        const raw = String($(this).val() || '');
+        if (raw === '') {
+            $('#sugarSpoonsState').text('');
+            $('#sugarSpoonsError').text('');
+            return;
+        }
+        if (!/^\d+$/.test(raw) || parseInt(raw, 10) > SUGAR_SPOONS_SAFETY_LIMIT) {
+            $('#sugarSpoonsError').text('أدخل عدداً صحيحاً من الملاعق.');
+            return;
+        }
+        $('#sugarSpoonsState').text(parseInt(raw, 10) === 0 ? 'بدون سكر' : parseInt(raw, 10) + ' ملعقة سكر');
+        $('#sugarSpoonsError').text('');
+    });
+
+    $(document).on('keydown', '#sugarSpoonsValue', function(event) {
+        if (event.key === 'Enter') {
+            event.preventDefault();
+            $('#sugarSpoonsConfirm').trigger('click');
+        }
+    });
+
+    $(document).on('click', '#sugarSpoonsConfirm', function() {
         if (!activeSugarContext) {
+            return;
+        }
+        const raw = String($('#sugarSpoonsValue').val() || '');
+        if (!/^\d+$/.test(raw) || parseInt(raw, 10) > SUGAR_SPOONS_SAFETY_LIMIT) {
+            $('#sugarSpoonsError').text('أدخل عدداً صحيحاً من الملاعق.');
+            $('#sugarSpoonsValue').focus();
             return;
         }
         const context = activeSugarContext;
         const options = Object.assign({}, context.options || {}, {
-            sugarSpoons: Math.max(0, Math.min(5, parseInt($(this).data('value'), 10) || 0))
+            sugarSpoons: normalizeSugarSpoons(raw)
         });
         activeSugarContext = null;
         toggleSugarSpoonsModal(false);

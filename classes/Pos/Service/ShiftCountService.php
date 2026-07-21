@@ -209,6 +209,10 @@ class ShiftCountService
         }
 
         $sessionId = (int) $drawerSession['id'];
+        $recordedAttempts = $this->sessionPhaseAttemptCount($conn, $sessionId, 'close');
+        if ($recordedAttempts >= self::MAX_ATTEMPTS) {
+            throw new RuntimeException('CLOSE_COUNT_MAX_ATTEMPTS');
+        }
         $existing = $_SESSION['pos_shift_close_count'] ?? null;
         $canResume = is_array($existing)
             && (int) ($existing['user_id'] ?? 0) === $userId
@@ -216,10 +220,14 @@ class ShiftCountService
             && (time() - (int) ($existing['started_at'] ?? 0)) <= self::TOKEN_TTL_SECONDS;
 
         if ($canResume) {
-            $attemptNumber = (int) ($existing['attempt_number'] ?? 0);
+            // The database is authoritative. PHP session state is scoped to a
+            // browser/user, so it cannot enforce a drawer-wide limit by itself.
+            $attemptNumber = $recordedAttempts;
             if ($attemptNumber >= self::MAX_ATTEMPTS) {
                 throw new RuntimeException('CLOSE_COUNT_MAX_ATTEMPTS');
             }
+
+            $existing['attempt_number'] = $attemptNumber;
 
             $token = (string) ($existing['token'] ?? '');
             if ($token === '') {
@@ -254,7 +262,7 @@ class ShiftCountService
             'drawer_session_id' => $sessionId,
             'expected' => $expected,
             'tolerance' => $tolerance,
-            'attempt_number' => 0,
+            'attempt_number' => $recordedAttempts,
             'attempt_ids' => [],
             'token' => $token,
             'started_at' => time(),
@@ -262,7 +270,7 @@ class ShiftCountService
 
         return [
             'phase' => 'close',
-            'attempt_number' => 0,
+            'attempt_number' => $recordedAttempts,
             'max_attempts' => self::MAX_ATTEMPTS,
             'drawer_session_id' => $sessionId,
             'close_token' => $token,
@@ -303,11 +311,6 @@ class ShiftCountService
             throw new RuntimeException('CLOSE_EXPECTED_DRIFTED');
         }
 
-        $attemptNumber = (int) ($state['attempt_number'] ?? 0) + 1;
-        if ($attemptNumber > self::MAX_ATTEMPTS) {
-            throw new RuntimeException('CLOSE_COUNT_MAX_ATTEMPTS');
-        }
-
         $counted = round((float) $countedAmount, 3);
         if ($counted < 0) {
             throw new RuntimeException('COUNTED_AMOUNT_INVALID');
@@ -316,10 +319,9 @@ class ShiftCountService
         $variance = round($counted - $snapshotExpected, 3);
         $matched = $this->floatExpectation->amountsMatch($counted, $snapshotExpected, $tolerance);
 
-        $attemptId = $this->recordCountAttempt($conn, [
+        $recordedAttempt = $this->recordLimitedSessionCountAttempt($conn, [
             'drawer_session_id' => $sessionId,
             'count_phase' => 'close',
-            'attempt_number' => $attemptNumber,
             'counted_amount' => $counted,
             'expected_amount' => $snapshotExpected,
             'variance' => $variance,
@@ -328,7 +330,9 @@ class ShiftCountService
             'tenant' => (int) ($drawerSession['tenant'] ?? 0),
             'branch' => (int) ($drawerSession['branch'] ?? 0),
             'created_by' => $userId,
-        ]);
+        ], $context, 'CLOSE_COUNT_MAX_ATTEMPTS');
+        $attemptId = (int) $recordedAttempt['id'];
+        $attemptNumber = (int) $recordedAttempt['attempt_number'];
 
         $state['attempt_number'] = $attemptNumber;
         $state['attempt_ids'][] = $attemptId;
@@ -404,23 +408,30 @@ class ShiftCountService
 
         $expected = (float) $this->drawerSessions->expectedCash($conn, $blockingSessionId);
         $tolerance = $this->floatExpectation->toleranceForBranch($conn, $scope['tenant'], $scope['branch']);
+        $recordedAttempts = $this->sessionPhaseAttemptCount($conn, $blockingSessionId, 'close');
+        $attemptsExhausted = $recordedAttempts >= self::MAX_ATTEMPTS;
 
         $_SESSION['pos_shift_takeover_close_count'] = [
             'user_id' => $userId,
             'drawer_session_id' => $blockingSessionId,
             'expected' => $expected,
             'tolerance' => $tolerance,
-            'attempt_number' => 0,
+            'attempt_number' => min($recordedAttempts, self::MAX_ATTEMPTS),
             'attempt_ids' => [],
+            'attempts_exhausted' => $attemptsExhausted,
             'finalized' => false,
             'started_at' => time(),
         ];
 
         return [
             'phase' => 'takeover_close',
-            'attempt_number' => 0,
+            'attempt_number' => min($recordedAttempts, self::MAX_ATTEMPTS),
             'max_attempts' => self::MAX_ATTEMPTS,
             'drawer_session_id' => $blockingSessionId,
+            'status' => $attemptsExhausted ? 'final_amount_required' : 'count_required',
+            'message' => $attemptsExhausted
+                ? 'تم استخدام محاولتي العد. أدخل المبلغ النهائي لاعتماده عند الإغلاق.'
+                : 'أدخل المبلغ المعدود في الدرج.',
         ];
     }
 
@@ -456,11 +467,6 @@ class ShiftCountService
             throw new RuntimeException('CLOSE_EXPECTED_DRIFTED');
         }
 
-        $attemptNumber = (int) ($state['attempt_number'] ?? 0) + 1;
-        if ($attemptNumber > self::MAX_ATTEMPTS) {
-            throw new RuntimeException('TAKEOVER_CLOSE_COUNT_MAX_ATTEMPTS');
-        }
-
         $counted = round((float) $countedAmount, 3);
         if ($counted < 0) {
             throw new RuntimeException('COUNTED_AMOUNT_INVALID');
@@ -469,28 +475,53 @@ class ShiftCountService
         $variance = round($counted - $snapshotExpected, 3);
         $matched = $this->floatExpectation->amountsMatch($counted, $snapshotExpected, $tolerance);
 
-        $attemptId = $this->recordCountAttempt($conn, [
-            'drawer_session_id' => $sessionId,
-            'count_phase' => 'close',
-            'attempt_number' => $attemptNumber,
-            'counted_amount' => $counted,
-            'expected_amount' => $snapshotExpected,
-            'variance' => $variance,
-            'matched' => $matched,
-            'expected_snapshot_json' => [
-                'expected_cash' => $snapshotExpected,
-                'takeover' => true,
-            ],
-            'tenant' => (int) ($drawerSession['tenant'] ?? 0),
-            'branch' => (int) ($drawerSession['branch'] ?? 0),
-            'created_by' => $userId,
-        ]);
+        $attemptsExhausted = !empty($state['attempts_exhausted'])
+            || $this->sessionPhaseAttemptCount($conn, $sessionId, 'close') >= self::MAX_ATTEMPTS;
+        $attemptNumber = min(
+            self::MAX_ATTEMPTS,
+            max(0, (int) ($state['attempt_number'] ?? 0)) + ($attemptsExhausted ? 0 : 1)
+        );
+        $attemptId = 0;
+
+        if (!$attemptsExhausted) {
+            try {
+                $recordedAttempt = $this->recordLimitedSessionCountAttempt($conn, [
+                    'drawer_session_id' => $sessionId,
+                    'count_phase' => 'close',
+                    'counted_amount' => $counted,
+                    'expected_amount' => $snapshotExpected,
+                    'variance' => $variance,
+                    'matched' => $matched,
+                    'expected_snapshot_json' => [
+                        'expected_cash' => $snapshotExpected,
+                        'takeover' => true,
+                    ],
+                    'tenant' => (int) ($drawerSession['tenant'] ?? 0),
+                    'branch' => (int) ($drawerSession['branch'] ?? 0),
+                    'created_by' => $userId,
+                ], $context, 'TAKEOVER_CLOSE_COUNT_MAX_ATTEMPTS');
+                $attemptId = (int) $recordedAttempt['id'];
+                $attemptNumber = (int) $recordedAttempt['attempt_number'];
+            } catch (RuntimeException $exception) {
+                if ($exception->getMessage() !== 'TAKEOVER_CLOSE_COUNT_MAX_ATTEMPTS') {
+                    throw $exception;
+                }
+                // Another request used the final slot after this flow began.
+                // Continue as an authorised finalisation without creating a
+                // third count-attempt row.
+                $attemptsExhausted = true;
+                $attemptNumber = self::MAX_ATTEMPTS;
+            }
+        }
 
         $state['attempt_number'] = $attemptNumber;
-        $state['attempt_ids'][] = $attemptId;
+        $state['attempts_exhausted'] = $attemptsExhausted;
+        if ($attemptId > 0) {
+            $state['attempt_ids'][] = $attemptId;
+        }
         $_SESSION['pos_shift_takeover_close_count'] = $state;
 
-        if ($matched || $attemptNumber >= self::MAX_ATTEMPTS) {
+        if ($matched || $attemptNumber >= self::MAX_ATTEMPTS || $attemptsExhausted) {
             $direction = $variance > 0.0001 ? 'over' : ($variance < -0.0001 ? 'under' : 'balanced');
             $state['finalized'] = true;
             $state['counted_cash'] = $counted;
@@ -516,6 +547,7 @@ class ShiftCountService
                 'variance' => $variance,
                 'variance_direction' => $direction,
                 'drawer_session_id' => $sessionId,
+                'count_source' => $attemptsExhausted ? 'manager_finalization' : 'count_attempt',
                 'message' => $message,
             ];
         }
@@ -1344,6 +1376,79 @@ class ShiftCountService
             $stmt->bind_param('ii', $sessionId, $attemptId);
             $stmt->execute();
             $stmt->close();
+        }
+    }
+
+    private function sessionPhaseAttemptCount(mysqli $conn, int $sessionId, string $phase): int
+    {
+        if ($sessionId < 1 || !$this->tableExists($conn, 'drawer_count_attempts')) {
+            return 0;
+        }
+
+        $stmt = $conn->prepare('
+            SELECT COUNT(*) AS attempt_count
+            FROM drawer_count_attempts
+            WHERE drawer_session_id = ? AND count_phase = ?
+        ');
+        $stmt->bind_param('is', $sessionId, $phase);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc() ?: [];
+        $stmt->close();
+
+        return (int) ($row['attempt_count'] ?? 0);
+    }
+
+    /**
+     * Reserve and record one session-scoped attempt while holding the drawer
+     * row lock. This makes the two-attempt limit authoritative across users,
+     * browser sessions, refreshes, and takeover flows.
+     *
+     * @return array{id:int,attempt_number:int}
+     */
+    private function recordLimitedSessionCountAttempt(
+        mysqli $conn,
+        array $data,
+        array $context,
+        string $maxAttemptsError
+    ): array {
+        require_once dirname(__DIR__, 3) . '/includes/db_transaction.php';
+
+        $sessionId = (int) ($data['drawer_session_id'] ?? 0);
+        $phase = (string) ($data['count_phase'] ?? '');
+        if ($sessionId < 1 || !in_array($phase, ['open', 'close'], true)) {
+            throw new RuntimeException('COUNT_ATTEMPT_SCOPE_INVALID');
+        }
+
+        $ownsTransaction = posmain_tx_begin_if_needed($conn, posmain_tx_context_in_transaction($context));
+
+        try {
+            $lock = $conn->prepare('SELECT id FROM drawer_sessions WHERE id = ? FOR UPDATE');
+            $lock->bind_param('i', $sessionId);
+            $lock->execute();
+            $lockedRow = $lock->get_result()->fetch_assoc();
+            $lock->close();
+            if (!$lockedRow) {
+                throw new RuntimeException('DRAWER_SESSION_REQUIRED');
+            }
+
+            $recordedAttempts = $this->sessionPhaseAttemptCount($conn, $sessionId, $phase);
+            if ($recordedAttempts >= self::MAX_ATTEMPTS) {
+                throw new RuntimeException($maxAttemptsError);
+            }
+
+            $attemptNumber = $recordedAttempts + 1;
+            $data['attempt_number'] = $attemptNumber;
+            $attemptId = $this->recordCountAttempt($conn, $data);
+
+            posmain_tx_commit_if_owned($conn, $ownsTransaction);
+
+            return [
+                'id' => $attemptId,
+                'attempt_number' => $attemptNumber,
+            ];
+        } catch (Throwable $exception) {
+            posmain_tx_rollback_if_owned($conn, $ownsTransaction);
+            throw $exception;
         }
     }
 

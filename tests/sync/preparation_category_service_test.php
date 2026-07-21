@@ -21,6 +21,7 @@ try {
     $conn->query("CREATE DATABASE `{$db}` CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci");
     $conn->select_db($db);
     $conn->query('CREATE TABLE myitems (id BIGINT NOT NULL PRIMARY KEY, group1 BIGINT NOT NULL DEFAULT 0, isdeleted TINYINT NOT NULL DEFAULT 0) ENGINE=InnoDB');
+    $conn->query('CREATE TABLE item_group (id BIGINT NOT NULL PRIMARY KEY, gname VARCHAR(120) NOT NULL, isdeleted TINYINT NOT NULL DEFAULT 0) ENGINE=InnoDB');
     $conn->query('CREATE TABLE item_variants (id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY, parent_item_id BIGINT NOT NULL, variant_item_id BIGINT NOT NULL, is_active TINYINT NOT NULL DEFAULT 1) ENGINE=InnoDB');
 
     $planned = (new SyncSchemaManager())->plannedStatements();
@@ -29,6 +30,7 @@ try {
     $conn->query($planned['order_line_preparation_values']);
 
     $conn->query('INSERT INTO myitems (id, group1, isdeleted) VALUES (10, 7, 0), (11, 7, 0), (12, 8, 0), (13, 99, 0)');
+    $conn->query("INSERT INTO item_group (id, gname, isdeleted) VALUES (7, 'Hot drinks', 0), (8, 'Cold drinks', 0), (9, 'Deleted', 1)");
     $conn->query('INSERT INTO item_variants (parent_item_id, variant_item_id, is_active) VALUES (10, 13, 1)');
 
     $service = new PreparationSelectionService();
@@ -42,6 +44,8 @@ try {
 
     $validatedZero = $service->validateForItem($conn, 10, [['code' => 'sugar_spoons', 'value' => 0]], $enabled);
     preparationCategoryAssert(($validatedZero[0]['value'] ?? null) === 0, 'zero sugar must remain an explicit valid kitchen instruction');
+    $validatedLarge = $service->validateForItem($conn, 10, [['code' => 'sugar_spoons', 'value' => 27]], $enabled);
+    preparationCategoryAssert(($validatedLarge[0]['value'] ?? null) === 27, 'normal cashier quantities must not be limited to five');
 
     $requiredThrown = false;
     try {
@@ -64,6 +68,38 @@ try {
     $service->setCategorySugarAllowed($conn, 7, false, 4);
     preparationCategoryAssert(!$service->itemAllowsSugarSpoons($conn, 10, $enabled), 'disabling a category must remove inherited allowance');
     preparationCategoryAssert($service->itemAllowsSugarSpoons($conn, 12, $enabled), 'disabling a category must not remove direct item allowance');
+
+    $conn->begin_transaction();
+    $replacement = $service->replaceSugarAssignments($conn, [7], [12], 4);
+    $conn->commit();
+    preparationCategoryAssert($replacement['changed_category_ids'] === [7], 'bulk replacement must report the changed category');
+    preparationCategoryAssert($service->itemAllowsSugarSpoons($conn, 10, $enabled), 'bulk-selected category must enable all current category items');
+    preparationCategoryAssert($service->itemAllowsSugarSpoons($conn, 12, $enabled), 'bulk-selected individual item must remain enabled');
+
+    $conn->begin_transaction();
+    $replacement = $service->replaceSugarAssignments($conn, [8], [11], 4);
+    $conn->commit();
+    preparationCategoryAssert($replacement['changed_category_ids'] === [7, 8], 'bulk replacement must disable removed categories and enable selected categories');
+    preparationCategoryAssert($replacement['changed_item_ids'] === [11, 12], 'bulk replacement must disable removed items and enable selected items');
+    preparationCategoryAssert(!$service->itemAllowsSugarSpoons($conn, 10, $enabled), 'removed category must no longer enable its unselected item');
+    preparationCategoryAssert($service->itemAllowsSugarSpoons($conn, 11, $enabled), 'explicit item selection must work outside category inheritance');
+    preparationCategoryAssert($service->itemAllowsSugarSpoons($conn, 12, $enabled), 'new category selection must enable its items');
+
+    $invalidOwnerThrown = false;
+    try {
+        $service->replaceSugarAssignments($conn, [9], [], 4);
+    } catch (InvalidArgumentException $exception) {
+        $invalidOwnerThrown = $exception->getMessage() === 'PREPARATION_ASSIGNMENT_OWNER_INVALID';
+    }
+    preparationCategoryAssert($invalidOwnerThrown, 'bulk replacement must reject deleted or unknown owners');
+    preparationCategoryAssert($service->itemAllowsSugarSpoons($conn, 11, $enabled), 'rejected bulk replacement must preserve existing item assignments');
+    preparationCategoryAssert($service->itemAllowsSugarSpoons($conn, 12, $enabled), 'rejected bulk replacement must preserve existing category assignments');
+
+    $conn->begin_transaction();
+    $noChanges = $service->replaceSugarAssignments($conn, [8], [11], 4);
+    $conn->commit();
+    preparationCategoryAssert($noChanges['changed_category_ids'] === [], 'saving unchanged category assignments must be idempotent');
+    preparationCategoryAssert($noChanges['changed_item_ids'] === [], 'saving unchanged item assignments must be idempotent');
 
     echo "preparation-category-service-ok db={$db}\n";
 } finally {

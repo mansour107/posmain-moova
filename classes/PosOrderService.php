@@ -711,53 +711,12 @@ class PosOrderService
             return $mapped;
         }
 
-        $exactTable = $this->queryOne($conn, "
-            SELECT *
-            FROM tables
-            WHERE isdeleted = 0
-              AND (
-                  CAST(branch AS CHAR) = CAST(? AS CHAR)
-                  OR (? = 0 AND (branch IS NULL OR branch = '' OR branch = '0'))
-              )
-              AND (CAST(id AS CHAR) = ? OR tname = ?)
-            ORDER BY id ASC
-            LIMIT 1
-        ", [$branch, $branch, $tableToken, $tableToken]);
-
-        if ($exactTable) {
-            $this->persistLearnedTableLink($conn, $tenant, $branch, $moovaBranchId, $tableToken, (int) $exactTable['id']);
-
-            return $exactTable;
-        }
-
-        $namedTable = $this->queryOne($conn, "
-            SELECT *
-            FROM tables
-            WHERE isdeleted = 0
-              AND (
-                  CAST(branch AS CHAR) = CAST(? AS CHAR)
-                  OR (? = 0 AND (branch IS NULL OR branch = '' OR branch = '0'))
-              )
-              AND tname = ?
-            ORDER BY id ASC
-            LIMIT 1
-        ", [$branch, $branch, 'طاولة ' . $tableToken]);
-
-        if ($namedTable) {
-            $this->persistLearnedTableLink($conn, $tenant, $branch, $moovaBranchId, $tableToken, (int) $namedTable['id']);
-
-            return $namedTable;
-        }
-
-        throw new Exception('TABLE_NOT_FOUND');
-    }
-
-    private function persistLearnedTableLink(mysqli $conn, $tenant, $branch, $moovaBranchId, $moovaTableId, $posTableId)
-    {
-        MoovaPosIntegration::upsertTableLink($conn, [
-            'tenant' => (int) $tenant,
-            'branch' => (int) $branch,
-        ], $moovaBranchId, $moovaTableId, $posTableId);
+        // A Moova table identifier is an external identifier, not a POS table
+        // number or name. Never guess or learn this mapping while accepting an
+        // order: a coincidental match can route a multi-tenant order to the
+        // wrong physical table. Table links are created explicitly by the
+        // authoritative table reconciliation flow.
+        throw new Exception('TABLE_MAPPING_REQUIRED');
     }
 
     private function resolveIncomingItems(mysqli $conn, $tenant, $branch, array $items)

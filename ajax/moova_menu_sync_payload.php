@@ -282,6 +282,21 @@ function moova_menu_sync_fingerprint(mysqli $conn): array
             'max_changed_at' => (int) ($variants['max_changed_at'] ?? 0),
         ];
     }
+    if (moova_menu_sync_table_exists($conn, 'tables')) {
+        $tableChangedExpr = moova_menu_sync_changed_expr($conn, 'tables');
+        $tableDeletedExpr = moova_menu_sync_column_exists($conn, 'tables', 'isdeleted') ? 'COALESCE(isdeleted, 0)' : '0';
+        $tables = $conn->query("
+            SELECT COUNT(*) AS row_count,
+                   COALESCE(SUM(CRC32(CONCAT_WS('|', id, COALESCE(tname, ''), {$tableDeletedExpr}, {$tableChangedExpr}))), 0) AS checksum,
+                   COALESCE(MAX(UNIX_TIMESTAMP({$tableChangedExpr})), 0) AS max_changed_at
+            FROM tables
+        ")->fetch_assoc();
+        $raw['tables'] = [
+            'count' => (int) ($tables['row_count'] ?? 0),
+            'checksum' => (string) ($tables['checksum'] ?? '0'),
+            'max_changed_at' => (int) ($tables['max_changed_at'] ?? 0),
+        ];
+    }
 
     return [
         'fingerprint' => hash('sha256', json_encode($raw, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)),
@@ -499,11 +514,60 @@ function moova_menu_sync_build_menu(mysqli $conn, string $catalogVersion, ?array
         $items[] = $menuItem;
     }
 
+    $tables = [];
+    $activePosTableIds = [];
+    if (moova_menu_sync_table_exists($conn, 'tables')) {
+        $tableWhere = moova_menu_sync_column_exists($conn, 'tables', 'isdeleted')
+            ? 'WHERE COALESCE(isdeleted, 0) = 0'
+            : 'WHERE 1 = 1';
+        if ($link !== null && moova_menu_sync_column_exists($conn, 'tables', 'branch')) {
+            $branch = (int) ($link['pos_branch'] ?? 0);
+            $tableWhere .= " AND (CAST(branch AS CHAR) = '" . $conn->real_escape_string((string) $branch) . "'"
+                . ($branch === 0 ? " OR branch IS NULL OR branch = '' OR branch = '0'" : '') . ')';
+        }
+        $tableRows = $conn->query("SELECT id, tname FROM tables {$tableWhere} ORDER BY id ASC");
+        while ($tableRow = $tableRows->fetch_assoc()) {
+            $id = (int) ($tableRow['id'] ?? 0);
+            if ($id < 1) {
+                continue;
+            }
+            $providerTableId = 'pos-table-' . $id;
+            $activePosTableIds[] = $id;
+            $tables[] = [
+                'id' => $providerTableId,
+                'providerTableId' => $providerTableId,
+                'label' => trim((string) ($tableRow['tname'] ?? '')) ?: (string) $id,
+                'isActive' => true,
+            ];
+            if ($link !== null && !empty($link['moova_branch_id'])) {
+                MoovaPosIntegration::upsertTableLink($conn, [
+                    'tenant' => (int) ($link['pos_tenant'] ?? 0),
+                    'branch' => (int) ($link['pos_branch'] ?? 0),
+                ], (string) $link['moova_branch_id'], $providerTableId, $id);
+            }
+        }
+        if ($link !== null && !empty($link['moova_branch_id'])) {
+            $tenant = (int) ($link['pos_tenant'] ?? 0);
+            $branch = (int) ($link['pos_branch'] ?? 0);
+            $moovaBranchId = $conn->real_escape_string((string) $link['moova_branch_id']);
+            $notIn = $activePosTableIds ? ' AND pos_table_id NOT IN (' . implode(',', $activePosTableIds) . ')' : '';
+            $conn->query("
+                UPDATE moova_pos_table_links
+                SET status = 'inactive', updated_at = CURRENT_TIMESTAMP
+                WHERE moova_branch_id = '{$moovaBranchId}'
+                  AND pos_tenant = {$tenant}
+                  AND pos_branch = {$branch}
+                  AND status = 'active'{$notIn}
+            ");
+        }
+    }
+
     return [
         'catalogVersion' => $catalogVersion,
         'menu' => [
             'categories' => $categories,
             'items' => $items,
+            'tables' => $tables,
         ],
         'rawPayload' => [
             'source' => 'posmain_local_menu',
@@ -516,6 +580,7 @@ function moova_menu_sync_build_menu(mysqli $conn, string $catalogVersion, ?array
             'counts' => [
                 'categories' => count($categories),
                 'items' => count($items),
+                'tables' => count($tables),
             ],
         ],
     ];

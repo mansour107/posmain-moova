@@ -61,6 +61,7 @@ function moova_error_status($message)
         'TENANT_SCOPE_MISMATCH' => 403,
         'TABLE_REQUIRED' => 422,
         'TABLE_NOT_FOUND' => 422,
+        'TABLE_MAPPING_REQUIRED' => 422,
         'TABLE_MAPPING_AMBIGUOUS' => 409,
         'ITEM_NOT_FOUND' => 422,
         'NO_VALID_ITEMS' => 422,

@@ -7,6 +7,7 @@ It runs these existing workers in one supervised cycle:
 | Job | Worker | Purpose |
 | --- | --- | --- |
 | `sync_outbox` | `BranchSyncWorker` | Sends local `sync_outbox` events to the cloud receive API. |
+| `moova_catalog` | `MoovaCatalogSyncWorker` | Pushes authoritative menu and table snapshots from the local POS database to the paired Moova branch, with retry and fingerprint repair. |
 | `moova_poller` | `BranchMoovaPollWorker` | Pulls cloud Moova order events into the local inbound queue. |
 | `cloud_sync_poller` | `BranchCloudSyncPollWorker` | Optional generic hosted-to-branch POS editing; disabled for the offline-first production profile. |
 | `moova_apply` | `BranchMoovaApplyWorker` | Applies queued Moova events to POS table orders. |
@@ -48,6 +49,12 @@ Limit a smoke run to one job:
 
 ```bash
 php cli/branch_worker_daemon.php --once --only=sync_outbox
+```
+
+Force the catalog worker to compare the local fingerprint and retry any due Moova snapshot:
+
+```bash
+php cli/branch_worker_daemon.php --once --only=moova_catalog
 ```
 
 ## Operational Notes

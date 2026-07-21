@@ -1,5 +1,7 @@
 <?php
 
+require_once __DIR__ . '/Sync/SyncRuntimeCrypto.php';
+
 class MoovaPosIntegration
 {
     public static function ensureSchema(mysqli $conn)
@@ -10,13 +12,24 @@ class MoovaPosIntegration
                 moova_shop_id VARCHAR(128) DEFAULT NULL,
                 moova_branch_id VARCHAR(128) NOT NULL,
                 moova_device_token VARCHAR(191) DEFAULT NULL,
+                moova_device_token_encrypted TEXT DEFAULT NULL,
                 moova_device_token_hash CHAR(64) NOT NULL,
                 moova_device_token_last4 VARCHAR(16) DEFAULT NULL,
+                moova_connection_id VARCHAR(128) DEFAULT NULL,
+                moova_branch_link_id VARCHAR(128) DEFAULT NULL,
+                pairing_id VARCHAR(128) DEFAULT NULL,
+                pos_instance_uuid CHAR(36) DEFAULT NULL,
+                moova_shop_name VARCHAR(191) DEFAULT NULL,
+                moova_branch_name VARCHAR(191) DEFAULT NULL,
                 pos_tenant INT(11) NOT NULL DEFAULT 0,
                 pos_branch INT(11) NOT NULL DEFAULT 0,
                 widget_url VARCHAR(255) NOT NULL DEFAULT 'https://withmoova.com/pos-widget',
                 locale VARCHAR(16) NOT NULL DEFAULT 'ar',
                 status VARCHAR(20) NOT NULL DEFAULT 'active',
+                last_pair_verified_at DATETIME DEFAULT NULL,
+                last_catalog_fingerprint CHAR(64) DEFAULT NULL,
+                last_catalog_synced_at DATETIME DEFAULT NULL,
+                last_catalog_error TEXT DEFAULT NULL,
                 created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                 PRIMARY KEY (id),
@@ -25,6 +38,26 @@ class MoovaPosIntegration
                 KEY idx_moova_pos_scope_status (pos_tenant, pos_branch, status),
                 KEY idx_moova_token_status (moova_device_token_hash, status),
                 KEY idx_moova_branch_status (moova_branch_id, status)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+        ");
+
+        $conn->query("
+            CREATE TABLE IF NOT EXISTS moova_catalog_sync_outbox (
+                id BIGINT(20) NOT NULL AUTO_INCREMENT,
+                shop_link_id INT(11) NOT NULL,
+                pos_tenant INT(11) NOT NULL DEFAULT 0,
+                pos_branch INT(11) NOT NULL DEFAULT 0,
+                requested_fingerprint CHAR(64) DEFAULT NULL,
+                state VARCHAR(20) NOT NULL DEFAULT 'pending',
+                attempts INT(11) NOT NULL DEFAULT 0,
+                available_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                last_error TEXT DEFAULT NULL,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                PRIMARY KEY (id),
+                UNIQUE KEY uq_moova_catalog_link (shop_link_id),
+                KEY idx_moova_catalog_ready (state, available_at),
+                KEY idx_moova_catalog_scope (pos_tenant, pos_branch)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
         ");
 
@@ -123,6 +156,21 @@ class MoovaPosIntegration
             'moova_device_token',
             "ALTER TABLE moova_pos_shop_links ADD COLUMN moova_device_token VARCHAR(191) DEFAULT NULL AFTER moova_branch_id"
         );
+        foreach ([
+            'moova_device_token_encrypted' => "ALTER TABLE moova_pos_shop_links ADD COLUMN moova_device_token_encrypted TEXT DEFAULT NULL AFTER moova_device_token",
+            'moova_connection_id' => "ALTER TABLE moova_pos_shop_links ADD COLUMN moova_connection_id VARCHAR(128) DEFAULT NULL AFTER moova_device_token_last4",
+            'moova_branch_link_id' => "ALTER TABLE moova_pos_shop_links ADD COLUMN moova_branch_link_id VARCHAR(128) DEFAULT NULL AFTER moova_connection_id",
+            'pairing_id' => "ALTER TABLE moova_pos_shop_links ADD COLUMN pairing_id VARCHAR(128) DEFAULT NULL AFTER moova_branch_link_id",
+            'pos_instance_uuid' => "ALTER TABLE moova_pos_shop_links ADD COLUMN pos_instance_uuid CHAR(36) DEFAULT NULL AFTER pairing_id",
+            'moova_shop_name' => "ALTER TABLE moova_pos_shop_links ADD COLUMN moova_shop_name VARCHAR(191) DEFAULT NULL AFTER pos_instance_uuid",
+            'moova_branch_name' => "ALTER TABLE moova_pos_shop_links ADD COLUMN moova_branch_name VARCHAR(191) DEFAULT NULL AFTER moova_shop_name",
+            'last_pair_verified_at' => "ALTER TABLE moova_pos_shop_links ADD COLUMN last_pair_verified_at DATETIME DEFAULT NULL AFTER status",
+            'last_catalog_fingerprint' => "ALTER TABLE moova_pos_shop_links ADD COLUMN last_catalog_fingerprint CHAR(64) DEFAULT NULL AFTER last_pair_verified_at",
+            'last_catalog_synced_at' => "ALTER TABLE moova_pos_shop_links ADD COLUMN last_catalog_synced_at DATETIME DEFAULT NULL AFTER last_catalog_fingerprint",
+            'last_catalog_error' => "ALTER TABLE moova_pos_shop_links ADD COLUMN last_catalog_error TEXT DEFAULT NULL AFTER last_catalog_synced_at",
+        ] as $column => $sql) {
+            self::ensureColumn($conn, 'moova_pos_shop_links', $column, $sql);
+        }
         self::ensureColumn(
             $conn,
             'moova_pos_order_links',
@@ -281,6 +329,18 @@ class MoovaPosIntegration
         return $row ?: null;
     }
 
+    public static function findLatestLinkForScope(mysqli $conn, array $scope)
+    {
+        $tenant = (int) ($scope['tenant'] ?? 0);
+        $branch = (int) ($scope['branch'] ?? 0);
+        $stmt = $conn->prepare("SELECT * FROM moova_pos_shop_links WHERE pos_tenant = ? AND pos_branch = ? ORDER BY updated_at DESC, id DESC LIMIT 1");
+        $stmt->bind_param('ii', $tenant, $branch);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        return $row ?: null;
+    }
+
     public static function findActiveLinkByTokenAndBranch(mysqli $conn, $deviceToken, $branchId)
     {
         $hash = self::hashDeviceToken($deviceToken);
@@ -359,13 +419,38 @@ class MoovaPosIntegration
         $widgetUrl = trim((string) ($data['widget_url'] ?? ''));
         $locale = trim((string) ($data['locale'] ?? 'ar'));
 
-        if ($token === '' || $widgetUrl === '') {
+        if ($token === '' || $widgetUrl === '' || $branchId === '') {
             throw new InvalidArgumentException('MISSING_REQUIRED_FIELDS');
         }
+
+        $crypto = new SyncRuntimeCrypto();
+        if (!$crypto->available()) {
+            throw new RuntimeException('TOKEN_ENCRYPTION_UNAVAILABLE');
+        }
+        $encryptedToken = $crypto->encrypt($token);
 
         $tokenHash = self::hashDeviceToken($token);
         $last4 = substr($token, -4);
         $status = 'active';
+        $connectionId = trim((string) ($data['moova_connection_id'] ?? ''));
+        $branchLinkId = trim((string) ($data['moova_branch_link_id'] ?? ''));
+        $pairingId = trim((string) ($data['pairing_id'] ?? ''));
+        $instanceUuid = trim((string) ($data['pos_instance_uuid'] ?? ''));
+        $shopName = trim((string) ($data['moova_shop_name'] ?? ''));
+        $branchName = trim((string) ($data['moova_branch_name'] ?? ''));
+        if ($connectionId === '' || $branchLinkId === '' || $pairingId === '' || !self::isUuid($instanceUuid)) {
+            throw new InvalidArgumentException('INVALID_PAIRING_RESPONSE');
+        }
+
+        $deleteOutboxStmt = $conn->prepare("
+            DELETE q FROM moova_catalog_sync_outbox q
+            INNER JOIN moova_pos_shop_links l ON l.id = q.shop_link_id
+            WHERE l.pos_tenant = ?
+              AND l.pos_branch = ?
+        ");
+        $deleteOutboxStmt->bind_param("ii", $tenant, $branch);
+        $deleteOutboxStmt->execute();
+        $deleteOutboxStmt->close();
 
         $deleteStmt = $conn->prepare("
             DELETE FROM moova_pos_shop_links
@@ -378,19 +463,27 @@ class MoovaPosIntegration
 
         $insertStmt = $conn->prepare("
             INSERT INTO moova_pos_shop_links (
-                moova_shop_id, moova_branch_id, moova_device_token,
+                moova_shop_id, moova_branch_id, moova_device_token, moova_device_token_encrypted,
                 moova_device_token_hash, moova_device_token_last4,
+                moova_connection_id, moova_branch_link_id, pairing_id, pos_instance_uuid,
+                moova_shop_name, moova_branch_name,
                 pos_tenant, pos_branch, widget_url, locale, status
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ");
         $shopIdValue = $shopId === '' ? null : $shopId;
         $insertStmt->bind_param(
-            "sssssiisss",
+            "sssssssssssiisss",
             $shopIdValue,
             $branchId,
-            $token,
+            $encryptedToken,
             $tokenHash,
             $last4,
+            $connectionId,
+            $branchLinkId,
+            $pairingId,
+            $instanceUuid,
+            $shopName,
+            $branchName,
             $tenant,
             $branch,
             $widgetUrl,
@@ -405,6 +498,12 @@ class MoovaPosIntegration
             'id' => $id,
             'moova_shop_id' => $shopIdValue,
             'moova_branch_id' => $branchId,
+            'moova_connection_id' => $connectionId,
+            'moova_branch_link_id' => $branchLinkId,
+            'pairing_id' => $pairingId,
+            'pos_instance_uuid' => $instanceUuid,
+            'moova_shop_name' => $shopName,
+            'moova_branch_name' => $branchName,
             'moova_device_token_last4' => $last4,
             'pos_tenant' => $tenant,
             'pos_branch' => $branch,
@@ -414,15 +513,97 @@ class MoovaPosIntegration
         ];
     }
 
+    public static function deviceTokenForLink(array $link): string
+    {
+        $encrypted = trim((string) ($link['moova_device_token_encrypted'] ?? ''));
+        if ($encrypted !== '') {
+            return (new SyncRuntimeCrypto())->decrypt($encrypted);
+        }
+
+        // Read-only compatibility for installations created before encrypted
+        // credential storage. The next successful pairing replaces this value.
+        return trim((string) ($link['moova_device_token'] ?? ''));
+    }
+
+    public static function generateUuid(): string
+    {
+        $bytes = random_bytes(16);
+        $bytes[6] = chr((ord($bytes[6]) & 0x0f) | 0x40);
+        $bytes[8] = chr((ord($bytes[8]) & 0x3f) | 0x80);
+        $hex = bin2hex($bytes);
+        return substr($hex, 0, 8) . '-' . substr($hex, 8, 4) . '-' . substr($hex, 12, 4)
+            . '-' . substr($hex, 16, 4) . '-' . substr($hex, 20);
+    }
+
+    public static function isUuid(string $value): bool
+    {
+        return preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i', trim($value)) === 1;
+    }
+
+    public static function enqueueCatalogSync(mysqli $conn, array $link, ?string $fingerprint = null): void
+    {
+        $stmt = $conn->prepare("
+            INSERT INTO moova_catalog_sync_outbox (
+                shop_link_id, pos_tenant, pos_branch, requested_fingerprint, state, attempts, available_at, last_error
+            ) VALUES (?, ?, ?, ?, 'pending', 0, NOW(), NULL)
+            ON DUPLICATE KEY UPDATE
+                requested_fingerprint = VALUES(requested_fingerprint),
+                state = 'pending', attempts = 0, available_at = NOW(), last_error = NULL,
+                updated_at = CURRENT_TIMESTAMP
+        ");
+        $linkId = (int) ($link['id'] ?? 0);
+        $tenant = (int) ($link['pos_tenant'] ?? 0);
+        $branch = (int) ($link['pos_branch'] ?? 0);
+        $stmt->bind_param('iiis', $linkId, $tenant, $branch, $fingerprint);
+        $stmt->execute();
+        $stmt->close();
+    }
+
+    public static function markAllCatalogLinksDirty(mysqli $conn): void
+    {
+        self::ensureSchema($conn);
+        $rows = $conn->query("SELECT * FROM moova_pos_shop_links WHERE status = 'active'");
+        while ($link = $rows->fetch_assoc()) {
+            self::enqueueCatalogSync($conn, $link, null);
+        }
+    }
+
+    public static function recordCatalogSyncResult(mysqli $conn, int $linkId, string $fingerprint, array $result): void
+    {
+        if (!empty($result['ok'])) {
+            $stmt = $conn->prepare("UPDATE moova_pos_shop_links SET last_catalog_fingerprint = ?, last_catalog_synced_at = NOW(), last_catalog_error = NULL, last_pair_verified_at = NOW() WHERE id = ?");
+            $stmt->bind_param('si', $fingerprint, $linkId);
+            $stmt->execute();
+            $stmt->close();
+            $stmt = $conn->prepare("UPDATE moova_catalog_sync_outbox SET state = 'complete', last_error = NULL WHERE shop_link_id = ?");
+            $stmt->bind_param('i', $linkId);
+            $stmt->execute();
+            $stmt->close();
+            return;
+        }
+
+        $error = trim((string) ($result['message'] ?? $result['reason'] ?? 'Moova catalog sync failed'));
+        $stmt = $conn->prepare("UPDATE moova_pos_shop_links SET last_catalog_error = ? WHERE id = ?");
+        $stmt->bind_param('si', $error, $linkId);
+        $stmt->execute();
+        $stmt->close();
+        $stmt = $conn->prepare("UPDATE moova_catalog_sync_outbox SET state = 'pending', attempts = attempts + 1, available_at = DATE_ADD(NOW(), INTERVAL LEAST(300, POW(2, LEAST(attempts, 8))) SECOND), last_error = ? WHERE shop_link_id = ?");
+        $stmt->bind_param('si', $error, $linkId);
+        $stmt->execute();
+        $stmt->close();
+    }
+
     public static function disconnectScope(mysqli $conn, array $scope)
     {
         $tenant = (int) ($scope['tenant'] ?? 0);
         $branch = (int) ($scope['branch'] ?? 0);
 
         $stmt = $conn->prepare("
-            DELETE FROM moova_pos_shop_links
+            UPDATE moova_pos_shop_links
+            SET status = 'inactive', updated_at = CURRENT_TIMESTAMP
             WHERE pos_tenant = ?
               AND pos_branch = ?
+              AND status = 'active'
         ");
         $stmt->bind_param("ii", $tenant, $branch);
         $stmt->execute();

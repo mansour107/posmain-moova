@@ -446,9 +446,16 @@
                 });
             };
 
-            const afterBegin = function () {
+            const afterBegin = function (data) {
                 countState.started = true;
                 countState.handover = true;
+                if (data && data.status === 'final_amount_required') {
+                    $('#pshTakeoverAttemptLabel').removeClass('psh-hidden')
+                        .text('تم استخدام محاولتي العد من 2');
+                    $message.removeClass('psh-hidden is-success is-warn').addClass('is-info')
+                        .text(data.message || 'أدخل المبلغ النهائي لاعتماده عند الإغلاق.');
+                    $btn.text('اعتماد المبلغ النهائي');
+                }
                 return submitCount();
             };
 

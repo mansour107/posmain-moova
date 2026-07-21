@@ -1,19 +1,19 @@
 <?php
 
-require_once __DIR__ . '/../classes/Sync/SchemaReadinessGuard.php';
+require_once __DIR__ . '/../classes/Sync/SchemaManager.php';
 require_once __DIR__ . '/../classes/Pos/Service/PosCustomerMigrationService.php';
 
 if (!function_exists('posmain_apply_pos_customer_migrations')) {
     function posmain_apply_pos_customer_migrations(mysqli $conn): array
     {
-        (new SyncSchemaReadinessGuard())->assertReady($conn);
+        $schemaTables = (new SyncSchemaManager())->applyPosCustomerSchema($conn);
 
         $migration = new PosCustomerMigrationService();
         $delivery = $migration->migrateFromDeliveryClientsIfNeeded($conn);
         $backfill = $migration->backfillOrderFulfillmentCustomers($conn);
 
         return [
-            'schema_tables' => [],
+            'schema_tables' => $schemaTables,
             'delivery_migration' => $delivery,
             'fulfillment_backfill' => $backfill,
         ];
@@ -29,7 +29,9 @@ if (!function_exists('posmain_ensure_pos_customer_schema')) {
             return;
         }
 
-        (new SyncSchemaReadinessGuard())->assertReady($conn);
+        if ((new SyncSchemaManager())->pendingPosCustomerStatements($conn) !== []) {
+            throw new RuntimeException('POS_CUSTOMER_SCHEMA_MIGRATIONS_PENDING');
+        }
         $ensured[$key] = true;
     }
 }

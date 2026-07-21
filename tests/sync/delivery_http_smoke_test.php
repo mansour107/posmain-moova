@@ -15,10 +15,13 @@ function deliveryHttpGetStatus(string $url): int
         ],
     ]);
     @file_get_contents($url, false, $ctx);
-    if (!isset($http_response_header[0])) {
+    $responseHeaders = function_exists('http_get_last_response_headers')
+        ? http_get_last_response_headers()
+        : ($http_response_header ?? []);
+    if (!isset($responseHeaders[0])) {
         return 0;
     }
-    if (preg_match('/\s(\d{3})\s/', $http_response_header[0], $matches)) {
+    if (preg_match('/\s(\d{3})\s/', $responseHeaders[0], $matches)) {
         return (int) $matches[1];
     }
 

@@ -27,6 +27,8 @@ $orderId = (int) ($_POST['order_id'] ?? 0);
 $newStatus = trim((string) ($_POST['delivery_status'] ?? ''));
 $driverName = trim((string) ($_POST['driver_name'] ?? ''));
 $driverPhone = trim((string) ($_POST['driver_phone'] ?? ''));
+$codAmount = max(0, (float) ($_POST['cod_amount'] ?? 0));
+$driverTip = max(0, (float) ($_POST['driver_tip'] ?? 0));
 
 if ($orderId < 1 || $newStatus === '') {
     http_response_code(422);
@@ -48,6 +50,8 @@ try {
                 'in_transaction' => true,
                 'force' => !empty($_POST['force']),
                 'event_source' => 'delivery_dispatch',
+                'tenant' => (int) ($_SESSION['pos_tenant'] ?? 0),
+                'branch' => (int) ($_SESSION['pos_branch'] ?? 0),
             ]);
             $conn->commit();
             echo json_encode([
@@ -67,7 +71,11 @@ try {
         'actor_user_id' => (int) ($_SESSION['userid'] ?? 0),
         'driver_name' => $driverName,
         'driver_phone' => $driverPhone,
+        'cod_amount' => $codAmount,
+        'driver_tip' => $driverTip,
         'force' => !empty($_POST['force']),
+        'tenant' => (int) ($_SESSION['pos_tenant'] ?? 0),
+        'branch' => (int) ($_SESSION['pos_branch'] ?? 0),
     ]);
     echo json_encode(['success' => true, 'fulfillment' => $result], JSON_UNESCAPED_UNICODE);
 } catch (Throwable $e) {

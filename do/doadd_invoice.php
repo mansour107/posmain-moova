@@ -502,12 +502,18 @@ if ($route_delivery_service) {
         $deliveryRequest['delivery_customer_address'] = $delivery_address;
         $deliveryRequest['pos_customer_id'] = $pos_customer_id;
         $deliveryRequest['delivery_zone_name'] = $delivery_zone_name;
+        $deliveryRequest['delivery_zone_id'] = (int) ($_POST['delivery_zone_id'] ?? 0);
         $deliveryRequest['delivery_fee'] = $delivery_fee;
+        $deliveryRequest['delivery_worker_id'] = (int) ($_POST['delivery_worker_id'] ?? 0);
+        $deliveryRequest['collection_mode'] = (string) ($_POST['collection_mode'] ?? 'prepaid');
+        $deliveryRequest['courier_source'] = (string) ($_POST['courier_source'] ?? 'in_house');
         $deliveryRequest['submit'] = $submit;
 
         $mutationService = new PosOrderMutationService();
         $serviceResult = $mutationService->createDeliveryOrder($conn, $deliveryRequest, [
             'user_id' => (int) $usid,
+            'tenant' => (int) ($_SESSION['pos_tenant'] ?? 0),
+            'branch' => (int) ($_SESSION['pos_branch'] ?? 0),
         ]);
         $last_op = (int) $serviceResult['data']['order_id'];
         $pro_id = (int) $serviceResult['data']['pro_id'];

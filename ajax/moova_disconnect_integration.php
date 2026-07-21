@@ -6,6 +6,7 @@ include('../includes/connect.php');
 ob_clean();
 
 require_once('../classes/MoovaPosIntegration.php');
+require_once('../classes/Moova/MoovaPosPairingService.php');
 require_once('../includes/auth_guard.php');
 require_once('../includes/csrf.php');
 require_once('../classes/Security/SecurityAuditLogger.php');
@@ -70,6 +71,14 @@ try {
     $scope = MoovaPosIntegration::getCurrentUserScope($conn, $userId);
     if (!$scope) {
         moova_disconnect_response(401, ['success' => false, 'code' => 'INVALID_USER_SCOPE', 'message' => 'Invalid POS user scope']);
+    }
+
+    $link = MoovaPosIntegration::findActiveLinkForScope($conn, $scope);
+    if ($link) {
+        (new MoovaPosPairingService())->release(
+            MoovaPosIntegration::deviceTokenForLink($link),
+            (string) ($link['pos_instance_uuid'] ?? '')
+        );
     }
 
     $conn->begin_transaction();

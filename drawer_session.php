@@ -28,7 +28,7 @@ $movementLabels = [
     'paid_out' => 'مصروف نقدي',
     'safe_drop' => 'تحويل للخزنة',
     'opening' => 'رصيد البداية',
-    'closing_adjustment' => 'تسوية إغلاق',
+    'closing_adjustment' => 'فرق الإغلاق (قيد داخلي)',
     'no_sale' => 'فتح الدرج بدون بيع',
 ];
 
@@ -238,6 +238,27 @@ $countAttempts = $countAttempts ?? [];
 $resolutionHistory = $resolutionHistory ?? [];
 $overridePeriods = $overridePeriods ?? [];
 $overrideAuditEvents = $overrideAuditEvents ?? [];
+
+// The product limit is two attempts per phase for the drawer session. Older
+// versions scoped the counter to a browser/user session, so keep surplus rows
+// available for audit without presenting them as additional valid attempts.
+$orderedCountAttempts = $countAttempts;
+usort($orderedCountAttempts, static function (array $left, array $right): int {
+    return ((int) ($left['id'] ?? 0)) <=> ((int) ($right['id'] ?? 0));
+});
+$officialCountAttempts = [];
+$legacyExtraCountAttempts = [];
+$countAttemptsByPhase = ['open' => 0, 'close' => 0];
+foreach ($orderedCountAttempts as $attempt) {
+    $phase = ($attempt['count_phase'] ?? '') === 'open' ? 'open' : 'close';
+    if ($countAttemptsByPhase[$phase] < 2) {
+        $countAttemptsByPhase[$phase]++;
+        $attempt['display_attempt_number'] = $countAttemptsByPhase[$phase];
+        $officialCountAttempts[] = $attempt;
+        continue;
+    }
+    $legacyExtraCountAttempts[] = $attempt;
+}
 $auditPage = max(1, (int) ($_GET['audit_page'] ?? 1));
 $auditPerPage = 25;
 $auditTotal = count($overrideAuditEvents);
@@ -302,6 +323,7 @@ $countedCash = array_key_exists('counted_cash', $breakdown) && $breakdown['count
 $closeVariance = array_key_exists('close_variance', $breakdown) && $breakdown['close_variance'] !== null
     ? (float) $breakdown['close_variance']
     : null;
+$hasCloseVariance = $closeVariance !== null && abs($closeVariance) >= 0.001;
 $isOpen = ($session['status'] ?? '') === 'open';
 $countPending = !empty($breakdown['count_pending']);
 
@@ -333,12 +355,23 @@ $varianceClass = $closeDiffClass;
 $varianceLabel = 'الفرق';
 $varianceHint = $closeDiffHint;
 
-$paymentsTotal = (float) ($recon['payments']['total'] ?? 0);
-$paymentsCash = (float) ($recon['payments']['cash'] ?? 0);
-$paymentsByType = $recon['payments']['by_type'] ?? [];
-$reconCashPayments = (float) ($recon['reconciliation']['cash_payments'] ?? $paymentsCash);
+$paymentReport = $recon['payments'] ?? [];
+$paymentSourceLabel = 'الحركات الحالية';
+if (!$isOpen && is_array($closeSummary)) {
+    $snapshotPaymentReport = json_decode((string) ($closeSummary['payment_summary_json'] ?? ''), true);
+    if (is_array($snapshotPaymentReport)) {
+        // Closed sessions use the immutable Z snapshot. A later live query can
+        // include repaired/imported payments and must not rewrite history.
+        $paymentReport = $snapshotPaymentReport;
+        $paymentSourceLabel = 'لقطة الإغلاق المعتمدة';
+    }
+}
+$paymentsTotal = (float) ($paymentReport['total'] ?? 0);
+$paymentsCash = (float) ($paymentReport['cash'] ?? 0);
+$paymentsByType = $paymentReport['by_type'] ?? [];
+$reconCashPayments = $paymentsCash;
 $reconDrawerSaleCash = (float) ($recon['reconciliation']['drawer_sale_cash'] ?? $saleCashInDrawer);
-$reconCashDifference = (float) ($recon['reconciliation']['cash_difference'] ?? ($reconDrawerSaleCash - $reconCashPayments));
+$reconCashDifference = round($reconDrawerSaleCash - $reconCashPayments, 3);
 $showCashMismatch = abs($reconCashDifference) >= 0.001;
 $hasPaymentMix = false;
 foreach ($paymentsByType as $mixAmount) {
@@ -347,6 +380,8 @@ foreach ($paymentsByType as $mixAmount) {
         break;
     }
 }
+$paymentMethods = $paymentReport['methods'] ?? [];
+$hasPayments = $paymentMethods !== [] || $paymentsTotal > 0;
 
 $friendlyReason = static function (?string $reason) use ($movementReasonLabels): string {
     $reason = trim((string) $reason);
@@ -454,51 +489,26 @@ include('includes/header.php');
       </div>
       <?php endif; ?>
 
-      <?php if ($canReport): ?>
-      <section class="pr-panel" data-testid="drawer-session-accountability">
-        <div class="pr-panel-head">
+      <?php if ($isOpen): ?>
+      <section class="pr-close-summary" data-testid="drawer-session-opening">
+        <div class="pr-close-summary-head">
           <div>
-            <p class="pr-eyebrow">سلسلة العهدة</p>
-            <h2 class="pr-panel-title">من عدّ ومن اعتمد ومن استلم؟</h2>
+            <p class="pr-eyebrow">النتيجة حتى الآن</p>
+            <h2 class="pr-close-summary-title">وضع الدرج المفتوح</h2>
           </div>
+          <?php if ($hasOpeningVariance && $varianceStatus === 'resolved' && $hasResolutionDetails): ?>
+          <button type="button" class="pr-pill pr-pill--muted pr-pill--action" data-bs-toggle="modal" data-bs-target="#reviewedDrawerModal" data-testid="drawer-session-reviewed-opening">تمت مراجعة الافتتاح</button>
+          <?php elseif ($openingNeedsReview && $canResolveVariance): ?>
+          <button type="button" class="pr-pill pr-pill--status-open pr-pill--action" data-bs-toggle="modal" data-bs-target="#resolveDrawerModal" data-testid="drawer-session-review-opening">مراجعة فرق الافتتاح</button>
+          <?php elseif ($openingNeedsReview): ?>
+          <span class="pr-pill pr-pill--status-open">فرق الافتتاح يحتاج مراجعة</span>
+          <?php endif; ?>
         </div>
-        <div class="pr-panel-body">
-          <div class="pr-verdict pr-verdict--compact">
-            <div class="pr-verdict-card">
-              <div class="pr-verdict-label">صاحب الشيفت</div>
-              <div class="pr-verdict-value pr-verdict-value--sm"><?= htmlspecialchars((string) ($accountability['shift_owner_name'] ?? $userName ?: '—')) ?></div>
-            </div>
-            <div class="pr-verdict-card">
-              <div class="pr-verdict-label">قام بالعد</div>
-              <div class="pr-verdict-value pr-verdict-value--sm"><?= htmlspecialchars((string) ($accountability['counted_by_name'] ?? '') ?: '—') ?></div>
-            </div>
-            <div class="pr-verdict-card">
-              <div class="pr-verdict-label">أغلق الشيفت</div>
-              <div class="pr-verdict-value pr-verdict-value--sm"><?= htmlspecialchars((string) ($accountability['closed_by_name'] ?? '') ?: '—') ?></div>
-            </div>
-            <div class="pr-verdict-card">
-              <div class="pr-verdict-label">اعتمد الاستلام</div>
-              <div class="pr-verdict-value pr-verdict-value--sm"><?= htmlspecialchars((string) ($accountability['takeover_authorized_by_name'] ?? '') ?: '—') ?></div>
-            </div>
-          </div>
-          <?php if (!empty($accountability['succeeding_session_id'])): ?>
-          <div class="pr-callout pr-callout--success mt-3">
-            انتقلت العهدة إلى
-            <a href="<?= htmlspecialchars(posmain_cash_shift_detail_url((int) $accountability['succeeding_session_id'], $returnTo), ENT_QUOTES, 'UTF-8') ?>">
-              جلسة #<?= (int) $accountability['succeeding_session_id'] ?>
-            </a>
-            — <?= htmlspecialchars((string) ($accountability['succeeding_shift_owner_name'] ?? '') ?: 'مستخدم غير معروف') ?>
-          </div>
-          <?php endif; ?>
-          <?php if (!empty($accountability['preceding_session_id'])): ?>
-          <div class="pr-callout mt-3">
-            استلمت هذه الجلسة العهدة من
-            <a href="<?= htmlspecialchars(posmain_cash_shift_detail_url((int) $accountability['preceding_session_id'], $returnTo), ENT_QUOTES, 'UTF-8') ?>">
-              جلسة #<?= (int) $accountability['preceding_session_id'] ?>
-            </a>
-            — <?= htmlspecialchars((string) ($accountability['preceding_shift_owner_name'] ?? '') ?: 'مستخدم غير معروف') ?>
-          </div>
-          <?php endif; ?>
+        <div class="pr-verdict pr-verdict--drawer-result">
+          <div class="pr-verdict-card"><div class="pr-verdict-label">المتوقع عند الافتتاح</div><div class="pr-verdict-value"><?= $expectedOpeningCash !== null ? number_format($expectedOpeningCash, 2) : '—' ?></div></div>
+          <div class="pr-verdict-card"><div class="pr-verdict-label">العد المعتمد عند الافتتاح</div><div class="pr-verdict-value"><?= number_format($openingCounted, 2) ?></div></div>
+          <div class="pr-verdict-card"><div class="pr-verdict-label">فرق الافتتاح</div><div class="pr-verdict-value <?= $hasOpeningVariance ? 'pr-verdict-value--' . ($openingVariance > 0 ? 'pos' : 'neg') : '' ?>"><?= $openingVariance !== null ? number_format((float) $openingVariance, 2) : '—' ?></div></div>
+          <div class="pr-verdict-card"><div class="pr-verdict-label">المتوقع الآن في الدرج</div><div class="pr-verdict-value"><?= number_format($expectedCash, 2) ?></div><div class="pr-verdict-sub">يتحدث مع الحركات حتى الإغلاق</div></div>
         </div>
       </section>
       <?php endif; ?>
@@ -506,52 +516,81 @@ include('includes/header.php');
       <?php if (!$isOpen): ?>
       <section class="pr-close-summary" data-testid="drawer-session-close-summary">
         <div class="pr-close-summary-head">
-          <h2 class="pr-close-summary-title">ملخص الإغلاق</h2>
-          <?php if ($varianceStatus === 'resolved' && ($closeVariance !== null && abs((float) $closeVariance) >= 0.001 || $hasOpeningVariance) && $hasResolutionDetails): ?>
-          <button
-            type="button"
-            class="pr-pill pr-pill--muted pr-pill--action"
-            data-bs-toggle="modal"
-            data-bs-target="#reviewedDrawerModal"
-            data-testid="drawer-session-reviewed-close"
-          >
-            تمت المراجعة
-          </button>
-          <?php elseif ($varianceStatus === 'resolved' && ($closeVariance !== null && abs((float) $closeVariance) >= 0.001 || $hasOpeningVariance)): ?>
-          <span class="pr-pill pr-pill--muted">تمت المراجعة</span>
-          <?php elseif ($varianceStatus === 'unresolved' && $canResolveVariance && !$openingNeedsReview): ?>
-          <button
-            type="button"
-            class="pr-pill pr-pill--status-open pr-pill--action"
-            data-bs-toggle="modal"
-            data-bs-target="#resolveDrawerModal"
-            data-testid="drawer-session-review-close"
-          >
-            يحتاج مراجعة
-          </button>
-          <?php elseif ($varianceStatus === 'unresolved' && !$canResolveVariance): ?>
-          <span class="pr-pill pr-pill--status-open">يحتاج مراجعة</span>
-          <?php endif; ?>
+          <div>
+            <p class="pr-eyebrow">النتيجة المعتمدة</p>
+            <h2 class="pr-close-summary-title">نتيجة الدرج</h2>
+          </div>
+          <div class="pr-result-actions">
+            <?php if ($hasOpeningVariance && $varianceStatus === 'resolved' && $hasResolutionDetails): ?>
+            <button type="button" class="pr-pill pr-pill--muted pr-pill--action" data-bs-toggle="modal" data-bs-target="#reviewedDrawerModal" data-testid="drawer-session-reviewed-opening">تمت مراجعة الافتتاح</button>
+            <?php elseif ($openingNeedsReview && $canResolveVariance): ?>
+            <button type="button" class="pr-pill pr-pill--status-open pr-pill--action" data-bs-toggle="modal" data-bs-target="#resolveDrawerModal" data-testid="drawer-session-review-opening">مراجعة فرق الافتتاح</button>
+            <?php elseif ($openingNeedsReview): ?>
+            <span class="pr-pill pr-pill--status-open">فرق الافتتاح يحتاج مراجعة</span>
+            <?php endif; ?>
+
+            <?php if ($hasCloseVariance && $varianceStatus === 'resolved' && $hasResolutionDetails): ?>
+            <button type="button" class="pr-pill pr-pill--muted pr-pill--action" data-bs-toggle="modal" data-bs-target="#reviewedDrawerModal" data-testid="drawer-session-reviewed-close">تمت مراجعة الإغلاق</button>
+            <?php elseif ($hasCloseVariance && $varianceStatus === 'unresolved' && $canResolveVariance): ?>
+            <button type="button" class="pr-pill pr-pill--status-open pr-pill--action" data-bs-toggle="modal" data-bs-target="#resolveDrawerModal" data-testid="drawer-session-review-close">مراجعة فرق الإغلاق</button>
+            <?php elseif ($hasCloseVariance && $varianceStatus === 'unresolved'): ?>
+            <span class="pr-pill pr-pill--status-open">فرق الإغلاق يحتاج مراجعة</span>
+            <?php endif; ?>
+          </div>
         </div>
-        <div class="pr-verdict pr-verdict--close-story">
+        <div class="pr-verdict pr-verdict--close-story pr-verdict--drawer-result">
+          <div class="pr-verdict-card" data-testid="drawer-session-opening-counted">
+            <div class="pr-verdict-label">رصيد البداية</div>
+            <div class="pr-verdict-value"><?= number_format($openingCounted, 2) ?></div>
+            <div class="pr-verdict-sub">العد المعتمد عند الافتتاح</div>
+          </div>
           <div class="pr-verdict-card" data-testid="drawer-session-expected">
-            <div class="pr-verdict-label">المتوقع في الدرج</div>
+            <div class="pr-verdict-label">المتوقع قبل الإغلاق</div>
             <div class="pr-verdict-value"><?= number_format($expectedCash, 2) ?></div>
             <div class="pr-verdict-sub">حسب الحركات</div>
           </div>
           <div class="pr-verdict-card" data-testid="drawer-session-counted">
-            <div class="pr-verdict-label">ما تم عده عند الإغلاق</div>
+            <div class="pr-verdict-label">العد النهائي</div>
             <div class="pr-verdict-value"><?= $countedCash !== null ? number_format($countedCash, 2) : '—' ?></div>
-            <div class="pr-verdict-sub"><?= $countedCash !== null ? 'العد الفعلي' : 'لم يُعد بعد' ?></div>
+            <div class="pr-verdict-sub"><?= $countedCash !== null ? 'المبلغ الفعلي عند الإغلاق' : 'لم يُسجّل بعد' ?></div>
           </div>
           <div class="pr-verdict-card pr-verdict-card--hero pr-verdict-card--<?= htmlspecialchars($closeDiffClass, ENT_QUOTES, 'UTF-8') ?>" data-testid="drawer-session-verdict">
             <div class="pr-verdict-label">الفرق</div>
-            <div class="pr-verdict-value pr-verdict-value--<?= htmlspecialchars($closeDiffClass, ENT_QUOTES, 'UTF-8') ?>">
+            <div class="pr-verdict-value pr-verdict-value--<?= htmlspecialchars($closeDiffClass, ENT_QUOTES, 'UTF-8') ?>" data-testid="drawer-session-close-variance-row">
               <?= $closeDiffValue !== null ? number_format($closeDiffValue, 2) : '—' ?>
             </div>
             <div class="pr-verdict-sub"><?= htmlspecialchars($closeDiffHint) ?></div>
           </div>
         </div>
+        <details class="pr-result-breakdown" data-testid="drawer-session-cash-walk">
+          <summary>كيف حُسب المتوقع؟</summary>
+          <div class="pr-result-breakdown-grid">
+            <?php
+            $walkLines = [
+                ['opening', '', (float) ($movementTotals['opening'] ?? $drawer['opening_cash'] ?? 0)],
+                ['sale_cash', '+', (float) ($movementTotals['sale_cash'] ?? 0)],
+                ['refund_cash', '−', (float) ($movementTotals['refund_cash'] ?? 0)],
+                ['paid_in', '+', (float) ($movementTotals['paid_in'] ?? 0)],
+                ['paid_out', '−', (float) ($movementTotals['paid_out'] ?? 0)],
+                ['safe_drop', '−', (float) ($movementTotals['safe_drop'] ?? 0)],
+            ];
+            foreach ($walkLines as [$type, $sign, $amount]):
+                if ($amount == 0.0 && !in_array($type, ['opening', 'sale_cash'], true)) {
+                    continue;
+                }
+            ?>
+            <div class="pr-result-breakdown-row">
+              <span><?= htmlspecialchars($movementLabels[$type] ?? $type) ?></span>
+              <strong><?php if ($sign !== ''): ?><?= $sign ?> <?php endif; ?><?= number_format($amount, 2) ?></strong>
+            </div>
+            <?php endforeach; ?>
+          </div>
+          <?php if ($openingVariance !== null): ?>
+          <p class="pr-result-breakdown-note">
+            الافتتاح: متوقع <?= number_format((float) $expectedOpeningCash, 2) ?>، معدود <?= number_format($openingCounted, 2) ?>، فرق <?= number_format((float) $openingVariance, 2) ?>.
+          </p>
+          <?php endif; ?>
+        </details>
       </section>
       <?php endif; ?>
 
@@ -559,8 +598,8 @@ include('includes/header.php');
       <section class="pr-panel" data-testid="drawer-session-z-summary">
         <div class="pr-panel-head">
           <div>
-            <p class="pr-eyebrow">سجل إغلاق ثابت</p>
-            <h2 class="pr-panel-title">ملخص تقرير Z</h2>
+            <p class="pr-eyebrow">لقطة الإغلاق المعتمدة</p>
+            <h2 class="pr-panel-title">ملخص المبيعات</h2>
           </div>
           <div class="pr-detail-actions pr-no-print">
             <a class="pr-btn pr-btn-ghost" href="print/closed_session_receipt.php?id=<?= (int) $sessionId ?>">طباعة الملخص</a>
@@ -569,118 +608,20 @@ include('includes/header.php');
         </div>
         <div class="pr-verdict pr-verdict--compact">
           <div class="pr-verdict-card"><div class="pr-verdict-label">إجمالي المبيعات</div><div class="pr-verdict-value pr-verdict-value--sm"><?= number_format((float) ($closeSummary['total_sales'] ?? 0), 2) ?></div></div>
-          <div class="pr-verdict-card"><div class="pr-verdict-label">المبيعات النقدية</div><div class="pr-verdict-value pr-verdict-value--sm"><?= number_format((float) ($closeSummary['cash_sales'] ?? 0), 2) ?></div></div>
-          <div class="pr-verdict-card"><div class="pr-verdict-label">غير النقدي</div><div class="pr-verdict-value pr-verdict-value--sm"><?= number_format((float) ($closeSummary['non_cash_sales'] ?? 0), 2) ?></div></div>
-          <div class="pr-verdict-card"><div class="pr-verdict-label">المصروفات</div><div class="pr-verdict-value pr-verdict-value--sm"><?= number_format((float) ($closeSummary['expense_total'] ?? 0), 2) ?></div></div>
+          <div class="pr-verdict-card"><div class="pr-verdict-label">عدد الطلبات</div><div class="pr-verdict-value pr-verdict-value--sm"><?= number_format((int) ($closeSummary['total_orders'] ?? 0)) ?></div></div>
+          <div class="pr-verdict-card"><div class="pr-verdict-label">الخصومات</div><div class="pr-verdict-value pr-verdict-value--sm"><?= number_format((float) ($closeSummary['discount_total'] ?? 0), 2) ?></div></div>
+          <div class="pr-verdict-card"><div class="pr-verdict-label">المرتجعات</div><div class="pr-verdict-value pr-verdict-value--sm"><?= number_format((float) ($closeSummary['return_total'] ?? 0), 2) ?></div></div>
         </div>
       </section>
       <?php endif; ?>
 
-      <section class="pr-panel" data-testid="drawer-session-opening">
-        <div class="pr-panel-head">
-          <h2 class="pr-panel-title">الافتتاح</h2>
-          <?php if ($hasOpeningVariance && $varianceStatus === 'resolved' && $hasResolutionDetails): ?>
-          <button
-            type="button"
-            class="pr-pill pr-pill--muted pr-pill--action"
-            data-bs-toggle="modal"
-            data-bs-target="#reviewedDrawerModal"
-            data-testid="drawer-session-reviewed-opening"
-          >
-            تمت المراجعة
-          </button>
-          <?php elseif ($hasOpeningVariance && $varianceStatus === 'resolved'): ?>
-          <span class="pr-pill pr-pill--muted">تمت المراجعة</span>
-          <?php elseif ($openingNeedsReview && $canResolveVariance): ?>
-          <button
-            type="button"
-            class="pr-pill pr-pill--status-open pr-pill--action"
-            data-bs-toggle="modal"
-            data-bs-target="#resolveDrawerModal"
-            data-testid="drawer-session-review-opening"
-          >
-            يحتاج مراجعة
-          </button>
-          <?php elseif ($openingNeedsReview): ?>
-          <span class="pr-pill pr-pill--status-open">يحتاج مراجعة</span>
-          <?php endif; ?>
-        </div>
-        <div class="pr-panel-body">
-          <div class="pr-verdict pr-verdict--compact pr-verdict--close-story">
-            <div class="pr-verdict-card">
-              <div class="pr-verdict-label">المتوقع عند الافتتاح</div>
-              <div class="pr-verdict-value pr-verdict-value--sm"><?= $expectedOpeningCash !== null ? number_format($expectedOpeningCash, 2) : '—' ?></div>
-            </div>
-            <div class="pr-verdict-card">
-              <div class="pr-verdict-label">ما تم عده في الدرج</div>
-              <div class="pr-verdict-value pr-verdict-value--sm"><?= number_format($openingCounted, 2) ?></div>
-            </div>
-            <div class="pr-verdict-card">
-              <div class="pr-verdict-label">الفرق</div>
-              <div class="pr-verdict-value pr-verdict-value--sm <?= $hasOpeningVariance ? 'pr-verdict-value--' . ($openingVariance > 0 ? 'pos' : 'neg') : '' ?>">
-                <?php if ($openingVariance !== null): ?>
-                  <?= $openingVariance > 0 ? '+' : '' ?><?= number_format((float) $openingVariance, 2) ?>
-                <?php else: ?>
-                  —
-                <?php endif; ?>
-              </div>
-              <?php if ($hasOpeningVariance): ?>
-              <div class="pr-verdict-sub"><?= $openingVariance > 0 ? 'أكثر من المتوقع' : 'أقل من المتوقع' ?></div>
-              <?php endif; ?>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <div class="pr-walk" data-testid="drawer-session-cash-walk">
-        <h2 class="pr-walk-title">مسار النقد في الدرج</h2>
-        <p class="pr-walk-hint pr-walk-hint--lead">هنا النقد داخل الدرج فقط. البطاقة والبنك في قسم طرق الدفع.</p>
-        <?php
-        $walkLines = [
-            ['opening', '', (float) ($movementTotals['opening'] ?? $drawer['opening_cash'] ?? 0)],
-            ['sale_cash', '+', (float) ($movementTotals['sale_cash'] ?? 0)],
-            ['refund_cash', '−', (float) ($movementTotals['refund_cash'] ?? 0)],
-            ['paid_in', '+', (float) ($movementTotals['paid_in'] ?? 0)],
-            ['paid_out', '−', (float) ($movementTotals['paid_out'] ?? 0)],
-            ['safe_drop', '−', (float) ($movementTotals['safe_drop'] ?? 0)],
-        ];
-        foreach ($walkLines as [$type, $sign, $amount]):
-            if ($amount == 0.0 && !in_array($type, ['opening', 'sale_cash'], true)) {
-                continue;
-            }
-        ?>
-        <div class="pr-walk-row">
-          <span class="pr-walk-label"><?= htmlspecialchars($movementLabels[$type] ?? $type) ?></span>
-          <span class="pr-walk-amount">
-            <?php if ($sign !== ''): ?><?= $sign ?> <?php endif; ?><?= number_format($amount, 2) ?>
-          </span>
-        </div>
-        <?php endforeach; ?>
-        <div class="pr-walk-row pr-walk-row--total">
-          <span class="pr-walk-label">المتوقع في الدرج</span>
-          <span class="pr-walk-amount"><?= number_format($expectedCash, 2) ?></span>
-        </div>
-        <div class="pr-walk-row">
-          <span class="pr-walk-label">ما تم عده عند الإغلاق</span>
-          <span class="pr-walk-amount"><?= $countedCash !== null ? number_format($countedCash, 2) : '—' ?></span>
-        </div>
-        <div class="pr-walk-row pr-walk-row--result" data-testid="drawer-session-close-variance-row">
-          <span class="pr-walk-label">فرق الإغلاق</span>
-          <span class="pr-walk-amount <?= $closeVariance !== null && abs($closeVariance) >= 0.001 ? 'pr-verdict-value--' . ($closeVariance > 0 ? 'pos' : 'neg') : '' ?>"><?= $closeVariance !== null ? number_format($closeVariance, 2) : '—' ?></span>
-        </div>
-        <?php if ($countPending || ($isOpen && $closeVariance === null)): ?>
-        <p class="pr-walk-hint">فرق الإغلاق يظهر بعد تسجيل عد الإغلاق.</p>
-        <?php endif; ?>
-      </div>
-
-      <?php
-      $paymentMethods = $recon['payments']['methods'] ?? [];
-      $hasPayments = $paymentMethods !== [] || $paymentsTotal > 0;
-      ?>
       <?php if ($canReport && $hasPayments): ?>
       <section class="pr-panel" data-testid="drawer-session-payments">
         <div class="pr-panel-head">
-          <h2 class="pr-panel-title">طرق الدفع</h2>
+          <div>
+            <p class="pr-eyebrow"><?= htmlspecialchars($paymentSourceLabel) ?></p>
+            <h2 class="pr-panel-title">طرق الدفع</h2>
+          </div>
           <span class="pr-pill pr-pill--money"><?= number_format($paymentsTotal, 2) ?> إجمالي</span>
         </div>
         <div class="pr-panel-body">
@@ -730,11 +671,47 @@ include('includes/header.php');
       <?php endif; ?>
 
       <?php if ($canReport): ?>
-      <section class="pr-panel" data-testid="drawer-session-movements">
+      <section class="pr-panel" data-testid="drawer-session-accountability">
         <div class="pr-panel-head">
-          <h2 class="pr-panel-title">سجل حركات الدرج</h2>
-          <span class="pr-pill pr-pill--muted"><?= count($movements['rows'] ?? []) ?> حركة</span>
+          <div>
+            <p class="pr-eyebrow">سلسلة العهدة</p>
+            <h2 class="pr-panel-title">من عدّ ومن أغلق ومن استلم؟</h2>
+          </div>
         </div>
+        <div class="pr-panel-body">
+          <div class="pr-verdict pr-verdict--compact">
+            <div class="pr-verdict-card"><div class="pr-verdict-label">صاحب الشيفت</div><div class="pr-verdict-value pr-verdict-value--sm"><?= htmlspecialchars((string) ($accountability['shift_owner_name'] ?? $userName ?: '—')) ?></div></div>
+            <div class="pr-verdict-card"><div class="pr-verdict-label">قام بالعد النهائي</div><div class="pr-verdict-value pr-verdict-value--sm"><?= htmlspecialchars((string) ($accountability['counted_by_name'] ?? '') ?: '—') ?></div></div>
+            <div class="pr-verdict-card"><div class="pr-verdict-label">أغلق الشيفت</div><div class="pr-verdict-value pr-verdict-value--sm"><?= htmlspecialchars((string) ($accountability['closed_by_name'] ?? '') ?: '—') ?></div></div>
+            <div class="pr-verdict-card"><div class="pr-verdict-label">اعتمد الاستلام</div><div class="pr-verdict-value pr-verdict-value--sm"><?= htmlspecialchars((string) ($accountability['takeover_authorized_by_name'] ?? '') ?: '—') ?></div></div>
+          </div>
+          <div class="pr-custody-links">
+            <?php if (!empty($accountability['preceding_session_id'])): ?>
+            <a href="<?= htmlspecialchars(posmain_cash_shift_detail_url((int) $accountability['preceding_session_id'], $returnTo), ENT_QUOTES, 'UTF-8') ?>" class="pr-custody-link">
+              <span>العهدة السابقة</span>
+              <strong>جلسة #<?= (int) $accountability['preceding_session_id'] ?> · <?= htmlspecialchars((string) ($accountability['preceding_shift_owner_name'] ?? '') ?: 'مستخدم غير معروف') ?></strong>
+            </a>
+            <?php endif; ?>
+            <?php if (!empty($accountability['succeeding_session_id'])): ?>
+            <a href="<?= htmlspecialchars(posmain_cash_shift_detail_url((int) $accountability['succeeding_session_id'], $returnTo), ENT_QUOTES, 'UTF-8') ?>" class="pr-custody-link pr-custody-link--next">
+              <span>انتقلت العهدة إلى</span>
+              <strong>جلسة #<?= (int) $accountability['succeeding_session_id'] ?> · <?= htmlspecialchars((string) ($accountability['succeeding_shift_owner_name'] ?? '') ?: 'مستخدم غير معروف') ?></strong>
+            </a>
+            <?php endif; ?>
+          </div>
+        </div>
+      </section>
+      <?php endif; ?>
+
+      <?php if ($canReport): ?>
+      <details class="pr-panel pr-panel-disclosure" data-testid="drawer-session-movements">
+        <summary class="pr-panel-head">
+          <div>
+            <p class="pr-eyebrow">تفاصيل المراجعة</p>
+            <h2 class="pr-panel-title">سجل حركات الدرج</h2>
+          </div>
+          <span class="pr-pill pr-pill--muted"><?= count($movements['rows'] ?? []) ?> حركة</span>
+        </summary>
         <div class="pr-panel-body">
           <p class="pr-walk-hint pr-walk-hint--lead">
             حركات النقد داخل الدرج فقط. اضغط على الحركة لعرض التفاصيل.
@@ -748,8 +725,21 @@ include('includes/header.php');
               $signedAmount = $sign >= 0 ? $amount : -$amount;
               $showSign = $type !== 'opening' && $type !== 'no_sale';
               $displaySign = $signedAmount >= 0 ? '+' : '−';
+              $timelineLabel = $movementLabels[$type] ?? $type;
+              $timelineAmount = abs($signedAmount);
+              if ($type === 'closing_adjustment' && $countedCash !== null) {
+                  // The ledger row stores the variance needed to reconcile the
+                  // expected balance. Operators need the final physical count
+                  // as the primary value; keep the variance in the details.
+                  $timelineLabel = 'العد النهائي عند الإغلاق';
+                  $timelineAmount = $countedCash;
+                  $showSign = false;
+              }
               $reasonText = $friendlyReason($row['reason'] ?? null);
               $detailBits = [];
+              if ($type === 'closing_adjustment') {
+                  $detailBits[] = 'فرق الإغلاق الدفتري: ' . number_format($amount, 2);
+              }
               if ($reasonText !== '') {
                   $detailBits[] = $reasonText;
               }
@@ -770,9 +760,9 @@ include('includes/header.php');
             <details class="pr-timeline-item pr-timeline-item--expandable">
               <summary class="pr-timeline-summary">
                 <span class="pr-timeline-time"><?= htmlspecialchars((string) ($row['created_at'] ?? '')) ?></span>
-                <span class="pr-timeline-type"><?= htmlspecialchars($movementLabels[$type] ?? $type) ?></span>
+                <span class="pr-timeline-type"><?= htmlspecialchars($timelineLabel) ?></span>
                 <span class="pr-timeline-amount">
-                  <?php if ($showSign): ?><?= $displaySign ?> <?php endif; ?><?= number_format(abs($signedAmount), 2) ?>
+                  <?php if ($showSign): ?><?= $displaySign ?> <?php endif; ?><?= number_format($timelineAmount, 2) ?>
                 </span>
               </summary>
               <?php if ($hasDetails): ?>
@@ -789,50 +779,81 @@ include('includes/header.php');
             <?php endif; ?>
           </div>
         </div>
-      </section>
+      </details>
       <?php endif; ?>
 
       <?php if ($countAttempts): ?>
-      <section class="pr-panel">
+      <section class="pr-panel" data-testid="drawer-session-count-attempts">
         <div class="pr-panel-head">
-          <h2 class="pr-panel-title">محاولات العد</h2>
-          <span class="pr-pill pr-pill--muted"><?= count($countAttempts) ?> محاولة</span>
+          <div>
+            <p class="pr-eyebrow">حد أقصى محاولتان لكل مرحلة</p>
+            <h2 class="pr-panel-title">سجل العد المعتمد</h2>
+          </div>
+          <div class="pr-count-limits" aria-label="استخدام محاولات العد">
+            <span class="pr-pill pr-pill--muted">الافتتاح <?= (int) $countAttemptsByPhase['open'] ?> من 2</span>
+            <span class="pr-pill pr-pill--muted">الإغلاق <?= (int) $countAttemptsByPhase['close'] ?> من 2</span>
+          </div>
         </div>
         <div class="pr-panel-body pr-table-wrap">
-          <table class="pr-table">
+          <?php if ($legacyExtraCountAttempts): ?>
+          <div class="pr-callout pr-callout--warn" role="status" data-testid="drawer-session-legacy-count-warning">
+            توجد <?= count($legacyExtraCountAttempts) ?> سجلات عد زائدة أنشأها الإصدار السابق عند إعادة فتح مسار الاستلام.
+            لم تعد تُعرض كمحاولات معتمدة، ويمكن مراجعتها في السجل التقني أدناه.
+          </div>
+          <?php endif; ?>
+          <table class="pr-table pr-count-table">
             <thead>
               <tr>
-                <th>المرحلة</th>
-                <th>المحاولة</th>
-                <th>المعدود</th>
-                <th>المتوقع</th>
-                <th>فرق العد</th>
-                <th>مطابق</th>
+                <th>المرحلة والمحاولة</th>
+                <th>المبلغ المعدود</th>
+                <th>النتيجة</th>
                 <th>قام بالعد</th>
                 <th>الوقت</th>
               </tr>
             </thead>
             <tbody>
-              <?php foreach ($countAttempts as $attempt): ?>
+              <?php foreach ($officialCountAttempts as $attempt): ?>
+              <?php $attemptVarianceDisplay = $formatVarianceAmountDisplay((float) ($attempt['variance'] ?? 0)); ?>
               <tr>
-                <td><?= ($attempt['count_phase'] ?? '') === 'open' ? 'افتتاح' : 'إغلاق' ?></td>
-                <td><?= (int) ($attempt['attempt_number'] ?? 0) ?></td>
-                <td><?= number_format((float) ($attempt['counted_amount'] ?? 0), 2) ?></td>
-                <td><?= number_format((float) ($attempt['expected_amount'] ?? 0), 2) ?></td>
                 <td>
-                  <?php $attemptVarianceDisplay = $formatVarianceAmountDisplay((float) ($attempt['variance'] ?? 0)); ?>
+                  <strong><?= ($attempt['count_phase'] ?? '') === 'open' ? 'افتتاح' : 'إغلاق' ?></strong>
+                  <span class="pr-table-sub">المحاولة <?= (int) ($attempt['display_attempt_number'] ?? 0) ?> من 2</span>
+                </td>
+                <td><?= number_format((float) ($attempt['counted_amount'] ?? 0), 2) ?></td>
+                <td>
                   <div class="pr-amount-dir <?= htmlspecialchars($attemptVarianceDisplay['class'], ENT_QUOTES, 'UTF-8') ?>">
                     <?= htmlspecialchars($attemptVarianceDisplay['formatted']) ?>
                   </div>
                   <div class="pr-amount-dir-label"><?= htmlspecialchars($attemptVarianceDisplay['label']) ?></div>
                 </td>
-                <td><?= !empty($attempt['matched']) ? 'نعم' : 'لا' ?></td>
                 <td><?= htmlspecialchars((string) (($attempt['display_name'] ?? '') ?: ($attempt['uname'] ?? '') ?: ('مستخدم #' . (int) ($attempt['created_by'] ?? 0)))) ?></td>
                 <td><?= htmlspecialchars((string) ($attempt['created_at'] ?? '')) ?></td>
               </tr>
               <?php endforeach; ?>
             </tbody>
           </table>
+
+          <?php if ($legacyExtraCountAttempts): ?>
+          <details class="pr-technical-log">
+            <summary>السجل التقني السابق (<?= count($legacyExtraCountAttempts) ?>)</summary>
+            <div class="pr-table-wrap">
+              <table class="pr-table pr-table--compact">
+                <thead><tr><th>المرحلة</th><th>الرقم المسجل</th><th>المعدود</th><th>قام بالعد</th><th>الوقت</th></tr></thead>
+                <tbody>
+                  <?php foreach ($legacyExtraCountAttempts as $attempt): ?>
+                  <tr>
+                    <td><?= ($attempt['count_phase'] ?? '') === 'open' ? 'افتتاح' : 'إغلاق' ?></td>
+                    <td><?= (int) ($attempt['attempt_number'] ?? 0) ?></td>
+                    <td><?= number_format((float) ($attempt['counted_amount'] ?? 0), 2) ?></td>
+                    <td><?= htmlspecialchars((string) (($attempt['display_name'] ?? '') ?: ($attempt['uname'] ?? '') ?: ('مستخدم #' . (int) ($attempt['created_by'] ?? 0)))) ?></td>
+                    <td><?= htmlspecialchars((string) ($attempt['created_at'] ?? '')) ?></td>
+                  </tr>
+                  <?php endforeach; ?>
+                </tbody>
+              </table>
+            </div>
+          </details>
+          <?php endif; ?>
         </div>
       </section>
       <?php endif; ?>

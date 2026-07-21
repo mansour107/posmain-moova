@@ -5,6 +5,7 @@ require_once __DIR__ . '/includes/auth_guard.php';
 require_once __DIR__ . '/includes/page_guard.php';
 require_once __DIR__ . '/classes/Security/PostLoginRouteService.php';
 require_once __DIR__ . '/classes/Dashboard/DashboardOverviewService.php';
+require_once __DIR__ . '/includes/business_day.php';
 
 page_guard(null, $conn);
 
@@ -22,6 +23,7 @@ if (!$hasDashboardWidgets) {
     exit;
 }
 
+$dashboardBusinessDay = posmain_business_day_context($conn);
 $dashboardFlags = [
     'is_admin' => auth_guard_is_admin_session(),
     'sid_rents' => auth_guard_has_legacy_flag('sid_rents', $conn),
@@ -32,6 +34,9 @@ $dashboardFlags = [
     'menu.edit' => auth_guard_has_permission('menu.edit', $conn),
     'reports.view' => auth_guard_has_permission('reports.view', $conn),
     'accounting.view' => auth_guard_has_permission('accounting.view', $conn),
+    'business_day' => $dashboardBusinessDay['current_business_day'],
+    'tenant' => $dashboardBusinessDay['tenant'],
+    'branch' => $dashboardBusinessDay['branch'],
 ];
 
 $dashboardOverview = (new DashboardOverviewService())->build($conn, $dashboardFlags);

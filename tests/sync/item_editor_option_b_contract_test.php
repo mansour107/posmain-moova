@@ -7,6 +7,14 @@ $pricingPanel = itemEditorOptionBSource($root . '/elements/sales/item_pricing_pa
 $profileJs = itemEditorOptionBSource($root . '/js/item_unit_profile.js');
 $js = itemEditorOptionBSource($root . '/js/additem.js');
 
+$csrfPreparation = strpos($form, "\$menuWriteCsrfInput = csrf_input('menu_write');");
+$headerRender = strpos($form, "include('includes/header.php')");
+itemEditorOptionBAssert($csrfPreparation !== false, 'item editor should prepare its CSRF field before rendering');
+itemEditorOptionBAssert($headerRender !== false, 'item editor should render the shared header');
+itemEditorOptionBAssert($csrfPreparation < $headerRender, 'item editor should prepare its CSRF field before the header closes the session');
+itemEditorOptionBAssert(substr_count($form, "csrf_input('menu_write')") === 1, 'item editor should not reopen the session while rendering either form action');
+itemEditorOptionBAssert(substr_count($form, '<?= $menuWriteCsrfInput ?>') === 2, 'both item form actions should render the prepared CSRF field');
+
 foreach ([
     'class="item-editor-shell"',
     'id="item-info-section"',

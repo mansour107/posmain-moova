@@ -24,6 +24,13 @@ foreach ([
 $bootstrap = file_get_contents($root . '/includes/pos_customer_bootstrap.php');
 posCustomerCrmAssert(strpos($bootstrap, 'applyPosCustomerSchema') !== false, 'bootstrap should use scoped CRM schema apply');
 posCustomerCrmAssert(strpos($bootstrap, '->apply($conn)') === false, 'bootstrap should not call full SyncSchemaManager::apply');
+posCustomerCrmAssert(strpos($bootstrap, 'pendingPosCustomerStatements') !== false, 'runtime customer readiness should inspect only customer schema');
+posCustomerCrmAssert(strpos($bootstrap, 'SyncSchemaReadinessGuard') === false, 'unrelated pending migrations must not block customer saving');
+
+$customerSave = file_get_contents($root . '/ajax/pos_customer_save.php');
+posCustomerCrmAssert(strpos($customerSave, 'POS_CUSTOMER_SCHEMA_MIGRATIONS_PENDING') !== false, 'customer save should expose a scoped actionable schema error');
+$deliveryUi = file_get_contents($root . '/js/pos_delivery.js');
+posCustomerCrmAssert(strpos($deliveryUi, 'JSON.parse(xhr.responseText)') !== false, 'delivery customer save should parse JSON failures instead of displaying raw response bodies');
 
 $migration = file_get_contents($root . '/update/013_pos_customers.sql');
 posCustomerCrmAssert(strpos($migration, 'CREATE TABLE IF NOT EXISTS pos_customers') !== false, 'migration should create pos_customers');

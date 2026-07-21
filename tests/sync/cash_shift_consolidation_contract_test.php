@@ -24,7 +24,7 @@ $mirror = (string) file_get_contents($root . '/classes/Sync/CloudOperationalMirr
 $workspaceService = (string) file_get_contents($root . '/classes/Pos/Service/CashShiftWorkspaceService.php');
 $routeManifest = require $root . '/config/rbac_route_manifest.php';
 
-foreach (['TAB_OVERVIEW', 'TAB_SHIFTS', 'TAB_MOVEMENTS', 'TAB_SETTINGS'] as $constant) {
+foreach (['TAB_OVERVIEW', 'TAB_SHIFTS', 'TAB_ORDERS', 'TAB_PAYMENTS', 'TAB_ITEMS', 'TAB_ATTENTION', 'TAB_MOVEMENTS', 'TAB_SETTINGS'] as $constant) {
     cashShiftContractAssert(strpos($workspaceService, "public const {$constant}") !== false, "workspace tab constant missing: {$constant}");
     cashShiftContractAssert(strpos($workspace, "CashShiftWorkspaceService::{$constant}") !== false, "workspace must consume tab constant: {$constant}");
 }
@@ -33,6 +33,16 @@ cashShiftContractAssert($presets['today']['date_from'] === '2026-07-15', 'today 
 cashShiftContractAssert($presets['yesterday']['date_from'] === '2026-07-14', 'yesterday preset must be business-day relative');
 cashShiftContractAssert($presets['last_7_days']['date_from'] === '2026-07-09', 'past-week preset must be inclusive of seven business dates');
 cashShiftContractAssert($presets['month_to_date']['date_from'] === '2026-07-01', 'month preset must begin on the first business date of the month');
+$focusedContext = (new CashShiftWorkspaceService())->normalizeContext(
+    ['tab' => 'orders', 'focus' => 'order_cancelled'],
+    ['date_from' => '2026-07-15', 'date_to' => '2026-07-15']
+);
+cashShiftContractAssert($focusedContext['focus'] === 'order_cancelled', 'order focus must be preserved on the orders tab');
+$invalidFocusContext = (new CashShiftWorkspaceService())->normalizeContext(
+    ['tab' => 'overview', 'focus' => 'order_cancelled'],
+    ['date_from' => '2026-07-15', 'date_to' => '2026-07-15']
+);
+cashShiftContractAssert($invalidFocusContext['focus'] === '', 'tab-specific focus must not leak into another report tab');
 cashShiftContractAssert(substr_count($workspace, 'data-testid="session-detail-link"') === 1, 'workspace should have one canonical shift list');
 cashShiftContractAssert(strpos($workspace, 'scope') !== false && strpos($workspace, 'كل الفترات') !== false, 'backlog scope must be explicit');
 cashShiftContractAssert(strpos($workspaceService, 'backlogOptions($context)') !== false, 'backlog badge and rows must share one filter mapping');
@@ -51,9 +61,14 @@ cashShiftContractAssert(
         === 'cash_flow_report.php?tab=shifts&status=open',
     'return_to must preserve only workspace query keys'
 );
+cashShiftContractAssert(
+    posmain_cash_shift_safe_return_to('cash_flow_report.php?tab=orders&focus=order_cancelled')
+        === 'cash_flow_report.php?tab=orders&focus=order_cancelled',
+    'return_to must preserve a valid focused report destination'
+);
 
 cashShiftContractAssert(strpos($schema, 'drawer_session_close_summaries') !== false, 'canonical close summary table must be planned');
-cashShiftContractAssert(strpos($schema, 'closed_orders.drop_legacy') !== false, 'legacy close table retirement must be staged');
+cashShiftContractAssert(strpos($schema, 'legacy_closed_orders_archive') !== false, 'legacy close rows must have a staged archive path');
 cashShiftContractAssert(strpos($close, "'drawer_session_id'") !== false && strpos($close, "'close_summary_id'") !== false, 'close result must expose canonical ids');
 cashShiftContractAssert(strpos($close, 'recordShiftCloseSnapshot') !== false, 'normal close must enqueue the v2 sync snapshot in its transaction');
 cashShiftContractAssert(strpos($forceClose, 'recordShiftCloseSnapshot') !== false, 'force close must enqueue the v2 sync snapshot in its transaction');

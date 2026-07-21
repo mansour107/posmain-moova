@@ -16,7 +16,13 @@ function pos_render_cart_row(array $row): string
     $sugarSpoons = null;
     foreach ($preparationValues as $preparationValue) {
         if (($preparationValue['code'] ?? $preparationValue['field_code'] ?? '') === 'sugar_spoons') {
-            $sugarSpoons = max(0, min(5, (int) ($preparationValue['value'] ?? $preparationValue['selected_value'] ?? 0)));
+            $sugarSpoons = max(
+                0,
+                min(
+                    PreparationSelectionService::SUGAR_SPOONS_SAFETY_LIMIT,
+                    (int) ($preparationValue['value'] ?? $preparationValue['selected_value'] ?? 0)
+                )
+            );
             break;
         }
     }

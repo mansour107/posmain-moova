@@ -4,18 +4,18 @@
  * Isolated database with full sync schema + delivery fixtures.
  */
 
+putenv('POSMAIN_ENV=test');
+putenv('POSMAIN_PRODUCTION_MODE=0');
+putenv('POSMAIN_SYNC_OUTBOX_ENABLED=0');
+putenv('POSMAIN_RECIPE_MODE=off');
+putenv('POSMAIN_DELIVERY_V2=1');
+
 require_once __DIR__ . '/../../classes/Pos/Service/PosOrderMutationService.php';
 require_once __DIR__ . '/../../classes/Pos/Service/PosCustomerService.php';
 require_once __DIR__ . '/../../classes/Pos/Service/OrderFulfillmentService.php';
 require_once __DIR__ . '/../../classes/Sync/SchemaManager.php';
 
 mysqli_report(MYSQLI_REPORT_OFF);
-
-putenv('POSMAIN_ENV=test');
-putenv('POSMAIN_PRODUCTION_MODE=0');
-putenv('POSMAIN_SYNC_OUTBOX_ENABLED=0');
-putenv('POSMAIN_RECIPE_MODE=off');
-putenv('POSMAIN_DELIVERY_V2=1');
 
 $host = getenv('POSMAIN_TEST_MYSQL_HOST') ?: '127.0.0.1';
 $port = (int) (getenv('POSMAIN_TEST_MYSQL_PORT') ?: 3307);
@@ -50,6 +50,26 @@ function deliveryProdCreateBaseSchema(mysqli $conn): void
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
     ");
     $conn->query("
+        CREATE TABLE usr_pwrs (
+            id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+            rollname VARCHAR(100) NULL,
+            info VARCHAR(255) NULL,
+            role_key VARCHAR(80) NULL,
+            is_active TINYINT(1) NOT NULL DEFAULT 1,
+            is_system TINYINT(1) NOT NULL DEFAULT 0,
+            isdeleted TINYINT(1) NOT NULL DEFAULT 0
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+    ");
+    $conn->query("
+        CREATE TABLE users (
+            id INT NOT NULL PRIMARY KEY,
+            uname VARCHAR(100) NOT NULL,
+            display_name VARCHAR(255) NULL,
+            userrole INT NOT NULL DEFAULT 0,
+            isdeleted TINYINT(1) NOT NULL DEFAULT 0
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+    ");
+    $conn->query("
         CREATE TABLE delivery_clients (
             id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
             client_name VARCHAR(255) NOT NULL,
@@ -77,6 +97,17 @@ function deliveryProdCreateBaseSchema(mysqli $conn): void
             cost_price DECIMAL(15,4) NOT NULL DEFAULT 0,
             price1 DECIMAL(15,4) NOT NULL DEFAULT 0,
             isdeleted TINYINT(1) NOT NULL DEFAULT 0
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+    ");
+    $conn->query("
+        CREATE TABLE item_units (
+            id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+            item_id INT NOT NULL,
+            unit_id INT NOT NULL DEFAULT 1,
+            u_val DECIMAL(18,6) NOT NULL DEFAULT 1.000000,
+            price1 DECIMAL(15,4) NOT NULL DEFAULT 0,
+            isdeleted TINYINT(1) NOT NULL DEFAULT 0,
+            KEY idx_item_units_item_unit (item_id, unit_id)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
     ");
     $conn->query("
@@ -212,6 +243,8 @@ function deliveryProdCreateBaseSchema(mysqli $conn): void
 
 function deliveryProdSeedFixtures(mysqli $conn): void
 {
+    $conn->query("INSERT INTO users (id, uname, display_name, userrole, isdeleted) VALUES (7, 'delivery_test', 'Delivery Test User', 0, 0)");
+    $conn->query("INSERT INTO drawer_sessions (uuid, user_id, tenant, branch, fund_account_id, opened_at, business_day, opened_by, opening_cash, status) VALUES ('fd3dd079-9b92-4db0-868d-b445f7862db4', 7, 0, 0, 51, NOW(), CURRENT_DATE, 7, 100.000, 'open')");
     $conn->query("INSERT INTO settings (id, def_pos_client, def_pos_store, def_pos_employee, def_pos_fund, edit_pass, isdeleted)
                   VALUES (1, 501, 3, 4, 51, '1234', 0)");
     $conn->query("
@@ -224,6 +257,11 @@ function deliveryProdSeedFixtures(mysqli $conn): void
         INSERT INTO myitems (id, iname, barcode, itmqty, cost_price, price1, isdeleted) VALUES
             (10, 'Delivery Burger', 'BRG10', 50, 5, 25, 0),
             (11, 'Delivery Fries', 'FRS11', 50, 2, 10, 0)
+    ");
+    $conn->query("
+        INSERT INTO item_units (item_id, unit_id, u_val, price1, isdeleted) VALUES
+            (10, 1, 1.000000, 25, 0),
+            (11, 1, 1.000000, 10, 0)
     ");
     $conn->query("
         INSERT INTO delivery_zones (name, fee, is_active, sort_order) VALUES
@@ -362,11 +400,13 @@ try {
         'accural_date' => date('Y-m-d'),
         'headtotal' => 19,
         'headdisc' => 0,
-        'headplus' => 0,
-        'headnet' => 19,
+        'headplus' => 20,
+        'headnet' => 39,
         'delivery_customer_name' => 'Discount Qty User',
         'delivery_customer_phone' => $discPhone,
         'delivery_customer_address' => 'Nasr Block 2',
+        'delivery_zone_name' => 'Nasr City',
+        'delivery_fee' => 20,
         'submit' => 'save',
         'itmname' => [11],
         'itmqty' => [2],
@@ -379,7 +419,7 @@ try {
     $discLine = $conn->query("SELECT det_value FROM fat_details WHERE fatid = {$discOrderId} AND isdeleted = 0 LIMIT 1")->fetch_assoc();
     $discHead = $conn->query("SELECT fat_total, fat_net FROM ot_head WHERE id = {$discOrderId}")->fetch_assoc();
     deliveryProdAssert(abs((float) $discLine['det_value'] - 18.0) < 0.01, 'detail line should use per-unit discount');
-    deliveryProdAssert(abs((float) $discHead['fat_net'] - 18.0) < 0.01, 'header net should match discounted line subtotal');
+    deliveryProdAssert(abs((float) $discHead['fat_net'] - 38.0) < 0.01, 'header net should match discounted line subtotal plus authoritative zone fee');
 
     // Phase 3/5: save-only delivery with zone fee
     $deliveryFee = 15.0;
@@ -400,6 +440,7 @@ try {
         'headnet' => $headNet,
         'delivery_fee' => $deliveryFee,
         'delivery_zone_name' => 'Maadi',
+        'courier_source' => 'external',
         'delivery_customer_name' => 'Production Test User Updated',
         'delivery_customer_phone' => $phone,
         'delivery_customer_address' => 'Maadi Street 2',
@@ -438,20 +479,31 @@ try {
 
     // Phase 6: dispatch lifecycle
     $fulfillmentService = new OrderFulfillmentService();
-    $accepted = $fulfillmentService->transitionDeliveryStatus($conn, $orderId, 'accepted', ['actor_user_id' => 7]);
-    deliveryProdAssert($accepted['delivery_status'] === 'accepted', 'pending -> accepted');
-    $preparing = $fulfillmentService->transitionDeliveryStatus($conn, $orderId, 'preparing', ['actor_user_id' => 7]);
-    deliveryProdAssert($preparing['delivery_status'] === 'preparing', 'accepted -> preparing');
-    $ready = $fulfillmentService->transitionDeliveryStatus($conn, $orderId, 'ready', ['actor_user_id' => 7]);
-    deliveryProdAssert($ready['delivery_status'] === 'ready', 'preparing -> ready');
-    $pickedUp = $fulfillmentService->transitionDeliveryStatus($conn, $orderId, 'picked_up', [
+    $transitionOptions = [
         'actor_user_id' => 7,
+        'tenant' => 0,
+        'branch' => 0,
+        'config' => [
+            'role' => 'branch',
+            'sync' => [
+                'outbox_enabled' => false,
+                'cloud_to_branch_publish_enabled' => false,
+            ],
+        ],
+    ];
+    $accepted = $fulfillmentService->transitionDeliveryStatus($conn, $orderId, 'accepted', $transitionOptions);
+    deliveryProdAssert($accepted['delivery_status'] === 'accepted', 'pending -> accepted');
+    $preparing = $fulfillmentService->transitionDeliveryStatus($conn, $orderId, 'preparing', $transitionOptions);
+    deliveryProdAssert($preparing['delivery_status'] === 'preparing', 'accepted -> preparing');
+    $ready = $fulfillmentService->transitionDeliveryStatus($conn, $orderId, 'ready', $transitionOptions);
+    deliveryProdAssert($ready['delivery_status'] === 'ready', 'preparing -> ready');
+    $pickedUp = $fulfillmentService->transitionDeliveryStatus($conn, $orderId, 'picked_up', $transitionOptions + [
         'driver_name' => 'Driver A',
         'driver_phone' => '01001112233',
     ]);
     deliveryProdAssert($pickedUp['delivery_status'] === 'picked_up', 'ready -> picked_up');
     deliveryProdAssert(($pickedUp['metadata']['driver_name'] ?? '') === 'Driver A', 'driver metadata stored');
-    $delivered = $fulfillmentService->transitionDeliveryStatus($conn, $orderId, 'delivered', ['actor_user_id' => 7]);
+    $delivered = $fulfillmentService->transitionDeliveryStatus($conn, $orderId, 'delivered', $transitionOptions);
     deliveryProdAssert($delivered['delivery_status'] === 'delivered', 'picked_up -> delivered');
 
     $activeList = $fulfillmentService->listActiveDeliveryOrders($conn, ['include_terminal' => false]);
@@ -563,7 +615,9 @@ try {
         'pending_count_before_second_pending' => $pendingCountBefore,
     ], JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT) . "\n";
 } catch (Throwable $e) {
-    fwrite(STDERR, 'delivery-production-integration-FAIL: ' . $e->getMessage() . "\n");
+    fwrite(STDERR, 'delivery-production-integration-FAIL: ' . $e->getMessage()
+        . ' at ' . $e->getFile() . ':' . $e->getLine() . "\n"
+        . $e->getTraceAsString() . "\n");
     exit(1);
 } finally {
     $conn->query("DROP DATABASE IF EXISTS `{$db}`");

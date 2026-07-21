@@ -13,12 +13,14 @@ require_csrf('delivery_zones_write');
 
 $action = trim((string) ($_POST['action'] ?? 'save'));
 $id = (int) ($_POST['id'] ?? 0);
+$tenant = max(0, (int) ($_SESSION['pos_tenant'] ?? 0));
+$branch = max(0, (int) ($_SESSION['pos_branch'] ?? 0));
 
 if ($action === 'delete') {
     if ($id > 0) {
-        $stmt = $conn->prepare('UPDATE delivery_zones SET is_active = 0 WHERE id = ?');
+        $stmt = $conn->prepare('UPDATE delivery_zones SET is_active = 0 WHERE id = ? AND tenant = ? AND branch = ?');
         if ($stmt) {
-            $stmt->bind_param('i', $id);
+            $stmt->bind_param('iii', $id, $tenant, $branch);
             $stmt->execute();
             $stmt->close();
         }
@@ -38,20 +40,20 @@ if ($name === '') {
 }
 
 if ($id > 0) {
-    $stmt = $conn->prepare('UPDATE delivery_zones SET name = ?, fee = ?, sort_order = ?, is_active = ? WHERE id = ?');
+    $stmt = $conn->prepare('UPDATE delivery_zones SET name = ?, fee = ?, sort_order = ?, is_active = ? WHERE id = ? AND tenant = ? AND branch = ?');
     if (!$stmt) {
         die('فشل تحديث المنطقة');
     }
-    $stmt->bind_param('sdiii', $name, $fee, $sortOrder, $isActive, $id);
+    $stmt->bind_param('sdiiiii', $name, $fee, $sortOrder, $isActive, $id, $tenant, $branch);
     $stmt->execute();
     $stmt->close();
     $_SESSION['success_message'] = 'تم تحديث منطقة التوصيل';
 } else {
-    $stmt = $conn->prepare('INSERT INTO delivery_zones (name, fee, sort_order, is_active) VALUES (?, ?, ?, ?)');
+    $stmt = $conn->prepare('INSERT INTO delivery_zones (name, fee, sort_order, is_active, tenant, branch) VALUES (?, ?, ?, ?, ?, ?)');
     if (!$stmt) {
         die('فشل إضافة المنطقة');
     }
-    $stmt->bind_param('sdii', $name, $fee, $sortOrder, $isActive);
+    $stmt->bind_param('sdiiii', $name, $fee, $sortOrder, $isActive, $tenant, $branch);
     $stmt->execute();
     $stmt->close();
     $_SESSION['success_message'] = 'تم إضافة منطقة التوصيل';

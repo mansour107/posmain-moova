@@ -134,7 +134,7 @@ class PostLoginRouteService
         }
 
         if ($has('reports.view')) {
-            return ['workspace' => self::WORKSPACE_BACKOFFICE, 'url' => 'sales-reports.php'];
+            return ['workspace' => self::WORKSPACE_BACKOFFICE, 'url' => 'cash_flow_report.php?tab=overview'];
         }
 
         if ($has('reports.cash_flow')) {

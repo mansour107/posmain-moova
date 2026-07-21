@@ -1,6 +1,7 @@
 <?php
 
 require_once __DIR__ . '/OperationalSyncEventService.php';
+require_once __DIR__ . '/../MoovaPosIntegration.php';
 
 function posmain_operational_sync_config(): array
 {
@@ -44,7 +45,11 @@ function posmain_record_operational_row_sync(
             $options['event_type'] = $eventType;
         }
 
-        return (new OperationalSyncEventService())->recordRowSnapshot($conn, $domain, $rowId, $options);
+        $event = (new OperationalSyncEventService())->recordRowSnapshot($conn, $domain, $rowId, $options);
+        if (in_array($domain, ['item_group', 'tables', 'modifier_groups', 'modifier_options', 'item_modifier_groups', 'item_variants'], true)) {
+            MoovaPosIntegration::markAllCatalogLinksDirty($conn);
+        }
+        return $event;
     } catch (Throwable $exception) {
         if (function_exists('posmain_log_exception') && function_exists('posmain_error_reference')) {
             posmain_log_exception($exception, posmain_error_reference(), 'operational_sync_outbox');
@@ -76,7 +81,11 @@ function posmain_record_operational_delete_sync(
             $options['event_type'] = $eventType;
         }
 
-        return (new OperationalSyncEventService())->recordRowDelete($conn, $domain, $rowId, $options);
+        $event = (new OperationalSyncEventService())->recordRowDelete($conn, $domain, $rowId, $options);
+        if (in_array($domain, ['item_group', 'tables', 'modifier_groups', 'modifier_options', 'item_modifier_groups', 'item_variants'], true)) {
+            MoovaPosIntegration::markAllCatalogLinksDirty($conn);
+        }
+        return $event;
     } catch (Throwable $exception) {
         if (function_exists('posmain_log_exception') && function_exists('posmain_error_reference')) {
             posmain_log_exception($exception, posmain_error_reference(), 'operational_sync_delete');

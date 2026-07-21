@@ -58,8 +58,8 @@ recipeReconciliationReportAssert(
 recipeReconciliationReportAssertNoBcMathDecimalBehavior($root . '/classes/Recipe/RecipeReconciliationService.php');
 recipeReconciliationReportAssert(
     strpos($reportsIndex, 'recipe_stock_reconciliation.php') !== false
-        && strpos($salesReports, 'recipe_stock_reconciliation.php') !== false,
-    'recipe stock reconciliation report should be discoverable from existing report screens'
+        && strpos($salesReports, 'cash_flow_report.php?tab=overview') !== false,
+    'recipe reconciliation stays discoverable from the report index while legacy POS reports redirect'
 );
 
 echo "recipe-stock-reconciliation-report-contract-ok\n";

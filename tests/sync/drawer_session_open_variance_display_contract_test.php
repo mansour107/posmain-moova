@@ -1,8 +1,8 @@
 <?php
 
 /**
- * Drawer session page: simple admin language, opening section, cash-only walk,
- * payments without invoice jargon, expandable movement details.
+ * Drawer session page: one result story per session state, immutable close
+ * payments, and expandable technical evidence.
  */
 
 declare(strict_types=1);
@@ -33,15 +33,17 @@ drawerOpenVarianceAssert(
 drawerOpenVarianceAssert(
     strpos($page, 'data-testid="drawer-session-opening"') !== false
         && strpos($page, 'المتوقع عند الافتتاح') !== false
-        && strpos($page, 'ما تم عده في الدرج') !== false,
-    'opening must be its own simple section'
+        && strpos($page, 'العد المعتمد عند الافتتاح') !== false
+        && strpos($page, '<?php if ($isOpen): ?>') !== false,
+    'open shifts must have one integrated drawer result'
 );
 
 drawerOpenVarianceAssert(
     strpos($page, 'data-testid="drawer-session-close-summary"') !== false
-        && strpos($page, 'ملخص الإغلاق') !== false
+        && strpos($page, 'نتيجة الدرج') !== false
+        && strpos($page, 'العد النهائي') !== false
         && strpos($page, '<?php if (!$isOpen): ?>') !== false,
-    'close summary must exist only for closed shifts'
+    'closed shifts must lead with the final drawer result'
 );
 
 drawerOpenVarianceAssert(
@@ -98,13 +100,34 @@ drawerOpenVarianceAssert(
 drawerOpenVarianceAssert(
     strpos($page, 'data-testid="drawer-session-close-variance-row"') !== false
         && strpos($page, 'فرق الإغلاق') !== false,
-    'close variance must stay explicit in the cash walk'
+    'close variance must stay explicit but secondary to final count'
 );
 
 drawerOpenVarianceAssert(
-    strpos($page, 'مسار النقد في الدرج') !== false
+    strpos($page, 'كيف حُسب المتوقع؟') !== false
         && strpos($page, "'opening', '',") !== false,
-    'opening walk row must not use a leading + sign'
+    'the optional calculation breakdown must not prefix opening with a plus sign'
+);
+
+drawerOpenVarianceAssert(
+    strpos($page, "\$paymentReport = \$recon['payments']") !== false
+        && strpos($page, "\$closeSummary['payment_summary_json']") !== false
+        && strpos($page, 'لقطة الإغلاق المعتمدة') !== false,
+    'closed payment totals must use the immutable close snapshot'
+);
+
+drawerOpenVarianceAssert(
+    strpos($page, "\$timelineLabel = 'العد النهائي عند الإغلاق'") !== false
+        && strpos($page, 'فرق الإغلاق الدفتري: ') !== false,
+    'closing adjustment must show final count first and keep ledger variance in details'
+);
+
+drawerOpenVarianceAssert(
+    strpos($page, '$officialCountAttempts') !== false
+        && strpos($page, '$legacyExtraCountAttempts') !== false
+        && strpos($page, 'الإغلاق <?= (int) $countAttemptsByPhase[\'close\'] ?> من 2') !== false
+        && strpos($page, 'السجل التقني السابق') !== false,
+    'count UI must show the two-attempt contract and isolate legacy surplus rows'
 );
 
 drawerOpenVarianceAssert(

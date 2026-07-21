@@ -9,7 +9,8 @@
 class PreparationSelectionService
 {
     public const SUGAR_SPOONS = 'sugar_spoons';
-    public const SUGAR_SPOONS_MAX = 5;
+    /** Invisible abuse/corruption guard; this is not an operational cashier limit. */
+    public const SUGAR_SPOONS_SAFETY_LIMIT = 999;
 
     private array $tableCache = [];
 
@@ -232,7 +233,7 @@ class PreparationSelectionService
             return;
         }
         $active = !empty($input['sugar_spoons_enabled']) ? 1 : 0;
-        $max = max(1, min(20, (int) ($input['sugar_spoons_max'] ?? 5)));
+        $max = self::SUGAR_SPOONS_SAFETY_LIMIT;
         $inventoryItemId = max(0, (int) ($input['sugar_spoons_inventory_item_id'] ?? 0));
         $inventoryQty = trim((string) ($input['sugar_spoons_inventory_qty_per_spoon'] ?? '0'));
         if (!preg_match('/^\d+(?:\.\d{1,6})?$/', $inventoryQty) || (float) $inventoryQty < 0) {
@@ -255,7 +256,7 @@ class PreparationSelectionService
         $code = self::SUGAR_SPOONS;
         $labelAr = 'ملاعق سكر';
         $labelEn = 'Sugar spoons';
-        $max = self::SUGAR_SPOONS_MAX;
+        $max = self::SUGAR_SPOONS_SAFETY_LIMIT;
         $active = $allowed ? 1 : 0;
         $stmt = $conn->prepare("\n            INSERT INTO item_preparation_configs
                 (item_id, field_code, label_ar, label_en, max_value, requires_explicit_value,
@@ -282,7 +283,7 @@ class PreparationSelectionService
         $code = self::SUGAR_SPOONS;
         $labelAr = 'ملاعق سكر';
         $labelEn = 'Sugar spoons';
-        $max = self::SUGAR_SPOONS_MAX;
+        $max = self::SUGAR_SPOONS_SAFETY_LIMIT;
         $active = $allowed ? 1 : 0;
         $stmt = $conn->prepare("\n            INSERT INTO item_group_preparation_configs
                 (item_group_id, field_code, label_ar, label_en, max_value, requires_explicit_value,
@@ -310,13 +311,86 @@ class PreparationSelectionService
         return $this->activeStateMap($conn, 'item_group_preparation_configs', 'item_group_id', $groupIds);
     }
 
+    /**
+     * Replaces the admin-managed sugar eligibility sets in one operation.
+     *
+     * Category and item selections intentionally remain independent: selecting a
+     * category does not destroy an existing item-level selection, so removing the
+     * category later cannot silently change a previously explicit item decision.
+     * The caller owns the transaction so sync-outbox writes can commit atomically
+     * with these configuration changes.
+     *
+     * @return array{selected_category_ids:array<int,int>,selected_item_ids:array<int,int>,category_config_ids:array<int,int>,item_config_ids:array<int,int>,changed_category_ids:array<int,int>,changed_item_ids:array<int,int>}
+     */
+    public function replaceSugarAssignments(
+        mysqli $conn,
+        array $selectedCategoryIds,
+        array $selectedItemIds,
+        int $actorId = 0
+    ): array {
+        if (!$this->tableExists($conn, 'item_preparation_configs')
+            || !$this->tableExists($conn, 'item_group_preparation_configs')) {
+            throw new RuntimeException('PREPARATION_SCHEMA_NOT_READY');
+        }
+
+        $selectedCategoryIds = $this->normalizeOwnerIds($selectedCategoryIds);
+        $selectedItemIds = $this->normalizeOwnerIds($selectedItemIds);
+        $this->assertOwnersExist($conn, 'item_group', $selectedCategoryIds);
+        $this->assertOwnersExist($conn, 'myitems', $selectedItemIds);
+
+        $currentCategoryIds = $this->activeSugarOwnerIds(
+            $conn,
+            'item_group_preparation_configs',
+            'item_group_id'
+        );
+        $currentItemIds = $this->activeSugarOwnerIds(
+            $conn,
+            'item_preparation_configs',
+            'item_id'
+        );
+
+        $changedCategoryIds = $this->changedOwnerIds($currentCategoryIds, $selectedCategoryIds);
+        $changedItemIds = $this->changedOwnerIds($currentItemIds, $selectedItemIds);
+        $categoryConfigIds = [];
+        $itemConfigIds = [];
+
+        foreach ($changedCategoryIds as $groupId) {
+            $categoryConfigIds[] = $this->setCategorySugarAllowed(
+                $conn,
+                $groupId,
+                in_array($groupId, $selectedCategoryIds, true),
+                $actorId
+            );
+        }
+        foreach ($changedItemIds as $itemId) {
+            $itemConfigIds[] = $this->setItemSugarAllowed(
+                $conn,
+                $itemId,
+                in_array($itemId, $selectedItemIds, true),
+                $actorId
+            );
+        }
+
+        return [
+            'selected_category_ids' => $selectedCategoryIds,
+            'selected_item_ids' => $selectedItemIds,
+            'category_config_ids' => array_values(array_filter($categoryConfigIds)),
+            'item_config_ids' => array_values(array_filter($itemConfigIds)),
+            'changed_category_ids' => $changedCategoryIds,
+            'changed_item_ids' => $changedItemIds,
+        ];
+    }
+
     private function publicField(array $row): array
     {
+        $code = (string) $row['field_code'];
         return [
-            'code' => (string) $row['field_code'],
+            'code' => $code,
             'label_ar' => (string) $row['label_ar'],
             'label_en' => $row['label_en'] !== null ? (string) $row['label_en'] : null,
-            'max_value' => max(1, min(20, (int) ($row['max_value'] ?? 5))),
+            'max_value' => $code === self::SUGAR_SPOONS
+                ? self::SUGAR_SPOONS_SAFETY_LIMIT
+                : max(1, min(20, (int) ($row['max_value'] ?? 5))),
             'requires_explicit_value' => (int) ($row['requires_explicit_value'] ?? 1) === 1,
             'inventory_item_id' => (int) ($row['inventory_item_id'] ?? 0),
             'inventory_qty_per_value' => (string) ($row['inventory_qty_per_value'] ?? '0'),
@@ -410,6 +484,56 @@ class PreparationSelectionService
         }
         $stmt->close();
         return $states;
+    }
+
+    private function normalizeOwnerIds(array $ownerIds): array
+    {
+        $ids = array_values(array_unique(array_filter(
+            array_map('intval', $ownerIds),
+            static fn(int $id): bool => $id > 0
+        )));
+        sort($ids, SORT_NUMERIC);
+        return $ids;
+    }
+
+    private function assertOwnersExist(mysqli $conn, string $table, array $ownerIds): void
+    {
+        if (!$ownerIds) {
+            return;
+        }
+        $sql = "SELECT id FROM {$table} WHERE COALESCE(isdeleted, 0) = 0 AND id IN (" . implode(',', $ownerIds) . ')';
+        $result = $conn->query($sql);
+        $found = [];
+        while ($result && ($row = $result->fetch_assoc())) {
+            $found[] = (int) $row['id'];
+        }
+        sort($found, SORT_NUMERIC);
+        if ($found !== $ownerIds) {
+            throw new InvalidArgumentException('PREPARATION_ASSIGNMENT_OWNER_INVALID');
+        }
+    }
+
+    private function activeSugarOwnerIds(mysqli $conn, string $table, string $ownerColumn): array
+    {
+        $stmt = $conn->prepare("SELECT {$ownerColumn} AS owner_id FROM {$table} WHERE field_code = ? AND is_active = 1");
+        $code = self::SUGAR_SPOONS;
+        $stmt->bind_param('s', $code);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        $ids = [];
+        while ($row = $result->fetch_assoc()) {
+            $ids[] = (int) $row['owner_id'];
+        }
+        $stmt->close();
+        return $this->normalizeOwnerIds($ids);
+    }
+
+    private function changedOwnerIds(array $currentIds, array $selectedIds): array
+    {
+        return $this->normalizeOwnerIds(array_merge(
+            array_diff($currentIds, $selectedIds),
+            array_diff($selectedIds, $currentIds)
+        ));
     }
 
     private function tableExists(mysqli $conn, string $table): bool

@@ -2,6 +2,24 @@
 
 require_once __DIR__ . '/../config/app_config.php';
 
+if (!function_exists('posmain_configure_web_error_visibility')) {
+    function posmain_configure_web_error_visibility(?string $sapi = null): void
+    {
+        $sapi = $sapi ?? PHP_SAPI;
+        if (in_array($sapi, ['cli', 'phpdbg'], true)) {
+            return;
+        }
+
+        // Browser pages must never expose PHP diagnostics or internal paths.
+        // Keep reporting and logging enabled so operators still receive the error.
+        ini_set('display_errors', '0');
+        ini_set('display_startup_errors', '0');
+        ini_set('log_errors', '1');
+    }
+}
+
+posmain_configure_web_error_visibility();
+
 if (!function_exists('posmain_session_driver')) {
     function posmain_session_driver(): string
     {

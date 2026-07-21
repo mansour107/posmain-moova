@@ -47,8 +47,9 @@ otHeadFilterAssert($unsafe === [], 'unsafe ot_head OR/isdeleted pattern found in
 
 $serviceSrc = file_get_contents($root . '/classes/Dashboard/DashboardOverviewService.php');
 otHeadFilterAssert(
-    strpos($serviceSrc, 'pro_tybe IN (3, 9) AND isdeleted = 0') !== false,
-    'DashboardOverviewService must use IN + isdeleted filter'
+    strpos($serviceSrc, 'OperationsReportService') !== false
+        && strpos($serviceSrc, 'pro_tybe = 9') !== false,
+    'DashboardOverviewService must consume the canonical POS report service'
 );
 
 echo "dashboard-ot-head-filter-contract-ok\n";

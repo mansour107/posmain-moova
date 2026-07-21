@@ -4,18 +4,6 @@ require_once __DIR__ . '/includes/page_guard.php';
 require_once __DIR__ . '/includes/csrf.php';
 include('includes/connect.php');
 page_guard('menu.edit', $conn);
-require_once __DIR__ . '/classes/Pos/Service/PreparationSelectionService.php';
-
-$preparationService = new PreparationSelectionService();
-$preparationFieldsEnabled = $preparationService->isEnabled();
-$groupIds = [];
-$groupIdResult = $conn->query('SELECT id FROM item_group WHERE isdeleted = 0');
-while ($groupIdRow = $groupIdResult->fetch_assoc()) {
-    $groupIds[] = (int) $groupIdRow['id'];
-}
-$categorySugarStates = $preparationFieldsEnabled
-    ? $preparationService->categorySugarStates($conn, $groupIds)
-    : [];
 ?>
 <?php include('includes/header.php') ?>
 <?php include('includes/navbar.php') ?>
@@ -98,12 +86,6 @@ $subgroupsError = isset($_GET['error']) && $activeTab === 'subgroups';
                                             required
                                             style="flex: 1;"
                                         >
-                                        <?php if ($preparationFieldsEnabled): ?>
-                                            <label class="mb-0 mr-3 d-inline-flex align-items-center">
-                                                <input type="checkbox" name="sugar_spoons_enabled" value="1" class="ml-2">
-                                                ملاعق السكر
-                                            </label>
-                                        <?php endif; ?>
                                     </form>
                                 </div>
                             </div>
@@ -114,9 +96,6 @@ $subgroupsError = isset($_GET['error']) && $activeTab === 'subgroups';
                                         <tr>
                                             <th width="80">#</th>
                                             <th>اسم التصنيف</th>
-                                            <?php if ($preparationFieldsEnabled): ?>
-                                                <th width="150" class="text-center">ملاعق السكر</th>
-                                            <?php endif; ?>
                                             <th width="150" class="text-center">العمليات</th>
                                         </tr>
                                     </thead>
@@ -126,7 +105,7 @@ $subgroupsError = isset($_GET['error']) && $activeTab === 'subgroups';
                                         $resgrb = $conn->query("SELECT * FROM item_group WHERE isdeleted = 0 ORDER BY id ASC");
 
                                         if ($resgrb->num_rows == 0) {
-                                            echo '<tr><td colspan="' . ($preparationFieldsEnabled ? '4' : '3') . '" class="text-center text-muted">لا توجد تصنيفات</td></tr>';
+                                            echo '<tr><td colspan="3" class="text-center text-muted">لا توجد تصنيفات</td></tr>';
                                         }
 
                                         while ($rowgrb = $resgrb->fetch_assoc()) {
@@ -145,14 +124,6 @@ $subgroupsError = isset($_GET['error']) && $activeTab === 'subgroups';
                                                         required
                                                     >
                                                 </td>
-                                                <?php if ($preparationFieldsEnabled): ?>
-                                                    <td class="text-center">
-                                                        <label class="mb-0" title="يظهر اختيار عدد ملاعق السكر لكل أصناف هذا التصنيف">
-                                                            <input type="checkbox" name="sugar_spoons_enabled" value="1" <?= !empty($categorySugarStates[(int) $rowgrb['id']]) ? 'checked' : '' ?>>
-                                                            <span class="mr-1">مسموح</span>
-                                                        </label>
-                                                    </td>
-                                                <?php endif; ?>
                                                 <td class="text-center">
                                                     <button type="submit" class="btn btn-sm btn-warning">
                                                         <i class="fas fa-edit"></i>

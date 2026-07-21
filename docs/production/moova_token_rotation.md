@@ -4,20 +4,19 @@ Generated: 2026-05-13
 
 ## Policy
 
-Moova device tokens remain visible to authorized Moova managers because operators need to verify the POS bridge setup. They are still secrets.
+Moova device tokens are write-only secrets in POSMAIN. Managers can replace a token but cannot reveal the stored value.
 
-Only users with `moova.manage` compatibility permissions may view or replace the full token. Cashiers use the token indirectly through the local widget/proxy and should not need to reveal it.
+Only users with `moova.manage` compatibility permissions may replace the token. Cashiers use it indirectly through the bridge.
 
 ## Current Controls
 
-- `moova_integration.php` displays the full token only when the user can manage Moova integration.
-- Viewing the full token records `security_audit_log.event_type = moova_device_token_viewed`.
+- `moova_integration.php` displays only the last four characters.
 - Saving or disconnecting the link records dedicated Moova integration audit events.
-- `moova_pos_shop_links` stores `moova_device_token_hash` and `moova_device_token_last4` for lookup and audit metadata.
+- `moova_pos_shop_links` stores the token encrypted at rest, plus a one-way hash and last four characters for lookup and audit metadata.
 
-## At-Rest Risk
+## At-Rest Protection
 
-The current Phase 5 slice does not encrypt `moova_device_token` at rest. Until encryption is implemented, restrict DB users, backups, logs, and support exports as if the token column is secret material.
+New pairings require `POSMAIN_CONFIG_ENCRYPTION_KEY` (or its key file) and never store the raw token. Legacy plaintext rows are read only for compatibility and are replaced by encrypted storage on the next successful pairing.
 
 Do not commit:
 

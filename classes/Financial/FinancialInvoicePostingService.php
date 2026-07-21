@@ -105,6 +105,8 @@ final class FinancialInvoicePostingService
                 'idempotency_key' => $idempotencyKey,
                 'op_id' => $orderId,
                 'op2' => $orderId,
+                'tenant' => $tenant,
+                'branch' => $branch,
             ]
         );
 

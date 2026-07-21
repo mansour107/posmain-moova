@@ -29,9 +29,7 @@ foreach ([
     recipeReportMenuAssert(strpos($reports, '$recipeReportLinks[' . $linkKey . ']') !== false, 'reports index should gate recipe link: ' . $linkKey);
 }
 
-recipeReportMenuAssert(strpos($salesReports, "require_once __DIR__ . '/includes/recipe_report_permissions.php'") !== false, 'sales reports should load shared recipe link permissions');
-recipeReportMenuAssert(strpos($salesReports, 'posmain_recipe_report_can_view_sales_reconciliation($conn)') !== false, 'sales reports should calculate recipe reconciliation visibility');
-recipeReportMenuAssert(strpos($salesReports, '$canViewRecipeSalesReconciliation') !== false, 'sales reports should gate recipe reconciliation link');
+recipeReportMenuAssert(strpos($salesReports, 'cash_flow_report.php?tab=overview') !== false, 'legacy sales report entry should redirect to the canonical workspace');
 recipeReportMenuAssert(strpos($sidebar, 'recipe_manage.php') !== false, 'sidebar inventory menu should link recipe management');
 recipeReportMenuAssert(strpos($sidebar, 'الوصفات') !== false, 'sidebar inventory menu should show Arabic recipe management label');
 recipeReportMenuAssert(strpos($sidebar, '$lang_inventory_management') < strpos($sidebar, 'الوصفات'), 'recipe management should be under inventory management in the sidebar');

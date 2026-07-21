@@ -24,7 +24,7 @@ class MoovaPosMenuPayloadBuilder
             'success' => true,
             'catalogVersion' => $built['catalogVersion'] ?? $catalogVersion,
             'fingerprint' => $catalogVersion,
-            'menu' => $built['menu'] ?? ['categories' => [], 'items' => []],
+            'menu' => $built['menu'] ?? ['categories' => [], 'items' => [], 'tables' => []],
             'rawPayload' => $built['rawPayload'] ?? [
                 'source' => 'posmain_local_menu',
                 'catalogVersion' => $catalogVersion,

@@ -587,7 +587,17 @@ $condensedMeta = implode(' · ', $metaBits);
                 var btn = document.getElementById('posTakeoverShiftBtn');
                 var sessionId = btn ? (btn.getAttribute('data-session-id') || '0') : '0';
                 var err = document.getElementById('posTakeoverError');
-                beginTakeoverCloseCount(sessionId).then(function () {
+                beginTakeoverCloseCount(sessionId).then(function (data) {
+                    if (data && data.status === 'final_amount_required') {
+                        var attemptLabel = document.getElementById('posTakeoverAttemptLabel');
+                        if (attemptLabel) {
+                            attemptLabel.hidden = false;
+                            attemptLabel.textContent = 'تم استخدام محاولتي العد من 2';
+                        }
+                        showErr(err, '');
+                        showInfo(document.getElementById('posTakeoverInfo'), data.message || 'أدخل المبلغ النهائي لاعتماده عند الإغلاق.');
+                        if (btn) btn.textContent = 'اعتماد المبلغ النهائي';
+                    }
                     var amount = document.getElementById('posTakeoverAmount');
                     if (amount) setTimeout(function () { amount.focus(); }, 50);
                 }).catch(function (e) {

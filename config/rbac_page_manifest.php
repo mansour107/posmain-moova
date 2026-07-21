@@ -92,6 +92,7 @@ return [
     // delivery / moova / kds
     'moova_integration.php' => ['permission' => 'moova.manage'],
     'delivery_board.php' => ['permission' => 'delivery.dispatch'],
+    'delivery_management.php' => ['any_of' => ['delivery.workers.manage', 'delivery.compensation.manage', 'delivery.settlements.manage', 'delivery.reports.view']],
     'delivery_zones.php' => ['permission' => 'delivery.zones.manage'],
     'kds.php' => ['permission' => 'kds.view'],
     'kds_settings.php' => ['permission' => 'kds.manage', 'admin_or' => true],

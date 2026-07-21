@@ -107,6 +107,16 @@ function branchWorkerStatusReport(mysqli $conn, int $limit, int $recentMinutes):
         );
     }
 
+    if (branchWorkerStatusTableExists($conn, 'moova_catalog_sync_outbox')) {
+        $checks['moova_catalog'] = branchWorkerStatusMoovaCatalog($conn, $limit);
+        $problems = array_merge($problems, branchWorkerStatusProblems($checks['moova_catalog'], 'moova_catalog'));
+        if ((int) ($checks['moova_catalog']['retry_errors'] ?? 0) > 0) {
+            $problems[] = 'moova_catalog_retry_errors';
+        }
+    } else {
+        $checks['moova_catalog'] = ['available' => false];
+    }
+
     $problems = array_values(array_unique($problems));
 
     return [
@@ -201,6 +211,37 @@ function branchWorkerStatusMoovaInbound(mysqli $conn, int $limit): array
             FROM moova_pos_inbound_events
             WHERE error_message IS NOT NULL OR cloud_ack_error IS NOT NULL
             ORDER BY COALESCE(cloud_ack_last_attempt_at, last_attempt_at, received_at) DESC, id DESC
+            LIMIT {$limit}
+        "),
+    ];
+}
+
+function branchWorkerStatusMoovaCatalog(mysqli $conn, int $limit): array
+{
+    return [
+        'available' => true,
+        'counts_by_status' => branchWorkerStatusCounts($conn, 'moova_catalog_sync_outbox', 'state'),
+        'retryable_due' => branchWorkerStatusScalar($conn, "
+            SELECT COUNT(*) AS value
+            FROM moova_catalog_sync_outbox
+            WHERE state = 'pending' AND available_at <= NOW()
+        "),
+        'expired_syncing_locks' => branchWorkerStatusScalar($conn, "
+            SELECT COUNT(*) AS value
+            FROM moova_catalog_sync_outbox
+            WHERE state = 'processing'
+              AND updated_at < DATE_SUB(NOW(), INTERVAL 10 MINUTE)
+        "),
+        'retry_errors' => branchWorkerStatusScalar($conn, "
+            SELECT COUNT(*) AS value
+            FROM moova_catalog_sync_outbox
+            WHERE attempts > 0 AND last_error IS NOT NULL
+        "),
+        'recent_errors' => branchWorkerStatusRows($conn, "
+            SELECT id, shop_link_id, state, attempts, last_error, available_at, updated_at
+            FROM moova_catalog_sync_outbox
+            WHERE last_error IS NOT NULL
+            ORDER BY updated_at DESC, id DESC
             LIMIT {$limit}
         "),
     ];
@@ -352,6 +393,15 @@ function branchWorkerStatusHuman(array $report): void
     fwrite(STDOUT, "\nMoova inbound:\n");
     fwrite(STDOUT, '- pending_apply: ' . (int) ($moova['pending_apply'] ?? 0) . "\n");
     fwrite(STDOUT, '- pending_cloud_ack: ' . (int) ($moova['pending_cloud_ack'] ?? 0) . "\n");
+
+    $catalog = $report['checks']['moova_catalog'] ?? [];
+    fwrite(STDOUT, "\nMoova catalog:\n");
+    if (empty($catalog['available'])) {
+        fwrite(STDOUT, "- not configured\n");
+    } else {
+        fwrite(STDOUT, '- retryable_due: ' . (int) ($catalog['retryable_due'] ?? 0) . "\n");
+        fwrite(STDOUT, '- retry_errors: ' . (int) ($catalog['retry_errors'] ?? 0) . "\n");
+    }
 
     $logs = $report['checks']['worker_logs']['latest'] ?? [];
     fwrite(STDOUT, "\nLatest worker logs:\n");

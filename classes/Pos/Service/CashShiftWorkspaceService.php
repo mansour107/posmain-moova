@@ -13,13 +13,35 @@ class CashShiftWorkspaceService
 {
     public const TAB_OVERVIEW = 'overview';
     public const TAB_SHIFTS = 'shifts';
+    public const TAB_ORDERS = 'orders';
+    public const TAB_PAYMENTS = 'payments';
+    public const TAB_ITEMS = 'items';
+    public const TAB_ATTENTION = 'attention';
     public const TAB_MOVEMENTS = 'movements';
     public const TAB_SETTINGS = 'settings';
+    public const FOCUS_ORDER_CANCELLED = 'order_cancelled';
+    public const FOCUS_ORDER_DISCOUNTED = 'order_discounted';
+    public const FOCUS_PAYMENT_REFUNDS = 'payment_refunds';
+    public const FOCUS_PAYMENT_PENDING_REFUNDS = 'payment_pending_refunds';
+    public const FOCUS_PAYMENT_CASH_DIFFERENCE = 'payment_cash_difference';
+    public const FOCUS_MOVEMENT_UNASSIGNED = 'movement_unassigned';
     public const TABS = [
         self::TAB_OVERVIEW,
         self::TAB_SHIFTS,
+        self::TAB_ORDERS,
+        self::TAB_PAYMENTS,
+        self::TAB_ITEMS,
+        self::TAB_ATTENTION,
         self::TAB_MOVEMENTS,
         self::TAB_SETTINGS,
+    ];
+    public const FOCUS_TABS = [
+        self::FOCUS_ORDER_CANCELLED => self::TAB_ORDERS,
+        self::FOCUS_ORDER_DISCOUNTED => self::TAB_ORDERS,
+        self::FOCUS_PAYMENT_REFUNDS => self::TAB_PAYMENTS,
+        self::FOCUS_PAYMENT_PENDING_REFUNDS => self::TAB_PAYMENTS,
+        self::FOCUS_PAYMENT_CASH_DIFFERENCE => self::TAB_PAYMENTS,
+        self::FOCUS_MOVEMENT_UNASSIGNED => self::TAB_MOVEMENTS,
     ];
 
     private CashFlowPeriodService $cashFlow;
@@ -38,6 +60,10 @@ class CashShiftWorkspaceService
         $tab = (string) ($input['tab'] ?? self::TAB_OVERVIEW);
         if (!in_array($tab, self::TABS, true)) {
             $tab = self::TAB_OVERVIEW;
+        }
+        $focus = trim((string) ($input['focus'] ?? ''));
+        if (!isset(self::FOCUS_TABS[$focus]) || self::FOCUS_TABS[$focus] !== $tab) {
+            $focus = '';
         }
         $status = (string) ($input['status'] ?? 'all');
         if (!in_array($status, ['all', 'open', 'closed', 'needs_review', 'forced_closed'], true)) {
@@ -61,6 +87,7 @@ class CashShiftWorkspaceService
             'cashier_id' => max(0, (int) ($input['cashier_id'] ?? 0)),
             'override_operator_id' => max(0, (int) ($input['override_operator_id'] ?? 0)),
             'movement_type' => trim((string) ($input['movement_type'] ?? '')),
+            'focus' => $focus,
             'status' => $status,
             'scope' => $scope,
             'has_override' => !empty($input['has_override']),
@@ -77,6 +104,8 @@ class CashShiftWorkspaceService
             'date_to' => $context['date_to'],
             'cashier_id' => $context['cashier_id'],
             'movement_type' => $context['movement_type'],
+            'focus' => (string) ($context['focus'] ?? ''),
+            'only_unassigned' => ($context['focus'] ?? '') === self::FOCUS_MOVEMENT_UNASSIGNED,
             'drawer_session_id' => 0,
             'include_unassigned' => true,
             'tenant' => $context['tenant'],
@@ -114,12 +143,12 @@ class CashShiftWorkspaceService
                 'date_to' => $current->format('Y-m-d'),
             ],
             'last_30_days' => [
-                'label' => 'آخر 30 يوماً',
+                'label' => 'آخر 30 يومًا',
                 'date_from' => $current->modify('-29 days')->format('Y-m-d'),
                 'date_to' => $current->format('Y-m-d'),
             ],
             'month_to_date' => [
-                'label' => 'هذا الشهر',
+                'label' => 'من بداية الشهر',
                 'date_from' => $current->modify('first day of this month')->format('Y-m-d'),
                 'date_to' => $current->format('Y-m-d'),
             ],
@@ -148,15 +177,25 @@ class CashShiftWorkspaceService
             );
             $overrideIds = $this->overrideSessionIdsForRows($conn, $rows);
             foreach ($rows as &$row) {
-                $row['business_day'] = substr((string) ($row['opened_at'] ?? ''), 0, 10);
+                // The unresolved-session query is intentionally lean. Enrich
+                // each visible backlog row from the same ledger-backed read
+                // model used by the period list so monetary columns never
+                // degrade to placeholder zeroes in review mode.
+                $financial = $this->financialSessionForBacklogRow($conn, $row, $context);
+                $row = array_merge($financial, $row);
+                if (empty($row['business_day'])) {
+                    $row['business_day'] = substr((string) ($row['opened_at'] ?? ''), 0, 10);
+                }
                 $row['close_variance'] = $this->varianceAmount($row);
                 $row['count_pending'] = false;
                 $row['variance_status'] = 'unresolved';
                 $row['has_override'] = isset($overrideIds[(int) $row['id']]);
-                $row = array_merge(
-                    $row,
-                    $this->cashFlow->accountabilityForSession($conn, (int) ($row['id'] ?? 0))
-                );
+                if ($financial === []) {
+                    $row = array_merge(
+                        $row,
+                        $this->cashFlow->accountabilityForSession($conn, (int) ($row['id'] ?? 0))
+                    );
+                }
             }
             unset($row);
 
@@ -285,6 +324,28 @@ class CashShiftWorkspaceService
         }
 
         return (float) ($row['difference'] ?? 0);
+    }
+
+    /** @return array<string, mixed> */
+    private function financialSessionForBacklogRow(mysqli $conn, array $row, array $context): array
+    {
+        $openedDate = substr((string) ($row['opened_at'] ?? ''), 0, 10);
+        if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $openedDate)) {
+            return [];
+        }
+
+        // A session opened before the branch cutoff belongs to the preceding
+        // business day, so the lookup window deliberately includes both days.
+        $from = (new DateTimeImmutable($openedDate))->modify('-1 day')->format('Y-m-d');
+        $sessions = $this->cashFlow->sessions($conn, [
+            'date_from' => $from,
+            'date_to' => $openedDate,
+            'tenant' => (int) ($context['tenant'] ?? 0),
+            'branch' => (int) ($context['branch'] ?? 0),
+            'drawer_session_id' => (int) ($row['id'] ?? 0),
+        ]);
+
+        return $sessions[0] ?? [];
     }
 
     private function date(string $value): string

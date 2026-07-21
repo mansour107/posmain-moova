@@ -1,6 +1,6 @@
 # Branch Worker Status
 
-`tools/branch_worker_status.php` is a read-only operator check for the branch worker daemon.
+`tools/branch_worker_status.php` is a read-only operator check for the branch worker daemon, including POS-to-Moova catalog retries and Moova-to-POS order queues.
 
 Use it after service start, after cloud/branch outages, and during rollout support to answer:
 

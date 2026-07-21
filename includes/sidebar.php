@@ -16,6 +16,12 @@ $posmainCanViewKds = isset($conn) && $conn instanceof mysqli
     && auth_guard_has_permission('kds.view', $conn);
 $posmainCanManageKds = isset($conn) && $conn instanceof mysqli
     && auth_guard_has_permission('kds.manage', $conn);
+$posmainCanDispatchDelivery = isset($conn) && $conn instanceof mysqli
+    && auth_guard_has_permission('delivery.dispatch', $conn);
+$posmainCanManageDelivery = isset($conn) && $conn instanceof mysqli
+    && (auth_guard_has_permission('delivery.workers.manage', $conn)
+        || auth_guard_has_permission('delivery.settlements.manage', $conn)
+        || auth_guard_has_permission('delivery.compensation.manage', $conn));
 $posmainCanEditMenu = isset($conn) && $conn instanceof mysqli
     && auth_guard_has_permission('menu.edit', $conn);
 $posmainCanEditInventory = isset($conn) && $conn instanceof mysqli
@@ -379,6 +385,21 @@ $posmainLegacyFlag = static function (string $flag) use ($conn): bool {
 
 
 
+<!-- ------------------- التوصيل -->
+        <?php if ($posmainCanDispatchDelivery || $posmainCanManageDelivery) { ?>
+          <li class="nav-item has-treeview">
+            <a href="#" class="nav-link nav-link-basic">
+              <i class="nav-icon fas fa-motorcycle"></i>
+              <p>التوصيل <i class="fas fa-angle-left right"></i></p>
+            </a>
+            <ul class="nav nav-treeview" style="display: none;">
+              <?php if ($posmainCanDispatchDelivery) { ?><li class="nav-item"><a href="delivery_board.php" class="nav-link"><i class="nav-icon fas fa-route"></i><p>طلبات التوصيل</p></a></li><?php } ?>
+              <?php if ($posmainCanManageDelivery) { ?><li class="nav-item"><a href="delivery_management.php" class="nav-link"><i class="nav-icon fas fa-users-cog"></i><p>العمال والحسابات</p></a></li><?php } ?>
+              <?php if (isset($conn) && auth_guard_has_permission('delivery.zones.manage', $conn)) { ?><li class="nav-item"><a href="delivery_zones.php" class="nav-link"><i class="nav-icon fas fa-map-marked-alt"></i><p>مناطق التوصيل</p></a></li><?php } ?>
+            </ul>
+          </li>
+        <?php } ?>
+
 <!-- ------------------- شاشة المطبخ KDS -->
         <?php if ($posmainCanViewKds) { ?>
           <li class="nav-item has-treeview">
@@ -464,11 +485,11 @@ $posmainLegacyFlag = static function (string $flag) use ($conn): bool {
 
 
 
-              <?php if ($posmainCanCloseShift || $posmainCanViewCashFlow) { ?>
+              <?php if (($posmainCanCloseShift || $posmainCanViewCashFlow) && !$posmainCanViewReports) { ?>
               <li class="nav-item">
                 <a href="cash_flow_report.php" class="nav-link">
                   <i class="nav-icon fas fa-cash-register"></i>
-                  <p>النقد والورديات</p>
+                  <p>تقارير التشغيل</p>
                 </a>
               </li>
               <?php } ?>
@@ -1544,9 +1565,9 @@ $posmainLegacyFlag = static function (string $flag) use ($conn): bool {
               </li>
 
               <li class="nav-item">
-                <a href="sales-reports.php" class="nav-link">
-                  <i class="nav-icon fas fa-list"></i>
-                  <p><?= $lang_sales_reports ?></p>
+                <a href="cash_flow_report.php?tab=overview" class="nav-link">
+                  <i class="nav-icon fas fa-chart-pie"></i>
+                  <p>تقارير التشغيل</p>
                 </a>
               </li>
 
@@ -1569,15 +1590,6 @@ $posmainLegacyFlag = static function (string $flag) use ($conn): bool {
               </li>
 
 
-
-              <li class="nav-item">
-                <a href="items_summery.php" class="nav-link">
-                  <i class="nav-icon fas fa-list"></i>
-                  <p>
-                    <?= $lang_sales_items_report ?>
-                  </p>
-                </a>
-              </li>
 
               <li class="nav-item">
                 <a href="inventory_dashboard.php" class="nav-link">

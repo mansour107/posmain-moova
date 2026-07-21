@@ -84,13 +84,14 @@ class BranchMoovaApplyWorkerTest extends TestCase
         if (!$table || !$item) {
             $this->markTestSkipped('POS table and item fixtures are not available.');
         }
+        $tableToken = $this->mapTable((int) $table['id']);
 
         $ingest = new MoovaLocalIngestService();
         $payload = [
             'idempotency_key' => 'phpunit:moova-apply:new-order',
             'moova_order_id' => 'phpunit-apply-order-1',
             'moova_branch_id' => 'phpunit-apply-branch',
-            'table_id' => (string) $table['id'],
+            'table_id' => $tableToken,
             'items' => [
                 ['item_id' => (string) $item['id'], 'qty' => 1],
             ],
@@ -416,13 +417,14 @@ class BranchMoovaApplyWorkerTest extends TestCase
         if (!$table || !$item) {
             $this->markTestSkipped('POS table and item fixtures are not available.');
         }
+        $tableToken = $this->mapTable((int) $table['id']);
 
         $ingest = new MoovaLocalIngestService();
         $payload = [
             'idempotency_key' => $idempotencyKey,
             'moova_order_id' => $moovaOrderId,
             'moova_branch_id' => 'phpunit-apply-branch',
-            'table_id' => (string) $table['id'],
+            'table_id' => $tableToken,
             'items' => [
                 ['item_id' => (string) $item['id'], 'qty' => 1],
             ],
@@ -467,6 +469,17 @@ class BranchMoovaApplyWorkerTest extends TestCase
             ORDER BY t.id ASC
             LIMIT 1
         ")->fetch_assoc() ?: null;
+    }
+
+    private function mapTable(int $tableId): string
+    {
+        $tableToken = 'pos-table-' . $tableId;
+        MoovaPosIntegration::upsertTableLink(self::$conn, [
+            'tenant' => 0,
+            'branch' => 0,
+        ], 'phpunit-apply-branch', $tableToken, $tableId);
+
+        return $tableToken;
     }
 
     private function loadItem(): ?array
@@ -607,6 +620,7 @@ class BranchMoovaApplyWorkerTest extends TestCase
         self::$conn->query("DELETE FROM moova_pos_inbound_events WHERE branch_uuid = '{$branchUuid}'");
         self::$conn->query("DELETE FROM moova_pos_order_change_links WHERE idempotency_key LIKE 'phpunit:moova-apply:%'");
         self::$conn->query("DELETE FROM moova_pos_order_links WHERE idempotency_key LIKE 'phpunit:moova-apply:%'");
+        self::$conn->query("DELETE FROM moova_pos_table_links WHERE moova_branch_id = 'phpunit-apply-branch'");
         self::$conn->query("DELETE FROM sync_worker_logs WHERE worker_name = 'moova_apply'");
     }
 

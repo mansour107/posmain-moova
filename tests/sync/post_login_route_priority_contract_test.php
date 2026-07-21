@@ -21,7 +21,7 @@ $cases = [
     'reports_only' => [
         'permissions' => ['reports.view' => true],
         'workspace' => PostLoginRouteService::WORKSPACE_BACKOFFICE,
-        'url' => 'sales-reports.php',
+        'url' => 'cash_flow_report.php?tab=overview',
     ],
     'manager_like_no_widgets' => [
         'permissions' => [
@@ -33,7 +33,7 @@ $cases = [
             'kds.view' => true,
         ],
         'workspace' => PostLoginRouteService::WORKSPACE_BACKOFFICE,
-        'url' => 'sales-reports.php',
+        'url' => 'cash_flow_report.php?tab=overview',
     ],
     'widgets_present' => [
         'permissions' => [

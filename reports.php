@@ -81,6 +81,11 @@ $recipeReportLinks = posmain_recipe_report_link_permissions($conn);
                     <div id="financialReports" class=" show">
                         <div class="row g-3 justify-content-center" id="financialReportsContent">
                             <div class="col-md-4 col-lg-3 report-item">
+                                <a class="btn btn-outline-dark btn-block btn-sm w-100" href="cash_flow_report.php?tab=overview">
+                                    تقارير التشغيل
+                                </a>
+                            </div>
+                            <div class="col-md-4 col-lg-3 report-item">
                                 <a class="btn btn-outline-success btn-block btn-sm w-100" href="acc_report.php?acc=clients">
                                     👥 تقرير العملاء
                                 </a>

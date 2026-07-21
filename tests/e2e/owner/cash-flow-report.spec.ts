@@ -6,7 +6,7 @@ test.describe('Cash flow report access', () => {
     await loginAs(page, 'admin');
     const response = await page.goto('/cash_flow_report.php');
     expect(response?.status()).toBeLessThan(400);
-    await expect(page.locator('h1')).toContainText('تقرير التدفق النقدي');
+    await expect(page.locator('h1')).toContainText('تقارير التشغيل');
     await expect(page.locator('#date_from')).toBeVisible();
   });
 
@@ -20,7 +20,7 @@ test.describe('Cash flow report access', () => {
       body.includes('403') ||
       body.includes('غير مصرح') ||
       body.includes('Permission') ||
-      !body.includes('تقرير التدفق النقدي');
+      !body.includes('تقارير التشغيل');
     expect(denied).toBeTruthy();
   });
 
@@ -46,72 +46,37 @@ test.describe('Cash flow report UX', () => {
     await page.goto(`/cash_flow_report.php?date_from=${dateFrom}&date_to=${dateTo}`);
   });
 
-  test('shows verdict strip and paginated sessions tab by default', async ({ page }) => {
-    await expect(page.locator('.pr-verdict')).toBeVisible();
-    await expect(page.getByTestId('cash-flow-tab-sessions')).toHaveClass(/is-active/);
-    await expect(page.getByTestId('cash-flow-panel-sessions')).toHaveClass(/is-active/);
-
-    const sessionRows = page.getByTestId('cash-flow-panel-sessions').locator('tbody tr');
-    const rowCount = await sessionRows.count();
-    expect(rowCount).toBeGreaterThan(0);
-    expect(rowCount).toBeLessThanOrEqual(10);
-
-    await expect(page.getByTestId('cash-flow-session-meta')).toContainText('جلسة');
+  test('renders the unified workspace fully in Arabic RTL', async ({ page }) => {
+    const workspace = page.locator('#cashShiftWorkspace');
+    await expect(workspace).toHaveAttribute('dir', 'rtl');
+    await expect(workspace).toHaveAttribute('lang', 'ar');
+    await expect(page.locator('h1')).toHaveText('تقارير التشغيل');
+    await expect(page.getByRole('navigation', { name: 'أقسام تقارير التشغيل' })).toBeVisible();
+    await expect(page.getByText('صافي المبيعات', { exact: true })).toBeVisible();
+    await expect(page.getByText('إجمالي المبيعات', { exact: true })).toBeVisible();
+    await expect(page.getByText('الخصومات', { exact: true })).toBeVisible();
+    await expect(page.getByText('المرتجعات', { exact: true })).toBeVisible();
+    expect(await workspace.evaluate((element) => getComputedStyle(element).direction)).toBe('rtl');
+    expect(await workspace.evaluate((element) => getComputedStyle(element).textAlign)).toBe('right');
   });
 
-  test('switches to movements tab without scrolling through all sessions', async ({ page }) => {
-    await expect(page.getByTestId('cash-flow-session-pagination')).toBeVisible();
+  test('keeps every report section Arabic when navigating tabs', async ({ page }) => {
+    const sections: Array<[string, string]> = [
+      ['shifts', 'الشيفتات وجلسات الدرج'],
+      ['orders', 'سجل الطلبات'],
+      ['payments', 'تفاصيل التحصيل'],
+      ['items', 'أداء الأصناف'],
+      ['attention', 'مراجعة الملاحظات'],
+      ['movements', 'سجل الدرج'],
+      ['settings', 'يوم العمل'],
+    ];
+    const navigation = page.getByRole('navigation', { name: 'أقسام تقارير التشغيل' });
 
-    await page.getByTestId('cash-flow-tab-movements').click();
-    await expect(page.getByTestId('cash-flow-panel-movements')).toHaveClass(/is-active/);
-    await expect(page.locator('#movement_type')).toBeVisible();
-
-    const visibleSessionRows = await page
-      .getByTestId('cash-flow-panel-sessions')
-      .locator('tbody tr')
-      .count();
-    expect(visibleSessionRows).toBeLessThanOrEqual(10);
-  });
-
-  test('session pagination navigates pages', async ({ page }) => {
-    const pagination = page.getByTestId('cash-flow-session-pagination');
-    if (!(await pagination.isVisible())) {
-      test.skip();
+    for (const [tab, heading] of sections) {
+      await navigation.locator(`a[href*="tab=${tab}"]`).click();
+      await expect(page).toHaveURL(new RegExp(`tab=${tab}`));
+      await expect(page.getByText(heading, { exact: true }).first()).toBeVisible();
+      await expect(page.locator('#cashShiftWorkspace')).toHaveAttribute('dir', 'rtl');
     }
-
-    const firstPageFirstCashier = await page
-      .getByTestId('cash-flow-panel-sessions')
-      .locator('tbody tr')
-      .first()
-      .locator('.pr-pill--user')
-      .innerText();
-
-    await pagination.locator('.page-item').filter({ hasText: '2' }).first().click();
-    await expect(page).toHaveURL(/session_page=2/);
-
-    const secondPageFirstCashier = await page
-      .getByTestId('cash-flow-panel-sessions')
-      .locator('tbody tr')
-      .first()
-      .locator('.pr-pill--user')
-      .innerText();
-
-    expect(secondPageFirstCashier).not.toBe(firstPageFirstCashier);
-  });
-
-  test('opens drawer session detail from sessions table', async ({ page }) => {
-    const detailLink = page.getByTestId('session-detail-link').first();
-    await expect(detailLink).toBeVisible();
-    await detailLink.click();
-    await expect(page).toHaveURL(/drawer_session\.php\?id=\d+/);
-    await expect(page.locator('h1')).toBeVisible();
-  });
-
-  test('uses natural Arabic labels in overview', async ({ page }) => {
-    await expect(page.locator('.pr-verdict-label', { hasText: 'المتوقع في الدرج' })).toBeVisible();
-    await expect(page.locator('.pr-verdict-label', { hasText: 'ما تم عده في الدرج' })).toBeVisible();
-    await expect(page.getByText('تفاصيل مسار النقد')).toBeVisible();
-    await expect(page.getByText('تسوية المبيعات')).toHaveCount(0);
-    await expect(page.getByText('معد فعلياً')).toHaveCount(0);
   });
 });

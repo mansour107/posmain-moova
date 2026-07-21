@@ -22,9 +22,11 @@ class BranchWorkerStatusTest extends TestCase
 
         $this->assertStringContainsString('sync_outbox', $source);
         $this->assertStringContainsString('moova_pos_inbound_events', $source);
+        $this->assertStringContainsString('moova_catalog_sync_outbox', $source);
         $this->assertStringContainsString('sync_worker_logs', $source);
         $this->assertStringContainsString('expired_syncing_locks', $source);
         $this->assertStringContainsString('pending_cloud_ack', $source);
+        $this->assertStringContainsString('retry_errors', $source);
         $this->assertStringContainsString('recent_failed', $source);
         $this->assertStringContainsString('recent_minutes', $source);
         $this->assertStringContainsString('DATE_SUB(NOW(6), INTERVAL', $source);
@@ -86,6 +88,7 @@ class BranchWorkerStatusTest extends TestCase
         $this->assertSame(0, $payload['recent_minutes']);
         $this->assertArrayHasKey('sync_outbox', $payload['checks']);
         $this->assertArrayHasKey('moova_inbound', $payload['checks']);
+        $this->assertArrayHasKey('moova_catalog', $payload['checks']);
         $this->assertArrayHasKey('worker_logs', $payload['checks']);
         $this->assertArrayHasKey('counts_by_status', $payload['checks']['sync_outbox']);
         $this->assertArrayHasKey('pending_cloud_ack', $payload['checks']['moova_inbound']);

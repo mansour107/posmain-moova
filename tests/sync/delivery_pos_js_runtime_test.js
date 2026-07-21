@@ -22,6 +22,7 @@ function assert(cond, msg) {
 // Phase 1/2 UI contracts
 assert(deliveryJs.includes('window.posDeliveryState'), 'posDeliveryState required');
 assert(deliveryJs.includes('isCustomerFormComplete'), 'customer completeness helper required');
+assert(deliveryJs.includes("window.POSMAIN.can('delivery.dispatch')"), 'pending delivery polling should only run for dispatch-capable users');
 assert(deliveryJs.includes('response.success'), 'must check response.success');
 assert(deliveryJs.includes('تأكيد بيانات العميل') || posContent.includes('تأكيد بيانات العميل'), 'confirm label updated');
 assert(deliveryJs.includes('posDeliveryIsReadyForSubmit'), 'delivery readiness export required');

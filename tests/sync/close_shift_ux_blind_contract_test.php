@@ -112,9 +112,10 @@ try {
     closeUxAssert(!array_key_exists('expected_cash', $wrong1), 'recount must not leak expected');
     closeUxAssert(!array_key_exists('variance', $wrong1), 'recount must not leak variance');
 
-    // Re-begin must resume sticky attempts — not reset to 0.
+    // Re-begin must use the drawer record, even when browser state was lost.
+    unset($_SESSION['pos_shift_close_count']);
     $begin2 = $count->beginCloseCount($conn, 91, ['drawer_session_id' => $sessionId]);
-    closeUxAssert((int) ($begin2['attempt_number'] ?? -1) === 1, 'begin resumes attempt_number=1');
+    closeUxAssert((int) ($begin2['attempt_number'] ?? -1) === 1, 'begin resumes drawer-wide attempt_number=1');
 
     $wrong2 = $count->submitCloseCount($conn, 91, '10.000', ['drawer_session_id' => $sessionId]);
     closeUxAssert(($wrong2['status'] ?? '') === 'close_with_variance', 'second mismatch accepts with variance');
@@ -130,6 +131,23 @@ try {
         $begin3Blocked = $exception->getMessage() === 'CLOSE_COUNT_MAX_ATTEMPTS';
     }
     closeUxAssert($begin3Blocked, 'begin after max attempts must be blocked');
+
+    // A manager takeover may still finalize the drawer, but it must not add a
+    // third close-count attempt. The final amount is stored by the close itself.
+    $_SESSION['userid'] = 92;
+    $takeoverBegin = $count->beginTakeoverCloseCount($conn, 92, $sessionId, [
+        'tenant' => 1,
+        'branch' => 3,
+    ]);
+    closeUxAssert(($takeoverBegin['status'] ?? '') === 'final_amount_required', 'takeover switches to finalization after two attempts');
+    $takeoverFinal = $count->submitTakeoverCloseCount($conn, 92, '120.000', [
+        'tenant' => 1,
+        'branch' => 3,
+    ]);
+    closeUxAssert(($takeoverFinal['count_source'] ?? '') === 'manager_finalization', 'manager amount is a finalization, not another attempt');
+    closeUxAssert((float) ($takeoverFinal['counted_cash'] ?? -1) === 120.0, 'manager final amount retained');
+    $closeAttemptCount = (int) $conn->query("SELECT COUNT(*) AS c FROM drawer_count_attempts WHERE drawer_session_id = {$sessionId} AND count_phase = 'close'")->fetch_assoc()['c'];
+    closeUxAssert($closeAttemptCount === 2, 'drawer-wide close attempts remain capped at two');
 
     echo "close_shift_ux_blind_contract_test: OK\n";
 } finally {

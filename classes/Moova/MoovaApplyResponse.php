@@ -63,6 +63,7 @@ class MoovaApplyResponse
             'ITEM_NOT_FOUND' => 'One or more edited order items are not available in the POS.',
             'NO_VALID_ITEMS' => 'Edited order has no valid POS items.',
             'TABLE_NOT_FOUND' => 'POS table was not found.',
+            'TABLE_MAPPING_REQUIRED' => 'Moova table is not explicitly mapped to a POS table.',
             'IDEMPOTENCY_PAYLOAD_CONFLICT' => 'Idempotency key was reused with a different payload.',
         ];
 

@@ -27,6 +27,9 @@ if (!class_exists('BranchCloudSyncPollWorker')) {
 if (!class_exists('BranchMoovaAckWorker')) {
     require_once __DIR__ . '/BranchMoovaAckWorker.php';
 }
+if (!class_exists('MoovaCatalogSyncWorker')) {
+    require_once __DIR__ . '/../Moova/MoovaCatalogSyncWorker.php';
+}
 if (!class_exists('SyncSchemaManager')) {
     require_once __DIR__ . '/SchemaManager.php';
 }
@@ -231,6 +234,12 @@ class BranchWorkerDaemon
                 'worker' => new BranchSyncWorker(),
                 'default_batch_size' => 50,
                 'purpose' => 'Deliver local sync_outbox events to the cloud receive API.',
+            ],
+            [
+                'name' => 'moova_catalog',
+                'worker' => new MoovaCatalogSyncWorker(),
+                'default_batch_size' => 10,
+                'purpose' => 'Push POS-authoritative catalog snapshots to the paired Moova branch.',
             ],
             [
                 'name' => 'moova_poller',

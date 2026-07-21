@@ -26,8 +26,13 @@ try {
         id INT AUTO_INCREMENT PRIMARY KEY,
         pro_tybe INT NOT NULL,
         pro_value DECIMAL(12,2) NOT NULL DEFAULT 0,
+        fat_total DECIMAL(12,2) NOT NULL DEFAULT 0,
+        fat_disc DECIMAL(12,2) NOT NULL DEFAULT 0,
+        fat_net DECIMAL(12,2) NOT NULL DEFAULT 0,
         pro_date DATE NOT NULL,
-        isdeleted TINYINT NOT NULL DEFAULT 0
+        payment_status VARCHAR(20) NULL,
+        isdeleted TINYINT NOT NULL DEFAULT 0,
+        user INT NOT NULL DEFAULT 1
     ) ENGINE=InnoDB');
     $conn->query('CREATE TABLE myinstallments (
         id INT AUTO_INCREMENT PRIMARY KEY,
@@ -47,12 +52,12 @@ try {
     ) ENGINE=InnoDB");
 
     $today = date('Y-m-d');
-    $conn->query("INSERT INTO ot_head (pro_tybe, pro_value, pro_date, isdeleted) VALUES
-        (3, 100.00, '{$today}', 0),
-        (9, 50.00, '{$today}', 0),
-        (3, 999.00, '{$today}', 1),
-        (3, 200.00, DATE_SUB(CURDATE(), INTERVAL 3 DAY), 0),
-        (9, 25.00, DATE_SUB(CURDATE(), INTERVAL 10 DAY), 0)");
+    $conn->query("INSERT INTO ot_head (pro_tybe, pro_value, fat_total, fat_disc, fat_net, pro_date, payment_status, isdeleted) VALUES
+        (3, 100.00, 100.00, 0, 100.00, '{$today}', 'paid', 0),
+        (9, 50.00, 50.00, 0, 50.00, '{$today}', 'paid', 0),
+        (9, 999.00, 999.00, 0, 999.00, '{$today}', 'paid', 1),
+        (3, 200.00, 200.00, 0, 200.00, DATE_SUB(CURDATE(), INTERVAL 3 DAY), 'paid', 0),
+        (9, 25.00, 25.00, 0, 25.00, DATE_SUB(CURDATE(), INTERVAL 10 DAY), 'paid', 0)");
     $conn->query('INSERT INTO myinstallments (ins_case) VALUES (2), (2), (3)');
     $conn->query('INSERT INTO tasks (isdeleted) VALUES (NULL), (NULL), (1)');
     $conn->query('INSERT INTO reservations (duration) VALUES (30), (NULL), (NULL)');
@@ -72,9 +77,9 @@ try {
     $overview = $service->build($conn, $flags);
 
     dashboardServiceAssert((bool) $overview['kpis'][0]['available'], 'sales KPIs available');
-    dashboardServiceAssert((int) $overview['kpis'][1]['value'] === 2, 'today order count excludes deleted');
-    dashboardServiceAssert(abs((float) $overview['kpis'][0]['value'] - 150.0) < 0.01, 'today sales sum excludes deleted');
-    dashboardServiceAssert(abs((float) $overview['kpis'][2]['value'] - 75.0) < 0.01, 'today AOV');
+    dashboardServiceAssert((int) $overview['kpis'][1]['value'] === 1, 'today order count is completed POS only');
+    dashboardServiceAssert(abs((float) $overview['kpis'][0]['value'] - 50.0) < 0.01, 'today net sales uses canonical POS scope');
+    dashboardServiceAssert(abs((float) $overview['kpis'][2]['value'] - 50.0) < 0.01, 'today AOV');
 
     $types = array_column($overview['attention'], 'type');
     dashboardServiceAssert(in_array('overdue_installments', $types, true), 'installments attention');

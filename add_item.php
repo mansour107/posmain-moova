@@ -4,8 +4,6 @@ require_once __DIR__ . '/includes/page_guard.php';
 require_once __DIR__ . '/includes/csrf.php';
 include('includes/connect.php');
 page_guard('menu.edit', $conn);
-include('includes/header.php') ?>
-<?php
 require_once __DIR__ . '/classes/Items/ItemEditorFlash.php';
 require_once __DIR__ . '/classes/Items/ItemFormInput.php';
 require_once __DIR__ . '/classes/Items/ItemCostSourceSupport.php';
@@ -14,6 +12,7 @@ require_once __DIR__ . '/classes/Items/ItemUnitProfileReader.php';
 require_once __DIR__ . '/classes/Pos/Service/ItemVariantService.php';
 
 $itemEditorFlash = ItemEditorFlash::take();
+$menuWriteCsrfInput = csrf_input('menu_write');
 
 $isEdit = isset($_GET['edit']);
 $editId = $isEdit ? (int) $_GET['edit'] : 0;
@@ -175,6 +174,7 @@ try {
     $itemVariants = [];
 }
 ?>
+<?php include('includes/header.php') ?>
 <?php include('includes/navbar.php') ?>
 <?php include('includes/sidebar.php') ?>
 
@@ -218,10 +218,10 @@ try {
 
                 <?php if (!$isEdit): ?>
                     <form action="do/doadd_item.php" method="post" enctype="multipart/form-data" id="item-main-form">
-                    <?= csrf_input('menu_write') ?>
+                    <?= $menuWriteCsrfInput ?>
                 <?php else: ?>
                     <form action="do/doedit_item.php?edit=<?= $editId ?>" method="post" enctype="multipart/form-data" id="item-main-form">
-                    <?= csrf_input('menu_write') ?>
+                    <?= $menuWriteCsrfInput ?>
                 <?php endif; ?>
                 <input type="hidden" name="item_variants_payload_present" value="1">
 

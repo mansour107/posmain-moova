@@ -7,7 +7,7 @@ if (!function_exists('posmain_cash_shift_workspace_url')) {
     {
         $allowed = [
             'tab', 'date_from', 'date_to', 'cashier_id', 'override_operator_id',
-            'movement_type', 'status', 'scope', 'page', 'has_override',
+            'movement_type', 'status', 'scope', 'page', 'has_override', 'focus',
         ];
         $safe = [];
         foreach ($allowed as $key) {

@@ -30,7 +30,7 @@ try {
     $conn->query("CREATE DATABASE `$db` CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci");
     $conn->select_db($db);
     foreach ([
-        "CREATE TABLE journal_heads (id INT AUTO_INCREMENT PRIMARY KEY, journal_id INT NOT NULL, total DECIMAL(19,2) NOT NULL, jdate DATE NOT NULL, details VARCHAR(255) NULL, user INT NULL, op_id INT NULL, op2 INT NULL) ENGINE=InnoDB",
+        "CREATE TABLE journal_heads (id INT AUTO_INCREMENT PRIMARY KEY, journal_id INT NOT NULL, total DECIMAL(19,2) NOT NULL, jdate DATE NOT NULL, details VARCHAR(255) NULL, user INT NULL, op_id INT NULL, op2 INT NULL, tenant INT NULL DEFAULT 0, branch INT NULL DEFAULT 0) ENGINE=InnoDB",
         "CREATE TABLE journal_entries (id INT AUTO_INCREMENT PRIMARY KEY, journal_id INT NOT NULL, account_id INT NOT NULL, debit DECIMAL(19,2) NOT NULL DEFAULT 0, credit DECIMAL(19,2) NOT NULL DEFAULT 0, tybe INT NOT NULL DEFAULT 0, op2 INT NULL) ENGINE=InnoDB",
         "CREATE TABLE ot_head (id INT AUTO_INCREMENT PRIMARY KEY, pro_tybe INT NOT NULL DEFAULT 9, fat_net DECIMAL(19,2) NOT NULL DEFAULT 0, fat_tax DECIMAL(19,2) NOT NULL DEFAULT 0, payment_status VARCHAR(20) NULL, isdeleted TINYINT(1) NOT NULL DEFAULT 0, table_id INT NULL, info VARCHAR(255) NULL, emp_id INT NULL, acc1 INT NULL, acc2 INT NULL, pro_value DECIMAL(19,2) NULL, cost_center INT NULL, profit DECIMAL(19,2) NULL, user INT NULL, op2 INT NULL, pro_id INT NULL, is_journal TINYINT NULL, journal_tybe INT NULL, pro_date DATE NULL) ENGINE=InnoDB",
         "CREATE TABLE fat_details (id INT AUTO_INCREMENT PRIMARY KEY, fatid INT NOT NULL, item_id INT NOT NULL, qty_in DECIMAL(19,6) NOT NULL DEFAULT 0, qty_out DECIMAL(19,6) NOT NULL DEFAULT 0, price DECIMAL(19,6) NOT NULL DEFAULT 0, discount DECIMAL(19,2) NOT NULL DEFAULT 0, det_value DECIMAL(19,2) NOT NULL DEFAULT 0, isdeleted TINYINT(1) NOT NULL DEFAULT 0) ENGINE=InnoDB",
@@ -66,9 +66,11 @@ try {
         501,
         91,
         1,
-        ['idempotency_key' => 'e2e-invoice-800']
+        ['idempotency_key' => 'e2e-invoice-800', 'tenant' => 7, 'branch' => 9]
     );
     e2eAssert($invoice['replayed'] === false, 'invoice posted');
+    $invoiceScope = $conn->query('SELECT tenant, branch FROM journal_heads WHERE id = ' . (int) $invoice['journal_head_id'])->fetch_assoc();
+    e2eAssert((int) ($invoiceScope['tenant'] ?? -1) === 7 && (int) ($invoiceScope['branch'] ?? -1) === 9, 'invoice journal scope persisted');
 
     $payment = (new AccountingPostingService())->postTablePaymentReceipt($conn, [
         'order_id' => 800,

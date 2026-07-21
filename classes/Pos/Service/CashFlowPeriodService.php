@@ -421,7 +421,20 @@ class CashFlowPeriodService
     public function paymentBreakdown(mysqli $conn, array $filters): array
     {
         if (!$this->tableExists($conn, 'order_payments')) {
-            return ['source' => 'none', 'by_type' => [], 'total' => '0.000', 'cash_net' => '0.000'];
+            return [
+                'source' => 'none',
+                'by_type' => [],
+                'refunds_by_type' => [],
+                'net_by_type' => [],
+                'by_method' => [],
+                'total' => '0.000',
+                'refund_total' => '0.000',
+                'net_total' => '0.000',
+                'cash_collected' => '0.000',
+                'cash_refunds' => '0.000',
+                'cash_net' => '0.000',
+                'pending_external_refund_total' => '0.000',
+            ];
         }
 
         $normalized = $this->normalizeFilters($filters);
@@ -474,6 +487,19 @@ class CashFlowPeriodService
             WHERE " . implode(' AND ', $where) . "
         ";
 
+        if ($this->columnExists($conn, 'order_payments', 'is_voided')) {
+            $sql .= ' AND COALESCE(op.is_voided, 0) = 0';
+        }
+
+        if ($joinOrders && $normalized['tenant'] > 0 && $this->columnExists($conn, 'ot_head', 'tenant')) {
+            $sql .= ' AND oh.tenant = ?';
+            $params[] = $normalized['tenant'];
+        }
+        if ($joinOrders && $normalized['branch'] > 0 && $this->columnExists($conn, 'ot_head', 'branch')) {
+            $sql .= ' AND oh.branch = ?';
+            $params[] = $normalized['branch'];
+        }
+
         if ($normalized['cashier_id'] > 0) {
             if ($joinOrders && $this->columnExists($conn, 'ot_head', 'user')) {
                 $sql .= ' AND (op.created_by = ? OR oh.user = ?)';
@@ -486,6 +512,7 @@ class CashFlowPeriodService
         }
 
         $total = 0.0;
+        $byMethod = [];
         foreach ($this->queryAll($conn, $sql, $params) as $row) {
             $money = Money::fromLegacy($row['amount'] ?? 0);
             if (!$money->isPositive() && !$money->isNegative()) {
@@ -496,17 +523,129 @@ class CashFlowPeriodService
             $type = $this->paymentTypeForMethod($method, $methodTypes);
             $byType[$type] = ($byType[$type] ?? 0) + $amount;
             $total += $amount;
+            $methodKey = $method !== '' ? $method : 'unknown';
+            if (!isset($byMethod[$methodKey])) {
+                $byMethod[$methodKey] = [
+                    'code' => $methodKey,
+                    'label' => $method !== '' ? $method : 'Unknown',
+                    'type' => $type,
+                    'collected' => 0.0,
+                    'refunded' => 0.0,
+                    'pending_refund' => 0.0,
+                ];
+            }
+            $byMethod[$methodKey]['collected'] += $amount;
         }
 
-        $drawerCashNet = $this->drawerCashNetForPeriod($conn, $normalized);
+        $refundsByType = array_fill_keys(array_keys($byType), 0.0);
+        $settledRefundsByType = array_fill_keys(array_keys($byType), 0.0);
+        $refundTotal = 0.0;
+        $pendingExternalRefundTotal = 0.0;
+        if ($this->tableExists($conn, 'payment_refunds')) {
+            $refundWhere = ['pr.created_at >= ?', 'pr.created_at < ?'];
+            $refundParams = [$fromBounds['start_at'], $toBounds['end_at']];
+            $joinPaymentMethods = $this->tableExists($conn, 'payment_methods');
+            $joinRefundOrders = $joinOrders;
+            if ($normalized['cashier_id'] > 0 && $this->columnExists($conn, 'payment_refunds', 'created_by')) {
+                $refundWhere[] = 'pr.created_by = ?';
+                $refundParams[] = $normalized['cashier_id'];
+            }
+            if ($joinRefundOrders && $normalized['tenant'] > 0 && $this->columnExists($conn, 'ot_head', 'tenant')) {
+                $refundWhere[] = 'roh.tenant = ?';
+                $refundParams[] = $normalized['tenant'];
+            }
+            if ($joinRefundOrders && $normalized['branch'] > 0 && $this->columnExists($conn, 'ot_head', 'branch')) {
+                $refundWhere[] = 'roh.branch = ?';
+                $refundParams[] = $normalized['branch'];
+            }
+
+            $refundSql = "
+                SELECT pr.amount, pr.status, pr.payment_method_id"
+                . ($joinPaymentMethods ? ', pm.code AS method_code, pm.type AS method_type, COALESCE(NULLIF(pm.name_en, \'\'), NULLIF(pm.name_ar, \'\'), pm.code) AS method_label' : '') . "
+                FROM payment_refunds pr
+                " . ($joinPaymentMethods ? 'LEFT JOIN payment_methods pm ON pm.id = pr.payment_method_id' : '') . "
+                " . ($joinRefundOrders ? 'LEFT JOIN ot_head roh ON roh.id = pr.original_order_id' : '') . "
+                WHERE " . implode(' AND ', $refundWhere);
+
+            foreach ($this->queryAll($conn, $refundSql, $refundParams) as $row) {
+                $amount = (float) Money::fromLegacy($row['amount'] ?? 0)->toString();
+                if (abs($amount) < 0.0001) {
+                    continue;
+                }
+                $method = trim((string) ($row['method_code'] ?? ''));
+                $methodKey = $method !== '' ? $method : 'method_' . (int) ($row['payment_method_id'] ?? 0);
+                $type = trim((string) ($row['method_type'] ?? ''));
+                if (!array_key_exists($type, $refundsByType)) {
+                    $type = $this->paymentTypeForMethod($method, $methodTypes);
+                }
+                $refundsByType[$type] = ($refundsByType[$type] ?? 0) + $amount;
+                $refundTotal += $amount;
+                $status = (string) ($row['status'] ?? 'posted');
+                if ($status === 'pending_external') {
+                    $pendingExternalRefundTotal += $amount;
+                } else {
+                    $settledRefundsByType[$type] = ($settledRefundsByType[$type] ?? 0) + $amount;
+                }
+                if (!isset($byMethod[$methodKey])) {
+                    $byMethod[$methodKey] = [
+                        'code' => $methodKey,
+                        'label' => (string) (($row['method_label'] ?? '') ?: ($method !== '' ? $method : 'Payment method')),
+                        'type' => $type,
+                        'collected' => 0.0,
+                        'refunded' => 0.0,
+                        'pending_refund' => 0.0,
+                    ];
+                }
+                $byMethod[$methodKey]['refunded'] += $amount;
+                if ($status === 'pending_external') {
+                    $byMethod[$methodKey]['pending_refund'] += $amount;
+                }
+            }
+        }
+
+        $netByType = [];
+        foreach ($byType as $type => $amount) {
+            $netByType[$type] = (float) $amount - (float) ($refundsByType[$type] ?? 0);
+        }
+        foreach ($byMethod as &$methodRow) {
+            $methodRow['net'] = (float) $methodRow['collected'] - (float) $methodRow['refunded'];
+            foreach (['collected', 'refunded', 'pending_refund', 'net'] as $moneyKey) {
+                $methodRow[$moneyKey] = $this->formatDecimal((float) $methodRow[$moneyKey]);
+            }
+        }
+        unset($methodRow);
+        uasort($byMethod, static fn (array $a, array $b): int => (float) $b['collected'] <=> (float) $a['collected']);
+
+        // A deployed drawer subsystem is not enough for historical periods:
+        // only compare the two cash sources when drawer coverage exists for
+        // the requested window, otherwise a legitimate pre-ledger period
+        // would be presented as a false mismatch.
+        $cashReconciliationAvailable = $this->drawerSubsystemAvailable($conn)
+            && $this->drawerCoversPeriod($conn, $filters);
+        $drawerCashNet = $cashReconciliationAvailable ? $this->drawerCashNetForPeriod($conn, $normalized) : 0.0;
+        $cashCollected = (float) ($byType['cash'] ?? 0);
+        $cashRefunds = (float) ($settledRefundsByType['cash'] ?? 0);
+        $cashNet = $cashCollected - $cashRefunds;
 
         return [
-            'source' => $this->drawerSubsystemAvailable($conn) && $this->drawerCoversPeriod($conn, $filters) ? 'drawer' : 'legacy',
+            'source' => $cashReconciliationAvailable ? 'drawer' : 'legacy',
             'by_type' => $this->formatTotals($byType),
+            'refunds_by_type' => $this->formatTotals($refundsByType),
+            'settled_refunds_by_type' => $this->formatTotals($settledRefundsByType),
+            'net_by_type' => $this->formatTotals($netByType),
+            'by_method' => array_values($byMethod),
             'total' => $this->formatDecimal($total),
-            'cash_net' => $this->formatDecimal($byType['cash'] ?? 0),
+            'refund_total' => $this->formatDecimal($refundTotal),
+            'net_total' => $this->formatDecimal($total - $refundTotal),
+            'cash_collected' => $this->formatDecimal($cashCollected),
+            'cash_refunds' => $this->formatDecimal($cashRefunds),
+            'cash_net' => $this->formatDecimal($cashNet),
+            'pending_external_refund_total' => $this->formatDecimal($pendingExternalRefundTotal),
             'drawer_cash_net' => $this->formatDecimal($drawerCashNet),
-            'cash_reconciliation_diff' => $this->formatDecimal($drawerCashNet - (float) ($byType['cash'] ?? 0)),
+            'cash_reconciliation_available' => $cashReconciliationAvailable,
+            'cash_reconciliation_diff' => $cashReconciliationAvailable
+                ? $this->formatDecimal($drawerCashNet - $cashNet)
+                : '0.000',
         ];
     }
 

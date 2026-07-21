@@ -20,17 +20,14 @@ moovaTableMappingAssert(
     'MoovaPosIntegration should expose upsertTableLink'
 );
 moovaTableMappingAssert(
-    strpos($orderSource, 'persistLearnedTableLink') !== false,
-    'PosOrderService should persist learned table links'
+    strpos($orderSource, 'persistLearnedTableLink') === false,
+    'PosOrderService must not learn table links while accepting an order'
 );
 moovaTableMappingAssert(
     strpos($orderSource, "AND tname LIKE ?") === false,
     'fuzzy table LIKE matching should be removed'
 );
-moovaTableMappingAssert(
-    strpos($orderSource, 'TABLE_MAPPING_AMBIGUOUS') === false,
-    'ambiguous fuzzy table mapping should be removed'
-);
+moovaTableMappingAssert(strpos($orderSource, 'TABLE_MAPPING_REQUIRED') !== false, 'missing explicit mapping should be rejected');
 
 mysqli_report(MYSQLI_REPORT_OFF);
 
@@ -99,28 +96,29 @@ try {
             ['itemId' => (string) $items['id'], 'qty' => 1],
         ],
     ]);
-    $conn->commit();
+    $conn->rollback();
+    fwrite(STDERR, "unmapped table order should have been rejected\n");
+    exit(1);
 } catch (Throwable $e) {
     $conn->rollback();
-    fwrite(STDERR, 'table mapping runtime test failed: ' . $e->getMessage() . "\n");
-    exit(1);
+    moovaTableMappingAssert($e->getMessage() === 'TABLE_MAPPING_REQUIRED', 'unmapped table should fail with TABLE_MAPPING_REQUIRED');
 }
 
-$link = $conn->query("
-    SELECT pos_table_id
-    FROM moova_pos_table_links
-    WHERE moova_branch_id = '{$conn->real_escape_string($moovaBranchId)}'
-      AND moova_table_id = '{$conn->real_escape_string($moovaTableId)}'
-      AND pos_tenant = 0
-      AND pos_branch = 0
-      AND status = 'active'
-    LIMIT 1
-")->fetch_assoc();
-
-moovaTableMappingAssert(
-    $link && (int) $link['pos_table_id'] === (int) $table['id'],
-    'learned table link should be persisted after exact table match'
-);
+MoovaPosIntegration::upsertTableLink($conn, $scope, $moovaBranchId, $moovaTableId, (int) $table['id']);
+$conn->begin_transaction();
+try {
+    $service->createOrMergeMoovaTableOrder($conn, $scope, [
+        'cofeOrderId' => $prefix . '-mapped-order',
+        'branchId' => $moovaBranchId,
+        'tableNumber' => $moovaTableId,
+        'items' => [['itemId' => (string) $items['id'], 'qty' => 1]],
+    ]);
+    $conn->rollback();
+} catch (Throwable $e) {
+    $conn->rollback();
+    fwrite(STDERR, 'explicitly mapped table order failed: ' . $e->getMessage() . "\n");
+    exit(1);
+}
 
 $conn->query("
     DELETE FROM moova_pos_table_links

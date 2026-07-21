@@ -7,6 +7,7 @@ ob_clean();
 
 require_once('../classes/MoovaPosIntegration.php');
 require_once('../classes/Moova/MoovaPosMenuReconcileService.php');
+require_once('../classes/Moova/MoovaPosPairingService.php');
 require_once('../includes/auth_guard.php');
 require_once('../includes/csrf.php');
 require_once('../classes/Security/SecurityAuditLogger.php');
@@ -104,6 +105,11 @@ function moova_integration_trigger_menu_sync_after_save(array $saved, $deviceTok
     );
 }
 
+$pairingClaimed = false;
+$pairingShouldReleaseOnFailure = false;
+$claimedDeviceToken = '';
+$claimedInstanceUuid = '';
+
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     moova_integration_response(405, ['success' => false, 'code' => 'METHOD_NOT_ALLOWED', 'message' => 'Method not allowed']);
 }
@@ -141,44 +147,24 @@ try {
         moova_integration_response(401, ['success' => false, 'code' => 'INVALID_USER_SCOPE', 'message' => 'Invalid POS user scope']);
     }
 
-    $existing = MoovaPosIntegration::findActiveLinkForScope($conn, $scope);
-    $shopId = trim((string) ($payload['moovaShopId'] ?? ''));
-    $branchId = trim((string) ($payload['moovaBranchId'] ?? ''));
+    $existing = MoovaPosIntegration::findLatestLinkForScope($conn, $scope);
     $deviceToken = trim((string) ($payload['deviceToken'] ?? ''));
-    $widgetUrl = trim((string) ($payload['widgetUrl'] ?? ''));
     $locale = trim((string) ($payload['locale'] ?? 'ar'));
 
-    if ($deviceToken === '' && $existing && !empty($existing['moova_device_token'])) {
-        $deviceToken = (string) $existing['moova_device_token'];
-    }
-
-    if ($branchId === '' && $existing && !empty($existing['moova_branch_id'])) {
-        $branchId = (string) $existing['moova_branch_id'];
-    }
-
-    if ($branchId !== '' && (strlen($branchId) > 128 || !preg_match('/^[A-Za-z0-9._:\\-]+$/', $branchId))) {
-        moova_integration_response(422, ['success' => false, 'code' => 'INVALID_BRANCH', 'message' => 'Invalid Moova branch id']);
-    }
-
-    if ($shopId !== '' && (strlen($shopId) > 128 || !preg_match('/^[A-Za-z0-9._:\\-]+$/', $shopId))) {
-        moova_integration_response(422, ['success' => false, 'code' => 'INVALID_SHOP', 'message' => 'Invalid Moova shop id']);
+    if ($deviceToken === '' && $existing) {
+        $deviceToken = MoovaPosIntegration::deviceTokenForLink($existing);
     }
 
     if (strlen($deviceToken) < 8 || strlen($deviceToken) > 191) {
         moova_integration_response(422, ['success' => false, 'code' => 'INVALID_DEVICE_TOKEN', 'message' => 'Invalid Moova device token']);
     }
 
-    if (strlen($widgetUrl) > 255) {
-        moova_integration_response(422, ['success' => false, 'code' => 'INVALID_WIDGET_URL', 'message' => 'Widget URL is too long']);
-    }
-    $parts = parse_url($widgetUrl);
-    $scheme = strtolower((string) ($parts['scheme'] ?? ''));
-    if (!$parts || !in_array($scheme, ['http', 'https'], true) || empty($parts['host'])) {
-        moova_integration_response(422, ['success' => false, 'code' => 'INVALID_WIDGET_URL', 'message' => 'Widget URL must be a valid http or https URL']);
-    }
-
     if (!in_array($locale, ['ar', 'en'], true)) {
         $locale = 'ar';
+    }
+
+    if (!(new SyncRuntimeCrypto())->available()) {
+        throw new RuntimeException('TOKEN_ENCRYPTION_UNAVAILABLE');
     }
 
     $remoteLink = MoovaPosIntegration::findActiveLinkByToken($conn, $deviceToken);
@@ -194,14 +180,44 @@ try {
         ]);
     }
 
+    $instanceUuid = trim((string) ($existing['pos_instance_uuid'] ?? ''));
+    if (!MoovaPosIntegration::isUuid($instanceUuid)) {
+        $instanceUuid = MoovaPosIntegration::generateUuid();
+    }
+    $existingMatchesClaim = $existing
+        && (string) ($existing['status'] ?? '') === 'active'
+        && hash_equals(
+            (string) ($existing['moova_device_token_hash'] ?? ''),
+            MoovaPosIntegration::hashDeviceToken($deviceToken)
+        )
+        && strtolower(trim((string) ($existing['pos_instance_uuid'] ?? ''))) === strtolower($instanceUuid);
+    $pairing = (new MoovaPosPairingService())->claim(
+        $deviceToken,
+        $scope,
+        $instanceUuid,
+        moova_integration_current_origin(),
+        $locale
+    );
+    $pairingClaimed = true;
+    $pairingShouldReleaseOnFailure = !$existingMatchesClaim;
+    $claimedDeviceToken = $deviceToken;
+    $claimedInstanceUuid = $instanceUuid;
+
     $conn->begin_transaction();
     $saved = MoovaPosIntegration::saveActiveLinkForScope($conn, $scope, [
-        'moova_shop_id' => $shopId,
-        'moova_branch_id' => $branchId,
+        'moova_shop_id' => $pairing['shopId'],
+        'moova_branch_id' => $pairing['branchId'],
         'moova_device_token' => $deviceToken,
-        'widget_url' => $widgetUrl,
+        'widget_url' => $pairing['widgetUrl'],
         'locale' => $locale,
+        'moova_connection_id' => $pairing['connectionId'],
+        'moova_branch_link_id' => $pairing['branchLinkId'],
+        'pairing_id' => $pairing['pairingId'],
+        'pos_instance_uuid' => $instanceUuid,
+        'moova_shop_name' => $pairing['shopName'] ?? '',
+        'moova_branch_name' => $pairing['branchName'] ?? '',
     ]);
+    MoovaPosIntegration::enqueueCatalogSync($conn, $saved);
     $conn->commit();
 
     moova_integration_audit('moova_integration_saved', [
@@ -218,6 +234,17 @@ try {
     ]);
 
     $autoSync = moova_integration_trigger_menu_sync_after_save($saved, $deviceToken);
+    $syncFingerprint = '';
+    try {
+        if (!defined('MOOVA_MENU_SYNC_LIBRARY_ONLY')) {
+            define('MOOVA_MENU_SYNC_LIBRARY_ONLY', true);
+        }
+        require_once __DIR__ . '/moova_menu_sync_payload.php';
+        $syncFingerprint = (string) (moova_menu_sync_fingerprint($conn)['fingerprint'] ?? '');
+        MoovaPosIntegration::recordCatalogSyncResult($conn, (int) $saved['id'], $syncFingerprint, $autoSync);
+    } catch (Throwable $syncStateError) {
+        error_log('[Moova POS] failed to record initial catalog sync state: ' . $syncStateError->getMessage());
+    }
 
     moova_integration_response(200, [
         'success' => true,
@@ -227,7 +254,6 @@ try {
             'id' => $saved['id'],
             'moovaShopId' => $saved['moova_shop_id'],
             'moovaBranchId' => $saved['moova_branch_id'],
-            'deviceToken' => $deviceToken,
             'deviceTokenMasked' => MoovaPosIntegration::maskDeviceToken($deviceToken),
             'widgetUrl' => $saved['widget_url'],
             'locale' => $saved['locale'],
@@ -241,11 +267,26 @@ try {
     } catch (Throwable $ignored) {
     }
 
-    moova_integration_response(500, posmain_exception_payload(
+    if ($pairingClaimed && $pairingShouldReleaseOnFailure && $claimedDeviceToken !== '' && $claimedInstanceUuid !== '') {
+        try {
+            (new MoovaPosPairingService())->release($claimedDeviceToken, $claimedInstanceUuid);
+        } catch (Throwable $releaseError) {
+            error_log('[Moova POS] pairing compensation failed: ' . $releaseError->getMessage());
+        }
+    }
+
+    $errorCode = strtok($e->getMessage(), ':') ?: 'MOOVA_INTEGRATION_SAVE_FAILED';
+    $status = in_array($errorCode, ['PAIRING_ALREADY_CLAIMED', 'MAPPING_ALREADY_ACTIVE', 'PAIRING_BRANCH_REQUIRED'], true) ? 409 : 500;
+    if (in_array($errorCode, ['INVALID_DEVICE_TOKEN', 'invalid_device_token'], true)) {
+        $status = 401;
+    }
+    $errorPayload = posmain_exception_payload(
         $e,
         'تعذر حفظ إعدادات موفا الآن، يرجى المحاولة مرة أخرى أو التواصل مع الدعم',
-        'MOOVA_INTEGRATION_SAVE_FAILED',
+        $errorCode,
         false,
         'moova_integration_save'
-    ));
+    );
+    $errorPayload['code'] = $errorCode;
+    moova_integration_response($status, $errorPayload);
 }

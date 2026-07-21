@@ -1,6 +1,8 @@
 <?php
 
 require_once __DIR__ . '/../../Sync/SyncOutboxEventService.php';
+require_once __DIR__ . '/DeliveryCompensationService.php';
+require_once __DIR__ . '/DeliveryAccountingService.php';
 
 class OrderFulfillmentService
 {
@@ -281,6 +283,11 @@ class OrderFulfillmentService
             }
         }
 
+        $courierSource = (string) ($current['courier_source'] ?? 'in_house');
+        if ($newStatus === 'picked_up' && $courierSource === 'in_house' && (int) ($current['delivery_worker_id'] ?? 0) < 1) {
+            throw new InvalidArgumentException('DELIVERY_WORKER_REQUIRED_BEFORE_PICKUP');
+        }
+
         $metadata = is_array($current['metadata'] ?? null) ? $current['metadata'] : [];
         if (!empty($options['driver_name'])) {
             $metadata['driver_name'] = (string) $options['driver_name'];
@@ -309,6 +316,73 @@ class OrderFulfillmentService
             'metadata_json' => $metadata,
         ], ['require_table' => true]);
 
+        $tip = max(0, (float) ($options['driver_tip'] ?? $current['driver_tip'] ?? 0));
+        $postedCod = max(0, (float) ($options['cod_amount'] ?? 0));
+        $codAmount = $postedCod > 0 ? $postedCod : max(0, (float) ($current['cod_amount'] ?? 0));
+        $resolvedCollectionMode = (string) ($current['collection_mode'] ?? 'prepaid');
+        if ($newStatus === 'delivered') {
+            $orderStmt = $conn->prepare('SELECT remaining_amount FROM ot_head WHERE id = ? LIMIT 1 FOR UPDATE');
+            $orderStmt->bind_param('i', $orderId);
+            $orderStmt->execute();
+            $remaining = (float) ($orderStmt->get_result()->fetch_assoc()['remaining_amount'] ?? 0);
+            $orderStmt->close();
+            if ($remaining > 0.01) {
+                $resolvedCollectionMode = 'cod';
+                if ($codAmount <= 0) {
+                    $codAmount = $remaining;
+                }
+                if (abs($codAmount - $remaining) > 0.01) {
+                    throw new InvalidArgumentException('DELIVERY_COD_AMOUNT_MUST_MATCH_REMAINING');
+                }
+            } else {
+                $resolvedCollectionMode = 'prepaid';
+                $codAmount = 0.0;
+            }
+        }
+        $stampSql = '';
+        if ($newStatus === 'picked_up') {
+            $stampSql = ', picked_up_at = COALESCE(picked_up_at, NOW())';
+        } elseif ($newStatus === 'delivered') {
+            $stampSql = ', delivered_at = COALESCE(delivered_at, NOW())';
+        }
+        $financeUpdate = $conn->prepare("UPDATE order_fulfillment SET cod_amount = ?, driver_tip = ?, collection_mode = ? {$stampSql} WHERE order_id = ?");
+        $financeUpdate->bind_param('ddsi', $codAmount, $tip, $resolvedCollectionMode, $orderId);
+        $financeUpdate->execute();
+        $financeUpdate->close();
+
+        if ($newStatus === 'delivered' && $currentStatus !== 'delivered') {
+            $accounting = new DeliveryAccountingService();
+            if ($resolvedCollectionMode === 'cod') {
+                $accounting->finalizeCodOrder(
+                    $conn,
+                    $orderId,
+                    number_format($codAmount, 3, '.', ''),
+                    (int) ($options['actor_user_id'] ?? 0),
+                    $options
+                );
+            }
+            $accounting->postDeliveryFeeReclassification(
+                $conn,
+                $orderId,
+                number_format((float) ($current['delivery_fee'] ?? 0), 3, '.', ''),
+                (int) ($options['actor_user_id'] ?? 0),
+                $options
+            );
+            $financial = (new DeliveryCompensationService())->accrueDeliveredOrder($conn, $orderId, [
+                'tenant' => (int) ($options['tenant'] ?? 0),
+                'branch' => (int) ($options['branch'] ?? 0),
+                'config' => $options['config'] ?? null,
+            ]);
+            if ($financial) {
+                $accounting->postDeliveredAccrual(
+                    $conn,
+                    $financial,
+                    (int) ($options['actor_user_id'] ?? 0),
+                    $options
+                );
+            }
+        }
+
         $config = $options['config'] ?? (function_exists('posmain_app_config') ? posmain_app_config() : []);
         if ((string) ($config['role'] ?? 'branch') === 'branch') {
             $this->syncOutbox->recordOrderSnapshot($conn, $orderId, [
@@ -318,7 +392,7 @@ class OrderFulfillmentService
             ]);
         }
 
-        return $updated;
+        return $this->fulfillmentForOrder($conn, $orderId) ?: $updated;
     }
 
     private function allowedDeliveryTransitions(): array
@@ -347,7 +421,17 @@ class OrderFulfillmentService
         $statusFilter = $includeTerminal
             ? ''
             : " AND f.delivery_status NOT IN ('delivered', 'cancelled', 'failed', 'none')";
+        $scopeFilter = '';
+        if ($this->tableColumnExists($conn, 'ot_head', 'tenant') && $this->tableColumnExists($conn, 'ot_head', 'branch')) {
+            $tenant = max(0, (int) ($options['tenant'] ?? 0));
+            $branch = max(0, (int) ($options['branch'] ?? 0));
+            $scopeFilter = " AND o.tenant = {$tenant} AND o.branch = {$branch}";
+        }
 
+        $workerColumns = $this->columnExists($conn, 'delivery_worker_id')
+            ? "f.delivery_worker_id, f.delivery_zone_id, f.courier_source, f.collection_mode, f.cod_amount, f.driver_tip, f.assigned_at, f.picked_up_at, f.delivered_at, w.name AS delivery_worker_name, w.phone AS delivery_worker_phone,"
+            : "NULL AS delivery_worker_id, NULL AS delivery_zone_id, 'in_house' AS courier_source, 'prepaid' AS collection_mode, 0 AS cod_amount, 0 AS driver_tip, NULL AS assigned_at, NULL AS picked_up_at, NULL AS delivered_at, NULL AS delivery_worker_name, NULL AS delivery_worker_phone,";
+        $workerJoin = $this->columnExists($conn, 'delivery_worker_id') ? 'LEFT JOIN delivery_workers w ON w.id = f.delivery_worker_id' : '';
         $sql = "
             SELECT
                 o.id AS order_id,
@@ -365,14 +449,17 @@ class OrderFulfillmentService
                 f.delivery_zone,
                 f.delivery_fee,
                 f.delivery_status,
+                {$workerColumns}
                 f.delivery_client_id,
                 f.metadata_json,
                 (SELECT COUNT(*) FROM fat_details fd WHERE fd.fatid = o.id AND fd.isdeleted = 0) AS line_count
             FROM order_fulfillment f
             INNER JOIN ot_head o ON o.id = f.order_id
+            {$workerJoin}
             WHERE f.fulfillment_type = 'delivery'
               AND o.isdeleted = 0
               {$statusFilter}
+              {$scopeFilter}
             ORDER BY f.delivery_status ASC, order_time DESC
             LIMIT {$limit}
         ";
@@ -400,6 +487,17 @@ class OrderFulfillmentService
                     'delivery_zone' => (string) ($row['delivery_zone'] ?? ''),
                     'delivery_fee' => (float) ($row['delivery_fee'] ?? 0),
                     'delivery_status' => (string) $row['delivery_status'],
+                    'delivery_worker_id' => isset($row['delivery_worker_id']) ? (int) $row['delivery_worker_id'] : null,
+                    'delivery_worker_name' => (string) ($row['delivery_worker_name'] ?? ''),
+                    'delivery_worker_phone' => (string) ($row['delivery_worker_phone'] ?? ''),
+                    'delivery_zone_id' => isset($row['delivery_zone_id']) ? (int) $row['delivery_zone_id'] : null,
+                    'courier_source' => (string) ($row['courier_source'] ?? 'in_house'),
+                    'collection_mode' => (string) ($row['collection_mode'] ?? 'prepaid'),
+                    'cod_amount' => (float) ($row['cod_amount'] ?? 0),
+                    'driver_tip' => (float) ($row['driver_tip'] ?? 0),
+                    'assigned_at' => $row['assigned_at'] ?? null,
+                    'picked_up_at' => $row['picked_up_at'] ?? null,
+                    'delivered_at' => $row['delivered_at'] ?? null,
                     'delivery_client_id' => isset($row['delivery_client_id']) ? (int) $row['delivery_client_id'] : null,
                     'line_count' => (int) ($row['line_count'] ?? 0),
                     'metadata' => $metadata,
@@ -410,10 +508,16 @@ class OrderFulfillmentService
         return $orders;
     }
 
-    public function countPendingDeliveryOrders(mysqli $conn): int
+    public function countPendingDeliveryOrders(mysqli $conn, array $options = []): int
     {
         if (!$this->tableExists($conn)) {
             return 0;
+        }
+        $scopeFilter = '';
+        if ($this->tableColumnExists($conn, 'ot_head', 'tenant') && $this->tableColumnExists($conn, 'ot_head', 'branch')) {
+            $tenant = max(0, (int) ($options['tenant'] ?? 0));
+            $branch = max(0, (int) ($options['branch'] ?? 0));
+            $scopeFilter = " AND o.tenant = {$tenant} AND o.branch = {$branch}";
         }
         $result = $conn->query("
             SELECT COUNT(*) AS pending_count
@@ -422,6 +526,7 @@ class OrderFulfillmentService
             WHERE f.fulfillment_type = 'delivery'
               AND f.delivery_status = 'pending'
               AND o.isdeleted = 0
+              {$scopeFilter}
         ");
         if (!$result) {
             return 0;
@@ -445,6 +550,16 @@ class OrderFulfillmentService
         $row = $stmt->get_result()->fetch_assoc();
         $stmt->close();
 
+        return $row && (int) $row['column_count'] > 0;
+    }
+
+    private function tableColumnExists(mysqli $conn, string $table, string $column): bool
+    {
+        $stmt = $conn->prepare('SELECT COUNT(*) AS column_count FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?');
+        $stmt->bind_param('ss', $table, $column);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
         return $row && (int) $row['column_count'] > 0;
     }
 
@@ -763,8 +878,17 @@ class OrderFulfillmentService
             'delivery_client_id' => isset($row['delivery_client_id']) ? (int) $row['delivery_client_id'] : null,
             'pos_customer_id' => isset($row['pos_customer_id']) ? (int) $row['pos_customer_id'] : null,
             'delivery_zone' => $row['delivery_zone'] !== null ? (string) $row['delivery_zone'] : null,
+            'delivery_zone_id' => isset($row['delivery_zone_id']) && $row['delivery_zone_id'] !== null ? (int) $row['delivery_zone_id'] : null,
+            'delivery_worker_id' => isset($row['delivery_worker_id']) && $row['delivery_worker_id'] !== null ? (int) $row['delivery_worker_id'] : null,
+            'courier_source' => (string) ($row['courier_source'] ?? 'in_house'),
+            'collection_mode' => (string) ($row['collection_mode'] ?? 'prepaid'),
+            'cod_amount' => (float) ($row['cod_amount'] ?? 0),
+            'driver_tip' => (float) ($row['driver_tip'] ?? 0),
             'delivery_fee' => (float) $row['delivery_fee'],
             'delivery_status' => (string) $row['delivery_status'],
+            'assigned_at' => $row['assigned_at'] ?? null,
+            'picked_up_at' => $row['picked_up_at'] ?? null,
+            'delivered_at' => $row['delivered_at'] ?? null,
             'crm_rollup_paid_amount' => isset($row['crm_rollup_paid_amount']) ? (float) $row['crm_rollup_paid_amount'] : 0.0,
             'crm_rollup_counted' => isset($row['crm_rollup_counted']) ? (int) $row['crm_rollup_counted'] : 0,
             'promised_at' => $row['promised_at'] !== null ? (string) $row['promised_at'] : null,

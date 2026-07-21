@@ -24,7 +24,7 @@ $options = getopt('', [
 ]);
 
 if (isset($options['help'])) {
-    fwrite(STDOUT, "Usage: php cli/branch_worker_daemon.php [--once|--loop] [--list|--preflight] [--strict] [--only=sync_outbox,moova_poller,cloud_sync_poller,moova_apply,moova_ack] [--batch-size=25] [--sync-batch-size=50] [--moova-batch-size=25] [--sleep=5] [--max-runtime=300]\n");
+    fwrite(STDOUT, "Usage: php cli/branch_worker_daemon.php [--once|--loop] [--list|--preflight] [--strict] [--only=sync_outbox,moova_catalog,moova_poller,cloud_sync_poller,moova_apply,moova_ack] [--batch-size=25] [--sync-batch-size=50] [--moova-batch-size=25] [--sleep=5] [--max-runtime=300]\n");
     fwrite(STDOUT, "--strict makes --preflight fail when branch/cloud config warnings are present.\n");
     fwrite(STDOUT, "Use php cli/branch_worker_daemon.php --preflight --strict before service enablement.\n");
     exit(0);
