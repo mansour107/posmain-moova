@@ -76,9 +76,16 @@ try {
     if ($transactionStarted) {
         $conn->rollback();
     }
+    $errorReference = function_exists('posmain_error_reference')
+        ? posmain_error_reference()
+        : '';
+    if ($errorReference !== '' && function_exists('posmain_log_exception')) {
+        posmain_log_exception($exception, $errorReference, 'sugar_assignment_bulk_save');
+    }
     http_response_code(500);
     echo json_encode([
         'success' => false,
         'message' => 'تعذر حفظ إعداد السكر. لم يتم تطبيق أي تغيير.',
+        'reference' => $errorReference,
     ], JSON_UNESCAPED_UNICODE);
 }

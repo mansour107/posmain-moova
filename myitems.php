@@ -43,6 +43,7 @@ require_once __DIR__ . '/includes/page_guard.php';
 require_once __DIR__ . '/includes/csrf.php';
 include('includes/connect.php');
 page_guard('menu.edit', $conn);
+$menuWriteCsrfToken = csrf_token('menu_write');
 include('includes/header.php') ?>
 <?php include('includes/navbar.php') ?>
 <?php include('includes/sidebar.php') ?>
@@ -120,20 +121,6 @@ if ($preparationFieldsEnabled) {
     <section class="content-header item-catalog-page">
         <div class="container-fluid">
 
-            <?php if (isset($_GET['recost']) && $_GET['recost'] === 'ok'): ?>
-                <div class="alert alert-success alert-dismissible fade show" role="alert">
-                    <button type="button" class="close" data-dismiss="alert" aria-label="إغلاق">&times;</button>
-                    <i class="fas fa-check-circle"></i>
-                    تم إعادة حساب التكاليف بنجاح.
-                </div>
-            <?php elseif (isset($_GET['recost']) && $_GET['recost'] === 'fail'): ?>
-                <div class="alert alert-danger alert-dismissible fade show" role="alert">
-                    <button type="button" class="close" data-dismiss="alert" aria-label="إغلاق">&times;</button>
-                    <i class="fas fa-exclamation-triangle"></i>
-                    تعذّر إكمال إعادة حساب التكاليف. تحقق من الاتصال بقاعدة البيانات أو البيانات ثم أعد المحاولة.
-                </div>
-            <?php endif; ?>
-
             <?php if (isset($_GET['active'])): ?>
                 <?php
                 $activeMessages = [
@@ -175,14 +162,6 @@ if ($preparationFieldsEnabled) {
                                 إعداد السكر
                             </button>
                         <?php endif; ?>
-                        <a href="do/recost.php" class="btn btn-outline-secondary">
-                            <i class="fas fa-calculator"></i>
-                            إعادة حساب
-                        </a>
-                        <a href="items_factory.php" class="btn btn-outline-info">
-                            <i class="fas fa-magic"></i>
-                            مصنع الأصناف
-                        </a>
                         <button id="reset-manual-prices" class="btn btn-outline-warning" type="button">
                             <i class="fas fa-shield-alt"></i>
                             إعادة تعيين الحماية
@@ -1016,6 +995,8 @@ if ($preparationFieldsEnabled) {
 
 <script>
 $(document).ready(function() {
+    var sugarAssignmentsCsrf = <?= json_encode($menuWriteCsrfToken) ?>;
+
     function selectedSugarCategoryIds() {
         return $('.sugar-category-choice:checked').map(function() { return String(this.value); }).get();
     }
@@ -1075,8 +1056,9 @@ $(document).ready(function() {
             url: 'ajax/sugar_spoons_assignments_save.php',
             method: 'POST',
             dataType: 'json',
-            headers: { 'X-CSRF-Token': <?= json_encode(csrf_token('menu_write')) ?> },
+            headers: { 'X-CSRF-Token': sugarAssignmentsCsrf },
             data: {
+                csrf_token: sugarAssignmentsCsrf,
                 category_ids: selectedSugarCategoryIds(),
                 item_ids: selectedSugarItemIds()
             }
@@ -1091,7 +1073,11 @@ $(document).ready(function() {
             }, 450);
         }).fail(function(xhr) {
             var response = xhr.responseJSON || {};
-            message.removeClass('d-none').addClass('alert-danger').text(response.message || 'تعذر حفظ إعداد السكر. لم يتم تطبيق أي تغيير.');
+            var errorCode = String(response.code || response.message || '');
+            var errorMessage = errorCode === 'CSRF_INVALID'
+                ? 'انتهت صلاحية الصفحة. حدّث الصفحة ثم حاول الحفظ مرة أخرى.'
+                : (response.message || 'تعذر حفظ إعداد السكر. لم يتم تطبيق أي تغيير.');
+            message.removeClass('d-none').addClass('alert-danger').text(errorMessage);
         }).always(function() {
             button.prop('disabled', false);
             button.find('.sugar-save-label').removeClass('d-none');
@@ -1102,7 +1088,7 @@ $(document).ready(function() {
     refreshSugarAssignmentState();
 
     $('#reset-manual-prices').click(function() {
-        if (confirm('هل أنت متأكد من إعادة تعيين حماية الأسعار؟ سيتم إعادة حساب جميع الأسعار عند الضغط على إعادة حساب')) {
+        if (confirm('هل أنت متأكد من إعادة تعيين حماية الأسعار؟')) {
             $.ajax({
                 url: 'do/reset_manual_prices.php',
                 method: 'POST',

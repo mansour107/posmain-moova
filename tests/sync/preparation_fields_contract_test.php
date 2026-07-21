@@ -89,12 +89,19 @@ preparation_contract_assert(strpos($categorySource, 'sugar_spoons_enabled') === 
 
 $itemsSource = file_get_contents(__DIR__ . '/../../myitems.php');
 preparation_contract_assert(strpos($itemsSource, 'إعداد السكر') !== false, 'item catalog must expose one sugar assignment button');
+preparation_contract_assert(strpos($itemsSource, "\$menuWriteCsrfToken = csrf_token('menu_write');") !== false, 'item catalog must persist the menu token before header closes the session');
 preparation_contract_assert(strpos($itemsSource, 'id="sugarAssignmentsModal"') !== false, 'the assignment flow must stay in one modal');
 preparation_contract_assert(strpos($itemsSource, 'sugar-category-choice') !== false, 'the modal must support whole-category selection');
 preparation_contract_assert(strpos($itemsSource, 'sugar-item-checkbox') !== false, 'the modal must support searchable individual-item selection');
 preparation_contract_assert(strpos($itemsSource, '$sugarItemRows') !== false, 'the assignment modal must use a full catalog independent of table filters');
 preparation_contract_assert(strpos($itemsSource, 'item-sugar-toggle') === false, 'item rows must not expose repetitive sugar checkboxes');
 preparation_contract_assert(strpos($itemsSource, 'ajax/sugar_spoons_assignments_save.php') !== false, 'the modal must save all selections in one request');
+preparation_contract_assert(strpos($itemsSource, 'csrf_token: sugarAssignmentsCsrf') !== false, 'bulk sugar save must submit CSRF in the POST body for proxy-safe verification');
+preparation_contract_assert(strpos($itemsSource, "errorCode === 'CSRF_INVALID'") !== false, 'expired sugar assignment pages must show an actionable Arabic refresh message');
+
+$bulkSaveSource = file_get_contents(__DIR__ . '/../../ajax/sugar_spoons_assignments_save.php');
+preparation_contract_assert(strpos($bulkSaveSource, "'sugar_assignment_bulk_save'") !== false, 'bulk sugar save failures must be logged with a stable context');
+preparation_contract_assert(strpos($bulkSaveSource, "'reference' => \$errorReference") !== false, 'bulk sugar save failures must return a safe diagnostic reference');
 
 $editorSource = file_get_contents(__DIR__ . '/../../add_item.php');
 preparation_contract_assert(strpos($editorSource, 'sugar_spoons_inventory_item_id') === false, 'item editor must not mix inventory mapping into sugar allowance');
