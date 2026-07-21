@@ -22,6 +22,13 @@ class SyncSchemaManager
             'pos_customer_phones' => $this->posCustomerPhonesSql(),
             'pos_customer_addresses' => $this->posCustomerAddressesSql(),
             'delivery_zones' => $this->deliveryZonesSql(),
+            'delivery_compensation_plans' => $this->deliveryCompensationPlansSql(),
+            'delivery_compensation_zone_rates' => $this->deliveryCompensationZoneRatesSql(),
+            'delivery_workers' => $this->deliveryWorkersSql(),
+            'delivery_assignments' => $this->deliveryAssignmentsSql(),
+            'delivery_order_financials' => $this->deliveryOrderFinancialsSql(),
+            'delivery_settlements' => $this->deliverySettlementsSql(),
+            'delivery_settlement_lines' => $this->deliverySettlementLinesSql(),
             'security_audit_log' => $this->securityAuditLogSql(),
             'security_bootstrap_state' => $this->securityBootstrapStateSql(),
             'failed_login_attempts' => $this->failedLoginAttemptsSql(),
@@ -36,6 +43,8 @@ class SyncSchemaManager
             'item_modifier_groups' => $this->itemModifierGroupsSql(),
             'order_line_modifiers' => $this->orderLineModifiersSql(),
             'order_line_notes' => $this->orderLineNotesSql(),
+            'item_preparation_configs' => $this->itemPreparationConfigsSql(),
+            'order_line_preparation_values' => $this->orderLinePreparationValuesSql(),
             'table_areas' => $this->tableAreasSql(),
             'payment_methods' => $this->paymentMethodsSql(),
             'tax_categories' => $this->taxCategoriesSql(),
@@ -440,6 +449,10 @@ class SyncSchemaManager
             $pending[$label] = $statement;
         }
 
+        foreach ($this->preparationFieldUpgradeStatements($conn) as $label => $statement) {
+            $pending[$label] = $statement;
+        }
+
         if ($this->tableExists($conn, 'users') && $this->columnExists($conn, 'users', 'pin_enc')) {
             $legacyPins = $conn->query(
                 "SELECT COUNT(*) AS c FROM users WHERE pin_enc IS NOT NULL AND TRIM(pin_enc) <> ''"
@@ -498,6 +511,53 @@ class SyncSchemaManager
     {
         $applied = [];
         foreach ($this->pendingPosCustomerStatements($conn) as $label => $sql) {
+            $conn->query($sql);
+            $applied[] = $label;
+        }
+
+        return $applied;
+    }
+
+    public function deliveryTableKeys(): array
+    {
+        return [
+            'delivery_zones',
+            'order_fulfillment',
+            'delivery_compensation_plans',
+            'delivery_compensation_zone_rates',
+            'delivery_workers',
+            'delivery_assignments',
+            'delivery_order_financials',
+            'delivery_settlements',
+            'delivery_settlement_lines',
+            'drawer_movements',
+        ];
+    }
+
+    public function pendingDeliveryStatements(mysqli $conn): array
+    {
+        $pending = [];
+        $planned = $this->plannedStatements();
+        foreach ($this->deliveryTableKeys() as $table) {
+            if (!isset($planned[$table])) {
+                continue;
+            }
+            if (!$this->tableExists($conn, $table)) {
+                $pending[$table] = $planned[$table];
+                continue;
+            }
+            foreach ($this->upgradeStatements($conn, $table) as $label => $statement) {
+                $pending[$label] = $statement;
+            }
+        }
+
+        return $pending;
+    }
+
+    public function applyDeliverySchema(mysqli $conn): array
+    {
+        $applied = [];
+        foreach ($this->pendingDeliveryStatements($conn) as $label => $sql) {
             $conn->query($sql);
             $applied[] = $label;
         }
@@ -615,6 +675,25 @@ class SyncSchemaManager
         return $result && (int) $result->num_rows > 0;
     }
 
+    private function preparationFieldUpgradeStatements(mysqli $conn): array
+    {
+        $pending = [];
+        if ($this->tableExists($conn, 'kds_ticket_lines') && !$this->columnExists($conn, 'kds_ticket_lines', 'preparation_json')) {
+            $pending['kds_ticket_lines.add_preparation_json'] =
+                'ALTER TABLE kds_ticket_lines ADD COLUMN preparation_json JSON NULL AFTER modifiers_json';
+        }
+        if ($this->tableExists($conn, 'recipe_order_line_usage') && !$this->columnExists($conn, 'recipe_order_line_usage', 'preparation_hash')) {
+            $pending['recipe_order_line_usage.add_preparation_hash'] =
+                'ALTER TABLE recipe_order_line_usage ADD COLUMN preparation_hash CHAR(64) NULL AFTER modifiers_json';
+        }
+        if ($this->tableExists($conn, 'recipe_order_line_usage') && !$this->columnExists($conn, 'recipe_order_line_usage', 'preparation_json')) {
+            $pending['recipe_order_line_usage.add_preparation_json'] =
+                'ALTER TABLE recipe_order_line_usage ADD COLUMN preparation_json JSON NULL AFTER preparation_hash';
+        }
+
+        return $pending;
+    }
+
     public function applyKdsSchema(mysqli $conn): array
     {
         $applied = [];
@@ -722,6 +801,10 @@ class SyncSchemaManager
 
         if ($table === 'order_fulfillment') {
             return $this->orderFulfillmentUpgradeStatements($conn);
+        }
+
+        if ($table === 'drawer_movements') {
+            return $this->drawerMovementsDeliveryUpgradeStatements($conn);
         }
 
         if ($table === 'pos_customers') {
@@ -2293,6 +2376,7 @@ CREATE TABLE IF NOT EXISTS kds_ticket_lines (
   qty DECIMAL(15,3) NOT NULL DEFAULT 0.000,
   notes TEXT NULL,
   modifiers_json JSON NULL,
+  preparation_json JSON NULL,
   line_status ENUM('new','cooking','done','voided','pending') NOT NULL DEFAULT 'new',
   is_changed TINYINT(1) NOT NULL DEFAULT 0,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -2340,8 +2424,17 @@ CREATE TABLE IF NOT EXISTS order_fulfillment (
   crm_rollup_paid_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
   crm_rollup_counted TINYINT(1) NOT NULL DEFAULT 0,
   delivery_zone VARCHAR(120) NULL,
+  delivery_zone_id INT NULL,
+  delivery_worker_id BIGINT UNSIGNED NULL,
+  courier_source ENUM('in_house','external') NOT NULL DEFAULT 'in_house',
+  collection_mode ENUM('prepaid','cod') NOT NULL DEFAULT 'prepaid',
+  cod_amount DECIMAL(12,3) NOT NULL DEFAULT 0.000,
+  driver_tip DECIMAL(12,3) NOT NULL DEFAULT 0.000,
   delivery_fee DECIMAL(12,3) NOT NULL DEFAULT 0.000,
   delivery_status VARCHAR(40) NOT NULL DEFAULT 'none',
+  assigned_at DATETIME NULL,
+  picked_up_at DATETIME NULL,
+  delivered_at DATETIME NULL,
   promised_at DATETIME NULL,
   metadata_json JSON NULL,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -2352,6 +2445,8 @@ CREATE TABLE IF NOT EXISTS order_fulfillment (
   KEY idx_order_fulfillment_provider (external_provider, external_order_id),
   KEY idx_fulfillment_client (delivery_client_id),
   KEY idx_fulfillment_pos_customer (pos_customer_id)
+  ,KEY idx_fulfillment_delivery_worker (delivery_worker_id, delivery_status)
+  ,KEY idx_fulfillment_delivery_zone (delivery_zone_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
     }
 
@@ -2371,6 +2466,195 @@ CREATE TABLE IF NOT EXISTS delivery_zones (
   PRIMARY KEY (id),
   KEY idx_delivery_zones_active (is_active, sort_order),
   KEY idx_delivery_zones_tenant_branch (tenant, branch, is_active)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
+    private function deliveryCompensationPlansSql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS delivery_compensation_plans (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  uuid CHAR(36) NOT NULL,
+  name VARCHAR(160) NOT NULL,
+  base_period ENUM('none','daily','weekly','monthly') NOT NULL DEFAULT 'none',
+  base_amount DECIMAL(12,3) NOT NULL DEFAULT 0.000,
+  per_delivery_method ENUM('none','customer_fee','fixed','percentage','zone_rate') NOT NULL DEFAULT 'customer_fee',
+  per_delivery_value DECIMAL(12,3) NOT NULL DEFAULT 0.000,
+  tips_mode ENUM('none','pass_through') NOT NULL DEFAULT 'none',
+  effective_from DATE NOT NULL,
+  effective_to DATE NULL,
+  is_active TINYINT(1) NOT NULL DEFAULT 1,
+  tenant INT NOT NULL DEFAULT 0,
+  branch INT NOT NULL DEFAULT 0,
+  created_by BIGINT UNSIGNED NOT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_delivery_compensation_plan_uuid (uuid),
+  KEY idx_delivery_compensation_plan_scope (tenant, branch, is_active, effective_from)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
+    private function deliveryCompensationZoneRatesSql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS delivery_compensation_zone_rates (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  uuid CHAR(36) NOT NULL,
+  plan_id BIGINT UNSIGNED NOT NULL,
+  zone_id INT NOT NULL,
+  amount DECIMAL(12,3) NOT NULL DEFAULT 0.000,
+  tenant INT NOT NULL DEFAULT 0,
+  branch INT NOT NULL DEFAULT 0,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_delivery_compensation_zone_rate_uuid (uuid),
+  UNIQUE KEY uq_delivery_compensation_zone_rate (plan_id, zone_id),
+  KEY idx_delivery_compensation_zone_scope (tenant, branch, zone_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
+    private function deliveryWorkersSql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS delivery_workers (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  uuid CHAR(36) NOT NULL,
+  name VARCHAR(160) NOT NULL,
+  phone VARCHAR(60) NULL,
+  compensation_plan_id BIGINT UNSIGNED NULL,
+  is_active TINYINT(1) NOT NULL DEFAULT 1,
+  is_available TINYINT(1) NOT NULL DEFAULT 1,
+  notes VARCHAR(500) NULL,
+  tenant INT NOT NULL DEFAULT 0,
+  branch INT NOT NULL DEFAULT 0,
+  created_by BIGINT UNSIGNED NOT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_delivery_worker_uuid (uuid),
+  KEY idx_delivery_worker_scope (tenant, branch, is_active, is_available),
+  KEY idx_delivery_worker_plan (compensation_plan_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
+    private function deliveryAssignmentsSql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS delivery_assignments (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  uuid CHAR(36) NOT NULL,
+  order_id BIGINT UNSIGNED NOT NULL,
+  worker_id BIGINT UNSIGNED NOT NULL,
+  assigned_by BIGINT UNSIGNED NOT NULL,
+  assigned_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  ended_at DATETIME NULL,
+  ended_by BIGINT UNSIGNED NULL,
+  end_reason VARCHAR(120) NULL,
+  tenant INT NOT NULL DEFAULT 0,
+  branch INT NOT NULL DEFAULT 0,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_delivery_assignment_uuid (uuid),
+  KEY idx_delivery_assignment_order (order_id, ended_at),
+  KEY idx_delivery_assignment_worker (worker_id, ended_at, assigned_at),
+  KEY idx_delivery_assignment_scope (tenant, branch, assigned_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
+    private function deliveryOrderFinancialsSql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS delivery_order_financials (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  uuid CHAR(36) NOT NULL,
+  order_id BIGINT UNSIGNED NOT NULL,
+  worker_id BIGINT UNSIGNED NOT NULL,
+  plan_id BIGINT UNSIGNED NULL,
+  settlement_id BIGINT UNSIGNED NULL,
+  customer_delivery_fee DECIMAL(12,3) NOT NULL DEFAULT 0.000,
+  compensation_amount DECIMAL(12,3) NOT NULL DEFAULT 0.000,
+  tip_amount DECIMAL(12,3) NOT NULL DEFAULT 0.000,
+  cod_amount DECIMAL(12,3) NOT NULL DEFAULT 0.000,
+  plan_snapshot_json JSON NULL,
+  status ENUM('open','settled','reversed') NOT NULL DEFAULT 'open',
+  delivered_at DATETIME NOT NULL,
+  reversed_at DATETIME NULL,
+  reversed_by BIGINT UNSIGNED NULL,
+  reversal_reason VARCHAR(255) NULL,
+  tenant INT NOT NULL DEFAULT 0,
+  branch INT NOT NULL DEFAULT 0,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_delivery_order_financial_uuid (uuid),
+  UNIQUE KEY uq_delivery_order_financial_order (order_id),
+  KEY idx_delivery_order_financial_worker (worker_id, status, delivered_at),
+  KEY idx_delivery_order_financial_settlement (settlement_id),
+  KEY idx_delivery_order_financial_scope (tenant, branch, status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
+    private function deliverySettlementsSql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS delivery_settlements (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  uuid CHAR(36) NOT NULL,
+  worker_id BIGINT UNSIGNED NOT NULL,
+  period_start DATE NOT NULL,
+  period_end DATE NOT NULL,
+  status ENUM('finalized','reversed') NOT NULL DEFAULT 'finalized',
+  delivery_earnings DECIMAL(12,3) NOT NULL DEFAULT 0.000,
+  base_pay DECIMAL(12,3) NOT NULL DEFAULT 0.000,
+  tips DECIMAL(12,3) NOT NULL DEFAULT 0.000,
+  bonuses DECIMAL(12,3) NOT NULL DEFAULT 0.000,
+  deductions DECIMAL(12,3) NOT NULL DEFAULT 0.000,
+  cod_held DECIMAL(12,3) NOT NULL DEFAULT 0.000,
+  net_amount DECIMAL(12,3) NOT NULL DEFAULT 0.000,
+  settlement_direction ENUM('shop_pays','worker_pays','balanced') NOT NULL,
+  payment_method ENUM('cash','bank','offset') NOT NULL DEFAULT 'cash',
+  fund_account_id BIGINT UNSIGNED NULL,
+  drawer_session_id BIGINT UNSIGNED NULL,
+  drawer_movement_id BIGINT UNSIGNED NULL,
+  journal_head_id BIGINT UNSIGNED NULL,
+  idempotency_key VARCHAR(191) NOT NULL,
+  notes VARCHAR(500) NULL,
+  finalized_by BIGINT UNSIGNED NOT NULL,
+  finalized_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  reversed_by BIGINT UNSIGNED NULL,
+  reversed_at DATETIME NULL,
+  reversal_reason VARCHAR(255) NULL,
+  tenant INT NOT NULL DEFAULT 0,
+  branch INT NOT NULL DEFAULT 0,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_delivery_settlement_uuid (uuid),
+  UNIQUE KEY uq_delivery_settlement_idempotency (idempotency_key),
+  KEY idx_delivery_settlement_worker (worker_id, status, period_end),
+  KEY idx_delivery_settlement_scope (tenant, branch, finalized_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
+    private function deliverySettlementLinesSql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS delivery_settlement_lines (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  uuid CHAR(36) NOT NULL,
+  settlement_id BIGINT UNSIGNED NOT NULL,
+  line_type ENUM('order','base_pay','bonus','deduction','cod_offset','tip') NOT NULL,
+  order_financial_id BIGINT UNSIGNED NULL,
+  order_id BIGINT UNSIGNED NULL,
+  amount DECIMAL(12,3) NOT NULL,
+  description VARCHAR(255) NULL,
+  metadata_json JSON NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_delivery_settlement_line_uuid (uuid),
+  UNIQUE KEY uq_delivery_settlement_order_financial (settlement_id, order_financial_id),
+  KEY idx_delivery_settlement_line_settlement (settlement_id, line_type)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
     }
 
@@ -2406,6 +2690,45 @@ ALTER TABLE order_fulfillment
             $statements['order_fulfillment.add_crm_rollup_counted'] = "
 ALTER TABLE order_fulfillment
   ADD COLUMN crm_rollup_counted TINYINT(1) NOT NULL DEFAULT 0 AFTER crm_rollup_paid_amount";
+        }
+
+        $columns = [
+            'delivery_zone_id' => "ALTER TABLE order_fulfillment ADD COLUMN delivery_zone_id INT NULL AFTER delivery_zone",
+            'delivery_worker_id' => "ALTER TABLE order_fulfillment ADD COLUMN delivery_worker_id BIGINT UNSIGNED NULL AFTER delivery_zone_id",
+            'courier_source' => "ALTER TABLE order_fulfillment ADD COLUMN courier_source ENUM('in_house','external') NOT NULL DEFAULT 'in_house' AFTER delivery_worker_id",
+            'collection_mode' => "ALTER TABLE order_fulfillment ADD COLUMN collection_mode ENUM('prepaid','cod') NOT NULL DEFAULT 'prepaid' AFTER courier_source",
+            'cod_amount' => "ALTER TABLE order_fulfillment ADD COLUMN cod_amount DECIMAL(12,3) NOT NULL DEFAULT 0.000 AFTER collection_mode",
+            'driver_tip' => "ALTER TABLE order_fulfillment ADD COLUMN driver_tip DECIMAL(12,3) NOT NULL DEFAULT 0.000 AFTER cod_amount",
+            'assigned_at' => "ALTER TABLE order_fulfillment ADD COLUMN assigned_at DATETIME NULL AFTER delivery_status",
+            'picked_up_at' => "ALTER TABLE order_fulfillment ADD COLUMN picked_up_at DATETIME NULL AFTER assigned_at",
+            'delivered_at' => "ALTER TABLE order_fulfillment ADD COLUMN delivered_at DATETIME NULL AFTER picked_up_at",
+        ];
+        foreach ($columns as $column => $sql) {
+            if (!$this->columnExists($conn, 'order_fulfillment', $column)) {
+                $statements['order_fulfillment.add_' . $column] = $sql;
+            }
+        }
+        if (!$this->indexExists($conn, 'order_fulfillment', 'idx_fulfillment_delivery_worker')) {
+            $statements['order_fulfillment.add_idx_delivery_worker'] = "ALTER TABLE order_fulfillment ADD KEY idx_fulfillment_delivery_worker (delivery_worker_id, delivery_status)";
+        }
+        if (!$this->indexExists($conn, 'order_fulfillment', 'idx_fulfillment_delivery_zone')) {
+            $statements['order_fulfillment.add_idx_delivery_zone'] = "ALTER TABLE order_fulfillment ADD KEY idx_fulfillment_delivery_zone (delivery_zone_id)";
+        }
+
+        return $statements;
+    }
+
+    private function drawerMovementsDeliveryUpgradeStatements(mysqli $conn): array
+    {
+        $statements = [];
+        if (!$this->columnExists($conn, 'drawer_movements', 'delivery_worker_id')) {
+            $statements['drawer_movements.add_delivery_worker_id'] = 'ALTER TABLE drawer_movements ADD COLUMN delivery_worker_id BIGINT UNSIGNED NULL AFTER payment_id';
+        }
+        if (!$this->columnExists($conn, 'drawer_movements', 'delivery_settlement_id')) {
+            $statements['drawer_movements.add_delivery_settlement_id'] = 'ALTER TABLE drawer_movements ADD COLUMN delivery_settlement_id BIGINT UNSIGNED NULL AFTER delivery_worker_id';
+        }
+        if (!$this->indexExists($conn, 'drawer_movements', 'idx_drawer_movements_delivery_settlement')) {
+            $statements['drawer_movements.add_idx_delivery_settlement'] = 'ALTER TABLE drawer_movements ADD KEY idx_drawer_movements_delivery_settlement (delivery_settlement_id, delivery_worker_id)';
         }
 
         return $statements;
@@ -2719,6 +3042,55 @@ CREATE TABLE IF NOT EXISTS order_line_notes (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
     }
 
+    private function itemPreparationConfigsSql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS item_preparation_configs (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  item_id BIGINT NOT NULL,
+  field_code VARCHAR(64) NOT NULL,
+  label_ar VARCHAR(120) NOT NULL,
+  label_en VARCHAR(120) NULL,
+  max_value INT UNSIGNED NOT NULL DEFAULT 5,
+  requires_explicit_value TINYINT(1) NOT NULL DEFAULT 1,
+  is_active TINYINT(1) NOT NULL DEFAULT 1,
+  inventory_item_id BIGINT NULL,
+  inventory_qty_per_value DECIMAL(18,6) NOT NULL DEFAULT 0.000000,
+  sort_order INT NOT NULL DEFAULT 0,
+  created_by BIGINT NULL,
+  updated_by BIGINT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_item_preparation_field (item_id, field_code),
+  KEY idx_item_preparation_active (item_id, is_active, sort_order),
+  KEY idx_item_preparation_inventory (inventory_item_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
+    private function orderLinePreparationValuesSql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS order_line_preparation_values (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  order_id BIGINT NOT NULL,
+  fat_detail_id BIGINT NOT NULL,
+  item_id BIGINT NOT NULL,
+  field_code VARCHAR(64) NOT NULL,
+  label_ar VARCHAR(120) NOT NULL,
+  value_int INT UNSIGNED NOT NULL DEFAULT 0,
+  max_value INT UNSIGNED NOT NULL DEFAULT 0,
+  inventory_item_id BIGINT NULL,
+  inventory_qty_per_value DECIMAL(18,6) NOT NULL DEFAULT 0.000000,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_order_line_preparation_field (fat_detail_id, field_code),
+  KEY idx_order_line_preparation_order (order_id, fat_detail_id),
+  KEY idx_order_line_preparation_inventory (inventory_item_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
     private function tableAreasSql()
     {
         return "
@@ -2929,6 +3301,8 @@ CREATE TABLE IF NOT EXISTS drawer_movements (
   amount DECIMAL(12,3) NOT NULL,
   order_id BIGINT UNSIGNED NULL,
   payment_id BIGINT UNSIGNED NULL,
+  delivery_worker_id BIGINT UNSIGNED NULL,
+  delivery_settlement_id BIGINT UNSIGNED NULL,
   reason VARCHAR(500) NULL,
   created_by BIGINT UNSIGNED NOT NULL,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -2940,6 +3314,7 @@ CREATE TABLE IF NOT EXISTS drawer_movements (
   KEY idx_drawer_movements_order (order_id, payment_id),
   KEY idx_drawer_movements_type (movement_type, created_at),
   KEY idx_drawer_movements_voucher (ref_ot_head_id)
+  ,KEY idx_drawer_movements_delivery_settlement (delivery_settlement_id, delivery_worker_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
     }
 
@@ -3339,6 +3714,8 @@ CREATE TABLE IF NOT EXISTS recipe_order_line_usage (
   variant_id BIGINT UNSIGNED NULL,
   modifiers_hash CHAR(64) NULL,
   modifiers_json JSON NULL,
+  preparation_hash CHAR(64) NULL,
+  preparation_json JSON NULL,
   order_qty DECIMAL(18,6) NOT NULL,
   order_unit_id BIGINT UNSIGNED NULL,
   recipe_id BIGINT UNSIGNED NULL,

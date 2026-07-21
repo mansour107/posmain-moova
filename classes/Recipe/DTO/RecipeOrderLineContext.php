@@ -18,6 +18,7 @@ class RecipeOrderLineContext
     public $unitId;
     public $variantId;
     public $modifiers;
+    public $preparationValues;
     public $orderType;
     public $channel;
     public $requestedAt;
@@ -47,6 +48,7 @@ class RecipeOrderLineContext
         $this->unitId = isset($data['unit_id']) ? (int) $data['unit_id'] : null;
         $this->variantId = isset($data['variant_id']) ? (int) $data['variant_id'] : null;
         $this->modifiers = $this->normalizeModifiers($data['modifiers'] ?? []);
+        $this->preparationValues = $this->normalizePreparationValues($data['preparation_values'] ?? $data['preparations'] ?? []);
         $this->orderType = $this->token($data['order_type'] ?? 'takeaway', ['dine_in', 'takeaway', 'delivery'], 'takeaway');
         $this->channel = $this->token($data['channel'] ?? 'pos', ['pos', 'table', 'moova', 'cofe', 'api'], 'pos');
         $this->requestedAt = $data['requested_at'] ?? date('Y-m-d H:i:s');
@@ -75,6 +77,22 @@ class RecipeOrderLineContext
                 continue;
             }
             $normalized[] = $modifier;
+        }
+
+        return $normalized;
+    }
+
+    private function normalizePreparationValues($values): array
+    {
+        if (!is_array($values)) {
+            return [];
+        }
+        $normalized = [];
+        foreach ($values as $value) {
+            if (!is_array($value) || trim((string) ($value['code'] ?? $value['field_code'] ?? '')) === '') {
+                continue;
+            }
+            $normalized[] = $value;
         }
 
         return $normalized;

@@ -260,18 +260,19 @@ class RecipeOrderLifecycleService
             }
             $this->assertStrictAvailability($conn, $lineContext);
 
-            $snapshot = $this->costService->getOrCreateOrderSnapshot($conn, (int) $explosion->recipeId, new RecipeCostContext([
-                'pos_tenant' => $lineContext->posTenant,
-                'pos_branch' => $lineContext->posBranch,
-                'branch_uuid' => $lineContext->branchUuid,
-                'store_id' => $lineContext->storeId,
-                'order_type' => $lineContext->orderType,
-                'channel' => $lineContext->channel,
-                'modifiers' => $lineContext->modifiers,
-                'calculated_at' => date('Y-m-d H:i:s'),
-            ]), $lineContext->sellableItemId);
-            $explosion->costSnapshotId = (int) $snapshot['id'];
-            $this->applySnapshotCosts($explosion, $snapshot);
+            $costContext = $this->costContext($lineContext);
+            $snapshot = null;
+            if ($explosion->recipeId) {
+                $snapshot = $this->costService->getOrCreateOrderSnapshot(
+                    $conn,
+                    (int) $explosion->recipeId,
+                    $costContext,
+                    $lineContext->sellableItemId
+                );
+                $explosion->costSnapshotId = (int) $snapshot['id'];
+                $this->applySnapshotCosts($explosion, $snapshot);
+            }
+            $this->applyPreparationCosts($conn, $explosion, $costContext);
 
             $usage = $this->ensureUsage($conn, $lineContext, $explosion, 'consumed', $snapshot);
             $movementContext = $this->lineOrderContext($lineContext, (int) $usage['id']);
@@ -311,13 +312,15 @@ class RecipeOrderLifecycleService
             $this->usageRepository->updateUsage($conn, (int) $usage['id'], [
                 'status' => 'consumed',
                 'consumed_at' => date('Y-m-d H:i:s'),
-                'recipe_cost_snapshot_id' => (int) $snapshot['id'],
+                'recipe_cost_snapshot_id' => $snapshot ? (int) $snapshot['id'] : null,
                 'cost_total' => $this->explosionCostTotal($explosion),
                 'explosion_json' => json_encode($explosion->toArray(), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
             ]);
 
             $writes['recipe_order_line_usage'][] = (int) $usage['id'];
-            $writes['recipe_cost_snapshots'][] = (int) $snapshot['id'];
+            if ($snapshot) {
+                $writes['recipe_cost_snapshots'][] = (int) $snapshot['id'];
+            }
             $writes['inventory_movements'] = array_merge($writes['inventory_movements'], $movementResult->movementIds);
             $writes['stock_reservations'] = array_merge($writes['stock_reservations'], $reservationResult->reservationIds);
             $warnings = array_merge($warnings, $explosion->warnings);
@@ -479,6 +482,8 @@ class RecipeOrderLifecycleService
             'variant_id' => $context->variantId,
             'modifiers_hash' => $this->modifiersHash($context->modifiers),
             'modifiers_json' => $context->modifiers ? json_encode($context->modifiers, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) : null,
+            'preparation_hash' => $this->modifiersHash($context->preparationValues),
+            'preparation_json' => $context->preparationValues ? json_encode($context->preparationValues, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) : null,
             'order_qty' => RecipeDecimal::normalize($context->quantity),
             'order_unit_id' => $context->unitId,
             'recipe_id' => $explosion->recipeId,
@@ -621,10 +626,10 @@ class RecipeOrderLifecycleService
             }
 
             $explosion = $this->explosionFromUsage($usage);
-            if (!$explosion || !$explosion->hasRecipe || !$explosion->recipeId) {
+            if (!$explosion || !$explosion->hasRecipe) {
                 $explosion = $this->explosionService->explodeOrderLine($conn, $lineContext);
             }
-            if (!$explosion->hasRecipe || !$explosion->recipeId) {
+            if (!$explosion->hasRecipe) {
                 $warnings[] = 'No active recipe for item ' . $lineContext->sellableItemId . '.';
                 continue;
             }
@@ -632,18 +637,19 @@ class RecipeOrderLifecycleService
                 $this->assertStrictAvailability($conn, $lineContext);
             }
 
-            $snapshot = $this->costService->getOrCreateOrderSnapshot($conn, (int) $explosion->recipeId, new RecipeCostContext([
-                'pos_tenant' => $lineContext->posTenant,
-                'pos_branch' => $lineContext->posBranch,
-                'branch_uuid' => $lineContext->branchUuid,
-                'store_id' => $lineContext->storeId,
-                'order_type' => $lineContext->orderType,
-                'channel' => $lineContext->channel,
-                'modifiers' => $lineContext->modifiers,
-                'calculated_at' => date('Y-m-d H:i:s'),
-            ]), $lineContext->sellableItemId);
-            $explosion->costSnapshotId = (int) $snapshot['id'];
-            $this->applySnapshotCosts($explosion, $snapshot);
+            $costContext = $this->costContext($lineContext);
+            $snapshot = null;
+            if ($explosion->recipeId) {
+                $snapshot = $this->costService->getOrCreateOrderSnapshot(
+                    $conn,
+                    (int) $explosion->recipeId,
+                    $costContext,
+                    $lineContext->sellableItemId
+                );
+                $explosion->costSnapshotId = (int) $snapshot['id'];
+                $this->applySnapshotCosts($explosion, $snapshot);
+            }
+            $this->applyPreparationCosts($conn, $explosion, $costContext);
 
             $movementContext = $this->lineOrderContext($lineContext, (int) $usage['id']);
             $movementContext['item_category_id'] = $itemCategoryId;
@@ -683,13 +689,15 @@ class RecipeOrderLifecycleService
             $this->usageRepository->updateUsage($conn, (int) $usage['id'], [
                 'status' => 'consumed',
                 'consumed_at' => date('Y-m-d H:i:s'),
-                'recipe_cost_snapshot_id' => (int) $snapshot['id'],
+                'recipe_cost_snapshot_id' => $snapshot ? (int) $snapshot['id'] : null,
                 'cost_total' => $this->explosionCostTotal($explosion),
                 'explosion_json' => json_encode($explosion->toArray(), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
             ]);
 
             $writes['recipe_order_line_usage'][] = (int) $usage['id'];
-            $writes['recipe_cost_snapshots'][] = (int) $snapshot['id'];
+            if ($snapshot) {
+                $writes['recipe_cost_snapshots'][] = (int) $snapshot['id'];
+            }
             $writes['inventory_movements'] = array_merge($writes['inventory_movements'], $movementResult->movementIds);
             $writes['stock_reservations'] = array_merge($writes['stock_reservations'], $reservationResult->reservationIds);
             $warnings = array_merge($warnings, $explosion->warnings);
@@ -709,6 +717,10 @@ class RecipeOrderLifecycleService
         $modifiers = json_decode((string) ($usage['modifiers_json'] ?? '[]'), true);
         if (!is_array($modifiers)) {
             $modifiers = [];
+        }
+        $preparationValues = json_decode((string) ($usage['preparation_json'] ?? '[]'), true);
+        if (!is_array($preparationValues)) {
+            $preparationValues = [];
         }
 
         return [
@@ -732,6 +744,7 @@ class RecipeOrderLifecycleService
             'qty' => (string) ($usage['order_qty'] ?? '1.000000'),
             'variant_id' => isset($usage['variant_id']) ? (int) $usage['variant_id'] : null,
             'modifiers' => $modifiers,
+            'preparation_values' => $preparationValues,
         ];
     }
 
@@ -896,6 +909,46 @@ class RecipeOrderLifecycleService
                 $requirement->unitCost = (string) ($snapshot['cost_per_sell_unit'] ?? '0.000000');
                 $requirement->totalCost = RecipeDecimal::multiply($requirement->requiredQtyBase, $requirement->unitCost);
             }
+        }
+    }
+
+    private function costContext(RecipeOrderLineContext $context): RecipeCostContext
+    {
+        return new RecipeCostContext([
+            'pos_tenant' => $context->posTenant,
+            'pos_branch' => $context->posBranch,
+            'branch_uuid' => $context->branchUuid,
+            'store_id' => $context->storeId,
+            'order_type' => $context->orderType,
+            'channel' => $context->channel,
+            'modifiers' => $context->modifiers,
+            'calculated_at' => date('Y-m-d H:i:s'),
+        ]);
+    }
+
+    /**
+     * Preparation counters may consume a mapped inventory item even where the
+     * sellable drink has no recipe.  Their cost is frozen into the usage and
+     * movement payload at payment time using the branch moving-average cost.
+     */
+    private function applyPreparationCosts(
+        mysqli $conn,
+        RecipeExplosionResult $explosion,
+        RecipeCostContext $context
+    ): void {
+        foreach ($explosion->requirements as $requirement) {
+            if ($requirement->lineType !== 'preparation_ingredient') {
+                continue;
+            }
+            $requirement->unitCost = $this->costService->costForInventoryItem(
+                $conn,
+                $requirement->ingredientItemId,
+                $context
+            );
+            $requirement->totalCost = RecipeDecimal::multiply(
+                $requirement->requiredQtyBase,
+                $requirement->unitCost
+            );
         }
     }
 

@@ -1,16 +1,19 @@
 <?php
 
 require_once __DIR__ . '/ModifierLineNoteService.php';
+require_once __DIR__ . '/PreparationSelectionService.php';
 require_once __DIR__ . '/PosOrderMutationService.php';
 
 class OrderPrintPayloadService
 {
     private ModifierLineNoteService $customizationService;
+    private PreparationSelectionService $preparationService;
     private array $tableExistsCache = [];
 
     public function __construct(?ModifierLineNoteService $customizationService = null)
     {
         $this->customizationService = $customizationService ?: new ModifierLineNoteService();
+        $this->preparationService = new PreparationSelectionService();
     }
 
     public function buildReceiptPayload(mysqli $conn, int $orderId): array
@@ -71,6 +74,11 @@ class OrderPrintPayloadService
                 $line['modifiers'] = [];
                 $line['notes'] = [];
             }
+            $line['preparation_values'] = $this->preparationService->fetchLineValues(
+                $conn,
+                $orderId,
+                (int) $line['detail_id']
+            );
         }
         unset($line);
 

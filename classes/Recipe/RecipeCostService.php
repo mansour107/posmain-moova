@@ -114,6 +114,19 @@ class RecipeCostService
         return $this->createSnapshot($conn, $recipeId, $context, $variantItemId);
     }
 
+    /**
+     * Resolves an inventory item's current unit cost for operational
+     * preparation consumption when there is no recipe header to snapshot.
+     */
+    public function costForInventoryItem(
+        mysqli $conn,
+        int $itemId,
+        RecipeCostContext $context,
+        string $method = 'moving_average'
+    ): string {
+        return $this->costForItem($conn, $itemId, $method, $context);
+    }
+
     private function variantItemIdForSnapshot(mysqli $conn, int $recipeId, int $sellableItemId): int
     {
         if ($sellableItemId < 1) {

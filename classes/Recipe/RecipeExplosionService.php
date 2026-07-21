@@ -57,13 +57,24 @@ class RecipeExplosionService
             }
         }
         if (!$recipe) {
-            return $this->fallback($context, 'no_active_recipe');
+            $preparationRequirements = $this->preparationRequirements($context);
+            if (!$preparationRequirements) {
+                return $this->fallback($context, 'no_active_recipe');
+            }
+            return new RecipeExplosionResult([
+                'sellable_item_id' => $context->sellableItemId,
+                'requirements' => $this->mergeRequirements($preparationRequirements),
+                'warnings' => [],
+                'has_recipe' => true,
+                'fallback_mode' => 'preparation_only',
+            ]);
         }
 
         $orderQty = RecipeDecimal::normalize($context->quantity);
         $requirements = (string) ($recipe['recipe_type'] ?? '') === 'batch_prepared'
             ? [$this->preparedStockRequirement($recipe, $orderQty)]
             : $this->explodeRecipe($conn, $recipe, $orderQty, $context, [], $variantItemId);
+        $requirements = $this->mergeRequirements(array_merge($requirements, $this->preparationRequirements($context)));
 
         return new RecipeExplosionResult([
             'sellable_item_id' => $context->sellableItemId,
@@ -150,6 +161,61 @@ class RecipeExplosionService
             'has_recipe' => false,
             'fallback_mode' => $mode,
         ]);
+    }
+
+    /** @return IngredientRequirement[] */
+    private function preparationRequirements(RecipeOrderLineContext $context): array
+    {
+        $requirements = [];
+        $orderQty = RecipeDecimal::normalize($context->quantity);
+        foreach ($context->preparationValues as $value) {
+            $ingredientId = (int) ($value['inventory_item_id'] ?? 0);
+            $selected = (int) ($value['value'] ?? $value['value_int'] ?? 0);
+            $perValue = RecipeDecimal::normalize($value['inventory_qty_per_value'] ?? '0');
+            if ($ingredientId < 1 || $selected < 1 || RecipeDecimal::compare($perValue, '0') <= 0) {
+                continue;
+            }
+            $qty = RecipeDecimal::multiply($orderQty, RecipeDecimal::multiply((string) $selected, $perValue));
+            $requirements[] = new IngredientRequirement([
+                'ingredient_item_id' => $ingredientId,
+                'source_recipe_line_id' => 0,
+                'line_type' => 'preparation_ingredient',
+                'required_qty_base' => $qty,
+                'unit_conversion_to_base' => '1.00000000',
+                'wastage_percent' => '0.0000',
+                'is_required' => true,
+                'order_type' => 'any',
+                'channel' => 'any',
+            ]);
+        }
+
+        return $requirements;
+    }
+
+    /**
+     * Inventory idempotency is per ingredient and order line. Aggregate before
+     * reservations/movements so a base recipe and preparation field pointing
+     * at the same stock item cannot overwrite each other.
+     */
+    private function mergeRequirements(array $requirements): array
+    {
+        $merged = [];
+        foreach ($requirements as $requirement) {
+            if (!$requirement instanceof IngredientRequirement || $requirement->ingredientItemId < 1) {
+                continue;
+            }
+            $key = $requirement->ingredientItemId . ':' . (int) ($requirement->unitId ?? 0);
+            if (!isset($merged[$key])) {
+                $merged[$key] = $requirement;
+                continue;
+            }
+            $merged[$key]->requiredQtyBase = RecipeDecimal::add(
+                $merged[$key]->requiredQtyBase,
+                $requirement->requiredQtyBase
+            );
+        }
+
+        return array_values($merged);
     }
 
     private function explodeRecipe(

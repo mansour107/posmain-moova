@@ -151,12 +151,17 @@ if ($print_payload !== null || $order) {
                 <td>
                     <?php
                     $notes = is_array($item['notes'] ?? null) ? $item['notes'] : [];
+                    $preparationValues = is_array($item['preparation_values'] ?? null) ? $item['preparation_values'] : [];
                     if ($notes) {
                         foreach ($notes as $note) {
                             echo '<div>' . htmlspecialchars($note['note_text'] ?? '', ENT_QUOTES, 'UTF-8') . '</div>';
                         }
-                    } else {
+                    } elseif (!$preparationValues) {
                         echo htmlspecialchars($item['legacy_notes'] ?? '', ENT_QUOTES, 'UTF-8');
+                    }
+                    foreach ($preparationValues as $preparation) {
+                        echo '<div>تحضير: ' . htmlspecialchars($preparation['label_ar'] ?? '', ENT_QUOTES, 'UTF-8')
+                            . ' — ' . htmlspecialchars((string) ($preparation['value'] ?? 0), ENT_QUOTES, 'UTF-8') . '</div>';
                     }
                     ?>
                 </td>

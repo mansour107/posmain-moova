@@ -24,6 +24,8 @@ class RecipeOrderLineUsageRepository extends RecipeRepositoryBase
             'variant_id' => null,
             'modifiers_hash' => null,
             'modifiers_json' => null,
+            'preparation_hash' => null,
+            'preparation_json' => null,
             'order_unit_id' => null,
             'recipe_id' => null,
             'recipe_version_number' => null,

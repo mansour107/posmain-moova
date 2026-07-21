@@ -1,6 +1,7 @@
 <?php
 
 require_once __DIR__ . '/../Pos/Service/ItemVariantService.php';
+require_once __DIR__ . '/../Pos/Service/PreparationSelectionService.php';
 
 /**
  * Builds Moova-compatible menu option groups from POS modifier groups and item variants.
@@ -209,6 +210,22 @@ class ItemCustomerMenuOptions
             : null;
         if ($variantGroup !== null) {
             $options[] = $variantGroup;
+        }
+        foreach ((new PreparationSelectionService())->fieldsForItem($conn, $itemId) as $field) {
+            $options[] = [
+                'id' => 'pos-preparation-' . $field['code'],
+                'providerOptionId' => 'pos-preparation-' . $field['code'],
+                'label' => $field['label_ar'],
+                'name2' => $field['label_en'],
+                'type' => 'counter',
+                'min' => 0,
+                'max' => $field['max_value'],
+                'step' => 1,
+                'requiresExplicitValue' => !empty($field['requires_explicit_value']),
+                'suffix' => 'ملعقة',
+                'priceDelta' => 0,
+                'priceDeltaCents' => 0,
+            ];
         }
 
         return $options;

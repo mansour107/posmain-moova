@@ -9,6 +9,7 @@ require_once __DIR__ . '/IdempotencyService.php';
 require_once __DIR__ . '/ItemAvailabilityService.php';
 require_once __DIR__ . '/ManagerApprovalService.php';
 require_once __DIR__ . '/ModifierLineNoteService.php';
+require_once __DIR__ . '/PreparationSelectionService.php';
 require_once __DIR__ . '/../../Sync/SyncOutboxEventService.php';
 require_once __DIR__ . '/../../Moova/MoovaNewOrderApplyService.php';
 require_once __DIR__ . '/../../Moova/MoovaChangeOrderApplyService.php';
@@ -23,6 +24,7 @@ require_once __DIR__ . '/PosCustomerOrderSideEffects.php';
 require_once __DIR__ . '/PosCustomerService.php';
 require_once __DIR__ . '/DeliveryZoneService.php';
 require_once __DIR__ . '/OrderFulfillmentService.php';
+require_once __DIR__ . '/DeliveryWorkerService.php';
 require_once __DIR__ . '/SideEffectPolicy.php';
 require_once __DIR__ . '/OrderRevisionService.php';
 require_once __DIR__ . '/../../../includes/pos_user_context.php';
@@ -69,6 +71,7 @@ class PosOrderMutationService
     private $itemAvailabilityService;
     private $managerApprovalService;
     private $modifierLineNoteService;
+    private $preparationSelectionService;
     private $recipeLifecycleService;
     private $recipeSettingsService;
     private $recipeAuditService;
@@ -86,6 +89,7 @@ class PosOrderMutationService
         $this->itemAvailabilityService = $itemAvailabilityService ?: new ItemAvailabilityService();
         $this->managerApprovalService = $managerApprovalService ?: new ManagerApprovalService();
         $this->modifierLineNoteService = $modifierLineNoteService ?: new ModifierLineNoteService();
+        $this->preparationSelectionService = new PreparationSelectionService();
         $this->recipeLifecycleService = $recipeLifecycleService ?: new RecipeOrderLifecycleService();
         $this->recipeSettingsService = $recipeSettingsService ?: new RecipeSettingsService();
         $this->recipeAuditService = $recipeAuditService ?: new RecipeAuditService();
@@ -1401,6 +1405,47 @@ class PosOrderMutationService
             'config' => $context['config'] ?? null,
         ]);
 
+        $collectionMode = strtolower(trim((string) ($request['collection_mode'] ?? 'prepaid')));
+        if (!in_array($collectionMode, ['prepaid', 'cod'], true)) {
+            $collectionMode = 'prepaid';
+        }
+        // The invoice balance is authoritative: any unpaid remainder travels as
+        // COD, while a fully paid order cannot leave phantom cash with a worker.
+        $collectionMode = (float) $status['remaining_amount'] > 0 ? 'cod' : 'prepaid';
+        $courierSource = strtolower(trim((string) ($request['courier_source'] ?? 'in_house')));
+        if (!in_array($courierSource, ['in_house', 'external'], true)) {
+            $courierSource = 'in_house';
+        }
+        $fulfillmentService = new OrderFulfillmentService();
+        $fulfillment = $fulfillmentService->upsertForOrder($conn, $orderId, [
+            'order_channel' => 'cashier',
+            'fulfillment_type' => 'delivery',
+            'customer_name' => $deliveryName,
+            'customer_phone' => $deliveryPhone,
+            'customer_address' => $deliveryAddress,
+            'pos_customer_id' => $deliveryCustomerId,
+            'delivery_zone' => $deliveryZoneName,
+            'delivery_fee' => $deliveryFee,
+            'delivery_status' => 'pending',
+            'metadata_json' => ['source' => 'pos_cashier_delivery'],
+        ], ['require_table' => true]);
+        $fulfillmentUpdate = $conn->prepare("UPDATE order_fulfillment SET delivery_zone_id = NULLIF(?, 0), courier_source = ?, collection_mode = ?, cod_amount = CASE WHEN ? = 'cod' THEN ? ELSE 0 END WHERE order_id = ?");
+        $deliveryZoneId = (int) ($resolvedTotals['delivery_zone_id'] ?? 0);
+        $codAmount = $collectionMode === 'cod' ? (float) $status['remaining_amount'] : 0.0;
+        $fulfillmentUpdate->bind_param('isssdi', $deliveryZoneId, $courierSource, $collectionMode, $collectionMode, $codAmount, $orderId);
+        $fulfillmentUpdate->execute();
+        $fulfillmentUpdate->close();
+        $deliveryWorkerId = max(0, (int) ($request['delivery_worker_id'] ?? 0));
+        if ($deliveryWorkerId > 0 && $courierSource === 'in_house') {
+            (new DeliveryWorkerService())->assignOrder($conn, $orderId, $deliveryWorkerId, [
+                'in_transaction' => true,
+                'user_id' => $userId,
+                'tenant' => (int) ($context['tenant'] ?? $_SESSION['pos_tenant'] ?? 0),
+                'branch' => (int) ($context['branch'] ?? $_SESSION['pos_branch'] ?? 0),
+                'config' => $context['config'] ?? null,
+            ]);
+        }
+
         $outboxResult = null;
         if (!array_key_exists('record_outbox', $context) || $context['record_outbox']) {
             try {
@@ -1451,6 +1496,9 @@ class PosOrderMutationService
                 'remaining_amount' => $status['remaining_amount'],
                 'profit' => (float) $lineResult['totals']['profit'],
                 'pos_customer_id' => $deliveryCustomerId,
+                'delivery_worker_id' => $deliveryWorkerId ?: null,
+                'collection_mode' => $collectionMode,
+                'fulfillment' => $fulfillmentService->fulfillmentForOrder($conn, $orderId),
                 'journal_head_id' => $salesJournal['journal_head_id'] ?? null,
                 'journal_id' => $salesJournal['journal_id'] ?? null,
                 'receipt_ids' => array_column($receipts, 'receipt_id'),
@@ -1483,6 +1531,7 @@ class PosOrderMutationService
                 'unit_id' => (int) ($request['unit_id'][$index] ?? $request['unitid'][$index] ?? 0),
                 'note' => (string) ($request['itmnote'][$index] ?? ''),
                 'modifiers' => $this->decodeLineModifiers($request['itmmodifiers'][$index] ?? []),
+                'preparation_values' => $this->decodeLinePreparationValues($request['itmpreparation'][$index] ?? []),
                 'base_price' => (float) ($request['itmbaseprice'][$index] ?? $request['itmprice'][$index] ?? 0),
                 'manager_approval_id' => (int) ($request['itmmanagerapproval'][$index] ?? $request['manager_approval_id'][$index] ?? 0),
             ];
@@ -1511,6 +1560,16 @@ class PosOrderMutationService
             );
             $item['u_val'] = $resolved['factor_float'];
             $item['u_val_decimal'] = $resolved['factor_decimal'];
+            $submittedPreparation = $item['preparation_values']
+                ?? $item['preparations']
+                ?? $item['preparation']
+                ?? $this->preparationValuesFromOptions($item['options'] ?? []);
+            $item['preparation_values'] = $this->preparationSelectionService->validateForItem(
+                $conn,
+                $itemId,
+                $submittedPreparation,
+                ['config' => function_exists('posmain_app_config') ? posmain_app_config() : []]
+            );
         }
         unset($item);
 
@@ -1596,6 +1655,7 @@ class PosOrderMutationService
 
     private function insertTakeawaySalesJournal(mysqli $conn, int $orderId, int $proId, $amount, string $date, int $customerId, int $userId, int $salesAccountId = 0): array
     {
+        $scope = $this->orderAccountingScope($conn, $orderId);
         $salesAccountId = posmain_ensure_sales_account($conn, $salesAccountId > 0 ? $salesAccountId : 91);
         if ($salesAccountId <= 0) {
             throw new InvalidArgumentException('لا يوجد حساب مبيعات صالح في دليل الحسابات');
@@ -1612,6 +1672,8 @@ class PosOrderMutationService
             [
                 'jdate' => $date,
                 'idempotency_key' => 'takeaway-invoice:' . $orderId,
+                'tenant' => $scope['tenant'],
+                'branch' => $scope['branch'],
             ]
         );
 
@@ -1624,8 +1686,9 @@ class PosOrderMutationService
 
     private function insertTakeawayReceipt(mysqli $conn, int $orderId, int $proId, string $info, string $date, int $empId, int $fundAccountId, int $customerId, $amount, string $methodLabel, int $userId): array
     {
+        $scope = $this->orderAccountingScope($conn, $orderId);
         $postedAmount = Money::from(is_string($amount) ? $amount : number_format((float) $amount, 2, '.', ''))->toString();
-        $receiptProId = $this->nextInvoiceProId($conn, 1, 0, 0);
+        $receiptProId = $this->nextInvoiceProId($conn, 1, $scope['tenant'], $scope['branch']);
         $receiptInfo = $info . ' - دفع ' . $methodLabel;
         $this->tableOrderService->execute($conn, "
             INSERT INTO ot_head (
@@ -1635,8 +1698,14 @@ class PosOrderMutationService
         ", [$receiptProId, $receiptInfo, $date, $empId, $fundAccountId, $customerId, $postedAmount, $userId, $orderId]);
         $receiptId = (int) $conn->insert_id;
         $this->tableOrderService->assignUuidIfPresent($conn, 'ot_head', $receiptId);
+        if ($this->columnExists($conn, 'ot_head', 'tenant') && $this->columnExists($conn, 'ot_head', 'branch')) {
+            $scopeUpdate = $conn->prepare('UPDATE ot_head SET tenant = ?, branch = ? WHERE id = ?');
+            $scopeUpdate->bind_param('iii', $scope['tenant'], $scope['branch'], $receiptId);
+            $scopeUpdate->execute();
+            $scopeUpdate->close();
+        }
 
-        $journalId = $this->tableOrderService->nextJournalId($conn, 0, 0);
+        $journalId = $this->tableOrderService->nextJournalId($conn, $scope['tenant'], $scope['branch']);
         $details = 'سند قبض ' . $methodLabel . ' _ ' . $proId;
         $journalHeadId = JournalPostingService::postBalancedHead(
             $conn,
@@ -1656,6 +1725,8 @@ class PosOrderMutationService
                 'source_id' => $receiptId,
                 'posting_kind' => 'payment_receipt',
                 'idempotency_key' => 'takeaway-receipt:' . $orderId . ':' . $receiptId,
+                'tenant' => $scope['tenant'],
+                'branch' => $scope['branch'],
             ]
         );
 
@@ -1763,6 +1834,13 @@ class PosOrderMutationService
             $sourceItem,
             abs((float) ($line['qty_out'] ?? 0) - (float) ($line['qty_in'] ?? 0)),
             $context
+        );
+        $this->preparationSelectionService->persistLineValues(
+            $conn,
+            $orderId,
+            $detailId,
+            (int) $line['item_id'],
+            is_array($sourceItem['preparation_values'] ?? null) ? $sourceItem['preparation_values'] : []
         );
 
         $quantity = $this->recipeQuantityFromLegacyStockValues(
@@ -3137,6 +3215,11 @@ class PosOrderMutationService
                 break;
             }
         }
+        if (isset($sourceItem['preparation_values']) && is_array($sourceItem['preparation_values'])) {
+            $line['preparation_values'] = $sourceItem['preparation_values'];
+        } elseif ($detailId > 0) {
+            $line['preparation_values'] = $this->preparationSelectionService->fetchLineValues($conn, $orderId, $detailId);
+        }
         $managerApprovalId = (int) (
             $sourceItem['manager_approval_id']
             ?? $sourceItem['recipe_stock_manager_approval_id']
@@ -3459,9 +3542,44 @@ class PosOrderMutationService
         if ($value === '') {
             return [];
         }
-
         $decoded = json_decode($value, true);
         return is_array($decoded) ? $decoded : [];
+    }
+
+    private function decodeLinePreparationValues($value): array
+    {
+        if (is_array($value)) {
+            return $value;
+        }
+        if (!is_string($value) || trim($value) === '') {
+            return [];
+        }
+        $decoded = json_decode($value, true);
+
+        return is_array($decoded) ? $decoded : [];
+    }
+
+    private function preparationValuesFromOptions($options): array
+    {
+        if (!is_array($options)) {
+            return [];
+        }
+        $values = [];
+        foreach ($options as $option) {
+            if (!is_array($option)) {
+                continue;
+            }
+            $id = (string) ($option['id'] ?? $option['option_id'] ?? $option['providerOptionId'] ?? '');
+            if (strpos($id, 'pos-preparation-') !== 0) {
+                continue;
+            }
+            $values[] = [
+                'code' => substr($id, strlen('pos-preparation-')),
+                'value' => $option['value'] ?? $option['value_int'] ?? null,
+            ];
+        }
+
+        return $values;
     }
 
     private function persistLineNoteIfAvailable(mysqli $conn, int $orderId, int $detailId, int $itemId, $note, array $context = []): void
@@ -4060,6 +4178,26 @@ class PosOrderMutationService
         $result = $conn->query("SHOW COLUMNS FROM `{$tableName}` LIKE '{$columnName}'");
 
         return $result && $result->num_rows > 0;
+    }
+
+    private function orderAccountingScope(mysqli $conn, int $orderId): array
+    {
+        if ($orderId < 1
+            || !$this->columnExists($conn, 'ot_head', 'tenant')
+            || !$this->columnExists($conn, 'ot_head', 'branch')) {
+            return ['tenant' => 0, 'branch' => 0];
+        }
+
+        $stmt = $conn->prepare('SELECT tenant, branch FROM ot_head WHERE id = ? LIMIT 1');
+        $stmt->bind_param('i', $orderId);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        return [
+            'tenant' => max(0, (int) ($row['tenant'] ?? 0)),
+            'branch' => max(0, (int) ($row['branch'] ?? 0)),
+        ];
     }
 
     private function requiredPositiveInt(array $request, string $key, string $message): int

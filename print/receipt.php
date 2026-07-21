@@ -164,6 +164,7 @@ if ($is_delivery) {
         foreach ($receipt_lines as $line) {
             $line_modifiers = is_array($line['modifiers'] ?? null) ? $line['modifiers'] : [];
             $line_notes = is_array($line['notes'] ?? null) ? $line['notes'] : [];
+            $line_preparation_values = is_array($line['preparation_values'] ?? null) ? $line['preparation_values'] : [];
     ?>
 <tr>
 <td class="p-1 receipt-item-name-cell" style="font-size:small; border: 1px solid #ddd;">
@@ -173,6 +174,9 @@ if ($is_delivery) {
     <?php endforeach; ?>
     <?php foreach ($line_notes as $note): ?>
         <div style="font-size:10px; color:#555;">ملاحظة: <?= htmlspecialchars($note['note_text'] ?? '', ENT_QUOTES, 'UTF-8') ?></div>
+    <?php endforeach; ?>
+    <?php foreach ($line_preparation_values as $preparation): ?>
+        <div style="font-size:10px; color:#555;">تحضير: <?= htmlspecialchars($preparation['label_ar'] ?? '', ENT_QUOTES, 'UTF-8') ?> — <?= htmlspecialchars((string) ($preparation['value'] ?? 0), ENT_QUOTES, 'UTF-8') ?></div>
     <?php endforeach; ?>
 </td>
 <td style="border: 1px solid #ddd;"><?= htmlspecialchars($line['qty'] ?? '0.000', ENT_QUOTES, 'UTF-8') ?></td>
