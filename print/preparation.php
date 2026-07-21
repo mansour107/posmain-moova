@@ -160,8 +160,11 @@ if ($print_payload !== null || $order) {
                         echo htmlspecialchars($item['legacy_notes'] ?? '', ENT_QUOTES, 'UTF-8');
                     }
                     foreach ($preparationValues as $preparation) {
-                        echo '<div>تحضير: ' . htmlspecialchars($preparation['label_ar'] ?? '', ENT_QUOTES, 'UTF-8')
-                            . ' — ' . htmlspecialchars((string) ($preparation['value'] ?? 0), ENT_QUOTES, 'UTF-8') . '</div>';
+                        $selectedPreparationValue = (int) ($preparation['value'] ?? 0);
+                        $selectedPreparationText = $selectedPreparationValue === 0
+                            ? 'بدون سكر'
+                            : $selectedPreparationValue . ' ملعقة';
+                        echo '<div>' . htmlspecialchars($selectedPreparationText, ENT_QUOTES, 'UTF-8') . '</div>';
                     }
                     ?>
                 </td>

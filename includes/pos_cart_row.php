@@ -12,6 +12,22 @@ function pos_render_cart_row(array $row): string
     $subtotal = (float) ($row['subtotal'] ?? ($price * (float) $qty));
     $barcode = htmlspecialchars((string) ($row['barcode'] ?? (string) $itemId), ENT_QUOTES, 'UTF-8');
     $lineNote = htmlspecialchars((string) ($row['line_note'] ?? ''), ENT_QUOTES, 'UTF-8');
+    $preparationValues = is_array($row['preparation_values'] ?? null) ? $row['preparation_values'] : [];
+    $sugarSpoons = null;
+    foreach ($preparationValues as $preparationValue) {
+        if (($preparationValue['code'] ?? $preparationValue['field_code'] ?? '') === 'sugar_spoons') {
+            $sugarSpoons = max(0, min(5, (int) ($preparationValue['value'] ?? $preparationValue['selected_value'] ?? 0)));
+            break;
+        }
+    }
+    if ($sugarSpoons === null && !empty($row['sugar_allowed'])) {
+        $sugarSpoons = 0;
+    }
+    $preparationJson = htmlspecialchars(
+        json_encode($sugarSpoons === null ? [] : [['code' => 'sugar_spoons', 'value' => $sugarSpoons]], JSON_UNESCAPED_UNICODE),
+        ENT_QUOTES,
+        'UTF-8'
+    );
     $uVal = htmlspecialchars((string) ($row['u_val'] ?? '1'), ENT_QUOTES, 'UTF-8');
     $priceFormatted = number_format($price, 2, '.', '');
     $subtotalFormatted = number_format($subtotal, 2, '.', '');
@@ -42,6 +58,10 @@ function pos_render_cart_row(array $row): string
                 <input type="hidden" value="<?= $itemId ?>" name="itmname[]">
                 <input type="hidden" class="barcode" value="<?= $barcode ?>">
                 <div class="pos-cart-name" title="<?= $itemName ?>"><?= $itemName ?></div>
+                <?php if ($sugarSpoons !== null): ?>
+                    <small class="pos-cart-preparation text-muted">السكر: <?= $sugarSpoons === 0 ? 'بدون' : $sugarSpoons . ' ملعقة' ?></small>
+                <?php endif; ?>
+                <input type="hidden" class="preparationValuesInput" name="itmpreparation[]" value="<?= $preparationJson ?>">
                 <input type="hidden" class="lineNoteInput" name="itmnote[]" value="<?= $lineNote ?>">
                 <input type="hidden" class="managerApprovalInput" name="itmmanagerapproval[]" value="">
             </div>

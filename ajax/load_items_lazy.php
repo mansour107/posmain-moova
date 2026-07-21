@@ -9,6 +9,7 @@ require_once '../includes/connect.php';
 require_once '../includes/pos_default_accounts.php';
 require_once '../classes/Pos/Service/ItemAvailabilityService.php';
 require_once '../classes/Pos/Service/ItemVariantService.php';
+require_once '../classes/Pos/Service/PreparationSelectionService.php';
 require_once '../classes/Items/ItemCatalogStatus.php';
 require_once '../classes/Items/ItemUnitResolver.php';
 require_once '../includes/pos_item_card.php';
@@ -117,6 +118,7 @@ try {
 
     $availabilityScope = posmain_pos_availability_scope($conn);
     $items = (new ItemAvailabilityService())->decorateItems($conn, $items, $availabilityScope);
+    $items = (new PreparationSelectionService())->decorateItems($conn, $items);
 
     foreach ($items as &$item) {
         $item['html'] = pos_render_item_card_compact($item);

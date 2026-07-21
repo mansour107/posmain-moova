@@ -12,7 +12,6 @@ require_once __DIR__ . '/classes/Items/ItemCostSourceSupport.php';
 require_once __DIR__ . '/classes/Items/ItemUnitProfileBuilder.php';
 require_once __DIR__ . '/classes/Items/ItemUnitProfileReader.php';
 require_once __DIR__ . '/classes/Pos/Service/ItemVariantService.php';
-require_once __DIR__ . '/classes/Pos/Service/PreparationSelectionService.php';
 
 $itemEditorFlash = ItemEditorFlash::take();
 
@@ -168,33 +167,6 @@ foreach ($itemGroup2Options as $groupOption) {
 $trackStock = in_array($itemType, ['service', 'made'], true) ? 0 : ($isEdit ? (int) ($rowitm['track_stock'] ?? 1) : 1);
 $preferredUnitId = $isEdit ? (int) ($rowitm['preferred_unit_id'] ?? 0) : 0;
 $itemVariants = [];
-$preparationFieldsEnabled = function_exists('posmain_app_config') && !empty(posmain_app_config()['features']['preparation_fields']);
-$preparationFieldsAvailable = false;
-if ($preparationFieldsEnabled) {
-    $preparationTable = $conn->query("SHOW TABLES LIKE 'item_preparation_configs'");
-    $preparationFieldsAvailable = $preparationTable && $preparationTable->num_rows > 0;
-    if ($preparationTable) {
-        $preparationTable->free();
-    }
-}
-$sugarPreparation = ['enabled' => false, 'max' => 5, 'inventory_item_id' => 0, 'inventory_qty' => '0'];
-if ($preparationFieldsAvailable && $isEdit) {
-    $stmt = $conn->prepare("SELECT is_active, max_value, inventory_item_id, inventory_qty_per_value FROM item_preparation_configs WHERE item_id = ? AND field_code = 'sugar_spoons' LIMIT 1");
-    if ($stmt) {
-        $stmt->bind_param('i', $editId);
-        $stmt->execute();
-        $row = $stmt->get_result()->fetch_assoc();
-        $stmt->close();
-        if ($row) {
-            $sugarPreparation = [
-                'enabled' => (int) ($row['is_active'] ?? 0) === 1,
-                'max' => (int) ($row['max_value'] ?? 5),
-                'inventory_item_id' => (int) ($row['inventory_item_id'] ?? 0),
-                'inventory_qty' => (string) ($row['inventory_qty_per_value'] ?? '0'),
-            ];
-        }
-    }
-}
 try {
     $itemVariantService = new ItemVariantService();
     $itemVariantService->ensureSchema($conn);
@@ -913,38 +885,6 @@ try {
                                     </div>
                                 </div>
                             </section>
-
-                            <?php if ($preparationFieldsAvailable && $isEdit): ?>
-                                <section class="item-editor-panel" id="item-preparation-section">
-                                    <div class="item-editor-panel-header">
-                                        <div>
-                                            <h3 class="item-editor-panel-title">تحضير المشروب</h3>
-                                            <p class="item-editor-panel-subtitle">خيار تشغيلي مجاني، منفصل عن الإضافات والأسعار والوصفة.</p>
-                                        </div>
-                                    </div>
-                                    <div class="item-editor-panel-body">
-                                        <div class="custom-control custom-switch mb-3">
-                                            <input type="checkbox" class="custom-control-input" id="sugar_spoons_enabled" name="sugar_spoons_enabled" value="1" <?= $sugarPreparation['enabled'] ? 'checked' : '' ?> >
-                                            <label class="custom-control-label" for="sugar_spoons_enabled">اطلب من الكاشير تحديد ملاعق السكر لهذا الصنف</label>
-                                        </div>
-                                        <div class="row">
-                                            <div class="col-md-4">
-                                                <label for="sugar_spoons_max">الحد الأقصى</label>
-                                                <input id="sugar_spoons_max" name="sugar_spoons_max" type="number" min="1" max="20" class="form-control" value="<?= (int) $sugarPreparation['max'] ?>">
-                                            </div>
-                                            <div class="col-md-4">
-                                                <label for="sugar_spoons_inventory_item_id">صنف مخزون السكر (اختياري)</label>
-                                                <input id="sugar_spoons_inventory_item_id" name="sugar_spoons_inventory_item_id" type="number" min="0" class="form-control" value="<?= (int) $sugarPreparation['inventory_item_id'] ?>" placeholder="رقم الصنف">
-                                            </div>
-                                            <div class="col-md-4">
-                                                <label for="sugar_spoons_inventory_qty_per_spoon">كمية المخزون لكل ملعقة</label>
-                                                <input id="sugar_spoons_inventory_qty_per_spoon" name="sugar_spoons_inventory_qty_per_spoon" type="number" min="0" step="0.000001" class="form-control" value="<?= htmlspecialchars($sugarPreparation['inventory_qty'], ENT_QUOTES, 'UTF-8') ?>">
-                                            </div>
-                                        </div>
-                                        <small class="form-text text-muted mt-2">لا يوجد اختيار افتراضي: يختار الكاشير 0 إلى الحد الأقصى لكل سطر طلب.</small>
-                                    </div>
-                                </section>
-                            <?php endif; ?>
 
                             <?php $hideParentPricingSection = count($itemVariants) > 0; ?>
                             <?php include __DIR__ . '/elements/sales/item_unit_profile_panel.php'; ?>

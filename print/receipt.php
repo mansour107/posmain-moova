@@ -176,7 +176,8 @@ if ($is_delivery) {
         <div style="font-size:10px; color:#555;">ملاحظة: <?= htmlspecialchars($note['note_text'] ?? '', ENT_QUOTES, 'UTF-8') ?></div>
     <?php endforeach; ?>
     <?php foreach ($line_preparation_values as $preparation): ?>
-        <div style="font-size:10px; color:#555;">تحضير: <?= htmlspecialchars($preparation['label_ar'] ?? '', ENT_QUOTES, 'UTF-8') ?> — <?= htmlspecialchars((string) ($preparation['value'] ?? 0), ENT_QUOTES, 'UTF-8') ?></div>
+        <?php $receiptPreparationValue = (int) ($preparation['value'] ?? 0); ?>
+        <div style="font-size:10px; color:#555;"><?= htmlspecialchars($receiptPreparationValue === 0 ? 'بدون سكر' : $receiptPreparationValue . ' ملعقة سكر', ENT_QUOTES, 'UTF-8') ?></div>
     <?php endforeach; ?>
 </td>
 <td style="border: 1px solid #ddd;"><?= htmlspecialchars($line['qty'] ?? '0.000', ENT_QUOTES, 'UTF-8') ?></td>

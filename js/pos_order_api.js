@@ -125,18 +125,32 @@
         const priceFields = form.querySelectorAll('[name="itmprice[]"], [name="itmprice"]');
         const discFields = form.querySelectorAll('[name="itmdisc[]"], [name="itmdisc"]');
         const noteFields = form.querySelectorAll('[name="itmnote[]"], [name="itmnote"]');
+        const preparationFields = form.querySelectorAll('[name="itmpreparation[]"], [name="itmpreparation"]');
 
         names.forEach(function (field, index) {
             const id = parseInt(field.value, 10);
             if (!id) {
                 return;
             }
+            let preparationValues = [];
+            const preparationRaw = String((preparationFields[index] || {}).value || '').trim();
+            if (preparationRaw !== '') {
+                try {
+                    const parsedPreparation = JSON.parse(preparationRaw);
+                    if (Array.isArray(parsedPreparation)) {
+                        preparationValues = parsedPreparation;
+                    }
+                } catch (ignored) {
+                    preparationValues = [];
+                }
+            }
             items.push({
                 id: id,
                 qty: parseFloat((qtyFields[index] || {}).value || 1),
                 price: parseFloat((priceFields[index] || {}).value || 0),
                 discount: parseFloat((discFields[index] || {}).value || 0),
-                note: String((noteFields[index] || {}).value || '')
+                note: String((noteFields[index] || {}).value || ''),
+                preparation_values: preparationValues
             });
         });
 
@@ -185,6 +199,7 @@
         payload.itmprice = [];
         payload.itmdisc = [];
         payload.itmnote = [];
+        payload.itmpreparation = [];
 
         collectLineItems(form).forEach(function (item) {
             payload.itmname.push(item.id);
@@ -192,6 +207,7 @@
             payload.itmprice.push(item.price);
             payload.itmdisc.push(item.discount);
             payload.itmnote.push(item.note);
+            payload.itmpreparation.push(JSON.stringify(item.preparation_values || []));
         });
 
         payload.items = collectLineItems(form);

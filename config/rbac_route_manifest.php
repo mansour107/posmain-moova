@@ -238,6 +238,7 @@ return [
     'ajax/get_category_items.php' => ['permission' => 'pos.open', 'csrf' => '', 'lane' => 'pos'],
     'ajax/get_daily_sales.php' => ['any_of' => ['pos.open', 'reports.view'], 'csrf' => '', 'lane' => 'pos'],
     'ajax/get_item_variants.php' => ['permission' => 'pos.open', 'csrf' => '', 'lane' => 'pos'],
+    'ajax/item_sugar_spoons_toggle.php' => ['permission' => 'menu.edit', 'csrf' => 'menu_write', 'lane' => 'erp'],
     'ajax/get_items.php' => ['permission' => 'pos.open', 'csrf' => '', 'lane' => 'pos'],
     'ajax/get_pos_options.php' => ['permission' => 'pos.open', 'csrf' => '', 'lane' => 'pos'],
     'ajax/get_recent_orders.php' => ['permission' => 'pos.open', 'csrf' => '', 'lane' => 'pos'],

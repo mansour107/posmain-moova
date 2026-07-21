@@ -9,6 +9,7 @@
 class PreparationSelectionService
 {
     public const SUGAR_SPOONS = 'sugar_spoons';
+    public const SUGAR_SPOONS_MAX = 5;
 
     private array $tableCache = [];
 
@@ -42,7 +43,85 @@ class PreparationSelectionService
         }
         $stmt->close();
 
+        if (!$fields && $this->tableExists($conn, 'item_group_preparation_configs')) {
+            $groupId = $this->itemGroupId($conn, $configItemId);
+            if ($groupId > 0) {
+                $stmt = $conn->prepare("\n                    SELECT item_group_id AS item_id, field_code, label_ar, label_en, max_value,
+                           requires_explicit_value, NULL AS inventory_item_id,
+                           '0.000000' AS inventory_qty_per_value
+                    FROM item_group_preparation_configs
+                    WHERE item_group_id = ? AND is_active = 1
+                    ORDER BY sort_order, id
+                ");
+                $stmt->bind_param('i', $groupId);
+                $stmt->execute();
+                $result = $stmt->get_result();
+                while ($row = $result->fetch_assoc()) {
+                    $fields[] = $this->publicField($row);
+                }
+                $stmt->close();
+            }
+        }
+
         return $fields;
+    }
+
+    public function itemAllowsSugarSpoons(mysqli $conn, int $itemId, array $context = []): bool
+    {
+        foreach ($this->fieldsForItem($conn, $itemId, $context) as $field) {
+            if (($field['code'] ?? '') === self::SUGAR_SPOONS) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** @param array<int,array<string,mixed>> $items */
+    public function decorateItems(mysqli $conn, array $items, array $context = []): array
+    {
+        if (!$this->isEnabled($context) || !$items) {
+            foreach ($items as &$item) {
+                $item['allows_sugar_spoons'] = false;
+            }
+            unset($item);
+            return $items;
+        }
+
+        $itemIds = array_values(array_unique(array_filter(array_map(
+            static fn(array $item): int => (int) ($item['id'] ?? $item['item_id'] ?? 0),
+            $items
+        ))));
+        $ownerIds = array_fill_keys($itemIds, 0);
+        foreach ($itemIds as $itemId) {
+            $ownerIds[$itemId] = $itemId;
+        }
+        if ($itemIds && $this->tableExists($conn, 'item_variants')) {
+            $sql = 'SELECT variant_item_id, parent_item_id FROM item_variants WHERE is_active = 1 AND variant_item_id IN (' . implode(',', $itemIds) . ')';
+            $result = $conn->query($sql);
+            while ($result && ($row = $result->fetch_assoc())) {
+                $ownerIds[(int) $row['variant_item_id']] = (int) $row['parent_item_id'];
+            }
+        }
+
+        $configOwnerIds = array_values(array_unique(array_values($ownerIds)));
+        $directStates = $this->itemSugarDirectStates($conn, $configOwnerIds);
+        $groupByItem = [];
+        if ($configOwnerIds) {
+            $result = $conn->query('SELECT id, group1 FROM myitems WHERE id IN (' . implode(',', $configOwnerIds) . ')');
+            while ($result && ($row = $result->fetch_assoc())) {
+                $groupByItem[(int) $row['id']] = (int) ($row['group1'] ?? 0);
+            }
+        }
+        $categoryStates = $this->categorySugarStates($conn, array_values($groupByItem));
+
+        foreach ($items as &$item) {
+            $itemId = (int) ($item['id'] ?? $item['item_id'] ?? 0);
+            $ownerId = (int) ($ownerIds[$itemId] ?? $itemId);
+            $groupId = (int) ($groupByItem[$ownerId] ?? 0);
+            $item['allows_sugar_spoons'] = !empty($directStates[$ownerId]) || !empty($categoryStates[$groupId]);
+        }
+        unset($item);
+        return $items;
     }
 
     /**
@@ -168,6 +247,69 @@ class PreparationSelectionService
         $stmt->close();
     }
 
+    public function setItemSugarAllowed(mysqli $conn, int $itemId, bool $allowed, int $actorId = 0): int
+    {
+        if ($itemId < 1 || !$this->tableExists($conn, 'item_preparation_configs')) {
+            throw new RuntimeException('PREPARATION_SCHEMA_NOT_READY');
+        }
+        $code = self::SUGAR_SPOONS;
+        $labelAr = 'ملاعق سكر';
+        $labelEn = 'Sugar spoons';
+        $max = self::SUGAR_SPOONS_MAX;
+        $active = $allowed ? 1 : 0;
+        $stmt = $conn->prepare("\n            INSERT INTO item_preparation_configs
+                (item_id, field_code, label_ar, label_en, max_value, requires_explicit_value,
+                 is_active, inventory_item_id, inventory_qty_per_value, sort_order, created_by, updated_by)
+            VALUES (?, ?, ?, ?, ?, 1, ?, NULL, 0.000000, 0, NULLIF(?, 0), NULLIF(?, 0))
+            ON DUPLICATE KEY UPDATE
+                id = LAST_INSERT_ID(id),
+                label_ar = VALUES(label_ar), label_en = VALUES(label_en),
+                max_value = VALUES(max_value), requires_explicit_value = 1,
+                is_active = VALUES(is_active), updated_by = VALUES(updated_by)
+        ");
+        $stmt->bind_param('isssiiii', $itemId, $code, $labelAr, $labelEn, $max, $active, $actorId, $actorId);
+        $stmt->execute();
+        $configId = (int) ($stmt->insert_id ?: $conn->insert_id);
+        $stmt->close();
+        return $configId;
+    }
+
+    public function setCategorySugarAllowed(mysqli $conn, int $groupId, bool $allowed, int $actorId = 0): int
+    {
+        if ($groupId < 1 || !$this->tableExists($conn, 'item_group_preparation_configs')) {
+            throw new RuntimeException('PREPARATION_SCHEMA_NOT_READY');
+        }
+        $code = self::SUGAR_SPOONS;
+        $labelAr = 'ملاعق سكر';
+        $labelEn = 'Sugar spoons';
+        $max = self::SUGAR_SPOONS_MAX;
+        $active = $allowed ? 1 : 0;
+        $stmt = $conn->prepare("\n            INSERT INTO item_group_preparation_configs
+                (item_group_id, field_code, label_ar, label_en, max_value, requires_explicit_value,
+                 is_active, sort_order, created_by, updated_by)
+            VALUES (?, ?, ?, ?, ?, 1, ?, 0, NULLIF(?, 0), NULLIF(?, 0))
+            ON DUPLICATE KEY UPDATE
+                id = LAST_INSERT_ID(id), label_ar = VALUES(label_ar), label_en = VALUES(label_en),
+                max_value = VALUES(max_value), requires_explicit_value = 1,
+                is_active = VALUES(is_active), updated_by = VALUES(updated_by)
+        ");
+        $stmt->bind_param('isssiiii', $groupId, $code, $labelAr, $labelEn, $max, $active, $actorId, $actorId);
+        $stmt->execute();
+        $configId = (int) ($stmt->insert_id ?: $conn->insert_id);
+        $stmt->close();
+        return $configId;
+    }
+
+    public function itemSugarDirectStates(mysqli $conn, array $itemIds): array
+    {
+        return $this->activeStateMap($conn, 'item_preparation_configs', 'item_id', $itemIds);
+    }
+
+    public function categorySugarStates(mysqli $conn, array $groupIds): array
+    {
+        return $this->activeStateMap($conn, 'item_group_preparation_configs', 'item_group_id', $groupIds);
+    }
+
     private function publicField(array $row): array
     {
         return [
@@ -235,6 +377,39 @@ class PreparationSelectionService
         $row = $stmt->get_result()->fetch_assoc();
         $stmt->close();
         return (int) ($row['parent_item_id'] ?? 0) > 0 ? (int) $row['parent_item_id'] : $itemId;
+    }
+
+    private function itemGroupId(mysqli $conn, int $itemId): int
+    {
+        $stmt = $conn->prepare('SELECT group1 FROM myitems WHERE id = ? AND COALESCE(isdeleted, 0) = 0 LIMIT 1');
+        $stmt->bind_param('i', $itemId);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        return (int) ($row['group1'] ?? 0);
+    }
+
+    private function activeStateMap(mysqli $conn, string $table, string $ownerColumn, array $ownerIds): array
+    {
+        if (!$this->tableExists($conn, $table)) {
+            return [];
+        }
+        $ids = array_values(array_unique(array_filter(array_map('intval', $ownerIds), static fn(int $id): bool => $id > 0)));
+        if (!$ids) {
+            return [];
+        }
+        $sql = "SELECT {$ownerColumn} AS owner_id, is_active FROM {$table} WHERE field_code = ? AND {$ownerColumn} IN (" . implode(',', $ids) . ')';
+        $stmt = $conn->prepare($sql);
+        $code = self::SUGAR_SPOONS;
+        $stmt->bind_param('s', $code);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        $states = [];
+        while ($row = $result->fetch_assoc()) {
+            $states[(int) $row['owner_id']] = (int) $row['is_active'] === 1;
+        }
+        $stmt->close();
+        return $states;
     }
 
     private function tableExists(mysqli $conn, string $table): bool

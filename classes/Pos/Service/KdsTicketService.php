@@ -1434,6 +1434,23 @@ class KdsTicketService
         } elseif (!empty($line['notes']) && is_string($line['notes'])) {
             $notesParts[] = trim((string) $line['notes']);
         }
+        if (is_array($line['preparation_values'] ?? null)) {
+            foreach ($line['preparation_values'] as $value) {
+                if (!is_array($value)) {
+                    continue;
+                }
+                $label = trim((string) ($value['label_ar'] ?? $value['code'] ?? ''));
+                if ($label === '') {
+                    continue;
+                }
+                // Zero is deliberately retained: it is the cashier's explicit
+                // answer to a required preparation question, not an omission.
+                $selected = (int) ($value['value'] ?? $value['value_int'] ?? 0);
+                $notesParts[] = $selected === 0
+                    ? 'بدون سكر'
+                    : $label . ': ' . $selected . ' ملعقة';
+            }
+        }
         $notes = implode(' | ', array_unique($notesParts));
 
         $modifiers = is_array($line['modifiers'] ?? null) ? $line['modifiers'] : [];

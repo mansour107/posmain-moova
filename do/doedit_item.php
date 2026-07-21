@@ -8,7 +8,6 @@ require_once __DIR__ . '/../classes/Items/ItemFormInput.php';
 require_once __DIR__ . '/../classes/Items/ItemUnitPersistence.php';
 require_once __DIR__ . '/../classes/Items/ItemRecipeCatalogService.php';
 require_once __DIR__ . '/../classes/Pos/Service/ItemVariantService.php';
-require_once __DIR__ . '/../classes/Pos/Service/PreparationSelectionService.php';
 require_once __DIR__ . '/../classes/Sync/MenuItemSyncRecorder.php';
 require_once __DIR__ . '/../classes/Sync/ItemImageSyncRecorder.php';
 
@@ -172,10 +171,6 @@ try {
     }
     $stmt->close();
     (new ItemRecipeCatalogService())->saveMetadata($conn, $item_id, $payload);
-    if (function_exists('posmain_app_config') && !empty(posmain_app_config()['features']['preparation_fields'])) {
-        (new PreparationSelectionService())->saveSugarSpoonsConfig($conn, $item_id, $_POST, $usid);
-    }
-
     ItemUnitPersistence::saveForItem($conn, $item_id, $payload['units'], (int) ($payload['purchase_unit_id'] ?? 0));
 
     $changedItemIds = [$item_id];

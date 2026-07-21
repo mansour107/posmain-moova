@@ -672,9 +672,9 @@ if (!function_exists('posmain_app_config')) {
                 'cloud_base_url' => (string) $branchIdentityEnv(['POSMAIN_CLOUD_BASE_URL'], ''),
             ],
             'features' => [
-                // Kept off by default: existing cashier payloads and historical orders
-                // behave exactly as before until an operator enables the new field.
-                'preparation_fields' => posmain_bool($branchEnv(['POSMAIN_PREPARATION_FIELDS_ENABLED'], '0'), false),
+                // Enabled by default; only explicitly assigned items/categories expose
+                // the cashier counter, so existing menu items keep their old flow.
+                'preparation_fields' => posmain_bool($branchEnv(['POSMAIN_PREPARATION_FIELDS_ENABLED'], '1'), true),
                 'legacy_debug_routes' => posmain_bool($branchEnv(['POSMAIN_ENABLE_LEGACY_DEBUG_ROUTES'], '0'), false),
                 'legacy_offline_prototype' => posmain_bool($branchEnv(['POSMAIN_ENABLE_LEGACY_OFFLINE_PROTOTYPE'], '0'), false),
                 'moova_direct_apply' => $moovaDirectApply,

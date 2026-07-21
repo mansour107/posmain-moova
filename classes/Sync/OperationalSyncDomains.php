@@ -44,6 +44,8 @@ class OperationalSyncDomains
             'item_unit' => self::rowDomain('item_units', 'item_unit', 'item_unit.saved', 'item_units'),
             'item_availability' => self::rowDomain('item_availability', 'item_availability', 'item_availability.saved', 'item_availabilities'),
             'item_variant' => self::rowDomain('item_variants', 'item_variant', 'item_variant.saved', 'item_variants'),
+            'item_preparation_config' => self::rowDomain('item_preparation_configs', 'item_preparation_config', 'item_preparation_config.saved', 'item_preparation_configs'),
+            'item_group_preparation_config' => self::rowDomain('item_group_preparation_configs', 'item_group_preparation_config', 'item_group_preparation_config.saved', 'item_group_preparation_configs'),
             'inventory_count' => self::rowDomain('inventory_counts', 'inventory_count', 'inventory.count_saved', 'inventory_counts'),
             'inventory_count_line' => self::rowDomain('inventory_count_lines', 'inventory_count_line', 'inventory.count_line_saved', 'inventory_count_lines'),
             'inventory_transfer' => self::rowDomain('inventory_transfers', 'inventory_transfer', 'inventory.transfer_saved', 'inventory_transfers'),

@@ -72,6 +72,7 @@ function pos_render_item_card(array $rowitem): string
     $recipeQty = htmlspecialchars((string) ($rowitem['recipe_effective_available_qty'] ?? ''), ENT_QUOTES, 'UTF-8');
     $recipeRevision = htmlspecialchars((string) ($rowitem['recipe_availability_revision'] ?? ''), ENT_QUOTES, 'UTF-8');
     $hasVariants = !empty($rowitem['has_variants']) || !empty($rowitem['has_active_variants']);
+    $allowsSugarSpoons = !empty($rowitem['allows_sugar_spoons']);
     $variantDataAttribute = '';
     if ($hasVariants && isset($rowitem['variants']) && is_array($rowitem['variants'])) {
         $variantJson = json_encode($rowitem['variants'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
@@ -120,6 +121,7 @@ function pos_render_item_card(array $rowitem): string
             data-recipe-effective-available-qty="<?= $recipeQty ?>"
             data-recipe-availability-revision="<?= $recipeRevision ?>"
             data-has-variants="<?= $hasVariants ? '1' : '0' ?>"
+            data-sugar-spoons="<?= $allowsSugarSpoons ? '1' : '0' ?>"
             <?= $variantDataAttribute ?>
             aria-disabled="<?= $canAdd ? 'false' : 'true' ?>"
             title="<?= !$isAvailable && $unavailableReason !== '' ? $unavailableReason : $itemName ?>"
@@ -197,6 +199,7 @@ function pos_render_item_card_compact(array $rowitem): string
     $recipeQty = htmlspecialchars((string) ($rowitem['recipe_effective_available_qty'] ?? ''), ENT_QUOTES, 'UTF-8');
     $recipeRevision = htmlspecialchars((string) ($rowitem['recipe_availability_revision'] ?? ''), ENT_QUOTES, 'UTF-8');
     $hasVariants = !empty($rowitem['has_variants']) || !empty($rowitem['has_active_variants']);
+    $allowsSugarSpoons = !empty($rowitem['allows_sugar_spoons']);
     $variantDataAttribute = '';
     if ($hasVariants && isset($rowitem['variants']) && is_array($rowitem['variants'])) {
         $variantJson = json_encode($rowitem['variants'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
@@ -239,6 +242,7 @@ function pos_render_item_card_compact(array $rowitem): string
             data-recipe-effective-available-qty="<?= $recipeQty ?>"
             data-recipe-availability-revision="<?= $recipeRevision ?>"
             data-has-variants="<?= $hasVariants ? '1' : '0' ?>"
+            data-sugar-spoons="<?= $allowsSugarSpoons ? '1' : '0' ?>"
             <?= $variantDataAttribute ?>
             aria-disabled="<?= $canAdd ? 'false' : 'true' ?>"
             title="<?= !$isAvailable && $unavailableReason !== '' ? $unavailableReason : $itemName ?>">

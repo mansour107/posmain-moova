@@ -2,6 +2,7 @@
 require_once __DIR__ . '/production_guard.php';
 require_once __DIR__ . '/pos_default_accounts.php';
 require_once __DIR__ . '/../classes/Pos/Service/LegacyOrderLinePresentationService.php';
+require_once __DIR__ . '/../classes/Pos/Service/PreparationSelectionService.php';
 require_once __DIR__ . '/pos_cart_row.php';
 
 if (!isset($action_url)) {
@@ -10,6 +11,7 @@ if (!isset($action_url)) {
 
 $posmainPosDefaults = posmain_resolve_pos_defaults($conn, is_array($rowstg ?? null) ? $rowstg : []);
 $posmainLegacyLinePresentation = new LegacyOrderLinePresentationService();
+$posmainPreparationSelection = new PreparationSelectionService();
 
 $posOrderMode = 1;
 $posEditTableId = 0;
@@ -349,6 +351,11 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                                                 $pos_initial_cart_total_value += $subtotal;
                                                 $barcode = $rowdet['barcode'] ?: $rowdet['item_id'];
                                                 $line_note = $rowdet['notes'] ?? '';
+                                                $preparation_values = $posmainPreparationSelection->fetchLineValues(
+                                                    $conn,
+                                                    (int) $id,
+                                                    (int) $rowdet['id']
+                                                );
                                                 echo pos_render_cart_row([
                                                     'item_id' => (int) $rowdet['item_id'],
                                                     'item_name' => $item_name,
@@ -357,6 +364,11 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                                                     'subtotal' => $subtotal,
                                                     'barcode' => $barcode,
                                                     'line_note' => $line_note,
+                                                    'preparation_values' => $preparation_values,
+                                                    'sugar_allowed' => $posmainPreparationSelection->itemAllowsSugarSpoons(
+                                                        $conn,
+                                                        (int) $rowdet['item_id']
+                                                    ),
                                                     'u_val' => $u_val,
                                                     'persisted' => true,
                                                     'persisted_qty' => $qty,
@@ -536,6 +548,7 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                                 }
                                 $availabilityScope = posmain_pos_availability_scope($conn);
                                 $posInitialItems = (new ItemAvailabilityService())->decorateItems($conn, $posInitialItems, $availabilityScope);
+                                $posInitialItems = $posmainPreparationSelection->decorateItems($conn, $posInitialItems);
                                 foreach ($posInitialItems as $rowitem) {
                                     echo pos_render_item_card_compact($rowitem);
                                 }

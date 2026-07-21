@@ -5,6 +5,7 @@ ini_set('display_errors', 0);
 
 require_once __DIR__ . '/../includes/session_bootstrap.php';
 require_once __DIR__ . '/../classes/Pos/Service/ItemAvailabilityService.php';
+require_once __DIR__ . '/../classes/Pos/Service/PreparationSelectionService.php';
 require_once __DIR__ . '/../classes/Items/ItemCatalogStatus.php';
 require_once __DIR__ . '/../classes/Items/ItemUnitColumnSupport.php';
 require_once __DIR__ . '/../classes/Items/ItemUnitResolver.php';
@@ -96,6 +97,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['barcode'])) {
             'has_variants' => (int) ($item['has_variants'] ?? 0) === 1
         ];
         $decoratedItems = (new ItemAvailabilityService())->decorateItems($conn, [$barcodeItem], posmain_pos_availability_scope($conn));
+        $decoratedItems = (new PreparationSelectionService())->decorateItems($conn, $decoratedItems);
 
         echo json_encode([
             'success' => true,

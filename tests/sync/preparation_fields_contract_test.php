@@ -13,6 +13,7 @@ function preparation_contract_assert(bool $condition, string $message): void
 }
 
 $selection = new PreparationSelectionService();
+preparation_contract_assert($selection->isEnabled(['preparation_fields_enabled' => true]), 'preparation feature must be available when enabled');
 $normalize = new ReflectionMethod(PreparationSelectionService::class, 'normalizeSubmitted');
 $normalized = $normalize->invoke($selection, [
     ['id' => 'pos-preparation-sugar_spoons', 'value' => 0],
@@ -44,6 +45,7 @@ preparation_contract_assert(count($recipeLine->preparationValues) === 1, 'recipe
 $schema = new SyncSchemaManager();
 $planned = $schema->plannedStatements();
 preparation_contract_assert(isset($planned['item_preparation_configs']), 'preparation config schema must be planned');
+preparation_contract_assert(isset($planned['item_group_preparation_configs']), 'category preparation config schema must be planned');
 preparation_contract_assert(isset($planned['order_line_preparation_values']), 'order-line preparation schema must be planned');
 preparation_contract_assert(strpos($planned['kds_ticket_lines'], 'preparation_json') !== false, 'KDS schema must reserve preparation payload storage');
 preparation_contract_assert(strpos($planned['recipe_order_line_usage'], 'preparation_json') !== false, 'recipe usage must snapshot preparation payloads');
@@ -72,5 +74,35 @@ $receiptSource = file_get_contents(__DIR__ . '/../../print/receipt.php');
 $kotSource = file_get_contents(__DIR__ . '/../../print/preparation.php');
 preparation_contract_assert(strpos($receiptSource, 'line_preparation_values') !== false, 'receipt must render preparation values');
 preparation_contract_assert(strpos($kotSource, 'preparationValues') !== false, 'KOT must render preparation values');
+preparation_contract_assert(strpos($receiptSource, 'بدون سكر') !== false, 'receipt must render explicit zero as no sugar');
+preparation_contract_assert(strpos($kotSource, 'بدون سكر') !== false, 'KOT must render explicit zero as no sugar');
+
+$categorySource = file_get_contents(__DIR__ . '/../../mygroups.php');
+preparation_contract_assert(strpos($categorySource, 'name="sugar_spoons_enabled"') !== false, 'existing category rows must expose the sugar allowance');
+preparation_contract_assert(strpos($categorySource, 'تحضير المشروب') === false, 'category flow must not introduce a separate preparation-management surface');
+
+$itemsSource = file_get_contents(__DIR__ . '/../../myitems.php');
+preparation_contract_assert(strpos($itemsSource, 'item-sugar-toggle') !== false, 'existing item rows must expose direct sugar allowance');
+preparation_contract_assert(strpos($itemsSource, 'من التصنيف') !== false, 'item rows must explain inherited category allowance');
+
+$editorSource = file_get_contents(__DIR__ . '/../../add_item.php');
+preparation_contract_assert(strpos($editorSource, 'sugar_spoons_inventory_item_id') === false, 'item editor must not mix inventory mapping into sugar allowance');
+preparation_contract_assert(strpos($editorSource, 'item-preparation-section') === false, 'item editor must not add a separate sugar configuration panel');
+
+$cardSource = file_get_contents(__DIR__ . '/../../includes/pos_item_card.php');
+$cashierSource = file_get_contents(__DIR__ . '/../../js/pos_barcode.js');
+$apiSource = file_get_contents(__DIR__ . '/../../js/pos_order_api.js');
+preparation_contract_assert(strpos($cardSource, 'data-sugar-spoons') !== false, 'cashier item cards must carry sugar eligibility');
+preparation_contract_assert(strpos($cashierSource, 'بدون سكر') !== false, 'cashier must be able to explicitly choose zero sugar');
+preparation_contract_assert(strpos($cashierSource, 'sugarSpoonsChoice') !== false, 'cashier must get one-tap sugar choices');
+preparation_contract_assert(strpos($cashierSource, 'name="itmpreparation[]"') !== false, 'cashier cart must persist preparation values');
+preparation_contract_assert(strpos($apiSource, 'payload.itmpreparation') !== false, 'POS API payload must carry preparation values');
+
+$kdsSource = file_get_contents(__DIR__ . '/../../classes/Pos/Service/KdsTicketService.php');
+preparation_contract_assert(strpos($kdsSource, "line['preparation_values']") !== false, 'KDS ticket notes must carry sugar instructions');
+preparation_contract_assert(strpos($kdsSource, 'بدون سكر') !== false, 'KDS must render explicit zero as no sugar');
+
+$appConfigSource = file_get_contents(__DIR__ . '/../../config/app_config.php');
+preparation_contract_assert(strpos($appConfigSource, "['POSMAIN_PREPARATION_FIELDS_ENABLED'], '1'") !== false, 'sugar preparation must be enabled by default');
 
 echo "preparation_fields_contract_test: OK\n";

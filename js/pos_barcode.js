@@ -1697,6 +1697,7 @@ $(document).ready(function() {
                     requestRecipeStockOverride(availability, item.name || '', item.id).then(function(managerApprovalId) {
                         beginAddItemToOrder(item.id, item.name, item.price, item.barcode, qty, '', '', {
                             hasVariants: itemHasVariantsValue(item.has_variants),
+                            sugarAllowed: item.allows_sugar_spoons === true || String(item.allows_sugar_spoons || '') === '1',
                             managerApprovalId: managerApprovalId
                         });
                     });
@@ -1727,6 +1728,7 @@ $(document).ready(function() {
         let itemBarcode = card.data('item-barcode');
         let imageHtml = card.find('.item-image-container').html();
         let hasVariants = itemHasVariantsValue(card.attr('data-has-variants'));
+        let sugarAllowed = String(card.attr('data-sugar-spoons') || '0') === '1';
         let availability = itemAvailabilityContext(card);
         registerVariantCacheFromCard(card);
 
@@ -1741,6 +1743,7 @@ $(document).ready(function() {
             showAvailabilityWarnToast(availability, itemName);
             beginAddItemToOrder(itemId, itemName, itemPrice, itemBarcode, 1, imageHtml, '', {
                 hasVariants: hasVariants,
+                sugarAllowed: sugarAllowed,
                 managerApprovalId: null
             });
             return;
@@ -1749,6 +1752,7 @@ $(document).ready(function() {
         requestRecipeStockOverride(availability, itemName, itemId).then(function(managerApprovalId) {
             beginAddItemToOrder(itemId, itemName, itemPrice, itemBarcode, 1, imageHtml, '', {
                 hasVariants: hasVariants,
+                sugarAllowed: sugarAllowed,
                 managerApprovalId: managerApprovalId
             });
         });
@@ -1765,6 +1769,7 @@ $(document).ready(function() {
         let itemBarcode = card.data('item-barcode');
         let itemDesc = card.data('item-desc') || 'لا يوجد وصف';
         let hasVariants = itemHasVariantsValue(card.attr('data-has-variants'));
+        let sugarAllowed = String(card.attr('data-sugar-spoons') || '0') === '1';
         let availability = itemAvailabilityContext(card);
 
         let imageHtml = card.find('.item-image-container').html();
@@ -1787,6 +1792,7 @@ $(document).ready(function() {
             'barcode': itemBarcode,
             'image': imageHtml,
             'hasVariants': hasVariants,
+            'sugarAllowed': sugarAllowed,
             'isAvailable': availability.isAvailable,
             'canAdd': availability.canAdd,
             'availabilityStatus': availability.status,
@@ -1830,6 +1836,7 @@ $(document).ready(function() {
             showAvailabilityWarnToast(availability, data.name);
             beginAddItemToOrder(data.id, data.name, itemPrice, data.barcode, 1, data.image, '', {
                 hasVariants: itemHasVariantsValue(data.hasVariants),
+                sugarAllowed: data.sugarAllowed === true || String(data.sugarAllowed) === 'true',
                 managerApprovalId: null
             });
             $('#itemDetailsModal').modal('hide');
@@ -1839,6 +1846,7 @@ $(document).ready(function() {
         requestRecipeStockOverride(availability, data.name, data.id).then(function(managerApprovalId) {
             beginAddItemToOrder(data.id, data.name, itemPrice, data.barcode, 1, data.image, '', {
                 hasVariants: itemHasVariantsValue(data.hasVariants),
+                sugarAllowed: data.sugarAllowed === true || String(data.sugarAllowed) === 'true',
                 managerApprovalId: managerApprovalId
             });
             $('#itemDetailsModal').modal('hide');
@@ -1988,6 +1996,7 @@ $(document).ready(function() {
     }
 
     let activeVariantContext = null;
+    let activeSugarContext = null;
 
     function fetchItemVariants(itemId) {
         return $.ajax({
@@ -2010,7 +2019,7 @@ $(document).ready(function() {
             : null;
 
         if (hasVariantHint === false) {
-            addItemToOrder(id, name, price, barcode, qty, imageHtml || '', lineNote || '', options || {});
+            completeAddItemToOrder(id, name, price, barcode, qty, imageHtml || '', lineNote || '', options || {});
             return;
         }
 
@@ -2024,6 +2033,7 @@ $(document).ready(function() {
                 qty: parseFloat(qty) || 1,
                 imageHtml: imageHtml || '',
                 lineNote: lineNote || '',
+                sugarAllowed: !!(options && options.sugarAllowed),
                 managerApprovalId: options && options.managerApprovalId ? options.managerApprovalId : null,
                 variants: cachedVariants
             });
@@ -2032,7 +2042,7 @@ $(document).ready(function() {
 
         fetchItemVariants(id).then(function(variants) {
             if (!variants.length) {
-                addItemToOrder(id, name, price, barcode, qty, imageHtml || '', lineNote || '', options || {});
+                completeAddItemToOrder(id, name, price, barcode, qty, imageHtml || '', lineNote || '', options || {});
                 return;
             }
 
@@ -2044,10 +2054,90 @@ $(document).ready(function() {
                 qty: parseFloat(qty) || 1,
                 imageHtml: imageHtml || '',
                 lineNote: lineNote || '',
+                sugarAllowed: !!(options && options.sugarAllowed),
                 managerApprovalId: options && options.managerApprovalId ? options.managerApprovalId : null,
                 variants: variants
             });
         });
+    }
+
+    function ensureSugarSpoonsModal() {
+        if ($('#sugarSpoonsModal').length > 0) {
+            return;
+        }
+
+        $('body').append(`
+            <div class="modal" id="sugarSpoonsModal" tabindex="-1" aria-labelledby="sugarSpoonsModalLabel" aria-hidden="true">
+                <div class="modal-dialog modal-dialog-centered">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <h5 class="modal-title" id="sugarSpoonsModalLabel">عدد ملاعق السكر</h5>
+                            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="إغلاق"></button>
+                        </div>
+                        <div class="modal-body">
+                            <div class="fw-bold mb-3" id="sugarSpoonsItemName"></div>
+                            <div class="d-grid gap-2" style="grid-template-columns:repeat(3,minmax(0,1fr))">
+                                <button type="button" class="btn btn-outline-secondary sugarSpoonsChoice" data-value="0">بدون سكر</button>
+                                <button type="button" class="btn btn-outline-primary sugarSpoonsChoice" data-value="1">1</button>
+                                <button type="button" class="btn btn-outline-primary sugarSpoonsChoice" data-value="2">2</button>
+                                <button type="button" class="btn btn-outline-primary sugarSpoonsChoice" data-value="3">3</button>
+                                <button type="button" class="btn btn-outline-primary sugarSpoonsChoice" data-value="4">4</button>
+                                <button type="button" class="btn btn-outline-primary sugarSpoonsChoice" data-value="5">5</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `);
+    }
+
+    function toggleSugarSpoonsModal(show) {
+        const modal = document.getElementById('sugarSpoonsModal');
+        if (!modal) {
+            return;
+        }
+        if (window.bootstrap && bootstrap.Modal) {
+            const instance = typeof bootstrap.Modal.getOrCreateInstance === 'function'
+                ? bootstrap.Modal.getOrCreateInstance(modal)
+                : new bootstrap.Modal(modal);
+            show ? instance.show() : instance.hide();
+            return;
+        }
+        $('#sugarSpoonsModal').modal(show ? 'show' : 'hide');
+    }
+
+    function completeAddItemToOrder(id, name, price, barcode, qty, imageHtml, lineNote, options) {
+        options = options || {};
+        if (options.sugarAllowed && !Object.prototype.hasOwnProperty.call(options, 'sugarSpoons')) {
+            ensureSugarSpoonsModal();
+            activeSugarContext = {
+                id: id,
+                name: name,
+                price: price,
+                barcode: barcode,
+                qty: qty,
+                imageHtml: imageHtml,
+                lineNote: lineNote,
+                options: options
+            };
+            $('#sugarSpoonsItemName').text(name || '');
+            toggleSugarSpoonsModal(true);
+            return;
+        }
+        addItemToOrder(id, name, price, barcode, qty, imageHtml, lineNote, options);
+    }
+
+    function sugarSpoonsFromPreparation(values) {
+        if (!Array.isArray(values)) {
+            return null;
+        }
+        for (let index = 0; index < values.length; index += 1) {
+            const value = values[index] || {};
+            if (String(value.code || value.field_code || '') === 'sugar_spoons') {
+                return Math.max(0, Math.min(5, parseInt(value.value !== undefined ? value.value : value.selected_value, 10) || 0));
+            }
+        }
+        return null;
     }
 
     function ensureVariantModal() {
@@ -2138,8 +2228,19 @@ $(document).ready(function() {
         const unitValue = parseFloat(options && options.uVal ? options.uVal : 1) || 1;
         const persisted = !!(options && options.persisted);
         const persistedQty = parseFloat(options && options.persistedQty !== undefined ? options.persistedQty : qty) || qty;
+        const hasSugarSelection = Object.prototype.hasOwnProperty.call(options || {}, 'sugarSpoons')
+            && options.sugarSpoons !== null
+            && options.sugarSpoons !== undefined;
+        const sugarSpoons = hasSugarSelection
+            ? Math.max(0, Math.min(5, parseInt(options.sugarSpoons, 10) || 0))
+            : null;
+        const preparationValues = sugarSpoons === null
+            ? []
+            : [{ code: 'sugar_spoons', value: sugarSpoons }];
+        const preparationJson = JSON.stringify(preparationValues);
         let existingItem = $('.item-card-order').filter(function() {
-            return String($(this).find('input[name="itmname[]"]').val()) === String(id);
+            return String($(this).find('input[name="itmname[]"]').val()) === String(id)
+                && String($(this).find('.preparationValuesInput').val() || '[]') === preparationJson;
         });
 
         if (existingItem.length > 0) {
@@ -2168,6 +2269,10 @@ $(document).ready(function() {
         const noteValue = String(lineNote || '').trim() || getLineNoteDraft(id, barcode);
         const safeName = escapeHtml(name);
         const safeLineNote = escapeHtml(noteValue);
+        const safePreparationJson = escapeHtml(preparationJson);
+        const preparationLabel = sugarSpoons === null
+            ? ''
+            : `<small class="pos-cart-preparation text-muted">السكر: ${sugarSpoons === 0 ? 'بدون' : sugarSpoons + ' ملعقة'}</small>`;
 
         let itemCard = `
             <div class="item-card-order pos-cart-row" data-itemid="${escapeHtml(barcode)}" data-catalog-price="${unitPrice.toFixed(4)}"${persisted ? ` data-persisted-line="1" data-persisted-qty="${escapeHtml(String(persistedQty))}"` : ''}>
@@ -2189,6 +2294,11 @@ $(document).ready(function() {
                         <input type="hidden" value='${id}' name="itmname[]">
                         <input type="hidden" class="barcode" value="${escapeHtml(barcode)}">
                         <div class="pos-cart-name" title="${safeName}">${safeName}</div>
+                        ${preparationLabel}
+                        <input type="hidden"
+                               class="preparationValuesInput"
+                               name="itmpreparation[]"
+                               value="${safePreparationJson}">
                         <input type="hidden"
                                class="lineNoteInput"
                                name="itmnote[]"
@@ -3215,6 +3325,7 @@ $(document).ready(function() {
                         console.log('📦 Found items:', response.items.length);
                         response.items.forEach(function(item) {
                             console.log('➕ Adding item:', item);
+                            const persistedSugarSpoons = sugarSpoonsFromPreparation(item.preparation_values);
                             addItemToOrder(
                                 item.item_id,
                                 item.item_name || 'Unknown Item',
@@ -3227,6 +3338,9 @@ $(document).ready(function() {
                                     uVal: item.u_val || 1,
                                     persisted: true,
                                     persistedQty: parseFloat(item.qty) || 1,
+                                    sugarSpoons: persistedSugarSpoons === null && item.allows_sugar_spoons
+                                        ? 0
+                                        : persistedSugarSpoons,
                                 }
                             );
                         });
@@ -3465,23 +3579,53 @@ $(document).ready(function() {
         }
 
         const $choice = $(this);
-        addItemToOrder(
+        const variantContext = activeVariantContext;
+        toggleVariantModal(false);
+        window.setTimeout(function() {
+            completeAddItemToOrder(
             parseInt($choice.data('item-id'), 10) || 0,
             String($choice.data('item-name') || ''),
             parseFloat($choice.data('item-price')) || 0,
             String($choice.data('item-barcode') || ''),
-            activeVariantContext.qty || 1,
-            activeVariantContext.imageHtml || '',
-            activeVariantContext.lineNote || '',
+            variantContext.qty || 1,
+            variantContext.imageHtml || '',
+            variantContext.lineNote || '',
             {
-                managerApprovalId: activeVariantContext.managerApprovalId || null
+                sugarAllowed: !!variantContext.sugarAllowed,
+                managerApprovalId: variantContext.managerApprovalId || null
             }
-        );
-        toggleVariantModal(false);
+            );
+        }, 150);
     });
 
     $(document).on('hidden.bs.modal', '#itemVariantModal', function() {
         activeVariantContext = null;
+    });
+
+    $(document).on('click', '.sugarSpoonsChoice', function() {
+        if (!activeSugarContext) {
+            return;
+        }
+        const context = activeSugarContext;
+        const options = Object.assign({}, context.options || {}, {
+            sugarSpoons: Math.max(0, Math.min(5, parseInt($(this).data('value'), 10) || 0))
+        });
+        activeSugarContext = null;
+        toggleSugarSpoonsModal(false);
+        addItemToOrder(
+            context.id,
+            context.name,
+            context.price,
+            context.barcode,
+            context.qty,
+            context.imageHtml,
+            context.lineNote,
+            options
+        );
+    });
+
+    $(document).on('hidden.bs.modal', '#sugarSpoonsModal', function() {
+        activeSugarContext = null;
     });
 
     $(document).on('click', '.lineNoteButton', function() {

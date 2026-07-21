@@ -44,6 +44,7 @@ class SyncSchemaManager
             'order_line_modifiers' => $this->orderLineModifiersSql(),
             'order_line_notes' => $this->orderLineNotesSql(),
             'item_preparation_configs' => $this->itemPreparationConfigsSql(),
+            'item_group_preparation_configs' => $this->itemGroupPreparationConfigsSql(),
             'order_line_preparation_values' => $this->orderLinePreparationValuesSql(),
             'table_areas' => $this->tableAreasSql(),
             'payment_methods' => $this->paymentMethodsSql(),
@@ -3065,6 +3066,29 @@ CREATE TABLE IF NOT EXISTS item_preparation_configs (
   UNIQUE KEY uq_item_preparation_field (item_id, field_code),
   KEY idx_item_preparation_active (item_id, is_active, sort_order),
   KEY idx_item_preparation_inventory (inventory_item_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
+    private function itemGroupPreparationConfigsSql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS item_group_preparation_configs (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  item_group_id BIGINT NOT NULL,
+  field_code VARCHAR(64) NOT NULL,
+  label_ar VARCHAR(120) NOT NULL,
+  label_en VARCHAR(120) NULL,
+  max_value INT UNSIGNED NOT NULL DEFAULT 5,
+  requires_explicit_value TINYINT(1) NOT NULL DEFAULT 1,
+  is_active TINYINT(1) NOT NULL DEFAULT 1,
+  sort_order INT NOT NULL DEFAULT 0,
+  created_by BIGINT NULL,
+  updated_by BIGINT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_item_group_preparation_field (item_group_id, field_code),
+  KEY idx_item_group_preparation_active (item_group_id, is_active, sort_order)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
     }
 

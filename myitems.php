@@ -4,6 +4,7 @@ require_once __DIR__ . '/includes/connect.php';
 require_once __DIR__ . '/classes/Inventory/InventoryStockReadService.php';
 require_once __DIR__ . '/classes/Items/ItemCatalogStatus.php';
 require_once __DIR__ . '/classes/Items/ItemUnitCatalogLabel.php';
+require_once __DIR__ . '/classes/Pos/Service/PreparationSelectionService.php';
 
 function item_catalog_h($value): string
 {
@@ -87,6 +88,14 @@ $sql = 'SELECT *, ' . ItemCatalogStatus::activeSelectSql($conn) . ' FROM myitems
 $resitm = $conn->query($sql);
 $itemRows = $resitm ? $resitm->fetch_all(MYSQLI_ASSOC) : [];
 $itemRows = $inventoryStockReadService->decorateItems($conn, $itemRows);
+$preparationService = new PreparationSelectionService();
+$preparationFieldsEnabled = $preparationService->isEnabled();
+$itemSugarStates = [];
+$categorySugarStates = [];
+if ($preparationFieldsEnabled) {
+    $itemSugarStates = $preparationService->itemSugarDirectStates($conn, array_column($itemRows, 'id'));
+    $categorySugarStates = $preparationService->categorySugarStates($conn, array_column($itemRows, 'group1'));
+}
 ?>
 <div class="content-wrapper">
     <section class="content-header item-catalog-page">
@@ -188,6 +197,9 @@ $itemRows = $inventoryStockReadService->decorateItems($conn, $itemRows);
                                 <th>سعر البيع</th>
                                 <th>سعر الشراء</th>
                                 <th>سعر التكلفة</th>
+                                <?php if ($preparationFieldsEnabled): ?>
+                                    <th class="text-center">ملاعق السكر</th>
+                                <?php endif; ?>
                                 <th>عمليات</th>
                             </tr>
                         </thead>
@@ -197,6 +209,8 @@ $itemRows = $inventoryStockReadService->decorateItems($conn, $itemRows);
                             $itemid = (int) $rowitm['id'];
                             $editUrl = 'add_item.php?edit=' . $itemid;
                             $isActive = (int) ($rowitm['catalog_is_active'] ?? $rowitm['is_active'] ?? 1) === 1;
+                            $itemSugarEnabled = !empty($itemSugarStates[$itemid]);
+                            $categorySugarEnabled = !empty($categorySugarStates[(int) ($rowitm['group1'] ?? 0)]);
                             $resunt = $conn->query("SELECT iu.*, u.uname FROM item_units iu LEFT JOIN myunits u ON u.id = iu.unit_id WHERE iu.item_id = $itemid AND COALESCE(iu.isdeleted, 0) = 0 ORDER BY iu.id ASC");
                             $unitRows = [];
                             while ($r = $resunt->fetch_assoc()) {
@@ -264,6 +278,20 @@ $itemRows = $inventoryStockReadService->decorateItems($conn, $itemRows);
                                     <i class="fas fa-lock" aria-hidden="true"></i>
                                     <?= item_catalog_h(item_catalog_number($rowitm['cost_price'] ?? 0)) ?>
                                 </td>
+                                <?php if ($preparationFieldsEnabled): ?>
+                                    <td class="sugar-cell text-center">
+                                        <label class="sugar-toggle mb-0" title="<?= $categorySugarEnabled ? 'مسموح من التصنيف' : 'السماح للكاشير باختيار عدد ملاعق السكر' ?>">
+                                            <input
+                                                type="checkbox"
+                                                class="item-sugar-toggle"
+                                                data-item-id="<?= $itemid ?>"
+                                                <?= ($itemSugarEnabled || $categorySugarEnabled) ? 'checked' : '' ?>
+                                                <?= $categorySugarEnabled ? 'disabled' : '' ?>
+                                            >
+                                            <span><?= $categorySugarEnabled ? 'من التصنيف' : 'مسموح' ?></span>
+                                        </label>
+                                    </td>
+                                <?php endif; ?>
                                 <td class="ops-cell">
                                     <a class="catalog-op history-op" href="item_summery.php?id=<?= $itemid ?>" title="سجل الحركة">
                                         <i class="fas fa-history"></i>
@@ -311,7 +339,7 @@ $itemRows = $inventoryStockReadService->decorateItems($conn, $itemRows);
                         <?php endforeach; ?>
                         <?php if (count($itemRows) === 0): ?>
                             <tr>
-                                <td colspan="8" class="text-center text-muted py-4">
+                                <td colspan="<?= $preparationFieldsEnabled ? 9 : 8 ?>" class="text-center text-muted py-4">
                                     لا توجد أصناف بعد. أضف أول صنف من <a href="add_item.php">صفحة إضافة صنف</a>.
                                 </td>
                             </tr>
@@ -564,6 +592,27 @@ $itemRows = $inventoryStockReadService->decorateItems($conn, $itemRows);
     margin-left: 5px;
 }
 
+.sugar-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    color: #475569;
+    font-size: 12px;
+    font-weight: 800;
+    white-space: nowrap;
+}
+
+.sugar-toggle input {
+    width: 18px;
+    height: 18px;
+    accent-color: #0f766e;
+}
+
+.sugar-toggle input:disabled + span {
+    color: #0f766e;
+}
+
 .ops-cell {
     min-width: 270px;
     white-space: nowrap;
@@ -636,6 +685,32 @@ $itemRows = $inventoryStockReadService->decorateItems($conn, $itemRows);
 
 <script>
 $(document).ready(function() {
+    $('.item-sugar-toggle').on('change', function() {
+        var toggle = $(this);
+        var enabled = toggle.is(':checked');
+        toggle.prop('disabled', true);
+        $.ajax({
+            url: 'ajax/item_sugar_spoons_toggle.php',
+            method: 'POST',
+            dataType: 'json',
+            headers: { 'X-CSRF-Token': <?= json_encode(csrf_token('menu_write')) ?> },
+            data: {
+                item_id: toggle.data('item-id'),
+                enabled: enabled ? 1 : 0
+            }
+        }).done(function(response) {
+            if (!response || response.success !== true) {
+                toggle.prop('checked', !enabled);
+                alert((response && response.message) || 'تعذر حفظ إعداد ملاعق السكر');
+            }
+        }).fail(function() {
+            toggle.prop('checked', !enabled);
+            alert('تعذر حفظ إعداد ملاعق السكر');
+        }).always(function() {
+            toggle.prop('disabled', false);
+        });
+    });
+
     $('#reset-manual-prices').click(function() {
         if (confirm('هل أنت متأكد من إعادة تعيين حماية الأسعار؟ سيتم إعادة حساب جميع الأسعار عند الضغط على إعادة حساب')) {
             $.ajax({

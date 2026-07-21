@@ -10,6 +10,7 @@ include($root_path . '/includes/connect.php');
 require_once($root_path . '/classes/TableOrderService.php');
 require_once($root_path . '/classes/Pos/Service/ModifierLineNoteService.php');
 require_once($root_path . '/classes/Pos/Service/LegacyOrderLinePresentationService.php');
+require_once($root_path . '/classes/Pos/Service/PreparationSelectionService.php');
 
 try {
     if (!isset($_POST['order_id']) || empty($_POST['order_id'])) {
@@ -31,6 +32,7 @@ try {
     $items = [];
     $customizationService = new ModifierLineNoteService();
     $linePresentation = new LegacyOrderLinePresentationService();
+    $preparationSelection = new PreparationSelectionService();
 
     foreach ($loaded['items'] as $item) {
         $presentedLine = $linePresentation->presentSaleLine($item);
@@ -42,6 +44,11 @@ try {
             $customizations = ['modifiers' => [], 'notes' => []];
         }
         $lineNote = trim((string) ($item['kitchen_note'] ?? $item['notes'] ?? ''));
+        $preparationValues = $preparationSelection->fetchLineValues(
+            $conn,
+            (int) $order['id'],
+            (int) $item['id']
+        );
         if ($lineNote === '' && !empty($customizations['notes'])) {
             $lineNote = trim(implode("\n", array_map(static function ($note) {
                 return (string) ($note['note_text'] ?? '');
@@ -70,6 +77,8 @@ try {
             'note' => $lineNote,
             'kitchen_note' => $lineNote,
             'modifiers' => $customizations['modifiers'],
+            'preparation_values' => $preparationValues,
+            'allows_sugar_spoons' => $preparationSelection->itemAllowsSugarSpoons($conn, (int) $item['item_id']),
         ];
     }
     
