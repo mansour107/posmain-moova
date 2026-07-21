@@ -1860,6 +1860,15 @@ $(document).ready(function() {
         return $('<div>').text(value == null ? '' : String(value)).html();
     }
 
+    function escapeHtmlAttribute(value) {
+        return String(value == null ? '' : value)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
     let activeLineNoteRow = null;
     const lineNoteDraftStoragePrefix = 'posmain.lineNotes.v1';
 
@@ -2305,8 +2314,8 @@ $(document).ready(function() {
         let itemNumber = $('#itemData .item-card-order').length + 1;
         const noteValue = String(lineNote || '').trim() || getLineNoteDraft(id, barcode);
         const safeName = escapeHtml(name);
-        const safeLineNote = escapeHtml(noteValue);
-        const safePreparationJson = escapeHtml(preparationJson);
+        const safeLineNote = escapeHtmlAttribute(noteValue);
+        const safePreparationJson = escapeHtmlAttribute(preparationJson);
         const preparationLabel = sugarSpoons === null
             ? ''
             : `<small class="pos-cart-preparation text-muted">السكر: ${sugarSpoons === 0 ? 'بدون' : sugarSpoons + ' ملعقة'}</small>`;

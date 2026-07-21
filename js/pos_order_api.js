@@ -423,6 +423,19 @@
         alert(message);
     }
 
+    function userFacingOrderError(body) {
+        body = body || {};
+        const errorCode = String(body.code || body.error_code || body.error || body.message || '').trim();
+        const messages = {
+            PREPARATION_VALUE_REQUIRED: 'اختر عدد ملاعق السكر للصنف ثم حاول إتمام الطلب مرة أخرى.',
+            PREPARATION_FIELD_NOT_ALLOWED: 'خيار التحضير المحدد لم يعد متاحاً لهذا الصنف. أعد إضافة الصنف ثم حاول مرة أخرى.',
+            PREPARATION_VALUE_INVALID: 'عدد ملاعق السكر غير صحيح. أعد اختيار العدد ثم حاول مرة أخرى.'
+        };
+
+        return messages[errorCode]
+            || String(body.message || body.error || 'حدث خطأ أثناء معالجة الطلب');
+    }
+
     function restorePrintOrderButton() {
         const printOrderBtn = $('.pos-print-order-btn');
         if (printOrderBtn.length > 0) {
@@ -481,7 +494,7 @@
         const body = result.body || {};
         const draft = window.POSOrderDraft;
         if (!result.ok || body.success === false) {
-            const message = body.message || body.error || 'حدث خطأ أثناء معالجة الطلب';
+            const message = userFacingOrderError(body);
             const code = body.code || '';
             if (code === 'MANAGER_APPROVAL_REQUIRED' && window.POSMAIN && typeof window.POSMAIN.requestManagerOverride === 'function') {
                 const escalationKey = body.escalation_permission_key || body.permission_key || 'pos.discount.manual_pct.limit';
@@ -632,6 +645,7 @@
         createIdempotencyKey: createIdempotencyKey,
         applyOrderSuccessState: applyOrderSuccessState,
         showOrderSuccess: showOrderSuccess,
+        userFacingOrderError: userFacingOrderError,
         restoreSubmitButtons: restoreSubmitButtons,
         restorePayConfirmButton: restorePayConfirmButton
     };

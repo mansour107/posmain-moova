@@ -117,8 +117,11 @@ preparation_contract_assert(strpos($cashierSource, 'id="sugarSpoonsIncrease"') !
 preparation_contract_assert(strpos($cashierSource, 'id="sugarSpoonsValue"') !== false, 'cashier must be able to enter a spoon quantity directly');
 preparation_contract_assert(strpos($cashierSource, 'sugarSpoonsChoice') === false, 'cashier must not be constrained to fixed preset quantities');
 preparation_contract_assert(strpos($cashierSource, 'name="itmpreparation[]"') !== false, 'cashier cart must persist preparation values');
+preparation_contract_assert(strpos($cashierSource, 'function escapeHtmlAttribute') !== false, 'cashier must provide attribute-safe encoding for preparation JSON');
+preparation_contract_assert(strpos($cashierSource, 'const safePreparationJson = escapeHtmlAttribute(preparationJson);') !== false, 'cashier must not truncate preparation JSON at embedded quotes');
 preparation_contract_assert(strpos($cashierSource, "find('.preparationValuesInput').val() || '[]'") !== false, 'cart line grouping must include preparation values so different spoon counts remain separate');
 preparation_contract_assert(strpos($apiSource, 'payload.itmpreparation') !== false, 'POS API payload must carry preparation values');
+preparation_contract_assert(strpos($apiSource, "PREPARATION_VALUE_REQUIRED: 'اختر عدد ملاعق السكر") !== false, 'cashier must see an actionable Arabic message instead of an internal preparation error code');
 
 $kdsSource = file_get_contents(__DIR__ . '/../../classes/Pos/Service/KdsTicketService.php');
 preparation_contract_assert(strpos($kdsSource, "line['preparation_values']") !== false, 'KDS ticket notes must carry sugar instructions');
