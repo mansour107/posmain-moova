@@ -41,6 +41,7 @@ $checks = [
         'registerPairPinPad',
         'pin_pad.js',
         'posmain_user_can_approve_register_pair',
+        '$isManager = posmain_user_can_approve_register_pair($conn, $userId);',
         'pos.shift.force_close',
     ],
 ];

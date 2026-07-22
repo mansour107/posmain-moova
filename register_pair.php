@@ -83,8 +83,9 @@ try {
 }
 
 $permissionService = PermissionService::forConnection($conn);
-$isManager = $permissionService->check($userId, 'users.manage')
-    || (int) ($_SESSION['usty'] ?? 0) === 2;
+// Keep first-register authorization aligned with re-pair approval. Preset
+// managers intentionally do not have users.manage, but may create REG1.
+$isManager = posmain_user_can_approve_register_pair($conn, $userId);
 $canClaim = $permissionService->check($userId, 'pos.open') || $isManager;
 
 $activeRegisters = $registers->tableExists($conn)
