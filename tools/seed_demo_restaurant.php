@@ -1030,7 +1030,7 @@ final class Phase6DemoSeeder
  */
 function phase6_demo_seed_options(): array
 {
-    $options = getopt('', ['help', 'json', 'dry-run', 'apply', 'reset-demo', 'with-moova-dummy', 'no-moova-dummy']);
+    $options = getopt('', ['help', 'json', 'dry-run', 'apply', 'reset-demo', 'with-moova-dummy', 'no-moova-dummy', 'shop-id::']);
     if ($options === false) {
         $options = [];
     }
@@ -1052,13 +1052,14 @@ function phase6_demo_seed_options(): array
         'reset_demo' => isset($options['reset-demo']),
         'with_moova_dummy' => isset($options['with-moova-dummy']),
         'no_moova_dummy' => isset($options['no-moova-dummy']),
+        'shop_id' => max(0, (int) ($options['shop-id'] ?? 0)),
     ];
 }
 
 function phase6_demo_seed_help(): string
 {
     return <<<TXT
-Usage: php tools/seed_demo_restaurant.php [--dry-run|--apply] [--reset-demo] [--with-moova-dummy] [--json]
+Usage: php tools/seed_demo_restaurant.php [--dry-run|--apply] [--reset-demo] [--with-moova-dummy] [--shop-id=ID] [--json]
 
 Seeds a disposable Phase 6 pilot QA restaurant dataset:
 - 3 categories, 54 items, 10 modifier options
@@ -1071,6 +1072,7 @@ Safety:
 - Defaults to --dry-run.
 - Refuses production mode.
 - --reset-demo only resets rows with P6-DEMO or p6_ prefixes before reseeding.
+- --shop-id seeds one active routed shop through its configured database connection.
 
 TXT;
 }
@@ -1116,7 +1118,15 @@ if (!$seedOptions['no_moova_dummy']) {
 }
 
 try {
-    $connection = posmain_db_connect();
+    $targetShopId = (int) ($seedOptions['shop_id'] ?? 0);
+    if ($targetShopId > 0) {
+        if (!posmain_router_enabled($appConfig)) {
+            throw new RuntimeException('--shop-id requires router mode.');
+        }
+        $connection = posmain_shop_db_connect($targetShopId, $appConfig);
+    } else {
+        $connection = posmain_db_connect();
+    }
     $seeder = new Phase6DemoSeeder($connection, $appConfig, $seedOptions);
     $result = $seeder->run();
     phase6_demo_seed_print($result, $seedOptions['json']);
