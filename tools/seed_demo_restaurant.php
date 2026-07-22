@@ -564,7 +564,10 @@ final class Phase6DemoSeeder
             return RolePermissionSyncService::allManagedLegacyColumns();
         }
 
-        $skip = ['id', 'rollname', 'info', 'isdeleted', 'is_active', 'tenant', 'branch'];
+        // Role metadata is not a legacy permission flag. In particular, role_key
+        // is unique and assigning it the numeric permission default would make
+        // the second seeded role fail with a duplicate-key error.
+        $skip = ['id', 'rollname', 'info', 'isdeleted', 'is_active', 'tenant', 'branch', 'role_key', 'is_system'];
         $columns = [];
         foreach (array_keys($this->tableColumnsFor('usr_pwrs')) as $column) {
             if (in_array($column, $skip, true)) {
