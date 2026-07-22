@@ -24,7 +24,10 @@ require_once __DIR__ . '/PosCustomerOrderSideEffects.php';
 require_once __DIR__ . '/PosCustomerService.php';
 require_once __DIR__ . '/DeliveryZoneService.php';
 require_once __DIR__ . '/OrderFulfillmentService.php';
-require_once __DIR__ . '/DeliveryWorkerService.php';
+$deliveryWorkerServicePath = __DIR__ . '/DeliveryWorkerService.php';
+if (is_file($deliveryWorkerServicePath)) {
+    require_once $deliveryWorkerServicePath;
+}
 require_once __DIR__ . '/SideEffectPolicy.php';
 require_once __DIR__ . '/OrderRevisionService.php';
 require_once __DIR__ . '/../../../includes/pos_user_context.php';
