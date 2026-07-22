@@ -107,9 +107,12 @@ class PosOrderController
         if (($idempotency['status'] ?? '') === 'completed') {
             $conn->commit();
 
+            $response = is_array($idempotency['response'] ?? null) ? $idempotency['response'] : [];
+            $response['idempotency_replayed'] = true;
+
             return [
                 'http_status' => 200,
-                'payload' => $idempotency['response'],
+                'payload' => $response,
             ];
         }
         if (!in_array($idempotency['status'] ?? '', ['started', 'reclaimed'], true)) {
@@ -358,9 +361,12 @@ class PosOrderController
         if (($idempotency['status'] ?? '') === 'completed') {
             $conn->commit();
 
+            $response = is_array($idempotency['response'] ?? null) ? $idempotency['response'] : [];
+            $response['idempotency_replayed'] = true;
+
             return [
                 'http_status' => 200,
-                'payload' => $idempotency['response'],
+                'payload' => $response,
             ];
         }
         if (!in_array($idempotency['status'] ?? '', ['started', 'reclaimed'], true)) {
@@ -456,9 +462,12 @@ class PosOrderController
         if (($idempotency['status'] ?? '') === 'completed') {
             $conn->commit();
 
+            $response = is_array($idempotency['response'] ?? null) ? $idempotency['response'] : [];
+            $response['idempotency_replayed'] = true;
+
             return [
                 'http_status' => 200,
-                'payload' => $idempotency['response'],
+                'payload' => $response,
             ];
         }
         if (!in_array($idempotency['status'] ?? '', ['started', 'reclaimed'], true)) {
@@ -490,7 +499,12 @@ class PosOrderController
             'discount' => $discount,
             'net' => $net,
             'pos_customer_id' => (int) ($data['pos_customer_id'] ?? 0),
-        ], ['user_id' => $userId]);
+            'idempotency_key' => $idempotencyKey,
+        ], [
+            'user_id' => $userId,
+            'in_transaction' => true,
+            'skip_idempotency' => true,
+        ]);
         $paymentResult = $paymentEnvelope['data'] ?? [];
 
         $order = $tableOrderService->queryOne($conn, 'SELECT * FROM ot_head WHERE id = ? LIMIT 1', [$orderId]);
@@ -607,9 +621,12 @@ class PosOrderController
         if (($idempotency['status'] ?? '') === 'completed') {
             $conn->commit();
 
+            $response = is_array($idempotency['response'] ?? null) ? $idempotency['response'] : [];
+            $response['idempotency_replayed'] = true;
+
             return [
                 'http_status' => 200,
-                'payload' => $idempotency['response'],
+                'payload' => $response,
             ];
         }
         if (!in_array($idempotency['status'] ?? '', ['started', 'reclaimed'], true)) {
@@ -645,7 +662,12 @@ class PosOrderController
             'paid_amount' => $paidAmount,
             'payment_method' => $paymentMethod,
             'user_id' => $userId,
-        ], ['user_id' => $userId, 'in_transaction' => true]);
+            'idempotency_key' => $idempotencyKey,
+        ], [
+            'user_id' => $userId,
+            'in_transaction' => true,
+            'skip_idempotency' => true,
+        ]);
         $splitData = $splitEnvelope['data'] ?? [];
         $newHeadId = (int) ($splitData['new_invoice_id'] ?? 0);
         $splitGroupId = (string) ($splitData['split_group_id'] ?? '');

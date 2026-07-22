@@ -47,7 +47,7 @@ try {
         'order_id' => $savedOrderId,
         'paid' => 10,
         'payment_method' => 'cash',
-    ], ['user_id' => 8]);
+    ], ['user_id' => 8, 'skip_idempotency' => true]);
     posOrderEventAssert($payment['data']['payment_status'] === 'partial', 'payment smoke should remain partial');
     posOrderEventAssertEvent($conn, $savedOrderId, 'order.payment_recorded', 'pos_table_payment', 8, 'applied_amount', 10.0);
 
@@ -75,7 +75,7 @@ try {
         'order_id' => $savedOrderId,
         'paid' => 20,
         'payment_method' => 'cash',
-    ], ['user_id' => 10]);
+    ], ['user_id' => 10, 'skip_idempotency' => true]);
 
     echo "pos-order-mutation-event-recording-ok db={$db}\n";
 } finally {

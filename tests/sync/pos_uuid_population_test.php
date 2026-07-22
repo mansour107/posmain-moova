@@ -46,7 +46,7 @@ try {
         'order_id' => $savedOrderId,
         'paid' => 10,
         'payment_method' => 'cash',
-    ], ['user_id' => 8]);
+    ], ['user_id' => 8, 'skip_idempotency' => true]);
     posUuidAssert((int) $conn->query("SELECT COUNT(*) AS c FROM order_payments WHERE order_id = {$savedOrderId} AND uuid REGEXP '" . posUuidRegexSql() . "'")->fetch_assoc()['c'] === 1, 'table payment uuid expected');
 
     $conn->query("
@@ -79,7 +79,7 @@ try {
         'items' => [
             ['detail_id' => 2001, 'qty' => 1],
         ],
-    ], ['user_id' => 9]);
+    ], ['user_id' => 9, 'skip_idempotency' => true]);
     $childOrderId = (int) $split['data']['order_id'];
     posUuidAssertTableRow($conn, 'ot_head', $childOrderId, 'split child order uuid expected');
     posUuidAssert((int) $conn->query("SELECT COUNT(*) AS c FROM fat_details WHERE fatid = {$childOrderId} AND uuid REGEXP '" . posUuidRegexSql() . "'")->fetch_assoc()['c'] === 1, 'split copied detail uuid expected');

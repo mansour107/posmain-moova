@@ -1,8 +1,14 @@
 <?php
 
 require_once __DIR__ . '/../../classes/Pos/Service/PosOrderMutationService.php';
+require_once __DIR__ . '/../../classes/Pos/Service/PaymentMethodService.php';
+require_once __DIR__ . '/../../classes/Pos/Service/DrawerSessionService.php';
+require_once __DIR__ . '/../../classes/Sync/SchemaManager.php';
 
 mysqli_report(MYSQLI_REPORT_OFF);
+putenv('POSMAIN_RECIPE_MODE=off');
+$_ENV['POSMAIN_RECIPE_MODE']='off';
+$_SERVER['POSMAIN_RECIPE_MODE']='off';
 
 $host = getenv('POSMAIN_TEST_MYSQL_HOST') ?: '127.0.0.1';
 $port = (int) (getenv('POSMAIN_TEST_MYSQL_PORT') ?: 3307);
@@ -20,11 +26,16 @@ try {
     $conn->query("CREATE DATABASE `{$db}` CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci");
     $conn->select_db($db);
     posMutationSkeletonCreateSchema($conn);
+    posMutationSkeletonSeedPaymentAndDrawer($conn);
 
     $service = new PosOrderMutationService();
     $conn->begin_transaction();
     try {
-        $conn->query("INSERT INTO tables (id, tname, table_case, isdeleted) VALUES (1, 'T1', 1, 0)");
+        $conn->query("DELETE FROM order_payments");
+        $conn->query("DELETE FROM fat_details");
+        $conn->query("DELETE FROM ot_head");
+        $conn->query("DELETE FROM tables");
+        $conn->query("REPLACE INTO tables (id, tname, table_case, isdeleted) VALUES (1, 'T1', 1, 0)");
         $conn->query("
             INSERT INTO ot_head (
                 id, table_id, pro_tybe, isdeleted, order_status, payment_status,
@@ -41,7 +52,7 @@ try {
             'paid' => 40,
             'payment_method' => 'cash',
             'notes' => 'skeleton partial',
-        ], ['user_id' => 7]);
+        ], ['user_id' => 7, 'skip_idempotency' => true]);
 
         posMutationSkeletonAssert($partial['success'] === true, 'payment wrapper should return success envelope');
         posMutationSkeletonAssert($partial['code'] === 'OK', 'payment wrapper should return OK code');
@@ -55,7 +66,7 @@ try {
             'amount_paid' => 60,
             'payment_method' => 'cash',
             'notes' => 'skeleton full',
-        ], ['user_id' => 7]);
+        ], ['user_id' => 7, 'skip_idempotency' => true]);
 
         posMutationSkeletonAssert($full['data']['payment_status'] === 'paid', 'full payment status expected');
         posMutationSkeletonAssert($full['data']['fully_paid'] === true, 'full payment flag expected');
@@ -69,7 +80,8 @@ try {
         $conn->query("DELETE FROM order_payments");
         $conn->query("DELETE FROM fat_details");
         $conn->query("DELETE FROM ot_head");
-        $conn->query("INSERT INTO tables (id, tname, table_case, isdeleted) VALUES (1, 'T1', 1, 0)");
+        $conn->query("DELETE FROM tables");
+        $conn->query("REPLACE INTO tables (id, tname, table_case, isdeleted) VALUES (1, 'T1', 1, 0)");
         $conn->query("
             INSERT INTO ot_head (
                 id, table_id, pro_tybe, isdeleted, order_status, payment_status,
@@ -101,6 +113,27 @@ try {
 } finally {
     $conn->query("DROP DATABASE IF EXISTS `{$db}`");
     $conn->close();
+}
+
+
+function posMutationSkeletonSeedPaymentAndDrawer(mysqli $conn): void
+{
+    (new SyncSchemaManager())->apply($conn);
+    $paymentMethods = new PaymentMethodService();
+    $paymentMethods->saveMethod($conn, [
+        'code' => 'cash',
+        'name_ar' => 'Cash',
+        'name_en' => 'Cash',
+        'type' => 'cash',
+        'account_id' => 51,
+    ]);
+    (new DrawerSessionService())->openSession($conn, [
+        'user_id' => 7,
+        'opened_by' => 7,
+        'tenant' => 0,
+        'branch' => 0,
+        'opening_cash' => '100.000',
+    ]);
 }
 
 function posMutationSkeletonCreateSchema(mysqli $conn): void

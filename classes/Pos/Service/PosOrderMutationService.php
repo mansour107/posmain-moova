@@ -99,6 +99,74 @@ class PosOrderMutationService
 
     public function payTableOrder(mysqli $conn, array $request, array $context = []): array
     {
+        if (!empty($context['skip_idempotency'])) {
+            return $this->payTableOrderWithTransaction($conn, $request, $context);
+        }
+
+        $ownsTransaction = empty($context['in_transaction']) && empty($context['transaction_started']);
+        if ($ownsTransaction) {
+            $conn->begin_transaction();
+        }
+
+        try {
+            $idempotency = $this->beginIdempotency($conn, self::SCOPE_TABLE_PAYMENT, $request, $context);
+            if ($idempotency['status'] === 'completed') {
+                if ($ownsTransaction) {
+                    $conn->commit();
+                }
+
+                $response = is_array($idempotency['response'] ?? null) ? $idempotency['response'] : [];
+                $response['idempotency_replayed'] = true;
+                return $response;
+            }
+
+            $result = $this->payTableOrderInsideTransaction($conn, $request, $context);
+            $this->idempotencyService->complete(
+                $conn,
+                self::SCOPE_TABLE_PAYMENT,
+                $idempotency['key'],
+                $idempotency['hash'],
+                $result
+            );
+            if ($ownsTransaction) {
+                $conn->commit();
+            }
+
+            return $result;
+        } catch (Throwable $exception) {
+            if ($ownsTransaction) {
+                $conn->rollback();
+            }
+
+            throw $exception;
+        }
+    }
+
+    private function payTableOrderWithTransaction(mysqli $conn, array $request, array $context): array
+    {
+        $ownsTransaction = empty($context['in_transaction']) && empty($context['transaction_started']);
+        if ($ownsTransaction) {
+            $conn->begin_transaction();
+        }
+
+        try {
+            $result = $this->payTableOrderInsideTransaction($conn, $request, $context);
+            if ($ownsTransaction) {
+                $conn->commit();
+            }
+
+            return $result;
+        } catch (Throwable $exception) {
+            if ($ownsTransaction) {
+                $conn->rollback();
+            }
+
+            throw $exception;
+        }
+    }
+
+    private function payTableOrderInsideTransaction(mysqli $conn, array $request, array $context): array
+    {
         $result = $this->paymentService->payTableOrder($conn, $request, $context);
         $orderId = (int) ($result['data']['order_id'] ?? 0);
         if ($orderId > 0 && !empty($result['data']['fully_paid'])) {
@@ -501,6 +569,51 @@ class PosOrderMutationService
     }
 
     public function splitTablePayment(mysqli $conn, array $request, array $context = []): array
+    {
+        if (!empty($context['skip_idempotency'])) {
+            return $this->splitTablePaymentWithTransaction($conn, $request, $context);
+        }
+
+        $ownsTransaction = empty($context['in_transaction']) && empty($context['transaction_started']);
+        if ($ownsTransaction) {
+            $conn->begin_transaction();
+        }
+
+        try {
+            $idempotency = $this->beginIdempotency($conn, self::SCOPE_SPLIT_PAYMENT, $request, $context);
+            if ($idempotency['status'] === 'completed') {
+                if ($ownsTransaction) {
+                    $conn->commit();
+                }
+
+                $response = is_array($idempotency['response'] ?? null) ? $idempotency['response'] : [];
+                $response['idempotency_replayed'] = true;
+                return $response;
+            }
+
+            $result = $this->splitTablePaymentInsideTransaction($conn, $request, $context);
+            $this->idempotencyService->complete(
+                $conn,
+                self::SCOPE_SPLIT_PAYMENT,
+                $idempotency['key'],
+                $idempotency['hash'],
+                $result
+            );
+            if ($ownsTransaction) {
+                $conn->commit();
+            }
+
+            return $result;
+        } catch (Throwable $exception) {
+            if ($ownsTransaction) {
+                $conn->rollback();
+            }
+
+            throw $exception;
+        }
+    }
+
+    private function splitTablePaymentWithTransaction(mysqli $conn, array $request, array $context): array
     {
         $ownsTransaction = empty($context['in_transaction']) && empty($context['transaction_started']);
         if ($ownsTransaction) {

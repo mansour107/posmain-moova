@@ -2,6 +2,19 @@
     'use strict';
 
     const API_BASE = 'api/pos/index.php';
+    const submissionStates = new WeakMap();
+
+    function submissionStateFor(form) {
+        let state = submissionStates.get(form);
+        if (!state) {
+            state = {
+                active: null,
+                retryable: null
+            };
+            submissionStates.set(form, state);
+        }
+        return state;
+    }
 
     function getCsrfToken() {
         const meta = document.querySelector('meta[name="posmain-csrf-token"]');
@@ -399,7 +412,7 @@
         }
     }
 
-    function showOrderError(message, retryFn) {
+    function showOrderError(message, retryFn, cancelFn) {
         if (window.Swal && typeof window.Swal.fire === 'function') {
             const options = {
                 icon: 'error',
@@ -413,6 +426,8 @@
                 window.Swal.fire(options).then(function (result) {
                     if (result.isConfirmed) {
                         retryFn();
+                    } else if (typeof cancelFn === 'function') {
+                        cancelFn();
                     }
                 });
                 return;
@@ -421,6 +436,9 @@
             return;
         }
         alert(message);
+        if (typeof cancelFn === 'function') {
+            cancelFn();
+        }
     }
 
     function userFacingOrderError(body) {
@@ -429,11 +447,36 @@
         const messages = {
             PREPARATION_VALUE_REQUIRED: 'اختر عدد ملاعق السكر للصنف ثم حاول إتمام الطلب مرة أخرى.',
             PREPARATION_FIELD_NOT_ALLOWED: 'خيار التحضير المحدد لم يعد متاحاً لهذا الصنف. أعد إضافة الصنف ثم حاول مرة أخرى.',
-            PREPARATION_VALUE_INVALID: 'عدد ملاعق السكر غير صحيح. أعد اختيار العدد ثم حاول مرة أخرى.'
+            PREPARATION_VALUE_INVALID: 'عدد ملاعق السكر غير صحيح. أعد اختيار العدد ثم حاول مرة أخرى.',
+            IDEMPOTENCY_REQUIRED: 'تعذر إرسال الطلب: مفتاح الحماية مفقود. أعد المحاولة.',
+            IDEMPOTENCY_CONFLICT: 'تم إرسال نفس العملية ببيانات مختلفة. أغلق النافذة وافتح الدفع من جديد إن لزم.',
+            IDEMPOTENCY_PROCESSING: 'الطلب قيد المعالجة. انتظر لحظات ثم أعد المحاولة بنفس العملية.'
         };
 
         return messages[errorCode]
             || String(body.message || body.error || 'حدث خطأ أثناء معالجة الطلب');
+    }
+
+    function sleep(ms) {
+        return new Promise(function (resolve) {
+            window.setTimeout(resolve, ms);
+        });
+    }
+
+    function isIdempotencyProcessingResult(result) {
+        const body = (result && result.body) || {};
+        const code = String(body.code || body.error_code || body.error || '').trim();
+        return result && (result.status === 423 || code === 'IDEMPOTENCY_PROCESSING');
+    }
+
+    function shouldReuseIdempotencyKeyOnRetry(result) {
+        if (!result) {
+            return true; // network/unknown failure: keep the same key
+        }
+        if (isIdempotencyProcessingResult(result)) {
+            return true;
+        }
+        return false;
     }
 
     function restorePrintOrderButton() {
@@ -490,18 +533,19 @@
         restorePayConfirmButton();
     }
 
-    function handleOrderResponse(result, action) {
+    function handleOrderResponse(result, action, options) {
+        options = options || {};
         const body = result.body || {};
         const draft = window.POSOrderDraft;
         if (!result.ok || body.success === false) {
             const message = userFacingOrderError(body);
-            const code = body.code || '';
+            const code = String(body.code || body.error_code || body.error || '');
             if (code === 'MANAGER_APPROVAL_REQUIRED' && window.POSMAIN && typeof window.POSMAIN.requestManagerOverride === 'function') {
                 const escalationKey = body.escalation_permission_key || body.permission_key || 'pos.discount.manual_pct.limit';
                 return window.POSMAIN.requestManagerOverride(escalationKey, {
                     message: message,
                 }).then(function (approval) {
-                    const form = document.getElementById('posForm');
+                    const form = options.form || document.getElementById('posForm');
                     if (form && approval && approval.approval_id) {
                         let input = form.querySelector('input[name="manager_approval_id"]');
                         if (!input) {
@@ -512,7 +556,12 @@
                         }
                         input.value = String(approval.approval_id);
                     }
-                    return submitFromForm(form, action);
+                    // Manager approval is a new authorized attempt, but keep the same money intent key.
+                    return submitFromForm(form, action, {
+                        reuseIdempotencyKey: true,
+                        rotateKey: false,
+                        internalRetry: true
+                    });
                 }).catch(function () {
                     showOrderError('تم إلغاء اعتماد المدير');
                     restoreSubmitButtons(action);
@@ -527,7 +576,12 @@
             if (isPaymentAction(action) && window.jQuery) {
                 window.jQuery('#paymentModal').modal('show');
             }
-            return { success: false, body: body };
+            return {
+                success: false,
+                body: body,
+                status: result.status,
+                reuseIdempotencyKey: shouldReuseIdempotencyKeyOnRetry(result)
+            };
         }
 
         if (body.offline_queued) {
@@ -548,6 +602,9 @@
 
         if (body.print_url && (action === 'cash' || action === 'split_cash' || action === 'print_receipt')) {
             applyOrderSuccessState(body, action);
+            if (draft && typeof draft.clearIdempotencyKey === 'function') {
+                draft.clearIdempotencyKey();
+            }
             window.location.href = body.print_url;
             return { success: true, body: body };
         }
@@ -567,68 +624,171 @@
                 resetOrderScreenAfterCommit(body, action);
             }
         }
+        if (draft && typeof draft.clearIdempotencyKey === 'function' && (isPaymentAction(action) || isDraftSaveAction(action))) {
+            // Success completes this intent; next cashier action must mint a new key.
+            draft.clearIdempotencyKey();
+        }
         return { success: true, body: body };
     }
 
-    function prepareDraftForSubmit(draft, action) {
+    function prepareDraftForSubmit(draft, action, options) {
+        options = options || {};
+        const rotateKey = options.rotateKey !== false;
         if (!draft) {
             return;
         }
         if (isDraftSaveAction(action)) {
             draft.markSaving();
-            draft.rotateIdempotencyKey(action);
+            if (rotateKey && typeof draft.rotateIdempotencyKey === 'function') {
+                draft.rotateIdempotencyKey(action);
+            }
             return;
         }
-        if (isPaymentAction(action)) {
+        if (isPaymentAction(action) && rotateKey && typeof draft.rotateIdempotencyKey === 'function') {
             draft.rotateIdempotencyKey(action);
         }
     }
 
-    function submitFromForm(form, action) {
+    function submitFromForm(form, action, options) {
+        options = options || {};
         const draft = window.POSOrderDraft;
-        if (draft && !draft.canSave(action)) {
+        if (!form) {
+            return Promise.resolve({ success: false, noForm: true });
+        }
+
+        const state = submissionStateFor(form);
+        if (!options.internalRetry && state.active) {
+            // Only one order mutation may own a form at a time, even across different buttons.
+            return state.active.promise;
+        }
+
+        if (!options.internalRetry && draft && !draft.canSave(action)) {
             return Promise.resolve({ success: false, blocked: true });
         }
 
-        const route = resolveRoute(action, form);
+        const retainedIntent = !options.internalRetry ? state.retryable : null;
+        const effectiveAction = retainedIntent ? retainedIntent.action : action;
+        const route = retainedIntent ? retainedIntent.route : resolveRoute(action, form);
         if (!route) {
-            if (draft && isDraftSaveAction(action)) {
+            if (draft && isDraftSaveAction(effectiveAction)) {
                 draft.markSaveFailed();
                 restorePrintOrderButton();
-            } else if (isPaymentAction(action)) {
+            } else if (isPaymentAction(effectiveAction)) {
                 restorePayConfirmButton();
             }
             return Promise.resolve({ success: false, noRoute: true });
         }
 
-        prepareDraftForSubmit(draft, action);
+        let payload;
+        if (retainedIntent) {
+            // The server may still finish this operation. Preserve both key and payload exactly.
+            payload = retainedIntent.payload;
+        } else {
+            // Fresh cashier intent rotates once. Retries / processing reattempts reuse the same key.
+            prepareDraftForSubmit(draft, action, {
+                rotateKey: options.rotateKey !== false && options.reuseIdempotencyKey !== true
+            });
+            payload = buildOrderPayload(form, action);
+        }
 
-        const payload = buildOrderPayload(form, action);
-        const attempt = function () {
+        const postOnce = function () {
             return postOrderRoute(route, payload).then(function (result) {
-                return handleOrderResponse(result, action);
+                if (isIdempotencyProcessingResult(result)) {
+                    return sleep(450).then(function () {
+                        // Same payload + same key: never mint a new key for 423 processing.
+                        return postOrderRoute(route, payload);
+                    });
+                }
+                return result;
             });
         };
 
-        return attempt().catch(function () {
-            restoreSubmitButtons(action);
-            if (isPaymentAction(action) && window.jQuery) {
+        const attempt = function () {
+            return postOnce().then(function (result) {
+                return handleOrderResponse(result, effectiveAction, {
+                    form: form,
+                    route: route,
+                    payload: payload
+                });
+            });
+        };
+
+        const requestPromise = attempt().catch(function (error) {
+            restoreSubmitButtons(effectiveAction);
+            if (isPaymentAction(effectiveAction) && window.jQuery) {
                 window.jQuery('#paymentModal').modal('show');
             }
             return new Promise(function (resolve) {
                 showOrderError('حدث خطأ في الاتصال بالخادم', function () {
-                    prepareDraftForSubmit(draft, action);
+                    // Network retry must reuse the exact same idempotency key/payload.
                     attempt().then(resolve).catch(function () {
                         showOrderError('تعذر إتمام الطلب بعد إعادة المحاولة');
-                        restoreSubmitButtons(action);
-                        if (isPaymentAction(action) && window.jQuery) {
+                        restoreSubmitButtons(effectiveAction);
+                        if (isPaymentAction(effectiveAction) && window.jQuery) {
                             window.jQuery('#paymentModal').modal('show');
                         }
-                        resolve({ success: false, networkError: true });
+                        resolve({
+                            success: false,
+                            networkError: true,
+                            reuseIdempotencyKey: true,
+                            error: error || null
+                        });
+                    });
+                }, function () {
+                    // The outcome is unknown; a later submit must reconcile with the same intent.
+                    resolve({
+                        success: false,
+                        networkError: true,
+                        cancelled: true,
+                        reuseIdempotencyKey: true,
+                        error: error || null
                     });
                 });
             });
         });
+
+        const finalizedPromise = requestPromise.then(function (outcome) {
+            if (outcome && outcome.success) {
+                state.retryable = null;
+            } else if (outcome && outcome.reuseIdempotencyKey) {
+                const intent = outcome._posSubmissionIntent || {
+                    action: effectiveAction,
+                    route: route,
+                    payload: payload
+                };
+                state.retryable = intent;
+                if (options.internalRetry) {
+                    outcome._posSubmissionIntent = intent;
+                } else if (outcome._posSubmissionIntent) {
+                    delete outcome._posSubmissionIntent;
+                }
+            } else {
+                state.retryable = null;
+            }
+            return outcome;
+        });
+
+        if (options.internalRetry) {
+            return finalizedPromise;
+        }
+
+        let trackedPromise;
+        trackedPromise = finalizedPromise.then(function (outcome) {
+            if (state.active && state.active.promise === trackedPromise) {
+                state.active = null;
+            }
+            return outcome;
+        }, function (error) {
+            if (state.active && state.active.promise === trackedPromise) {
+                state.active = null;
+            }
+            throw error;
+        });
+        state.active = {
+            action: effectiveAction,
+            promise: trackedPromise
+        };
+        return trackedPromise;
     }
 
     window.POSOrderApi = {

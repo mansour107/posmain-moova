@@ -1,6 +1,8 @@
 <?php
 
 require_once __DIR__ . '/../../classes/Pos/Service/PosOrderMutationService.php';
+require_once __DIR__ . '/../../classes/Pos/Service/PaymentMethodService.php';
+require_once __DIR__ . '/../../classes/Pos/Service/DrawerSessionService.php';
 require_once __DIR__ . '/../../classes/Sync/SchemaManager.php';
 require_once __DIR__ . '/../../classes/Recipe/DTO/RecipeActorContext.php';
 require_once __DIR__ . '/../../classes/Recipe/RecipeDefinitionService.php';
@@ -9,6 +11,13 @@ require_once __DIR__ . '/../../classes/Recipe/RecipeOrderLifecycleService.php';
 require_once __DIR__ . '/../../classes/Recipe/Repository/InventoryBalanceRepository.php';
 
 mysqli_report(MYSQLI_REPORT_OFF);
+putenv('POSMAIN_RECIPE_MODE=off');
+putenv('POSMAIN_RECIPE_RESERVATIONS=0');
+putenv('POSMAIN_RECIPE_CONSUMPTION=0');
+putenv('POSMAIN_RECIPE_ACCOUNTING=0');
+putenv('POSMAIN_RECIPE_AVAILABILITY=0');
+$_ENV['POSMAIN_RECIPE_MODE'] = 'off';
+$_SERVER['POSMAIN_RECIPE_MODE'] = 'off';
 
 $host = getenv('POSMAIN_TEST_MYSQL_HOST') ?: '127.0.0.1';
 $port = (int) (getenv('POSMAIN_TEST_MYSQL_PORT') ?: 3307);
@@ -26,6 +35,7 @@ try {
     $conn->query("CREATE DATABASE `{$db}` CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci");
     $conn->select_db($db);
     posSplitPaymentCreateSchema($conn);
+    posSplitPaymentSeedCashDrawer($conn);
 
     $conn->query("INSERT INTO tables (id, tname, table_case, isdeleted) VALUES (1, 'T1', 1, 0)");
     $conn->query("
@@ -61,7 +71,7 @@ try {
         ],
         'paid_amount' => 30,
         'payment_method' => 'cash',
-    ], ['user_id' => 7]);
+    ], ['user_id' => 7, 'skip_idempotency' => true]);
 
     $newOrderId = (int) $split['data']['new_invoice_id'];
     posSplitPaymentAssert($split['success'] === true, 'split should return success envelope');
@@ -131,7 +141,7 @@ try {
         ],
         'paid_amount' => 3.33,
         'payment_method' => 'cash',
-    ], ['user_id' => 7]);
+    ], ['user_id' => 7, 'skip_idempotency' => true]);
     posSplitPaymentAssert($roundingSplit['success'] === true, 'split should accept cashier cent-rounded partial item amounts');
 
     $shadowBridge = new InventoryInvoiceBridge(new InventoryFeatureFlags([
@@ -189,7 +199,7 @@ try {
             'cost_price' => '5.000000',
             'det_store' => 3,
         ],
-    ], ['user_id' => 7]);
+    ], ['user_id' => 7, 'skip_idempotency' => true]);
     $conn->commit();
     $beforeSplitDirectMovements = (int) $conn->query("SELECT COUNT(*) AS c FROM inventory_movements WHERE movement_type = 'sale_direct' AND item_id IN (4010, 4011)")->fetch_assoc()['c'];
     $shadowSplit = $shadowSplitService->splitTablePayment($conn, [
@@ -201,7 +211,7 @@ try {
         ],
         'paid_amount' => 30,
         'payment_method' => 'cash',
-    ], ['user_id' => 7]);
+    ], ['user_id' => 7, 'skip_idempotency' => true]);
     $afterSplitDirectMovements = (int) $conn->query("SELECT COUNT(*) AS c FROM inventory_movements WHERE movement_type = 'sale_direct' AND item_id IN (4010, 4011)")->fetch_assoc()['c'];
     $splitBridgeBalanceA = (new InventoryBalanceRepository())->findBalance($conn, 0, 0, 3, 4010);
     $splitBridgeBalanceB = (new InventoryBalanceRepository())->findBalance($conn, 0, 0, 3, 4011);
@@ -255,7 +265,7 @@ try {
         ],
         'paid_amount' => 10,
         'payment_method' => 'cash',
-    ], ['user_id' => 7]);
+    ], ['user_id' => 7, 'skip_idempotency' => true]);
     $recipeChildOrderId = (int) $recipeSplit['data']['new_invoice_id'];
     $afterSplitBalance = (new InventoryBalanceRepository())->findBalance($conn, 0, 0, 3, 30011);
     $originalUsages = posSplitPaymentRows($conn, 'recipe_order_line_usage', 'order_id = 300');
@@ -295,6 +305,50 @@ try {
 } finally {
     $conn->query("DROP DATABASE IF EXISTS `{$db}`");
     $conn->close();
+}
+
+
+function posSplitPaymentSeedCashDrawer(mysqli $conn): void
+{
+    $conn->query("
+        CREATE TABLE IF NOT EXISTS settings (
+            id INT NOT NULL PRIMARY KEY,
+            def_pos_client INT NULL,
+            def_pos_store INT NULL,
+            isdeleted TINYINT(1) NOT NULL DEFAULT 0
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+    ");
+    $conn->query("
+        CREATE TABLE IF NOT EXISTS acc_head (
+            id INT NOT NULL PRIMARY KEY,
+            code VARCHAR(40) NULL,
+            aname VARCHAR(255) NULL,
+            is_stock TINYINT(1) NOT NULL DEFAULT 0,
+            isdeleted TINYINT(1) NOT NULL DEFAULT 0
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+    ");
+    $conn->query("INSERT IGNORE INTO settings (id, def_pos_client, def_pos_store, isdeleted) VALUES (1, 501, 3, 0)");
+    $conn->query("INSERT IGNORE INTO acc_head (id, code, aname, is_stock, isdeleted) VALUES (3, 'ST001', 'Main Store', 1, 0), (51, '101001', 'Cash', 0, 0), (501, '122001', 'Customer', 0, 0)");
+
+    $paymentMethods = new PaymentMethodService();
+    try {
+        $paymentMethods->saveMethod($conn, [
+            'code' => 'cash',
+            'name_ar' => 'Cash',
+            'name_en' => 'Cash',
+            'type' => 'cash',
+            'account_id' => 51,
+        ]);
+    } catch (Throwable $exception) {
+        // Already seeded in this disposable DB.
+    }
+    (new DrawerSessionService())->openSession($conn, [
+        'user_id' => 7,
+        'opened_by' => 7,
+        'tenant' => 0,
+        'branch' => 0,
+        'opening_cash' => '100.000',
+    ]);
 }
 
 function posSplitPaymentCreateSchema(mysqli $conn): void

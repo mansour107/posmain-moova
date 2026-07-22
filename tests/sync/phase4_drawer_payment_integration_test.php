@@ -51,7 +51,7 @@ try {
         'opening_cash' => '100.000',
     ]);
     $service = new PosOrderMutationService();
-    $context = ['user_id' => 7, 'tenant' => 2, 'branch' => 3];
+    $context = ['user_id' => 7, 'tenant' => 2, 'branch' => 3, 'skip_idempotency' => true];
 
     $full = $service->payTableOrder($conn, [
         'table_id' => 1,
@@ -103,7 +103,7 @@ try {
             'paid' => 10,
             'payment_method' => 'cash_drawer',
             'notes' => 'blocked without drawer',
-        ], ['user_id' => 8, 'tenant' => 2, 'branch' => 3]);
+        ], ['user_id' => 8, 'tenant' => 2, 'branch' => 3, 'skip_idempotency' => true]);
     }, 'DRAWER_SESSION_REQUIRED');
     $blocked = $conn->query("SELECT payment_status, paid_amount, remaining_amount FROM ot_head WHERE id = 103")->fetch_assoc();
     phase4DrawerPaymentAssert($blocked['payment_status'] === 'unpaid', 'blocked cash payment should not mutate status');

@@ -37,6 +37,14 @@ foreach ($controllerExpectations as $method => $scope) {
     posTableEndpointIdempotencyAssert(strpos($controller, $scope) !== false, 'controller ' . $method . ' should use ' . $scope);
 }
 
+$paymentMethodStart = strpos($controller, 'function payTable');
+$splitMethodStart = strpos($controller, 'function splitPayment');
+$cofeMethodStart = strpos($controller, 'function createCofeTableOrder');
+$paymentMethodSource = substr($controller, $paymentMethodStart, $splitMethodStart - $paymentMethodStart);
+$splitMethodSource = substr($controller, $splitMethodStart, $cofeMethodStart - $splitMethodStart);
+posTableEndpointIdempotencyAssert(strpos($paymentMethodSource, "['idempotency_replayed'] = true") !== false, 'payment HTTP replay should be marked for frontend replay handling');
+posTableEndpointIdempotencyAssert(strpos($splitMethodSource, "['idempotency_replayed'] = true") !== false, 'split-payment HTTP replay should be marked for frontend replay handling');
+
 posTableEndpointIdempotencyAssert(strpos($controller, '$idempotencyService = new IdempotencyService()') !== false, 'controller should instantiate IdempotencyService');
 posTableEndpointIdempotencyAssert(strpos($controller, 'IDEMPOTENCY_CONFLICT') !== false, 'controller should handle idempotency conflicts');
 
@@ -70,12 +78,25 @@ foreach ($directEndpointExpectations as $path => $expectation) {
 $jsExpectations = [
     'js/pos_barcode.js' => [
         'createPOSIdempotencyKey',
-        'ensureFormIdempotencyKey(form, action)',
+        "window.POSOrderDraft.rotateIdempotencyKey",
         "idempotency_key: createPOSIdempotencyKey('pos.order.cancel')",
+    ],
+    'js/pos_order_api.js' => [
+        'ensureFormIdempotencyKey(form, action)',
+        'reuseIdempotencyKey',
+        'submissionStates',
+        'state.active.promise',
+        'state.retryable = intent',
+        'IDEMPOTENCY_PROCESSING',
+        "route === 'orders.payment'",
+    ],
+    'js/pos_order_draft.js' => [
+        'ensureFormIdempotencyKey',
+        'rotateIdempotencyKey',
+        'clearIdempotencyKey',
     ],
     'includes/pos_content.php' => [
         'createPOSIdempotencyKey',
-        'ensureFormIdempotencyKey(form, action)',
         "idempotency_key: createPOSIdempotencyKey('pos.order.cancel')",
     ],
     'js/pos_tables.js' => [
