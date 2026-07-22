@@ -501,12 +501,31 @@ final class Phase6DemoSeeder
 
     private function seedUsers(): void
     {
+        // Keep P6-labelled roles for older QA fixtures, but attach demo users to the
+        // maintained presets. Capability records are authoritative when present, so
+        // hand-made legacy roles can otherwise login but lack modern permissions.
         $roleIds = [
             'admin' => $this->seedRole('P6 Demo Admin', ['show_users', 'add_users', 'edit_users', 'delete_users', 'show_sales', 'add_sales', 'edit_sales', 'delete_sales', 'show_payment', 'add_payment', 'edit_payment', 'delete_payment', 'show_items', 'add_items', 'edit_items', 'delete_items']),
             'manager' => $this->seedRole('P6 Demo Manager', ['show_sales', 'add_sales', 'edit_sales', 'delete_sales', 'show_payment', 'add_payment', 'edit_payment', 'delete_payment', 'show_items', 'add_items', 'edit_items']),
             'cashier' => $this->seedRole('P6 Demo Cashier', ['show_sales', 'add_sales', 'show_payment', 'add_payment', 'show_items']),
             'waiter' => $this->seedRole('P6 Demo Waiter', ['show_sales', 'add_sales', 'show_items']),
         ];
+
+        $roleColumns = $this->tableColumnsFor('usr_pwrs');
+        if (isset($roleColumns['role_key'], $roleColumns['is_system'])) {
+            $presetRoleIds = RolePermissionSyncService::seedPresetRoles($this->db);
+            $roleIds = [
+                'admin' => (int) ($presetRoleIds['owner'] ?? 0),
+                'manager' => (int) ($presetRoleIds['manager'] ?? 0),
+                'cashier' => (int) ($presetRoleIds['cashier'] ?? 0),
+                'waiter' => (int) ($presetRoleIds['waiter'] ?? 0),
+            ];
+            foreach ($roleIds as $role => $roleId) {
+                if ($roleId < 1) {
+                    throw new RuntimeException('PRESET_ROLE_SEED_FAILED:' . $role);
+                }
+            }
+        }
 
         $passwordHash = PasswordService::hashPassword('P6demo123!');
         $users = [
