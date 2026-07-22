@@ -653,11 +653,7 @@ class ShiftCountService
                 $session = $this->drawerSessions->openSession($conn, $openRequest);
                 $_SESSION['pos_drawer_session_id'] = (int) $session['id'];
                 posmain_begin_pos_shift_session($userId);
-                unset(
-                    $_SESSION['pos_shift_open_count'],
-                    $_SESSION['pos_unlocked_pending_open'],
-                    $_SESSION['pos_pending_takeover']
-                );
+                $this->clearCompletedOpenCountState();
                 posmain_tx_commit_if_owned($conn, $ownsTransaction);
 
                 return [
@@ -1308,11 +1304,7 @@ class ShiftCountService
             throw $exception;
         }
 
-        unset(
-            $_SESSION['pos_shift_open_count'],
-            $_SESSION['pos_unlocked_pending_open'],
-            $_SESSION['pos_pending_takeover']
-        );
+        $this->clearCompletedOpenCountState();
 
         return [
             'status' => $matched ? 'opened' : 'opened_with_variance',
@@ -1332,6 +1324,23 @@ class ShiftCountService
                     : 'تم فتح الشيفت — عجز: ' . number_format(abs($variance), 2)),
             'variance_status' => $matched ? 'none' : 'unresolved',
         ];
+    }
+
+    /**
+     * The opening-count modal is driven by these browser-session flags. Once
+     * the drawer session has committed, retaining open_count_pending would
+     * incorrectly gate the same cashier behind the modal on every POS reload.
+     */
+    private function clearCompletedOpenCountState(): void
+    {
+        unset(
+            $_SESSION['pos_shift_open_count'],
+            $_SESSION['pos_unlocked_pending_open'],
+            $_SESSION['pos_pending_takeover'],
+            $_SESSION['posmain_shift_entry_state'],
+            $_SESSION['posmain_shift_entry_message'],
+            $_SESSION['posmain_shift_blocking']
+        );
     }
 
     private function updateOpeningVariance(mysqli $conn, int $sessionId, float $expected, float $variance, bool $matched): bool

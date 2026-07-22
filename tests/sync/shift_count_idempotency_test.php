@@ -83,6 +83,12 @@ try {
 
     $floatService->setOpeningBaseline($conn, 1, 2, 100.0, 77);
 
+    // This is the POS browser state that displays the opening-count overlay.
+    // A successful count must clear it once the drawer session exists.
+    $_SESSION['posmain_shift_entry_state'] = 'open_count_pending';
+    $_SESSION['posmain_shift_entry_message'] = 'opening';
+    $_SESSION['posmain_shift_blocking'] = ['id' => 999];
+
     $countService->beginOpenCount($conn, 77);
     $key = 'test-open-' . getmypid();
     $first = idemSubmitOpen($conn, 77, '100.000', $key);
@@ -91,6 +97,9 @@ try {
 
     $sessionId = (int) ($first['data']['drawer_session_id'] ?? 0);
     idemAssert($sessionId > 0, 'drawer session created');
+    idemAssert(!isset($_SESSION['posmain_shift_entry_state']), 'successful opening count clears stale POS entry state');
+    idemAssert(!isset($_SESSION['posmain_shift_entry_message']), 'successful opening count clears stale POS entry message');
+    idemAssert(!isset($_SESSION['posmain_shift_blocking']), 'successful opening count clears stale drawer blocking payload');
 
     $attemptCount = (int) $conn->query("SELECT COUNT(*) AS c FROM drawer_count_attempts WHERE count_phase = 'open'")->fetch_assoc()['c'];
     idemAssert($attemptCount === 1, 'single open attempt row');
