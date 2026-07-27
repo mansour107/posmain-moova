@@ -15,12 +15,7 @@ class KitchenEventPublisher
             return null;
         }
 
-        $payload = null;
-        try {
-            $payload = (new OrderPrintPayloadService())->buildKotPayloadByOrderId($conn, $orderId);
-        } catch (Throwable $exception) {
-            error_log('KitchenEventPublisher payload build skipped: ' . $exception->getMessage());
-        }
+        $payload = (new OrderPrintPayloadService())->buildKotPayloadByOrderId($conn, $orderId);
 
         return [
             'event_type' => $eventType,

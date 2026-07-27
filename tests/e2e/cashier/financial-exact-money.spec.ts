@@ -75,6 +75,7 @@ test.describe('financial: exact-money browser flow', () => {
         order_id: String(id),
         action: 'refund',
         refund_stock_policy: 'waste',
+        refund_payment_method: 'cash',
         reason: 'e2e financial credit-note refund',
         idempotency_key: `e2e-fin-refund-${id}-${Date.now()}`,
       });

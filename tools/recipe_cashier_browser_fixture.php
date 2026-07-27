@@ -463,6 +463,7 @@ function recipeCashierBrowserFixtureAssessPaidReversalSurface(mysqli $conn, stri
         'order_id' => 9001,
         'action' => 'refund',
         'refund_stock_policy' => 'return_to_stock',
+        'refund_payment_method' => 'cash',
         'reason' => 'fixture HTTP refund smoke',
         'idempotency_key' => 'fixture-http-refund-9001-fixed',
     ];

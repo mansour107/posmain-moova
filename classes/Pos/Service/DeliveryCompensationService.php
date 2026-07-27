@@ -59,7 +59,10 @@ final class DeliveryCompensationService
         $basePeriod = $this->enum($data['base_period'] ?? 'none', self::BASE_PERIODS, 'DELIVERY_PLAN_BASE_PERIOD_INVALID');
         $method = $this->enum($data['per_delivery_method'] ?? 'customer_fee', self::METHODS, 'DELIVERY_PLAN_METHOD_INVALID');
         $tipsMode = $this->enum($data['tips_mode'] ?? 'none', self::TIP_MODES, 'DELIVERY_PLAN_TIPS_MODE_INVALID');
-        $baseAmount = $this->amount($data['base_amount'] ?? 0);
+        // A plan without a base-pay period must never retain a base amount.
+        // Keep this invariant server-side because disabled HTML inputs are not
+        // submitted, but older clients or direct requests may still send one.
+        $baseAmount = $basePeriod === 'none' ? '0.000' : $this->amount($data['base_amount'] ?? 0);
         $perValue = $this->amount($data['per_delivery_value'] ?? 0);
         $effectiveFrom = $this->date($data['effective_from'] ?? date('Y-m-d'));
         $effectiveTo = trim((string) ($data['effective_to'] ?? '')) !== '' ? $this->date($data['effective_to']) : null;

@@ -49,7 +49,10 @@ $dispatch = file_get_contents($root . '/classes/Pos/Service/OrderFulfillmentServ
 deliveryContractAssert(strpos($dispatch, 'DELIVERY_WORKER_REQUIRED_BEFORE_PICKUP') !== false, 'pickup must enforce worker assignment');
 deliveryContractAssert(strpos($dispatch, 'finalizeCodOrder') !== false, 'delivered COD should finalize accounting');
 $cashier = file_get_contents($root . '/js/pos_delivery.js');
-deliveryContractAssert(strpos($cashier, 'delivery_worker_id') !== false && strpos($cashier, 'delivery_collection_mode') !== false, 'cashier should expose optional worker and collection mode');
+$cashierQueue = file_get_contents($root . '/js/pos_delivery_queue.js');
+deliveryContractAssert(strpos($cashier, 'id="delivery_worker_id"') === false, 'delivery creation should not assign a worker before dispatch');
+deliveryContractAssert(strpos($cashierQueue, "data.action = 'dispatch'") !== false && strpos($cashierQueue, "action: 'delivered'") !== false, 'cashier queue should own dispatch and delivery confirmation');
+deliveryContractAssert(strpos($cashierQueue, "value=\"external\"") === false || strpos(file_get_contents($root . '/includes/pos_content.php'), 'value="external"') !== false, 'cashier dispatch should allow an external courier');
 
 echo "delivery_operations_contract_test: OK\n";
 

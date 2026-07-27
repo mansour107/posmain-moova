@@ -3,17 +3,23 @@
 require_once __DIR__ . '/ModifierLineNoteService.php';
 require_once __DIR__ . '/PreparationSelectionService.php';
 require_once __DIR__ . '/PosOrderMutationService.php';
+require_once __DIR__ . '/KitchenLineSnapshotService.php';
 
 class OrderPrintPayloadService
 {
     private ModifierLineNoteService $customizationService;
     private PreparationSelectionService $preparationService;
+    private KitchenLineSnapshotService $kitchenSnapshots;
     private array $tableExistsCache = [];
 
-    public function __construct(?ModifierLineNoteService $customizationService = null)
+    public function __construct(
+        ?ModifierLineNoteService $customizationService = null,
+        ?KitchenLineSnapshotService $kitchenSnapshots = null
+    )
     {
         $this->customizationService = $customizationService ?: new ModifierLineNoteService();
         $this->preparationService = new PreparationSelectionService();
+        $this->kitchenSnapshots = $kitchenSnapshots ?: new KitchenLineSnapshotService();
     }
 
     public function buildReceiptPayload(mysqli $conn, int $orderId): array
@@ -82,6 +88,15 @@ class OrderPrintPayloadService
         }
         unset($line);
 
+        if ($documentType === 'kot') {
+            $lines = $this->kitchenSnapshots->captureForOrder($conn, $orderId, $lines);
+        } else {
+            $sentSnapshot = $this->kitchenSnapshots->existingForOrder($conn, $orderId);
+            if ($sentSnapshot !== null) {
+                $lines = $sentSnapshot;
+            }
+        }
+
         return [
             'document_type' => $documentType,
             'order' => [
@@ -142,7 +157,8 @@ class OrderPrintPayloadService
     {
         $stmt = $conn->prepare("
             SELECT fd.*,
-                   i.iname AS item_name
+                   i.iname AS item_name,
+                   i.group1 AS item_group_id
             FROM fat_details fd
             LEFT JOIN myitems i ON i.id = fd.item_id
             WHERE fd.fatid = ?
@@ -159,7 +175,8 @@ class OrderPrintPayloadService
             $lines[] = [
                 'detail_id' => (int) $row['id'],
                 'item_id' => $this->nullableInt($row['item_id'] ?? null),
-                'name' => $this->nullableString($row['item_name'] ?? null) ?: 'غير محدد',
+                'item_group_id' => $this->nullableInt($row['item_group_id'] ?? null),
+                'name' => $this->nullableString($row['item_name'] ?? null) ?: '',
                 'qty' => $this->quantity($qty),
                 'price' => $this->money($row['price'] ?? 0),
                 'line_total' => $this->money($row['det_value'] ?? 0),

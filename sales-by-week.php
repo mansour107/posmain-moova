@@ -48,25 +48,13 @@
                         $from = $_POST['from'];
                         $to   = $_POST['to'];
                     }
-
-                    // استعلام: تجميع المبيعات حسب الأسبوع
-                    $sql = "SELECT YEARWEEK(pro_date, 1) as sales_week,
-                                   MIN(pro_date) as week_start,
-                                   MAX(pro_date) as week_end,
-                                   SUM(pro_value) as total_sales
-                            FROM ot_head 
-                            WHERE (pro_tybe = 9 OR pro_tybe = 3)
-                            AND pro_date BETWEEN '$from' AND '$to'
-                            GROUP BY sales_week
-                            ORDER BY sales_week ASC";
-
-                    $res = $conn->query($sql);
-
-                    $weeks = [];
+                    require_once __DIR__ . '/classes/Financial/LegacySalesReportService.php';
+                    $weeks = (new LegacySalesReportService())->timeBuckets($conn, $from, $to, 'week', [
+                        'tenant' => (int) ($_SESSION['pos_tenant'] ?? 0),
+                        'branch' => (int) ($_SESSION['pos_branch'] ?? 0),
+                    ]);
                     $grand_total = 0;
-
-                    while ($row = $res->fetch_assoc()) {
-                        $weeks[] = $row;
+                    foreach ($weeks as $row) {
                         $grand_total += $row['total_sales'];
                     }
 

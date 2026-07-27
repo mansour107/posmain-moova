@@ -37,13 +37,13 @@ try {
             (91, '3111', 'Sales', 0, 0, 0, 0, 0)
     ");
     $conn->query("
-        INSERT INTO myitems (id, iname, item_type, track_stock, isdeleted) VALUES
-            (10, 'Table item 10', 'sellable', 1, 0),
-            (11, 'Table item 11', 'sellable', 1, 0),
-            (12, 'Table item 12', 'sellable', 1, 0),
-            (13, 'Table item 13', 'sellable', 1, 0)
+        INSERT INTO myitems (id, iname, price1, item_type, track_stock, isdeleted) VALUES
+            (10, 'Table item 10', 15, 'sellable', 1, 0),
+            (11, 'Table item 11', 8, 'sellable', 1, 0),
+            (12, 'Table item 12', 12, 'sellable', 1, 0),
+            (13, 'Table item 13', 20, 'sellable', 1, 0)
     ");
-    $conn->query("INSERT INTO tables (id, tname, table_case, isdeleted) VALUES (1, 'T1', 0, 0), (2, 'T2', 0, 0), (3, 'T3', 1, 0)");
+    $conn->query("INSERT INTO tables (id, tname, table_case, isdeleted) VALUES (1, 'T1', 0, 0), (2, 'T2', 0, 0), (3, 'T3', 1, 0), (4, 'T4', 0, 0)");
 
     $new = $service->saveTableOrder($conn, [
         'table_id' => 1,
@@ -138,31 +138,37 @@ try {
     ");
     $conn->query("INSERT INTO fat_details (id, fatid, isdeleted, det_value, profit) VALUES (3000, 300, 0, 20, 0)");
 
-    $paidUpdate = $service->saveTableOrder($conn, [
-        'table_id' => 3,
-        'order_id' => 300,
-        'order_date' => '2026-05-12',
-        'store_id' => 3,
-        'emp_id' => 4,
-        'fund_id' => 51,
-        'items' => [
-            ['id' => 13, 'qty' => 1, 'price' => 20],
-        ],
-        'total' => 20,
-        'discount' => 0,
-        'net' => 20,
-    ], ['user_id' => 7]);
-
-    posTableSaveAssert($paidUpdate['data']['payment_status'] === 'paid', 'update should complete when preserved paid amount covers new net');
-    posTableSaveAssert((int) $conn->query("SELECT table_case FROM tables WHERE id = 3")->fetch_assoc()['table_case'] === 0, 'paid updated order should free table');
-    posTableSaveAssert((int) $conn->query("SELECT COUNT(*) AS c FROM inventory_movements WHERE order_id = 300 AND movement_type = 'sale_direct'")->fetch_assoc()['c'] === 1, 'paid update should shadow-add replacement table line');
+    $belowPaidBlocked = false;
+    try {
+        $service->saveTableOrder($conn, [
+            'table_id' => 3,
+            'order_id' => 300,
+            'order_date' => '2026-05-12',
+            'store_id' => 3,
+            'emp_id' => 4,
+            'fund_id' => 51,
+            'items' => [
+                ['id' => 13, 'qty' => 1, 'price' => 20],
+            ],
+            'total' => 20,
+            'discount' => 0,
+            'net' => 20,
+        ], ['user_id' => 7]);
+    } catch (Throwable $exception) {
+        $belowPaidBlocked = $exception->getMessage() === 'ORDER_TOTAL_BELOW_PAID_AMOUNT_USE_REFUND';
+    }
+    posTableSaveAssert($belowPaidBlocked, 'table edit must not silently reduce a collected payment');
+    $blockedOrder = $conn->query("SELECT paid_amount, fat_net, payment_status FROM ot_head WHERE id = 300")->fetch_assoc();
+    posTableSaveAssert(abs((float) $blockedOrder['paid_amount'] - 25.0) < 0.0001, 'blocked edit preserves collected amount');
+    posTableSaveAssert(abs((float) $blockedOrder['fat_net'] - 20.0) < 0.0001, 'blocked edit preserves original order net');
+    posTableSaveAssert((int) $conn->query("SELECT isdeleted FROM fat_details WHERE id = 3000")->fetch_assoc()['isdeleted'] === 0, 'blocked edit preserves original item rows');
 
     $conn->query("INSERT INTO pos_customers (id, display_name, notes, isdeleted) VALUES (1, 'CRM Customer', '', 0)");
     $conn->query("INSERT INTO pos_customer_phones (id, customer_id, phone_normalized, phone_display, is_primary, isdeleted) VALUES (1, 1, '201001234567', '01001234567', 1, 0)");
     $conn->query("UPDATE pos_customers SET primary_phone_id = 1 WHERE id = 1");
 
     $customerSave = $service->saveTableOrder($conn, [
-        'table_id' => 3,
+        'table_id' => 4,
         'order_date' => '2026-05-12',
         'store_id' => 3,
         'emp_id' => 4,
@@ -216,8 +222,22 @@ function posTableSaveCreateSchema(mysqli $conn): void
         CREATE TABLE myitems (
             id INT NOT NULL PRIMARY KEY,
             iname VARCHAR(255) NULL,
+            group1 INT NOT NULL DEFAULT 0,
+            price1 DECIMAL(15,4) NOT NULL DEFAULT 0,
+            cost_price DECIMAL(15,4) NOT NULL DEFAULT 0,
+            itmqty DECIMAL(15,4) NOT NULL DEFAULT 0,
             item_type ENUM('sellable','ingredient','packaging','service') NOT NULL DEFAULT 'sellable',
             track_stock TINYINT(1) NOT NULL DEFAULT 1,
+            isdeleted TINYINT(1) NOT NULL DEFAULT 0
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+    ");
+    $conn->query("
+        CREATE TABLE item_units (
+            id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+            item_id INT NOT NULL,
+            unit_id INT NOT NULL DEFAULT 1,
+            u_val DECIMAL(18,6) NOT NULL DEFAULT 1.000000,
+            price1 DECIMAL(15,4) NOT NULL DEFAULT 0,
             isdeleted TINYINT(1) NOT NULL DEFAULT 0
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
     ");
@@ -292,12 +312,33 @@ function posTableSaveCreateSchema(mysqli $conn): void
             fatid INT NOT NULL,
             fat_tybe INT NULL,
             det_store INT NULL,
+            cost_price DECIMAL(15,4) NOT NULL DEFAULT 0,
             profit DECIMAL(15,4) NOT NULL DEFAULT 0,
             isdeleted TINYINT(1) NOT NULL DEFAULT 0
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
     ");
 
     (new SyncSchemaManager())->apply($conn);
+
+    $conn->query("
+        CREATE TABLE users (
+            id INT NOT NULL PRIMARY KEY,
+            uname VARCHAR(120) NOT NULL,
+            userrole INT NULL,
+            permission_mode ENUM('role_only','role_with_overrides') NOT NULL DEFAULT 'role_only',
+            isdeleted TINYINT(1) NOT NULL DEFAULT 0
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+    ");
+    $conn->query("
+        CREATE TABLE usr_pwrs (
+            id INT NOT NULL PRIMARY KEY,
+            rollname VARCHAR(191) NULL,
+            edit_sales TINYINT(1) NOT NULL DEFAULT 0,
+            isdeleted TINYINT(1) NOT NULL DEFAULT 0
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+    ");
+    $conn->query("INSERT INTO usr_pwrs (id, rollname, edit_sales, isdeleted) VALUES (3, 'Cashier', 0, 0)");
+    $conn->query("INSERT INTO users (id, uname, userrole, isdeleted) VALUES (7, 'cashier7', 3, 0)");
 }
 
 function posTableSaveAssert(bool $condition, string $message): void

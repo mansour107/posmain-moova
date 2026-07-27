@@ -33,7 +33,7 @@ try {
     $conn->query("CREATE TABLE journal_heads (id INT NOT NULL AUTO_INCREMENT PRIMARY KEY, journal_id INT NOT NULL, total DECIMAL(19,2) NOT NULL, jdate DATE NOT NULL, details VARCHAR(255) NULL, user INT NULL, op_id INT NULL, op2 INT NULL, source_type VARCHAR(60) NULL, source_id BIGINT NULL, posting_kind VARCHAR(80) NULL, idempotency_key VARCHAR(191) NULL, reversal_of_journal_id BIGINT NULL, tenant INT NULL, branch INT NULL, pro_tybe INT NULL, UNIQUE KEY uq_journal_idempotency (idempotency_key)) ENGINE=InnoDB");
     $conn->query("CREATE TABLE journal_entries (id INT NOT NULL AUTO_INCREMENT PRIMARY KEY, journal_id INT NOT NULL, account_id INT NOT NULL, debit DECIMAL(19,2) NOT NULL DEFAULT 0, credit DECIMAL(19,2) NOT NULL DEFAULT 0, tybe INT NOT NULL DEFAULT 0, op2 INT NULL) ENGINE=InnoDB");
     $conn->query("CREATE TABLE ot_head (id BIGINT NOT NULL PRIMARY KEY, pro_id BIGINT NULL, fat_net DECIMAL(19,2) NOT NULL DEFAULT 0, paid_amount DECIMAL(19,2) NOT NULL DEFAULT 0, remaining_amount DECIMAL(19,2) NOT NULL DEFAULT 0, acc2 INT NULL, payment_status VARCHAR(20) NULL, pro_date DATE NULL, invoice_status VARCHAR(20) NULL, order_status VARCHAR(20) NULL, payment_date DATETIME NULL, completed_at DATETIME NULL, mdtime DATETIME NULL, tenant INT NOT NULL DEFAULT 0, branch INT NOT NULL DEFAULT 0) ENGINE=InnoDB");
-    $conn->query("INSERT INTO ot_head (id, pro_id, payment_status, pro_date, invoice_status, order_status) VALUES (7001, 7001, 'paid', CURRENT_DATE, 'posted', 'active'), (7002, 7002, 'paid', CURRENT_DATE, 'posted', 'active')");
+    $conn->query("INSERT INTO ot_head (id, pro_id, fat_net, remaining_amount, payment_status, pro_date, invoice_status, order_status) VALUES (7001, 7001, 0, 0, 'paid', CURRENT_DATE, 'posted', 'active'), (7002, 7002, 0, 0, 'paid', CURRENT_DATE, 'posted', 'active'), (7004, 7004, 275, 275, 'unpaid', CURRENT_DATE, 'draft', 'active')");
     $conn->query("INSERT INTO delivery_zones (name, fee, tenant, branch) VALUES ('وسط البلد', 25.000, 0, 0)");
     $zoneId = (int) $conn->insert_id;
 
@@ -69,6 +69,14 @@ try {
     }
     deliveryOperationsAssert($invalidEnumBlocked, 'invalid plan enums must be rejected instead of silently defaulted');
 
+    $noBasePlan = $plans->savePlan($conn, [
+        'name' => 'بدون أساسي',
+        'base_period' => 'none',
+        'base_amount' => '999',
+        'effective_from' => date('Y-m-d'),
+    ], ['user_id' => 1] + $syncOff);
+    deliveryOperationsAssert($noBasePlan['base_period'] === 'none' && $noBasePlan['base_amount'] === '0.000', 'plans without a base period must discard a posted base amount');
+
     $workers = new DeliveryWorkerService();
     $worker = $workers->saveWorker($conn, [
         'name' => 'عامل اختبار',
@@ -103,6 +111,23 @@ try {
     }
     deliveryOperationsAssert($crossBranchBlocked, 'assignment must not attach a local worker to another tenant or branch order');
 
+    $fulfillment->upsertForOrder($conn, 7004, [
+        'fulfillment_type' => 'delivery',
+        'delivery_zone' => 'وسط البلد',
+        'delivery_fee' => 25,
+        'delivery_status' => 'pending',
+    ], ['require_table' => true]);
+    $conn->query("UPDATE order_fulfillment SET collection_mode = 'cod', cod_amount = 275.000 WHERE order_id = 7004");
+    $workers->assignOrder($conn, 7004, (int) $worker['id'], ['user_id' => 1] + $syncOff);
+    $fulfillment->transitionDeliveryStatus($conn, 7004, 'picked_up', ['cashier_dispatch' => true, 'actor_user_id' => 1] + $syncOff);
+    $failedOrder = $fulfillment->transitionDeliveryStatus($conn, 7004, 'failed', ['failure_reason' => 'تعذر الوصول للعميل', 'actor_user_id' => 1] + $syncOff);
+    deliveryOperationsAssert(($failedOrder['metadata']['failure_reason'] ?? '') === 'تعذر الوصول للعميل', 'failed delivery should retain its operational reason');
+    $workerWithFailure = $workers->listWorkers($conn, [], true, true)[0];
+    deliveryOperationsAssert((int) $workerWithFailure['failed_order_count'] === 1, 'worker profile should count failed deliveries');
+    deliveryOperationsAssert($workerWithFailure['failed_order_value'] === '275.000', 'worker profile should expose failed order value for admin review');
+    deliveryOperationsAssert($workerWithFailure['failed_cod_exposure'] === '275.000', 'worker profile should expose failed COD risk without auto-posting it');
+    deliveryOperationsAssert((int) $conn->query('SELECT COUNT(*) AS c FROM delivery_order_financials WHERE order_id = 7004')->fetch_assoc()['c'] === 0, 'failed delivery must not auto-accrue worker compensation');
+
     $transitionOptions = ['actor_user_id' => 1] + $syncOff;
     foreach (['accepted', 'preparing', 'ready', 'picked_up'] as $status) {
         $fulfillment->transitionDeliveryStatus($conn, 7001, $status, $transitionOptions);
@@ -114,6 +139,10 @@ try {
     $blocked = false;
     try { $fulfillment->transitionDeliveryStatus($conn, 7002, 'picked_up', $transitionOptions); } catch (Throwable $exception) { $blocked = $exception->getMessage() === 'DELIVERY_WORKER_REQUIRED_BEFORE_PICKUP'; }
     deliveryOperationsAssert($blocked, 'in-house pickup should require a worker');
+    deliveryOperationsAssert(
+        $fulfillment->countPendingDeliveryOrders($conn, ['tenant' => 0, 'branch' => 0]) === 2,
+        'cashier badge should count every local non-terminal delivery while excluding failed and cross-branch orders'
+    );
 
     $workerId = (int) $worker['id'];
     $conn->query("UPDATE order_fulfillment SET delivery_status = 'delivered', delivered_at = NOW(), driver_tip = 5.000, delivery_worker_id = {$workerId} WHERE order_id = 7001");

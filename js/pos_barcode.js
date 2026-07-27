@@ -4168,6 +4168,8 @@ const recentOrdersState = {
     limit: 30,
     loading: false,
     hasMore: false,
+    ordersById: {},
+    refundTenders: [],
 };
 
 function escapeRecentOrdersHtml(value) {
@@ -4379,6 +4381,7 @@ function renderRecentOrderRow(order, rowNumber) {
     const tableId = parseInt(order.table_id || 0, 10);
     const deleteEligible = order.delete_eligible === true || order.delete_eligible === 1 || order.delete_eligible === '1'
         || order.can_delete === true || order.can_delete === 1 || order.can_delete === '1';
+    const editEligible = order.edit_eligible === true || order.edit_eligible === 1 || order.edit_eligible === '1';
     const refundEligible = order.refund_eligible === true || order.refund_eligible === 1 || order.refund_eligible === '1'
         || order.can_refund === true || order.can_refund === 1 || order.can_refund === '1';
     const voidEligible = order.void_eligible === true || order.void_eligible === 1 || order.void_eligible === '1'
@@ -4392,23 +4395,30 @@ function renderRecentOrderRow(order, rowNumber) {
     const canVoidDirect = window.POSMAIN && typeof window.POSMAIN.can === 'function'
         ? window.POSMAIN.can('pos.void.paid') === true
         : false;
-    const statusBadge = (order.status === 'ملغى' || order.status === 'مسترد')
+    const statusBadge = (order.status === 'ملغى' || order.status === 'مسترد' || order.status === 'مسترد بالكامل')
         ? 'bg-danger'
-        : (order.status === 'مكتمل' ? 'bg-success' : 'bg-warning');
+        : (order.status === 'مكتمل' ? 'bg-success' : 'bg-warning text-dark');
     const typeBadge = order.type === 'دليفري'
         ? 'bg-info text-dark'
         : (order.type === 'طاولة' ? 'bg-warning text-dark' : 'bg-secondary');
     const customerCell = renderRecentOrderCustomerCell(order);
     const deleteButton = deleteEligible
-        ? `<button class="btn btn-danger delete-order${canDeleteDirect ? '' : ' pos-action-locked'}" data-id="${order.id}" data-table-id="${tableId}" title="حذف">
-                <i class="fas fa-trash"></i>
+        ? `<button class="btn btn-danger delete-order${canDeleteDirect ? '' : ' pos-action-locked'}" data-id="${order.id}" data-table-id="${tableId}" title="إلغاء طلب غير مدفوع">
+                <i class="fas fa-ban"></i>
            </button>`
-        : `<button class="btn btn-outline-secondary" disabled title="لا يمكن حذف طلب مكتمل أو مدفوع من هنا">
-                <i class="fas fa-trash"></i>
+        : `<button class="btn btn-outline-secondary" disabled title="الطلب المدفوع يُعالج بالاسترداد، ولا يُحذف">
+                <i class="fas fa-ban"></i>
+           </button>`;
+    const editButton = editEligible
+        ? `<button class="btn btn-warning edit-order" data-id="${order.id}" title="تعديل طلب غير مدفوع">
+                <i class="fas fa-edit"></i>
+           </button>`
+        : `<button class="btn btn-outline-secondary" disabled title="لا يمكن تعديل طلب بعد تسجيل دفعة؛ استخدم الاسترداد عند الحاجة">
+                <i class="fas fa-edit"></i>
            </button>`;
     const reversalLocked = (refundEligible && !canRefundDirect) || (voidEligible && !canVoidDirect);
     const paidReversalButton = (refundEligible || voidEligible)
-        ? `<button type="button" class="btn btn-outline-danger reverse-paid-order${reversalLocked ? ' pos-action-locked' : ''}" data-id="${order.id}" data-refund-eligible="${refundEligible ? '1' : '0'}" data-void-eligible="${voidEligible ? '1' : '0'}" title="استرداد أو إلغاء مدفوع">
+        ? `<button type="button" class="btn btn-outline-danger reverse-paid-order${reversalLocked ? ' pos-action-locked' : ''}" data-id="${order.id}" data-refund-eligible="${refundEligible ? '1' : '0'}" data-void-eligible="${voidEligible ? '1' : '0'}" title="استرداد مبلغ أو إلغاء طلب مدفوع">
                 <i class="fas fa-undo"></i>
            </button>`
         : '';
@@ -4430,9 +4440,7 @@ function renderRecentOrderRow(order, rowNumber) {
             </td>
             <td class="text-nowrap">
                 <div class="btn-group btn-group-sm" role="group">
-                    <button class="btn btn-warning edit-order" data-id="${order.id}" title="تعديل">
-                        <i class="fas fa-edit"></i>
-                    </button>
+                    ${editButton}
                     <button class="btn btn-secondary print-order" data-id="${order.id}" title="طباعة الفاتورة">
                         <i class="fas fa-print"></i>
                     </button>
@@ -4474,6 +4482,15 @@ function loadRecentOrders(append = false) {
             recentOrdersState.loading = false;
 
             if (response.success && Array.isArray(response.orders)) {
+                if (!append) {
+                    recentOrdersState.ordersById = {};
+                    recentOrdersState.refundTenders = Array.isArray(response.refund_tenders)
+                        ? response.refund_tenders
+                        : [];
+                }
+                response.orders.forEach((order) => {
+                    recentOrdersState.ordersById[String(order.id)] = order;
+                });
                 if (!append) {
                     if (response.orders.length === 0) {
                         $('#recentOrdersList').html(`
@@ -4564,6 +4581,14 @@ const paidReversalState = {
     canVoid: false,
     submitting: false,
     pendingApprovalId: 0,
+    idempotencyKey: '',
+    idempotencyAction: '',
+    originalPayments: [],
+    refundTenders: [],
+    refundableLines: [],
+    originalTotal: 0,
+    refundedAmount: 0,
+    remainingRefundableAmount: 0,
 };
 
 function resetPaidReversalValidation() {
@@ -4578,10 +4603,147 @@ function populatePaidReversalActionSelect(refundEligible, voidEligible) {
     const $select = $('#paid-reversal-action');
     $select.empty();
     if (refundEligible) {
-        $select.append('<option value="refund">استرداد</option>');
+        $select.append('<option value="refund">استرداد مبلغ الطلب</option>');
     }
     if (voidEligible) {
-        $select.append('<option value="void">إلغاء مدفوع</option>');
+        $select.append('<option value="void">إلغاء الطلب المدفوع</option>');
+    }
+}
+
+function invalidatePaidReversalIdempotency() {
+    if (!paidReversalState.submitting) {
+        paidReversalState.idempotencyKey = '';
+        paidReversalState.idempotencyAction = '';
+    }
+}
+
+function populatePaidReversalTenderContext() {
+    const payments = Array.isArray(paidReversalState.originalPayments)
+        ? paidReversalState.originalPayments
+        : [];
+    const tenders = Array.isArray(paidReversalState.refundTenders)
+        ? paidReversalState.refundTenders
+        : [];
+    const originalHtml = payments.length > 0
+        ? payments.map((payment) => {
+            const label = escapeRecentOrdersHtml(payment.label || payment.payment_method || '-');
+            const amount = parseFloat(payment.refundable_amount || payment.original_amount || 0).toFixed(2);
+            return `<span class="badge bg-light text-dark border me-1">${label}: ${amount} ج.م</span>`;
+        }).join('')
+        : '<span class="text-danger">تعذر تحميل طرق الدفع الأصلية لهذا الطلب.</span>';
+    $('#paid-reversal-original-tenders').html(
+        '<strong class="d-block mb-2">طرق الدفع الأصلية والمتبقي القابل للاسترداد</strong>' + originalHtml
+    );
+    $('#paid-reversal-balance-summary').html(
+        `<strong class="d-block mb-1">رصيد الاسترداد</strong>
+         إجمالي البيع: ${paidReversalState.originalTotal.toFixed(2)} ج.م
+         <span class="mx-1">•</span>
+         المسترد سابقاً: ${paidReversalState.refundedAmount.toFixed(2)} ج.م
+         <span class="mx-1">•</span>
+         <strong>المتبقي: ${paidReversalState.remainingRefundableAmount.toFixed(2)} ج.م</strong>`
+    );
+
+    const $select = $('#paid-reversal-tender');
+    $select.empty().append('<option value="">اختر طريقة صرف الاسترداد</option>');
+    tenders.forEach((tender) => {
+        const code = escapeRecentOrdersHtml(tender.code || '');
+        const label = escapeRecentOrdersHtml(tender.label || tender.code || '');
+        const type = escapeRecentOrdersHtml(tender.type || '');
+        $select.append(`<option value="${code}" data-type="${type}">${label}</option>`);
+    });
+    $('#paid-reversal-reference').val('');
+    updatePaidReversalTenderVisibility();
+}
+
+function formatPaidReversalQuantity(value) {
+    return parseFloat(value || 0).toFixed(6).replace(/\.?0+$/, '');
+}
+
+function populatePaidReversalRefundLines() {
+    const lines = Array.isArray(paidReversalState.refundableLines)
+        ? paidReversalState.refundableLines
+        : [];
+    const html = lines.length > 0
+        ? lines.map((line) => {
+            const detailId = parseInt(line.original_detail_id || 0, 10);
+            const remainingQty = parseFloat(line.remaining_quantity || 0);
+            const remainingAmount = parseFloat(line.remaining_amount || 0);
+            return `<tr data-refund-detail-id="${detailId}" data-remaining-amount="${remainingAmount}">
+                <td>
+                    <input class="form-check-input paid-reversal-line-check" type="checkbox"
+                        aria-label="اختيار ${escapeRecentOrdersHtml(line.label || '')}">
+                </td>
+                <td>
+                    <strong>${escapeRecentOrdersHtml(line.label || `#${line.item_id || detailId}`)}</strong>
+                    ${parseFloat(line.original_discount || 0) > 0
+                        ? `<small class="d-block text-muted">يشمل خصماً ${parseFloat(line.original_discount).toFixed(2)} ج.م</small>`
+                        : ''}
+                </td>
+                <td class="text-nowrap">${formatPaidReversalQuantity(remainingQty)}</td>
+                <td style="min-width: 8rem">
+                    <input class="form-control form-control-sm paid-reversal-line-qty" type="number"
+                        min="0.000001" max="${remainingQty.toFixed(6)}" step="0.000001"
+                        value="${remainingQty.toFixed(6)}" disabled>
+                </td>
+                <td class="text-nowrap paid-reversal-line-estimate">${remainingAmount.toFixed(2)} ج.م</td>
+            </tr>`;
+        }).join('')
+        : '<tr><td colspan="5" class="text-center text-muted py-3">لا توجد سطور قابلة للاسترداد.</td></tr>';
+    $('#paid-reversal-items-list').html(html);
+    updatePaidReversalItemsTotal();
+}
+
+function updatePaidReversalItemsTotal() {
+    let total = 0;
+    $('#paid-reversal-items-list tr[data-refund-detail-id]').each(function() {
+        const $row = $(this);
+        const selected = $row.find('.paid-reversal-line-check').is(':checked');
+        const $qty = $row.find('.paid-reversal-line-qty');
+        const maxQty = parseFloat($qty.attr('max') || 0);
+        const qty = Math.max(0, Math.min(maxQty, parseFloat($qty.val() || 0)));
+        const remainingAmount = parseFloat($row.data('remaining-amount') || 0);
+        const estimate = maxQty > 0 ? (remainingAmount * qty / maxQty) : 0;
+        $row.find('.paid-reversal-line-estimate').text(`${estimate.toFixed(2)} ج.م`);
+        if (selected) {
+            total += estimate;
+        }
+    });
+    $('#paid-reversal-items-total').text(`الإجمالي التقريبي المحدد: ${total.toFixed(2)} ج.م — الخادم يحسب القيمة النهائية من لقطة البيع.`);
+}
+
+function updatePaidReversalRefundModeVisibility() {
+    const action = $('#paid-reversal-action').val() === 'void' ? 'void' : 'refund';
+    const mode = String($('#paid-reversal-refund-mode').val() || 'full');
+    const isRefund = action === 'refund';
+    $('#paid-reversal-refund-mode').prop('disabled', !isRefund);
+    $('#paid-reversal-amount-section').toggleClass('d-none', !isRefund || mode !== 'amount');
+    $('#paid-reversal-items-section').toggleClass('d-none', !isRefund || mode !== 'items');
+}
+
+function updatePaidReversalTenderVisibility() {
+    const action = $('#paid-reversal-action').val() === 'void' ? 'void' : 'refund';
+    const isRefund = action === 'refund';
+    $('#paid-reversal-tender-section').toggleClass('d-none', !isRefund);
+    updatePaidReversalRefundModeVisibility();
+    if (!isRefund) {
+        return;
+    }
+
+    const selected = $('#paid-reversal-tender option:selected');
+    const type = String(selected.data('type') || '');
+    const reference = String($('#paid-reversal-reference').val() || '').trim();
+    if (type === 'cash') {
+        $('#paid-reversal-settlement-hint').text(
+            'سيُسجل الصرف النقدي مرة واحدة كحركة استرداد نقدي على جلسة الدرج المفتوحة.'
+        );
+    } else if (type && reference) {
+        $('#paid-reversal-settlement-hint').text(
+            'سيُسجل الاسترداد غير النقدي كتسوية مكتملة باستخدام المرجع المدخل.'
+        );
+    } else {
+        $('#paid-reversal-settlement-hint').text(
+            'الاسترداد غير النقدي بدون مرجع سيُسجل كعملية معلقة حتى إدخال مرجع التسوية.'
+        );
     }
 }
 
@@ -4601,15 +4763,38 @@ function openPaidOrderReversalModal(orderId, refundEligible, voidEligible, optio
     paidReversalState.canRefund = refundEligible;
     paidReversalState.canVoid = voidEligible;
     paidReversalState.submitting = false;
+    paidReversalState.idempotencyKey = '';
+    paidReversalState.idempotencyAction = '';
+    paidReversalState.originalPayments = Array.isArray(options && options.originalPayments)
+        ? options.originalPayments
+        : [];
+    paidReversalState.refundTenders = Array.isArray(options && options.refundTenders)
+        ? options.refundTenders
+        : [];
+    paidReversalState.refundableLines = Array.isArray(options && options.refundableLines)
+        ? options.refundableLines
+        : [];
+    paidReversalState.originalTotal = Math.max(0, parseFloat(options && options.originalTotal || 0));
+    paidReversalState.refundedAmount = Math.max(0, parseFloat(options && options.refundedAmount || 0));
+    paidReversalState.remainingRefundableAmount = Math.max(
+        0,
+        parseFloat(options && options.remainingRefundableAmount || 0)
+    );
     if (!options || !options.keepApproval) {
         paidReversalState.pendingApprovalId = 0;
     }
 
+    $('#paid-reversal-refund-mode').val('full');
     populatePaidReversalActionSelect(refundEligible, voidEligible);
+    populatePaidReversalTenderContext();
+    populatePaidReversalRefundLines();
+    $('#paid-reversal-amount')
+        .val('')
+        .attr('max', paidReversalState.remainingRefundableAmount.toFixed(2));
     $('#paid-reversal-policy').val('waste');
     $('#paid-reversal-reason').val('');
     resetPaidReversalValidation();
-    $('#paidReversalSubmitBtn').prop('disabled', false).html('<i class="fas fa-check me-1"></i>تنفيذ');
+    $('#paidReversalSubmitBtn').prop('disabled', false).html('<i class="fas fa-check me-1"></i>تأكيد العملية');
 
     const modal = typeof bootstrap.Modal.getOrCreateInstance === 'function'
         ? bootstrap.Modal.getOrCreateInstance(modalEl)
@@ -4627,7 +4812,7 @@ function submitPaidOrderReversal(approvalId) {
 
     const reason = ($('#paid-reversal-reason').val() || '').trim();
     if (!reason) {
-        showPaidReversalValidation('يرجى إدخال سبب العملية');
+        showPaidReversalValidation('اكتب سبب الاسترداد أو الإلغاء قبل المتابعة.');
         $('#paid-reversal-reason').trigger('focus');
         return;
     }
@@ -4640,18 +4825,76 @@ function submitPaidOrderReversal(approvalId) {
 
     const action = $('#paid-reversal-action').val() === 'void' ? 'void' : 'refund';
     const policy = $('#paid-reversal-policy').val() || 'waste';
+    const refundTender = String($('#paid-reversal-tender').val() || '').trim();
+    const refundReference = String($('#paid-reversal-reference').val() || '').trim();
+    if (action === 'refund' && !refundTender) {
+        showPaidReversalValidation('اختر طريقة صرف مبلغ الاسترداد قبل المتابعة.');
+        $('#paid-reversal-tender').trigger('focus');
+        return;
+    }
+    const refundMode = String($('#paid-reversal-refund-mode').val() || 'full');
+    let refundAmount = '';
+    let refundLines = [];
+    if (action === 'refund' && refundMode === 'amount') {
+        refundAmount = String($('#paid-reversal-amount').val() || '').trim();
+        const parsedAmount = parseFloat(refundAmount);
+        if (!Number.isFinite(parsedAmount) || parsedAmount <= 0
+            || parsedAmount - paidReversalState.remainingRefundableAmount > 0.005
+        ) {
+            showPaidReversalValidation('أدخل مبلغاً صحيحاً لا يتجاوز الرصيد القابل للاسترداد.');
+            $('#paid-reversal-amount').trigger('focus');
+            return;
+        }
+    } else if (action === 'refund' && refundMode === 'items') {
+        $('#paid-reversal-items-list tr[data-refund-detail-id]').each(function() {
+            const $row = $(this);
+            if (!$row.find('.paid-reversal-line-check').is(':checked')) {
+                return;
+            }
+            const $qty = $row.find('.paid-reversal-line-qty');
+            const quantity = parseFloat($qty.val() || 0);
+            const maxQuantity = parseFloat($qty.attr('max') || 0);
+            if (Number.isFinite(quantity) && quantity > 0 && quantity <= maxQuantity + 0.0000005) {
+                refundLines.push({
+                    original_detail_id: parseInt($row.data('refund-detail-id') || 0, 10),
+                    quantity: quantity.toFixed(6),
+                    stock_disposition: policy === 'return_to_stock' ? 'restock' : 'waste',
+                });
+            }
+        });
+        if (refundLines.length === 0) {
+            showPaidReversalValidation('اختر صنفاً واحداً على الأقل وحدد كمية صحيحة.');
+            return;
+        }
+    }
     const permissionKey = action === 'void' ? 'pos.void.paid' : 'pos.refund';
+    if (!paidReversalState.idempotencyKey || paidReversalState.idempotencyAction !== action) {
+        paidReversalState.idempotencyKey = createPOSIdempotencyKey(
+            action === 'void' ? 'pos.order.void' : 'pos.order.refund'
+        );
+        paidReversalState.idempotencyAction = action;
+    }
     paidReversalState.submitting = true;
     resetPaidReversalValidation();
-    $('#paidReversalSubmitBtn').prop('disabled', true).html('<i class="fas fa-spinner fa-spin me-1"></i>جاري التنفيذ...');
+    $('#paidReversalSubmitBtn').prop('disabled', true).html('<i class="fas fa-spinner fa-spin me-1"></i>جارٍ تنفيذ العملية...');
 
     const postData = {
         order_id: orderId,
         action: action,
         refund_stock_policy: policy,
         reason: reason,
-        idempotency_key: createPOSIdempotencyKey(action === 'void' ? 'pos.order.void' : 'pos.order.refund'),
+        idempotency_key: paidReversalState.idempotencyKey,
     };
+    if (action === 'refund') {
+        postData.refund_payment_method = refundTender;
+        postData.refund_external_reference = refundReference;
+        postData.refund_mode = refundMode;
+        if (refundMode === 'amount') {
+            postData.refund_amount = refundAmount;
+        } else if (refundMode === 'items') {
+            postData.refund_lines = JSON.stringify(refundLines);
+        }
+    }
     if (approvalId) {
         postData.manager_approval_id = approvalId;
     } else if (effectiveApprovalId) {
@@ -4660,10 +4903,10 @@ function submitPaidOrderReversal(approvalId) {
 
     function handleApprovalRequired() {
         paidReversalState.submitting = false;
-        $('#paidReversalSubmitBtn').prop('disabled', false).html('<i class="fas fa-check me-1"></i>تنفيذ');
-        const actionLabel = action === 'void' ? 'إلغاء طلب مدفوع' : 'استرداد';
+        $('#paidReversalSubmitBtn').prop('disabled', false).html('<i class="fas fa-check me-1"></i>تأكيد العملية');
+        const actionLabel = action === 'void' ? 'إلغاء الطلب المدفوع' : 'استرداد مبلغ الطلب';
         window.POSMAIN.requestManagerOverride(permissionKey, {
-            message: actionLabel + ' يتطلب اعتماد',
+            message: actionLabel + ' يحتاج إلى اعتماد مدير',
             target_type: 'order',
             target_id: orderId,
         }).done(function (approval) {
@@ -4690,6 +4933,8 @@ function submitPaidOrderReversal(approvalId) {
                 if (response.success) {
                     paidReversalState.submitting = false;
                     paidReversalState.pendingApprovalId = 0;
+                    paidReversalState.idempotencyKey = '';
+                    paidReversalState.idempotencyAction = '';
                     const modalEl = document.getElementById('paidOrderReversalModal');
                     if (modalEl && typeof bootstrap !== 'undefined' && bootstrap.Modal) {
                         const instance = bootstrap.Modal.getInstance(modalEl);
@@ -4698,26 +4943,33 @@ function submitPaidOrderReversal(approvalId) {
                         }
                     }
                     if (window.Swal && typeof window.Swal.fire === 'function') {
+                        const pendingExternal = parseFloat(
+                            (response.data && response.data.pending_external_amount) || 0
+                        );
                         Swal.fire({
                             icon: 'success',
-                            title: action === 'void' ? 'تم إلغاء الطلب المدفوع' : 'تم استرداد الطلب',
+                            title: action === 'void'
+                                ? 'تم إلغاء الطلب المدفوع'
+                                : (pendingExternal > 0
+                                    ? 'تم تسجيل الاسترداد وهو بانتظار التسوية الخارجية'
+                                    : 'تم استرداد مبلغ الطلب وحفظ المرتجع'),
                             timer: 1800,
                             showConfirmButton: false,
                         });
                     }
                     loadRecentOrders(false);
-                    $('#paidReversalSubmitBtn').prop('disabled', false).html('<i class="fas fa-check me-1"></i>تنفيذ');
+                    $('#paidReversalSubmitBtn').prop('disabled', false).html('<i class="fas fa-check me-1"></i>تأكيد العملية');
                 } else if (paidReversalNeedsApproval(response.code) && !effectiveApprovalId) {
                     handleApprovalRequired();
                 } else {
                     paidReversalState.submitting = false;
                     showPaidReversalValidation(paidReversalFriendlyError(response));
-                    $('#paidReversalSubmitBtn').prop('disabled', false).html('<i class="fas fa-check me-1"></i>تنفيذ');
+                    $('#paidReversalSubmitBtn').prop('disabled', false).html('<i class="fas fa-check me-1"></i>تأكيد العملية');
                 }
             } catch (e) {
                 paidReversalState.submitting = false;
                 showPaidReversalValidation('خطأ في استجابة الخادم');
-                $('#paidReversalSubmitBtn').prop('disabled', false).html('<i class="fas fa-check me-1"></i>تنفيذ');
+                $('#paidReversalSubmitBtn').prop('disabled', false).html('<i class="fas fa-check me-1"></i>تأكيد العملية');
             }
         },
         error: function(xhr) {
@@ -4737,7 +4989,7 @@ function submitPaidOrderReversal(approvalId) {
             }
             paidReversalState.submitting = false;
             showPaidReversalValidation(paidReversalFriendlyError(payload || { code: code, message: message }));
-            $('#paidReversalSubmitBtn').prop('disabled', false).html('<i class="fas fa-check me-1"></i>تنفيذ');
+            $('#paidReversalSubmitBtn').prop('disabled', false).html('<i class="fas fa-check me-1"></i>تأكيد العملية');
         },
     });
 }
@@ -4762,11 +5014,18 @@ function paidReversalFriendlyError(payload) {
         case 'APPROVAL_EXPIRED':
             return 'انتهت صلاحية الاعتماد. أعد إدخال الرمز ثم نفّذ.';
         case 'ORDER_ALREADY_REVERSED':
-            return 'هذا الطلب تمت معالجته مسبقاً.';
+            return 'لا يمكن تنفيذ العملية لأن الطلب تم استرداده أو إلغاؤه من قبل.';
         case 'ORDER_NOT_PAID':
             return 'الطلب غير مدفوع ولا يمكن استرداده من هنا.';
         case 'ORDER_NOT_FOUND':
             return 'تعذر العثور على الطلب.';
+        case 'REFUND_TENDER_REQUIRED':
+            return 'اختر طريقة صرف مبلغ الاسترداد.';
+        case 'PAYMENT_METHOD_NOT_FOUND':
+        case 'PAYMENT_METHOD_ACCOUNT_REQUIRED':
+            return 'طريقة الاسترداد غير متاحة أو غير مرتبطة بحساب مالي صالح.';
+        case 'DRAWER_SESSION_REQUIRED':
+            return 'الاسترداد النقدي يحتاج إلى جلسة درج مفتوحة لنفس المستخدم والفرع.';
         default:
             if (message && message !== code) {
                 return message;
@@ -4805,24 +5064,27 @@ function deleteOrder(orderId, tableId, approvalId) {
             success: function(response) {
                 if (response.success) {
                     loadRecentOrders(false);
-                    alert('تم حذف الطلب بنجاح');
+                    alert('تم إلغاء الطلب غير المدفوع مع الاحتفاظ بسجل الإلغاء.');
                 } else if ((response.code || '') === 'MANAGER_APPROVAL_REQUIRED' && !approvalId) {
                     window.POSMAIN.requestManagerOverride('pos.cancel.unpaid', {
-                        message: 'حذف الطلب يتطلب اعتماد مدير',
+                        message: 'إلغاء الطلب غير المدفوع يحتاج إلى اعتماد مدير',
                         target_type: 'pos_order',
                         target_id: orderId,
                     }).done(function (approval) {
                         deleteOrder(orderId, tableId, approval.approval_id);
                     });
                 } else {
-                    alert('حدث خطأ أثناء حذف الطلب: ' + (response.message || 'خطأ غير معروف'));
+                    const message = (response.code || '') === 'ORDER_HAS_PAYMENT_USE_REFUND'
+                        ? 'تم تسجيل دفعة على هذا الطلب، لذلك لا يمكن إلغاؤه كطلب غير مدفوع. استخدم الاسترداد.'
+                        : (response.message || 'تعذر إلغاء الطلب');
+                    alert(message);
                 }
             },
             error: function(xhr) {
                 const payload = xhr.responseJSON || {};
                 if ((payload.code || '') === 'MANAGER_APPROVAL_REQUIRED' && !approvalId) {
                     window.POSMAIN.requestManagerOverride('pos.cancel.unpaid', {
-                        message: 'حذف الطلب يتطلب اعتماد مدير',
+                        message: 'إلغاء الطلب غير المدفوع يحتاج إلى اعتماد مدير',
                         target_type: 'pos_order',
                         target_id: orderId,
                     }).done(function (approval) {
@@ -4830,7 +5092,9 @@ function deleteOrder(orderId, tableId, approvalId) {
                     });
                     return;
                 }
-                alert('حدث خطأ في الاتصال بالخادم');
+                alert((payload.code || '') === 'ORDER_HAS_PAYMENT_USE_REFUND'
+                    ? 'تم تسجيل دفعة على هذا الطلب، لذلك استخدم الاسترداد بدلاً من الإلغاء.'
+                    : 'تعذر إلغاء الطلب. تحقق من الاتصال ثم حاول مرة أخرى.');
             }
         });
     };
@@ -4839,18 +5103,18 @@ function deleteOrder(orderId, tableId, approvalId) {
         && window.POSMAIN.can('pos.cancel.unpaid') !== true;
     if (needsOverride && !approvalId) {
         window.POSMAIN.requestManagerOverride('pos.cancel.unpaid', {
-            message: 'حذف الطلب يتطلب اعتماد مدير',
+            message: 'إلغاء الطلب غير المدفوع يحتاج إلى اعتماد مدير',
             target_type: 'pos_order',
             target_id: orderId,
         }).done(function (approval) {
-            if (confirm('هل أنت متأكد من حذف هذا الطلب؟ لا يمكن التراجع عن هذه العملية.')) {
+            if (confirm('هل تريد إلغاء هذا الطلب غير المدفوع؟ سيبقى سجل الإلغاء محفوظاً.')) {
                 deleteOrder(orderId, tableId, approval.approval_id);
             }
         });
         return;
     }
 
-    if (confirm('هل أنت متأكد من حذف هذا الطلب؟ لا يمكن التراجع عن هذه العملية.')) {
+    if (confirm('هل تريد إلغاء هذا الطلب غير المدفوع؟ سيبقى سجل الإلغاء محفوظاً.')) {
         runDelete();
     }
 }
@@ -4893,9 +5157,17 @@ $(document).ready(function() {
         const orderId = $(this).data('id');
         const refundEligible = $(this).data('refund-eligible') === 1 || $(this).data('refund-eligible') === '1';
         const voidEligible = $(this).data('void-eligible') === 1 || $(this).data('void-eligible') === '1';
+        const order = recentOrdersState.ordersById[String(orderId)] || {};
         // Open the modal first; PIN is requested on submit for the selected action
         // (refund vs void) so the approval permission key always matches.
-        openPaidOrderReversalModal(orderId, refundEligible, voidEligible);
+        openPaidOrderReversalModal(orderId, refundEligible, voidEligible, {
+            originalPayments: Array.isArray(order.original_payments) ? order.original_payments : [],
+            refundTenders: recentOrdersState.refundTenders,
+            refundableLines: Array.isArray(order.refundable_lines) ? order.refundable_lines : [],
+            originalTotal: order.total,
+            refundedAmount: order.refunded_amount,
+            remainingRefundableAmount: order.remaining_refundable_amount,
+        });
     });
 
     // Handle print order button
@@ -4924,10 +5196,44 @@ $(document).ready(function() {
 
     $('#paidOrderReversalModal').on('shown.bs.modal', function() {
         resetPaidReversalValidation();
-        $('#paid-reversal-reason').trigger('focus');
+        const action = $('#paid-reversal-action').val() === 'void' ? 'void' : 'refund';
+        $(action === 'refund' ? '#paid-reversal-tender' : '#paid-reversal-reason').trigger('focus');
     });
 
-    $('#paid-reversal-reason').on('input', function() {
+    $('#paid-reversal-action').on('change', function() {
+        invalidatePaidReversalIdempotency();
+        updatePaidReversalTenderVisibility();
+        resetPaidReversalValidation();
+    });
+
+    $('#paid-reversal-tender, #paid-reversal-reference').on('change input', function() {
+        invalidatePaidReversalIdempotency();
+        updatePaidReversalTenderVisibility();
+        resetPaidReversalValidation();
+    });
+
+    $('#paid-reversal-refund-mode, #paid-reversal-amount').on('change input', function() {
+        invalidatePaidReversalIdempotency();
+        updatePaidReversalRefundModeVisibility();
+        resetPaidReversalValidation();
+    });
+
+    $(document).on('change', '.paid-reversal-line-check', function() {
+        const $row = $(this).closest('tr');
+        $row.find('.paid-reversal-line-qty').prop('disabled', !$(this).is(':checked'));
+        invalidatePaidReversalIdempotency();
+        updatePaidReversalItemsTotal();
+        resetPaidReversalValidation();
+    });
+
+    $(document).on('input change', '.paid-reversal-line-qty', function() {
+        invalidatePaidReversalIdempotency();
+        updatePaidReversalItemsTotal();
+        resetPaidReversalValidation();
+    });
+
+    $('#paid-reversal-policy, #paid-reversal-reason').on('change input', function() {
+        invalidatePaidReversalIdempotency();
         if (($(this).val() || '').trim() !== '') {
             resetPaidReversalValidation();
         }

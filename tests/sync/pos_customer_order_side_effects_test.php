@@ -82,6 +82,35 @@ try {
     posCrmSideEffectsAssert((int) ($rebuilt['orders_count'] ?? 0) === 1, 'rebuild should preserve orders_count');
     posCrmSideEffectsAssert(abs((float) ($rebuilt['lifetime_paid'] ?? 0) - 100.0) < 0.001, 'rebuild should preserve lifetime_paid');
 
+    $conn->query("INSERT INTO credit_notes (
+        uuid, tenant, branch, business_day, original_order_id, customer_account_id,
+        total_amount, reason, status, created_by
+    ) VALUES (
+        '50010000-0000-4000-8000-000000000001', 0, 0, CURDATE(), 5001, 1,
+        40.00, 'partial refund', 'posted', 7
+    )");
+    $partialRefresh = $sideEffects->refreshCustomerRollupForOrder($conn, 5001);
+    posCrmSideEffectsAssert($partialRefresh['applied'] === true, 'refund should refresh linked customer rollup');
+    $partialProfile = $customerService->getProfile($conn, $customerId, true);
+    posCrmSideEffectsAssert(abs((float) ($partialProfile['lifetime_paid'] ?? 0) - 60.0) < 0.001, 'partial refund should reduce lifetime paid');
+    posCrmSideEffectsAssert((int) ($partialProfile['orders_count'] ?? 0) === 1, 'partial refund should preserve historical order count');
+
+    $conn->query("INSERT INTO credit_notes (
+        uuid, tenant, branch, business_day, original_order_id, customer_account_id,
+        total_amount, reason, status, created_by
+    ) VALUES (
+        '50010000-0000-4000-8000-000000000002', 0, 0, CURDATE(), 5001, 1,
+        60.00, 'remaining refund', 'posted', 7
+    )");
+    $conn->query("UPDATE ot_head SET payment_status = 'refunded' WHERE id = 5001");
+    $fullRefresh = $sideEffects->refreshCustomerRollupForOrder($conn, 5001);
+    $fullProfile = $customerService->getProfile($conn, $customerId, true);
+    posCrmSideEffectsAssert($fullRefresh['applied'] === true, 'full refund should refresh linked customer rollup');
+    posCrmSideEffectsAssert(abs((float) ($fullProfile['lifetime_paid'] ?? 0)) < 0.001, 'full refund should reduce lifetime paid to zero');
+    posCrmSideEffectsAssert((int) ($fullProfile['orders_count'] ?? 0) === 1, 'full refund should preserve original order history');
+    $live = $sideEffects->liveStatsFromFulfillment($conn, $customerId);
+    posCrmSideEffectsAssert(abs((float) ($live['lifetime_paid'] ?? 0)) < 0.001, 'live customer stats should use posted credit notes');
+
     echo "pos-customer-order-side-effects-ok db={$db}\n";
 } finally {
     $conn->query("DROP DATABASE IF EXISTS `{$db}`");

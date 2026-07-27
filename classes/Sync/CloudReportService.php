@@ -52,9 +52,9 @@ class CloudReportService
 
     private function salesSummary(mysqli $conn, string $branchUuid, ?string $from, ?string $to): array
     {
-        [$where, $types, $params] = $this->where($branchUuid, 'branch_uuid', 'pro_date', $from, $to);
-        $cancelled = $this->cancelledSql();
-        $paid = $this->paidSql();
+        [$where, $types, $params] = $this->where($branchUuid, 'o.branch_uuid', 'o.pro_date', $from, $to);
+        $cancelled = $this->cancelledSql('o');
+        $paid = $this->paidSql('o');
 
         $row = $this->queryOne($conn, "
             SELECT
@@ -62,16 +62,19 @@ class CloudReportService
                 COALESCE(SUM(CASE WHEN {$cancelled} THEN 1 ELSE 0 END), 0) AS cancelled_orders,
                 COALESCE(SUM(CASE WHEN NOT ({$cancelled}) THEN 1 ELSE 0 END), 0) AS net_orders,
                 COALESCE(SUM(CASE WHEN NOT ({$cancelled}) AND {$paid} THEN 1 ELSE 0 END), 0) AS paid_orders,
-                COALESCE(SUM(CASE WHEN NOT ({$cancelled}) AND LOWER(COALESCE(payment_status, '')) = 'partial' THEN 1 ELSE 0 END), 0) AS partial_orders,
-                COALESCE(SUM(CASE WHEN NOT ({$cancelled}) THEN fat_total ELSE 0 END), 0) AS total_sales,
-                COALESCE(SUM(CASE WHEN NOT ({$cancelled}) THEN fat_net ELSE 0 END), 0) AS net_sales,
-                COALESCE(SUM(CASE WHEN NOT ({$cancelled}) THEN fat_disc ELSE 0 END), 0) AS discounts,
-                COALESCE(SUM(CASE WHEN NOT ({$cancelled}) THEN paid_amount ELSE 0 END), 0) AS paid_amount,
-                COALESCE(SUM(CASE WHEN NOT ({$cancelled}) THEN remaining_amount ELSE 0 END), 0) AS remaining_amount,
-                COALESCE(SUM(CASE WHEN {$cancelled} THEN fat_total ELSE 0 END), 0) AS cancelled_sales
-            FROM cloud_orders
+                COALESCE(SUM(CASE WHEN NOT ({$cancelled}) AND LOWER(COALESCE(o.payment_status, '')) = 'partial' THEN 1 ELSE 0 END), 0) AS partial_orders,
+                COALESCE(SUM(CASE WHEN NOT ({$cancelled}) THEN o.fat_total ELSE 0 END), 0) AS total_sales,
+                COALESCE(SUM(CASE WHEN NOT ({$cancelled}) THEN o.fat_net ELSE 0 END), 0) AS net_sales,
+                COALESCE(SUM(CASE WHEN NOT ({$cancelled}) THEN o.fat_disc ELSE 0 END), 0) AS discounts,
+                COALESCE(SUM(CASE WHEN NOT ({$cancelled}) THEN o.paid_amount ELSE 0 END), 0) AS paid_amount,
+                COALESCE(SUM(CASE WHEN NOT ({$cancelled}) THEN o.remaining_amount ELSE 0 END), 0) AS remaining_amount,
+                COALESCE(SUM(CASE WHEN {$cancelled} THEN o.fat_total ELSE 0 END), 0) AS cancelled_sales
+            FROM cloud_orders o
             WHERE {$where}
         ", $types, $params);
+        $refunds = $this->refundSummary($conn, $branchUuid, $from, $to);
+        $salesAfterDiscount = (float) ($row['net_sales'] ?? 0);
+        $refundTotal = (float) $refunds['total'];
 
         return [
             'total_orders' => (int) ($row['total_orders'] ?? 0),
@@ -80,7 +83,10 @@ class CloudReportService
             'paid_orders' => (int) ($row['paid_orders'] ?? 0),
             'partial_orders' => (int) ($row['partial_orders'] ?? 0),
             'total_sales' => $this->decimal($row['total_sales'] ?? null),
-            'net_sales' => $this->decimal($row['net_sales'] ?? null),
+            'sales_after_discount' => $this->decimal($salesAfterDiscount),
+            'refunds' => $this->decimal($refundTotal),
+            'refund_count' => $refunds['count'],
+            'net_sales' => $this->decimal($salesAfterDiscount - $refundTotal),
             'discounts' => $this->decimal($row['discounts'] ?? null),
             'paid_amount' => $this->decimal($row['paid_amount'] ?? null),
             'remaining_amount' => $this->decimal($row['remaining_amount'] ?? null),
@@ -100,19 +106,34 @@ class CloudReportService
             throw new InvalidArgumentException('Unsupported cloud report grouping.');
         }
 
-        [$where, $types, $params] = $this->where($branchUuid, 'branch_uuid', 'pro_date', $from, $to);
-        $cancelled = $this->cancelledSql();
+        [$where, $types, $params] = $this->where($branchUuid, 'o.branch_uuid', 'o.pro_date', $from, $to);
+        $cancelled = $this->cancelledSql('o');
         $rows = $this->queryAll($conn, "
             SELECT
-                {$column} AS group_key,
+                o.{$column} AS group_key,
                 COUNT(*) AS order_count,
-                COALESCE(SUM(fat_total), 0) AS total_sales
-            FROM cloud_orders
+                COALESCE(SUM(o.fat_net), 0) AS total_sales
+            FROM cloud_orders o
             WHERE {$where}
               AND NOT ({$cancelled})
-            GROUP BY {$column}
+            GROUP BY o.{$column}
             ORDER BY total_sales DESC, order_count DESC
         ", $types, $params);
+
+        $refundGroups = $this->refundGroups($conn, $branchUuid, $from, $to, $column);
+        $indexed = [];
+        foreach ($rows as $row) {
+            $indexed[(string) ($row['group_key'] ?? '')] = $row;
+        }
+        foreach ($refundGroups as $refund) {
+            $key = (string) ($refund['group_key'] ?? '');
+            if (!isset($indexed[$key])) {
+                $indexed[$key] = ['group_key' => $refund['group_key'], 'order_count' => 0, 'total_sales' => 0];
+            }
+            $indexed[$key]['total_sales'] = (float) $indexed[$key]['total_sales'] - (float) $refund['refund_total'];
+        }
+        $rows = array_values($indexed);
+        usort($rows, static fn (array $a, array $b): int => (float) $b['total_sales'] <=> (float) $a['total_sales']);
 
         return array_map(function (array $row): array {
             return [
@@ -125,23 +146,40 @@ class CloudReportService
 
     private function sourceTotals(mysqli $conn, string $branchUuid, ?string $from, ?string $to): array
     {
-        [$where, $types, $params] = $this->where($branchUuid, 'branch_uuid', 'pro_date', $from, $to);
-        $cancelled = $this->cancelledSql();
+        [$where, $types, $params] = $this->where($branchUuid, 'o.branch_uuid', 'o.pro_date', $from, $to);
+        $cancelled = $this->cancelledSql('o');
         $rows = $this->queryAll($conn, "
             SELECT
                 CASE
-                    WHEN LOWER(COALESCE(source_system, '')) = 'moova' THEN 'moova'
-                    WHEN COALESCE(source_external_id, '') <> '' THEN 'external'
+                    WHEN LOWER(COALESCE(o.source_system, '')) = 'moova' THEN 'moova'
+                    WHEN COALESCE(o.source_external_id, '') <> '' THEN 'external'
                     ELSE 'local'
                 END AS source_bucket,
                 COUNT(*) AS order_count,
-                COALESCE(SUM(fat_total), 0) AS total_sales
-            FROM cloud_orders
+                COALESCE(SUM(o.fat_net), 0) AS total_sales
+            FROM cloud_orders o
             WHERE {$where}
               AND NOT ({$cancelled})
             GROUP BY source_bucket
             ORDER BY total_sales DESC, source_bucket ASC
         ", $types, $params);
+
+        foreach ($this->refundGroups($conn, $branchUuid, $from, $to, 'source_bucket') as $refund) {
+            $key = (string) ($refund['group_key'] ?? 'local');
+            $found = false;
+            foreach ($rows as &$row) {
+                if ((string) ($row['source_bucket'] ?? '') === $key) {
+                    $row['total_sales'] = (float) $row['total_sales'] - (float) $refund['refund_total'];
+                    $found = true;
+                    break;
+                }
+            }
+            unset($row);
+            if (!$found) {
+                $rows[] = ['source_bucket' => $key, 'order_count' => 0, 'total_sales' => -(float) $refund['refund_total']];
+            }
+        }
+        usort($rows, static fn (array $a, array $b): int => (float) $b['total_sales'] <=> (float) $a['total_sales']);
 
         return array_map(function (array $row): array {
             return [
@@ -172,11 +210,69 @@ class CloudReportService
             ORDER BY amount DESC, payment_method ASC
         ", $types, $params);
 
+        $indexed = [];
+        foreach ($rows as $row) {
+            $method = (string) ($row['payment_method'] ?? 'unknown');
+            $indexed[$method] = $row + [
+                'refund_count' => 0,
+                'refunded_amount' => 0,
+                'settled_refunded_amount' => 0,
+                'pending_refund_amount' => 0,
+            ];
+        }
+
+        [$refundJoins, $refundWhere, $refundTypes, $refundParams] = $this->refundScope($branchUuid, $from, $to);
+        $refundRows = $this->queryAll($conn, "
+            SELECT COALESCE(NULLIF(p.payment_method, ''), 'unknown') AS payment_method,
+                   COUNT(pr.id) AS refund_count,
+                   COALESCE(SUM(pr.amount), 0) AS refunded_amount,
+                   COALESCE(SUM(CASE
+                       WHEN pr.status = 'settled' OR (pr.status = 'posted' AND LOWER(COALESCE(p.payment_method, '')) = 'cash')
+                       THEN pr.amount ELSE 0 END), 0) AS settled_refunded_amount,
+                   COALESCE(SUM(CASE WHEN pr.status = 'pending_external' THEN pr.amount ELSE 0 END), 0) AS pending_refund_amount
+            FROM credit_notes cn {$refundJoins}
+            INNER JOIN payment_refunds pr ON pr.credit_note_id = cn.id
+            LEFT JOIN cloud_order_payments p
+                   ON p.branch_uuid = refund_order.branch_uuid
+                  AND p.order_uuid = refund_order.order_uuid
+                  AND p.local_payment_id = pr.original_payment_id
+            WHERE {$refundWhere}
+            GROUP BY payment_method
+        ", $refundTypes, $refundParams);
+        foreach ($refundRows as $refund) {
+            $method = (string) ($refund['payment_method'] ?? 'unknown');
+            if (!isset($indexed[$method])) {
+                $indexed[$method] = [
+                    'payment_method' => $method,
+                    'payment_count' => 0,
+                    'amount' => 0,
+                    'refund_count' => 0,
+                    'refunded_amount' => 0,
+                    'settled_refunded_amount' => 0,
+                    'pending_refund_amount' => 0,
+                ];
+            }
+            foreach (['refund_count', 'refunded_amount', 'settled_refunded_amount', 'pending_refund_amount'] as $field) {
+                $indexed[$method][$field] = $refund[$field] ?? 0;
+            }
+        }
+        $rows = array_values($indexed);
+        usort($rows, static fn (array $a, array $b): int => (float) $b['amount'] <=> (float) $a['amount']);
+
         return array_map(function (array $row): array {
+            $collected = (float) ($row['amount'] ?? 0);
+            $refunded = (float) ($row['refunded_amount'] ?? 0);
+            $settledRefunded = (float) ($row['settled_refunded_amount'] ?? 0);
             return [
                 'payment_method' => (string) ($row['payment_method'] ?? 'unknown'),
                 'payment_count' => (int) ($row['payment_count'] ?? 0),
-                'amount' => $this->decimal($row['amount'] ?? null),
+                'amount' => $this->decimal($collected),
+                'refund_count' => (int) ($row['refund_count'] ?? 0),
+                'refunded_amount' => $this->decimal($refunded),
+                'settled_refunded_amount' => $this->decimal($settledRefunded),
+                'pending_refund_amount' => $this->decimal($row['pending_refund_amount'] ?? 0),
+                'net_after_refunds' => $this->decimal($collected - $refunded),
+                'net_custody' => $this->decimal($collected - $settledRefunded),
             ];
         }, $rows);
     }
@@ -208,16 +304,135 @@ class CloudReportService
             LIMIT {$limit}
         ", $types, $params);
 
+        $refundRows = $this->refundedItems($conn, $branchUuid, $from, $to);
+        $indexed = [];
+        foreach ($rows as $row) {
+            $key = (string) ($row['item_uuid'] ?: 'id:' . $row['item_id']);
+            $row['qty_refunded'] = 0;
+            $row['refund_total'] = 0;
+            $indexed[$key] = $row;
+        }
+        foreach ($refundRows as $refund) {
+            $key = (string) ($refund['item_uuid'] ?: 'id:' . $refund['item_id']);
+            if (!isset($indexed[$key])) {
+                $indexed[$key] = [
+                    'item_uuid' => $refund['item_uuid'],
+                    'item_id' => $refund['item_id'],
+                    'item_name' => $refund['item_name'],
+                    'category_id' => $refund['category_id'],
+                    'qty_out' => 0,
+                    'line_total' => 0,
+                    'qty_refunded' => 0,
+                    'refund_total' => 0,
+                ];
+            }
+            $indexed[$key]['qty_refunded'] += (float) $refund['qty_refunded'];
+            $indexed[$key]['refund_total'] += (float) $refund['refund_total'];
+        }
+        $rows = array_values($indexed);
+        usort($rows, static fn (array $a, array $b): int =>
+            ((float) $b['line_total'] - (float) $b['refund_total']) <=> ((float) $a['line_total'] - (float) $a['refund_total'])
+        );
+        $rows = array_slice($rows, 0, $limit);
+
         return array_map(function (array $row): array {
+            $soldQty = (float) ($row['qty_out'] ?? 0);
+            $refundedQty = (float) ($row['qty_refunded'] ?? 0);
+            $soldTotal = (float) ($row['line_total'] ?? 0);
+            $refundTotal = (float) ($row['refund_total'] ?? 0);
             return [
                 'item_uuid' => $row['item_uuid'],
                 'item_id' => $row['item_id'] === null ? null : (int) $row['item_id'],
                 'item_name' => $row['item_name'],
                 'category_id' => $row['category_id'] === null ? null : (int) $row['category_id'],
-                'qty_out' => $this->decimal($row['qty_out'] ?? null),
-                'line_total' => $this->decimal($row['line_total'] ?? null),
+                'qty_out' => $this->decimal($soldQty),
+                'qty_refunded' => $this->decimal($refundedQty),
+                'net_qty' => $this->decimal($soldQty - $refundedQty),
+                'line_total' => $this->decimal($soldTotal),
+                'refund_total' => $this->decimal($refundTotal),
+                'net_total' => $this->decimal($soldTotal - $refundTotal),
             ];
         }, $rows);
+    }
+
+    /** @return array{total:float,count:int} */
+    private function refundSummary(mysqli $conn, string $branchUuid, ?string $from, ?string $to): array
+    {
+        [$joins, $where, $types, $params] = $this->refundScope($branchUuid, $from, $to);
+        $row = $this->queryOne($conn, "
+            SELECT COUNT(*) AS refund_count, COALESCE(SUM(cn.total_amount), 0) AS refund_total
+            FROM credit_notes cn {$joins}
+            WHERE {$where}
+        ", $types, $params);
+        return ['total' => (float) ($row['refund_total'] ?? 0), 'count' => (int) ($row['refund_count'] ?? 0)];
+    }
+
+    /** @return list<array<string,mixed>> */
+    private function refundGroups(
+        mysqli $conn,
+        string $branchUuid,
+        ?string $from,
+        ?string $to,
+        string $column
+    ): array {
+        [$joins, $where, $types, $params] = $this->refundScope($branchUuid, $from, $to);
+        $groupExpr = match ($column) {
+            'cashier_user_id' => 'cn.created_by',
+            'waiter_id' => 'refund_order.waiter_id',
+            'order_type' => 'refund_order.order_type',
+            'source_bucket' => "CASE WHEN LOWER(COALESCE(refund_order.source_system, '')) = 'moova' THEN 'moova' WHEN COALESCE(refund_order.source_external_id, '') <> '' THEN 'external' ELSE 'local' END",
+            default => throw new InvalidArgumentException('Unsupported cloud refund grouping.'),
+        };
+        return $this->queryAll($conn, "
+            SELECT {$groupExpr} AS group_key, COALESCE(SUM(cn.total_amount), 0) AS refund_total
+            FROM credit_notes cn {$joins}
+            WHERE {$where}
+            GROUP BY {$groupExpr}
+        ", $types, $params);
+    }
+
+    /** @return list<array<string,mixed>> */
+    private function refundedItems(mysqli $conn, string $branchUuid, ?string $from, ?string $to): array
+    {
+        [$joins, $where, $types, $params] = $this->refundScope($branchUuid, $from, $to);
+        return $this->queryAll($conn, "
+            SELECT l.item_uuid, l.item_id, l.item_name, m.category_id,
+                   COALESCE(SUM(cnl.quantity), 0) AS qty_refunded,
+                   COALESCE(SUM(cnl.line_amount), 0) AS refund_total
+            FROM credit_notes cn {$joins}
+            INNER JOIN credit_note_lines cnl ON cnl.credit_note_id = cn.id
+            INNER JOIN cloud_order_lines l
+                    ON l.branch_uuid = refund_order.branch_uuid
+                   AND l.order_uuid = refund_order.order_uuid
+                   AND l.local_line_id = cnl.original_detail_id
+            LEFT JOIN cloud_menu_items m
+                   ON m.branch_uuid = l.branch_uuid AND m.item_uuid = l.item_uuid
+            WHERE {$where}
+            GROUP BY l.item_uuid, l.item_id, l.item_name, m.category_id
+        ", $types, $params);
+    }
+
+    /** @return array{0:string,1:string,2:string,3:array<int,mixed>} */
+    private function refundScope(string $branchUuid, ?string $from, ?string $to): array
+    {
+        $joins = ' INNER JOIN cloud_orders refund_order ON refund_order.local_order_id = cn.original_order_id'
+            . ' INNER JOIN cloud_branches refund_branch ON refund_branch.branch_uuid = refund_order.branch_uuid';
+        $where = "refund_order.branch_uuid = ? AND cn.status = 'posted'"
+            . ' AND (refund_branch.pos_tenant IS NULL OR cn.tenant = refund_branch.pos_tenant)'
+            . ' AND (refund_branch.pos_branch IS NULL OR cn.branch = refund_branch.pos_branch)';
+        $types = 's';
+        $params = [$branchUuid];
+        if ($from !== null) {
+            $where .= ' AND COALESCE(cn.business_day, DATE(cn.created_at)) >= DATE(?)';
+            $types .= 's';
+            $params[] = $from;
+        }
+        if ($to !== null) {
+            $where .= ' AND COALESCE(cn.business_day, DATE(cn.created_at)) < DATE(?)';
+            $types .= 's';
+            $params[] = $to;
+        }
+        return [$joins, $where, $types, $params];
     }
 
     private function shiftSummary(mysqli $conn, string $branchUuid, ?string $from, ?string $to): array
@@ -314,12 +529,25 @@ class CloudReportService
     private function cancelledSql(string $alias = ''): string
     {
         $prefix = $alias === '' ? '' : $alias . '.';
-        return "({$prefix}isdeleted = 1 OR LOWER(COALESCE({$prefix}order_status, '')) IN ('cancelled','canceled','deleted','voided'))";
+        $cancelled = "({$prefix}isdeleted = 1 OR LOWER(COALESCE({$prefix}order_status, '')) IN ('cancelled','canceled','deleted','voided'))";
+        $postedReversal = "EXISTS (
+            SELECT 1
+            FROM credit_notes reversal_cn
+            INNER JOIN cloud_branches reversal_branch
+                    ON reversal_branch.branch_uuid = {$prefix}branch_uuid
+            WHERE reversal_cn.original_order_id = {$prefix}local_order_id
+              AND reversal_cn.status = 'posted'
+              AND (reversal_branch.pos_tenant IS NULL OR reversal_cn.tenant = reversal_branch.pos_tenant)
+              AND (reversal_branch.pos_branch IS NULL OR reversal_cn.branch = reversal_branch.pos_branch)
+        )";
+
+        return "({$cancelled} AND NOT ({$postedReversal}))";
     }
 
-    private function paidSql(): string
+    private function paidSql(string $alias = ''): string
     {
-        return "LOWER(COALESCE(payment_status, '')) IN ('paid','completed','complete')";
+        $prefix = $alias === '' ? '' : $alias . '.';
+        return "LOWER(COALESCE({$prefix}payment_status, '')) IN ('paid','completed','complete')";
     }
 
     private function normalizeDate($value): ?string

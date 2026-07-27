@@ -93,6 +93,7 @@ function deliveryProdCreateBaseSchema(mysqli $conn): void
             id INT NOT NULL PRIMARY KEY,
             iname VARCHAR(255) NULL,
             barcode VARCHAR(80) NULL,
+            group1 INT NOT NULL DEFAULT 0,
             itmqty DECIMAL(15,4) NOT NULL DEFAULT 0,
             cost_price DECIMAL(15,4) NOT NULL DEFAULT 0,
             price1 DECIMAL(15,4) NOT NULL DEFAULT 0,

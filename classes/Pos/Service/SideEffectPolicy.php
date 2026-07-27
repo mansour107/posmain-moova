@@ -25,7 +25,10 @@ class SideEffectPolicy
             return false;
         }
 
-        return !empty($result['errors']);
+        // This method is called only after the bridge returned errors or threw.
+        // In live mode either condition must abort the surrounding order/refund
+        // transaction; otherwise money can post while inventory silently diverges.
+        return true;
     }
 
     public static function orderEventShouldRollback(Throwable $exception): bool

@@ -20,12 +20,30 @@
     var clockEl = document.getElementById('kdsClock');
 
     var tickets = {};          // id -> ticket
+    var kitchenEvents = {};    // id -> unacknowledged append-only event
     var historyTickets = {};   // id -> ticket (history drawer)
     var cursor = 0;
     var soundEnabled = true;
     var failureStreak = 0;
     var polling = false;
     var audioCtx = null;
+    var actionError = null;
+
+    function clearActionError() {
+        if (actionError) {
+            actionError.remove();
+            actionError = null;
+        }
+    }
+
+    function showActionError(message) {
+        clearActionError();
+        actionError = document.createElement('div');
+        actionError.className = 'kds-action-error';
+        actionError.setAttribute('role', 'alert');
+        actionError.textContent = 'تعذر تنفيذ إجراء المطبخ. لم يتم تأكيد الحدث وسيظل ظاهراً. ' + (message || 'حاول مرة أخرى.');
+        screen.insertBefore(actionError, screen.firstChild);
+    }
 
     function escapeHtml(value) {
         var div = document.createElement('div');
@@ -172,11 +190,23 @@
         var mods = '';
         if (line.modifiers && line.modifiers.length) {
             mods = '<div class="kds-line__mods">' + line.modifiers.map(function (m) {
-                var label = typeof m === 'string' ? m : (m.name || m.option_name || m.label || '');
-                return escapeHtml(label);
+                var label = typeof m === 'string' ? m : (m.name_ar || m.name_en || m.name || m.option_name || m.label || '');
+                var modifierQty = typeof m === 'object' ? Number(m.qty || 1) : 1;
+                var qtySuffix = modifierQty > 1 ? ' ×' + ((modifierQty % 1 === 0) ? modifierQty.toFixed(0) : modifierQty.toFixed(3)) : '';
+                return escapeHtml(label + qtySuffix);
             }).filter(Boolean).join('، ') + '</div>';
         }
         var notes = line.notes ? '<div class="kds-line__notes"><i class="fas fa-pen"></i> ' + escapeHtml(line.notes) + '</div>' : '';
+        var preparation = '';
+        if (line.preparation_values && line.preparation_values.length) {
+            preparation = '<div class="kds-line__preparation"><i class="fas fa-mug-hot"></i> ' +
+                line.preparation_values.map(function (value) {
+                    var selected = Number(value.value || 0);
+                    var label = value.label_ar || value.code || '';
+                    return selected === 0 ? 'بدون سكر' : label + ': ' + selected + ' ملعقة';
+                }).map(escapeHtml).join('، ') +
+                '</div>';
+        }
 
         var status = line.line_status || 'new';
         var cls = 'kds-line line-' + status;
@@ -198,7 +228,7 @@
 
         return '<li class="' + cls + '">' +
             '<span class="kds-line__qty">' + escapeHtml(qtyLabel) + '×</span>' +
-            '<span class="kds-line__name">' + escapeHtml(line.name) + mods + notes + '</span>' +
+            '<span class="kds-line__name">' + escapeHtml(line.name) + mods + notes + preparation + '</span>' +
             tag +
             '</li>';
     }
@@ -262,6 +292,41 @@
             '<ul class="kds-card__lines">' + lines + '</ul>' +
             actions +
             '</article>';
+    }
+
+    function eventLabel(event) {
+        if (event.event_type === 'order_cancel') {
+            return 'إلغاء طلب';
+        }
+        if (event.event_type === 'line_cancel') {
+            return 'إلغاء صنف';
+        }
+        return 'تعديل طلب';
+    }
+
+    function eventCardHtml(event) {
+        var before = Array.isArray(event.before) ? event.before : [];
+        var after = Array.isArray(event.after) ? event.after : [];
+        var reason = event.reason
+            ? '<div class="kds-event__reason"><i class="fas fa-comment"></i> السبب: ' + escapeHtml(event.reason) + '</div>'
+            : '';
+        var beforeHtml = before.length
+            ? '<div class="kds-event__section"><strong>قبل</strong><ul class="kds-card__lines">' + before.map(lineHtml).join('') + '</ul></div>'
+            : '';
+        var afterHtml = after.length
+            ? '<div class="kds-event__section"><strong>بعد</strong><ul class="kds-card__lines">' + after.map(lineHtml).join('') + '</ul></div>'
+            : '<div class="kds-event__cancelled">تم طلب الإلغاء بالكامل</div>';
+        var action = CAN_COMPLETE
+            ? '<div class="kds-card__actions"><button class="kds-act kds-act--ack" data-action="acknowledge_event" data-event-id="' +
+                event.id + '" data-event-version="' + event.version + '"><i class="fas fa-check-double"></i> تأكيد الاستلام</button></div>'
+            : '';
+
+        return '<article class="kds-card kds-event-card kds-event--' + escapeHtml(event.event_type) +
+            '" data-id="event-' + event.id + '" data-event-id="' + event.id + '">' +
+            '<div class="kds-card__head"><span class="kds-card__order">#' + escapeHtml(event.order_id) +
+            ' <span class="kds-card__badge">' + escapeHtml(eventLabel(event)) + '</span></span>' +
+            '<span class="kds-card__status">بانتظار التأكيد</span></div>' +
+            reason + beforeHtml + afterHtml + action + '</article>';
     }
 
     function sortedTickets() {
@@ -348,7 +413,12 @@
 
     function render() {
         var list = sortedTickets();
-        if (!list.length) {
+        var eventList = Object.keys(kitchenEvents).map(function (id) {
+            return kitchenEvents[id];
+        }).sort(function (a, b) {
+            return a.id - b.id;
+        });
+        if (!list.length && !eventList.length) {
             grid.innerHTML = '';
             emptyState.hidden = false;
             activeCountEl.textContent = '0';
@@ -356,7 +426,7 @@
         }
 
         emptyState.hidden = true;
-        activeCountEl.textContent = list.length;
+        activeCountEl.textContent = list.length + eventList.length;
 
         var existing = new Map();
         grid.querySelectorAll('.kds-card').forEach(function (card) {
@@ -364,6 +434,18 @@
         });
 
         var orderedCards = [];
+        eventList.forEach(function (event) {
+            var key = 'event-' + event.id;
+            var card = existing.get(key);
+            if (card) {
+                existing.delete(key);
+                orderedCards.push(card);
+                return;
+            }
+            var wrapper = document.createElement('div');
+            wrapper.innerHTML = eventCardHtml(event);
+            orderedCards.push(wrapper.firstElementChild);
+        });
         list.forEach(function (ticket) {
             var id = String(ticket.id);
             var sig = ticketSignature(ticket);
@@ -394,11 +476,16 @@
         if (data.full) {
             tickets = {};
         }
+        kitchenEvents = {};
+        (data.events || []).forEach(function (event) {
+            kitchenEvents[event.id] = event;
+        });
         var changes = data.changes || [];
         if (!changes.length && !data.full) {
             if (typeof data.cursor === 'number') {
                 cursor = data.cursor;
             }
+            render();
             return;
         }
         changes.forEach(function (change) {
@@ -489,6 +576,31 @@
         });
     }
 
+    function acknowledgeEvent(eventId, eventVersion) {
+        var body = new URLSearchParams();
+        body.set('action', 'acknowledge_event');
+        body.set('event_id', eventId);
+        body.set('event_version', eventVersion);
+        body.set('csrf_token', CSRF);
+        return fetch('do/kds_ticket_action.php', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'X-Requested-With': 'XMLHttpRequest',
+                'X-CSRF-Token': CSRF
+            },
+            credentials: 'same-origin',
+            body: body.toString()
+        }).then(function (res) {
+            return res.json().then(function (data) {
+                if (!res.ok) {
+                    throw new Error((data && data.message) || ('HTTP ' + res.status));
+                }
+                return data;
+            });
+        });
+    }
+
     grid.addEventListener('click', function (event) {
         var btn = event.target.closest('.kds-act');
         if (!btn) {
@@ -501,17 +613,22 @@
         if (card) {
             card.classList.add('is-busy');
         }
-        sendAction(ticketId, action)
+        var request = action === 'acknowledge_event'
+            ? acknowledgeEvent(btn.getAttribute('data-event-id'), btn.getAttribute('data-event-version'))
+            : sendAction(ticketId, action);
+        request
             .then(function (response) {
                 if (!response || !response.success) {
                     throw new Error((response && response.message) || 'action failed');
                 }
+                clearActionError();
                 poll();
             })
-            .catch(function () {
+            .catch(function (error) {
                 if (card) {
                     card.classList.remove('is-busy');
                 }
+                showActionError(error && error.message ? error.message : '');
             });
     });
 

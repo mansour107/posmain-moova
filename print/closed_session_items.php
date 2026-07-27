@@ -42,25 +42,39 @@ $user_id = (int) $shift['user_id'];
 
 // جلب الأصناف المباعة مقسمة بالتصنيفات
 $items_query = "
-    SELECT 
-        COALESCE(c.gname, 'بدون تصنيف') as category_name,
-        i.iname as item_name,
-        SUM(d.qty_out) as total_qty,
-        SUM(d.det_value) as total_value
-    FROM fat_details d
-    JOIN ot_head h ON d.fatid = h.id
-    JOIN myitems i ON d.item_id = i.id
-    LEFT JOIN item_group c ON i.group1 = c.id
-    WHERE DATE(h.pro_date) = ?
-      AND h.crtime > ?
-      AND h.crtime <= ?
-      AND h.user = ?
-      AND d.isdeleted = 0
-      AND h.isdeleted = 0
-      AND (h.pro_tybe = 9 OR h.pro_tybe = 3 OR h.pro_tybe = 10 OR h.pro_tybe = 11)
-    GROUP BY c.gname, i.iname
-    HAVING total_qty > 0
-    ORDER BY c.gname ASC, total_qty DESC
+    SELECT category_name, item_name, SUM(quantity_delta) AS total_qty, SUM(value_delta) AS total_value
+    FROM (
+        SELECT COALESCE(c.gname, 'بدون تصنيف') AS category_name,
+               i.iname AS item_name,
+               d.qty_out AS quantity_delta,
+               d.det_value AS value_delta
+        FROM fat_details d
+        JOIN ot_head h ON d.fatid = h.id
+        JOIN myitems i ON d.item_id = i.id
+        LEFT JOIN item_group c ON i.group1 = c.id
+        WHERE DATE(h.pro_date) = ?
+          AND h.crtime > ?
+          AND h.crtime <= ?
+          AND h.user = ?
+          AND d.isdeleted = 0
+          AND h.isdeleted = 0
+          AND (h.pro_tybe = 9 OR h.pro_tybe = 3 OR h.pro_tybe = 10 OR h.pro_tybe = 11)
+        UNION ALL
+        SELECT COALESCE(c.gname, 'بدون تصنيف') AS category_name,
+               i.iname AS item_name,
+               -cnl.quantity AS quantity_delta,
+               -cnl.line_amount AS value_delta
+        FROM credit_notes cn
+        JOIN credit_note_lines cnl ON cnl.credit_note_id = cn.id
+        JOIN fat_details d ON d.id = cnl.original_detail_id
+        JOIN myitems i ON d.item_id = i.id
+        LEFT JOIN item_group c ON i.group1 = c.id
+        WHERE cn.status = 'posted'
+          AND cn.drawer_session_id = ?
+    ) shift_items
+    GROUP BY category_name, item_name
+    HAVING ABS(total_qty) >= 0.000001 OR ABS(total_value) >= 0.01
+    ORDER BY category_name ASC, total_qty DESC
 ";
 
 $items_data = [];
@@ -69,7 +83,7 @@ $total_value_all = 0;
 
 $stmt = $conn->prepare($items_query);
 if ($stmt) {
-    $stmt->bind_param("sssi", $shift_date, $start_time, $end_time, $user_id);
+    $stmt->bind_param("sssii", $shift_date, $start_time, $end_time, $user_id, $id);
     $stmt->execute();
     $res_items = $stmt->get_result();
     while ($row = $res_items->fetch_assoc()) {

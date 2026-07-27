@@ -4,6 +4,7 @@ require_once __DIR__ . '/KdsStationService.php';
 require_once __DIR__ . '/KdsRoutingService.php';
 require_once __DIR__ . '/OrderPrintPayloadService.php';
 require_once __DIR__ . '/OrderEventService.php';
+require_once __DIR__ . '/KdsOrderEventService.php';
 
 /**
  * Persists and drives kitchen tickets for the KDS.
@@ -23,6 +24,7 @@ class KdsTicketService
     private KdsRoutingService $routing;
     private OrderPrintPayloadService $printPayload;
     private OrderEventService $orderEvents;
+    private KdsOrderEventService $kitchenEvents;
     private array $scopeCache = [];
     private ?bool $kitchenStatusColumn = null;
 
@@ -30,12 +32,14 @@ class KdsTicketService
         ?KdsStationService $stations = null,
         ?KdsRoutingService $routing = null,
         ?OrderPrintPayloadService $printPayload = null,
-        ?OrderEventService $orderEvents = null
+        ?OrderEventService $orderEvents = null,
+        ?KdsOrderEventService $kitchenEvents = null
     ) {
         $this->stations = $stations ?: new KdsStationService();
         $this->routing = $routing ?: new KdsRoutingService($this->stations);
         $this->printPayload = $printPayload ?: new OrderPrintPayloadService();
         $this->orderEvents = $orderEvents ?: new OrderEventService();
+        $this->kitchenEvents = $kitchenEvents ?: new KdsOrderEventService();
     }
 
     public function tablesExist(mysqli $conn): bool
@@ -49,7 +53,13 @@ class KdsTicketService
      * Idempotently rebuilds the per-station tickets for an order. Safe to
      * call repeatedly; only writes a change-log row when content moves.
      */
-    public function syncForOrder(mysqli $conn, int $orderId, string $eventType = 'updated', int $actorUserId = 0): void
+    public function syncForOrder(
+        mysqli $conn,
+        int $orderId,
+        string $eventType = 'updated',
+        int $actorUserId = 0,
+        array $eventMetadata = []
+    ): void
     {
         if ($orderId < 1 || !$this->tablesExist($conn)) {
             return;
@@ -57,24 +67,20 @@ class KdsTicketService
 
         $order = $this->fetchOrderHeader($conn, $orderId);
         if (!$order || (int) ($order['isdeleted'] ?? 0) === 1) {
-            $this->cancelAllTicketsForOrder($conn, $orderId);
+            $this->cancelAllTicketsForOrder($conn, $orderId, $actorUserId, $eventMetadata, (int) ($order['kitchen_revision'] ?? 0));
             $this->recomputeOrderKitchenStatus($conn, $orderId);
             return;
         }
 
         $orderStatus = strtolower((string) ($order['order_status'] ?? 'active'));
         if ($orderStatus === 'cancelled') {
-            $this->cancelAllTicketsForOrder($conn, $orderId);
+            $eventMetadata['reason'] = $eventMetadata['reason'] ?? $order['cancellation_reason'] ?? '';
+            $this->cancelAllTicketsForOrder($conn, $orderId, $actorUserId, $eventMetadata, (int) ($order['kitchen_revision'] ?? 0));
             $this->recomputeOrderKitchenStatus($conn, $orderId);
             return;
         }
 
-        try {
-            $payload = $this->printPayload->buildKotPayloadByOrderId($conn, $orderId);
-        } catch (Throwable $exception) {
-            error_log('KdsTicketService payload skipped for order ' . $orderId . ': ' . $exception->getMessage());
-            return;
-        }
+        $payload = $this->printPayload->buildKotPayloadByOrderId($conn, $orderId);
 
         $lines = is_array($payload['lines'] ?? null) ? $payload['lines'] : [];
         $paymentStatus = strtolower((string) ($payload['order']['payment_status'] ?? ($order['payment_status'] ?? 'unpaid')));
@@ -90,12 +96,31 @@ class KdsTicketService
         $existingStations = $this->stationIdsWithTicket($conn, $orderId);
 
         foreach ($routed as $stationId => $group) {
-            $this->upsertTicket($conn, $orderId, (int) $stationId, $group['lines'], $context, $paymentStatus, $actorUserId, $eventType);
+            $this->upsertTicket(
+                $conn,
+                $orderId,
+                (int) $stationId,
+                $group['lines'],
+                $context,
+                $paymentStatus,
+                $actorUserId,
+                $eventType,
+                (int) ($order['kitchen_revision'] ?? 0),
+                $eventMetadata
+            );
         }
 
         foreach ($existingStations as $stationId) {
             if (!in_array($stationId, $stationsWithLines, true)) {
-                $this->cancelTicket($conn, $orderId, $stationId);
+                $this->cancelTicket(
+                    $conn,
+                    $orderId,
+                    $stationId,
+                    $actorUserId,
+                    $eventMetadata,
+                    (int) ($order['kitchen_revision'] ?? 0),
+                    $eventType === 'updated'
+                );
             }
         }
 
@@ -110,7 +135,9 @@ class KdsTicketService
         array $context,
         string $paymentStatus,
         int $actorUserId,
-        string $eventType = 'updated'
+        string $eventType = 'updated',
+        int $kitchenRevision = 0,
+        array $eventMetadata = []
     ): void {
         [$tenant, $branch] = $this->scope();
         $itemCount = count($lines);
@@ -118,11 +145,25 @@ class KdsTicketService
         $active = $this->fetchActiveTicket($conn, $orderId, $stationId);
         if ($active) {
             $ticketId = (int) $active['id'];
+            $beforeEventSnapshot = $this->ticketEventSnapshot($conn, $ticketId);
             $meaningful = !empty($active['parent_ticket_id'])
                 ? $this->syncPostCompletionEdit($conn, $orderId, $stationId, $ticketId, $lines)
                 : $this->reconcileLines($conn, $ticketId, $lines);
 
             if ($meaningful) {
+                if ($eventType === 'updated') {
+                    $this->recordKitchenMutationEvent(
+                        $conn,
+                        $orderId,
+                        $stationId,
+                        $ticketId,
+                        $kitchenRevision,
+                        $beforeEventSnapshot,
+                        $this->eventSnapshotFromLines($lines),
+                        $actorUserId,
+                        $eventMetadata
+                    );
+                }
                 $this->recomputeTicketStatusFromLines($conn, $ticketId);
                 $this->touchTicketMeta($conn, $ticketId, $itemCount, $context);
                 $this->recordChange($conn, $stationId, $ticketId, $orderId, 'upsert');
@@ -140,7 +181,20 @@ class KdsTicketService
             if ($itemCount === 0) {
                 return;
             }
-            $this->createRootTicket($conn, $orderId, $stationId, $lines, $context, $tenant, $branch);
+            $ticketId = $this->createRootTicket($conn, $orderId, $stationId, $lines, $context, $tenant, $branch);
+            if ($eventType === 'updated') {
+                $this->recordKitchenMutationEvent(
+                    $conn,
+                    $orderId,
+                    $stationId,
+                    $ticketId,
+                    $kitchenRevision,
+                    [],
+                    $this->eventSnapshotFromLines($lines),
+                    $actorUserId,
+                    $eventMetadata
+                );
+            }
 
             return;
         }
@@ -150,10 +204,26 @@ class KdsTicketService
         }
 
         if (in_array((string) $root['status'], ['completed', 'recalled'], true)) {
+            $beforeEventSnapshot = $this->ticketEventSnapshot($conn, (int) $root['id']);
             $delta = $this->computePostCompletionDelta($conn, $orderId, $stationId, $lines);
             $this->applySilentLedgerUpdates($conn, $orderId, $stationId, $lines, $delta);
 
             if ($delta['silent_only'] || empty($delta['delta_lines'])) {
+                $afterEventSnapshot = $this->eventSnapshotFromLines($lines);
+                if (!$this->eventSnapshotsEquivalent($beforeEventSnapshot, $afterEventSnapshot) && $eventType === 'updated') {
+                    $this->recordKitchenMutationEvent(
+                        $conn,
+                        $orderId,
+                        $stationId,
+                        (int) $root['id'],
+                        $kitchenRevision,
+                        $beforeEventSnapshot,
+                        $afterEventSnapshot,
+                        $actorUserId,
+                        $eventMetadata
+                    );
+                    $this->recordChange($conn, $stationId, (int) $root['id'], $orderId, 'event');
+                }
                 return;
             }
 
@@ -170,6 +240,17 @@ class KdsTicketService
             foreach ($delta['delta_lines'] as $line) {
                 $this->insertLine($conn, $supplementId, $line, true);
             }
+            $this->recordKitchenMutationEvent(
+                $conn,
+                $orderId,
+                $stationId,
+                $supplementId,
+                $kitchenRevision,
+                $beforeEventSnapshot,
+                $this->eventSnapshotFromLines($lines),
+                $actorUserId,
+                $eventMetadata
+            );
             $this->recordChange($conn, $stationId, $supplementId, $orderId, 'upsert');
 
             return;
@@ -177,8 +258,22 @@ class KdsTicketService
 
         // Root still open but was not returned by fetchActiveTicket (edge).
         $ticketId = (int) $root['id'];
+        $beforeEventSnapshot = $this->ticketEventSnapshot($conn, $ticketId);
         $meaningful = $this->reconcileLines($conn, $ticketId, $lines);
         if ($meaningful) {
+            if ($eventType === 'updated') {
+                $this->recordKitchenMutationEvent(
+                    $conn,
+                    $orderId,
+                    $stationId,
+                    $ticketId,
+                    $kitchenRevision,
+                    $beforeEventSnapshot,
+                    $this->eventSnapshotFromLines($lines),
+                    $actorUserId,
+                    $eventMetadata
+                );
+            }
             $this->recomputeTicketStatusFromLines($conn, $ticketId);
             $this->touchTicketMeta($conn, $ticketId, $itemCount, $context);
             $this->recordChange($conn, $stationId, $ticketId, $orderId, 'upsert');
@@ -197,7 +292,7 @@ class KdsTicketService
         array $context,
         int $tenant,
         int $branch
-    ): void {
+    ): int {
         $uuid = $this->uuid();
         $tableId = $context['table_id'];
         $tableName = $context['table_name'];
@@ -231,6 +326,8 @@ class KdsTicketService
             $this->insertLine($conn, $ticketId, $line, false);
         }
         $this->recordChange($conn, $stationId, $ticketId, $orderId, 'upsert');
+
+        return $ticketId;
     }
 
     private function createSupplementTicket(
@@ -323,7 +420,7 @@ class KdsTicketService
             $seen[$lineKey] = true;
         }
 
-        $stmt = $conn->prepare("SELECT id, line_key, item_id, notes, modifiers_json FROM kds_ticket_lines WHERE ticket_id = ?");
+        $stmt = $conn->prepare("SELECT id, line_key, item_id, notes, modifiers_json, preparation_json FROM kds_ticket_lines WHERE ticket_id = ?");
         $stmt->bind_param('i', $ticketId);
         $stmt->execute();
         $result = $stmt->get_result();
@@ -504,7 +601,7 @@ class KdsTicketService
         }
 
         $stmt = $conn->prepare("
-            SELECT id, detail_id, line_key, item_id, qty, notes, modifiers_json, line_status
+            SELECT id, detail_id, line_key, item_id, qty, notes, modifiers_json, preparation_json, line_status
             FROM kds_ticket_lines
             WHERE ticket_id = ?
         ");
@@ -583,7 +680,7 @@ class KdsTicketService
      */
     private function reconcileLines(mysqli $conn, int $ticketId, array $lines): bool
     {
-        $stmt = $conn->prepare("SELECT id, detail_id, line_key, item_id, qty, name, notes, modifiers_json, line_status FROM kds_ticket_lines WHERE ticket_id = ?");
+        $stmt = $conn->prepare("SELECT id, detail_id, line_key, item_id, qty, name, notes, modifiers_json, preparation_json, line_status FROM kds_ticket_lines WHERE ticket_id = ?");
         $stmt->bind_param('i', $ticketId);
         $stmt->execute();
         $result = $stmt->get_result();
@@ -601,16 +698,23 @@ class KdsTicketService
         $changed = false;
 
         foreach ($this->aggregateOrderLinesByKey($lines) as $lineKey => $line) {
-            $seen[$lineKey] = true;
             $normalized = $this->normalizeLine($line);
+            $existingKey = $lineKey;
+            if (!isset($existing[$existingKey])) {
+                $compatibleKey = $this->compatibleExistingLineKey($existing, $seen, $normalized);
+                if ($compatibleKey !== null) {
+                    $existingKey = $compatibleKey;
+                }
+            }
 
-            if (!isset($existing[$lineKey])) {
+            if (!isset($existing[$existingKey])) {
                 $this->insertLine($conn, $ticketId, $line, true);
                 $changed = true;
                 continue;
             }
 
-            $prev = $existing[$lineKey];
+            $seen[$existingKey] = true;
+            $prev = $existing[$existingKey];
             $prevStatus = (string) ($prev['line_status'] ?? 'new');
 
             if ($prevStatus === 'voided') {
@@ -626,8 +730,9 @@ class KdsTicketService
             $sameQty = $this->quantity($prev['qty']) === $normalized['qty'];
             $sameNotes = (string) ($prev['notes'] ?? '') === $normalized['notes'];
             $sameMods = (string) ($prev['modifiers_json'] ?? '') === $normalized['modifiers_json'];
+            $samePreparation = (string) ($prev['preparation_json'] ?? '') === $normalized['preparation_json'];
             $sameDetail = (int) ($prev['detail_id'] ?? 0) === (int) ($line['detail_id'] ?? 0);
-            if ($sameQty && $sameNotes && $sameMods) {
+            if ($sameQty && $sameNotes && $sameMods && $samePreparation) {
                 if (!$sameDetail) {
                     $this->refreshLineDetailId($conn, (int) $prev['id'], (int) ($line['detail_id'] ?? 0));
                     $changed = true;
@@ -653,20 +758,54 @@ class KdsTicketService
         return $changed;
     }
 
+    /**
+     * A cashier save can recreate fat_details and shift display positions when
+     * an earlier line is removed. Match an otherwise identical surviving line
+     * before treating it as new, while retaining exact keys for repeated lines.
+     */
+    private function compatibleExistingLineKey(array $existing, array $seen, array $normalized): ?string
+    {
+        foreach ($existing as $candidateKey => $candidate) {
+            if (isset($seen[$candidateKey]) || (string) ($candidate['line_status'] ?? '') === 'voided') {
+                continue;
+            }
+            if ((int) ($candidate['item_id'] ?? 0) !== (int) $normalized['item_id']) {
+                continue;
+            }
+            if ((string) ($candidate['name'] ?? '') !== $normalized['name']) {
+                continue;
+            }
+            if ((string) ($candidate['notes'] ?? '') !== $normalized['notes']) {
+                continue;
+            }
+            if ((string) ($candidate['modifiers_json'] ?? '') !== $normalized['modifiers_json']) {
+                continue;
+            }
+            if ((string) ($candidate['preparation_json'] ?? '') !== $normalized['preparation_json']) {
+                continue;
+            }
+
+            return (string) $candidateKey;
+        }
+
+        return null;
+    }
+
     private function updateLineSpec(mysqli $conn, int $lineId, array $line, array $normalized, string $status, bool $isChanged): void
     {
         $changedFlag = $isChanged ? 1 : 0;
         $modsValue = $normalized['modifiers_json'] !== '' ? $normalized['modifiers_json'] : null;
+        $preparationValue = $normalized['preparation_json'] !== '' ? $normalized['preparation_json'] : null;
         $detailId = (int) ($line['detail_id'] ?? 0);
         $lineKey = $this->kitchenLineKey($line);
         $itemId = $normalized['item_id'];
         $stmt = $conn->prepare("
             UPDATE kds_ticket_lines
-            SET detail_id = ?, line_key = ?, item_id = ?, qty = ?, name = ?, notes = ?, modifiers_json = ?, item_group_id = ?, line_status = ?, is_changed = ?
+            SET detail_id = ?, line_key = ?, item_id = ?, qty = ?, name = ?, notes = ?, modifiers_json = ?, preparation_json = ?, item_group_id = ?, line_status = ?, is_changed = ?
             WHERE id = ?
         ");
         $stmt->bind_param(
-            'isidsssisii',
+            'isidssssisii',
             $detailId,
             $lineKey,
             $itemId,
@@ -674,6 +813,7 @@ class KdsTicketService
             $normalized['name'],
             $normalized['notes'],
             $modsValue,
+            $preparationValue,
             $normalized['item_group_id'],
             $status,
             $changedFlag,
@@ -706,13 +846,14 @@ class KdsTicketService
         $lineKey = $this->kitchenLineKey($line);
         $stmt = $conn->prepare("
             INSERT INTO kds_ticket_lines
-                (ticket_id, detail_id, line_key, item_id, item_group_id, name, qty, notes, modifiers_json, line_status, is_changed)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'new', ?)
+                (ticket_id, detail_id, line_key, item_id, item_group_id, name, qty, notes, modifiers_json, preparation_json, line_status, is_changed)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'new', ?)
             ON DUPLICATE KEY UPDATE
                 detail_id = VALUES(detail_id),
                 item_id = VALUES(item_id),
                 qty = VALUES(qty), name = VALUES(name), notes = VALUES(notes),
-                modifiers_json = VALUES(modifiers_json), item_group_id = VALUES(item_group_id),
+                modifiers_json = VALUES(modifiers_json), preparation_json = VALUES(preparation_json),
+                item_group_id = VALUES(item_group_id),
                 is_changed = VALUES(is_changed)
         ");
         $detailId = (int) ($line['detail_id'] ?? 0);
@@ -722,8 +863,9 @@ class KdsTicketService
         $qty = $normalized['qty_num'];
         $notes = $normalized['notes'];
         $mods = $normalized['modifiers_json'] !== '' ? $normalized['modifiers_json'] : null;
+        $preparation = $normalized['preparation_json'] !== '' ? $normalized['preparation_json'] : null;
         $stmt->bind_param(
-            'iisiisdssi',
+            'iisiisdsssi',
             $ticketId,
             $detailId,
             $lineKey,
@@ -733,6 +875,7 @@ class KdsTicketService
             $qty,
             $notes,
             $mods,
+            $preparation,
             $changedFlag
         );
         $stmt->execute();
@@ -873,7 +1016,15 @@ class KdsTicketService
         }
     }
 
-    private function cancelTicket(mysqli $conn, int $orderId, int $stationId): void
+    private function cancelTicket(
+        mysqli $conn,
+        int $orderId,
+        int $stationId,
+        int $actorUserId = 0,
+        array $eventMetadata = [],
+        int $kitchenRevision = 0,
+        bool $recordKitchenEvent = false
+    ): void
     {
         $stmt = $conn->prepare("SELECT id FROM kds_tickets WHERE order_id = ? AND station_id = ? AND status <> 'cancelled'");
         $stmt->bind_param('ii', $orderId, $stationId);
@@ -886,6 +1037,21 @@ class KdsTicketService
         $stmt->close();
 
         foreach ($ids as $ticketId) {
+            $beforeEventSnapshot = $this->ticketEventSnapshot($conn, $ticketId);
+            if ($recordKitchenEvent && $beforeEventSnapshot && $actorUserId > 0) {
+                $this->kitchenEvents->record(
+                    $conn,
+                    $orderId,
+                    $stationId,
+                    $ticketId,
+                    $kitchenRevision,
+                    'line_cancel',
+                    $beforeEventSnapshot,
+                    [],
+                    $actorUserId,
+                    $eventMetadata
+                );
+            }
             $up = $conn->prepare("UPDATE kds_tickets SET status = 'cancelled' WHERE id = ?");
             $up->bind_param('i', $ticketId);
             $up->execute();
@@ -894,7 +1060,13 @@ class KdsTicketService
         }
     }
 
-    private function cancelAllTicketsForOrder(mysqli $conn, int $orderId): void
+    private function cancelAllTicketsForOrder(
+        mysqli $conn,
+        int $orderId,
+        int $actorUserId = 0,
+        array $eventMetadata = [],
+        int $kitchenRevision = 0
+    ): void
     {
         $stmt = $conn->prepare("SELECT id, station_id FROM kds_tickets WHERE order_id = ? AND status <> 'cancelled'");
         $stmt->bind_param('i', $orderId);
@@ -909,6 +1081,21 @@ class KdsTicketService
         foreach ($rows as $row) {
             $ticketId = (int) $row['id'];
             $stationId = (int) $row['station_id'];
+            $beforeEventSnapshot = $this->ticketEventSnapshot($conn, $ticketId);
+            if ($beforeEventSnapshot && $actorUserId > 0) {
+                $this->kitchenEvents->record(
+                    $conn,
+                    $orderId,
+                    $stationId,
+                    $ticketId,
+                    $kitchenRevision,
+                    'order_cancel',
+                    $beforeEventSnapshot,
+                    [],
+                    $actorUserId,
+                    $eventMetadata
+                );
+            }
             $up = $conn->prepare("UPDATE kds_tickets SET status = 'cancelled' WHERE id = ?");
             $up->bind_param('i', $ticketId);
             $up->execute();
@@ -1154,11 +1341,31 @@ class KdsTicketService
 
     private function fetchOrderHeader(mysqli $conn, int $orderId): ?array
     {
+        $proIdSelect = $this->columnExists($conn, 'ot_head', 'pro_id') ? 'h.pro_id' : 'h.id AS pro_id';
+        $tableIdSelect = $this->columnExists($conn, 'ot_head', 'table_id') ? 'h.table_id' : 'NULL AS table_id';
+        $orderTypeSelect = $this->columnExists($conn, 'ot_head', 'order_type') ? 'h.order_type' : "'' AS order_type";
+        $orderStatusSelect = $this->columnExists($conn, 'ot_head', 'order_status') ? 'h.order_status' : "'active' AS order_status";
+        $paymentStatusSelect = $this->columnExists($conn, 'ot_head', 'payment_status') ? 'h.payment_status' : "'unpaid' AS payment_status";
+        $deletedSelect = $this->columnExists($conn, 'ot_head', 'isdeleted') ? 'h.isdeleted' : '0 AS isdeleted';
+        $revisionSelect = $this->columnExists($conn, 'ot_head', 'kitchen_revision')
+            ? 'h.kitchen_revision'
+            : '0 AS kitchen_revision';
+        $reasonSelect = $this->columnExists($conn, 'ot_head', 'cancellation_reason')
+            ? 'h.cancellation_reason'
+            : "'' AS cancellation_reason";
+        $hasTableName = $this->columnExists($conn, 'ot_head', 'table_id')
+            && $this->tableExistsByName($conn, 'tables')
+            && $this->columnExists($conn, 'tables', 'id')
+            && $this->columnExists($conn, 'tables', 'tname');
+        $tableNameSelect = $hasTableName ? 't.tname AS table_name' : "'' AS table_name";
+        $tableJoin = $hasTableName ? 'LEFT JOIN tables t ON t.id = h.table_id' : '';
         $stmt = $conn->prepare("
-            SELECT h.id, h.pro_id, h.table_id, h.order_type, h.order_status, h.payment_status, h.isdeleted,
-                   t.tname AS table_name
+            SELECT h.id, {$proIdSelect}, {$tableIdSelect}, {$orderTypeSelect},
+                   {$orderStatusSelect}, {$paymentStatusSelect}, {$deletedSelect},
+                   {$revisionSelect}, {$reasonSelect},
+                   {$tableNameSelect}
             FROM ot_head h
-            LEFT JOIN tables t ON t.id = h.table_id
+            {$tableJoin}
             WHERE h.id = ?
             LIMIT 1
         ");
@@ -1168,6 +1375,23 @@ class KdsTicketService
         $stmt->close();
 
         return $row ?: null;
+    }
+
+    private function tableExistsByName(mysqli $conn, string $table): bool
+    {
+        $table = preg_replace('/[^a-zA-Z0-9_]/', '', $table);
+        $result = $conn->query("SHOW TABLES LIKE '{$table}'");
+
+        return $result && $result->num_rows > 0;
+    }
+
+    private function columnExists(mysqli $conn, string $table, string $column): bool
+    {
+        $table = preg_replace('/[^a-zA-Z0-9_]/', '', $table);
+        $column = preg_replace('/[^a-zA-Z0-9_]/', '', $column);
+        $result = $conn->query("SHOW COLUMNS FROM `{$table}` LIKE '{$column}'");
+
+        return $result && $result->num_rows > 0;
     }
 
     private function fetchActiveTicket(mysqli $conn, int $orderId, int $stationId): ?array
@@ -1258,10 +1482,155 @@ class KdsTicketService
         $stmt->close();
     }
 
+    private function recordKitchenMutationEvent(
+        mysqli $conn,
+        int $orderId,
+        int $stationId,
+        int $ticketId,
+        int $kitchenRevision,
+        array $before,
+        array $after,
+        int $actorUserId,
+        array $metadata
+    ): void {
+        if ($actorUserId < 1 || $this->eventSnapshotsEquivalent($before, $after)) {
+            return;
+        }
+        $eventType = $this->kitchenMutationEventType($before, $after);
+        $this->kitchenEvents->record(
+            $conn,
+            $orderId,
+            $stationId,
+            $ticketId,
+            $kitchenRevision,
+            $eventType,
+            $before,
+            $after,
+            $actorUserId,
+            $metadata
+        );
+    }
+
+    private function ticketEventSnapshot(mysqli $conn, int $ticketId): array
+    {
+        $stmt = $conn->prepare("
+            SELECT detail_id, line_key, item_id, name, qty, notes, modifiers_json, preparation_json, line_status
+            FROM kds_ticket_lines
+            WHERE ticket_id = ?
+            ORDER BY id ASC
+        ");
+        $stmt->bind_param('i', $ticketId);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        $lines = [];
+        while ($row = $result->fetch_assoc()) {
+            $lines[] = [
+                'detail_id' => (int) ($row['detail_id'] ?? 0),
+                'line_key' => (string) ($row['line_key'] ?? ''),
+                'item_id' => $this->nullableInt($row['item_id'] ?? null),
+                'name' => (string) ($row['name'] ?? ''),
+                'qty' => $this->quantity($row['qty'] ?? 0),
+                'notes' => (string) ($row['notes'] ?? ''),
+                'modifiers' => $this->decodeJsonArray($row['modifiers_json'] ?? null),
+                'preparation_values' => $this->decodeJsonArray($row['preparation_json'] ?? null),
+                'line_status' => (string) ($row['line_status'] ?? 'new'),
+            ];
+        }
+        $stmt->close();
+
+        return $lines;
+    }
+
+    private function eventSnapshotFromLines(array $lines): array
+    {
+        $snapshot = [];
+        foreach ($this->aggregateOrderLinesByKey($lines) as $lineKey => $line) {
+            $normalized = $this->normalizeLine($line);
+            $snapshot[] = [
+                'detail_id' => (int) ($line['detail_id'] ?? 0),
+                'line_key' => $lineKey,
+                'item_id' => $normalized['item_id'],
+                'name' => $normalized['name'],
+                'qty' => $normalized['qty'],
+                'notes' => $normalized['notes'],
+                'modifiers' => $this->decodeJsonArray($normalized['modifiers_json']),
+                'preparation_values' => $this->decodeJsonArray($normalized['preparation_json']),
+                'line_status' => 'new',
+            ];
+        }
+
+        return $snapshot;
+    }
+
+    private function decodeJsonArray($value): array
+    {
+        if ($value === null || $value === '') {
+            return [];
+        }
+        if (is_array($value)) {
+            return array_values($value);
+        }
+        $decoded = json_decode((string) $value, true);
+        if (!is_array($decoded) || json_last_error() !== JSON_ERROR_NONE) {
+            throw new RuntimeException('KDS_EVENT_SNAPSHOT_INVALID');
+        }
+
+        return array_values($decoded);
+    }
+
+    private function eventSnapshotsEquivalent(array $before, array $after): bool
+    {
+        return $this->eventSemanticRows($before) === $this->eventSemanticRows($after);
+    }
+
+    private function eventSemanticRows(array $snapshot): array
+    {
+        $rows = [];
+        foreach ($snapshot as $line) {
+            $semantic = [
+                'line_key' => (string) ($line['line_key'] ?? ''),
+                'item_id' => (int) ($line['item_id'] ?? 0),
+                'name' => (string) ($line['name'] ?? ''),
+                'qty' => $this->quantity($line['qty'] ?? 0),
+                'notes' => (string) ($line['notes'] ?? ''),
+                'modifiers' => array_values(is_array($line['modifiers'] ?? null) ? $line['modifiers'] : []),
+                'preparation_values' => array_values(is_array($line['preparation_values'] ?? null) ? $line['preparation_values'] : []),
+            ];
+            $rows[] = $semantic;
+        }
+        usort($rows, static function (array $a, array $b): int {
+            return strcmp(
+                json_encode($a, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?: '',
+                json_encode($b, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?: ''
+            );
+        });
+
+        return $rows;
+    }
+
+    private function kitchenMutationEventType(array $before, array $after): string
+    {
+        if ($after === []) {
+            return 'line_cancel';
+        }
+        $beforeQty = 0.0;
+        foreach ($before as $line) {
+            $beforeQty += (float) ($line['qty'] ?? 0);
+        }
+        $afterQty = 0.0;
+        foreach ($after as $line) {
+            $afterQty += (float) ($line['qty'] ?? 0);
+        }
+
+        return count($after) < count($before) || $afterQty < $beforeQty - 0.0005
+            ? 'line_cancel'
+            : 'change';
+    }
+
     private function ticketLines(mysqli $conn, int $ticketId): array
     {
         $stmt = $conn->prepare("
-            SELECT detail_id, item_id, item_group_id, name, qty, notes, modifiers_json, is_changed, line_status
+            SELECT detail_id, item_id, item_group_id, name, qty, notes, modifiers_json, preparation_json, is_changed, line_status
             FROM kds_ticket_lines
             WHERE ticket_id = ?
             ORDER BY id ASC
@@ -1278,6 +1647,15 @@ class KdsTicketService
                     $modifiers = $decoded;
                 }
             }
+            $preparation = [];
+            if (!empty($r['preparation_json'])) {
+                $decoded = json_decode((string) $r['preparation_json'], true);
+                if (!is_array($decoded) || json_last_error() !== JSON_ERROR_NONE) {
+                    $stmt->close();
+                    throw new RuntimeException('KDS_PREPARATION_SNAPSHOT_INVALID');
+                }
+                $preparation = $decoded;
+            }
             $rawStatus = (string) ($r['line_status'] ?? 'new');
             if ($rawStatus === 'pending') {
                 $rawStatus = 'new';
@@ -1289,6 +1667,7 @@ class KdsTicketService
                 'qty' => $this->quantity($r['qty']),
                 'notes' => (string) ($r['notes'] ?? ''),
                 'modifiers' => $modifiers,
+                'preparation_values' => $preparation,
                 'is_changed' => (int) $r['is_changed'] === 1,
                 'line_status' => $rawStatus,
             ];
@@ -1363,6 +1742,10 @@ class KdsTicketService
      */
     private function kitchenLineKey(array $line): string
     {
+        $snapshotKey = trim((string) ($line['kitchen_line_key'] ?? $line['snapshot_hash'] ?? ''));
+        if (preg_match('/^[a-f0-9]{64}$/', $snapshotKey)) {
+            return $snapshotKey;
+        }
         $normalized = $this->normalizeLine($line);
 
         return $this->kitchenLineKeyFromParts(
@@ -1435,26 +1818,15 @@ class KdsTicketService
             $notesParts[] = trim((string) $line['notes']);
         }
         if (is_array($line['preparation_values'] ?? null)) {
-            foreach ($line['preparation_values'] as $value) {
-                if (!is_array($value)) {
-                    continue;
-                }
-                $label = trim((string) ($value['label_ar'] ?? $value['code'] ?? ''));
-                if ($label === '') {
-                    continue;
-                }
-                // Zero is deliberately retained: it is the cashier's explicit
-                // answer to a required preparation question, not an omission.
-                $selected = (int) ($value['value'] ?? $value['value_int'] ?? 0);
-                $notesParts[] = $selected === 0
-                    ? 'بدون سكر'
-                    : $label . ': ' . $selected . ' ملعقة';
-            }
+            $preparation = array_values($line['preparation_values']);
+        } else {
+            $preparation = [];
         }
         $notes = implode(' | ', array_unique($notesParts));
 
         $modifiers = is_array($line['modifiers'] ?? null) ? $line['modifiers'] : [];
         $modifiersJson = $modifiers ? (json_encode(array_values($modifiers), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?: '') : '';
+        $preparationJson = $preparation ? (json_encode($preparation, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?: '') : '';
 
         $qtyNum = (float) ($line['qty'] ?? 0);
 
@@ -1466,6 +1838,7 @@ class KdsTicketService
             'qty' => $this->quantity($qtyNum),
             'notes' => $notes,
             'modifiers_json' => $modifiersJson,
+            'preparation_json' => $preparationJson,
         ];
     }
 

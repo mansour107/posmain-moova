@@ -13,6 +13,8 @@
 require_once __DIR__ . '/../../classes/Sync/SchemaManager.php';
 require_once __DIR__ . '/../../classes/Pos/Service/KdsStationService.php';
 require_once __DIR__ . '/../../classes/Pos/Service/KdsTicketService.php';
+require_once __DIR__ . '/../../classes/Pos/Service/KdsOrderEventService.php';
+require_once __DIR__ . '/../../classes/Sync/PosOrderSnapshotBuilder.php';
 
 mysqli_report(MYSQLI_REPORT_OFF);
 
@@ -42,6 +44,7 @@ $schema->applyKdsSchema($conn);
 
 $stationService = new KdsStationService();
 $ticketService = new KdsTicketService();
+$eventService = new KdsOrderEventService();
 
 // Track created rows for cleanup.
 $created = ['stations' => [], 'groups' => [], 'items' => [], 'orders' => []];
@@ -138,6 +141,53 @@ try {
     $revAfterEdit = (int) $conn->query("SELECT revision FROM kds_tickets WHERE id = {$ticketA}")->fetch_assoc()['revision'];
     kdsRuntimeAssert($itemCountA === 2, 'station A should now hold 2 lines after edit');
     kdsRuntimeAssert($revAfterEdit > $revAfter, 'edit must bump revision');
+    $eventRows = $conn->query("SELECT * FROM kds_order_events WHERE order_id = {$orderId} AND station_id = {$stationA} ORDER BY id ASC");
+    kdsRuntimeAssert($eventRows->num_rows === 1, 'edit must append exactly one durable kitchen event');
+    $editEvent = $eventRows->fetch_assoc();
+    $beforeEvent = json_decode((string) $editEvent['before_snapshot_json'], true);
+    $afterEvent = json_decode((string) $editEvent['after_snapshot_json'], true);
+    kdsRuntimeAssert(is_array($beforeEvent) && count($beforeEvent) === 1, 'event must preserve the original station snapshot');
+    kdsRuntimeAssert(is_array($afterEvent) && count($afterEvent) === 2, 'event must preserve the changed station snapshot');
+    $ticketService->syncForOrder($conn, $orderId, 'updated', 1);
+    $eventCountAfterRetry = (int) $conn->query("SELECT COUNT(*) c FROM kds_order_events WHERE order_id = {$orderId} AND station_id = {$stationA}")->fetch_assoc()['c'];
+    kdsRuntimeAssert($eventCountAfterRetry === 1, 'duplicate order sync must not duplicate kitchen events');
+
+    $pendingEvents = $eventService->pendingForStation($conn, $stationA);
+    kdsRuntimeAssert(count($pendingEvents) === 1 && $pendingEvents[0]['status'] === 'delivered', 'poll must durably deliver the pending event without acknowledging it');
+    $eventId = (int) $pendingEvents[0]['id'];
+    $ack = $eventService->acknowledge($conn, $eventId, 1, 1);
+    kdsRuntimeAssert($ack['applied'] === true, 'first acknowledgement must apply');
+    $retryAck = $eventService->acknowledge($conn, $eventId, 1, 1);
+    kdsRuntimeAssert($retryAck['applied'] === false, 'duplicate acknowledgement must be idempotent');
+    kdsRuntimeAssert($eventService->pendingForStation($conn, $stationA) === [], 'acknowledged event must leave the pending feed');
+    $staleRejected = false;
+    try {
+        $eventService->acknowledge($conn, $eventId, 99, 1);
+    } catch (RuntimeException $exception) {
+        $staleRejected = $exception->getMessage() === 'KDS_EVENT_ACK_STALE';
+    }
+    kdsRuntimeAssert($staleRejected, 'stale acknowledgement version must be rejected');
+    $syncSnapshot = (new PosOrderSnapshotBuilder())->build(
+        $conn,
+        '22222222-2222-4222-8222-222222222222',
+        $orderId,
+        ['source_system' => 'kds_event_test']
+    );
+    kdsRuntimeAssert(count($syncSnapshot['kitchen_events'] ?? []) === 1, 'sync snapshot must include the durable kitchen event');
+    kdsRuntimeAssert($syncSnapshot['kitchen_events'][0]['status'] === 'acknowledged', 'sync must expose acknowledgement state');
+    kdsRuntimeAssert(count($syncSnapshot['kitchen_events'][0]['before']) === 1, 'sync must retain the event before snapshot');
+    kdsRuntimeAssert(count($syncSnapshot['kitchen_events'][0]['after']) === 2, 'sync must retain the event after snapshot');
+
+    $eventCountBeforeInvalid = (int) $conn->query("SELECT COUNT(*) c FROM kds_order_events WHERE order_id = {$orderId}")->fetch_assoc()['c'];
+    $malformedRejected = false;
+    try {
+        $eventService->record($conn, $orderId, $stationA, $ticketA, $revAfterEdit, 'change', [], [], 1);
+    } catch (InvalidArgumentException $exception) {
+        $malformedRejected = $exception->getMessage() === 'KDS_EVENT_SNAPSHOT_EMPTY';
+    }
+    $eventCountAfterInvalid = (int) $conn->query("SELECT COUNT(*) c FROM kds_order_events WHERE order_id = {$orderId}")->fetch_assoc()['c'];
+    kdsRuntimeAssert($malformedRejected, 'malformed empty event snapshots must fail visibly');
+    kdsRuntimeAssert($eventCountAfterInvalid === $eventCountBeforeInvalid, 'malformed event must not create kitchen work');
 
     // --- 4. Cursor feed --------------------------------------------------
     $feedFull = $ticketService->changesSince($conn, $stationA, 0);
@@ -161,9 +211,11 @@ try {
 
     // --- 6. Void cancels tickets ----------------------------------------
     $conn->query("UPDATE ot_head SET order_status = 'cancelled' WHERE id = {$orderId}");
-    $ticketService->syncForOrder($conn, $orderId, 'updated', 1);
+    $ticketService->syncForOrder($conn, $orderId, 'cancelled', 1, ['reason' => 'test full cancellation']);
     $activeAfterVoid = (int) $conn->query("SELECT COUNT(*) c FROM kds_tickets WHERE order_id = {$orderId} AND status <> 'cancelled'")->fetch_assoc()['c'];
     kdsRuntimeAssert($activeAfterVoid === 0, 'voided order must have no active tickets');
+    $cancelEvents = (int) $conn->query("SELECT COUNT(*) c FROM kds_order_events WHERE order_id = {$orderId} AND event_type = 'order_cancel'")->fetch_assoc()['c'];
+    kdsRuntimeAssert($cancelEvents === 2, 'full cancellation must append one event per affected station');
 
     // --- 7. Reconcile must not backfill ancient open orders --------------
     $conn->query("
@@ -202,6 +254,8 @@ try {
     $rootStatus = (string) $conn->query("SELECT status FROM kds_tickets WHERE id = {$editTicket}")->fetch_assoc()['status'];
     kdsRuntimeAssert($activeAfterRemove === 0, 'edit-model: removal after complete must not create a board card');
     kdsRuntimeAssert($rootStatus === 'completed', 'edit-model: root ticket must stay completed after removal');
+    $lineCancelType = (string) $conn->query("SELECT event_type FROM kds_order_events WHERE order_id = {$editOrderId} ORDER BY id DESC LIMIT 1")->fetch_assoc()['event_type'];
+    kdsRuntimeAssert($lineCancelType === 'line_cancel', 'post-send removal must be identified as a line cancellation');
 
     $insLineFor($itemA2, 1, $editOrderId);
     $ticketService->syncForOrder($conn, $editOrderId, 'updated', 1);
@@ -230,9 +284,12 @@ try {
 
     $conn->query("DELETE FROM fat_details WHERE fatid = {$churnOrderId}");
     $insLineFor($itemA1, 1, $churnOrderId);
+    $churnEventsBefore = (int) $conn->query("SELECT COUNT(*) c FROM kds_order_events WHERE order_id = {$churnOrderId}")->fetch_assoc()['c'];
     $ticketService->syncForOrder($conn, $churnOrderId, 'updated', 1);
+    $churnEventsAfter = (int) $conn->query("SELECT COUNT(*) c FROM kds_order_events WHERE order_id = {$churnOrderId}")->fetch_assoc()['c'];
     $activeAfterChurnResave = (int) $conn->query("SELECT COUNT(*) c FROM kds_tickets WHERE order_id = {$churnOrderId} AND station_id = {$stationA} AND status IN ('new','in_progress')")->fetch_assoc()['c'];
     kdsRuntimeAssert($activeAfterChurnResave === 0, 'churn: identical re-save must not reopen the board');
+    kdsRuntimeAssert($churnEventsBefore === $churnEventsAfter, 'churn: identical re-save must not append a kitchen event');
 
     $insLineFor($itemA2, 1, $churnOrderId);
     $ticketService->syncForOrder($conn, $churnOrderId, 'updated', 1);
@@ -246,6 +303,7 @@ try {
 } finally {
     // --- Cleanup ---------------------------------------------------------
     foreach ($created['orders'] as $orderId) {
+        $conn->query("DELETE FROM kds_order_events WHERE order_id = {$orderId}");
         $conn->query("DELETE l FROM kds_ticket_lines l JOIN kds_tickets t ON t.id = l.ticket_id WHERE t.order_id = {$orderId}");
         $conn->query("DELETE FROM kds_changes WHERE order_id = {$orderId}");
         $conn->query("DELETE FROM kds_tickets WHERE order_id = {$orderId}");
@@ -260,6 +318,7 @@ try {
         $conn->query("DELETE FROM item_group WHERE id = {$groupId}");
     }
     foreach ($created['stations'] as $stationId) {
+        $conn->query("DELETE FROM kds_order_events WHERE station_id = {$stationId}");
         $conn->query("DELETE FROM kds_station_users WHERE station_id = {$stationId}");
         $conn->query("DELETE FROM kds_station_categories WHERE station_id = {$stationId}");
         $conn->query("DELETE FROM kds_tickets WHERE station_id = {$stationId}");

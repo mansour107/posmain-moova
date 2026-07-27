@@ -39,6 +39,7 @@
                 <div class="card-body">
                     <?php
                     require_once __DIR__ . '/includes/business_day.php';
+                    require_once __DIR__ . '/classes/Financial/LegacySalesReportService.php';
                     $businessDayContext = posmain_business_day_context(
                         isset($conn) && $conn instanceof mysqli ? $conn : null,
                         (int) ($_SESSION['pos_tenant'] ?? 0),
@@ -55,24 +56,14 @@
                     }
 
                     $cutoffHour = (int) $businessDayContext['cutoff_hour'];
-                    $fromEsc = $conn->real_escape_string($from);
-                    $toEsc = $conn->real_escape_string($to);
-
-                    // استعلام: تجميع المبيعات حسب الساعة ضمن نافذة يوم العمل
-                    $sql = "SELECT HOUR(crtime) as sales_hour,
-                                   SUM(pro_value) as total_sales
-                            FROM ot_head
-                            WHERE (pro_tybe = 9 OR pro_tybe = 3)
-                            AND DATE(DATE_SUB(crtime, INTERVAL {$cutoffHour} HOUR)) BETWEEN '{$fromEsc}' AND '{$toEsc}'
-                            GROUP BY sales_hour
-                            ORDER BY sales_hour ASC";
-
-                    $res = $conn->query($sql);
-
                     // مصفوفة للساعات (0 → 23)
                     $hours = array_fill(0, 24, 0);
-
-                    while ($row = $res->fetch_assoc()) {
+                    $hourRows = (new LegacySalesReportService())->timeBuckets($conn, $from, $to, 'hour', [
+                        'tenant' => (int) ($_SESSION['pos_tenant'] ?? 0),
+                        'branch' => (int) ($_SESSION['pos_branch'] ?? 0),
+                        'cutoff_hour' => $cutoffHour,
+                    ]);
+                    foreach ($hourRows as $row) {
                         $hours[(int)$row['sales_hour']] = $row['total_sales'];
                     }
 
@@ -82,8 +73,8 @@
                     // استبعاد الساعات الصفرية عشان نحسب الأعلى والأقل
                     $filtered = array_filter($hours, fn($v) => $v > 0);
 
-                    $max_val = max($filtered);
-                    $min_val = min($filtered);
+                    $max_val = $filtered !== [] ? max($filtered) : 0;
+                    $min_val = $filtered !== [] ? min($filtered) : 0;
 
                     $max_hour = array_search($max_val, $hours);
                     $min_hour = array_search($min_val, $hours);

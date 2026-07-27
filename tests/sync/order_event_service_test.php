@@ -107,12 +107,60 @@ class OrderEventServiceTest extends TestCase
         $service->record(self::$conn, 0, 'payment_added', 'unit_test');
     }
 
+    public function testShadowModeKeepsOrderEventWhenConfiguredIdentityChangesInsideTransaction(): void
+    {
+        $service = new OrderEventService();
+        $identity = new SyncBranchIdentity();
+        $orderId = random_int(100000, 999999);
+        $previousMode = getenv('POSMAIN_SIDE_EFFECT_MODE');
+        putenv('POSMAIN_SIDE_EFFECT_MODE=shadow');
+
+        self::$conn->begin_transaction();
+        try {
+            self::$conn->query('DELETE FROM sync_branch_identity WHERE id = 1');
+            $identity->ensure(self::$conn, [
+                'branch' => ['uuid' => '77777777-7777-4777-8777-777777777777'],
+            ]);
+
+            $event = $service->record(self::$conn, $orderId, 'order.saved', 'identity_rotation_test', [
+                'sync_config' => $this->syncConfigWithUuid('88888888-8888-4888-8888-888888888888'),
+            ]);
+
+            $eventId = (int) $event['id'];
+            $this->assertGreaterThan(0, $eventId);
+            $this->assertSame(
+                1,
+                (int) self::$conn->query("SELECT COUNT(*) AS c FROM order_events WHERE id = {$eventId}")->fetch_assoc()['c']
+            );
+            $this->assertSame(
+                0,
+                (int) self::$conn->query(
+                    "SELECT COUNT(*) AS c FROM sync_outbox WHERE aggregate_type = 'order_event' AND aggregate_local_id = {$eventId}"
+                )->fetch_assoc()['c']
+            );
+            $transaction = self::$conn->query('SELECT @@session.in_transaction AS active_transaction')->fetch_assoc();
+            $this->assertSame(1, (int) ($transaction['active_transaction'] ?? 0));
+        } finally {
+            self::$conn->rollback();
+            if ($previousMode === false) {
+                putenv('POSMAIN_SIDE_EFFECT_MODE');
+            } else {
+                putenv('POSMAIN_SIDE_EFFECT_MODE=' . $previousMode);
+            }
+        }
+    }
+
     private function syncConfig(): array
+    {
+        return $this->syncConfigWithUuid('12345678-1234-4234-8234-123456789012');
+    }
+
+    private function syncConfigWithUuid(string $uuid): array
     {
         return [
             'role' => 'branch',
             'branch' => [
-                'uuid' => '12345678-1234-4234-8234-123456789012',
+                'uuid' => $uuid,
                 'name' => 'Order Event PHPUnit Branch',
                 'pos_tenant' => 12,
                 'pos_branch' => 34,

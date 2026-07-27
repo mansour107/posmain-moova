@@ -72,7 +72,9 @@ $salesDay = file_get_contents(__DIR__ . '/../../sales-by-day.php');
 businessDayContractAssert(strpos($salesDay, 'posmain_business_day_context') !== false, 'sales-by-day should use business day');
 
 $salesHour = file_get_contents(__DIR__ . '/../../sales-by-hour.php');
-businessDayContractAssert(strpos($salesHour, 'DATE_SUB(crtime') !== false, 'sales-by-hour should filter by business-day crtime');
+$legacySalesReports = file_get_contents(__DIR__ . '/../../classes/Financial/LegacySalesReportService.php');
+businessDayContractAssert(strpos($salesHour, 'cutoff_hour') !== false, 'sales-by-hour should pass the branch cutoff hour');
+businessDayContractAssert(strpos($legacySalesReports, 'DATE(DATE_SUB(oh.crtime') !== false, 'legacy sales adapter should filter hourly sales by business-day crtime');
 
 $cutoffEndpoint = file_get_contents(__DIR__ . '/../../do/do_set_business_day_cutoff.php');
 businessDayContractAssert(strpos($cutoffEndpoint, 'setCutoffHourForBranch') !== false, 'cutoff endpoint should persist setting');

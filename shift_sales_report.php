@@ -29,6 +29,7 @@ $sales_data = [
     'total_invoices' => (int) ($totals['total_orders'] ?? 0),
     'total_sales' => (float) ($totals['total_gross'] ?? 0),
     'total_discounts' => (float) ($totals['total_discount'] ?? 0),
+    'total_refunds' => (float) ($totals['total_refunds'] ?? 0),
     'net_sales' => (float) ($totals['total_net'] ?? 0),
     'first_sale_time' => $timeBounds['first_sale_time'],
     'last_sale_time' => $timeBounds['last_sale_time'],
@@ -122,6 +123,12 @@ include('includes/header.php');
                                         <tr>
                                             <td><strong>الخصم:</strong></td>
                                             <td class="text-end text-danger"><?= number_format($sales_data['total_discounts'], 2) ?> ج.م</td>
+                                        </tr>
+                                        <?php endif; ?>
+                                        <?php if ($sales_data['total_refunds'] > 0): ?>
+                                        <tr>
+                                            <td><strong>المرتجعات:</strong></td>
+                                            <td class="text-end text-danger">- <?= number_format($sales_data['total_refunds'], 2) ?> ج.م</td>
                                         </tr>
                                         <?php endif; ?>
                                         <tr class="table-success">

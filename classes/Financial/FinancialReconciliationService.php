@@ -2,6 +2,7 @@
 
 require_once __DIR__ . '/Money.php';
 require_once __DIR__ . '/FinancialCertificationBaselineService.php';
+require_once __DIR__ . '/RefundReversalReadService.php';
 
 /**
  * Exact-money financial reconciliations.
@@ -80,6 +81,7 @@ final class FinancialReconciliationService
         if (!$this->columnExists($conn, 'fat_details', 'posted_net')) {
             throw new RuntimeException('POSTED_LINE_SNAPSHOTS_REQUIRED');
         }
+        $saleEvidence = (new RefundReversalReadService())->originalSaleEvidencePredicate($conn, 'oh');
         $sql = "
             SELECT COUNT(*) AS c FROM (
                 SELECT oh.id
@@ -87,8 +89,7 @@ final class FinancialReconciliationService
                 LEFT JOIN fat_details fd
                   ON fd.fatid = oh.id AND COALESCE(fd.isdeleted, 0) = 0
                 WHERE oh.pro_tybe = 9
-                  AND COALESCE(oh.isdeleted, 0) = 0
-                  AND COALESCE(oh.payment_status, '') = 'paid'
+                  AND {$saleEvidence}
                 GROUP BY oh.id, oh.fat_net
                 HAVING SUM(CASE WHEN fd.id IS NOT NULL AND fd.posted_net IS NULL THEN 1 ELSE 0 END) > 0
                     OR ROUND(COALESCE(oh.fat_net, 0), 2) <> ROUND(COALESCE(SUM(fd.posted_net), 0), 2)
@@ -99,18 +100,33 @@ final class FinancialReconciliationService
 
     public function invoiceVersusPaymentsAndRefunds(mysqli $conn): int
     {
-        $this->requireTables($conn, ['ot_head', 'order_payments', 'payment_refunds']);
-        $refundExpr = '(SELECT COALESCE(SUM(pr.amount), 0) FROM payment_refunds pr WHERE pr.original_order_id = oh.id AND COALESCE(pr.status, \"posted\") = \"posted\")';
+        $this->requireTables($conn, ['ot_head', 'order_payments', 'credit_notes', 'payment_refunds']);
+        $activePaymentPredicate = $this->columnExists($conn, 'order_payments', 'is_voided')
+            ? 'COALESCE(op.is_voided, 0) = 0'
+            : '1 = 1';
+        $saleEvidence = (new RefundReversalReadService())->originalSaleEvidencePredicate($conn, 'oh');
         $sql = "
             SELECT COUNT(*) AS c
             FROM ot_head oh
             WHERE oh.pro_tybe = 9
-              AND COALESCE(oh.isdeleted, 0) = 0
-              AND COALESCE(oh.payment_status, '') = 'paid'
-              AND ROUND(COALESCE(oh.fat_net, 0), 2) <> ROUND(
-                    (SELECT COALESCE(SUM(op.amount), 0) FROM order_payments op WHERE op.order_id = oh.id)
-                    - {$refundExpr}
-                  , 2)
+              AND {$saleEvidence}
+              AND (
+                    ROUND(COALESCE(oh.fat_net, 0), 2) <> ROUND(
+                        (SELECT COALESCE(SUM(op.amount), 0)
+                           FROM order_payments op
+                          WHERE op.order_id = oh.id AND {$activePaymentPredicate})
+                    , 2)
+                    OR ROUND(
+                        (SELECT COALESCE(SUM(cn.total_amount), 0)
+                           FROM credit_notes cn
+                          WHERE cn.original_order_id = oh.id AND cn.status = 'posted')
+                    , 2) <> ROUND(
+                        (SELECT COALESCE(SUM(pr.amount), 0)
+                           FROM payment_refunds pr
+                          WHERE pr.original_order_id = oh.id
+                            AND COALESCE(pr.status, 'posted') IN ('posted', 'settled', 'pending_external'))
+                    , 2)
+                  )
         ";
         return $this->countRows($conn, $sql);
     }
@@ -243,6 +259,7 @@ final class FinancialReconciliationService
         if (!$this->columnExists($conn, 'fat_details', 'posted_tax')) {
             throw new RuntimeException('POSTED_TAX_SNAPSHOTS_REQUIRED');
         }
+        $saleEvidence = (new RefundReversalReadService())->originalSaleEvidencePredicate($conn, 'oh');
         $sql = "
             SELECT COUNT(*) AS c FROM (
                 SELECT oh.id
@@ -250,8 +267,7 @@ final class FinancialReconciliationService
                 LEFT JOIN fat_details fd
                   ON fd.fatid = oh.id AND COALESCE(fd.isdeleted, 0) = 0
                 WHERE oh.pro_tybe = 9
-                  AND COALESCE(oh.isdeleted, 0) = 0
-                  AND COALESCE(oh.payment_status, '') = 'paid'
+                  AND {$saleEvidence}
                 GROUP BY oh.id, oh.fat_tax
                 HAVING SUM(CASE WHEN fd.id IS NOT NULL AND fd.posted_tax IS NULL THEN 1 ELSE 0 END) > 0
                     OR ROUND(COALESCE(oh.fat_tax, 0), 2) <> ROUND(COALESCE(SUM(fd.posted_tax), 0), 2)

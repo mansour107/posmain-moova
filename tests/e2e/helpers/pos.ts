@@ -24,10 +24,18 @@ export async function clickNthAddableItem(page: Page, index: number): Promise<vo
       continue;
     }
     await card.click();
+    const preparationConfirm = page.locator('#sugarSpoonsConfirm');
+    if (await preparationConfirm.waitFor({ state: 'visible', timeout: 1_000 }).then(() => true).catch(() => false)) {
+      await preparationConfirm.click();
+    }
     return;
   }
 
   await cards.nth(index).click();
+  const preparationConfirm = page.locator('#sugarSpoonsConfirm');
+  if (await preparationConfirm.waitFor({ state: 'visible', timeout: 1_000 }).then(() => true).catch(() => false)) {
+    await preparationConfirm.click();
+  }
 }
 
 export async function removeFirstCartLine(page: Page): Promise<void> {

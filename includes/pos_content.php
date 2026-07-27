@@ -99,7 +99,8 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                             </button>
                             <button type="button" class="pos-mode-tab<?= $posOrderMode === 3 ? ' active' : '' ?>" data-age-target="age3">
                                 دليفري
-                                <span class="pos-delivery-pending-badge d-none" id="posDeliveryPendingBadge">0</span>
+                                <span class="pos-delivery-pending-badge d-none" id="posDeliveryPendingBadge"
+                                    data-delivery-queue-trigger title="متابعة طلبات التوصيل">0</span>
                             </button>
                         </div>
 
@@ -918,6 +919,86 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
         </div>
     </div>
 
+    <!-- متابعة التوصيل داخل شاشة الكاشير -->
+    <div class="offcanvas offcanvas-end pos-delivery-queue" tabindex="-1" id="posDeliveryQueue"
+        aria-labelledby="posDeliveryQueueLabel" data-bs-scroll="false">
+        <div class="offcanvas-header pos-delivery-queue__header">
+            <h5 class="offcanvas-title" id="posDeliveryQueueLabel">طلبات التوصيل</h5>
+            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="offcanvas" aria-label="إغلاق"></button>
+        </div>
+        <div class="pos-delivery-queue__summary" aria-live="polite">
+            <button type="button" class="pos-delivery-filter is-active" data-delivery-filter="all">
+                الكل <strong id="posDeliveryCountActive">0</strong>
+            </button>
+            <button type="button" class="pos-delivery-filter" data-delivery-filter="waiting">
+                في التجهيز <strong id="posDeliveryCountWaiting">0</strong>
+            </button>
+            <button type="button" class="pos-delivery-filter" data-delivery-filter="out">
+                مع المندوب <strong id="posDeliveryCountOut">0</strong>
+            </button>
+        </div>
+        <div class="offcanvas-body pos-delivery-queue__body">
+            <div class="pos-delivery-queue__state" id="posDeliveryQueueState">جارٍ تحميل الطلبات…</div>
+            <div class="pos-delivery-order-list d-none" id="posDeliveryOrderList"></div>
+        </div>
+    </div>
+
+    <div class="modal fade pos-delivery-action-modal" id="posDeliveryDispatchModal" tabindex="-1"
+        aria-labelledby="posDeliveryDispatchLabel" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered modal-sm">
+            <form class="modal-content" id="posDeliveryDispatchForm">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="posDeliveryDispatchLabel">خرج للتوصيل</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="إغلاق"></button>
+                </div>
+                <div class="modal-body">
+                    <input type="hidden" name="order_id" value="">
+                    <div class="pos-delivery-worker-switch" role="group" aria-label="نوع المندوب">
+                        <label><input type="radio" name="worker_mode" value="registered" checked><span>مندوب مسجل</span></label>
+                        <label><input type="radio" name="worker_mode" value="external"><span>مندوب خارجي</span></label>
+                    </div>
+                    <div class="mt-3" data-worker-mode-panel="registered">
+                        <label class="form-label" for="posDeliveryWorkerSelect">المندوب</label>
+                        <select class="form-select" id="posDeliveryWorkerSelect" name="delivery_worker_id" required></select>
+                    </div>
+                    <div class="mt-3 d-none" data-worker-mode-panel="external">
+                        <label class="form-label" for="posDeliveryExternalName">الاسم <small>اختياري</small></label>
+                        <input class="form-control" id="posDeliveryExternalName" name="driver_name" maxlength="160"
+                            placeholder="مثال: مندوب خارجي">
+                        <label class="form-label mt-2" for="posDeliveryExternalPhone">الهاتف <small>اختياري</small></label>
+                        <input class="form-control" id="posDeliveryExternalPhone" name="driver_phone" maxlength="60" inputmode="tel">
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-light" data-bs-dismiss="modal">رجوع</button>
+                    <button type="submit" class="btn pos-delivery-primary-action">تأكيد الخروج</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div class="modal fade pos-delivery-action-modal" id="posDeliveryFailureModal" tabindex="-1"
+        aria-labelledby="posDeliveryFailureLabel" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered modal-sm">
+            <form class="modal-content" id="posDeliveryFailureForm">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="posDeliveryFailureLabel">تعذر التسليم</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="إغلاق"></button>
+                </div>
+                <div class="modal-body">
+                    <input type="hidden" name="order_id" value="">
+                    <label class="form-label" for="posDeliveryFailureReason">السبب</label>
+                    <textarea class="form-control" id="posDeliveryFailureReason" name="reason" rows="3" maxlength="500"
+                        placeholder="مثال: العميل لم يرد" required></textarea>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-light" data-bs-dismiss="modal">رجوع</button>
+                    <button type="submit" class="btn btn-danger">تسجيل التعذر</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
     <!-- POS scripts stay local-first; internet connectivity is only for optional sync/update flows. -->
     <script>
         if (window.jQuery
@@ -937,6 +1018,7 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
     <script src="js/pos_barcode.js?v=<?= (int) (@filemtime(__DIR__ . '/../js/pos_barcode.js') ?: 1) ?>"></script>
     <script src="js/pos_customer.js?v=<?= (int) (@filemtime(__DIR__ . '/../js/pos_customer.js') ?: 1) ?>"></script>
     <script src="js/pos_delivery.js?v=<?= (int) (@filemtime(__DIR__ . '/../js/pos_delivery.js') ?: 1) ?>"></script>
+    <script src="js/pos_delivery_queue.js?v=<?= (int) (@filemtime(__DIR__ . '/../js/pos_delivery_queue.js') ?: 1) ?>"></script>
     <script src="js/pos_shift_expenses.js?v=<?= (int) (@filemtime(__DIR__ . '/../js/pos_shift_expenses.js') ?: 1) ?>"></script>
 
     <?php if ($legacyOfflinePrototypeEnabled): ?>
@@ -1180,21 +1262,69 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                         aria-label="إغلاق"></button>
                     <div class="pos-paid-reversal-heading">
                         <h5 class="modal-title" id="paidOrderReversalModalLabel">
-                            <i class="fas fa-undo me-2"></i>استرداد أو إلغاء طلب مدفوع
+                            <i class="fas fa-undo me-2"></i>استرداد مبلغ أو إلغاء طلب مدفوع
                         </h5>
-                        <p class="pos-paid-reversal-subtitle mb-0">اختر العملية وسياسة المخزون، ثم اذكر سبباً للتدقيق</p>
+                        <p class="pos-paid-reversal-subtitle mb-0">اختر طريقة صرف الاسترداد، وحدد أثر المخزون، ثم اكتب السبب.</p>
                     </div>
                 </div>
                 <div class="modal-body pos-paid-reversal-body">
                     <div class="alert alert-danger d-none mb-3" id="paidReversalValidationAlert" role="alert"></div>
-                    <label class="form-label" for="paid-reversal-action">نوع العملية</label>
+                    <label class="form-label" for="paid-reversal-action">ما العملية المطلوبة؟</label>
                     <select id="paid-reversal-action" class="form-select pos-paid-reversal-control mb-3"></select>
-                    <label class="form-label" for="paid-reversal-policy">سياسة المخزون</label>
+                    <div id="paid-reversal-tender-section">
+                        <div class="alert alert-info border mb-3" id="paid-reversal-balance-summary"></div>
+                        <label class="form-label" for="paid-reversal-refund-mode">نطاق الاسترداد</label>
+                        <select id="paid-reversal-refund-mode" class="form-select pos-paid-reversal-control mb-3">
+                            <option value="full">كل المبلغ المتبقي</option>
+                            <option value="items">أصناف وكميات محددة</option>
+                            <option value="amount">مبلغ محدد</option>
+                        </select>
+                        <div class="d-none mb-3" id="paid-reversal-amount-section">
+                            <label class="form-label" for="paid-reversal-amount">المبلغ المطلوب استرداده</label>
+                            <div class="input-group">
+                                <input id="paid-reversal-amount" class="form-control pos-paid-reversal-control"
+                                    type="number" min="0.01" step="0.01" inputmode="decimal" autocomplete="off">
+                                <span class="input-group-text">ج.م</span>
+                            </div>
+                            <div class="form-text">سيُوزع المبلغ على سطور البيع الأصلية بالترتيب مع نسب الضريبة والخصم المحفوظة.</div>
+                        </div>
+                        <div class="d-none mb-3" id="paid-reversal-items-section">
+                            <label class="form-label">الأصناف والكميات المطلوب استردادها</label>
+                            <div class="table-responsive border rounded">
+                                <table class="table table-sm align-middle mb-0">
+                                    <thead>
+                                        <tr>
+                                            <th scope="col">اختيار</th>
+                                            <th scope="col">الصنف</th>
+                                            <th scope="col">المتاح</th>
+                                            <th scope="col">الكمية</th>
+                                            <th scope="col">القيمة التقريبية</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="paid-reversal-items-list"></tbody>
+                                </table>
+                            </div>
+                            <div class="form-text" id="paid-reversal-items-total"></div>
+                        </div>
+                        <div class="alert alert-light border mb-3" id="paid-reversal-original-tenders"></div>
+                        <label class="form-label" for="paid-reversal-tender">طريقة صرف مبلغ الاسترداد</label>
+                        <select id="paid-reversal-tender" class="form-select pos-paid-reversal-control mb-2">
+                            <option value="">اختر طريقة صرف الاسترداد</option>
+                        </select>
+                        <label class="form-label" for="paid-reversal-reference">مرجع الاسترداد الخارجي (اختياري)</label>
+                        <input id="paid-reversal-reference" class="form-control pos-paid-reversal-control"
+                            type="text" maxlength="120" autocomplete="off"
+                            placeholder="رقم عملية البطاقة أو البنك بعد تنفيذها">
+                        <div class="form-text mb-3" id="paid-reversal-settlement-hint">
+                            الاسترداد غير النقدي بدون مرجع سيُسجل كعملية معلقة حتى إدخال مرجع التسوية.
+                        </div>
+                    </div>
+                    <label class="form-label" for="paid-reversal-policy">ماذا يحدث للمخزون؟</label>
                     <select id="paid-reversal-policy" class="form-select pos-paid-reversal-control mb-3">
-                        <option value="waste">لا يرجع المكونات للمخزون</option>
-                        <option value="return_to_stock">يرجع المكونات للمخزون</option>
+                        <option value="waste">لا تُعِد المرتجع إلى المخزون</option>
+                        <option value="return_to_stock">أعِد المرتجع إلى المخزون</option>
                     </select>
-                    <label class="form-label" for="paid-reversal-reason">السبب</label>
+                    <label class="form-label" for="paid-reversal-reason">سبب الاسترداد أو الإلغاء</label>
                     <textarea id="paid-reversal-reason" class="form-control pos-paid-reversal-control" rows="3"
                         maxlength="255" placeholder="مثال: طلب خاطئ من العميل"></textarea>
                 </div>
@@ -1203,7 +1333,7 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                         <i class="fas fa-times me-1"></i>إلغاء
                     </button>
                     <button type="button" class="btn pos-paid-reversal-btn-submit" id="paidReversalSubmitBtn">
-                        <i class="fas fa-check me-1"></i>تنفيذ
+                        <i class="fas fa-check me-1"></i>تأكيد العملية
                     </button>
                 </div>
             </div>
@@ -1231,65 +1361,5 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                 openReceipt();
             };
 
-            window.deleteOrder = function(orderId, tableId) {
-                tableId = parseInt(tableId || 0, 10);
-
-                Swal.fire({
-                    title: 'هل أنت متأكد؟',
-                    text: "هل أنت متأكد من حذف هذا الطلب؟ لا يمكن التراجع عن هذا الإجراء.",
-                    icon: 'warning',
-                    showCancelButton: true,
-                    confirmButtonColor: '#d33',
-                    cancelButtonColor: '#3085d6',
-                    confirmButtonText: 'نعم، احذفه!',
-                    cancelButtonText: 'إلغاء'
-                }).then((result) => {
-                    if (result.isConfirmed) {
-                        $.ajax({
-                            url: 'ajax/delete_order.php',
-                            method: 'POST',
-                            data: {
-                                order_id: orderId,
-                                table_id: tableId,
-                                idempotency_key: createPOSIdempotencyKey('pos.order.cancel')
-                            },
-                            success: function(response) {
-                                try {
-                                    if (typeof response === 'string') response = JSON.parse(response);
-                                    if (response.success) {
-                                        Swal.fire(
-                                            'تم الحذف!',
-                                            'تم حذف الطلب بنجاح.',
-                                            'success'
-                                        );
-                                        if (typeof window.loadRecentOrders === 'function') {
-                                            window.loadRecentOrders(false);
-                                        }
-                                    } else {
-                                        Swal.fire(
-                                            'خطأ!',
-                                            'فشل الحذف: ' + (response.message || response.error || 'خطأ غير معروف'),
-                                            'error'
-                                        );
-                                    }
-                                } catch (e) {
-                                    Swal.fire(
-                                        'خطأ!',
-                                        'خطأ في استجابة الخادم',
-                                        'error'
-                                    );
-                                }
-                            },
-                            error: function() {
-                                Swal.fire(
-                                    'خطأ!',
-                                    'خطأ في الاتصال',
-                                    'error'
-                                );
-                            }
-                        });
-                    }
-                });
-            };
         });
     </script>

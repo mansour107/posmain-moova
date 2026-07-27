@@ -8,6 +8,7 @@ require_once __DIR__ . '/UnitPrice.php';
 require_once __DIR__ . '/FinancialTenderAllocator.php';
 require_once __DIR__ . '/../Accounting/JournalPostingService.php';
 require_once __DIR__ . '/../Pos/Service/DrawerSessionService.php';
+require_once __DIR__ . '/../Pos/Service/BusinessDayService.php';
 require_once __DIR__ . '/../Pos/Service/PaymentMethodService.php';
 require_once __DIR__ . '/../Sync/DocumentCounterService.php';
 require_once __DIR__ . '/../Sync/OperationalSyncEventService.php';
@@ -33,7 +34,7 @@ final class FinancialRefundService
     }
 
     /**
-     * @return array{credit_note_id:int,credit_note_journal_head_id:int,refund_ids:array<int,int>,total_amount:string,pending_external_amount:string,replayed:bool}
+     * @return array{credit_note_id:int,credit_note_journal_head_id:int,refund_ids:array<int,int>,refund_tenders:array<int,array>,total_amount:string,cumulative_refunded_amount:string,remaining_refundable_amount:string,reversal_status:string,pending_external_amount:string,tenant:int,branch:int,business_day:?string,drawer_session_id:?int,manager_approval_id:?int,replayed:bool}
      */
     public function createPostedRefund(mysqli $conn, array $request, array $context = []): array
     {
@@ -46,6 +47,7 @@ final class FinancialRefundService
         $branch = max(0, (int) ($request['branch'] ?? $context['branch'] ?? 0));
         $idempotencyKey = trim((string) ($request['idempotency_key'] ?? ''));
         $vatAccountId = (int) ($request['vat_payable_account_id'] ?? $context['vat_payable_account_id'] ?? 0);
+        $requestFingerprint = $this->refundRequestFingerprint($orderId, $request);
 
         $ownsTransaction = empty($context['in_transaction']);
         if ($ownsTransaction) {
@@ -57,13 +59,12 @@ final class FinancialRefundService
             if ($idempotencyKey !== '') {
                 $existing = $this->findCreditNoteByIdempotency($conn, $idempotencyKey);
                 if ($existing !== null) {
-                    if ((int) $existing['original_order_id'] !== $orderId
-                        || Money::from((string) $existing['total_amount'])->toString() !== Money::from((string) ($request['expected_total'] ?? $existing['total_amount']))->toString()
-                    ) {
-                        // Allow replay when payload matches stored total.
-                        if ((int) $existing['original_order_id'] !== $orderId) {
-                            throw new RuntimeException('IDEMPOTENCY_KEY_CONFLICT');
-                        }
+                    if ((int) $existing['original_order_id'] !== $orderId) {
+                        throw new RuntimeException('IDEMPOTENCY_KEY_CONFLICT');
+                    }
+                    $storedFingerprint = trim((string) ($existing['request_fingerprint'] ?? ''));
+                    if ($storedFingerprint !== '' && !hash_equals($storedFingerprint, $requestFingerprint)) {
+                        throw new RuntimeException('IDEMPOTENCY_KEY_CONFLICT');
                     }
                     if ($ownsTransaction) {
                         $conn->commit();
@@ -73,20 +74,40 @@ final class FinancialRefundService
                 }
             }
 
-            $defaultDisposition = $this->normalizeStockDisposition(
-                $request['stock_disposition'] ?? $request['refund_stock_policy'] ?? 'no_stock_return'
-            );
-            $lines = $this->normalizeLinesFromSnapshots(
+            if ($tenant === 0 && $branch === 0) {
+                $scope = $this->orderScope($conn, $orderId);
+                $tenant = $scope['tenant'];
+                $branch = $scope['branch'];
+            }
+            $attribution = $this->resolveRefundAttribution(
                 $conn,
-                $orderId,
-                $request['lines'] ?? null,
-                $defaultDisposition
+                $userId,
+                $tenant,
+                $branch,
+                $request,
+                $context
             );
-            $total = $this->sumAmounts(array_column($lines, 'line_amount'));
+            $tenant = $attribution['tenant'];
+            $branch = $attribution['branch'];
+            $drawerSessionId = $attribution['drawer_session_id'];
+
+            $preview = $this->previewRefund($conn, $orderId, $request);
+            $lines = $preview['lines'];
+            $total = $preview['total_amount'];
             $taxTotal = $this->sumAmounts(array_column($lines, 'tax_amount'));
             $payments = $this->normalizePaymentAllocations($conn, $orderId, $request['payments'] ?? null, $total, $request);
             if ($this->sumAmounts(array_column($payments, 'amount')) !== $total) {
                 throw new InvalidArgumentException('REFUND_TENDER_TOTAL_MISMATCH');
+            }
+            $hasCashTender = false;
+            foreach ($payments as $payment) {
+                if (($payment['type'] ?? '') === 'cash') {
+                    $hasCashTender = true;
+                    break;
+                }
+            }
+            if ($hasCashTender && !empty($context['require_drawer_session']) && $drawerSessionId === null) {
+                throw new RuntimeException('DRAWER_SESSION_REQUIRED');
             }
 
             foreach ($payments as $payment) {
@@ -99,8 +120,11 @@ final class FinancialRefundService
                 $customerAccountId,
                 $total,
                 $idempotencyKey !== '' ? $idempotencyKey : null,
+                $preview['refund_mode'],
+                $requestFingerprint,
                 $reason,
-                $userId
+                $userId,
+                $attribution
             );
             foreach ($lines as $line) {
                 $this->insertCreditNoteLine($conn, $creditNoteId, $line);
@@ -193,10 +217,7 @@ final class FinancialRefundService
                     $update->close();
 
                     if ($payment['type'] === 'cash') {
-                        $sessionId = (int) ($request['drawer_session_id'] ?? $context['drawer_session_id'] ?? 0);
-                        if ($sessionId < 1 && session_status() === PHP_SESSION_ACTIVE) {
-                            $sessionId = (int) ($_SESSION['pos_drawer_session_id'] ?? 0);
-                        }
+                        $sessionId = (int) ($drawerSessionId ?? 0);
                         if ($sessionId < 1) {
                             $open = $this->drawers->resolveOpenSessionForUser($conn, $userId, [
                                 'tenant' => $tenant,
@@ -228,12 +249,24 @@ final class FinancialRefundService
                 $conn->commit();
             }
 
+            $state = $this->reversalStateForOrder($conn, $orderId);
+
             return [
                 'credit_note_id' => $creditNoteId,
                 'credit_note_journal_head_id' => $creditJournal,
                 'refund_ids' => $refundIds,
+                'refund_tenders' => $this->refundTenderRows($conn, $creditNoteId),
+                'refund_mode' => $preview['refund_mode'],
                 'total_amount' => $total,
+                'cumulative_refunded_amount' => $state['cumulative_refunded_amount'],
+                'remaining_refundable_amount' => $state['remaining_refundable_amount'],
+                'reversal_status' => $state['reversal_status'],
                 'pending_external_amount' => $pendingExternal->toString(),
+                'tenant' => $tenant,
+                'branch' => $branch,
+                'business_day' => $attribution['business_day'],
+                'drawer_session_id' => $drawerSessionId,
+                'manager_approval_id' => $attribution['manager_approval_id'],
                 'replayed' => false,
             ];
         } catch (Throwable $exception) {
@@ -242,6 +275,72 @@ final class FinancialRefundService
             }
             throw $exception;
         }
+    }
+
+    /**
+     * Return an already-posted refund without re-running its side effects.
+     */
+    public function findPostedRefundByIdempotency(mysqli $conn, string $key, int $orderId, ?array $request = null): ?array
+    {
+        $key = trim($key);
+        if ($key === '' || $orderId < 1) {
+            return null;
+        }
+        $existing = $this->findCreditNoteByIdempotency($conn, $key);
+        if ($existing === null) {
+            return null;
+        }
+        if ((int) ($existing['original_order_id'] ?? 0) !== $orderId) {
+            throw new RuntimeException('IDEMPOTENCY_KEY_CONFLICT');
+        }
+        if ($request !== null) {
+            $storedFingerprint = trim((string) ($existing['request_fingerprint'] ?? ''));
+            if ($storedFingerprint !== ''
+                && !hash_equals($storedFingerprint, $this->refundRequestFingerprint($orderId, $request))
+            ) {
+                throw new RuntimeException('IDEMPOTENCY_KEY_CONFLICT');
+            }
+        }
+
+        return $this->existingResult($conn, $existing);
+    }
+
+    /**
+     * Resolve a cashier refund selection against immutable posted line
+     * snapshots. This is also used before manager-limit evaluation so approval
+     * is based on the requested partial amount, not the original sale total.
+     *
+     * @return array{refund_mode:string,total_amount:string,lines:array<int,array>}
+     */
+    public function previewRefund(mysqli $conn, int $orderId, array $request): array
+    {
+        if ($orderId < 1) {
+            throw new InvalidArgumentException('ORIGINAL_ORDER_REQUIRED');
+        }
+        $defaultDisposition = $this->normalizeStockDisposition(
+            $request['stock_disposition'] ?? $request['refund_stock_policy'] ?? 'no_stock_return'
+        );
+        $mode = $this->refundModeFromRequest($request);
+        if ($mode === 'amount') {
+            $amount = Money::from((string) ($request['refund_amount'] ?? '0'))->toString();
+            if (!Money::from($amount)->isPositive()) {
+                throw new InvalidArgumentException('REFUND_AMOUNT_INVALID');
+            }
+            $lines = $this->allocateAmountToRemainingLines($conn, $orderId, $amount, $defaultDisposition);
+        } else {
+            $requestedLines = $mode === 'items' ? ($request['lines'] ?? null) : null;
+            $lines = $this->normalizeLinesFromSnapshots($conn, $orderId, $requestedLines, $defaultDisposition);
+        }
+        $total = $this->sumAmounts(array_column($lines, 'line_amount'));
+        if (!Money::from($total)->isPositive()) {
+            throw new InvalidArgumentException('REFUND_AMOUNT_INVALID');
+        }
+
+        return [
+            'refund_mode' => $mode,
+            'total_amount' => $total,
+            'lines' => $lines,
+        ];
     }
 
     /**
@@ -350,38 +449,87 @@ final class FinancialRefundService
             $lines = $this->allRemainingRefundLines($conn, $orderId, $defaultDisposition);
         }
         $normalized = [];
+        $seenDetailIds = [];
         foreach ($lines as $line) {
             if (!is_array($line)) {
                 throw new InvalidArgumentException('REFUND_LINE_INVALID');
             }
             $detailId = $this->positiveInt($line['original_detail_id'] ?? $line['detail_id'] ?? 0, 'ORIGINAL_DETAIL_REQUIRED');
+            if (isset($seenDetailIds[$detailId])) {
+                throw new InvalidArgumentException('REFUND_LINE_DUPLICATE');
+            }
+            $seenDetailIds[$detailId] = true;
             $snapshot = $this->loadLineSnapshot($conn, $orderId, $detailId);
             $quantity = DecimalQuantity::from($line['quantity'] ?? $line['qty'] ?? '0')->toString();
             if (FinancialDecimal::compare($quantity, '0.000000', DecimalQuantity::SCALE) <= 0) {
                 throw new InvalidArgumentException('REFUND_QUANTITY_INVALID');
             }
-            $remainingQty = $this->remainingRefundableQty($conn, $detailId, $snapshot['quantity']);
+            $refunded = $this->refundedLineState($conn, $detailId);
+            $remainingQty = FinancialDecimal::subtract(
+                $snapshot['quantity'],
+                $refunded['quantity'],
+                DecimalQuantity::SCALE
+            );
             if (FinancialDecimal::compare($quantity, $remainingQty, DecimalQuantity::SCALE) > 0) {
                 throw new InvalidArgumentException('REFUND_QUANTITY_EXCEEDS_REMAINING');
             }
 
             $unitAmount = $snapshot['unit_amount'];
-            $expected = RoundingPolicy::halfUp(
-                FinancialDecimal::multiply($quantity, $unitAmount, DecimalQuantity::SCALE),
-                Money::SCALE,
+            $remainingAmount = Money::from($snapshot['line_amount'])
+                ->subtract(Money::from($refunded['line_amount']))
+                ->toString();
+            $remainingTax = Money::from($snapshot['tax_amount'])
+                ->subtract(Money::from($refunded['tax_amount']))
+                ->toString();
+            $remainingEvidence = [];
+            foreach ([
+                'gross_amount',
+                'line_discount_amount',
+                'order_discount_amount',
+                'taxable_amount',
+            ] as $column) {
+                $remainingEvidence[$column] = Money::from($snapshot[$column])
+                    ->subtract(Money::from($refunded[$column]))
+                    ->toString();
+            }
+            $takesRemainder = FinancialDecimal::compare(
+                $quantity,
+                $remainingQty,
                 DecimalQuantity::SCALE
-            );
-            // Pro-rate tax from snapshot when present.
-            $taxAmount = '0.00';
-            if (Money::from($snapshot['tax_amount'])->isPositive()
-                && FinancialDecimal::compare($snapshot['quantity'], '0', DecimalQuantity::SCALE) > 0
-            ) {
-                $taxRaw = bcdiv(
-                    bcmul($snapshot['tax_amount'], $quantity, 12),
-                    $snapshot['quantity'],
-                    6
+            ) === 0;
+            $expected = $takesRemainder
+                ? $remainingAmount
+                : $this->proRateMoney(
+                    $snapshot['line_amount'],
+                    $quantity,
+                    $snapshot['quantity']
                 );
-                $taxAmount = RoundingPolicy::halfUp($taxRaw);
+            if (Money::from($expected)->compare(Money::from($remainingAmount)) > 0) {
+                $expected = $remainingAmount;
+            }
+            $taxAmount = $takesRemainder
+                ? $remainingTax
+                : $this->proRateMoney(
+                    $snapshot['tax_amount'],
+                    $quantity,
+                    $snapshot['quantity']
+                );
+            if (Money::from($taxAmount)->compare(Money::from($remainingTax)) > 0) {
+                $taxAmount = $remainingTax;
+            }
+            $evidence = [];
+            foreach ($remainingEvidence as $column => $remainingValue) {
+                $value = $takesRemainder
+                    ? $remainingValue
+                    : $this->proRateMoney(
+                        $snapshot[$column],
+                        $quantity,
+                        $snapshot['quantity']
+                    );
+                if (Money::from($value)->compare(Money::from($remainingValue)) > 0) {
+                    $value = $remainingValue;
+                }
+                $evidence[$column] = $value;
             }
             $disposition = $this->normalizeStockDisposition($line['stock_disposition'] ?? $defaultDisposition);
             $normalized[] = [
@@ -389,6 +537,10 @@ final class FinancialRefundService
                 'quantity' => $quantity,
                 'unit_amount' => $unitAmount,
                 'line_amount' => $expected,
+                'gross_amount' => $evidence['gross_amount'],
+                'line_discount_amount' => $evidence['line_discount_amount'],
+                'order_discount_amount' => $evidence['order_discount_amount'],
+                'taxable_amount' => $evidence['taxable_amount'],
                 'tax_rate' => $snapshot['tax_rate'],
                 'tax_amount' => $taxAmount,
                 'stock_disposition' => $disposition,
@@ -396,6 +548,266 @@ final class FinancialRefundService
         }
 
         return $normalized;
+    }
+
+    private function allocateAmountToRemainingLines(
+        mysqli $conn,
+        int $orderId,
+        string $requestedAmount,
+        string $disposition
+    ): array {
+        $remainingOrderAmount = Money::from(
+            $this->reversalStateForOrder($conn, $orderId)['remaining_refundable_amount']
+        );
+        $requested = Money::from($requestedAmount);
+        if ($requested->compare($remainingOrderAmount) > 0) {
+            throw new InvalidArgumentException('REFUND_AMOUNT_EXCEEDS_REMAINING');
+        }
+
+        $remaining = $requested;
+        $lines = [];
+        foreach ($this->remainingLineSnapshots($conn, $orderId) as $snapshot) {
+            if (!$remaining->isPositive()) {
+                break;
+            }
+            $available = Money::from($snapshot['remaining_amount']);
+            if (!$available->isPositive()) {
+                continue;
+            }
+            $allocated = $remaining->compare($available) >= 0 ? $available : $remaining;
+            $takesRemainder = $allocated->compare($available) === 0;
+            $quantity = $takesRemainder
+                ? $snapshot['remaining_quantity']
+                : $this->proRateQuantity(
+                    $snapshot['remaining_quantity'],
+                    $allocated->toString(),
+                    $available->toString()
+                );
+            if (FinancialDecimal::compare($quantity, '0', DecimalQuantity::SCALE) <= 0) {
+                throw new InvalidArgumentException('REFUND_AMOUNT_TOO_SMALL_FOR_LINE');
+            }
+            $taxAmount = $takesRemainder
+                ? $snapshot['remaining_tax']
+                : $this->proRateMoney(
+                    $snapshot['remaining_tax'],
+                    $allocated->toString(),
+                    $available->toString()
+                );
+            if (Money::from($taxAmount)->compare(Money::from($snapshot['remaining_tax'])) > 0) {
+                $taxAmount = $snapshot['remaining_tax'];
+            }
+            $evidence = [];
+            foreach ([
+                'gross_amount',
+                'line_discount_amount',
+                'order_discount_amount',
+                'taxable_amount',
+            ] as $column) {
+                $remainingColumn = 'remaining_' . $column;
+                $evidence[$column] = $takesRemainder
+                    ? $snapshot[$remainingColumn]
+                    : $this->proRateMoney(
+                        $snapshot[$remainingColumn],
+                        $allocated->toString(),
+                        $available->toString()
+                    );
+                if (Money::from($evidence[$column])->compare(Money::from($snapshot[$remainingColumn])) > 0) {
+                    $evidence[$column] = $snapshot[$remainingColumn];
+                }
+            }
+            $lines[] = [
+                'original_detail_id' => $snapshot['original_detail_id'],
+                'quantity' => $quantity,
+                'unit_amount' => $snapshot['unit_amount'],
+                'line_amount' => $allocated->toString(),
+                'gross_amount' => $evidence['gross_amount'],
+                'line_discount_amount' => $evidence['line_discount_amount'],
+                'order_discount_amount' => $evidence['order_discount_amount'],
+                'taxable_amount' => $evidence['taxable_amount'],
+                'tax_rate' => $snapshot['tax_rate'],
+                'tax_amount' => $taxAmount,
+                'stock_disposition' => $disposition,
+            ];
+            $remaining = $remaining->subtract($allocated);
+        }
+        if ($remaining->isPositive()) {
+            throw new InvalidArgumentException('REFUND_AMOUNT_EXCEEDS_REMAINING');
+        }
+
+        return $lines;
+    }
+
+    private function proRateMoney(string $total, string $part, string $whole): string
+    {
+        if (!Money::from($total)->isPositive()
+            || FinancialDecimal::compare($whole, '0', DecimalQuantity::SCALE) <= 0
+        ) {
+            return '0.00';
+        }
+
+        return RoundingPolicy::halfUp(
+            bcdiv(bcmul($total, $part, 12), $whole, 12)
+        );
+    }
+
+    private function proRateQuantity(string $quantity, string $part, string $whole): string
+    {
+        if (FinancialDecimal::compare($whole, '0', Money::SCALE) <= 0) {
+            return '0.000000';
+        }
+        $raw = bcdiv(bcmul($quantity, $part, 12), $whole, 12);
+        $rounded = RoundingPolicy::halfUp($raw, DecimalQuantity::SCALE, 12);
+        if (FinancialDecimal::compare($part, $whole, Money::SCALE) < 0
+            && FinancialDecimal::compare($rounded, $quantity, DecimalQuantity::SCALE) >= 0
+        ) {
+            $rounded = bcsub(
+                DecimalQuantity::from($quantity)->toString(),
+                '0.000001',
+                DecimalQuantity::SCALE
+            );
+        }
+
+        return DecimalQuantity::from($rounded)->toString();
+    }
+
+    private function refundModeFromRequest(array $request): string
+    {
+        $explicit = strtolower(trim((string) ($request['refund_mode'] ?? '')));
+        $hasLines = is_array($request['lines'] ?? null) && $request['lines'] !== [];
+        $hasAmount = array_key_exists('refund_amount', $request)
+            && trim((string) $request['refund_amount']) !== '';
+        if ($explicit === '') {
+            $explicit = $hasLines ? 'items' : ($hasAmount ? 'amount' : 'full');
+        }
+        if (!in_array($explicit, ['full', 'items', 'amount'], true)) {
+            throw new InvalidArgumentException('REFUND_MODE_INVALID');
+        }
+        if (($explicit === 'full' && ($hasLines || $hasAmount))
+            || ($explicit === 'items' && (!$hasLines || $hasAmount))
+            || ($explicit === 'amount' && ($hasLines || !$hasAmount))
+        ) {
+            throw new InvalidArgumentException('REFUND_SELECTION_CONFLICT');
+        }
+
+        return $explicit;
+    }
+
+    private function refundRequestFingerprint(int $orderId, array $request): string
+    {
+        $mode = $this->refundModeFromRequest($request);
+        $lines = [];
+        if ($mode === 'items') {
+            foreach ((array) ($request['lines'] ?? []) as $line) {
+                if (!is_array($line)) {
+                    continue;
+                }
+                $lines[] = [
+                    'original_detail_id' => (int) ($line['original_detail_id'] ?? $line['detail_id'] ?? 0),
+                    'quantity' => DecimalQuantity::from($line['quantity'] ?? $line['qty'] ?? '0')->toString(),
+                    'stock_disposition' => $this->normalizeStockDisposition(
+                        $line['stock_disposition']
+                        ?? $request['stock_disposition']
+                        ?? $request['refund_stock_policy']
+                        ?? 'no_stock_return'
+                    ),
+                ];
+            }
+            usort($lines, static fn (array $a, array $b): int => $a['original_detail_id'] <=> $b['original_detail_id']);
+        }
+        $payments = [];
+        foreach ((array) ($request['payments'] ?? []) as $payment) {
+            if (!is_array($payment)) {
+                continue;
+            }
+            $payments[] = [
+                'original_payment_id' => (int) ($payment['original_payment_id'] ?? $payment['id'] ?? 0),
+                'payment_method' => (string) ($payment['payment_method_id'] ?? $payment['payment_method'] ?? ''),
+                'amount' => Money::from((string) ($payment['amount'] ?? '0'))->toString(),
+                'external_reference' => trim((string) ($payment['external_reference'] ?? $payment['reference_no'] ?? '')),
+            ];
+        }
+        $payload = [
+            'order_id' => $orderId,
+            'refund_mode' => $mode,
+            'refund_amount' => $mode === 'amount'
+                ? Money::from((string) ($request['refund_amount'] ?? '0'))->toString()
+                : null,
+            'lines' => $lines,
+            'refund_payment_method' => trim((string) (
+                $request['refund_payment_method'] ?? $request['refund_tender'] ?? ''
+            )),
+            'refund_external_reference' => trim((string) (
+                $request['refund_external_reference'] ?? $request['external_reference'] ?? ''
+            )),
+            'payments' => $payments,
+            'stock_disposition' => $this->normalizeStockDisposition(
+                $request['stock_disposition'] ?? $request['refund_stock_policy'] ?? 'no_stock_return'
+            ),
+            'reason' => trim((string) ($request['reason'] ?? '')),
+        ];
+
+        return hash('sha256', json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+    }
+
+    private function remainingLineSnapshots(mysqli $conn, int $orderId): array
+    {
+        $hasPosted = $this->columnExists($conn, 'fat_details', 'posted_qty');
+        $qtyExpr = $hasPosted
+            ? 'COALESCE(posted_qty, ABS(qty_out - qty_in))'
+            : 'ABS(qty_out - qty_in)';
+        $result = $conn->query('
+            SELECT id, ' . $qtyExpr . ' AS quantity
+            FROM fat_details
+            WHERE fatid = ' . (int) $orderId . '
+              AND COALESCE(isdeleted, 0) = 0
+            ORDER BY id ASC
+        ');
+        if ($result === false) {
+            throw new RuntimeException('REFUND_LINES_LOAD_FAILED');
+        }
+        $out = [];
+        while ($row = $result->fetch_assoc()) {
+            $detailId = (int) $row['id'];
+            $snapshot = $this->loadLineSnapshot($conn, $orderId, $detailId);
+            $refunded = $this->refundedLineState($conn, $detailId);
+            $remainingQty = FinancialDecimal::subtract(
+                $snapshot['quantity'],
+                $refunded['quantity'],
+                DecimalQuantity::SCALE
+            );
+            $remainingAmount = Money::from($snapshot['line_amount'])
+                ->subtract(Money::from($refunded['line_amount']))
+                ->toString();
+            if (FinancialDecimal::compare($remainingQty, '0', DecimalQuantity::SCALE) <= 0
+                || !Money::from($remainingAmount)->isPositive()
+            ) {
+                continue;
+            }
+            $out[] = [
+                'original_detail_id' => $detailId,
+                'remaining_quantity' => $remainingQty,
+                'remaining_amount' => $remainingAmount,
+                'remaining_tax' => Money::from($snapshot['tax_amount'])
+                    ->subtract(Money::from($refunded['tax_amount']))
+                    ->toString(),
+                'remaining_gross_amount' => Money::from($snapshot['gross_amount'])
+                    ->subtract(Money::from($refunded['gross_amount']))
+                    ->toString(),
+                'remaining_line_discount_amount' => Money::from($snapshot['line_discount_amount'])
+                    ->subtract(Money::from($refunded['line_discount_amount']))
+                    ->toString(),
+                'remaining_order_discount_amount' => Money::from($snapshot['order_discount_amount'])
+                    ->subtract(Money::from($refunded['order_discount_amount']))
+                    ->toString(),
+                'remaining_taxable_amount' => Money::from($snapshot['taxable_amount'])
+                    ->subtract(Money::from($refunded['taxable_amount']))
+                    ->toString(),
+                'unit_amount' => $snapshot['unit_amount'],
+                'tax_rate' => $snapshot['tax_rate'],
+            ];
+        }
+
+        return $out;
     }
 
     private function allRemainingRefundLines(mysqli $conn, int $orderId, string $disposition): array
@@ -456,6 +868,10 @@ final class FinancialRefundService
                       COALESCE(posted_qty, ABS(qty_out - qty_in)) AS quantity,
                       COALESCE(posted_unit_price, price) AS unit_amount,
                       COALESCE(posted_net, det_value) AS line_amount,
+                      COALESCE(posted_gross, posted_net, det_value) AS gross_amount,
+                      COALESCE(posted_line_discount, 0) AS line_discount_amount,
+                      COALESCE(posted_order_discount, 0) AS order_discount_amount,
+                      COALESCE(posted_taxable, posted_net, det_value) AS taxable_amount,
                       COALESCE(tax_rate_snapshot, 0) AS tax_rate,
                       COALESCE(posted_tax, 0) AS tax_amount
                FROM fat_details
@@ -465,6 +881,10 @@ final class FinancialRefundService
                       ABS(qty_out - qty_in) AS quantity,
                       price AS unit_amount,
                       det_value AS line_amount,
+                      det_value AS gross_amount,
+                      0 AS line_discount_amount,
+                      0 AS order_discount_amount,
+                      det_value AS taxable_amount,
                       0 AS tax_rate,
                       0 AS tax_amount
                FROM fat_details
@@ -493,6 +913,10 @@ final class FinancialRefundService
             'quantity' => $quantity,
             'unit_amount' => $unitAmount,
             'line_amount' => $lineAmount,
+            'gross_amount' => Money::from((string) $row['gross_amount'])->toString(),
+            'line_discount_amount' => Money::from((string) $row['line_discount_amount'])->toString(),
+            'order_discount_amount' => Money::from((string) $row['order_discount_amount'])->toString(),
+            'taxable_amount' => Money::from((string) $row['taxable_amount'])->toString(),
             'tax_rate' => TaxRate::from((string) $row['tax_rate'])->toString(),
             'tax_amount' => Money::from((string) $row['tax_amount'])->toString(),
         ];
@@ -500,11 +924,39 @@ final class FinancialRefundService
 
     private function remainingRefundableQty(mysqli $conn, int $detailId, string $originalQty): string
     {
+        $refunded = $this->refundedLineState($conn, $detailId)['quantity'];
+
+        return FinancialDecimal::subtract($originalQty, $refunded, DecimalQuantity::SCALE);
+    }
+
+    /** @return array{quantity:string,line_amount:string,tax_amount:string,gross_amount:string,line_discount_amount:string,order_discount_amount:string,taxable_amount:string} */
+    private function refundedLineState(mysqli $conn, int $detailId): array
+    {
+        $empty = [
+            'quantity' => '0.000000',
+            'line_amount' => '0.00',
+            'tax_amount' => '0.00',
+            'gross_amount' => '0.00',
+            'line_discount_amount' => '0.00',
+            'order_discount_amount' => '0.00',
+            'taxable_amount' => '0.00',
+        ];
         if (!$this->tableExists($conn, 'credit_note_lines')) {
-            return $originalQty;
+            return $empty;
         }
+        $hasEvidence = $this->columnExists($conn, 'credit_note_lines', 'gross_amount');
+        $evidenceSelect = $hasEvidence
+            ? ',
+                   COALESCE(SUM(cnl.gross_amount), 0) AS refunded_gross,
+                   COALESCE(SUM(cnl.line_discount_amount), 0) AS refunded_line_discount,
+                   COALESCE(SUM(cnl.order_discount_amount), 0) AS refunded_order_discount,
+                   COALESCE(SUM(cnl.taxable_amount), 0) AS refunded_taxable'
+            : '';
         $stmt = $conn->prepare('
-            SELECT COALESCE(SUM(quantity), 0) AS refunded
+            SELECT COALESCE(SUM(cnl.quantity), 0) AS refunded_quantity,
+                   COALESCE(SUM(cnl.line_amount), 0) AS refunded_amount,
+                   COALESCE(SUM(cnl.tax_amount), 0) AS refunded_tax
+                   ' . $evidenceSelect . '
             FROM credit_note_lines cnl
             INNER JOIN credit_notes cn ON cn.id = cnl.credit_note_id
             WHERE cnl.original_detail_id = ?
@@ -514,16 +966,41 @@ final class FinancialRefundService
         $stmt->execute();
         $row = $stmt->get_result()->fetch_assoc() ?: [];
         $stmt->close();
-        $refunded = DecimalQuantity::from((string) ($row['refunded'] ?? '0'))->toString();
 
-        return FinancialDecimal::subtract($originalQty, $refunded, DecimalQuantity::SCALE);
+        return [
+            'quantity' => DecimalQuantity::from((string) ($row['refunded_quantity'] ?? '0'))->toString(),
+            'line_amount' => Money::from((string) ($row['refunded_amount'] ?? '0'))->toString(),
+            'tax_amount' => Money::from((string) ($row['refunded_tax'] ?? '0'))->toString(),
+            'gross_amount' => Money::from((string) ($row['refunded_gross'] ?? '0'))->toString(),
+            'line_discount_amount' => Money::from((string) ($row['refunded_line_discount'] ?? '0'))->toString(),
+            'order_discount_amount' => Money::from((string) ($row['refunded_order_discount'] ?? '0'))->toString(),
+            'taxable_amount' => Money::from((string) ($row['refunded_taxable'] ?? '0'))->toString(),
+        ];
     }
 
     private function normalizePaymentAllocations(mysqli $conn, int $orderId, $payments, string $total, array $request): array
     {
+        $cashierSelectedMethod = trim((string) (
+            $request['refund_payment_method']
+            ?? $request['refund_tender']
+            ?? ''
+        ));
+        $cashierSelectedReference = $request['refund_external_reference']
+            ?? $request['external_reference']
+            ?? null;
+        $usesCashierSelection = (!is_array($payments) || $payments === [])
+            && $cashierSelectedMethod !== '';
         if (!is_array($payments) || $payments === []) {
-            // Auto-allocate across remaining original tenders.
+            // The original payment rows remain the capacity/provenance links.
+            // The cashier-selected method is the authoritative outgoing tender.
             $payments = $this->autoAllocatePayments($conn, $orderId, $total);
+            if ($usesCashierSelection) {
+                foreach ($payments as &$payment) {
+                    $payment['payment_method'] = $cashierSelectedMethod;
+                    $payment['external_reference'] = $cashierSelectedReference;
+                }
+                unset($payment);
+            }
         }
         $allowOverride = !empty($request['manager_tender_override'])
             && trim((string) ($request['manager_override_reason'] ?? '')) !== '';
@@ -538,7 +1015,7 @@ final class FinancialRefundService
             $reference = $payment['external_reference'] ?? $payment['reference_no'] ?? null;
             // Non-cash may omit reference at create time → pending_external.
             $tender = $this->resolveTenderAllowingPending($conn, $methodKey, $reference);
-            if (!$allowOverride && $tender['code'] !== (string) $original['payment_method']) {
+            if (!$usesCashierSelection && !$allowOverride && $tender['code'] !== (string) $original['payment_method']) {
                 throw new InvalidArgumentException('REFUND_TENDER_MUST_MATCH_ORIGINAL');
             }
             $amount = Money::from($payment['amount'] ?? '0')->toString();
@@ -645,16 +1122,92 @@ final class FinancialRefundService
         }
     }
 
-    private function insertCreditNote(mysqli $conn, int $orderId, int $customerAccountId, string $total, ?string $idempotencyKey, string $reason, int $userId): int
+    private function insertCreditNote(
+        mysqli $conn,
+        int $orderId,
+        int $customerAccountId,
+        string $total,
+        ?string $idempotencyKey,
+        string $refundMode,
+        string $requestFingerprint,
+        string $reason,
+        int $userId,
+        array $attribution
+    ): int
     {
         $uuid = $this->uuid();
-        $stmt = $conn->prepare('
-            INSERT INTO credit_notes (
-                uuid, original_order_id, customer_account_id, total_amount,
-                idempotency_key, reason, created_by
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
-        ');
-        $stmt->bind_param('siisssi', $uuid, $orderId, $customerAccountId, $total, $idempotencyKey, $reason, $userId);
+        $hasAttribution = $this->columnExists($conn, 'credit_notes', 'tenant')
+            && $this->columnExists($conn, 'credit_notes', 'branch')
+            && $this->columnExists($conn, 'credit_notes', 'business_day')
+            && $this->columnExists($conn, 'credit_notes', 'drawer_session_id')
+            && $this->columnExists($conn, 'credit_notes', 'manager_approval_id');
+        if ($hasAttribution) {
+            $tenant = (int) ($attribution['tenant'] ?? 0);
+            $branch = (int) ($attribution['branch'] ?? 0);
+            $businessDay = $attribution['business_day'] ?? null;
+            $drawerSessionId = $attribution['drawer_session_id'] ?? null;
+            $managerApprovalId = $attribution['manager_approval_id'] ?? null;
+            $hasPartialMetadata = $this->columnExists($conn, 'credit_notes', 'refund_mode')
+                && $this->columnExists($conn, 'credit_notes', 'request_fingerprint');
+            if ($hasPartialMetadata) {
+                $stmt = $conn->prepare('
+                    INSERT INTO credit_notes (
+                        uuid, tenant, branch, business_day, drawer_session_id,
+                        manager_approval_id, original_order_id, customer_account_id,
+                        total_amount, idempotency_key, refund_mode, request_fingerprint,
+                        reason, created_by
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ');
+                $stmt->bind_param(
+                    'siisiiiisssssi',
+                    $uuid,
+                    $tenant,
+                    $branch,
+                    $businessDay,
+                    $drawerSessionId,
+                    $managerApprovalId,
+                    $orderId,
+                    $customerAccountId,
+                    $total,
+                    $idempotencyKey,
+                    $refundMode,
+                    $requestFingerprint,
+                    $reason,
+                    $userId
+                );
+            } else {
+                $stmt = $conn->prepare('
+                    INSERT INTO credit_notes (
+                        uuid, tenant, branch, business_day, drawer_session_id,
+                        manager_approval_id, original_order_id, customer_account_id,
+                        total_amount, idempotency_key, reason, created_by
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ');
+                $stmt->bind_param(
+                    'siisiiiisssi',
+                    $uuid,
+                    $tenant,
+                    $branch,
+                    $businessDay,
+                    $drawerSessionId,
+                    $managerApprovalId,
+                    $orderId,
+                    $customerAccountId,
+                    $total,
+                    $idempotencyKey,
+                    $reason,
+                    $userId
+                );
+            }
+        } else {
+            $stmt = $conn->prepare('
+                INSERT INTO credit_notes (
+                    uuid, original_order_id, customer_account_id, total_amount,
+                    idempotency_key, reason, created_by
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            ');
+            $stmt->bind_param('siisssi', $uuid, $orderId, $customerAccountId, $total, $idempotencyKey, $reason, $userId);
+        }
         $stmt->execute();
         $id = (int) $stmt->insert_id;
         $stmt->close();
@@ -665,7 +1218,32 @@ final class FinancialRefundService
     private function insertCreditNoteLine(mysqli $conn, int $creditNoteId, array $line): void
     {
         $hasDisposition = $this->columnExists($conn, 'credit_note_lines', 'stock_disposition');
-        if ($hasDisposition) {
+        $hasEvidence = $this->columnExists($conn, 'credit_note_lines', 'gross_amount');
+        if ($hasDisposition && $hasEvidence) {
+            $stmt = $conn->prepare('
+                INSERT INTO credit_note_lines (
+                    credit_note_id, original_detail_id, quantity, unit_amount,
+                    line_amount, gross_amount, line_discount_amount,
+                    order_discount_amount, taxable_amount, tax_rate, tax_amount,
+                    stock_disposition
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ');
+            $stmt->bind_param(
+                'iissssssssss',
+                $creditNoteId,
+                $line['original_detail_id'],
+                $line['quantity'],
+                $line['unit_amount'],
+                $line['line_amount'],
+                $line['gross_amount'],
+                $line['line_discount_amount'],
+                $line['order_discount_amount'],
+                $line['taxable_amount'],
+                $line['tax_rate'],
+                $line['tax_amount'],
+                $line['stock_disposition']
+            );
+        } elseif ($hasDisposition) {
             $stmt = $conn->prepare('
                 INSERT INTO credit_note_lines (
                     credit_note_id, original_detail_id, quantity, unit_amount,
@@ -829,13 +1407,159 @@ final class FinancialRefundService
             $pending = Money::from((string) ($row['pending'] ?? '0'))->toString();
         }
 
+        $state = $this->reversalStateForOrder($conn, (int) $creditNote['original_order_id']);
+
         return [
             'credit_note_id' => $creditNoteId,
             'credit_note_journal_head_id' => (int) ($creditNote['journal_head_id'] ?? 0),
             'refund_ids' => $refundIds,
+            'refund_tenders' => $this->refundTenderRows($conn, $creditNoteId),
+            'refund_mode' => (string) ($creditNote['refund_mode'] ?? 'full'),
             'total_amount' => Money::from((string) $creditNote['total_amount'])->toString(),
+            'cumulative_refunded_amount' => $state['cumulative_refunded_amount'],
+            'remaining_refundable_amount' => $state['remaining_refundable_amount'],
+            'reversal_status' => $state['reversal_status'],
             'pending_external_amount' => $pending,
+            'tenant' => (int) ($creditNote['tenant'] ?? 0),
+            'branch' => (int) ($creditNote['branch'] ?? 0),
+            'business_day' => $creditNote['business_day'] ?? null,
+            'drawer_session_id' => isset($creditNote['drawer_session_id']) ? (int) $creditNote['drawer_session_id'] : null,
+            'manager_approval_id' => isset($creditNote['manager_approval_id']) ? (int) $creditNote['manager_approval_id'] : null,
             'replayed' => true,
+        ];
+    }
+
+    /** @return array<int,array{refund_id:int,payment_method_id:int,code:string,label:string,type:string,amount:string,status:string,external_reference:?string}> */
+    private function refundTenderRows(mysqli $conn, int $creditNoteId): array
+    {
+        $stmt = $conn->prepare('
+            SELECT pr.id AS refund_id,
+                   pr.payment_method_id,
+                   pr.amount,
+                   pr.status,
+                   pr.external_reference,
+                   COALESCE(pm.code, CONCAT(\'method_\', pr.payment_method_id)) AS method_code,
+                   COALESCE(NULLIF(pm.name_ar, \'\'), NULLIF(pm.name_en, \'\'), pm.code, CONCAT(\'Method \', pr.payment_method_id)) AS method_label,
+                   COALESCE(pm.type, \'\') AS method_type
+            FROM payment_refunds pr
+            LEFT JOIN payment_methods pm ON pm.id = pr.payment_method_id
+            WHERE pr.credit_note_id = ?
+            ORDER BY pr.id ASC
+        ');
+        $stmt->bind_param('i', $creditNoteId);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        $rows = [];
+        while ($row = $result->fetch_assoc()) {
+            $rows[] = [
+                'refund_id' => (int) $row['refund_id'],
+                'payment_method_id' => (int) $row['payment_method_id'],
+                'code' => (string) $row['method_code'],
+                'label' => (string) $row['method_label'],
+                'type' => (string) $row['method_type'],
+                'amount' => Money::from((string) $row['amount'])->toString(),
+                'status' => (string) $row['status'],
+                'external_reference' => $row['external_reference'] !== null
+                    ? (string) $row['external_reference']
+                    : null,
+            ];
+        }
+        $stmt->close();
+
+        return $rows;
+    }
+
+    /** @return array{tenant:int,branch:int,business_day:string,drawer_session_id:?int,manager_approval_id:?int} */
+    private function resolveRefundAttribution(
+        mysqli $conn,
+        int $userId,
+        int $tenant,
+        int $branch,
+        array $request,
+        array $context
+    ): array {
+        $drawerSession = null;
+        $requestedSessionId = (int) ($request['drawer_session_id'] ?? $context['drawer_session_id'] ?? 0);
+        if ($this->tableExists($conn, 'drawer_sessions')) {
+            $drawerSession = $this->drawers->resolveOpenSessionForUser($conn, $userId, [
+                'drawer_session_id' => $requestedSessionId,
+                'tenant' => $tenant,
+                'branch' => $branch,
+            ]);
+        }
+
+        if ($drawerSession !== null) {
+            $sessionTenant = max(0, (int) ($drawerSession['tenant'] ?? 0));
+            $sessionBranch = max(0, (int) ($drawerSession['branch'] ?? 0));
+            if (($tenant > 0 && $sessionTenant !== $tenant) || ($branch > 0 && $sessionBranch !== $branch)) {
+                throw new RuntimeException('DRAWER_SESSION_SCOPE_MISMATCH');
+            }
+            $tenant = $sessionTenant;
+            $branch = $sessionBranch;
+        }
+
+        $businessDay = trim((string) ($drawerSession['business_day'] ?? ''));
+        if ($businessDay === '') {
+            $businessDay = (new BusinessDayService())->currentBusinessDayForBranch($conn, $tenant, $branch);
+        }
+        $managerApprovalId = (int) ($request['manager_approval_id'] ?? $context['manager_approval_id'] ?? 0);
+
+        return [
+            'tenant' => $tenant,
+            'branch' => $branch,
+            'business_day' => $businessDay,
+            'drawer_session_id' => $drawerSession !== null ? (int) $drawerSession['id'] : null,
+            'manager_approval_id' => $managerApprovalId > 0 ? $managerApprovalId : null,
+        ];
+    }
+
+    /** @return array{tenant:int,branch:int} */
+    private function orderScope(mysqli $conn, int $orderId): array
+    {
+        if (!$this->columnExists($conn, 'ot_head', 'tenant') || !$this->columnExists($conn, 'ot_head', 'branch')) {
+            return ['tenant' => 0, 'branch' => 0];
+        }
+        $stmt = $conn->prepare('SELECT tenant, branch FROM ot_head WHERE id = ? LIMIT 1');
+        $stmt->bind_param('i', $orderId);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc() ?: [];
+        $stmt->close();
+
+        return [
+            'tenant' => max(0, (int) ($row['tenant'] ?? 0)),
+            'branch' => max(0, (int) ($row['branch'] ?? 0)),
+        ];
+    }
+
+    /** @return array{cumulative_refunded_amount:string,remaining_refundable_amount:string,reversal_status:string} */
+    private function reversalStateForOrder(mysqli $conn, int $orderId): array
+    {
+        $stmt = $conn->prepare('
+            SELECT COALESCE(oh.fat_net, 0) AS original_total,
+                   COALESCE(SUM(CASE WHEN cn.status = \'posted\' THEN cn.total_amount ELSE 0 END), 0) AS refunded_total
+            FROM ot_head oh
+            LEFT JOIN credit_notes cn ON cn.original_order_id = oh.id
+            WHERE oh.id = ?
+            GROUP BY oh.id, oh.fat_net
+        ');
+        $stmt->bind_param('i', $orderId);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc() ?: [];
+        $stmt->close();
+
+        $original = Money::from((string) ($row['original_total'] ?? '0'));
+        $refunded = Money::from((string) ($row['refunded_total'] ?? '0'));
+        $remaining = $original->compare($refunded) > 0
+            ? $original->subtract($refunded)
+            : Money::zero();
+        $status = !$refunded->isPositive()
+            ? 'none'
+            : ($remaining->isPositive() ? 'partial' : 'full');
+
+        return [
+            'cumulative_refunded_amount' => $refunded->toString(),
+            'remaining_refundable_amount' => $remaining->toString(),
+            'reversal_status' => $status,
         ];
     }
 

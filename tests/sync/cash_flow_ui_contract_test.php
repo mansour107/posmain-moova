@@ -79,6 +79,20 @@ cashFlowUiContractAssert(
     'manager-facing actions and order states must avoid unexplained accounting jargon'
 );
 cashFlowUiContractAssert(
+    strpos($overview, 'صافي المبالغ بعد المرتجعات') !== false
+    && strpos($overview, 'مرتجعات لم تصل للعميل بعد') !== false
+    && strpos($overview, "'drawer' => 'من سجلات الدفع والدرج'") !== false
+    && strpos($overview, 'سجل عكسي غير قابل للحذف') === false
+    && strpos($overview, 'قيد الإرجاع الخارجي') === false,
+    'refund reporting must explain financial states in plain Arabic'
+);
+cashFlowUiContractAssert(
+    strpos($overview, 'المسترد حتى الآن') !== false
+    && strpos($overview, 'المتبقي القابل للاسترداد') !== false
+    && strpos($overview, 'مسترد كلياً') === false,
+    'order reporting must explain partial and full refunds clearly'
+);
+cashFlowUiContractAssert(
     strpos($css, '.operations-metric--primary') !== false
     && strpos($css, 'background: linear-gradient(145deg, #1a2f5a, #294774)') === false,
     'net totals must use the same light metric-card language as the other totals'
@@ -104,6 +118,13 @@ cashFlowUiContractAssert(
 cashFlowUiContractAssert(
     strpos($detail, 'countPending') !== false && strpos($detail, 'drawer-session-pending-count-banner') !== false,
     'detail must label a missing close count as pending instead of balanced'
+);
+cashFlowUiContractAssert(
+    strpos($detail, 'المبلغ المتوقع الآن في الدرج') !== false
+    && strpos($detail, 'مسؤولية الشيفت') !== false
+    && strpos($detail, 'الشيفت ما زال مفتوحًا') !== false
+    && strpos($detail, 'سلسلة العهدة') === false,
+    'drawer detail must use plain operational wording for non-accountants'
 );
 
 cashFlowUiContractAssert(

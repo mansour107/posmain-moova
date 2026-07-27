@@ -33,6 +33,7 @@ class PosOrderSnapshotBuilder
             'receipts' => $this->receiptPayloads($conn, $branchUuid, $orderId, $orderUuid),
             'financial_bundle' => $this->financialBundle($conn, $orderId),
             'fulfillment' => $this->fulfillmentPayload($conn, $orderId),
+            'kitchen_events' => $this->kitchenEventPayloads($conn, $orderId),
         ];
 
         $snapshot['payload_hash'] = hash('sha256', $this->encodeJson($snapshot));
@@ -425,13 +426,22 @@ class PosOrderSnapshotBuilder
             $itemId = $this->nullableInt($row['item_id'] ?? null);
             $modifiers = $this->lineModifiers($conn, $orderId, $localLineId);
             $notes = $this->lineNotes($conn, $orderId, $localLineId);
+            $kitchenSnapshot = $this->lineKitchenSnapshot($conn, $orderId, $localLineId);
+            if ($kitchenSnapshot !== null) {
+                $modifiers = is_array($kitchenSnapshot['payload']['modifiers'] ?? null)
+                    ? $kitchenSnapshot['payload']['modifiers']
+                    : [];
+                $notes = is_array($kitchenSnapshot['payload']['notes'] ?? null)
+                    ? $kitchenSnapshot['payload']['notes']
+                    : [];
+            }
             $lines[] = [
                 'line_uuid' => self::deterministicUuid($branchUuid, 'fat_details:' . $localLineId),
                 'order_uuid' => $orderUuid,
                 'local_line_id' => $localLineId,
                 'item_id' => $itemId,
                 'item_uuid' => $itemId ? self::deterministicUuid($branchUuid, 'myitems:' . $itemId) : null,
-                'item_name' => $this->nullableString($row['item_name'] ?? null),
+                'item_name' => $this->nullableString($kitchenSnapshot['payload']['name'] ?? ($row['item_name'] ?? null)),
                 'barcode' => $this->nullableString($row['item_barcode'] ?? null),
                 'qty_in' => $this->decimalString($row['qty_in'] ?? null, 6),
                 'qty_out' => $this->decimalString($row['qty_out'] ?? null, 6),
@@ -443,11 +453,54 @@ class PosOrderSnapshotBuilder
                 'isdeleted' => (int) ($row['isdeleted'] ?? 0),
                 'modifiers' => $modifiers,
                 'notes' => $notes,
+                'preparation_values' => is_array($kitchenSnapshot['payload']['preparation_values'] ?? null)
+                    ? $kitchenSnapshot['payload']['preparation_values']
+                    : [],
+                'kitchen_snapshot' => $kitchenSnapshot,
             ];
         }
         $stmt->close();
 
         return $lines;
+    }
+
+    private function lineKitchenSnapshot(mysqli $conn, int $orderId, int $detailId): ?array
+    {
+        if (!$this->tableExists($conn, 'order_line_kitchen_snapshots')) {
+            return null;
+        }
+        $stmt = $conn->prepare("
+            SELECT display_order, snapshot_version, snapshot_hash, payload_json, created_at
+            FROM order_line_kitchen_snapshots
+            WHERE order_id = ? AND detail_id = ?
+            LIMIT 1
+        ");
+        $stmt->bind_param('ii', $orderId, $detailId);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        if (!$row) {
+            return null;
+        }
+        $payload = json_decode((string) $row['payload_json'], true);
+        if (!is_array($payload) || json_last_error() !== JSON_ERROR_NONE) {
+            throw new RuntimeException('ORDER_KITCHEN_SNAPSHOT_INVALID');
+        }
+        $actualHash = hash('sha256', json_encode(
+            $payload,
+            JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRESERVE_ZERO_FRACTION
+        ) ?: '');
+        if (!hash_equals((string) $row['snapshot_hash'], $actualHash)) {
+            throw new RuntimeException('ORDER_KITCHEN_SNAPSHOT_HASH_INVALID');
+        }
+
+        return [
+            'display_order' => (int) $row['display_order'],
+            'snapshot_version' => (int) $row['snapshot_version'],
+            'snapshot_hash' => (string) $row['snapshot_hash'],
+            'created_at' => (string) $row['created_at'],
+            'payload' => $payload,
+        ];
     }
 
     private function fulfillmentPayload(mysqli $conn, int $orderId): ?array
@@ -487,6 +540,56 @@ class PosOrderSnapshotBuilder
         ], $orderId);
 
         return $payload;
+    }
+
+    private function kitchenEventPayloads(mysqli $conn, int $orderId): array
+    {
+        if (!$this->tableExists($conn, 'kds_order_events')) {
+            return [];
+        }
+        $stmt = $conn->prepare("
+            SELECT uuid, idempotency_key, station_id, ticket_id, kitchen_revision, event_type,
+                   status, before_snapshot_json, after_snapshot_json, reason, actor_user_id,
+                   approval_id, version, delivered_at, acknowledged_at, acknowledged_by, created_at
+            FROM kds_order_events
+            WHERE order_id = ?
+            ORDER BY id ASC
+        ");
+        $stmt->bind_param('i', $orderId);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        $events = [];
+        while ($row = $result->fetch_assoc()) {
+            $before = json_decode((string) $row['before_snapshot_json'], true);
+            $after = json_decode((string) $row['after_snapshot_json'], true);
+            if (!is_array($before) || !is_array($after)) {
+                $stmt->close();
+                throw new RuntimeException('ORDER_KITCHEN_EVENT_SNAPSHOT_INVALID');
+            }
+            $events[] = [
+                'uuid' => (string) $row['uuid'],
+                'idempotency_key' => (string) $row['idempotency_key'],
+                'order_id' => $orderId,
+                'station_id' => (int) $row['station_id'],
+                'ticket_id' => isset($row['ticket_id']) ? (int) $row['ticket_id'] : null,
+                'kitchen_revision' => (int) $row['kitchen_revision'],
+                'event_type' => (string) $row['event_type'],
+                'status' => (string) $row['status'],
+                'before' => array_values($before),
+                'after' => array_values($after),
+                'reason' => (string) ($row['reason'] ?? ''),
+                'actor_user_id' => (int) $row['actor_user_id'],
+                'approval_id' => isset($row['approval_id']) ? (int) $row['approval_id'] : null,
+                'version' => (int) $row['version'],
+                'delivered_at' => (string) ($row['delivered_at'] ?? ''),
+                'acknowledged_at' => (string) ($row['acknowledged_at'] ?? ''),
+                'acknowledged_by' => isset($row['acknowledged_by']) ? (int) $row['acknowledged_by'] : null,
+                'created_at' => (string) $row['created_at'],
+            ];
+        }
+        $stmt->close();
+
+        return $events;
     }
 
     private function lineModifiers(mysqli $conn, int $orderId, int $detailId): array
@@ -599,6 +702,11 @@ class PosOrderSnapshotBuilder
         $receipts = [];
         foreach ($this->receiptRows($conn, $orderId) as $row) {
             $localReceiptId = (int) $row['id'];
+            $paymentDate = $this->datetimeOrNull($row['payment_date'] ?? null);
+            if ($paymentDate === null) {
+                $proDate = $this->dateOrNull($row['pro_date'] ?? null);
+                $paymentDate = $proDate !== null ? $proDate . ' 00:00:00' : null;
+            }
             $receipts[] = [
                 'receipt_uuid' => self::deterministicUuid($branchUuid, 'payment_receipt:' . $localReceiptId),
                 'order_uuid' => $orderUuid,
@@ -609,7 +717,7 @@ class PosOrderSnapshotBuilder
                 'amount' => $this->decimalString($row['pro_value'] ?? null, 4),
                 'acc_fund' => $this->nullableInt($row['acc1'] ?? null),
                 'payment_method' => $this->paymentMethod($row),
-                'payment_date' => $this->datetimeOrNull($row['payment_date'] ?? null) ?: $this->dateOrNull($row['pro_date'] ?? null),
+                'payment_date' => $paymentDate,
                 'acc_customer' => $this->nullableInt($row['acc2'] ?? null),
                 'employee_id' => $this->nullableInt($row['emp_id'] ?? null),
                 'created_by' => $this->nullableInt($row['user'] ?? null),

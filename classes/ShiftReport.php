@@ -3,6 +3,7 @@
 require_once __DIR__ . '/Pos/Service/ShiftDrawerReconciliationService.php';
 require_once __DIR__ . '/Pos/Service/DrawerSessionService.php';
 require_once __DIR__ . '/Pos/Service/BusinessDayService.php';
+require_once __DIR__ . '/Financial/RefundReversalReadService.php';
 
 class ShiftReport
 {
@@ -12,6 +13,10 @@ class ShiftReport
     private $date;
     private $shiftOpenedAt = null;
     private $drawerReconciliationService;
+    private $refundReversalReadService;
+    private $tenant = 0;
+    private $branch = 0;
+    private $drawerSessionId = 0;
     /** @var array<string, string> */
     private $shiftWindowTimestampCache = [];
 
@@ -20,6 +25,10 @@ class ShiftReport
         $this->conn = $conn;
         $this->userId = (int) $userId;
         $this->drawerReconciliationService = new ShiftDrawerReconciliationService();
+        $this->refundReversalReadService = new RefundReversalReadService();
+        $this->tenant = (int) ($scope['tenant'] ?? $scope['pos_tenant'] ?? $_SESSION['pos_tenant'] ?? 0);
+        $this->branch = (int) ($scope['branch'] ?? $scope['pos_branch'] ?? $_SESSION['pos_branch'] ?? 0);
+        $this->drawerSessionId = (int) ($scope['drawer_session_id'] ?? $_SESSION['pos_drawer_session_id'] ?? 0);
         $this->username = $this->getCashierUsernameById($this->userId);
         $this->resolveShiftWindow($scope);
         $this->date = $date ? $date : $this->resolveBusinessDay($scope);
@@ -188,17 +197,18 @@ class ShiftReport
     public function getTotals()
     {
         $params = [$this->date, (string) $this->userId];
+        $saleEvidence = $this->refundReversalReadService->originalSaleEvidencePredicate($this->conn, 'oh');
         $query = 'SELECT
                     COUNT(*) as total_orders,
                     COALESCE(SUM(fat_total), 0) as total_gross,
                     COALESCE(SUM(fat_disc), 0) as total_discount,
                     COALESCE(SUM(fat_net), 0) as total_net
-                  FROM ot_head
-                  WHERE DATE(pro_date) = ?
-                  AND user = ?
-                  AND pro_tybe = 9
-                  AND isdeleted = 0';
-        $query = $this->appendShiftWindow($query, $params);
+                  FROM ot_head oh
+                  WHERE DATE(oh.pro_date) = ?
+                  AND oh.user = ?
+                  AND oh.pro_tybe = 9
+                  AND ' . $saleEvidence;
+        $query = $this->appendShiftWindow($query, $params, 'oh');
 
         $stmt = $this->conn->prepare($query);
         $stmt->bind_param(str_repeat('s', count($params)), ...$params);
@@ -207,22 +217,29 @@ class ShiftReport
         $row = $result->fetch_assoc();
         $stmt->close();
 
+        $originalNet = (float) ($row['total_net'] ?? 0);
+        $returns = $this->canonicalReturns();
+        $row['total_sales_after_discount'] = $originalNet;
+        $row['total_refunds'] = (float) $returns['total'];
+        $row['total_net'] = $originalNet - (float) $returns['total'];
+
         return $row;
     }
 
     public function getOrderTypeCounts(): array
     {
         $params = [$this->date, (string) $this->userId];
+        $saleEvidence = $this->refundReversalReadService->originalSaleEvidencePredicate($this->conn, 'oh');
         $query = "SELECT
-                    SUM(CASE WHEN order_type = 'table' THEN 1 ELSE 0 END) as table_count,
-                    SUM(CASE WHEN order_type = 'delivery' THEN 1 ELSE 0 END) as delivery_count,
-                    SUM(CASE WHEN order_type = 'takeaway' THEN 1 ELSE 0 END) as takeaway_count
-                  FROM ot_head
-                  WHERE DATE(pro_date) = ?
-                  AND user = ?
-                  AND pro_tybe = 9
-                  AND isdeleted = 0";
-        $query = $this->appendShiftWindow($query, $params);
+                    SUM(CASE WHEN oh.order_type = 'table' THEN 1 ELSE 0 END) as table_count,
+                    SUM(CASE WHEN oh.order_type = 'delivery' THEN 1 ELSE 0 END) as delivery_count,
+                    SUM(CASE WHEN oh.order_type = 'takeaway' THEN 1 ELSE 0 END) as takeaway_count
+                  FROM ot_head oh
+                  WHERE DATE(oh.pro_date) = ?
+                  AND oh.user = ?
+                  AND oh.pro_tybe = 9
+                  AND {$saleEvidence}";
+        $query = $this->appendShiftWindow($query, $params, 'oh');
 
         $stmt = $this->conn->prepare($query);
         $stmt->bind_param(str_repeat('s', count($params)), ...$params);
@@ -241,15 +258,16 @@ class ShiftReport
     {
         $params = [$this->date, (string) $this->userId];
         $timestampExpr = $this->shiftWindowTimestampExpression();
+        $saleEvidence = $this->refundReversalReadService->originalSaleEvidencePredicate($this->conn, 'oh');
         $query = "SELECT
                     MIN({$timestampExpr}) as first_sale_time,
                     MAX({$timestampExpr}) as last_sale_time
-                  FROM ot_head
-                  WHERE DATE(pro_date) = ?
-                  AND user = ?
-                  AND pro_tybe = 9
-                  AND isdeleted = 0";
-        $query = $this->appendShiftWindow($query, $params);
+                  FROM ot_head oh
+                  WHERE DATE(oh.pro_date) = ?
+                  AND oh.user = ?
+                  AND oh.pro_tybe = 9
+                  AND {$saleEvidence}";
+        $query = $this->appendShiftWindow($query, $params, 'oh');
 
         $stmt = $this->conn->prepare($query);
         $stmt->bind_param(str_repeat('s', count($params)), ...$params);
@@ -301,6 +319,10 @@ class ShiftReport
 
     public function getReturns()
     {
+        if ($this->tableExists('credit_notes')) {
+            return $this->canonicalReturns();
+        }
+
         $params = [$this->date, (string) $this->userId];
         $query = 'SELECT
                     COUNT(*) as count,
@@ -320,6 +342,33 @@ class ShiftReport
         $stmt->close();
 
         return $row;
+    }
+
+    /** @return array{count:int,total:float} */
+    private function canonicalReturns(): array
+    {
+        $summary = $this->refundReversalReadService->periodSummary($this->conn, [
+            'date_from' => $this->date,
+            'date_to' => $this->date,
+            'tenant' => $this->tenant,
+            'branch' => $this->branch,
+            'cashier_id' => $this->userId,
+            'drawer_session_id' => $this->drawerSessionId,
+        ]);
+
+        return [
+            'count' => (int) $summary['count'],
+            'total' => (float) $summary['total_amount'],
+        ];
+    }
+
+    private function tableExists(string $table): bool
+    {
+        $table = preg_replace('/[^a-zA-Z0-9_]/', '', $table) ?: $table;
+        $escaped = $this->conn->real_escape_string($table);
+        $result = $this->conn->query("SHOW TABLES LIKE '{$escaped}'");
+
+        return $result instanceof mysqli_result && $result->num_rows > 0;
     }
 
     public function getExpenses()
@@ -347,23 +396,54 @@ class ShiftReport
     public function getItemsBreakdown()
     {
         $params = [$this->date, (string) $this->userId];
-        $query = 'SELECT
-                    mi.iname,
-                    mi.barcode,
-                    fd.price,
-                    SUM(fd.qty_out - fd.qty_in) as total_qty,
-                    SUM(fd.det_value) as total_value,
-                    COUNT(DISTINCT oh.id) as order_count
-                   FROM fat_details fd
-                   JOIN ot_head oh ON fd.fatid = oh.id
-                   JOIN myitems mi ON fd.item_id = mi.id
-                   WHERE DATE(oh.pro_date) = ?
+        $saleEvidence = $this->refundReversalReadService->originalSaleEvidencePredicate($this->conn, 'oh');
+        $saleWhere = 'DATE(oh.pro_date) = ?
                    AND oh.user = ?
                    AND oh.pro_tybe = 9
-                   AND oh.isdeleted = 0
+                   AND ' . $saleEvidence . '
                    AND fd.isdeleted = 0';
-        $query = $this->appendShiftWindow($query, $params, 'oh');
-        $query .= ' GROUP BY fd.item_id, fd.price ORDER BY total_value DESC';
+        $saleWhere = $this->appendShiftWindow($saleWhere, $params, 'oh');
+        $query = 'SELECT item_id, iname, barcode, price,
+                         SUM(qty_delta) AS total_qty,
+                         SUM(value_delta) AS total_value,
+                         COUNT(DISTINCT order_id) AS order_count
+                    FROM (
+                        SELECT fd.item_id, mi.iname, mi.barcode, fd.price,
+                               (fd.qty_out - fd.qty_in) AS qty_delta,
+                               fd.det_value AS value_delta,
+                               oh.id AS order_id
+                          FROM fat_details fd
+                          JOIN ot_head oh ON fd.fatid = oh.id
+                          JOIN myitems mi ON fd.item_id = mi.id
+                         WHERE ' . $saleWhere;
+
+        if ($this->tableExists('credit_notes') && $this->tableExists('credit_note_lines')) {
+            $query .= ' UNION ALL
+                        SELECT fd.item_id, mi.iname, mi.barcode, fd.price,
+                               -cnl.quantity AS qty_delta,
+                               -cnl.line_amount AS value_delta,
+                               cn.original_order_id AS order_id
+                          FROM credit_notes cn
+                          JOIN credit_note_lines cnl ON cnl.credit_note_id = cn.id
+                          JOIN fat_details fd ON fd.id = cnl.original_detail_id
+                          JOIN myitems mi ON mi.id = fd.item_id
+                         WHERE cn.status = \'posted\'
+                           AND COALESCE(cn.business_day, DATE(cn.created_at)) = ?
+                           AND cn.created_by = ?';
+            $params[] = $this->date;
+            $params[] = (string) $this->userId;
+            if ($this->drawerSessionId > 0 && $this->columnExists('credit_notes', 'drawer_session_id')) {
+                $query .= ' AND cn.drawer_session_id = ?';
+                $params[] = (string) $this->drawerSessionId;
+            } elseif ($this->shiftOpenedAt !== null && $this->shiftOpenedAt !== '') {
+                $query .= ' AND cn.created_at >= ?';
+                $params[] = $this->shiftOpenedAt;
+            }
+        }
+        $query .= ') item_activity
+                  GROUP BY item_id, iname, barcode, price
+                  HAVING ABS(total_qty) >= 0.000001 OR ABS(total_value) >= 0.01
+                  ORDER BY total_value DESC';
 
         $stmt = $this->conn->prepare($query);
         $stmt->bind_param(str_repeat('s', count($params)), ...$params);

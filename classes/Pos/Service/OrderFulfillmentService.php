@@ -3,6 +3,7 @@
 require_once __DIR__ . '/../../Sync/SyncOutboxEventService.php';
 require_once __DIR__ . '/DeliveryCompensationService.php';
 require_once __DIR__ . '/DeliveryAccountingService.php';
+require_once __DIR__ . '/OrderEventService.php';
 
 class OrderFulfillmentService
 {
@@ -278,12 +279,20 @@ class OrderFulfillmentService
         $allowed = $this->allowedDeliveryTransitions();
         if ($currentStatus !== $newStatus) {
             $nextAllowed = $allowed[$currentStatus] ?? [];
-            if (!in_array($newStatus, $nextAllowed, true) && !(!empty($options['force']) && $newStatus === 'cancelled')) {
+            $cashierPickup = $newStatus === 'picked_up'
+                && !empty($options['cashier_dispatch'])
+                && in_array($currentStatus, ['pending', 'accepted', 'preparing', 'ready'], true);
+            if (!in_array($newStatus, $nextAllowed, true)
+                && !$cashierPickup
+                && !(!empty($options['force']) && $newStatus === 'cancelled')) {
                 throw new InvalidArgumentException('DELIVERY_STATUS_TRANSITION_NOT_ALLOWED');
             }
         }
 
-        $courierSource = (string) ($current['courier_source'] ?? 'in_house');
+        $courierSource = strtolower(trim((string) ($options['courier_source'] ?? $current['courier_source'] ?? 'in_house')));
+        if (!in_array($courierSource, ['in_house', 'external'], true)) {
+            throw new InvalidArgumentException('DELIVERY_COURIER_SOURCE_INVALID');
+        }
         if ($newStatus === 'picked_up' && $courierSource === 'in_house' && (int) ($current['delivery_worker_id'] ?? 0) < 1) {
             throw new InvalidArgumentException('DELIVERY_WORKER_REQUIRED_BEFORE_PICKUP');
         }
@@ -297,6 +306,34 @@ class OrderFulfillmentService
         }
         if (!empty($options['actor_user_id'])) {
             $metadata['last_status_actor_user_id'] = (int) $options['actor_user_id'];
+        }
+        if ($newStatus === 'picked_up') {
+            $metadata['courier_source'] = $courierSource;
+        }
+        if ($newStatus === 'failed') {
+            $failureReason = trim((string) ($options['failure_reason'] ?? ''));
+            if ($failureReason === '') {
+                throw new InvalidArgumentException('DELIVERY_FAILURE_REASON_REQUIRED');
+            }
+            $orderValue = max(0, (float) ($options['order_value'] ?? 0));
+            $failureAmount = max(0, (float) ($current['cod_amount'] ?? 0));
+            $failureOrder = $conn->prepare('SELECT fat_net, remaining_amount FROM ot_head WHERE id = ? LIMIT 1 FOR UPDATE');
+            $failureOrder->bind_param('i', $orderId);
+            $failureOrder->execute();
+            $failureOrderRow = $failureOrder->get_result()->fetch_assoc() ?: [];
+            $failureOrder->close();
+            if ($orderValue <= 0) {
+                $orderValue = max(0, (float) ($failureOrderRow['fat_net'] ?? 0));
+            }
+            if ($failureAmount <= 0 && (string) ($current['collection_mode'] ?? 'prepaid') === 'cod') {
+                $failureAmount = max(0, (float) ($failureOrderRow['remaining_amount'] ?? 0));
+            }
+            $metadata['failure_reason'] = function_exists('mb_substr')
+                ? mb_substr($failureReason, 0, 500)
+                : substr($failureReason, 0, 500);
+            $metadata['failure_amount'] = number_format($failureAmount, 3, '.', '');
+            $metadata['failure_order_value'] = number_format($orderValue, 3, '.', '');
+            $metadata['failed_at'] = date('Y-m-d H:i:s');
         }
 
         $updated = $this->upsertForOrder($conn, $orderId, [
@@ -345,8 +382,8 @@ class OrderFulfillmentService
         } elseif ($newStatus === 'delivered') {
             $stampSql = ', delivered_at = COALESCE(delivered_at, NOW())';
         }
-        $financeUpdate = $conn->prepare("UPDATE order_fulfillment SET cod_amount = ?, driver_tip = ?, collection_mode = ? {$stampSql} WHERE order_id = ?");
-        $financeUpdate->bind_param('ddsi', $codAmount, $tip, $resolvedCollectionMode, $orderId);
+        $financeUpdate = $conn->prepare("UPDATE order_fulfillment SET cod_amount = ?, driver_tip = ?, collection_mode = ?, courier_source = ? {$stampSql} WHERE order_id = ?");
+        $financeUpdate->bind_param('ddssi', $codAmount, $tip, $resolvedCollectionMode, $courierSource, $orderId);
         $financeUpdate->execute();
         $financeUpdate->close();
 
@@ -381,6 +418,32 @@ class OrderFulfillmentService
                     $options
                 );
             }
+        }
+
+        if ($currentStatus !== $newStatus) {
+            (new OrderEventService())->recordIfAvailable(
+                $conn,
+                $orderId,
+                $newStatus === 'failed' ? 'delivery.failed' : 'delivery.status_changed',
+                (string) ($options['event_source'] ?? 'pos_delivery_status'),
+                [
+                    'actor_user_id' => (int) ($options['actor_user_id'] ?? 0),
+                    'tenant' => (int) ($options['tenant'] ?? 0),
+                    'branch' => (int) ($options['branch'] ?? 0),
+                    'before_state' => ['delivery_status' => $currentStatus],
+                    'after_state' => [
+                        'delivery_status' => $newStatus,
+                        'delivery_worker_id' => $current['delivery_worker_id'] ?? null,
+                        'courier_source' => $courierSource,
+                    ],
+                    'metadata' => $newStatus === 'failed' ? [
+                        'reason' => $metadata['failure_reason'] ?? null,
+                        'cod_exposure' => $metadata['failure_amount'] ?? '0.000',
+                        'order_value' => $metadata['failure_order_value'] ?? '0.000',
+                    ] : null,
+                    'sync_config' => $options['config'] ?? null,
+                ]
+            );
         }
 
         $config = $options['config'] ?? (function_exists('posmain_app_config') ? posmain_app_config() : []);
@@ -427,6 +490,12 @@ class OrderFulfillmentService
             $branch = max(0, (int) ($options['branch'] ?? 0));
             $scopeFilter = " AND o.tenant = {$tenant} AND o.branch = {$branch}";
         }
+        $orderDeletedFilter = $this->tableColumnExists($conn, 'ot_head', 'isdeleted')
+            ? ' AND COALESCE(o.isdeleted, 0) = 0'
+            : '';
+        $lineDeletedFilter = $this->tableColumnExists($conn, 'fat_details', 'isdeleted')
+            ? ' AND COALESCE(fd.isdeleted, 0) = 0'
+            : '';
 
         $workerColumns = $this->columnExists($conn, 'delivery_worker_id')
             ? "f.delivery_worker_id, f.delivery_zone_id, f.courier_source, f.collection_mode, f.cod_amount, f.driver_tip, f.assigned_at, f.picked_up_at, f.delivered_at, w.name AS delivery_worker_name, w.phone AS delivery_worker_phone,"
@@ -437,6 +506,7 @@ class OrderFulfillmentService
                 o.id AS order_id,
                 o.pro_id,
                 o.fat_net,
+                o.remaining_amount,
                 o.order_type,
                 o.payment_status,
                 o.order_status,
@@ -452,12 +522,12 @@ class OrderFulfillmentService
                 {$workerColumns}
                 f.delivery_client_id,
                 f.metadata_json,
-                (SELECT COUNT(*) FROM fat_details fd WHERE fd.fatid = o.id AND fd.isdeleted = 0) AS line_count
+                (SELECT COUNT(*) FROM fat_details fd WHERE fd.fatid = o.id{$lineDeletedFilter}) AS line_count
             FROM order_fulfillment f
             INNER JOIN ot_head o ON o.id = f.order_id
             {$workerJoin}
             WHERE f.fulfillment_type = 'delivery'
-              AND o.isdeleted = 0
+              {$orderDeletedFilter}
               {$statusFilter}
               {$scopeFilter}
             ORDER BY f.delivery_status ASC, order_time DESC
@@ -476,6 +546,7 @@ class OrderFulfillmentService
                     'order_id' => (int) $row['order_id'],
                     'pro_id' => (int) $row['pro_id'],
                     'fat_net' => (float) $row['fat_net'],
+                    'remaining_amount' => (float) ($row['remaining_amount'] ?? 0),
                     'order_type' => (string) $row['order_type'],
                     'payment_status' => (string) $row['payment_status'],
                     'order_status' => (string) $row['order_status'],
@@ -519,13 +590,16 @@ class OrderFulfillmentService
             $branch = max(0, (int) ($options['branch'] ?? 0));
             $scopeFilter = " AND o.tenant = {$tenant} AND o.branch = {$branch}";
         }
+        $orderDeletedFilter = $this->tableColumnExists($conn, 'ot_head', 'isdeleted')
+            ? ' AND COALESCE(o.isdeleted, 0) = 0'
+            : '';
         $result = $conn->query("
             SELECT COUNT(*) AS pending_count
             FROM order_fulfillment f
             INNER JOIN ot_head o ON o.id = f.order_id
             WHERE f.fulfillment_type = 'delivery'
-              AND f.delivery_status = 'pending'
-              AND o.isdeleted = 0
+              AND f.delivery_status NOT IN ('delivered', 'cancelled', 'failed', 'none')
+              {$orderDeletedFilter}
               {$scopeFilter}
         ");
         if (!$result) {

@@ -21,6 +21,21 @@ class SyncOutboxEventService
         $this->branchIdentity = $branchIdentity ?: new SyncBranchIdentity();
     }
 
+    /**
+     * Reconciles configured branch identity before a caller opens its business
+     * transaction. Identity rotation intentionally cannot run inside a caller
+     * transaction because it migrates historical sync references atomically.
+     */
+    public function prepareBranchIdentity(mysqli $conn, array $options = []): ?array
+    {
+        $config = $options['config'] ?? (function_exists('posmain_app_config') ? posmain_app_config() : []);
+        if (!$this->outboxEnabled($config) && !$this->cloudToBranchPublishEnabled($config)) {
+            return null;
+        }
+
+        return $this->branchIdentity->ensure($conn, $config);
+    }
+
     public function recordOrderSnapshot(mysqli $conn, int $orderId, array $options = []): ?array
     {
         $config = $options['config'] ?? (function_exists('posmain_app_config') ? posmain_app_config() : []);

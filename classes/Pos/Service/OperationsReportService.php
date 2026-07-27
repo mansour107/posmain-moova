@@ -2,6 +2,7 @@
 
 require_once __DIR__ . '/BusinessDayService.php';
 require_once __DIR__ . '/CashFlowPeriodService.php';
+require_once __DIR__ . '/../../Financial/RefundReversalReadService.php';
 
 /**
  * Canonical read model for the first-version POS operating reports.
@@ -16,6 +17,7 @@ class OperationsReportService
 {
     private BusinessDayService $businessDays;
     private CashFlowPeriodService $cashFlow;
+    private RefundReversalReadService $refunds;
     /** @var array<string, bool> */
     private array $tableCache = [];
     /** @var array<string, bool> */
@@ -23,10 +25,12 @@ class OperationsReportService
 
     public function __construct(
         ?BusinessDayService $businessDays = null,
-        ?CashFlowPeriodService $cashFlow = null
+        ?CashFlowPeriodService $cashFlow = null,
+        ?RefundReversalReadService $refunds = null
     ) {
         $this->businessDays = $businessDays ?: new BusinessDayService();
         $this->cashFlow = $cashFlow ?: new CashFlowPeriodService();
+        $this->refunds = $refunds ?: new RefundReversalReadService();
     }
 
     /** @return array<string, mixed> */
@@ -37,6 +41,8 @@ class OperationsReportService
             'available' => false,
             'gross_sales' => 0.0,
             'discounts' => 0.0,
+            'service_plus' => 0.0,
+            'tax' => 0.0,
             'sales_after_discount' => 0.0,
             'refunds' => 0.0,
             'net_sales' => 0.0,
@@ -57,6 +63,12 @@ class OperationsReportService
         $discountExpr = $this->columnExists($conn, 'ot_head', 'fat_disc')
             ? 'COALESCE(oh.fat_disc, 0)'
             : '0';
+        $servicePlusExpr = $this->columnExists($conn, 'ot_head', 'fat_plus')
+            ? 'COALESCE(oh.fat_plus, 0)'
+            : '0';
+        $taxExpr = $this->columnExists($conn, 'ot_head', 'fat_tax')
+            ? 'COALESCE(oh.fat_tax, 0)'
+            : '0';
         $netExpr = $this->columnExists($conn, 'ot_head', 'fat_net')
             ? 'COALESCE(oh.fat_net, 0)'
             : $grossExpr . ' - ' . $discountExpr;
@@ -69,6 +81,8 @@ class OperationsReportService
             "SELECT COUNT(*) AS order_count,
                     COALESCE(SUM({$grossExpr}), 0) AS gross_sales,
                     COALESCE(SUM({$discountExpr}), 0) AS discounts,
+                    COALESCE(SUM({$servicePlusExpr}), 0) AS service_plus,
+                    COALESCE(SUM({$taxExpr}), 0) AS tax,
                     COALESCE(SUM({$netExpr}), 0) AS sales_after_discount,
                     COALESCE({$refundedExpr}, 0) AS refunded_order_count,
                     COALESCE(SUM(CASE WHEN {$discountExpr} > 0 THEN 1 ELSE 0 END), 0) AS discounted_order_count
@@ -87,6 +101,8 @@ class OperationsReportService
             'available' => true,
             'gross_sales' => (float) ($row['gross_sales'] ?? 0),
             'discounts' => (float) ($row['discounts'] ?? 0),
+            'service_plus' => (float) ($row['service_plus'] ?? 0),
+            'tax' => (float) ($row['tax'] ?? 0),
             'sales_after_discount' => $salesAfterDiscount,
             'refunds' => $refundTotal,
             'net_sales' => $netSales,
@@ -161,9 +177,59 @@ class OperationsReportService
             $row['payment_methods'] = $orderPayments === []
                 ? [trim((string) ($row['payment_status'] ?? '')) === 'unpaid' ? 'Unpaid' : 'Not recorded']
                 : array_values(array_unique(array_column($orderPayments, 'label')));
+            $reversal = $this->refunds->stateForOrder($conn, $row['id']);
+            $row['reversal_status'] = $reversal['reversal_status'];
+            $row['cumulative_refunded_amount'] = (float) $reversal['cumulative_refunded_amount'];
+            $row['remaining_refundable_amount'] = (float) $reversal['remaining_refundable_amount'];
+            $row['refund_count'] = $reversal['refund_count'];
         }
         unset($row);
 
+        return $rows;
+    }
+
+    /** @return list<array<string,mixed>> */
+    public function refunds(mysqli $conn, array $filters): array
+    {
+        $scope = $this->normalizeFilters($filters);
+        $rows = $this->refunds->periodSummary($conn, $scope, true)['rows'];
+        foreach ($rows as &$row) {
+            $state = $this->refunds->stateForOrder($conn, (int) $row['original_order_id']);
+            $row['reversal_status'] = $state['reversal_status'];
+            $row['cumulative_refunded_amount'] = $state['cumulative_refunded_amount'];
+            $row['remaining_refundable_amount'] = $state['remaining_refundable_amount'];
+            $row['refund_count'] = $state['refund_count'];
+            $row['operator_name'] = 'User #' . (int) ($row['created_by'] ?? 0);
+            if ($this->tableExists($conn, 'users') && (int) ($row['created_by'] ?? 0) > 0) {
+                $userDisplay = $this->columnExists($conn, 'users', 'display_name')
+                    ? "COALESCE(NULLIF(display_name, ''), uname, '')"
+                    : "COALESCE(uname, '')";
+                $user = $this->queryOne(
+                    $conn,
+                    "SELECT {$userDisplay} AS display_name FROM users WHERE id = ? LIMIT 1",
+                    [(int) $row['created_by']]
+                );
+                if (trim((string) ($user['display_name'] ?? '')) !== '') {
+                    $row['operator_name'] = (string) $user['display_name'];
+                }
+            }
+            $row['settlement_status'] = 'posted';
+            $row['pending_external_amount'] = '0.00';
+            if ($this->tableExists($conn, 'payment_refunds')) {
+                $settlement = $this->queryOne(
+                    $conn,
+                    "SELECT COALESCE(SUM(CASE WHEN status = 'pending_external' THEN amount ELSE 0 END), 0) AS pending,
+                            SUM(CASE WHEN status = 'pending_external' THEN 1 ELSE 0 END) AS pending_count
+                       FROM payment_refunds WHERE credit_note_id = ?",
+                    [(int) $row['credit_note_id']]
+                ) ?: [];
+                $row['pending_external_amount'] = number_format((float) ($settlement['pending'] ?? 0), 2, '.', '');
+                $row['settlement_status'] = (int) ($settlement['pending_count'] ?? 0) > 0
+                    ? 'pending_external'
+                    : 'settled';
+            }
+        }
+        unset($row);
         return $rows;
     }
 
@@ -301,26 +367,8 @@ class OperationsReportService
     /** @return array{total:float,count:int} */
     private function refundSummary(mysqli $conn, array $scope): array
     {
-        if (!$this->tableExists($conn, 'credit_notes')) {
-            return ['total' => 0.0, 'count' => 0];
-        }
-        $bounds = $this->periodBounds($conn, $scope);
-        $where = ["cn.status = 'posted'", 'cn.created_at >= ?', 'cn.created_at < ?'];
-        $params = [$bounds['start_at'], $bounds['end_at']];
-        $joinOrder = $this->tableExists($conn, 'ot_head');
-        if ($joinOrder) {
-            $this->appendOrderOwnershipScope($conn, $scope, $where, $params, 'oh');
-        }
-        $row = $this->queryOne(
-            $conn,
-            'SELECT COUNT(*) AS c, COALESCE(SUM(cn.total_amount), 0) AS total
-               FROM credit_notes cn'
-                . ($joinOrder ? ' LEFT JOIN ot_head oh ON oh.id = cn.original_order_id' : '')
-                . ' WHERE ' . implode(' AND ', $where),
-            $params
-        ) ?: [];
-
-        return ['total' => (float) ($row['total'] ?? 0), 'count' => (int) ($row['c'] ?? 0)];
+        $summary = $this->refunds->periodSummary($conn, $scope);
+        return ['total' => (float) $summary['total_amount'], 'count' => $summary['count']];
     }
 
     /** @return list<array<string, mixed>> */
@@ -331,13 +379,21 @@ class OperationsReportService
             || !$this->tableExists($conn, 'fat_details')) {
             return [];
         }
-        $bounds = $this->periodBounds($conn, $scope);
-        $where = ["cn.status = 'posted'", 'cn.created_at >= ?', 'cn.created_at < ?'];
-        $params = [$bounds['start_at'], $bounds['end_at']];
-        $joinOrder = $this->tableExists($conn, 'ot_head');
-        if ($joinOrder) {
-            $this->appendOrderOwnershipScope($conn, $scope, $where, $params, 'oh');
+        $where = ["cn.status = 'posted'"];
+        $params = [];
+        if ($this->columnExists($conn, 'credit_notes', 'business_day')) {
+            $where[] = 'COALESCE(cn.business_day, DATE(cn.created_at)) BETWEEN ? AND ?';
+            $params[] = $scope['date_from'];
+            $params[] = $scope['date_to'];
+        } else {
+            $bounds = $this->periodBounds($conn, $scope);
+            $where[] = 'cn.created_at >= ?';
+            $where[] = 'cn.created_at < ?';
+            $params[] = $bounds['start_at'];
+            $params[] = $bounds['end_at'];
         }
+        $joinOrder = $this->tableExists($conn, 'ot_head');
+        $this->appendRefundOwnershipScope($conn, $scope, $where, $params, $joinOrder);
         $hasItems = $this->tableExists($conn, 'myitems');
         $nameExpr = $hasItems ? "COALESCE(NULLIF(mi.iname, ''), CONCAT('Item #', fd.item_id))" : "CONCAT('Item #', fd.item_id)";
 
@@ -509,12 +565,7 @@ class OperationsReportService
         $params = [$scope['date_from'], $scope['date_to']];
         $this->appendOrderOwnershipScope($conn, $scope, $where, $params, $alias);
         if ($completedOnly) {
-            if ($this->columnExists($conn, 'ot_head', 'isdeleted')) {
-                $where[] = "COALESCE({$alias}.isdeleted, 0) = 0";
-            }
-            if ($this->columnExists($conn, 'ot_head', 'payment_status')) {
-                $where[] = "{$alias}.payment_status IN ('paid', 'refunded')";
-            }
+            $where[] = $this->refunds->originalSaleEvidencePredicate($conn, $alias);
         }
 
         return [$where, $params];
@@ -577,6 +628,31 @@ class OperationsReportService
         }
         if ($scope['cashier_id'] > 0 && $this->columnExists($conn, 'ot_head', 'user')) {
             $where[] = "{$alias}.user = ?";
+            $params[] = $scope['cashier_id'];
+        }
+    }
+
+    private function appendRefundOwnershipScope(
+        mysqli $conn,
+        array $scope,
+        array &$where,
+        array &$params,
+        bool $joinOrder
+    ): void {
+        foreach (['tenant', 'branch'] as $column) {
+            if ($scope[$column] < 1) {
+                continue;
+            }
+            if ($this->columnExists($conn, 'credit_notes', $column)) {
+                $where[] = "cn.{$column} = ?";
+                $params[] = $scope[$column];
+            } elseif ($joinOrder && $this->columnExists($conn, 'ot_head', $column)) {
+                $where[] = "oh.{$column} = ?";
+                $params[] = $scope[$column];
+            }
+        }
+        if ($scope['cashier_id'] > 0 && $this->columnExists($conn, 'credit_notes', 'created_by')) {
+            $where[] = 'cn.created_by = ?';
             $params[] = $scope['cashier_id'];
         }
     }

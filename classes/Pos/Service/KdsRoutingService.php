@@ -37,7 +37,10 @@ class KdsRoutingService
         $routed = [];
         foreach ($lines as $line) {
             $itemId = (int) ($line['item_id'] ?? 0);
-            $groupId = $itemId > 0 ? (int) ($itemGroups[$itemId] ?? 0) : 0;
+            $snapshotGroupId = (int) ($line['item_group_id'] ?? 0);
+            $groupId = $snapshotGroupId > 0
+                ? $snapshotGroupId
+                : ($itemId > 0 ? (int) ($itemGroups[$itemId] ?? 0) : 0);
             $stationId = $groupId > 0 && isset($categoryMap[$groupId])
                 ? (int) $categoryMap[$groupId]
                 : $defaultStationId;

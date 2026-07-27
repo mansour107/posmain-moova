@@ -30,19 +30,29 @@ class PosOrderController
         }
         $data['idempotency_key'] = $idempotencyKey;
         $data['user_id'] = $userId;
+        $data['order_id'] = (int) ($data['order_id'] ?? $data['original_order_id'] ?? 0);
+        $data['action'] = 'refund';
 
-        $result = (new FinancialRefundService())->createPostedRefund($conn, $data, [
+        $drawerSessionId = session_status() === PHP_SESSION_ACTIVE
+            ? (int) ($_SESSION['pos_drawer_session_id'] ?? 0)
+            : 0;
+        $result = (new PosOrderMutationService())->reversePaidOrder($conn, $data, [
             'user_id' => $userId,
-            'tenant' => 0,
-            'branch' => 0,
+            'tenant' => session_status() === PHP_SESSION_ACTIVE ? (int) ($_SESSION['pos_tenant'] ?? 0) : 0,
+            'branch' => session_status() === PHP_SESSION_ACTIVE ? (int) ($_SESSION['pos_branch'] ?? 0) : 0,
+            'drawer_session_id' => $drawerSessionId,
+            'require_drawer_session' => true,
+            'event_source' => 'pos_api_refund',
         ]);
+        $refundData = $result['data'] ?? [];
+        $replayed = !empty($refundData['replayed']);
 
         return [
-            'http_status' => !empty($result['replayed']) ? 200 : 201,
+            'http_status' => $replayed ? 200 : 201,
             'payload' => [
                 'success' => true,
-                'code' => !empty($result['replayed']) ? 'REFUND_REPLAYED' : 'REFUND_POSTED',
-                'data' => $result,
+                'code' => $replayed ? 'REFUND_REPLAYED' : 'REFUND_POSTED',
+                'data' => $refundData,
                 'request_id' => $idempotencyKey,
             ],
         ];
@@ -83,6 +93,7 @@ class PosOrderController
 
         $posMutationService = new PosOrderMutationService();
         $sideEffects = new OrderMutationSideEffectsService();
+        $sideEffects->preflightSyncIdentity($conn);
         $conn->begin_transaction();
 
         $idempotency = $idempotencyService->begin($conn, $idempotencyScope, $idempotencyKey, $idempotencyHash, [
@@ -317,7 +328,10 @@ class PosOrderController
                     (string) ($saveData['order_status'] ?? 'active'),
                     $channel === 'delivery' ? 'pos_cashier_delivery' : 'pos_cashier',
                     'pos_cashier_update',
-                    [],
+                    [
+                        'reason' => $request['reason'] ?? $request['cancellation_reason'] ?? '',
+                        'manager_approval_id' => $request['manager_approval_id'] ?? null,
+                    ],
                     $kitchenRevision
                 );
 
@@ -336,6 +350,7 @@ class PosOrderController
         $idempotencyService = new IdempotencyService();
         $idempotencyKey = $idempotencyService->resolveKey($data, $server);
         $idempotencyHash = $idempotencyService->requestHashForPayload($data);
+        (new OrderMutationSideEffectsService())->preflightSyncIdentity($conn);
         $conn->begin_transaction();
         try {
 
@@ -438,6 +453,7 @@ class PosOrderController
         $idempotencyService = new IdempotencyService();
         $idempotencyKey = $idempotencyService->resolveKey($data, $server);
         $idempotencyHash = $idempotencyService->requestHashForPayload($data);
+        (new OrderMutationSideEffectsService())->preflightSyncIdentity($conn);
         $conn->begin_transaction();
 
         $idempotency = $idempotencyService->begin($conn, PosOrderMutationService::SCOPE_TABLE_PAYMENT, $idempotencyKey, $idempotencyHash, [
@@ -597,6 +613,7 @@ class PosOrderController
         $idempotencyService = new IdempotencyService();
         $idempotencyKey = $idempotencyService->resolveKey($data, $server);
         $idempotencyHash = $idempotencyService->requestHashForPayload($data);
+        (new OrderMutationSideEffectsService())->preflightSyncIdentity($conn);
         $conn->begin_transaction();
 
         $idempotency = $idempotencyService->begin($conn, PosOrderMutationService::SCOPE_SPLIT_PAYMENT, $idempotencyKey, $idempotencyHash, [
@@ -822,6 +839,7 @@ class PosOrderController
         $idempotencyService = new IdempotencyService();
         $idempotencyKey = $idempotencyService->resolveKey($data, $server);
         $idempotencyHash = $idempotencyService->requestHashForPayload($data);
+        (new OrderMutationSideEffectsService())->preflightSyncIdentity($conn);
         $conn->begin_transaction();
 
         $idempotency = $idempotencyService->begin($conn, $scope, $idempotencyKey, $idempotencyHash, [

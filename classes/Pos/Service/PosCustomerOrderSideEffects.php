@@ -214,11 +214,17 @@ class PosCustomerOrderSideEffects
             $conn->begin_transaction();
         }
         try {
+            $refundExpression = $this->tableExists($conn, 'credit_notes')
+                ? "(SELECT COALESCE(SUM(cn.total_amount), 0)
+                      FROM credit_notes cn
+                     WHERE cn.original_order_id = o.id AND cn.status = 'posted')"
+                : '0';
             $stmt = $conn->prepare("
                 SELECT
                     o.id AS order_id,
                     o.paid_amount,
                     o.payment_status,
+                    {$refundExpression} AS refunded_amount,
                     COALESCE(o.mdtime, o.crtime, o.pro_date) AS order_time
                 FROM order_fulfillment f
                 INNER JOIN ot_head o ON o.id = f.order_id AND o.isdeleted = 0
@@ -236,8 +242,8 @@ class PosCustomerOrderSideEffects
 
             while ($row = $result->fetch_assoc()) {
             $orderId = (int) $row['order_id'];
-            $paid = (float) ($row['paid_amount'] ?? 0);
-            $isPaid = strtolower((string) ($row['payment_status'] ?? '')) === 'paid';
+            $paid = max(0.0, (float) ($row['paid_amount'] ?? 0) - (float) ($row['refunded_amount'] ?? 0));
+            $isPaid = in_array(strtolower((string) ($row['payment_status'] ?? '')), ['paid', 'refunded'], true);
             $orderTime = $row['order_time'] ?? null;
 
             if ($paid > 0) {
@@ -303,11 +309,16 @@ class PosCustomerOrderSideEffects
             return null;
         }
 
+        $refundExpression = $this->tableExists($conn, 'credit_notes')
+            ? "(SELECT COALESCE(SUM(cn.total_amount), 0)
+                  FROM credit_notes cn
+                 WHERE cn.original_order_id = o.id AND cn.status = 'posted')"
+            : '0';
         $stmt = $conn->prepare("
             SELECT
                 COUNT(*) AS linked_orders,
-                SUM(CASE WHEN o.payment_status = 'paid' THEN 1 ELSE 0 END) AS paid_orders,
-                COALESCE(SUM(o.paid_amount), 0) AS lifetime_paid,
+                SUM(CASE WHEN o.payment_status IN ('paid', 'refunded') THEN 1 ELSE 0 END) AS paid_orders,
+                COALESCE(SUM(GREATEST(0, o.paid_amount - {$refundExpression})), 0) AS lifetime_paid,
                 MAX(COALESCE(o.mdtime, o.crtime, o.pro_date)) AS last_order_at
             FROM order_fulfillment f
             INNER JOIN ot_head o ON o.id = f.order_id AND o.isdeleted = 0
@@ -328,6 +339,26 @@ class PosCustomerOrderSideEffects
             'last_order_at' => $row['last_order_at'] ?? null,
             'linked_orders' => (int) ($row['linked_orders'] ?? 0),
         ];
+    }
+
+    /** Refresh the linked customer's materialized rollup after a refund. */
+    public function refreshCustomerRollupForOrder(mysqli $conn, int $orderId, array $options = []): array
+    {
+        if ($orderId < 1 || !$this->tableExists($conn, 'order_fulfillment')) {
+            return ['applied' => false, 'customer_id' => 0, 'reason' => 'CUSTOMER_NOT_LINKED'];
+        }
+        $stmt = $conn->prepare('SELECT pos_customer_id FROM order_fulfillment WHERE order_id = ? LIMIT 1');
+        $stmt->bind_param('i', $orderId);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        $customerId = (int) ($row['pos_customer_id'] ?? 0);
+        if ($customerId < 1) {
+            return ['applied' => false, 'customer_id' => 0, 'reason' => 'CUSTOMER_NOT_LINKED'];
+        }
+
+        $rollup = $this->rebuildCustomerRollups($conn, $customerId, $options + ['in_transaction' => true]);
+        return ['applied' => true, 'customer_id' => $customerId, 'reason' => null, 'rollup' => $rollup];
     }
 
     private function loadOrderPaymentState(mysqli $conn, int $orderId): ?array
@@ -429,6 +460,21 @@ class PosCustomerOrderSideEffects
         $exists = (bool) $stmt->get_result()->fetch_assoc();
         $stmt->close();
 
+        return $exists;
+    }
+
+    private function tableExists(mysqli $conn, string $table): bool
+    {
+        $stmt = $conn->prepare("
+            SELECT 1
+            FROM information_schema.TABLES
+            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?
+            LIMIT 1
+        ");
+        $stmt->bind_param('s', $table);
+        $stmt->execute();
+        $exists = (bool) $stmt->get_result()->fetch_assoc();
+        $stmt->close();
         return $exists;
     }
 

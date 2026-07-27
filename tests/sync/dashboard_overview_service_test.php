@@ -50,6 +50,14 @@ try {
         id INT AUTO_INCREMENT PRIMARY KEY,
         status VARCHAR(20) NOT NULL DEFAULT 'open'
     ) ENGINE=InnoDB");
+    $conn->query("CREATE TABLE credit_notes (
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        original_order_id BIGINT UNSIGNED NOT NULL,
+        total_amount DECIMAL(12,2) NOT NULL,
+        business_day DATE NULL,
+        status VARCHAR(20) NOT NULL DEFAULT 'posted',
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB");
 
     $today = date('Y-m-d');
     $conn->query("INSERT INTO ot_head (pro_tybe, pro_value, fat_total, fat_disc, fat_net, pro_date, payment_status, isdeleted) VALUES
@@ -58,6 +66,8 @@ try {
         (9, 999.00, 999.00, 0, 999.00, '{$today}', 'paid', 1),
         (3, 200.00, 200.00, 0, 200.00, DATE_SUB(CURDATE(), INTERVAL 3 DAY), 'paid', 0),
         (9, 25.00, 25.00, 0, 25.00, DATE_SUB(CURDATE(), INTERVAL 10 DAY), 'paid', 0)");
+    $conn->query("INSERT INTO credit_notes (original_order_id, total_amount, business_day, status, created_at)
+        VALUES (2, 10.00, '{$today}', 'posted', NOW())");
     $conn->query('INSERT INTO myinstallments (ins_case) VALUES (2), (2), (3)');
     $conn->query('INSERT INTO tasks (isdeleted) VALUES (NULL), (NULL), (1)');
     $conn->query('INSERT INTO reservations (duration) VALUES (30), (NULL), (NULL)');
@@ -78,8 +88,8 @@ try {
 
     dashboardServiceAssert((bool) $overview['kpis'][0]['available'], 'sales KPIs available');
     dashboardServiceAssert((int) $overview['kpis'][1]['value'] === 1, 'today order count is completed POS only');
-    dashboardServiceAssert(abs((float) $overview['kpis'][0]['value'] - 50.0) < 0.01, 'today net sales uses canonical POS scope');
-    dashboardServiceAssert(abs((float) $overview['kpis'][2]['value'] - 50.0) < 0.01, 'today AOV');
+    dashboardServiceAssert(abs((float) $overview['kpis'][0]['value'] - 40.0) < 0.01, 'today net sales subtracts posted refund reversals');
+    dashboardServiceAssert(abs((float) $overview['kpis'][2]['value'] - 40.0) < 0.01, 'today AOV uses refund-adjusted net sales');
 
     $types = array_column($overview['attention'], 'type');
     dashboardServiceAssert(in_array('overdue_installments', $types, true), 'installments attention');

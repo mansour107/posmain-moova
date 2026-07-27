@@ -41,6 +41,28 @@ try {
     phase4PrintPayloadAssert($kot['document_type'] === 'kot', 'kot payload type expected');
     phase4PrintPayloadAssert($kot['order']['id'] === 100, 'active table order expected');
     phase4PrintPayloadAssert($kot['lines'][1]['legacy_notes'] === 'ساخن', 'legacy notes should remain available');
+    $snapshotCount = (int) $conn->query("SELECT COUNT(*) c FROM order_line_kitchen_snapshots WHERE order_id = 100")->fetch_assoc()['c'];
+    phase4PrintPayloadAssert($snapshotCount === 2, 'KOT send should persist one immutable snapshot per line');
+
+    $conn->query("UPDATE myitems SET iname = 'RENAMED-LATTE' WHERE id = 501");
+    $conn->query("UPDATE modifier_options SET name_ar = 'اسم متغير' WHERE id = 301");
+    $replayedKot = $service->buildKotPayloadByOrderId($conn, 100);
+    phase4PrintPayloadAssert($replayedKot['lines'][0]['name'] === 'Latte', 'KOT replay must keep the sent item name');
+    phase4PrintPayloadAssert(
+        $replayedKot['lines'][0]['modifiers'][0]['name_ar'] === 'لبن شوفان',
+        'KOT replay must keep the sent modifier label'
+    );
+    $replayedReceipt = $service->buildReceiptPayload($conn, 100);
+    phase4PrintPayloadAssert($replayedReceipt['lines'][0]['name'] === 'Latte', 'kitchen print must consume the same sent snapshot');
+
+    $conn->query("
+        UPDATE order_line_kitchen_snapshots
+        SET payload_json = JSON_SET(payload_json, '$.name', 'CORRUPTED')
+        WHERE order_id = 100 AND detail_id = 1001
+    ");
+    phase4PrintPayloadExpectException(function () use ($service, $conn) {
+        $service->buildKotPayloadByOrderId($conn, 100);
+    }, 'KITCHEN_SNAPSHOT_HASH_MISMATCH');
 
     phase4PrintPayloadExpectException(function () use ($service, $conn) {
         $service->buildReceiptPayload($conn, 999);
@@ -96,7 +118,8 @@ function phase4PrintPayloadCreateLegacyTables(mysqli $conn): void
     $conn->query("
         CREATE TABLE myitems (
             id INT NOT NULL PRIMARY KEY,
-            iname VARCHAR(120) NULL
+            iname VARCHAR(120) NULL,
+            group1 INT NULL
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
     ");
     $conn->query("

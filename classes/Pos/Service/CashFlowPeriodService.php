@@ -429,6 +429,7 @@ class CashFlowPeriodService
                 'by_method' => [],
                 'total' => '0.000',
                 'refund_total' => '0.000',
+                'custody_refund_total' => '0.000',
                 'net_total' => '0.000',
                 'cash_collected' => '0.000',
                 'cash_refunds' => '0.000',
@@ -531,6 +532,7 @@ class CashFlowPeriodService
                     'type' => $type,
                     'collected' => 0.0,
                     'refunded' => 0.0,
+                    'settled_refunded' => 0.0,
                     'pending_refund' => 0.0,
                 ];
             }
@@ -568,10 +570,11 @@ class CashFlowPeriodService
                 WHERE " . implode(' AND ', $refundWhere);
 
             foreach ($this->queryAll($conn, $refundSql, $refundParams) as $row) {
-                $amount = (float) Money::fromLegacy($row['amount'] ?? 0)->toString();
-                if (abs($amount) < 0.0001) {
+                $refundMoney = Money::fromLegacy($row['amount'] ?? 0);
+                if ($refundMoney->compare(Money::zero()) === 0) {
                     continue;
                 }
+                $amount = (float) $refundMoney->toString();
                 $method = trim((string) ($row['method_code'] ?? ''));
                 $methodKey = $method !== '' ? $method : 'method_' . (int) ($row['payment_method_id'] ?? 0);
                 $type = trim((string) ($row['method_type'] ?? ''));
@@ -581,9 +584,11 @@ class CashFlowPeriodService
                 $refundsByType[$type] = ($refundsByType[$type] ?? 0) + $amount;
                 $refundTotal += $amount;
                 $status = (string) ($row['status'] ?? 'posted');
+                $custodyReversed = $status === 'settled' || ($status === 'posted' && $type === 'cash');
                 if ($status === 'pending_external') {
                     $pendingExternalRefundTotal += $amount;
-                } else {
+                }
+                if ($custodyReversed) {
                     $settledRefundsByType[$type] = ($settledRefundsByType[$type] ?? 0) + $amount;
                 }
                 if (!isset($byMethod[$methodKey])) {
@@ -593,10 +598,14 @@ class CashFlowPeriodService
                         'type' => $type,
                         'collected' => 0.0,
                         'refunded' => 0.0,
+                        'settled_refunded' => 0.0,
                         'pending_refund' => 0.0,
                     ];
                 }
                 $byMethod[$methodKey]['refunded'] += $amount;
+                if ($custodyReversed) {
+                    $byMethod[$methodKey]['settled_refunded'] += $amount;
+                }
                 if ($status === 'pending_external') {
                     $byMethod[$methodKey]['pending_refund'] += $amount;
                 }
@@ -605,11 +614,11 @@ class CashFlowPeriodService
 
         $netByType = [];
         foreach ($byType as $type => $amount) {
-            $netByType[$type] = (float) $amount - (float) ($refundsByType[$type] ?? 0);
+            $netByType[$type] = (float) $amount - (float) ($settledRefundsByType[$type] ?? 0);
         }
         foreach ($byMethod as &$methodRow) {
-            $methodRow['net'] = (float) $methodRow['collected'] - (float) $methodRow['refunded'];
-            foreach (['collected', 'refunded', 'pending_refund', 'net'] as $moneyKey) {
+            $methodRow['net'] = (float) $methodRow['collected'] - (float) $methodRow['settled_refunded'];
+            foreach (['collected', 'refunded', 'settled_refunded', 'pending_refund', 'net'] as $moneyKey) {
                 $methodRow[$moneyKey] = $this->formatDecimal((float) $methodRow[$moneyKey]);
             }
         }
@@ -626,6 +635,7 @@ class CashFlowPeriodService
         $cashCollected = (float) ($byType['cash'] ?? 0);
         $cashRefunds = (float) ($settledRefundsByType['cash'] ?? 0);
         $cashNet = $cashCollected - $cashRefunds;
+        $custodyRefundTotal = array_sum($settledRefundsByType);
 
         return [
             'source' => $cashReconciliationAvailable ? 'drawer' : 'legacy',
@@ -636,7 +646,8 @@ class CashFlowPeriodService
             'by_method' => array_values($byMethod),
             'total' => $this->formatDecimal($total),
             'refund_total' => $this->formatDecimal($refundTotal),
-            'net_total' => $this->formatDecimal($total - $refundTotal),
+            'custody_refund_total' => $this->formatDecimal($custodyRefundTotal),
+            'net_total' => $this->formatDecimal($total - $custodyRefundTotal),
             'cash_collected' => $this->formatDecimal($cashCollected),
             'cash_refunds' => $this->formatDecimal($cashRefunds),
             'cash_net' => $this->formatDecimal($cashNet),

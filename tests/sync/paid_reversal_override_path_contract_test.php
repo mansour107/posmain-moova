@@ -28,7 +28,7 @@ paidReversalOverridePathAssert(
     'route manifest must not hard-require pos.refund before action is known'
 );
 paidReversalOverridePathAssert(
-    strpos($js, 'openPaidOrderReversalModal(orderId, refundEligible, voidEligible);') !== false,
+    strpos($js, 'openPaidOrderReversalModal(orderId, refundEligible, voidEligible, {') !== false,
     'recent-orders click should open modal without pre-approving the wrong permission'
 );
 paidReversalOverridePathAssert(

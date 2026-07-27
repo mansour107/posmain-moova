@@ -25,6 +25,21 @@ function posmain_operational_sync_config(): array
     ];
 }
 
+function posmain_preflight_operational_sync(mysqli $conn): ?array
+{
+    try {
+        return (new SyncBranchIdentity())->ensure($conn, posmain_operational_sync_config());
+    } catch (Throwable $exception) {
+        if (function_exists('posmain_log_exception') && function_exists('posmain_error_reference')) {
+            posmain_log_exception($exception, posmain_error_reference(), 'operational_sync_identity_preflight');
+        } else {
+            error_log('[POS Sync] Failed to preflight branch identity: ' . $exception->getMessage());
+        }
+
+        return null;
+    }
+}
+
 function posmain_record_operational_row_sync(
     mysqli $conn,
     string $domain,

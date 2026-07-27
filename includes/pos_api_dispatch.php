@@ -158,6 +158,7 @@ if (!function_exists('pos_api_dispatch_exception_payload')) {
                 'USER_ID_REQUIRED',
                 'IDEMPOTENCY_REQUIRED',
                 'ORDER_ID_REQUIRED',
+                'DELIVERY_ZONE_INVALID',
             ], true)
                 ? $e->getMessage()
                 : 'VALIDATION_FAILED';
@@ -180,6 +181,19 @@ if (!function_exists('pos_api_dispatch_exception_payload')) {
         }
 
         if ($e instanceof RuntimeException) {
+            if (
+                str_starts_with($e->getMessage(), 'KITCHEN_SNAPSHOT_')
+                || str_starts_with($e->getMessage(), 'KDS_PREPARATION_SNAPSHOT_')
+            ) {
+                return [
+                    'http_status' => 422,
+                    'payload' => [
+                        'success' => false,
+                        'code' => 'KITCHEN_TICKET_INCOMPLETE',
+                        'message' => 'تعذر إرسال تذكرة المطبخ كاملة. راجع الصنف وإضافاته وتعليمات التحضير ثم أعد المحاولة.',
+                    ],
+                ];
+            }
             if ($e instanceof ManagerApprovalRequiredException || $e->getMessage() === 'MANAGER_APPROVAL_REQUIRED') {
                 $permissionKey = $e instanceof ManagerApprovalRequiredException ? $e->permissionKey() : '';
                 return [

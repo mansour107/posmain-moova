@@ -67,9 +67,6 @@ $expectations = [
         'http_response_code(401)',
         "require_csrf('pulse')",
     ],
-    'ajax/generate_items.php' => [
-        "require_csrf('items_factory')",
-    ],
     'do/doadd_invoice.php' => [
         "require_once('../includes/auth_guard.php')",
         "require_once('../includes/csrf.php')",

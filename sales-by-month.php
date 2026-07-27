@@ -58,19 +58,14 @@
                                     $to   = $_POST['to'];
                                 }
 
-                                // استعلام: تجميع المبيعات حسب الشهر
-                                $sql = "SELECT DATE_FORMAT(pro_date, '%Y-%m') as sales_month, 
-                                               SUM(pro_value) as total_sales 
-                                        FROM ot_head 
-                                        WHERE (pro_tybe = 9 OR pro_tybe = 3)
-                                        AND pro_date BETWEEN '$from' AND '$to'
-                                        GROUP BY sales_month
-                                        ORDER BY sales_month ASC";
-
-                                $res = $conn->query($sql);
+                                require_once __DIR__ . '/classes/Financial/LegacySalesReportService.php';
+                                $rows = (new LegacySalesReportService())->timeBuckets($conn, $from, $to, 'month', [
+                                    'tenant' => (int) ($_SESSION['pos_tenant'] ?? 0),
+                                    'branch' => (int) ($_SESSION['pos_branch'] ?? 0),
+                                ]);
                                 $grand_total = 0;
 
-                                while ($row = $res->fetch_assoc()) {
+                                foreach ($rows as $row) {
                                     $x++;
                                     $grand_total += $row['total_sales'];
                                     ?>

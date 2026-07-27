@@ -24,6 +24,7 @@ $sales_data = [
     'total_invoices' => (int) ($totals['total_orders'] ?? 0),
     'total_sales' => (float) ($totals['total_gross'] ?? 0),
     'total_discounts' => (float) ($totals['total_discount'] ?? 0),
+    'total_refunds' => (float) ($totals['total_refunds'] ?? 0),
     'net_sales' => (float) ($totals['total_net'] ?? 0),
 ];
 
@@ -179,6 +180,13 @@ if (file_exists($logo_path)) {
 <tr class="bg-slate-100 border-b-2 border-l-2 border-slate-900">
 <th>خصم:</th>
 <td class="float-right"><?= number_format($sales_data['total_discounts'], 2) ?> ج.م</td>
+</tr>
+<?php } ?>
+
+<?php if ($sales_data['total_refunds'] > 0) { ?>
+<tr class="bg-slate-100 border-b-2 border-l-2 border-slate-900">
+<th>مرتجعات:</th>
+<td class="float-right">- <?= number_format($sales_data['total_refunds'], 2) ?> ج.م</td>
 </tr>
 <?php } ?>
 

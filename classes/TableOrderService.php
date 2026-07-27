@@ -318,6 +318,12 @@ class TableOrderService
         if (!$order) {
             throw new Exception('لا يوجد طلب نشط لهذه الطاولة');
         }
+        if (
+            strtolower(trim((string) ($order['payment_status'] ?? 'unpaid'))) !== 'unpaid'
+            || Money::from((string) ($order['paid_amount'] ?? '0'))->compare(Money::zero()) > 0
+        ) {
+            throw new Exception('ORDER_HAS_PAYMENT_USE_REFUND');
+        }
 
         $this->execute($conn, "
             UPDATE ot_head

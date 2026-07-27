@@ -124,8 +124,10 @@ preparation_contract_assert(strpos($apiSource, 'payload.itmpreparation') !== fal
 preparation_contract_assert(strpos($apiSource, "PREPARATION_VALUE_REQUIRED: 'اختر عدد ملاعق السكر") !== false, 'cashier must see an actionable Arabic message instead of an internal preparation error code');
 
 $kdsSource = file_get_contents(__DIR__ . '/../../classes/Pos/Service/KdsTicketService.php');
-preparation_contract_assert(strpos($kdsSource, "line['preparation_values']") !== false, 'KDS ticket notes must carry sugar instructions');
-preparation_contract_assert(strpos($kdsSource, 'بدون سكر') !== false, 'KDS must render explicit zero as no sugar');
+$kdsBoardSource = file_get_contents(__DIR__ . '/../../js/kds_board.js');
+preparation_contract_assert(strpos($kdsSource, "'preparation_values' => \$preparation") !== false, 'KDS API must carry preparation separately from free-form notes');
+preparation_contract_assert(strpos($kdsBoardSource, 'line.preparation_values') !== false, 'KDS board must render structured preparation values');
+preparation_contract_assert(strpos($kdsBoardSource, 'بدون سكر') !== false, 'KDS must render explicit zero as no sugar');
 
 $appConfigSource = file_get_contents(__DIR__ . '/../../config/app_config.php');
 preparation_contract_assert(strpos($appConfigSource, "['POSMAIN_PREPARATION_FIELDS_ENABLED'], '1'") !== false, 'sugar preparation must be enabled by default');

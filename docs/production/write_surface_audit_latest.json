@@ -109,51 +109,6 @@
             ]
         },
         {
-            "path": "ajax/generate_items.php",
-            "categories": [
-                "menu_catalog"
-            ],
-            "tables": [
-                "item_group",
-                "item_units",
-                "myitems",
-                "myunits",
-                "process"
-            ],
-            "writes": [
-                {
-                    "operation": "INSERT",
-                    "table": "item_group",
-                    "line": 133
-                },
-                {
-                    "operation": "INSERT",
-                    "table": "myunits",
-                    "line": 158
-                },
-                {
-                    "operation": "INSERT",
-                    "table": "myitems",
-                    "line": 243
-                },
-                {
-                    "operation": "INSERT",
-                    "table": "myitems",
-                    "line": 244
-                },
-                {
-                    "operation": "INSERT",
-                    "table": "item_units",
-                    "line": 254
-                },
-                {
-                    "operation": "INSERT",
-                    "table": "process",
-                    "line": 272
-                }
-            ]
-        },
-        {
             "path": "ajax/get_tables.php",
             "categories": [
                 "table_state"
@@ -7761,44 +7716,6 @@
             ]
         },
         {
-            "path": "do/recost.php",
-            "categories": [
-                "menu_catalog",
-                "pos_order"
-            ],
-            "tables": [
-                "fat_details",
-                "myitems"
-            ],
-            "writes": [
-                {
-                    "operation": "ALTER",
-                    "table": "myitems",
-                    "line": 12
-                },
-                {
-                    "operation": "UPDATE",
-                    "table": "fat_details",
-                    "line": 56
-                },
-                {
-                    "operation": "UPDATE",
-                    "table": "fat_details",
-                    "line": 60
-                },
-                {
-                    "operation": "UPDATE",
-                    "table": "fat_details",
-                    "line": 69
-                },
-                {
-                    "operation": "UPDATE",
-                    "table": "fat_details",
-                    "line": 73
-                }
-            ]
-        },
-        {
             "path": "do/reset_manual_prices.php",
             "categories": [
                 "menu_catalog"
@@ -8294,22 +8211,6 @@
                     "operation": "INSERT",
                     "table": "clients",
                     "line": 44
-                }
-            ]
-        },
-        {
-            "path": "js/ajax/recost.php",
-            "categories": [
-                "pos_order"
-            ],
-            "tables": [
-                "fat_details"
-            ],
-            "writes": [
-                {
-                    "operation": "UPDATE",
-                    "table": "fat_details",
-                    "line": 30
                 }
             ]
         },

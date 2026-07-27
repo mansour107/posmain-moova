@@ -17,6 +17,7 @@ class SyncSchemaManager
             'kds_tickets' => $this->kdsTicketsSql(),
             'kds_ticket_lines' => $this->kdsTicketLinesSql(),
             'kds_changes' => $this->kdsChangesSql(),
+            'kds_order_events' => $this->kdsOrderEventsSql(),
             'order_fulfillment' => $this->orderFulfillmentSql(),
             'pos_customers' => $this->posCustomersSql(),
             'pos_customer_phones' => $this->posCustomerPhonesSql(),
@@ -43,6 +44,7 @@ class SyncSchemaManager
             'item_modifier_groups' => $this->itemModifierGroupsSql(),
             'order_line_modifiers' => $this->orderLineModifiersSql(),
             'order_line_notes' => $this->orderLineNotesSql(),
+            'order_line_kitchen_snapshots' => $this->orderLineKitchenSnapshotsSql(),
             'item_preparation_configs' => $this->itemPreparationConfigsSql(),
             'item_group_preparation_configs' => $this->itemGroupPreparationConfigsSql(),
             'order_line_preparation_values' => $this->orderLinePreparationValuesSql(),
@@ -450,6 +452,10 @@ class SyncSchemaManager
             $pending[$label] = $statement;
         }
 
+        foreach ($this->refundAttributionBackfillStatements($conn) as $label => $statement) {
+            $pending[$label] = $statement;
+        }
+
         foreach ($this->preparationFieldUpgradeStatements($conn) as $label => $statement) {
             $pending[$label] = $statement;
         }
@@ -476,6 +482,14 @@ class SyncSchemaManager
         foreach ($this->pendingStatements($conn) as $table => $sql) {
             $conn->query($sql);
             $applied[] = $table;
+        }
+
+        // Attribution backfills depend on columns that may have been added in
+        // the first pass above. Re-evaluate them against the now-current schema
+        // so a single migration run is sufficient for existing installations.
+        foreach ($this->refundAttributionBackfillStatements($conn) as $label => $sql) {
+            $conn->query($sql);
+            $applied[] = $label;
         }
 
         $this->seedRbacPresetRoles($conn);
@@ -575,6 +589,8 @@ class SyncSchemaManager
             'kds_tickets',
             'kds_ticket_lines',
             'kds_changes',
+            'kds_order_events',
+            'order_line_kitchen_snapshots',
         ];
     }
 
@@ -652,8 +668,10 @@ class SyncSchemaManager
                     "ALTER TABLE kds_ticket_lines ADD COLUMN line_key CHAR(64) NOT NULL DEFAULT '' AFTER detail_id";
             }
             if ($this->columnExists($conn, 'kds_ticket_lines', 'line_key')) {
-                $pending['kds_ticket_lines.backfill_line_key'] =
-                    "UPDATE kds_ticket_lines SET line_key = SHA2(CONCAT(COALESCE(item_id, 0), '|', COALESCE(CAST(modifiers_json AS CHAR), ''), '|', COALESCE(notes, '')), 256) WHERE line_key = ''";
+                if ($this->queryHasRows($conn, "SELECT 1 FROM kds_ticket_lines WHERE line_key = '' LIMIT 1")) {
+                    $pending['kds_ticket_lines.backfill_line_key'] =
+                        "UPDATE kds_ticket_lines SET line_key = SHA2(CONCAT(COALESCE(item_id, 0), '|', COALESCE(CAST(modifiers_json AS CHAR), ''), '|', COALESCE(notes, '')), 256) WHERE line_key = ''";
+                }
             }
             if ($this->indexExists($conn, 'kds_ticket_lines', 'uq_kds_ticket_line')) {
                 $pending['kds_ticket_lines.drop_detail_unique'] =
@@ -663,6 +681,10 @@ class SyncSchemaManager
                 && !$this->indexExists($conn, 'kds_ticket_lines', 'uq_kds_ticket_line_key')) {
                 $pending['kds_ticket_lines.add_line_key_unique'] =
                     "ALTER TABLE kds_ticket_lines ADD UNIQUE KEY uq_kds_ticket_line_key (ticket_id, line_key)";
+            }
+            if (!$this->columnExists($conn, 'kds_ticket_lines', 'preparation_json')) {
+                $pending['kds_ticket_lines.add_preparation_json'] =
+                    'ALTER TABLE kds_ticket_lines ADD COLUMN preparation_json JSON NULL AFTER modifiers_json';
             }
         }
 
@@ -1462,20 +1484,36 @@ ALTER TABLE {$quotedTable}
                   )";
         }
 
+        $openBranchLockNeedsBackfill = 'open_branch_lock IS NULL';
+        if ($this->tableExists($conn, 'drawer_sessions')
+            && $this->columnExists($conn, 'drawer_sessions', 'register_id')
+            && $this->columnExists($conn, 'drawer_sessions', 'open_register_lock')
+            && $this->columnExists($conn, 'drawer_sessions', 'open_user_lock')
+        ) {
+            // A fully locked register session deliberately has no branch-wide
+            // lock so other registers in the same branch may open concurrently.
+            $openBranchLockNeedsBackfill .= "
+                AND NOT (
+                    register_id IS NOT NULL
+                    AND open_register_lock IS NOT NULL
+                    AND open_user_lock IS NOT NULL
+                )";
+        }
+
         if ($this->tableExists($conn, 'drawer_sessions')
             && $this->columnExists($conn, 'drawer_sessions', 'open_branch_lock')
             && $this->queryHasRows($conn, "
                 SELECT 1
                 FROM drawer_sessions
                 WHERE status = 'open'
-                  AND open_branch_lock IS NULL
+                  AND {$openBranchLockNeedsBackfill}
                 LIMIT 1
             ")) {
             $statements['drawer_sessions.backfill_open_branch_lock'] = "
                 UPDATE drawer_sessions
                 SET open_branch_lock = CONCAT(tenant, ':', branch)
                 WHERE status = 'open'
-                  AND open_branch_lock IS NULL";
+                  AND {$openBranchLockNeedsBackfill}";
         }
 
         // Seed a default register per tenant/branch that already has drawer history,
@@ -1625,6 +1663,119 @@ ALTER TABLE {$quotedTable}
             $statements['journal_entries.modify_' . $column . '_decimal'] = "
 ALTER TABLE journal_entries
   MODIFY COLUMN {$column} DECIMAL({$precision},6) NOT NULL DEFAULT 0.000000";
+        }
+
+        return $statements;
+    }
+
+    /**
+     * Preserve refund-day/operator/shift attribution for historical credit
+     * notes. A drawer is attached only when exactly one session contains the
+     * refund timestamp; ambiguous rows deliberately remain unassigned.
+     */
+    private function refundAttributionBackfillStatements(mysqli $conn): array
+    {
+        $statements = [];
+        foreach (['tenant', 'branch', 'business_day', 'drawer_session_id', 'manager_approval_id'] as $column) {
+            if (!$this->tableExists($conn, 'credit_notes') || !$this->columnExists($conn, 'credit_notes', $column)) {
+                return $statements;
+            }
+        }
+
+        if ($this->tableExists($conn, 'ot_head')
+            && $this->columnExists($conn, 'ot_head', 'tenant')
+            && $this->columnExists($conn, 'ot_head', 'branch')
+            && $this->queryHasRows($conn, '
+                SELECT 1
+                FROM credit_notes cn
+                INNER JOIN ot_head oh ON oh.id = cn.original_order_id
+                WHERE cn.tenant = 0 AND cn.branch = 0
+                  AND (COALESCE(oh.tenant, 0) <> 0 OR COALESCE(oh.branch, 0) <> 0)
+                LIMIT 1
+            ')) {
+            $statements['credit_notes.backfill_tenant_branch'] = '
+                UPDATE credit_notes cn
+                INNER JOIN ot_head oh ON oh.id = cn.original_order_id
+                SET cn.tenant = COALESCE(oh.tenant, 0),
+                    cn.branch = COALESCE(oh.branch, 0)
+                WHERE cn.tenant = 0 AND cn.branch = 0
+                  AND (COALESCE(oh.tenant, 0) <> 0 OR COALESCE(oh.branch, 0) <> 0)';
+        }
+
+        if ($this->tableExists($conn, 'drawer_sessions')
+            && $this->columnExists($conn, 'drawer_sessions', 'closed_at')
+            && $this->queryHasRows($conn, '
+                SELECT 1
+                FROM credit_notes cn
+                WHERE cn.drawer_session_id IS NULL
+                  AND (
+                      SELECT COUNT(*)
+                      FROM drawer_sessions ds
+                      WHERE ds.user_id = cn.created_by
+                        AND ds.tenant = cn.tenant
+                        AND ds.branch = cn.branch
+                        AND cn.created_at >= ds.opened_at
+                        AND (ds.closed_at IS NULL OR cn.created_at <= ds.closed_at)
+                  ) = 1
+                LIMIT 1
+            ')) {
+            $statements['credit_notes.backfill_drawer_session'] = '
+                UPDATE credit_notes cn
+                SET cn.drawer_session_id = (
+                    SELECT MIN(ds.id)
+                    FROM drawer_sessions ds
+                    WHERE ds.user_id = cn.created_by
+                      AND ds.tenant = cn.tenant
+                      AND ds.branch = cn.branch
+                      AND cn.created_at >= ds.opened_at
+                      AND (ds.closed_at IS NULL OR cn.created_at <= ds.closed_at)
+                )
+                WHERE cn.drawer_session_id IS NULL
+                  AND (
+                      SELECT COUNT(*)
+                      FROM drawer_sessions ds2
+                      WHERE ds2.user_id = cn.created_by
+                        AND ds2.tenant = cn.tenant
+                        AND ds2.branch = cn.branch
+                        AND cn.created_at >= ds2.opened_at
+                        AND (ds2.closed_at IS NULL OR cn.created_at <= ds2.closed_at)
+                  ) = 1';
+        }
+
+        if ($this->tableExists($conn, 'drawer_sessions')
+            && $this->columnExists($conn, 'drawer_sessions', 'business_day')
+            && $this->queryHasRows($conn, '
+                SELECT 1
+                FROM credit_notes cn
+                INNER JOIN drawer_sessions ds ON ds.id = cn.drawer_session_id
+                WHERE cn.business_day IS NULL AND ds.business_day IS NOT NULL
+                LIMIT 1
+            ')) {
+            $statements['credit_notes.backfill_business_day_from_drawer'] = '
+                UPDATE credit_notes cn
+                INNER JOIN drawer_sessions ds ON ds.id = cn.drawer_session_id
+                SET cn.business_day = ds.business_day
+                WHERE cn.business_day IS NULL AND ds.business_day IS NOT NULL';
+        }
+
+        if ($this->queryHasRows($conn, 'SELECT 1 FROM credit_notes WHERE business_day IS NULL LIMIT 1')) {
+            if ($this->tableExists($conn, 'pos_branch_settings')) {
+                $statements['credit_notes.backfill_business_day_from_timestamp'] = '
+                    UPDATE credit_notes cn
+                    LEFT JOIN pos_branch_settings pbs
+                      ON pbs.pos_tenant = cn.tenant
+                     AND pbs.pos_branch = cn.branch
+                    SET cn.business_day = DATE(DATE_SUB(
+                        cn.created_at,
+                        INTERVAL COALESCE(pbs.business_day_cutoff_hour, 6) HOUR
+                    ))
+                    WHERE cn.business_day IS NULL';
+            } else {
+                $statements['credit_notes.backfill_business_day_from_timestamp'] = '
+                    UPDATE credit_notes
+                    SET business_day = DATE(DATE_SUB(created_at, INTERVAL 6 HOUR))
+                    WHERE business_day IS NULL';
+            }
         }
 
         return $statements;
@@ -1791,6 +1942,32 @@ ALTER TABLE journal_entries
         }
 
         if ($this->tableExists($conn, 'credit_notes')) {
+            $attributionColumns = [
+                'tenant' => 'ALTER TABLE credit_notes ADD COLUMN tenant INT NOT NULL DEFAULT 0 AFTER uuid',
+                'branch' => 'ALTER TABLE credit_notes ADD COLUMN branch INT NOT NULL DEFAULT 0 AFTER tenant',
+                'business_day' => 'ALTER TABLE credit_notes ADD COLUMN business_day DATE NULL AFTER branch',
+                'drawer_session_id' => 'ALTER TABLE credit_notes ADD COLUMN drawer_session_id BIGINT UNSIGNED NULL AFTER business_day',
+                'manager_approval_id' => 'ALTER TABLE credit_notes ADD COLUMN manager_approval_id BIGINT UNSIGNED NULL AFTER drawer_session_id',
+                'refund_mode' => "ALTER TABLE credit_notes ADD COLUMN refund_mode ENUM('full','items','amount') NOT NULL DEFAULT 'full' AFTER idempotency_key",
+                'request_fingerprint' => 'ALTER TABLE credit_notes ADD COLUMN request_fingerprint CHAR(64) NULL AFTER refund_mode',
+            ];
+            foreach ($attributionColumns as $column => $sql) {
+                if (!$this->columnExists($conn, 'credit_notes', $column)) {
+                    $statements['credit_notes.add_' . $column] = $sql;
+                }
+            }
+            if (!$this->indexExists($conn, 'credit_notes', 'idx_credit_notes_scope_day_status')) {
+                $statements['credit_notes.add_idx_scope_day_status'] =
+                    'ALTER TABLE credit_notes ADD KEY idx_credit_notes_scope_day_status (tenant, branch, business_day, status)';
+            }
+            if (!$this->indexExists($conn, 'credit_notes', 'idx_credit_notes_drawer_created')) {
+                $statements['credit_notes.add_idx_drawer_created'] =
+                    'ALTER TABLE credit_notes ADD KEY idx_credit_notes_drawer_created (drawer_session_id, created_at)';
+            }
+            if (!$this->indexExists($conn, 'credit_notes', 'idx_credit_notes_operator_created')) {
+                $statements['credit_notes.add_idx_operator_created'] =
+                    'ALTER TABLE credit_notes ADD KEY idx_credit_notes_operator_created (created_by, created_at)';
+            }
             if ($this->columnNeedsWiderFinancialDecimal($conn, 'credit_notes', 'total_amount', 19, 2)) {
                 $statements['credit_notes.modify_total_amount_decimal19_2'] =
                     'ALTER TABLE credit_notes MODIFY COLUMN total_amount DECIMAL(19,2) NOT NULL';
@@ -1815,6 +1992,17 @@ ALTER TABLE journal_entries
             if (!$this->columnExists($conn, 'credit_note_lines', 'stock_disposition')) {
                 $statements['credit_note_lines.add_stock_disposition'] =
                     "ALTER TABLE credit_note_lines ADD COLUMN stock_disposition ENUM('restock','waste','no_stock_return') NOT NULL DEFAULT 'no_stock_return'";
+            }
+            foreach ([
+                'gross_amount' => 'line_amount',
+                'line_discount_amount' => 'gross_amount',
+                'order_discount_amount' => 'line_discount_amount',
+                'taxable_amount' => 'order_discount_amount',
+            ] as $column => $after) {
+                if (!$this->columnExists($conn, 'credit_note_lines', $column)) {
+                    $statements['credit_note_lines.add_' . $column] =
+                        "ALTER TABLE credit_note_lines ADD COLUMN {$column} DECIMAL(19,2) NOT NULL DEFAULT 0.00 AFTER {$after}";
+                }
             }
         }
 
@@ -2404,6 +2592,40 @@ CREATE TABLE IF NOT EXISTS kds_changes (
   PRIMARY KEY (id),
   KEY idx_kds_changes_station_seq (station_id, id),
   KEY idx_kds_changes_ticket (ticket_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
+    private function kdsOrderEventsSql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS kds_order_events (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  uuid CHAR(36) NOT NULL,
+  idempotency_key CHAR(64) NOT NULL,
+  order_id BIGINT NOT NULL,
+  station_id BIGINT UNSIGNED NOT NULL,
+  ticket_id BIGINT UNSIGNED NULL,
+  kitchen_revision INT UNSIGNED NOT NULL DEFAULT 0,
+  event_type ENUM('change','line_cancel','order_cancel') NOT NULL,
+  status ENUM('pending','delivered','acknowledged','failed') NOT NULL DEFAULT 'pending',
+  before_snapshot_json LONGTEXT NOT NULL,
+  after_snapshot_json LONGTEXT NOT NULL,
+  reason VARCHAR(500) NULL,
+  actor_user_id BIGINT NOT NULL,
+  approval_id BIGINT NULL,
+  version INT UNSIGNED NOT NULL DEFAULT 1,
+  delivered_at DATETIME NULL,
+  acknowledged_at DATETIME NULL,
+  acknowledged_by BIGINT NULL,
+  failure_code VARCHAR(120) NULL,
+  tenant INT NOT NULL DEFAULT 0,
+  branch INT NOT NULL DEFAULT 0,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_kds_order_event_uuid (uuid),
+  UNIQUE KEY uq_kds_order_event_idempotency (idempotency_key),
+  KEY idx_kds_order_events_station_state (station_id, status, id),
+  KEY idx_kds_order_events_order (order_id, id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
     }
 
@@ -3043,6 +3265,25 @@ CREATE TABLE IF NOT EXISTS order_line_notes (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
     }
 
+    private function orderLineKitchenSnapshotsSql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS order_line_kitchen_snapshots (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  order_id BIGINT UNSIGNED NOT NULL,
+  detail_id BIGINT UNSIGNED NOT NULL,
+  display_order INT UNSIGNED NOT NULL,
+  snapshot_version SMALLINT UNSIGNED NOT NULL DEFAULT 1,
+  snapshot_hash CHAR(64) NOT NULL,
+  payload_json JSON NOT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_order_line_kitchen_snapshot (order_id, detail_id),
+  UNIQUE KEY uq_order_line_kitchen_hash (order_id, snapshot_hash),
+  KEY idx_order_line_kitchen_order (order_id, display_order, id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
     private function itemPreparationConfigsSql()
     {
         return "
@@ -3175,10 +3416,17 @@ CREATE TABLE IF NOT EXISTS tax_categories (
 CREATE TABLE IF NOT EXISTS credit_notes (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   uuid CHAR(36) NOT NULL,
+  tenant INT NOT NULL DEFAULT 0,
+  branch INT NOT NULL DEFAULT 0,
+  business_day DATE NULL,
+  drawer_session_id BIGINT UNSIGNED NULL,
+  manager_approval_id BIGINT UNSIGNED NULL,
   original_order_id BIGINT UNSIGNED NOT NULL,
   customer_account_id BIGINT UNSIGNED NOT NULL,
   total_amount DECIMAL(19,2) NOT NULL,
   idempotency_key VARCHAR(191) NULL,
+  refund_mode ENUM('full','items','amount') NOT NULL DEFAULT 'full',
+  request_fingerprint CHAR(64) NULL,
   journal_head_id BIGINT UNSIGNED NULL,
   reason VARCHAR(500) NOT NULL,
   status ENUM('posted','void') NOT NULL DEFAULT 'posted',
@@ -3188,7 +3436,10 @@ CREATE TABLE IF NOT EXISTS credit_notes (
   UNIQUE KEY uq_credit_notes_uuid (uuid),
   UNIQUE KEY uq_credit_notes_idempotency (idempotency_key),
   KEY idx_credit_notes_order_status (original_order_id, status),
-  KEY idx_credit_notes_customer_created (customer_account_id, created_at)
+  KEY idx_credit_notes_customer_created (customer_account_id, created_at),
+  KEY idx_credit_notes_scope_day_status (tenant, branch, business_day, status),
+  KEY idx_credit_notes_drawer_created (drawer_session_id, created_at),
+  KEY idx_credit_notes_operator_created (created_by, created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
     }
 
@@ -3202,6 +3453,10 @@ CREATE TABLE IF NOT EXISTS credit_note_lines (
   quantity DECIMAL(19,6) NOT NULL DEFAULT 0.000000,
   unit_amount DECIMAL(19,6) NOT NULL DEFAULT 0.000000,
   line_amount DECIMAL(19,2) NOT NULL,
+  gross_amount DECIMAL(19,2) NOT NULL DEFAULT 0.00,
+  line_discount_amount DECIMAL(19,2) NOT NULL DEFAULT 0.00,
+  order_discount_amount DECIMAL(19,2) NOT NULL DEFAULT 0.00,
+  taxable_amount DECIMAL(19,2) NOT NULL DEFAULT 0.00,
   tax_rate DECIMAL(19,6) NOT NULL DEFAULT 0.000000,
   tax_amount DECIMAL(19,2) NOT NULL DEFAULT 0.00,
   stock_disposition ENUM('restock','waste','no_stock_return') NOT NULL DEFAULT 'no_stock_return',

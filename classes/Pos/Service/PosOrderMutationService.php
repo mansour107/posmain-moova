@@ -30,6 +30,7 @@ if (is_file($deliveryWorkerServicePath)) {
 }
 require_once __DIR__ . '/SideEffectPolicy.php';
 require_once __DIR__ . '/OrderRevisionService.php';
+require_once __DIR__ . '/KdsTicketService.php';
 require_once __DIR__ . '/../../../includes/pos_user_context.php';
 require_once __DIR__ . '/../../PosOrderService.php';
 require_once __DIR__ . '/../../../includes/pos_default_accounts.php';
@@ -197,9 +198,21 @@ class PosOrderMutationService
     public function cancelTableOrder(mysqli $conn, array $request, array $context = []): array
     {
         $orderId = (int) ($request['order_id'] ?? 0);
-        $lines = $orderId > 0
-            ? $this->loadRecipeOrderLineContexts($conn, $orderId, 'table', 'dine_in', $request, $context)
-            : [];
+        $tableId = (int) ($request['table_id'] ?? 0);
+        $order = ($orderId > 0 && $tableId > 0)
+            ? $this->tableOrderService->findActiveOrderByTableAndOrderId($conn, $tableId, $orderId, true)
+            : null;
+        if (!$order) {
+            throw new RuntimeException('ORDER_NOT_FOUND');
+        }
+        if (
+            strtolower(trim((string) ($order['payment_status'] ?? 'unpaid'))) !== 'unpaid'
+            || (float) ($order['paid_amount'] ?? 0) > self::PAYMENT_ROUNDING_TOLERANCE
+        ) {
+            throw new RuntimeException('ORDER_HAS_PAYMENT_USE_REFUND');
+        }
+
+        $lines = $this->loadRecipeOrderLineContexts($conn, $orderId, 'table', 'dine_in', $request, $context);
         $this->recordRecipeOrderLinesCancelled($conn, $lines, 'order_cancelled');
         $result = $this->tableStateService->cancelActiveOrder($conn, $request, $context);
         $orderId = (int) ($result['data']['order_id'] ?? 0);
@@ -208,6 +221,10 @@ class PosOrderMutationService
                 'table_id' => $result['data']['table_id'] ?? null,
                 'table_freed' => $result['data']['table_freed'] ?? null,
                 'reason' => $request['reason'] ?? $request['cancellation_reason'] ?? null,
+            ]);
+            (new KdsTicketService())->syncForOrder($conn, $orderId, 'cancelled', $this->contextUserId($request, $context), [
+                'reason' => $request['reason'] ?? $request['cancellation_reason'] ?? '',
+                'manager_approval_id' => $request['manager_approval_id'] ?? null,
             ]);
         }
 
@@ -320,6 +337,10 @@ class PosOrderMutationService
                 'reason' => $reason,
                 'order_channel' => $channel,
             ]);
+            (new KdsTicketService())->syncForOrder($conn, $orderId, 'cancelled', $userId, [
+                'reason' => $reason,
+                'manager_approval_id' => $request['manager_approval_id'] ?? null,
+            ]);
 
             if ($ownsTransaction) {
                 $conn->commit();
@@ -387,6 +408,14 @@ class PosOrderMutationService
             if (!in_array($action, ['refund', 'void'], true)) {
                 throw new InvalidArgumentException('ORDER_REVERSAL_ACTION_INVALID');
             }
+            if ($action === 'void' && (
+                !empty($request['lines'])
+                || !empty($request['payments'])
+                || trim((string) ($request['refund_amount'] ?? '')) !== ''
+                || !in_array(strtolower(trim((string) ($request['refund_mode'] ?? 'full'))), ['', 'full'], true)
+            )) {
+                throw new InvalidArgumentException('PARTIAL_VOID_NOT_SUPPORTED');
+            }
 
             $order = $this->tableOrderService->queryOne($conn, "
                 SELECT id, table_id, pro_tybe, order_type, payment_status, invoice_status,
@@ -397,10 +426,37 @@ class PosOrderMutationService
                 LIMIT 1
                 FOR UPDATE
             ", [$orderId]);
-            if (!$order || (int) ($order['isdeleted'] ?? 0) === 1) {
+            if (!$order) {
                 throw new RuntimeException('ORDER_NOT_FOUND');
             }
 
+            $financialRefunds = new FinancialRefundService();
+            $explicitIdempotencyKey = trim((string) ($request['idempotency_key'] ?? $context['idempotency_key'] ?? ''));
+            if ($explicitIdempotencyKey !== '') {
+                $existingRefund = $financialRefunds->findPostedRefundByIdempotency(
+                    $conn,
+                    $explicitIdempotencyKey,
+                    $orderId,
+                    $request
+                );
+                if ($existingRefund !== null) {
+                    if ($ownsTransaction) {
+                        $conn->commit();
+                    }
+
+                    return $this->paidReversalResponse(
+                        $order,
+                        $action,
+                        $existingRefund,
+                        null,
+                        $this->resolveRecipeRefundPolicy($request, $context)
+                    );
+                }
+            }
+
+            if ((int) ($order['isdeleted'] ?? 0) === 1) {
+                throw new RuntimeException('ORDER_NOT_FOUND');
+            }
             $paymentStatus = strtolower(trim((string) ($order['payment_status'] ?? 'unpaid')));
             if (in_array($paymentStatus, ['refunded', 'voided'], true)) {
                 throw new RuntimeException('ORDER_ALREADY_REVERSED');
@@ -410,7 +466,15 @@ class PosOrderMutationService
             }
 
             $userId = $this->contextUserId($request, $context);
-            $amount = max(0.0, (float) ($order['paid_amount'] ?? $order['fat_net'] ?? 0));
+            $scope = $this->orderAccountingScope($conn, $orderId);
+            $tenant = max(0, (int) ($context['tenant'] ?? $context['pos_tenant'] ?? $request['tenant'] ?? $request['pos_tenant'] ?? $scope['tenant']));
+            $branch = max(0, (int) ($context['branch'] ?? $context['pos_branch'] ?? $request['branch'] ?? $request['pos_branch'] ?? $scope['branch']));
+            $refundPreview = $action === 'refund'
+                ? $financialRefunds->previewRefund($conn, $orderId, $request)
+                : null;
+            $amount = $refundPreview !== null
+                ? (float) $refundPreview['total_amount']
+                : max(0.0, (float) ($order['paid_amount'] ?? $order['fat_net'] ?? 0));
             $limitKey = $action === 'void' ? 'pos.void.paid' : 'pos.refund.limit';
             $escalationKey = $action === 'void' ? 'pos.void.paid' : 'pos.refund';
             $approval = $this->managerApprovalService->requireApprovedIfNeeded(
@@ -427,22 +491,9 @@ class PosOrderMutationService
                 ])
             );
 
-            [$channel, $orderType] = $this->recipeChannelAndOrderType((string) ($order['order_type'] ?? ''));
-            $lines = $this->loadRecipeOrderLineContexts($conn, $orderId, $channel, $orderType, $request, $context);
-            $recipeResult = $this->recordRecipePaidOrderReversal(
-                $conn,
-                $orderId,
-                $lines,
-                $channel,
-                $orderType,
-                $action,
-                $request,
-                $context
-            );
-
             $request = $this->resolvePosRequestAccounts($conn, $request);
-            $customerId = (int) ($request['acc2_id'] ?? 0);
-            $salesAccountId = (int) ($request['sales_account_id'] ?? 0);
+            $customerId = (int) ($request['customer_account_id'] ?? $request['acc2_id'] ?? 0);
+            $salesAccountId = (int) ($request['revenue_account_id'] ?? $request['sales_account_id'] ?? 0);
             if ($customerId < 1 || $salesAccountId < 1) {
                 throw new RuntimeException('REFUND_ACCOUNTS_REQUIRED');
             }
@@ -457,64 +508,140 @@ class PosOrderMutationService
                 $drawerSessionId = (int) ($_SESSION['pos_drawer_session_id'] ?? 0);
             }
 
-            $creditNoteRefund = (new FinancialRefundService())->createPostedRefund($conn, [
+            $managerApprovalId = (int) ($approval['id'] ?? $request['manager_approval_id'] ?? 0);
+            $financialRequest = array_merge($request, [
                 'original_order_id' => $orderId,
                 'customer_account_id' => $customerId,
                 'revenue_account_id' => $salesAccountId,
                 'user_id' => $userId,
                 'reason' => $refundReason,
-                'idempotency_key' => (string) ($request['idempotency_key'] ?? $context['idempotency_key'] ?? ('paid-reversal:' . $action . ':' . $orderId)),
+                'idempotency_key' => $explicitIdempotencyKey !== ''
+                    ? $explicitIdempotencyKey
+                    : 'paid-reversal:' . $action . ':' . $orderId,
                 'refund_stock_policy' => $request['refund_stock_policy'] ?? 'waste',
                 'drawer_session_id' => $drawerSessionId,
-            ], [
+                'manager_approval_id' => $managerApprovalId > 0 ? $managerApprovalId : null,
+                'tenant' => $tenant,
+                'branch' => $branch,
+            ]);
+            $creditNoteRefund = $financialRefunds->createPostedRefund($conn, $financialRequest, [
                 'user_id' => $userId,
                 'in_transaction' => true,
                 'drawer_session_id' => $drawerSessionId,
-                'tenant' => (int) ($context['tenant'] ?? $_SESSION['pos_tenant'] ?? 0),
-                'branch' => (int) ($context['branch'] ?? $_SESSION['pos_branch'] ?? 0),
+                'manager_approval_id' => $managerApprovalId > 0 ? $managerApprovalId : null,
+                'tenant' => $tenant,
+                'branch' => $branch,
+                'require_drawer_session' => !empty($context['require_drawer_session']),
+                'sync_config' => $context['sync_config'] ?? $context['config'] ?? null,
             ]);
 
-            $newPaymentStatus = $action === 'void' ? 'voided' : 'refunded';
+            $reversalStatus = (string) ($creditNoteRefund['reversal_status'] ?? 'full');
+            $isFull = $action === 'void' || $reversalStatus === 'full';
+            $newPaymentStatus = $isFull ? ($action === 'void' ? 'voided' : 'refunded') : $paymentStatus;
             $reason = trim((string) ($request['reason'] ?? $request['refund_reason'] ?? $request['void_reason'] ?? ''));
             if ($reason === '') {
                 $reason = $action === 'void' ? 'paid_order_voided' : 'paid_order_refunded';
             }
 
-            $this->tableOrderService->execute($conn, "
-                UPDATE ot_head
-                SET payment_status = ?,
-                    invoice_status = 'cancelled',
-                    order_status = 'cancelled',
-                    remaining_amount = 0,
-                    isdeleted = CASE WHEN ? = 'void' THEN 1 ELSE isdeleted END,
-                    cancelled_at = NOW(),
-                    cancelled_by = ?,
-                    cancellation_reason = ?,
-                    updated_by = ?,
-                    mdtime = NOW()
-                WHERE id = ?
-            ", [$newPaymentStatus, $action, $userId, $reason, $userId, $orderId]);
+            if ($isFull) {
+                $this->tableOrderService->execute($conn, "
+                    UPDATE ot_head
+                    SET payment_status = ?,
+                        invoice_status = 'cancelled',
+                        order_status = 'cancelled',
+                        remaining_amount = 0,
+                        cancelled_at = NOW(),
+                        cancelled_by = ?,
+                        cancellation_reason = ?,
+                        updated_by = ?,
+                        mdtime = NOW()
+                    WHERE id = ?
+                ", [$newPaymentStatus, $userId, $reason, $userId, $orderId]);
+                $order['payment_status'] = $newPaymentStatus;
+                $order['invoice_status'] = 'cancelled';
+                $order['order_status'] = 'cancelled';
+            }
 
             $tableId = (int) ($order['table_id'] ?? 0);
-            if ($tableId > 0) {
+            if ($isFull && $tableId > 0) {
                 $this->tableOrderService->setTableFreeIfNoActiveOrder($conn, $tableId);
             }
 
-            $eventType = $action === 'void' ? 'order.voided' : 'order.refunded';
+            [$channel, $orderType] = $this->recipeChannelAndOrderType((string) ($order['order_type'] ?? ''));
+            $lines = $this->loadRecipeOrderLineContexts($conn, $orderId, $channel, $orderType, $request, $context);
+            $lines = $this->recipeLinesForCreditNote(
+                $conn,
+                $lines,
+                (int) ($creditNoteRefund['credit_note_id'] ?? 0)
+            );
+            $request['refund_uuid'] = 'credit-note:' . (int) ($creditNoteRefund['credit_note_id'] ?? 0);
+            $recipeResult = $this->recordRecipePaidOrderReversal(
+                $conn,
+                $orderId,
+                $lines,
+                $channel,
+                $orderType,
+                $action,
+                $request,
+                $context
+            );
             $policy = $this->resolveRecipeRefundPolicy($request, $context);
+            $creditNoteId = (int) ($creditNoteRefund['credit_note_id'] ?? 0);
+            // The posted credit-note line is the durable authority for direct
+            // stock disposition. Recipe policy is separate: a branch may
+            // discard consumed ingredients while still restocking a sealed
+            // direct-sale item selected by the manager.
+            if ($creditNoteId > 0) {
+                $restockLines = $this->loadRefundInventoryInvoiceBridgeLines($conn, $orderId, $creditNoteId);
+                if ($restockLines) {
+                    $this->recordInventoryInvoiceBridgeReversalLines(
+                        $conn,
+                        $orderId,
+                        $restockLines,
+                        'credit_note_' . $creditNoteId,
+                        $channel,
+                        $orderType,
+                        $request,
+                        $context
+                    );
+                }
+            }
+            $customerRollup = $this->customerSideEffects()->refreshCustomerRollupForOrder($conn, $orderId, [
+                'in_transaction' => true,
+                'sync_config' => $context['sync_config'] ?? $context['config'] ?? null,
+            ]);
+
+            $eventType = $action === 'void'
+                ? 'order.voided'
+                : ($isFull ? 'order.refunded' : 'order.partially_refunded');
             $eventMetadata = [
                 'payment_status_before' => $paymentStatus,
                 'payment_status_after' => $newPaymentStatus,
                 'refund_stock_policy' => $policy,
                 'reason' => $reason,
-                'amount' => $amount,
+                'amount' => (string) ($creditNoteRefund['total_amount'] ?? '0.00'),
                 'credit_note_id' => (int) ($creditNoteRefund['credit_note_id'] ?? 0),
+                'refund_mode' => (string) ($creditNoteRefund['refund_mode'] ?? 'full'),
                 'credit_note_total' => (string) ($creditNoteRefund['total_amount'] ?? '0.00'),
+                'cumulative_refunded_amount' => (string) ($creditNoteRefund['cumulative_refunded_amount'] ?? '0.00'),
+                'remaining_refundable_amount' => (string) ($creditNoteRefund['remaining_refundable_amount'] ?? '0.00'),
+                'reversal_status' => $reversalStatus,
+                'pending_external_amount' => (string) ($creditNoteRefund['pending_external_amount'] ?? '0.00'),
+                'refund_tenders' => $creditNoteRefund['refund_tenders'] ?? [],
+                'business_day' => $creditNoteRefund['business_day'] ?? null,
+                'drawer_session_id' => $creditNoteRefund['drawer_session_id'] ?? null,
+                'customer_rollup_refreshed' => !empty($customerRollup['applied']),
             ];
             if ($approval) {
                 $eventMetadata['manager_approval_id'] = (int) ($approval['id'] ?? 0);
             }
             $this->recordOrderEvent($conn, $orderId, $eventType, $context['event_source'] ?? 'pos_paid_reversal', $context, $eventMetadata);
+            if ($isFull) {
+                (new KdsTicketService())->syncForOrder($conn, $orderId, 'cancelled', $userId, [
+                    'reason' => $reason,
+                    'manager_approval_id' => $eventMetadata['manager_approval_id'] ?? null,
+                ]);
+            }
 
             if ($approval) {
                 $this->managerApprovalService->consumeApproval($conn, (int) $approval['id'], $userId);
@@ -524,21 +651,7 @@ class PosOrderMutationService
                 $conn->commit();
             }
 
-            return [
-                'success' => true,
-                'code' => 'OK',
-                'message' => $action === 'void' ? 'ORDER_VOIDED' : 'ORDER_REFUNDED',
-                'data' => [
-                    'order_id' => $orderId,
-                    'table_id' => $tableId,
-                    'action' => $action,
-                    'payment_status' => $newPaymentStatus,
-                    'invoice_status' => 'cancelled',
-                    'order_status' => 'cancelled',
-                    'refund_stock_policy' => $policy,
-                    'recipe' => $recipeResult,
-                ],
-            ];
+            return $this->paidReversalResponse($order, $action, $creditNoteRefund, $recipeResult, $policy);
         } catch (Throwable $exception) {
             if ($ownsTransaction) {
                 $conn->rollback();
@@ -546,6 +659,51 @@ class PosOrderMutationService
 
             throw $exception;
         }
+    }
+
+    private function paidReversalResponse(
+        array $order,
+        string $action,
+        array $refund,
+        ?array $recipeResult,
+        string $policy
+    ): array {
+        $reversalStatus = (string) ($refund['reversal_status'] ?? 'full');
+        $isFull = $action === 'void' || $reversalStatus === 'full';
+        $paymentStatus = (string) ($order['payment_status'] ?? ($isFull ? ($action === 'void' ? 'voided' : 'refunded') : 'paid'));
+        $invoiceStatus = (string) ($order['invoice_status'] ?? ($isFull ? 'cancelled' : 'posted'));
+        $orderStatus = (string) ($order['order_status'] ?? ($isFull ? 'cancelled' : 'completed'));
+        $replayed = !empty($refund['replayed']);
+
+        return [
+            'success' => true,
+            'code' => $replayed ? 'REFUND_REPLAYED' : 'OK',
+            'message' => $action === 'void'
+                ? 'ORDER_VOIDED'
+                : ($isFull ? 'ORDER_REFUNDED' : 'ORDER_PARTIALLY_REFUNDED'),
+            'data' => [
+                'order_id' => (int) ($order['id'] ?? 0),
+                'table_id' => (int) ($order['table_id'] ?? 0),
+                'action' => $action,
+                'payment_status' => $paymentStatus,
+                'invoice_status' => $invoiceStatus,
+                'order_status' => $orderStatus,
+                'credit_note_id' => (int) ($refund['credit_note_id'] ?? 0),
+                'refund_mode' => (string) ($refund['refund_mode'] ?? 'full'),
+                'refund_amount' => (string) ($refund['total_amount'] ?? '0.00'),
+                'cumulative_refunded_amount' => (string) ($refund['cumulative_refunded_amount'] ?? '0.00'),
+                'remaining_refundable_amount' => (string) ($refund['remaining_refundable_amount'] ?? '0.00'),
+                'reversal_status' => $reversalStatus,
+                'pending_external_amount' => (string) ($refund['pending_external_amount'] ?? '0.00'),
+                'refund_tenders' => $refund['refund_tenders'] ?? [],
+                'business_day' => $refund['business_day'] ?? null,
+                'drawer_session_id' => $refund['drawer_session_id'] ?? null,
+                'manager_approval_id' => $refund['manager_approval_id'] ?? null,
+                'refund_stock_policy' => $policy,
+                'replayed' => $replayed,
+                'recipe' => $recipeResult,
+            ],
+        ];
     }
 
     public function saveTableOrder(mysqli $conn, array $request, array $context = []): array
@@ -723,6 +881,7 @@ class PosOrderMutationService
         if ($orderId < 1) {
             return;
         }
+        $this->assertCashierOrderEditable($conn, $orderId);
 
         $userId = $this->contextUserId($request, $context);
         if ($userId > 0) {
@@ -932,6 +1091,7 @@ class PosOrderMutationService
         if (!$order) {
             throw new InvalidArgumentException('ORDER_NOT_FOUND');
         }
+        $this->assertCashierOrderEditable($conn, $orderId, $order);
 
         $orderType = trim((string) ($order['order_type'] ?? 'takeaway'));
         if ($orderType === 'table') {
@@ -1133,6 +1293,39 @@ class PosOrderMutationService
                 'receipt_ids' => array_column($receipts, 'receipt_id'),
             ],
         ]);
+    }
+
+    private function assertCashierOrderEditable(mysqli $conn, int $orderId, ?array $order = null): void
+    {
+        $order = $order ?? $this->tableOrderService->queryOne(
+            $conn,
+            'SELECT id, pro_tybe, payment_status, order_status, paid_amount, isdeleted FROM ot_head WHERE id = ? LIMIT 1',
+            [$orderId]
+        );
+        if (!$order || (int) ($order['pro_tybe'] ?? 0) !== 9 || (int) ($order['isdeleted'] ?? 0) === 1) {
+            throw new InvalidArgumentException('ORDER_NOT_FOUND');
+        }
+
+        $paymentStatus = strtolower(trim((string) ($order['payment_status'] ?? 'unpaid')));
+        $orderStatus = strtolower(trim((string) ($order['order_status'] ?? 'active')));
+        if (
+            $paymentStatus !== 'unpaid'
+            || $orderStatus !== 'active'
+            || (float) ($order['paid_amount'] ?? 0) > self::PAYMENT_ROUNDING_TOLERANCE
+        ) {
+            throw new RuntimeException('COMPLETED_ORDER_EDIT_REQUIRES_REFUND');
+        }
+
+        if ($this->tableExists($conn, 'credit_notes')) {
+            $posted = $this->tableOrderService->queryOne(
+                $conn,
+                "SELECT id FROM credit_notes WHERE original_order_id = ? AND status = 'posted' LIMIT 1",
+                [$orderId]
+            );
+            if ($posted) {
+                throw new RuntimeException('COMPLETED_ORDER_EDIT_REQUIRES_REFUND');
+            }
+        }
     }
 
     private function clearCashierOrderFinancialLinks(mysqli $conn, int $orderId): void
@@ -2060,6 +2253,9 @@ class PosOrderMutationService
                 throw new RuntimeException('الطلب المحدد لا يخص هذه الطاولة أو لم يعد نشطاً');
             }
             $existingPaid = (float) ($activeOrder['paid_amount'] ?? 0);
+            if (Money::fromLegacy($existingPaid)->compare(Money::fromLegacy($net)) > 0) {
+                throw new RuntimeException('ORDER_TOTAL_BELOW_PAID_AMOUNT_USE_REFUND');
+            }
         } else {
             $existingOrder = $this->tableOrderService->findActiveOrderByTableId($conn, $tableId, true);
             if ($existingOrder) {
@@ -2945,6 +3141,66 @@ class PosOrderMutationService
         ", [$orderId]);
     }
 
+    /**
+     * Build direct-stock compensation from the posted credit note so partial
+     * refunds use exactly the financially accepted quantity.
+     */
+    private function loadRefundInventoryInvoiceBridgeLines(mysqli $conn, int $orderId, int $creditNoteId): array
+    {
+        if ($orderId < 1
+            || $creditNoteId < 1
+            || !$this->columnExists($conn, 'credit_note_lines', 'original_detail_id')
+            || !$this->columnExists($conn, 'credit_note_lines', 'stock_disposition')
+        ) {
+            return [];
+        }
+
+        $costSelect = $this->columnExists($conn, 'fat_details', 'cost_price')
+            ? 'COALESCE(fd.cost_price, 0) AS cost_price'
+            : '0 AS cost_price';
+        $uuidSelect = $this->columnExists($conn, 'fat_details', 'uuid')
+            ? 'fd.uuid AS order_line_uuid'
+            : 'NULL AS order_line_uuid';
+
+        $rows = $this->tableOrderService->queryAll($conn, "
+            SELECT fd.id, fd.item_id, fd.u_val, fd.qty_in AS original_qty_in,
+                   fd.qty_out AS original_qty_out, fd.det_store,
+                   cnl.quantity AS refund_quantity, {$costSelect}, {$uuidSelect}
+            FROM credit_note_lines cnl
+            INNER JOIN fat_details fd ON fd.id = cnl.original_detail_id
+            WHERE cnl.credit_note_id = ?
+              AND cnl.stock_disposition = 'restock'
+              AND fd.fatid = ?
+              AND fd.isdeleted = 0
+            ORDER BY cnl.id ASC
+        ", [$creditNoteId, $orderId]);
+
+        $lines = [];
+        foreach ($rows as $row) {
+            $quantity = DecimalQuantity::from((string) ($row['refund_quantity'] ?? '0'))->toString();
+            if (FinancialDecimal::compare($quantity, '0', DecimalQuantity::SCALE) <= 0) {
+                continue;
+            }
+            $isOutbound = FinancialDecimal::compare(
+                (string) ($row['original_qty_out'] ?? '0'),
+                (string) ($row['original_qty_in'] ?? '0'),
+                DecimalQuantity::SCALE
+            ) >= 0;
+            $lines[] = [
+                'id' => (int) $row['id'],
+                'item_id' => (int) $row['item_id'],
+                'qty_in' => $isOutbound ? '0' : $quantity,
+                'qty_out' => $isOutbound ? $quantity : '0',
+                'u_val' => (string) ($row['u_val'] ?? '1'),
+                'cost_price' => (string) ($row['cost_price'] ?? '0'),
+                'det_store' => (int) ($row['det_store'] ?? 0),
+                'order_line_uuid' => $this->nullableString($row['order_line_uuid'] ?? null),
+            ];
+        }
+
+        return $lines;
+    }
+
     private function inventoryBridgeLinesFromRecipeLines(array $recipeLines): array
     {
         $lines = [];
@@ -3047,6 +3303,9 @@ class PosOrderMutationService
             );
             if (!empty($result['errors'])) {
                 error_log('POS inventory invoice bridge reversal shadow errors: ' . json_encode($result['errors'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+            }
+            if (SideEffectPolicy::inventoryBridgeShouldRollback(new RuntimeException('bridge_errors'), $result)) {
+                throw new RuntimeException('INVENTORY_BRIDGE_REVERSAL_FAILED');
             }
         } catch (Throwable $exception) {
             error_log('POS inventory invoice bridge reversal shadow failed: ' . $exception->getMessage());
@@ -3265,6 +3524,48 @@ class PosOrderMutationService
         return $action === 'void'
             ? $this->recipeLifecycleService->onOrderVoided($base, $reverseContext)
             : $this->recipeLifecycleService->onOrderRefunded($base, $reverseContext);
+    }
+
+    /**
+     * Limit recipe/COGS compensation to the quantities durably posted on the
+     * credit note. This keeps item, amount, and full refunds on one authority.
+     */
+    private function recipeLinesForCreditNote(mysqli $conn, array $recipeLines, int $creditNoteId): array
+    {
+        if ($creditNoteId < 1) {
+            return [];
+        }
+        $requested = [];
+        $rows = $this->tableOrderService->queryAll($conn, "
+            SELECT original_detail_id, quantity
+            FROM credit_note_lines
+            WHERE credit_note_id = ?
+            ORDER BY id ASC
+        ", [$creditNoteId]);
+        foreach ($rows as $line) {
+            $detailId = (int) ($line['original_detail_id'] ?? 0);
+            if ($detailId > 0) {
+                $requested[$detailId] = DecimalQuantity::from(
+                    $line['quantity'] ?? '0'
+                )->toString();
+            }
+        }
+
+        $filtered = [];
+        foreach ($recipeLines as $line) {
+            if (!is_array($line)) {
+                continue;
+            }
+            $detailId = (int) ($line['fat_detail_id'] ?? 0);
+            if ($detailId < 1 || !isset($requested[$detailId])) {
+                continue;
+            }
+            $line['quantity'] = $requested[$detailId];
+            $line['qty'] = $requested[$detailId];
+            $filtered[] = $line;
+        }
+
+        return $filtered;
     }
 
     private function resolveRecipeRefundPolicy(array $request = [], array $context = []): string

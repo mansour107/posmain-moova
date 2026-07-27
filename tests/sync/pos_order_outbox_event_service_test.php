@@ -124,6 +124,10 @@ class PosOrderOutboxEventServiceTest extends TestCase
         $this->assertCount(1, $payload['lines']);
         $this->assertCount(1, $payload['payments']);
         $this->assertCount(1, $payload['receipts']);
+        $this->assertSame(
+            (string) $payload['order']['pro_date'] . ' 00:00:00',
+            $payload['receipts'][0]['payment_date']
+        );
         $this->assertNotEmpty($payload['lines'][0]['line_uuid']);
         $this->assertSame(4, (int) $payload['schema_version']);
         $this->assertSame('1.2345', $payload['order']['fat_tax']);

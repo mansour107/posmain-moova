@@ -46,30 +46,14 @@
                     $to   = $_POST['to'];
                 }
 
-                $sql = "SELECT 
-                            COALESCE(g.id, 0) as group_id,
-                            COALESCE(g.gname, 'بدون تصنيف') as group_name,
-                            COALESCE(SUM(fd.qty_out), 0) as total_qty,
-                            COALESCE(SUM(fd.det_value), 0) as total_sales
-                        FROM myitems i
-                        LEFT JOIN item_group g ON i.group1 = g.id
-                        LEFT JOIN fat_details fd ON fd.item_id = i.id 
-                            AND fd.isdeleted = 0 
-                            AND (fd.fat_tybe = 9 OR fd.fat_tybe = 3)
-                            AND fd.crtime BETWEEN '$from 00:00:00' AND '$to 23:59:59'
-                        WHERE i.isdeleted = 0
-                        GROUP BY COALESCE(g.id, 0), COALESCE(g.gname, 'بدون تصنيف')
-                        HAVING total_qty > 0 OR total_sales > 0
-                        ORDER BY total_sales DESC, total_qty DESC";
-
-                $res = $conn->query($sql);
-
-                $data = [];
+                require_once __DIR__ . '/classes/Financial/LegacySalesReportService.php';
+                $data = (new LegacySalesReportService())->categoryTotals($conn, $from, $to, [
+                    'tenant' => (int) ($_SESSION['pos_tenant'] ?? 0),
+                    'branch' => (int) ($_SESSION['pos_branch'] ?? 0),
+                ]);
                 $grand_total = 0;
                 $grand_qty = 0;
-
-                while ($row = $res->fetch_assoc()) {
-                    $data[] = $row;
+                foreach ($data as $row) {
                     $grand_total += $row['total_sales'];
                     $grand_qty += $row['total_qty'];
                 }

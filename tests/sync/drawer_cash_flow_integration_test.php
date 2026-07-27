@@ -60,7 +60,7 @@ try {
     ]);
     $service = new PosOrderMutationService();
     $payments = new PaymentService();
-    $context = ['user_id' => 7, 'tenant' => 2, 'branch' => 3];
+    $context = ['user_id' => 7, 'tenant' => 2, 'branch' => 3, 'skip_idempotency' => true];
 
     $tableCash = $service->payTableOrder($conn, [
         'table_id' => 1,

@@ -71,9 +71,15 @@ try {
         ");
         $service->markTableOccupied($conn, 1);
         assertContract($service->findActiveOrderByTableId($conn, 1, true)['id'] === 13, 'active partial order should be table truth');
-        $service->cancelTableOrder($conn, 1, 13, 'contract cancel', 7);
-        assertContract($service->findActiveOrderByTableId($conn, 1, true) === null, 'cancelled order is removed from active table truth');
-        assertContract((int) $conn->query("SELECT table_case FROM tables WHERE id = 1")->fetch_assoc()['table_case'] === 0, 'cancelled last active order frees table');
+        $partialCancelBlocked = false;
+        try {
+            $service->cancelTableOrder($conn, 1, 13, 'contract cancel', 7);
+        } catch (Throwable $exception) {
+            $partialCancelBlocked = $exception->getMessage() === 'ORDER_HAS_PAYMENT_USE_REFUND';
+        }
+        assertContract($partialCancelBlocked, 'partially paid order must not use unpaid cancellation');
+        assertContract($service->findActiveOrderByTableId($conn, 1, true)['id'] === 13, 'blocked cancellation keeps the partially paid order active');
+        assertContract((int) $conn->query("SELECT table_case FROM tables WHERE id = 1")->fetch_assoc()['table_case'] === 1, 'blocked cancellation keeps the table occupied');
     } finally {
         $conn->rollback();
     }

@@ -332,15 +332,27 @@ class PosCustomerService
 
         $existing = $this->findByNormalizedPhone($conn, $normalized);
         if ($existing) {
+            $deliveryAddress = null;
+            if (trim($address) !== '') {
+                $deliveryAddress = [
+                    'address_text' => $address,
+                    'zone_id' => $zoneId,
+                    'is_default' => true,
+                ];
+                $profile = $this->getProfile($conn, (int) $existing['id'], false);
+                foreach ((array) ($profile['addresses'] ?? []) as $savedAddress) {
+                    if (trim((string) ($savedAddress['address_text'] ?? '')) === trim($address)) {
+                        $deliveryAddress['id'] = (int) ($savedAddress['id'] ?? 0);
+                        break;
+                    }
+                }
+            }
+
             return $this->saveCustomer($conn, [
                 'id' => (int) $existing['id'],
                 'display_name' => $name,
                 'phones' => [['phone' => $phone, 'is_primary' => true]],
-                'addresses' => trim($address) !== '' ? [[
-                    'address_text' => $address,
-                    'zone_id' => $zoneId,
-                    'is_default' => true,
-                ]] : [],
+                'addresses' => $deliveryAddress ? [$deliveryAddress] : [],
             ], $options + ['source_system' => 'pos_delivery_customer']);
         }
 
@@ -713,7 +725,7 @@ class PosCustomerService
             return;
         }
 
-        $hasDefault = false;
+        $defaultAddressId = 0;
         foreach ($addresses as $addressRow) {
             if (!is_array($addressRow)) {
                 continue;
@@ -725,9 +737,6 @@ class PosCustomerService
             $zoneId = (int) ($addressRow['zone_id'] ?? 0);
             $zoneParam = $zoneId > 0 ? $zoneId : null;
             $isDefault = !empty($addressRow['is_default']);
-            if ($isDefault) {
-                $hasDefault = true;
-            }
             $isDefaultInt = $isDefault ? 1 : 0;
             $addressId = (int) ($addressRow['id'] ?? 0);
 
@@ -740,26 +749,25 @@ class PosCustomerService
                 $stmt = $conn->prepare('INSERT INTO pos_customer_addresses (customer_id, address_text, zone_id, is_default) VALUES (?, ?, ?, ?)');
                 $stmt->bind_param('isii', $customerId, $text, $zoneParam, $isDefaultInt);
                 $stmt->execute();
+                $addressId = (int) $conn->insert_id;
                 $stmt->close();
+            }
+
+            if ($isDefault && $defaultAddressId < 1) {
+                $defaultAddressId = $addressId;
             }
         }
 
-        if ($hasDefault) {
+        if ($defaultAddressId > 0) {
             $stmt = $conn->prepare('UPDATE pos_customer_addresses SET is_default = 0 WHERE customer_id = ? AND isdeleted = 0');
             $stmt->bind_param('i', $customerId);
             $stmt->execute();
             $stmt->close();
 
-            foreach ($addresses as $addressRow) {
-                if (!empty($addressRow['is_default']) && !empty($addressRow['id'])) {
-                    $addressId = (int) $addressRow['id'];
-                    $stmt = $conn->prepare('UPDATE pos_customer_addresses SET is_default = 1 WHERE id = ? AND customer_id = ?');
-                    $stmt->bind_param('ii', $addressId, $customerId);
-                    $stmt->execute();
-                    $stmt->close();
-                    break;
-                }
-            }
+            $stmt = $conn->prepare('UPDATE pos_customer_addresses SET is_default = 1 WHERE id = ? AND customer_id = ? AND isdeleted = 0');
+            $stmt->bind_param('ii', $defaultAddressId, $customerId);
+            $stmt->execute();
+            $stmt->close();
         }
     }
 
@@ -829,7 +837,7 @@ class PosCustomerService
             return [];
         }
 
-        $stmt = $conn->prepare('SELECT id, address_text, zone_id, is_default FROM pos_customer_addresses WHERE customer_id = ? AND isdeleted = 0 ORDER BY is_default DESC, id ASC');
+        $stmt = $conn->prepare('SELECT id, address_text, zone_id, is_default FROM pos_customer_addresses WHERE customer_id = ? AND isdeleted = 0 ORDER BY is_default DESC, id DESC');
         $stmt->bind_param('i', $customerId);
         $stmt->execute();
         $result = $stmt->get_result();

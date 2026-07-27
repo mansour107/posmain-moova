@@ -1,6 +1,6 @@
 <?php
 
-require_once __DIR__ . '/../classes/Sync/SchemaReadinessGuard.php';
+require_once __DIR__ . '/../classes/Sync/KdsSchemaReadinessGuard.php';
 require_once __DIR__ . '/../classes/Pos/Service/KdsStationService.php';
 
 if (!function_exists('posmain_ensure_kds_schema')) {
@@ -11,9 +11,9 @@ if (!function_exists('posmain_ensure_kds_schema')) {
         if (isset($ensured[$key])) {
             return;
         }
-        $ensured[$key] = true;
 
-        (new SyncSchemaReadinessGuard())->assertReady($conn);
+        (new KdsSchemaReadinessGuard())->assertReady($conn);
         (new KdsStationService())->ensureDefaultStation($conn);
+        $ensured[$key] = true;
     }
 }
