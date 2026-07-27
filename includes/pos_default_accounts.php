@@ -1,5 +1,7 @@
 <?php
 
+require_once __DIR__ . '/../classes/Financial/Money.php';
+
 if (!function_exists('posmain_acc_head_has_column')) {
     function posmain_acc_head_has_column(mysqli $conn, string $column): bool
     {
@@ -10,7 +12,9 @@ if (!function_exists('posmain_acc_head_has_column')) {
         }
 
         $key = spl_object_hash($conn) . ':' . $safeColumn;
-        if (array_key_exists($key, $cache)) {
+        // A false result cannot be cached because a legacy-schema guard may
+        // add the column later in this same request.
+        if (($cache[$key] ?? false) === true) {
             return $cache[$key];
         }
 
@@ -60,7 +64,9 @@ if (!function_exists('posmain_acc_head_id_auto_increment')) {
     {
         static $cache = [];
         $key = spl_object_hash($conn);
-        if (array_key_exists($key, $cache)) {
+        // A false result cannot be cached: this same request may add a missing
+        // legacy column in posmain_ensure_pos_settings_columns().
+        if (($cache[$key] ?? false) === true) {
             return $cache[$key];
         }
 
@@ -384,7 +390,9 @@ if (!function_exists('posmain_settings_column_exists')) {
         }
 
         $key = spl_object_hash($conn) . ':' . $safeColumn;
-        if (array_key_exists($key, $cache)) {
+        // A false result cannot be cached: this same request may add a missing
+        // legacy column in posmain_ensure_pos_settings_columns().
+        if (($cache[$key] ?? false) === true) {
             return $cache[$key];
         }
 
@@ -419,6 +427,7 @@ if (!function_exists('posmain_ensure_pos_settings_columns')) {
             'def_pos_store' => 'INT NULL',
             'def_pos_employee' => 'INT NULL',
             'def_pos_fund' => 'INT NULL',
+            'cofe_integration_secret' => 'VARCHAR(255) NULL',
         ];
 
         foreach ($definitions as $column => $definition) {
@@ -442,8 +451,18 @@ if (!function_exists('posmain_load_pos_settings_row')) {
             return ($result && $result->num_rows > 0) ? $result->fetch_assoc() : [];
         }
 
+        $optionalColumns = [];
+        foreach (['cofe_integration_secret'] as $column) {
+            if (posmain_settings_column_exists($conn, $column)) {
+                $optionalColumns[] = $column;
+            }
+        }
+        $selectColumns = array_merge(
+            ['id', 'def_pos_store', 'def_pos_employee', 'def_pos_fund', 'def_pos_client'],
+            $optionalColumns
+        );
         $result = $conn->query(
-            'SELECT id, def_pos_store, def_pos_employee, def_pos_fund, def_pos_client
+            'SELECT `' . implode('`, `', $selectColumns) . '`
              FROM settings
              WHERE isdeleted = 0
              ORDER BY id ASC
@@ -897,8 +916,8 @@ if (!function_exists('posmain_resolve_pos_invoice_accounts')) {
         }
 
         $paymentBankId = (int) ($posted['payment_bank_id'] ?? 0);
-        $paidBank = (float) ($posted['paid_bank'] ?? 0);
-        if ($paidBank > 0) {
+        $paidBank = Money::fromLegacy($posted['paid_bank'] ?? '0.00');
+        if ($paidBank->isPositive()) {
             $paymentBankId = posmain_resolve_payment_bank_id($conn, $paymentBankId);
         }
 

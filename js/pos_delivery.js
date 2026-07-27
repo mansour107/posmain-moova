@@ -14,6 +14,7 @@
         phone: '',
         name: '',
         address: '',
+        addressId: null,
         zoneId: null,
         zoneName: '',
         fee: 0,
@@ -44,9 +45,24 @@
             phone: $('#customer_phone').val().trim(),
             name: ($('#customer_name').val() || '').trim(),
             address: ($('#customer_address').val() || '').trim(),
-            workerId: $('#delivery_worker_id').val() || null,
-            workerName: $('#delivery_worker_id option:selected').text() || '',
-            collectionMode: $('#delivery_collection_mode').val() || 'prepaid',
+            workerId: null,
+            workerName: '',
+            collectionMode: window.posDeliveryState.collectionMode || 'prepaid',
+        };
+    }
+
+    function preferredAddress(customer) {
+        const addresses = (customer && Array.isArray(customer.addresses)) ? customer.addresses : [];
+        return addresses.find(function (address) { return !!address.is_default; }) || addresses[0] || null;
+    }
+
+    function selectedZone() {
+        const $select = $('#delivery_zone_id');
+        const $option = $select.find('option:selected');
+        return {
+            id: parseInt($select.val(), 10) || null,
+            name: ($option.data('name') || $option.text() || '').trim(),
+            fee: parseFloat($option.data('fee') || 0) || 0,
         };
     }
 
@@ -178,18 +194,20 @@
     }
 
     function applyConfirmedCustomer(data) {
+        const zone = selectedZone();
         window.posDeliveryState = {
             confirmed: true,
             clientId: data.client_id || data.id || null,
             phone: data.phone,
             name: data.name,
             address: data.address,
-            zoneId: $('#delivery_zone_id').val() || window.posDeliveryState.zoneId || null,
-            zoneName: $('#delivery_zone_id option:selected').text() || window.posDeliveryState.zoneName || '',
-            fee: parseFloat($('#delivery_zone_id option:selected').data('fee') || window.posDeliveryState.fee || 0) || 0,
-            workerId: data.workerId || $('#delivery_worker_id').val() || window.posDeliveryState.workerId || null,
-            workerName: data.workerName || $('#delivery_worker_id option:selected').text() || window.posDeliveryState.workerName || '',
-            collectionMode: data.collectionMode || $('#delivery_collection_mode').val() || window.posDeliveryState.collectionMode || 'prepaid',
+            addressId: data.addressId || window.posDeliveryState.addressId || null,
+            zoneId: data.zoneId || zone.id || window.posDeliveryState.zoneId || null,
+            zoneName: data.zoneName || zone.name || window.posDeliveryState.zoneName || '',
+            fee: parseFloat(data.fee != null ? data.fee : (zone.fee || window.posDeliveryState.fee || 0)) || 0,
+            workerId: null,
+            workerName: '',
+            collectionMode: data.collectionMode || window.posDeliveryState.collectionMode || 'prepaid',
             isExistingClient: !!data.isExistingClient,
         };
         syncHiddenFieldsToForm();
@@ -208,7 +226,12 @@
                         id: customerId,
                         display_name: data.name,
                         primary_phone: data.phone,
-                        addresses: data.address ? [{ address_text: data.address, is_default: true }] : [],
+                        addresses: data.address ? [{
+                            id: data.addressId || null,
+                            address_text: data.address,
+                            zone_id: data.zoneId || null,
+                            is_default: true,
+                        }] : [],
                         stats: {},
                     });
                 }
@@ -223,6 +246,7 @@
             phone: '',
             name: '',
             address: '',
+            addressId: null,
             zoneId: null,
             zoneName: '',
             fee: 0,
@@ -253,50 +277,39 @@
         }
     }
 
-    function loadDeliveryZones() {
+    function loadDeliveryZones(selectedZoneId) {
         const $select = $('#delivery_zone_id');
         if (!$select.length) {
             return;
         }
-        ensureDeliveryOperationsFields();
         $.getJSON('ajax/delivery_zones_list.php')
             .done(function (response) {
                 const zones = (response && response.zones) || [];
                 let html = '<option value=""></option>';
                 zones.forEach(function (zone) {
-                    html += '<option value="' + zone.id + '" data-fee="' + zone.fee + '">' +
+                    html += '<option value="' + zone.id + '" data-name="' + escapeHtml(zone.name) + '" data-fee="' + zone.fee + '">' +
                         escapeHtml(zone.name) + ' (' + Number(zone.fee).toFixed(2) + ' ج.م)</option>';
                 });
                 $select.html(html);
+                const wantedZoneId = parseInt(selectedZoneId, 10) || null;
+                if (wantedZoneId && $select.find('option[value="' + wantedZoneId + '"]').length) {
+                    $select.val(String(wantedZoneId)).trigger('change');
+                }
+                updateConfirmButtonVisibility();
             })
             .fail(function () {
                 $select.html('<option value=""></option>');
             });
     }
 
-    function ensureDeliveryOperationsFields() {
-        if (!$('#delivery_collection_mode').length) {
-            $('#delivery_zone_id').closest('.mb-3').after(
-                '<div class="row g-2 mb-3" id="delivery_operations_fields">' +
-                '<div class="col-md-6"><label class="form-label fw-bold">التحصيل</label>' +
-                '<select class="form-select" id="delivery_collection_mode"><option value="prepaid">مدفوع الآن</option><option value="cod">تحصيل عند التسليم</option></select></div>' +
-                '<div class="col-md-6"><label class="form-label fw-bold">عامل التوصيل <small class="text-muted">اختياري</small></label>' +
-                '<select class="form-select" id="delivery_worker_id"><option value="">يُعيّن لاحقاً</option></select></div></div>'
-            );
-        }
-        $('#delivery_collection_mode').val(window.posDeliveryState.collectionMode || 'prepaid');
-        $.getJSON('ajax/delivery_workers.php')
-            .done(function (response) {
-                let html = '<option value="">يُعيّن لاحقاً</option>';
-                ((response && response.workers) || []).forEach(function (worker) {
-                    html += '<option value="' + worker.id + '">' + escapeHtml(worker.name) + '</option>';
-                });
-                $('#delivery_worker_id').html(html).val(window.posDeliveryState.workerId || '');
-            });
-    }
-
     function showNewCustomerForm() {
         const currentPhone = $('#customer_phone').val().trim();
+        window.posDeliveryState.clientId = null;
+        window.posDeliveryState.addressId = null;
+        window.posDeliveryState.zoneId = null;
+        window.posDeliveryState.zoneName = '';
+        window.posDeliveryState.fee = 0;
+        window.posDeliveryState.isExistingClient = false;
         $('#customer_result').html(
             '<div class="alert alert-info mb-3"><i class="fas fa-user-plus me-2"></i>عميل جديد - يرجى إدخال بياناته</div>' +
             '<div class="mb-3"><label class="form-label fw-bold">رقم الموبايل</label>' +
@@ -313,6 +326,31 @@
         updateConfirmButtonVisibility();
     }
 
+    function showExistingCustomerForm(customer, phone) {
+        const addressRecord = preferredAddress(customer);
+        const address = addressRecord ? addressRecord.address_text : '';
+        $('#customer_result').html(
+            '<div class="alert alert-success mb-3"><i class="fas fa-check-circle me-2"></i>تم العثور على العميل</div>' +
+            '<div class="mb-3"><label class="form-label fw-bold">رقم الموبايل</label>' +
+            '<input type="text" class="form-control" id="customer_phone_display" value="' + escapeHtml(phone) + '" readonly></div>' +
+            '<div class="mb-3"><label class="form-label fw-bold">اسم العميل</label>' +
+            '<input type="text" class="form-control" id="customer_name" value="' + escapeHtml(customer.display_name || '') + '"></div>' +
+            '<div class="mb-3"><label class="form-label fw-bold">العنوان</label>' +
+            '<textarea class="form-control" id="customer_address" rows="2">' + escapeHtml(address) + '</textarea></div>' +
+            '<div class="mb-3"><label class="form-label fw-bold">منطقة التوصيل</label>' +
+            '<select class="form-select" id="delivery_zone_id"><option value=""></option></select></div>'
+        );
+        window.posDeliveryState.clientId = customer.id;
+        window.posDeliveryState.addressId = addressRecord ? addressRecord.id : null;
+        window.posDeliveryState.zoneId = addressRecord ? addressRecord.zone_id : null;
+        window.posDeliveryState.zoneName = '';
+        window.posDeliveryState.fee = 0;
+        window.posDeliveryState.isExistingClient = true;
+        $('#saveCustomerBtn').html('<i class="fas fa-save me-1"></i>حفظ التعديل');
+        loadDeliveryZones(addressRecord ? addressRecord.zone_id : null);
+        updateConfirmButtonVisibility();
+    }
+
     function searchCustomerDynamic(phone) {
         $('#customer_phone').addClass('border-warning');
         $('#customer_result').html(
@@ -326,32 +364,22 @@
             dataType: 'json',
             data: { phone: phone },
         }).done(function (response) {
+            if ($('#customer_phone').val().trim() !== phone) {
+                return;
+            }
             $('#customer_phone').removeClass('border-warning');
             const customer = response && response.exact ? response.exact : null;
             if (response && response.success && customer) {
                 $('#customer_phone').addClass('border-success');
-                const address = (customer.addresses && customer.addresses[0]) ? customer.addresses[0].address_text : '';
-                $('#customer_result').html(
-                    '<div class="alert alert-success mb-3"><i class="fas fa-check-circle me-2"></i>تم العثور على العميل</div>' +
-                    '<div class="mb-3"><label class="form-label fw-bold">رقم الموبايل</label>' +
-                    '<input type="text" class="form-control" id="customer_phone_display" value="' + escapeHtml(phone) + '" readonly></div>' +
-                    '<div class="mb-3"><label class="form-label fw-bold">اسم العميل</label>' +
-                    '<input type="text" class="form-control" id="customer_name" value="' + escapeHtml(customer.display_name || '') + '"></div>' +
-                    '<div class="mb-3"><label class="form-label fw-bold">العنوان</label>' +
-                    '<textarea class="form-control" id="customer_address" rows="2">' + escapeHtml(address) + '</textarea></div>' +
-                    '<div class="mb-3"><label class="form-label fw-bold">منطقة التوصيل</label>' +
-                    '<select class="form-select" id="delivery_zone_id"><option value=""></option></select></div>'
-                );
-                window.posDeliveryState.clientId = customer.id;
-                window.posDeliveryState.isExistingClient = true;
-                $('#saveCustomerBtn').html('<i class="fas fa-save me-1"></i>حفظ التعديل');
-                loadDeliveryZones();
-                updateConfirmButtonVisibility();
+                showExistingCustomerForm(customer, phone);
             } else {
                 $('#customer_phone').addClass('border-info');
                 showNewCustomerForm();
             }
         }).fail(function () {
+            if ($('#customer_phone').val().trim() !== phone) {
+                return;
+            }
             $('#customer_phone').removeClass('border-warning').addClass('border-danger');
             showNewCustomerForm();
         });
@@ -364,16 +392,21 @@
             return;
         }
 
-        const zoneId = parseInt($('#delivery_zone_id').val(), 10) || null;
+        const zone = selectedZone();
+        const addressId = parseInt(window.posDeliveryState.addressId, 10) || null;
+        const addressPayload = {
+            address_text: values.address,
+            zone_id: zone.id,
+            is_default: true,
+        };
+        if (addressId) {
+            addressPayload.id = addressId;
+        }
         const payload = {
             id: window.posDeliveryState.clientId || undefined,
             display_name: values.name,
             phones: [{ phone: values.phone, is_primary: true }],
-            addresses: [{
-                address_text: values.address,
-                zone_id: zoneId,
-                is_default: true,
-            }],
+            addresses: [addressPayload],
         };
 
         $.ajax({
@@ -391,11 +424,19 @@
                 return;
             }
             modalDismissConfirmed = true;
+            const savedAddress = preferredAddress(response.customer)
+                || (response.customer.addresses || []).find(function (address) {
+                    return address.address_text === values.address && parseInt(address.zone_id, 10) === zone.id;
+                });
             applyConfirmedCustomer({
                 client_id: response.customer.id,
                 phone: values.phone,
                 name: values.name,
                 address: values.address,
+                addressId: savedAddress ? savedAddress.id : addressId,
+                zoneId: zone.id,
+                zoneName: zone.name,
+                fee: zone.fee,
                 isExistingClient: true,
                 workerId: values.workerId,
                 workerName: values.workerName,
@@ -449,7 +490,7 @@
                 '<div class="mb-3"><label class="form-label fw-bold">منطقة التوصيل</label>' +
                 '<select class="form-select" id="delivery_zone_id"><option value=""></option></select></div>'
             );
-            loadDeliveryZones();
+            loadDeliveryZones(window.posDeliveryState.zoneId);
             updateConfirmButtonVisibility();
         }
         $('#deliveryModal').modal('show');
@@ -479,18 +520,32 @@
         }
         const defaultAddress = (profile.addresses || []).find(function (a) { return a.is_default; })
             || (profile.addresses || [])[0];
+        const profileZoneId = defaultAddress ? (parseInt(defaultAddress.zone_id, 10) || null) : null;
+        const canKeepConfirmation = window.posDeliveryState.confirmed
+            && String(window.posDeliveryState.clientId || '') === String(profile.id || '')
+            && !!profileZoneId
+            && parseInt(window.posDeliveryState.zoneId, 10) === profileZoneId;
         window.posDeliveryState.phone = profile.primary_phone || '';
         window.posDeliveryState.name = profile.display_name || '';
         window.posDeliveryState.address = defaultAddress ? defaultAddress.address_text : '';
+        window.posDeliveryState.addressId = defaultAddress ? defaultAddress.id : null;
+        window.posDeliveryState.zoneId = profileZoneId;
         window.posDeliveryState.clientId = profile.id;
-        if (!window.posDeliveryState.confirmed || !window.posDeliveryState.zoneId) {
-            window.openDeliveryModal('أكمل عنوان ومنطقة التوصيل');
+        if (!canKeepConfirmation) {
+            $('#deliveryModalHint').text('راجع العنوان ومنطقة التوصيل').removeClass('d-none');
+            $('#customer_phone').val(window.posDeliveryState.phone);
+            showExistingCustomerForm(profile, window.posDeliveryState.phone);
+            $('#deliveryModal').modal('show');
         } else {
             applyConfirmedCustomer({
                 client_id: profile.id,
                 phone: window.posDeliveryState.phone,
                 name: window.posDeliveryState.name,
                 address: window.posDeliveryState.address,
+                addressId: window.posDeliveryState.addressId,
+                zoneId: window.posDeliveryState.zoneId,
+                zoneName: window.posDeliveryState.zoneName,
+                fee: window.posDeliveryState.fee,
                 isExistingClient: true,
             });
         }
@@ -525,24 +580,17 @@
         $(document).on('change', '#delivery_zone_id', function () {
             const fee = parseFloat($(this).find('option:selected').data('fee') || 0) || 0;
             window.posDeliveryState.zoneId = $(this).val() || null;
-            window.posDeliveryState.zoneName = $(this).find('option:selected').text() || '';
+            window.posDeliveryState.zoneName = $(this).find('option:selected').data('name')
+                || $(this).find('option:selected').text()
+                || '';
             window.posDeliveryState.fee = fee;
+            updateConfirmButtonVisibility();
             if (window.posDeliveryState.confirmed) {
                 syncHiddenFieldsToForm();
                 renderDeliveryBar();
                 renderDeliveryFeeRow();
             }
         });
-        $(document).on('change', '#delivery_worker_id, #delivery_collection_mode', function () {
-            window.posDeliveryState.workerId = $('#delivery_worker_id').val() || null;
-            window.posDeliveryState.workerName = $('#delivery_worker_id option:selected').text() || '';
-            window.posDeliveryState.collectionMode = $('#delivery_collection_mode').val() || 'prepaid';
-            if (window.posDeliveryState.confirmed) {
-                syncHiddenFieldsToForm();
-                renderDeliveryBar();
-            }
-        });
-
         $('#customer_phone').on('input', function () {
             const phone = $(this).val().trim();
             $(this).removeClass('border-success border-info border-danger border-warning');
@@ -585,25 +633,8 @@
             clearDeliverySession(true);
         });
 
-        function refreshDeliveryPendingBadge() {
-            $.getJSON('ajax/delivery_pending_count.php').done(function (response) {
-                const count = parseInt((response && response.pending_count) || 0, 10) || 0;
-                const $badge = $('#posDeliveryPendingBadge');
-                if (count > 0) {
-                    $badge.text(count).removeClass('d-none');
-                } else {
-                    $badge.addClass('d-none').text('0');
-                }
-            });
-        }
-
         $('input[name="age"]').on('change', function () {
             window.posDeliveryOnModeChange($(this).val());
         });
-
-        if (window.POSMAIN && window.POSMAIN.can('delivery.dispatch')) {
-            refreshDeliveryPendingBadge();
-            setInterval(refreshDeliveryPendingBadge, 30000);
-        }
     });
 })(window, window.jQuery);

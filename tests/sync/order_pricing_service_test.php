@@ -26,7 +26,20 @@ try {
         cost_price DECIMAL(12,3) NOT NULL DEFAULT 0,
         isdeleted TINYINT NOT NULL DEFAULT 0
     )");
+    $conn->query("CREATE TABLE item_units (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        item_id INT NOT NULL,
+        unit_id INT NOT NULL,
+        price1 DECIMAL(12,6) NOT NULL DEFAULT 0,
+        u_val DECIMAL(18,6) NOT NULL DEFAULT 1,
+        def_sale TINYINT NOT NULL DEFAULT 0,
+        def_stock TINYINT NOT NULL DEFAULT 0,
+        def_buy TINYINT NOT NULL DEFAULT 0,
+        conversion_swapped TINYINT NOT NULL DEFAULT 0,
+        isdeleted TINYINT NOT NULL DEFAULT 0
+    )");
     $conn->query("INSERT INTO myitems (id, price1, cost_price, isdeleted) VALUES (10, 12.500, 4.000, 0)");
+    $conn->query("INSERT INTO item_units (item_id, unit_id, price1, def_sale) VALUES (10, 1, 12.500000, 1)");
 
     $service = new OrderPricingService();
     $resolved = $service->resolveTableSaveRequest($conn, [
@@ -38,6 +51,7 @@ try {
     orderPricingAssert(!empty($resolved['pricing_resolved']), 'pricing should mark request resolved');
     orderPricingAssert($resolved['total'] === '25.00', 'pricing must return a decimal-string total');
     orderPricingAssert($resolved['items'][0]['price'] === '12.500000', 'canonical price should be used');
+    orderPricingAssert($resolved['tax_amount'] === '0.00' && $resolved['tax_rate'] === '0.00', 'V1 pricing must force tax to zero');
 
     $failed = false;
     try {
@@ -51,6 +65,15 @@ try {
         $failed = $e->getMessage() === 'PRICE_MISMATCH';
     }
     orderPricingAssert($failed, 'tampered line price should be rejected');
+
+    $taxAttempt = $service->resolveTableSaveRequest($conn, [
+        'items' => [['id' => 10, 'qty' => '1', 'price' => '12.5', 'discount' => '0', 'tax_rate' => '14']],
+        'discount' => '0',
+        'tax_rate' => '14',
+        'tax_inclusive' => true,
+    ]);
+    orderPricingAssert($taxAttempt['net'] === '12.50', 'client tax input must not increase the payable total');
+    orderPricingAssert($taxAttempt['tax_amount'] === '0.00', 'client tax input must not post tax');
 
     $discountRegression = $service->resolveTableSaveRequest($conn, [
         'items' => [['id' => 10, 'qty' => '2', 'price' => '12.5', 'discount' => '1']],

@@ -331,6 +331,10 @@ if (!function_exists('auth_guard_current_role_flags')) {
         if (!$conn || !is_numeric($roleId) || (int) $roleId < 1) {
             return [];
         }
+        $roleTable = $conn->query("SHOW TABLES LIKE 'usr_pwrs'");
+        if (!$roleTable instanceof mysqli_result || $roleTable->num_rows < 1) {
+            return [];
+        }
 
         $stmt = $conn->prepare('SELECT * FROM usr_pwrs WHERE id = ? AND COALESCE(isdeleted, 0) != 1 LIMIT 1');
         $roleId = (int) $roleId;

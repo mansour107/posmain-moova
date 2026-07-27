@@ -5,6 +5,9 @@ require_once __DIR__ . '/InventoryAccountingService.php';
 require_once __DIR__ . '/InventoryFeatureFlags.php';
 require_once __DIR__ . '/InventoryLedgerService.php';
 require_once __DIR__ . '/InventoryScopeResolver.php';
+require_once __DIR__ . '/../Recipe/RecipeFeatureFlags.php';
+require_once __DIR__ . '/../Recipe/DTO/RecipeScope.php';
+require_once __DIR__ . '/../Recipe/Repository/RecipeRepository.php';
 
 class InventoryInvoiceBridge
 {
@@ -21,17 +24,23 @@ class InventoryInvoiceBridge
     private InventoryLedgerService $ledger;
     private InventoryScopeResolver $scopeResolver;
     private InventoryAccountingService $accounting;
+    private RecipeFeatureFlags $recipeFlags;
+    private RecipeRepository $recipes;
 
     public function __construct(
         ?InventoryFeatureFlags $flags = null,
         ?InventoryLedgerService $ledger = null,
         ?InventoryScopeResolver $scopeResolver = null,
-        ?InventoryAccountingService $accounting = null
+        ?InventoryAccountingService $accounting = null,
+        ?RecipeFeatureFlags $recipeFlags = null,
+        ?RecipeRepository $recipes = null
     ) {
         $this->flags = $flags ?: new InventoryFeatureFlags();
         $this->ledger = $ledger ?: new InventoryLedgerService($this->flags);
         $this->scopeResolver = $scopeResolver ?: new InventoryScopeResolver($this->flags->appConfig());
         $this->accounting = $accounting ?: new InventoryAccountingService($this->flags);
+        $this->recipeFlags = $recipeFlags ?: new RecipeFeatureFlags($this->flags->appConfig());
+        $this->recipes = $recipes ?: new RecipeRepository();
     }
 
     public function recordInvoiceLines(mysqli $conn, int $invoiceType, int $invoiceId, array $lines, array $context = []): array
@@ -79,6 +88,7 @@ class InventoryInvoiceBridge
 
         $result['noop'] = $result['movements'] === [];
         $result['accounting'] = $this->postAccountingForMovements($conn, $result['movements'], $context);
+        $this->promoteAccountingErrors($result);
 
         return $result;
     }
@@ -160,8 +170,59 @@ class InventoryInvoiceBridge
 
         $result['noop'] = $result['movements'] === [];
         $result['accounting'] = $this->postAccountingForMovements($conn, $result['movements'], $context);
+        $this->promoteAccountingErrors($result);
 
         return $result;
+    }
+
+    /**
+     * Reserve direct-stock POS lines while an order is unpaid. Recipe-owned
+     * lines are deliberately skipped because their lifecycle owns ingredient
+     * reservations.
+     */
+    public function reserveInvoiceLines(mysqli $conn, int $invoiceType, int $invoiceId, array $lines, array $context = []): array
+    {
+        return $this->recordDirectStockLifecycleLines(
+            $conn,
+            $invoiceType,
+            $invoiceId,
+            $lines,
+            'reservation',
+            $context
+        );
+    }
+
+    /**
+     * Release the reservation for an edited/cancelled unpaid order.
+     */
+    public function releaseInvoiceReservations(mysqli $conn, int $invoiceType, int $invoiceId, array $lines, string $reason, array $context = []): array
+    {
+        $context['reservation_release_reason'] = $reason;
+
+        return $this->recordDirectStockLifecycleLines(
+            $conn,
+            $invoiceType,
+            $invoiceId,
+            $lines,
+            'reservation_release',
+            $context
+        );
+    }
+
+    /**
+     * Atomically release direct-stock reservations and create the paid sale
+     * movements whose COGS journals are posted by the normal bridge contract.
+     */
+    public function consumeInvoiceReservations(mysqli $conn, int $invoiceType, int $invoiceId, array $lines, array $context = []): array
+    {
+        return $this->recordDirectStockLifecycleLines(
+            $conn,
+            $invoiceType,
+            $invoiceId,
+            $lines,
+            'consume',
+            $context
+        );
     }
 
     public function movementForInvoiceLine(mysqli $conn, int $invoiceType, int $invoiceId, array $line, array $context = [], int $lineIndex = 0): ?array
@@ -182,6 +243,12 @@ class InventoryInvoiceBridge
         $scope = $this->scopeResolver->resolveForConn($conn, array_merge($context, [
             'store_id' => $line['store_id'] ?? $line['det_store'] ?? $context['store_id'] ?? 0,
         ]));
+        if ($movementType === 'sale_direct' && $this->recipeConsumptionOwnsLine($conn, $itemId, $scope, $context)) {
+            // The recipe lifecycle owns ingredient consumption and COGS for this
+            // sellable. Writing sale_direct as well would double-deplete stock
+            // and double-post COGS.
+            return null;
+        }
         $unitConversion = InventoryDecimal::normalize($line['u_val'] ?? $line['unit_conversion_to_base'] ?? '1', 8);
         $unitCost = InventoryDecimal::normalize($line['cost_price'] ?? $line['unit_cost'] ?? '0');
         $movementQty = InventoryDecimal::isPositive($qtyIn) ? $qtyIn : $qtyOut;
@@ -215,6 +282,174 @@ class InventoryInvoiceBridge
             ],
             'created_by' => isset($context['user_id']) ? (int) $context['user_id'] : null,
         ];
+    }
+
+    private function recordDirectStockLifecycleLines(
+        mysqli $conn,
+        int $invoiceType,
+        int $invoiceId,
+        array $lines,
+        string $action,
+        array $context
+    ): array {
+        $result = [
+            'success' => true,
+            'noop' => !$this->flags->canWriteShadowLedger(),
+            'mode' => $this->flags->mode(),
+            'invoice_type' => $invoiceType,
+            'invoice_id' => $invoiceId,
+            'lifecycle_action' => $action,
+            'shadow_write' => $this->flags->isShadowMode(),
+            'movements' => [],
+            'skipped' => [],
+            'errors' => [],
+        ];
+        if (!$this->flags->canWriteShadowLedger()) {
+            $result['skipped'][] = ['reason' => 'inventory_invoice_bridge_disabled'];
+            return $result;
+        }
+
+        foreach (array_values($lines) as $index => $line) {
+            try {
+                $sale = $this->movementForInvoiceLine($conn, $invoiceType, $invoiceId, $line, $context, $index);
+                if (!$sale || (string) ($sale['movement_type'] ?? '') !== 'sale_direct') {
+                    $result['skipped'][] = [
+                        'line_index' => $index,
+                        'fat_detail_id' => (int) ($line['fat_detail_id'] ?? $line['detail_id'] ?? $line['id'] ?? 0),
+                        'reason' => 'line_not_owned_by_direct_stock_lifecycle',
+                    ];
+                    continue;
+                }
+
+                $item = is_array($line['item'] ?? null)
+                    ? $line['item']
+                    : $this->loadItem($conn, (int) $sale['item_id']);
+                $reservation = $this->reservationMovementFromSale($sale, 'reservation', $context);
+                $release = $this->reservationMovementFromSale($sale, 'reservation_release', $context);
+
+                if ($action === 'reservation') {
+                    $result['movements'][] = $this->writeMovementWithSavepoint($conn, $reservation, $item, $index);
+                    continue;
+                }
+
+                $hasReservation = $this->existingMovementFor($conn, $reservation);
+                $hasRelease = $this->existingMovementFor($conn, $release);
+                if (!$hasReservation && !$hasRelease) {
+                    if ($action === 'consume' && $this->existingMovementFor($conn, $sale)) {
+                        $result['movements'][] = $this->writeMovementWithSavepoint($conn, $sale, $item, $index);
+                        continue;
+                    }
+                    if ($action === 'consume' && $this->flags->canWriteLedger()) {
+                        $result['success'] = false;
+                        $result['errors'][] = [
+                            'line_index' => $index,
+                            'fat_detail_id' => (int) ($line['fat_detail_id'] ?? $line['detail_id'] ?? $line['id'] ?? 0),
+                            'phase' => 'direct_stock_consume',
+                            'message' => 'DIRECT_STOCK_RESERVATION_MISSING',
+                        ];
+                        continue;
+                    }
+                    $result['skipped'][] = [
+                        'line_index' => $index,
+                        'fat_detail_id' => (int) ($line['fat_detail_id'] ?? $line['detail_id'] ?? $line['id'] ?? 0),
+                        'reason' => 'direct_stock_reservation_missing',
+                    ];
+                    continue;
+                }
+
+                $result['movements'][] = $this->writeMovementWithSavepoint($conn, $release, $item, $index);
+                if ($action === 'consume') {
+                    $result['movements'][] = $this->writeMovementWithSavepoint($conn, $sale, $item, $index);
+                }
+            } catch (Throwable $exception) {
+                $result['success'] = false;
+                $result['errors'][] = [
+                    'line_index' => $index,
+                    'fat_detail_id' => (int) ($line['fat_detail_id'] ?? $line['detail_id'] ?? $line['id'] ?? 0),
+                    'phase' => 'direct_stock_' . $action,
+                    'message' => $exception->getMessage(),
+                ];
+            }
+        }
+
+        $result['noop'] = $result['movements'] === [];
+        $result['accounting'] = $this->postAccountingForMovements($conn, $result['movements'], $context);
+        $this->promoteAccountingErrors($result);
+
+        return $result;
+    }
+
+    private function reservationMovementFromSale(array $sale, string $movementType, array $context): array
+    {
+        $qty = InventoryDecimal::normalize($sale['qty_out'] ?? '0');
+        $movement = $sale;
+        $movement['movement_type'] = $movementType;
+        $movement['qty_in'] = InventoryDecimal::zero();
+        $movement['qty_out'] = InventoryDecimal::zero();
+        $movement['qty_reserved'] = $qty;
+        $movement['total_cost'] = InventoryDecimal::zero();
+        $movement['idempotency_key'] = (string) $sale['idempotency_key']
+            . ':lifecycle:' . $movementType
+            . ':qty:' . substr(hash('sha256', $qty), 0, 16);
+        $movement['metadata'] = array_merge(is_array($sale['metadata'] ?? null) ? $sale['metadata'] : [], [
+            'direct_stock_lifecycle' => $movementType,
+            'qty_reserved' => $qty,
+        ]);
+        if ($movementType === 'reservation_release') {
+            $movement['metadata']['reason'] = trim((string) ($context['reservation_release_reason'] ?? 'order_transition'));
+        }
+
+        return $movement;
+    }
+
+    private function recipeConsumptionOwnsLine(mysqli $conn, int $itemId, array $scope, array $context): bool
+    {
+        if ($itemId < 1 || !$this->recipeFlags->isEnabled()) {
+            return false;
+        }
+
+        $recipeScope = new RecipeScope(
+            (int) ($scope['pos_tenant'] ?? 0),
+            (int) ($scope['pos_branch'] ?? 0),
+            $scope['branch_uuid'] ?? null,
+            (int) ($scope['store_id'] ?? 0),
+            (string) ($context['channel'] ?? 'pos'),
+            (string) ($context['order_type'] ?? 'takeaway'),
+            (string) ($context['source_system'] ?? 'inventory_invoice_bridge')
+        );
+        $categoryId = $this->itemCategoryId($conn, $itemId);
+        if (!$this->recipeFlags->isConsumptionEnabledForItem($recipeScope, $itemId, $categoryId)) {
+            return false;
+        }
+
+        return $this->recipes->findActiveHeaderForItem(
+            $conn,
+            $recipeScope->posTenant,
+            $recipeScope->posBranch,
+            $itemId
+        ) !== null;
+    }
+
+    private function itemCategoryId(mysqli $conn, int $itemId): ?int
+    {
+        if ($itemId < 1) {
+            return null;
+        }
+        foreach (['group1', 'group_id', 'category_id'] as $column) {
+            if (!$this->columnExists($conn, 'myitems', $column)) {
+                continue;
+            }
+            $stmt = $conn->prepare("SELECT {$column} AS category_id FROM myitems WHERE id = ? LIMIT 1");
+            $stmt->bind_param('i', $itemId);
+            $stmt->execute();
+            $row = $stmt->get_result()->fetch_assoc();
+            $stmt->close();
+            $categoryId = (int) ($row['category_id'] ?? 0);
+
+            return $categoryId > 0 ? $categoryId : null;
+        }
+
+        return null;
     }
 
     private function movementTypeForInvoice(int $invoiceType, string $qtyIn, string $qtyOut): ?string
@@ -400,6 +635,27 @@ LIMIT 1");
         }
 
         return $result;
+    }
+
+    /**
+     * Accounting is part of the authoritative live inventory write. Keep the
+     * nested result for diagnostics, but also expose failures through the
+     * bridge's established success/errors contract so every caller can fail
+     * the surrounding transaction closed.
+     */
+    private function promoteAccountingErrors(array &$result): void
+    {
+        $accountingErrors = $result['accounting']['errors'] ?? [];
+        if (!is_array($accountingErrors) || $accountingErrors === []) {
+            return;
+        }
+
+        $result['success'] = false;
+        foreach ($accountingErrors as $error) {
+            $entry = is_array($error) ? $error : ['message' => (string) $error];
+            $entry['phase'] = 'accounting';
+            $result['errors'][] = $entry;
+        }
     }
 
     private function movementIdsByType(array $movements, string $movementType): array

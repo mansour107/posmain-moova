@@ -1,6 +1,7 @@
 <?php
 
 require_once __DIR__ . '/OrderEventService.php';
+require_once __DIR__ . '/../../Financial/Money.php';
 require_once __DIR__ . '/../../Sync/OperationalSyncEventService.php';
 
 final class DeliveryWorkerService
@@ -14,7 +15,10 @@ final class DeliveryWorkerService
                    COALESCE(financials.open_delivery_earnings, 0) AS open_delivery_earnings,
                    COALESCE(financials.open_tips, 0) AS open_tips,
                    COALESCE(financials.cod_held, 0) AS cod_held,
-                   COALESCE(financials.open_net_amount, 0) AS open_net_amount" : '';
+                   COALESCE(financials.open_net_amount, 0) AS open_net_amount,
+                   COALESCE(failed_deliveries.failed_order_count, 0) AS failed_order_count,
+                   COALESCE(failed_deliveries.failed_order_value, 0) AS failed_order_value,
+                   COALESCE(failed_deliveries.failed_cod_exposure, 0) AS failed_cod_exposure" : '';
         $financialJoin = $includeFinancials ? "
             LEFT JOIN (
                 SELECT worker_id, tenant, branch,
@@ -27,7 +31,27 @@ final class DeliveryWorkerService
                 GROUP BY worker_id, tenant, branch
             ) financials ON financials.worker_id = w.id
                         AND financials.tenant = w.tenant
-                        AND financials.branch = w.branch" : '';
+                        AND financials.branch = w.branch
+            LEFT JOIN (
+                SELECT f.delivery_worker_id AS worker_id,
+                       COUNT(*) AS failed_order_count,
+                       SUM(COALESCE(
+                           CAST(JSON_UNQUOTE(JSON_EXTRACT(f.metadata_json, '$.failure_order_value')) AS DECIMAL(19,3)),
+                           o.fat_net,
+                           0
+                       )) AS failed_order_value,
+                       SUM(COALESCE(
+                           CAST(JSON_UNQUOTE(JSON_EXTRACT(f.metadata_json, '$.failure_amount')) AS DECIMAL(19,3)),
+                           f.cod_amount,
+                           0
+                       )) AS failed_cod_exposure
+                FROM order_fulfillment f
+                INNER JOIN ot_head o ON o.id = f.order_id
+                WHERE f.fulfillment_type = 'delivery'
+                  AND f.delivery_status = 'failed'
+                  AND f.delivery_worker_id IS NOT NULL
+                GROUP BY f.delivery_worker_id
+            ) failed_deliveries ON failed_deliveries.worker_id = w.id" : '';
         $stmt = $conn->prepare("
             SELECT w.*, p.name AS compensation_plan_name,
                    COALESCE(active_orders.order_count, 0) AS active_orders
@@ -240,14 +264,14 @@ final class DeliveryWorkerService
 
     private function normalizeWorker(array $row): array
     {
-        foreach (['id', 'compensation_plan_id', 'is_active', 'is_available', 'tenant', 'branch', 'created_by', 'active_orders'] as $column) {
+        foreach (['id', 'compensation_plan_id', 'is_active', 'is_available', 'tenant', 'branch', 'created_by', 'active_orders', 'failed_order_count'] as $column) {
             if (array_key_exists($column, $row)) {
                 $row[$column] = $row[$column] !== null ? (int) $row[$column] : null;
             }
         }
-        foreach (['open_delivery_earnings', 'open_tips', 'cod_held', 'open_net_amount'] as $column) {
+        foreach (['open_delivery_earnings', 'open_tips', 'cod_held', 'open_net_amount', 'failed_order_value', 'failed_cod_exposure'] as $column) {
             if (array_key_exists($column, $row)) {
-                $row[$column] = number_format((float) $row[$column], 3, '.', '');
+                $row[$column] = Money::from($row[$column] ?? '0')->toString() . '0';
             }
         }
         return $row;

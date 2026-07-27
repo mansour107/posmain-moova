@@ -85,16 +85,17 @@ class RemainingWriteSurfacesOutboxTest extends TestCase
     public function testRemainingWriteSurfacesCallDurableOutboxProducer(): void
     {
         $expectations = [
-            'ajax/save_order.php' => ['recordOrderSnapshot', 'recordTableSnapshot', 'pos_table'],
-            'ajax/process_table_payment.php' => ['recordOrderSnapshot', 'recordTableSnapshot', 'order.payment_recorded'],
-            'ajax/process_split_payment.php' => ['recordOrderSnapshot', 'recordTableSnapshot', 'order.split_paid'],
+            'ajax/save_order.php' => ['pos_api_dispatch', 'orders.table'],
+            'ajax/process_table_payment.php' => ['pos_api_dispatch', 'orders.payment'],
+            'ajax/process_split_payment.php' => ['pos_api_dispatch', 'orders.split-payment'],
             'ajax/delete_order.php' => ['recordOrderSnapshot', 'recordTableSnapshot', 'order.cancelled'],
             'ajax/clear_table.php' => ['recordOrderSnapshot', 'recordTableSnapshot', 'order.cancelled'],
             'ajax/clear_table_normal.php' => ['recordOrderSnapshot', 'recordTableSnapshot', 'table.updated'],
             'ajax/update_table_status.php' => ['recordOrderSnapshot', 'recordTableSnapshot', 'order.table_status_updated'],
             'ajax/get_tables.php' => ['recordTableSnapshot', 'pos_table_refresh'],
-            'ajax/cofe_create_order.php' => ['recordOrderSnapshot', 'recordTableSnapshot', 'cofe_widget'],
+            'ajax/cofe_create_order.php' => ['pos_api_dispatch', 'integrations.cofe.orders'],
             'do/doadd_invoice.php' => ['recordOrderSnapshot', 'recordTableSnapshot', 'pos_cashier'],
+            'classes/Pos/Service/PosOrderMutationService.php' => ['recordOrderSnapshot', 'recordTableSnapshot', 'order.payment_recorded', 'order.split_paid'],
             'classes/Moova/MoovaNewOrderApplyService.php' => ['SyncOutboxEventService', 'recordOrderSnapshot', 'recordTableSnapshot'],
             'classes/Moova/MoovaChangeOrderApplyService.php' => ['SyncOutboxEventService', 'recordOrderSnapshot', 'recordTableSnapshot'],
         ];

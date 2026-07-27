@@ -124,6 +124,10 @@ class PosOrderOutboxEventServiceTest extends TestCase
         $this->assertCount(1, $payload['lines']);
         $this->assertCount(1, $payload['payments']);
         $this->assertCount(1, $payload['receipts']);
+        $this->assertSame(
+            (string) $payload['order']['pro_date'] . ' 00:00:00',
+            $payload['receipts'][0]['payment_date']
+        );
         $this->assertNotEmpty($payload['lines'][0]['line_uuid']);
         $this->assertSame(4, (int) $payload['schema_version']);
         $this->assertSame('1.2345', $payload['order']['fat_tax']);
@@ -143,12 +147,14 @@ class PosOrderOutboxEventServiceTest extends TestCase
         $this->assertSame('invoice', $payload['financial_bundle']['journal_heads'][0]['source_type']);
     }
 
-    public function testRapidOrderSnapshotsUseStrictlyIncreasingFinancialVersions(): void
+    public function testRetryOfSameOrderMutationReturnsOneImmutableEvent(): void
     {
         $service = new SyncOutboxEventService();
+        $sourceTransactionId = 'phpunit:order-payment:' . $this->orderId;
         $first = $service->recordOrderSnapshot(self::$conn, $this->orderId, [
             'event_type' => 'order.payment_recorded',
             'source_system' => 'pos_table_payment',
+            'source_transaction_id' => $sourceTransactionId,
             'config' => $this->branchConfig(),
         ]);
         $counterKey = self::$conn->real_escape_string('order:' . self::BRANCH_UUID . ':' . $this->orderId);
@@ -156,13 +162,95 @@ class PosOrderOutboxEventServiceTest extends TestCase
         $second = $service->recordOrderSnapshot(self::$conn, $this->orderId, [
             'event_type' => 'order.payment_recorded',
             'source_system' => 'pos_table_payment',
+            'source_transaction_id' => $sourceTransactionId,
             'config' => $this->branchConfig(),
         ]);
 
         $firstOutbox = $this->fetchOutbox((int) $first['outbox_id']);
         $secondOutbox = $this->fetchOutbox((int) $second['outbox_id']);
-        $this->assertSame((int) $firstOutbox['event_version'] + 1, (int) $secondOutbox['event_version']);
-        $this->assertNotSame($firstOutbox['idempotency_key'], $secondOutbox['idempotency_key']);
+        $this->assertSame((int) $firstOutbox['id'], (int) $secondOutbox['id']);
+        $this->assertSame($firstOutbox['event_uuid'], $secondOutbox['event_uuid']);
+        $this->assertSame($firstOutbox['idempotency_key'], $secondOutbox['idempotency_key']);
+        $this->assertSame($firstOutbox['payload_json'], $secondOutbox['payload_json']);
+        $this->assertSame($firstOutbox['payload_hash'], $secondOutbox['payload_hash']);
+        $this->assertSame($firstOutbox['created_at'], $secondOutbox['created_at']);
+        $this->assertSame($firstOutbox['updated_at'], $secondOutbox['updated_at']);
+        $this->assertSame($sourceTransactionId, $firstOutbox['source_transaction_id']);
+        $this->assertSame($sourceTransactionId, $second['source_transaction_id']);
+        $this->assertTrue($second['replayed']);
+        $this->assertSame(
+            1,
+            (int) self::$conn->query(
+                "SELECT COUNT(*) AS c FROM sync_outbox WHERE aggregate_type = 'order' AND aggregate_local_id = " .
+                (int) $this->orderId . " AND source_transaction_id = '" .
+                self::$conn->real_escape_string($sourceTransactionId) . "'"
+            )->fetch_assoc()['c']
+        );
+    }
+
+    public function testSameSourceTransactionRejectsChangedPayloadWithoutMutatingStoredEvent(): void
+    {
+        $service = new SyncOutboxEventService();
+        $sourceTransactionId = 'phpunit:immutable-conflict:' . $this->orderId;
+        $first = $service->recordOrderSnapshot(self::$conn, $this->orderId, [
+            'event_type' => 'order.payment_recorded',
+            'source_system' => 'pos_table_payment',
+            'source_transaction_id' => $sourceTransactionId,
+            'config' => $this->branchConfig(),
+        ]);
+        $before = $this->fetchOutbox((int) $first['outbox_id']);
+
+        self::$conn->query(
+            "UPDATE ot_head SET info = 'different replay payload' WHERE id = " . (int) $this->orderId
+        );
+
+        try {
+            $service->recordOrderSnapshot(self::$conn, $this->orderId, [
+                'event_type' => 'order.payment_recorded',
+                'source_system' => 'pos_table_payment',
+                'source_transaction_id' => $sourceTransactionId,
+                'config' => $this->branchConfig(),
+            ]);
+            $this->fail('Expected changed payload replay to be rejected.');
+        } catch (RuntimeException $exception) {
+            $this->assertSame('OUTBOX_IDEMPOTENCY_PAYLOAD_CONFLICT', $exception->getMessage());
+        }
+
+        $after = $this->fetchOutbox((int) $first['outbox_id']);
+        foreach (['id', 'event_uuid', 'source_transaction_id', 'idempotency_key', 'payload_json', 'payload_hash', 'created_at', 'updated_at'] as $field) {
+            $this->assertSame($before[$field], $after[$field], 'Stored outbox field mutated after conflict: ' . $field);
+        }
+        $this->assertSame(
+            1,
+            (int) self::$conn->query(
+                "SELECT COUNT(*) AS c FROM sync_outbox WHERE branch_uuid = '" . self::BRANCH_UUID .
+                "' AND source_transaction_id = '" . self::$conn->real_escape_string($sourceTransactionId) . "'"
+            )->fetch_assoc()['c']
+        );
+    }
+
+    public function testDisabledTransportPersistsHeldEventWithoutWorkerEligibility(): void
+    {
+        $config = $this->branchConfig();
+        $config['sync']['branch_sync_enabled'] = false;
+        $config['sync']['worker_enabled'] = false;
+
+        $event = (new SyncOutboxEventService())->recordOrderSnapshot(self::$conn, $this->orderId, [
+            'event_type' => 'order.saved',
+            'source_system' => 'pos_cashier',
+            'config' => $config,
+        ]);
+
+        $outbox = $this->fetchOutbox((int) $event['outbox_id']);
+        $this->assertSame('held', $outbox['status']);
+        $this->assertSame('held', $event['status']);
+
+        $metrics = (new BranchSyncWorker())->runOnce(self::$conn, $config, [
+            'batch_size' => 10,
+            'worker_id' => 'phpunit-held-outbox-worker',
+        ]);
+        $this->assertSame(0, $metrics['claimed']);
+        $this->assertSame('held', $this->fetchOutbox((int) $event['outbox_id'])['status']);
     }
 
     public function testVersion4SnapshotPreservesUnknownHeaderFinancialValuesAsNull(): void

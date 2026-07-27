@@ -3,17 +3,26 @@
 require_once __DIR__ . '/ModifierLineNoteService.php';
 require_once __DIR__ . '/PreparationSelectionService.php';
 require_once __DIR__ . '/PosOrderMutationService.php';
+require_once __DIR__ . '/KitchenLineSnapshotService.php';
+require_once __DIR__ . '/../../Financial/Money.php';
+require_once __DIR__ . '/../../Financial/DecimalQuantity.php';
 
 class OrderPrintPayloadService
 {
     private ModifierLineNoteService $customizationService;
     private PreparationSelectionService $preparationService;
+    private KitchenLineSnapshotService $kitchenSnapshots;
     private array $tableExistsCache = [];
+    private array $columnExistsCache = [];
 
-    public function __construct(?ModifierLineNoteService $customizationService = null)
+    public function __construct(
+        ?ModifierLineNoteService $customizationService = null,
+        ?KitchenLineSnapshotService $kitchenSnapshots = null
+    )
     {
         $this->customizationService = $customizationService ?: new ModifierLineNoteService();
         $this->preparationService = new PreparationSelectionService();
+        $this->kitchenSnapshots = $kitchenSnapshots ?: new KitchenLineSnapshotService();
     }
 
     public function buildReceiptPayload(mysqli $conn, int $orderId): array
@@ -82,6 +91,15 @@ class OrderPrintPayloadService
         }
         unset($line);
 
+        if ($documentType === 'kot') {
+            $lines = $this->kitchenSnapshots->captureForOrder($conn, $orderId, $lines);
+        } else {
+            $sentSnapshot = $this->kitchenSnapshots->existingForOrder($conn, $orderId);
+            if ($sentSnapshot !== null) {
+                $lines = $sentSnapshot;
+            }
+        }
+
         return [
             'document_type' => $documentType,
             'order' => [
@@ -119,11 +137,14 @@ class OrderPrintPayloadService
 
     private function fetchOrder(mysqli $conn, int $orderId): ?array
     {
+        $customerInfoSelect = $this->columnExists($conn, 'acc_head', 'info')
+            ? 'a.info AS customer_info'
+            : 'NULL AS customer_info';
         $stmt = $conn->prepare("
             SELECT h.*,
                    t.tname AS table_name,
                    a.aname AS customer_name,
-                   a.info AS customer_info
+                   {$customerInfoSelect}
             FROM ot_head h
             LEFT JOIN tables t ON t.id = h.table_id
             LEFT JOIN acc_head a ON a.id = h.acc1
@@ -140,9 +161,13 @@ class OrderPrintPayloadService
 
     private function fetchLines(mysqli $conn, int $orderId): array
     {
+        $itemGroupSelect = $this->columnExists($conn, 'myitems', 'group1')
+            ? 'i.group1 AS item_group_id'
+            : 'NULL AS item_group_id';
         $stmt = $conn->prepare("
             SELECT fd.*,
-                   i.iname AS item_name
+                   i.iname AS item_name,
+                   {$itemGroupSelect}
             FROM fat_details fd
             LEFT JOIN myitems i ON i.id = fd.item_id
             WHERE fd.fatid = ?
@@ -155,11 +180,16 @@ class OrderPrintPayloadService
 
         $lines = [];
         while ($row = $result->fetch_assoc()) {
-            $qty = (float) ($row['qty_out'] ?? 0) - (float) ($row['qty_in'] ?? 0);
+            $qty = FinancialDecimal::subtract(
+                DecimalQuantity::from((string) ($row['qty_out'] ?? '0'))->toString(),
+                DecimalQuantity::from((string) ($row['qty_in'] ?? '0'))->toString(),
+                DecimalQuantity::SCALE
+            );
             $lines[] = [
                 'detail_id' => (int) $row['id'],
                 'item_id' => $this->nullableInt($row['item_id'] ?? null),
-                'name' => $this->nullableString($row['item_name'] ?? null) ?: 'غير محدد',
+                'item_group_id' => $this->nullableInt($row['item_group_id'] ?? null),
+                'name' => $this->nullableString($row['item_name'] ?? null) ?: '',
                 'qty' => $this->quantity($qty),
                 'price' => $this->money($row['price'] ?? 0),
                 'line_total' => $this->money($row['det_value'] ?? 0),
@@ -205,6 +235,30 @@ class OrderPrintPayloadService
         return $this->tableExistsCache[$table];
     }
 
+    private function columnExists(mysqli $conn, string $table, string $column): bool
+    {
+        $key = $table . '.' . $column;
+        if (array_key_exists($key, $this->columnExistsCache)) {
+            return $this->columnExistsCache[$key];
+        }
+
+        $stmt = $conn->prepare("
+            SELECT COUNT(*) AS c
+            FROM information_schema.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE()
+              AND TABLE_NAME = ?
+              AND COLUMN_NAME = ?
+        ");
+        $stmt->bind_param('ss', $table, $column);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        $this->columnExistsCache[$key] = (int) ($row['c'] ?? 0) > 0;
+
+        return $this->columnExistsCache[$key];
+    }
+
     private function positiveInt($value, string $code): int
     {
         $value = (int) $value;
@@ -236,11 +290,11 @@ class OrderPrintPayloadService
 
     private function money($value): string
     {
-        return number_format((float) $value, 2, '.', '');
+        return Money::from((string) $value)->toString();
     }
 
     private function quantity($value): string
     {
-        return number_format((float) $value, 3, '.', '');
+        return DecimalQuantity::from((string) $value)->toString();
     }
 }

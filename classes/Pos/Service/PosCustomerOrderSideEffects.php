@@ -3,6 +3,7 @@
 require_once __DIR__ . '/PosCustomerOrderLinkService.php';
 require_once __DIR__ . '/PosCustomerService.php';
 require_once __DIR__ . '/OrderFulfillmentService.php';
+require_once __DIR__ . '/../../Financial/Money.php';
 
 class PosCustomerOrderSideEffects
 {
@@ -53,7 +54,7 @@ class PosCustomerOrderSideEffects
     /**
      * Idempotent rollup: lifetime_paid += payment delta; orders_count++ once when fully paid.
      *
-     * @return array{applied:bool,customer_id:int,paid_delta:float,orders_counted:bool,reason:?string}
+     * @return array{applied:bool,customer_id:int,paid_delta:string,orders_counted:bool,reason:?string}
      */
     public function applyPaymentRollup(mysqli $conn, int $orderId, array $options = []): array
     {
@@ -81,17 +82,17 @@ class PosCustomerOrderSideEffects
     private function applyPaymentRollupInsideTransaction(mysqli $conn, int $orderId, array $options = []): array
     {
         if ($orderId < 1 || !$this->customerService->tablesReady($conn)) {
-            return ['applied' => false, 'customer_id' => 0, 'paid_delta' => 0.0, 'orders_counted' => false, 'reason' => 'NOT_READY'];
+            return ['applied' => false, 'customer_id' => 0, 'paid_delta' => '0.00', 'orders_counted' => false, 'reason' => 'NOT_READY'];
         }
 
         $order = $this->loadOrderPaymentState($conn, $orderId);
         if (!$order) {
-            return ['applied' => false, 'customer_id' => 0, 'paid_delta' => 0.0, 'orders_counted' => false, 'reason' => 'ORDER_NOT_FOUND'];
+            return ['applied' => false, 'customer_id' => 0, 'paid_delta' => '0.00', 'orders_counted' => false, 'reason' => 'ORDER_NOT_FOUND'];
         }
 
-        $paidAmount = array_key_exists('paid_amount', $options)
-            ? (float) $options['paid_amount']
-            : (float) ($order['paid_amount'] ?? 0);
+        $paidAmount = array_key_exists('paid_amount', $options) && $options['paid_amount'] !== null
+            ? Money::from($options['paid_amount'])
+            : Money::from($order['paid_amount'] ?? '0');
         $paymentStatus = (string) ($options['payment_status'] ?? $order['payment_status'] ?? 'unpaid');
         $isFullyPaid = strtolower($paymentStatus) === 'paid';
 
@@ -112,29 +113,29 @@ class PosCustomerOrderSideEffects
         }
 
         if ($customerId < 1) {
-            return ['applied' => false, 'customer_id' => 0, 'paid_delta' => 0.0, 'orders_counted' => false, 'reason' => 'CUSTOMER_NOT_LINKED'];
+            return ['applied' => false, 'customer_id' => 0, 'paid_delta' => '0.00', 'orders_counted' => false, 'reason' => 'CUSTOMER_NOT_LINKED'];
         }
 
-        if ($paidAmount <= 0) {
-            return ['applied' => false, 'customer_id' => $customerId, 'paid_delta' => 0.0, 'orders_counted' => false, 'reason' => 'NO_PAYMENT'];
+        if (!$paidAmount->isPositive()) {
+            return ['applied' => false, 'customer_id' => $customerId, 'paid_delta' => '0.00', 'orders_counted' => false, 'reason' => 'NO_PAYMENT'];
         }
 
         $rollupPaid = $this->rollupPaidAmount($conn, $orderId, $fulfillment);
         $rollupCounted = $this->rollupCounted($conn, $orderId, $fulfillment);
-        $delta = round($paidAmount - $rollupPaid, 3);
+        $delta = $paidAmount->subtract($rollupPaid);
         $ordersCounted = false;
 
-        if ($delta > 0) {
-            $this->customerService->applyRollupDelta($conn, $customerId, $delta, false, array_merge($options, [
+        if ($delta->isPositive()) {
+            $this->customerService->applyRollupDelta($conn, $customerId, $delta->toString(), false, array_merge($options, [
                 'in_transaction' => true,
                 'defer_sync' => true,
             ]));
-            $rollupPaid += $delta;
-            $this->updateRollupPaidAmount($conn, $orderId, $rollupPaid);
+            $rollupPaid = $rollupPaid->add($delta);
+            $this->updateRollupPaidAmount($conn, $orderId, $rollupPaid->toString());
         }
 
         if ($isFullyPaid && !$rollupCounted) {
-            $this->customerService->applyRollupDelta($conn, $customerId, 0.0, true, array_merge($options, [
+            $this->customerService->applyRollupDelta($conn, $customerId, '0.00', true, array_merge($options, [
                 'in_transaction' => true,
                 'defer_sync' => true,
             ]));
@@ -142,8 +143,8 @@ class PosCustomerOrderSideEffects
             $ordersCounted = true;
         }
 
-        if ($delta <= 0 && !$ordersCounted) {
-            return ['applied' => false, 'customer_id' => $customerId, 'paid_delta' => 0.0, 'orders_counted' => false, 'reason' => 'ALREADY_ROLLED_UP'];
+        if (!$delta->isPositive() && !$ordersCounted) {
+            return ['applied' => false, 'customer_id' => $customerId, 'paid_delta' => '0.00', 'orders_counted' => false, 'reason' => 'ALREADY_ROLLED_UP'];
         }
 
         $this->customerService->recordSyncSnapshot($conn, $customerId, $options + [
@@ -154,7 +155,7 @@ class PosCustomerOrderSideEffects
         return [
             'applied' => true,
             'customer_id' => $customerId,
-            'paid_delta' => max(0.0, $delta),
+            'paid_delta' => $delta->isPositive() ? $delta->toString() : '0.00',
             'orders_counted' => $ordersCounted,
             'reason' => null,
         ];
@@ -199,12 +200,12 @@ class PosCustomerOrderSideEffects
     public function rebuildCustomerRollups(mysqli $conn, int $customerId, array $options = []): array
     {
         if ($customerId < 1 || !$this->customerService->tablesReady($conn)) {
-            return ['orders_count' => 0, 'lifetime_paid' => 0.0, 'last_order_at' => null, 'orders_reset' => 0];
+            return ['orders_count' => 0, 'lifetime_paid' => '0.00', 'last_order_at' => null, 'orders_reset' => 0];
         }
 
         if (!$this->columnExists($conn, 'order_fulfillment', 'pos_customer_id')
             || !$this->columnExists($conn, 'ot_head', 'id')) {
-            return ['orders_count' => 0, 'lifetime_paid' => 0.0, 'last_order_at' => null, 'orders_reset' => 0];
+            return ['orders_count' => 0, 'lifetime_paid' => '0.00', 'last_order_at' => null, 'orders_reset' => 0];
         }
 
         $hasRollupColumns = $this->columnExists($conn, 'order_fulfillment', 'crm_rollup_paid_amount');
@@ -214,11 +215,17 @@ class PosCustomerOrderSideEffects
             $conn->begin_transaction();
         }
         try {
+            $refundExpression = $this->tableExists($conn, 'credit_notes')
+                ? "(SELECT COALESCE(SUM(cn.total_amount), 0)
+                      FROM credit_notes cn
+                     WHERE cn.original_order_id = o.id AND cn.status = 'posted')"
+                : '0';
             $stmt = $conn->prepare("
                 SELECT
                     o.id AS order_id,
                     o.paid_amount,
                     o.payment_status,
+                    {$refundExpression} AS refunded_amount,
                     COALESCE(o.mdtime, o.crtime, o.pro_date) AS order_time
                 FROM order_fulfillment f
                 INNER JOIN ot_head o ON o.id = f.order_id AND o.isdeleted = 0
@@ -230,18 +237,21 @@ class PosCustomerOrderSideEffects
             $result = $stmt->get_result();
 
             $ordersCount = 0;
-            $lifetimePaid = 0.0;
+            $lifetimePaid = Money::zero();
             $lastOrderAt = null;
             $ordersReset = 0;
 
             while ($row = $result->fetch_assoc()) {
             $orderId = (int) $row['order_id'];
-            $paid = (float) ($row['paid_amount'] ?? 0);
-            $isPaid = strtolower((string) ($row['payment_status'] ?? '')) === 'paid';
+            $paid = Money::from($row['paid_amount'] ?? '0')->subtract(Money::from($row['refunded_amount'] ?? '0'));
+            if ($paid->isNegative()) {
+                $paid = Money::zero();
+            }
+            $isPaid = in_array(strtolower((string) ($row['payment_status'] ?? '')), ['paid', 'refunded'], true);
             $orderTime = $row['order_time'] ?? null;
 
-            if ($paid > 0) {
-                $lifetimePaid += $paid;
+            if ($paid->isPositive()) {
+                $lifetimePaid = $lifetimePaid->add($paid);
             }
             if ($isPaid) {
                 $ordersCount++;
@@ -251,7 +261,7 @@ class PosCustomerOrderSideEffects
             }
 
             if ($hasRollupColumns) {
-                $this->updateRollupPaidAmount($conn, $orderId, $paid);
+                $this->updateRollupPaidAmount($conn, $orderId, $paid->toString());
                 $this->updateRollupCounted($conn, $orderId, $isPaid);
                 $ordersReset++;
             }
@@ -267,7 +277,8 @@ class PosCustomerOrderSideEffects
             WHERE id = ?
               AND isdeleted = 0
         ");
-            $update->bind_param('idsi', $ordersCount, $lifetimePaid, $lastOrderAt, $customerId);
+            $lifetimePaidString = $lifetimePaid->toString();
+            $update->bind_param('issi', $ordersCount, $lifetimePaidString, $lastOrderAt, $customerId);
             $update->execute();
             $update->close();
 
@@ -282,7 +293,7 @@ class PosCustomerOrderSideEffects
 
             return [
                 'orders_count' => $ordersCount,
-                'lifetime_paid' => $lifetimePaid,
+                'lifetime_paid' => $lifetimePaid->toString(),
                 'last_order_at' => $lastOrderAt,
                 'orders_reset' => $ordersReset,
             ];
@@ -303,11 +314,16 @@ class PosCustomerOrderSideEffects
             return null;
         }
 
+        $refundExpression = $this->tableExists($conn, 'credit_notes')
+            ? "(SELECT COALESCE(SUM(cn.total_amount), 0)
+                  FROM credit_notes cn
+                 WHERE cn.original_order_id = o.id AND cn.status = 'posted')"
+            : '0';
         $stmt = $conn->prepare("
             SELECT
                 COUNT(*) AS linked_orders,
-                SUM(CASE WHEN o.payment_status = 'paid' THEN 1 ELSE 0 END) AS paid_orders,
-                COALESCE(SUM(o.paid_amount), 0) AS lifetime_paid,
+                SUM(CASE WHEN o.payment_status IN ('paid', 'refunded') THEN 1 ELSE 0 END) AS paid_orders,
+                COALESCE(SUM(GREATEST(0, o.paid_amount - {$refundExpression})), 0) AS lifetime_paid,
                 MAX(COALESCE(o.mdtime, o.crtime, o.pro_date)) AS last_order_at
             FROM order_fulfillment f
             INNER JOIN ot_head o ON o.id = f.order_id AND o.isdeleted = 0
@@ -324,10 +340,30 @@ class PosCustomerOrderSideEffects
 
         return [
             'orders_count' => (int) ($row['paid_orders'] ?? 0),
-            'lifetime_paid' => (float) ($row['lifetime_paid'] ?? 0),
+            'lifetime_paid' => Money::from($row['lifetime_paid'] ?? '0')->toString(),
             'last_order_at' => $row['last_order_at'] ?? null,
             'linked_orders' => (int) ($row['linked_orders'] ?? 0),
         ];
+    }
+
+    /** Refresh the linked customer's materialized rollup after a refund. */
+    public function refreshCustomerRollupForOrder(mysqli $conn, int $orderId, array $options = []): array
+    {
+        if ($orderId < 1 || !$this->tableExists($conn, 'order_fulfillment')) {
+            return ['applied' => false, 'customer_id' => 0, 'reason' => 'CUSTOMER_NOT_LINKED'];
+        }
+        $stmt = $conn->prepare('SELECT pos_customer_id FROM order_fulfillment WHERE order_id = ? LIMIT 1');
+        $stmt->bind_param('i', $orderId);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        $customerId = (int) ($row['pos_customer_id'] ?? 0);
+        if ($customerId < 1) {
+            return ['applied' => false, 'customer_id' => 0, 'reason' => 'CUSTOMER_NOT_LINKED'];
+        }
+
+        $rollup = $this->rebuildCustomerRollups($conn, $customerId, $options + ['in_transaction' => true]);
+        return ['applied' => true, 'customer_id' => $customerId, 'reason' => null, 'rollup' => $rollup];
     }
 
     private function loadOrderPaymentState(mysqli $conn, int $orderId): ?array
@@ -351,14 +387,14 @@ class PosCustomerOrderSideEffects
         return $row ?: null;
     }
 
-    private function rollupPaidAmount(mysqli $conn, int $orderId, ?array $fulfillment): float
+    private function rollupPaidAmount(mysqli $conn, int $orderId, ?array $fulfillment): Money
     {
         if (is_array($fulfillment) && array_key_exists('crm_rollup_paid_amount', $fulfillment)) {
-            return (float) ($fulfillment['crm_rollup_paid_amount'] ?? 0);
+            return Money::from($fulfillment['crm_rollup_paid_amount'] ?? '0');
         }
 
         if (!$this->columnExists($conn, 'order_fulfillment', 'crm_rollup_paid_amount')) {
-            return 0.0;
+            return Money::zero();
         }
 
         $stmt = $conn->prepare('SELECT crm_rollup_paid_amount FROM order_fulfillment WHERE order_id = ? LIMIT 1');
@@ -367,7 +403,7 @@ class PosCustomerOrderSideEffects
         $row = $stmt->get_result()->fetch_assoc();
         $stmt->close();
 
-        return (float) ($row['crm_rollup_paid_amount'] ?? 0);
+        return Money::from($row['crm_rollup_paid_amount'] ?? '0');
     }
 
     private function rollupCounted(mysqli $conn, int $orderId, ?array $fulfillment): bool
@@ -389,14 +425,14 @@ class PosCustomerOrderSideEffects
         return (int) ($row['crm_rollup_counted'] ?? 0) === 1;
     }
 
-    private function updateRollupPaidAmount(mysqli $conn, int $orderId, float $amount): void
+    private function updateRollupPaidAmount(mysqli $conn, int $orderId, string $amount): void
     {
         if (!$this->columnExists($conn, 'order_fulfillment', 'crm_rollup_paid_amount')) {
             return;
         }
 
         $stmt = $conn->prepare('UPDATE order_fulfillment SET crm_rollup_paid_amount = ? WHERE order_id = ?');
-        $stmt->bind_param('di', $amount, $orderId);
+        $stmt->bind_param('si', $amount, $orderId);
         $stmt->execute();
         $stmt->close();
     }
@@ -429,6 +465,21 @@ class PosCustomerOrderSideEffects
         $exists = (bool) $stmt->get_result()->fetch_assoc();
         $stmt->close();
 
+        return $exists;
+    }
+
+    private function tableExists(mysqli $conn, string $table): bool
+    {
+        $stmt = $conn->prepare("
+            SELECT 1
+            FROM information_schema.TABLES
+            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?
+            LIMIT 1
+        ");
+        $stmt->bind_param('s', $table);
+        $stmt->execute();
+        $exists = (bool) $stmt->get_result()->fetch_assoc();
+        $stmt->close();
         return $exists;
     }
 

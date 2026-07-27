@@ -237,12 +237,10 @@ $restwn = $conn->query("SELECT * from towns ");
 $role = []; 
 if (isset($_SESSION['usrole'])) {
     $user_role_id = (int) $_SESSION['usrole'];
-    $stmt = $conn->prepare(
-        'SELECT id, rollname, role_key, is_system, isdeleted, info, is_active
-           FROM usr_pwrs
-          WHERE id = ?
-          LIMIT 1'
-    );
+    // Keep role loading compatible with pre-RBAC schemas while also retaining
+    // every legacy permission flag used by auth_guard. Newer columns such as
+    // role_key are optional until their migration has run.
+    $stmt = $conn->prepare('SELECT * FROM usr_pwrs WHERE id = ? LIMIT 1');
     $stmt->bind_param('i', $user_role_id);
     $stmt->execute();
     $role = $stmt->get_result()->fetch_assoc() ?: [];

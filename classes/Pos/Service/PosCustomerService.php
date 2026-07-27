@@ -1,5 +1,7 @@
 <?php
 
+require_once __DIR__ . '/../../Financial/Money.php';
+
 require_once __DIR__ . '/PosCustomerPhoneService.php';
 require_once __DIR__ . '/../../Sync/OperationalSyncEventService.php';
 
@@ -124,7 +126,7 @@ class PosCustomerService
             'phones' => $phones,
             'addresses' => $addresses,
             'orders_count' => (int) ($customer['orders_count'] ?? 0),
-            'lifetime_paid' => (float) ($customer['lifetime_paid'] ?? 0),
+            'lifetime_paid' => Money::from($customer['lifetime_paid'] ?? '0')->toString(),
             'last_order_at' => $customer['last_order_at'] ?? null,
         ];
 
@@ -147,17 +149,17 @@ class PosCustomerService
 
         $stats = [
             'orders_count' => (int) ($customerRow['orders_count'] ?? 0),
-            'lifetime_paid' => (float) ($customerRow['lifetime_paid'] ?? 0),
+            'lifetime_paid' => Money::from($customerRow['lifetime_paid'] ?? '0')->toString(),
             'last_order_at' => $customerRow['last_order_at'] ?? null,
         ];
 
-        if ($stats['orders_count'] === 0 && $stats['lifetime_paid'] <= 0) {
+        if ($stats['orders_count'] === 0 && !Money::from($stats['lifetime_paid'])->isPositive()) {
             require_once __DIR__ . '/PosCustomerOrderSideEffects.php';
             $live = (new PosCustomerOrderSideEffects())->liveStatsFromFulfillment($conn, $customerId);
             if ($live !== null) {
                 $stats = [
                     'orders_count' => (int) $live['orders_count'],
-                    'lifetime_paid' => (float) $live['lifetime_paid'],
+                    'lifetime_paid' => Money::from($live['lifetime_paid'])->toString(),
                     'last_order_at' => $live['last_order_at'] ?? null,
                     'linked_orders' => (int) ($live['linked_orders'] ?? 0),
                 ];
@@ -170,7 +172,7 @@ class PosCustomerService
     public function applyRollupDelta(
         mysqli $conn,
         int $customerId,
-        float $paidDelta,
+        $paidDelta,
         bool $incrementOrderCount,
         array $options = []
     ): void
@@ -179,7 +181,9 @@ class PosCustomerService
             return;
         }
 
-        if ($paidDelta > 0 && $incrementOrderCount) {
+        $paidDelta = Money::from($paidDelta);
+        $paidDeltaString = $paidDelta->toString();
+        if ($paidDelta->isPositive() && $incrementOrderCount) {
             $stmt = $conn->prepare("
                 UPDATE pos_customers
                 SET orders_count = orders_count + 1,
@@ -189,8 +193,8 @@ class PosCustomerService
                 WHERE id = ?
                   AND isdeleted = 0
             ");
-            $stmt->bind_param('di', $paidDelta, $customerId);
-        } elseif ($paidDelta > 0) {
+            $stmt->bind_param('si', $paidDeltaString, $customerId);
+        } elseif ($paidDelta->isPositive()) {
             $stmt = $conn->prepare("
                 UPDATE pos_customers
                 SET lifetime_paid = lifetime_paid + ?,
@@ -199,7 +203,7 @@ class PosCustomerService
                 WHERE id = ?
                   AND isdeleted = 0
             ");
-            $stmt->bind_param('di', $paidDelta, $customerId);
+            $stmt->bind_param('si', $paidDeltaString, $customerId);
         } elseif ($incrementOrderCount) {
             $stmt = $conn->prepare("
                 UPDATE pos_customers
@@ -332,15 +336,27 @@ class PosCustomerService
 
         $existing = $this->findByNormalizedPhone($conn, $normalized);
         if ($existing) {
+            $deliveryAddress = null;
+            if (trim($address) !== '') {
+                $deliveryAddress = [
+                    'address_text' => $address,
+                    'zone_id' => $zoneId,
+                    'is_default' => true,
+                ];
+                $profile = $this->getProfile($conn, (int) $existing['id'], false);
+                foreach ((array) ($profile['addresses'] ?? []) as $savedAddress) {
+                    if (trim((string) ($savedAddress['address_text'] ?? '')) === trim($address)) {
+                        $deliveryAddress['id'] = (int) ($savedAddress['id'] ?? 0);
+                        break;
+                    }
+                }
+            }
+
             return $this->saveCustomer($conn, [
                 'id' => (int) $existing['id'],
                 'display_name' => $name,
                 'phones' => [['phone' => $phone, 'is_primary' => true]],
-                'addresses' => trim($address) !== '' ? [[
-                    'address_text' => $address,
-                    'zone_id' => $zoneId,
-                    'is_default' => true,
-                ]] : [],
+                'addresses' => $deliveryAddress ? [$deliveryAddress] : [],
             ], $options + ['source_system' => 'pos_delivery_customer']);
         }
 
@@ -355,11 +371,13 @@ class PosCustomerService
         ], $options + ['source_system' => 'pos_delivery_customer']);
     }
 
-    public function recordOrderPaid(mysqli $conn, int $customerId, float $paidAmount, array $options = []): void
+    public function recordOrderPaid(mysqli $conn, int $customerId, $paidAmount, array $options = []): void
     {
-        if ($customerId < 1 || $paidAmount <= 0 || !$this->tablesReady($conn)) {
+        $paidAmount = Money::from($paidAmount);
+        if ($customerId < 1 || !$paidAmount->isPositive() || !$this->tablesReady($conn)) {
             return;
         }
+        $paidAmountString = $paidAmount->toString();
 
         $ownsTransaction = $this->ownsTransaction($options);
         if ($ownsTransaction) {
@@ -375,7 +393,7 @@ class PosCustomerService
                 WHERE id = ?
                   AND isdeleted = 0
             ");
-            $stmt->bind_param('di', $paidAmount, $customerId);
+            $stmt->bind_param('si', $paidAmountString, $customerId);
             $stmt->execute();
             $stmt->close();
             $this->recordSyncSnapshot($conn, $customerId, $options + [
@@ -466,7 +484,7 @@ class PosCustomerService
             }
 
             $sourceOrders = (int) ($source['orders_count'] ?? 0);
-            $sourcePaid = (float) ($source['lifetime_paid'] ?? 0);
+            $sourcePaid = Money::from($source['lifetime_paid'] ?? '0')->toString();
             $sourceLast = $source['last_order_at'] ?? null;
 
             $stmt = $conn->prepare('
@@ -478,7 +496,7 @@ class PosCustomerService
                 WHERE id = ?
                   AND isdeleted = 0
             ');
-            $stmt->bind_param('sidi', $mergedNotes, $sourceOrders, $sourcePaid, $targetId);
+            $stmt->bind_param('sisi', $mergedNotes, $sourceOrders, $sourcePaid, $targetId);
             $stmt->execute();
             $stmt->close();
 
@@ -713,7 +731,7 @@ class PosCustomerService
             return;
         }
 
-        $hasDefault = false;
+        $defaultAddressId = 0;
         foreach ($addresses as $addressRow) {
             if (!is_array($addressRow)) {
                 continue;
@@ -725,9 +743,6 @@ class PosCustomerService
             $zoneId = (int) ($addressRow['zone_id'] ?? 0);
             $zoneParam = $zoneId > 0 ? $zoneId : null;
             $isDefault = !empty($addressRow['is_default']);
-            if ($isDefault) {
-                $hasDefault = true;
-            }
             $isDefaultInt = $isDefault ? 1 : 0;
             $addressId = (int) ($addressRow['id'] ?? 0);
 
@@ -740,26 +755,25 @@ class PosCustomerService
                 $stmt = $conn->prepare('INSERT INTO pos_customer_addresses (customer_id, address_text, zone_id, is_default) VALUES (?, ?, ?, ?)');
                 $stmt->bind_param('isii', $customerId, $text, $zoneParam, $isDefaultInt);
                 $stmt->execute();
+                $addressId = (int) $conn->insert_id;
                 $stmt->close();
+            }
+
+            if ($isDefault && $defaultAddressId < 1) {
+                $defaultAddressId = $addressId;
             }
         }
 
-        if ($hasDefault) {
+        if ($defaultAddressId > 0) {
             $stmt = $conn->prepare('UPDATE pos_customer_addresses SET is_default = 0 WHERE customer_id = ? AND isdeleted = 0');
             $stmt->bind_param('i', $customerId);
             $stmt->execute();
             $stmt->close();
 
-            foreach ($addresses as $addressRow) {
-                if (!empty($addressRow['is_default']) && !empty($addressRow['id'])) {
-                    $addressId = (int) $addressRow['id'];
-                    $stmt = $conn->prepare('UPDATE pos_customer_addresses SET is_default = 1 WHERE id = ? AND customer_id = ?');
-                    $stmt->bind_param('ii', $addressId, $customerId);
-                    $stmt->execute();
-                    $stmt->close();
-                    break;
-                }
-            }
+            $stmt = $conn->prepare('UPDATE pos_customer_addresses SET is_default = 1 WHERE id = ? AND customer_id = ? AND isdeleted = 0');
+            $stmt->bind_param('ii', $defaultAddressId, $customerId);
+            $stmt->execute();
+            $stmt->close();
         }
     }
 
@@ -829,7 +843,7 @@ class PosCustomerService
             return [];
         }
 
-        $stmt = $conn->prepare('SELECT id, address_text, zone_id, is_default FROM pos_customer_addresses WHERE customer_id = ? AND isdeleted = 0 ORDER BY is_default DESC, id ASC');
+        $stmt = $conn->prepare('SELECT id, address_text, zone_id, is_default FROM pos_customer_addresses WHERE customer_id = ? AND isdeleted = 0 ORDER BY is_default DESC, id DESC');
         $stmt->bind_param('i', $customerId);
         $stmt->execute();
         $result = $stmt->get_result();

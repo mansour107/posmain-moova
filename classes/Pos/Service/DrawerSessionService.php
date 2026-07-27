@@ -3,6 +3,7 @@
 require_once dirname(__DIR__, 3) . '/includes/drawer_movement_signs.php';
 require_once __DIR__ . '/BusinessDayService.php';
 require_once __DIR__ . '/../../Sync/OperationalSyncEventService.php';
+require_once dirname(__DIR__) . '/Value/CashAmount.php';
 
 class DrawerSessionService
 {
@@ -29,7 +30,7 @@ class DrawerSessionService
         $tenant = $this->nonNegativeInt($request['tenant'] ?? 0, 'TENANT_INVALID');
         $branch = $this->nonNegativeInt($request['branch'] ?? 0, 'BRANCH_INVALID');
         $fundAccountId = $this->optionalPositiveInt($request['fund_account_id'] ?? null);
-        $openingCash = $this->decimal($request['opening_cash'] ?? '0', false, 'OPENING_CASH_INVALID');
+        $openingCash = $this->decimal($request['opening_cash'] ?? '0', true, 'OPENING_CASH_INVALID', true);
         $notes = $this->nullableText($request['notes'] ?? null, 500);
         $registerId = $this->optionalPositiveInt($request['register_id'] ?? null);
         $precedingSessionId = $this->optionalPositiveInt($request['preceding_session_id'] ?? null);
@@ -404,12 +405,14 @@ class DrawerSessionService
             }
         }
 
-        $preCloseExpected = $hasOpeningMovement ? 0.0 : (float) $session['opening_cash'];
-        $closeVariance = 0.0;
+        $preCloseExpected = $hasOpeningMovement
+            ? '0.00'
+            : CashAmount::normalize($session['opening_cash'] ?? '0.00');
+        $closeVariance = '0.00';
         foreach ($movements as $movement) {
             $type = (string) ($movement['movement_type'] ?? '');
             if ($type === 'closing_adjustment') {
-                $closeVariance += (float) ($movement['amount'] ?? 0);
+                $closeVariance = CashAmount::add($closeVariance, $movement['amount'] ?? '0.00');
                 continue;
             }
 
@@ -418,10 +421,16 @@ class DrawerSessionService
                 continue;
             }
 
-            $preCloseExpected += $sign * (float) ($movement['amount'] ?? 0);
+            $amount = CashAmount::normalize($movement['amount'] ?? '0.00', true);
+            $preCloseExpected = CashAmount::add(
+                $preCloseExpected,
+                $sign < 0 ? CashAmount::negate($amount) : $amount
+            );
         }
 
-        $countedCash = $session['counted_cash'] !== null ? (float) $session['counted_cash'] : null;
+        $countedCash = $session['counted_cash'] !== null
+            ? CashAmount::normalize($session['counted_cash'])
+            : null;
         $isClosed = in_array((string) ($session['status'] ?? ''), ['closed', 'forced_closed'], true);
         $countPending = $isClosed && $countedCash === null;
         // No closing count yet (open session or interrupted close) is unknown over/short,
@@ -429,14 +438,14 @@ class DrawerSessionService
         $closeVarianceKnown = $countedCash !== null;
 
         return [
-            'pre_close_expected_cash' => $this->formatDecimal($preCloseExpected),
+            'pre_close_expected_cash' => $preCloseExpected,
             // A missing close count is not a zero variance. Keep it nullable so
             // reporting can distinguish an uncounted close from a balanced one.
-            'close_variance' => $closeVarianceKnown ? $this->formatDecimal($closeVariance) : null,
-            'post_close_expected_cash' => $this->formatDecimal(
-                $closeVarianceKnown ? ($preCloseExpected + $closeVariance) : $preCloseExpected
-            ),
-            'counted_cash' => $countedCash !== null ? $this->formatDecimal($countedCash) : null,
+            'close_variance' => $closeVarianceKnown ? $closeVariance : null,
+            'post_close_expected_cash' => $closeVarianceKnown
+                ? CashAmount::add($preCloseExpected, $closeVariance)
+                : $preCloseExpected,
+            'counted_cash' => $countedCash,
             'has_closing_count' => $countedCash !== null,
             'count_pending' => $countPending,
             'is_closed' => $isClosed,
@@ -455,17 +464,20 @@ class DrawerSessionService
             }
         }
 
-        $expected = $hasOpeningMovement ? 0.0 : (float) $session['opening_cash'];
+        $expected = $hasOpeningMovement
+            ? '0.00'
+            : CashAmount::normalize($session['opening_cash'] ?? '0.00');
         foreach ($movements as $movement) {
             $type = (string) ($movement['movement_type'] ?? '');
             $sign = self::movementTypes()[$type] ?? 0;
             if ($sign === 0) {
                 continue;
             }
-            $expected += $sign * (float) $movement['amount'];
+            $amount = CashAmount::normalize($movement['amount'] ?? '0.00', true);
+            $expected = CashAmount::add($expected, $sign < 0 ? CashAmount::negate($amount) : $amount);
         }
 
-        return $this->formatDecimal($expected);
+        return $expected;
     }
 
     public function closeSession(mysqli $conn, int $sessionId, array $request, array $context = []): array
@@ -787,15 +799,15 @@ class DrawerSessionService
         return $movements;
     }
 
-    public function netCashRecordedForOrder(mysqli $conn, int $orderId): float
+    public function netCashRecordedForOrder(mysqli $conn, int $orderId): string
     {
         if ($orderId < 1) {
-            return 0.0;
+            return '0.00';
         }
 
         $tableCheck = $conn->query("SHOW TABLES LIKE 'drawer_movements'");
         if (!$tableCheck instanceof mysqli_result || $tableCheck->num_rows < 1) {
-            return 0.0;
+            return '0.00';
         }
 
         $stmt = $conn->prepare("
@@ -809,11 +821,11 @@ class DrawerSessionService
         $stmt->execute();
         $result = $stmt->get_result();
 
-        $saleCash = 0.0;
-        $refundCash = 0.0;
+        $saleCash = '0.00';
+        $refundCash = '0.00';
         while ($row = $result->fetch_assoc()) {
             $type = (string) ($row['movement_type'] ?? '');
-            $amount = (float) ($row['total_amount'] ?? 0);
+            $amount = CashAmount::normalize($row['total_amount'] ?? '0.00');
             if ($type === 'sale_cash') {
                 $saleCash = $amount;
             } elseif ($type === 'refund_cash') {
@@ -822,7 +834,7 @@ class DrawerSessionService
         }
         $stmt->close();
 
-        return round($saleCash - $refundCash, 3);
+        return CashAmount::subtract($saleCash, $refundCash);
     }
 
     private function finishSession(mysqli $conn, int $sessionId, array $request, string $status, array $context = []): array
@@ -831,30 +843,30 @@ class DrawerSessionService
 
         $this->requireOpenSession($conn, $sessionId);
         $closedBy = $this->positiveInt($request['closed_by'] ?? $request['user_id'] ?? 0, 'CLOSED_BY_REQUIRED');
-        $countedCash = $this->decimal($request['counted_cash'] ?? null, false, 'COUNTED_CASH_INVALID');
+        $countedCash = $this->decimal($request['counted_cash'] ?? null, true, 'COUNTED_CASH_INVALID', true);
         $notes = $this->nullableText($request['notes'] ?? null, 500);
         $closedAt = $this->dateTime($request['closed_at'] ?? null);
 
         $ownsTransaction = posmain_tx_begin_if_needed($conn, posmain_tx_context_in_transaction($context));
 
         try {
-            $expectedBeforeClose = (float) $this->expectedCash($conn, $sessionId);
+            $expectedBeforeClose = $this->expectedCash($conn, $sessionId);
             // Authoritative over/short = counted − pre-close expected (before closing_adjustment).
-            $difference = round((float) $countedCash - $expectedBeforeClose, 3);
+            $difference = CashAmount::subtract($countedCash, $expectedBeforeClose);
 
-            if (abs($difference) > 0.0001) {
+            if (CashAmount::compare($difference, '0.00') !== 0) {
                 $this->recordMovement($conn, $sessionId, [
                     'movement_type' => 'closing_adjustment',
-                    'amount' => $this->formatDecimal($difference),
+                    'amount' => $difference,
                     'created_by' => $closedBy,
                     'reason' => 'shift_close_variance',
                     'sync_config' => $context['sync_config'] ?? $request['sync_config'] ?? null,
                 ]);
             }
 
-            // Post-close expected equals counted (float continuity); difference keeps raw over/short.
+            // Post-close expected equals counted; difference keeps raw over/short.
             $expectedCash = $this->expectedCash($conn, $sessionId);
-            $differenceFormatted = $this->formatDecimal($difference);
+            $differenceFormatted = $difference;
 
             $lockClears = [];
             if ($this->drawerSessionColumnExists($conn, 'open_branch_lock')) {
@@ -895,7 +907,7 @@ class DrawerSessionService
 
             if ($this->drawerSessionColumnExists($conn, 'close_expected_snapshot')
                 && !array_key_exists('skip_close_expected_snapshot', $request)) {
-                $snapshot = $this->formatDecimal($expectedBeforeClose);
+                $snapshot = $expectedBeforeClose;
                 $snapStmt = $conn->prepare('UPDATE drawer_sessions SET close_expected_snapshot = ? WHERE id = ?');
                 $snapStmt->bind_param('si', $snapshot, $sessionId);
                 $snapStmt->execute();
@@ -1198,20 +1210,24 @@ class DrawerSessionService
             throw new InvalidArgumentException($code);
         }
 
-        $amount = (float) $value;
-        if ($positiveOnly && $amount < 0) {
+        try {
+            $amount = CashAmount::normalize($value, !$positiveOnly);
+        } catch (InvalidArgumentException $exception) {
+            throw new InvalidArgumentException($code, 0, $exception);
+        }
+        if ($positiveOnly && CashAmount::compare($amount, '0.00') < 0) {
             throw new InvalidArgumentException($code);
         }
-        if ($positiveOnly && $amount === 0.0 && !$allowZero) {
+        if ($positiveOnly && CashAmount::compare($amount, '0.00') === 0 && !$allowZero) {
             throw new InvalidArgumentException($code);
         }
 
-        return $this->formatDecimal($amount);
+        return $amount;
     }
 
     private function formatDecimal($value): string
     {
-        return number_format((float) $value, 3, '.', '');
+        return CashAmount::normalize($value, true);
     }
 
     private function positiveInt($value, string $code): int

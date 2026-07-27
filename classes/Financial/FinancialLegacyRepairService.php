@@ -2,6 +2,11 @@
 
 require_once __DIR__ . '/../Sync/PosOrderSnapshotBuilder.php';
 require_once __DIR__ . '/../Maintenance/DataRepairRunLedger.php';
+require_once __DIR__ . '/Decimal.php';
+require_once __DIR__ . '/Money.php';
+require_once __DIR__ . '/UnitPrice.php';
+require_once __DIR__ . '/DecimalQuantity.php';
+require_once __DIR__ . '/RoundingPolicy.php';
 
 final class FinancialLegacyRepairService
 {
@@ -47,7 +52,10 @@ final class FinancialLegacyRepairService
             ORDER BY oh.id
         ");
         foreach ($orders as $order) {
-            if (abs((float) $order['fat_net'] - (float) $order['line_net']) > 0.005 || abs((float) $order['fat_tax']) > 0.005) {
+            $headerNet = Money::from((string) $order['fat_net']);
+            $lineNet = Money::from((string) $order['line_net']);
+            $tax = Money::from((string) $order['fat_tax']);
+            if ($headerNet->compare($lineNet) !== 0 || $tax->compare(Money::zero()) !== 0) {
                 $ambiguousOrders[] = $order;
                 continue;
             }
@@ -145,19 +153,30 @@ final class FinancialLegacyRepairService
                 $stmt->close();
             }
             foreach ($plan['snapshot_candidates'] as $row) {
-                $qty = abs((float) $row['qty_out'] - (float) $row['qty_in']);
-                $gross = $qty * (float) $row['price'];
-                $cost = $qty * (float) $row['cost_price'];
+                $qtyIn = DecimalQuantity::from((string) $row['qty_in'])->toString();
+                $qtyOut = DecimalQuantity::from((string) $row['qty_out'])->toString();
+                $qtyDelta = FinancialDecimal::subtract($qtyOut, $qtyIn, DecimalQuantity::SCALE);
+                if (FinancialDecimal::compare($qtyDelta, '0', DecimalQuantity::SCALE) < 0) {
+                    $qtyDelta = FinancialDecimal::subtract('0', $qtyDelta, DecimalQuantity::SCALE);
+                }
+                $qty = DecimalQuantity::from($qtyDelta)->toString();
+                $price = UnitPrice::from((string) $row['price'])->toString();
+                $unitCost = UnitPrice::from((string) $row['cost_price'])->toString();
+                $gross = RoundingPolicy::halfUp(
+                    FinancialDecimal::multiply($qty, $price, 12),
+                    Money::SCALE,
+                    12
+                );
+                $cost = RoundingPolicy::halfUp(
+                    FinancialDecimal::multiply($qty, $unitCost, 12),
+                    UnitPrice::SCALE,
+                    12
+                );
                 $stmt = $conn->prepare("UPDATE fat_details SET posted_qty=?, posted_unit_price=?, posted_line_discount=?, posted_order_discount=0, posted_taxable=?, posted_tax=0, posted_gross=?, posted_net=?, posted_unit_cost=?, posted_total_cost=?, tax_rate_snapshot=0 WHERE id=? AND posted_net IS NULL");
                 $lineId = (int) $row['line_id'];
-                $qtyString = number_format($qty, 6, '.', '');
-                $grossString = number_format($gross, 2, '.', '');
-                $costString = number_format($cost, 6, '.', '');
-                $price = (string) $row['price'];
-                $discount = (string) $row['discount'];
-                $net = (string) $row['det_value'];
-                $unitCost = (string) $row['cost_price'];
-                $stmt->bind_param('ssssssssi', $qtyString, $price, $discount, $net, $grossString, $net, $unitCost, $costString, $lineId);
+                $discount = Money::from((string) $row['discount'])->toString();
+                $net = Money::from((string) $row['det_value'])->toString();
+                $stmt->bind_param('ssssssssi', $qty, $price, $discount, $net, $gross, $net, $unitCost, $cost, $lineId);
                 $stmt->execute();
                 $counts['snapshots'] += $stmt->affected_rows;
                 $stmt->close();

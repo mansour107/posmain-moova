@@ -2,6 +2,7 @@
 
 require_once __DIR__ . '/DTO/InventoryMovementRequest.php';
 require_once __DIR__ . '/InventoryDecimal.php';
+require_once __DIR__ . '/InventoryMovingAverageCostCalculator.php';
 require_once __DIR__ . '/InventoryFeatureFlags.php';
 require_once __DIR__ . '/InventoryItemPolicyService.php';
 require_once __DIR__ . '/NegativeStockSalePolicyService.php';
@@ -385,9 +386,24 @@ FOR UPDATE");
             }
         } elseif (InventoryDecimal::isPositive($request->qtyIn)) {
             $onHand = InventoryDecimal::add($onHand, $request->qtyIn);
-            $averageCost = $this->movingAverageCost($oldOnHand, $averageCost, $request);
+            $averageCost = InventoryMovingAverageCostCalculator::nextAverageCost(
+                $oldOnHand,
+                $averageCost,
+                $request->movementType,
+                $request->qtyIn,
+                $request->qtyOut,
+                $request->unitCost
+            );
         } else {
             $onHand = InventoryDecimal::subtract($onHand, $request->qtyOut);
+            $averageCost = InventoryMovingAverageCostCalculator::nextAverageCost(
+                $oldOnHand,
+                $averageCost,
+                $request->movementType,
+                $request->qtyIn,
+                $request->qtyOut,
+                $request->unitCost
+            );
         }
 
         return [
@@ -396,25 +412,6 @@ FOR UPDATE");
             'qty_available' => InventoryDecimal::subtract($onHand, $reserved),
             'moving_average_cost' => $averageCost,
         ];
-    }
-
-    private function movingAverageCost(string $oldOnHand, string $oldAverageCost, InventoryMovementRequest $request): string
-    {
-        if (!in_array($request->movementType, array_merge(self::REAL_INBOUND_TYPES, ['adjustment']), true)) {
-            return $oldAverageCost;
-        }
-        if (!InventoryDecimal::isPositive($request->qtyIn)) {
-            return $oldAverageCost;
-        }
-        if (InventoryDecimal::compare($oldOnHand, '0') <= 0) {
-            return $request->unitCost;
-        }
-
-        $oldValue = InventoryDecimal::multiply($oldOnHand, $oldAverageCost);
-        $newValue = InventoryDecimal::multiply($request->qtyIn, $request->unitCost);
-        $totalQty = InventoryDecimal::add($oldOnHand, $request->qtyIn);
-
-        return InventoryDecimal::divide(InventoryDecimal::add($oldValue, $newValue), $totalQty);
     }
 
     private function assertNegativePolicy(mysqli $conn, array $newBalance, InventoryMovementRequest $request): bool

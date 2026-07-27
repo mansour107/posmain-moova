@@ -67,6 +67,12 @@ try {
     }
 
     $result = $response['result'] ?? [];
+    if (($result['status'] ?? '') === 'counted_pending_review') {
+        $_SESSION['error_message'] = 'تم تسجيل عد الإغلاق، لكن الشيفت ما زال مفتوحًا حتى يعتمد مستخدم مخول فرق الدرج.';
+        header('Location: pos_barcode.php');
+        exit;
+    }
+
     $variance = round((float) ($result['variance'] ?? 0), 3);
     $matched = !empty($result['matched']) || abs($variance) <= 0.010;
     $totalOrders = (int) ($result['total_orders'] ?? 0);

@@ -40,7 +40,7 @@ try {
     $idB = (int) $b['id'];
     posCustomerServiceAssert($idA > 0 && $idB > 0, 'customers should be created');
 
-    $service->recordOrderPaid($conn, $idB, 50.0);
+    $service->recordOrderPaid($conn, $idB, '50.00');
     $merged = $service->mergeCustomers($conn, $idB, $idA);
     posCustomerServiceAssert((int) $merged['id'] === $idA, 'merge should return target profile');
     posCustomerServiceAssert($service->getProfile($conn, $idB, false) === null, 'source should be soft-deleted');

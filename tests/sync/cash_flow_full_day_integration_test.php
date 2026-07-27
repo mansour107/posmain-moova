@@ -4,6 +4,7 @@ require_once __DIR__ . '/../../includes/session_bootstrap.php';
 require_once __DIR__ . '/../../classes/Sync/SchemaManager.php';
 require_once __DIR__ . '/../../classes/Pos/Service/ShiftSessionService.php';
 require_once __DIR__ . '/../../classes/Pos/Service/PaymentService.php';
+require_once __DIR__ . '/../../classes/Pos/Service/PaymentMethodService.php';
 require_once __DIR__ . '/../../classes/Pos/Service/CashFlowPeriodService.php';
 require_once __DIR__ . '/../../classes/Pos/Service/DrawerSessionService.php';
 
@@ -21,6 +22,14 @@ try {
     $conn->select_db($db);
     cashFlowFullDayCreateSchema($conn);
     (new SyncSchemaManager())->apply($conn);
+    (new PaymentMethodService())->saveMethod($conn, [
+        'code' => 'cash',
+        'name_ar' => 'Cash',
+        'name_en' => 'Cash',
+        'type' => 'cash',
+        'account_id' => 51,
+        'settlement_policy' => 'cash_drawer',
+    ]);
 
     $cashierId = 11;
     $_SESSION = [
@@ -33,11 +42,11 @@ try {
     $drawer = new DrawerSessionService();
     $payment = new PaymentService();
 
-    $opened = $shift->openForCashier($conn, $cashierId, ['opening_cash' => '100.000', 'tenant' => 1, 'branch' => 2]);
+    $opened = $shift->openForCashier($conn, $cashierId, ['opening_cash' => '100.00', 'tenant' => 1, 'branch' => 2]);
     $sessionId = (int) $opened['id'];
     cashFlowFullDayAssert(abs((float) $drawer->expectedCash($conn, $sessionId) - 100.0) < 0.01, 'opening expected cash');
 
-    $payment->recordCashDrawerMovementForPayment($conn, 'cash', 50.0, 201, $cashierId, [
+    $payment->recordCashDrawerMovementForPayment($conn, 'cash', '50.00', 201, $cashierId, [
         'tenant' => 1,
         'branch' => 2,
         'drawer_session_id' => $sessionId,
@@ -45,18 +54,18 @@ try {
     ], $opened, null, 9001);
     cashFlowFullDayAssert(abs((float) $drawer->expectedCash($conn, $sessionId) - 150.0) < 0.01, 'after sale');
 
-    $shift->recordShiftPayIn($conn, $cashierId, ['amount' => 25, 'reason' => 'float top-up']);
+    $shift->recordShiftPayIn($conn, $cashierId, ['amount' => '25.00', 'reason' => 'float top-up']);
     cashFlowFullDayAssert(abs((float) $drawer->expectedCash($conn, $sessionId) - 175.0) < 0.01, 'after payin');
 
-    $shift->recordShiftExpense($conn, $cashierId, ['amount' => 15, 'reason' => 'supplies']);
+    $shift->recordShiftExpense($conn, $cashierId, ['amount' => '15.00', 'reason' => 'supplies']);
     cashFlowFullDayAssert(abs((float) $drawer->expectedCash($conn, $sessionId) - 160.0) < 0.01, 'after payout');
 
-    $shift->recordShiftSafeDrop($conn, $cashierId, ['amount' => 100, 'reason' => 'vault']);
+    $shift->recordShiftSafeDrop($conn, $cashierId, ['amount' => '100.00', 'reason' => 'vault']);
     cashFlowFullDayAssert(abs((float) $drawer->expectedCash($conn, $sessionId) - 60.0) < 0.01, 'after safe drop');
 
     $drawer->recordMovement($conn, $sessionId, [
         'movement_type' => 'no_sale',
-        'amount' => '0.000',
+        'amount' => '0.00',
         'allow_zero_amount' => true,
         'reason' => 'audit open',
         'created_by' => $cashierId,
@@ -65,7 +74,7 @@ try {
 
     $closed = $drawer->closeSession($conn, $sessionId, [
         'closed_by' => $cashierId,
-        'counted_cash' => '65.000',
+        'counted_cash' => '65.00',
     ]);
     cashFlowFullDayAssert(abs((float) $closed['expected_cash'] - 65.0) < 0.01, 'close should absorb variance');
     cashFlowFullDayAssert(abs((float) $closed['difference'] - 5.0) < 0.01, 'difference keeps pre-close over (65-60)');

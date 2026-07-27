@@ -1,5 +1,7 @@
 <?php
 
+require_once __DIR__ . '/../../Financial/Money.php';
+
 class DeliveryZoneService
 {
     public function resolvePostedZone(mysqli $conn, array $request): array
@@ -16,7 +18,7 @@ class DeliveryZoneService
             return [
                 'delivery_zone_id' => $zoneId,
                 'delivery_zone_name' => (string) $zone['name'],
-                'delivery_fee' => (float) $zone['fee'],
+                'delivery_fee' => Money::from($zone['fee'])->toString(),
             ];
         }
 
@@ -27,7 +29,7 @@ class DeliveryZoneService
                 return [
                     'delivery_zone_id' => (int) $zone['id'],
                     'delivery_zone_name' => (string) $zone['name'],
-                    'delivery_fee' => (float) $zone['fee'],
+                    'delivery_fee' => Money::from($zone['fee'])->toString(),
                 ];
             }
         }
@@ -43,7 +45,7 @@ class DeliveryZoneService
         return [
             'delivery_zone_id' => null,
             'delivery_zone_name' => $zoneName,
-            'delivery_fee' => max(0, (float) ($request['delivery_fee'] ?? 0)),
+            'delivery_fee' => Money::from($request['delivery_fee'] ?? '0')->toString(),
         ];
     }
 

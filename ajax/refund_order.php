@@ -44,6 +44,30 @@ try {
     if ($orderId <= 0) {
         throw new InvalidArgumentException('ORDER_ID_REQUIRED');
     }
+    $refundPaymentMethod = trim((string) ($_POST['refund_payment_method'] ?? ''));
+    if ($action === 'refund' && $refundPaymentMethod === '') {
+        throw new InvalidArgumentException('REFUND_TENDER_REQUIRED');
+    }
+    $refundMode = $action === 'refund'
+        ? strtolower(trim((string) ($_POST['refund_mode'] ?? 'full')))
+        : 'full';
+    if (!in_array($refundMode, ['full', 'items', 'amount'], true)) {
+        throw new InvalidArgumentException('REFUND_MODE_INVALID');
+    }
+    $refundLines = null;
+    $refundAmount = null;
+    if ($refundMode === 'items') {
+        $decodedLines = json_decode((string) ($_POST['refund_lines'] ?? ''), true);
+        if (!is_array($decodedLines) || $decodedLines === []) {
+            throw new InvalidArgumentException('REFUND_LINES_REQUIRED');
+        }
+        $refundLines = $decodedLines;
+    } elseif ($refundMode === 'amount') {
+        $refundAmount = trim((string) ($_POST['refund_amount'] ?? ''));
+        if ($refundAmount === '' || !is_numeric($refundAmount) || (float) $refundAmount <= 0) {
+            throw new InvalidArgumentException('REFUND_AMOUNT_INVALID');
+        }
+    }
 
     $idempotencyKey = $idempotencyService->resolveKey($_POST, $_SERVER);
     $idempotencyHash = $idempotencyService->requestHashForPayload($_POST);
@@ -53,8 +77,8 @@ try {
     $conn->begin_transaction();
     $idempotency = $idempotencyService->begin($conn, $scope, $idempotencyKey, $idempotencyHash, [
         'user_id' => $userId,
-        'tenant' => 0,
-        'branch' => 0,
+        'tenant' => (int) ($_SESSION['pos_tenant'] ?? 0),
+        'branch' => (int) ($_SESSION['pos_branch'] ?? 0),
         'stale_after_seconds' => 300,
     ]);
 
@@ -84,21 +108,34 @@ try {
         'order_id' => $orderId,
         'action' => $action,
         'reason' => $_POST['reason'] ?? '',
+        'refund_mode' => $refundMode,
+        'refund_amount' => $refundAmount,
+        'lines' => $refundLines,
         'refund_stock_policy' => $_POST['refund_stock_policy'] ?? '',
+        'refund_payment_method' => $refundPaymentMethod,
+        'refund_external_reference' => $_POST['refund_external_reference'] ?? null,
         'manager_approval_id' => $_POST['manager_approval_id'] ?? null,
+        'drawer_session_id' => $_SESSION['pos_drawer_session_id'] ?? null,
         'idempotency_key' => $idempotencyKey,
     ], [
         'user_id' => $userId,
+        'tenant' => (int) ($_SESSION['pos_tenant'] ?? 0),
+        'branch' => (int) ($_SESSION['pos_branch'] ?? 0),
+        'drawer_session_id' => (int) ($_SESSION['pos_drawer_session_id'] ?? 0),
+        'require_drawer_session' => true,
         'event_source' => $action === 'void' ? 'pos_paid_void' : 'pos_paid_refund',
         'in_transaction' => true,
     ]);
 
     $data = $result['data'] ?? [];
+    $reversalStatus = (string) ($data['reversal_status'] ?? 'full');
     $syncOutbox->recordOrderSnapshot($conn, $orderId, [
-        'event_type' => $action === 'void' ? 'order.voided' : 'order.refunded',
+        'event_type' => $action === 'void'
+            ? 'order.voided'
+            : ($reversalStatus === 'full' ? 'order.refunded' : 'order.partially_refunded'),
         'source_system' => 'pos_paid_reversal',
     ]);
-    if ((int) ($data['table_id'] ?? 0) > 0) {
+    if ($reversalStatus === 'full' && (int) ($data['table_id'] ?? 0) > 0) {
         $syncOutbox->recordTableSnapshot($conn, (int) $data['table_id'], [
             'event_type' => 'table.updated',
             'source_system' => 'pos_paid_reversal',

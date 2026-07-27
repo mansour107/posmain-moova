@@ -8,6 +8,9 @@ require_once __DIR__ . '/../Service/OrderAccountingService.php';
 require_once __DIR__ . '/../Service/DrawerSessionService.php';
 require_once __DIR__ . '/../Service/PaymentMethodService.php';
 require_once __DIR__ . '/../../../classes/Financial/Money.php';
+require_once __DIR__ . '/../../../classes/Financial/DecimalQuantity.php';
+require_once __DIR__ . '/../../../classes/Financial/UnitPrice.php';
+require_once __DIR__ . '/../../../classes/Financial/RoundingPolicy.php';
 require_once __DIR__ . '/../../../classes/Financial/FinancialRefundService.php';
 require_once __DIR__ . '/../Validation/OrderInputValidator.php';
 require_once __DIR__ . '/../Validation/PaymentInputValidator.php';
@@ -30,19 +33,29 @@ class PosOrderController
         }
         $data['idempotency_key'] = $idempotencyKey;
         $data['user_id'] = $userId;
+        $data['order_id'] = (int) ($data['order_id'] ?? $data['original_order_id'] ?? 0);
+        $data['action'] = 'refund';
 
-        $result = (new FinancialRefundService())->createPostedRefund($conn, $data, [
+        $drawerSessionId = session_status() === PHP_SESSION_ACTIVE
+            ? (int) ($_SESSION['pos_drawer_session_id'] ?? 0)
+            : 0;
+        $result = (new PosOrderMutationService())->reversePaidOrder($conn, $data, [
             'user_id' => $userId,
-            'tenant' => 0,
-            'branch' => 0,
+            'tenant' => session_status() === PHP_SESSION_ACTIVE ? (int) ($_SESSION['pos_tenant'] ?? 0) : 0,
+            'branch' => session_status() === PHP_SESSION_ACTIVE ? (int) ($_SESSION['pos_branch'] ?? 0) : 0,
+            'drawer_session_id' => $drawerSessionId,
+            'require_drawer_session' => true,
+            'event_source' => 'pos_api_refund',
         ]);
+        $refundData = $result['data'] ?? [];
+        $replayed = !empty($refundData['replayed']);
 
         return [
-            'http_status' => !empty($result['replayed']) ? 200 : 201,
+            'http_status' => $replayed ? 200 : 201,
             'payload' => [
                 'success' => true,
-                'code' => !empty($result['replayed']) ? 'REFUND_REPLAYED' : 'REFUND_POSTED',
-                'data' => $result,
+                'code' => $replayed ? 'REFUND_REPLAYED' : 'REFUND_POSTED',
+                'data' => $refundData,
                 'request_id' => $idempotencyKey,
             ],
         ];
@@ -54,6 +67,7 @@ class PosOrderController
             throw new InvalidArgumentException('بيانات غير صحيحة');
         }
 
+        $data['idempotency_key'] = $this->requireIdempotencyKey($data, $server);
         $idempotencyScope = (string) ($options['idempotency_scope'] ?? PosOrderMutationService::SCOPE_TABLE_SAVE);
         $sourceSystem = (string) ($options['source_system'] ?? 'pos_table');
         $eventSource = (string) ($options['event_source'] ?? 'pos_table_save');
@@ -83,6 +97,7 @@ class PosOrderController
 
         $posMutationService = new PosOrderMutationService();
         $sideEffects = new OrderMutationSideEffectsService();
+        $sideEffects->preflightSyncIdentity($conn);
         $conn->begin_transaction();
 
         $idempotency = $idempotencyService->begin($conn, $idempotencyScope, $idempotencyKey, $idempotencyHash, [
@@ -133,6 +148,7 @@ class PosOrderController
             'total' => (string) ($data['total'] ?? '0.00'),
             'discount' => (string) ($data['discount'] ?? '0.00'),
             'net' => (string) ($data['net'] ?? '0.00'),
+            'mutation_version' => $data['mutation_version'] ?? $data['order_version'] ?? null,
             'user_id' => $userId,
             'pos_customer_id' => (int) ($data['pos_customer_id'] ?? $data['posCustomerId'] ?? 0) ?: null,
         ], ['user_id' => $userId, 'in_transaction' => true, 'event_source' => $eventSource]);
@@ -167,6 +183,7 @@ class PosOrderController
                     'edit_id' => $orderId,
                     'table_id' => $tableId,
                     'kitchen_revision' => $kitchenRevision,
+                    'mutation_version' => (int) ($saveData['mutation_version'] ?? 0),
                     'cart_saved' => true,
                 ],
             ];
@@ -186,6 +203,7 @@ class PosOrderController
 
     public function createTakeaway(mysqli $conn, array $data, array $server, int $userId): array
     {
+        $data['idempotency_key'] = $this->requireIdempotencyKey($data, $server);
         if ($this->requiresLegacyEditShim($data)) {
             return $this->updateOrder($conn, $data, $server, $userId);
         }
@@ -229,6 +247,7 @@ class PosOrderController
 
     public function createDelivery(mysqli $conn, array $data, array $server, int $userId): array
     {
+        $data['idempotency_key'] = $this->requireIdempotencyKey($data, $server);
         if ($this->requiresLegacyEditShim($data)) {
             return $this->updateOrder($conn, $data, $server, $userId);
         }
@@ -272,6 +291,7 @@ class PosOrderController
 
     public function updateOrder(mysqli $conn, array $data, array $server, int $userId): array
     {
+        $data['idempotency_key'] = $this->requireIdempotencyKey($data, $server);
         $request = $this->normalizeCashierMutationRequest($conn, $data);
         $editId = (int) ($request['edit_id'] ?? $request['edit'] ?? $request['order_id'] ?? 0);
         if ($editId < 1) {
@@ -317,7 +337,10 @@ class PosOrderController
                     (string) ($saveData['order_status'] ?? 'active'),
                     $channel === 'delivery' ? 'pos_cashier_delivery' : 'pos_cashier',
                     'pos_cashier_update',
-                    [],
+                    [
+                        'reason' => $request['reason'] ?? $request['cancellation_reason'] ?? '',
+                        'manager_approval_id' => $request['manager_approval_id'] ?? null,
+                    ],
                     $kitchenRevision
                 );
 
@@ -328,6 +351,7 @@ class PosOrderController
 
     public function freeTable(mysqli $conn, array $data, array $server, int $userId): array
     {
+        $data['idempotency_key'] = $this->requireIdempotencyKey($data, $server);
         $tableId = (int) ($data['table_id'] ?? $data['selected_table_id'] ?? 0);
         if ($tableId < 1) {
             throw new InvalidArgumentException('الرجاء اختيار طاولة');
@@ -336,6 +360,7 @@ class PosOrderController
         $idempotencyService = new IdempotencyService();
         $idempotencyKey = $idempotencyService->resolveKey($data, $server);
         $idempotencyHash = $idempotencyService->requestHashForPayload($data);
+        (new OrderMutationSideEffectsService())->preflightSyncIdentity($conn);
         $conn->begin_transaction();
         try {
 
@@ -413,6 +438,7 @@ class PosOrderController
 
     public function payTable(mysqli $conn, array $data, array $server, int $userId): array
     {
+        $data['idempotency_key'] = $this->requireIdempotencyKey($data, $server);
         try {
             $paymentInput = PaymentInputValidator::validateTablePayment($data);
         } catch (Exception $e) {
@@ -438,6 +464,7 @@ class PosOrderController
         $idempotencyService = new IdempotencyService();
         $idempotencyKey = $idempotencyService->resolveKey($data, $server);
         $idempotencyHash = $idempotencyService->requestHashForPayload($data);
+        (new OrderMutationSideEffectsService())->preflightSyncIdentity($conn);
         $conn->begin_transaction();
 
         $idempotency = $idempotencyService->begin($conn, PosOrderMutationService::SCOPE_TABLE_PAYMENT, $idempotencyKey, $idempotencyHash, [
@@ -563,6 +590,7 @@ class PosOrderController
             'updated_state' => [
                 'order_id' => $orderId,
                 'table_id' => $tableId,
+                'mutation_version' => (int) ($paymentResult['mutation_version'] ?? 0),
             ],
         ];
         $idempotencyService->complete($conn, PosOrderMutationService::SCOPE_TABLE_PAYMENT, $idempotencyKey, $idempotencyHash, $response);
@@ -580,16 +608,17 @@ class PosOrderController
 
     public function splitPayment(mysqli $conn, array $data, array $server, int $userId): array
     {
+        $data['idempotency_key'] = $this->requireIdempotencyKey($data, $server);
         $splitRows = $this->extractSplitPaymentRows($data);
         $tableId = (int) ($data['table_id'] ?? $data['selected_table_id'] ?? 0);
         $orderId = (int) ($data['order_id'] ?? $data['edit_id'] ?? $data['selected_order_id'] ?? 0);
-        $paidAmount = (float) ($data['paid_amount'] ?? $data['paid'] ?? 0);
+        $paidAmount = Money::fromLegacy($data['paid_amount'] ?? $data['paid'] ?? 0);
         $paymentMethod = trim((string) ($data['payment_method'] ?? $data['pos_split_payment_method'] ?? ''));
         if ($paymentMethod === '') {
-            $paymentMethod = (float) ($data['paid_bank'] ?? 0) > 0 ? 'bank' : 'cash';
+            $paymentMethod = Money::fromLegacy($data['paid_bank'] ?? 0)->isPositive() ? 'bank' : 'cash';
         }
 
-        if ($tableId <= 0 || $paidAmount <= 0 || !$splitRows) {
+        if ($tableId <= 0 || !$paidAmount->isPositive() || !$splitRows) {
             throw new InvalidArgumentException('بيانات السداد المقسم غير صحيحة');
         }
 
@@ -597,6 +626,7 @@ class PosOrderController
         $idempotencyService = new IdempotencyService();
         $idempotencyKey = $idempotencyService->resolveKey($data, $server);
         $idempotencyHash = $idempotencyService->requestHashForPayload($data);
+        (new OrderMutationSideEffectsService())->preflightSyncIdentity($conn);
         $conn->begin_transaction();
 
         $idempotency = $idempotencyService->begin($conn, PosOrderMutationService::SCOPE_SPLIT_PAYMENT, $idempotencyKey, $idempotencyHash, [
@@ -641,7 +671,7 @@ class PosOrderController
                 'order_id' => $orderId,
                 'table_id' => $tableId,
                 'items' => $resolvedItems,
-                'paid_amount' => $paidAmount,
+                'paid_amount' => $paidAmount->toString(),
                 'payment_method' => $paymentMethod,
             ]);
         } catch (Exception $e) {
@@ -652,7 +682,7 @@ class PosOrderController
         $originalOrderId = (int) ($data['order_id'] ?? 0);
         $tableId = (int) ($data['table_id'] ?? 0);
         $rawItems = is_array($data['items'] ?? null) ? $data['items'] : [];
-        $paidAmount = (float) ($data['paid_amount'] ?? 0);
+        $paidAmount = (string) ($data['paid_amount'] ?? '0.00');
         $paymentMethod = trim((string) ($data['payment_method'] ?? 'cash'));
 
         $splitEnvelope = $posMutationService->splitTablePayment($conn, [
@@ -671,7 +701,7 @@ class PosOrderController
         $splitData = $splitEnvelope['data'] ?? [];
         $newHeadId = (int) ($splitData['new_invoice_id'] ?? 0);
         $splitGroupId = (string) ($splitData['split_group_id'] ?? '');
-        $remainingTotal = (float) ($splitData['remaining_total'] ?? 0);
+        $remainingTotal = Money::fromLegacy($splitData['remaining_total'] ?? '0.00')->toString();
         $activeTableOrderId = $splitData['active_order_id'] ?? null;
 
         (new OrderMutationSideEffectsService())->recordSplitPayment(
@@ -692,6 +722,9 @@ class PosOrderController
             'invoice_id' => $newHeadId,
             'split_group_id' => $splitGroupId,
             'remaining_total' => $remainingTotal,
+            'active_order_id' => $activeTableOrderId !== null ? (int) $activeTableOrderId : null,
+            'original_mutation_version' => (int) ($splitData['original_mutation_version'] ?? 0),
+            'mutation_version' => (int) ($splitData['mutation_version'] ?? 0),
             'request_id' => $idempotencyKey,
             'print_url' => $newHeadId > 0 ? 'print/receipt.php?id=' . $newHeadId : null,
             'redirect_url' => 'pos_barcode.php',
@@ -719,14 +752,19 @@ class PosOrderController
             throw new InvalidArgumentException('رقم الطاولة مطلوب');
         }
 
+        $cofeOrderId = trim((string) ($data['cofeOrderId'] ?? $data['cofe_order_id'] ?? ''));
+        if ($cofeOrderId === '') {
+            $cofeOrderId = $idempotencyKey;
+        }
+
         $orderItems = [];
-        foreach ($cofeItems as $cofeItem) {
+        foreach ($cofeItems as $cofeIndex => $cofeItem) {
             if (!is_array($cofeItem)) {
                 continue;
             }
             $cofeItemId = (string) ($cofeItem['itemId'] ?? '');
-            $qty = (float) ($cofeItem['qty'] ?? 1);
-            if ($qty <= 0 || $cofeItemId === '') {
+            $qty = DecimalQuantity::from($cofeItem['qty'] ?? 1)->toString();
+            if (FinancialDecimal::compare($qty, '0', DecimalQuantity::SCALE) <= 0 || $cofeItemId === '') {
                 continue;
             }
 
@@ -747,11 +785,27 @@ class PosOrderController
                 throw new InvalidArgumentException("الصنف رقم {$cofeItemId} غير موجود في النظام");
             }
 
+            $externalLineId = trim((string) (
+                $cofeItem['externalLineId']
+                ?? $cofeItem['external_line_id']
+                ?? $cofeItem['lineId']
+                ?? $cofeItem['line_id']
+                ?? ''
+            ));
+            if ($externalLineId === '') {
+                $externalLineId = 'line:' . (int) $cofeIndex . ':item:' . (int) $item['id'];
+            }
+
             $orderItems[] = [
                 'id' => (int) $item['id'],
                 'qty' => $qty,
-                'price' => (float) $item['price1'],
-                'discount' => 0,
+                'price' => UnitPrice::from((string) $item['price1'])->toString(),
+                'discount' => '0.000000',
+                'external_line_id' => $externalLineId,
+                'source_order_uuid' => $cofeOrderId,
+                'source_line_uuid' => substr('cofe:' . $externalLineId, 0, 128),
+                'source_channel' => 'cofe',
+                'modifiers' => is_array($cofeItem['modifiers'] ?? null) ? $cofeItem['modifiers'] : [],
             ];
         }
 
@@ -760,9 +814,12 @@ class PosOrderController
         }
 
         $accounts = posmain_resolve_pos_invoice_accounts($conn, posmain_load_pos_settings_row($conn), []);
-        $total = 0.0;
+        $total = Money::zero();
         foreach ($orderItems as $line) {
-            $total += (float) $line['qty'] * (float) $line['price'];
+            $lineTotal = RoundingPolicy::halfUp(
+                FinancialDecimal::multiply($line['qty'], $line['price'], UnitPrice::SCALE)
+            );
+            $total = $total->add(Money::from($lineTotal));
         }
 
         $payload = [
@@ -773,9 +830,9 @@ class PosOrderController
             'emp_id' => (int) ($accounts['emp_id'] ?? 0),
             'fund_id' => (int) ($accounts['fund_id'] ?? 0),
             'items' => $orderItems,
-            'total' => $total,
-            'discount' => 0,
-            'net' => $total,
+            'total' => $total->toString(),
+            'discount' => '0.00',
+            'net' => $total->toString(),
             'idempotency_key' => $idempotencyKey,
         ];
 
@@ -822,6 +879,7 @@ class PosOrderController
         $idempotencyService = new IdempotencyService();
         $idempotencyKey = $idempotencyService->resolveKey($data, $server);
         $idempotencyHash = $idempotencyService->requestHashForPayload($data);
+        (new OrderMutationSideEffectsService())->preflightSyncIdentity($conn);
         $conn->begin_transaction();
 
         $idempotency = $idempotencyService->begin($conn, $scope, $idempotencyKey, $idempotencyHash, [
@@ -857,6 +915,11 @@ class PosOrderController
             $conn->rollback();
             throw $exception;
         }
+    }
+
+    private function requireIdempotencyKey(array $data, array $server): string
+    {
+        return (new IdempotencyService())->resolveKey($data, $server);
     }
 
     private function mapIdempotencyGate(mysqli $conn, array $idempotency, string $idempotencyKey): ?array
@@ -918,9 +981,9 @@ class PosOrderController
             foreach ($data['itmname'] as $index => $itemId) {
                 $items[] = [
                     'id' => (int) $itemId,
-                    'qty' => (float) ($qtyFields[$index] ?? 1),
-                    'price' => (float) ($priceFields[$index] ?? 0),
-                    'discount' => (float) ($discFields[$index] ?? 0),
+                    'qty' => DecimalQuantity::from($qtyFields[$index] ?? 1)->toString(),
+                    'price' => UnitPrice::from($priceFields[$index] ?? 0)->toString(),
+                    'discount' => UnitPrice::from($discFields[$index] ?? 0)->toString(),
                 ];
             }
         }
@@ -931,9 +994,9 @@ class PosOrderController
 
         $pricingInput = [
             'items' => $items,
-            'total' => (float) ($data['headtotal'] ?? $data['total'] ?? 0),
-            'discount' => (float) ($data['headdisc'] ?? $data['discount'] ?? 0),
-            'net' => (float) ($data['headnet'] ?? $data['net'] ?? 0),
+            'total' => Money::from($data['headtotal'] ?? $data['total'] ?? 0)->toString(),
+            'discount' => Money::from($data['headdisc'] ?? $data['discount'] ?? 0)->toString(),
+            'net' => Money::from($data['headnet'] ?? $data['net'] ?? 0)->toString(),
             'manager_approval_id' => $data['manager_approval_id'] ?? null,
             'price_override_approval_id' => $data['price_override_approval_id'] ?? null,
         ];
@@ -962,9 +1025,9 @@ class PosOrderController
                     continue;
                 }
                 $data['itmname'][] = (int) ($item['id'] ?? $item['item_id'] ?? 0);
-                $data['itmqty'][] = (float) ($item['qty'] ?? 1);
-                $data['itmprice'][] = (float) ($item['price'] ?? 0);
-                $data['itmdisc'][] = (float) ($item['discount'] ?? 0);
+                $data['itmqty'][] = DecimalQuantity::from($item['qty'] ?? 1)->toString();
+                $data['itmprice'][] = UnitPrice::from($item['price'] ?? 0)->toString();
+                $data['itmdisc'][] = UnitPrice::from($item['discount'] ?? 0)->toString();
                 $data['itmnote'][] = (string) ($item['note'] ?? '');
             }
         }
@@ -977,7 +1040,7 @@ class PosOrderController
             'acc2_id' => (int) ($data['acc2_id'] ?? 0),
             'payment_fund_id' => (int) ($data['payment_fund_id'] ?? $data['fund_id'] ?? 0),
             'payment_bank_id' => (int) ($data['payment_bank_id'] ?? 0),
-            'paid_bank' => (float) ($data['paid_bank'] ?? 0),
+            'paid_bank' => Money::from($data['paid_bank'] ?? 0)->toString(),
         ]);
 
         $data['store_id'] = (int) $resolved['store_id'];
@@ -1026,9 +1089,9 @@ class PosOrderController
             'emp_id' => (int) ($normalized['emp_id'] ?? 0),
             'fund_id' => (int) ($normalized['fund_id'] ?? 0),
             'items' => $items,
-            'total' => (float) ($normalized['headtotal'] ?? $normalized['total'] ?? 0),
-            'discount' => (float) ($normalized['headdisc'] ?? $normalized['discount'] ?? 0),
-            'net' => (float) ($normalized['headnet'] ?? $normalized['net'] ?? 0),
+            'total' => Money::from($normalized['headtotal'] ?? $normalized['total'] ?? 0)->toString(),
+            'discount' => Money::from($normalized['headdisc'] ?? $normalized['discount'] ?? 0)->toString(),
+            'net' => Money::from($normalized['headnet'] ?? $normalized['net'] ?? 0)->toString(),
         ]);
         $saveRequest = (new OrderPricingService())->resolveTableSaveRequest($conn, $saveRequest, ['user_id' => $userId]);
 
@@ -1040,9 +1103,9 @@ class PosOrderController
             'emp_id' => (int) ($saveRequest['emp_id'] ?? 0),
             'fund_id' => (int) ($saveRequest['fund_id'] ?? 0),
             'items' => is_array($saveRequest['items'] ?? null) ? $saveRequest['items'] : [],
-            'total' => (float) ($saveRequest['total'] ?? 0),
-            'discount' => (float) ($saveRequest['discount'] ?? 0),
-            'net' => (float) ($saveRequest['net'] ?? 0),
+            'total' => Money::from($saveRequest['total'] ?? 0)->toString(),
+            'discount' => Money::from($saveRequest['discount'] ?? 0)->toString(),
+            'net' => Money::from($saveRequest['net'] ?? 0)->toString(),
             'user_id' => $userId,
             'pos_customer_id' => (int) ($data['pos_customer_id'] ?? $data['posCustomerId'] ?? 0) ?: null,
         ], ['user_id' => $userId, 'in_transaction' => true, 'event_source' => 'pos_table_pay_save']);
@@ -1092,9 +1155,9 @@ class PosOrderController
             }
             $items[] = [
                 'id' => $itemId,
-                'qty' => (float) ($qtyFields[$index] ?? 1),
-                'price' => (float) ($priceFields[$index] ?? 0),
-                'discount' => (float) ($discFields[$index] ?? 0),
+                'qty' => DecimalQuantity::from($qtyFields[$index] ?? 1)->toString(),
+                'price' => UnitPrice::from($priceFields[$index] ?? 0)->toString(),
+                'discount' => UnitPrice::from($discFields[$index] ?? 0)->toString(),
                 'note' => (string) ($noteFields[$index] ?? ''),
             ];
         }
@@ -1108,9 +1171,9 @@ class PosOrderController
         $orderId = (int) ($data['order_id'] ?? 0);
         $proId = (int) ($data['pro_id'] ?? 0);
         $submit = (string) ($request['submit'] ?? $request['submit_action'] ?? 'cash');
-        $paid = (float) ($request['paid_cash'] ?? 0) + (float) ($request['paid_bank'] ?? 0);
+        $paid = Money::from($request['paid_cash'] ?? 0)->add(Money::from($request['paid_bank'] ?? 0));
         if (isset($request['paid'])) {
-            $paid = (float) $request['paid'];
+            $paid = Money::from($request['paid']);
         }
 
         $message = $channel === 'delivery'
@@ -1132,13 +1195,14 @@ class PosOrderController
                 'edit_id' => $orderId,
                 'pro_id' => $proId,
                 'kitchen_revision' => (int) ($data['kitchen_revision'] ?? 0),
+                'mutation_version' => (int) ($data['mutation_version'] ?? 0),
                 'cart_saved' => true,
             ],
         ];
 
         if ($submit === 'print_receipt' && $orderId > 0) {
             $payload['print_url'] = 'print/receipt.php?id=' . $orderId;
-        } elseif ($submit === 'cash' && $paid > 0) {
+        } elseif ($submit === 'cash' && $paid->isPositive()) {
             $payload['print_url'] = 'print/receipt.php?id=' . $orderId;
         }
 
@@ -1230,9 +1294,9 @@ class PosOrderController
             }
             $cartItems[] = [
                 'id' => $itemId,
-                'qty' => (float) ($item['qty'] ?? 1),
-                'price' => (float) ($item['price'] ?? 0),
-                'discount' => (float) ($item['discount'] ?? 0),
+                'qty' => DecimalQuantity::from($item['qty'] ?? 1)->toString(),
+                'price' => UnitPrice::from($item['price'] ?? 0)->toString(),
+                'discount' => UnitPrice::from($item['discount'] ?? 0)->toString(),
                 'note' => (string) ($item['note'] ?? ''),
             ];
         }
@@ -1257,9 +1321,9 @@ class PosOrderController
             }
             $cartItems[] = [
                 'id' => $itemId,
-                'qty' => (float) ($qtyFields[$index] ?? 1),
-                'price' => (float) ($priceFields[$index] ?? 0),
-                'discount' => (float) ($discFields[$index] ?? 0),
+                'qty' => DecimalQuantity::from($qtyFields[$index] ?? 1)->toString(),
+                'price' => UnitPrice::from($priceFields[$index] ?? 0)->toString(),
+                'discount' => UnitPrice::from($discFields[$index] ?? 0)->toString(),
                 'note' => (string) ($noteFields[$index] ?? ''),
             ];
         }
@@ -1326,7 +1390,7 @@ class PosOrderController
 
             $mapped[] = [
                 'detail_id' => $detailId,
-                'qty' => (float) ($row['qty'] ?? $row['quantity'] ?? 0),
+                'qty' => DecimalQuantity::from($row['qty'] ?? $row['quantity'] ?? 0)->toString(),
             ];
         }
 
@@ -1359,7 +1423,7 @@ class PosOrderController
                 $normalized[] = [
                     'detail_id' => $detailId,
                     'qty' => isset($row['qty']) || isset($row['quantity'])
-                        ? (float) ($row['qty'] ?? $row['quantity'] ?? 0)
+                        ? DecimalQuantity::from($row['qty'] ?? $row['quantity'] ?? 0)->toString()
                         : null,
                 ];
             }
@@ -1386,9 +1450,9 @@ class PosOrderController
             'emp_id' => (int) ($saveData['emp_id'] ?? 0),
             'fund_id' => (int) ($saveData['fund_id'] ?? 0),
             'items' => $cartItems,
-            'total' => (float) ($saveData['total'] ?? 0),
-            'discount' => (float) ($saveData['discount'] ?? 0),
-            'net' => (float) ($saveData['net'] ?? 0),
+            'total' => Money::from($saveData['total'] ?? 0)->toString(),
+            'discount' => Money::from($saveData['discount'] ?? 0)->toString(),
+            'net' => Money::from($saveData['net'] ?? 0)->toString(),
             'user_id' => $userId,
             'pos_customer_id' => (int) ($saveData['pos_customer_id'] ?? $data['pos_customer_id'] ?? 0) ?: null,
         ], ['user_id' => $userId, 'in_transaction' => true, 'event_source' => 'pos_split_payment_save']);

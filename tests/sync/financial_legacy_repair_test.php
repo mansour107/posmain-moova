@@ -47,7 +47,7 @@ try {
     ");
     $conn->query("
         INSERT INTO fat_details (id, fatid, qty_in, qty_out, price, discount, det_value, cost_price, isdeleted, posted_net) VALUES
-        (1001, 100, 0, 1, 50, 0, 50, 12, 0, NULL),
+        (1001, 100, 0, 0.333333, 150, 0, 50, 12.345678, 0, NULL),
         (1002, 101, 0, 1, 30, 0, 30, 8, 0, 30),
         (1003, 102, 0, 1, 20, 0, 20, 5, 0, NULL)
     ");
@@ -71,6 +71,11 @@ try {
     financialRepairAssert((int) $conn->query('SELECT COUNT(*) AS c FROM order_payments WHERE order_id = 100')->fetch_assoc()['c'] === 1, 'cash payment must be reconstructed once');
     financialRepairAssert((int) $conn->query('SELECT COUNT(*) AS c FROM order_payments WHERE order_id IN (101,102)')->fetch_assoc()['c'] === 0, 'card and active unpaid orders must remain untouched');
     financialRepairAssert((string) $conn->query('SELECT posted_net FROM fat_details WHERE id = 1001')->fetch_assoc()['posted_net'] === '50.00', 'finalized line snapshot must be backfilled');
+    $snapshot = $conn->query('SELECT posted_qty, posted_gross, posted_unit_cost, posted_total_cost FROM fat_details WHERE id = 1001')->fetch_assoc();
+    financialRepairAssert((string) $snapshot['posted_qty'] === '0.333333', 'snapshot quantity must preserve exact six-decimal quantity');
+    financialRepairAssert((string) $snapshot['posted_gross'] === '50.00', 'snapshot gross must use exact decimal multiplication at currency precision');
+    financialRepairAssert((string) $snapshot['posted_unit_cost'] === '12.345678', 'snapshot unit cost must preserve the immutable six-decimal cost');
+    financialRepairAssert((string) $snapshot['posted_total_cost'] === '4.115222', 'snapshot total cost must use exact six-decimal multiplication');
     financialRepairAssert((string) $conn->query('SELECT posted_net FROM fat_details WHERE id = 1003')->fetch_assoc()['posted_net'] === '', 'active unpaid line must remain outside repair');
     financialRepairAssert((int) $conn->query("SELECT is_active FROM payment_methods WHERE code = 'P6-DEMO-CASH'")->fetch_assoc()['is_active'] === 0, 'unused demo tender must be deactivated');
 

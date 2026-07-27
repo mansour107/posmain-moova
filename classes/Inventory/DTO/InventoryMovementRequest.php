@@ -29,6 +29,7 @@ class InventoryMovementRequest
     public string $idempotencyKey;
     public string $payloadHash;
     public array $metadata;
+    public ?int $reversedMovementId;
     public ?int $createdBy;
 
     private function __construct(array $data)
@@ -63,6 +64,9 @@ class InventoryMovementRequest
         $this->metadata = is_array($data['metadata'] ?? null)
             ? $data['metadata']
             : (is_array($data['metadata_json'] ?? null) ? $data['metadata_json'] : []);
+        $this->reversedMovementId = $this->nullablePositiveInt(
+            $data['reversed_movement_id'] ?? $data['reversedMovementId'] ?? null
+        );
         $this->createdBy = $this->nullablePositiveInt($data['created_by'] ?? $data['createdBy'] ?? null);
         $this->payloadHash = trim((string) ($data['payload_hash'] ?? $data['payloadHash'] ?? ''));
         if ($this->payloadHash === '') {
@@ -105,6 +109,7 @@ class InventoryMovementRequest
             'idempotency_key' => $this->idempotencyKey,
             'payload_hash' => $this->payloadHash,
             'metadata_json' => $this->metadataJson(),
+            'reversed_movement_id' => $this->reversedMovementId,
             'created_by' => $this->createdBy,
         ];
     }
@@ -185,6 +190,7 @@ class InventoryMovementRequest
             'unit_cost' => $this->unitCost,
             'total_cost' => $this->totalCost,
             'metadata' => $this->metadata,
+            'reversed_movement_id' => $this->reversedMovementId,
         ];
     }
 

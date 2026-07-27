@@ -158,6 +158,9 @@ if (!function_exists('pos_api_dispatch_exception_payload')) {
                 'USER_ID_REQUIRED',
                 'IDEMPOTENCY_REQUIRED',
                 'ORDER_ID_REQUIRED',
+                'DELIVERY_ZONE_INVALID',
+                'MUTATION_VERSION_REQUIRED',
+                'MUTATION_VERSION_INVALID',
             ], true)
                 ? $e->getMessage()
                 : 'VALIDATION_FAILED';
@@ -180,6 +183,19 @@ if (!function_exists('pos_api_dispatch_exception_payload')) {
         }
 
         if ($e instanceof RuntimeException) {
+            if (
+                str_starts_with($e->getMessage(), 'KITCHEN_SNAPSHOT_')
+                || str_starts_with($e->getMessage(), 'KDS_PREPARATION_SNAPSHOT_')
+            ) {
+                return [
+                    'http_status' => 422,
+                    'payload' => [
+                        'success' => false,
+                        'code' => 'KITCHEN_TICKET_INCOMPLETE',
+                        'message' => 'تعذر إرسال تذكرة المطبخ كاملة. راجع الصنف وإضافاته وتعليمات التحضير ثم أعد المحاولة.',
+                    ],
+                ];
+            }
             if ($e instanceof ManagerApprovalRequiredException || $e->getMessage() === 'MANAGER_APPROVAL_REQUIRED') {
                 $permissionKey = $e instanceof ManagerApprovalRequiredException ? $e->permissionKey() : '';
                 return [
@@ -210,6 +226,27 @@ if (!function_exists('pos_api_dispatch_exception_payload')) {
                         'success' => false,
                         'code' => 'IDEMPOTENCY_CONFLICT',
                         'message' => 'تم استخدام نفس مفتاح الطلب مع بيانات مختلفة',
+                    ],
+                ];
+            }
+            if ($e->getMessage() === 'STALE_ORDER_VERSION') {
+                return [
+                    'http_status' => 409,
+                    'payload' => [
+                        'success' => false,
+                        'code' => 'STALE_ORDER_VERSION',
+                        'message' => 'تم تعديل الطلب من جهاز آخر. أعد تحميل الطلب قبل الحفظ.',
+                        'reload_required' => true,
+                    ],
+                ];
+            }
+            if ($e->getMessage() === 'MUTATION_VERSION_SCHEMA_REQUIRED') {
+                return [
+                    'http_status' => 503,
+                    'payload' => [
+                        'success' => false,
+                        'code' => 'MUTATION_VERSION_SCHEMA_REQUIRED',
+                        'message' => 'مخطط حماية تعديلات الطلبات غير جاهز. أوقف عمليات البيع وشغّل الترحيلات المطلوبة.',
                     ],
                 ];
             }

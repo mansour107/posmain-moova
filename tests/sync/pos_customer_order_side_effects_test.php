@@ -65,22 +65,51 @@ try {
     $conn->query("UPDATE ot_head SET paid_amount = 100, payment_status = 'paid' WHERE id = 5001");
     $rollup2 = $sideEffects->applyPaymentRollup($conn, 5001);
     posCrmSideEffectsAssert($rollup2['applied'] === true, 'first paid rollup should apply');
-    posCrmSideEffectsAssert(abs($rollup2['paid_delta'] - 100.0) < 0.001, 'paid delta should be 100');
+    posCrmSideEffectsAssert($rollup2['paid_delta'] === '100.00', 'paid delta should be 100.00');
 
     $profile = $customerService->getProfile($conn, $customerId, true);
     posCrmSideEffectsAssert((int) ($profile['orders_count'] ?? 0) === 1, 'orders_count should be 1 after first paid');
-    posCrmSideEffectsAssert(abs((float) ($profile['lifetime_paid'] ?? 0) - 100.0) < 0.001, 'lifetime_paid should be 100');
+    posCrmSideEffectsAssert(($profile['lifetime_paid'] ?? '') === '100.00', 'lifetime_paid should be 100.00');
 
     $rollup3 = $sideEffects->applyPaymentRollup($conn, 5001);
     posCrmSideEffectsAssert($rollup3['applied'] === false, 'second rollup should be idempotent');
 
     $profileAfter = $customerService->getProfile($conn, $customerId, true);
     posCrmSideEffectsAssert((int) ($profileAfter['orders_count'] ?? 0) === 1, 'orders_count should stay 1 after duplicate rollup');
-    posCrmSideEffectsAssert(abs((float) ($profileAfter['lifetime_paid'] ?? 0) - 100.0) < 0.001, 'lifetime_paid should stay 100');
+    posCrmSideEffectsAssert(($profileAfter['lifetime_paid'] ?? '') === '100.00', 'lifetime_paid should stay 100.00');
 
     $rebuilt = $sideEffects->rebuildCustomerRollups($conn, $customerId);
     posCrmSideEffectsAssert((int) ($rebuilt['orders_count'] ?? 0) === 1, 'rebuild should preserve orders_count');
-    posCrmSideEffectsAssert(abs((float) ($rebuilt['lifetime_paid'] ?? 0) - 100.0) < 0.001, 'rebuild should preserve lifetime_paid');
+    posCrmSideEffectsAssert(($rebuilt['lifetime_paid'] ?? '') === '100.00', 'rebuild should preserve lifetime_paid');
+
+    $conn->query("INSERT INTO credit_notes (
+        uuid, tenant, branch, business_day, original_order_id, customer_account_id,
+        total_amount, reason, status, created_by
+    ) VALUES (
+        '50010000-0000-4000-8000-000000000001', 0, 0, CURDATE(), 5001, 1,
+        40.00, 'partial refund', 'posted', 7
+    )");
+    $partialRefresh = $sideEffects->refreshCustomerRollupForOrder($conn, 5001);
+    posCrmSideEffectsAssert($partialRefresh['applied'] === true, 'refund should refresh linked customer rollup');
+    $partialProfile = $customerService->getProfile($conn, $customerId, true);
+    posCrmSideEffectsAssert(($partialProfile['lifetime_paid'] ?? '') === '60.00', 'partial refund should reduce lifetime paid');
+    posCrmSideEffectsAssert((int) ($partialProfile['orders_count'] ?? 0) === 1, 'partial refund should preserve historical order count');
+
+    $conn->query("INSERT INTO credit_notes (
+        uuid, tenant, branch, business_day, original_order_id, customer_account_id,
+        total_amount, reason, status, created_by
+    ) VALUES (
+        '50010000-0000-4000-8000-000000000002', 0, 0, CURDATE(), 5001, 1,
+        60.00, 'remaining refund', 'posted', 7
+    )");
+    $conn->query("UPDATE ot_head SET payment_status = 'refunded' WHERE id = 5001");
+    $fullRefresh = $sideEffects->refreshCustomerRollupForOrder($conn, 5001);
+    $fullProfile = $customerService->getProfile($conn, $customerId, true);
+    posCrmSideEffectsAssert($fullRefresh['applied'] === true, 'full refund should refresh linked customer rollup');
+    posCrmSideEffectsAssert(($fullProfile['lifetime_paid'] ?? '') === '0.00', 'full refund should reduce lifetime paid to zero');
+    posCrmSideEffectsAssert((int) ($fullProfile['orders_count'] ?? 0) === 1, 'full refund should preserve original order history');
+    $live = $sideEffects->liveStatsFromFulfillment($conn, $customerId);
+    posCrmSideEffectsAssert(($live['lifetime_paid'] ?? '') === '0.00', 'live customer stats should use posted credit notes');
 
     echo "pos-customer-order-side-effects-ok db={$db}\n";
 } finally {

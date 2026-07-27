@@ -59,12 +59,25 @@ final class ErpUnitConversionAuditService
 
     public function findRawFactorMovementMismatches(mysqli $conn, int $limit = 200): array
     {
+        $unpaidDraftPredicate = $this->canResolveOrderSettlement($conn)
+            ? " AND NOT EXISTS (
+                SELECT 1
+                FROM ot_head oh
+                WHERE oh.id = fd.fatid
+                  AND LOWER(COALESCE(oh.payment_status, 'unpaid')) IN ('unpaid', 'partial')
+                  AND LOWER(COALESCE(oh.invoice_status, '')) = 'draft'
+                  AND LOWER(COALESCE(oh.order_status, '')) IN ('draft', 'active')
+                  AND COALESCE(oh.closed, 0) = 0
+                  AND COALESCE(oh.isdeleted, 0) = 0
+            )"
+            : '';
         $stmt = $conn->prepare("
             SELECT fd.id, fd.fatid, fd.item_id, fd.u_val, fd.qty_in, fd.qty_out, fd.fat_tybe
             FROM fat_details fd
             WHERE COALESCE(fd.isdeleted, 0) = 0
               AND fd.fat_tybe IN (3, 4, 9, 10, 11)
               AND fd.qty_out > 0
+              {$unpaidDraftPredicate}
             ORDER BY fd.id DESC
             LIMIT ?
         ");
@@ -92,6 +105,37 @@ final class ErpUnitConversionAuditService
         }
 
         return $mismatches;
+    }
+
+    private function canResolveOrderSettlement(mysqli $conn): bool
+    {
+        foreach ([
+            ['fat_details', 'fatid'],
+            ['ot_head', 'id'],
+            ['ot_head', 'payment_status'],
+            ['ot_head', 'invoice_status'],
+            ['ot_head', 'order_status'],
+            ['ot_head', 'closed'],
+            ['ot_head', 'isdeleted'],
+        ] as [$table, $column]) {
+            $stmt = $conn->prepare("
+                SELECT 1
+                FROM information_schema.columns
+                WHERE table_schema = DATABASE()
+                  AND table_name = ?
+                  AND column_name = ?
+                LIMIT 1
+            ");
+            $stmt->bind_param('ss', $table, $column);
+            $stmt->execute();
+            $exists = (bool) $stmt->get_result()->fetch_assoc();
+            $stmt->close();
+            if (!$exists) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private function classifyRow(array $row, bool $hasSwap): string

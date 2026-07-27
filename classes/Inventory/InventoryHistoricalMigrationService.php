@@ -1,6 +1,7 @@
 <?php
 
 require_once __DIR__ . '/InventoryDecimal.php';
+require_once __DIR__ . '/InventoryMovingAverageCostCalculator.php';
 require_once __DIR__ . '/InventoryFeatureFlags.php';
 require_once __DIR__ . '/InventoryLedgerService.php';
 require_once __DIR__ . '/../../includes/pos_default_accounts.php';
@@ -8,7 +9,7 @@ require_once __DIR__ . '/../../includes/pos_operational_store.php';
 
 class InventoryHistoricalMigrationService
 {
-    private const REVIEWED_MOVEMENT_TYPES = ['purchase', 'purchase_return', 'sale_direct', 'adjustment', 'refund_reversal', 'opening_balance'];
+    private const REVIEWED_MOVEMENT_TYPES = ['purchase', 'purchase_return', 'sale_direct', 'reservation', 'adjustment', 'refund_reversal', 'opening_balance'];
 
     public function migrationPlan(mysqli $conn, array $filters = []): array
     {
@@ -166,8 +167,25 @@ class InventoryHistoricalMigrationService
             return 0;
         }
 
-        $conditions = ['COALESCE(fd.isdeleted, 0) = 0', 'im.id IS NULL'];
+        $conditions = [
+            'NOT EXISTS (
+                SELECT 1
+                FROM inventory_movements existing_im
+                WHERE existing_im.idempotency_key IN (
+                    CONCAT(\'migration:fat_details:\', fd.id, \':v1\'),
+                    CONCAT(\'migration:fat_details:\', fd.id, \':reviewed:v1\')
+                )
+                   OR (
+                       existing_im.fat_detail_id = fd.id
+                       AND existing_im.qty_in = fd.qty_in
+                       AND existing_im.qty_out = fd.qty_out
+                   )
+            )',
+        ];
         $params = [];
+        if ($this->columnExists($conn, 'fat_details', 'isdeleted')) {
+            $conditions[] = 'COALESCE(fd.isdeleted, 0) = 0';
+        }
         if (isset($filters['pos_tenant']) && (int) $filters['pos_tenant'] >= 0 && $this->columnExists($conn, 'fat_details', 'tenant')) {
             $conditions[] = 'fd.tenant = ?';
             $params[] = (int) $filters['pos_tenant'];
@@ -184,13 +202,30 @@ class InventoryHistoricalMigrationService
             $conditions[] = 'fd.item_id = ?';
             $params[] = $itemId;
         }
+        if (($minFatDetailId = $this->positiveInt($filters['min_fat_detail_id'] ?? null)) > 0) {
+            $conditions[] = 'fd.id > ?';
+            $params[] = $minFatDetailId;
+        }
+        if ($this->tableExists($conn, 'myitems') && $this->columnExists($conn, 'myitems', 'track_stock')) {
+            $conditions[] = 'COALESCE(mi.track_stock, 1) = 1';
+        }
+        $reviewedSkipIds = [];
+        foreach ($this->reviewedDecisionMap($filters) as $fatDetailId => $decision) {
+            if (($decision['action'] ?? '') === 'skip') {
+                $reviewedSkipIds[] = (int) $fatDetailId;
+            }
+        }
+        if ($reviewedSkipIds) {
+            $conditions[] = 'fd.id NOT IN (' . implode(',', array_fill(0, count($reviewedSkipIds), '?')) . ')';
+            array_push($params, ...$reviewedSkipIds);
+        }
 
         $row = $this->fetchOne(
             $conn,
             'SELECT COUNT(*) AS row_count
 FROM fat_details fd
-LEFT JOIN inventory_movements im
-  ON im.idempotency_key = CONCAT(\'migration:fat_details:\', fd.id, \':v1\')
+' . ($this->tableExists($conn, 'myitems') ? 'LEFT JOIN myitems mi ON mi.id = fd.item_id
+' : '') . '
 WHERE ' . implode(' AND ', $conditions),
             $params
         );
@@ -234,6 +269,10 @@ WHERE ' . implode(' AND ', $conditions),
         $applied = [];
         $replayed = [];
         $ledgerOptions = is_array($options['ledger_options'] ?? null) ? $options['ledger_options'] : [];
+        // Historical replay must reproduce the reviewed legacy sequence even
+        // when that sequence temporarily or permanently crossed below zero.
+        // The live negative-stock policy remains enforced on new sale writes.
+        $ledgerOptions += ['enforce_negative_policy' => false];
         foreach (($plan['planned_movements'] ?? []) as $movement) {
             $request = $this->movementRequestFromPlannedMovement($movement);
             $result = $ledger->recordMovement(
@@ -327,7 +366,7 @@ WHERE ' . implode(' AND ', $conditions),
             $hasDifference = InventoryDecimal::compare($difference, '0') !== 0;
             $hasCurrentBalance = is_array($current) && $current !== [];
             $derivedStockValue = InventoryDecimal::normalize($row['derived_stock_value'] ?? '0');
-            $derivedAverageCost = $this->movingAverageCostForDerivedBalance($derivedQty, $derivedStockValue);
+            $derivedAverageCost = InventoryDecimal::normalize($row['derived_moving_average_cost'] ?? '0');
             $currentAverageCost = InventoryDecimal::normalize($current['moving_average_cost'] ?? '0');
             $hasCostDifference = InventoryDecimal::compare($derivedAverageCost, $currentAverageCost) !== 0;
             $lastMovementId = (int) ($row['last_movement_id'] ?? 0);
@@ -644,10 +683,21 @@ WHERE " . implode(' AND ', $conditions), $params);
         $movementType = $this->movementTypeForLegacyRow($proType, $hasIn, $hasOut);
         if ($movementType === '') {
             $reasons[] = 'unsupported_or_ambiguous_pro_tybe';
+        } elseif ($movementType === 'sale_direct') {
+            $settlementState = $this->legacySaleSettlementState(
+                $conn,
+                (int) ($row['fatid'] ?? $row['pro_id'] ?? 0)
+            );
+            if ($settlementState === 'unpaid') {
+                $movementType = 'reservation';
+            } elseif ($settlementState === 'conflict') {
+                $reasons[] = 'legacy_order_payment_state_conflict';
+            }
         }
 
         $idempotencyKey = 'migration:fat_details:' . $id . ':v1';
-        if ($this->movementExists($conn, $posTenant, $posBranch, $storeId, $idempotencyKey)) {
+        if ($this->movementExists($conn, $posTenant, $posBranch, $storeId, $idempotencyKey)
+            || $this->matchingFatDetailMovementExists($conn, $id, $qtyIn, $qtyOut)) {
             return [
                 'status' => 'existing',
                 'already_migrated' => true,
@@ -685,7 +735,21 @@ WHERE " . implode(' AND ', $conditions), $params);
 
         $qty = $hasIn ? $qtyIn : $qtyOut;
         $unitCost = InventoryDecimal::normalize($row['cost_price'] ?? '0');
-        $totalCost = InventoryDecimal::multiply($qty, $unitCost);
+        if (InventoryDecimal::compare($unitCost, '0') < 0) {
+            return [
+                'status' => 'ambiguous',
+                'fat_detail_id' => $id,
+                'item_id' => $itemId,
+                'pro_tybe' => $proType,
+                'store_id' => $storeId,
+                'qty_in' => $qtyIn,
+                'qty_out' => $qtyOut,
+                'reasons' => ['negative_unit_cost_requires_review'],
+            ];
+        }
+        $totalCost = $movementType === 'reservation'
+            ? InventoryDecimal::zero()
+            : InventoryDecimal::multiply($qty, $unitCost);
         $unitConversion = $this->legacyUnitConversion($row);
 
         return [
@@ -702,8 +766,9 @@ WHERE " . implode(' AND ', $conditions), $params);
                 'source_uuid' => 'legacy-fat-details:' . $id,
                 'order_id' => (int) ($row['fatid'] ?? $row['pro_id'] ?? 0),
                 'fat_detail_id' => $id,
-                'qty_in' => $hasIn ? $qtyIn : InventoryDecimal::zero(),
-                'qty_out' => $hasOut ? $qtyOut : InventoryDecimal::zero(),
+                'qty_in' => $movementType === 'reservation' ? InventoryDecimal::zero() : ($hasIn ? $qtyIn : InventoryDecimal::zero()),
+                'qty_out' => $movementType === 'reservation' ? InventoryDecimal::zero() : ($hasOut ? $qtyOut : InventoryDecimal::zero()),
+                'qty_reserved' => $movementType === 'reservation' ? $qty : InventoryDecimal::zero(),
                 'unit_conversion_to_base' => $unitConversion,
                 'unit_cost' => $unitCost,
                 'total_cost' => $totalCost,
@@ -713,6 +778,7 @@ WHERE " . implode(' AND ', $conditions), $params);
                     'legacy_pro_tybe' => $proType,
                     'legacy_u_val' => InventoryDecimal::normalize($row['u_val'] ?? '1'),
                     'legacy_created_at' => (string) ($row['crtime'] ?? ''),
+                    'legacy_order_settlement' => $movementType === 'reservation' ? 'unpaid' : 'settled_or_legacy_unknown',
                 ],
             ],
         ];
@@ -812,7 +878,7 @@ WHERE " . implode(' AND ', $conditions), $params);
         if (in_array($movementType, ['purchase', 'refund_reversal', 'opening_balance'], true) && !$hasIn) {
             $errors[] = 'reviewed_movement_type_requires_qty_in';
         }
-        if (in_array($movementType, ['purchase_return', 'sale_direct'], true) && !$hasOut) {
+        if (in_array($movementType, ['purchase_return', 'sale_direct', 'reservation'], true) && !$hasOut) {
             $errors[] = 'reviewed_movement_type_requires_qty_out';
         }
 
@@ -845,11 +911,12 @@ WHERE " . implode(' AND ', $conditions), $params);
                 'source_uuid' => 'legacy-fat-details-reviewed:' . $id,
                 'order_id' => (int) ($row['fatid'] ?? $row['pro_id'] ?? 0),
                 'fat_detail_id' => $id,
-                'qty_in' => $hasIn ? $qtyIn : InventoryDecimal::zero(),
-                'qty_out' => $hasOut ? $qtyOut : InventoryDecimal::zero(),
+                'qty_in' => $movementType === 'reservation' ? InventoryDecimal::zero() : ($hasIn ? $qtyIn : InventoryDecimal::zero()),
+                'qty_out' => $movementType === 'reservation' ? InventoryDecimal::zero() : ($hasOut ? $qtyOut : InventoryDecimal::zero()),
+                'qty_reserved' => $movementType === 'reservation' ? $qty : InventoryDecimal::zero(),
                 'unit_conversion_to_base' => $unitConversion,
                 'unit_cost' => $unitCost,
-                'total_cost' => InventoryDecimal::multiply($qty, $unitCost),
+                'total_cost' => $movementType === 'reservation' ? InventoryDecimal::zero() : InventoryDecimal::multiply($qty, $unitCost),
                 'idempotency_key' => 'migration:fat_details:' . $id . ':reviewed:v1',
                 'metadata' => [
                     'source' => 'phase14_reviewed_fat_details_backfill',
@@ -896,6 +963,62 @@ WHERE " . implode(' AND ', $conditions), $params);
         return '';
     }
 
+    private function legacySaleSettlementState(mysqli $conn, int $orderId): string
+    {
+        if ($orderId < 1
+            || !$this->tableExists($conn, 'ot_head')
+            || !$this->columnExists($conn, 'ot_head', 'payment_status')
+            || !$this->columnExists($conn, 'ot_head', 'invoice_status')
+            || !$this->columnExists($conn, 'ot_head', 'order_status')
+            || !$this->columnExists($conn, 'ot_head', 'closed')
+            || !$this->columnExists($conn, 'ot_head', 'isdeleted')) {
+            return 'unknown';
+        }
+
+        $row = $this->fetchOne(
+            $conn,
+            'SELECT payment_status, invoice_status, order_status, closed, isdeleted FROM ot_head WHERE id = ? LIMIT 1',
+            [$orderId]
+        );
+        if (!$row) {
+            return 'unknown';
+        }
+
+        $paymentStatus = strtolower(trim((string) ($row['payment_status'] ?? '')));
+        $capturedAmount = '0.00';
+        if ($this->tableExists($conn, 'order_payments')
+            && $this->columnExists($conn, 'order_payments', 'order_id')
+            && $this->columnExists($conn, 'order_payments', 'amount')) {
+            $activePredicate = $this->columnExists($conn, 'order_payments', 'is_voided')
+                ? ' AND COALESCE(is_voided, 0) = 0'
+                : '';
+            $payment = $this->fetchOne(
+                $conn,
+                'SELECT COALESCE(SUM(amount), 0) AS captured_amount'
+                    . ' FROM order_payments WHERE order_id = ?' . $activePredicate,
+                [$orderId]
+            );
+            $capturedAmount = InventoryDecimal::normalize($payment['captured_amount'] ?? '0', 2);
+        }
+        $hasCapturedPayment = InventoryDecimal::compare($capturedAmount, '0', 2) > 0;
+        $isActiveDraft = strtolower(trim((string) ($row['invoice_status'] ?? ''))) === 'draft'
+            && in_array(strtolower(trim((string) ($row['order_status'] ?? ''))), ['draft', 'active'], true)
+            && (int) ($row['closed'] ?? 0) === 0
+            && (int) ($row['isdeleted'] ?? 0) === 0;
+
+        if ($isActiveDraft && in_array($paymentStatus, ['unpaid', 'partial'], true)) {
+            return $hasCapturedPayment ? 'conflict' : 'unpaid';
+        }
+        if (in_array($paymentStatus, ['paid', 'refunded', 'voided'], true)) {
+            return 'settled';
+        }
+
+        // Older completed orders frequently retain the default "unpaid"
+        // marker. Only the full active-draft lifecycle contract can demote an
+        // historical stock movement to a reservation.
+        return $isActiveDraft ? ($hasCapturedPayment ? 'settled' : 'unknown') : 'settled';
+    }
+
     private function derivedMovementBalances(mysqli $conn, array $filters): array
     {
         $conditions = ['1 = 1'];
@@ -906,22 +1029,72 @@ WHERE " . implode(' AND ', $conditions), $params);
             $params[] = $itemId;
         }
 
-        return $this->fetchAll($conn, "
+        $movements = $this->fetchAll($conn, "
 SELECT
+  im.id,
   im.pos_tenant,
   im.pos_branch,
-  MAX(COALESCE(im.branch_uuid, '')) AS branch_uuid,
+  COALESCE(im.branch_uuid, '') AS branch_uuid,
   im.store_id,
   im.item_id,
-  COALESCE(SUM(im.qty_in - im.qty_out), 0) AS derived_qty_on_hand,
-  COALESCE(SUM(CASE WHEN im.qty_in > 0 THEN im.total_cost ELSE -im.total_cost END), 0) AS derived_stock_value,
-  COUNT(*) AS movement_count,
-  MAX(im.id) AS last_movement_id
+  im.movement_type,
+  im.qty_in,
+  im.qty_out,
+  im.unit_cost
 FROM inventory_movements im
 WHERE " . implode(' AND ', $conditions) . "
-GROUP BY im.pos_tenant, im.pos_branch, im.store_id, im.item_id
-ORDER BY im.pos_tenant, im.pos_branch, im.store_id, im.item_id
-LIMIT " . $this->limit($filters), $params);
+ORDER BY im.pos_tenant, im.pos_branch, im.store_id, im.item_id, im.id", $params);
+
+        $balances = [];
+        foreach ($movements as $movement) {
+            $key = (int) $movement['pos_tenant'] . ':'
+                . (int) $movement['pos_branch'] . ':'
+                . (int) $movement['store_id'] . ':'
+                . (int) $movement['item_id'];
+            if (!isset($balances[$key])) {
+                $balances[$key] = [
+                    'pos_tenant' => (int) $movement['pos_tenant'],
+                    'pos_branch' => (int) $movement['pos_branch'],
+                    'branch_uuid' => (string) ($movement['branch_uuid'] ?? ''),
+                    'store_id' => (int) $movement['store_id'],
+                    'item_id' => (int) $movement['item_id'],
+                    'derived_qty_on_hand' => InventoryDecimal::zero(),
+                    'derived_moving_average_cost' => InventoryDecimal::zero(),
+                    'derived_stock_value' => InventoryDecimal::zero(),
+                    'movement_count' => 0,
+                    'last_movement_id' => 0,
+                ];
+            }
+            $state = &$balances[$key];
+            $oldQty = (string) $state['derived_qty_on_hand'];
+            $oldAverageCost = (string) $state['derived_moving_average_cost'];
+            $qtyIn = InventoryDecimal::normalize($movement['qty_in'] ?? '0');
+            $qtyOut = InventoryDecimal::normalize($movement['qty_out'] ?? '0');
+            $state['derived_moving_average_cost'] = InventoryMovingAverageCostCalculator::nextAverageCost(
+                $oldQty,
+                $oldAverageCost,
+                (string) ($movement['movement_type'] ?? ''),
+                $qtyIn,
+                $qtyOut,
+                InventoryDecimal::normalize($movement['unit_cost'] ?? '0')
+            );
+            $state['derived_qty_on_hand'] = InventoryDecimal::subtract(
+                InventoryDecimal::add($oldQty, $qtyIn),
+                $qtyOut
+            );
+            if (trim((string) ($movement['branch_uuid'] ?? '')) !== '') {
+                $state['branch_uuid'] = (string) $movement['branch_uuid'];
+            }
+            $state['movement_count']++;
+            $state['last_movement_id'] = (int) $movement['id'];
+            $state['derived_stock_value'] = InventoryDecimal::multiply(
+                (string) $state['derived_qty_on_hand'],
+                (string) $state['derived_moving_average_cost']
+            );
+            unset($state);
+        }
+
+        return array_values($balances);
     }
 
     private function currentBalanceRow(mysqli $conn, int $posTenant, int $posBranch, int $storeId, int $itemId): array
@@ -938,27 +1111,6 @@ WHERE pos_tenant = ?
   AND store_id = ?
   AND item_id = ?
 LIMIT 1", [$posTenant, $posBranch, $storeId, $itemId]) ?: [];
-    }
-
-    private function movingAverageCostForDerivedBalance(string $qtyOnHand, string $stockValue): string
-    {
-        if (InventoryDecimal::compare($qtyOnHand, '0') === 0) {
-            return InventoryDecimal::zero();
-        }
-
-        $averageCost = InventoryDecimal::divide($stockValue, $qtyOnHand);
-
-        return $this->absoluteDecimal($averageCost);
-    }
-
-    private function absoluteDecimal(string $value): string
-    {
-        $normalized = InventoryDecimal::normalize($value);
-        if (strpos($normalized, '-') === 0) {
-            return InventoryDecimal::normalize(substr($normalized, 1));
-        }
-
-        return $normalized;
     }
 
     private function movementExists(mysqli $conn, int $posTenant, int $posBranch, int $storeId, string $idempotencyKey): bool
@@ -983,6 +1135,30 @@ WHERE pos_tenant = ?
   AND store_id = ?
   AND idempotency_key = ?
 LIMIT 1", [$posTenant, $posBranch, $storeId, $idempotencyKey]);
+
+        return is_array($row);
+    }
+
+    private function matchingFatDetailMovementExists(
+        mysqli $conn,
+        int $fatDetailId,
+        string $qtyIn,
+        string $qtyOut
+    ): bool {
+        if ($fatDetailId < 1 || !$this->tableExists($conn, 'inventory_movements')) {
+            return false;
+        }
+        $row = $this->fetchOne($conn, '
+SELECT id
+FROM inventory_movements
+WHERE fat_detail_id = ?
+  AND qty_in = ?
+  AND qty_out = ?
+LIMIT 1', [
+            $fatDetailId,
+            InventoryDecimal::normalize($qtyIn),
+            InventoryDecimal::normalize($qtyOut),
+        ]);
 
         return is_array($row);
     }
@@ -1065,6 +1241,7 @@ LIMIT 1", [$posTenant, $posBranch, $storeId, $idempotencyKey]);
             'fat_detail_id' => (int) ($movement['fat_detail_id'] ?? 0),
             'qty_in' => (string) ($movement['qty_in'] ?? '0'),
             'qty_out' => (string) ($movement['qty_out'] ?? '0'),
+            'qty_reserved' => (string) ($movement['qty_reserved'] ?? '0'),
             'unit_conversion_to_base' => (string) ($movement['unit_conversion_to_base'] ?? '1'),
             'unit_cost' => (string) ($movement['unit_cost'] ?? '0'),
             'total_cost' => (string) ($movement['total_cost'] ?? '0'),

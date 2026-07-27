@@ -60,6 +60,19 @@ preparation_contract_assert(strpos($planned['recipe_order_line_usage'], 'prepara
 $mutationSource = file_get_contents(__DIR__ . '/../../classes/Pos/Service/PosOrderMutationService.php');
 preparation_contract_assert(strpos($mutationSource, 'validateForItem(') !== false, 'order mutation must validate preparation values');
 preparation_contract_assert(strpos($mutationSource, 'persistLineValues(') !== false, 'order mutation must persist preparation values');
+$tableInsertStart = strpos($mutationSource, 'private function insertTableOrderItems');
+$tableInsertEnd = strpos($mutationSource, 'private function loadRecipeOrderLineContexts', (int) $tableInsertStart);
+$tableInsertSource = $tableInsertStart === false
+    ? ''
+    : substr(
+        $mutationSource,
+        (int) $tableInsertStart,
+        $tableInsertEnd === false ? null : $tableInsertEnd - $tableInsertStart
+    );
+preparation_contract_assert(
+    strpos($tableInsertSource, "'preparation_values' => is_array(\$item['preparation_values'] ?? null)") !== false,
+    'table inventory normalization must retain the validated preparation selection, including explicit zero'
+);
 
 $explosionSource = file_get_contents(__DIR__ . '/../../classes/Recipe/RecipeExplosionService.php');
 preparation_contract_assert(strpos($explosionSource, 'preparationRequirements') !== false, 'recipe explosion must add mapped preparation inventory requirements');
@@ -124,8 +137,10 @@ preparation_contract_assert(strpos($apiSource, 'payload.itmpreparation') !== fal
 preparation_contract_assert(strpos($apiSource, "PREPARATION_VALUE_REQUIRED: 'اختر عدد ملاعق السكر") !== false, 'cashier must see an actionable Arabic message instead of an internal preparation error code');
 
 $kdsSource = file_get_contents(__DIR__ . '/../../classes/Pos/Service/KdsTicketService.php');
-preparation_contract_assert(strpos($kdsSource, "line['preparation_values']") !== false, 'KDS ticket notes must carry sugar instructions');
-preparation_contract_assert(strpos($kdsSource, 'بدون سكر') !== false, 'KDS must render explicit zero as no sugar');
+$kdsBoardSource = file_get_contents(__DIR__ . '/../../js/kds_board.js');
+preparation_contract_assert(strpos($kdsSource, "'preparation_values' => \$preparation") !== false, 'KDS API must carry preparation separately from free-form notes');
+preparation_contract_assert(strpos($kdsBoardSource, 'line.preparation_values') !== false, 'KDS board must render structured preparation values');
+preparation_contract_assert(strpos($kdsBoardSource, 'بدون سكر') !== false, 'KDS must render explicit zero as no sugar');
 
 $appConfigSource = file_get_contents(__DIR__ . '/../../config/app_config.php');
 preparation_contract_assert(strpos($appConfigSource, "['POSMAIN_PREPARATION_FIELDS_ENABLED'], '1'") !== false, 'sugar preparation must be enabled by default');

@@ -69,14 +69,14 @@ class PosCustomerOrderLinkService
             'customer_address' => $address !== '' ? $address : null,
             'pos_customer_id' => $customerId,
             'delivery_zone' => trim((string) ($request['delivery_zone_name'] ?? '')),
-            'delivery_fee' => (float) ($request['delivery_fee'] ?? 0),
+            'delivery_fee' => (string) ($request['delivery_fee'] ?? '0'),
             'delivery_status' => $fulfillmentType === 'delivery' ? 'pending' : 'none',
         ];
 
         return $this->fulfillmentService->upsertForOrder($conn, $orderId, $data, $options);
     }
 
-    public function recordPaidOrder(mysqli $conn, int $orderId, float $paidAmount): void
+    public function recordPaidOrder(mysqli $conn, int $orderId, $paidAmount): void
     {
         if ($orderId < 1) {
             return;
@@ -84,7 +84,7 @@ class PosCustomerOrderLinkService
 
         require_once __DIR__ . '/PosCustomerOrderSideEffects.php';
         (new PosCustomerOrderSideEffects($this))->applyPaymentRollup($conn, $orderId, [
-            'paid_amount' => $paidAmount > 0 ? $paidAmount : null,
+            'paid_amount' => $paidAmount,
         ]);
     }
 }

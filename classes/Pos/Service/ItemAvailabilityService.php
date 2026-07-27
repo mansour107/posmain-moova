@@ -296,7 +296,16 @@ class ItemAvailabilityService
 
     private function withInventoryAvailability(mysqli $conn, array $availability, array $scope): array
     {
-        if (!$this->inventoryFlags->canWriteLedger() || !empty($availability['recipe_enabled'])) {
+        if (
+            !$this->inventoryFlags->canWriteLedger()
+            || !empty($availability['recipe_enabled'])
+            || $this->activeRecipeUsesIngredientsInsteadOfPreparedStock(
+                $conn,
+                (int) ($availability['item_id'] ?? 0),
+                (int) ($availability['tenant'] ?? $scope['tenant'] ?? $scope['pos_tenant'] ?? 0),
+                (int) ($availability['branch'] ?? $scope['branch'] ?? $scope['pos_branch'] ?? 0)
+            )
+        ) {
             return $availability;
         }
 
@@ -625,6 +634,42 @@ WHERE TABLE_SCHEMA = DATABASE()
         $stmt->close();
 
         return (bool) $row;
+    }
+
+    /**
+     * Make-to-order recipe products are not prepared-stock SKUs. Their
+     * availability comes from their ingredient recipe, even while recipe
+     * availability calculation is staged off during a consumption pilot.
+     * Batch-prepared products remain governed by their own prepared balance.
+     */
+    private function activeRecipeUsesIngredientsInsteadOfPreparedStock(
+        mysqli $conn,
+        int $itemId,
+        int $tenant,
+        int $branch
+    ): bool {
+        if ($itemId < 1 || !$this->tableExists($conn, 'recipe_headers')) {
+            return false;
+        }
+
+        $stmt = $conn->prepare("
+            SELECT recipe_type
+            FROM recipe_headers
+            WHERE sellable_item_id = ?
+              AND pos_tenant = ?
+              AND pos_branch = ?
+              AND status = 'active'
+              AND (effective_from IS NULL OR effective_from <= CURRENT_TIMESTAMP)
+              AND (effective_to IS NULL OR effective_to > CURRENT_TIMESTAMP)
+            ORDER BY version_number DESC
+            LIMIT 1
+        ");
+        $stmt->bind_param('iii', $itemId, $tenant, $branch);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        return $row && (string) ($row['recipe_type'] ?? '') !== 'batch_prepared';
     }
 
     private function tableExists(mysqli $conn, string $table): bool

@@ -16,6 +16,9 @@ $pass = getenv('POSMAIN_TEST_MYSQL_PASS') ?: '';
 $db = 'posmain_moova_menu_sync_' . getmypid();
 $token = 'runtime-token-' . getmypid();
 $branchId = 'moova-branch-runtime';
+$testEncryptionKey = 'base64:' . base64_encode(hash('sha256', 'posmain-moova-menu-sync-runtime-fixture', true));
+putenv('POSMAIN_CONFIG_ENCRYPTION_KEY=' . $testEncryptionKey);
+$_ENV['POSMAIN_CONFIG_ENCRYPTION_KEY'] = $testEncryptionKey;
 $conn = new mysqli($host, $user, $pass, '', $port);
 
 try {
@@ -27,7 +30,11 @@ try {
     recipeMoovaMenuSyncPayloadEndpointRuntimeSeedRows($conn, $token, $branchId);
 
     $enabledPayload = recipeMoovaMenuSyncPayloadEndpointRuntimeRunChild($db, $token, $branchId, true);
-    recipeMoovaMenuSyncPayloadEndpointRuntimeAssert(($enabledPayload['success'] ?? false) === true, 'enabled menu sync endpoint should return success JSON');
+    recipeMoovaMenuSyncPayloadEndpointRuntimeAssert(
+        ($enabledPayload['success'] ?? false) === true,
+        'enabled menu sync endpoint should return success JSON: '
+            . json_encode($enabledPayload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
+    );
     recipeMoovaMenuSyncPayloadEndpointRuntimeAssert(is_array($enabledPayload['menu']['items'] ?? null), 'enabled menu sync payload should include menu items');
 
     $enabledItem = recipeMoovaMenuSyncPayloadEndpointRuntimeFindItem($enabledPayload, 'pos-item-9101');
@@ -213,6 +220,10 @@ function recipeMoovaMenuSyncPayloadEndpointRuntimeSeedRows(mysqli $conn, string 
         'moova_device_token' => $token,
         'widget_url' => 'https://withmoova.com/pos-widget',
         'locale' => 'ar',
+        'moova_connection_id' => 'runtime-connection',
+        'moova_branch_link_id' => 'runtime-branch-link',
+        'pairing_id' => 'runtime-pairing',
+        'pos_instance_uuid' => '44444444-4444-4444-8444-444444444444',
     ]);
 
     $conn->query("

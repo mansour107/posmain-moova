@@ -87,8 +87,8 @@ try {
                 id, table_id, pro_tybe, isdeleted, order_status, payment_status,
                 fat_total, fat_disc, fat_net, paid_amount, remaining_amount
             ) VALUES (
-                20, 1, 9, 0, 'active', 'partial',
-                80, 0, 80, 20, 60
+                20, 1, 9, 0, 'active', 'unpaid',
+                80, 0, 80, 0, 80
             )
         ");
         $conn->query("INSERT INTO fat_details (id, fatid, isdeleted, det_value, profit) VALUES (200, 20, 0, 80, 0)");
@@ -174,6 +174,11 @@ function posMutationSkeletonCreateSchema(mysqli $conn): void
         CREATE TABLE fat_details (
             id INT NOT NULL PRIMARY KEY,
             fatid INT NOT NULL,
+            item_id INT NULL,
+            u_val DECIMAL(15,4) NOT NULL DEFAULT 1,
+            qty_in DECIMAL(15,4) NOT NULL DEFAULT 0,
+            qty_out DECIMAL(15,4) NOT NULL DEFAULT 0,
+            det_store INT NULL,
             isdeleted TINYINT(1) NOT NULL DEFAULT 0,
             det_value DECIMAL(15,4) NOT NULL DEFAULT 0,
             profit DECIMAL(15,4) NOT NULL DEFAULT 0

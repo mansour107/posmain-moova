@@ -342,7 +342,7 @@ if ($closeVariance !== null && abs($closeVariance) >= 0.001) {
 } elseif ($countPending) {
     $closeDiffValue = null;
     $closeDiffClass = 'warn';
-    $closeDiffHint = 'الجلسة أُغلقت لكن العد لم يُسجَّل بعد';
+    $closeDiffHint = 'الشيفت أُغلق لكن العد لم يُسجَّل بعد';
 } else {
     $closeDiffValue = null;
     $closeDiffClass = 'warn';
@@ -403,6 +403,8 @@ $statusLabel = $statusLabels[$statusKey] ?? $statusKey;
 $canResolveVariance = function_exists('auth_guard_has_permission')
     && auth_guard_has_permission('pos.shift.resolve_variance', $conn);
 $openingNeedsReview = $hasOpeningVariance && $varianceStatus === 'unresolved';
+$closeNeedsReview = $hasCloseVariance
+    && in_array($varianceStatus, ['counted_pending_review', 'unresolved'], true);
 $sessionVarianceType = (string) ($session['variance_type'] ?? 'opening');
 if (!in_array($sessionVarianceType, ['opening', 'closing', 'both', 'force_close'], true)) {
     $sessionVarianceType = $hasOpeningVariance ? 'opening' : 'closing';
@@ -437,7 +439,7 @@ include('includes/header.php');
     <div class="premium-report">
       <?php if ($notFound): ?>
       <div class="pr-callout pr-callout--danger">
-        <strong>الجلسة غير موجودة</strong> — تحقق من رقم الجلسة أو صلاحيات الفرع.
+        <strong>الشيفت غير موجود</strong> — تحقق من رقم الشيفت أو صلاحيات الفرع.
         <div class="mt-2">
           <a href="<?= htmlspecialchars($returnTo, ENT_QUOTES, 'UTF-8') ?>" class="pr-btn pr-btn-ghost">العودة للشيفتات</a>
         </div>
@@ -445,15 +447,15 @@ include('includes/header.php');
       <?php else: ?>
 
       <nav class="pr-breadcrumb pr-no-print">
-        <a href="<?= htmlspecialchars($returnTo, ENT_QUOTES, 'UTF-8') ?>">النقد والورديات</a>
+        <a href="<?= htmlspecialchars($returnTo, ENT_QUOTES, 'UTF-8') ?>">الشيفتات والنقدية</a>
         <span>›</span>
-        <strong>جلسة #<?= (int) $sessionId ?></strong>
+        <strong>شيفت #<?= (int) $sessionId ?></strong>
       </nav>
 
       <header class="pr-hero">
         <div class="pr-hero-text">
-          <p class="pr-eyebrow">تفاصيل الجلسة</p>
-          <h1>جلسة درج #<?= (int) $sessionId ?></h1>
+          <p class="pr-eyebrow">تفاصيل الشيفت</p>
+          <h1>تفاصيل الشيفت والدرج #<?= (int) $sessionId ?></h1>
           <div class="pr-detail-meta">
             <span class="pr-pill pr-pill--user"><?= htmlspecialchars($userName) ?></span>
             <span class="pr-pill <?= $isOpen ? 'pr-pill--status-open pr-pill--pulse' : 'pr-pill--status-closed' ?>"><?= htmlspecialchars($statusLabel) ?></span>
@@ -480,12 +482,20 @@ include('includes/header.php');
       <?php endif; ?>
       <?php if ($isOpen): ?>
       <div class="pr-callout pr-callout--warn">
-        الجلسة ما زالت مفتوحة — الأرقام أدناه تمثل المتوقع حتى الآن وليست إغلاقاً نهائياً.
+        الشيفت ما زال مفتوحًا — الأرقام أدناه تمثل المتوقع حتى الآن وليست نتيجة إغلاق نهائية.
+      </div>
+      <?php endif; ?>
+      <?php if ($isOpen && $varianceStatus === 'counted_pending_review'): ?>
+      <div class="pr-callout pr-callout--warn" role="alert" data-testid="drawer-session-pending-variance-banner">
+        تم تسجيل عد الإغلاق، والشيفت ما زال مفتوحًا حتى يعتمد مستخدم مخول فرق الدرج.
+        <?php if ($canResolveVariance): ?>
+        <button type="button" class="pr-btn pr-btn-primary" data-bs-toggle="modal" data-bs-target="#resolveDrawerModal" data-testid="drawer-session-review-pending-close">مراجعة فرق الإغلاق</button>
+        <?php endif; ?>
       </div>
       <?php endif; ?>
       <?php if ($countPending): ?>
       <div class="pr-callout pr-callout--warn" role="alert" data-testid="drawer-session-pending-count-banner">
-        هذه الجلسة مغلقة لكن لم يُسجَّل عد الإغلاق بعد. فرق الدرج غير معروف، وليس صفراً أو حالة توازن.
+        هذا الشيفت مغلق، لكن لم يُسجَّل عد الإغلاق بعد. فرق الدرج غير معروف، ولا يعني ذلك أن الفرق صفر.
       </div>
       <?php endif; ?>
 
@@ -493,8 +503,8 @@ include('includes/header.php');
       <section class="pr-close-summary" data-testid="drawer-session-opening">
         <div class="pr-close-summary-head">
           <div>
-            <p class="pr-eyebrow">النتيجة حتى الآن</p>
-            <h2 class="pr-close-summary-title">وضع الدرج المفتوح</h2>
+            <p class="pr-eyebrow">ملخص الدرج حتى الآن</p>
+            <h2 class="pr-close-summary-title">حالة الدرج المفتوح</h2>
           </div>
           <?php if ($hasOpeningVariance && $varianceStatus === 'resolved' && $hasResolutionDetails): ?>
           <button type="button" class="pr-pill pr-pill--muted pr-pill--action" data-bs-toggle="modal" data-bs-target="#reviewedDrawerModal" data-testid="drawer-session-reviewed-opening">تمت مراجعة الافتتاح</button>
@@ -505,10 +515,10 @@ include('includes/header.php');
           <?php endif; ?>
         </div>
         <div class="pr-verdict pr-verdict--drawer-result">
-          <div class="pr-verdict-card"><div class="pr-verdict-label">المتوقع عند الافتتاح</div><div class="pr-verdict-value"><?= $expectedOpeningCash !== null ? number_format($expectedOpeningCash, 2) : '—' ?></div></div>
-          <div class="pr-verdict-card"><div class="pr-verdict-label">العد المعتمد عند الافتتاح</div><div class="pr-verdict-value"><?= number_format($openingCounted, 2) ?></div></div>
+          <div class="pr-verdict-card"><div class="pr-verdict-label">المبلغ المطلوب عند فتح الدرج</div><div class="pr-verdict-value"><?= $expectedOpeningCash !== null ? number_format($expectedOpeningCash, 2) : '—' ?></div></div>
+          <div class="pr-verdict-card"><div class="pr-verdict-label">المبلغ الذي عده الموظف عند الافتتاح</div><div class="pr-verdict-value"><?= number_format($openingCounted, 2) ?></div></div>
           <div class="pr-verdict-card"><div class="pr-verdict-label">فرق الافتتاح</div><div class="pr-verdict-value <?= $hasOpeningVariance ? 'pr-verdict-value--' . ($openingVariance > 0 ? 'pos' : 'neg') : '' ?>"><?= $openingVariance !== null ? number_format((float) $openingVariance, 2) : '—' ?></div></div>
-          <div class="pr-verdict-card"><div class="pr-verdict-label">المتوقع الآن في الدرج</div><div class="pr-verdict-value"><?= number_format($expectedCash, 2) ?></div><div class="pr-verdict-sub">يتحدث مع الحركات حتى الإغلاق</div></div>
+          <div class="pr-verdict-card"><div class="pr-verdict-label">المبلغ المتوقع الآن في الدرج</div><div class="pr-verdict-value"><?= number_format($expectedCash, 2) ?></div><div class="pr-verdict-sub">يتغيّر تلقائيًا مع كل حركة حتى إغلاق الشيفت</div></div>
         </div>
       </section>
       <?php endif; ?>
@@ -531,9 +541,9 @@ include('includes/header.php');
 
             <?php if ($hasCloseVariance && $varianceStatus === 'resolved' && $hasResolutionDetails): ?>
             <button type="button" class="pr-pill pr-pill--muted pr-pill--action" data-bs-toggle="modal" data-bs-target="#reviewedDrawerModal" data-testid="drawer-session-reviewed-close">تمت مراجعة الإغلاق</button>
-            <?php elseif ($hasCloseVariance && $varianceStatus === 'unresolved' && $canResolveVariance): ?>
+            <?php elseif ($closeNeedsReview && $canResolveVariance): ?>
             <button type="button" class="pr-pill pr-pill--status-open pr-pill--action" data-bs-toggle="modal" data-bs-target="#resolveDrawerModal" data-testid="drawer-session-review-close">مراجعة فرق الإغلاق</button>
-            <?php elseif ($hasCloseVariance && $varianceStatus === 'unresolved'): ?>
+            <?php elseif ($closeNeedsReview): ?>
             <span class="pr-pill pr-pill--status-open">فرق الإغلاق يحتاج مراجعة</span>
             <?php endif; ?>
           </div>
@@ -674,7 +684,7 @@ include('includes/header.php');
       <section class="pr-panel" data-testid="drawer-session-accountability">
         <div class="pr-panel-head">
           <div>
-            <p class="pr-eyebrow">سلسلة العهدة</p>
+            <p class="pr-eyebrow">مسؤولية الشيفت</p>
             <h2 class="pr-panel-title">من عدّ ومن أغلق ومن استلم؟</h2>
           </div>
         </div>
@@ -683,19 +693,19 @@ include('includes/header.php');
             <div class="pr-verdict-card"><div class="pr-verdict-label">صاحب الشيفت</div><div class="pr-verdict-value pr-verdict-value--sm"><?= htmlspecialchars((string) ($accountability['shift_owner_name'] ?? $userName ?: '—')) ?></div></div>
             <div class="pr-verdict-card"><div class="pr-verdict-label">قام بالعد النهائي</div><div class="pr-verdict-value pr-verdict-value--sm"><?= htmlspecialchars((string) ($accountability['counted_by_name'] ?? '') ?: '—') ?></div></div>
             <div class="pr-verdict-card"><div class="pr-verdict-label">أغلق الشيفت</div><div class="pr-verdict-value pr-verdict-value--sm"><?= htmlspecialchars((string) ($accountability['closed_by_name'] ?? '') ?: '—') ?></div></div>
-            <div class="pr-verdict-card"><div class="pr-verdict-label">اعتمد الاستلام</div><div class="pr-verdict-value pr-verdict-value--sm"><?= htmlspecialchars((string) ($accountability['takeover_authorized_by_name'] ?? '') ?: '—') ?></div></div>
+            <div class="pr-verdict-card"><div class="pr-verdict-label">اعتمد استلام الدرج</div><div class="pr-verdict-value pr-verdict-value--sm"><?= htmlspecialchars((string) ($accountability['takeover_authorized_by_name'] ?? '') ?: '—') ?></div></div>
           </div>
           <div class="pr-custody-links">
             <?php if (!empty($accountability['preceding_session_id'])): ?>
             <a href="<?= htmlspecialchars(posmain_cash_shift_detail_url((int) $accountability['preceding_session_id'], $returnTo), ENT_QUOTES, 'UTF-8') ?>" class="pr-custody-link">
-              <span>العهدة السابقة</span>
-              <strong>جلسة #<?= (int) $accountability['preceding_session_id'] ?> · <?= htmlspecialchars((string) ($accountability['preceding_shift_owner_name'] ?? '') ?: 'مستخدم غير معروف') ?></strong>
+              <span>الشيفت السابق</span>
+              <strong>شيفت #<?= (int) $accountability['preceding_session_id'] ?> · <?= htmlspecialchars((string) ($accountability['preceding_shift_owner_name'] ?? '') ?: 'مستخدم غير معروف') ?></strong>
             </a>
             <?php endif; ?>
             <?php if (!empty($accountability['succeeding_session_id'])): ?>
             <a href="<?= htmlspecialchars(posmain_cash_shift_detail_url((int) $accountability['succeeding_session_id'], $returnTo), ENT_QUOTES, 'UTF-8') ?>" class="pr-custody-link pr-custody-link--next">
-              <span>انتقلت العهدة إلى</span>
-              <strong>جلسة #<?= (int) $accountability['succeeding_session_id'] ?> · <?= htmlspecialchars((string) ($accountability['succeeding_shift_owner_name'] ?? '') ?: 'مستخدم غير معروف') ?></strong>
+              <span>استلم الدرج بعده</span>
+              <strong>شيفت #<?= (int) $accountability['succeeding_session_id'] ?> · <?= htmlspecialchars((string) ($accountability['succeeding_shift_owner_name'] ?? '') ?: 'مستخدم غير معروف') ?></strong>
             </a>
             <?php endif; ?>
           </div>
@@ -738,7 +748,7 @@ include('includes/header.php');
               $reasonText = $friendlyReason($row['reason'] ?? null);
               $detailBits = [];
               if ($type === 'closing_adjustment') {
-                  $detailBits[] = 'فرق الإغلاق الدفتري: ' . number_format($amount, 2);
+                  $detailBits[] = 'الفرق المسجل عند الإغلاق: ' . number_format($amount, 2);
               }
               if ($reasonText !== '') {
                   $detailBits[] = $reasonText;
@@ -775,7 +785,7 @@ include('includes/header.php');
             </details>
             <?php endforeach; ?>
             <?php if (($movements['rows'] ?? []) === []): ?>
-            <p class="text-muted text-center py-3 mb-0">لا توجد حركات مسجلة لهذه الجلسة</p>
+            <p class="text-muted text-center py-3 mb-0">لا توجد حركات مسجلة لهذا الشيفت</p>
             <?php endif; ?>
           </div>
         </div>
@@ -787,7 +797,7 @@ include('includes/header.php');
         <div class="pr-panel-head">
           <div>
             <p class="pr-eyebrow">حد أقصى محاولتان لكل مرحلة</p>
-            <h2 class="pr-panel-title">سجل العد المعتمد</h2>
+            <h2 class="pr-panel-title">عمليات عدّ النقدية</h2>
           </div>
           <div class="pr-count-limits" aria-label="استخدام محاولات العد">
             <span class="pr-pill pr-pill--muted">الافتتاح <?= (int) $countAttemptsByPhase['open'] ?> من 2</span>
@@ -910,7 +920,7 @@ include('includes/header.php');
       <?php if ($overridePeriods): ?>
       <section class="pr-panel" data-testid="drawer-override-periods">
         <div class="pr-panel-head">
-          <h2 class="pr-panel-title">فترات التجاوز المؤقت</h2>
+          <h2 class="pr-panel-title">استخدام الدرج بواسطة موظف آخر</h2>
           <span class="pr-pill pr-pill--muted"><?= count($overridePeriods) ?> فترة</span>
         </div>
         <div class="pr-panel-body pr-table-wrap">
@@ -920,9 +930,9 @@ include('includes/header.php');
           <table class="pr-table">
             <thead>
               <tr>
-                <th>المعرّف</th>
-                <th>المشغّل</th>
-                <th>صاحب الوردية</th>
+                <th>رقم السجل</th>
+                <th>الموظف الذي استخدم الدرج</th>
+                <th>صاحب الشيفت</th>
                 <th>السبب</th>
                 <th>البداية</th>
                 <th>النهاية</th>
@@ -1058,7 +1068,7 @@ include('includes/header.php');
       </div>
       <?php endif; ?>
 
-      <?php if ($canResolveVariance && $varianceStatus === 'unresolved'): ?>
+      <?php if ($canResolveVariance && in_array($varianceStatus, ['counted_pending_review', 'unresolved'], true)): ?>
       <div class="modal fade pr-modal" id="resolveDrawerModal" tabindex="-1" aria-hidden="true" data-testid="drawer-session-resolve-modal">
         <div class="modal-dialog modal-dialog-centered pr-modal-dialog">
           <div class="modal-content pr-modal-content">
@@ -1129,7 +1139,7 @@ include('includes/header.php');
                     name="resolution_notes"
                     id="resolveNotes"
                     rows="3"
-                    placeholder="أي توضيح يساعد عند مراجعة هذه الجلسة لاحقاً"
+                    placeholder="أي توضيح يساعد عند مراجعة هذا الشيفت لاحقًا"
                   ></textarea>
                 </div>
                 <p class="text-muted mt-3 mb-0" style="font-size:0.85rem" data-testid="drawer-session-resolve-ledger-note">

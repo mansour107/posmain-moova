@@ -49,6 +49,11 @@ try {
     branchRestoreFinancialAssert(branchRestoreFinancialCount($conn, 'journal_heads') === 1, 'exact journal replay must be idempotent');
     branchRestoreFinancialAssert(branchRestoreFinancialCount($conn, 'journal_entries') === 2, 'exact entry replay must be idempotent');
 
+    $legacyDateReplay = $event;
+    $legacyDateReplay['payload']['receipts'][0]['payment_date'] = '2026-07-16';
+    $mirror->mirrorFromBranchEvent($conn, 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa', $legacyDateReplay);
+    branchRestoreFinancialAssert(branchRestoreFinancialCount($conn, 'ot_head') === 2, 'date-only receipt replay must match stored midnight datetime');
+
     $accountConflict = $event;
     $accountConflict['payload']['financial_bundle']['accounts'][1]['aname'] = 'Wrong account identity';
     unset($accountConflict['payload']['financial_bundle']['bundle_hash']);
@@ -252,7 +257,7 @@ function branchRestoreFinancialEvent(): array
                 'acc_fund' => 10,
                 'acc_customer' => 11,
                 'created_by' => 1,
-                'payment_date' => '2026-07-16 12:00:00',
+                'payment_date' => '2026-07-16 00:00:00',
             ]],
             'financial_bundle' => $bundle,
         ],

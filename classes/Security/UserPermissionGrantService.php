@@ -10,11 +10,14 @@ class UserPermissionGrantService
 
     public function userUsesOverrides(mysqli $conn, int $userId): bool
     {
-        if ($userId < 1) {
+        if ($userId < 1 || !$this->columnExists($conn, 'users', 'permission_mode')) {
             return false;
         }
 
-        $stmt = $conn->prepare("SELECT permission_mode FROM users WHERE id = ? AND COALESCE(isdeleted, 0) != 1 LIMIT 1");
+        $activeSql = $this->columnExists($conn, 'users', 'isdeleted')
+            ? ' AND COALESCE(isdeleted, 0) != 1'
+            : '';
+        $stmt = $conn->prepare("SELECT permission_mode FROM users WHERE id = ?{$activeSql} LIMIT 1");
         $stmt->bind_param('i', $userId);
         $stmt->execute();
         $row = $stmt->get_result()->fetch_assoc();
@@ -61,5 +64,23 @@ class UserPermissionGrantService
         if (session_status() === PHP_SESSION_ACTIVE) {
             unset($_SESSION['posmain_capabilities_cache'], $_SESSION['posmain_capabilities_version']);
         }
+    }
+
+    private function columnExists(mysqli $conn, string $table, string $column): bool
+    {
+        $stmt = $conn->prepare('
+            SELECT 1
+              FROM INFORMATION_SCHEMA.COLUMNS
+             WHERE TABLE_SCHEMA = DATABASE()
+               AND TABLE_NAME = ?
+               AND COLUMN_NAME = ?
+             LIMIT 1
+        ');
+        $stmt->bind_param('ss', $table, $column);
+        $stmt->execute();
+        $exists = (bool) $stmt->get_result()->fetch_row();
+        $stmt->close();
+
+        return $exists;
     }
 }

@@ -22,8 +22,8 @@ recipeRuntimePreflightAssert(strpos($service, 'recipe_runtime_accounting_pilot_r
 recipeRuntimePreflightAssert(strpos($service, 'recipe_runtime_availability_pilot_requires_recipe_availability') !== false, 'service should block availability_pilot preflight when availability is disabled');
 recipeRuntimePreflightAssert(strpos($service, 'recipe_runtime_strict_stock_requires_recipe_availability') !== false, 'service should block strict stock preflight without recipe availability');
 recipeRuntimePreflightAssert(strpos($service, 'recipe_runtime_strict_stock_requires_effective_recipe_availability') !== false, 'service should block strict stock when recipe availability is configured but not effective for the mode');
-recipeRuntimePreflightAssert(strpos($service, 'recipe_runtime_negative_stock_approval_conflicts_with_strict_stock') !== false, 'service should block contradictory stock policy flags in preflight');
-recipeRuntimePreflightAssert(strpos($service, 'recipe_runtime_negative_stock_approval_requires_recipe_availability') !== false, 'service should block negative-stock approval preflight without recipe availability');
+recipeRuntimePreflightAssert(strpos($service, 'NegativeStockSalePolicyService') !== false, 'service should resolve the durable branch negative-stock policy');
+recipeRuntimePreflightAssert(strpos($service, "'negative_stock_sale_policy'") !== false, 'service should expose the resolved negative-stock policy');
 recipeRuntimePreflightAssert(strpos($service, "['reserve_only', 'consume_pilot', 'accounting_pilot', 'availability_pilot', 'full']") !== false, 'service should warn reserve_only and later active modes to use pilot evidence');
 recipeRuntimePreflightAssert(strpos($service, 'SyncSchemaManager') !== false, 'service should inspect schema manager pending statements');
 recipeRuntimePreflightAssert(strpos($service, 'recipe_manage.php') !== false, 'service should check recipe management surface');

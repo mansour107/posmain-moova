@@ -127,12 +127,13 @@ foreach ($inventoryPurchaseSupplierHistoryRows as $historyRow) {
     $inventoryPurchaseSupplierDefaults[] = $historyRow;
 }
 
+$inventoryReceivingCsrfMeta = csrf_meta_tag('inventory_receiving', 'inventory-receiving-csrf');
 include __DIR__ . '/includes/header.php';
 include __DIR__ . '/includes/navbar.php';
 include __DIR__ . '/includes/sidebar.php';
 ?>
 
-<?= csrf_meta_tag('inventory_receiving', 'inventory-receiving-csrf') ?>
+<?= $inventoryReceivingCsrfMeta ?>
 
 <style>
     .inventory-receiving-page {

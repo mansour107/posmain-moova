@@ -13,8 +13,23 @@ productionErrorAssertNotContains('die("Connection failed: " . $e->getMessage())'
 $validatorSource = productionErrorRead('classes/Pos/Validation/TableInputValidator.php');
 productionErrorAssertContains('posmain_exception_payload(', $validatorSource, 'table endpoint failures should use central safe payloads');
 
+$dispatchRoutes = [
+    'ajax/save_order.php' => 'orders.table',
+    'ajax/process_table_payment.php' => 'orders.payment',
+    'ajax/process_split_payment.php' => 'orders.split-payment',
+];
+
+foreach ($dispatchRoutes as $path => $route) {
+    $source = productionErrorRead($path);
+    productionErrorAssertContains('pos_api_dispatch_exception_payload(', $source, $path . ' should use central safe dispatch error payloads');
+    productionErrorAssertContains("'" . $route . "'", $source, $path . ' should tag errors with the canonical API route');
+}
+
+$apiRouterSource = productionErrorRead('api/pos/index.php');
+productionErrorAssertContains('pos_api_dispatch_exception_payload(', $apiRouterSource, 'canonical POS API should use the safe dispatch error payload');
+productionErrorAssertContains('PosResponse::json(', $apiRouterSource, 'canonical POS API should emit the normalized safe payload');
+
 $jsonRoutes = [
-    'ajax/save_order.php' => 'save_order',
     'ajax/delete_order.php' => 'delete_order',
     'ajax/update_table_status.php' => 'update_table_status',
     'ajax/search_items.php' => 'search_items',

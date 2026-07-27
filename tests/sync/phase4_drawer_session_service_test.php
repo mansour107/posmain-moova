@@ -41,13 +41,13 @@ try {
         'tenant' => 3,
         'branch' => 4,
         'fund_account_id' => 5001,
-        'opening_cash' => '100.125',
+        'opening_cash' => '100.13',
         'opened_at' => '2026-05-13 09:00:00',
         'notes' => 'صباح',
         'sync_config' => $syncConfig,
     ]);
     phase4DrawerAssert($session['status'] === 'open', 'session should be open');
-    phase4DrawerAssert($session['opening_cash'] === '100.125', 'opening cash should preserve decimal string');
+    phase4DrawerAssert($session['opening_cash'] === '100.13', 'opening cash should preserve canonical money string');
     phase4DrawerAssert($session['fund_account_id'] === 5001, 'fund account expected');
     phase4DrawerAssert(strlen($session['uuid']) === 36, 'uuid should be stored');
 
@@ -59,20 +59,20 @@ try {
             'user_id' => 7,
             'tenant' => 3,
             'branch' => 4,
-            'opening_cash' => '5.000',
+            'opening_cash' => '5.00',
         ]);
     }, 'DRAWER_SESSION_ALREADY_OPEN');
 
     $sale = $service->recordMovement($conn, $session['id'], [
         'movement_type' => 'sale_cash',
-        'amount' => '50.250',
+        'amount' => '50.25',
         'order_id' => 300,
         'payment_id' => 400,
         'reason' => 'table payment',
         'created_by' => 99,
         'sync_config' => $syncConfig,
     ]);
-    phase4DrawerAssert($sale['amount'] === '50.250', 'sale movement amount expected');
+    phase4DrawerAssert($sale['amount'] === '50.25', 'sale movement amount expected');
     phase4DrawerAssert($sale['order_id'] === 300, 'sale order id expected');
     $saleEvents = phase4DrawerOutboxRows($conn, (int) $sale['id']);
     phase4DrawerAssert(count($saleEvents) === 1 && (int) $saleEvents[0]['event_version'] === 1, 'assigned movement must append revision 1');
@@ -158,7 +158,7 @@ try {
     $hostedUuid = $cloudConn->real_escape_string((string) $session['uuid']);
     $cloudConn->query("
         INSERT INTO drawer_sessions (id, uuid, user_id, tenant, branch, opened_at, opened_by, opening_cash, status)
-        VALUES ({$hostedDrawerId}, '{$hostedUuid}', 7, 3, 4, '2026-05-13 09:00:00', 99, 100.125, 'open')
+        VALUES ({$hostedDrawerId}, '{$hostedUuid}', 7, 3, 4, '2026-05-13 09:00:00', 99, 100.130, 'open')
     ");
     $inbox = new SyncInboxService();
     $newer = $inbox->receiveBranchEvent(
@@ -217,38 +217,38 @@ try {
 
     $service->recordMovement($conn, $session['id'], [
         'movement_type' => 'refund_cash',
-        'amount' => '10.000',
+        'amount' => '10.00',
         'created_by' => 99,
     ]);
     $service->recordMovement($conn, $session['id'], [
         'movement_type' => 'paid_in',
-        'amount' => '20.125',
+        'amount' => '20.12',
         'created_by' => 99,
     ]);
     $service->recordMovement($conn, $session['id'], [
         'movement_type' => 'paid_out',
-        'amount' => '5.500',
+        'amount' => '5.50',
         'created_by' => 99,
     ]);
     $service->recordMovement($conn, $session['id'], [
         'movement_type' => 'safe_drop',
-        'amount' => '30.000',
+        'amount' => '30.00',
         'created_by' => 99,
     ]);
 
-    phase4DrawerAssert($service->expectedCash($conn, $session['id']) === '125.000', 'expected cash should match signed movement math');
+    phase4DrawerAssert($service->expectedCash($conn, $session['id']) === '125.00', 'expected cash should match signed movement math');
     phase4DrawerAssert(count($service->movementsForSession($conn, $session['id'])) === 6, 'six drawer movements expected including opening');
 
     $closed = $service->closeSession($conn, $session['id'], [
         'closed_by' => 101,
-        'counted_cash' => '124.500',
+        'counted_cash' => '124.50',
         'closed_at' => '2026-05-13 17:00:00',
         'notes' => 'نقص بسيط',
     ], ['sync_config' => $syncConfig]);
     phase4DrawerAssert($closed['status'] === 'closed', 'session should close');
-    phase4DrawerAssert($closed['expected_cash'] === '124.500', 'closed expected cash should include closing adjustment');
-    phase4DrawerAssert($closed['counted_cash'] === '124.500', 'counted cash mismatch');
-    phase4DrawerAssert($closed['difference'] === '-0.500', 'difference should keep pre-close over/short (counted - expected before adjustment)');
+    phase4DrawerAssert($closed['expected_cash'] === '124.50', 'closed expected cash should include closing adjustment');
+    phase4DrawerAssert($closed['counted_cash'] === '124.50', 'counted cash mismatch');
+    phase4DrawerAssert($closed['difference'] === '-0.50', 'difference should keep pre-close over/short (counted - expected before adjustment)');
     phase4DrawerAssert($service->findOpenSession($conn, 7, 3, 4) === null, 'closed session should no longer be open');
     phase4DrawerExpectException(function () use ($service, $conn, $session, $syncConfig) {
         $service->captureExternalSessionMutation($conn, (int) $session['id'], ['sync_config' => $syncConfig]);

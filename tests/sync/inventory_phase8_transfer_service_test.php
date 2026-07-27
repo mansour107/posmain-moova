@@ -2,6 +2,16 @@
 
 $root = dirname(__DIR__, 2);
 
+// This isolated service contract intentionally exercises the dormant multi-store
+// transfer implementation. Commercial V1 keeps single-store mode enabled and
+// blocks these endpoints at the runtime boundary.
+if (!function_exists('posmain_single_store_mode_enabled')) {
+    function posmain_single_store_mode_enabled(): bool
+    {
+        return false;
+    }
+}
+
 require_once $root . '/classes/Sync/SchemaManager.php';
 require_once $root . '/classes/Inventory/InventoryFeatureFlags.php';
 require_once $root . '/classes/Inventory/InventoryLedgerService.php';

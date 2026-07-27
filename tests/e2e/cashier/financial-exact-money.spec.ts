@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { loginAndUnlockPos } from '../helpers/auth';
+import { prepareCleanShift } from '../helpers/handover';
 import { clickFirstAddableItem, payCashInModal, readCartNet } from '../helpers/pos';
 
 /**
@@ -7,6 +8,10 @@ import { clickFirstAddableItem, payCashInModal, readCartNet } from '../helpers/p
  * unlock (opens drawer) → takeaway cash pay → receipt → legacy journal writer blocked.
  */
 test.describe('financial: exact-money browser flow', () => {
+  test.beforeEach(() => {
+    prepareCleanShift();
+  });
+
   test('cashier cash takeaway posts receipt without fatal errors', async ({ page }) => {
     await loginAndUnlockPos(page, 'cashier');
     await clickFirstAddableItem(page);
@@ -75,6 +80,7 @@ test.describe('financial: exact-money browser flow', () => {
         order_id: String(id),
         action: 'refund',
         refund_stock_policy: 'waste',
+        refund_payment_method: 'cash',
         reason: 'e2e financial credit-note refund',
         idempotency_key: `e2e-fin-refund-${id}-${Date.now()}`,
       });

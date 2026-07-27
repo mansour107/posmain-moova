@@ -94,6 +94,23 @@ function recipeReservationLifecycleCreateSchema(mysqli $conn): void
 {
     (new SyncSchemaManager())->apply($conn);
     $conn->query("
+        CREATE TABLE settings (
+            id INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+            def_pos_store INT UNSIGNED NULL
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ");
+    $conn->query("
+        CREATE TABLE acc_head (
+            id INT UNSIGNED NOT NULL PRIMARY KEY,
+            code VARCHAR(32) NOT NULL,
+            aname VARCHAR(191) NOT NULL,
+            is_stock TINYINT(1) NOT NULL DEFAULT 0,
+            isdeleted TINYINT(1) NOT NULL DEFAULT 0
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ");
+    $conn->query("INSERT INTO acc_head (id, code, aname, is_stock) VALUES (1, 'STORE-1', 'Operational store', 1)");
+    $conn->query("INSERT INTO settings (def_pos_store) VALUES (1)");
+    $conn->query("
         CREATE TABLE IF NOT EXISTS item_group (
             id BIGINT UNSIGNED NOT NULL PRIMARY KEY,
             gname VARCHAR(255) NULL
@@ -123,6 +140,7 @@ function recipeReservationLifecycleSeedRecipe(mysqli $conn, int $sellableItemId,
             ({$ingredientItemId}, 'Reservation runtime ingredient', 3.000000, 7, 'ingredient', 1)
     ");
     (new InventoryBalanceRepository())->putBalance($conn, [
+        'store_id' => 1,
         'item_id' => $ingredientItemId,
         'qty_on_hand' => $stock,
         'qty_reserved' => '0.000000',
@@ -171,7 +189,7 @@ function recipeReservationLifecycleLineContext(mysqli $conn, int $orderId, int $
         'fat_detail_id' => $lineId,
         'pos_tenant' => 0,
         'pos_branch' => 0,
-        'store_id' => 0,
+        'store_id' => 1,
         'channel' => 'table',
         'order_type' => 'dine_in',
         'sellable_item_id' => $itemId,
@@ -182,7 +200,7 @@ function recipeReservationLifecycleLineContext(mysqli $conn, int $orderId, int $
 
 function recipeReservationLifecycleBalance(mysqli $conn, int $itemId): array
 {
-    return (new InventoryBalanceRepository())->findBalance($conn, 0, 0, 0, $itemId);
+    return (new InventoryBalanceRepository())->findBalance($conn, 0, 0, 1, $itemId);
 }
 
 function recipeReservationLifecycleRows(mysqli $conn, string $table, string $where): array

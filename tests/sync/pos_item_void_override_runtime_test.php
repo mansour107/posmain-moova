@@ -1,15 +1,22 @@
 <?php
 
-require_once __DIR__ . '/../../classes/Pos/Service/ManagerApprovalService.php';
-require_once __DIR__ . '/../../classes/Pos/Service/PosOrderMutationService.php';
-
-mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
-
 $host = getenv('POSMAIN_TEST_MYSQL_HOST') ?: '127.0.0.1';
 $port = (int) (getenv('POSMAIN_TEST_MYSQL_PORT') ?: 3307);
 $user = getenv('POSMAIN_TEST_MYSQL_USER') ?: 'root';
 $pass = getenv('POSMAIN_TEST_MYSQL_PASS') ?: '';
 $db = 'posmain_item_void_override_' . getmypid();
+putenv('POSMAIN_DB_HOST=' . $host);
+putenv('POSMAIN_DB_PORT=' . $port);
+putenv('POSMAIN_DB_USER=' . $user);
+putenv('POSMAIN_DB_PASS=' . $pass);
+putenv('POSMAIN_DB_NAME=' . $db);
+putenv('POSMAIN_BRANCH_UUID=79ec8b45-6fd3-4e0b-a2f2-46cab97991ea');
+
+require_once __DIR__ . '/../../classes/Pos/Service/ManagerApprovalService.php';
+require_once __DIR__ . '/../../classes/Pos/Service/PosOrderMutationService.php';
+
+mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
+
 $conn = new mysqli($host, $user, $pass, '', $port);
 
 try {
@@ -82,6 +89,20 @@ try {
     ], ['manager_approval_id' => (int) $freshApproval['id']], ['user_id' => 99, 'event_source' => 'runtime_test']);
     $consumed = $approvalService->approvalById($conn, (int) $freshApproval['id'], false);
     posItemVoidRuntimeAssert(!empty($consumed['consumed_at']), 'valid approval should be consumed once');
+    $voidEvent = $conn->query("
+        SELECT event_type, event_source, actor_user_id, metadata_json
+        FROM order_events
+        WHERE order_id = 501 AND event_type = 'order.item_voided'
+        ORDER BY id DESC
+        LIMIT 1
+    ")->fetch_assoc();
+    posItemVoidRuntimeAssert(is_array($voidEvent), 'approved item void should write an audit event');
+    posItemVoidRuntimeAssert((int) ($voidEvent['actor_user_id'] ?? 0) === 99, 'item void audit should identify the cashier');
+    $voidMetadata = json_decode((string) ($voidEvent['metadata_json'] ?? ''), true);
+    posItemVoidRuntimeAssert(
+        (int) ($voidMetadata['manager_approval_id'] ?? 0) === (int) $freshApproval['id'],
+        'item void audit should link the consumed manager approval'
+    );
 
     posItemVoidRuntimeExpectException(function () use ($requireMethod, $mutationService, $conn, $freshApproval) {
         $requireMethod->invoke($mutationService, $conn, 501, [
@@ -127,6 +148,24 @@ function posItemVoidRuntimeCreateSchema(mysqli $conn): void
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
     ");
     $conn->query("
+        CREATE TABLE sync_branch_identity (
+            id TINYINT UNSIGNED NOT NULL PRIMARY KEY,
+            branch_uuid CHAR(36) NOT NULL,
+            branch_name VARCHAR(255) NULL,
+            pos_tenant INT NULL,
+            pos_branch INT NULL,
+            cloud_base_url VARCHAR(500) NULL,
+            current_menu_version BIGINT UNSIGNED NOT NULL DEFAULT 0,
+            created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+            updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+            UNIQUE KEY uq_sync_branch_identity_uuid (branch_uuid)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+    ");
+    $conn->query("
+        INSERT INTO sync_branch_identity (id, branch_uuid, branch_name)
+        VALUES (1, '79ec8b45-6fd3-4e0b-a2f2-46cab97991ea', 'Item void fixture')
+    ");
+    $conn->query("
         CREATE TABLE manager_approvals (
             id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
             action_type VARCHAR(80) NOT NULL,
@@ -153,6 +192,10 @@ function posItemVoidRuntimeCreateSchema(mysqli $conn): void
             event_type VARCHAR(80) NOT NULL,
             event_source VARCHAR(80) NOT NULL,
             actor_user_id BIGINT NULL,
+            tenant INT NOT NULL DEFAULT 0,
+            branch INT NOT NULL DEFAULT 0,
+            before_state_json JSON NULL,
+            after_state_json JSON NULL,
             metadata_json JSON NULL,
             created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY (id)

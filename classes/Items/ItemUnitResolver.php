@@ -27,7 +27,7 @@ final class ItemUnitResolver
 
     public static function rowForItemUnit(mysqli $conn, int $itemId, int $unitId): ?array
     {
-        if ($unitId < 1) {
+        if ($unitId < 1 || !self::itemUnitsTableExists($conn)) {
             return null;
         }
 
@@ -48,11 +48,13 @@ final class ItemUnitResolver
         return $row ?: null;
     }
 
-    public static function sellPriceForItem(mysqli $conn, int $itemId): float
+    public static function sellPriceForItem(mysqli $conn, int $itemId, ?int $unitId = null): string
     {
-        $sell = self::sellRowForItem($conn, $itemId);
-        if ($sell !== null && (float) ($sell['price1'] ?? 0) > 0) {
-            return (float) $sell['price1'];
+        $sell = $unitId !== null && $unitId > 0
+            ? self::rowForItemUnit($conn, $itemId, $unitId)
+            : self::sellRowForItem($conn, $itemId);
+        if ($sell !== null && RecipeDecimal::compare((string) ($sell['price1'] ?? '0'), '0', 6) > 0) {
+            return RecipeDecimal::normalize((string) $sell['price1'], 6);
         }
 
         $stmt = $conn->prepare('SELECT price1 FROM myitems WHERE id = ? LIMIT 1');
@@ -61,7 +63,7 @@ final class ItemUnitResolver
         $row = $stmt->get_result()->fetch_assoc();
         $stmt->close();
 
-        return (float) ($row['price1'] ?? 0);
+        return RecipeDecimal::normalize((string) ($row['price1'] ?? '0'), 6);
     }
 
     public static function sellToStockFactorDecimal(mysqli $conn, int $itemId, int $scale = ItemUnitConversion::INVENTORY_SCALE): string
@@ -178,7 +180,7 @@ final class ItemUnitResolver
 
     private static function rowByFlag(mysqli $conn, int $itemId, string $flag): ?array
     {
-        if (!ItemUnitColumnSupport::hasDefFlags($conn)) {
+        if (!self::itemUnitsTableExists($conn) || !ItemUnitColumnSupport::hasDefFlags($conn)) {
             return null;
         }
 
@@ -206,6 +208,10 @@ final class ItemUnitResolver
 
     private static function firstRow(mysqli $conn, int $itemId): ?array
     {
+        if (!self::itemUnitsTableExists($conn)) {
+            return null;
+        }
+
         $stmt = $conn->prepare('
             SELECT *
             FROM item_units
@@ -220,5 +226,18 @@ final class ItemUnitResolver
         $stmt->close();
 
         return $row ?: null;
+    }
+
+    private static function itemUnitsTableExists(mysqli $conn): bool
+    {
+        static $cache = [];
+        $databaseRow = $conn->query('SELECT DATABASE() AS db_name')->fetch_assoc();
+        $cacheKey = (string) $conn->thread_id . ':' . (string) ($databaseRow['db_name'] ?? '');
+        if (!array_key_exists($cacheKey, $cache)) {
+            $result = $conn->query("SHOW TABLES LIKE 'item_units'");
+            $cache[$cacheKey] = $result instanceof mysqli_result && $result->num_rows > 0;
+        }
+
+        return $cache[$cacheKey];
     }
 }

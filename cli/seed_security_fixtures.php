@@ -297,7 +297,11 @@ if (!function_exists('posmain_drawer_sessions_table_exists')) {
 if (posmain_drawer_sessions_table_exists($conn)) {
     $closed = $conn->query(
         "UPDATE drawer_sessions
-            SET status = 'closed', closed_at = COALESCE(closed_at, NOW())
+            SET status = 'closed',
+                closed_at = COALESCE(closed_at, NOW()),
+                open_branch_lock = NULL,
+                open_register_lock = NULL,
+                open_user_lock = NULL
           WHERE status = 'open' AND closed_at IS NULL"
     );
     if ($closed) {

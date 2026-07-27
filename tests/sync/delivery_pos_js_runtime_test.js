@@ -8,6 +8,7 @@ const path = require('node:path');
 
 const root = path.resolve(__dirname, '../..');
 const deliveryJs = fs.readFileSync(path.join(root, 'js/pos_delivery.js'), 'utf8');
+const deliveryQueueJs = fs.readFileSync(path.join(root, 'js/pos_delivery_queue.js'), 'utf8');
 const barcodeJs = fs.readFileSync(path.join(root, 'js/pos_barcode.js'), 'utf8');
 const posContent = fs.readFileSync(path.join(root, 'includes/pos_content.php'), 'utf8');
 const widgetJs = fs.readFileSync(path.join(root, 'assets/moova-pos-widget/pos-widget.js'), 'utf8');
@@ -22,15 +23,22 @@ function assert(cond, msg) {
 // Phase 1/2 UI contracts
 assert(deliveryJs.includes('window.posDeliveryState'), 'posDeliveryState required');
 assert(deliveryJs.includes('isCustomerFormComplete'), 'customer completeness helper required');
-assert(deliveryJs.includes("window.POSMAIN.can('delivery.dispatch')"), 'pending delivery polling should only run for dispatch-capable users');
+assert(deliveryQueueJs.includes('ajax/pos_delivery_queue.php'), 'cashier delivery queue endpoint required');
+assert(deliveryQueueJs.includes("data.action = 'dispatch'"), 'cashier must dispatch from the POS queue');
+assert(deliveryQueueJs.includes("data.action = 'failed'"), 'cashier must log failed delivery with a reason');
+assert(deliveryQueueJs.includes('summary.active'), 'badge must use all active delivery orders');
 assert(deliveryJs.includes('response.success'), 'must check response.success');
 assert(deliveryJs.includes('تأكيد بيانات العميل') || posContent.includes('تأكيد بيانات العميل'), 'confirm label updated');
 assert(deliveryJs.includes('posDeliveryIsReadyForSubmit'), 'delivery readiness export required');
 assert(deliveryJs.includes('posDeliveryBar'), 'delivery bar renderer required');
 assert(deliveryJs.includes('delivery_zones_list.php'), 'zones list endpoint wired');
+assert(deliveryJs.includes('loadDeliveryZones(addressRecord ? addressRecord.zone_id : null)'), 'saved customer zone should be restored into the delivery selector');
+assert(deliveryJs.includes('addressPayload.id = addressId'), 'existing default address should be updated rather than duplicated by the cashier');
 assert(deliveryJs.includes('revert') || deliveryJs.includes("$('#age1')"), 'modal dismiss should revert mode');
 assert(posContent.includes('pos_delivery.js'), 'pos_content should load pos_delivery.js');
+assert(posContent.includes('pos_delivery_queue.js'), 'pos_content should load compact delivery queue');
 assert(posContent.includes('id="posDeliveryBar"'), 'delivery bar mount required');
+assert(posContent.includes('id="posDeliveryQueue"'), 'delivery queue offcanvas mount required');
 
 // Phase 2 fee row + totals
 assert(deliveryJs.includes('posDeliveryFeeRow'), 'delivery fee row id required');

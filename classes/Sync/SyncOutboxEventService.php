@@ -21,6 +21,21 @@ class SyncOutboxEventService
         $this->branchIdentity = $branchIdentity ?: new SyncBranchIdentity();
     }
 
+    /**
+     * Reconciles configured branch identity before a caller opens its business
+     * transaction. Identity rotation intentionally cannot run inside a caller
+     * transaction because it migrates historical sync references atomically.
+     */
+    public function prepareBranchIdentity(mysqli $conn, array $options = []): ?array
+    {
+        $config = $options['config'] ?? (function_exists('posmain_app_config') ? posmain_app_config() : []);
+        if (!$this->outboxEnabled($config) && !$this->cloudToBranchPublishEnabled($config)) {
+            return null;
+        }
+
+        return $this->branchIdentity->ensure($conn, $config);
+    }
+
     public function recordOrderSnapshot(mysqli $conn, int $orderId, array $options = []): ?array
     {
         $config = $options['config'] ?? (function_exists('posmain_app_config') ? posmain_app_config() : []);
@@ -46,8 +61,25 @@ class SyncOutboxEventService
             'branch_timezone' => $config['timezone'] ?? null,
         ]);
         $orderUuid = (string) $payload['order_uuid'];
+        $baseRevision = max(1, (int) ($payload['order']['sync_revision'] ?? 1));
+        $sourceTransactionId = $this->sourceTransactionId(
+            $options['source_transaction_id'] ?? null,
+            'order',
+            $orderId,
+            $eventType,
+            'mutation:' . $baseRevision
+        );
+        $idempotencyKey = $this->idempotencyKey($branchUuid, 'order', $orderId, $sourceTransactionId);
+        $existing = $outboxEnabled
+            ? $this->findOutboxByIdempotencyKey($conn, $branchUuid, $idempotencyKey)
+            : null;
+        if ($existing !== null) {
+            $this->assertImmutableReplayMatches($existing, $payload, 'order');
+
+            return $this->existingOrderResult($existing, $branchUuid, $orderUuid);
+        }
+
         if ($outboxEnabled) {
-            $baseRevision = max(1, (int) ($payload['order']['sync_revision'] ?? 1));
             $existingRevision = $this->highestOrderEventVersion($conn, $orderUuid);
             $counter = new DocumentCounterService();
             $counterKey = 'order:' . $branchUuid . ':' . $orderId;
@@ -73,8 +105,8 @@ class SyncOutboxEventService
         $payloadHash = hash('sha256', $payloadJson);
         $eventUuid = SyncBranchIdentity::generateUuidV4();
         $aggregateId = 'ot_head:' . $orderId;
-        $idempotencyKey = $this->idempotencyKey($branchUuid, $orderId, $eventType, $payloadHash);
         $eventVersion = max(1, (int) ($payload['order']['sync_revision'] ?? 1));
+        $deliveryStatus = $this->deliveryStatus($config);
 
         $outboxId = null;
         if ($outboxEnabled) {
@@ -95,17 +127,13 @@ class SyncOutboxEventService
                 event_version,
                 source_system,
                 source_event_uuid,
+                source_transaction_id,
                 idempotency_key,
                 payload_json,
                 payload_hash,
                 status,
                 attempts
-            ) VALUES (?, ?, ?, ?, 'order', ?, ?, ?, 'order', ?, ?, ?, ?, ?, NULL, ?, ?, ?, 'pending', 0)
-            ON DUPLICATE KEY UPDATE
-                id = LAST_INSERT_ID(id),
-                payload_json = VALUES(payload_json),
-                payload_hash = VALUES(payload_hash),
-                updated_at = CURRENT_TIMESTAMP
+            ) VALUES (?, ?, ?, ?, 'order', ?, ?, ?, 'order', ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, 0)
         ");
 
             $params = [
@@ -121,14 +149,30 @@ class SyncOutboxEventService
                 $eventType,
                 $eventVersion,
                 $sourceSystem,
+                $sourceTransactionId,
                 $idempotencyKey,
                 $payloadJson,
                 $payloadHash,
+                $deliveryStatus,
             ];
-            $this->bindParams($stmt, str_repeat('s', count($params)), $params);
-            $stmt->execute();
-            $outboxId = (int) $conn->insert_id;
-            $stmt->close();
+            try {
+                $this->bindParams($stmt, str_repeat('s', count($params)), $params);
+                $stmt->execute();
+                $outboxId = (int) $conn->insert_id;
+                $stmt->close();
+            } catch (mysqli_sql_exception $exception) {
+                $stmt->close();
+                if ((int) $exception->getCode() !== 1062) {
+                    throw $exception;
+                }
+                $existing = $this->findOutboxByIdempotencyKey($conn, $branchUuid, $idempotencyKey);
+                if ($existing === null) {
+                    throw $exception;
+                }
+                $this->assertImmutableReplayMatches($existing, $payload, 'order');
+
+                return $this->existingOrderResult($existing, $branchUuid, $orderUuid);
+            }
         }
 
         $cloudBranchEvents = $this->publishCloudBranchEvent($conn, $config, [
@@ -154,6 +198,9 @@ class SyncOutboxEventService
             'order_uuid' => $orderUuid,
             'idempotency_key' => $idempotencyKey,
             'payload_hash' => $payloadHash,
+            'event_version' => $eventVersion,
+            'source_transaction_id' => $sourceTransactionId,
+            'status' => $deliveryStatus,
             'cloud_branch_events' => $cloudBranchEvents,
         ];
     }
@@ -202,13 +249,43 @@ class SyncOutboxEventService
             'source_system' => $sourceSystem,
             'active_order_id' => array_key_exists('active_order_id', $options) ? $options['active_order_id'] : '__auto__',
         ]);
+        $baseRevision = max(1, (int) ($payload['table']['sync_revision'] ?? 1));
+        $sourceTransactionId = $this->sourceTransactionId(
+            $options['source_transaction_id'] ?? null,
+            'table',
+            $tableId,
+            $eventType,
+            'revision:' . $baseRevision . ':payload:' . substr($this->semanticPayloadHash($payload, 'table'), 0, 24)
+        );
+        $idempotencyKey = $this->idempotencyKey($branchUuid, 'table', $tableId, $sourceTransactionId);
+        $tableUuid = (string) $payload['table_uuid'];
+        $existing = $outboxEnabled
+            ? $this->findOutboxByIdempotencyKey($conn, $branchUuid, $idempotencyKey)
+            : null;
+        if ($existing !== null) {
+            $this->assertImmutableReplayMatches($existing, $payload, 'table');
+
+            return $this->existingEntityResult($existing, $branchUuid, 'table_uuid', $tableUuid);
+        }
+        if ($outboxEnabled) {
+            $payload['table']['sync_revision'] = $this->nextAggregateEventVersion(
+                $conn,
+                $posTenant,
+                $posBranch,
+                'table',
+                $branchUuid,
+                $tableId,
+                $baseRevision
+            );
+            unset($payload['payload_hash']);
+            $payload['payload_hash'] = hash('sha256', $this->encodeJson($payload));
+        }
         $payloadJson = $this->encodeJson($payload);
         $payloadHash = hash('sha256', $payloadJson);
-        $tableUuid = (string) $payload['table_uuid'];
         $eventUuid = SyncBranchIdentity::generateUuidV4();
         $aggregateId = 'tables:' . $tableId;
-        $idempotencyKey = $this->tableIdempotencyKey($branchUuid, $tableId, $eventType, $payloadHash);
         $eventVersion = max(1, (int) ($payload['table']['sync_revision'] ?? 1));
+        $deliveryStatus = $this->deliveryStatus($config);
 
         $outboxId = null;
         if ($outboxEnabled) {
@@ -229,17 +306,13 @@ class SyncOutboxEventService
                 event_version,
                 source_system,
                 source_event_uuid,
+                source_transaction_id,
                 idempotency_key,
                 payload_json,
                 payload_hash,
                 status,
                 attempts
-            ) VALUES (?, ?, ?, ?, 'table', ?, ?, ?, 'table', ?, ?, ?, ?, ?, NULL, ?, ?, ?, 'pending', 0)
-            ON DUPLICATE KEY UPDATE
-                id = LAST_INSERT_ID(id),
-                payload_json = VALUES(payload_json),
-                payload_hash = VALUES(payload_hash),
-                updated_at = CURRENT_TIMESTAMP
+            ) VALUES (?, ?, ?, ?, 'table', ?, ?, ?, 'table', ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, 0)
         ");
 
             $params = [
@@ -255,14 +328,30 @@ class SyncOutboxEventService
                 $eventType,
                 $eventVersion,
                 $sourceSystem,
+                $sourceTransactionId,
                 $idempotencyKey,
                 $payloadJson,
                 $payloadHash,
+                $deliveryStatus,
             ];
-            $this->bindParams($stmt, str_repeat('s', count($params)), $params);
-            $stmt->execute();
-            $outboxId = (int) $conn->insert_id;
-            $stmt->close();
+            try {
+                $this->bindParams($stmt, str_repeat('s', count($params)), $params);
+                $stmt->execute();
+                $outboxId = (int) $conn->insert_id;
+                $stmt->close();
+            } catch (mysqli_sql_exception $exception) {
+                $stmt->close();
+                if ((int) $exception->getCode() !== 1062) {
+                    throw $exception;
+                }
+                $existing = $this->findOutboxByIdempotencyKey($conn, $branchUuid, $idempotencyKey);
+                if ($existing === null) {
+                    throw $exception;
+                }
+                $this->assertImmutableReplayMatches($existing, $payload, 'table');
+
+                return $this->existingEntityResult($existing, $branchUuid, 'table_uuid', $tableUuid);
+            }
         }
 
         $cloudBranchEvents = $this->publishCloudBranchEvent($conn, $config, [
@@ -288,6 +377,9 @@ class SyncOutboxEventService
             'table_uuid' => $tableUuid,
             'idempotency_key' => $idempotencyKey,
             'payload_hash' => $payloadHash,
+            'event_version' => $eventVersion,
+            'source_transaction_id' => $sourceTransactionId,
+            'status' => $deliveryStatus,
             'cloud_branch_events' => $cloudBranchEvents,
         ];
     }
@@ -322,12 +414,43 @@ class SyncOutboxEventService
             'pos_tenant' => $posTenant,
             'pos_branch' => $posBranch,
         ]);
+        $baseRevision = max(1, (int) ($payload['menu_item']['menu_version'] ?? 1));
+        $sourceTransactionId = $this->sourceTransactionId(
+            $options['source_transaction_id'] ?? null,
+            'menu_item',
+            $itemId,
+            $eventType,
+            'revision:' . $baseRevision . ':payload:' . substr($this->semanticPayloadHash($payload, 'menu_item'), 0, 24)
+        );
+        $idempotencyKey = $this->idempotencyKey($branchUuid, 'menu_item', $itemId, $sourceTransactionId);
+        $itemUuid = (string) $payload['item_uuid'];
+        $existing = $outboxEnabled
+            ? $this->findOutboxByIdempotencyKey($conn, $branchUuid, $idempotencyKey)
+            : null;
+        if ($existing !== null) {
+            $this->assertImmutableReplayMatches($existing, $payload, 'menu_item');
+
+            return $this->existingEntityResult($existing, $branchUuid, 'item_uuid', $itemUuid);
+        }
+        if ($outboxEnabled) {
+            $payload['menu_item']['menu_version'] = $this->nextAggregateEventVersion(
+                $conn,
+                $posTenant,
+                $posBranch,
+                'menu_item',
+                $branchUuid,
+                $itemId,
+                $baseRevision
+            );
+            unset($payload['payload_hash']);
+            $payload['payload_hash'] = hash('sha256', $this->encodeJson($payload));
+        }
         $payloadJson = $this->encodeJson($payload);
         $payloadHash = hash('sha256', $payloadJson);
-        $itemUuid = (string) $payload['item_uuid'];
         $eventUuid = SyncBranchIdentity::generateUuidV4();
         $aggregateId = 'myitems:' . $itemId;
-        $idempotencyKey = $this->menuItemIdempotencyKey($branchUuid, $itemId, $eventType, $payloadHash);
+        $eventVersion = max(1, (int) ($payload['menu_item']['menu_version'] ?? 1));
+        $deliveryStatus = $this->deliveryStatus($config);
 
         $outboxId = null;
         if ($outboxEnabled) {
@@ -348,20 +471,15 @@ class SyncOutboxEventService
                 event_version,
                 source_system,
                 source_event_uuid,
+                source_transaction_id,
                 idempotency_key,
                 payload_json,
                 payload_hash,
                 status,
                 attempts
-            ) VALUES (?, ?, ?, ?, 'menu_item', ?, ?, ?, 'menu_item', ?, ?, ?, ?, ?, NULL, ?, ?, ?, 'pending', 0)
-            ON DUPLICATE KEY UPDATE
-                id = LAST_INSERT_ID(id),
-                payload_json = VALUES(payload_json),
-                payload_hash = VALUES(payload_hash),
-                updated_at = CURRENT_TIMESTAMP
+            ) VALUES (?, ?, ?, ?, 'menu_item', ?, ?, ?, 'menu_item', ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, 0)
         ");
 
-            $eventVersion = (int) ($payload['menu_item']['menu_version'] ?? 1);
             $params = [
                 $eventUuid,
                 $branchUuid,
@@ -375,20 +493,36 @@ class SyncOutboxEventService
                 $eventType,
                 $eventVersion,
                 $sourceSystem,
+                $sourceTransactionId,
                 $idempotencyKey,
                 $payloadJson,
                 $payloadHash,
+                $deliveryStatus,
             ];
-            $this->bindParams($stmt, str_repeat('s', count($params)), $params);
-            $stmt->execute();
-            $outboxId = (int) $conn->insert_id;
-            $stmt->close();
+            try {
+                $this->bindParams($stmt, str_repeat('s', count($params)), $params);
+                $stmt->execute();
+                $outboxId = (int) $conn->insert_id;
+                $stmt->close();
+            } catch (mysqli_sql_exception $exception) {
+                $stmt->close();
+                if ((int) $exception->getCode() !== 1062) {
+                    throw $exception;
+                }
+                $existing = $this->findOutboxByIdempotencyKey($conn, $branchUuid, $idempotencyKey);
+                if ($existing === null) {
+                    throw $exception;
+                }
+                $this->assertImmutableReplayMatches($existing, $payload, 'menu_item');
+
+                return $this->existingEntityResult($existing, $branchUuid, 'item_uuid', $itemUuid);
+            }
         }
 
         $cloudBranchEvents = $this->publishCloudBranchEvent($conn, $config, [
             'branch_uuid' => $branchUuid,
             'event_type' => $eventType,
-            'event_version' => (int) ($payload['menu_item']['menu_version'] ?? 1),
+            'event_version' => $eventVersion,
             'source_system' => $sourceSystem,
             'aggregate_type' => 'menu_item',
             'aggregate_uuid' => $itemUuid,
@@ -408,6 +542,9 @@ class SyncOutboxEventService
             'item_uuid' => $itemUuid,
             'idempotency_key' => $idempotencyKey,
             'payload_hash' => $payloadHash,
+            'event_version' => $eventVersion,
+            'source_transaction_id' => $sourceTransactionId,
+            'status' => $deliveryStatus,
             'cloud_branch_events' => $cloudBranchEvents,
         ];
     }
@@ -421,6 +558,13 @@ class SyncOutboxEventService
     {
         return in_array((string) ($config['role'] ?? 'branch'), ['cloud', 'fake_cloud'], true)
             && !empty($config['sync']['cloud_to_branch_publish_enabled']);
+    }
+
+    private function deliveryStatus(array $config): string
+    {
+        return !empty($config['sync']['branch_sync_enabled']) && !empty($config['sync']['worker_enabled'])
+            ? 'pending'
+            : 'held';
     }
 
     private function publishCloudBranchEvent(mysqli $conn, array $config, array $event): array
@@ -440,19 +584,148 @@ class SyncOutboxEventService
         }
     }
 
-    private function idempotencyKey(string $branchUuid, int $orderId, string $eventType, string $payloadHash): string
-    {
-        return 'pos:order:' . $orderId . ':' . $eventType . ':' . substr(hash('sha256', $branchUuid . ':' . $payloadHash), 0, 32);
+    private function sourceTransactionId(
+        $requested,
+        string $aggregateType,
+        int $localId,
+        string $eventType,
+        string $fallbackRevision
+    ): string {
+        $value = trim((string) $requested);
+        if ($value === '') {
+            $value = $aggregateType . ':' . $localId . ':' . $eventType . ':' . $fallbackRevision;
+        }
+        if (strlen($value) > 191) {
+            $value = substr($value, 0, 150) . ':' . hash('sha256', $value);
+        }
+
+        return $value;
     }
 
-    private function tableIdempotencyKey(string $branchUuid, int $tableId, string $eventType, string $payloadHash): string
+    private function idempotencyKey(
+        string $branchUuid,
+        string $aggregateType,
+        int $localId,
+        string $sourceTransactionId
+    ): string
     {
-        return 'pos:table:' . $tableId . ':' . $eventType . ':' . substr(hash('sha256', $branchUuid . ':' . $payloadHash), 0, 32);
+        return 'pos:' . $aggregateType . ':' . $localId . ':tx:' .
+            substr(hash('sha256', $branchUuid . ':' . $sourceTransactionId), 0, 40);
     }
 
-    private function menuItemIdempotencyKey(string $branchUuid, int $itemId, string $eventType, string $payloadHash): string
+    private function findOutboxByIdempotencyKey(mysqli $conn, string $branchUuid, string $idempotencyKey): ?array
     {
-        return 'pos:menu_item:' . $itemId . ':' . $eventType . ':' . substr(hash('sha256', $branchUuid . ':' . $payloadHash), 0, 32);
+        $stmt = $conn->prepare("
+            SELECT *
+            FROM sync_outbox
+            WHERE branch_uuid = ?
+              AND idempotency_key = ?
+            LIMIT 1
+        ");
+        $stmt->bind_param('ss', $branchUuid, $idempotencyKey);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        return $row ?: null;
+    }
+
+    private function assertImmutableReplayMatches(array $existing, array $currentPayload, string $aggregateType): void
+    {
+        $storedPayload = json_decode((string) ($existing['payload_json'] ?? ''), true);
+        if (
+            !is_array($storedPayload)
+            || !hash_equals(
+                $this->semanticPayloadHash($storedPayload, $aggregateType),
+                $this->semanticPayloadHash($currentPayload, $aggregateType)
+            )
+        ) {
+            throw new RuntimeException('OUTBOX_IDEMPOTENCY_PAYLOAD_CONFLICT');
+        }
+    }
+
+    private function semanticPayloadHash(array $payload, string $aggregateType): string
+    {
+        unset($payload['captured_at_utc'], $payload['payload_hash']);
+        if ($aggregateType === 'order' && isset($payload['order']) && is_array($payload['order'])) {
+            unset($payload['order']['sync_revision']);
+        } elseif ($aggregateType === 'table' && isset($payload['table']) && is_array($payload['table'])) {
+            unset($payload['table']['sync_revision']);
+        } elseif ($aggregateType === 'menu_item' && isset($payload['menu_item']) && is_array($payload['menu_item'])) {
+            unset($payload['menu_item']['menu_version']);
+        }
+
+        return hash('sha256', $this->encodeJson($payload));
+    }
+
+    private function existingOrderResult(array $existing, string $branchUuid, string $orderUuid): array
+    {
+        return array_merge(
+            $this->existingEntityResult($existing, $branchUuid, 'order_uuid', $orderUuid),
+            ['order_uuid' => $orderUuid]
+        );
+    }
+
+    private function existingEntityResult(
+        array $existing,
+        string $branchUuid,
+        string $entityUuidKey,
+        string $entityUuid
+    ): array {
+        return [
+            'outbox_id' => (int) $existing['id'],
+            'event_uuid' => (string) $existing['event_uuid'],
+            'branch_uuid' => $branchUuid,
+            $entityUuidKey => $entityUuid,
+            'idempotency_key' => (string) $existing['idempotency_key'],
+            'payload_hash' => (string) $existing['payload_hash'],
+            'event_version' => (int) $existing['event_version'],
+            'source_transaction_id' => (string) ($existing['source_transaction_id'] ?? ''),
+            'status' => (string) $existing['status'],
+            'cloud_branch_events' => [],
+            'replayed' => true,
+        ];
+    }
+
+    private function nextAggregateEventVersion(
+        mysqli $conn,
+        int $posTenant,
+        int $posBranch,
+        string $aggregateType,
+        string $branchUuid,
+        int $localId,
+        int $baseRevision
+    ): int {
+        $stmt = $conn->prepare("
+            SELECT COALESCE(MAX(event_version), 0) AS max_version
+            FROM sync_outbox
+            WHERE aggregate_type = ?
+              AND aggregate_local_id = ?
+              AND branch_uuid = ?
+        ");
+        $stmt->bind_param('sis', $aggregateType, $localId, $branchUuid);
+        $stmt->execute();
+        $existingRevision = (int) ($stmt->get_result()->fetch_assoc()['max_version'] ?? 0);
+        $stmt->close();
+
+        $counter = new DocumentCounterService();
+        $counterKey = $aggregateType . ':' . $branchUuid . ':' . $localId;
+        $counter->ensureCounterRow(
+            $conn,
+            $posTenant,
+            $posBranch,
+            $aggregateType . '_sync',
+            $counterKey,
+            max(0, $baseRevision - 1, $existingRevision)
+        );
+
+        return $counter->nextCounter(
+            $conn,
+            $posTenant,
+            $posBranch,
+            $aggregateType . '_sync',
+            $counterKey
+        );
     }
 
     private function buildMenuItemPayload(mysqli $conn, string $branchUuid, int $itemId, array $options): array

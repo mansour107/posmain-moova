@@ -20,6 +20,25 @@ try {
     phase4TableMergeSeed($conn);
 
     $service = new TableMergeService();
+    $conn->query("UPDATE acc_head SET is_stock = 0 WHERE id = 3");
+    phase4TableMergeExpectException(function () use ($service, $conn) {
+        $service->mergeOrders($conn, [
+            'source_table_id' => 1,
+            'destination_table_id' => 2,
+            'source_order_id' => 100,
+            'destination_order_id' => 200,
+        ], ['user_id' => 77, 'tenant' => 5, 'branch' => 6]);
+    }, 'OPERATIONAL_STORE_NOT_CONFIGURED');
+    phase4TableMergeAssert(
+        (int) $conn->query("SELECT COUNT(*) AS c FROM fat_details WHERE fatid = 100 AND isdeleted = 0")->fetch_assoc()['c'] === 2,
+        'missing-store failure must not move source lines'
+    );
+    phase4TableMergeAssert(
+        (int) $conn->query("SELECT table_case FROM tables WHERE id = 1")->fetch_assoc()['table_case'] === 1,
+        'missing-store failure must not release source table'
+    );
+    $conn->query("UPDATE acc_head SET is_stock = 1 WHERE id = 3");
+
     $merged = $service->mergeOrders($conn, [
         'source_table_id' => 1,
         'destination_table_id' => 2,
@@ -87,6 +106,22 @@ try {
 function phase4TableMergeCreateLegacyTables(mysqli $conn): void
 {
     $conn->query("
+        CREATE TABLE settings (
+            id INT NOT NULL PRIMARY KEY,
+            def_pos_store INT NULL,
+            isdeleted TINYINT(1) NOT NULL DEFAULT 0
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+    ");
+    $conn->query("
+        CREATE TABLE acc_head (
+            id INT NOT NULL PRIMARY KEY,
+            code VARCHAR(40) NULL,
+            aname VARCHAR(120) NULL,
+            is_stock TINYINT(1) NOT NULL DEFAULT 0,
+            isdeleted TINYINT(1) NOT NULL DEFAULT 0
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+    ");
+    $conn->query("
         CREATE TABLE tables (
             id INT NOT NULL PRIMARY KEY,
             tname VARCHAR(120) NULL,
@@ -130,6 +165,8 @@ function phase4TableMergeCreateLegacyTables(mysqli $conn): void
 
 function phase4TableMergeSeed(mysqli $conn): void
 {
+    $conn->query("INSERT INTO settings (id, def_pos_store, isdeleted) VALUES (1, 3, 0)");
+    $conn->query("INSERT INTO acc_head (id, code, aname, is_stock, isdeleted) VALUES (3, '123001', 'Operational store', 1, 0)");
     $conn->query("
         INSERT INTO tables (id, tname, table_case, isdeleted) VALUES
         (1, 'T1', 1, 0),

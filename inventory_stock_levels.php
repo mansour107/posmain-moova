@@ -103,12 +103,13 @@ $inventoryStockLevelRows = inventoryStockLevelRows($conn, "
     LIMIT 160
 ");
 
+$inventoryStockLevelCsrfMeta = csrf_meta_tag('inventory_stock_level', 'inventory-stock-level-csrf');
 include __DIR__ . '/includes/header.php';
 include __DIR__ . '/includes/navbar.php';
 include __DIR__ . '/includes/sidebar.php';
 ?>
 
-<?= csrf_meta_tag('inventory_stock_level', 'inventory-stock-level-csrf') ?>
+<?= $inventoryStockLevelCsrfMeta ?>
 
 <style>
     .inventory-stock-level-page{direction:rtl;background:#f6f8fb;min-height:calc(100vh - 57px)}

@@ -46,7 +46,8 @@ $surfaces = [
         'integrations.cofe.orders',
     ],
     'do/doadd_invoice_waiter.php' => [
-        'doadd_invoice.php',
+        'http_response_code(410)',
+        'LEGACY_WAITER_AUTH_DISABLED',
     ],
     'classes/PosOrderService.php' => [
         'class PosOrderService',
@@ -106,9 +107,15 @@ orderCreationSurfaceAssert(
 );
 
 $waiterSource = file_get_contents($root . '/do/doadd_invoice_waiter.php');
+$routeManifest = require $root . '/config/rbac_route_manifest.php';
 orderCreationSurfaceAssert(
-    strpos($waiterSource, 'require_csrf') === false,
-    'doadd_invoice_waiter should remain documented as lacking CSRF'
+    !empty($routeManifest['do/doadd_invoice_waiter.php']['quarantined']),
+    'doadd_invoice_waiter should remain explicitly quarantined in the route manifest'
+);
+orderCreationSurfaceAssert(
+    strpos($waiterSource, 'INSERT INTO ot_head') === false
+        && strpos($waiterSource, 'PosOrderMutationService') === false,
+    'quarantined waiter endpoint must not retain order mutation capability'
 );
 
 echo "order-creation-write-surface-contract-ok\n";

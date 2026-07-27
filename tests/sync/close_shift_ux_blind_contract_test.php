@@ -83,7 +83,7 @@ try {
     $float = new DrawerFloatExpectationService();
 
     closeUxAssert($count->handoverEnabled($conn), 'handover enabled');
-    $float->setOpeningBaseline($conn, 1, 3, 100.0, 91);
+    $float->setOpeningBaseline($conn, 1, 3, '100.000', 91);
 
     $count->beginOpenCount($conn, 91);
     $opened = $count->submitOpenCount($conn, 91, '100.000');

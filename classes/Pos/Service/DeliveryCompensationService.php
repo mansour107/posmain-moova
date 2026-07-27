@@ -1,6 +1,7 @@
 <?php
 
 require_once __DIR__ . '/../../Sync/OperationalSyncEventService.php';
+require_once __DIR__ . '/../../Recipe/RecipeDecimal.php';
 
 final class DeliveryCompensationService
 {
@@ -59,7 +60,10 @@ final class DeliveryCompensationService
         $basePeriod = $this->enum($data['base_period'] ?? 'none', self::BASE_PERIODS, 'DELIVERY_PLAN_BASE_PERIOD_INVALID');
         $method = $this->enum($data['per_delivery_method'] ?? 'customer_fee', self::METHODS, 'DELIVERY_PLAN_METHOD_INVALID');
         $tipsMode = $this->enum($data['tips_mode'] ?? 'none', self::TIP_MODES, 'DELIVERY_PLAN_TIPS_MODE_INVALID');
-        $baseAmount = $this->amount($data['base_amount'] ?? 0);
+        // A plan without a base-pay period must never retain a base amount.
+        // Keep this invariant server-side because disabled HTML inputs are not
+        // submitted, but older clients or direct requests may still send one.
+        $baseAmount = $basePeriod === 'none' ? '0.000' : $this->amount($data['base_amount'] ?? 0);
         $perValue = $this->amount($data['per_delivery_value'] ?? 0);
         $effectiveFrom = $this->date($data['effective_from'] ?? date('Y-m-d'));
         $effectiveTo = trim((string) ($data['effective_to'] ?? '')) !== '' ? $this->date($data['effective_to']) : null;
@@ -199,11 +203,15 @@ final class DeliveryCompensationService
         if (!$plan) {
             return '0.000';
         }
-        $value = (float) $plan['per_delivery_value'];
         switch ($plan['per_delivery_method']) {
             case 'customer_fee': return $this->amount($customerFee);
-            case 'fixed': return $this->amount($value);
-            case 'percentage': return $this->amount(((float) $customerFee) * $value / 100);
+            case 'fixed': return $this->amount($plan['per_delivery_value']);
+            case 'percentage':
+                return $this->amount(RecipeDecimal::divide(
+                    RecipeDecimal::multiply($customerFee, $plan['per_delivery_value'], 6),
+                    '100',
+                    6
+                ));
             case 'zone_rate':
                 foreach ($plan['zone_rates'] as $rate) {
                     if ((int) $rate['zone_id'] === $zoneId) {
@@ -287,11 +295,18 @@ final class DeliveryCompensationService
         // POSMAIN journals use currency precision (Money::SCALE = 2). Store the
         // third schema decimal as zero so per-order accruals and settlements can
         // never accumulate a sub-cent payable that the ledger cannot represent.
-        $number = round((float) $value, 2);
-        if ($number < 0) {
+        if (is_float($value) || is_bool($value) || is_array($value) || is_object($value)) {
+            throw new InvalidArgumentException('DELIVERY_DECIMAL_STRING_REQUIRED');
+        }
+        $value = trim((string) $value);
+        if (!preg_match('/^-?(?:0|[1-9]\d*)(?:\.\d+)?$/', $value)) {
             throw new InvalidArgumentException('DELIVERY_AMOUNT_INVALID');
         }
-        return number_format($number, 3, '.', '');
+        $amount = RecipeDecimal::normalize($value, 2);
+        if (RecipeDecimal::compare($amount, '0.00', 2) < 0) {
+            throw new InvalidArgumentException('DELIVERY_AMOUNT_INVALID');
+        }
+        return $amount . '0';
     }
 
     private function date($value): string

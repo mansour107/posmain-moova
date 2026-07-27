@@ -30,6 +30,7 @@ $conn->set_charset('utf8mb4');
 try {
     (new SyncSchemaManager())->apply($conn);
     inventoryPhase9CreateLegacyItemTable($conn);
+    inventoryPhase9CreateOperationalStore($conn, 3);
     $conn->query("
         INSERT INTO myitems (id, iname, barcode, itmqty, cost_price, last_price, item_type, track_stock)
         VALUES
@@ -157,7 +158,7 @@ try {
 
     $unitIncrease = $service->recordAdjustment($conn, [
         'operation_uuid' => '88888888-bbbb-4bbb-8bbb-888888888888',
-        'store_id' => 4,
+        'store_id' => 3,
         'item_id' => 6603,
         'unit_id' => 902,
         'direction' => 'increase',
@@ -174,13 +175,13 @@ try {
     inventoryPhase9Assert(inventoryPhase9DecimalEquals($unitMovement['unit_cost'], '5.000000'), 'unit increase should store base unit cost');
     inventoryPhase9Assert(inventoryPhase9DecimalEquals($unitMovement['total_cost'], '120.000000'), 'unit increase should preserve entered-unit total');
     inventoryPhase9Assert(strpos((string) $unitMovement['metadata_json'], '"entered_qty":"2.000000"') !== false, 'unit increase metadata should keep entered qty');
-    $unitBalance = inventoryPhase9One($conn, 'SELECT qty_on_hand, moving_average_cost FROM inventory_item_balances WHERE item_id = 6603 AND store_id = 4 LIMIT 1');
+    $unitBalance = inventoryPhase9One($conn, 'SELECT qty_on_hand, moving_average_cost FROM inventory_item_balances WHERE item_id = 6603 AND store_id = 3 LIMIT 1');
     inventoryPhase9Assert(inventoryPhase9DecimalEquals($unitBalance['qty_on_hand'], '24.000000'), 'unit increase should increase on hand by base qty');
     inventoryPhase9Assert(inventoryPhase9DecimalEquals($unitBalance['moving_average_cost'], '5.000000'), 'unit increase should set base moving average cost');
 
     $unitWaste = $service->recordWaste($conn, [
         'operation_uuid' => '99999999-cccc-4ccc-8ccc-999999999999',
-        'store_id' => 4,
+        'store_id' => 3,
         'item_id' => 6603,
         'unit_id' => 902,
         'qty' => '1.000000',
@@ -193,13 +194,13 @@ try {
     inventoryPhase9Assert((int) $unitWasteMovement['unit_id'] === 902, 'unit waste should store selected unit');
     inventoryPhase9Assert(inventoryPhase9DecimalEquals($unitWasteMovement['unit_cost'], '5.000000'), 'unit waste should use base moving average cost');
     inventoryPhase9Assert(inventoryPhase9DecimalEquals($unitWasteMovement['total_cost'], '60.000000'), 'unit waste should value base qty');
-    $unitBalance = inventoryPhase9One($conn, 'SELECT qty_on_hand FROM inventory_item_balances WHERE item_id = 6603 AND store_id = 4 LIMIT 1');
+    $unitBalance = inventoryPhase9One($conn, 'SELECT qty_on_hand FROM inventory_item_balances WHERE item_id = 6603 AND store_id = 3 LIMIT 1');
     inventoryPhase9Assert(inventoryPhase9DecimalEquals($unitBalance['qty_on_hand'], '12.000000'), 'unit waste should decrease on hand by base qty');
 
     try {
         $service->recordAdjustment($conn, [
             'operation_uuid' => 'aaaaaaaa-bbbb-4bbb-8bbb-aaaaaaaaaaaa',
-            'store_id' => 4,
+            'store_id' => 3,
             'item_id' => 6603,
             'unit_id' => 999999,
             'direction' => 'increase',
@@ -258,7 +259,7 @@ try {
 
     $approvedReasonCode = $service->recordWaste($conn, [
         'operation_uuid' => 'dededede-aaaa-4aaa-8aaa-dededededede',
-        'store_id' => 4,
+        'store_id' => 3,
         'item_id' => 6603,
         'qty' => '1.000000',
         'reason_code_id' => 9104,
@@ -324,7 +325,7 @@ try {
 
     $photoWaste = $service->recordWaste($conn, [
         'operation_uuid' => '12121212-aaaa-4aaa-8aaa-121212121212',
-        'store_id' => 4,
+        'store_id' => 3,
         'item_id' => 6603,
         'qty' => '1.000000',
         'reason' => 'photo evidence waste',
@@ -403,6 +404,24 @@ CREATE TABLE item_units (
   cost_price DECIMAL(18,6) NOT NULL DEFAULT 0.000000,
   isdeleted TINYINT(1) NOT NULL DEFAULT 0
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
+}
+
+function inventoryPhase9CreateOperationalStore(mysqli $conn, int $storeId): void
+{
+    $conn->query('CREATE TABLE settings (
+        id INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        def_pos_store INT UNSIGNED NULL
+    ) ENGINE=InnoDB');
+    $conn->query('CREATE TABLE acc_head (
+        id INT UNSIGNED NOT NULL PRIMARY KEY,
+        code VARCHAR(32) NOT NULL,
+        aname VARCHAR(191) NOT NULL,
+        is_stock TINYINT(1) NOT NULL DEFAULT 0,
+        isdeleted TINYINT(1) NOT NULL DEFAULT 0
+    ) ENGINE=InnoDB');
+    $conn->query("INSERT INTO acc_head (id, code, aname, is_stock, isdeleted)
+        VALUES ({$storeId}, 'STORE-{$storeId}', 'Operational store', 1, 0)");
+    $conn->query("INSERT INTO settings (def_pos_store) VALUES ({$storeId})");
 }
 
 function inventoryPhase9AssertSourceContracts(string $root): void

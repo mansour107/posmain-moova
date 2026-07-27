@@ -39,26 +39,44 @@ try {
     $conn->query("INSERT INTO users (id, uname, userrole, isdeleted) VALUES (7, 'cashier', 1, 0)");
     $conn->query("INSERT INTO myitems (id, iname, item_type, track_stock, price1, isdeleted) VALUES (10, 'Table item 10', 'sellable', 1, 15, 0)");
     $conn->query("INSERT INTO tables (id, tname, table_case, isdeleted) VALUES (1, 'T1', 0, 0)");
+    (new PaymentMethodService())->saveMethod($conn, [
+        'code' => 'cash',
+        'name_ar' => 'Cash',
+        'name_en' => 'Cash',
+        'type' => 'cash',
+        'account_id' => 51,
+        'settlement_policy' => 'cash_drawer',
+    ]);
+    // Simulate a legacy/stale tender mapping. Cash must resolve to the valid
+    // configured POS fund before any order, drawer, receipt, or journal write.
+    $conn->query("UPDATE payment_methods SET account_id = 9999 WHERE code = 'cash'");
+    (new DrawerSessionService())->openSession($conn, [
+        'user_id' => 7,
+        'opened_by' => 7,
+        'tenant' => 0,
+        'branch' => 0,
+        'opening_cash' => '100.00',
+    ]);
 
     $controller = new PosOrderController();
     $payload = [
         'table_id' => 1,
         'selected_table_id' => 1,
         'order_id' => 0,
-        'paid' => 30,
-        'paid_cash' => 30,
-        'net' => 30,
-        'headnet' => 30,
-        'total' => 30,
-        'headtotal' => 30,
-        'discount' => 0,
-        'headdisc' => 0,
+        'paid' => '30.00',
+        'paid_cash' => '30.00',
+        'net' => '30.00',
+        'headnet' => '30.00',
+        'total' => '30.00',
+        'headtotal' => '30.00',
+        'discount' => '0.00',
+        'headdisc' => '0.00',
         'store_id' => 3,
         'emp_id' => 4,
         'fund_id' => 51,
         'payment_fund_id' => 51,
         'items' => [
-            ['id' => 10, 'qty' => 2, 'price' => 15, 'discount' => 0],
+            ['id' => 10, 'qty' => '2.000000', 'price' => '15.00', 'discount' => '0.00'],
         ],
         'idempotency_key' => 'table-pay-without-save-' . getmypid(),
     ];
@@ -75,12 +93,24 @@ try {
     posTablePayWithoutSaveAssert((string) ($order['payment_status'] ?? '') === 'paid', 'auto-saved table order should be paid');
     posTablePayWithoutSaveAssert((int) ($order['table_id'] ?? 0) === 1, 'paid order should stay linked to table');
     posTablePayWithoutSaveAssert((int) $conn->query("SELECT COUNT(*) AS c FROM fat_details WHERE fatid = {$orderId} AND isdeleted = 0")->fetch_assoc()['c'] === 1, 'auto-saved table order should have line items');
+    $receiptAccounts = $conn->query("
+        SELECT je.account_id
+        FROM journal_entries je
+        JOIN journal_heads jh ON jh.id = je.journal_id
+        WHERE jh.source_type = 'payment'
+          AND jh.op2 = {$orderId}
+        ORDER BY je.id
+    ")->fetch_all(MYSQLI_ASSOC);
+    posTablePayWithoutSaveAssert(
+        in_array(51, array_map(static fn(array $row): int => (int) $row['account_id'], $receiptAccounts), true),
+        'stale cash tender account must fall back to the valid configured POS fund'
+    );
 
     try {
         $controller->payTable($conn, [
             'table_id' => 1,
             'order_id' => 0,
-            'paid' => 10,
+            'paid' => '10.00',
             'items' => [],
             'idempotency_key' => 'table-pay-empty-' . getmypid(),
         ], [], 7);

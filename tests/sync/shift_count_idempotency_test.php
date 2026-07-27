@@ -81,7 +81,7 @@ try {
         fat_net DOUBLE NULL
     )");
 
-    $floatService->setOpeningBaseline($conn, 1, 2, 100.0, 77);
+    $floatService->setOpeningBaseline($conn, 1, 2, '100.000', 77);
 
     // This is the POS browser state that displays the opening-count overlay.
     // A successful count must clear it once the drawer session exists.

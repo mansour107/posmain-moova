@@ -1,8 +1,16 @@
 <?php
 
 require_once __DIR__ . '/../../classes/Pos/Service/PosOrderMutationService.php';
+require_once __DIR__ . '/../../classes/Pos/Service/PaymentMethodService.php';
+require_once __DIR__ . '/../../classes/Sync/SchemaManager.php';
 
 mysqli_report(MYSQLI_REPORT_OFF);
+putenv('POSMAIN_RECIPE_MODE=off');
+$_ENV['POSMAIN_RECIPE_MODE'] = 'off';
+$_SERVER['POSMAIN_RECIPE_MODE'] = 'off';
+putenv('POSMAIN_INVENTORY_LEDGER_MODE=off');
+$_ENV['POSMAIN_INVENTORY_LEDGER_MODE'] = 'off';
+$_SERVER['POSMAIN_INVENTORY_LEDGER_MODE'] = 'off';
 
 $host = getenv('POSMAIN_TEST_MYSQL_HOST') ?: '127.0.0.1';
 $port = (int) (getenv('POSMAIN_TEST_MYSQL_PORT') ?: 3307);
@@ -20,10 +28,24 @@ try {
     $conn->query("CREATE DATABASE `{$db}` CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci");
     $conn->select_db($db);
     posOrderEventCreateSchema($conn);
+    (new SyncSchemaManager())->apply($conn);
 
     $service = new PosOrderMutationService();
+    $conn->query("
+        INSERT INTO acc_head (id, code, aname, isdeleted)
+        VALUES
+            (52, '112052', 'Card clearing', 0),
+            (501, '122001', 'POS customer', 0)
+    ");
+    (new PaymentMethodService())->saveMethod($conn, [
+        'code' => 'card_terminal',
+        'name_ar' => 'Card',
+        'name_en' => 'Card',
+        'type' => 'card',
+        'account_id' => 52,
+    ]);
     $conn->query("INSERT INTO settings (id, def_pos_client, isdeleted) VALUES (1, 501, 0)");
-    $conn->query("INSERT INTO acc_head (id, code, isdeleted) VALUES (501, '122001', 0)");
+    $conn->query("INSERT INTO myitems (id, price1, isdeleted) VALUES (10, 15, 0)");
     $conn->query("INSERT INTO tables (id, tname, table_case, isdeleted) VALUES (1, 'T1', 0, 0), (2, 'T2', 1, 0)");
 
     $save = $service->saveTableOrder($conn, [
@@ -46,18 +68,19 @@ try {
         'table_id' => 1,
         'order_id' => $savedOrderId,
         'paid' => 10,
-        'payment_method' => 'cash',
+        'payment_method' => 'card_terminal',
+        'reference_no' => 'EVENT-PARTIAL-1',
     ], ['user_id' => 8, 'skip_idempotency' => true]);
     posOrderEventAssert($payment['data']['payment_status'] === 'partial', 'payment smoke should remain partial');
-    posOrderEventAssertEvent($conn, $savedOrderId, 'order.payment_recorded', 'pos_table_payment', 8, 'applied_amount', 10.0);
+    posOrderEventAssertEvent($conn, $savedOrderId, 'order.payment_recorded', 'pos_table_payment', 8, 'applied_amount', '10.00');
 
     $conn->query("
         INSERT INTO ot_head (
             id, pro_id, table_id, pro_tybe, isdeleted, order_status, payment_status,
             invoice_status, fat_total, fat_disc, fat_net, paid_amount, remaining_amount
         ) VALUES (
-            200, 20, 2, 9, 0, 'active', 'partial',
-            'draft', 20, 0, 20, 5, 15
+            200, 20, 2, 9, 0, 'active', 'unpaid',
+            'draft', 20, 0, 20, 0, 20
         )
     ");
     $conn->query("INSERT INTO fat_details (id, fatid, isdeleted, det_value, profit) VALUES (2000, 200, 0, 20, 0)");
@@ -74,7 +97,8 @@ try {
         'table_id' => 1,
         'order_id' => $savedOrderId,
         'paid' => 20,
-        'payment_method' => 'cash',
+        'payment_method' => 'card_terminal',
+        'reference_no' => 'EVENT-FINAL-1',
     ], ['user_id' => 10, 'skip_idempotency' => true]);
 
     echo "pos-order-mutation-event-recording-ok db={$db}\n";
@@ -96,6 +120,7 @@ function posOrderEventCreateSchema(mysqli $conn): void
         CREATE TABLE acc_head (
             id INT NOT NULL PRIMARY KEY,
             code VARCHAR(40) NULL,
+            aname VARCHAR(255) NULL,
             isdeleted TINYINT(1) NOT NULL DEFAULT 0
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
     ");
@@ -104,6 +129,15 @@ function posOrderEventCreateSchema(mysqli $conn): void
             id INT NOT NULL PRIMARY KEY,
             tname VARCHAR(255) NULL,
             table_case INT NOT NULL DEFAULT 0,
+            isdeleted TINYINT(1) NOT NULL DEFAULT 0
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+    ");
+    $conn->query("
+        CREATE TABLE myitems (
+            id INT NOT NULL PRIMARY KEY,
+            price1 DECIMAL(15,4) NOT NULL DEFAULT 0,
+            cost_price DECIMAL(15,4) NOT NULL DEFAULT 0,
+            itmqty DECIMAL(15,4) NOT NULL DEFAULT 0,
             isdeleted TINYINT(1) NOT NULL DEFAULT 0
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
     ");

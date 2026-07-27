@@ -101,11 +101,10 @@ try {
     recipeMoovaReplayAssert(count($detailRows) === 1, 'same item from multiple Moova orders should share the legacy detail row');
     recipeMoovaReplayAssert(recipeMoovaReplayDecimalEquals($detailRows[0]['qty_out'], '3.000000'), 'legacy detail row should contain both Moova quantities');
     $directSaleRows = recipeMoovaReplayRows($conn, "SELECT id, qty_out, order_line_uuid FROM inventory_movements WHERE order_id = {$orderId} AND movement_type = 'sale_direct' ORDER BY id");
-    recipeMoovaReplayAssert(count($directSaleRows) === 2, 'two Moova source lines should create two direct sale shadow movements even when sharing a fat_detail row');
-    recipeMoovaReplayAssert(recipeMoovaReplayDecimalEquals($directSaleRows[0]['qty_out'], '1.000000'), 'first Moova shadow movement should keep first provider quantity');
-    recipeMoovaReplayAssert(recipeMoovaReplayDecimalEquals($directSaleRows[1]['qty_out'], '2.000000'), 'second Moova shadow movement should keep second provider quantity');
-    recipeMoovaReplayAssert(count(array_unique(array_column($directSaleRows, 'order_line_uuid'))) === 2, 'Moova shadow movements should use mapping line identity for idempotency');
-    recipeMoovaReplayAssert(recipeMoovaReplayBalance($conn, 7001)['qty_on_hand'] === '-3.000000', 'sellable shadow balance should reflect both Moova direct sale lines');
+    recipeMoovaReplayAssert(
+        count($directSaleRows) === 0,
+        'recipe-owned Moova lines must not also write sellable sale_direct movements and double-deplete stock/COGS'
+    );
 
     $usageRows = recipeMoovaReplayRows($conn, "SELECT source_order_uuid, source_line_uuid, status, fat_detail_id FROM recipe_order_line_usage WHERE order_id = {$orderId} ORDER BY source_order_uuid");
     recipeMoovaReplayAssert(count($usageRows) === 2, 'two Moova source lines should create two recipe usage rows');
@@ -137,10 +136,9 @@ try {
         'cancel replay should not duplicate reservation release movement'
     );
     recipeMoovaReplayAssert(
-        recipeMoovaReplayCount($conn, "SELECT COUNT(*) AS c FROM inventory_movements WHERE order_id = {$orderId} AND movement_type = 'refund_reversal' AND item_id = 7001") === 1,
-        'Moova cancel should create one direct-stock shadow reversal for the cancelled source line'
+        recipeMoovaReplayCount($conn, "SELECT COUNT(*) AS c FROM inventory_movements WHERE order_id = {$orderId} AND movement_type = 'refund_reversal' AND item_id = 7001") === 0,
+        'cancelling a recipe-owned Moova line must not create a sellable reversal without a matching direct sale'
     );
-    recipeMoovaReplayAssert(recipeMoovaReplayBalance($conn, 7001)['qty_on_hand'] === '-1.000000', 'sellable shadow balance should keep only the remaining Moova direct sale after cancel');
 
     $conn->begin_transaction();
     try {
@@ -148,7 +146,7 @@ try {
             'conn' => $conn,
             'order_id' => $orderId,
             'channel' => 'moova',
-            'order_type' => 'delivery',
+            'order_type' => 'dine_in',
         ]);
         $conn->commit();
     } catch (Throwable $e) {
@@ -163,7 +161,7 @@ try {
             'conn' => $conn,
             'order_id' => $orderId,
             'channel' => 'moova',
-            'order_type' => 'delivery',
+            'order_type' => 'dine_in',
         ]);
         $conn->commit();
     } catch (Throwable $e) {
@@ -239,7 +237,7 @@ function recipeMoovaReplayPayload(string $orderId, string $lineId, string $qty):
         'branchId' => 'moova-branch-1',
         'tableNumber' => '1',
         'sourceChannel' => 'moova',
-        'fulfillmentType' => 'delivery',
+        'fulfillmentType' => 'dine_in',
         'items' => [
             [
                 'externalLineId' => $lineId,
@@ -420,6 +418,13 @@ function recipeMoovaReplaySeedData(mysqli $conn): void
         (4, 0, 0, 0, 0, 1, 0, 0, '1101')
     ");
     $conn->query("INSERT INTO tables (id, tname, branch, table_case, isdeleted) VALUES (1, '1', '0', 0, 0)");
+    MoovaPosIntegration::upsertTableLink(
+        $conn,
+        ['tenant' => 0, 'branch' => 0],
+        'moova-branch-1',
+        '1',
+        1
+    );
     $conn->query("
         INSERT INTO myitems (id, tenant, branch, iname, barcode, price1, cost_price, itmqty, group1, item_type, track_stock, isdeleted) VALUES
         (7001, 0, 0, 'Moova Replay Burger', '7001', '10.000000', '0.000000', '0.000000', 7, 'sellable', 1, 0),

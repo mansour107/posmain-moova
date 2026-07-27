@@ -24,10 +24,43 @@ foreach ($routes as $path => $snippets) {
     uploadRouteAssert(strpos($source, 'move_uploaded_file(') === false, $path . ' should not move uploads directly');
 }
 
-$htaccess = file_get_contents(__DIR__ . '/../../uploads/.htaccess');
+$htaccessPath = __DIR__ . '/../../uploads/.htaccess';
+uploadRouteAssert(is_file($htaccessPath), 'uploads/.htaccess must exist');
+$htaccess = file_get_contents($htaccessPath);
 uploadRouteAssert(is_string($htaccess), 'unable to read uploads/.htaccess');
+
+uploadRouteAssert(
+    strpos($htaccess, 'Options -Indexes -ExecCGI -Includes') !== false,
+    'uploads/.htaccess should disable directory indexes, CGI execution, and server-side includes'
+);
 uploadRouteAssert(strpos($htaccess, 'RemoveHandler .php') !== false, 'uploads/.htaccess should remove PHP handlers');
-uploadRouteAssert(strpos($htaccess, 'Require all denied') !== false, 'uploads/.htaccess should deny executable file requests');
+uploadRouteAssert(strpos($htaccess, 'RemoveType .php') !== false, 'uploads/.htaccess should remove PHP MIME types');
+
+$executableBlockMatched = preg_match(
+    '/<FilesMatch\\s+"([^"]+)">\\s*Require all denied\\s*<\\/FilesMatch>/s',
+    $htaccess,
+    $executableBlock
+);
+uploadRouteAssert($executableBlockMatched === 1, 'uploads/.htaccess should deny executable file requests in a FilesMatch block');
+
+$executablePattern = (string) ($executableBlock[1] ?? '');
+uploadRouteAssert(
+    strpos($executablePattern, '(?i)') !== false,
+    'uploads/.htaccess executable deny pattern should be case-insensitive'
+);
+foreach (['php', 'phtml', 'phar', 'cgi', 'pl', 'py', 'rb', 'sh', 'jsp', 'asp', 'aspx', 'shtml'] as $extension) {
+    uploadRouteAssert(
+        strpos($executablePattern, $extension) !== false,
+        'uploads/.htaccess executable deny pattern should cover .' . $extension
+    );
+}
+
+$outsideFilesMatch = preg_replace('/<FilesMatch\\b[^>]*>.*?<\\/FilesMatch>/s', '', $htaccess);
+uploadRouteAssert(is_string($outsideFilesMatch), 'unable to inspect uploads/.htaccess access scope');
+uploadRouteAssert(
+    strpos($outsideFilesMatch, 'Require all denied') === false,
+    'uploads/.htaccess must not blanket-deny legitimate static uploads'
+);
 
 echo "upload-route-contract-ok\n";
 

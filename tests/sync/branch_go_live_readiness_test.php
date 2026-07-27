@@ -173,6 +173,7 @@ class BranchGoLiveReadinessTest extends TestCase
             'POSMAIN_BRANCH_UUID=branch-test',
             'POSMAIN_CLOUD_BASE_URL=https://cloud.example.test',
             'POSMAIN_BRANCH_SYNC_SECRET=test-secret-from-file',
+            'POSMAIN_MOOVA_MODE=queued_worker',
             'POSMAIN_MOOVA_APPLY_ENABLED=1',
             '',
         ]));
@@ -203,6 +204,7 @@ class BranchGoLiveReadinessTest extends TestCase
             'POSMAIN_BRANCH_UUID=branch-test',
             'POSMAIN_CLOUD_BASE_URL=https://cloud.example.test',
             'POSMAIN_BRANCH_SYNC_SECRET=test-secret-from-file',
+            'POSMAIN_MOOVA_MODE=queued_worker',
             'POSMAIN_MOOVA_APPLY_ENABLED=1',
             '',
         ]));
@@ -244,6 +246,7 @@ class BranchGoLiveReadinessTest extends TestCase
             'POSMAIN_BRANCH_UUID=branch-test',
             'POSMAIN_CLOUD_BASE_URL=https://cloud.example.test',
             'POSMAIN_BRANCH_SYNC_SECRET=test-secret-from-file',
+            'POSMAIN_MOOVA_MODE=queued_worker',
             'POSMAIN_MOOVA_APPLY_ENABLED=1',
             '',
         ]));
@@ -318,6 +321,7 @@ class BranchGoLiveReadinessTest extends TestCase
             'POSMAIN_BRANCH_UUID=branch-test',
             'POSMAIN_CLOUD_BASE_URL=https://cloud.example.test',
             'POSMAIN_BRANCH_SYNC_SECRET=test-secret-from-file',
+            'POSMAIN_MOOVA_MODE=queued_worker',
             'POSMAIN_MOOVA_APPLY_ENABLED=1',
             '',
         ]));

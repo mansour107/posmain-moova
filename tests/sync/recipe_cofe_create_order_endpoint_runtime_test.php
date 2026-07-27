@@ -33,7 +33,7 @@ try {
     $payload = [
         'cofeOrderId' => 'cofe-endpoint-order-' . getmypid(),
         'idempotencyKey' => 'cofe-endpoint-idem-' . getmypid(),
-        'tableNumber' => '',
+        'tableNumber' => '1',
         'items' => [
             [
                 'externalLineId' => 'cofe-endpoint-line-1',
@@ -45,6 +45,23 @@ try {
             ],
         ],
     ];
+
+    $legacyBaseline = [
+        'orders' => (int) $conn->query("SELECT COUNT(*) AS c FROM ot_head")->fetch_assoc()['c'],
+        'details' => (int) $conn->query("SELECT COUNT(*) AS c FROM fat_details")->fetch_assoc()['c'],
+        'movements' => (int) $conn->query("SELECT COUNT(*) AS c FROM inventory_movements")->fetch_assoc()['c'],
+    ];
+    $legacy = recipeCofeEndpointPost($server['legacy_url'], $payload);
+    recipeCofeEndpointAssert($legacy['status'] === 410, 'legacy Cofe endpoint should remain quarantined');
+    recipeCofeEndpointAssert(
+        ($legacy['json']['error'] ?? '') === 'ENDPOINT_QUARANTINED',
+        'legacy Cofe endpoint should return the stable quarantine error'
+    );
+    recipeCofeEndpointAssert($legacyBaseline === [
+        'orders' => (int) $conn->query("SELECT COUNT(*) AS c FROM ot_head")->fetch_assoc()['c'],
+        'details' => (int) $conn->query("SELECT COUNT(*) AS c FROM fat_details")->fetch_assoc()['c'],
+        'movements' => (int) $conn->query("SELECT COUNT(*) AS c FROM inventory_movements")->fetch_assoc()['c'],
+    ], 'quarantined legacy Cofe request must not mutate durable order, detail, or inventory state');
 
     $first = recipeCofeEndpointPost($server['url'], $payload);
     recipeCofeEndpointAssert($first['status'] === 200, 'first Cofe endpoint POST should return HTTP 200: ' . $first['raw']);
@@ -62,25 +79,40 @@ try {
     $cashCount = (int) $conn->query("SELECT COUNT(*) AS c FROM ot_head WHERE pro_tybe = 1")->fetch_assoc()['c'];
     $detailCount = (int) $conn->query("SELECT COUNT(*) AS c FROM fat_details WHERE fatid = {$orderId}")->fetch_assoc()['c'];
     $storedKey = (string) $conn->query("SELECT cofe_idempotency_key FROM ot_head WHERE id = {$orderId}")->fetch_assoc()['cofe_idempotency_key'];
+    $requestKeyCount = (int) $conn->query(
+        "SELECT COUNT(*) AS c FROM pos_request_keys
+         WHERE scope = 'pos.integration.cofe.create'
+           AND idempotency_key = '" . $conn->real_escape_string($payload['idempotencyKey']) . "'
+           AND status = 'completed'"
+    )->fetch_assoc()['c'];
     $usageRows = recipeCofeEndpointRows($conn, 'recipe_order_line_usage', "order_id = {$orderId}");
-    $movementRows = recipeCofeEndpointRows($conn, 'inventory_movements', "order_id = {$orderId} AND movement_type = 'recipe_consumption'");
+    $movementRows = recipeCofeEndpointRows($conn, 'inventory_movements', "order_id = {$orderId} AND movement_type = 'reservation'");
     $mapRows = recipeCofeEndpointRows($conn, 'external_order_line_map', "external_order_id = '" . $conn->real_escape_string($payload['cofeOrderId']) . "'");
     $balance = (new InventoryBalanceRepository())->findBalance($conn, 0, 0, 1, 6001);
 
     recipeCofeEndpointAssert($orderCount === 1, 'replay should not create a second Cofe sale order');
-    recipeCofeEndpointAssert($cashCount === 1, 'replay should not create a second Cofe cash receipt');
+    recipeCofeEndpointAssert($cashCount === 0, 'unpaid Cofe table order must not create a cash receipt before tender capture');
     recipeCofeEndpointAssert($detailCount === 1, 'replay should not create duplicate fat_details rows');
-    recipeCofeEndpointAssert($storedKey === $payload['idempotencyKey'], 'Cofe order should persist idempotency key');
+    recipeCofeEndpointAssert($storedKey === '', 'canonical Cofe order should not depend on the legacy header idempotency column');
+    recipeCofeEndpointAssert($requestKeyCount === 1, 'canonical Cofe replay should keep one completed scoped idempotency record');
     recipeCofeEndpointAssert(count($usageRows) === 1, 'recipe usage should be created once');
-    recipeCofeEndpointAssert((string) $usageRows[0]['status'] === 'consumed', 'recipe usage should be consumed');
-    recipeCofeEndpointAssert((string) $usageRows[0]['source_line_uuid'] === 'cofe:cofe-endpoint-line-1', 'recipe usage should preserve Cofe provider line identity');
-    recipeCofeEndpointAssert(count($movementRows) === 1, 'recipe consumption movement should be written once');
+    recipeCofeEndpointAssert((string) $usageRows[0]['status'] === 'reserved', 'unpaid Cofe table order recipe usage should remain reserved');
+    recipeCofeEndpointAssert(
+        (string) $usageRows[0]['source_line_uuid'] === 'cofe:cofe-endpoint-line-1',
+        'recipe usage should preserve Cofe provider line identity: ' . json_encode($usageRows, JSON_UNESCAPED_SLASHES)
+    );
+    recipeCofeEndpointAssert(count($movementRows) === 1, 'recipe reservation movement should be written once');
     recipeCofeEndpointAssert(count($mapRows) === 1, 'external Cofe line map should be written once');
-    recipeCofeEndpointAssert((string) $balance['qty_on_hand'] === '8.000000', 'ingredient stock should be deducted exactly once: ' . json_encode([
+    recipeCofeEndpointAssert(
+        (string) $balance['qty_on_hand'] === '10.000000'
+            && (string) $balance['qty_reserved'] === '2.000000'
+            && (string) $balance['qty_available'] === '8.000000',
+        'unpaid Cofe table order should reserve ingredient stock exactly once without consuming on-hand quantity: ' . json_encode([
         'balance' => $balance,
         'movements' => $movementRows,
         'usage' => $usageRows,
-    ], JSON_UNESCAPED_SLASHES));
+    ], JSON_UNESCAPED_SLASHES)
+    );
 
     echo "recipe-cofe-create-order-endpoint-runtime-ok db={$db}\n";
 } finally {
@@ -102,7 +134,8 @@ function recipeCofeEndpointCreateLegacySchema(mysqli $conn): void
             def_pos_store INT NOT NULL DEFAULT 1,
             def_pos_employee INT NOT NULL DEFAULT 35,
             def_pos_client INT NOT NULL DEFAULT 12,
-            def_pos_fund INT NOT NULL DEFAULT 91
+            def_pos_fund INT NOT NULL DEFAULT 91,
+            isdeleted TINYINT(1) NOT NULL DEFAULT 0
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
     ");
     $conn->query("INSERT INTO settings (lang, edit_pass, def_pos_store, def_pos_employee, def_pos_client, def_pos_fund) VALUES ('ar', '', 1, 35, 12, 91)");
@@ -128,8 +161,11 @@ function recipeCofeEndpointCreateLegacySchema(mysqli $conn): void
     $conn->query("
         CREATE TABLE acc_head (
             id INT NOT NULL PRIMARY KEY,
+            code VARCHAR(50) NULL,
+            aname VARCHAR(191) NULL,
             parent_id INT NULL,
             is_basic TINYINT(1) NOT NULL DEFAULT 0,
+            is_stock TINYINT(1) NOT NULL DEFAULT 0,
             isdeleted TINYINT(1) NOT NULL DEFAULT 0,
             is_fund TINYINT(1) NOT NULL DEFAULT 0
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
@@ -190,6 +226,18 @@ function recipeCofeEndpointCreateLegacySchema(mysqli $conn): void
             `user` INT NULL,
             op2 INT NULL,
             table_id INT NULL,
+            order_type VARCHAR(40) NULL,
+            payment_status VARCHAR(40) NOT NULL DEFAULT 'unpaid',
+            invoice_status VARCHAR(40) NOT NULL DEFAULT 'draft',
+            order_status VARCHAR(40) NOT NULL DEFAULT 'active',
+            paid_amount DECIMAL(18,6) NOT NULL DEFAULT 0.000000,
+            remaining_amount DECIMAL(18,6) NOT NULL DEFAULT 0.000000,
+            payment_method VARCHAR(40) NULL,
+            payment_notes VARCHAR(255) NULL,
+            payment_date DATETIME NULL,
+            completed_at DATETIME NULL,
+            tenant INT NOT NULL DEFAULT 0,
+            branch INT NOT NULL DEFAULT 0,
             isdeleted TINYINT(1) NOT NULL DEFAULT 0,
             crtime DATETIME NULL,
             mdtime DATETIME NULL
@@ -237,6 +285,8 @@ function recipeCofeEndpointCreateLegacySchema(mysqli $conn): void
             det_store BIGINT UNSIGNED NULL,
             cost_price DECIMAL(18,6) NOT NULL DEFAULT 0.000000,
             profit DECIMAL(18,6) NOT NULL DEFAULT 0.000000,
+            tenant INT NOT NULL DEFAULT 0,
+            branch INT NOT NULL DEFAULT 0,
             isdeleted TINYINT(1) NOT NULL DEFAULT 0
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
     ");
@@ -258,15 +308,36 @@ function recipeCofeEndpointCreateLegacySchema(mysqli $conn): void
 
 function recipeCofeEndpointSeedData(mysqli $conn): void
 {
-    $conn->query("INSERT INTO usr_pwrs (id, rollname, isdeleted) VALUES (1, 'admin', 0)");
+    $owner = $conn->query("SELECT id, role_key FROM usr_pwrs WHERE id = 1 LIMIT 1")->fetch_assoc();
+    recipeCofeEndpointAssert(
+        is_array($owner) && ($owner['role_key'] ?? '') === 'owner',
+        'schema setup should seed the owner role used by the endpoint fixture'
+    );
     $conn->query("INSERT INTO stores (id, isdeleted) VALUES (1, 0)");
-    $conn->query("INSERT INTO acc_head (id, parent_id, is_basic, isdeleted, is_fund) VALUES (12, 12, 0, 0, 0), (35, 35, 0, 0, 0), (91, 0, 0, 0, 1)");
+    $conn->query("
+        INSERT INTO acc_head (id, code, aname, parent_id, is_basic, is_stock, isdeleted, is_fund) VALUES
+            (1, '130001', 'Operational Stock', 0, 0, 1, 0, 0),
+            (12, '122001', 'Walk-in Customer', 12, 0, 0, 0, 0),
+            (35, '350001', 'Cofe Employee', 35, 0, 0, 0, 0),
+            (91, '101001', 'Cash Fund', 0, 0, 0, 0, 1)
+    ");
+    $conn->query("INSERT INTO tables (id, tname, table_case, isdeleted) VALUES (1, 'Cofe Endpoint Table', 0, 0)");
     $conn->query("INSERT INTO item_group (id, gname) VALUES (7, 'Endpoint Recipes')");
     $conn->query("
-        INSERT INTO myitems (id, iname, barcode, cofe_item_id, price1, cost_price, itmqty, group1, isdeleted)
+        INSERT INTO modifier_groups (
+            id, name_ar, name_en, selection_min, selection_max, is_required, is_active, tenant, branch, sort_order
+        ) VALUES (1, 'إضافة تجريبية', 'Endpoint option', 0, 2, 0, 1, 0, 0, 1)
+    ");
+    $conn->query("
+        INSERT INTO modifier_options (id, group_id, name_ar, name_en, price_delta, is_active, sort_order)
+        VALUES (10, 1, 'اختيار تجريبي', 'Endpoint choice', 0.000, 1, 1)
+    ");
+    $conn->query("INSERT INTO item_modifier_groups (item_id, group_id, sort_order) VALUES (5001, 1, 1)");
+    $conn->query("
+        INSERT INTO myitems (id, iname, barcode, cofe_item_id, price1, cost_price, itmqty, group1, item_type, track_stock, isdeleted)
         VALUES
-          (5001, 'Endpoint Burger', '5001', 'cofe-sku-5001', 12.000000, 0.000000, 0.000000, 7, 0),
-          (6001, 'Endpoint Patty', '6001', NULL, 0.000000, 4.000000, 10.000000, 7, 0)
+          (5001, 'Endpoint Burger', '5001', 'cofe-sku-5001', 12.000000, 0.000000, 0.000000, 7, 'sellable', 0, 0),
+          (6001, 'Endpoint Patty', '6001', NULL, 0.000000, 4.000000, 10.000000, 7, 'ingredient', 1, 0)
     ");
 }
 
@@ -321,6 +392,7 @@ function recipeCofeEndpointStartServer(string $root, string $db, string $session
         'POSMAIN_RECIPE_MOOVA_SYNC' => '0',
         'POSMAIN_RECIPE_STRICT_STOCK' => '0',
         'POSMAIN_RECIPE_PILOT_POS_BRANCH' => '0',
+        'POSMAIN_ALLOW_OPEN_INTEGRATIONS' => '1',
     ]);
 
     $process = proc_open([
@@ -345,7 +417,8 @@ function recipeCofeEndpointStartServer(string $root, string $db, string $session
     return [
         'process' => $process,
         'pipes' => $pipes,
-        'url' => 'http://127.0.0.1:' . $port . '/ajax/cofe_create_order.php',
+        'url' => 'http://127.0.0.1:' . $port . '/api/pos/integrations/cofe/orders',
+        'legacy_url' => 'http://127.0.0.1:' . $port . '/ajax/cofe_create_order.php',
     ];
 }
 

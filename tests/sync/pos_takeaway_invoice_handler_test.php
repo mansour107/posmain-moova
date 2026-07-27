@@ -36,48 +36,33 @@ function posTakeawayInvoiceHandlerTestMain(): void
         posTakeawayInvoiceCreateSchema($conn);
         posTakeawayInvoiceSeedFixtures($conn);
         posTakeawayInvoiceSeedRecipe($conn);
+        $baseline = posTakeawayInvoiceDurableState($conn);
 
-        $runner = posTakeawayInvoiceCreateRunner($db, $host, $port, $user, $pass, posTakeawayInvoiceCashPost());
-        try {
-            $command = escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg($runner) . ' 2>&1';
-            $lines = [];
-            exec($command, $lines, $exitCode);
-            posTakeawayInvoiceAssert($exitCode === 0, "handler runner failed:\n" . implode("\n", $lines));
-        } finally {
-            @unlink($runner);
-        }
+        posTakeawayInvoiceAssertCliWriterForbidden(
+            $db,
+            $host,
+            $port,
+            $user,
+            $pass,
+            posTakeawayInvoiceCashPost()
+        );
+        posTakeawayInvoiceAssert(
+            posTakeawayInvoiceDurableState($conn) === $baseline,
+            'forbidden CLI cash request must not create or mutate order, payment, journal, outbox, counter, recipe, or stock state'
+        );
 
-        posTakeawayInvoiceAssertCommittedTakeawaySale($conn);
-        $firstOrderId = (int) $conn->query("SELECT id FROM ot_head WHERE pro_tybe = 9 AND op2 IS NULL ORDER BY id ASC LIMIT 1")->fetch_assoc()['id'];
-        posTakeawayInvoiceAssertRecipeConsumedOnce($conn, $firstOrderId, '8.000000');
-
-        $runner = posTakeawayInvoiceCreateRunner($db, $host, $port, $user, $pass, posTakeawayInvoiceCashPost());
-        try {
-            $command = escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg($runner) . ' 2>&1';
-            $lines = [];
-            exec($command, $lines, $exitCode);
-            posTakeawayInvoiceAssert($exitCode === 0, "handler replay runner failed:\n" . implode("\n", $lines));
-        } finally {
-            @unlink($runner);
-        }
-
-        posTakeawayInvoiceAssert((int) $conn->query("SELECT COUNT(*) AS c FROM ot_head WHERE pro_tybe = 9 AND op2 IS NULL")->fetch_assoc()['c'] === 1, 'handler replay should not create a second POS order');
-        posTakeawayInvoiceAssert((int) $conn->query("SELECT COUNT(*) AS c FROM process WHERE type = 'add cash'")->fetch_assoc()['c'] === 1, 'handler replay should not create a second process row');
-        posTakeawayInvoiceAssertRecipeConsumedOnce($conn, $firstOrderId, '8.000000');
-
-        $runner = posTakeawayInvoiceCreateRunner($db, $host, $port, $user, $pass, posTakeawayInvoiceMixedPost());
-        try {
-            $command = escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg($runner) . ' 2>&1';
-            $lines = [];
-            exec($command, $lines, $exitCode);
-            posTakeawayInvoiceAssert($exitCode === 0, "mixed handler runner failed:\n" . implode("\n", $lines));
-        } finally {
-            @unlink($runner);
-        }
-
-        posTakeawayInvoiceAssertCommittedMixedTakeawaySale($conn);
-        $mixedOrderId = (int) $conn->query("SELECT id FROM ot_head WHERE pro_tybe = 9 AND pro_serial = 'TAKEAWAY-FIXTURE-MIXED-1' AND op2 IS NULL ORDER BY id ASC LIMIT 1")->fetch_assoc()['id'];
-        posTakeawayInvoiceAssertRecipeConsumedOnce($conn, $mixedOrderId, '6.000000');
+        posTakeawayInvoiceAssertCliWriterForbidden(
+            $db,
+            $host,
+            $port,
+            $user,
+            $pass,
+            posTakeawayInvoiceMixedPost()
+        );
+        posTakeawayInvoiceAssert(
+            posTakeawayInvoiceDurableState($conn) === $baseline,
+            'forbidden CLI mixed-tender request must not create or mutate durable financial or stock state'
+        );
 
         if (!is_dir($sessionDir) && !mkdir($sessionDir, 0700, true) && !is_dir($sessionDir)) {
             throw new RuntimeException('Unable to create temp session directory.');
@@ -88,18 +73,24 @@ function posTakeawayInvoiceHandlerTestMain(): void
         $httpPost['pro_serial'] = 'TAKEAWAY-FIXTURE-HTTP-1';
         $httpPost['csrf_token'] = 'takeaway-http-csrf-fixed';
         $httpResponse = posTakeawayInvoiceHttpPost($server['url'], $server['session_id'], $httpPost);
-        posTakeawayInvoiceAssert($httpResponse['status'] === 302, 'HTTP handler should redirect to receipt after paid takeaway: ' . $httpResponse['raw']);
-        posTakeawayInvoiceAssert(strpos((string) ($httpResponse['location'] ?? ''), '/print/receipt.php?id=') !== false || strpos((string) ($httpResponse['location'] ?? ''), '../print/receipt.php?id=') !== false, 'HTTP handler should redirect to receipt');
-        $httpOrderId = (int) $conn->query("SELECT id FROM ot_head WHERE pro_tybe = 9 AND pro_serial = 'TAKEAWAY-FIXTURE-HTTP-1' AND op2 IS NULL ORDER BY id ASC LIMIT 1")->fetch_assoc()['id'];
-        posTakeawayInvoiceAssert($httpOrderId > 0, 'HTTP handler should create a paid takeaway order in the temp DB');
-        posTakeawayInvoiceAssertRecipeConsumedOnce($conn, $httpOrderId, '4.000000');
+        $httpPayload = json_decode($httpResponse['raw'], true);
+        posTakeawayInvoiceAssert($httpResponse['status'] === 410, 'HTTP legacy handler should return 410 Gone: ' . $httpResponse['raw']);
+        posTakeawayInvoiceAssert(is_array($httpPayload), 'HTTP legacy handler should return a JSON quarantine payload');
+        posTakeawayInvoiceAssert(($httpPayload['code'] ?? '') === 'LEGACY_FINANCIAL_WRITER_FORBIDDEN', 'HTTP legacy handler should return the stable forbidden-writer code');
+        posTakeawayInvoiceAssert(($httpPayload['endpoint'] ?? '') === 'do/doadd_invoice.php', 'HTTP quarantine payload should identify the blocked endpoint');
+        posTakeawayInvoiceAssert(
+            posTakeawayInvoiceDurableState($conn) === $baseline,
+            'forbidden HTTP request must not create or mutate durable financial or stock state'
+        );
 
         $httpReplay = posTakeawayInvoiceHttpPost($server['url'], $server['session_id'], $httpPost);
-        posTakeawayInvoiceAssert($httpReplay['status'] === 302, 'HTTP handler replay should redirect to receipt after idempotency replay: ' . $httpReplay['raw']);
-        posTakeawayInvoiceAssert((int) $conn->query("SELECT COUNT(*) AS c FROM ot_head WHERE pro_tybe = 9 AND pro_serial = 'TAKEAWAY-FIXTURE-HTTP-1' AND op2 IS NULL")->fetch_assoc()['c'] === 1, 'HTTP handler replay should not create a second POS order');
-        posTakeawayInvoiceAssertRecipeConsumedOnce($conn, $httpOrderId, '4.000000');
+        posTakeawayInvoiceAssert($httpReplay['status'] === 410, 'repeated HTTP legacy request should remain quarantined');
+        posTakeawayInvoiceAssert(
+            posTakeawayInvoiceDurableState($conn) === $baseline,
+            'repeated forbidden HTTP request must remain write-free'
+        );
 
-        echo "pos-takeaway-invoice-handler-ok db={$db}\n";
+        echo "pos-takeaway-invoice-handler-quarantine-ok db={$db}\n";
     } finally {
         if (is_array($server)) {
             posTakeawayInvoiceStopServer($server);
@@ -110,12 +101,72 @@ function posTakeawayInvoiceHandlerTestMain(): void
     }
 }
 
+function posTakeawayInvoiceAssertCliWriterForbidden(
+    string $db,
+    string $host,
+    int $port,
+    string $user,
+    string $pass,
+    array $post
+): void {
+    $runner = posTakeawayInvoiceCreateRunner($db, $host, $port, $user, $pass, $post);
+    try {
+        $command = escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg($runner) . ' 2>&1';
+        $lines = [];
+        exec($command, $lines, $exitCode);
+        $output = implode("\n", $lines);
+        posTakeawayInvoiceAssert($exitCode !== 0, 'legacy CLI writer should fail closed');
+        posTakeawayInvoiceAssert(
+            strpos($output, 'LEGACY_FINANCIAL_WRITER_FORBIDDEN:do/doadd_invoice.php') !== false,
+            "legacy CLI writer should expose the stable quarantine exception:\n" . $output
+        );
+    } finally {
+        @unlink($runner);
+    }
+}
+
+function posTakeawayInvoiceDurableState(mysqli $conn): array
+{
+    $scalar = static function (string $sql) use ($conn): string {
+        $row = $conn->query($sql)->fetch_assoc();
+
+        return (string) ($row['v'] ?? '');
+    };
+    $balance = $conn->query("
+        SELECT qty_on_hand, qty_reserved, qty_available, moving_average_cost
+        FROM inventory_item_balances
+        WHERE store_id = 3 AND item_id = 12
+        ORDER BY id ASC
+        LIMIT 1
+    ")->fetch_assoc();
+
+    return [
+        'orders' => $scalar('SELECT COUNT(*) AS v FROM ot_head'),
+        'order_total' => $scalar('SELECT COALESCE(SUM(fat_net),0) AS v FROM ot_head'),
+        'details' => $scalar('SELECT COUNT(*) AS v FROM fat_details'),
+        'detail_qty_out' => $scalar('SELECT COALESCE(SUM(qty_out),0) AS v FROM fat_details'),
+        'payments' => $scalar('SELECT COUNT(*) AS v FROM order_payments'),
+        'payment_total' => $scalar('SELECT COALESCE(SUM(amount),0) AS v FROM order_payments'),
+        'journal_heads' => $scalar('SELECT COUNT(*) AS v FROM journal_heads'),
+        'journal_entries' => $scalar('SELECT COUNT(*) AS v FROM journal_entries'),
+        'journal_debits' => $scalar('SELECT COALESCE(SUM(debit),0) AS v FROM journal_entries'),
+        'journal_credits' => $scalar('SELECT COALESCE(SUM(credit),0) AS v FROM journal_entries'),
+        'process_rows' => $scalar('SELECT COUNT(*) AS v FROM process'),
+        'outbox_rows' => $scalar('SELECT COUNT(*) AS v FROM sync_outbox'),
+        'document_counters' => $scalar('SELECT COUNT(*) AS v FROM document_counters'),
+        'recipe_usages' => $scalar('SELECT COUNT(*) AS v FROM recipe_order_line_usage'),
+        'inventory_movements' => $scalar('SELECT COUNT(*) AS v FROM inventory_movements'),
+        'ingredient_balance' => is_array($balance) ? $balance : null,
+    ];
+}
+
 function posTakeawayInvoiceCreateSchema(mysqli $conn): void
 {
     $conn->query("
         CREATE TABLE settings (
             id INT NOT NULL PRIMARY KEY,
             def_pos_client INT NULL,
+            def_pos_store INT NULL,
             edit_pass VARCHAR(255) NULL,
             isdeleted TINYINT(1) NOT NULL DEFAULT 0
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
@@ -130,6 +181,8 @@ function posTakeawayInvoiceCreateSchema(mysqli $conn): void
         CREATE TABLE usr_pwrs (
             id INT NOT NULL PRIMARY KEY,
             rollname VARCHAR(191) NULL,
+            info VARCHAR(255) NULL,
+            is_active TINYINT(1) NOT NULL DEFAULT 1,
             add_sales TINYINT(1) NOT NULL DEFAULT 0,
             show_sales TINYINT(1) NOT NULL DEFAULT 0,
             sid_sales TINYINT(1) NOT NULL DEFAULT 0,
@@ -147,6 +200,8 @@ function posTakeawayInvoiceCreateSchema(mysqli $conn): void
             id INT NOT NULL PRIMARY KEY,
             code VARCHAR(40) NULL,
             aname VARCHAR(255) NULL,
+            info VARCHAR(255) NULL,
+            is_stock TINYINT(1) NOT NULL DEFAULT 0,
             isdeleted TINYINT(1) NOT NULL DEFAULT 0
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
     ");
@@ -159,6 +214,7 @@ function posTakeawayInvoiceCreateSchema(mysqli $conn): void
             cost_price DECIMAL(15,4) NOT NULL DEFAULT 0,
             last_price DECIMAL(15,4) NULL,
             price1 DECIMAL(15,4) NOT NULL DEFAULT 0,
+            group1 INT NULL,
             isdeleted TINYINT(1) NOT NULL DEFAULT 0
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
     ");
@@ -308,38 +364,74 @@ function posTakeawayInvoiceCreateSchema(mysqli $conn): void
     ");
 
     (new SyncSchemaManager())->apply($conn);
+    $conn->query("
+        CREATE TABLE users (
+            id INT NOT NULL PRIMARY KEY,
+            uname VARCHAR(120) NOT NULL,
+            display_name VARCHAR(191) NULL,
+            userrole INT NULL,
+            permission_mode ENUM('role_only','role_with_overrides') NOT NULL DEFAULT 'role_only',
+            isdeleted TINYINT(1) NOT NULL DEFAULT 0
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+    ");
 }
 
 function posTakeawayInvoiceSeedFixtures(mysqli $conn): void
 {
-    $conn->query("INSERT INTO settings (id, def_pos_client, edit_pass, isdeleted) VALUES (1, 501, '1234', 0)");
+    $conn->query("
+        INSERT INTO settings (id, def_pos_client, def_pos_store, edit_pass, isdeleted)
+        VALUES (1, 501, 3, '1234', 0)
+    ");
     $conn->query("
         INSERT INTO usr_pwrs (
             id, rollname, add_sales, show_sales, sid_sales, edit_sales,
             add_payment, show_payment, delete_sales, edit_payment, delete_payment, isdeleted
         ) VALUES (1, 'admin', 1, 1, 1, 1, 1, 1, 1, 1, 1, 0)
+        ON DUPLICATE KEY UPDATE
+            rollname = VALUES(rollname),
+            add_sales = VALUES(add_sales),
+            show_sales = VALUES(show_sales),
+            sid_sales = VALUES(sid_sales),
+            edit_sales = VALUES(edit_sales),
+            add_payment = VALUES(add_payment),
+            show_payment = VALUES(show_payment),
+            delete_sales = VALUES(delete_sales),
+            edit_payment = VALUES(edit_payment),
+            delete_payment = VALUES(delete_payment),
+            isdeleted = VALUES(isdeleted)
     ");
     $conn->query("
-        INSERT INTO acc_head (id, code, aname, isdeleted) VALUES
-            (91, '400001', 'Sales', 0),
-            (501, '122001', 'Walk-in Customer', 0),
-            (51, '101001', 'Cash Drawer', 0),
-            (61, '102001', 'Bank Account', 0)
+        INSERT INTO users (id, uname, display_name, userrole, permission_mode, isdeleted)
+        VALUES (7, 'api_matrix_smoke', 'API matrix smoke', 1, 'role_only', 0)
     ");
     $conn->query("
-        INSERT INTO myitems (id, iname, barcode, itmqty, cost_price, price1, isdeleted) VALUES
-            (10, 'Coffee', 'COF10', 20, 4, 10, 0),
-            (11, 'Cake', 'CAK11', 15, 2, 8, 0),
-            (12, 'Coffee Beans', 'BEAN12', 10, 3, 0, 0)
+        INSERT INTO acc_head (id, code, aname, is_stock, isdeleted) VALUES
+            (3, '130003', 'Operational Stock', 1, 0),
+            (91, '400001', 'Sales', 0, 0),
+            (501, '122001', 'Walk-in Customer', 0, 0),
+            (51, '101001', 'Cash Drawer', 0, 0),
+            (61, '102001', 'Bank Account', 0, 0)
+    ");
+    $conn->query("
+        INSERT INTO myitems (id, iname, barcode, itmqty, cost_price, price1, track_stock, isdeleted) VALUES
+            (10, 'Coffee', 'COF10', 20, 4, 10, 0, 0),
+            (11, 'Cake', 'CAK11', 15, 2, 8, 0, 0),
+            (12, 'Coffee Beans', 'BEAN12', 10, 3, 0, 0, 0)
     ");
 }
 
 function posTakeawayInvoiceSeedRecipe(mysqli $conn): void
 {
+    require_once __DIR__ . '/../../includes/pos_operational_store.php';
+    $operationalStoreId = posmain_operational_store_id($conn);
+    if ($operationalStoreId < 1) {
+        throw new RuntimeException('Recipe fixture requires a configured operational store.');
+    }
+
     (new InventoryBalanceRepository())->putBalance($conn, [
         'pos_tenant' => 0,
         'pos_branch' => 0,
-        'store_id' => 3,
+        'store_id' => $operationalStoreId,
         'item_id' => 12,
         'qty_on_hand' => '10.000000',
         'qty_reserved' => '0.000000',
@@ -559,7 +651,7 @@ function posTakeawayInvoiceSeedSession(string $sessionDir, string $sessionId): v
     $previousSavePath = session_save_path();
     $previousId = session_id();
     if (session_status() === PHP_SESSION_ACTIVE) {
-        throw new RuntimeException('Unexpected active session in POS takeaway HTTP test.');
+        session_write_close();
     }
     session_save_path($sessionDir);
     session_id($sessionId);
@@ -636,7 +728,7 @@ function posTakeawayInvoiceHttpPost(string $url, string $sessionId, array $post)
             'method' => 'POST',
             'header' => implode("\r\n", [
                 'Content-Type: application/x-www-form-urlencoded',
-                'Accept: text/html',
+                'Accept: application/json',
                 'Cookie: PHPSESSID=' . $sessionId,
                 'X-CSRF-Token: ' . (string) ($post['csrf_token'] ?? ''),
                 'X-POSMAIN-CSRF-Token: ' . (string) ($post['csrf_token'] ?? ''),

@@ -33,8 +33,9 @@ try {
         $_POST,
         $_SERVER,
         $userId,
-        static function (array $txContext = []) use ($conn, $userId, $sessionId): array {
+        static function (array $txContext = []) use ($conn, $userId, $sessionId, $appConfig): array {
             $service = new ShiftCountService();
+            $txContext['financial_certified_mode'] = !empty($appConfig['financial']['certified_mode']);
             $data = $service->resolveSession($conn, $userId, $sessionId, [
                 'resolution_reason_code' => $_POST['resolution_reason_code'] ?? '',
                 'resolution_notes' => $_POST['resolution_notes'] ?? '',
@@ -58,7 +59,7 @@ try {
         $_SESSION['error_message'] = 'اختر سبب الفرق من القائمة قبل التأكيد';
     } elseif ($exception->getMessage() === 'RESOLUTION_NOTES_REQUIRED') {
         $_SESSION['error_message'] = 'اخترت "سبب آخر" — اكتب التفاصيل قبل التأكيد';
-    } elseif ($exception->getMessage() === 'LEDGER_SUBSYSTEM_UNAVAILABLE' || $exception->getMessage() === 'FUND_ACCOUNT_REQUIRED') {
+    } elseif (in_array($exception->getMessage(), ['LEDGER_SUBSYSTEM_UNAVAILABLE', 'FUND_ACCOUNT_REQUIRED', 'VARIANCE_JOURNAL_REQUIRED'], true)) {
         $_SESSION['error_message'] = 'تعذر تسجيل قيد الفرق في الحسابات — لم يتم اعتماد المراجعة';
     } else {
         $_SESSION['error_message'] = 'تعذر حل الحالة: ' . $exception->getMessage();

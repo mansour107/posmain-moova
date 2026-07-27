@@ -420,8 +420,14 @@ class RecipeInventoryMovementService
             if (($movement['movement_type'] ?? '') !== 'recipe_consumption') {
                 continue;
             }
-            $qty = (string) ($movement['qty_out'] ?? '0');
-            if (!RecipeDecimal::isPositive($qty)) {
+            $movementId = (int) ($movement['id'] ?? 0);
+            $lockedMovement = $this->movements->lockById($conn, $movementId);
+            if (!$lockedMovement || ($lockedMovement['movement_type'] ?? '') !== 'recipe_consumption') {
+                continue;
+            }
+            $movement = $lockedMovement;
+            $originalQty = RecipeDecimal::normalize($movement['qty_out'] ?? '0');
+            if (!RecipeDecimal::isPositive($originalQty)) {
                 continue;
             }
 
@@ -434,10 +440,37 @@ class RecipeInventoryMovementService
                 'takeaway',
                 'recipe'
             );
-            $idempotencyKey = 'refund-reversal:' . (string) ($movement['movement_uuid'] ?? $movement['id']);
+            $refundUuid = trim((string) ($refundContext['refund_uuid'] ?? ''));
+            $idempotencyKey = 'refund-reversal:'
+                . ($refundUuid !== '' ? $refundUuid . ':' : '')
+                . (string) ($movement['movement_uuid'] ?? $movement['id']);
             $existing = $this->movements->findByIdempotencyKey($conn, $scope->posTenant, $scope->posBranch, $scope->storeId, $idempotencyKey);
             if ($existing) {
                 $movementIds[] = (int) $existing['id'];
+                continue;
+            }
+
+            $alreadyRefunded = $this->movements->refundedQuantityForMovement($conn, $movementId);
+            $remainingQty = RecipeDecimal::subtract($originalQty, $alreadyRefunded);
+            if (!RecipeDecimal::isPositive($remainingQty)) {
+                continue;
+            }
+
+            $requestedOrderQty = RecipeDecimal::normalize(
+                $refundContext['refund_order_quantity'] ?? $refundContext['original_order_quantity'] ?? '0'
+            );
+            $originalOrderQty = RecipeDecimal::normalize($refundContext['original_order_quantity'] ?? '0');
+            if (!RecipeDecimal::isPositive($requestedOrderQty) || !RecipeDecimal::isPositive($originalOrderQty)) {
+                throw new InvalidArgumentException('REFUND_RECIPE_QUANTITY_REQUIRED');
+            }
+            $qty = RecipeDecimal::multiply(
+                $originalQty,
+                RecipeDecimal::divide($requestedOrderQty, $originalOrderQty)
+            );
+            if (RecipeDecimal::compare($qty, $remainingQty) > 0) {
+                $qty = $remainingQty;
+            }
+            if (!RecipeDecimal::isPositive($qty)) {
                 continue;
             }
 
@@ -445,9 +478,11 @@ class RecipeInventoryMovementService
             $balance = $this->lockBalance($conn, $scope, $itemId);
             $newOnHand = RecipeDecimal::add($balance['qty_on_hand'], $qty);
             $newAvailable = RecipeDecimal::subtract($newOnHand, $balance['qty_reserved']);
+            $unitCost = RecipeDecimal::normalize($movement['unit_cost'] ?? '0');
+            $totalCost = RecipeDecimal::multiply($qty, $unitCost);
             $movementId = $this->movements->createMovement($conn, [
                 'movement_uuid' => $this->uuid(),
-                'movement_group_uuid' => $refundContext['refund_uuid'] ?? null,
+                'movement_group_uuid' => $refundUuid !== '' ? $refundUuid : null,
                 'pos_tenant' => $scope->posTenant,
                 'pos_branch' => $scope->posBranch,
                 'branch_uuid' => $scope->branchUuid,
@@ -456,7 +491,7 @@ class RecipeInventoryMovementService
                 'movement_type' => 'refund_reversal',
                 'source_type' => 'order_line',
                 'source_id' => $movement['source_id'] ?? null,
-                'source_uuid' => $refundContext['refund_uuid'] ?? null,
+                'source_uuid' => $refundUuid !== '' ? $refundUuid : null,
                 'order_id' => $movement['order_id'] ?? null,
                 'fat_detail_id' => $movement['fat_detail_id'] ?? null,
                 'order_line_uuid' => $movement['order_line_uuid'] ?? null,
@@ -466,8 +501,8 @@ class RecipeInventoryMovementService
                 'qty_in' => $qty,
                 'unit_id' => $movement['unit_id'] ?? null,
                 'unit_conversion_to_base' => $movement['unit_conversion_to_base'] ?? '1.00000000',
-                'unit_cost' => $movement['unit_cost'] ?? '0.000000',
-                'total_cost' => $movement['total_cost'] ?? '0.000000',
+                'unit_cost' => $unitCost,
+                'total_cost' => $totalCost,
                 'idempotency_key' => $idempotencyKey,
                 'reversed_movement_id' => $movement['id'] ?? null,
                 'created_by' => $refundContext['created_by'] ?? null,

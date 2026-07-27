@@ -39,8 +39,10 @@ class PosIntegrationAuth
 
     private static function resolveCofeSecret(?mysqli $conn): string
     {
-        if ($conn instanceof mysqli && function_exists('posmain_load_pos_settings_row')) {
+        if ($conn instanceof mysqli) {
             require_once __DIR__ . '/../../../includes/pos_default_accounts.php';
+        }
+        if ($conn instanceof mysqli && function_exists('posmain_load_pos_settings_row')) {
             $settings = posmain_load_pos_settings_row($conn);
             $fromSettings = trim((string) ($settings['cofe_integration_secret'] ?? ''));
             if ($fromSettings !== '') {

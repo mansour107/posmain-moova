@@ -415,7 +415,17 @@ class RolePermissionSyncService
             }
         }
 
-        $columns = ['rollname' => $rollname, 'is_active' => 1, 'role_key' => $roleKey, 'is_system' => 1];
+        $columns = ['rollname' => $rollname];
+        if (!self::usrPwrsIdAutoIncrements($conn)) {
+            $lastIdResult = $conn->query('SELECT id FROM usr_pwrs ORDER BY id DESC LIMIT 1 FOR UPDATE');
+            $lastIdRow = $lastIdResult instanceof mysqli_result ? $lastIdResult->fetch_assoc() : null;
+            $columns = ['id' => ((int) ($lastIdRow['id'] ?? 0)) + 1] + $columns;
+        }
+        foreach (['is_active' => 1, 'role_key' => $roleKey, 'is_system' => 1] as $column => $value) {
+            if (self::usrPwrsColumnExists($conn, $column)) {
+                $columns[$column] = $value;
+            }
+        }
         foreach ($legacyValues as $column => $value) {
             if (preg_match('/^[a-z_][a-z0-9_]*$/i', (string) $column)
                 && self::usrPwrsColumnExists($conn, (string) $column)) {
@@ -467,6 +477,14 @@ class RolePermissionSyncService
         return isset($cache[$cacheKey][$column]);
     }
 
+    private static function usrPwrsIdAutoIncrements(mysqli $conn): bool
+    {
+        $result = $conn->query("SHOW COLUMNS FROM usr_pwrs LIKE 'id'");
+        $row = $result instanceof mysqli_result ? $result->fetch_assoc() : null;
+
+        return stripos((string) ($row['Extra'] ?? ''), 'auto_increment') !== false;
+    }
+
     public static function applyLegacyFlagValuesToRole(
         mysqli $conn,
         int $roleId,
@@ -515,9 +533,19 @@ class RolePermissionSyncService
         int $isSystem,
         string $roleKey
     ): void {
-        $sets = ['rollname = ?', 'is_system = ?', 'role_key = ?'];
-        $types = 'sis';
-        $params = [$rollname, $isSystem, $roleKey];
+        $sets = ['rollname = ?'];
+        $types = 's';
+        $params = [$rollname];
+        if (self::usrPwrsColumnExists($conn, 'is_system')) {
+            $sets[] = 'is_system = ?';
+            $types .= 'i';
+            $params[] = $isSystem;
+        }
+        if (self::usrPwrsColumnExists($conn, 'role_key')) {
+            $sets[] = 'role_key = ?';
+            $types .= 's';
+            $params[] = $roleKey;
+        }
 
         foreach ($legacyValues as $column => $value) {
             if (!preg_match('/^[a-z_][a-z0-9_]*$/i', $column)) {

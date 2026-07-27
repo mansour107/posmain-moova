@@ -71,7 +71,8 @@ try {
     $plan = $service->mirrorRepairPlan($conn, $filters);
     inventoryReconciliationRepairAssert((int) $plan['summary']['repair_candidate_count'] === 1, 'only stale mirror rows with agreeing stock sources should be repair candidates: ' . json_encode($plan));
     inventoryReconciliationRepairAssert((int) $plan['repair_candidates'][0]['item_id'] === 9101, 'stale mirror item should be selected');
-    inventoryReconciliationRepairAssert((int) $plan['summary']['unhandled_difference_count'] === 2, 'non-stock and real ledger mismatches should remain unhandled');
+    inventoryReconciliationRepairAssert((int) $plan['summary']['unhandled_difference_count'] === 1, 'only the real stock-ledger mismatch should remain unhandled');
+    inventoryReconciliationRepairAssert((int) $plan['unhandled_differences'][0]['item_id'] === 9103, 'ordinary non-stock sale history must not be treated as an inventory divergence');
     inventoryReconciliationRepairAssert((bool) preg_match('/^[a-f0-9]{64}$/', (string) $plan['manifest_hash']), 'dry-run should produce a review manifest hash');
 
     $rehearsal = $service->rehearseMirrorRepair($conn, $filters);

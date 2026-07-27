@@ -5,6 +5,7 @@ require_once __DIR__ . '/../includes/connect.php';
 require_once __DIR__ . '/../includes/auth_guard.php';
 require_once __DIR__ . '/../includes/kds_access.php';
 require_once __DIR__ . '/../classes/Pos/Service/KdsTicketService.php';
+require_once __DIR__ . '/../classes/Pos/Service/KdsOrderEventService.php';
 
 header('Content-Type: application/json; charset=utf-8');
 
@@ -30,6 +31,7 @@ try {
     }
 
     $feed = $service->changesSince($conn, (int) $station['id'], $since);
+    $events = (new KdsOrderEventService())->pendingForStation($conn, (int) $station['id']);
 
     echo json_encode([
         'success' => true,
@@ -44,6 +46,7 @@ try {
         'cursor' => $feed['cursor'],
         'full' => $feed['full'],
         'changes' => $feed['changes'],
+        'events' => $events,
         'server_time' => time(),
     ], JSON_UNESCAPED_UNICODE);
 } catch (Throwable $e) {

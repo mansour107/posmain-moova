@@ -1,6 +1,7 @@
 <?php
 
 require_once __DIR__ . '/../../Sync/OperationalSyncEventService.php';
+require_once __DIR__ . '/../../Financial/Decimal.php';
 
 class ManagerApprovalRequiredException extends RuntimeException
 {
@@ -115,10 +116,11 @@ class ManagerApprovalService
         string $actionType,
         string $targetType,
         ?int $targetId,
-        float $amount,
+        $amount,
         array $request = [],
         array $context = []
     ): ?array {
+        $amount = $this->decimalBoundary($amount);
         $userId = (int) ($context['user_id'] ?? 0);
         $limitPermissionKey = trim((string) ($context['limit_permission_key'] ?? ''));
         if ($userId > 0 && $limitPermissionKey !== '') {
@@ -139,7 +141,7 @@ class ManagerApprovalService
 
         $threshold = $this->threshold($context);
         if ($userId < 1 || $limitPermissionKey === '') {
-            if ($amount <= $threshold) {
+            if (FinancialDecimal::compare($amount, $threshold, 6) <= 0) {
                 return null;
             }
         }
@@ -434,7 +436,7 @@ class ManagerApprovalService
     }
 
   /**
-     * @return array{limit_permission_key: string, amount: float}|null
+     * @return array{limit_permission_key: string, amount: string}|null
      */
     private function resolveApproverLimitCheck(string $permissionKey, array $context): ?array
     {
@@ -450,8 +452,8 @@ class ManagerApprovalService
             return null;
         }
 
-        $amount = (float) ($context['amount'] ?? $context['limit_amount'] ?? 0);
-        if ($amount <= 0) {
+        $amount = $this->decimalBoundary($context['amount'] ?? $context['limit_amount'] ?? '0');
+        if (FinancialDecimal::compare($amount, '0', 6) <= 0) {
             return null;
         }
 
@@ -497,19 +499,27 @@ class ManagerApprovalService
         return strpos($actionType, 'discount') !== false && $this->truthy($discount);
     }
 
-    private function threshold(array $context): float
+    private function threshold(array $context): string
     {
         if (array_key_exists('discount_approval_threshold', $context)) {
-            return max(0, (float) $context['discount_approval_threshold']);
+            return $this->decimalBoundary($context['discount_approval_threshold']);
         }
 
         $value = getenv('POSMAIN_DISCOUNT_APPROVAL_THRESHOLD');
-        return $value === false || $value === '' ? 0.0 : max(0, (float) $value);
+        return $value === false || $value === '' ? '0.000000' : $this->decimalBoundary($value);
+    }
+
+    private function decimalBoundary($value): string
+    {
+        return FinancialDecimal::normalize(
+            is_float($value) ? sprintf('%.6F', $value) : ($value === null || $value === '' ? '0' : $value),
+            6
+        );
     }
 
     private function approvalIdFrom(array $request, array $context): ?int
     {
-        foreach (['manager_approval_id', 'approval_id', 'discount_approval_id'] as $key) {
+        foreach (['price_override_approval_id', 'manager_approval_id', 'approval_id', 'discount_approval_id'] as $key) {
             if (isset($request[$key]) && (int) $request[$key] > 0) {
                 return (int) $request[$key];
             }

@@ -3,6 +3,8 @@
 require_once __DIR__ . '/DrawerSessionService.php';
 require_once __DIR__ . '/DrawerLedgerPostingService.php';
 require_once __DIR__ . '/../../ShiftReport.php';
+require_once dirname(__DIR__) . '/Value/CashAmount.php';
+require_once dirname(__DIR__, 2) . '/Financial/Money.php';
 
 // Drawer session lookups depend on posmain_drawer_sessions_table_exists().
 if (!function_exists('posmain_drawer_sessions_table_exists')) {
@@ -216,11 +218,8 @@ class ShiftSessionService
             throw new RuntimeException('SHIFT_WRITE_BLOCKED');
         }
 
-        $amount = round((float) ($payload['amount'] ?? 0), 3);
+        $amount = $this->positiveCashAmount($payload['amount'] ?? null, 'EXPENSE_AMOUNT_REQUIRED');
         $reason = trim((string) ($payload['reason'] ?? ''));
-        if ($amount <= 0) {
-            throw new RuntimeException('EXPENSE_AMOUNT_REQUIRED');
-        }
         if ($reason === '') {
             throw new RuntimeException('EXPENSE_REASON_REQUIRED');
         }
@@ -257,7 +256,7 @@ class ShiftSessionService
 
             $movement = $this->drawerSessions->recordMovement($conn, (int) $drawerSession['id'], [
                 'movement_type' => 'paid_out',
-                'amount' => number_format($amount, 3, '.', ''),
+                'amount' => $amount,
                 'reason' => $reason,
                 'created_by' => $userId,
                 'manager_approval_id' => $managerApprovalId,
@@ -288,11 +287,8 @@ class ShiftSessionService
             throw new RuntimeException('SHIFT_WRITE_BLOCKED');
         }
 
-        $amount = round((float) ($payload['amount'] ?? 0), 3);
+        $amount = $this->positiveCashAmount($payload['amount'] ?? null, 'PAYIN_AMOUNT_REQUIRED');
         $reason = trim((string) ($payload['reason'] ?? ''));
-        if ($amount <= 0) {
-            throw new RuntimeException('PAYIN_AMOUNT_REQUIRED');
-        }
         if ($reason === '') {
             throw new RuntimeException('PAYIN_REASON_REQUIRED');
         }
@@ -323,7 +319,7 @@ class ShiftSessionService
 
             $movement = $this->drawerSessions->recordMovement($conn, (int) $drawerSession['id'], [
                 'movement_type' => 'paid_in',
-                'amount' => number_format($amount, 3, '.', ''),
+                'amount' => $amount,
                 'reason' => $reason,
                 'created_by' => $userId,
                 'manager_approval_id' => $managerApprovalId,
@@ -354,11 +350,8 @@ class ShiftSessionService
             throw new RuntimeException('SHIFT_WRITE_BLOCKED');
         }
 
-        $amount = round((float) ($payload['amount'] ?? 0), 3);
+        $amount = $this->positiveCashAmount($payload['amount'] ?? null, 'SAFE_DROP_AMOUNT_REQUIRED');
         $reason = trim((string) ($payload['reason'] ?? ''));
-        if ($amount <= 0) {
-            throw new RuntimeException('SAFE_DROP_AMOUNT_REQUIRED');
-        }
         if ($reason === '') {
             throw new RuntimeException('SAFE_DROP_REASON_REQUIRED');
         }
@@ -389,7 +382,7 @@ class ShiftSessionService
 
             $movement = $this->drawerSessions->recordMovement($conn, (int) $drawerSession['id'], [
                 'movement_type' => 'safe_drop',
-                'amount' => number_format($amount, 3, '.', ''),
+                'amount' => $amount,
                 'reason' => $reason,
                 'created_by' => $userId,
                 'manager_approval_id' => $managerApprovalId,
@@ -423,14 +416,14 @@ class ShiftSessionService
 
         $reportScope = $scope;
         $report = new ShiftReport($conn, $userId, $context['date'] ?? date('Y-m-d'), $reportScope);
-        $voucherTotal = (float) ($report->getExpenses()['total'] ?? 0);
+        $voucherTotal = CashAmount::normalize($report->getExpenses()['total'] ?? '0.00');
 
         return [
             'source' => 'legacy',
             'drawer_active' => false,
             'mid_shift_enabled' => false,
             'total' => $voucherTotal,
-            'total_formatted' => number_format($voucherTotal, 2),
+            'total_formatted' => $voucherTotal,
             'count' => 0,
             'notes' => '',
             'movements' => [],
@@ -478,21 +471,21 @@ class ShiftSessionService
                 'mid_shift_enabled' => false,
                 'expected_cash' => null,
                 'payins' => [
-                    'total' => 0.0,
+                    'total' => '0.00',
                     'total_formatted' => '0.00',
                     'count' => 0,
                     'notes' => '',
                     'movements' => [],
                 ],
                 'payouts' => [
-                    'total' => 0.0,
+                    'total' => '0.00',
                     'total_formatted' => '0.00',
                     'count' => 0,
                     'notes' => '',
                     'movements' => [],
                 ],
                 'safe_drops' => [
-                    'total' => 0.0,
+                    'total' => '0.00',
                     'total_formatted' => '0.00',
                     'count' => 0,
                     'notes' => '',
@@ -547,7 +540,7 @@ class ShiftSessionService
         bool $excludeZeroAmountPaidIn
     ): array {
         $movements = [];
-        $total = 0.0;
+        $total = '0.00';
         $notes = [];
 
         foreach ($this->drawerSessions->movementsForSession($conn, (int) $drawerSession['id']) as $movement) {
@@ -555,12 +548,12 @@ class ShiftSessionService
                 continue;
             }
 
-            $amount = (float) ($movement['amount'] ?? 0);
-            if ($excludeZeroAmountPaidIn && $amount <= 0) {
+            $amount = CashAmount::normalize($movement['amount'] ?? '0.00');
+            if ($excludeZeroAmountPaidIn && CashAmount::compare($amount, '0.00') <= 0) {
                 continue;
             }
 
-            $total += $amount;
+            $total = CashAmount::add($total, $amount);
             $reason = trim((string) ($movement['reason'] ?? ''));
             if ($reason !== '') {
                 $notes[] = $reason;
@@ -568,7 +561,7 @@ class ShiftSessionService
 
             $movements[] = [
                 'id' => (int) ($movement['id'] ?? 0),
-                'amount' => number_format($amount, 2, '.', ''),
+                'amount' => $amount,
                 'reason' => $reason,
                 'created_at' => (string) ($movement['created_at'] ?? ''),
             ];
@@ -576,7 +569,7 @@ class ShiftSessionService
 
         return [
             'total' => $total,
-            'total_formatted' => number_format($total, 2),
+            'total_formatted' => $total,
             'count' => count($movements),
             'notes' => $this->truncateExpenseNotes(implode(' | ', $notes)),
             'movements' => $movements,
@@ -590,14 +583,14 @@ class ShiftSessionService
 
         if ($summary['drawer_active']) {
             return [
-                'expenses' => (float) $summary['total'],
+                'expenses' => CashAmount::normalize($summary['total'] ?? '0.00'),
                 'exp_notes' => $expNotes !== '' ? $this->truncateExpenseNotes($expNotes) : $summary['notes'],
                 'expense_summary' => $summary,
             ];
         }
 
         return [
-            'expenses' => (float) ($payload['expenses'] ?? $summary['total']),
+            'expenses' => CashAmount::normalize($payload['expenses'] ?? $summary['total'] ?? '0.00'),
             'exp_notes' => $this->truncateExpenseNotes($expNotes),
             'expense_summary' => $summary,
         ];
@@ -878,7 +871,7 @@ class ShiftSessionService
                 'pos.shift.force_close',
                 'drawer_session',
                 $sessionId,
-                1.0,
+                '1.00',
                 $payload,
                 [
                     'user_id' => $actingUserId,
@@ -893,12 +886,14 @@ class ShiftSessionService
             $approvalId = (int) ($payload['manager_approval_id'] ?? 0) ?: null;
         }
 
-        $expectedBefore = (float) $this->drawerSessions->expectedCash($conn, $sessionId);
+        $expectedBefore = CashAmount::normalize($this->drawerSessions->expectedCash($conn, $sessionId));
         $countedCash = trim((string) ($payload['counted_cash'] ?? ''));
         if ($countedCash === '') {
-            $countedCash = number_format($expectedBefore, 3, '.', '');
+            $countedCash = $expectedBefore;
         }
-        if (!is_numeric($countedCash) || (float) $countedCash < 0) {
+        try {
+            $countedCash = CashAmount::normalize($countedCash);
+        } catch (InvalidArgumentException $exception) {
             throw new RuntimeException('COUNTED_AMOUNT_INVALID');
         }
 
@@ -931,28 +926,29 @@ class ShiftSessionService
             }
             $closed = $this->drawerSessions->forceCloseSession($conn, $sessionId, [
                 'closed_by' => $actingUserId,
-                'counted_cash' => number_format((float) $countedCash, 3, '.', ''),
+                'counted_cash' => $countedCash,
                 'notes' => $reason,
             ], $syncContext);
 
-            $difference = (float) ($closed['difference'] ?? 0);
+            $difference = CashAmount::normalize($closed['difference'] ?? '0.00', true);
             $openingUnresolved = (($session['variance_status'] ?? '') === 'unresolved')
                 && in_array((string) ($session['variance_type'] ?? ''), ['opening', 'both'], true);
 
-            $varianceStatus = (abs($difference) > 0.0001 || $openingUnresolved) ? 'unresolved' : 'none';
+            $hasClosingVariance = CashAmount::compare($difference, '0.00') !== 0;
+            $varianceStatus = ($hasClosingVariance || $openingUnresolved) ? 'unresolved' : 'none';
             $varianceType = 'none';
-            if ($openingUnresolved && abs($difference) > 0.0001) {
+            if ($openingUnresolved && $hasClosingVariance) {
                 $varianceType = 'both';
             } elseif ($openingUnresolved) {
                 $varianceType = 'opening';
-            } elseif (abs($difference) > 0.0001) {
+            } elseif ($hasClosingVariance) {
                 $varianceType = 'closing';
             }
 
             if ($varianceStatus === 'unresolved' && $this->drawerSessionsColumnExists($conn, 'variance_status')) {
                 $type = $varianceType;
                 $status = $varianceStatus;
-                $snapshot = number_format($expectedBefore, 3, '.', '');
+                $snapshot = $expectedBefore;
                 if ($this->drawerSessionsColumnExists($conn, 'close_expected_snapshot')) {
                     $stmt = $conn->prepare("
                         UPDATE drawer_sessions
@@ -980,21 +976,21 @@ class ShiftSessionService
             $closeSummary = (new DrawerSessionCloseSummaryService())->createForSession($conn, $sessionId, [
                 'shift_number' => date('Ymd') . '_' . $ownerUserId,
                 'total_orders' => (int) ($reportTotals['total_orders'] ?? 0),
-                'total_sales' => (float) ($reportTotals['total_net'] ?? 0),
-                'cash_sales' => (float) ($reconciliation['payments']['cash'] ?? 0),
-                'non_cash_sales' => (float) ($reconciliation['payments']['non_cash'] ?? 0),
-                'discount_total' => (float) ($reportTotals['total_discount'] ?? 0),
-                'return_total' => 0,
-                'expense_total' => (float) ($expenseSummary['total'] ?? 0),
+                'total_sales' => $this->legacyReadAmount($reportTotals['total_net'] ?? '0.00', true),
+                'cash_sales' => $this->legacyReadAmount($reconciliation['payments']['cash'] ?? '0.00'),
+                'non_cash_sales' => $this->legacyReadAmount($reconciliation['payments']['non_cash'] ?? '0.00'),
+                'discount_total' => $this->legacyReadAmount($reportTotals['total_discount'] ?? '0.00'),
+                'return_total' => '0.00',
+                'expense_total' => CashAmount::normalize($expenseSummary['total'] ?? '0.00'),
                 'expense_notes' => (string) ($expenseSummary['notes'] ?? ''),
-                'expected_non_cash' => (float) ($reconciliation['payments']['non_cash'] ?? 0),
+                'expected_non_cash' => $this->legacyReadAmount($reconciliation['payments']['non_cash'] ?? '0.00'),
                 'counted_non_cash' => null,
                 'non_cash_difference' => null,
                 'close_path' => !empty($payload['takeover']) ? 'drawer_takeover_force_close' : 'drawer_force_close',
                 'report_snapshot' => [
                     'force_close_reason' => $reason,
                     'expected_cash' => $expectedBefore,
-                    'counted_cash' => (float) $countedCash,
+                    'counted_cash' => $countedCash,
                     'variance_status' => $varianceStatus,
                     'variance_type' => $varianceType,
                     'manager_approval_id' => $approvalId,
@@ -1034,7 +1030,7 @@ class ShiftSessionService
                 'metadata' => [
                     'owner_user_id' => $ownerUserId,
                     'incoming_user_id' => (int) ($payload['incoming_user_id'] ?? $actingUserId),
-                    'counted_cash' => (float) $countedCash,
+                    'counted_cash' => $countedCash,
                     'expected_before' => $expectedBefore,
                     'difference' => $difference,
                     'variance_status' => $varianceStatus,
@@ -1061,7 +1057,7 @@ class ShiftSessionService
     private function requirePayoutApprovalIfNeeded(
         mysqli $conn,
         int $userId,
-        float $amount,
+        string $amount,
         int $drawerSessionId,
         array $request
     ): ?int {
@@ -1080,7 +1076,10 @@ class ShiftSessionService
         $limit = $permissionService->limit($userId, 'pos.payout.over_limit');
         $withinLimit = true;
         if ($limit !== null && empty($limit['is_unlimited']) && $limit['limit_value'] !== null) {
-            $withinLimit = $amount <= (float) $limit['limit_value'];
+            $withinLimit = CashAmount::compare(
+                $amount,
+                CashAmount::normalize($limit['limit_value'])
+            ) <= 0;
         }
 
         if ($withinLimit) {
@@ -1103,6 +1102,29 @@ class ShiftSessionService
         $approvalService->consumeApproval($conn, $approvalId, $userId);
 
         return $approvalId;
+    }
+
+    private function positiveCashAmount($amount, string $errorCode): string
+    {
+        try {
+            $normalized = CashAmount::normalize($amount);
+        } catch (InvalidArgumentException $exception) {
+            throw new RuntimeException($errorCode, 0, $exception);
+        }
+        if (CashAmount::compare($normalized, '0.00') <= 0) {
+            throw new RuntimeException($errorCode);
+        }
+
+        return $normalized;
+    }
+
+    /**
+     * Adapter for legacy report/reconciliation read models that still expose
+     * numeric PHP values. Mutation request boundaries remain string-only.
+     */
+    private function legacyReadAmount($value, bool $allowNegative = false): string
+    {
+        return Money::fromLegacy($value, $allowNegative)->toString();
     }
 
     private function payoutLimitInfrastructureAvailable(mysqli $conn): bool

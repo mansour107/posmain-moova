@@ -27,11 +27,11 @@ try {
     ];
 
     $service = new ShiftSessionService();
-    $opened = $service->openForCashier($conn, $cashierId, ['opening_cash' => '100.000']);
+    $opened = $service->openForCashier($conn, $cashierId, ['opening_cash' => '100.00']);
     shiftExpenseIntegrationAssert($opened['status'] === 'open', 'shift should open');
 
     $recorded = $service->recordShiftExpense($conn, $cashierId, [
-        'amount' => 15.5,
+        'amount' => '15.50',
         'reason' => 'توصيل طلب',
     ]);
     shiftExpenseIntegrationAssert($recorded['movement']['movement_type'] === 'paid_out', 'movement should be paid_out');
@@ -41,7 +41,7 @@ try {
     }
 
     $service->recordShiftExpense($conn, $cashierId, [
-        'amount' => 4.5,
+        'amount' => '4.50',
         'reason' => 'مشتريات صغيرة',
     ]);
 
@@ -54,9 +54,9 @@ try {
     shiftExpenseIntegrationAssert(abs($expectedCash - 80.0) < 0.01, 'expected cash should subtract paid_out from opening');
 
     $closed = $service->closeSimpleShift($conn, $cashierId, [
-        'cash' => 80,
-        'fund_after' => 80,
-        'expenses' => 999,
+        'cash' => '80.00',
+        'fund_after' => '80.00',
+        'expenses' => '999.00',
         'exp_notes' => 'ignored when drawer active',
     ]);
     shiftExpenseIntegrationAssert(abs((float) $closed['total_sales'] >= 0), 'close should succeed');
@@ -66,7 +66,7 @@ try {
     shiftExpenseIntegrationAssert($row['expense_notes'] === 'ignored when drawer active', 'close should keep provided notes when present');
 
     shiftExpenseIntegrationExpectException(function () use ($service, $conn, $cashierId) {
-        $service->recordShiftExpense($conn, $cashierId, ['amount' => 1, 'reason' => 'late']);
+        $service->recordShiftExpense($conn, $cashierId, ['amount' => '1.00', 'reason' => 'late']);
     }, 'SHIFT_WRITE_BLOCKED');
 
     echo "shift-expense-record-integration-ok db={$db}\n";

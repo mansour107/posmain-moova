@@ -9,6 +9,9 @@ require_once __DIR__ . '/InventoryHistoricalMigrationService.php';
 require_once __DIR__ . '/InventoryLegacyRetirementReadinessService.php';
 require_once __DIR__ . '/InventoryOperationalHardeningService.php';
 require_once __DIR__ . '/InventoryReconciliationAcceptanceService.php';
+require_once __DIR__ . '/InventoryUnpaidSaleReclassificationService.php';
+require_once __DIR__ . '/InventoryNonStockLedgerNeutralizationService.php';
+require_once __DIR__ . '/InventoryValuationAccountingService.php';
 
 class InventoryCutoverReadinessService
 {
@@ -23,6 +26,7 @@ class InventoryCutoverReadinessService
         $migration = $this->migrationReadiness($conn, $filters, $options);
         $reconciliation = $this->inventoryReconciliationReadiness($conn, $filters, $options);
         $accounting = $this->accountingReadiness($conn, $filters, $options);
+        $valuationAccounting = $this->valuationAccountingReadiness($conn, $filters, $flags, $options);
         $hardening = $this->hardeningReadiness($conn);
         $legacy = $this->legacyRetirementReadiness($conn);
 
@@ -30,6 +34,7 @@ class InventoryCutoverReadinessService
             $migration['blockers'],
             $reconciliation['blockers'],
             $accounting['blockers'],
+            $valuationAccounting['blockers'],
             $hardening['blockers']
         )));
         $legacyBlockers = array_values(array_unique(array_merge($cutoverBlockers, $legacy['blockers'])));
@@ -44,12 +49,14 @@ class InventoryCutoverReadinessService
             'migration' => $migration,
             'reconciliation' => $reconciliation,
             'accounting_reconciliation' => $accounting,
+            'valuation_accounting_reconciliation' => $valuationAccounting,
             'hardening' => $hardening,
             'legacy_retirement' => $legacy,
             'required_before_cutover' => [
                 'clean_or_accepted_reconciliation',
                 'reviewed_historical_migration_plan',
                 'clean_or_accepted_inventory_accounting_reconciliation',
+                'inventory_valuation_matches_inventory_asset_gl',
                 'inventory_operational_health_green',
                 'browser_operator_qa',
                 'live_inventory_cutover_signoff',
@@ -85,6 +92,20 @@ class InventoryCutoverReadinessService
         $unmigratedLegacyRows = (new InventoryHistoricalMigrationService())->countUnmigratedLegacyFatRows($conn, $filters);
         if ($unmigratedLegacyRows > 0) {
             $blockers[] = 'safe_legacy_backfill_candidates_not_applied';
+        }
+        $unpaidSaleReclassification = (new InventoryUnpaidSaleReclassificationService())->plan($conn);
+        foreach (($unpaidSaleReclassification['blockers'] ?? []) as $blocker) {
+            $blockers[] = 'unpaid_sale_reclassification:' . (string) ($blocker['code'] ?? $blocker);
+        }
+        if ((int) ($unpaidSaleReclassification['summary']['entry_count'] ?? 0) > 0) {
+            $blockers[] = 'unpaid_order_sale_movements_require_reclassification';
+        }
+        $nonStockNeutralization = (new InventoryNonStockLedgerNeutralizationService())->plan($conn);
+        foreach (($nonStockNeutralization['blockers'] ?? []) as $blocker) {
+            $blockers[] = 'non_stock_ledger_neutralization:' . (string) ($blocker['code'] ?? $blocker);
+        }
+        if ((int) ($nonStockNeutralization['summary']['entry_count'] ?? 0) > 0) {
+            $blockers[] = 'non_stock_items_have_inventory_ledger_state';
         }
 
         $acceptedRebuildRows = [];
@@ -134,6 +155,8 @@ class InventoryCutoverReadinessService
                 'ambiguous_count' => (int) ($backfillSummary['ambiguous_count'] ?? 0),
                 'unused_review_decision_count' => (int) ($backfillSummary['unused_review_decision_count'] ?? 0),
                 'unmigrated_legacy_row_count' => $unmigratedLegacyRows,
+                'unpaid_sale_reclassification_count' => (int) ($unpaidSaleReclassification['summary']['entry_count'] ?? 0),
+                'non_stock_ledger_neutralization_count' => (int) ($nonStockNeutralization['summary']['entry_count'] ?? 0),
                 'difference_count' => (int) ($rebuildSummary['difference_count'] ?? 0),
                 'cost_difference_count' => (int) ($rebuildSummary['cost_difference_count'] ?? 0),
                 'rebuild_candidate_count' => (int) ($rebuildSummary['rebuild_candidate_count'] ?? 0),
@@ -141,6 +164,8 @@ class InventoryCutoverReadinessService
                 'unaccepted_rebuild_candidate_count' => count($unacceptedRebuildRows),
             ],
             'sample_ambiguous_rows' => array_slice($plan['backfill']['sample_ambiguous_rows'] ?? [], 0, 5),
+            'sample_unpaid_sale_reclassifications' => array_slice($unpaidSaleReclassification['entries'] ?? [], 0, 5),
+            'sample_non_stock_ledger_neutralizations' => array_slice($nonStockNeutralization['entries'] ?? [], 0, 5),
             'sample_rebuild_rows' => array_slice(array_values(array_filter($rebuildRows, static fn(array $row): bool => !empty($row['needs_rebuild']))), 0, 5),
             'sample_unaccepted_rebuild_rows' => array_slice($unacceptedRebuildRows, 0, 5),
             'blockers' => array_values(array_unique($blockers)),
@@ -232,6 +257,48 @@ class InventoryCutoverReadinessService
             'sample_unaccepted_problems' => array_slice($unacceptedRows, 0, 5),
             'blockers' => array_values(array_unique($blockers)),
         ];
+    }
+
+    private function valuationAccountingReadiness(
+        mysqli $conn,
+        array $filters,
+        InventoryFeatureFlags $flags,
+        array $options
+    ): array {
+        $required = array_key_exists('require_valuation_accounting', $options)
+            ? (bool) $options['require_valuation_accounting']
+            : $flags->mode() === 'live';
+        if (!$required) {
+            return ['ok' => true, 'required' => false, 'blockers' => []];
+        }
+        $accounts = $flags->config()['accounts'] ?? [];
+        $inventoryAccountId = (int) ($accounts['inventory_asset_account_id'] ?? $accounts['inventory_account_id'] ?? 0);
+        $filteredStoreId = (int) ($filters['store_id'] ?? 0);
+        $scope = [
+            'pos_tenant' => (int) ($filters['pos_tenant'] ?? 0),
+            'pos_branch' => (int) ($filters['pos_branch'] ?? 0),
+            'store_id' => $filteredStoreId > 0 ? $filteredStoreId : $this->operationalStoreId($conn),
+        ];
+        $review = (new InventoryValuationAccountingService())->review($conn, $scope, $inventoryAccountId);
+        $blockers = [];
+        foreach (($review['blockers'] ?? []) as $blocker) {
+            $blockers[] = 'valuation_accounting:' . (string) $blocker;
+        }
+
+        return $review + [
+            'required' => true,
+            'blockers' => array_values(array_unique($blockers)),
+        ];
+    }
+
+    private function operationalStoreId(mysqli $conn): int
+    {
+        if (!$this->tableExists($conn, 'settings') || !$this->columnExists($conn, 'settings', 'def_pos_store')) {
+            return 0;
+        }
+        $row = $conn->query('SELECT COALESCE(def_pos_store,0) AS store_id FROM settings ORDER BY id LIMIT 1')->fetch_assoc();
+
+        return (int) ($row['store_id'] ?? 0);
     }
 
     private function hardeningReadiness(mysqli $conn): array
@@ -346,6 +413,28 @@ WHERE TABLE_SCHEMA = DATABASE()
         $stmt->close();
 
         return (int) ($row['index_count'] ?? 0) > 0;
+    }
+
+    private function tableExists(mysqli $conn, string $table): bool
+    {
+        $stmt = $conn->prepare('SELECT COUNT(*) AS c FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=?');
+        $stmt->bind_param('s', $table);
+        $stmt->execute();
+        $count = (int) ($stmt->get_result()->fetch_assoc()['c'] ?? 0);
+        $stmt->close();
+
+        return $count > 0;
+    }
+
+    private function columnExists(mysqli $conn, string $table, string $column): bool
+    {
+        $stmt = $conn->prepare('SELECT COUNT(*) AS c FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=? AND COLUMN_NAME=?');
+        $stmt->bind_param('ss', $table, $column);
+        $stmt->execute();
+        $count = (int) ($stmt->get_result()->fetch_assoc()['c'] ?? 0);
+        $stmt->close();
+
+        return $count > 0;
     }
 
 }

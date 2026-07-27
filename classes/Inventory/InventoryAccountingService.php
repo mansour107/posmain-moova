@@ -310,7 +310,7 @@ class InventoryAccountingService
                 $conn,
                 (string) $journalId,
                 $total,
-                (string) ($journal['jdate'] ?? date('Y-m-d')),
+                (string) ($journal['jdate'] ?? $context['jdate'] ?? date('Y-m-d')),
                 (string) ($journal['details'] ?? 'Inventory accounting'),
                 (int) ($journal['user_id'] ?? 0),
                 $entries,
@@ -577,9 +577,11 @@ class InventoryAccountingService
     private function nextJournalId(mysqli $conn, int $tenant, int $branch): int
     {
         $seed = $this->maxJournalId($conn, $tenant, $branch);
-        $this->counterService->ensureCounterRow($conn, $tenant, $branch, 'journal_id', 'journal:inventory', $seed);
+        // Inventory, recipe, sale, payment and refund journals share the same
+        // branch journal-number namespace and therefore the same locked counter.
+        $this->counterService->ensureCounterRow($conn, $tenant, $branch, 'journal_id', 'journal:default', $seed);
 
-        return $this->counterService->nextJournalId($conn, $tenant, $branch, 'inventory');
+        return $this->counterService->nextJournalId($conn, $tenant, $branch);
     }
 
     private function maxJournalId(mysqli $conn, int $tenant, int $branch): int

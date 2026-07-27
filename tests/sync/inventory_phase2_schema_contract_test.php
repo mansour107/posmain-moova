@@ -281,6 +281,14 @@ function inventoryPhase2UnexpectedRuntimeReference(string $reference): bool
         'classes/Inventory/InventoryReasonCodeService.php' => [
             'inventory_reason_codes',
         ],
+        'classes/Items/ItemInventoryUnitSync.php' => [
+            'inventory_item_stock_levels',
+        ],
+        'config/rbac_page_manifest.php' => [
+            'inventory_counts',
+            'inventory_reason_codes',
+            'inventory_transfers',
+        ],
         'ajax/inventory_stock_level_save.php' => [
             'inventory_item_stock_levels',
         ],

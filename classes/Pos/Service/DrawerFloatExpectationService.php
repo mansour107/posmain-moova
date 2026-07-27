@@ -1,6 +1,7 @@
 <?php
 
 require_once dirname(__DIR__, 3) . '/includes/drawer_movement_signs.php';
+require_once dirname(__DIR__) . '/Value/CashAmount.php';
 
 class DrawerFloatExpectationService
 {
@@ -13,14 +14,14 @@ class DrawerFloatExpectationService
     public function expectedOpeningFloat(mysqli $conn, int $tenant, int $branch): array
     {
         $lastClosed = $this->findLastClosedSession($conn, $tenant, $branch);
-        $baseCounted = 0.0;
+        $baseCounted = '0.00';
         $sinceAt = null;
         $lastSessionId = null;
         $baselineRequired = false;
         $baseline = null;
 
         if ($lastClosed) {
-            $baseCounted = (float) ($lastClosed['counted_cash'] ?? 0);
+            $baseCounted = CashAmount::normalize($lastClosed['counted_cash'] ?? '0.00');
             $sinceAt = (string) ($lastClosed['closed_at'] ?? '');
             $lastSessionId = (int) ($lastClosed['id'] ?? 0);
         } else {
@@ -33,17 +34,17 @@ class DrawerFloatExpectationService
         }
 
         $unassignedNet = $this->netUnassignedMovementsSince($conn, $tenant, $branch, $sinceAt);
-        $expected = round($baseCounted + $unassignedNet, 3);
+        $expected = CashAmount::add($baseCounted, $unassignedNet);
 
         return [
-            'base_counted' => $this->formatDecimal($baseCounted),
-            'unassigned_net' => $this->formatDecimal($unassignedNet),
-            'interim_net' => $this->formatDecimal(0),
-            'expected' => $this->formatDecimal($expected),
+            'base_counted' => $baseCounted,
+            'unassigned_net' => $unassignedNet,
+            'interim_net' => '0.00',
+            'expected' => $expected,
             'since_at' => $sinceAt,
             'last_session_id' => $lastSessionId,
             'baseline_required' => $baselineRequired,
-            'baseline' => $baseline !== null ? $this->formatDecimal($baseline) : null,
+            'baseline' => $baseline,
         ];
     }
 
@@ -56,7 +57,7 @@ class DrawerFloatExpectationService
         return $this->getOpeningBaseline($conn, $tenant, $branch) === null;
     }
 
-    public function getOpeningBaseline(mysqli $conn, int $tenant, int $branch): ?float
+    public function getOpeningBaseline(mysqli $conn, int $tenant, int $branch): ?string
     {
         if (!$this->tableExists($conn, 'pos_branch_settings')
             || !$this->columnExists($conn, 'pos_branch_settings', 'opening_float_baseline')) {
@@ -78,13 +79,15 @@ class DrawerFloatExpectationService
             return null;
         }
 
-        return round((float) $row['opening_float_baseline'], 3);
+        return CashAmount::normalize($row['opening_float_baseline']);
     }
 
-    public function setOpeningBaseline(mysqli $conn, int $tenant, int $branch, float $amount, int $userId): array
+    public function setOpeningBaseline(mysqli $conn, int $tenant, int $branch, $amount, int $userId): array
     {
-        if ($amount < 0) {
-            throw new RuntimeException('BASELINE_AMOUNT_INVALID');
+        try {
+            $formatted = CashAmount::normalize($amount);
+        } catch (InvalidArgumentException $exception) {
+            throw new RuntimeException('BASELINE_AMOUNT_INVALID', 0, $exception);
         }
 
         if ($this->findLastClosedSession($conn, $tenant, $branch)) {
@@ -98,8 +101,6 @@ class DrawerFloatExpectationService
         if (!$this->tableExists($conn, 'pos_branch_settings')) {
             throw new RuntimeException('BRANCH_SETTINGS_UNAVAILABLE');
         }
-
-        $formatted = number_format(round($amount, 3), 3, '.', '');
 
         $stmt = $conn->prepare('
             INSERT INTO pos_branch_settings (
@@ -131,10 +132,10 @@ class DrawerFloatExpectationService
         return !$this->branchHasAnyDrawerSession($conn, $tenant, $branch);
     }
 
-    public function toleranceForBranch(mysqli $conn, int $tenant, int $branch): float
+    public function toleranceForBranch(mysqli $conn, int $tenant, int $branch): string
     {
         if (!$this->tableExists($conn, 'pos_branch_settings')) {
-            return 0.010;
+            return '0.01';
         }
 
         $stmt = $conn->prepare('
@@ -149,17 +150,22 @@ class DrawerFloatExpectationService
         $stmt->close();
 
         if (!$row) {
-            return 0.010;
+            return '0.01';
         }
 
-        $tolerance = (float) ($row['cash_count_tolerance'] ?? 0.010);
+        $tolerance = CashAmount::normalize($row['cash_count_tolerance'] ?? '0.01');
 
-        return $tolerance > 0 ? $tolerance : 0.010;
+        return CashAmount::compare($tolerance, '0.00') > 0 ? $tolerance : '0.01';
     }
 
-    public function amountsMatch(float $counted, float $expected, float $tolerance): bool
+    public function amountsMatch($counted, $expected, $tolerance): bool
     {
-        return abs(round($counted - $expected, 3)) <= $tolerance;
+        $difference = CashAmount::subtract($counted, $expected);
+        if (CashAmount::compare($difference, '0.00') < 0) {
+            $difference = CashAmount::negate($difference);
+        }
+
+        return CashAmount::compare($difference, CashAmount::normalize($tolerance)) <= 0;
     }
 
     private function findLastClosedSession(mysqli $conn, int $tenant, int $branch): ?array
@@ -235,10 +241,10 @@ class DrawerFloatExpectationService
         return $row !== null;
     }
 
-    private function netUnassignedMovementsSince(mysqli $conn, int $tenant, int $branch, ?string $sinceAt): float
+    private function netUnassignedMovementsSince(mysqli $conn, int $tenant, int $branch, ?string $sinceAt): string
     {
         if (!$this->tableExists($conn, 'drawer_movements')) {
-            return 0.0;
+            return '0.00';
         }
 
         $sql = "
@@ -272,23 +278,19 @@ class DrawerFloatExpectationService
         $stmt->execute();
         $result = $stmt->get_result();
 
-        $net = 0.0;
+        $net = '0.00';
         while ($row = $result->fetch_assoc()) {
             $type = (string) ($row['movement_type'] ?? '');
             $sign = $this->movementSigns()[$type] ?? 0;
             if ($sign === 0) {
                 continue;
             }
-            $net += $sign * (float) ($row['amount'] ?? 0);
+            $amount = CashAmount::normalize($row['amount'] ?? '0.00');
+            $net = CashAmount::add($net, $sign < 0 ? CashAmount::negate($amount) : $amount);
         }
         $stmt->close();
 
-        return round($net, 3);
-    }
-
-    private function formatDecimal(float $value): string
-    {
-        return number_format($value, 3, '.', '');
+        return $net;
     }
 
     private function tableExists(mysqli $conn, string $table): bool

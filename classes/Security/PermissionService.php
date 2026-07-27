@@ -1,5 +1,7 @@
 <?php
 
+require_once __DIR__ . '/../Financial/Decimal.php';
+
 class PermissionService
 {
     public const ADMIN_ROLE_IMMUTABLE = true;
@@ -39,7 +41,7 @@ class PermissionService
     }
 
     /**
-     * @return array{limit_value: ?float, is_unlimited: bool}|null
+     * @return array{limit_value: ?string, is_unlimited: bool}|null
      */
     public function limit(int $userId, string $permissionKey, ?int $roleId = null): ?array
     {
@@ -65,7 +67,7 @@ class PermissionService
         return null;
     }
 
-    public function checkAmount(int $userId, string $permissionKey, float $amount, ?int $roleId = null): bool
+    public function checkAmount(int $userId, string $permissionKey, $amount, ?int $roleId = null): bool
     {
         if (!$this->check($userId, $permissionKey, $roleId)) {
             return false;
@@ -80,7 +82,13 @@ class PermissionService
             return true;
         }
 
-        return $amount <= (float) $limit['limit_value'];
+        $amountDecimal = FinancialDecimal::normalize(
+            is_float($amount) ? sprintf('%.6F', $amount) : $amount,
+            6
+        );
+        $limitDecimal = FinancialDecimal::normalize((string) $limit['limit_value'], 6);
+
+        return FinancialDecimal::compare($amountDecimal, $limitDecimal, 6) <= 0;
     }
 
     public function permissionsVersion(): string
@@ -165,7 +173,7 @@ class PermissionService
     }
 
     /**
-     * @return array<string, array{limit_value: ?float, is_unlimited: bool}>
+     * @return array<string, array{limit_value: ?string, is_unlimited: bool}>
      */
     public function roleCapabilityLimits(int $roleId): array
     {
@@ -189,7 +197,7 @@ class PermissionService
                 continue;
             }
             $limits[$key] = [
-                'limit_value' => $row['limit_value'] !== null ? (float) $row['limit_value'] : null,
+                'limit_value' => $row['limit_value'] !== null ? (string) $row['limit_value'] : null,
                 'is_unlimited' => (int) ($row['is_unlimited'] ?? 1) === 1,
             ];
         }
@@ -401,7 +409,7 @@ class PermissionService
     }
 
     /**
-     * @return array{limit_value: ?float, is_unlimited: bool}|null
+     * @return array{limit_value: ?string, is_unlimited: bool}|null
      */
     private function userGrantLimit(int $userId, string $permissionKey): ?array
     {
@@ -441,13 +449,16 @@ class PermissionService
         }
 
         return [
-            'limit_value' => $row['limit_value'] !== null ? (float) $row['limit_value'] : null,
+            'limit_value' => $row['limit_value'] !== null ? (string) $row['limit_value'] : null,
             'is_unlimited' => (int) ($row['is_unlimited'] ?? 1) === 1,
         ];
     }
 
     private function roleFlagsById(int $roleId): array
     {
+        if (!$this->tableExists('usr_pwrs')) {
+            return [];
+        }
         $stmt = $this->conn->prepare(
             'SELECT * FROM usr_pwrs WHERE id = ? AND COALESCE(isdeleted, 0) != 1 LIMIT 1'
         );
@@ -461,6 +472,9 @@ class PermissionService
 
     private function roleFlagsForUser(int $userId): array
     {
+        if (!$this->tableExists('users') || !$this->tableExists('usr_pwrs')) {
+            return [];
+        }
         $stmt = $this->conn->prepare(
             'SELECT p.* FROM users u
               INNER JOIN usr_pwrs p ON p.id = u.userrole
@@ -478,7 +492,13 @@ class PermissionService
 
     private function appSettingsTableExists(): bool
     {
-        $result = $this->conn->query("SHOW TABLES LIKE 'app_settings'");
+        return $this->tableExists('app_settings');
+    }
+
+    private function tableExists(string $table): bool
+    {
+        $escaped = $this->conn->real_escape_string($table);
+        $result = $this->conn->query("SHOW TABLES LIKE '{$escaped}'");
 
         return $result instanceof mysqli_result && $result->num_rows > 0;
     }

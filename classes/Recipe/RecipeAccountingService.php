@@ -497,9 +497,12 @@ class RecipeAccountingService
     private function nextJournalId(mysqli $conn, int $posTenant, int $posBranch): int
     {
         $seed = $this->maxJournalId($conn, $posTenant, $posBranch);
-        $this->counterService->ensureCounterRow($conn, $posTenant, $posBranch, 'journal_id', 'journal:recipe', $seed);
+        // journal_heads.journal_id is one branch-wide accounting sequence.
+        // A recipe-specific counter can allocate the same number concurrently
+        // as a cashier/refund journal even when both seed from MAX(journal_id).
+        $this->counterService->ensureCounterRow($conn, $posTenant, $posBranch, 'journal_id', 'journal:default', $seed);
 
-        return $this->counterService->nextJournalId($conn, $posTenant, $posBranch, 'recipe');
+        return $this->counterService->nextJournalId($conn, $posTenant, $posBranch);
     }
 
     private function maxJournalId(mysqli $conn, int $posTenant, int $posBranch): int

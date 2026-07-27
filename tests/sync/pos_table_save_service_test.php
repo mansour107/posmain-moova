@@ -26,7 +26,7 @@ try {
     posTableSaveCreateSchema($conn);
 
     $service = new PosOrderMutationService();
-    $conn->query("INSERT INTO settings (id, def_pos_client, def_pos_store, def_pos_employee, def_pos_fund, isdeleted) VALUES (1, 501, 3, 4, 51, 0)");
+    $conn->query("INSERT INTO settings (id, def_pos_client, def_pos_store, def_pos_employee, def_pos_fund, negative_stock_sale_policy, isdeleted) VALUES (1, 501, 3, 4, 51, 'allow_with_warning', 0)");
     $conn->query("
         INSERT INTO acc_head (id, code, aname, parent_id, is_basic, is_stock, is_fund, isdeleted) VALUES
             (3, '123001', 'Main store', 0, 0, 1, 0, 0),
@@ -37,13 +37,13 @@ try {
             (91, '3111', 'Sales', 0, 0, 0, 0, 0)
     ");
     $conn->query("
-        INSERT INTO myitems (id, iname, item_type, track_stock, isdeleted) VALUES
-            (10, 'Table item 10', 'sellable', 1, 0),
-            (11, 'Table item 11', 'sellable', 1, 0),
-            (12, 'Table item 12', 'sellable', 1, 0),
-            (13, 'Table item 13', 'sellable', 1, 0)
+        INSERT INTO myitems (id, iname, price1, item_type, track_stock, isdeleted) VALUES
+            (10, 'Table item 10', 15, 'sellable', 1, 0),
+            (11, 'Table item 11', 8, 'sellable', 1, 0),
+            (12, 'Table item 12', 12, 'sellable', 1, 0),
+            (13, 'Table item 13', 20, 'sellable', 1, 0)
     ");
-    $conn->query("INSERT INTO tables (id, tname, table_case, isdeleted) VALUES (1, 'T1', 0, 0), (2, 'T2', 0, 0), (3, 'T3', 1, 0)");
+    $conn->query("INSERT INTO tables (id, tname, table_case, isdeleted) VALUES (1, 'T1', 0, 0), (2, 'T2', 0, 0), (3, 'T3', 1, 0), (4, 'T4', 0, 0)");
 
     $new = $service->saveTableOrder($conn, [
         'table_id' => 1,
@@ -64,13 +64,16 @@ try {
     posTableSaveAssert($new['success'] === true, 'new save should return success envelope');
     posTableSaveAssert($new['data']['is_update'] === false, 'new save should report create mode');
     posTableSaveAssert($new['data']['payment_status'] === 'unpaid', 'new table order should be unpaid');
+    posTableSaveAssert((int) $new['data']['mutation_version'] === 1, 'new order should start at mutation version 1');
     posTableSaveAssert(abs($new['data']['net'] - 38.0) < 0.0001, 'new save should recalculate net from details');
     posTableSaveAssert((int) $conn->query("SELECT table_case FROM tables WHERE id = 1")->fetch_assoc()['table_case'] === 1, 'new save should occupy table');
     posTableSaveAssert((int) $conn->query("SELECT COUNT(*) AS c FROM fat_details WHERE fatid = {$orderId} AND isdeleted = 0")->fetch_assoc()['c'] === 2, 'new save should insert detail rows');
     posTableSaveAssert((int) $conn->query("SELECT current_value FROM document_counters WHERE counter_type = 'pro_id' AND counter_key = 'pro_tybe:9'")->fetch_assoc()['current_value'] === 1, 'new save should allocate pro_id through document counter');
-    posTableSaveAssert((int) $conn->query("SELECT COUNT(*) AS c FROM inventory_movements WHERE order_id = {$orderId} AND movement_type = 'sale_direct'")->fetch_assoc()['c'] === 2, 'new save should shadow-write direct sale movements');
-    $item10Balance = $conn->query("SELECT qty_on_hand FROM inventory_item_balances WHERE item_id = 10 AND store_id = 3 LIMIT 1")->fetch_assoc();
-    posTableSaveAssert(is_array($item10Balance) && (string) $item10Balance['qty_on_hand'] === '-2.000000', 'new save should shadow-track item 10 balance');
+    posTableSaveAssert((int) $conn->query("SELECT COUNT(*) AS c FROM inventory_movements WHERE order_id = {$orderId} AND movement_type = 'reservation'")->fetch_assoc()['c'] === 2, 'new unpaid table save should reserve direct stock');
+    posTableSaveAssert((int) $conn->query("SELECT COUNT(*) AS c FROM inventory_movements WHERE order_id = {$orderId} AND movement_type = 'sale_direct'")->fetch_assoc()['c'] === 0, 'new unpaid table save must not create a sale movement or COGS basis');
+    $item10Balance = $conn->query("SELECT qty_on_hand, qty_reserved, qty_available FROM inventory_item_balances WHERE item_id = 10 AND store_id = 3 LIMIT 1")->fetch_assoc();
+    posTableSaveAssert(is_array($item10Balance) && (string) $item10Balance['qty_on_hand'] === '0.000000', 'unpaid table save must not consume item 10 on-hand');
+    posTableSaveAssert((string) $item10Balance['qty_reserved'] === '2.000000' && (string) $item10Balance['qty_available'] === '-2.000000', 'unpaid table save should reserve item 10 exactly');
 
     try {
         $service->saveTableOrder($conn, [
@@ -79,10 +82,10 @@ try {
             'store_id' => 3,
             'emp_id' => 4,
             'fund_id' => 51,
-            'items' => [['id' => 12, 'qty' => 1, 'price' => 5]],
-            'total' => 5,
+            'items' => [['id' => 12, 'qty' => 1, 'price' => 12]],
+            'total' => 12,
             'discount' => 0,
-            'net' => 5,
+            'net' => 12,
         ], ['user_id' => 7]);
         throw new RuntimeException('occupied table save should fail');
     } catch (RuntimeException $exception) {
@@ -105,6 +108,7 @@ try {
     $updated = $service->saveTableOrder($conn, [
         'table_id' => 2,
         'order_id' => 200,
+        'mutation_version' => 1,
         'order_date' => '2026-05-12',
         'store_id' => 3,
         'emp_id' => 4,
@@ -118,12 +122,37 @@ try {
     ], ['user_id' => 7]);
 
     posTableSaveAssert($updated['data']['is_update'] === true, 'update should report update mode');
+    posTableSaveAssert((int) $updated['data']['mutation_version'] === 2, 'successful update should advance mutation version once');
     posTableSaveAssert($updated['data']['payment_status'] === 'partial', 'update should preserve existing partial payment');
     posTableSaveAssert(abs($updated['data']['paid_amount'] - 10.0) < 0.0001, 'update should preserve paid amount up to net');
     posTableSaveAssert(abs($updated['data']['remaining_amount'] - 14.0) < 0.0001, 'update should recompute remaining amount');
     posTableSaveAssert((int) $conn->query("SELECT isdeleted FROM fat_details WHERE id = 2000")->fetch_assoc()['isdeleted'] === 1, 'update should soft-delete replaced detail rows');
     posTableSaveAssert((int) $conn->query("SELECT table_case FROM tables WHERE id = 2")->fetch_assoc()['table_case'] === 1, 'partial updated order should keep table occupied');
-    posTableSaveAssert((int) $conn->query("SELECT COUNT(*) AS c FROM inventory_movements WHERE order_id = 200 AND movement_type = 'sale_direct'")->fetch_assoc()['c'] === 1, 'update should shadow-add replacement table line');
+    posTableSaveAssert((int) $conn->query("SELECT COUNT(*) AS c FROM inventory_movements WHERE order_id = 200 AND movement_type = 'reservation'")->fetch_assoc()['c'] === 1, 'update should reserve the replacement table line');
+
+    $staleBlocked = false;
+    try {
+        $service->saveTableOrder($conn, [
+            'table_id' => 2,
+            'order_id' => 200,
+            'mutation_version' => 1,
+            'order_date' => '2026-05-12',
+            'store_id' => 3,
+            'emp_id' => 4,
+            'fund_id' => 51,
+            'items' => [['id' => 13, 'qty' => 1, 'price' => 20]],
+            'total' => 20,
+            'discount' => 0,
+            'net' => 20,
+        ], ['user_id' => 7]);
+    } catch (Throwable $exception) {
+        $staleBlocked = $exception->getMessage() === 'STALE_ORDER_VERSION';
+    }
+    posTableSaveAssert($staleBlocked, 'stale table edit must be rejected');
+    $staleState = $conn->query("SELECT mutation_version, fat_net FROM ot_head WHERE id = 200")->fetch_assoc();
+    posTableSaveAssert((int) $staleState['mutation_version'] === 2, 'stale edit must not advance durable mutation version');
+    posTableSaveAssert(Money::fromLegacy($staleState['fat_net'])->compare(Money::from('24.00')) === 0, 'stale edit must not alter durable total');
+    posTableSaveAssert((int) $conn->query("SELECT COUNT(*) AS c FROM fat_details WHERE fatid = 200 AND isdeleted = 0")->fetch_assoc()['c'] === 1, 'stale edit must not replace durable order lines');
 
     $conn->query("
         INSERT INTO ot_head (
@@ -138,31 +167,38 @@ try {
     ");
     $conn->query("INSERT INTO fat_details (id, fatid, isdeleted, det_value, profit) VALUES (3000, 300, 0, 20, 0)");
 
-    $paidUpdate = $service->saveTableOrder($conn, [
-        'table_id' => 3,
-        'order_id' => 300,
-        'order_date' => '2026-05-12',
-        'store_id' => 3,
-        'emp_id' => 4,
-        'fund_id' => 51,
-        'items' => [
-            ['id' => 13, 'qty' => 1, 'price' => 20],
-        ],
-        'total' => 20,
-        'discount' => 0,
-        'net' => 20,
-    ], ['user_id' => 7]);
-
-    posTableSaveAssert($paidUpdate['data']['payment_status'] === 'paid', 'update should complete when preserved paid amount covers new net');
-    posTableSaveAssert((int) $conn->query("SELECT table_case FROM tables WHERE id = 3")->fetch_assoc()['table_case'] === 0, 'paid updated order should free table');
-    posTableSaveAssert((int) $conn->query("SELECT COUNT(*) AS c FROM inventory_movements WHERE order_id = 300 AND movement_type = 'sale_direct'")->fetch_assoc()['c'] === 1, 'paid update should shadow-add replacement table line');
+    $belowPaidBlocked = false;
+    try {
+        $service->saveTableOrder($conn, [
+            'table_id' => 3,
+            'order_id' => 300,
+            'mutation_version' => 1,
+            'order_date' => '2026-05-12',
+            'store_id' => 3,
+            'emp_id' => 4,
+            'fund_id' => 51,
+            'items' => [
+                ['id' => 13, 'qty' => 1, 'price' => 20],
+            ],
+            'total' => 20,
+            'discount' => 0,
+            'net' => 20,
+        ], ['user_id' => 7]);
+    } catch (Throwable $exception) {
+        $belowPaidBlocked = $exception->getMessage() === 'ORDER_TOTAL_BELOW_PAID_AMOUNT_USE_REFUND';
+    }
+    posTableSaveAssert($belowPaidBlocked, 'table edit must not silently reduce a collected payment');
+    $blockedOrder = $conn->query("SELECT paid_amount, fat_net, payment_status FROM ot_head WHERE id = 300")->fetch_assoc();
+    posTableSaveAssert(abs((float) $blockedOrder['paid_amount'] - 25.0) < 0.0001, 'blocked edit preserves collected amount');
+    posTableSaveAssert(abs((float) $blockedOrder['fat_net'] - 20.0) < 0.0001, 'blocked edit preserves original order net');
+    posTableSaveAssert((int) $conn->query("SELECT isdeleted FROM fat_details WHERE id = 3000")->fetch_assoc()['isdeleted'] === 0, 'blocked edit preserves original item rows');
 
     $conn->query("INSERT INTO pos_customers (id, display_name, notes, isdeleted) VALUES (1, 'CRM Customer', '', 0)");
     $conn->query("INSERT INTO pos_customer_phones (id, customer_id, phone_normalized, phone_display, is_primary, isdeleted) VALUES (1, 1, '201001234567', '01001234567', 1, 0)");
     $conn->query("UPDATE pos_customers SET primary_phone_id = 1 WHERE id = 1");
 
     $customerSave = $service->saveTableOrder($conn, [
-        'table_id' => 3,
+        'table_id' => 4,
         'order_date' => '2026-05-12',
         'store_id' => 3,
         'emp_id' => 4,
@@ -216,8 +252,22 @@ function posTableSaveCreateSchema(mysqli $conn): void
         CREATE TABLE myitems (
             id INT NOT NULL PRIMARY KEY,
             iname VARCHAR(255) NULL,
+            group1 INT NOT NULL DEFAULT 0,
+            price1 DECIMAL(15,4) NOT NULL DEFAULT 0,
+            cost_price DECIMAL(15,4) NOT NULL DEFAULT 0,
+            itmqty DECIMAL(15,4) NOT NULL DEFAULT 0,
             item_type ENUM('sellable','ingredient','packaging','service') NOT NULL DEFAULT 'sellable',
             track_stock TINYINT(1) NOT NULL DEFAULT 1,
+            isdeleted TINYINT(1) NOT NULL DEFAULT 0
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+    ");
+    $conn->query("
+        CREATE TABLE item_units (
+            id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+            item_id INT NOT NULL,
+            unit_id INT NOT NULL DEFAULT 1,
+            u_val DECIMAL(18,6) NOT NULL DEFAULT 1.000000,
+            price1 DECIMAL(15,4) NOT NULL DEFAULT 0,
             isdeleted TINYINT(1) NOT NULL DEFAULT 0
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
     ");
@@ -292,12 +342,33 @@ function posTableSaveCreateSchema(mysqli $conn): void
             fatid INT NOT NULL,
             fat_tybe INT NULL,
             det_store INT NULL,
+            cost_price DECIMAL(15,4) NOT NULL DEFAULT 0,
             profit DECIMAL(15,4) NOT NULL DEFAULT 0,
             isdeleted TINYINT(1) NOT NULL DEFAULT 0
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
     ");
 
     (new SyncSchemaManager())->apply($conn);
+
+    $conn->query("
+        CREATE TABLE users (
+            id INT NOT NULL PRIMARY KEY,
+            uname VARCHAR(120) NOT NULL,
+            userrole INT NULL,
+            permission_mode ENUM('role_only','role_with_overrides') NOT NULL DEFAULT 'role_only',
+            isdeleted TINYINT(1) NOT NULL DEFAULT 0
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+    ");
+    $conn->query("
+        CREATE TABLE usr_pwrs (
+            id INT NOT NULL PRIMARY KEY,
+            rollname VARCHAR(191) NULL,
+            edit_sales TINYINT(1) NOT NULL DEFAULT 0,
+            isdeleted TINYINT(1) NOT NULL DEFAULT 0
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+    ");
+    $conn->query("INSERT INTO usr_pwrs (id, rollname, edit_sales, isdeleted) VALUES (3, 'Cashier', 0, 0)");
+    $conn->query("INSERT INTO users (id, uname, userrole, isdeleted) VALUES (7, 'cashier7', 3, 0)");
 }
 
 function posTableSaveAssert(bool $condition, string $message): void

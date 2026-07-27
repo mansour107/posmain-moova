@@ -5,12 +5,19 @@ include('includes/sidebar.php');
 
 
 require_once __DIR__ . '/includes/business_day.php';
+require_once __DIR__ . '/classes/Financial/RefundReversalReadService.php';
 $businessDayContext = posmain_business_day_context(
     isset($conn) && $conn instanceof mysqli ? $conn : null,
     (int) ($_SESSION['pos_tenant'] ?? 0),
     (int) ($_SESSION['pos_branch'] ?? 0)
 );
 $today = $businessDayContext['current_business_day'];
+$refundReadModel = new RefundReversalReadService();
+$visiblePosSale = $refundReadModel->originalSaleEvidencePredicate(
+    $conn,
+    'oh',
+    ['', 'unpaid', 'partial', 'paid', 'refunded', 'voided']
+);
 
 $q = isset($_GET['q']) ? $_GET['q'] : "all";  // استقبال قيمة q من GET
 $strtdate = isset($_GET['strtdate']) ? $_GET['strtdate'] : (isset($_POST['strtdate']) ? $_POST['strtdate'] : null);
@@ -32,17 +39,17 @@ switch ($q) {
     case "sale":
         $report_name = "مشتريات";
         $where_clause = "pro_tybe = 4 AND isdeleted != 1 $dateFilter";
-        $resop = $conn->query("SELECT * FROM ot_head WHERE $where_clause ORDER BY id DESC LIMIT $limit OFFSET $offset");
+        $resop = $conn->query("SELECT oh.* FROM ot_head oh WHERE $where_clause ORDER BY id DESC LIMIT $limit OFFSET $offset");
         break;
     case "buy":
         $report_name = "مبيعات";
-        $where_clause = "(pro_tybe = 2 OR pro_tybe = 3 OR pro_tybe = 9) AND isdeleted != 1 $dateFilter";
-        $resop = $conn->query("SELECT * FROM ot_head WHERE $where_clause ORDER BY id DESC LIMIT $limit OFFSET $offset");
+        $where_clause = "((pro_tybe IN (2, 3) AND isdeleted != 1) OR (pro_tybe = 9 AND {$visiblePosSale})) $dateFilter";
+        $resop = $conn->query("SELECT oh.* FROM ot_head oh WHERE $where_clause ORDER BY id DESC LIMIT $limit OFFSET $offset");
         break;
     default:
         $report_name = "التقرير الشامل";
-        $where_clause = "isdeleted != 1 $dateFilter";
-        $resop = $conn->query("SELECT * FROM ot_head WHERE $where_clause ORDER BY id DESC LIMIT $limit OFFSET $offset");
+        $where_clause = "((pro_tybe != 9 AND isdeleted != 1) OR (pro_tybe = 9 AND {$visiblePosSale})) $dateFilter";
+        $resop = $conn->query("SELECT oh.* FROM ot_head oh WHERE $where_clause ORDER BY id DESC LIMIT $limit OFFSET $offset");
 }
 ?>
 
@@ -52,7 +59,7 @@ switch ($q) {
         <div class="container-fluid">
             <div class="card">
                 <div class="card-header">
-                    <h3> - محلل العمل اليومي <?= $report_name ?></h3>
+                    <h3>الملخص اليومي للمبيعات</h3>
                     
                     <?php if (isset($_GET['success']) && $_GET['success'] == 'deleted'): ?>
                         <div class="alert alert-success alert-dismissible fade show" role="alert">
@@ -102,7 +109,7 @@ switch ($q) {
                                     <th>الحساب المقابل</th>
                                     <th>المخزن</th>
                                     <th>الموظف</th>
-                                    <th>الربح</th>
+                                    <th>صافي الربح</th>
                                     <th>المستخدم</th>
                                     <th>معرف</th>
                                 </tr>
@@ -114,6 +121,22 @@ switch ($q) {
                                     $x++;
                                     $proid = $rowop['id'];
                                     $tybe = $rowop['pro_tybe'];
+                                    $reversal = (int) $tybe === 9
+                                        ? $refundReadModel->stateForOrder($conn, (int) $proid)
+                                        : null;
+                                    $originalNet = (float) $rowop['fat_net'] - (float) ($rowop['jal_amount'] ?? 0);
+                                    $refundedAmount = $reversal
+                                        ? (float) $reversal['cumulative_refunded_amount']
+                                        : 0.0;
+                                    $netAfterRefund = max(0.0, $originalNet - $refundedAmount);
+                                    $refundedProfit = $reversal
+                                        ? $refundReadModel->refundedProfitForOrder($conn, (int) $proid)
+                                        : '0.000000';
+                                    $netProfitAfterRefund = FinancialDecimal::subtract(
+                                        FinancialDecimal::normalize((string) ($rowop['profit'] ?? '0'), 6, true),
+                                        $refundedProfit,
+                                        6
+                                    );
                                     ?>
                                     <tr>
                                         <td><?= $x ?></td>
@@ -125,16 +148,23 @@ switch ($q) {
                                         </td>
                                          <td class="value"><?= $rowop['pro_value'] ?></td>
                                         <td class="fatnet <?php if($rowop['pro_value'] != $rowop['fat_net']){echo "bg-yellow-300";} ?>">
-                                            <?= $rowop['fat_net'] - ($rowop['jal_amount'] ?? 0) ?>
+                                            <?= number_format($netAfterRefund, 2, '.', '') ?>
                                             <?php if(($rowop['jal_amount'] ?? 0) > 0): ?>
                                                 <small class="d-block text-muted" style="font-size: 0.65rem;">(أجل: <?= $rowop['jal_amount'] ?>)</small>
+                                            <?php endif; ?>
+                                            <?php if ($reversal && $reversal['reversal_status'] !== 'none'): ?>
+                                                <small class="d-block <?= $reversal['reversal_status'] === 'full' ? 'text-danger' : 'text-warning' ?>">
+                                                    <?= $reversal['reversal_status'] === 'full' ? 'مسترد بالكامل' : 'مسترد جزئياً' ?>
+                                                    — المسترد: <?= number_format($refundedAmount, 2) ?>
+                                                    — المتبقي من البيع: <?= number_format((float) $reversal['remaining_refundable_amount'], 2) ?>
+                                                </small>
                                             <?php endif; ?>
                                         </td>
                                         <td><?= $conn->query("SELECT aname FROM acc_head WHERE id = {$rowop['acc1']}")->fetch_assoc()['aname'] ?></td>
                                         <td><?= $conn->query("SELECT aname FROM acc_head WHERE id = {$rowop['acc2']}")->fetch_assoc()['aname'] ?></td>
                                         <td><?= $rowop['store_id'] > 0 ? $conn->query("SELECT aname FROM acc_head WHERE id = {$rowop['store_id']}")->fetch_assoc()['aname'] : '' ?></td>
                                         <td><?= $rowop['emp_id'] > 0 ? $conn->query("SELECT aname FROM acc_head WHERE id = {$rowop['emp_id']}")->fetch_assoc()['aname'] : '' ?></td>
-                                         <td class="prft"><?= $rowop['profit'] ?></td>
+                                         <td class="prft"><?= number_format((float) $netProfitAfterRefund, 2, '.', '') ?></td>
                                         <td><?= $conn->query("SELECT uname FROM users WHERE id = {$rowop['user']}")->fetch_assoc()['uname'] ?></td>
                                         <td>
                                             <?= $rowop['id'] ?>
@@ -144,7 +174,7 @@ switch ($q) {
                                             <?php $proid = $rowop['id']?>
                                             
                                             <!-- زر التعديل -->
-                                            <?php if(in_array($tybe, [3, 4, 9])) { // مبيعات، مشتريات، كاشير ?>
+                                            <?php if(in_array($tybe, [3, 4])) { // مبيعات ومشتريات غير كاشير ?>
                                             <a href="sales.php?edit_id=<?= $rowop['id'] ?>" class="btn btn-sm btn-warning" title="تعديل">
                                                 <i class="fa fa-edit"></i>
                                             </a>
@@ -196,7 +226,12 @@ switch ($q) {
                                             </div>
                                             <?php endif; ?>
 
-                                            <!-- زر الحذف -->
+                                            <?php if ((int) $tybe === 9): ?>
+                                            <span class="badge badge-light border text-muted" title="يبقى طلب الكاشير محفوظاً. استخدم الاسترداد من شاشة الكاشير لعكس المبلغ.">
+                                                طلب كاشير محفوظ — الاسترداد من شاشة الكاشير
+                                            </span>
+                                            <?php else: ?>
+                                            <!-- زر الحذف للعمليات غير التابعة للكاشير -->
                                             <a href="#" class="btn btn-sm btn-danger" data-toggle="modal" data-target="#deleteModal<?= $rowop['id']?>" data-id="<?= $id; ?>">
                                                 <i class="fa fa-trash"></i>
                                             </a>
@@ -235,6 +270,7 @@ switch ($q) {
                                                 </div>
                                             </div>
                                             </form>
+                                            <?php endif; ?>
 
                                         </td>
                                     </tr>
@@ -243,23 +279,17 @@ switch ($q) {
                                 ?>
                             </tbody>
                         </table>
-                        <table>
-                        <tbody>
+                        <table class="table table-bordered table-sm mt-3 mb-0">
+                            <tbody>
                                 <tr>
-                                    <td> اجمالي </td>
-                                    <td class="bg-zinc-100" id="total"></td>
-                                    <td> _       _ </td>
-                                    <td></td>
-                                    <td> صافي </td>
-                                    <td class="" id="fatnet"></td>
-                                    <td> _       _ </td>
-
-                                    <td> ارباح </td>
-                                    <td class="" id="profit"></td>
-                                    <td></td>
+                                    <th>إجمالي قبل الاسترداد</th>
+                                    <td id="total"></td>
+                                    <th>صافي المبيعات بعد الاسترداد</th>
+                                    <td id="fatnet"></td>
+                                    <th>صافي الربح بعد الاسترداد</th>
+                                    <td id="profit"></td>
                                 </tr>
                             </tbody>
-                       
                         </table>
                     </div>
                 </div>
@@ -270,7 +300,7 @@ switch ($q) {
                         <ul class="pagination pagination-sm justify-content-center mb-0">
                             <?php
                             // حساب إجمالي السجلات
-                            $count_query = $conn->query("SELECT COUNT(*) as total FROM ot_head WHERE $where_clause");
+                            $count_query = $conn->query("SELECT COUNT(*) as total FROM ot_head oh WHERE $where_clause");
                             $total_items = $count_query->fetch_assoc()['total'];
                             $total_pages = ceil($total_items / $limit);
                             

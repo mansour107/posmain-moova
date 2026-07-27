@@ -5,7 +5,11 @@ require_once __DIR__ . '/../includes/pos_default_accounts.php';
 require_once __DIR__ . '/inventory_single_store_preflight.php';
 
 /**
- * Merge multi-store inventory data into the operational store per tenant/branch scope.
+ * Legacy balance-only merge helper.
+ *
+ * Applying this path is intentionally retired because directly merging balances
+ * can make the immutable ledger and derived balance disagree. Use
+ * inventory_reclassify_store_scope.php for auditable compensating movements.
  *
  * Usage:
  *   php tools/inventory_merge_stores_to_operational.php [--dry-run|--apply] [--backup-confirmed] [--workflow-action=abort|cancel-open] [--force-cost-policy=zero|negative-net|ignore-zero-cost] [--json]
@@ -28,6 +32,12 @@ function inventoryMergeStoresMain(array $argv): int
     $workflowAction = inventoryMergeStoresOption($argv, 'workflow-action') ?: 'abort';
     $costPolicy = inventoryMergeStoresOption($argv, 'force-cost-policy') ?: 'default';
     $skipPreflight = in_array('--skip-preflight', $argv, true);
+
+    if ($apply) {
+        fwrite(STDERR, "Direct balance merge apply is retired; use tools/inventory_reclassify_store_scope.php.\n");
+        $conn->close();
+        return 2;
+    }
 
     if ($apply && !$backupConfirmed) {
         fwrite(STDERR, "Refusing --apply without --backup-confirmed (take a DB backup first).\n");

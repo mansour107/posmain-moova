@@ -25,6 +25,16 @@ if (isset($options['help'])) {
 }
 
 $checks = [];
+$checks['runtime_activation'] = inventoryProductionReadinessToolCheck(
+    $root,
+    'tools/inventory_runtime_preflight.php',
+    static function (array $payload): bool {
+        return !empty($payload['ok'])
+            && (string) ($payload['mode'] ?? '') === 'live'
+            && !empty($payload['accounting_enabled'])
+            && (int) ($payload['pending_migration_count'] ?? -1) === 0;
+    }
+);
 $checks['legacy_retirement'] = inventoryProductionReadinessToolCheck(
     $root,
     'tools/inventory_legacy_retirement_check.php',
@@ -74,6 +84,7 @@ $result = [
     'checked_at_utc' => gmdate('Y-m-d\TH:i:s\Z'),
     'scope' => [
         'ledger_and_balance_cutover',
+        'runtime_activation',
         'legacy_stock_retirement',
         'operational_hardening',
         'recipe_runtime',

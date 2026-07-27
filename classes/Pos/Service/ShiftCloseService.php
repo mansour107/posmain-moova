@@ -3,8 +3,10 @@
 require_once __DIR__ . '/DrawerSessionService.php';
 require_once __DIR__ . '/DrawerSessionCloseSummaryService.php';
 require_once __DIR__ . '/ShiftSessionService.php';
+require_once dirname(__DIR__) . '/Value/CashAmount.php';
 require_once __DIR__ . '/../../ShiftReport.php';
 require_once dirname(__DIR__, 2) . '/Sync/OperationalSyncEventService.php';
+require_once dirname(__DIR__, 2) . '/Financial/Money.php';
 
 class ShiftCloseService
 {
@@ -63,14 +65,14 @@ class ShiftCloseService
             $recoveredDrawerSession = true;
         }
 
-        $countedCash = (float) ($payload['fund_after'] ?? $payload['counted_cash'] ?? 0);
-        $cash = (float) ($payload['cash'] ?? $countedCash);
+        $countedCash = CashAmount::normalize($payload['fund_after'] ?? $payload['counted_cash'] ?? '0.00');
+        $cash = CashAmount::normalize($payload['cash'] ?? $countedCash);
         $notes = trim((string) ($payload['notes'] ?? ''));
         $closePath = (string) ($payload['close_path'] ?? 'close_shift.php');
         $varianceStatus = (string) ($payload['variance_status'] ?? 'none');
         $varianceType = (string) ($payload['variance_type'] ?? 'none');
         $closeExpectedSnapshot = isset($payload['close_expected_snapshot'])
-            ? (float) $payload['close_expected_snapshot']
+            ? CashAmount::normalize($payload['close_expected_snapshot'])
             : null;
         $openingVarianceUnresolved = !empty($payload['opening_variance_unresolved']);
 
@@ -93,16 +95,19 @@ class ShiftCloseService
         $report = new ShiftReport($conn, $userId, $shiftDate, $reportScope);
         $totals = $report->getTotals();
         $totalOrders = (int) ($totals['total_orders'] ?? 0);
-        $totalSales = (float) ($totals['total_net'] ?? 0);
+        // ShiftReport is a legacy read model which still returns PHP floats.
+        // Convert that internal value exactly at this one adapter boundary;
+        // client mutation payloads remain strict decimal strings.
+        $totalSales = $this->legacyReportAmount($totals['total_net'] ?? '0.00', true);
 
         $username = $this->cashierUsername($conn, $userId);
         $resolvedExpenses = $this->resolveCloseExpenses($conn, $userId, $scope, $payload);
-        $expenses = (float) $resolvedExpenses['expenses'];
+        $expenses = CashAmount::normalize($resolvedExpenses['expenses'] ?? '0.00');
         $expNotes = (string) $resolvedExpenses['exp_notes'];
         $expenseSummary = $resolvedExpenses['expense_summary'];
         $payInSummary = $drawerSession
             ? $this->shiftSessions->shiftPayInSummary($conn, $userId, $scope)
-            : ['total' => 0.0, 'count' => 0];
+            : ['total' => '0.00', 'count' => 0];
 
         $shiftSessionToken = trim((string) ($_SESSION['pos_shift_session_token'] ?? ''));
         $drawerNotes = $this->truncateDrawerSessionNotes($notes);
@@ -121,7 +126,7 @@ class ShiftCloseService
                 'close_path' => $closePath,
                 'expense_source' => $expenseSummary['source'] ?? null,
                 'expense_count' => (int) ($expenseSummary['count'] ?? 0),
-                'payin_total' => (float) ($payInSummary['total'] ?? 0),
+                'payin_total' => CashAmount::normalize($payInSummary['total'] ?? '0.00'),
                 'payin_count' => (int) ($payInSummary['count'] ?? 0),
                 'drawer_expected_cash' => $expenseSummary['expected_cash'] ?? null,
                 'counted_cash' => $countedCash,
@@ -184,7 +189,7 @@ class ShiftCloseService
                 ),
                 'close_expected_snapshot' => $closeExpectedSnapshot !== null
                     ? $closeExpectedSnapshot
-                    : (float) ($closedSession['close_expected_snapshot'] ?? 0),
+                    : CashAmount::normalize($closedSession['close_expected_snapshot'] ?? '0.00'),
             ]);
             $closedSession = $this->drawerSessions->captureExternalSessionMutation(
                 $conn,
@@ -194,24 +199,33 @@ class ShiftCloseService
 
             $this->linkCountAttemptsToSession($conn, $drawerSessionId, 'close');
 
-            $cashSales = (float) ($zRow['total_cash'] ?? $details['sys_cash'] ?? $cash);
-            $nonCashSales = (float) ($zRow['total_visa'] ?? $details['sys_visa'] ?? max(0, $totalSales - $cashSales));
+            $cashSales = CashAmount::normalize($zRow['total_cash'] ?? $details['sys_cash'] ?? $cash);
+            if (isset($zRow['total_visa']) || isset($details['sys_visa'])) {
+                $nonCashSales = CashAmount::normalize($zRow['total_visa'] ?? $details['sys_visa']);
+            } else {
+                $derivedNonCash = CashAmount::subtract($totalSales, $cashSales);
+                $nonCashSales = CashAmount::compare($derivedNonCash, '0.00') < 0 ? '0.00' : $derivedNonCash;
+            }
             $countedNonCash = array_key_exists('actual_visa', (array) $zRow)
-                ? (float) $zRow['actual_visa']
+                ? CashAmount::normalize($zRow['actual_visa'])
                 : null;
             $closeSummary = $this->closeSummaries->createForSession($conn, $drawerSessionId, [
                 'shift_number' => (string) ($zRow['shift'] ?? $shiftNumber),
                 'total_orders' => $totalOrders,
-                'total_sales' => (float) ($zRow['total_sales'] ?? $totalSales),
+                'total_sales' => CashAmount::normalize($zRow['total_sales'] ?? $totalSales, true),
                 'cash_sales' => $cashSales,
                 'non_cash_sales' => $nonCashSales,
-                'discount_total' => (float) ($zRow['total_discount'] ?? $totals['total_discount'] ?? 0),
-                'return_total' => (float) ($zRow['total_returns'] ?? $details['total_returns'] ?? 0),
+                'discount_total' => isset($zRow['total_discount'])
+                    ? CashAmount::normalize($zRow['total_discount'])
+                    : $this->legacyReportAmount($totals['total_discount'] ?? '0.00'),
+                'return_total' => CashAmount::normalize($zRow['total_returns'] ?? $details['total_returns'] ?? '0.00'),
                 'expense_total' => $expenses,
                 'expense_notes' => $expNotes,
                 'expected_non_cash' => $nonCashSales,
                 'counted_non_cash' => $countedNonCash,
-                'non_cash_difference' => $countedNonCash === null ? null : $countedNonCash - $nonCashSales,
+                'non_cash_difference' => $countedNonCash === null
+                    ? null
+                    : CashAmount::subtract($countedNonCash, $nonCashSales),
                 'close_path' => $closePath,
                 'report_snapshot' => json_decode((string) $jsonDetails, true) ?: $details,
                 'payment_summary' => [
@@ -249,19 +263,21 @@ class ShiftCloseService
         $closedExpectedSnapshot = $closeExpectedSnapshot;
         if (is_array($closedSession)) {
             if (array_key_exists('difference', $closedSession) && $closedSession['difference'] !== null) {
-                $closedDifference = (float) $closedSession['difference'];
+                $closedDifference = CashAmount::normalize($closedSession['difference'], true);
             }
             if ($closedExpectedSnapshot === null && isset($closedSession['close_expected_snapshot'])) {
-                $closedExpectedSnapshot = (float) $closedSession['close_expected_snapshot'];
+                $closedExpectedSnapshot = CashAmount::normalize($closedSession['close_expected_snapshot']);
             }
         }
 
         $expectedCash = $closedExpectedSnapshot !== null
-            ? (float) $closedExpectedSnapshot
-            : ($drawerSessionId > 0 ? (float) ($expenseSummary['expected_cash'] ?? 0) : 0.0);
+            ? CashAmount::normalize($closedExpectedSnapshot)
+            : ($drawerSessionId > 0
+                ? CashAmount::normalize($expenseSummary['expected_cash'] ?? '0.00')
+                : '0.00');
         $variance = $closedDifference !== null
-            ? round($closedDifference, 3)
-            : round($countedCash - $expectedCash, 3);
+            ? CashAmount::normalize($closedDifference, true)
+            : CashAmount::subtract($countedCash, $expectedCash);
 
         return [
             'drawer_session_id' => $drawerSessionId,
@@ -274,7 +290,7 @@ class ShiftCloseService
             'variance' => $variance,
             'variance_status' => $varianceStatus,
             'variance_type' => $varianceType,
-            'matched' => abs($variance) <= 0.010,
+            'matched' => CashAmount::compare($this->absoluteAmount($variance), '0.01') <= 0,
             'legacy_drawer_session_recovered' => $recoveredDrawerSession,
             'clear_pos_shift_session' => !$ownsTransaction,
         ];
@@ -298,14 +314,14 @@ class ShiftCloseService
 
         if ($summary['drawer_active']) {
             return [
-                'expenses' => (float) $summary['total'],
+                'expenses' => CashAmount::normalize($summary['total'] ?? '0.00'),
                 'exp_notes' => $expNotes !== '' ? $this->truncateExpenseNotes($expNotes) : $summary['notes'],
                 'expense_summary' => $summary,
             ];
         }
 
         return [
-            'expenses' => (float) ($payload['expenses'] ?? $summary['total']),
+            'expenses' => CashAmount::normalize($payload['expenses'] ?? $summary['total'] ?? '0.00'),
             'exp_notes' => $this->truncateExpenseNotes($expNotes),
             'expense_summary' => $summary,
         ];
@@ -400,7 +416,7 @@ class ShiftCloseService
 
         if (isset($data['close_expected_snapshot']) && $this->columnExists($conn, 'drawer_sessions', 'close_expected_snapshot')) {
             $fields[] = 'close_expected_snapshot = ?';
-            $params[] = number_format((float) $data['close_expected_snapshot'], 3, '.', '');
+            $params[] = CashAmount::normalize($data['close_expected_snapshot']);
             $types .= 's';
         }
 
@@ -459,6 +475,20 @@ class ShiftCloseService
         }
 
         return 'both';
+    }
+
+    private function absoluteAmount($value): string
+    {
+        $normalized = CashAmount::normalize($value, true);
+
+        return CashAmount::compare($normalized, '0.00') < 0
+            ? CashAmount::negate($normalized)
+            : $normalized;
+    }
+
+    private function legacyReportAmount($value, bool $allowNegative = false): string
+    {
+        return Money::fromLegacy($value, $allowNegative)->toString();
     }
 
     private function columnExists(mysqli $conn, string $table, string $column): bool

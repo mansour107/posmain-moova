@@ -17,6 +17,7 @@ class CloudReportServiceTest extends TestCase
     private const ITEM_UUID = '55556666-bbbb-4bbb-8bbb-555566665555';
     private const TABLE_UUID = '77778888-bbbb-4bbb-8bbb-777788887777';
     private const CLOSE_UUID = '99990000-bbbb-4bbb-8bbb-999900009999';
+    private const CREDIT_UUID = 'aaaa1111-bbbb-4bbb-8bbb-aaaa1111aaaa';
 
     private static $conn;
 
@@ -75,23 +76,41 @@ class CloudReportServiceTest extends TestCase
         $this->assertSame(1, $report['sales']['net_orders']);
         $this->assertSame(1, $report['sales']['paid_orders']);
         $this->assertSame('55.2500', $report['sales']['total_sales']);
-        $this->assertSame('50.2500', $report['sales']['net_sales']);
+        $this->assertSame('50.2500', $report['sales']['sales_after_discount']);
+        $this->assertSame('20.0000', $report['sales']['refunds']);
+        $this->assertSame(1, $report['sales']['refund_count']);
+        $this->assertSame('30.2500', $report['sales']['net_sales']);
         $this->assertSame('5.0000', $report['sales']['discounts']);
         $this->assertSame('55.2500', $report['sales']['paid_amount']);
         $this->assertSame('18.0000', $report['sales']['cancelled_sales']);
 
         $this->assertSame(5, (int) $report['by_cashier'][0]['key']);
-        $this->assertSame('55.2500', $report['by_cashier'][0]['total_sales']);
+        $this->assertSame('50.2500', $report['by_cashier'][0]['total_sales']);
+        $refundOperator = array_values(array_filter($report['by_cashier'], static fn (array $row): bool => (int) $row['key'] === 6));
+        $this->assertSame('-20.0000', $refundOperator[0]['total_sales']);
         $this->assertSame(7, (int) $report['by_waiter'][0]['key']);
+        $this->assertSame('30.2500', $report['by_waiter'][0]['total_sales']);
         $this->assertSame('table', $report['by_order_type'][0]['key']);
+        $this->assertSame('30.2500', $report['by_order_type'][0]['total_sales']);
         $this->assertSame('moova', $report['by_source'][0]['source']);
+        $this->assertSame('30.2500', $report['by_source'][0]['total_sales']);
 
         $this->assertSame('cash', $report['payments'][0]['payment_method']);
         $this->assertSame('55.2500', $report['payments'][0]['amount']);
+        $this->assertSame(1, $report['payments'][0]['refund_count']);
+        $this->assertSame('20.0000', $report['payments'][0]['refunded_amount']);
+        $this->assertSame('20.0000', $report['payments'][0]['settled_refunded_amount']);
+        $this->assertSame('0.0000', $report['payments'][0]['pending_refund_amount']);
+        $this->assertSame('35.2500', $report['payments'][0]['net_after_refunds']);
+        $this->assertSame('35.2500', $report['payments'][0]['net_custody']);
         $this->assertSame(self::ITEM_UUID, $report['items'][0]['item_uuid']);
         $this->assertSame(7, $report['items'][0]['category_id']);
         $this->assertSame('3.0000', $report['items'][0]['qty_out']);
         $this->assertSame('54.0000', $report['items'][0]['line_total']);
+        $this->assertSame('1.0000', $report['items'][0]['qty_refunded']);
+        $this->assertSame('2.0000', $report['items'][0]['net_qty']);
+        $this->assertSame('18.0000', $report['items'][0]['refund_total']);
+        $this->assertSame('36.0000', $report['items'][0]['net_total']);
 
         $this->assertSame(1, $report['shifts']['shift_count']);
         $this->assertSame('55.2500', $report['shifts']['total_sales']);
@@ -119,8 +138,39 @@ class CloudReportServiceTest extends TestCase
         $this->assertStringContainsString('Cloud apply is disabled', $receiveOnly['trust']['warning']);
     }
 
+    public function testFullyReversedHiddenOrderRemainsGrossAndOffsetsExactlyOnce(): void
+    {
+        self::$conn->query("
+            UPDATE cloud_orders
+               SET payment_status = 'voided',
+                   invoice_status = 'cancelled',
+                   order_status = 'cancelled',
+                   isdeleted = 1
+             WHERE local_order_id = 101
+        ");
+        self::$conn->query("UPDATE credit_notes SET total_amount = '50.25' WHERE original_order_id = 101");
+
+        $report = (new CloudReportService())->branchSummary(self::$conn, self::BRANCH_UUID, [
+            'from' => '2026-05-10 00:00:00',
+            'to' => '2026-05-11 00:00:00',
+        ], SyncApplyMode::LIVE_APPLY);
+
+        $this->assertSame('50.2500', $report['sales']['sales_after_discount']);
+        $this->assertSame('50.2500', $report['sales']['refunds']);
+        $this->assertSame('0.0000', $report['sales']['net_sales']);
+        $this->assertSame('18.0000', $report['sales']['cancelled_sales']);
+        $this->assertSame('0.0000', $report['by_order_type'][0]['total_sales']);
+    }
+
     private function seedSnapshots(): void
     {
+        $this->insertRow('cloud_branches', [
+            'branch_uuid' => self::BRANCH_UUID,
+            'branch_name' => 'Refund report branch',
+            'pos_tenant' => 91,
+            'pos_branch' => 92,
+            'status' => 'active',
+        ]);
         $this->insertRow('cloud_orders', [
             'branch_uuid' => self::BRANCH_UUID,
             'order_uuid' => self::ORDER_UUID,
@@ -206,6 +256,7 @@ class CloudReportServiceTest extends TestCase
             'branch_uuid' => self::BRANCH_UUID,
             'order_uuid' => self::ORDER_UUID,
             'line_uuid' => self::LINE_UUID,
+            'local_line_id' => 401,
             'item_id' => 201,
             'item_uuid' => self::ITEM_UUID,
             'item_name' => 'Temp Tea',
@@ -220,6 +271,7 @@ class CloudReportServiceTest extends TestCase
             'branch_uuid' => self::BRANCH_UUID,
             'order_uuid' => self::ORDER_UUID,
             'payment_uuid' => self::PAYMENT_UUID,
+            'local_payment_id' => 301,
             'amount' => '55.2500',
             'payment_method' => 'cash',
             'voided' => 0,
@@ -272,6 +324,42 @@ class CloudReportServiceTest extends TestCase
             'payload_hash' => hash('sha256', 'shift'),
             'payload_json' => '{}',
         ]);
+        $this->insertRow('credit_notes', [
+            'uuid' => self::CREDIT_UUID,
+            'tenant' => 91,
+            'branch' => 92,
+            'business_day' => '2026-05-10',
+            'original_order_id' => 101,
+            'customer_account_id' => 501,
+            'total_amount' => '20.00',
+            'reason' => 'cloud partial refund',
+            'status' => 'posted',
+            'created_by' => 6,
+            'created_at' => '2026-05-10 16:00:00',
+        ]);
+        $creditNoteId = (int) self::$conn->insert_id;
+        $this->insertRow('credit_note_lines', [
+            'credit_note_id' => $creditNoteId,
+            'original_detail_id' => 401,
+            'quantity' => '1.000000',
+            'unit_amount' => '18.000000',
+            'line_amount' => '18.00',
+            'tax_rate' => '0.000000',
+            'tax_amount' => '0.00',
+            'stock_disposition' => 'restock',
+        ]);
+        $this->insertRow('payment_refunds', [
+            'credit_note_id' => $creditNoteId,
+            'original_order_id' => 101,
+            'original_payment_id' => 301,
+            'payment_method_id' => 1,
+            'account_id' => 1,
+            'amount' => '20.00',
+            'status' => 'posted',
+            'idempotency_key' => 'cloud-report-refund-' . $creditNoteId,
+            'created_by' => 6,
+            'created_at' => '2026-05-10 16:00:00',
+        ]);
     }
 
     private function insertRow(string $table, array $row): void
@@ -300,6 +388,9 @@ class CloudReportServiceTest extends TestCase
 
     private function cleanup(): void
     {
+        self::$conn->query("DELETE pr FROM payment_refunds pr INNER JOIN credit_notes cn ON cn.id = pr.credit_note_id WHERE cn.uuid = '" . self::CREDIT_UUID . "'");
+        self::$conn->query("DELETE cnl FROM credit_note_lines cnl INNER JOIN credit_notes cn ON cn.id = cnl.credit_note_id WHERE cn.uuid = '" . self::CREDIT_UUID . "'");
+        self::$conn->query("DELETE FROM credit_notes WHERE uuid = '" . self::CREDIT_UUID . "'");
         foreach ([
             'cloud_order_payments',
             'cloud_order_lines',
@@ -311,6 +402,7 @@ class CloudReportServiceTest extends TestCase
         ] as $table) {
             self::$conn->query("DELETE FROM {$table} WHERE branch_uuid = '" . self::$conn->real_escape_string(self::BRANCH_UUID) . "'");
         }
+        self::$conn->query("DELETE FROM cloud_branches WHERE branch_uuid = '" . self::BRANCH_UUID . "'");
     }
 }
 

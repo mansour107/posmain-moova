@@ -61,13 +61,17 @@ try {
     $result = (new InventoryCutoverReadinessService())->review($conn, $filters, $reviewOptions);
     $conn->close();
 } catch (Throwable $exception) {
+    $databaseUnavailable = !isset($conn) || !$conn instanceof mysqli || $conn->connect_errno !== 0;
+    $failureCode = $databaseUnavailable
+        ? 'inventory_cutover_readiness_database_unreachable'
+        : 'inventory_cutover_readiness_check_failed';
     $result = [
         'ready_for_cutover' => false,
         'ready_for_legacy_retirement' => false,
         'checked_at_utc' => gmdate('Y-m-d\TH:i:s\Z'),
         'filters' => $filters,
-        'blockers' => ['inventory_cutover_readiness_database_unreachable'],
-        'legacy_retirement_blockers' => ['inventory_cutover_readiness_database_unreachable'],
+        'blockers' => [$failureCode],
+        'legacy_retirement_blockers' => [$failureCode],
         'error' => $exception->getMessage(),
     ];
 }

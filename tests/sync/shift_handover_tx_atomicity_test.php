@@ -1,5 +1,9 @@
 <?php
 
+$db = 'posmain_tx_atomic_' . getmypid();
+putenv('POSMAIN_DB_NAME=' . $db);
+putenv('POSMAIN_BRANCH_UUID=c7258dd1-e78b-43a5-8654-fc3c7422a730');
+
 require_once __DIR__ . '/../../classes/Sync/SchemaManager.php';
 require_once __DIR__ . '/../../includes/shift_handover_idempotency.php';
 require_once __DIR__ . '/../../includes/db_transaction.php';
@@ -16,7 +20,6 @@ $host = getenv('POSMAIN_TEST_MYSQL_HOST') ?: '127.0.0.1';
 $port = (int) (getenv('POSMAIN_TEST_MYSQL_PORT') ?: 3307);
 $user = getenv('POSMAIN_TEST_MYSQL_USER') ?: 'root';
 $pass = getenv('POSMAIN_TEST_MYSQL_PASS') ?: '';
-$db = 'posmain_tx_atomic_' . getmypid();
 $conn = new mysqli($host, $user, $pass, '', $port);
 
 function txAtomicAssert(bool $condition, string $message): void
@@ -52,6 +55,7 @@ try {
             'operational_sync_enabled' => true,
         ],
     ];
+    (new SyncBranchIdentity())->ensure($conn, $syncConfig);
     $registerService = new PosRegisterService();
     $register = $registerService->ensureDefaultRegister($conn, 1, 2);
     $_COOKIE[PosRegisterService::COOKIE_NAME] = (string) ($register['_pairing_token_once'] ?? '');
@@ -73,7 +77,7 @@ try {
     $floatService = new DrawerFloatExpectationService();
     $countService = new ShiftCountService();
     $drawer = new DrawerSessionService();
-    $floatService->setOpeningBaseline($conn, 1, 2, 100.0, 88);
+    $floatService->setOpeningBaseline($conn, 1, 2, '100.000', 88);
 
     $countService->beginOpenCount($conn, 88);
     $_POST = ['counted_amount' => '100.000', 'idempotency_key' => 'tx-open-' . getmypid()];
@@ -142,9 +146,9 @@ try {
                 $txContext['sync_config'] = $syncConfig;
                 (new ShiftSessionService())->closeSimpleShift($conn, 88, [
                     'close_token' => $token,
-                    'counted_cash' => 140.0,
-                    'fund_after' => 140.0,
-                    'cash' => 140.0,
+                    'counted_cash' => '140.00',
+                    'fund_after' => '140.00',
+                    'cash' => '140.00',
                     'matched' => true,
                     'drawer_session_id' => $sessionId,
                     'bypass_count_token' => false,
@@ -208,9 +212,9 @@ try {
             $txContext['sync_config'] = $syncConfig;
             $result = (new ShiftSessionService())->closeSimpleShift($conn, 88, [
                 'close_token' => $token2,
-                'counted_cash' => 140.0,
-                'fund_after' => 140.0,
-                'cash' => 140.0,
+                'counted_cash' => '140.00',
+                'fund_after' => '140.00',
+                'cash' => '140.00',
                 'matched' => true,
                 'drawer_session_id' => $sessionId,
             ], $txContext);

@@ -99,7 +99,7 @@ drawerVarianceLedgerAssert(
 );
 
 drawerVarianceLedgerAssert(
-    strpos($counts, "round(abs(\$varianceAmount), 3) >= 0.001") !== false,
+    strpos($counts, '$this->hasAmount($varianceAmount)') !== false,
     'zero variances must not create ledger entries'
 );
 
@@ -144,7 +144,8 @@ drawerVarianceLedgerAssert(
 );
 
 drawerVarianceLedgerAssert(
-    strpos($closedPage, "'tab' => 'shifts'") !== false
+    (strpos($closedPage, "'tab' => 'shifts'") !== false
+        || strpos($closedPage, "'tab' => CashShiftWorkspaceService::TAB_SHIFTS") !== false)
         && strpos($closedPage, "'status' => 'needs_review'") !== false
         && strpos($closedPage, "'scope' => 'backlog'") !== false
         && strpos($closedPage, "header('Location: ' . posmain_cash_shift_workspace_url") !== false,

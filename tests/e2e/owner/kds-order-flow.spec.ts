@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { loginAndUnlockPos } from '../helpers/auth';
+import { prepareCleanShift } from '../helpers/handover';
 import { clickFirstAddableItem, readCartNet, saveOrderOnly } from '../helpers/pos';
 
 /**
@@ -9,6 +10,7 @@ import { clickFirstAddableItem, readCartNet, saveOrderOnly } from '../helpers/po
  */
 test.describe('kds: order reaches the kitchen board and completes', () => {
   test.beforeEach(async ({ page }) => {
+    prepareCleanShift();
     await loginAndUnlockPos(page, 'admin');
   });
 
@@ -16,6 +18,10 @@ test.describe('kds: order reaches the kitchen board and completes', () => {
     // 1. Place a takeaway order in POS.
     const netBefore = await readCartNet(page);
     await clickFirstAddableItem(page);
+    const preparationConfirm = page.locator('#sugarSpoonsConfirm');
+    if (await preparationConfirm.waitFor({ state: 'visible', timeout: 2_000 }).then(() => true).catch(() => false)) {
+      await preparationConfirm.click();
+    }
     await expect.poll(() => readCartNet(page)).toBeGreaterThan(netBefore);
 
     const saveResponse = page.waitForResponse((response) =>
@@ -39,7 +45,7 @@ test.describe('kds: order reaches the kitchen board and completes', () => {
     await expect(page.locator('#kdsScreen')).toBeVisible({ timeout: 15_000 });
 
     // 3. A ticket should arrive on the board within a couple of poll cycles.
-    const cards = page.locator('.kds-card');
+    const cards = page.locator('.kds-card:not(.kds-event-card)');
     await expect.poll(async () => cards.count(), { timeout: 20_000 }).toBeGreaterThan(0);
 
     // 4. One-click complete a specific ticket and assert THAT ticket leaves the

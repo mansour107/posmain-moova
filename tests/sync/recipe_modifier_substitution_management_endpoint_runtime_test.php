@@ -37,9 +37,13 @@ try {
 
     $recipe = recipeModifierSubstitutionManagementEndpointRuntimeOne(
         $conn,
-        "SELECT * FROM recipe_headers WHERE sellable_item_id = 2001 AND recipe_name = 'Endpoint Managed Latte' LIMIT 1"
+        "SELECT * FROM recipe_headers WHERE sellable_item_id = 2001 LIMIT 1"
     );
     recipeModifierSubstitutionManagementEndpointRuntimeAssert($recipe !== null, 'recipe_manage.php should create the draft recipe');
+    recipeModifierSubstitutionManagementEndpointRuntimeAssert(
+        $recipe['recipe_name'] === 'Latte recipe',
+        'recipe_manage.php should derive the recipe name from the selected item'
+    );
     recipeModifierSubstitutionManagementEndpointRuntimeAssert($recipe['status'] === 'draft', 'created recipe should start as draft');
     recipeModifierSubstitutionManagementEndpointRuntimeAssert((int) $recipe['created_by'] === 1, 'created recipe should stamp actor user');
     $recipeId = (int) $recipe['id'];
@@ -195,6 +199,7 @@ function recipeModifierSubstitutionManagementEndpointRuntimeChild(string $json):
     $_SESSION['usrole'] = 1;
     $_SESSION['userrole'] = 1;
     $_SESSION['usty'] = 2;
+    $_SESSION['posmain_auth_version'] = 1;
     $_SESSION['posmain_csrf_tokens'] = [
         'recipe_editor' => $csrf,
     ];
@@ -257,7 +262,8 @@ function recipeModifierSubstitutionManagementEndpointRuntimeCreateBaseSchema(mys
         CREATE TABLE settings (
             id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
             lang VARCHAR(20) NULL DEFAULT 'ar',
-            edit_pass VARCHAR(191) NULL DEFAULT ''
+            edit_pass VARCHAR(191) NULL DEFAULT '',
+            def_pos_store INT NULL
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
     ");
     $conn->query("
@@ -280,6 +286,8 @@ function recipeModifierSubstitutionManagementEndpointRuntimeCreateBaseSchema(mys
         CREATE TABLE usr_pwrs (
             id INT NOT NULL PRIMARY KEY,
             rollname VARCHAR(191) NULL,
+            info VARCHAR(255) NULL,
+            is_active TINYINT(1) NOT NULL DEFAULT 1,
             add_stock TINYINT(1) NOT NULL DEFAULT 0,
             edit_stock TINYINT(1) NOT NULL DEFAULT 0,
             add_items TINYINT(1) NOT NULL DEFAULT 0,
@@ -292,8 +300,21 @@ function recipeModifierSubstitutionManagementEndpointRuntimeCreateBaseSchema(mys
         CREATE TABLE myitems (
             id BIGINT UNSIGNED NOT NULL PRIMARY KEY,
             iname VARCHAR(191) NOT NULL,
+            barcode VARCHAR(191) NULL,
             cost_price DECIMAL(18,6) NOT NULL DEFAULT 0.000000,
             group1 BIGINT UNSIGNED NULL,
+            isdeleted TINYINT(1) NOT NULL DEFAULT 0
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+    ");
+    $conn->query("
+        CREATE TABLE acc_head (
+            id INT NOT NULL PRIMARY KEY,
+            code VARCHAR(50) NULL,
+            aname VARCHAR(191) NULL,
+            parent_id INT NULL,
+            is_basic TINYINT(1) NOT NULL DEFAULT 0,
+            is_stock TINYINT(1) NOT NULL DEFAULT 0,
+            is_fund TINYINT(1) NOT NULL DEFAULT 0,
             isdeleted TINYINT(1) NOT NULL DEFAULT 0
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
     ");
@@ -301,15 +322,18 @@ function recipeModifierSubstitutionManagementEndpointRuntimeCreateBaseSchema(mys
 
 function recipeModifierSubstitutionManagementEndpointRuntimeSeedBaseRows(mysqli $conn): void
 {
-    $conn->query("INSERT INTO settings (lang, edit_pass) VALUES ('ar', '')");
+    $conn->query("INSERT INTO settings (lang, edit_pass, def_pos_store) VALUES ('ar', '', 3)");
     $conn->query("INSERT INTO towns (id, tname) VALUES (1, 'Main')");
     $conn->query("INSERT INTO users (id, uname, userrole, usertype, isdeleted) VALUES (1, 'admin', 1, 2, 0)");
-    $conn->query("
-        INSERT INTO usr_pwrs
-            (id, rollname, add_stock, edit_stock, add_items, edit_items, sid_accounts, isdeleted)
-        VALUES
-            (1, 'Admin', 1, 1, 1, 1, 1, 0)
-    ");
+    $conn->query("INSERT INTO acc_head (id, code, aname, is_stock, isdeleted) VALUES (3, '130003', 'Operational Stock', 1, 0)");
+    $owner = recipeModifierSubstitutionManagementEndpointRuntimeOne(
+        $conn,
+        "SELECT id, role_key FROM usr_pwrs WHERE id = 1 LIMIT 1"
+    );
+    recipeModifierSubstitutionManagementEndpointRuntimeAssert(
+        is_array($owner) && ($owner['role_key'] ?? '') === 'owner',
+        'schema setup should seed the owner role used by the endpoint fixture'
+    );
     $conn->query("
         INSERT INTO myitems (id, iname, cost_price, group1, isdeleted) VALUES
             (2001, 'Latte', 0.000000, 10, 0),

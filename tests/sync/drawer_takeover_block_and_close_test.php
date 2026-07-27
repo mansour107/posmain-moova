@@ -94,6 +94,7 @@ try {
             'operational_sync_enabled' => true,
         ],
     ];
+    (new SyncBranchIdentity())->ensure($conn, $syncConfig);
     $registerService = new PosRegisterService();
     $register = $registerService->ensureDefaultRegister($conn, 3, 7);
     $_COOKIE[PosRegisterService::COOKIE_NAME] = (string) ($register['_pairing_token_once'] ?? '');
@@ -105,7 +106,7 @@ try {
     $float = new DrawerFloatExpectationService();
 
     takeoverAssert($count->handoverEnabled($conn), 'handover enabled');
-    $float->setOpeningBaseline($conn, 3, 7, 100.0, 90);
+    $float->setOpeningBaseline($conn, 3, 7, '100.000', 90);
 
     // Cashier A opens the branch drawer.
     $_SESSION['userid'] = 10;
@@ -256,7 +257,7 @@ try {
                 'success' => true,
                 'data' => [
                     'closed_session_id' => (int) ($closed['id'] ?? 0),
-                    'counted_cash' => (float) ($closed['counted_cash'] ?? 0),
+                    'counted_cash' => (string) ($closed['counted_cash'] ?? '0.00'),
                     'variance_status' => (string) ($closed['variance_status'] ?? 'none'),
                     'owner_user_id' => (int) ($closed['user_id'] ?? 0),
                     'authorized_by' => 90,
@@ -266,7 +267,10 @@ try {
     );
     takeoverAssert(($first['success'] ?? false) === true, 'takeover close succeeds');
     takeoverAssert((int) ($first['data']['closed_session_id'] ?? 0) === $sessionA, 'closed session id');
-    takeoverAssert(abs((float) ($first['data']['counted_cash'] ?? 0) - 120.0) < 0.01, 'counted cash stored');
+    takeoverAssert(
+        CashAmount::compare($first['data']['counted_cash'] ?? '0.00', '120.00') === 0,
+        'counted cash stored'
+    );
     takeoverAssert((int) ($first['data']['owner_user_id'] ?? 0) === 10, 'owner user_id not reassigned');
 
     $closedRow = $drawer->sessionById($conn, $sessionA);

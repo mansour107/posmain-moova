@@ -1,6 +1,7 @@
 <?php
 
 require_once __DIR__ . '/../../Sync/OperationalSyncEventService.php';
+require_once __DIR__ . '/SideEffectPolicy.php';
 
 class OrderEventService
 {
@@ -66,12 +67,30 @@ class OrderEventService
         if (isset($options['sync_config']) && is_array($options['sync_config'])) {
             $syncOptions['config'] = $options['sync_config'];
         }
-        (new OperationalSyncEventService())->recordRowSnapshot(
-            $conn,
-            'order_event',
-            $eventId,
-            $syncOptions
-        );
+        $savepoint = $this->connectionInTransaction($conn);
+        if ($savepoint) {
+            $conn->query('SAVEPOINT posmain_order_event_sync');
+        }
+        try {
+            (new OperationalSyncEventService())->recordRowSnapshot(
+                $conn,
+                'order_event',
+                $eventId,
+                $syncOptions
+            );
+            if ($savepoint) {
+                $conn->query('RELEASE SAVEPOINT posmain_order_event_sync');
+            }
+        } catch (Throwable $exception) {
+            if ($savepoint) {
+                $conn->query('ROLLBACK TO SAVEPOINT posmain_order_event_sync');
+                $conn->query('RELEASE SAVEPOINT posmain_order_event_sync');
+            }
+            if (SideEffectPolicy::orderEventShouldRollback($exception)) {
+                throw $exception;
+            }
+            error_log('POS order event operational sync skipped: ' . $exception->getMessage());
+        }
 
         return [
             'id' => $eventId,
@@ -113,5 +132,13 @@ class OrderEventService
         $result = $conn->query("SHOW TABLES LIKE '{$tableName}'");
 
         return $result && $result->num_rows > 0;
+    }
+
+    private function connectionInTransaction(mysqli $conn): bool
+    {
+        $result = $conn->query('SELECT @@session.in_transaction AS active_transaction');
+        $row = $result->fetch_assoc() ?: [];
+
+        return !empty($row['active_transaction']);
     }
 }

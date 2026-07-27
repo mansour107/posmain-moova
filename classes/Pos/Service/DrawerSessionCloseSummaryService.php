@@ -2,6 +2,7 @@
 
 require_once __DIR__ . '/../../Sync/BranchIdentity.php';
 require_once __DIR__ . '/../../Sync/SchemaReadinessGuard.php';
+require_once dirname(__DIR__) . '/Value/CashAmount.php';
 
 /**
  * Immutable, one-to-one close snapshot for a drawer session.
@@ -119,7 +120,7 @@ class DrawerSessionCloseSummaryService
 
     private function decimal($value): string
     {
-        return number_format((float) $value, 3, '.', '');
+        return CashAmount::normalize($value, true);
     }
 
     private function nullableDecimal($value): ?string

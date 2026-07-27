@@ -27,6 +27,8 @@ $moovaMenuSyncSource = singleStoreOperationalSource($root . '/ajax/moova_menu_sy
 singleStoreOperationalAssert(is_file($root . '/includes/pos_operational_store.php'), 'missing pos_operational_store.php');
 singleStoreOperationalAssert(is_file($root . '/tools/inventory_single_store_preflight.php'), 'missing preflight tool');
 singleStoreOperationalAssert(is_file($root . '/tools/inventory_merge_stores_to_operational.php'), 'missing merge tool');
+singleStoreOperationalAssert(is_file($root . '/tools/inventory_reclassify_store_scope.php'), 'missing immutable scope reclassification tool');
+singleStoreOperationalAssert(is_file($root . '/classes/Inventory/InventoryStoreScopeReclassificationService.php'), 'missing immutable scope reclassification service');
 
 foreach ([
     'posmain_single_store_mode_enabled',
@@ -52,6 +54,7 @@ singleStoreOperationalAssert(strpos($defaultsSource, 'posmain_operational_store_
 singleStoreOperationalAssert(strpos($preflightSource, 'inventorySingleStorePreflightBuildReport') !== false, 'preflight should build structured report');
 singleStoreOperationalAssert(strpos($preflightSource, 'blocking') !== false, 'preflight should classify blocking issues');
 singleStoreOperationalAssert(strpos($mergeSource, '--backup-confirmed') !== false, 'merge apply should require backup confirmation');
+singleStoreOperationalAssert(strpos($mergeSource, 'Direct balance merge apply is retired') !== false, 'unsafe direct balance merge apply should be retired');
 singleStoreOperationalAssert(strpos($mergeSource, 'inventory_item_stock_levels') !== false, 'merge should handle stock levels');
 singleStoreOperationalAssert(strpos($mergeSource, 'recipe_availability_cache') !== false, 'merge should purge availability cache');
 
@@ -78,7 +81,10 @@ singleStoreOperationalAssert(strpos($mergeSource, 'begin_transaction') !== false
 singleStoreOperationalAssert(strpos($operationalSource, 'return true') !== false, 'single-store mode should be hardcoded on');
 singleStoreOperationalAssert(strpos($posOrderMutationSource, 'resolvePosRequestAccounts($conn, $request)') !== false, 'table save should resolve POS accounts before write');
 singleStoreOperationalAssert(strpos($doeditInvoiceSource, 'posmain_resolve_pos_invoice_accounts') !== false, 'invoice edit should resolve operational store');
-singleStoreOperationalAssert(strpos($cofeCreateOrderSource, 'posmain_resolve_pos_invoice_accounts') !== false, 'cofe create order should resolve operational store');
+singleStoreOperationalAssert(
+    strpos($cofeCreateOrderSource, "pos_api_dispatch(\$conn, 'integrations.cofe.orders')") !== false,
+    'cofe create order should use the canonical authenticated dispatcher whose mutation service resolves operational store'
+);
 singleStoreOperationalAssert(strpos($saveStartBalanceSource, 'posmain_operational_store_id') !== false, 'opening balance should use operational store');
 singleStoreOperationalAssert(strpos($doaddStoreSource, 'posmain_single_store_mode_enabled') !== false, 'add store handler should block in single-store mode');
 singleStoreOperationalAssert(strpos($moovaMenuSyncSource, 'resolveForConn') !== false, 'moova menu sync should use recipe resolveForConn');

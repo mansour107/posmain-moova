@@ -9,7 +9,8 @@ $expectations = [
         "csrf_input('pos_browser')",
         "csrf_token('shift_close')",
         'window.POSMAIN_SHIFT_CSRF_TOKEN',
-        "csrf_input('shift_close')",
+        "name: 'csrf_token'",
+        'value: window.POSMAIN_SHIFT_CSRF_TOKEN',
     ],
     'includes/pos_supermarket_content.php' => [
         "csrf_input('pos_browser')",
@@ -66,9 +67,6 @@ $expectations = [
         "rbac_guard_route('ajax/pulse_ajax.php')",
         'http_response_code(401)',
         "require_csrf('pulse')",
-    ],
-    'ajax/generate_items.php' => [
-        "require_csrf('items_factory')",
     ],
     'do/doadd_invoice.php' => [
         "require_once('../includes/auth_guard.php')",

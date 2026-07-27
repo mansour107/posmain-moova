@@ -35,6 +35,9 @@
                 case 'invoice_not_found':
                     echo '<div class="error-message"><h2>الفاتورة غير موجودة</h2><p>الفاتورة المطلوب حذفها غير موجودة أو تم حذفها مسبقاً</p></div>';
                     break;
+                case 'pos_orders_use_cancel_or_refund':
+                    echo '<div class="error-message"><h2>لا يمكن حذف طلب كاشير مسجل</h2><p>يبقى الطلب الأصلي محفوظاً لحماية دقة الحسابات. إذا كان الطلب غير مدفوع فألغِه من شاشة الكاشير، وإذا تم تسجيل دفعة فاستخدم الاسترداد.</p></div>';
+                    break;
                 case 'delete_failed':
                     $error_msg = isset($_GET['msg']) ? $_GET['msg'] : '';
                     $invoice_id = isset($_GET['id']) ? $_GET['id'] : '';

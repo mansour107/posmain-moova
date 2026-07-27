@@ -13,7 +13,7 @@ $checks = [
         'WORKSPACE_KDS',
         'WORKSPACE_CHOOSER',
         'resolveBestLanding',
-        'sales-reports.php',
+        'cash_flow_report.php?tab=overview',
     ],
     'classes/Security/PinService.php' => ['PIN_LENGTH = 4', 'PIN_REVEAL_DISABLED', 'auth_version'],
     'classes/Pos/Service/PosRegisterService.php' => ['COOKIE_NAME', 'requirePairedRegister', 'pairing_token_hash'],

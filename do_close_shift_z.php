@@ -218,6 +218,11 @@ if ($drawer_session_id > 0) {
         }
 
         $result = $response['result'] ?? [];
+        if (($result['status'] ?? '') === 'counted_pending_review') {
+            $_SESSION['error_message'] = 'تم تسجيل فرق الدرج، ولا يمكن إنشاء تقرير Z النهائي قبل اعتماد السبب من مستخدم لديه صلاحية مراجعة فروق الشيفت.';
+            header('Location: z_report.php');
+            exit;
+        }
         $variance = round((float) ($result['variance'] ?? $total_deficit), 3);
         $matched = !empty($result['matched']) || abs($variance) <= 0.010;
         if ($matched) {

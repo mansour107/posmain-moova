@@ -27,7 +27,6 @@ return [
     'myitems.php' => ['permission' => 'menu.edit'],
     'add_item.php' => ['permission' => 'menu.edit'],
     'mystores.php' => ['permission' => 'inventory.edit'],
-    'items_factory.php' => ['permission' => 'menu.edit'],
     'inv_operations.php' => ['permission' => 'inventory.edit'],
     'inventory_dashboard.php' => ['permission' => 'inventory.edit'],
     'inventory_reports.php' => ['permission' => 'inventory.edit'],

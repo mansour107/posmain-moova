@@ -617,7 +617,8 @@ try {
     moova_menu_sync_json(500, ['success' => false, 'code' => 'MOOVA_MAPPING_UNAVAILABLE']);
 }
 
-if (!$link || $deviceToken === '' || !hash_equals((string) ($link['moova_device_token'] ?? ''), $deviceToken)) {
+$storedDeviceToken = $link ? MoovaPosIntegration::deviceTokenForLink($link) : '';
+if (!$link || $deviceToken === '' || $storedDeviceToken === '' || !hash_equals($storedDeviceToken, $deviceToken)) {
     moova_menu_sync_json(403, ['success' => false, 'code' => 'MOOVA_LINK_NOT_FOUND']);
 }
 

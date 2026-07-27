@@ -3,6 +3,7 @@
 class PaymentMethodService
 {
     private const TYPES = ['cash', 'card', 'wallet', 'bank'];
+    private const SETTLEMENT_POLICIES = ['cash_drawer', 'manual_external', 'reference_required'];
 
     public function saveMethod(mysqli $conn, array $data): array
     {
@@ -11,7 +12,11 @@ class PaymentMethodService
         $nameEn = $this->nullableText($data['name_en'] ?? null, 120);
         $accountId = $this->optionalPositiveInt($data['account_id'] ?? null);
         $type = $this->normalizeType($data['type'] ?? '');
-        $requiresReference = $type === 'cash' ? $this->boolInt($data['requires_reference'] ?? false) : 1;
+        $settlementPolicy = $this->normalizeSettlementPolicy(
+            $data['settlement_policy'] ?? $this->defaultSettlementPolicy($type)
+        );
+        $this->assertSettlementPolicyMatchesType($type, $settlementPolicy);
+        $requiresReference = $settlementPolicy === 'reference_required' ? 1 : 0;
         $isActive = $this->boolInt($data['is_active'] ?? true);
         $sortOrder = $this->nonNegativeInt($data['sort_order'] ?? 0, 'PAYMENT_METHOD_SORT_INVALID');
         if ($isActive === 1 && $accountId === null) {
@@ -21,26 +26,28 @@ class PaymentMethodService
         $stmt = $conn->prepare("
             INSERT INTO payment_methods (
                 code, name_ar, name_en, account_id, type,
-                requires_reference, is_active, sort_order
+                requires_reference, settlement_policy, is_active, sort_order
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON DUPLICATE KEY UPDATE
                 name_ar = VALUES(name_ar),
                 name_en = VALUES(name_en),
                 account_id = VALUES(account_id),
                 type = VALUES(type),
                 requires_reference = VALUES(requires_reference),
+                settlement_policy = VALUES(settlement_policy),
                 is_active = VALUES(is_active),
                 sort_order = VALUES(sort_order)
         ");
         $stmt->bind_param(
-            'sssisiii',
+            'sssisisii',
             $code,
             $nameAr,
             $nameEn,
             $accountId,
             $type,
             $requiresReference,
+            $settlementPolicy,
             $isActive,
             $sortOrder
         );
@@ -102,10 +109,7 @@ class PaymentMethodService
      */
     public function resolveTender(mysqli $conn, $method, $reference = null): array
     {
-        $resolved = $this->resolveActive($conn, $method);
-        if ((int) ($resolved['account_id'] ?? 0) < 1) {
-            throw new RuntimeException('PAYMENT_METHOD_ACCOUNT_REQUIRED');
-        }
+        $resolved = $this->resolvePostableAccount($conn, $this->resolveActive($conn, $method));
         $resolved['reference_no'] = $this->validateReference($resolved, $reference);
 
         return $resolved;
@@ -117,7 +121,20 @@ class PaymentMethodService
      */
     public function resolveTenderAllowingPendingExternal(mysqli $conn, $method, $reference = null): array
     {
-        $resolved = $this->resolveActive($conn, $method);
+        $resolved = $this->resolvePostableAccount($conn, $this->resolveActive($conn, $method));
+        $reference = $this->nullableText($reference, 120);
+        if (($resolved['settlement_policy'] ?? '') === 'reference_required' && $reference === null) {
+            $resolved['reference_no'] = null;
+
+            return $resolved;
+        }
+        $resolved['reference_no'] = $this->validateReference($resolved, $reference);
+
+        return $resolved;
+    }
+
+    private function resolvePostableAccount(mysqli $conn, array $resolved): array
+    {
         $accountId = (int) ($resolved['account_id'] ?? 0);
         if ($accountId < 1 || !$this->accountExists($conn, $accountId)) {
             if (($resolved['type'] ?? '') === 'cash') {
@@ -131,13 +148,6 @@ class PaymentMethodService
         if ($accountId < 1 || !$this->accountExists($conn, $accountId)) {
             throw new RuntimeException('PAYMENT_METHOD_ACCOUNT_REQUIRED');
         }
-        $reference = $this->nullableText($reference, 120);
-        if (!empty($resolved['requires_reference']) && $reference === null && $resolved['type'] !== 'cash') {
-            $resolved['reference_no'] = null;
-
-            return $resolved;
-        }
-        $resolved['reference_no'] = $this->validateReference($resolved, $reference);
 
         return $resolved;
     }
@@ -158,7 +168,7 @@ class PaymentMethodService
     public function validateReference(array $method, $reference): ?string
     {
         $reference = $this->nullableText($reference, 120);
-        if (!empty($method['requires_reference']) && $reference === null) {
+        if (($method['settlement_policy'] ?? '') === 'reference_required' && $reference === null) {
             throw new InvalidArgumentException('PAYMENT_REFERENCE_REQUIRED');
         }
 
@@ -293,9 +303,11 @@ class PaymentMethodService
             'account_id' => $row['account_id'] !== null ? (int) $row['account_id'] : null,
             'type' => (string) $row['type'],
             'requires_reference' => (int) $row['requires_reference'] === 1,
+            'settlement_policy' => (string) ($row['settlement_policy'] ?? $this->defaultSettlementPolicy((string) $row['type'])),
             'is_active' => (int) $row['is_active'] === 1,
             'sort_order' => (int) $row['sort_order'],
-            'drawer_impact' => (string) $row['type'] === 'cash',
+            'drawer_impact' => (string) ($row['settlement_policy'] ?? '') === 'cash_drawer'
+                || (!isset($row['settlement_policy']) && (string) $row['type'] === 'cash'),
         ];
     }
 
@@ -307,6 +319,36 @@ class PaymentMethodService
         }
 
         return $type;
+    }
+
+    private function normalizeSettlementPolicy($value): string
+    {
+        $policy = strtolower(trim((string) $value));
+        if (!in_array($policy, self::SETTLEMENT_POLICIES, true)) {
+            throw new InvalidArgumentException('PAYMENT_SETTLEMENT_POLICY_INVALID');
+        }
+
+        return $policy;
+    }
+
+    private function defaultSettlementPolicy(string $type): string
+    {
+        if ($type === 'cash') {
+            return 'cash_drawer';
+        }
+        if ($type === 'bank') {
+            return 'manual_external';
+        }
+
+        return 'reference_required';
+    }
+
+    private function assertSettlementPolicyMatchesType(string $type, string $policy): void
+    {
+        if (($type === 'cash' && $policy !== 'cash_drawer')
+            || ($type !== 'cash' && $policy === 'cash_drawer')) {
+            throw new InvalidArgumentException('PAYMENT_SETTLEMENT_POLICY_TYPE_MISMATCH');
+        }
     }
 
     private function requiredText($value, int $maxLength, string $code): string

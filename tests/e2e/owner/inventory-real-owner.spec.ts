@@ -66,6 +66,7 @@ test.describe('owner: inventory stock levels — real owner journey', () => {
         resp => resp.url().includes('ajax/inventory_stock_level_save.php') && resp.request().method() === 'POST',
         { timeout: 15_000 },
       );
+      const reload = page.waitForNavigation({ waitUntil: 'domcontentloaded' });
       await saveButton.click();
       const saveResp = await saveRequest;
       expect(saveResp.status(), 'save AJAX should not 5xx').toBeLessThan(500);
@@ -75,7 +76,7 @@ test.describe('owner: inventory stock levels — real owner journey', () => {
       expect(saveJson?.success, `save should report success: ${saveJson?.message ?? ''}`).toBe(true);
 
       // Page reloads after save (window.location.reload in the handler).
-      await page.waitForLoadState('networkidle');
+      await reload;
 
       // Confirm the saved reorder level is now visible in the table row.
       const savedRow = page.locator('table.inventory-stock-level-table tbody tr').first();

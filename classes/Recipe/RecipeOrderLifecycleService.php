@@ -797,7 +797,16 @@ class RecipeOrderLifecycleService
             $fatDetailId = isset($line['fat_detail_id']) ? (int) $line['fat_detail_id'] : null;
             $orderLineUuid = isset($line['order_line_uuid']) ? (string) $line['order_line_uuid'] : null;
             foreach ($this->usageRepository->findForOrderLine($conn, $orderId, $fatDetailId, $orderLineUuid) as $usage) {
-                $usageRows[(int) $usage['id']] = $usage;
+                $usageRows[(int) $usage['id']] = [
+                    'usage' => $usage,
+                    'requested_qty' => RecipeDecimal::normalize(
+                        $line['quantity'] ?? $line['qty'] ?? $usage['order_qty'] ?? '0'
+                    ),
+                    'credit_note_line_id' => (int) ($line['credit_note_line_id'] ?? 0),
+                    'stock_disposition' => isset($line['stock_disposition'])
+                        ? strtolower(trim((string) $line['stock_disposition']))
+                        : null,
+                ];
             }
         }
 
@@ -808,15 +817,51 @@ class RecipeOrderLifecycleService
         $movementIds = [];
         $journalIds = [];
         $warnings = [];
-        foreach ($usageRows as $usage) {
+        foreach ($usageRows as $usageEntry) {
+            $usage = $usageEntry['usage'];
             if ((string) ($usage['status'] ?? '') !== 'consumed') {
                 continue;
             }
 
+            $requestedQty = RecipeDecimal::normalize($usageEntry['requested_qty'] ?? '0');
+            $originalQty = RecipeDecimal::normalize($usage['order_qty'] ?? '0');
+            if (!RecipeDecimal::isPositive($requestedQty) || !RecipeDecimal::isPositive($originalQty)) {
+                throw new RuntimeException('REFUND_RECIPE_QUANTITY_REQUIRED');
+            }
+            if (RecipeDecimal::compare($requestedQty, $originalQty) > 0) {
+                $requestedQty = $originalQty;
+            }
+            $hasDurableCreditNoteLine = (int) ($usageEntry['credit_note_line_id'] ?? 0) > 0;
+            $linePolicy = $this->refundPolicyForDisposition(
+                $usageEntry['stock_disposition'] ?? null,
+                (string) ($reverseContext['policy'] ?? 'waste')
+            );
+            $cumulativeQty = $hasDurableCreditNoteLine
+                ? $this->cumulativePostedRefundQuantity(
+                    $conn,
+                    (int) ($usage['order_id'] ?? 0),
+                    (int) ($usage['fat_detail_id'] ?? 0),
+                    $requestedQty
+                )
+                : $requestedQty;
+            $isFinalQuantity = RecipeDecimal::compare($cumulativeQty, $originalQty) >= 0;
+            $cumulativeRestockQty = $hasDurableCreditNoteLine
+                ? $this->cumulativePostedRestockQuantity(
+                    $conn,
+                    (int) ($usage['order_id'] ?? 0),
+                    (int) ($usage['fat_detail_id'] ?? 0)
+                )
+                : ($linePolicy === 'return_to_stock' ? $requestedQty : RecipeDecimal::zero());
             $originalMovements = $this->movementRepository->findByRecipeUsageAndType($conn, (int) $usage['id'], 'recipe_consumption');
-            $result = $this->movementService->recordRefundReversal($conn, $originalMovements, array_merge($reverseContext, [
+            $movementContext = array_merge($reverseContext, [
+                'policy' => $linePolicy,
                 'created_by' => $reverseContext['created_by'] ?? null,
-            ]));
+                'refund_order_quantity' => $requestedQty,
+                'original_order_quantity' => $originalQty,
+                'credit_note_line_id' => (int) ($usageEntry['credit_note_line_id'] ?? 0),
+                'stock_disposition' => $usageEntry['stock_disposition'] ?? null,
+            ]);
+            $result = $this->movementService->recordRefundReversal($conn, $originalMovements, $movementContext);
             $movementIds = array_merge($movementIds, $result->movementIds);
             $itemCategoryId = $this->itemCategoryId($conn, (int) ($usage['sellable_item_id'] ?? 0));
             if ($result->movementIds && $this->flags->isAccountingEnabledForItem(
@@ -838,14 +883,19 @@ class RecipeOrderLifecycleService
                 }
             }
             $warnings = array_merge($warnings, $result->warnings);
-            $timestampColumn = $usageStatus === 'voided' ? 'voided_at' : 'refunded_at';
-            $finalStatus = ($reverseContext['policy'] ?? '') === 'waste' && $usageStatus === 'refunded'
-                ? 'wasted'
-                : $usageStatus;
-            $this->usageRepository->updateUsage($conn, (int) $usage['id'], [
-                'status' => $finalStatus,
-                $timestampColumn => date('Y-m-d H:i:s'),
-            ]);
+            if ($usageStatus === 'voided' || $isFinalQuantity) {
+                $timestampColumn = $usageStatus === 'voided' ? 'voided_at' : 'refunded_at';
+                $finalStatus = $usageStatus;
+                if ($usageStatus === 'refunded') {
+                    $finalStatus = RecipeDecimal::isPositive($cumulativeRestockQty)
+                        ? 'refunded'
+                        : 'wasted';
+                }
+                $this->usageRepository->updateUsage($conn, (int) $usage['id'], [
+                    'status' => $finalStatus,
+                    $timestampColumn => date('Y-m-d H:i:s'),
+                ]);
+            }
             $this->refreshAvailabilityCache(
                 $conn,
                 $this->normalizedLineContext($conn, $this->lineContextFromUsage($conn, $order, $usage))
@@ -869,6 +919,72 @@ class RecipeOrderLifecycleService
             null,
             $conn
         );
+    }
+
+    private function cumulativePostedRefundQuantity(
+        mysqli $conn,
+        int $orderId,
+        int $fatDetailId,
+        string $currentQuantity
+    ): string {
+        if ($orderId < 1
+            || $fatDetailId < 1
+            || !$this->columnExists($conn, 'credit_note_lines', 'original_detail_id')
+        ) {
+            return RecipeDecimal::normalize($currentQuantity);
+        }
+
+        $stmt = $conn->prepare("
+            SELECT COALESCE(SUM(cnl.quantity), 0) AS refunded_qty
+            FROM credit_note_lines cnl
+            INNER JOIN credit_notes cn ON cn.id = cnl.credit_note_id
+            WHERE cn.original_order_id = ?
+              AND cnl.original_detail_id = ?
+              AND cn.status = 'posted'
+        ");
+        $stmt->bind_param('ii', $orderId, $fatDetailId);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        return RecipeDecimal::normalize($row['refunded_qty'] ?? $currentQuantity);
+    }
+
+    private function cumulativePostedRestockQuantity(mysqli $conn, int $orderId, int $fatDetailId): string
+    {
+        if ($orderId < 1
+            || $fatDetailId < 1
+            || !$this->columnExists($conn, 'credit_note_lines', 'stock_disposition')
+        ) {
+            return RecipeDecimal::zero();
+        }
+
+        $stmt = $conn->prepare("
+            SELECT COALESCE(SUM(cnl.quantity), 0) AS restock_qty
+            FROM credit_note_lines cnl
+            INNER JOIN credit_notes cn ON cn.id = cnl.credit_note_id
+            WHERE cn.original_order_id = ?
+              AND cnl.original_detail_id = ?
+              AND cn.status = 'posted'
+              AND cnl.stock_disposition = 'restock'
+        ");
+        $stmt->bind_param('ii', $orderId, $fatDetailId);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        return RecipeDecimal::normalize($row['restock_qty'] ?? '0');
+    }
+
+    private function refundPolicyForDisposition($disposition, string $fallback): string
+    {
+        if ($disposition === null) {
+            return $fallback === 'return_to_stock' ? 'return_to_stock' : 'waste';
+        }
+
+        return strtolower(trim((string) $disposition)) === 'restock'
+            ? 'return_to_stock'
+            : 'waste';
     }
 
     private function resolveRefundPolicy(array $context): string

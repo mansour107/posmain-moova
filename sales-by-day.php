@@ -38,6 +38,7 @@
 
                 <?php
                 require_once __DIR__ . '/includes/business_day.php';
+                require_once __DIR__ . '/classes/Financial/LegacySalesReportService.php';
                 $businessDayContext = posmain_business_day_context(
                     isset($conn) && $conn instanceof mysqli ? $conn : null,
                     (int) ($_SESSION['pos_tenant'] ?? 0),
@@ -52,21 +53,12 @@
                     $to   = $_POST['to'];
                 }
 
-                // استعلام التجميع اليومي
-                $sql = "SELECT pro_date, SUM(pro_value) as total_sales 
-                        FROM ot_head 
-                        WHERE (pro_tybe = 9 OR pro_tybe = 3)
-                        AND pro_date BETWEEN '$from' AND '$to'
-                        GROUP BY pro_date
-                        ORDER BY pro_date ASC";
-
-                $res = $conn->query($sql);
-
-                $data = [];
+                $data = (new LegacySalesReportService())->timeBuckets($conn, $from, $to, 'day', [
+                    'tenant' => (int) ($_SESSION['pos_tenant'] ?? 0),
+                    'branch' => (int) ($_SESSION['pos_branch'] ?? 0),
+                ]);
                 $grand_total = 0;
-
-                while ($row = $res->fetch_assoc()) {
-                    $data[] = $row;
+                foreach ($data as $row) {
                     $grand_total += $row['total_sales'];
                 }
 

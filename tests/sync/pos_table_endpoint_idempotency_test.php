@@ -95,10 +95,6 @@ $jsExpectations = [
         'rotateIdempotencyKey',
         'clearIdempotencyKey',
     ],
-    'includes/pos_content.php' => [
-        'createPOSIdempotencyKey',
-        "idempotency_key: createPOSIdempotencyKey('pos.order.cancel')",
-    ],
     'js/pos_tables.js' => [
         "getPOSTableIdempotencyKey('pos.table.save')",
         "idempotency_key: getPOSTableIdempotencyKey('pos.order.cancel')",

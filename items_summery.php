@@ -2,6 +2,7 @@
 require_once __DIR__ . '/includes/auth_guard.php';
 include __DIR__ . '/includes/connect.php';
 require_once __DIR__ . '/includes/page_guard.php';
+require_once __DIR__ . '/classes/Financial/LegacySalesReportService.php';
 page_guard('reports.view', $conn);
 ?>
 <?php include('includes/header.php'); ?>
@@ -67,13 +68,13 @@ page_guard('reports.view', $conn);
                                 $from = $_GET['from'] ?? null;
                                 $to = $_GET['to'] ?? null;
 
-                                $dateFilter = "";
-                                if ($from && $to) {
-                                    $dateFilter = "AND crtime BETWEEN '$from 00:00:00' AND '$to 23:59:59'";
-                                } elseif ($from) {
-                                    $dateFilter = "AND crtime >= '$from 00:00:00'";
-                                } elseif ($to) {
-                                    $dateFilter = "AND crtime <= '$to 23:59:59'";
+                                $itemTotals = (new LegacySalesReportService())->itemTotals($conn, $from, $to, [
+                                    'tenant' => (int) ($_SESSION['pos_tenant'] ?? 0),
+                                    'branch' => (int) ($_SESSION['pos_branch'] ?? 0),
+                                ]);
+                                $itemTotalsById = [];
+                                foreach ($itemTotals as $itemTotal) {
+                                    $itemTotalsById[(int) $itemTotal['id']] = $itemTotal;
                                 }
 
                                 $resitm = $conn->query("SELECT * FROM myitems WHERE isdeleted = 0");
@@ -81,19 +82,18 @@ page_guard('reports.view', $conn);
                                     $x++;
                                     $item_id = $rowitm['id'];
 
-                                    $sumqty = $conn->query("SELECT SUM(qty_out) AS total_qty FROM fat_details WHERE isdeleted = 0 AND item_id = $item_id AND (fat_tybe = 9 OR fat_tybe = 3) $dateFilter")->fetch_assoc();
-                                    $sumvalue = $conn->query("SELECT SUM(det_value) AS total_value FROM fat_details WHERE isdeleted = 0 AND item_id = $item_id AND (fat_tybe = 9 OR fat_tybe = 3) $dateFilter")->fetch_assoc();
+                                    $summary = $itemTotalsById[(int) $item_id] ?? ['total_qty' => 0, 'total_value' => 0, 'total_profit' => 0];
                                 ?>
                                     <tr>
                                         <td class="text-center"><?= $x ?></td>
                                         <td class="text-center"><?= $rowitm['barcode'] ?></td>
                                         <td class="text-center"><a class="btn btn-light btn-block" href="item_summery.php?id=<?= $rowitm['id']?>"><?= $rowitm['iname'] ?></a></td>
-                                        <td class="text-center qty"><?= $sumqty['total_qty'] ?? 0 ?></td>
-                                        <td class="text-center val"><?= $sumvalue['total_value'] ?? 0 ?></td>
+                                        <td class="text-center qty"><?= $summary['total_qty'] ?? 0 ?></td>
+                                        <td class="text-center val"><?= $summary['total_value'] ?? 0 ?></td>
                                         <td class="text-center price">0</td> <!-- يحسب لاحقًا -->
                                         <td class="text-center price1"><?= $rowitm['price1'] ?></td>
                                         <td class="text-center cost_price"><?= $rowitm['cost_price'] ?></td>
-                                        <td class="text-center profit">0</td>
+                                        <td class="text-center profit"><?= number_format((float) ($summary['total_profit'] ?? 0), 2, '.', '') ?></td>
                                         <td class="text-center salesprofit">0%</td>
                                     </tr>
                                 <?php } ?>
@@ -137,9 +137,7 @@ page_guard('reports.view', $conn);
                     $row.find('.price').addClass('bg-red-100'); // خسارة
                 }
 
-                // حساب الربح
-                var profit = (price - costPrice) * qty;
-                $row.find('.profit').text(profit.toFixed(2));
+                var profit = parseFloat($row.find('.profit').text()) || 0;
 
                 // نسبة الربح إلى المبيعات
                 var salesProfit = (val > 0) ? (profit / val) * 100 : 0;

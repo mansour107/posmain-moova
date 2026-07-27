@@ -12,6 +12,21 @@ $pass = getenv('POSMAIN_TEST_MYSQL_PASS') ?: '';
 $db = 'posmain_split_recipe_endpoint_' . getmypid();
 $root = dirname(__DIR__, 2);
 $sessionDir = sys_get_temp_dir() . '/posmain-split-recipe-session-' . getmypid();
+$certificationEnv = [
+    'POSMAIN_INVENTORY_CUTOVER_CERTIFIED' => '1',
+    'POSMAIN_RECIPE_ROLLOUT_CERTIFIED' => '1',
+    'POSMAIN_RECIPE_DEFAULT_COGS_ACCOUNT_ID' => '71',
+    'POSMAIN_RECIPE_RAW_INVENTORY_ACCOUNT_ID' => '81',
+    'POSMAIN_RECIPE_PREPARED_INVENTORY_ACCOUNT_ID' => '81',
+    'POSMAIN_RECIPE_PACKAGING_INVENTORY_ACCOUNT_ID' => '81',
+    'POSMAIN_RECIPE_WASTE_EXPENSE_ACCOUNT_ID' => '71',
+    'POSMAIN_RECIPE_PRODUCTION_VARIANCE_ACCOUNT_ID' => '71',
+];
+$previousCertificationEnv = [];
+foreach ($certificationEnv as $name => $value) {
+    $previousCertificationEnv[$name] = getenv($name);
+    putenv($name . '=' . $value);
+}
 $conn = @new mysqli($host, $user, $pass, '', $port);
 if ($conn->connect_errno) {
     echo "pos-split-payment-recipe-endpoint-runtime-skipped-db-unavailable\n";
@@ -27,6 +42,16 @@ try {
     $conn->query("ALTER TABLE ot_head ADD COLUMN parent_order_id INT NULL, ADD COLUMN split_group_id VARCHAR(64) NULL");
     $conn->query("ALTER TABLE fat_details ADD COLUMN stock_value DECIMAL(15,4) NOT NULL DEFAULT 0, ADD COLUMN plus DECIMAL(15,4) NOT NULL DEFAULT 0");
     posTakeawayInvoiceSeedFixtures($conn);
+    $conn->query("INSERT INTO acc_head (id, code, aname, is_stock, isdeleted) VALUES
+        (71, 'COGS-71', 'Recipe COGS', 0, 0),
+        (81, 'INV-81', 'Raw inventory', 0, 0)");
+    $conn->query("UPDATE settings SET def_pos_store = 3 WHERE id = 1");
+    $conn->query("INSERT INTO payment_methods
+        (code, name_ar, name_en, account_id, type, requires_reference, settlement_policy, is_active, sort_order)
+        VALUES ('cash', 'نقدي', 'Cash', 51, 'cash', 0, 'cash_drawer', 1, 1)");
+    $conn->query("INSERT INTO drawer_sessions
+        (uuid, user_id, tenant, branch, fund_account_id, opened_at, business_day, opened_by, opening_cash, status, open_branch_lock)
+        VALUES ('00000000-0000-4000-8000-000000000007', 7, 0, 0, 51, '2026-05-25 08:00:00', '2026-05-25', 7, 0, 'open', '0:0')");
     posTakeawayInvoiceSeedRecipe($conn);
     $conn->query("INSERT INTO tables (id, tname, table_case, isdeleted) VALUES (1, 'Recipe Split Table', 0, 0)");
 
@@ -61,7 +86,7 @@ try {
     $splitPayload = [
         'table_id' => 1,
         'order_id' => $orderId,
-        'items' => [
+        'split_items' => [
             ['detail_id' => $detailId, 'qty' => 1],
         ],
         'paid_amount' => 10,
@@ -70,7 +95,10 @@ try {
     ];
     $split = posSplitRecipeEndpointJsonPost($baseUrl . '/ajax/process_split_payment.php', $sessionId, $splitPayload);
     $splitPayloadDecoded = json_decode((string) ($split['body'] ?? ''), true);
-    posSplitRecipeEndpointAssert((int) ($split['status'] ?? 0) === 200, 'split endpoint should return HTTP 200');
+    posSplitRecipeEndpointAssert(
+        (int) ($split['status'] ?? 0) === 200,
+        'split endpoint should return HTTP 200: status=' . (int) ($split['status'] ?? 0) . ' body=' . (string) ($split['body'] ?? '')
+    );
     posSplitRecipeEndpointAssert(is_array($splitPayloadDecoded), 'split endpoint should return JSON');
     posSplitRecipeEndpointAssert(($splitPayloadDecoded['success'] ?? false) === true, 'split endpoint should succeed: ' . json_encode($splitPayloadDecoded, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
     posSplitRecipeEndpointAssert(($splitPayloadDecoded['code'] ?? '') === 'OK', 'split endpoint should return OK');
@@ -95,6 +123,9 @@ try {
     $conn->query("DROP DATABASE IF EXISTS `{$db}`");
     $conn->close();
     posTakeawayInvoiceRemoveDir($sessionDir);
+    foreach ($previousCertificationEnv as $name => $previous) {
+        putenv($previous === false ? $name : $name . '=' . $previous);
+    }
 }
 
 function posSplitRecipeEndpointJsonPost(string $url, string $sessionId, array $payload): array

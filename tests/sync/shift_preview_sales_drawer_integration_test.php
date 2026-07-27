@@ -63,6 +63,32 @@ try {
     $payments = new PaymentService();
     $payments->recordCollectedOrderPayments($conn, 501, 28.0, 0.0, $cashierId, [], 'shift_preview_sale');
 
+    $refundUuid = '00000000-0000-4000-8000-000000000501';
+    $refundReason = 'partial shift refund';
+    $refundStmt = $conn->prepare(
+        "INSERT INTO credit_notes
+            (uuid, tenant, branch, business_day, drawer_session_id, original_order_id,
+             customer_account_id, total_amount, reason, status, created_by, created_at)
+         VALUES (?, 9, 8, ?, ?, 501, 501, 8.00, ?, 'posted', ?, NOW())"
+    );
+    $drawerSessionId = (int) $opened['id'];
+    $refundStmt->bind_param('ssisi', $refundUuid, $today, $drawerSessionId, $refundReason, $cashierId);
+    $refundStmt->execute();
+    $refundStmt->close();
+
+    $refundedTotals = $report->getTotals();
+    $returns = $report->getReturns();
+    shiftPreviewSalesAssert(abs((float) ($refundedTotals['total_sales_after_discount'] ?? 0) - 28.0) < 0.01, 'shift preview should preserve original posted sales');
+    shiftPreviewSalesAssert(abs((float) ($refundedTotals['total_refunds'] ?? 0) - 8.0) < 0.01, 'shift preview should attribute refund to refunding shift');
+    shiftPreviewSalesAssert(abs((float) ($refundedTotals['total_net'] ?? 0) - 20.0) < 0.01, 'shift preview net sales should subtract posted refunds');
+    shiftPreviewSalesAssert((int) ($returns['count'] ?? 0) === 1, 'shift preview should expose one immutable refund record');
+    shiftPreviewSalesAssert(abs((float) ($returns['total'] ?? 0) - 8.0) < 0.01, 'shift preview refund total should use posted credit notes');
+
+    $conn->query("UPDATE ot_head SET payment_status = 'voided', isdeleted = 1 WHERE id = 501");
+    $historicalVoidTotals = $report->getTotals();
+    shiftPreviewSalesAssert(abs((float) ($historicalVoidTotals['total_sales_after_discount'] ?? 0) - 28.0) < 0.01, 'hidden historical paid void should retain original shift gross');
+    shiftPreviewSalesAssert(abs((float) ($historicalVoidTotals['total_net'] ?? 0) - 20.0) < 0.01, 'hidden historical paid void should subtract its posted reversal once');
+
     $expenseSummary = $shiftSessions->drawerExpenseSummary($conn, $opened);
     shiftPreviewSalesAssert(abs((float) ($expenseSummary['expected_cash'] ?? 0) - 78.0) < 0.01, 'expected cash should include opening and cash sale');
 

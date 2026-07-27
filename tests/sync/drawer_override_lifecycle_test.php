@@ -137,7 +137,7 @@ try {
     $audit = new SecurityAuditLogger();
 
     overrideAssert($count->handoverEnabled($conn), 'handover enabled');
-    $float->setOpeningBaseline($conn, 3, 7, 100.0, 90);
+    $float->setOpeningBaseline($conn, 3, 7, '100.000', 90);
 
     // Cashier A opens.
     $count->beginOpenCount($conn, 10);

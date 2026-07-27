@@ -30,16 +30,24 @@ try {
 
     $coldStart = $service->expectedOpeningFloat($conn, 1, 2);
     drawerFloatAssert(!empty($coldStart['baseline_required']), 'cold start requires baseline');
-    drawerFloatAssert($coldStart['expected'] === '0.000', 'expected is unassigned only when baseline missing');
+    drawerFloatAssert($coldStart['expected'] === '0.00', 'expected is unassigned only when baseline missing');
 
-    $service->setOpeningBaseline($conn, 1, 2, 500.0, 10);
+    $floatRejected = false;
+    try {
+        $service->setOpeningBaseline($conn, 1, 2, 500.0, 10);
+    } catch (RuntimeException $exception) {
+        $floatRejected = $exception->getMessage() === 'BASELINE_AMOUNT_INVALID';
+    }
+    drawerFloatAssert($floatRejected, 'opening baseline must reject PHP floats at the exact-decimal service boundary');
+
+    $service->setOpeningBaseline($conn, 1, 2, '500.000', 10);
     $withBaseline = $service->expectedOpeningFloat($conn, 1, 2);
     drawerFloatAssert(empty($withBaseline['baseline_required']), 'baseline set clears requirement');
-    drawerFloatAssert($withBaseline['expected'] === '500.000', 'expected uses baseline before first close');
+    drawerFloatAssert($withBaseline['expected'] === '500.00', 'expected uses baseline before first close');
 
-    $service->setOpeningBaseline($conn, 1, 2, 550.0, 10);
+    $service->setOpeningBaseline($conn, 1, 2, '550.000', 10);
     $corrected = $service->expectedOpeningFloat($conn, 1, 2);
-    drawerFloatAssert($corrected['expected'] === '550.000', 'baseline can be corrected before first session');
+    drawerFloatAssert($corrected['expected'] === '550.00', 'baseline can be corrected before first session');
 
     $openOnly = $drawer->openSession($conn, [
         'user_id' => 10,
@@ -51,7 +59,7 @@ try {
 
     $baselineLocked = false;
     try {
-        $service->setOpeningBaseline($conn, 1, 2, 600.0, 10);
+        $service->setOpeningBaseline($conn, 1, 2, '600.000', 10);
     } catch (RuntimeException $exception) {
         $baselineLocked = $exception->getMessage() === 'BASELINE_LOCKED';
     }
@@ -70,7 +78,7 @@ try {
 
     $baselineNotRequired = false;
     try {
-        $service->setOpeningBaseline($conn, 1, 2, 700.0, 10);
+        $service->setOpeningBaseline($conn, 1, 2, '700.000', 10);
     } catch (RuntimeException $exception) {
         $baselineNotRequired = $exception->getMessage() === 'BASELINE_NOT_REQUIRED';
     }
@@ -85,14 +93,14 @@ try {
     $conn->query("UPDATE drawer_movements SET created_at = DATE_ADD(NOW(), INTERVAL 2 SECOND) WHERE drawer_session_id IS NULL");
 
     $expected = $service->expectedOpeningFloat($conn, 1, 2);
-    drawerFloatAssert($expected['base_counted'] === '150.000', 'base counted should be last close');
-    drawerFloatAssert($expected['unassigned_net'] === '25.000', 'unassigned pay-in should add to expected');
-    drawerFloatAssert($expected['expected'] === '175.000', 'expected opening should include post-close pay-in');
-    drawerFloatAssert($service->amountsMatch(175.0, 175.0, 0.01), 'tolerance match expected');
-    drawerFloatAssert(!$service->amountsMatch(170.0, 175.0, 0.01), 'mismatch outside tolerance');
+    drawerFloatAssert($expected['base_counted'] === '150.00', 'base counted should be last close');
+    drawerFloatAssert($expected['unassigned_net'] === '25.00', 'unassigned pay-in should add to expected');
+    drawerFloatAssert($expected['expected'] === '175.00', 'expected opening should include post-close pay-in');
+    drawerFloatAssert($service->amountsMatch('175.00', '175.00', '0.01'), 'tolerance match expected');
+    drawerFloatAssert(!$service->amountsMatch('170.00', '175.00', '0.01'), 'mismatch outside tolerance');
 
     $afterClose = $service->expectedOpeningFloat($conn, 1, 2);
-    drawerFloatAssert($afterClose['base_counted'] === '150.000', 'after first close baseline ignored');
+    drawerFloatAssert($afterClose['base_counted'] === '150.00', 'after first close baseline ignored');
     drawerFloatAssert(empty($afterClose['baseline_required']), 'baseline not required after close');
 
     echo "drawer_float_expectation_service_test: OK\n";

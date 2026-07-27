@@ -53,6 +53,7 @@
     function clearCashierEditState() {
         $('#edit_order_id').val('');
         $('#selected_order_id').val('');
+        $('#order_mutation_version').val('0');
         const form = document.getElementById('posForm');
         if (!form) {
             return;
@@ -185,9 +186,10 @@
             'headtotal', 'headdisc', 'headplus', 'headnet', 'fund_id', 'info', 'age', 'table_id',
             'selected_table_id', 'selected_order_id', 'edit_id', 'jal_name', 'jal_notes', 'jal_amount',
             'delivery_customer_name', 'delivery_customer_phone', 'delivery_customer_address',
-            'delivery_zone_name', 'delivery_fee', 'pos_customer_id', 'payment_fund_id', 'payment_bank_id',
+            'delivery_zone_id', 'delivery_zone_name', 'delivery_fee', 'delivery_worker_id',
+            'collection_mode', 'courier_source', 'pos_customer_id', 'payment_fund_id', 'payment_bank_id',
             'paid_cash', 'paid_bank', 'paid', 'empty_table_after_payment', 'pos_split_payment_payload',
-            'manager_approval_id', 'price_override_approval_id'
+            'manager_approval_id', 'price_override_approval_id', 'mutation_version'
         ];
 
         names.forEach(function (name) {
@@ -355,6 +357,10 @@
     function applyOrderSuccessState(body, action) {
         const state = body.updated_state || {};
         const orderId = state.order_id || body.order_id || 0;
+        const mutationVersion = parseInt(state.mutation_version || body.mutation_version || 0, 10) || 0;
+        if (mutationVersion > 0 && window.jQuery) {
+            window.jQuery('#order_mutation_version').val(String(mutationVersion));
+        }
         if (orderId > 0) {
             const form = document.getElementById('posForm');
             const age = form ? readCheckedAge(form) : 1;
@@ -448,9 +454,13 @@
             PREPARATION_VALUE_REQUIRED: 'اختر عدد ملاعق السكر للصنف ثم حاول إتمام الطلب مرة أخرى.',
             PREPARATION_FIELD_NOT_ALLOWED: 'خيار التحضير المحدد لم يعد متاحاً لهذا الصنف. أعد إضافة الصنف ثم حاول مرة أخرى.',
             PREPARATION_VALUE_INVALID: 'عدد ملاعق السكر غير صحيح. أعد اختيار العدد ثم حاول مرة أخرى.',
+            KITCHEN_TICKET_INCOMPLETE: 'تعذر إرسال تذكرة المطبخ كاملة. راجع الصنف وإضافاته وتعليمات التحضير ثم أعد المحاولة.',
             IDEMPOTENCY_REQUIRED: 'تعذر إرسال الطلب: مفتاح الحماية مفقود. أعد المحاولة.',
             IDEMPOTENCY_CONFLICT: 'تم إرسال نفس العملية ببيانات مختلفة. أغلق النافذة وافتح الدفع من جديد إن لزم.',
-            IDEMPOTENCY_PROCESSING: 'الطلب قيد المعالجة. انتظر لحظات ثم أعد المحاولة بنفس العملية.'
+            IDEMPOTENCY_PROCESSING: 'الطلب قيد المعالجة. انتظر لحظات ثم أعد المحاولة بنفس العملية.',
+            DELIVERY_ZONE_INVALID: 'منطقة التوصيل المحددة غير متاحة حالياً. افتح بيانات التوصيل واختر المنطقة مرة أخرى.',
+            MUTATION_VERSION_REQUIRED: 'تعذر التحقق من نسخة الطلب. أعد تحميل الطلب قبل الحفظ.',
+            STALE_ORDER_VERSION: 'تم تعديل الطلب من جهاز آخر. أعد تحميل الطلب قبل الحفظ.'
         };
 
         return messages[errorCode]

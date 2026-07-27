@@ -26,16 +26,22 @@ try {
         'code' => 'cash_drawer',
         'name_ar' => 'Cash drawer',
         'type' => 'cash',
+        'account_id' => 51,
+        'settlement_policy' => 'cash_drawer',
     ]);
     $methods->saveMethod($conn, [
         'code' => 'card_terminal',
         'name_ar' => 'Card terminal',
         'type' => 'card',
+        'account_id' => 52,
+        'settlement_policy' => 'reference_required',
     ]);
     $methods->saveMethod($conn, [
         'code' => 'wallet',
         'name_ar' => 'Wallet',
         'type' => 'wallet',
+        'account_id' => 53,
+        'settlement_policy' => 'reference_required',
     ]);
 
     $drawer = new DrawerSessionService();
@@ -44,28 +50,28 @@ try {
         'opened_by' => 7,
         'tenant' => 2,
         'branch' => 3,
-        'opening_cash' => '100.000',
+        'opening_cash' => '100.00',
         'opened_at' => '2026-05-13 08:00:00',
     ]);
     $drawer->recordMovement($conn, $session['id'], [
         'movement_type' => 'sale_cash',
-        'amount' => '110.000',
+        'amount' => '110.00',
         'order_id' => 10,
         'created_by' => 7,
     ]);
     $drawer->recordMovement($conn, $session['id'], [
         'movement_type' => 'refund_cash',
-        'amount' => '2.000',
+        'amount' => '2.00',
         'created_by' => 7,
     ]);
     $drawer->recordMovement($conn, $session['id'], [
         'movement_type' => 'paid_out',
-        'amount' => '10.000',
+        'amount' => '10.00',
         'created_by' => 7,
     ]);
     $drawer->recordMovement($conn, $session['id'], [
         'movement_type' => 'safe_drop',
-        'amount' => '5.000',
+        'amount' => '5.00',
         'created_by' => 7,
     ]);
 
@@ -82,7 +88,7 @@ try {
     phase4ShiftReconcileAssert($summary['drawer']['opening_cash'] === '100.000', 'opening cash expected');
     phase4ShiftReconcileAssert($summary['drawer']['movement_totals']['sale_cash'] === '110.000', 'sale cash movement total expected');
     phase4ShiftReconcileAssert($summary['drawer']['movement_totals']['refund_cash'] === '2.000', 'refund movement total expected');
-    phase4ShiftReconcileAssert($summary['drawer']['expected_cash'] === '193.000', 'expected cash should use signed drawer movement math');
+    phase4ShiftReconcileAssert($summary['drawer']['expected_cash'] === '193.00', 'expected cash should use signed drawer movement math');
     // opening + sale_cash + refund_cash + paid_out + safe_drop
     phase4ShiftReconcileAssert($summary['drawer']['movement_count'] === 5, 'drawer movement count includes opening movement');
 
@@ -124,6 +130,20 @@ try {
 
 function phase4ShiftReconcileCreateLegacyTables(mysqli $conn): void
 {
+    $conn->query("
+        CREATE TABLE acc_head (
+            id INT NOT NULL PRIMARY KEY,
+            code VARCHAR(40) NOT NULL,
+            aname VARCHAR(120) NOT NULL,
+            isdeleted TINYINT(1) NOT NULL DEFAULT 0
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+    ");
+    $conn->query("
+        INSERT INTO acc_head (id, code, aname, isdeleted) VALUES
+            (51, '101001', 'Cash drawer', 0),
+            (52, '102001', 'Card clearing', 0),
+            (53, '102002', 'Wallet clearing', 0)
+    ");
     $conn->query("
         CREATE TABLE ot_head (
             id INT NOT NULL PRIMARY KEY,

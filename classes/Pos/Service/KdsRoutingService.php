@@ -10,6 +10,7 @@ require_once __DIR__ . '/KdsStationService.php';
 class KdsRoutingService
 {
     private KdsStationService $stations;
+    private array $columnCache = [];
 
     public function __construct(?KdsStationService $stations = null)
     {
@@ -37,7 +38,10 @@ class KdsRoutingService
         $routed = [];
         foreach ($lines as $line) {
             $itemId = (int) ($line['item_id'] ?? 0);
-            $groupId = $itemId > 0 ? (int) ($itemGroups[$itemId] ?? 0) : 0;
+            $snapshotGroupId = (int) ($line['item_group_id'] ?? 0);
+            $groupId = $snapshotGroupId > 0
+                ? $snapshotGroupId
+                : ($itemId > 0 ? (int) ($itemGroups[$itemId] ?? 0) : 0);
             $stationId = $groupId > 0 && isset($categoryMap[$groupId])
                 ? (int) $categoryMap[$groupId]
                 : $defaultStationId;
@@ -69,6 +73,9 @@ class KdsRoutingService
         if (!$itemIds) {
             return [];
         }
+        if (!$this->columnExists($conn, 'myitems', 'group1')) {
+            return [];
+        }
 
         $placeholders = implode(',', array_fill(0, count($itemIds), '?'));
         $types = str_repeat('i', count($itemIds));
@@ -83,5 +90,25 @@ class KdsRoutingService
         $stmt->close();
 
         return $map;
+    }
+
+    private function columnExists(mysqli $conn, string $table, string $column): bool
+    {
+        $cacheKey = spl_object_id($conn) . ':' . $table . ':' . $column;
+        if (array_key_exists($cacheKey, $this->columnCache)) {
+            return $this->columnCache[$cacheKey];
+        }
+
+        $stmt = $conn->prepare("
+            SELECT COUNT(*) AS c
+            FROM information_schema.columns
+            WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?
+        ");
+        $stmt->bind_param('ss', $table, $column);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        return $this->columnCache[$cacheKey] = ((int) ($row['c'] ?? 0)) > 0;
     }
 }

@@ -6,6 +6,7 @@ require_once __DIR__ . '/ShiftSessionService.php';
 require_once __DIR__ . '/ShiftCloseService.php';
 require_once __DIR__ . '/DrawerBranchBlockedException.php';
 require_once __DIR__ . '/PosRegisterService.php';
+require_once dirname(__DIR__) . '/Value/CashAmount.php';
 
 if (!function_exists('posmain_drawer_sessions_table_exists')) {
     require_once dirname(__DIR__, 3) . '/includes/pos_shift_guard.php';
@@ -86,7 +87,7 @@ class ShiftCountService
             'tenant' => $scope['tenant'],
             'branch' => $scope['branch'],
             'register_id' => $scope['register_id'],
-            'expected' => (float) $breakdown['expected'],
+            'expected' => CashAmount::normalize($breakdown['expected'] ?? '0.00'),
             'breakdown' => $breakdown,
             'tolerance' => $tolerance,
             'attempt_number' => 0,
@@ -99,7 +100,7 @@ class ShiftCountService
             'attempt_number' => 0,
             'max_attempts' => self::MAX_ATTEMPTS,
             'unassigned_net' => $breakdown['unassigned_net'],
-            'has_unassigned' => abs((float) $breakdown['unassigned_net']) > 0.0001,
+            'has_unassigned' => $this->hasAmount($breakdown['unassigned_net'] ?? '0.00'),
         ];
     }
 
@@ -132,14 +133,10 @@ class ShiftCountService
             throw new RuntimeException('OPEN_COUNT_MAX_ATTEMPTS');
         }
 
-        $counted = round((float) $countedAmount, 3);
-        if ($counted < 0) {
-            throw new RuntimeException('COUNTED_AMOUNT_INVALID');
-        }
-
-        $expected = (float) ($state['expected'] ?? 0);
-        $tolerance = (float) ($state['tolerance'] ?? 0.010);
-        $variance = round($counted - $expected, 3);
+        $counted = $this->countedAmount($countedAmount);
+        $expected = CashAmount::normalize($state['expected'] ?? '0.00');
+        $tolerance = CashAmount::normalize($state['tolerance'] ?? '0.01');
+        $variance = CashAmount::subtract($counted, $expected);
         $matched = $this->floatExpectation->amountsMatch($counted, $expected, $tolerance);
 
         $attemptId = $this->recordCountAttempt($conn, [
@@ -210,6 +207,48 @@ class ShiftCountService
 
         $sessionId = (int) $drawerSession['id'];
         $recordedAttempts = $this->sessionPhaseAttemptCount($conn, $sessionId, 'close');
+        $reviewedCount = (string) ($drawerSession['variance_status'] ?? '') === 'resolved'
+            && $drawerSession['counted_cash'] !== null
+            && $this->hasAmount($drawerSession['difference'] ?? '0.00');
+        if ($reviewedCount) {
+            $expected = CashAmount::normalize($drawerSession['close_expected_snapshot']
+                ?? $drawerSession['expected_cash']
+                ?? $this->drawerSessions->expectedCash($conn, $sessionId));
+            $reviewedCountedCash = CashAmount::normalize($drawerSession['counted_cash']);
+            $closeToken = $this->issueCloseToken(
+                $sessionId,
+                $expected,
+                $userId,
+                $reviewedCountedCash,
+                false,
+                $conn
+            );
+            $_SESSION['pos_shift_close_count'] = [
+                'user_id' => $userId,
+                'drawer_session_id' => $sessionId,
+                'expected' => $expected,
+                'tolerance' => $this->floatExpectation->toleranceForBranch(
+                    $conn,
+                    (int) ($drawerSession['tenant'] ?? 0),
+                    (int) ($drawerSession['branch'] ?? 0)
+                ),
+                'attempt_number' => $recordedAttempts,
+                'attempt_ids' => [],
+                'reviewed_counted_cash' => $reviewedCountedCash,
+                'token' => $closeToken,
+                'started_at' => time(),
+            ];
+
+            return [
+                'phase' => 'close',
+                'attempt_number' => $recordedAttempts,
+                'max_attempts' => self::MAX_ATTEMPTS,
+                'drawer_session_id' => $sessionId,
+                'reviewed_variance' => true,
+                'reviewed_counted_cash' => $reviewedCountedCash,
+                'close_token' => $closeToken,
+            ];
+        }
         if ($recordedAttempts >= self::MAX_ATTEMPTS) {
             throw new RuntimeException('CLOSE_COUNT_MAX_ATTEMPTS');
         }
@@ -233,7 +272,7 @@ class ShiftCountService
             if ($token === '') {
                 $token = $this->issueCloseToken(
                     $sessionId,
-                    (float) ($existing['expected'] ?? 0),
+                    CashAmount::normalize($existing['expected'] ?? '0.00'),
                     $userId
                 );
                 $existing['token'] = $token;
@@ -249,7 +288,7 @@ class ShiftCountService
             ];
         }
 
-        $expected = (float) $this->drawerSessions->expectedCash($conn, $sessionId);
+        $expected = CashAmount::normalize($this->drawerSessions->expectedCash($conn, $sessionId));
         $tolerance = $this->floatExpectation->toleranceForBranch(
             $conn,
             (int) ($drawerSession['tenant'] ?? 0),
@@ -302,21 +341,48 @@ class ShiftCountService
             throw new RuntimeException('DRAWER_SESSION_NOT_OPEN');
         }
 
-        $currentExpected = (float) $this->drawerSessions->expectedCash($conn, $sessionId);
-        $snapshotExpected = (float) ($state['expected'] ?? 0);
-        $tolerance = (float) ($state['tolerance'] ?? 0.010);
+        if ((string) ($drawerSession['variance_status'] ?? '') === 'resolved'
+            && isset($state['reviewed_counted_cash'])) {
+            $reviewedCounted = CashAmount::normalize($state['reviewed_counted_cash']);
+            $submittedCounted = $this->countedAmount($countedAmount);
+            if (CashAmount::compare($submittedCounted, $reviewedCounted) !== 0) {
+                throw new RuntimeException('REVIEWED_COUNT_CHANGED');
+            }
+            $reviewedExpected = CashAmount::normalize($state['expected'] ?? '0.00');
+            $reviewedVariance = CashAmount::subtract($reviewedCounted, $reviewedExpected);
+            $closeToken = $this->issueCloseToken(
+                $sessionId,
+                $reviewedExpected,
+                $userId,
+                $reviewedCounted,
+                false,
+                $conn
+            );
+
+            return [
+                'status' => 'ready_to_close_after_review',
+                'phase' => 'close',
+                'attempt_number' => (int) ($state['attempt_number'] ?? self::MAX_ATTEMPTS),
+                'matched' => false,
+                'counted_cash' => $reviewedCounted,
+                'variance' => $reviewedVariance,
+                'expected_cash' => $reviewedExpected,
+                'close_token' => $closeToken,
+                'message' => 'تم اعتماد فرق الدرج — يمكن الآن إنشاء تقرير Z النهائي',
+            ];
+        }
+
+        $currentExpected = CashAmount::normalize($this->drawerSessions->expectedCash($conn, $sessionId));
+        $snapshotExpected = CashAmount::normalize($state['expected'] ?? '0.00');
+        $tolerance = CashAmount::normalize($state['tolerance'] ?? '0.01');
 
         if (!$this->floatExpectation->amountsMatch($currentExpected, $snapshotExpected, $tolerance)) {
             unset($_SESSION['pos_shift_close_count']);
             throw new RuntimeException('CLOSE_EXPECTED_DRIFTED');
         }
 
-        $counted = round((float) $countedAmount, 3);
-        if ($counted < 0) {
-            throw new RuntimeException('COUNTED_AMOUNT_INVALID');
-        }
-
-        $variance = round($counted - $snapshotExpected, 3);
+        $counted = $this->countedAmount($countedAmount);
+        $variance = CashAmount::subtract($counted, $snapshotExpected);
         $matched = $this->floatExpectation->amountsMatch($counted, $snapshotExpected, $tolerance);
 
         $recordedAttempt = $this->recordLimitedSessionCountAttempt($conn, [
@@ -342,8 +408,19 @@ class ShiftCountService
             $closeToken = $this->issueCloseToken($sessionId, $snapshotExpected, $userId, $counted, $matched, $conn);
             $canSeeExpected = $this->canSeeExpectedCash($conn);
 
+            if (!$matched) {
+                $this->markCloseCountPendingReview(
+                    $conn,
+                    $sessionId,
+                    $counted,
+                    $snapshotExpected,
+                    $variance,
+                    $context
+                );
+            }
+
             $response = [
-                'status' => $matched ? 'ready_to_close' : 'close_with_variance',
+                'status' => $matched ? 'ready_to_close' : 'counted_pending_review',
                 'phase' => 'close',
                 'attempt_number' => $attemptNumber,
                 'matched' => $matched,
@@ -351,18 +428,18 @@ class ShiftCountService
                 'close_token' => $closeToken,
                 'message' => $matched
                     ? 'العد متطابق — جاري إغلاق الشيفت'
-                    : 'تم تسجيل العد — جاري إغلاق الشيفت',
+                    : 'تم تسجيل العد — يجب اعتماد الفرق من مستخدم مخول قبل إغلاق تقرير Z',
             ];
 
             // Blind cashiers must not learn expected or over/short before close.
             if ($canSeeExpected) {
                 $response['variance'] = $variance;
-                $response['variance_direction'] = $variance > 0 ? 'over' : ($variance < 0 ? 'under' : 'balanced');
+                $response['variance_direction'] = $this->amountDirection($variance);
                 $response['expected_cash'] = $snapshotExpected;
                 if (!$matched) {
-                    $response['message'] = $variance > 0
-                        ? 'زيادة في الدرج: ' . number_format(abs($variance), 2)
-                        : 'عجز في الدرج: ' . number_format(abs($variance), 2);
+                    $response['message'] = CashAmount::compare($variance, '0.00') > 0
+                        ? 'زيادة في الدرج: ' . $this->absoluteAmount($variance)
+                        : 'عجز في الدرج: ' . $this->absoluteAmount($variance);
                 }
             }
 
@@ -406,7 +483,7 @@ class ShiftCountService
             throw new RuntimeException('DRAWER_SESSION_SCOPE_MISMATCH');
         }
 
-        $expected = (float) $this->drawerSessions->expectedCash($conn, $blockingSessionId);
+        $expected = CashAmount::normalize($this->drawerSessions->expectedCash($conn, $blockingSessionId));
         $tolerance = $this->floatExpectation->toleranceForBranch($conn, $scope['tenant'], $scope['branch']);
         $recordedAttempts = $this->sessionPhaseAttemptCount($conn, $blockingSessionId, 'close');
         $attemptsExhausted = $recordedAttempts >= self::MAX_ATTEMPTS;
@@ -458,21 +535,17 @@ class ShiftCountService
             throw new RuntimeException('CANNOT_TAKEOVER_OWN_SESSION');
         }
 
-        $currentExpected = (float) $this->drawerSessions->expectedCash($conn, $sessionId);
-        $snapshotExpected = (float) ($state['expected'] ?? 0);
-        $tolerance = (float) ($state['tolerance'] ?? 0.010);
+        $currentExpected = CashAmount::normalize($this->drawerSessions->expectedCash($conn, $sessionId));
+        $snapshotExpected = CashAmount::normalize($state['expected'] ?? '0.00');
+        $tolerance = CashAmount::normalize($state['tolerance'] ?? '0.01');
 
         if (!$this->floatExpectation->amountsMatch($currentExpected, $snapshotExpected, $tolerance)) {
             unset($_SESSION['pos_shift_takeover_close_count']);
             throw new RuntimeException('CLOSE_EXPECTED_DRIFTED');
         }
 
-        $counted = round((float) $countedAmount, 3);
-        if ($counted < 0) {
-            throw new RuntimeException('COUNTED_AMOUNT_INVALID');
-        }
-
-        $variance = round($counted - $snapshotExpected, 3);
+        $counted = $this->countedAmount($countedAmount);
+        $variance = CashAmount::subtract($counted, $snapshotExpected);
         $matched = $this->floatExpectation->amountsMatch($counted, $snapshotExpected, $tolerance);
 
         $attemptsExhausted = !empty($state['attempts_exhausted'])
@@ -522,7 +595,7 @@ class ShiftCountService
         $_SESSION['pos_shift_takeover_close_count'] = $state;
 
         if ($matched || $attemptNumber >= self::MAX_ATTEMPTS || $attemptsExhausted) {
-            $direction = $variance > 0.0001 ? 'over' : ($variance < -0.0001 ? 'under' : 'balanced');
+            $direction = $this->amountDirection($variance);
             $state['finalized'] = true;
             $state['counted_cash'] = $counted;
             $state['matched'] = $matched;
@@ -533,8 +606,8 @@ class ShiftCountService
             $message = $matched
                 ? 'العد متطابق — يمكن متابعة إغلاق وردية الموظف'
                 : ($direction === 'over'
-                    ? 'زيادة في الدرج: ' . number_format(abs($variance), 2) . ' — سيتم التسجيل والمتابعة'
-                    : 'عجز في الدرج: ' . number_format(abs($variance), 2) . ' — سيتم التسجيل والمتابعة');
+                    ? 'زيادة في الدرج: ' . $this->absoluteAmount($variance) . ' — سيتم التسجيل والمتابعة'
+                    : 'عجز في الدرج: ' . $this->absoluteAmount($variance) . ' — سيتم التسجيل والمتابعة');
 
             return [
                 'status' => $matched ? 'ready_to_takeover' : 'takeover_with_variance',
@@ -564,7 +637,7 @@ class ShiftCountService
     /**
      * Final counted cash from a completed takeover close-count phase (if any).
      *
-     * @return array{counted_cash:float,matched:bool,variance:float,attempt_ids:array}|null
+     * @return array{counted_cash:string,matched:bool,variance:string,attempt_ids:array}|null
      */
     public function peekTakeoverCloseCount(int $userId, int $sessionId): ?array
     {
@@ -577,9 +650,9 @@ class ShiftCountService
         }
 
         return [
-            'counted_cash' => (float) ($state['counted_cash'] ?? 0),
+            'counted_cash' => CashAmount::normalize($state['counted_cash'] ?? '0.00'),
             'matched' => !empty($state['matched']),
-            'variance' => (float) ($state['variance'] ?? 0),
+            'variance' => CashAmount::normalize($state['variance'] ?? '0.00', true),
             'attempt_ids' => $state['attempt_ids'] ?? [],
         ];
     }
@@ -613,13 +686,10 @@ class ShiftCountService
     public function openFromTakeoverCountedCash(
         mysqli $conn,
         int $userId,
-        float $countedCash,
+        $countedCash,
         array $context = []
     ): array {
-        $counted = round($countedCash, 3);
-        if ($counted < 0) {
-            throw new RuntimeException('COUNTED_AMOUNT_INVALID');
-        }
+        $counted = $this->countedAmount($countedCash);
 
         $scope = $this->shiftSessions->resolveScope($context);
         $scope['register_id'] = $this->resolvePairedRegisterId($conn, $scope, $context);
@@ -637,7 +707,7 @@ class ShiftCountService
                     'tenant' => $scope['tenant'],
                     'branch' => $scope['branch'],
                     'register_id' => (int) ($scope['register_id'] ?? 0) ?: null,
-                    'opening_cash' => number_format($counted, 3, '.', ''),
+                    'opening_cash' => $counted,
                     'in_transaction' => true,
                 ];
                 $pendingTakeover = $_SESSION['pos_pending_takeover'] ?? null;
@@ -660,7 +730,7 @@ class ShiftCountService
                     'status' => 'opened',
                     'phase' => 'open',
                     'matched' => true,
-                    'variance' => 0.0,
+                    'variance' => '0.00',
                     'variance_direction' => 'balanced',
                     'counted_cash' => $counted,
                     'expected_cash' => $counted,
@@ -681,9 +751,9 @@ class ShiftCountService
             throw new RuntimeException('OPENING_BASELINE_REQUIRED');
         }
 
-        $expected = (float) ($breakdown['expected'] ?? 0);
+        $expected = CashAmount::normalize($breakdown['expected'] ?? '0.00');
         $tolerance = $this->floatExpectation->toleranceForBranch($conn, $scope['tenant'], $scope['branch']);
-        $variance = round($counted - $expected, 3);
+        $variance = CashAmount::subtract($counted, $expected);
         $matched = $this->floatExpectation->amountsMatch($counted, $expected, $tolerance);
 
         $attemptId = $this->recordCountAttempt($conn, [
@@ -727,7 +797,7 @@ class ShiftCountService
         );
     }
 
-    public function validateCloseToken(string $token, int $sessionId, int $userId, float $countedCash, bool $matched, ?mysqli $conn = null): bool
+    public function validateCloseToken(string $token, int $sessionId, int $userId, $countedCash, bool $matched, ?mysqli $conn = null): bool
     {
         $payload = $this->extractTokenPayload($token);
         $tokenHash = (string) ($payload['hash'] ?? '');
@@ -739,9 +809,14 @@ class ShiftCountService
             return false;
         }
 
-        $countedFromToken = round((float) ($payload['cnt'] ?? 0), 3);
+        try {
+            $counted = $this->countedAmount($countedCash);
+            $countedFromToken = $this->countedAmount($payload['cnt'] ?? '0.00');
+        } catch (Throwable $exception) {
+            return false;
+        }
         $matchedFromToken = !empty($payload['m']);
-        if (abs($countedFromToken - round($countedCash, 3)) > 0.0001 || $matchedFromToken !== $matched) {
+        if (CashAmount::compare($countedFromToken, $counted) !== 0 || $matchedFromToken !== $matched) {
             return false;
         }
 
@@ -754,8 +829,8 @@ class ShiftCountService
                 return false;
             }
 
-            $expected = (float) ($state['expected'] ?? $payload['exp'] ?? 0);
-            $expectedHash = $this->buildCloseTokenHash($sessionId, $expected, $userId, $countedCash, $matched);
+            $expected = CashAmount::normalize($state['expected'] ?? $payload['exp'] ?? '0.00');
+            $expectedHash = $this->buildCloseTokenHash($sessionId, $expected, $userId, $counted, $matched);
 
             return hash_equals($expectedHash, $tokenHash);
         }
@@ -789,7 +864,7 @@ class ShiftCountService
     public function closeWithValidatedCount(mysqli $conn, int $userId, array $payload, array $context = []): array
     {
         $token = trim((string) ($payload['close_token'] ?? ''));
-        $countedCash = round((float) ($payload['counted_cash'] ?? $payload['fund_after'] ?? 0), 3);
+        $countedCash = $this->countedAmount($payload['counted_cash'] ?? $payload['fund_after'] ?? '0.00');
         $matched = !empty($payload['matched']);
         $sessionId = (int) ($payload['drawer_session_id'] ?? ($_SESSION['pos_shift_close_count']['drawer_session_id'] ?? 0));
 
@@ -803,25 +878,40 @@ class ShiftCountService
 
         $state = $_SESSION['pos_shift_close_count'] ?? [];
         $drawerSession = $this->drawerSessions->sessionById($conn, $sessionId);
+        $varianceStatus = (string) ($drawerSession['variance_status'] ?? 'none');
+        if (!$matched && $varianceStatus !== 'resolved') {
+            return [
+                'status' => 'counted_pending_review',
+                'drawer_session_id' => $sessionId,
+                'counted_cash' => $drawerSession['counted_cash'] ?? $countedCash,
+                'expected_cash' => $drawerSession['close_expected_snapshot'] ?? null,
+                'variance' => $drawerSession['difference'] ?? null,
+                'variance_status' => $varianceStatus === 'none' ? 'counted_pending_review' : $varianceStatus,
+                'matched' => false,
+                'requires_permission' => 'pos.shift.resolve_variance',
+            ];
+        }
         $openingUnresolved = ($drawerSession['variance_status'] ?? '') === 'unresolved'
             && in_array((string) ($drawerSession['variance_type'] ?? ''), ['opening', 'both'], true);
 
         $tokenPayload = $this->extractTokenPayload($token);
         if (isset($state['expected'])) {
-            $closeExpectedSnapshot = (float) $state['expected'];
+            $closeExpectedSnapshot = CashAmount::normalize($state['expected']);
         } elseif (isset($tokenPayload['exp'])) {
-            $closeExpectedSnapshot = (float) $tokenPayload['exp'];
+            $closeExpectedSnapshot = CashAmount::normalize($tokenPayload['exp']);
         } elseif (isset($drawerSession['close_expected_snapshot'])) {
-            $closeExpectedSnapshot = (float) $drawerSession['close_expected_snapshot'];
+            $closeExpectedSnapshot = CashAmount::normalize($drawerSession['close_expected_snapshot']);
         } else {
-            $closeExpectedSnapshot = (float) $this->drawerSessions->expectedCash($conn, $sessionId);
+            $closeExpectedSnapshot = CashAmount::normalize($this->drawerSessions->expectedCash($conn, $sessionId));
         }
 
         return $this->shiftClose->closeShift($conn, $userId, array_merge($payload, [
             'fund_after' => $countedCash,
             'cash' => $countedCash,
             'counted_cash' => $countedCash,
-            'variance_status' => $matched && !$openingUnresolved ? 'none' : 'unresolved',
+            'variance_status' => $matched && !$openingUnresolved
+                ? 'none'
+                : ($varianceStatus === 'resolved' ? 'resolved' : 'unresolved'),
             'variance_type' => $matched ? ($openingUnresolved ? 'opening' : 'none') : ($openingUnresolved ? 'both' : 'closing'),
             'close_expected_snapshot' => $closeExpectedSnapshot,
             'opening_variance_unresolved' => $openingUnresolved,
@@ -861,7 +951,7 @@ class ShiftCountService
 
         $session = $this->drawerSessions->sessionById($conn, $sessionId);
         $priorStatus = (string) ($session['variance_status'] ?? 'none');
-        if ($priorStatus !== 'unresolved') {
+        if (!in_array($priorStatus, ['counted_pending_review', 'unresolved'], true)) {
             throw new RuntimeException('VARIANCE_NOT_UNRESOLVED');
         }
 
@@ -883,14 +973,14 @@ class ShiftCountService
 
         // Always use server-side true over/short — never trust client-posted zero.
         if ($varianceType === 'opening') {
-            $varianceAmount = (float) ($session['opening_variance'] ?? 0);
+            $varianceAmount = CashAmount::normalize($session['opening_variance'] ?? '0.00', true);
         } elseif ($varianceType === 'both') {
-            $varianceAmount = round(
-                (float) ($session['opening_variance'] ?? 0) + (float) ($session['difference'] ?? 0),
-                3
+            $varianceAmount = CashAmount::add(
+                $session['opening_variance'] ?? '0.00',
+                $session['difference'] ?? '0.00'
             );
         } else {
-            $varianceAmount = (float) ($session['difference'] ?? 0);
+            $varianceAmount = CashAmount::normalize($session['difference'] ?? '0.00', true);
         }
 
         $snapshot = [
@@ -913,7 +1003,7 @@ class ShiftCountService
                 : trim($reasonCodes[$reasonCode] . ($notes !== '' ? ' — ' . $notes : ''));
 
             $snapshotJson = json_encode($snapshot, JSON_UNESCAPED_UNICODE);
-            $varianceFormatted = number_format($varianceAmount, 3, '.', '');
+            $varianceFormatted = $varianceAmount;
 
             if ($hasReasonCodeColumn) {
                 $stmt = $conn->prepare('
@@ -923,7 +1013,7 @@ class ShiftCountService
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 ');
                 $stmt->bind_param(
-                    'isidssss',
+                    'ississss',
                     $sessionId,
                     $varianceType,
                     $varianceFormatted,
@@ -941,7 +1031,7 @@ class ShiftCountService
                     ) VALUES (?, ?, ?, ?, ?, ?, ?)
                 ');
                 $stmt->bind_param(
-                    'isidsss',
+                    'ississs',
                     $sessionId,
                     $varianceType,
                     $varianceFormatted,
@@ -957,7 +1047,7 @@ class ShiftCountService
 
             $sessionStatusUpdated = false;
             if ($this->columnExists($conn, 'drawer_sessions', 'variance_status')) {
-                $update = $conn->prepare("UPDATE drawer_sessions SET variance_status = 'resolved' WHERE id = ? AND variance_status = 'unresolved'");
+                $update = $conn->prepare("UPDATE drawer_sessions SET variance_status = 'resolved' WHERE id = ? AND variance_status IN ('counted_pending_review','unresolved')");
                 $update->bind_param('i', $sessionId);
                 $update->execute();
                 if ($update->affected_rows !== 1) {
@@ -973,9 +1063,13 @@ class ShiftCountService
             // resolution row: either both are recorded or neither is.
             // Skipped on installs without the accounting subsystem.
             $ledgerOtHeadId = null;
-            if (round(abs($varianceAmount), 3) >= 0.001) {
+            if ($this->hasAmount($varianceAmount)) {
                 require_once __DIR__ . '/DrawerLedgerPostingService.php';
                 $ledgerPosting = new DrawerLedgerPostingService();
+                $certifiedMode = !empty($context['financial_certified_mode']);
+                if (!$ledgerPosting->canPost($conn) && $certifiedMode) {
+                    throw new RuntimeException('LEDGER_SUBSYSTEM_UNAVAILABLE');
+                }
                 if ($ledgerPosting->canPost($conn)) {
                     $fundAccountId = $ledgerPosting->resolveFundAccountId($conn, $session);
                     $ledgerReason = $reasonCodes[$reasonCode] . ($notes !== '' ? ' — ' . $notes : '');
@@ -993,6 +1087,9 @@ class ShiftCountService
                         $link->execute();
                         $link->close();
                     }
+                }
+                if ($certifiedMode && (!$ledgerOtHeadId || $ledgerOtHeadId < 1)) {
+                    throw new RuntimeException('VARIANCE_JOURNAL_REQUIRED');
                 }
             }
 
@@ -1025,6 +1122,56 @@ class ShiftCountService
         ];
     }
 
+    private function markCloseCountPendingReview(
+        mysqli $conn,
+        int $sessionId,
+        $counted,
+        $expected,
+        $variance,
+        array $context
+    ): void {
+        require_once dirname(__DIR__, 3) . '/includes/db_transaction.php';
+
+        $ownsTransaction = posmain_tx_begin_if_needed($conn, posmain_tx_context_in_transaction($context));
+        try {
+            $countedValue = $this->countedAmount($counted);
+            $expectedValue = CashAmount::normalize($expected);
+            $varianceValue = CashAmount::normalize($variance, true);
+            $stmt = $conn->prepare("
+                UPDATE drawer_sessions
+                SET counted_cash = ?,
+                    expected_cash = ?,
+                    close_expected_snapshot = ?,
+                    difference = ?,
+                    variance_status = 'counted_pending_review',
+                    variance_type = CASE
+                        WHEN variance_type = 'opening' THEN 'both'
+                        ELSE 'closing'
+                    END
+                WHERE id = ?
+                  AND status = 'open'
+                  AND variance_status IN ('none','unresolved','counted_pending_review')
+            ");
+            $stmt->bind_param('ssssi', $countedValue, $expectedValue, $expectedValue, $varianceValue, $sessionId);
+            $stmt->execute();
+            if ($stmt->affected_rows !== 1) {
+                $stmt->close();
+                throw new RuntimeException('CLOSE_COUNT_REVIEW_STATE_CONFLICT');
+            }
+            $stmt->close();
+
+            $syncContext = ['in_transaction' => true];
+            if (is_array($context['sync_config'] ?? null)) {
+                $syncContext['sync_config'] = $context['sync_config'];
+            }
+            $this->drawerSessions->captureExternalSessionMutation($conn, $sessionId, $syncContext);
+            posmain_tx_commit_if_owned($conn, $ownsTransaction);
+        } catch (Throwable $exception) {
+            posmain_tx_rollback_if_owned($conn, $ownsTransaction);
+            throw $exception;
+        }
+    }
+
     /**
      * @param array{variance_type?:string,user_id?:int,override_operator_id?:int,has_override?:bool,offset?:int} $options
      * @return list<array<string, mixed>>
@@ -1044,13 +1191,21 @@ class ShiftCountService
             SELECT ds.*, u.uname, u.display_name
             FROM drawer_sessions ds
             LEFT JOIN users u ON u.id = ds.user_id
-            WHERE ds.variance_status = 'unresolved'
+            WHERE ds.variance_status IN ('counted_pending_review','unresolved')
         ";
         [$sql, $params, $types] = $this->appendUnresolvedScope($conn, $sql, $tenant, $branch, $options);
 
         $limit = max(1, min(100, $limit));
         $offset = max(0, (int) ($options['offset'] ?? 0));
-        $sql .= ' ORDER BY ds.closed_at DESC, ds.opened_at DESC LIMIT ' . $limit . ' OFFSET ' . $offset;
+        // A counted drawer that is still open blocks the register and needs
+        // immediate review. Keep those rows ahead of historical unresolved
+        // sessions instead of burying NULL closed_at values on the last page.
+        $sql .= "
+            ORDER BY
+                CASE WHEN ds.variance_status = 'counted_pending_review' THEN 0 ELSE 1 END,
+                COALESCE(ds.closed_at, ds.opened_at) DESC
+            LIMIT {$limit} OFFSET {$offset}
+        ";
 
         $stmt = $conn->prepare($sql);
         if ($types !== '') {
@@ -1068,6 +1223,7 @@ class ShiftCountService
                 'opened_at' => (string) ($row['opened_at'] ?? ''),
                 'closed_at' => $row['closed_at'],
                 'status' => (string) ($row['status'] ?? ''),
+                'variance_status' => (string) ($row['variance_status'] ?? ''),
                 'variance_type' => (string) ($row['variance_type'] ?? ''),
                 'expected_opening_cash' => $row['expected_opening_cash'] ?? null,
                 'opening_variance' => $row['opening_variance'] ?? null,
@@ -1099,7 +1255,7 @@ class ShiftCountService
         $sql = "
             SELECT COUNT(*) AS cnt
             FROM drawer_sessions ds
-            WHERE ds.variance_status = 'unresolved'
+            WHERE ds.variance_status IN ('counted_pending_review','unresolved')
         ";
         [$sql, $params, $types] = $this->appendUnresolvedScope($conn, $sql, $tenant, $branch, $options);
 
@@ -1233,9 +1389,9 @@ class ShiftCountService
     private function finalizeOpen(
         mysqli $conn,
         int $userId,
-        float $counted,
-        float $expected,
-        float $variance,
+        $counted,
+        $expected,
+        $variance,
         bool $matched,
         array $scope,
         array $state,
@@ -1253,7 +1409,7 @@ class ShiftCountService
                 'tenant' => $scope['tenant'],
                 'branch' => $scope['branch'],
                 'register_id' => (int) ($state['register_id'] ?? $scope['register_id'] ?? 0) ?: null,
-                'opening_cash' => number_format($counted, 3, '.', ''),
+                'opening_cash' => $this->countedAmount($counted),
                 'in_transaction' => true,
             ];
 
@@ -1311,7 +1467,7 @@ class ShiftCountService
             'phase' => 'open',
             'matched' => $matched,
             'variance' => $variance,
-            'variance_direction' => $variance > 0 ? 'over' : ($variance < 0 ? 'under' : 'balanced'),
+            'variance_direction' => $this->amountDirection($variance),
             'counted_cash' => $counted,
             'expected_cash' => $expected,
             'attempt_number' => (int) ($state['attempt_number'] ?? self::MAX_ATTEMPTS),
@@ -1319,9 +1475,9 @@ class ShiftCountService
             'drawer_session_id' => (int) ($session['id'] ?? 0),
             'message' => $matched
                 ? 'تم فتح الشيفت بنجاح'
-                : ($variance > 0
-                    ? 'تم فتح الشيفت — زيادة: ' . number_format(abs($variance), 2)
-                    : 'تم فتح الشيفت — عجز: ' . number_format(abs($variance), 2)),
+                : (CashAmount::compare($variance, '0.00') > 0
+                    ? 'تم فتح الشيفت — زيادة: ' . $this->absoluteAmount($variance)
+                    : 'تم فتح الشيفت — عجز: ' . $this->absoluteAmount($variance)),
             'variance_status' => $matched ? 'none' : 'unresolved',
         ];
     }
@@ -1343,7 +1499,7 @@ class ShiftCountService
         );
     }
 
-    private function updateOpeningVariance(mysqli $conn, int $sessionId, float $expected, float $variance, bool $matched): bool
+    private function updateOpeningVariance(mysqli $conn, int $sessionId, $expected, $variance, bool $matched): bool
     {
         if (!$this->columnExists($conn, 'drawer_sessions', 'expected_opening_cash')) {
             return false;
@@ -1360,8 +1516,8 @@ class ShiftCountService
                 variance_type = ?
             WHERE id = ?
         ');
-        $expectedFormatted = number_format($expected, 3, '.', '');
-        $varianceFormatted = number_format($variance, 3, '.', '');
+        $expectedFormatted = CashAmount::normalize($expected);
+        $varianceFormatted = CashAmount::normalize($variance, true);
         $stmt->bind_param('ssssi', $expectedFormatted, $varianceFormatted, $varianceStatus, $varianceType, $sessionId);
         $stmt->execute();
         $updated = $stmt->affected_rows === 1;
@@ -1470,9 +1626,9 @@ class ShiftCountService
         $snapshotJson = json_encode($data['expected_snapshot_json'] ?? [], JSON_UNESCAPED_UNICODE);
         $sessionId = $data['drawer_session_id'] ?? null;
         $matched = !empty($data['matched']) ? 1 : 0;
-        $counted = number_format((float) $data['counted_amount'], 3, '.', '');
-        $expected = number_format((float) $data['expected_amount'], 3, '.', '');
-        $variance = number_format((float) $data['variance'], 3, '.', '');
+        $counted = $this->countedAmount($data['counted_amount']);
+        $expected = CashAmount::normalize($data['expected_amount']);
+        $variance = CashAmount::normalize($data['variance'], true);
         $phase = (string) $data['count_phase'];
         $attempt = (int) $data['attempt_number'];
         $tenant = (int) $data['tenant'];
@@ -1508,15 +1664,16 @@ class ShiftCountService
 
     private function issueCloseToken(
         int $sessionId,
-        float $expected,
+        $expected,
         int $userId,
-        ?float $counted = null,
+        $counted = null,
         ?bool $matched = null,
         ?mysqli $conn = null
     ): string {
-        $countedValue = $counted ?? 0.0;
+        $expectedValue = CashAmount::normalize($expected);
+        $countedValue = $counted === null ? '0.00' : $this->countedAmount($counted);
         $matchedValue = $matched ?? false;
-        $hash = $this->buildCloseTokenHash($sessionId, $expected, $userId, $countedValue, $matchedValue);
+        $hash = $this->buildCloseTokenHash($sessionId, $expectedValue, $userId, $countedValue, $matchedValue);
         // Client token must not embed expected cash (blind-count integrity).
         // Expected stays in PHP session / close_token_hash HMAC only.
         $payload = base64_encode(json_encode([
@@ -1532,7 +1689,7 @@ class ShiftCountService
             $_SESSION['pos_shift_close_count'] = [];
         }
         $_SESSION['pos_shift_close_count']['token'] = $payload;
-        $_SESSION['pos_shift_close_count']['expected'] = $expected;
+        $_SESSION['pos_shift_close_count']['expected'] = $expectedValue;
 
         if ($conn instanceof mysqli
             && $counted !== null
@@ -1560,7 +1717,7 @@ class ShiftCountService
         }
     }
 
-    private function buildCloseTokenHash(int $sessionId, float $expected, int $userId, float $counted, bool $matched): string
+    private function buildCloseTokenHash(int $sessionId, $expected, int $userId, $counted, bool $matched): string
     {
         $secret = $this->tokenSecret();
 
@@ -1568,13 +1725,52 @@ class ShiftCountService
             'sha256',
             implode('|', [
                 $sessionId,
-                number_format($expected, 3, '.', ''),
+                CashAmount::normalize($expected),
                 $userId,
-                number_format($counted, 3, '.', ''),
+                $this->countedAmount($counted),
                 $matched ? '1' : '0',
             ]),
             $secret
         );
+    }
+
+    /**
+     * Cash counts are a financial API boundary: strings only, two decimal
+     * places, non-negative, and no silently rounded fractions.
+     */
+    private function countedAmount($value): string
+    {
+        try {
+            $normalized = CashAmount::normalize($value);
+        } catch (Throwable $exception) {
+            throw new RuntimeException('COUNTED_AMOUNT_INVALID', 0, $exception);
+        }
+        if (CashAmount::compare($normalized, '0.00') < 0) {
+            throw new RuntimeException('COUNTED_AMOUNT_INVALID');
+        }
+
+        return $normalized;
+    }
+
+    private function hasAmount($value): bool
+    {
+        return CashAmount::compare(CashAmount::normalize($value, true), '0.00') !== 0;
+    }
+
+    private function amountDirection($value): string
+    {
+        $comparison = CashAmount::compare(CashAmount::normalize($value, true), '0.00');
+
+        return $comparison > 0 ? 'over' : ($comparison < 0 ? 'under' : 'balanced');
+    }
+
+    private function absoluteAmount($value): string
+    {
+        $normalized = CashAmount::normalize($value, true);
+
+        return CashAmount::compare($normalized, '0.00') < 0
+            ? CashAmount::negate($normalized)
+            : $normalized;
     }
 
     /** @return array<string, mixed> */

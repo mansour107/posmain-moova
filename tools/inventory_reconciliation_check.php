@@ -54,13 +54,28 @@ try {
     $conn = posmain_db_connect();
     $service = new RecipeReconciliationService();
     $rows = $service->report($conn, $filters);
-    $conversionAudit = new ErpUnitConversionAuditService();
-    $conversionMismatches = $conversionAudit->findRawFactorMovementMismatches($conn, min(100, (int) $filters['limit']));
+    $conversionMismatches = [];
+    $conversionAuditError = '';
+    try {
+        $conversionAudit = new ErpUnitConversionAuditService();
+        $conversionMismatches = $conversionAudit->findRawFactorMovementMismatches($conn, min(100, (int) $filters['limit']));
+    } catch (Throwable $conversionException) {
+        $conversionAuditError = $conversionException->getMessage();
+    }
     $conn->close();
 
     $result = inventoryReconciliationResult($filters, $rows, $acceptance);
     $result['conversion_factor_mismatches'] = $conversionMismatches;
     $result['conversion_factor_mismatch_count'] = count($conversionMismatches);
+    if ($conversionAuditError !== '') {
+        $result['ok'] = false;
+        $result['conversion_factor_audit_error'] = $conversionAuditError;
+        $result['blockers'][] = 'inventory_unit_conversion_audit_unavailable';
+    } elseif ($conversionMismatches) {
+        $result['ok'] = false;
+        $result['blockers'][] = 'inventory_unit_conversion_factor_mismatch';
+    }
+    $result['blockers'] = array_values(array_unique($result['blockers']));
 } catch (Throwable $exception) {
     $result = [
         'ok' => false,
@@ -137,6 +152,11 @@ function inventoryReconciliationResult(array $filters, array $rows, array $accep
     }
     $unacceptedCount = (int) ($acceptanceSummary['unaccepted_difference_count'] ?? $differenceCount);
 
+    $blockers = $acceptanceBlockers;
+    if ($unacceptedCount > 0) {
+        $blockers[] = 'inventory_reconciliation_unaccepted_differences';
+    }
+
     return [
         'ok' => $unacceptedCount === 0 && empty($acceptanceBlockers),
         'checked_at_utc' => gmdate('Y-m-d\TH:i:s\Z'),
@@ -152,7 +172,7 @@ function inventoryReconciliationResult(array $filters, array $rows, array $accep
             'reason_counts' => $reasonCounts,
         ],
         'rows' => $rows,
-        'blockers' => $acceptanceBlockers,
+        'blockers' => array_values(array_unique($blockers)),
     ];
 }
 

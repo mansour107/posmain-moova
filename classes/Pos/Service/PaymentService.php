@@ -146,7 +146,7 @@ class PaymentService
         return $this->drawerSessionService->recordMovement($conn, (int) $session['id'], $movementPayload);
     }
 
-    public function netCashRecordedForOrder(mysqli $conn, int $orderId): float
+    public function netCashRecordedForOrder(mysqli $conn, int $orderId): string
     {
         return $this->drawerSessionService->netCashRecordedForOrder($conn, $orderId);
     }

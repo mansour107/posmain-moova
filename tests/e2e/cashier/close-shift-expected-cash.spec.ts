@@ -1,6 +1,10 @@
 import { test, expect } from '@playwright/test';
 import { loginAndUnlockPos } from '../helpers/auth';
-import { clickFirstAddableItem, payCashInModal } from '../helpers/pos';
+import {
+  closeShiftCashModal,
+  prepareCleanShift,
+  recordCashSale,
+} from '../helpers/handover';
 
 async function openCloseShiftModal(page: import('@playwright/test').Page): Promise<void> {
   const closeButton = page.locator('[data-bs-target="#closeShiftModal"], button[title="إغلاق الشيفت"]').first();
@@ -23,6 +27,10 @@ function parseMoney(value: unknown): number {
 }
 
 test.describe('cashier: close-shift ledger stays correct while modal is blind', () => {
+  test.beforeEach(() => {
+    prepareCleanShift();
+  });
+
   test('cash sale updates the ledger but remains hidden in the close modal', async ({ page }) => {
     await loginAndUnlockPos(page, 'manager');
 
@@ -33,8 +41,7 @@ test.describe('cashier: close-shift ledger stays correct while modal is blind', 
     const expectedBefore = parseMoney(beforeBody.data?.expected_cash);
     const salesBefore = parseMoney(beforeBody.data?.total_sales);
 
-    await clickFirstAddableItem(page);
-    await payCashInModal(page);
+    await recordCashSale(page);
 
     const previewAfterSale = await page.request.get('/do/get_shift_preview.php');
     expect(previewAfterSale.ok()).toBeTruthy();
@@ -81,6 +88,7 @@ test.describe('cashier: close-shift ledger stays correct while modal is blind', 
     const expectedAfterExpense = parseMoney(afterExpenseBody.data?.expected_cash);
     expect(expectedAfterExpense).toBeCloseTo(expectedAfterPayin - 5, 1);
 
+    await closeShiftCashModal(page);
     await openCloseShiftModal(page);
     await expect(page.getByTestId('close-shift-guidance')).toBeVisible();
     await expect(page.locator('#closeShiftModal')).not.toContainText(/إيداعات الشيفت|مصروفات الشيفت|النقدية المتوقعة/i);

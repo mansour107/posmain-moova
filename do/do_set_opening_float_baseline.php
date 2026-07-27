@@ -45,7 +45,7 @@ try {
         $userId,
         static function () use ($conn, $tenant, $branch, $userId, $amountRaw): array {
             $service = new DrawerFloatExpectationService();
-            $data = $service->setOpeningBaseline($conn, $tenant, $branch, (float) $amountRaw, $userId);
+            $data = $service->setOpeningBaseline($conn, $tenant, $branch, $amountRaw, $userId);
 
             return ['success' => true, 'data' => $data];
         }

@@ -47,7 +47,11 @@ export async function closeKdsHistory(page: Page): Promise<void> {
 }
 
 export function kdsCardForProId(page: Page, proId: number | string) {
-  return page.locator(`.kds-card:has(.kds-card__order:text("#${proId}"))`).first();
+  const escaped = String(proId).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const exactOrderLabel = page.locator('.kds-card__order').filter({
+    hasText: new RegExp(`^\\s*#${escaped}\\s*$`),
+  });
+  return page.locator('.kds-card:not(.kds-event-card)').filter({ has: exactOrderLabel }).first();
 }
 
 /** @deprecated Prefer kdsCardForProId — the board label is pro_id, not ot_head.id */

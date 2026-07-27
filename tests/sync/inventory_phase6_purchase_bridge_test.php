@@ -29,6 +29,7 @@ $conn->set_charset('utf8mb4');
 try {
     (new SyncSchemaManager())->apply($conn);
     inventoryPhase6CreateLegacyItemTable($conn);
+    inventoryPhase6CreateOperationalStore($conn, 3);
     $conn->query("
         INSERT INTO myitems (id, iname, itmqty, cost_price, last_price, item_type, track_stock)
         VALUES (6101, 'Purchase bridge item', 10.000000, 2.000000, 2.000000, 'sellable', 1)
@@ -156,6 +157,24 @@ CREATE TABLE myitems (
   item_type ENUM('sellable','ingredient','packaging','service') NOT NULL DEFAULT 'sellable',
   track_stock TINYINT(1) NOT NULL DEFAULT 1
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
+}
+
+function inventoryPhase6CreateOperationalStore(mysqli $conn, int $storeId): void
+{
+    $conn->query('CREATE TABLE settings (
+        id INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        def_pos_store INT UNSIGNED NULL
+    ) ENGINE=InnoDB');
+    $conn->query('CREATE TABLE acc_head (
+        id INT UNSIGNED NOT NULL PRIMARY KEY,
+        code VARCHAR(32) NOT NULL,
+        aname VARCHAR(191) NOT NULL,
+        is_stock TINYINT(1) NOT NULL DEFAULT 0,
+        isdeleted TINYINT(1) NOT NULL DEFAULT 0
+    ) ENGINE=InnoDB');
+    $conn->query("INSERT INTO acc_head (id, code, aname, is_stock, isdeleted)
+        VALUES ({$storeId}, 'STORE-{$storeId}', 'Operational store', 1, 0)");
+    $conn->query("INSERT INTO settings (def_pos_store) VALUES ({$storeId})");
 }
 
 function inventoryPhase6One(mysqli $conn, string $sql): array

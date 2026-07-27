@@ -32,8 +32,8 @@ drawerOpenVarianceAssert(
 
 drawerOpenVarianceAssert(
     strpos($page, 'data-testid="drawer-session-opening"') !== false
-        && strpos($page, 'المتوقع عند الافتتاح') !== false
-        && strpos($page, 'العد المعتمد عند الافتتاح') !== false
+        && strpos($page, 'المبلغ المطلوب عند فتح الدرج') !== false
+        && strpos($page, 'المبلغ الذي عده الموظف عند الافتتاح') !== false
         && strpos($page, '<?php if ($isOpen): ?>') !== false,
     'open shifts must have one integrated drawer result'
 );
@@ -118,8 +118,8 @@ drawerOpenVarianceAssert(
 
 drawerOpenVarianceAssert(
     strpos($page, "\$timelineLabel = 'العد النهائي عند الإغلاق'") !== false
-        && strpos($page, 'فرق الإغلاق الدفتري: ') !== false,
-    'closing adjustment must show final count first and keep ledger variance in details'
+        && strpos($page, 'الفرق المسجل عند الإغلاق: ') !== false,
+    'closing adjustment must show final count first and keep the recorded variance in details'
 );
 
 drawerOpenVarianceAssert(

@@ -1,40 +1,51 @@
 <?php
 
-require_once __DIR__ . '/../../classes/Pos/Service/PosOrderMutationService.php';
-require_once __DIR__ . '/../../classes/Sync/SchemaManager.php';
-require_once __DIR__ . '/../../classes/Recipe/DTO/RecipeActorContext.php';
-require_once __DIR__ . '/../../classes/Recipe/RecipeDefinitionService.php';
-require_once __DIR__ . '/../../classes/Recipe/Repository/InventoryBalanceRepository.php';
-
-mysqli_report(MYSQLI_REPORT_OFF);
-
 const POS_TAKEAWAY_SERVICE_BRANCH_UUID = '22222222-2222-4222-8222-222222222222';
+$db = 'posmain_takeaway_service_' . getmypid();
 
 putenv('POSMAIN_ENV=test');
 putenv('POSMAIN_PRODUCTION_MODE=0');
-    putenv('POSMAIN_SYNC_OUTBOX_ENABLED=1');
+putenv('POSMAIN_DB_NAME=' . $db);
 putenv('POSMAIN_SYNC_OUTBOX_ENABLED=1');
 putenv('POSMAIN_BRANCH_UUID=' . POS_TAKEAWAY_SERVICE_BRANCH_UUID);
 putenv('POSMAIN_BRANCH_NAME=Takeaway Service Fixture');
 putenv('POSMAIN_POS_TENANT=0');
 putenv('POSMAIN_POS_BRANCH=0');
 putenv('POSMAIN_CLOUD_BASE_URL=http://127.0.0.1/cloud-fixture');
-putenv('POSMAIN_RECIPE_MODE=consume_pilot');
-putenv('POSMAIN_RECIPE_MODE=consume_pilot');
+putenv('POSMAIN_RECIPE_MODE=accounting_pilot');
 putenv('POSMAIN_RECIPE_RESERVATIONS=1');
 putenv('POSMAIN_RECIPE_CONSUMPTION=1');
-putenv('POSMAIN_RECIPE_ACCOUNTING=0');
+putenv('POSMAIN_RECIPE_ACCOUNTING=1');
+putenv('POSMAIN_RECIPE_DEFAULT_COGS_ACCOUNT_ID=16');
+putenv('POSMAIN_RECIPE_RAW_INVENTORY_ACCOUNT_ID=20');
+putenv('POSMAIN_RECIPE_PREPARED_INVENTORY_ACCOUNT_ID=20');
+putenv('POSMAIN_RECIPE_PACKAGING_INVENTORY_ACCOUNT_ID=20');
+putenv('POSMAIN_RECIPE_WASTE_EXPENSE_ACCOUNT_ID=16');
+putenv('POSMAIN_RECIPE_PRODUCTION_VARIANCE_ACCOUNT_ID=16');
 putenv('POSMAIN_RECIPE_AVAILABILITY=0');
 putenv('POSMAIN_RECIPE_MOOVA_SYNC=0');
 putenv('POSMAIN_RECIPE_STRICT_STOCK=0');
+putenv('POSMAIN_INVENTORY_CUTOVER_CERTIFIED=1');
+putenv('POSMAIN_RECIPE_ROLLOUT_CERTIFIED=1');
 putenv('POSMAIN_RECIPE_PILOT_POS_BRANCH=0');
 putenv('POSMAIN_RECIPE_PILOT_ITEM_IDS=10');
+
+// app_config.php resolves environment-backed branch identity when it is first
+// included. Seed the isolated runtime profile before loading POS services so
+// recipe movements and immutable sync snapshots share one branch UUID.
+require_once __DIR__ . '/../../classes/Pos/Service/PosOrderMutationService.php';
+require_once __DIR__ . '/../../classes/Sync/SchemaManager.php';
+require_once __DIR__ . '/../../classes/Recipe/DTO/RecipeActorContext.php';
+require_once __DIR__ . '/../../classes/Recipe/RecipeDefinitionService.php';
+require_once __DIR__ . '/../../classes/Recipe/Repository/InventoryBalanceRepository.php';
+require_once __DIR__ . '/../../classes/Pos/Service/DrawerSessionService.php';
+
+mysqli_report(MYSQLI_REPORT_OFF);
 
 $host = getenv('POSMAIN_TEST_MYSQL_HOST') ?: '127.0.0.1';
 $port = (int) (getenv('POSMAIN_TEST_MYSQL_PORT') ?: 3307);
 $user = getenv('POSMAIN_TEST_MYSQL_USER') ?: 'root';
 $pass = getenv('POSMAIN_TEST_MYSQL_PASS') ?: '';
-$db = 'posmain_takeaway_service_' . getmypid();
 $conn = @new mysqli($host, $user, $pass, '', $port);
 if ($conn->connect_errno) {
     echo "pos-takeaway-order-service-skipped-db-unavailable\n";
@@ -129,6 +140,7 @@ function posTakeawayServiceCreateSchema(mysqli $conn): void
         CREATE TABLE settings (
             id INT NOT NULL PRIMARY KEY,
             def_pos_client INT NULL,
+            def_pos_store INT NULL,
             edit_pass VARCHAR(255) NULL,
             isdeleted TINYINT(1) NOT NULL DEFAULT 0
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
@@ -144,6 +156,7 @@ function posTakeawayServiceCreateSchema(mysqli $conn): void
             id INT NOT NULL PRIMARY KEY,
             code VARCHAR(40) NULL,
             aname VARCHAR(255) NULL,
+            is_stock TINYINT(1) NOT NULL DEFAULT 0,
             isdeleted TINYINT(1) NOT NULL DEFAULT 0
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
     ");
@@ -309,13 +322,16 @@ function posTakeawayServiceCreateSchema(mysqli $conn): void
 
 function posTakeawayServiceSeedFixtures(mysqli $conn): void
 {
-    $conn->query("INSERT INTO settings (id, def_pos_client, edit_pass, isdeleted) VALUES (1, 501, '1234', 0)");
+    $conn->query("INSERT INTO settings (id, def_pos_client, def_pos_store, edit_pass, isdeleted) VALUES (1, 501, 3, '1234', 0)");
     $conn->query("
-        INSERT INTO acc_head (id, code, aname, isdeleted) VALUES
-            (91, '400001', 'Sales', 0),
-            (501, '122001', 'Walk-in Customer', 0),
-            (51, '101001', 'Cash Drawer', 0),
-            (61, '102001', 'Bank Account', 0)
+        INSERT INTO acc_head (id, code, aname, is_stock, isdeleted) VALUES
+            (3, '130003', 'Operational Store', 1, 0),
+            (16, '42', 'Cost of Goods Sold', 0, 0),
+            (20, '123', 'Inventory Asset', 0, 0),
+            (91, '400001', 'Sales', 0, 0),
+            (501, '122001', 'Walk-in Customer', 0, 0),
+            (51, '101001', 'Cash Drawer', 0, 0),
+            (61, '102001', 'Bank Account', 0, 0)
     ");
     $conn->query("
         INSERT INTO myitems (id, iname, barcode, itmqty, cost_price, price1, isdeleted) VALUES
@@ -323,10 +339,28 @@ function posTakeawayServiceSeedFixtures(mysqli $conn): void
             (11, 'Cake', 'CAK11', 15, 2, 8, 0),
             (12, 'Coffee Beans', 'BEAN12', 10, 3, 0, 0)
     ");
+    $drawer = (new DrawerSessionService())->openSession($conn, [
+        'user_id' => 7,
+        'opened_by' => 7,
+        'tenant' => 0,
+        'branch' => 0,
+        'opening_cash' => '100.00',
+    ]);
+    $_SESSION['pos_drawer_session_id'] = (int) ($drawer['id'] ?? 0);
 }
 
 function posTakeawayServiceSeedRecipe(mysqli $conn): void
 {
+    (new InventoryBalanceRepository())->putBalance($conn, [
+        'pos_tenant' => 0,
+        'pos_branch' => 0,
+        'store_id' => 3,
+        'item_id' => 11,
+        'qty_on_hand' => '15.000000',
+        'qty_reserved' => '0.000000',
+        'qty_available' => '15.000000',
+        'moving_average_cost' => '2.000000',
+    ]);
     (new InventoryBalanceRepository())->putBalance($conn, [
         'pos_tenant' => 0,
         'pos_branch' => 0,
@@ -403,7 +437,7 @@ function posTakeawayServiceAssertCommittedSale(mysqli $conn, int $orderId): void
 
     posTakeawayServiceAssertCounter($conn, 'pro_id', 'pro_tybe:9', 1);
     posTakeawayServiceAssertCounter($conn, 'pro_id', 'pro_tybe:1', 1);
-    posTakeawayServiceAssertCounter($conn, 'journal_id', 'journal:default', 2);
+    posTakeawayServiceAssertCounter($conn, 'journal_id', 'journal:default', 3);
     posTakeawayServiceAssert($conn->query("SELECT type FROM process LIMIT 1")->fetch_assoc()['type'] === 'add cash', 'process row expected');
 
     $outbox = $conn->query("
@@ -412,7 +446,8 @@ function posTakeawayServiceAssertCommittedSale(mysqli $conn, int $orderId): void
         WHERE aggregate_type = 'order'
           AND entity_type = 'order'
           AND event_type = 'order.saved'
-        ORDER BY id ASC
+          AND aggregate_local_id = {$orderId}
+        ORDER BY id DESC
         LIMIT 1
     ")->fetch_assoc();
     posTakeawayServiceAssert(is_array($outbox), 'sync outbox event expected');
@@ -427,7 +462,11 @@ function posTakeawayServiceAssertCommittedSale(mysqli $conn, int $orderId): void
     posTakeawayServiceAssert((int) $payload['local_order_id'] === $orderId, 'payload order id expected');
     posTakeawayServiceAssert($payload['order']['payment_status'] === 'paid', 'payload payment status expected');
     posTakeawayServiceAssert(count($payload['lines']) === 2, 'payload lines expected');
-    posTakeawayServiceAssert(count($payload['payments']) === 1, 'payload payment expected');
+    posTakeawayServiceAssert(count($payload['payments']) === 2, 'payload should include receipt compatibility plus authoritative tender payment');
+    posTakeawayServiceAssert(
+        array_column($payload['payments'], 'source') === ['ot_head', 'order_payments'],
+        'payload payment sources should preserve receipt compatibility and order_payments tender authority'
+    );
     posTakeawayServiceAssert(count($payload['receipts']) === 1, 'payload receipt expected');
 
     $event = $conn->query("SELECT * FROM order_events WHERE order_id = {$orderId} ORDER BY id ASC LIMIT 1")->fetch_assoc();
@@ -461,16 +500,30 @@ function posTakeawayServiceAssertCommittedMixedSale(mysqli $conn, int $orderId):
 
     posTakeawayServiceAssertCounter($conn, 'pro_id', 'pro_tybe:9', 2);
     posTakeawayServiceAssertCounter($conn, 'pro_id', 'pro_tybe:1', 3);
-    posTakeawayServiceAssertCounter($conn, 'journal_id', 'journal:default', 5);
+    posTakeawayServiceAssertCounter($conn, 'journal_id', 'journal:default', 7);
     posTakeawayServiceAssert((int) $conn->query("SELECT COUNT(*) AS c FROM process WHERE type = 'add cash'")->fetch_assoc()['c'] === 2, 'mixed route should add one process row per new order');
 
-    $outbox = $conn->query("SELECT * FROM sync_outbox WHERE aggregate_local_id = {$orderId} ORDER BY id DESC LIMIT 1")->fetch_assoc();
+    $outbox = $conn->query("
+        SELECT *
+        FROM sync_outbox
+        WHERE aggregate_type = 'order'
+          AND entity_type = 'order'
+          AND event_type = 'order.saved'
+          AND aggregate_local_id = {$orderId}
+        ORDER BY id DESC
+        LIMIT 1
+    ")->fetch_assoc();
     posTakeawayServiceAssert(is_array($outbox), 'mixed sync outbox event expected');
     $payload = json_decode($outbox['payload_json'], true);
-    posTakeawayServiceAssert(count($payload['payments']) === 2, 'mixed payload should include two payments');
+    posTakeawayServiceAssert(count($payload['payments']) === 4, 'mixed payload should include receipt compatibility plus two authoritative tender payments');
     posTakeawayServiceAssert(count($payload['receipts']) === 2, 'mixed payload should include two receipts');
-    posTakeawayServiceAssert($payload['payments'][0]['payment_method'] === 'cash', 'mixed payload first payment method expected');
-    posTakeawayServiceAssert($payload['payments'][1]['payment_method'] === 'bank', 'mixed payload second payment method expected');
+    $authoritativePayments = array_values(array_filter(
+        $payload['payments'],
+        static fn (array $payment): bool => ($payment['source'] ?? '') === 'order_payments'
+    ));
+    posTakeawayServiceAssert(count($authoritativePayments) === 2, 'mixed payload should carry exactly two authoritative tender rows');
+    posTakeawayServiceAssert($authoritativePayments[0]['payment_method'] === 'cash', 'mixed payload first authoritative payment method expected');
+    posTakeawayServiceAssert($authoritativePayments[1]['payment_method'] === 'bank', 'mixed payload second authoritative payment method expected');
 }
 
 function posTakeawayServiceAssertRecipeConsumedOnce(mysqli $conn, int $orderId, string $expectedIngredientOnHand): void
@@ -487,7 +540,20 @@ function posTakeawayServiceAssertRecipeConsumedOnce(mysqli $conn, int $orderId, 
     posTakeawayServiceAssert((string) $movements[0]['qty_out'] === '2.000000', 'recipe movement should consume ingredient quantity once per paid line quantity');
     posTakeawayServiceAssert((string) $movements[0]['source_type'] === 'recipe_order_line_usage', 'recipe movement should be sourced from recipe usage');
     posTakeawayServiceAssert((int) $movements[0]['recipe_order_line_usage_id'] === (int) $usages[0]['id'], 'recipe movement should link to usage row');
-    posTakeawayServiceAssert((string) $movements[0]['accounting_journal_id'] === '' || $movements[0]['accounting_journal_id'] === null, 'recipe accounting should stay disabled in this isolated proof');
+    $recipeJournalId = (int) ($movements[0]['accounting_journal_id'] ?? 0);
+    posTakeawayServiceAssert($recipeJournalId > 0, 'certified paid takeaway recipe consumption should post COGS accounting');
+    $recipeJournal = $conn->query("SELECT total FROM journal_heads WHERE journal_id = {$recipeJournalId} LIMIT 1")->fetch_assoc();
+    posTakeawayServiceAssert(is_array($recipeJournal), 'recipe COGS journal should exist');
+    posTakeawayServiceAssert((string) $recipeJournal['total'] === '6.0000', 'recipe COGS journal should equal exact consumed ingredient cost');
+    $recipeJournalTotals = $conn->query("
+        SELECT COALESCE(SUM(debit), 0) AS debit, COALESCE(SUM(credit), 0) AS credit
+        FROM journal_entries
+        WHERE journal_id = {$recipeJournalId}
+    ")->fetch_assoc();
+    posTakeawayServiceAssert(
+        (string) ($recipeJournalTotals['debit'] ?? '') === (string) ($recipeJournalTotals['credit'] ?? ''),
+        'recipe COGS journal must be balanced'
+    );
 
     $balance = (new InventoryBalanceRepository())->findBalance($conn, 0, 0, 3, 12);
     $storeZeroBalance = (new InventoryBalanceRepository())->findBalance($conn, 0, 0, 0, 12);
@@ -530,7 +596,10 @@ function posTakeawayServiceAssertCounter(mysqli $conn, string $type, string $key
         LIMIT 1
     ")->fetch_assoc();
     posTakeawayServiceAssert(is_array($row), "counter {$type}:{$key} expected");
-    posTakeawayServiceAssert((int) $row['current_value'] === $expected, "counter {$type}:{$key} value expected");
+    posTakeawayServiceAssert(
+        (int) $row['current_value'] === $expected,
+        "counter {$type}:{$key} value expected actual=" . (int) $row['current_value'] . " expected={$expected}"
+    );
 }
 
 function posTakeawayServiceAssertFloat(float $actual, float $expected, string $message): void

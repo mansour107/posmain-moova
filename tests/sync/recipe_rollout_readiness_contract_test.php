@@ -52,8 +52,8 @@ recipeRolloutReadinessAssert(strpos($service, 'recipe_moova_sync_outbox_requires
 recipeRolloutReadinessAssert(strpos($service, 'recipe_moova_sync_outbox_requires_branch_sync_enabled') !== false, 'readiness service should block recipe Moova outbox sync without branch sync enabled');
 recipeRolloutReadinessAssert(strpos($service, 'recipe_moova_sync_outbox_requires_sync_worker_enabled') !== false, 'readiness service should block recipe Moova outbox sync without sync worker enabled');
 recipeRolloutReadinessAssert(strpos($service, 'runtime_bcmath_missing') !== false && strpos($service, 'recipe_runtime_bcmath_missing') !== false, 'readiness service should block active rollout when the current PHP runtime lacks bcmath');
-recipeRolloutReadinessAssert(strpos($service, 'recipe_negative_stock_approval_requires_recipe_availability') !== false, 'readiness service should block manager negative-stock override without recipe availability');
-recipeRolloutReadinessAssert(strpos($service, 'recipe_negative_stock_approval_conflicts_with_strict_stock') !== false, 'readiness service should block strict stock with manager negative-stock override approval');
+recipeRolloutReadinessAssert(strpos($service, 'NegativeStockSalePolicyService') !== false, 'readiness service should resolve the durable branch negative-stock policy');
+recipeRolloutReadinessAssert(strpos($service, "'negative_stock_sale_policy'") !== false, 'readiness service should expose the resolved negative-stock policy');
 recipeRolloutReadinessAssert(strpos($service, 'strict_stock_requires_effective_recipe_availability') !== false, 'readiness service should block strict stock when recipe availability is configured but not effective for the mode');
 recipeRolloutReadinessAssert(strpos($service, 'reserve_only_requires_recipe_reservations') !== false, 'readiness service should block reserve_only when reservations are disabled');
 recipeRolloutReadinessAssert(strpos($service, 'full_requires_recipe_reservations') !== false, 'readiness service should block full mode when reservations are disabled');

@@ -26,10 +26,10 @@ foreach (['TAB_OVERVIEW', 'TAB_SHIFTS', 'TAB_ORDERS', 'TAB_PAYMENTS', 'TAB_ITEMS
     operationsWorkspaceAssert(strpos($workspace, "CashShiftWorkspaceService::{$constant}") !== false, "workspace does not consume {$constant}");
 }
 
-foreach (['إجمالي المبيعات', 'الخصومات', 'المرتجعات', 'صافي المبيعات', 'عدد الطلبات'] as $label) {
+foreach (['قيمة الأصناف', 'الخصومات', 'المرتجعات', 'صافي المبيعات', 'عدد الطلبات'] as $label) {
     operationsWorkspaceAssert(strpos($workspace, $label) !== false, "daily sales is missing {$label}");
 }
-foreach (['رصيد البداية', 'المبيعات النقدية', 'نقدية أخرى داخلة', 'النقدية الخارجة', 'الفرق'] as $label) {
+foreach (['رصيد البداية', 'المبيعات النقدية', 'نقدية أخرى دخلت الدرج', 'نقدية خرجت من الدرج', 'الفرق'] as $label) {
     operationsWorkspaceAssert(strpos($workspace, $label) !== false, "shift grid is missing {$label}");
 }
 foreach (['سجل الطلبات', 'تفاصيل التحصيل', 'أداء الأصناف', 'متابعة الإدارة'] as $section) {

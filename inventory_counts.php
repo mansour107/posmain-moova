@@ -60,12 +60,13 @@ $inventoryCounts = inventoryCountRows($conn, "
     LIMIT 120
 ");
 
+$inventoryCountCsrfMeta = csrf_meta_tag('inventory_count', 'inventory-count-csrf');
 include __DIR__ . '/includes/header.php';
 include __DIR__ . '/includes/navbar.php';
 include __DIR__ . '/includes/sidebar.php';
 ?>
 
-<?= csrf_meta_tag('inventory_count', 'inventory-count-csrf') ?>
+<?= $inventoryCountCsrfMeta ?>
 
 <style>
     .inventory-count-page {

@@ -581,6 +581,11 @@ if (!function_exists('posmain_app_config')) {
             'recipe' => [
                 'enabled' => $recipeMode !== 'off',
                 'mode' => $recipeMode,
+                // This is an operator-supplied release attestation, not a
+                // substitute for tools/recipe_rollout_readiness.php.  The
+                // production profile will not activate writable recipe
+                // behavior until both have been completed.
+                'rollout_certified' => posmain_bool($branchEnv(['POSMAIN_RECIPE_ROLLOUT_CERTIFIED'], '0'), false),
                 'shadow_ledger' => posmain_bool($branchEnv(['POSMAIN_RECIPE_SHADOW_LEDGER'], '1'), true),
                 'reservations' => posmain_bool($branchEnv(['POSMAIN_RECIPE_RESERVATIONS', 'POSMAIN_INVENTORY_RESERVATIONS'], '1'), true),
                 'consumption' => posmain_bool($branchEnv(['POSMAIN_RECIPE_CONSUMPTION'], '1'), true),
@@ -610,6 +615,9 @@ if (!function_exists('posmain_app_config')) {
             ],
             'inventory' => [
                 'ledger_mode' => $inventoryLedgerMode,
+                // Set only after the scoped cutover/readiness evidence has
+                // been reviewed for this branch database.
+                'cutover_certified' => posmain_bool($branchEnv(['POSMAIN_INVENTORY_CUTOVER_CERTIFIED'], '0'), false),
                 'legacy_mirror' => posmain_bool($branchEnv(['POSMAIN_INVENTORY_LEGACY_MIRROR'], '1'), true),
                 'strict_stock' => posmain_bool($branchEnv(['POSMAIN_INVENTORY_STRICT_STOCK'], '0'), false),
                 'reservations' => posmain_bool($branchEnv(['POSMAIN_INVENTORY_RESERVATIONS'], '0'), false),
@@ -721,8 +729,10 @@ if (!function_exists('posmain_app_config')) {
 
         $config = posmain_merge_config($config, posmain_runtime_file_database_overrides());
         $config = posmain_merge_config($config, posmain_runtime_db_settings_overrides($config));
-        require_once __DIR__ . '/production_profile.php';
-        $config = posmain_production_profile_apply($config);
+        if ($productionMode) {
+            require_once __DIR__ . '/production_profile.php';
+            $config = posmain_production_profile_apply($config);
+        }
 
         return posmain_merge_config($config, $overrides);
     }

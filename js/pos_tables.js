@@ -3,7 +3,8 @@ let currentOrder = {
     items: [],
     total: 0,
     discount: 0,
-    net: 0
+    net: 0,
+    mutation_version: 0
 };
 let posTableRequestKeys = {};
 
@@ -48,7 +49,8 @@ function bootstrapTableOrderDraft(response) {
     const order = response && response.order ? response.order : {};
     window.POSOrderDraft.bootstrapSaved({
         order_id: order.id || $('#current_order_id').val(),
-        kitchen_revision: order.kitchen_revision || 0
+        kitchen_revision: order.kitchen_revision || 0,
+        mutation_version: order.mutation_version || 0
     });
 }
 
@@ -187,6 +189,7 @@ function loadTableOrder(tableId, tableName) {
             if (response.success && response.order) {
                 // تحميل الطلب الموجود
                 $('#current_order_id').val(response.order.id);
+                currentOrder.mutation_version = parseInt(response.order.mutation_version || 1, 10) || 1;
                 currentOrder.items = response.items || [];
                 displayOrderItems();
                 calculateTotal();
@@ -194,6 +197,7 @@ function loadTableOrder(tableId, tableName) {
             } else {
                 // طلب جديد
                 $('#current_order_id').val('');
+                currentOrder.mutation_version = 0;
                 currentOrder.items = [];
                 displayOrderItems();
                 if (window.POSOrderDraft && typeof window.POSOrderDraft.reset === 'function') {
@@ -447,6 +451,7 @@ function saveOrder() {
         table_id: tableId,
         table_name: tableName,
         order_id: $('#current_order_id').val(),
+        mutation_version: currentOrder.mutation_version || null,
         order_date: $('#order_date').val(),
         store_id: $('#store_id').val(),
         emp_id: $('#emp_id').val(),
@@ -482,6 +487,8 @@ function saveOrder() {
     }).done(function(response) {
         if (response.success) {
             $('#current_order_id').val(response.order_id);
+            const state = response.updated_state || {};
+            currentOrder.mutation_version = parseInt(state.mutation_version || currentOrder.mutation_version || 1, 10) || 1;
             if (draft && typeof draft.markSaved === 'function') {
                 draft.markSaved(response);
             }
@@ -492,9 +499,14 @@ function saveOrder() {
             }
             alert('خطأ: ' + response.message);
         }
-    }).fail(function() {
+    }).fail(function(xhr) {
         if (draft && typeof draft.markSaveFailed === 'function') {
             draft.markSaveFailed();
+        }
+        const body = xhr && xhr.responseJSON ? xhr.responseJSON : {};
+        if (body.code === 'STALE_ORDER_VERSION') {
+            alert('تم تعديل الطلب من جهاز آخر. أعد تحميل الطلب قبل الحفظ.');
+            return;
         }
         alert('خطأ في حفظ الطلب');
     }).always(function() {
@@ -567,6 +579,7 @@ function cancelOrder() {
                 if (response.success) {
                     alert('تم إلغاء الطلب بنجاح');
                     currentOrder.items = [];
+                    currentOrder.mutation_version = 0;
                     $('#current_order_id').val('');
                     clearPOSTableIdempotencyKey('pos.order.cancel');
                     displayOrderItems();
@@ -642,6 +655,7 @@ function addItemByBarcode(barcode) {
 // مسح الطلب (للاستخدام الداخلي)
 function clearOrder() {
     currentOrder.items = [];
+    currentOrder.mutation_version = 0;
     $('#current_order_id').val('');
     displayOrderItems();
     calculateTotal();

@@ -340,11 +340,6 @@ class RecipeRuntimePreflightService
                 "\$recipeReportLinks['operations']",
                 "\$recipeReportLinks['dashboard']",
             ],
-            'sales-reports.php' => [
-                'recipe_report_permissions.php',
-                'posmain_recipe_report_can_view_sales_reconciliation',
-                '$canViewRecipeSalesReconciliation',
-            ],
             'ajax/refund_order.php' => [
                 "require_csrf('pos_browser')",
                 'require_pos_lane_permission(',
@@ -405,9 +400,6 @@ class RecipeRuntimePreflightService
                 'inventory_adjustments.php',
                 'recipe_operations_report.php',
                 'recipe_operational_dashboard.php',
-            ],
-            'sales-reports.php' => [
-                'recipe_stock_reconciliation.php',
             ],
         ];
 

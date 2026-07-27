@@ -63,6 +63,17 @@ try {
         !array_key_exists('metadata_json', $acceptedPayload['fulfillment']),
         'raw metadata_json column must not be copied into the payload'
     );
+    $acceptedReplay = $service->transitionDeliveryStatus($conn, 4101, 'accepted', ['config' => $config]);
+    fulfillmentAssert((string) $acceptedReplay['delivery_status'] === 'accepted', 'same-status retry should return the committed state');
+    fulfillmentAssert(count(fulfillmentEvents($conn, 4101)) === 1, 'same-status retry must not create a duplicate outbox event');
+    fulfillmentExpectFailure(
+        static fn () => $service->transitionDeliveryStatus($conn, 4101, 'accepted', [
+            'config' => $config,
+            'driver_tip' => '1.00',
+        ]),
+        'DELIVERY_STATUS_REPLAY_CONFLICT'
+    );
+    fulfillmentAssert(count(fulfillmentEvents($conn, 4101)) === 1, 'conflicting replay must not mutate or emit');
 
     $conn->begin_transaction();
     $service->transitionDeliveryStatus($conn, 4101, 'preparing', [

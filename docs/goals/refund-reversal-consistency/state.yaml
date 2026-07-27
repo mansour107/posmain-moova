@@ -1,0 +1,407 @@
+version: 2
+
+goal:
+  title: "Refund Reversal Consistency"
+  slug: "refund-reversal-consistency"
+  kind: specific
+  tranche: "Implement and verify the approved V1 refund-reversal plan across writes, reports, shifts, accounting, admin drilldown, and sync."
+  status: done
+
+rules:
+  pm_owns_state: true
+  one_active_task: true
+  max_write_workers: 1
+  no_implementation_without_worker_or_pm_task: true
+  no_completion_without_judge_or_pm_audit: true
+
+agents:
+  scout: installed
+  worker: installed
+  judge: installed
+
+active_task: null
+
+tasks:
+  - id: T001
+    type: scout
+    assignee: PM
+    status: done
+    objective: "Map refund writers and every monetary, shift, inventory, customer, sync, and admin consumer."
+    inputs:
+      - "Approved plan exploration"
+      - "Current repository"
+    constraints:
+      - "Read-only."
+    expected_output:
+      - "Impacted surface map"
+      - "Known correctness gaps"
+    receipt:
+      result: done
+      summary: "Mapped the refund API/browser split, credit-note and payment-refund ledgers, shift/drawer paths, local/cloud reports, customer/product rollups, and current test coverage."
+      evidence:
+        - "classes/Financial/FinancialRefundService.php"
+        - "classes/Pos/Service/PosOrderMutationService.php"
+        - "classes/Pos/Service/OperationsReportService.php"
+        - "classes/Financial/FinancialPostedReportsService.php"
+        - "classes/ShiftReport.php"
+        - "cash_flow_report.php"
+  - id: T002
+    type: judge
+    assignee: PM
+    status: done
+    objective: "Lock product and accounting decisions for the first safe implementation tranche."
+    inputs:
+      - "T001 receipt"
+      - "Owner-approved proposed plan"
+    constraints:
+      - "Do not implement."
+    expected_output:
+      - "Attribution decision"
+      - "Canonical metric definitions"
+      - "Compatibility constraints"
+    receipt:
+      result: done
+      decision: "Refunds belong to the refunding day/operator/shift; Net Sales is the headline; V1 cashier UX remains whole-order while backend/read models support partial refunds."
+      next_allowed_task: T003
+      blocked_tasks: []
+  - id: T003
+    type: pm
+    assignee: PM
+    status: done
+    objective: "Add durable refund attribution and unify refund orchestration without changing the cashier workflow."
+    allowed_files:
+      - "classes/Sync/SchemaManager.php"
+      - "classes/Financial/FinancialRefundService.php"
+      - "classes/Pos/Service/PosOrderMutationService.php"
+      - "classes/Pos/Http/PosOrderController.php"
+      - "ajax/refund_order.php"
+      - "tests/sync/financial_refund_service_test.php"
+      - "tests/sync/pos_paid_reversal_service_test.php"
+      - "tests/sync/recipe_paid_reversal_endpoint_runtime_test.php"
+    verify:
+      - "php tests/sync/financial_refund_service_test.php"
+      - "php tests/sync/pos_paid_reversal_service_test.php"
+      - "php tests/sync/recipe_paid_reversal_endpoint_runtime_test.php"
+    stop_if:
+      - "A required write falls outside allowed_files before board update."
+      - "Existing refund behavior is ambiguous after source inspection."
+      - "Focused verification fails twice for the same unexplained reason."
+    receipt:
+      result: done
+      summary: "Unified browser and API paid-refund orchestration, stamped credit notes with refund-day/operator/shift/approval attribution, preserved original sales, and derived partial/full state from posted credit notes."
+      evidence:
+        - "php tests/sync/financial_refund_service_test.php (pass: financial-refund-service-ok)"
+        - "php tests/sync/pos_paid_reversal_service_test.php (pass: pos-paid-reversal-service-ok)"
+        - "php tests/sync/recipe_paid_reversal_endpoint_runtime_test.php (pass: recipe-paid-reversal-endpoint-runtime-ok)"
+  - id: T004
+    type: pm
+    assignee: PM
+    status: done
+    objective: "Create the canonical reversal-aware sales read model and repair financial and reconciliation formulas."
+    allowed_files:
+      - "classes/Financial/RefundReversalReadService.php"
+      - "classes/Pos/Service/OperationsReportService.php"
+      - "classes/Financial/FinancialPostedReportsService.php"
+      - "classes/Financial/FinancialReconciliationService.php"
+      - "classes/Pos/Service/CashFlowPeriodService.php"
+      - "tests/sync/refund_reversal_read_service_test.php"
+      - "tests/sync/operations_report_service_test.php"
+      - "tests/sync/financial_posted_reports_test.php"
+      - "tests/sync/financial_refund_reconciliation_test.php"
+      - "tests/sync/cash_flow_period_contract_test.php"
+    verify:
+      - "php tests/sync/refund_reversal_read_service_test.php"
+      - "php tests/sync/operations_report_service_test.php"
+      - "php tests/sync/financial_posted_reports_test.php"
+      - "php tests/sync/financial_refund_reconciliation_test.php"
+      - "php tests/sync/cash_flow_period_contract_test.php"
+    stop_if:
+      - "A required formula cannot distinguish posted revenue reversal from tender settlement."
+      - "Focused verification fails twice for the same unexplained reason."
+    receipt:
+      result: done
+      summary: "Established posted credit notes as the canonical revenue-reversal read model, retained fully refunded invoices in gross sales, separated tender custody from pending external refunds, and repaired refund reconciliation formulas."
+      evidence:
+        - "php tests/sync/refund_reversal_read_service_test.php (pass)"
+        - "php tests/sync/operations_report_service_test.php (pass)"
+        - "php tests/sync/financial_posted_reports_test.php (pass)"
+        - "php tests/sync/financial_refund_reconciliation_test.php (pass)"
+        - "php tests/sync/cash_flow_period_contract_test.php (pass)"
+  - id: T005
+    type: pm
+    assignee: PM
+    status: done
+    objective: "Update shift, dashboard, customer, product, inventory/profit, and admin drilldown consumers."
+    allowed_files:
+      - "classes/ShiftReport.php"
+      - "classes/Financial/RefundReversalReadService.php"
+      - "classes/Pos/Service/OperationsReportService.php"
+      - "classes/Pos/Service/PosCustomerOrderSideEffects.php"
+      - "classes/Pos/Service/PosOrderMutationService.php"
+      - "cash_flow_report.php"
+      - "z_report.php"
+      - "tests/sync/shift_preview_sales_drawer_integration_test.php"
+      - "tests/sync/pos_customer_order_side_effects_test.php"
+      - "tests/sync/operations_report_service_test.php"
+      - "tests/sync/dashboard_overview_service_test.php"
+      - "tests/sync/refund_admin_drilldown_contract_test.php"
+      - "tests/sync/recipe_paid_reversal_endpoint_runtime_test.php"
+    verify:
+      - "php tests/sync/shift_preview_sales_drawer_integration_test.php"
+      - "php tests/sync/pos_customer_order_side_effects_test.php"
+      - "php tests/sync/operations_report_service_test.php"
+      - "php tests/sync/dashboard_overview_service_test.php"
+      - "php tests/sync/refund_admin_drilldown_contract_test.php"
+      - "php tests/sync/recipe_paid_reversal_endpoint_runtime_test.php"
+    stop_if:
+      - "A consumer cannot be made reversal-aware without changing the approved cashier workflow."
+      - "A focused regression fails twice for the same unexplained reason."
+    receipt:
+      result: done
+      summary: "Made shift/Z-report totals, dashboard KPIs, customer lifetime value, item reporting, order rows, and the admin payment drilldown reversal-aware while preserving the cashier workflow."
+      evidence:
+        - "php tests/sync/shift_preview_sales_drawer_integration_test.php (pass)"
+        - "php tests/sync/pos_customer_order_side_effects_test.php (pass)"
+        - "php tests/sync/operations_report_service_test.php (pass)"
+        - "php tests/sync/dashboard_overview_service_test.php (pass)"
+        - "php tests/sync/refund_admin_drilldown_contract_test.php (pass)"
+        - "php tests/sync/recipe_paid_reversal_endpoint_runtime_test.php (pass)"
+  - id: T006
+    type: pm
+    assignee: PM
+    status: done
+    objective: "Make cloud and legacy reporting use the canonical refund projection."
+    allowed_files:
+      - "classes/Sync/CloudReportService.php"
+      - "classes/ShiftReport.php"
+      - "classes/Sync/CloudOperationalMirrorService.php"
+      - "classes/Financial/LegacySalesReportService.php"
+      - "items_summery.php"
+      - "top_products_report.php"
+      - "sales-by-day.php"
+      - "sales-by-week.php"
+      - "sales-by-month.php"
+      - "sales-by-hour.php"
+      - "sales-by-group.php"
+      - "operations_summary.php"
+      - "print/closed_session_items.php"
+      - "tests/sync/cloud_report_service_test.php"
+      - "tests/sync/cloud_operational_mirror_service_test.php"
+      - "tests/sync/legacy_sales_report_service_test.php"
+      - "tests/sync/refund_legacy_reports_contract_test.php"
+      - "tests/sync/business_day_contract_test.php"
+      - "tests/sync/shift_sales_receipt_scope_contract_test.php"
+    verify:
+      - "php tests/sync/cloud_report_service_test.php"
+      - "php tests/sync/cloud_operational_mirror_service_test.php"
+      - "php tests/sync/legacy_sales_report_service_test.php"
+      - "php tests/sync/refund_legacy_reports_contract_test.php"
+      - "php tests/sync/business_day_contract_test.php"
+    stop_if:
+      - "Cloud reporting lacks a durable refund source and cannot be repaired within the existing sync contract."
+      - "A focused regression fails twice for the same unexplained reason."
+    receipt:
+      result: done
+      summary: "Made trusted cloud net sales, groupings, and item totals refund-aware; centralized historical report formulas; exposed reversal state in legacy operations; and attributed credited items to the refunding closed shift."
+      evidence:
+        - "php tools/phpunit.phar tests/sync/cloud_report_service_test.php (pass: 48 assertions)"
+        - "php tests/sync/cloud_operational_mirror_service_test.php (pass)"
+        - "php tests/sync/legacy_sales_report_service_test.php (pass)"
+        - "php tests/sync/refund_legacy_reports_contract_test.php (pass)"
+        - "php tests/sync/business_day_contract_test.php (pass)"
+        - "php tests/sync/shift_sales_receipt_scope_contract_test.php (pass)"
+  - id: T007
+    type: pm
+    assignee: PM
+    status: done
+    objective: "Run focused, adjacent, parity, and browser-flow verification and resolve regressions."
+    allowed_files:
+      - "classes/Sync/SchemaManager.php"
+      - "classes/Financial/FinancialRefundService.php"
+      - "classes/Financial/RefundReversalReadService.php"
+      - "classes/Financial/FinancialPostedReportsService.php"
+      - "classes/Financial/FinancialReconciliationService.php"
+      - "classes/Financial/LegacySalesReportService.php"
+      - "classes/Pos/Service/PosOrderMutationService.php"
+      - "classes/Pos/Service/PosCustomerOrderSideEffects.php"
+      - "classes/Pos/Service/OperationsReportService.php"
+      - "classes/Pos/Service/CashFlowPeriodService.php"
+      - "classes/ShiftReport.php"
+      - "classes/Sync/CloudReportService.php"
+      - "tests/sync"
+    verify:
+      - "Focused refund, reporting, customer, shift, and endpoint tests from T003-T006"
+      - "Adjacent accounting, inventory, drawer-close, sync, schema, and receipt contracts"
+      - "Paid-reversal cashier surface smoke when the local runtime is available"
+    stop_if:
+      - "An adjacent failure requires changing behavior outside the approved refund plan."
+      - "The cashier surface requires credentials or external state unavailable locally."
+    receipt:
+      result: done
+      summary: "Re-ran the full focused refund suite and adjacent accounting, inventory, drawer, sync, schema, authorization, endpoint, and report contracts; corrected exact-decimal legacy reporting and added cloud payment refund/net-custody parity. The authenticated cashier smoke requires an unavailable session cookie, while its endpoint runtime and static surface contracts pass."
+      evidence:
+        - "Focused T003-T006 suite (17 scripts passed)"
+        - "vendor/bin/phpunit tests/sync/cloud_report_service_test.php (pass: 57 assertions)"
+        - "php tests/sync/paid_reversal_override_path_contract_test.php (pass)"
+        - "php tests/sync/recipe_paid_reversal_endpoint_contract_test.php (pass)"
+        - "php tests/sync/recipe_paid_reversal_surface_smoke_contract_test.php (pass)"
+        - "php tests/sync/operations_reports_workspace_contract_test.php (pass)"
+        - "php tests/sync/cloud_operational_mirror_service_test.php (pass)"
+        - "Known unrelated failures: inventory_phase2_schema_contract_test; FinancialLegacyRepairService exact-money guard"
+  - id: T008
+    type: pm
+    assignee: PM
+    status: done
+    objective: "Expose gross sales, discounts, refunds, and refund-adjusted net sales consistently on shift report and receipt surfaces."
+    allowed_files:
+      - "shift_sales_report.php"
+      - "print/daily_sales_receipt.php"
+      - "print/shift_sales_receipt.php"
+      - "tests/sync/refund_shift_surfaces_contract_test.php"
+    verify:
+      - "php tests/sync/refund_shift_surfaces_contract_test.php"
+      - "php tests/sync/business_day_contract_test.php"
+      - "php tests/sync/shift_sales_receipt_scope_contract_test.php"
+    stop_if:
+      - "A surface requires changing cashier workflow or stored accounting data."
+      - "Focused verification fails twice for the same unexplained reason."
+    receipt:
+      result: done
+      summary: "Added an explicit refunds row between discounts and net sales on the live shift report and both printable shift receipts, while retaining gross and refund-adjusted net totals."
+      evidence:
+        - "php tests/sync/refund_shift_surfaces_contract_test.php (pass)"
+        - "php tests/sync/business_day_contract_test.php (pass)"
+        - "php tests/sync/shift_sales_receipt_scope_contract_test.php (pass)"
+  - id: T999
+    type: pm
+    assignee: PM
+    status: done
+    objective: "Audit the tranche against every approved requirement and current verification evidence."
+    receipt:
+      result: done
+      decision: "complete"
+      summary: "The V1 tranche preserves original sales, supports cumulative partial/full reversals, attributes refunds to the refunding day/operator/shift, separates revenue reversal from tender settlement, updates local/cloud/legacy/shift/customer/item/admin consumers, and passes the current focused verification matrix."
+      evidence:
+        - "19 focused refund/report/shift/customer/sync tests passed after final changes"
+        - "Cloud report PHPUnit passed: 2 tests, 57 assertions"
+        - "Paid-reversal authorization, endpoint, and surface contracts passed"
+        - "git diff --check passed"
+      limitations:
+        - "Authenticated cashier GET smoke was not run because no unlocked session cookie was available; endpoint runtime and static surface contracts passed instead."
+        - "Unrelated pre-existing failures remain in inventory_phase2_schema_contract_test and the FinancialLegacyRepairService exact-money guard."
+  - id: T010
+    type: pm
+    assignee: PM
+    status: done
+    objective: "Harden completed-sale immutability and prove reversal totals remain single-counted for full refunds and paid voids."
+    allowed_files:
+      - "ajax/get_recent_orders.php"
+      - "ajax/delete_order.php"
+      - "classes/Financial/RefundReversalReadService.php"
+      - "classes/Financial/FinancialPostedReportsService.php"
+      - "classes/Financial/FinancialReconciliationService.php"
+      - "classes/Financial/LegacySalesReportService.php"
+      - "classes/Pos/Service/OperationsReportService.php"
+      - "classes/Pos/Service/PosOrderMutationService.php"
+      - "classes/TableOrderService.php"
+      - "classes/ShiftReport.php"
+      - "classes/Sync/CloudReportService.php"
+      - "do/dodel_invoice.php"
+      - "do/dodel_pro.php"
+      - "includes/pos_content.php"
+      - "js/pos_barcode.js"
+      - "tests/sync"
+    verify:
+      - "Focused paid reversal, report, cancellation, edit, permission, inventory, sync, and browser checks."
+      - "git diff --check"
+    stop_if:
+      - "A safe correction requires deleting or rewriting historical posted financial data."
+      - "A required policy extends beyond unpaid cancellation versus posted refund/reversal."
+      - "Focused verification fails twice for the same unexplained reason."
+    receipt:
+      result: done
+      summary: "Preserved completed sales as immutable originals, blocked paid/completed edit and delete substitutes, retained fully refunded sales as gross evidence, prevented double subtraction, made profit refund-aware, and replaced retired order-detail links with the immutable receipt."
+      evidence:
+        - "Real browser: opened drawer session 491, sold order 999738 for 10.00 cash, fully refunded it, and observed clear fully-refunded state with edit/delete disabled."
+        - "Database: original order remains isdeleted=0; posted credit note, posted payment refund, balanced journals, and opposite drawer movements remain linked."
+        - "Admin operations: gross 10.00, refunds 10.00, net sales 0.00, net profit 0.00."
+        - "Cash flow: cash collected 10.00, cash refunded 10.00, net tender 0.00, expected drawer unchanged."
+        - "Focused refund, reporting, shift, cancellation, reconciliation, endpoint, and UI contract tests passed."
+        - "git diff --check passed."
+      limitations:
+        - "A follow-up audit found and T012 fixed the live inventory exception path so refund transactions now fail closed; shadow mode intentionally remains log-and-continue."
+        - "The local handover screen could not open the manager PIN prompt, so the test-only shift helper was used to clear a stale test shift before the browser journey."
+        - "The test product required a sugar-spoon choice despite being bottled water; this is an unrelated catalog/preparation UX issue."
+        - "pos_split_payment_recipe_endpoint_runtime_test has a stale fixture missing usr_pwrs.is_active; the underlying split-payment service test passes."
+  - id: T011
+    type: pm
+    assignee: PM
+    status: done
+    objective: "Audit the hardened refund tranche against current code, focused tests, database records, and the real browser journey."
+    receipt:
+      result: done
+      decision: "complete"
+      summary: "The scoped V1 refund path now uses posted reversal records as the authoritative source, keeps completed sales immutable, projects full and partial status consistently, and single-counts refunds across sales, profit, accounting, tender, drawer, shift, inventory disposition, sync snapshots, and admin drilldowns."
+      evidence:
+        - "T010 receipt and local browser/database proof."
+        - "Focused refund-reversal read, paid-reversal, financial reconciliation, admin drilldown, legacy report, and shift-surface tests passed after final wording changes."
+        - "No hosted or production target was touched."
+  - id: T012
+    type: pm
+    assignee: PM
+    status: done
+    objective: "Make live inventory reversal failures fail closed so a financial refund cannot commit without its required stock side effect."
+    allowed_files:
+      - "classes/Pos/Service/SideEffectPolicy.php"
+      - "tests/sync"
+    verify:
+      - "Focused side-effect policy tests."
+      - "Paid reversal and inventory refund integration tests."
+      - "git diff --check."
+    stop_if:
+      - "The correction would change shadow-mode behavior."
+      - "A safe correction requires rewriting posted refund history."
+    receipt:
+      result: done
+      summary: "Made all inventory bridge failures abort the surrounding order or refund transaction in live mode, including thrown exceptions without a structured error payload, while preserving shadow-mode log-and-continue behavior."
+      evidence:
+        - "php tests/sync/side_effect_policy_test.php (pass)"
+        - "php tests/sync/pos_paid_reversal_service_test.php (pass)"
+        - "php tests/sync/recipe_paid_reversal_endpoint_runtime_test.php (pass)"
+        - "php tests/sync/financial_refund_reconciliation_test.php (pass)"
+        - "git diff --check (pass)"
+      unrelated_failures:
+        - "inventory_recipe_side_effect_contract_test.php currently expects a removed Cofe endpoint delegation marker."
+        - "order_creation_behavior_freeze_test.php currently expects an older table.updated source string."
+  - id: T013
+    type: pm
+    assignee: PM
+    status: done
+    objective: "Perform the final audit after closing the live inventory atomicity gap."
+    receipt:
+      result: done
+      decision: "complete"
+      summary: "The scoped refund path is ready for production use under the production profile: posted reversal data remains authoritative, completed sales remain immutable, all monetary projections are net and single-counted, and live financial plus inventory side effects fail atomically."
+      evidence:
+        - "T010 browser/database/report proof."
+        - "T012 fail-closed policy proof and paid-reversal integration tests."
+        - "Goal-state checker and git diff check pass."
+        - "No hosted or production target was touched."
+
+checks:
+  dirty_fingerprint: "Pre-existing dirty tree recorded at goal creation; preserve all unrelated modifications and deletions."
+  last_verification:
+    result: pass
+    task: T013
+    commands:
+      - "Focused T003-T010 refund, report, shift, cancellation, accounting, inventory, sync, and endpoint matrix passed."
+      - "Real in-app-browser sale and full-refund journey passed with database and admin-report proof."
+      - "php tests/sync/refund_reversal_read_service_test.php (pass)"
+      - "php tests/sync/pos_paid_reversal_service_test.php (pass)"
+      - "php tests/sync/financial_refund_reconciliation_test.php (pass)"
+      - "php tests/sync/refund_admin_drilldown_contract_test.php (pass)"
+      - "php tests/sync/refund_legacy_reports_contract_test.php (pass)"
+      - "php tests/sync/refund_shift_surfaces_contract_test.php (pass)"
+      - "php tests/sync/side_effect_policy_test.php (pass)"
+      - "php tests/sync/recipe_paid_reversal_endpoint_runtime_test.php (pass)"
+      - "git diff --check (pass)"

@@ -1,6 +1,7 @@
 <?php
 
 require_once __DIR__ . '/Money.php';
+require_once __DIR__ . '/RefundReversalReadService.php';
 
 /**
  * Posted-source financial reports for certification.
@@ -9,6 +10,13 @@ require_once __DIR__ . '/Money.php';
  */
 final class FinancialPostedReportsService
 {
+    private RefundReversalReadService $refunds;
+
+    public function __construct(?RefundReversalReadService $refunds = null)
+    {
+        $this->refunds = $refunds ?: new RefundReversalReadService();
+    }
+
     /**
      * @return array{gross:string,discount:string,net:string,tax:string,refunded:string,invoice_count:int,credit_note_count:int,rows:array<int,array>}
      */
@@ -19,6 +27,11 @@ final class FinancialPostedReportsService
         $invoiceCount = 0;
         if ($this->tableExists($conn, 'ot_head')) {
             $hasPosted = $this->columnExists($conn, 'fat_details', 'posted_net');
+            $saleEvidence = $this->refunds->originalSaleEvidencePredicate(
+                $conn,
+                'oh',
+                ['paid', 'refunded', 'partial', 'unpaid', 'open', '']
+            );
             $stmt = $conn->prepare("
                 SELECT oh.id, oh.fat_net, oh.fat_tax, oh.pro_date,
                        " . ($hasPosted
@@ -33,8 +46,7 @@ final class FinancialPostedReportsService
                 FROM ot_head oh
                 LEFT JOIN fat_details fd ON fd.fatid = oh.id AND COALESCE(fd.isdeleted, 0) = 0
                 WHERE oh.pro_tybe = 9
-                  AND COALESCE(oh.isdeleted, 0) = 0
-                  AND COALESCE(oh.payment_status, '') IN ('paid', 'partial', 'unpaid', 'open', '')
+                  AND {$saleEvidence}
                   AND oh.pro_date BETWEEN ? AND ?
                 GROUP BY oh.id, oh.fat_net, oh.fat_tax, oh.pro_date
                 ORDER BY oh.id ASC
@@ -60,41 +72,32 @@ final class FinancialPostedReportsService
                     'discount' => $discount,
                     'tax' => $tax,
                     'net' => $net,
-                    'drilldown_url' => 'check_orders.php?id=' . (int) $row['id'],
+                    'drilldown_url' => 'print/receipt.php?id=' . (int) $row['id'],
                 ];
             }
             $stmt->close();
         }
 
-        $creditNoteCount = 0;
-        if ($this->tableExists($conn, 'credit_notes')) {
-            $stmt = $conn->prepare("
-                SELECT id, total_amount, created_at
-                FROM credit_notes
-                WHERE status = 'posted'
-                  AND DATE(created_at) BETWEEN ? AND ?
-                ORDER BY id ASC
-            ");
-            $stmt->bind_param('ss', $dateFrom, $dateTo);
-            $stmt->execute();
-            $result = $stmt->get_result();
-            while ($row = $result->fetch_assoc()) {
-                $creditNoteCount++;
-                $amount = Money::from((string) $row['total_amount'])->toString();
-                $sales['refunded'] = $sales['refunded']->add(Money::from($amount));
-                $sales['net'] = $sales['net']->subtract(Money::from($amount));
-                $rows[] = [
-                    'document_type' => 'credit_note',
-                    'document_id' => (int) $row['id'],
-                    'date' => substr((string) $row['created_at'], 0, 10),
-                    'gross' => '0.00',
-                    'discount' => '0.00',
-                    'tax' => '0.00',
-                    'net' => '-' . $amount,
-                    'drilldown_url' => 'credit_notes.php?id=' . (int) $row['id'],
-                ];
-            }
-            $stmt->close();
+        $refundSummary = $this->refunds->periodSummary($conn, [
+            'date_from' => $dateFrom,
+            'date_to' => $dateTo,
+        ], true);
+        $creditNoteCount = $refundSummary['count'];
+        $refunded = Money::from($refundSummary['total_amount']);
+        $sales['refunded'] = $refunded;
+        $sales['net'] = $sales['net']->subtract($refunded);
+        foreach ($refundSummary['rows'] as $row) {
+            $amount = Money::from((string) $row['total_amount'])->toString();
+            $rows[] = [
+                'document_type' => 'credit_note',
+                'document_id' => (int) $row['credit_note_id'],
+                'date' => (string) $row['business_day'],
+                'gross' => '0.00',
+                'discount' => '0.00',
+                'tax' => '0.00',
+                'net' => '-' . $amount,
+                'drilldown_url' => 'cash_flow_report.php?focus=refunds&credit_note_id=' . (int) $row['credit_note_id'],
+            ];
         }
 
         return [
@@ -110,7 +113,7 @@ final class FinancialPostedReportsService
     }
 
     /**
-     * Tender report = posted payments − posted/settled refunds.
+     * Tender custody = posted payments minus cash-posted/non-cash-settled refunds.
      *
      * @return array{rows:array<int,array{method:string,paid:string,refunded:string,net:string}>,total_paid:string,total_refunded:string,total_net:string}
      */
@@ -144,9 +147,12 @@ final class FinancialPostedReportsService
             $stmt->close();
         }
 
+        $pendingExternal = Money::zero();
         if ($this->tableExists($conn, 'payment_refunds')) {
             $hasStatus = $this->columnExists($conn, 'payment_refunds', 'status');
-            $statusFilter = $hasStatus ? "AND status IN ('posted','settled')" : '';
+            $statusFilter = $hasStatus
+                ? "AND (pr.status = 'settled' OR (pr.status = 'posted' AND COALESCE(pm.type, '') = 'cash'))"
+                : '';
             $stmt = $conn->prepare("
                 SELECT pm.code AS payment_method, COALESCE(SUM(pr.amount),0) AS refunded
                 FROM payment_refunds pr
@@ -166,6 +172,19 @@ final class FinancialPostedReportsService
                 $byMethod[$method]['refunded'] = Money::from((string) $row['refunded'])->toString();
             }
             $stmt->close();
+
+            if ($hasStatus) {
+                $stmt = $conn->prepare("
+                    SELECT COALESCE(SUM(amount), 0) AS pending
+                    FROM payment_refunds
+                    WHERE DATE(created_at) BETWEEN ? AND ?
+                      AND status = 'pending_external'
+                ");
+                $stmt->bind_param('ss', $dateFrom, $dateTo);
+                $stmt->execute();
+                $pendingExternal = Money::from((string) ($stmt->get_result()->fetch_assoc()['pending'] ?? '0'));
+                $stmt->close();
+            }
         }
 
         $rows = [];
@@ -191,6 +210,7 @@ final class FinancialPostedReportsService
             'total_paid' => $totalPaid->toString(),
             'total_refunded' => $totalRefunded->toString(),
             'total_net' => $totalPaid->subtract($totalRefunded)->toString(),
+            'pending_external_refund_total' => $pendingExternal->toString(),
         ];
     }
 

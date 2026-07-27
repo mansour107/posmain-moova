@@ -31,6 +31,18 @@ $ensureSource = $ensureStart === false ? '' : substr($customerBootstrap, $ensure
 runtimeSchemaAssert(strpos($ensureSource, 'applyPosCustomerSchema') === false, 'customer request-time readiness must not execute DDL');
 runtimeSchemaAssert(strpos($ensureSource, 'SCHEMA_MIGRATIONS_PENDING') === false || strpos($ensureSource, 'POS_CUSTOMER_SCHEMA_MIGRATIONS_PENDING') !== false, 'customer writes must not depend on unrelated global migrations');
 
+$kdsGuard = file_get_contents($root . '/classes/Sync/KdsSchemaReadinessGuard.php');
+runtimeSchemaAssert(strpos($kdsGuard, 'pendingKdsStatements') !== false, 'KDS runtime must use scoped schema readiness');
+runtimeSchemaAssert(strpos($kdsGuard, 'pendingStatements(') === false, 'KDS runtime must not depend on unrelated global migrations');
+$kdsBootstrap = file_get_contents($root . '/includes/kds_bootstrap.php');
+runtimeSchemaAssert(strpos($kdsBootstrap, 'KdsSchemaReadinessGuard') !== false, 'KDS bootstrap must enforce scoped readiness');
+runtimeSchemaAssert(strpos($kdsBootstrap, 'SyncSchemaReadinessGuard') === false, 'KDS bootstrap must not enforce global readiness');
+
+$posController = file_get_contents($root . '/classes/Pos/Http/PosOrderController.php');
+runtimeSchemaAssert(substr_count($posController, 'preflightSyncIdentity($conn)') >= 5, 'POS transaction entry points must preflight sync identity');
+$sugarAssignments = file_get_contents($root . '/ajax/sugar_spoons_assignments_save.php');
+runtimeSchemaAssert(strpos($sugarAssignments, 'posmain_preflight_operational_sync($conn)') !== false, 'preparation writes must preflight sync identity');
+
 $schemaManager = file_get_contents($root . '/classes/Sync/SchemaManager.php');
 runtimeSchemaAssert(strpos($schemaManager, 'DROP TABLE closed_orders') === false, 'generic schema manager must never drop closed_orders');
 runtimeSchemaAssert(strpos($schemaManager, 'backfillClosedOrders') === false, 'generic schema manager must never rewrite closed_orders');

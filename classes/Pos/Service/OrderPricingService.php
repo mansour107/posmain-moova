@@ -1,6 +1,8 @@
 <?php
 
 require_once __DIR__ . '/../../Financial/FinancialPricingService.php';
+require_once __DIR__ . '/../../Items/ItemUnitResolver.php';
+require_once __DIR__ . '/ManagerApprovalService.php';
 
 class OrderPricingService
 {
@@ -10,10 +12,6 @@ class OrderPricingService
         if (!$items) {
             throw new InvalidArgumentException('الرجاء إضافة أصناف للطلب');
         }
-
-        $allowMismatch = !empty($context['allow_price_mismatch'])
-            || !empty($data['manager_approval_id'])
-            || !empty($data['price_override_approval_id']);
 
         $resolvedItems = [];
         foreach ($items as $item) {
@@ -27,21 +25,26 @@ class OrderPricingService
             }
 
             $catalog = $this->loadCatalogPrice($conn, $itemId);
-            $canonicalPrice = UnitPrice::fromLegacy($catalog['price1'] ?? '0')->toString();
+            $unitId = (int) ($item['unit_id'] ?? $item['scanned_unit_id'] ?? 0);
+            $canonicalPrice = UnitPrice::from(
+                ItemUnitResolver::sellPriceForItem($conn, $itemId, $unitId > 0 ? $unitId : null)
+            )->toString();
             $submittedPrice = UnitPrice::fromLegacy($item['price'] ?? '0')->toString();
             if (FinancialDecimal::compare($canonicalPrice, '0', UnitPrice::SCALE) <= 0) {
-                $canonicalPrice = $submittedPrice;
+                throw new InvalidArgumentException('CATALOG_PRICE_NOT_CONFIGURED');
             }
 
             if (
-                !$allowMismatch
-                && FinancialDecimal::compare($submittedPrice, '0', UnitPrice::SCALE) > 0
+                FinancialDecimal::compare($submittedPrice, '0', UnitPrice::SCALE) > 0
                 && FinancialDecimal::compare($submittedPrice, $canonicalPrice, UnitPrice::SCALE) !== 0
             ) {
-                throw new InvalidArgumentException('PRICE_MISMATCH');
+                $this->assertPriceOverrideAuthorized($conn, $data, $context);
             }
 
-            $price = FinancialDecimal::compare($canonicalPrice, '0', UnitPrice::SCALE) > 0 ? $canonicalPrice : $submittedPrice;
+            $price = FinancialDecimal::compare($submittedPrice, $canonicalPrice, UnitPrice::SCALE) === 0
+                || FinancialDecimal::compare($submittedPrice, '0', UnitPrice::SCALE) <= 0
+                ? $canonicalPrice
+                : $submittedPrice;
 
             $item['id'] = $itemId;
             $item['item_id'] = $itemId;
@@ -56,8 +59,9 @@ class OrderPricingService
             $resolvedItems,
             Money::fromLegacy($data['discount'] ?? '0')->toString(),
             [
-                'rate' => Money::fromLegacy($data['tax_rate'] ?? '0')->toString(),
-                'inclusive' => !empty($data['tax_inclusive']),
+                'enabled' => false,
+                'rate' => '0.00',
+                'inclusive' => false,
             ]
         );
         $resolvedTotal = $pricing['totals']['gross'];
@@ -68,7 +72,9 @@ class OrderPricingService
         $data['net'] = $resolvedNet;
         $data['discount'] = $pricing['totals']['discount'];
         $data['taxable_amount'] = $pricing['totals']['taxable'];
-        $data['tax_amount'] = $pricing['totals']['tax'];
+        $data['tax_rate'] = '0.00';
+        $data['tax_inclusive'] = false;
+        $data['tax_amount'] = '0.00';
         $data['pricing_resolved'] = true;
 
         return $data;
@@ -87,5 +93,41 @@ class OrderPricingService
         }
 
         return $row;
+    }
+
+    private function assertPriceOverrideAuthorized(mysqli $conn, array $data, array $context): void
+    {
+        if (!empty($context['allow_price_mismatch'])) {
+            return;
+        }
+
+        $userId = (int) ($context['user_id'] ?? 0);
+        if ($userId > 0) {
+            if (!class_exists('PermissionService', false)) {
+                require_once __DIR__ . '/../../Security/PermissionService.php';
+            }
+            if (PermissionService::forConnection($conn)->check($userId, 'pos.price.override')) {
+                return;
+            }
+        }
+
+        $approvalId = (int) ($data['price_override_approval_id'] ?? 0);
+        if ($approvalId < 1) {
+            throw new InvalidArgumentException('PRICE_MISMATCH');
+        }
+
+        (new ManagerApprovalService())->requireApprovedIfNeeded(
+            $conn,
+            'pos.price.override',
+            'pos_order',
+            (int) ($data['order_id'] ?? 0) ?: null,
+            1.0,
+            ['price_override_approval_id' => $approvalId],
+            [
+                'user_id' => $userId,
+                'require_manager_approval' => true,
+                'price_override_approval_id' => $approvalId,
+            ]
+        );
     }
 }

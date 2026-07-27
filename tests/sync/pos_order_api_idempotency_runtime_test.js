@@ -23,8 +23,8 @@ function jqueryStub() {
   };
 }
 
-function createForm() {
-  const values = {
+function createForm(overrides) {
+  const values = Object.assign({
     age: '1',
     headtotal: '100',
     headnet: '100',
@@ -32,7 +32,7 @@ function createForm() {
     paid: '100',
     paid_cash: '100',
     paid_bank: '0',
-  };
+  }, overrides || {});
   const lineFields = {
     '[name="itmname[]"], [name="itmname"]': [{ value: '11' }],
     '[name="itmqty[]"], [name="itmqty"]': [{ value: '1' }],
@@ -79,8 +79,8 @@ function jsonResponse(status, body) {
   };
 }
 
-function createRuntime(fetchImpl) {
-  const form = createForm();
+function createRuntime(fetchImpl, formValues) {
+  const form = createForm(formValues);
   let key = '';
   let sequence = 0;
   let saving = false;
@@ -223,11 +223,40 @@ async function managerApprovalRetryStaysInsideOriginalIntent() {
   assert(requests[1].manager_approval_id === '77', 'manager retry must add the approval to the new request payload');
 }
 
+async function deliveryMetadataSurvivesTransport() {
+  let sentPayload = null;
+  const runtime = createRuntime((url, options) => {
+    sentPayload = JSON.parse(options.body);
+    return Promise.resolve(jsonResponse(200, { success: true }));
+  }, {
+    age: '3',
+    delivery_customer_name: 'Ahmed',
+    delivery_customer_phone: '01001234567',
+    delivery_customer_address: 'Maadi',
+    delivery_zone_id: '41',
+    delivery_zone_name: 'Maadi',
+    delivery_fee: '25.00',
+    delivery_worker_id: '9',
+    collection_mode: 'cod',
+    courier_source: 'in_house',
+    pos_customer_id: '77',
+  });
+
+  const result = await runtime.api.submitFromForm(runtime.form, 'save');
+  assert(result.success === true, 'delivery transport should submit successfully');
+  assert(sentPayload.delivery_zone_id === '41', 'delivery zone id must survive browser payload building');
+  assert(sentPayload.delivery_worker_id === '9', 'delivery worker id must survive browser payload building');
+  assert(sentPayload.collection_mode === 'cod', 'delivery collection mode must survive browser payload building');
+  assert(sentPayload.courier_source === 'in_house', 'delivery courier source must survive browser payload building');
+  assert(sentPayload.pos_customer_id === '77', 'delivery customer link must survive browser payload building');
+}
+
 Promise.resolve()
   .then(rapidSubmitReusesInFlightPromise)
   .then(processingRetryRetainsExactIntent)
   .then(cancelledNetworkPromptStillRetainsIntent)
   .then(managerApprovalRetryStaysInsideOriginalIntent)
+  .then(deliveryMetadataSurvivesTransport)
   .then(() => console.log('pos-order-api-idempotency-runtime-ok'))
   .catch((error) => {
     console.error(error.stack || error.message || error);

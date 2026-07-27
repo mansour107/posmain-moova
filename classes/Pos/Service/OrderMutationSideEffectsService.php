@@ -29,6 +29,18 @@ class OrderMutationSideEffectsService
         $this->kdsTickets = $kdsTickets ?: new KdsTicketService();
     }
 
+    public function preflightSyncIdentity(mysqli $conn): void
+    {
+        try {
+            $this->syncOutbox->prepareBranchIdentity($conn);
+        } catch (Throwable $exception) {
+            if (SideEffectPolicy::orderEventShouldRollback($exception)) {
+                throw $exception;
+            }
+            error_log('POS sync identity preflight skipped: ' . $exception->getMessage());
+        }
+    }
+
     public function recordTableSave(
         mysqli $conn,
         int $orderId,
@@ -44,6 +56,13 @@ class OrderMutationSideEffectsService
             return;
         }
 
+        $this->publishKitchenRevision($conn, $orderId, $kitchenRevision, $isUpdate, [
+            'table_id' => $tableId,
+            'is_full_refresh' => true,
+        ]);
+
+        $this->syncKitchenDisplay($conn, $orderId, $isUpdate ? 'updated' : 'new', $userId);
+
         $eventType = $isUpdate ? 'order.updated' : 'order.saved';
         $this->recordOrderLifecycle($conn, $orderId, $eventType, $eventSource, $userId, [
             'table_id' => $tableId,
@@ -52,13 +71,6 @@ class OrderMutationSideEffectsService
             'channel' => 'table',
             'kitchen_revision' => $kitchenRevision,
         ], $sourceSystem, $tableId > 0 ? $orderId : null, $tableId);
-
-        $this->publishKitchenRevision($conn, $orderId, $kitchenRevision, $isUpdate, [
-            'table_id' => $tableId,
-            'is_full_refresh' => true,
-        ]);
-
-        $this->syncKitchenDisplay($conn, $orderId, $isUpdate ? 'updated' : 'new', $userId);
     }
 
     public function recordCashierMutation(
@@ -77,6 +89,13 @@ class OrderMutationSideEffectsService
             return;
         }
 
+        $this->publishKitchenRevision($conn, $orderId, $kitchenRevision, $isUpdate, array_merge([
+            'channel' => $channel,
+            'is_full_refresh' => true,
+        ], $metadata));
+
+        $this->syncKitchenDisplay($conn, $orderId, $isUpdate ? 'updated' : 'new', $userId, $metadata);
+
         $eventType = $isUpdate ? 'order.updated' : 'order.saved';
         $this->recordOrderLifecycle($conn, $orderId, $eventType, $eventSource, $userId, array_merge([
             'order_status' => $orderStatus,
@@ -84,13 +103,6 @@ class OrderMutationSideEffectsService
             'channel' => $channel,
             'kitchen_revision' => $kitchenRevision,
         ], $metadata), $sourceSystem);
-
-        $this->publishKitchenRevision($conn, $orderId, $kitchenRevision, $isUpdate, array_merge([
-            'channel' => $channel,
-            'is_full_refresh' => true,
-        ], $metadata));
-
-        $this->syncKitchenDisplay($conn, $orderId, $isUpdate ? 'updated' : 'new', $userId);
     }
 
     public function recordTablePayment(
@@ -175,22 +187,20 @@ class OrderMutationSideEffectsService
         ]);
     }
 
-    /**
-     * Persists per-station kitchen tickets for the KDS. Best-effort: a KDS
-     * failure must never roll back the underlying sale. The KDS poll
-     * endpoint also reconciles missed events as a safety net.
-     */
-    private function syncKitchenDisplay(mysqli $conn, int $orderId, string $eventType, int $userId): void
+    /** Persist the exact kitchen snapshot or fail the enclosing send visibly. */
+    private function syncKitchenDisplay(
+        mysqli $conn,
+        int $orderId,
+        string $eventType,
+        int $userId,
+        array $eventMetadata = []
+    ): void
     {
         if ($orderId < 1) {
             return;
         }
 
-        try {
-            $this->kdsTickets->syncForOrder($conn, $orderId, $eventType, $userId);
-        } catch (Throwable $exception) {
-            error_log('KDS ticket sync skipped for order ' . $orderId . ': ' . $exception->getMessage());
-        }
+        $this->kdsTickets->syncForOrder($conn, $orderId, $eventType, $userId, $eventMetadata);
     }
 
     private function publishKitchenRevision(
@@ -251,9 +261,9 @@ class OrderMutationSideEffectsService
             }
         }
 
-        $this->orderEvents->recordIfAvailable($conn, $orderId, $eventType, $eventSource, [
-            'actor_user_id' => $userId,
-            'metadata' => $metadata,
-        ]);
+        // PosOrderMutationService owns the durable order_events write inside the
+        // same business transaction. This coordinator is responsible only for
+        // outbox/table snapshots and kitchen/KDS projections; writing the same
+        // lifecycle event here creates duplicate audit facts for one mutation.
     }
 }

@@ -26,7 +26,7 @@ try {
     recipeProductionEndpointRuntimeSeedBalance($conn, 3001, '20.000000');
     recipeProductionEndpointRuntimeSeedBalance($conn, 2001, '0.000000');
 
-    recipeProductionEndpointRuntimeRunChild($db, [
+    $draftChild = recipeProductionEndpointRuntimeRunChild($db, [
         'action' => 'create_draft',
         'recipe_id' => 101,
         'planned_output_qty' => '2.000000',
@@ -35,7 +35,13 @@ try {
     ]);
 
     $batch = recipeProductionEndpointRuntimeOne($conn, 'SELECT * FROM production_batches WHERE recipe_id = 101 ORDER BY id DESC LIMIT 1');
-    recipeProductionEndpointRuntimeAssert($batch !== null, 'production page should create a draft batch');
+    $draftError = trim((string) ($draftChild['stderr'] ?? ''));
+    recipeProductionEndpointRuntimeAssert(
+        $batch !== null,
+        $draftError !== ''
+            ? 'production page should create a draft batch: ' . $draftError
+            : 'production page should create a draft batch'
+    );
     recipeProductionEndpointRuntimeAssert($batch['status'] === 'draft', 'production page should create draft status');
     recipeProductionEndpointRuntimeAssert((int) $batch['created_by'] === 1, 'production page should stamp draft creator');
     recipeProductionEndpointRuntimeAssert(recipeProductionEndpointRuntimeDecimalEquals($batch['planned_output_qty'], '2.000000'), 'production page should persist planned output qty');
@@ -211,10 +217,23 @@ function recipeProductionEndpointRuntimeCreateSchema(mysqli $conn): void
         CREATE TABLE settings (
             id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
             lang VARCHAR(20) NULL DEFAULT 'ar',
-            edit_pass VARCHAR(191) NULL DEFAULT ''
+            edit_pass VARCHAR(191) NULL DEFAULT '',
+            def_pos_store INT NULL,
+            isdeleted TINYINT(1) NOT NULL DEFAULT 0
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
     ");
-    $conn->query("INSERT INTO settings (lang, edit_pass) VALUES ('ar', '')");
+    $conn->query("INSERT INTO settings (lang, edit_pass, def_pos_store) VALUES ('ar', '', 3)");
+    $conn->query("
+        CREATE TABLE acc_head (
+            id INT NOT NULL PRIMARY KEY,
+            code VARCHAR(40) NULL,
+            aname VARCHAR(191) NULL,
+            is_stock TINYINT(1) NOT NULL DEFAULT 0,
+            isdeleted TINYINT(1) NOT NULL DEFAULT 0
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+    ");
+    $conn->query("INSERT INTO acc_head (id, code, aname, is_stock, isdeleted)
+        VALUES (3, 'STORE-3', 'Operational store', 1, 0)");
     $conn->query("
         CREATE TABLE towns (
             id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -328,6 +347,7 @@ function recipeProductionEndpointRuntimeCreateSchema(mysqli $conn): void
             committed_by BIGINT UNSIGNED NULL,
             variance_reason VARCHAR(255) NULL,
             notes TEXT NULL,
+            sync_revision BIGINT UNSIGNED NOT NULL DEFAULT 0,
             created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
             PRIMARY KEY (id),
@@ -444,7 +464,7 @@ function recipeProductionEndpointRuntimeSeedBalance(mysqli $conn, int $itemId, s
         INSERT INTO inventory_item_balances
             (pos_tenant, pos_branch, branch_uuid, store_id, item_id, qty_on_hand, qty_reserved, qty_available, moving_average_cost)
         VALUES
-            (0, 0, NULL, 0, {$itemId}, '{$qty}', '0.000000', '{$qty}', '0.000000')
+            (0, 0, NULL, 3, {$itemId}, '{$qty}', '0.000000', '{$qty}', '0.000000')
     ");
 }
 

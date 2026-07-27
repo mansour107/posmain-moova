@@ -58,6 +58,8 @@ try {
     posTableSaveRecipeAssert($orderId > 0, 'table save endpoint should return order id');
     $firstKitchenRevision = (int) (($savedPayload['updated_state']['kitchen_revision'] ?? $savedPayload['kitchen_revision'] ?? 0));
     posTableSaveRecipeAssert($firstKitchenRevision >= 1, 'table save endpoint should return kitchen_revision');
+    $firstMutationVersion = (int) (($savedPayload['updated_state']['mutation_version'] ?? $savedPayload['mutation_version'] ?? 0));
+    posTableSaveRecipeAssert($firstMutationVersion >= 1, 'table save endpoint should return mutation_version');
 
     $replay = posTableSaveRecipeEndpointJsonPost($baseUrl . '/ajax/save_order.php', $sessionId, $payload);
     posTableSaveRecipeAssert((int) ($replay['status'] ?? 0) === 200, 'table save endpoint replay should return HTTP 200');
@@ -71,6 +73,7 @@ try {
 
     $updatePayload = $payload;
     $updatePayload['order_id'] = $orderId;
+    $updatePayload['mutation_version'] = $firstMutationVersion;
     $updatePayload['items'] = [
         ['id' => 10, 'qty' => 1, 'price' => 10],
     ];
@@ -80,7 +83,10 @@ try {
 
     $updated = posTableSaveRecipeEndpointJsonPost($baseUrl . '/ajax/save_order.php', $sessionId, $updatePayload);
     $updatedPayload = json_decode((string) ($updated['body'] ?? ''), true);
-    posTableSaveRecipeAssert(($updatedPayload['success'] ?? false) === true, 'table save update should succeed');
+    posTableSaveRecipeAssert(
+        ($updatedPayload['success'] ?? false) === true,
+        'table save update should succeed: ' . json_encode($updatedPayload, JSON_UNESCAPED_SLASHES)
+    );
     posTableSaveRecipeAssert((int) ($updatedPayload['order_id'] ?? 0) === $orderId, 'table save update should keep same order id');
     $secondKitchenRevision = (int) (($updatedPayload['updated_state']['kitchen_revision'] ?? 0));
     posTableSaveRecipeAssert($secondKitchenRevision > $firstKitchenRevision, 'table save update should bump kitchen_revision');
@@ -159,10 +165,26 @@ function posTableSaveRecipeAssertEndpointRows(mysqli $conn, int $orderId, string
     posTableSaveRecipeAssert(in_array('reservation', $movementTypes, true), 'saved table order should record reservation movement');
     posTableSaveRecipeAssert(!in_array('recipe_consumption', $movementTypes, true), 'saved unpaid table order should not consume ingredients');
 
-    $balance = (new InventoryBalanceRepository())->findBalance($conn, 0, 0, 3, 12);
+    require_once __DIR__ . '/../../includes/pos_operational_store.php';
+    $operationalStoreId = posmain_operational_store_id($conn);
+    $balance = (new InventoryBalanceRepository())->findBalance($conn, 0, 0, $operationalStoreId, 12);
     posTableSaveRecipeAssert(is_array($balance), 'ingredient balance should exist after table save');
-    posTableSaveRecipeAssert((string) $balance['qty_on_hand'] === '10.000000', 'table save reservation should not reduce on-hand stock');
-    posTableSaveRecipeAssert((string) $balance['qty_reserved'] === '2.000000', 'table save should reserve two ingredient units');
+    posTableSaveRecipeAssert(
+        (string) $balance['qty_on_hand'] === '10.000000',
+        'table save reservation should not reduce on-hand stock; actual=' . (string) $balance['qty_on_hand']
+            . '; balances=' . json_encode(
+                $conn->query('SELECT * FROM inventory_item_balances ORDER BY store_id, item_id')->fetch_all(MYSQLI_ASSOC),
+                JSON_UNESCAPED_SLASHES
+            )
+    );
+    posTableSaveRecipeAssert(
+        (string) $balance['qty_reserved'] === '2.000000',
+        'table save should reserve two ingredient units; state=' . json_encode([
+            'balance' => $balance,
+            'reservations' => $conn->query("SELECT * FROM stock_reservations WHERE order_id = {$orderId} ORDER BY id")->fetch_all(MYSQLI_ASSOC),
+            'movements' => $conn->query("SELECT id, movement_type, qty_in, qty_out, idempotency_key FROM inventory_movements WHERE order_id = {$orderId} ORDER BY id")->fetch_all(MYSQLI_ASSOC),
+        ], JSON_UNESCAPED_SLASHES)
+    );
 }
 
 function posTableSaveRecipeAssert(bool $condition, string $message): void

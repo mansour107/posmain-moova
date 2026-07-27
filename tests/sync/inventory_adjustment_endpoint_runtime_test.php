@@ -32,8 +32,8 @@ $conn->select_db($db);
 $conn->set_charset('utf8mb4');
 
 try {
-    (new SyncSchemaManager())->apply($conn);
     inventoryAdjustmentEndpointRuntimeCreateLegacyTables($conn);
+    (new SyncSchemaManager())->apply($conn);
     inventoryAdjustmentEndpointRuntimeSeedCommonRows($conn);
     inventoryAdjustmentEndpointRuntimeSeedStock($conn, 7701, '10.000000', '3.000000', 'seed-7701');
 
@@ -145,6 +145,7 @@ function inventoryAdjustmentEndpointRuntimeChild(string $json): void
     $_SESSION['usrole'] = 1;
     $_SESSION['userrole'] = 1;
     $_SESSION['usty'] = 2;
+    $_SESSION['posmain_auth_version'] = 1;
     $_SESSION['posmain_csrf_tokens'] = [
         'inventory_adjustment' => $csrf,
     ];
@@ -289,6 +290,8 @@ CREATE TABLE users (
 CREATE TABLE usr_pwrs (
   id INT NOT NULL PRIMARY KEY,
   rollname VARCHAR(191) NULL,
+  info VARCHAR(255) NULL,
+  is_active TINYINT(1) NOT NULL DEFAULT 1,
   add_stock TINYINT(1) NOT NULL DEFAULT 0,
   edit_stock TINYINT(1) NOT NULL DEFAULT 0,
   sid_reports TINYINT(1) NOT NULL DEFAULT 0,
@@ -308,12 +311,28 @@ CREATE TABLE myitems (
   base_unit_id INT NULL,
   isdeleted TINYINT(1) NOT NULL DEFAULT 0
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
+    $conn->query("
+CREATE TABLE acc_head (
+  id INT NOT NULL PRIMARY KEY,
+  code VARCHAR(50) NULL,
+  aname VARCHAR(191) NULL,
+  parent_id INT NULL,
+  is_basic TINYINT(1) NOT NULL DEFAULT 0,
+  is_stock TINYINT(1) NOT NULL DEFAULT 0,
+  is_fund TINYINT(1) NOT NULL DEFAULT 0,
+  isdeleted TINYINT(1) NOT NULL DEFAULT 0
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
 }
 
 function inventoryAdjustmentEndpointRuntimeSeedCommonRows(mysqli $conn): void
 {
     $conn->query("INSERT INTO users (id, uname, password, userrole, usertype, isdeleted) VALUES (1, 'inventory_adjustment_smoke', '', 1, 2, 0)");
-    $conn->query("INSERT INTO usr_pwrs (id, rollname, add_stock, edit_stock, sid_reports, sid_accounts, isdeleted) VALUES (1, 'admin', 1, 1, 1, 1, 0)");
+    $conn->query("INSERT INTO acc_head (id, code, aname, is_stock, isdeleted) VALUES (3, '130003', 'Operational Stock', 1, 0)");
+    $owner = inventoryAdjustmentEndpointRuntimeOne($conn, "SELECT id, role_key FROM usr_pwrs WHERE id = 1 LIMIT 1");
+    inventoryAdjustmentEndpointRuntimeAssert(
+        is_array($owner) && ($owner['role_key'] ?? '') === 'owner',
+        'schema setup should seed the owner role used by the endpoint fixture'
+    );
     $conn->query("
         INSERT INTO myitems (id, iname, barcode, itmqty, cost_price, last_price, item_type, track_stock, isdeleted)
         VALUES (7701, 'Inventory endpoint ingredient', 'IE-7701', 0.000000, 0.000000, 0.000000, 'ingredient', 1, 0)

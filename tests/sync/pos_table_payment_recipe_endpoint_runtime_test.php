@@ -30,6 +30,17 @@ try {
     posTakeawayInvoiceCreateSchema($conn);
     $conn->query("ALTER TABLE ot_head ADD COLUMN payment_notes TEXT NULL");
     posTakeawayInvoiceSeedFixtures($conn);
+    $conn->query("INSERT INTO payment_methods
+        (code, name_ar, name_en, account_id, type, requires_reference, settlement_policy, is_active, sort_order)
+        VALUES ('cash', 'نقدي', 'Cash', 51, 'cash', 0, 'cash_drawer', 1, 1)");
+    (new DrawerSessionService())->openSession($conn, [
+        'user_id' => 7,
+        'opened_by' => 7,
+        'tenant' => 0,
+        'branch' => 0,
+        'fund_account_id' => 51,
+        'opening_cash' => '100.00',
+    ]);
     posTakeawayInvoiceSeedRecipe($conn);
     $conn->query("INSERT INTO tables (id, tname, table_case, isdeleted) VALUES (1, 'Recipe Table Runtime', 0, 0)");
 

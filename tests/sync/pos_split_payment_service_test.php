@@ -402,6 +402,7 @@ function posSplitPaymentCreateSchema(mysqli $conn): void
             payment_status VARCHAR(40) NULL,
             invoice_status VARCHAR(40) NULL,
             order_status VARCHAR(40) NULL,
+            mutation_version BIGINT UNSIGNED NOT NULL DEFAULT 0,
             payment_method VARCHAR(50) NULL,
             payment_date DATETIME NULL,
             completed_at DATETIME NULL,

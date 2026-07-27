@@ -31,13 +31,13 @@ try {
         'conn' => $conn,
         'order_id' => 100,
         'fat_detail_id' => 1001,
-        'store_id' => 0,
+        'store_id' => 3,
         'channel' => 'table',
         'order_type' => 'dine_in',
         'sellable_item_id' => 41010,
         'quantity' => '3.000000',
     ]);
-    $reservedBeforeMerge = (new InventoryBalanceRepository())->findBalance($conn, 0, 0, 0, 41011);
+    $reservedBeforeMerge = (new InventoryBalanceRepository())->findBalance($conn, 0, 0, 3, 41011);
     recipeTableMergeAssert($reservedBeforeMerge['qty_reserved'] === '3.000000', 'source table order should reserve three ingredient units before merge');
 
     $result = $merge->mergeOrders($conn, [
@@ -56,7 +56,7 @@ try {
     $destinationUsages = recipeTableMergeRows($conn, 'recipe_order_line_usage', 'order_id = 200 AND sellable_item_id = 41010');
     $sourceReservations = recipeTableMergeRows($conn, 'stock_reservations', 'order_id = 100');
     $destinationReservations = recipeTableMergeRows($conn, 'stock_reservations', 'order_id = 200 AND sellable_item_id = 41010');
-    $balanceAfterMerge = (new InventoryBalanceRepository())->findBalance($conn, 0, 0, 0, 41011);
+    $balanceAfterMerge = (new InventoryBalanceRepository())->findBalance($conn, 0, 0, 3, 41011);
 
     recipeTableMergeAssert(array_column($sourceUsages, 'status') === ['released'], 'source recipe usage should be released after merge');
     recipeTableMergeAssert(array_column($destinationUsages, 'status') === ['reserved'], 'destination recipe usage should be reserved after merge');
@@ -69,7 +69,7 @@ try {
     $lifecycle->onOrderPaid([
         'conn' => $conn,
         'order_id' => 200,
-        'store_id' => 0,
+        'store_id' => 3,
         'channel' => 'table',
         'order_type' => 'dine_in',
         'lines' => [
@@ -80,7 +80,7 @@ try {
             ],
         ],
     ]);
-    $balanceAfterPayment = (new InventoryBalanceRepository())->findBalance($conn, 0, 0, 0, 41011);
+    $balanceAfterPayment = (new InventoryBalanceRepository())->findBalance($conn, 0, 0, 3, 41011);
     $consumedQty = $conn->query("SELECT COALESCE(SUM(qty_out), 0) AS qty FROM inventory_movements WHERE item_id = 41011 AND movement_type = 'recipe_consumption'")->fetch_assoc();
     $destinationUsageAfterPay = recipeTableMergeRows($conn, 'recipe_order_line_usage', 'order_id = 200 AND sellable_item_id = 41010');
 
@@ -98,6 +98,23 @@ try {
 function recipeTableMergeCreateSchema(mysqli $conn): void
 {
     $conn->query("
+        CREATE TABLE settings (
+            id INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+            def_pos_store INT UNSIGNED NULL
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ");
+    $conn->query("
+        CREATE TABLE acc_head (
+            id INT UNSIGNED NOT NULL PRIMARY KEY,
+            code VARCHAR(32) NOT NULL,
+            aname VARCHAR(191) NOT NULL,
+            is_stock TINYINT(1) NOT NULL DEFAULT 0,
+            isdeleted TINYINT(1) NOT NULL DEFAULT 0
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ");
+    $conn->query("INSERT INTO acc_head (id, code, aname, is_stock) VALUES (3, 'STORE-3', 'Operational store', 1)");
+    $conn->query("INSERT INTO settings (def_pos_store) VALUES (3)");
+    $conn->query("
         CREATE TABLE tables (
             id INT NOT NULL PRIMARY KEY,
             tname VARCHAR(120) NULL,
@@ -110,7 +127,7 @@ function recipeTableMergeCreateSchema(mysqli $conn): void
             id INT NOT NULL PRIMARY KEY,
             pro_tybe INT NULL,
             table_id INT NULL,
-            store_id INT NULL DEFAULT 0,
+            store_id INT NULL DEFAULT 3,
             isdeleted TINYINT(1) NOT NULL DEFAULT 0,
             order_status ENUM('draft','active','completed','cancelled') NULL,
             payment_status ENUM('unpaid','partial','paid','refunded','voided') NULL,
@@ -164,13 +181,13 @@ function recipeTableMergeCreateSchema(mysqli $conn): void
             invoice_status, fat_total, fat_disc, fat_net, pro_value, profit,
             paid_amount, remaining_amount, tenant, branch
         ) VALUES
-        (100, 9, 1, 0, 0, 'active', 'unpaid', 'draft', 30, 0, 30, 30, 12, 0, 30, 0, 0),
-        (200, 9, 2, 0, 0, 'active', 'unpaid', 'draft', 10, 0, 10, 10, 4, 0, 10, 0, 0)
+        (100, 9, 1, 3, 0, 'active', 'unpaid', 'draft', 30, 0, 30, 30, 12, 0, 30, 0, 0),
+        (200, 9, 2, 3, 0, 'active', 'unpaid', 'draft', 10, 0, 10, 10, 4, 0, 10, 0, 0)
     ");
     $conn->query("
         INSERT INTO fat_details (id, fatid, pro_id, item_id, isdeleted, qty_in, qty_out, u_val, det_store, det_value, profit) VALUES
-        (1001, 100, 100, 41010, 0, 0, 6.000000, 2.000000, 0, 30, 12),
-        (2001, 200, 200, 41020, 0, 0, 1.000000, 1.000000, 0, 10, 4)
+        (1001, 100, 100, 41010, 0, 0, 6.000000, 2.000000, 3, 30, 12),
+        (2001, 200, 200, 41020, 0, 0, 1.000000, 1.000000, 3, 10, 4)
     ");
 }
 
@@ -184,6 +201,9 @@ function recipeTableMergeSeedRecipe(mysqli $conn, int $sellableItemId, int $ingr
             (41020, 'Merge non-recipe item', 2.000000, 7, 'sellable', 1)
     ");
     (new InventoryBalanceRepository())->putBalance($conn, [
+        'pos_tenant' => 0,
+        'pos_branch' => 0,
+        'store_id' => 3,
         'item_id' => $ingredientItemId,
         'qty_on_hand' => $stock,
         'qty_reserved' => '0.000000',

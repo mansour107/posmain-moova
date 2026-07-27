@@ -56,8 +56,12 @@ shiftSalesReceiptScopeAssert(
     'getItemsBreakdown must not pass oh.crtime as table alias'
 );
 shiftSalesReceiptScopeAssert(
-    strpos($shiftReport, "appendShiftWindow(\$query, \$params, 'oh')") !== false,
+    strpos($shiftReport, "appendShiftWindow(\$saleWhere, \$params, 'oh')") !== false,
     'getItemsBreakdown should append shift window with oh alias'
+);
+shiftSalesReceiptScopeAssert(
+    strpos($shiftReport, 'credit_note_lines') !== false && strpos($shiftReport, '-cnl.quantity') !== false,
+    'getItemsBreakdown should include negative credited item lines in the refunding shift'
 );
 
 echo "shift-sales-receipt-scope-contract-ok\n";

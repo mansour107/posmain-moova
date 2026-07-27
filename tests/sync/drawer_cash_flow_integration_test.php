@@ -28,6 +28,7 @@ try {
     $conn->select_db($db);
     drawerCashFlowIntegrationCreateLegacyTables($conn);
     (new SyncSchemaManager())->apply($conn);
+    drawerCashFlowIntegrationSeedTables($conn);
 
     $paymentMethods = new PaymentMethodService();
     $paymentMethods->saveMethod($conn, [
@@ -36,18 +37,18 @@ try {
         'name_en' => 'Cash drawer',
         'type' => 'cash',
         'account_id' => 51,
+        'settlement_policy' => 'cash_drawer',
     ]);
     $paymentMethods->saveMethod($conn, [
         'code' => 'card_terminal',
         'name_ar' => 'Card terminal',
         'name_en' => 'Card terminal',
         'type' => 'card',
-        'account_id' => 52,
-        'requires_reference' => true,
+        'account_id' => 61,
+        'settlement_policy' => 'reference_required',
         'sort_order' => 1,
     ]);
 
-    drawerCashFlowIntegrationSeedTables($conn);
     drawerCashFlowIntegrationSeedRefundSchema($conn);
 
     $drawer = new DrawerSessionService();
@@ -56,43 +57,43 @@ try {
         'opened_by' => 7,
         'tenant' => 2,
         'branch' => 3,
-        'opening_cash' => '100.000',
+        'opening_cash' => '100.00',
     ]);
     $service = new PosOrderMutationService();
     $payments = new PaymentService();
-    $context = ['user_id' => 7, 'tenant' => 2, 'branch' => 3];
+    $context = ['user_id' => 7, 'tenant' => 2, 'branch' => 3, 'skip_idempotency' => true];
 
     $tableCash = $service->payTableOrder($conn, [
         'table_id' => 1,
         'order_id' => 100,
-        'paid' => 100,
+        'paid' => '100.00',
         'payment_method' => 'cash_drawer',
     ], $context);
     drawerCashFlowIntegrationAssert($tableCash['success'] === true, 'table cash payment should succeed');
-    drawerCashFlowIntegrationAssert($drawer->expectedCash($conn, (int) $session['id']) === '200.000', 'expected cash should include opening and table cash sale');
+    drawerCashFlowIntegrationAssert($drawer->expectedCash($conn, (int) $session['id']) === '200.00', 'expected cash should include opening and table cash sale');
 
-    $payments->recordCollectedOrderPayments($conn, 150, 35.0, 18.0, 7, $context, 'legacy_mixed_payment');
-    drawerCashFlowIntegrationAssert(drawerCashFlowIntegrationNetCashForOrder($conn, 150) === 35.0, 'legacy mixed path should record only cash in drawer');
-    drawerCashFlowIntegrationAssert(drawerCashFlowIntegrationOrderPaymentTotal($conn, 150, 'bank') === 18.0, 'legacy mixed path should record bank payment row');
-    drawerCashFlowIntegrationAssert($drawer->expectedCash($conn, (int) $session['id']) === '235.000', 'expected cash should include legacy cash portion');
+    $payments->recordCollectedOrderPayments($conn, 150, '35.00', '18.00', 7, $context, 'legacy_mixed_payment');
+    drawerCashFlowIntegrationAssert(drawerCashFlowIntegrationNetCashForOrder($conn, 150) === '35.00', 'legacy mixed path should record only cash in drawer');
+    drawerCashFlowIntegrationAssert(drawerCashFlowIntegrationOrderPaymentTotal($conn, 150, 'bank') === '18.00', 'legacy mixed path should record bank payment row');
+    drawerCashFlowIntegrationAssert($drawer->expectedCash($conn, (int) $session['id']) === '235.00', 'expected cash should include legacy cash portion');
 
     $overpay = $service->payTableOrder($conn, [
         'table_id' => 2,
         'order_id' => 101,
-        'paid' => 70,
+        'paid' => '70.00',
         'payment_method' => 'cash_drawer',
     ], $context);
-    drawerCashFlowIntegrationAssert(abs((float) $overpay['data']['applied_amount'] - 50.0) < 0.0001, 'overpay should apply remaining amount only');
+    drawerCashFlowIntegrationAssert($overpay['data']['applied_amount'] === '50.00', 'overpay should apply remaining amount only');
     $movement = drawerCashFlowIntegrationLatestMovement($conn);
-    drawerCashFlowIntegrationAssert(abs((float) $movement['amount'] - 50.0) < 0.0001, 'overpay drawer movement should use applied amount only');
-    drawerCashFlowIntegrationAssert($drawer->expectedCash($conn, (int) $session['id']) === '285.000', 'expected cash should include partial overpay applied amount');
+    drawerCashFlowIntegrationAssert(CashAmount::normalize($movement['amount']) === '50.00', 'overpay drawer movement should use applied amount only');
+    drawerCashFlowIntegrationAssert($drawer->expectedCash($conn, (int) $session['id']) === '285.00', 'expected cash should include partial overpay applied amount');
 
-    drawerCashFlowIntegrationSeedPaidOrderForRefund($conn, 501, 40.0);
-    $payments->recordCollectedOrderPayments($conn, 501, 40.0, 0.0, 7, $context, 'refund_seed_sale');
-    drawerCashFlowIntegrationAssert($drawer->expectedCash($conn, (int) $session['id']) === '325.000', 'expected cash should include seeded sale before refund');
-    $payments->recordCashRefundMovementForPayment($conn, 40.0, 501, 7, array_merge($context, ['drawer_reason' => 'drawer_refund_test']));
+    drawerCashFlowIntegrationSeedPaidOrderForRefund($conn, 501, '40.00');
+    $payments->recordCollectedOrderPayments($conn, 501, '40.00', '0.00', 7, $context, 'refund_seed_sale');
+    drawerCashFlowIntegrationAssert($drawer->expectedCash($conn, (int) $session['id']) === '325.00', 'expected cash should include seeded sale before refund');
+    $payments->recordCashRefundMovementForPayment($conn, '40.00', 501, 7, array_merge($context, ['drawer_reason' => 'drawer_refund_test']));
     drawerCashFlowIntegrationAssert(drawerCashFlowIntegrationMovementCount($conn, 'refund_cash', 501) === 1, 'refund should record refund_cash');
-    drawerCashFlowIntegrationAssert($drawer->expectedCash($conn, (int) $session['id']) === '285.000', 'expected cash should return to pre-refund-sale total after refund');
+    drawerCashFlowIntegrationAssert($drawer->expectedCash($conn, (int) $session['id']) === '285.00', 'expected cash should return to pre-refund-sale total after refund');
 
     echo "drawer-cash-flow-integration-ok db={$db}\n";
 } finally {
@@ -282,8 +283,8 @@ function drawerCashFlowIntegrationSeedTables(mysqli $conn): void
         (1, 'T1', 1, 0),
         (2, 'T2', 1, 0)
     ");
-    drawerCashFlowIntegrationSeedOrder($conn, 100, 1, 10, 100, 100, 0);
-    drawerCashFlowIntegrationSeedOrder($conn, 101, 2, 11, 80, 80, 30);
+    drawerCashFlowIntegrationSeedOrder($conn, 100, 1, 10, '100.00', '100.00', '0.00');
+    drawerCashFlowIntegrationSeedOrder($conn, 101, 2, 11, '80.00', '80.00', '30.00');
 }
 
 function drawerCashFlowIntegrationSeedRefundSchema(mysqli $conn): void
@@ -301,10 +302,10 @@ function drawerCashFlowIntegrationSeedRefundSchema(mysqli $conn): void
     ");
 }
 
-function drawerCashFlowIntegrationSeedOrder(mysqli $conn, int $id, int $tableId, int $proId, float $total, float $net, float $paid): void
+function drawerCashFlowIntegrationSeedOrder(mysqli $conn, int $id, int $tableId, int $proId, string $total, string $net, string $paid): void
 {
-    $remaining = max(0, $net - $paid);
-    $paymentStatus = $paid > 0 ? 'partial' : 'unpaid';
+    $remaining = Money::from($net)->subtract(Money::from($paid))->toString();
+    $paymentStatus = Money::from($paid)->isPositive() ? 'partial' : 'unpaid';
     $conn->query("
         INSERT INTO ot_head (
             id, pro_id, branch_id, table_id, order_type, pro_tybe, pro_date, accural_date,
@@ -320,7 +321,7 @@ function drawerCashFlowIntegrationSeedOrder(mysqli $conn, int $id, int $tableId,
     ");
 }
 
-function drawerCashFlowIntegrationSeedPaidOrderForRefund(mysqli $conn, int $orderId, float $amount): void
+function drawerCashFlowIntegrationSeedPaidOrderForRefund(mysqli $conn, int $orderId, string $amount): void
 {
     $conn->query("
         INSERT INTO ot_head (
@@ -365,20 +366,20 @@ function drawerCashFlowIntegrationLatestMovement(mysqli $conn): array
     return $row;
 }
 
-function drawerCashFlowIntegrationNetCashForOrder(mysqli $conn, int $orderId): float
+function drawerCashFlowIntegrationNetCashForOrder(mysqli $conn, int $orderId): string
 {
     return (new DrawerSessionService())->netCashRecordedForOrder($conn, $orderId);
 }
 
-function drawerCashFlowIntegrationOrderPaymentTotal(mysqli $conn, int $orderId, string $method): float
+function drawerCashFlowIntegrationOrderPaymentTotal(mysqli $conn, int $orderId, string $method): string
 {
     $stmt = $conn->prepare('SELECT COALESCE(SUM(amount), 0) AS total FROM order_payments WHERE order_id = ? AND payment_method = ?');
     $stmt->bind_param('is', $orderId, $method);
     $stmt->execute();
-    $total = (float) ($stmt->get_result()->fetch_assoc()['total'] ?? 0);
+    $total = (string) ($stmt->get_result()->fetch_assoc()['total'] ?? '0.00');
     $stmt->close();
 
-    return round($total, 3);
+    return CashAmount::normalize($total);
 }
 
 function drawerCashFlowIntegrationAssert(bool $condition, string $message): void

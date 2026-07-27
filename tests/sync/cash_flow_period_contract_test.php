@@ -26,6 +26,8 @@ cashFlowPeriodContractAssert(strpos($drawer, 'recordUnassignedMovement') !== fal
 cashFlowPeriodContractAssert(strpos($drawer, 'linkMovementToVoucher') !== false, 'DrawerSessionService should link movements to vouchers by id');
 cashFlowPeriodContractAssert(strpos($cashFlowPeriod, 'close_variance_rollup') !== false, 'CashFlowPeriodService should expose close variance rollup');
 cashFlowPeriodContractAssert(strpos($cashFlowPeriod, 'BusinessDayService') !== false, 'CashFlowPeriodService should use BusinessDayService');
+cashFlowPeriodContractAssert(strpos($cashFlowPeriod, 'custody_refund_total') !== false, 'cash flow should separate tender custody from refund obligations');
+cashFlowPeriodContractAssert(strpos($cashFlowPeriod, "\$status === 'settled' || (\$status === 'posted' && \$type === 'cash')") !== false, 'only posted cash or settled noncash refunds should reduce tender custody');
 
 $payment = file_get_contents(__DIR__ . '/../../classes/Pos/Service/PaymentService.php');
 cashFlowPeriodContractAssert(strpos($payment, 'recordCashMovementWithFallback') !== false, 'PaymentService should keep cash movement helper');

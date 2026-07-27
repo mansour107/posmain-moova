@@ -1,21 +1,28 @@
 <?php
 
-$sourcePath = __DIR__ . '/../../ajax/process_split_payment.php';
-$source = file_get_contents($sourcePath);
-if ($source === false) {
-    throw new RuntimeException('Unable to read ajax/process_split_payment.php');
+$root = __DIR__ . '/../..';
+$source = file_get_contents($root . '/ajax/process_split_payment.php');
+$dispatch = file_get_contents($root . '/includes/pos_api_dispatch.php');
+$controller = file_get_contents($root . '/classes/Pos/Http/PosOrderController.php');
+$sideEffects = file_get_contents($root . '/classes/Pos/Service/OrderMutationSideEffectsService.php');
+if ($source === false || $dispatch === false || $controller === false || $sideEffects === false) {
+    throw new RuntimeException('Unable to read split-payment routing contract files');
 }
 
-splitEndpointRoutingAssert(strpos($source, "require_once('../classes/Pos/Service/PosOrderMutationService.php')") !== false, 'split endpoint should require PosOrderMutationService');
-splitEndpointRoutingAssert(strpos($source, '$posMutationService = new PosOrderMutationService()') !== false, 'split endpoint should instantiate PosOrderMutationService');
-splitEndpointRoutingAssert(strpos($source, '$posMutationService->splitTablePayment') !== false, 'split endpoint should route mutation through splitTablePayment');
-splitEndpointRoutingAssert(strpos($source, "'in_transaction' => true") !== false, 'split endpoint should keep service call inside endpoint transaction for sync outbox');
-splitEndpointRoutingAssert(strpos($source, 'SyncOutboxEventService') !== false, 'split endpoint should preserve sync outbox recording');
-splitEndpointRoutingAssert(strpos($source, "'event_type' => 'order.split_paid'") !== false, 'split endpoint should preserve child order outbox event');
-splitEndpointRoutingAssert(strpos($source, "'active_order_id' => \$activeTableOrderId") !== false, 'split endpoint should preserve table active order snapshot value');
-splitEndpointRoutingAssert(strpos($source, "'new_invoice_id' => \$new_head_id") !== false, 'split endpoint should preserve new_invoice_id response key');
-splitEndpointRoutingAssert(strpos($source, "'split_group_id' => \$split_group_id") !== false, 'split endpoint should preserve split_group_id response key');
-splitEndpointRoutingAssert(strpos($source, 'تم سداد الأصناف المختارة بنجاح') !== false, 'split endpoint should preserve Arabic success message');
+splitEndpointRoutingAssert(strpos($source, 'pos_api_dispatch') !== false, 'split endpoint should delegate to pos_api_dispatch');
+splitEndpointRoutingAssert(strpos($source, "orders.split-payment") !== false, 'split endpoint should target orders.split-payment');
+splitEndpointRoutingAssert(strpos($source, 'pos_api_dispatch_exception_payload') !== false, 'split endpoint should use the central safe dispatch error path');
+splitEndpointRoutingAssert(strpos($dispatch, 'return $controller->splitPayment') !== false, 'dispatcher should route split payment to PosOrderController');
+splitEndpointRoutingAssert(strpos($controller, '$posMutationService->splitTablePayment') !== false, 'controller should route mutation through splitTablePayment');
+splitEndpointRoutingAssert(strpos($controller, "'in_transaction' => true") !== false, 'controller should keep service mutation in its transaction');
+splitEndpointRoutingAssert(strpos($controller, "'skip_idempotency' => true") !== false, 'controller should own one idempotency boundary around the delegated service');
+splitEndpointRoutingAssert(strpos($controller, '(new OrderMutationSideEffectsService())->recordSplitPayment') !== false, 'controller should delegate order/table/outbox effects to the central side-effect service');
+splitEndpointRoutingAssert(strpos($sideEffects, 'SyncOutboxEventService') !== false, 'central side-effect service should own sync outbox recording');
+splitEndpointRoutingAssert(strpos($sideEffects, "'order.split_paid'") !== false, 'central side-effect service should preserve the child order split-paid event');
+splitEndpointRoutingAssert(strpos($sideEffects, "'active_order_id' => \$activeOrderId") !== false, 'central side-effect service should preserve table active order snapshot value');
+splitEndpointRoutingAssert(strpos($controller, "'new_invoice_id' => \$newHeadId") !== false, 'controller should preserve new_invoice_id response key');
+splitEndpointRoutingAssert(strpos($controller, "'split_group_id' => \$splitGroupId") !== false, 'controller should preserve split_group_id response key');
+splitEndpointRoutingAssert(strpos($controller, 'تم سداد الأصناف المختارة بنجاح') !== false, 'controller should preserve Arabic success message');
 
 $forbiddenSnippets = [
     'INSERT INTO ot_head',

@@ -8,7 +8,9 @@ inventoryRecipeAssert(strpos($mutation, 'SideEffectPolicy::orderEventShouldRollb
 inventoryRecipeAssert(strpos($mutation, 'recordInventoryInvoiceBridgeLines') !== false, 'mutation service should own inventory bridge hook');
 
 $cofe = file_get_contents($root . '/ajax/cofe_create_order.php');
-inventoryRecipeAssert(strpos($cofe, 'PosOrderController') !== false, 'cofe path should use canonical mutation pipeline');
+inventoryRecipeAssert(strpos($cofe, 'pos_api_dispatch') !== false, 'cofe endpoint should delegate to the canonical API dispatcher');
+$dispatch = file_get_contents($root . '/includes/pos_api_dispatch.php');
+inventoryRecipeAssert(strpos($dispatch, 'PosOrderController') !== false, 'canonical API dispatcher should use PosOrderController');
 
 echo "inventory-recipe-side-effect-contract-ok\n";
 

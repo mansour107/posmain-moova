@@ -16,9 +16,11 @@ class RecipeReconciliationService
         $legacyVsFat = $this->decimalSubtract($legacyQty, $fatBalance);
         $ledgerVsBalance = $this->decimalSubtract($ledgerBalance, $balanceQty);
         $legacyVsLedger = $this->decimalSubtract($legacyQty, $ledgerBalance);
+        $legacySummaryComparable = $storeId <= 0 || !$this->shouldScopeFatDetailsByStore($conn, $storeId);
         $differenceReasons = $this->differenceReasons(
             $item,
             $storeId,
+            $legacySummaryComparable,
             $legacyQty,
             $fatBalance,
             $ledgerBalance,
@@ -163,6 +165,27 @@ class RecipeReconciliationService
         if ($this->columnExists($conn, 'fat_details', 'isdeleted')) {
             $conditions[] = 'COALESCE(isdeleted, 0) = 0';
         }
+        if ($this->canResolveLegacyOrderSettlement($conn)) {
+            // Active unpaid POS lines represent reservations, not completed
+            // stock depletion. Keeping them in the compatibility sum would
+            // certify the exact historical draft-consumption bug that the
+            // live lifecycle now prevents.
+            $fatTypeColumn = $this->columnExists($conn, 'fat_details', 'pro_tybe') ? 'pro_tybe' : 'fat_tybe';
+            $conditions[] = "NOT (
+                COALESCE(fat_details.{$fatTypeColumn}, 0) = 9
+                AND fat_details.qty_out > 0
+                AND EXISTS (
+                    SELECT 1
+                    FROM ot_head legacy_order
+                    WHERE legacy_order.id = fat_details.fatid
+                      AND LOWER(COALESCE(legacy_order.payment_status, 'unpaid')) IN ('unpaid', 'partial')
+                      AND LOWER(COALESCE(legacy_order.invoice_status, '')) = 'draft'
+                      AND LOWER(COALESCE(legacy_order.order_status, '')) IN ('draft', 'active')
+                      AND COALESCE(legacy_order.closed, 0) = 0
+                      AND COALESCE(legacy_order.isdeleted, 0) = 0
+                )
+            )";
+        }
         if ($this->columnExists($conn, 'fat_details', 'crtime')) {
             $dateFilter = $this->dateFilter($filters);
             if ($dateFilter['from'] !== null) {
@@ -181,6 +204,22 @@ class RecipeReconciliationService
         );
 
         return $this->decimalNormalize($row['qty'] ?? '0');
+    }
+
+    private function canResolveLegacyOrderSettlement(mysqli $conn): bool
+    {
+        return $this->tableExists($conn, 'ot_head')
+            && $this->columnExists($conn, 'ot_head', 'id')
+            && $this->columnExists($conn, 'ot_head', 'payment_status')
+            && $this->columnExists($conn, 'ot_head', 'invoice_status')
+            && $this->columnExists($conn, 'ot_head', 'order_status')
+            && $this->columnExists($conn, 'ot_head', 'closed')
+            && $this->columnExists($conn, 'ot_head', 'isdeleted')
+            && $this->columnExists($conn, 'fat_details', 'fatid')
+            && (
+                $this->columnExists($conn, 'fat_details', 'pro_tybe')
+                || $this->columnExists($conn, 'fat_details', 'fat_tybe')
+            );
     }
 
     private function ledgerBalance(mysqli $conn, int $posTenant, int $posBranch, int $storeId, int $itemId, array $filters): string
@@ -349,6 +388,7 @@ WHERE TABLE_SCHEMA = DATABASE()
     private function differenceReasons(
         array $item,
         int $storeId,
+        bool $legacySummaryComparable,
         string $legacyQty,
         string $fatBalance,
         string $ledgerBalance,
@@ -363,18 +403,26 @@ WHERE TABLE_SCHEMA = DATABASE()
         $trackStock = array_key_exists('track_stock', $item) ? (int) $item['track_stock'] : 1;
         $nonStockItem = $trackStock === 0 || $itemType === 'service';
 
-        if ($nonStockItem && ($this->isNonZero($fatBalance) || $this->isNonZero($ledgerBalance) || $this->isNonZero($balanceQty))) {
+        // fat_details is also the immutable commercial sale-line history. A
+        // non-stock/service item may legitimately appear there; only current
+        // stock ledger or balance state is invalid for that policy.
+        if ($nonStockItem && ($this->isNonZero($ledgerBalance) || $this->isNonZero($balanceQty))) {
             $reasons[] = 'non_stock_item_has_stock_movement';
         }
-        if ($this->decimalCompare($legacyVsFat, '0') !== 0) {
+        // In the operational/global scope, the compatibility mirror and the
+        // immutable ledger are the comparable stock truths. fat_details also
+        // contains commercial history and intentionally omits active draft
+        // reservations, so a fat-only delta must not fail cutover when mirror,
+        // ledger, and materialized balance agree.
+        if (!$nonStockItem && $legacySummaryComparable && $this->decimalCompare($legacyVsLedger, '0') !== 0) {
             $reasons[] = 'legacy_summary_mismatch';
         }
         if ($this->decimalCompare($ledgerVsBalance, '0') !== 0) {
             $reasons[] = empty($balanceRow) ? 'missing_balance_row' : 'ledger_balance_mismatch';
         }
-        $stockTruthDifference = $storeId > 0
-            ? $this->decimalSubtract($fatBalance, $ledgerBalance)
-            : $legacyVsLedger;
+        $stockTruthDifference = $legacySummaryComparable
+            ? $legacyVsLedger
+            : $this->decimalSubtract($fatBalance, $ledgerBalance);
         if (!$nonStockItem && $this->decimalCompare($stockTruthDifference, '0') !== 0) {
             if ($this->isNonZero($fatBalance) && !$this->isNonZero($ledgerBalance)) {
                 $reasons[] = 'missing_bridge_movement';
@@ -401,6 +449,9 @@ WHERE TABLE_SCHEMA = DATABASE()
         }
         if ($this->decimalCompare($ledgerVsBalance, '0') !== 0) {
             return 'Review inventory_item_balances against inventory_movements before enabling recipe stock.';
+        }
+        if ($reasons === []) {
+            return 'No action required.';
         }
         if ($this->decimalCompare($legacyVsLedger, '0') !== 0) {
             return 'Reconcile legacy stock with recipe ledger before expanding pilot items.';

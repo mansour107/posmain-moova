@@ -74,12 +74,13 @@ $inventoryAdjustmentRows = (new RecipeWasteAdjustmentReadService())->recentMovem
     'limit' => 80,
 ]);
 
+$inventoryAdjustmentCsrfMeta = csrf_meta_tag('inventory_adjustment', 'inventory-adjustment-csrf');
 include __DIR__ . '/includes/header.php';
 include __DIR__ . '/includes/navbar.php';
 include __DIR__ . '/includes/sidebar.php';
 ?>
 
-<?= csrf_meta_tag('inventory_adjustment', 'inventory-adjustment-csrf') ?>
+<?= $inventoryAdjustmentCsrfMeta ?>
 
 <style>
     html,body{overflow-x:hidden}

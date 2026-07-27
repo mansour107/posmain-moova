@@ -32,7 +32,10 @@ try {
     posOrderApiHttpMatrixAssert(strpos(file_get_contents(dirname(__DIR__, 2) . '/includes/pos_api_dispatch.php'), 'require_csrf') !== false, 'dispatch should require CSRF for browser routes');
 
     $missingKey = posOrderApiHttpMatrixRunChild($db, 'orders.takeaway', posOrderApiHttpMatrixSavePayload(['idempotency_key' => '']), true);
-    posOrderApiHttpMatrixAssert(($missingKey['body']['code'] ?? '') === 'IDEMPOTENCY_REQUIRED', 'missing idempotency key should be rejected');
+    posOrderApiHttpMatrixAssert(
+        ($missingKey['body']['code'] ?? '') === 'IDEMPOTENCY_REQUIRED',
+        'missing idempotency key should be rejected: ' . json_encode($missingKey, JSON_UNESCAPED_UNICODE)
+    );
 
     $csrfBlocked = posOrderApiHttpMatrixRunChild($db, 'orders.takeaway', $savePayload, false);
     posOrderApiHttpMatrixAssert(($csrfBlocked['http_status'] ?? 0) === 403, 'missing CSRF should return 403');
@@ -183,6 +186,7 @@ function posOrderApiHttpMatrixChild(string $encoded): void
     putenv('POSMAIN_PRODUCTION_MODE=0');
     putenv('POSMAIN_REQUIRE_OPEN_SHIFT=0');
     putenv('POSMAIN_RECIPE_MODE=off');
+    putenv('POSMAIN_INVENTORY_LEDGER_MODE=off');
     putenv('POSMAIN_DB_HOST=' . (getenv('POSMAIN_TEST_MYSQL_HOST') ?: '127.0.0.1'));
     putenv('POSMAIN_DB_PORT=' . (getenv('POSMAIN_TEST_MYSQL_PORT') ?: '3307'));
     putenv('POSMAIN_DB_USER=' . (getenv('POSMAIN_TEST_MYSQL_USER') ?: 'root'));

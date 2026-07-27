@@ -35,7 +35,11 @@ try {
         'user_type' => 1,
         'csrf_valid' => true,
     ]);
-    recipeManagerOverrideEndpointRuntimeAssert(($success['success'] ?? false) === true, 'manager override endpoint should approve with permission');
+    recipeManagerOverrideEndpointRuntimeAssert(
+        ($success['success'] ?? false) === true,
+        'manager override endpoint should approve with permission: '
+            . json_encode($success, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
+    );
     recipeManagerOverrideEndpointRuntimeAssert((int) ($success['approval_id'] ?? 0) > 0, 'manager override endpoint should return approval id');
 
     $approvalId = (int) $success['approval_id'];
@@ -205,6 +209,15 @@ function recipeManagerOverrideEndpointRuntimeCreateSchema(mysqli $conn): void
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
     ");
     $conn->query("
+        CREATE TABLE users (
+            id INT NOT NULL PRIMARY KEY,
+            uname VARCHAR(191) NOT NULL,
+            userrole INT NULL,
+            permission_mode ENUM('role_only','role_with_overrides') NOT NULL DEFAULT 'role_only',
+            isdeleted TINYINT(1) NOT NULL DEFAULT 0
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+    ");
+    $conn->query("
         CREATE TABLE manager_approvals (
             id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
             action_type VARCHAR(80) NOT NULL,
@@ -215,6 +228,10 @@ function recipeManagerOverrideEndpointRuntimeCreateSchema(mysqli $conn): void
             status ENUM('requested','approved','declined','expired') NOT NULL DEFAULT 'requested',
             reason VARCHAR(500) NULL,
             metadata_json JSON NULL,
+            permission_key VARCHAR(80) NULL,
+            expires_at DATETIME NULL,
+            consumed_at DATETIME NULL,
+            performed_by BIGINT UNSIGNED NULL,
             created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
             decided_at DATETIME NULL,
             PRIMARY KEY (id),
@@ -228,6 +245,8 @@ function recipeManagerOverrideEndpointRuntimeCreateSchema(mysqli $conn): void
 function recipeManagerOverrideEndpointRuntimeSeedRows(mysqli $conn): void
 {
     $conn->query("INSERT INTO towns (id, tname) VALUES (1, 'Runtime Town')");
+    $conn->query("INSERT INTO users (id, uname, userrole, permission_mode, isdeleted)
+        VALUES (7, 'recipe_manager_override_smoke', 2, 'role_only', 0)");
     $conn->query("
         INSERT INTO usr_pwrs (id, rollname, edit_sales, edit_stock, isdeleted) VALUES
         (2, 'Recipe Manager', 1, 1, 0),

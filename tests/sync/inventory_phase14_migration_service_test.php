@@ -44,13 +44,20 @@ try {
     inventoryPhase14Assert((int) $backfill['summary']['skipped_count'] === 1, 'non-stock legacy rows should be skipped instead of no-op applied');
     inventoryPhase14Assert((int) $backfill['summary']['ambiguous_count'] === 2, 'type 14 and missing item rows should be ambiguous');
     inventoryPhase14Assert((int) $backfill['summary']['already_migrated_count'] === 1, 'existing idempotency key should be detected');
+    inventoryPhase14Assert(
+        $service->countUnmigratedLegacyFatRows($conn, $filters) === 4,
+        'unmigrated counter should exclude already-migrated and explicitly non-stock legacy rows'
+    );
 
     $plannedById = [];
     foreach ($backfill['planned_movements'] as $movement) {
         $plannedById[(int) $movement['fat_detail_id']] = $movement;
     }
     inventoryPhase14Assert($plannedById[1]['movement_type'] === 'purchase', 'legacy purchase should map to purchase movement');
-    inventoryPhase14Assert($plannedById[2]['movement_type'] === 'sale_direct', 'legacy sale should map to sale_direct movement');
+    inventoryPhase14Assert($plannedById[2]['movement_type'] === 'reservation', 'unpaid legacy sale should map to a neutral reservation');
+    inventoryPhase14Assert($plannedById[2]['qty_reserved'] === '2.000000', 'unpaid legacy sale should preserve its quantity as reserved');
+    inventoryPhase14Assert($plannedById[2]['qty_out'] === '0.000000', 'unpaid legacy sale must not deplete on-hand stock');
+    inventoryPhase14Assert($plannedById[2]['total_cost'] === '0.000000', 'unpaid legacy reservation must not create COGS');
     inventoryPhase14Assert($plannedById[1]['idempotency_key'] === 'migration:fat_details:1:v1', 'candidate should expose deterministic idempotency key');
     inventoryPhase14Assert($plannedById[1]['source_type'] === 'fat_details', 'candidate should preserve source type');
     inventoryPhase14Assert($plannedById[1]['metadata']['legacy_u_val'] === '12.000000', 'candidate should preserve legacy unit value in metadata');
@@ -76,7 +83,11 @@ try {
     $negativeRows = array_values(array_filter($rebuild['rows'], static fn(array $row): bool => (int) ($row['item_id'] ?? 0) === 14004));
     inventoryPhase14Assert($negativeRows !== [], 'rebuild dry-run should include negative-stock movement rows');
     inventoryPhase14Assert($negativeRows[0]['derived_qty_on_hand'] === '-2.000000', 'negative-stock fixture should remain negative for quantity proof');
-    inventoryPhase14Assert($negativeRows[0]['derived_moving_average_cost'] === '4.000000', 'negative-stock derived cost should use stock value divided by quantity instead of zero');
+    inventoryPhase14Assert($negativeRows[0]['derived_moving_average_cost'] === '4.000000', 'negative-stock derived cost should preserve the sale-time cost instead of zero');
+    $outboundCostRows = array_values(array_filter($rebuild['rows'], static fn(array $row): bool => (int) ($row['item_id'] ?? 0) === 14005));
+    inventoryPhase14Assert($outboundCostRows !== [], 'rebuild dry-run should include the outbound-cost divergence fixture');
+    inventoryPhase14Assert($outboundCostRows[0]['derived_qty_on_hand'] === '1.000000', 'outbound-cost fixture should retain one unit');
+    inventoryPhase14Assert($outboundCostRows[0]['derived_moving_average_cost'] === '2.000000', 'outbound movement unit cost must not distort moving average cost');
 
     $conn->query("UPDATE inventory_item_balances SET qty_on_hand = qty_on_hand + 1 WHERE item_id = 14001 AND store_id = 3");
     $rebuildWithDifference = $service->rebuildBalancesPlan($conn, $filters);
@@ -150,6 +161,64 @@ try {
     inventoryPhase14Assert(!empty($reapply['ok']), 'backfill reapply should remain idempotent');
     inventoryPhase14Assert((int) $reapply['summary']['applied_count'] === 0, 'backfill reapply should not insert duplicate movements');
 
+    $reviewedFilters = $filters + [
+        'reviewed_decisions' => [
+            ['fat_detail_id' => 3, 'action' => 'movement', 'movement_type' => 'opening_balance', 'reason' => 'reviewed as opening balance'],
+            ['fat_detail_id' => 4, 'action' => 'skip', 'reason' => 'missing item cannot be safely mapped'],
+        ],
+    ];
+    $reviewedApply = $service->applyFatDetailsBackfill($conn, $reviewedFilters);
+    inventoryPhase14Assert(!empty($reviewedApply['ok']), 'reviewed movement and skip decisions should be applicable after safe rows');
+    inventoryPhase14Assert((int) $reviewedApply['summary']['applied_count'] === 1, 'reviewed movement should be written exactly once');
+    inventoryPhase14Assert(
+        $service->countUnmigratedLegacyFatRows($conn, $reviewedFilters) === 0,
+        'cutover counter should recognize reviewed movement keys and reviewed skips'
+    );
+
+    $conn->query("
+        INSERT INTO fat_details (id, fatid, pro_id, pro_tybe, item_id, u_val, qty_in, qty_out, det_store, cost_price, tenant, branch, isdeleted, crtime)
+        VALUES (9, 1009, 1009, 4, 14004, 1.000000, 1.000000, 0.000000, 3, -4.000000, 0, 0, 0, '2026-01-09 08:00:00')
+    ");
+    $negativeCostPlan = $service->fatDetailsBackfillPlan($conn, $filters + ['min_fat_detail_id' => 8]);
+    inventoryPhase14Assert((int) $negativeCostPlan['summary']['ambiguous_count'] === 1, 'negative historical unit cost should require an explicit reviewed decision');
+    inventoryPhase14Assert(
+        in_array('negative_unit_cost_requires_review', $negativeCostPlan['ambiguous_rows'][0]['reasons'] ?? [], true),
+        'negative historical unit cost should expose a specific review reason'
+    );
+
+    $conn->query("
+        INSERT INTO fat_details (id, fatid, pro_id, pro_tybe, item_id, u_val, qty_in, qty_out, det_store, cost_price, tenant, branch, isdeleted, crtime)
+        VALUES (10, 1010, 1010, 4, 14001, 1.000000, 1.000000, 0.000000, 3, 2.000000, 0, 0, 0, '2026-01-10 08:00:00')
+    ");
+    $ledger->recordMovement($conn, [
+        'scope' => ['pos_tenant' => 0, 'pos_branch' => 0, 'store_id' => 4],
+        'item_id' => 14001,
+        'movement_type' => 'purchase',
+        'source_type' => 'invoice',
+        'source_id' => 1010,
+        'source_uuid' => 'invoice-bridge:1010',
+        'fat_detail_id' => 10,
+        'qty_in' => '1.000000',
+        'unit_cost' => '2.000000',
+        'total_cost' => '2.000000',
+        'idempotency_key' => 'inventory-invoice-bridge:fat-detail:10:v1',
+        'metadata' => ['source' => 'phase14_existing_canonical_bridge_test'],
+    ], ['id' => 14001, 'item_type' => 'ingredient', 'track_stock' => 1]);
+    $canonicalBridgeScope = $filters + ['min_fat_detail_id' => 9];
+    $canonicalBridgePlan = $service->fatDetailsBackfillPlan($conn, $canonicalBridgeScope);
+    inventoryPhase14Assert(
+        (int) $canonicalBridgePlan['summary']['already_migrated_count'] === 1,
+        'a canonical bridge movement with the same fat-detail quantity should prevent a second historical replay'
+    );
+    inventoryPhase14Assert(
+        (int) $canonicalBridgePlan['summary']['safe_candidate_count'] === 0,
+        'canonical bridge evidence in another store scope must not be planned again under the legacy store'
+    );
+    inventoryPhase14Assert(
+        $service->countUnmigratedLegacyFatRows($conn, $canonicalBridgeScope) === 0,
+        'unmigrated counter should recognize matching canonical bridge evidence regardless of idempotency-key family'
+    );
+
     echo "inventory-phase14-migration-service-ok\n";
 } finally {
     $conn->query('DROP DATABASE IF EXISTS `' . $dbName . '`');
@@ -174,8 +243,9 @@ function inventoryPhase14AssertSourceContracts(string $root): void
         'deleted_legacy_row',
         'already_migrated',
         'ambiguous_legacy_rows_require_review',
-        'movingAverageCostForDerivedBalance',
-        'absoluteDecimal',
+        'negative_unit_cost_requires_review',
+        'InventoryMovingAverageCostCalculator',
+        'nextAverageCost',
     ] as $needle) {
         inventoryPhase14Assert(strpos($serviceSource, $needle) !== false, 'migration service should preserve phase14 behavior: ' . $needle);
     }
@@ -229,17 +299,35 @@ CREATE TABLE fat_details (
   crtime DATETIME NULL,
   mdtime DATETIME NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
+    $conn->query("
+CREATE TABLE ot_head (
+  id INT NOT NULL PRIMARY KEY,
+  payment_status VARCHAR(20) NOT NULL DEFAULT 'unpaid',
+  invoice_status VARCHAR(20) NOT NULL DEFAULT 'draft',
+  order_status VARCHAR(20) NOT NULL DEFAULT 'active',
+  closed INT NOT NULL DEFAULT 0,
+  isdeleted TINYINT(1) NOT NULL DEFAULT 0
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
+    $conn->query("
+CREATE TABLE order_payments (
+  id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  order_id INT NOT NULL,
+  amount DECIMAL(19,2) NOT NULL DEFAULT 0,
+  is_voided TINYINT(1) NOT NULL DEFAULT 0
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
 }
 
 function inventoryPhase14SeedFixtures(mysqli $conn): void
 {
+    $conn->query("INSERT INTO ot_head (id, payment_status) VALUES (1002, 'unpaid')");
     $conn->query("
         INSERT INTO myitems (id, code, iname, itmqty, cost_price, item_type, track_stock)
         VALUES
             (14001, 'M-14001', 'Migration flour', 3.000000, 2.000000, 'ingredient', 1),
             (14002, 'M-14002', 'Migration cheese', 8.000000, 1.000000, 'ingredient', 1),
             (14003, 'M-14003', 'Migration service', 0.000000, 0.000000, 'service', 0),
-            (14004, 'M-14004', 'Negative migration stock', -2.000000, 0.000000, 'ingredient', 1)
+            (14004, 'M-14004', 'Negative migration stock', -2.000000, 0.000000, 'ingredient', 1),
+            (14005, 'M-14005', 'Outbound cost divergence', 1.000000, 2.000000, 'ingredient', 1)
     ");
     $conn->query("
         INSERT INTO fat_details (id, fatid, pro_id, pro_tybe, item_id, u_val, qty_in, qty_out, det_store, cost_price, tenant, branch, isdeleted, crtime)
@@ -282,7 +370,36 @@ function inventoryPhase14SeedMigratedMovement(mysqli $conn, InventoryLedgerServi
         'total_cost' => '8.000000',
         'idempotency_key' => 'phase14:negative-stock:v1',
         'metadata' => ['source' => 'phase14_negative_stock_cost_test'],
-    ], ['id' => 14004, 'item_type' => 'ingredient', 'track_stock' => 1]);
+    ], ['id' => 14004, 'item_type' => 'ingredient', 'track_stock' => 1], [
+        // Historical migration evidence may contain a pre-existing negative
+        // balance. The live sale path remains governed by the negative-stock
+        // policy; this fixture only proves deterministic rebuild handling.
+        'enforce_negative_policy' => false,
+    ]);
+    $ledger->recordMovement($conn, [
+        'scope' => ['pos_tenant' => 0, 'pos_branch' => 0, 'store_id' => 3],
+        'item_id' => 14005,
+        'movement_type' => 'purchase',
+        'source_type' => 'manual',
+        'source_uuid' => 'phase14-outbound-cost-purchase',
+        'qty_in' => '10.000000',
+        'unit_cost' => '2.000000',
+        'total_cost' => '20.000000',
+        'idempotency_key' => 'phase14:outbound-cost:purchase:v1',
+        'metadata' => ['source' => 'phase14_outbound_cost_test'],
+    ], ['id' => 14005, 'item_type' => 'ingredient', 'track_stock' => 1]);
+    $ledger->recordMovement($conn, [
+        'scope' => ['pos_tenant' => 0, 'pos_branch' => 0, 'store_id' => 3],
+        'item_id' => 14005,
+        'movement_type' => 'sale_direct',
+        'source_type' => 'manual',
+        'source_uuid' => 'phase14-outbound-cost-sale',
+        'qty_out' => '9.000000',
+        'unit_cost' => '100.000000',
+        'total_cost' => '900.000000',
+        'idempotency_key' => 'phase14:outbound-cost:sale:v1',
+        'metadata' => ['source' => 'phase14_outbound_cost_test'],
+    ], ['id' => 14005, 'item_type' => 'ingredient', 'track_stock' => 1]);
 }
 
 function inventoryPhase14Assert(bool $condition, string $message): void

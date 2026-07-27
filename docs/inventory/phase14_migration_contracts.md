@@ -84,13 +84,16 @@ Use `--rehearse` before `--apply` for each scoped batch. A successful rehearsal 
 
 ## Balance Rebuild
 
-The balance rebuild path derives scoped balances from `inventory_movements`, then compares quantity, moving average cost, missing balance rows, and last movement pointers against `inventory_item_balances`.
+The balance rebuild path chronologically replays scoped `inventory_movements`
+through the same exact-decimal moving-average policy used by live ledger writes,
+then compares quantity, moving average cost, missing balance rows, and last
+movement pointers against `inventory_item_balances`.
 
-For negative on-hand rows, derived moving average cost still uses the movement
-stock value divided by quantity and is normalized to a non-negative unit cost.
-It must not collapse to zero merely because quantity is below zero; otherwise a
-rebuild could erase the cost evidence needed for COGS and valuation review. A
-zero on-hand row derives zero average cost because there is no quantity base.
+Cost-bearing inbound movements update the moving average. Outbound movements
+retain the existing moving average even when their recorded unit cost differs;
+signed outbound value must never be divided by the remaining net quantity. If
+the ledger begins with an outbound movement, the sale-time unit cost is retained
+as negative on-hand cost evidence instead of collapsing the balance cost to zero.
 
 Use `php tools/inventory_rebuild_balances.php --rehearse` before any apply. Rehearsal writes through the existing balance repository inside a rolled-back transaction. Apply requires `--backup-file` and should be run only after historical movement migration for the scoped batch is complete.
 

@@ -5,6 +5,7 @@ $root = dirname(__DIR__, 2);
 require_once $root . '/classes/Sync/SchemaManager.php';
 require_once $root . '/classes/Inventory/InventoryFeatureFlags.php';
 require_once $root . '/classes/Inventory/InventoryInvoiceBridge.php';
+require_once $root . '/classes/Pos/Service/SideEffectPolicy.php';
 
 inventoryPhase4AssertSourceContracts($root);
 
@@ -30,6 +31,7 @@ try {
     $manager = new SyncSchemaManager();
     $manager->apply($conn);
     inventoryPhase4CreateLegacyItemTable($conn);
+    inventoryPhase4CreateOperationalStore($conn, 7);
     inventoryPhase4SeedItem($conn, 1001, 'Shadow stock item', 'sellable', 1, '20.000000', '2.000000');
     inventoryPhase4SeedItem($conn, 2002, 'Shadow service item', 'service', 1, '0.000000', '0.000000');
 
@@ -55,7 +57,10 @@ try {
         'det_store' => 7,
     ]], ['user_id' => 9]);
     $conn->commit();
-    inventoryPhase4Assert($result['success'] === true && $result['movements'] !== [], 'shadow purchase should create a ledger movement result');
+    inventoryPhase4Assert(
+        $result['success'] === true && $result['movements'] !== [],
+        'shadow purchase should create a ledger movement result: ' . json_encode($result, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
+    );
     inventoryPhase4Assert($result['movements'][0]['shadow_write'] === true, 'shadow purchase should be marked as shadow write');
 
     $conn->begin_transaction();
@@ -182,12 +187,12 @@ try {
         'item_id' => 1001,
         'qty_in' => '0.000000',
         'qty_out' => '99.000000',
-        'det_store' => 9,
+        'det_store' => 7,
     ]], ['user_id' => 9]);
     $conn->commit();
     inventoryPhase4Assert($negativeShadow['success'] === true && $negativeShadow['movements'] !== [], 'shadow strict mode should record negative evidence without blocking legacy sale');
-    $negativeBalance = inventoryPhase4One($conn, 'SELECT * FROM inventory_item_balances WHERE item_id = 1001 AND store_id = 9 LIMIT 1');
-    inventoryPhase4Assert(inventoryPhase4DecimalEquals($negativeBalance['qty_available'], '-99.000000'), 'shadow strict mode should preserve negative variance for reconciliation');
+    $negativeBalance = inventoryPhase4One($conn, 'SELECT * FROM inventory_item_balances WHERE item_id = 1001 AND store_id = 7 LIMIT 1');
+    inventoryPhase4Assert(inventoryPhase4DecimalEquals($negativeBalance['qty_available'], '-90.000000'), 'shadow strict mode should preserve negative variance for reconciliation in the configured operational store');
 
     $conn->begin_transaction();
     $salesReturn = $bridge->recordInvoiceLines($conn, InventoryInvoiceBridge::TYPE_SALES_RETURN, 7006, [[
@@ -214,6 +219,125 @@ try {
     inventoryPhase4Assert($purchaseReturn['movements'][0]['movement_id'] > 0, 'purchase return should create outbound purchase return movement');
     $purchaseReturnMovement = inventoryPhase4One($conn, "SELECT movement_type FROM inventory_movements WHERE idempotency_key LIKE '%detail:507' LIMIT 1");
     inventoryPhase4Assert($purchaseReturnMovement['movement_type'] === 'purchase_return', 'purchase return should map to dedicated purchase_return movement type');
+
+    inventoryPhase4SeedItem($conn, 3003, 'Live accounting rollback item', 'sellable', 1, '0.000000', '0.000000');
+    $liveFlags = new InventoryFeatureFlags(['inventory' => [
+        'ledger_mode' => 'live',
+        'strict_stock' => '1',
+        'legacy_mirror' => '0',
+        'accounting' => '1',
+    ], 'branch' => [
+        'pos_tenant' => 3,
+        'pos_branch' => 5,
+        'uuid' => '00000000-0000-4000-8000-000000000005',
+    ]]);
+    $liveBridge = new InventoryInvoiceBridge($liveFlags);
+    $conn->begin_transaction();
+    $liveBridge->recordInvoiceLines($conn, InventoryInvoiceBridge::TYPE_PURCHASE, 7100, [[
+        'id' => 601,
+        'item_id' => 3003,
+        'qty_in' => '10.000000',
+        'qty_out' => '0.000000',
+        'u_val' => '1.000000',
+        'cost_price' => '2.000000',
+        'det_store' => 7,
+    ]], ['user_id' => 9]);
+    $conn->commit();
+
+    $previousSideEffectMode = getenv('POSMAIN_SIDE_EFFECT_MODE');
+    putenv('POSMAIN_SIDE_EFFECT_MODE=live');
+    try {
+        $conn->begin_transaction();
+        $failedSale = $liveBridge->recordInvoiceLines($conn, InventoryInvoiceBridge::TYPE_SALES, 7101, [[
+            'id' => 602,
+            'item_id' => 3003,
+            'qty_in' => '0.000000',
+            'qty_out' => '1.000000',
+            'u_val' => '1.000000',
+            'cost_price' => '2.000000',
+            'det_store' => 7,
+        ]], ['user_id' => 9]);
+        inventoryPhase4Assert($failedSale['success'] === false, 'live accounting failure must fail the bridge result');
+        inventoryPhase4Assert(
+            ($failedSale['errors'][0]['phase'] ?? '') === 'accounting',
+            'live accounting failure must be promoted to the top-level error contract'
+        );
+        inventoryPhase4Assert(
+            SideEffectPolicy::inventoryBridgeShouldRollback(new RuntimeException('bridge_errors'), $failedSale),
+            'live accounting failure must require rollback of the caller transaction'
+        );
+        $conn->rollback();
+    } finally {
+        if ($previousSideEffectMode === false) {
+            putenv('POSMAIN_SIDE_EFFECT_MODE');
+        } else {
+            putenv('POSMAIN_SIDE_EFFECT_MODE=' . $previousSideEffectMode);
+        }
+    }
+    $liveBalance = inventoryPhase4One($conn, 'SELECT qty_on_hand FROM inventory_item_balances WHERE item_id = 3003 AND store_id = 7 LIMIT 1');
+    inventoryPhase4Assert(inventoryPhase4DecimalEquals($liveBalance['qty_on_hand'], '10.000000'), 'rolled-back accounting failure must preserve stock');
+    inventoryPhase4Assert(
+        (int) $conn->query("SELECT COUNT(*) AS c FROM inventory_movements WHERE source_type = 'fat_details' AND source_id = 602")->fetch_assoc()['c'] === 0,
+        'rolled-back accounting failure must not leave a sale movement'
+    );
+
+    inventoryPhase4SeedItem($conn, 4004, 'Direct stock lifecycle item', 'sellable', 1, '0.000000', '0.000000');
+    $lifecycleFlags = new InventoryFeatureFlags(['inventory' => [
+        'ledger_mode' => 'live',
+        'strict_stock' => '1',
+        'legacy_mirror' => '0',
+        'accounting' => '0',
+    ], 'branch' => [
+        'pos_tenant' => 3,
+        'pos_branch' => 5,
+        'uuid' => '00000000-0000-4000-8000-000000000005',
+    ]]);
+    $lifecycleBridge = new InventoryInvoiceBridge($lifecycleFlags);
+    $lifecycleBridge->recordInvoiceLines($conn, InventoryInvoiceBridge::TYPE_PURCHASE, 7200, [[
+        'id' => 701,
+        'item_id' => 4004,
+        'qty_in' => '10.000000',
+        'qty_out' => '0.000000',
+        'cost_price' => '2.000000',
+        'det_store' => 7,
+    ]]);
+    $draftLine = [[
+        'id' => 702,
+        'item_id' => 4004,
+        'qty_in' => '0.000000',
+        'qty_out' => '3.000000',
+        'cost_price' => '2.000000',
+        'det_store' => 7,
+    ]];
+    $reserved = $lifecycleBridge->reserveInvoiceLines($conn, InventoryInvoiceBridge::TYPE_POS, 7201, $draftLine);
+    inventoryPhase4Assert($reserved['success'] === true && ($reserved['movements'][0]['movement_type'] ?? '') === 'reservation', 'unpaid direct-stock line should create a reservation');
+    $reservedReplay = $lifecycleBridge->reserveInvoiceLines($conn, InventoryInvoiceBridge::TYPE_POS, 7201, $draftLine);
+    inventoryPhase4Assert(!empty($reservedReplay['movements'][0]['idempotent_replay']), 'direct-stock reservation retry should replay idempotently');
+    $draftBalance = inventoryPhase4One($conn, 'SELECT qty_on_hand, qty_reserved, qty_available FROM inventory_item_balances WHERE item_id = 4004 AND store_id = 7 LIMIT 1');
+    inventoryPhase4Assert(inventoryPhase4DecimalEquals($draftBalance['qty_on_hand'], '10.000000'), 'unpaid direct-stock reservation must not consume on-hand stock');
+    inventoryPhase4Assert(inventoryPhase4DecimalEquals($draftBalance['qty_reserved'], '3.000000'), 'unpaid direct-stock reservation must reserve exact quantity');
+    inventoryPhase4Assert(inventoryPhase4DecimalEquals($draftBalance['qty_available'], '7.000000'), 'unpaid direct-stock reservation must reduce available stock');
+
+    $released = $lifecycleBridge->releaseInvoiceReservations($conn, InventoryInvoiceBridge::TYPE_POS, 7201, $draftLine, 'order_updated');
+    inventoryPhase4Assert(($released['movements'][0]['movement_type'] ?? '') === 'reservation_release', 'draft edit/cancel should release its reservation');
+    $releasedBalance = inventoryPhase4One($conn, 'SELECT qty_on_hand, qty_reserved FROM inventory_item_balances WHERE item_id = 4004 AND store_id = 7 LIMIT 1');
+    inventoryPhase4Assert(inventoryPhase4DecimalEquals($releasedBalance['qty_on_hand'], '10.000000'), 'reservation release must not change on-hand stock');
+    inventoryPhase4Assert(inventoryPhase4DecimalEquals($releasedBalance['qty_reserved'], '0.000000'), 'reservation release must clear the reserved quantity');
+
+    $paidLine = $draftLine;
+    $paidLine[0]['qty_out'] = '2.000000';
+    $lifecycleBridge->reserveInvoiceLines($conn, InventoryInvoiceBridge::TYPE_POS, 7202, $paidLine);
+    $consumed = $lifecycleBridge->consumeInvoiceReservations($conn, InventoryInvoiceBridge::TYPE_POS, 7202, $paidLine);
+    inventoryPhase4Assert($consumed['success'] === true, 'paid direct-stock transition should succeed');
+    inventoryPhase4Assert(
+        count(array_filter($consumed['movements'], static fn(array $movement): bool => ($movement['movement_type'] ?? '') === 'sale_direct')) === 1,
+        'paid direct-stock transition should create exactly one sale movement'
+    );
+    $paidReplay = $lifecycleBridge->consumeInvoiceReservations($conn, InventoryInvoiceBridge::TYPE_POS, 7202, $paidLine);
+    inventoryPhase4Assert($paidReplay['success'] === true, 'paid direct-stock retry should replay safely');
+    $paidBalance = inventoryPhase4One($conn, 'SELECT qty_on_hand, qty_reserved, qty_available FROM inventory_item_balances WHERE item_id = 4004 AND store_id = 7 LIMIT 1');
+    inventoryPhase4Assert(inventoryPhase4DecimalEquals($paidBalance['qty_on_hand'], '8.000000'), 'paid direct-stock transition must consume on-hand exactly once');
+    inventoryPhase4Assert(inventoryPhase4DecimalEquals($paidBalance['qty_reserved'], '0.000000'), 'paid direct-stock transition must release reservation exactly once');
 
     echo "inventory-phase4-invoice-bridge-ok\n";
 } finally {
@@ -250,8 +374,16 @@ function inventoryPhase4AssertSourceContracts(string $root): void
     }
 
     $cofeSource = inventoryPhase4Source($root . '/ajax/cofe_create_order.php');
-    foreach (['PosOrderController', 'cofe_widget', 'SCOPE_COFE_CREATE'] as $needle) {
-        inventoryPhase4Assert(strpos($cofeSource, (string) $needle) !== false, 'Cofe endpoint should delegate inventory side effects through canonical mutation path: ' . (string) $needle);
+    foreach (['pos_api_dispatch', 'integrations.cofe.orders'] as $needle) {
+        inventoryPhase4Assert(strpos($cofeSource, (string) $needle) !== false, 'Cofe endpoint should delegate through the canonical API dispatch: ' . (string) $needle);
+    }
+    $posDispatchSource = inventoryPhase4Source($root . '/includes/pos_api_dispatch.php');
+    foreach (['PosOrderController', 'createCofeTableOrder'] as $needle) {
+        inventoryPhase4Assert(strpos($posDispatchSource, (string) $needle) !== false, 'Cofe dispatch should delegate to the canonical order controller: ' . (string) $needle);
+    }
+    $posControllerSource = inventoryPhase4Source($root . '/classes/Pos/Http/PosOrderController.php');
+    foreach (['cofe_widget', 'SCOPE_COFE_CREATE'] as $needle) {
+        inventoryPhase4Assert(strpos($posControllerSource, (string) $needle) !== false, 'Cofe controller should preserve the canonical mutation scope and source: ' . (string) $needle);
     }
 
     $posMutationSource = inventoryPhase4Source($root . '/classes/Pos/Service/PosOrderMutationService.php');
@@ -272,8 +404,11 @@ function inventoryPhase4AssertSourceContracts(string $root): void
         'recordMoovaInventoryBridgeLines',
         'recordMoovaInventoryBridgeReversalLines',
         'inventoryBridgeLinesFromMoovaMappedLines',
-        'Moova inventory invoice bridge shadow errors',
-        'Moova inventory invoice bridge reversal shadow errors',
+        'reserveInvoiceLines',
+        'releaseInvoiceReservations',
+        'SideEffectPolicy::inventoryBridgeShouldRollback',
+        'Moova direct-stock reservation errors',
+        'Moova direct-stock reservation release errors',
     ] as $needle) {
         inventoryPhase4Assert(strpos($posOrderSource, $needle) !== false, 'Moova POS order service should contain guarded phase4 bridge hook: ' . $needle);
     }
@@ -322,6 +457,24 @@ CREATE TABLE myitems (
   track_stock TINYINT(1) NOT NULL DEFAULT 1,
   base_unit_id BIGINT UNSIGNED NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
+}
+
+function inventoryPhase4CreateOperationalStore(mysqli $conn, int $storeId): void
+{
+    $conn->query('CREATE TABLE settings (
+        id INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        def_pos_store INT UNSIGNED NULL
+    ) ENGINE=InnoDB');
+    $conn->query('CREATE TABLE acc_head (
+        id INT UNSIGNED NOT NULL PRIMARY KEY,
+        code VARCHAR(32) NOT NULL,
+        aname VARCHAR(191) NOT NULL,
+        is_stock TINYINT(1) NOT NULL DEFAULT 0,
+        isdeleted TINYINT(1) NOT NULL DEFAULT 0
+    ) ENGINE=InnoDB');
+    $conn->query("INSERT INTO acc_head (id, code, aname, is_stock, isdeleted)
+        VALUES ({$storeId}, 'STORE-{$storeId}', 'Operational store', 1, 0)");
+    $conn->query("INSERT INTO settings (def_pos_store) VALUES ({$storeId})");
 }
 
 function inventoryPhase4SeedItem(mysqli $conn, int $id, string $name, string $itemType, int $trackStock, string $qty, string $cost): void

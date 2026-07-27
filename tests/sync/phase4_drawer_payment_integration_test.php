@@ -179,12 +179,16 @@ function phase4DrawerPaymentCreateLegacyTables(mysqli $conn): void
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
     ");
     $conn->query("
-        INSERT INTO acc_head (id, code, aname, is_stock, isdeleted)
-        VALUES (3, '123001', 'Main store', 1, 0)
+        INSERT INTO acc_head (id, code, aname, is_stock, is_fund, isdeleted)
+        VALUES
+            (3, '123001', 'Main store', 1, 0, 0),
+            (51, '111001', 'Cash drawer', 0, 1, 0),
+            (52, '111002', 'Card clearing', 0, 1, 0),
+            (501, '120001', 'POS customer', 0, 0, 0)
     ");
     $conn->query("
         INSERT INTO settings (id, def_pos_store, def_pos_employee, def_pos_fund, def_pos_client, isdeleted)
-        VALUES (1, 3, 0, 0, 0, 0)
+        VALUES (1, 3, 0, 51, 501, 0)
     ");
     $conn->query("
         CREATE TABLE tables (

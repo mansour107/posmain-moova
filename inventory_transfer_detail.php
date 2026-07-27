@@ -65,12 +65,13 @@ if (!$inventoryTransfer) {
     http_response_code(404);
 }
 
+$inventoryTransferCsrfMeta = csrf_meta_tag('inventory_transfer', 'inventory-transfer-csrf');
 include __DIR__ . '/includes/header.php';
 include __DIR__ . '/includes/navbar.php';
 include __DIR__ . '/includes/sidebar.php';
 ?>
 
-<?= csrf_meta_tag('inventory_transfer', 'inventory-transfer-csrf') ?>
+<?= $inventoryTransferCsrfMeta ?>
 
 <style>
     .inventory-transfer-detail-page{direction:rtl;background:#f6f8fb;min-height:calc(100vh - 57px)}

@@ -39,7 +39,7 @@ tasks:
     objective: "Guard recost endpoints in live inventory mode"
     receipt:
       result: done
-      summary: "Live guard on do/recost.php and js/ajax/recost.php."
+      summary: "Historic mutation endpoints were guarded, then removed in later maintenance."
   - id: T013
     type: judge
     assignee: Judge

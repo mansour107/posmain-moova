@@ -52,6 +52,29 @@ try {
         $result['blockers'][] = 'financial_schema_missing';
     }
 
+    $requiredSettlementColumns = [
+        'payment_methods' => ['settlement_policy'],
+        'payment_refunds' => ['settlement_policy', 'settlement_declared_by', 'settlement_declared_at'],
+    ];
+    $missingSettlementColumns = [];
+    foreach ($requiredSettlementColumns as $table => $columns) {
+        if (!financialCertificationTableExists($conn, $table)) {
+            continue;
+        }
+        foreach ($columns as $column) {
+            if (!financialCertificationColumnExists($conn, $table, $column)) {
+                $missingSettlementColumns[] = $table . '.' . $column;
+            }
+        }
+    }
+    $result['checks']['settlement_policy_schema'] = [
+        'ok' => $missingSettlementColumns === [],
+        'missing_columns' => $missingSettlementColumns,
+    ];
+    if ($missingSettlementColumns !== []) {
+        $result['blockers'][] = 'payment_settlement_schema_missing';
+    }
+
     $requiredJournalColumns = [
         'source_type',
         'source_id',
@@ -91,7 +114,15 @@ try {
         $result['blockers'][] = 'journal_idempotency_indexes_missing';
     }
 
-    if (financialCertificationTableExists($conn, 'payment_methods')) {
+    if (financialCertificationTableExists($conn, 'payment_methods')
+        && financialCertificationColumnExists($conn, 'payment_methods', 'settlement_policy')) {
+        $missingLedgerAccountPredicate = financialCertificationTableExists($conn, 'acc_head')
+            ? " OR NOT EXISTS (
+                    SELECT 1
+                    FROM acc_head
+                    WHERE acc_head.id = payment_methods.account_id
+                )"
+            : '';
         $badTenders = (int) financialCertificationScalar($conn, "
             SELECT COUNT(*)
             FROM payment_methods
@@ -99,7 +130,12 @@ try {
               AND (
                 account_id IS NULL
                 OR type NOT IN ('cash', 'card', 'wallet', 'bank')
-                OR (type <> 'cash' AND requires_reference <> 1)
+                OR settlement_policy NOT IN ('cash_drawer', 'manual_external', 'reference_required')
+                OR (type = 'cash' AND settlement_policy <> 'cash_drawer')
+                OR (type <> 'cash' AND settlement_policy = 'cash_drawer')
+                OR (settlement_policy = 'reference_required' AND requires_reference <> 1)
+                OR (settlement_policy <> 'reference_required' AND requires_reference <> 0)
+                {$missingLedgerAccountPredicate}
               )
         ");
         $result['checks']['configured_tenders'] = ['ok' => $badTenders === 0, 'invalid_active_count' => $badTenders];
@@ -137,7 +173,8 @@ try {
         }
     }
 
-    if (financialCertificationTableExists($conn, 'payment_refunds')) {
+    if (financialCertificationTableExists($conn, 'payment_refunds')
+        && financialCertificationColumnExists($conn, 'payment_refunds', 'settlement_policy')) {
         $hasStatus = financialCertificationColumnExists($conn, 'payment_refunds', 'status');
         $orphanRefunds = (int) financialCertificationScalar($conn, $hasStatus ? "
             SELECT COUNT(*)
@@ -158,20 +195,21 @@ try {
         }
     }
 
-    require_once __DIR__ . '/../classes/Financial/FinancialReconciliationService.php';
-    $recon = (new FinancialReconciliationService())->runAll($conn);
-    $result['checks']['financial_reconciliations'] = $recon;
-    if (!$recon['ok']) {
-        foreach ($recon['blockers'] as $blocker) {
-            // Fresh/empty DBs may lack account-balance cache alignment until opening docs.
-            if ($blocker === 'account_balance_vs_journals' && !financialCertificationEnvFlag('POSMAIN_FINANCIAL_REQUIRE_BALANCE_CACHE')) {
-                continue;
+    if ($missingTables === [] && $missingSettlementColumns === []) {
+        require_once __DIR__ . '/../classes/Financial/FinancialReconciliationService.php';
+        $recon = (new FinancialReconciliationService())->runAll($conn);
+        $result['checks']['financial_reconciliations'] = $recon;
+        if (!$recon['ok']) {
+            foreach ($recon['blockers'] as $blocker) {
+                $result['blockers'][] = 'recon_' . $blocker;
             }
-            if ($blocker === 'cash_vs_drawer' && !financialCertificationEnvFlag('POSMAIN_FINANCIAL_REQUIRE_CASH_DRAWER_LINK')) {
-                continue;
-            }
-            $result['blockers'][] = 'recon_' . $blocker;
         }
+    } else {
+        $result['checks']['financial_reconciliations'] = [
+            'ok' => false,
+            'skipped' => true,
+            'reason' => 'required_financial_schema_missing',
+        ];
     }
 
     $conn->close();

@@ -6,6 +6,11 @@ require_once __DIR__ . '/../../classes/Financial/FinancialCertificationBaselineS
 require_once __DIR__ . '/../../classes/Financial/FinancialReconciliationService.php';
 
 mysqli_report(MYSQLI_REPORT_OFF);
+$preflightSource = file_get_contents(__DIR__ . '/../../tools/financial_certification_preflight.php') ?: '';
+financialGuardAssert(
+    strpos($preflightSource, 'acc_head.id = payment_methods.account_id') !== false,
+    'financial certification must reject active tenders whose ledger account does not exist'
+);
 $host = getenv('POSMAIN_TEST_MYSQL_HOST') ?: '127.0.0.1';
 $port = (int) (getenv('POSMAIN_TEST_MYSQL_PORT') ?: 3307);
 $user = getenv('POSMAIN_TEST_MYSQL_USER') ?: 'root';

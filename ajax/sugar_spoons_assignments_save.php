@@ -14,6 +14,9 @@ $itemIds = is_array($_POST['item_ids'] ?? null) ? $_POST['item_ids'] : [];
 $transactionStarted = false;
 
 try {
+    // Identity rotation migrates existing sync references and must finish
+    // before the assignment transaction begins.
+    posmain_preflight_operational_sync($conn);
     $conn->begin_transaction();
     $transactionStarted = true;
     $result = (new PreparationSelectionService())->replaceSugarAssignments(

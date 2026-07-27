@@ -188,7 +188,7 @@ class CashShiftWorkspaceService
                 }
                 $row['close_variance'] = $this->varianceAmount($row);
                 $row['count_pending'] = false;
-                $row['variance_status'] = 'unresolved';
+                $row['variance_status'] = (string) ($row['variance_status'] ?? 'unresolved');
                 $row['has_override'] = isset($overrideIds[(int) $row['id']]);
                 if ($financial === []) {
                     $row = array_merge(
@@ -216,7 +216,8 @@ class CashShiftWorkspaceService
             if ($context['status'] === 'forced_closed' && $status !== 'forced_closed') {
                 return false;
             }
-            if ($context['status'] === 'needs_review' && $varianceStatus !== 'unresolved') {
+            if ($context['status'] === 'needs_review'
+                && !in_array($varianceStatus, ['counted_pending_review', 'unresolved'], true)) {
                 return false;
             }
             if ($context['has_override'] && !isset($overrideIds[(int) $row['id']])) {

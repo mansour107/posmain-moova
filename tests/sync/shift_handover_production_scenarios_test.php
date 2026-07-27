@@ -72,7 +72,7 @@ try {
     $cold = $float->expectedOpeningFloat($conn, 1, 9);
     prodAssert(!empty($cold['baseline_required']), 'cold branch requires baseline');
 
-    $float->setOpeningBaseline($conn, 1, 9, 200.0, 501);
+    $float->setOpeningBaseline($conn, 1, 9, '200.000', 501);
     prodAssert($float->canSetOpeningBaseline($conn, 1, 9), 'baseline mutable before any session');
 
     $count->beginOpenCount($conn, 501);
@@ -81,7 +81,7 @@ try {
 
     $baselineLocked = false;
     try {
-        $float->setOpeningBaseline($conn, 1, 9, 250.0, 501);
+        $float->setOpeningBaseline($conn, 1, 9, '250.000', 501);
     } catch (RuntimeException $exception) {
         $baselineLocked = $exception->getMessage() === 'BASELINE_LOCKED';
     }
@@ -110,8 +110,15 @@ try {
     $closeWrong = $count->submitCloseCount($conn, 501, '240.000', ['drawer_session_id' => $sessionId]);
     prodAssert(($closeWrong['status'] ?? '') === 'recount', 'first close mismatch recounts');
     $closeFinal = $count->submitCloseCount($conn, 501, '240.000', ['drawer_session_id' => $sessionId]);
-    prodAssert(in_array($closeFinal['status'] ?? '', ['close_with_variance', 'ready_to_close'], true), 'close completes after max attempts');
+    prodAssert(($closeFinal['status'] ?? '') === 'counted_pending_review', 'nonzero close count waits for authorized variance review');
     prodAssert(!empty($closeFinal['close_token']), 'close token issued');
+    $pendingReview = $drawer->sessionById($conn, $sessionId);
+    prodAssert(($pendingReview['status'] ?? '') === 'open', 'pending variance must not finalize the drawer or Z report');
+    prodAssert(($pendingReview['variance_status'] ?? '') === 'counted_pending_review', 'pending variance state is durable');
+    prodAssert(
+        CashAmount::compare($pendingReview['counted_cash'] ?? '0.00', '240.00') === 0,
+        'pending variance preserves counted cash'
+    );
 
     $closeKey = 'prod-close-count-' . getmypid();
     $_POST = [
@@ -146,14 +153,54 @@ try {
     $attempts = $count->countAttemptsForSession($conn, $sessionId);
     prodAssert(count($attempts) >= 2, 'open and close attempts recorded');
 
-    $conn->query("UPDATE drawer_sessions SET variance_status = 'unresolved', variance_type = 'closing' WHERE id = {$sessionId}");
     $unresolved = $count->unresolvedSessions($conn, 1, 9);
-    prodAssert(count($unresolved) >= 1, 'unresolved queue lists variance session');
+    prodAssert(count($unresolved) >= 1, 'variance-review queue lists counted-pending session');
+    prodAssert(($unresolved[0]['variance_status'] ?? '') === 'counted_pending_review', 'queue preserves pending-review state');
 
     $resolvedCount = (int) $conn->query(
         "SELECT COUNT(*) AS c FROM drawer_session_resolutions WHERE drawer_session_id = {$sessionId}"
     )->fetch_assoc()['c'];
     prodAssert($resolvedCount === 0, 'no resolution before admin resolve');
+
+    $_SESSION['usrole'] = 1;
+    $certifiedRejected = false;
+    try {
+        $count->resolveSession($conn, 501, $sessionId, [
+            'resolution_reason_code' => 'recount_confirmed',
+            'resolution_notes' => 'Must not resolve without a journal subsystem.',
+        ], ['financial_certified_mode' => true]);
+    } catch (RuntimeException $exception) {
+        $certifiedRejected = $exception->getMessage() === 'LEDGER_SUBSYSTEM_UNAVAILABLE';
+    }
+    prodAssert($certifiedRejected, 'certified mode rejects variance resolution without a durable journal');
+    $afterRejectedResolve = $drawer->sessionById($conn, $sessionId);
+    prodAssert(($afterRejectedResolve['variance_status'] ?? '') === 'counted_pending_review', 'failed certified resolution rolls back status');
+
+    $resolution = $count->resolveSession($conn, 501, $sessionId, [
+        'resolution_reason_code' => 'recount_confirmed',
+        'resolution_notes' => 'Manager reviewed the blind recount.',
+    ]);
+    prodAssert(($resolution['variance_status'] ?? '') === 'resolved', 'authorized reason resolves pending variance');
+    prodAssert(
+        CashAmount::compare($resolution['variance_amount'] ?? '0.00', '-15.00') === 0,
+        'resolution uses durable server variance'
+    );
+
+    $reviewedBegin = $count->beginCloseCount($conn, 501, ['drawer_session_id' => $sessionId]);
+    prodAssert(!empty($reviewedBegin['reviewed_variance']), 'resolved variance can resume final close without a third count attempt');
+    $reviewedFinal = $count->submitCloseCount($conn, 501, '240.000', ['drawer_session_id' => $sessionId]);
+    prodAssert(($reviewedFinal['status'] ?? '') === 'ready_to_close_after_review', 'reviewed count is eligible for final close');
+    $closed = $count->closeWithValidatedCount($conn, 501, [
+        'close_token' => $reviewedFinal['close_token'],
+        'counted_cash' => '240.000',
+        'matched' => false,
+        'drawer_session_id' => $sessionId,
+        'notes' => 'Reviewed shift close',
+    ]);
+    prodAssert((int) ($closed['drawer_session_id'] ?? 0) === $sessionId, 'final close uses reviewed drawer');
+    $closedRow = $drawer->sessionById($conn, $sessionId);
+    prodAssert(($closedRow['status'] ?? '') === 'closed', 'final Z close occurs only after review');
+    prodAssert(($closedRow['variance_status'] ?? '') === 'resolved', 'final close preserves resolved variance status');
 
     echo "shift_handover_production_scenarios_test: OK\n";
 } finally {

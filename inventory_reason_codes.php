@@ -31,12 +31,13 @@ $inventoryReasonDirections = [
     'none' => 'بدون كمية',
 ];
 
+$inventoryReasonCodeCsrfMeta = csrf_meta_tag('inventory_reason_code', 'inventory-reason-code-csrf');
 include __DIR__ . '/includes/header.php';
 include __DIR__ . '/includes/navbar.php';
 include __DIR__ . '/includes/sidebar.php';
 ?>
 
-<?= csrf_meta_tag('inventory_reason_code', 'inventory-reason-code-csrf') ?>
+<?= $inventoryReasonCodeCsrfMeta ?>
 
 <style>
     html,body{overflow-x:hidden}

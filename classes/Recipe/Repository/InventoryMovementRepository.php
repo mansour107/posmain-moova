@@ -119,6 +119,43 @@ ORDER BY id",
         );
     }
 
+    /**
+     * Serialize compensation against the immutable original movement. This is
+     * separate from the balance lock because two ingredients can share a
+     * balance while each still needs its own reversal ceiling.
+     */
+    public function lockById(mysqli $conn, int $movementId): ?array
+    {
+        if ($movementId < 1) {
+            return null;
+        }
+
+        return $this->fetchOne(
+            $conn,
+            'SELECT * FROM inventory_movements WHERE id = ? LIMIT 1 FOR UPDATE',
+            [$movementId]
+        );
+    }
+
+    public function refundedQuantityForMovement(mysqli $conn, int $movementId): string
+    {
+        if ($movementId < 1) {
+            return RecipeDecimal::zero();
+        }
+
+        $row = $this->fetchOne(
+            $conn,
+            "
+SELECT COALESCE(SUM(qty_in), 0) AS refunded_qty
+FROM inventory_movements
+WHERE movement_type = 'refund_reversal'
+  AND reversed_movement_id = ?",
+            [$movementId]
+        );
+
+        return RecipeDecimal::normalize($row['refunded_qty'] ?? '0');
+    }
+
     public function findByIds(mysqli $conn, array $movementIds): array
     {
         $movementIds = array_values(array_unique(array_map('intval', $movementIds)));

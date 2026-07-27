@@ -408,7 +408,7 @@ $(document).ready(function() {
              }
         }
 
-        // Setup hidden fields for the backend `doadd_invoice.php`
+        // Compatibility fields for the modern api/pos path (legacy doadd_invoice is blocked).
         $('<input>').attr({type: 'hidden', name: 'paid_cash', value: paidCash}).appendTo(form);
         $('<input>').attr({type: 'hidden', name: 'paid', value: paidCash}).appendTo(form); // compatibility
         $('<input>').attr({type: 'hidden', name: 'payment_fund_id', value: $('#payment_fund_id').val()}).appendTo(form);

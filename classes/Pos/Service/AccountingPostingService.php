@@ -74,6 +74,8 @@ class AccountingPostingService
             'source_id' => $receiptId,
             'posting_kind' => 'payment_receipt',
             'idempotency_key' => $idempotencyKey,
+            'tenant' => $tenant,
+            'branch' => $branch,
         ]);
 
         return [

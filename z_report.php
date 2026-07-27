@@ -140,6 +140,14 @@ $net_cash_expected = $has_drawer_session ? $drawer_expected_cash : $total_cash_s
             <td>الخصومات</td>
             <td class="amount"><?= number_format($totals['total_discount'], 2) ?></td>
         </tr>
+        <tr>
+            <td>المبيعات بعد الخصم وقبل المرتجعات</td>
+            <td class="amount"><?= number_format($totals['total_sales_after_discount'] ?? 0, 2) ?></td>
+        </tr>
+        <tr>
+            <td>المرتجعات المنشورة</td>
+            <td class="amount">- <?= number_format($totals['total_refunds'] ?? 0, 2) ?></td>
+        </tr>
         <tr class="total-row">
             <td>صافي المبيعات</td>
             <td class="amount"><?= number_format($totals['total_net'], 2) ?></td>

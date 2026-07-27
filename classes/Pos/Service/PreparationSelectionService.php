@@ -455,6 +455,12 @@ class PreparationSelectionService
 
     private function itemGroupId(mysqli $conn, int $itemId): int
     {
+        // Some supported upgrade schemas have myitems before the legacy
+        // grouping column exists. Preparation fields are optional; absence of
+        // that column means "no group configuration", not a checkout failure.
+        if (!$this->columnExists($conn, 'myitems', 'group1')) {
+            return 0;
+        }
         $stmt = $conn->prepare('SELECT group1 FROM myitems WHERE id = ? AND COALESCE(isdeleted, 0) = 0 LIMIT 1');
         $stmt->bind_param('i', $itemId);
         $stmt->execute();
@@ -547,5 +553,23 @@ class PreparationSelectionService
         $row = $stmt->get_result()->fetch_assoc();
         $stmt->close();
         return $this->tableCache[$table] = (int) ($row['c'] ?? 0) > 0;
+    }
+
+    private function columnExists(mysqli $conn, string $table, string $column): bool
+    {
+        $cacheKey = $table . '.' . $column;
+        if (isset($this->tableCache[$cacheKey])) {
+            return $this->tableCache[$cacheKey];
+        }
+        $stmt = $conn->prepare(
+            'SELECT COUNT(*) AS c FROM information_schema.COLUMNS'
+            . ' WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?'
+        );
+        $stmt->bind_param('ss', $table, $column);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        return $this->tableCache[$cacheKey] = (int) ($row['c'] ?? 0) > 0;
     }
 }

@@ -2,6 +2,7 @@
 
 require_once __DIR__ . '/TableInputValidator.php';
 require_once __DIR__ . '/../../Financial/Money.php';
+require_once __DIR__ . '/../../Financial/DecimalQuantity.php';
 
 class PaymentInputValidator
 {
@@ -25,7 +26,7 @@ class PaymentInputValidator
         $data['order_id'] = TableInputValidator::positiveInt($data['order_id'] ?? $data['original_order_id'] ?? 0, 'بيانات السداد المقسم غير صحيحة');
         $data['table_id'] = TableInputValidator::positiveInt($data['table_id'] ?? 0, 'بيانات السداد المقسم غير صحيحة');
         $data['items'] = self::splitItems($data['items'] ?? null);
-        $data['paid_amount'] = TableInputValidator::decimal($data['paid_amount'] ?? $data['paid'] ?? 0, 'بيانات السداد المقسم غير صحيحة');
+        $data['paid_amount'] = self::money($data['paid_amount'] ?? $data['paid'] ?? 0, 'بيانات السداد المقسم غير صحيحة');
         $data['payment_method'] = self::paymentMethod($data['payment_method'] ?? 'cash');
 
         return $data;
@@ -58,7 +59,15 @@ class PaymentInputValidator
                 $normalizedItem = $item;
                 $normalizedItem['detail_id'] = $detailId;
                 if (array_key_exists('qty', $normalizedItem) || array_key_exists('quantity', $normalizedItem)) {
-                    $normalizedItem['qty'] = TableInputValidator::decimal($normalizedItem['qty'] ?? $normalizedItem['quantity'] ?? 0, 'كمية الصنف المختارة غير صحيحة');
+                    try {
+                        $quantity = DecimalQuantity::fromLegacy($normalizedItem['qty'] ?? $normalizedItem['quantity'] ?? 0);
+                    } catch (Throwable $exception) {
+                        throw new InvalidArgumentException('كمية الصنف المختارة غير صحيحة');
+                    }
+                    if (FinancialDecimal::compare($quantity->toString(), '0', DecimalQuantity::SCALE) <= 0) {
+                        throw new InvalidArgumentException('كمية الصنف المختارة غير صحيحة');
+                    }
+                    $normalizedItem['qty'] = $quantity->toString();
                 }
                 $normalized[] = $normalizedItem;
                 continue;

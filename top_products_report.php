@@ -1,4 +1,5 @@
 <?php include('includes/header.php'); ?>
+<?php require_once __DIR__ . '/classes/Financial/LegacySalesReportService.php'; ?>
 <?php include('includes/navbar.php'); ?>
 <?php include('includes/sidebar.php'); ?>
 
@@ -46,46 +47,18 @@
                     $to = $_GET['to'] ?? null;
                     $category = $_GET['category'] ?? null;
                     
-                    $dateFilter = "";
-                    if ($from && $to) {
-                        $dateFilter = "AND crtime BETWEEN '$from 00:00:00' AND '$to 23:59:59'";
-                    } elseif ($from) {
-                        $dateFilter = "AND crtime >= '$from 00:00:00'";
-                    } elseif ($to) {
-                        $dateFilter = "AND crtime <= '$to 23:59:59'";
-                    }
-
-                    // استعلام لجلب بيانات المبيعات لكل صنف
-                    $sql = "SELECT 
-                                i.id,
-                                i.iname,
-                                i.barcode,
-                                i.price1,
-                                i.cost_price,
-                                i.group1,
-                                g.gname as group_name,
-                                COALESCE(SUM(fd.qty_out), 0) as total_qty,
-                                COALESCE(SUM(fd.det_value), 0) as total_value,
-                                COALESCE(SUM(fd.profit), 0) as total_profit
-                            FROM myitems i
-                            LEFT JOIN item_group g ON i.group1 = g.id
-                            LEFT JOIN fat_details fd ON i.id = fd.item_id 
-                                AND fd.isdeleted = 0 
-                                AND (fd.fat_tybe = 9 OR fd.fat_tybe = 3) 
-                                $dateFilter
-                            WHERE i.isdeleted = 0
-                            GROUP BY i.id, i.iname, i.barcode, i.price1, i.cost_price, i.group1, g.gname
-                            HAVING total_qty > 0
-                            ORDER BY total_qty DESC";
-
-                    $result = $conn->query($sql);
                     $products = [];
-                    while ($row = $result->fetch_assoc()) {
+                    $itemTotals = (new LegacySalesReportService())->itemTotals($conn, $from, $to, [
+                        'tenant' => (int) ($_SESSION['pos_tenant'] ?? 0),
+                        'branch' => (int) ($_SESSION['pos_branch'] ?? 0),
+                    ]);
+                    foreach ($itemTotals as $row) {
                         // فلترة حسب نوع الصنف (JavaScript بدلاً من SQL)
-                        if (!$category || $row['group1'] == $category) {
+                        if ((float) $row['total_qty'] > 0 && (!$category || $row['group1'] == $category)) {
                             $products[] = $row;
                         }
                     }
+                    usort($products, static fn(array $a, array $b): int => (float) $b['total_qty'] <=> (float) $a['total_qty']);
 
                     // تصنيف الأصناف
                     $totalProducts = count($products);

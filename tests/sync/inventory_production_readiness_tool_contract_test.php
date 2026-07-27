@@ -5,6 +5,7 @@ $tool = inventoryProductionReadinessContractSource($root . '/tools/inventory_pro
 $roadmap = inventoryProductionReadinessContractSource($root . '/docs/inventory/roadmap_status.md');
 
 foreach ([
+    'inventory_runtime_preflight.php',
     'inventory_legacy_retirement_check.php',
     'inventory_cutover_readiness.php',
     'inventory_operational_health_check.php',
@@ -12,6 +13,7 @@ foreach ([
     'browser_operator_qa',
     'browser_operator_qa_evidence_missing',
     'production_ready',
+    'runtime_activation',
     'ledger_and_balance_cutover',
     'legacy_stock_retirement',
     'operational_hardening',
@@ -53,6 +55,7 @@ inventoryProductionReadinessContractAssert(array_key_exists('production_ready', 
 inventoryProductionReadinessContractAssert(empty($runtime['production_ready']), 'production readiness should not pass without browser evidence and live gates');
 
 foreach ([
+    'runtime_activation',
     'legacy_retirement',
     'cutover',
     'operational_health',

@@ -6,6 +6,7 @@ if (PHP_SAPI !== 'cli') {
 }
 
 require_once __DIR__ . '/../tests/sync/pos_takeaway_invoice_handler_test.php';
+require_once __DIR__ . '/../classes/Pos/Service/PosRegisterService.php';
 
 $options = getopt('', [
     'json',
@@ -49,15 +50,24 @@ try {
     posTakeawayInvoiceSeedFixtures($conn);
     recipeCashierBrowserFixtureExtendSchema($conn);
     posTakeawayInvoiceSeedRecipe($conn);
+    $register = (new PosRegisterService())->createRegister($conn, [
+        'tenant' => 0,
+        'branch' => 0,
+        'code' => 'REG1',
+        'name' => 'Cashier browser fixture register',
+        'paired_by' => 7,
+    ]);
 
     $server = posTakeawayInvoiceStartServer($root, $db, $sessionDir, $host, $port, $user, $pass);
+    recipeCashierBrowserFixtureRefreshSession($sessionDir, (string) $server['session_id']);
     $baseUrl = preg_replace('#/do/doadd_invoice\.php$#', '', (string) $server['url']);
     $result = [
         'ok' => true,
         'db' => $db,
         'base_url' => $baseUrl,
         'pos_url' => $baseUrl . '/pos_barcode.php',
-        'cookie' => 'PHPSESSID=' . $server['session_id'],
+        'cookie' => 'PHPSESSID=' . $server['session_id']
+            . '; ' . PosRegisterService::COOKIE_NAME . '=' . (string) ($register['_pairing_token_once'] ?? ''),
         'csrf_token' => 'takeaway-http-csrf-fixed',
         'pilot_item_id' => 10,
         'ingredient_item_id' => 12,
@@ -101,15 +111,9 @@ function recipeCashierBrowserFixtureExtendSchema(mysqli $conn): void
 {
     $conn->query("ALTER TABLE acc_head ADD COLUMN parent_id INT NOT NULL DEFAULT 0");
     $conn->query("ALTER TABLE acc_head ADD COLUMN is_basic TINYINT(1) NOT NULL DEFAULT 0");
-    $conn->query("ALTER TABLE acc_head ADD COLUMN is_stock TINYINT(1) NOT NULL DEFAULT 0");
     $conn->query("ALTER TABLE acc_head ADD COLUMN is_fund TINYINT(1) NOT NULL DEFAULT 0");
-    $conn->query("ALTER TABLE usr_pwrs ADD COLUMN isdeleted TINYINT(1) NOT NULL DEFAULT 0");
-    $conn->query("ALTER TABLE usr_pwrs ADD COLUMN edit_payment TINYINT(1) NOT NULL DEFAULT 1");
-    $conn->query("ALTER TABLE usr_pwrs ADD COLUMN delete_payment TINYINT(1) NOT NULL DEFAULT 1");
-    $conn->query("ALTER TABLE myitems ADD COLUMN group1 INT NOT NULL DEFAULT 1");
     $conn->query("ALTER TABLE myitems ADD COLUMN info TEXT NULL");
     $conn->query("ALTER TABLE myitems ADD COLUMN salesqty DECIMAL(15,4) NOT NULL DEFAULT 0");
-    $conn->query("ALTER TABLE settings ADD COLUMN def_pos_store INT NULL");
     $conn->query("ALTER TABLE settings ADD COLUMN def_pos_employee INT NULL");
     $conn->query("ALTER TABLE settings ADD COLUMN def_pos_fund INT NULL");
     $conn->query("ALTER TABLE ot_head ADD COLUMN cancelled_at DATETIME NULL");
@@ -132,16 +136,8 @@ function recipeCashierBrowserFixtureExtendSchema(mysqli $conn): void
             KEY idx_imgs_itemid (itemid)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
     ");
-    $conn->query("
-        CREATE TABLE users (
-            id INT NOT NULL PRIMARY KEY,
-            uname VARCHAR(255) NULL,
-            password VARCHAR(255) NULL,
-            userrole INT NOT NULL DEFAULT 1,
-            usertype INT NOT NULL DEFAULT 2,
-            isdeleted TINYINT(1) NOT NULL DEFAULT 0
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
-    ");
+    $conn->query("ALTER TABLE users ADD COLUMN password VARCHAR(255) NULL");
+    $conn->query("ALTER TABLE users ADD COLUMN usertype INT NOT NULL DEFAULT 2");
     $conn->query("
         CREATE TABLE session_time (
             id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -151,13 +147,26 @@ function recipeCashierBrowserFixtureExtendSchema(mysqli $conn): void
     ");
     $conn->query("UPDATE acc_head SET is_fund = 1 WHERE id IN (51, 61)");
     $conn->query("UPDATE acc_head SET is_stock = 1 WHERE id = 3");
-    $conn->query("UPDATE acc_head SET parent_id = 35 WHERE id = 4");
     $conn->query("UPDATE settings SET def_pos_store = 3, def_pos_employee = 4, def_pos_fund = 51, def_pos_client = 501 WHERE id = 1");
     $conn->query("UPDATE myitems SET group1 = 1, salesqty = CASE id WHEN 10 THEN 20 WHEN 11 THEN 10 ELSE 0 END");
     $conn->query("
-        INSERT INTO acc_head (id, code, aname, isdeleted, parent_id, is_basic, is_stock, is_fund) VALUES
-            (3, '130001', 'Main Store', 0, 0, 0, 1, 0),
-            (4, '350001', 'Cashier Employee', 0, 35, 0, 0, 0)
+        INSERT INTO payment_methods
+            (code, name_ar, name_en, account_id, type, requires_reference, settlement_policy, is_active, sort_order)
+        VALUES
+            ('cash', 'نقدي', 'Cash', 51, 'cash', 0, 'cash_drawer', 1, 1)
+    ");
+    $conn->query("
+        INSERT INTO drawer_sessions (
+            id, uuid, user_id, tenant, branch, fund_account_id, opened_at,
+            business_day, opened_by, opening_cash, status, notes
+        ) VALUES (
+            1, 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 7, 0, 0, 51, NOW(),
+            CURDATE(), 7, 0.00, 'open', 'cashier browser fixture'
+        )
+    ");
+    $conn->query("
+        INSERT INTO acc_head (id, code, aname, isdeleted, parent_id, is_basic, is_stock, is_fund)
+        VALUES (4, '350001', 'Cashier Employee', 0, 35, 0, 0, 0)
     ");
     $conn->query("INSERT INTO tables (id, tname, table_case, isdeleted) VALUES (1, 'QA Table 1', 1, 0)");
     $conn->query("
@@ -210,6 +219,11 @@ function recipeCashierBrowserFixtureExtendSchema(mysqli $conn): void
             NOW(),
             'paid reversal fixture order'
         )
+    ");
+    $conn->query("
+        INSERT INTO order_payments (id, order_id, amount, payment_method, created_by, created_at) VALUES
+            (9901, 9001, 10.00, 'cash', 7, NOW()),
+            (9902, 9002, 10.00, 'cash', 7, NOW())
     ");
     $conn->query("
         INSERT INTO ot_head (
@@ -345,7 +359,7 @@ function recipeCashierBrowserFixtureExtendSchema(mysqli $conn): void
         )
     ");
     $conn->query("INSERT INTO item_group (id, gname, isdeleted) VALUES (1, 'QA Menu', 0)");
-    $conn->query("INSERT INTO users (id, uname, password, userrole, usertype, isdeleted) VALUES (7, 'fixture-cashier', '" . md5('1234') . "', 1, 2, 0)");
+    $conn->query("UPDATE users SET uname = 'fixture-cashier', password = '" . md5('1234') . "', userrole = 1, usertype = 2, isdeleted = 0 WHERE id = 7");
 }
 
 function recipeCashierBrowserFixtureCleanup(?array &$server, mysqli &$conn, string $db, string $sessionDir, bool &$cleaned): void
@@ -463,6 +477,7 @@ function recipeCashierBrowserFixtureAssessPaidReversalSurface(mysqli $conn, stri
         'order_id' => 9001,
         'action' => 'refund',
         'refund_stock_policy' => 'return_to_stock',
+        'refund_payment_method' => 'cash',
         'reason' => 'fixture HTTP refund smoke',
         'idempotency_key' => 'fixture-http-refund-9001-fixed',
     ];
@@ -494,6 +509,7 @@ function recipeCashierBrowserFixtureAssessPaidReversalSurface(mysqli $conn, stri
         'order_id' => 9002,
         'action' => 'void',
         'refund_stock_policy' => 'waste',
+        'refund_payment_method' => 'cash',
         'reason' => 'fixture HTTP void smoke',
         'idempotency_key' => 'fixture-http-void-9002-fixed',
     ];
@@ -517,7 +533,7 @@ function recipeCashierBrowserFixtureAssessPaidReversalSurface(mysqli $conn, stri
         && (string) ($voidedOrder['payment_status'] ?? '') === 'voided'
         && (string) ($voidedOrder['invoice_status'] ?? '') === 'cancelled'
         && (string) ($voidedOrder['order_status'] ?? '') === 'cancelled'
-        && (int) ($voidedOrder['isdeleted'] ?? 0) === 1
+        && (int) ($voidedOrder['isdeleted'] ?? 1) === 0
         && (int) ($voidedOrder['table_id'] ?? 0) === 1
         && is_array($voidTable)
         && (int) ($voidTable['table_case'] ?? 1) === 0
@@ -571,6 +587,23 @@ function recipeCashierBrowserFixtureAssessPaidReversalSurface(mysqli $conn, stri
         'void_idempotency_completed_count' => $voidIdempotencyCount,
         'void_mutation_ok' => $voidMutationOk,
     ];
+}
+
+function recipeCashierBrowserFixtureRefreshSession(string $sessionDir, string $sessionId): void
+{
+    $previousSavePath = session_save_path();
+    $previousId = session_id();
+    if (session_status() === PHP_SESSION_ACTIVE) {
+        session_write_close();
+    }
+    session_save_path($sessionDir);
+    session_id($sessionId);
+    session_start();
+    $_SESSION['posmain_auth_version'] = 1;
+    $_SESSION['pos_drawer_session_id'] = 1;
+    session_write_close();
+    session_id($previousId);
+    session_save_path($previousSavePath);
 }
 
 function recipeCashierBrowserFixtureAssessPosPage(array $page): array

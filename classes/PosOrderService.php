@@ -5,6 +5,7 @@ require_once __DIR__ . '/Recipe/ExternalOrderLineIdentityService.php';
 require_once __DIR__ . '/Recipe/RecipeDecimal.php';
 require_once __DIR__ . '/Recipe/RecipeOrderLifecycleService.php';
 require_once __DIR__ . '/Inventory/InventoryInvoiceBridge.php';
+require_once __DIR__ . '/Pos/Service/SideEffectPolicy.php';
 require_once __DIR__ . '/MoovaPosIntegration.php';
 
 class PosOrderService
@@ -1627,7 +1628,7 @@ class PosOrderService
         }
 
         try {
-            $result = $this->inventoryInvoiceBridge->recordInvoiceLines(
+            $result = $this->inventoryInvoiceBridge->reserveInvoiceLines(
                 $conn,
                 self::TYPE_POS,
                 $orderId,
@@ -1635,10 +1636,16 @@ class PosOrderService
                 $this->moovaInventoryBridgeContext($tenant, $branch, $scope, $payload, $moovaOrderId)
             );
             if (!empty($result['errors'])) {
-                error_log('Moova inventory invoice bridge shadow errors: ' . json_encode($result['errors'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+                error_log('Moova direct-stock reservation errors: ' . json_encode($result['errors'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+            }
+            if (SideEffectPolicy::inventoryBridgeShouldRollback(new RuntimeException('bridge_errors'), $result)) {
+                throw new RuntimeException('MOOVA_INVENTORY_RESERVATION_FAILED');
             }
         } catch (Throwable $exception) {
-            error_log('Moova inventory invoice bridge shadow failed: ' . $exception->getMessage());
+            error_log('Moova direct-stock reservation failed: ' . $exception->getMessage());
+            if (SideEffectPolicy::inventoryBridgeShouldRollback($exception)) {
+                throw $exception;
+            }
         }
     }
 
@@ -1650,7 +1657,7 @@ class PosOrderService
         }
 
         try {
-            $result = $this->inventoryInvoiceBridge->recordInvoiceReversalLines(
+            $result = $this->inventoryInvoiceBridge->releaseInvoiceReservations(
                 $conn,
                 self::TYPE_POS,
                 $orderId,
@@ -1659,10 +1666,16 @@ class PosOrderService
                 $this->moovaInventoryBridgeContext($tenant, $branch, $scope, $payload, $moovaOrderId)
             );
             if (!empty($result['errors'])) {
-                error_log('Moova inventory invoice bridge reversal shadow errors: ' . json_encode($result['errors'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+                error_log('Moova direct-stock reservation release errors: ' . json_encode($result['errors'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+            }
+            if (SideEffectPolicy::inventoryBridgeShouldRollback(new RuntimeException('bridge_errors'), $result)) {
+                throw new RuntimeException('MOOVA_INVENTORY_RESERVATION_RELEASE_FAILED');
             }
         } catch (Throwable $exception) {
-            error_log('Moova inventory invoice bridge reversal shadow failed: ' . $exception->getMessage());
+            error_log('Moova direct-stock reservation release failed: ' . $exception->getMessage());
+            if (SideEffectPolicy::inventoryBridgeShouldRollback($exception)) {
+                throw $exception;
+            }
         }
     }
 

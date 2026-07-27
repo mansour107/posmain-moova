@@ -1,6 +1,6 @@
 <?php
 
-require_once __DIR__ . '/../../Sync/SchemaReadinessGuard.php';
+require_once __DIR__ . '/../../Sync/KdsSchemaReadinessGuard.php';
 
 /**
  * Manages KDS stations, category routing, and worker assignment.
@@ -11,12 +11,12 @@ require_once __DIR__ . '/../../Sync/SchemaReadinessGuard.php';
  */
 class KdsStationService
 {
-    private SyncSchemaReadinessGuard $schemaGuard;
+    private KdsSchemaReadinessGuard $schemaGuard;
     private array $scopeCache = [];
 
-    public function __construct(?SyncSchemaReadinessGuard $schemaGuard = null)
+    public function __construct(?KdsSchemaReadinessGuard $schemaGuard = null)
     {
-        $this->schemaGuard = $schemaGuard ?: new SyncSchemaReadinessGuard();
+        $this->schemaGuard = $schemaGuard ?: new KdsSchemaReadinessGuard();
     }
 
     public function ensureSchema(mysqli $conn): void

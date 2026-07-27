@@ -38,8 +38,10 @@ test.describe('owner: recipe management — real owner journey', () => {
       const firstOpenHref = await openLinks.first().getAttribute('href');
       expect(firstOpenHref, 'recipe open link must target a recipe_id').toMatch(/recipe_id=\d+/);
 
-      await openLinks.first().click();
-      await page.waitForLoadState('networkidle');
+      await Promise.all([
+        page.waitForNavigation({ waitUntil: 'domcontentloaded' }),
+        openLinks.first().click(),
+      ]);
 
       const selectedBody = await page.content();
       expect(selectedBody, 'opened recipe must not fatal').not.toMatch(/fatal error|SQL syntax|mysqli_|uncaught exception/i);
@@ -68,8 +70,10 @@ test.describe('owner: recipe management — real owner journey', () => {
       // Empty library: owner enters the create flow and uses the real autocomplete.
       const createLink = page.locator('a.recipe-create-top-button');
       await expect(createLink, 'empty library must offer create button').toBeVisible();
-      await createLink.click();
-      await page.waitForLoadState('networkidle');
+      await Promise.all([
+        page.waitForNavigation({ waitUntil: 'domcontentloaded' }),
+        createLink.click(),
+      ]);
 
       const createBody = await page.content();
       expect(createBody, 'create page must not fatal').not.toMatch(/fatal error|SQL syntax|mysqli_|uncaught exception/i);

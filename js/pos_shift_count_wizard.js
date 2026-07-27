@@ -89,6 +89,7 @@
             matched: false,
             attemptNumber: 0,
             handoverEnabled: false,
+            reviewedVariance: false,
         },
 
         initOpenOverlay: function () {
@@ -595,13 +596,17 @@
                 matched: false,
                 attemptNumber: 0,
                 handoverEnabled: false,
+                reviewedVariance: false,
             };
             this.goCloseStep('summary');
-            $('#pshCloseAmount').val('');
+            $('#pshCloseAmount').val('').prop('disabled', false);
             $('#pshCloseMessage').addClass('psh-hidden').text('');
             $('#pshCloseVariance').addClass('psh-hidden');
             $('#pshCloseCountStep').removeClass('psh-hidden');
             $('[data-psh-close-final]').addClass('psh-hidden');
+            $('[data-psh-close-submit-count]')
+                .prop('disabled', false)
+                .html('<i class="fas fa-check me-1"></i>تأكيد العد');
             // goCloseStep('summary') owns submit-count visibility — do not re-show it here.
         },
 
@@ -638,6 +643,24 @@
                         wizard.closeState.closeToken = response.data.close_token || '';
                         wizard.closeState.drawerSessionId = response.data.drawer_session_id || 0;
                         wizard.closeState.attemptNumber = Number(response.data.attempt_number || 0);
+                        if (response.data.reviewed_variance) {
+                            wizard.closeState.reviewedVariance = true;
+                            wizard.closeState.countedCash = Number(response.data.reviewed_counted_cash || 0);
+                            wizard.closeState.matched = false;
+                            $('#pshCloseAmount')
+                                .val(Number(response.data.reviewed_counted_cash || 0).toFixed(2))
+                                .prop('disabled', true);
+                            $('#pshCloseAttemptLabel').text('تم اعتماد فرق الدرج من مستخدم مخول');
+                            $('#pshCloseMessage')
+                                .removeClass('psh-hidden is-warn is-info')
+                                .addClass('is-success')
+                                .text('العد المعتمد محفوظ — أكّد الإغلاق النهائي بدون إعادة العد');
+                            $('[data-psh-close-submit-count]')
+                                .prop('disabled', false)
+                                .html('<i class="fas fa-check me-1"></i>تأكيد الإغلاق');
+                            $('[data-psh-close-back]').addClass('psh-hidden');
+                            return;
+                        }
                         if (wizard.closeState.attemptNumber > 0) {
                             $('#pshCloseAttemptLabel').text(
                                 'محاولة ' + wizard.closeState.attemptNumber + ' من ' + (response.data.max_attempts || 2)
@@ -658,6 +681,12 @@
             const $message = $('#pshCloseMessage');
             const $btn = $('[data-psh-close-submit-count]');
             const scope = 'pos.shift.submit_close_count';
+
+            if (this.closeState.reviewedVariance) {
+                $btn.prop('disabled', true);
+                this.finalizeClose();
+                return;
+            }
 
             if (amount === '') {
                 $message.removeClass('psh-hidden').addClass('is-info').text('الرجاء إدخال المبلغ');
@@ -708,12 +737,22 @@
 
                 self.clearIdempotencyKey(scope);
 
-                // Matched or max-attempt variance: auto-close immediately.
-                // Never show over/short while the shift is still open.
-                self.closeState.matched = data.status === 'ready_to_close' && !!data.matched;
-                if (data.status === 'close_with_variance') {
-                    self.closeState.matched = false;
+                // A non-matching final count is durable, but the drawer stays
+                // open until a separately authorized variance review. Do not
+                // submit close_shift.php or lock/logout the terminal here.
+                if (data.status === 'counted_pending_review') {
+                    $('[data-psh-close-back]').addClass('psh-hidden');
+                    $btn.prop('disabled', true);
+                    $message
+                        .removeClass('psh-hidden is-info is-success')
+                        .addClass('is-warn')
+                        .text(data.message || 'تم تسجيل العد — يجب اعتماد الفرق من مستخدم مخول قبل إغلاق الشيفت');
+                    return;
                 }
+
+                // A matching count, or an already reviewed variance, can now
+                // be finalized with the server-issued close token.
+                self.closeState.matched = data.status === 'ready_to_close' && !!data.matched;
                 $('[data-psh-close-back]').addClass('psh-hidden');
                 $btn.prop('disabled', true);
                 self.finalizeClose();

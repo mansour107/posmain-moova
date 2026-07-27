@@ -33,19 +33,20 @@ try {
     phase4PaymentAssert($cash['type'] === 'cash', 'cash type expected');
     phase4PaymentAssert($cash['account_id'] === 1001, 'cash account expected');
     phase4PaymentAssert($cash['requires_reference'] === false, 'cash should not require reference');
+    phase4PaymentAssert($cash['settlement_policy'] === 'cash_drawer', 'cash must settle through the drawer');
 
     $cashUpdated = $service->saveMethod($conn, [
         'code' => 'cash drawer',
         'name_ar' => 'درج نقدي',
         'name_en' => null,
-        'account_id' => null,
+        'account_id' => 1001,
         'type' => 'cash',
         'requires_reference' => false,
         'sort_order' => 3,
     ]);
     phase4PaymentAssert($cashUpdated['id'] === $cash['id'], 'same code should update existing row');
     phase4PaymentAssert($cashUpdated['name_ar'] === 'درج نقدي', 'cash name should update');
-    phase4PaymentAssert($cashUpdated['account_id'] === null, 'cash account should allow null');
+    phase4PaymentAssert($cashUpdated['account_id'] === 1001, 'active cash must retain a configured account');
     phase4PaymentAssert(phase4PaymentCount($conn) === 1, 'upsert should not duplicate payment method rows');
 
     $card = $service->saveMethod($conn, [
@@ -64,11 +65,21 @@ try {
         'is_active' => false,
         'sort_order' => 0,
     ]);
+    $bank = $service->saveMethod($conn, [
+        'code' => 'manual bank',
+        'name_ar' => 'تحويل بنكي يدوي',
+        'type' => 'bank',
+        'account_id' => 3003,
+        'sort_order' => 4,
+    ]);
+    phase4PaymentAssert($bank['settlement_policy'] === 'manual_external', 'generic bank should be an authenticated manual settlement');
+    phase4PaymentAssert($bank['requires_reference'] === false, 'manual bank should not require an external reference');
 
     $active = $service->listActive($conn);
-    phase4PaymentAssert(count($active) === 2, 'inactive methods should be excluded from active list');
+    phase4PaymentAssert(count($active) === 3, 'inactive methods should be excluded from active list');
     phase4PaymentAssert($active[0]['code'] === 'card_terminal', 'active list should sort by sort_order');
     phase4PaymentAssert($active[1]['code'] === 'cash_drawer', 'cash should be second after sort update');
+    phase4PaymentAssert($active[2]['code'] === 'manual_bank', 'manual bank should remain available without a reference');
 
     $resolvedByCode = $service->resolveActive($conn, 'CARD TERMINAL');
     phase4PaymentAssert($resolvedByCode['id'] === $card['id'], 'resolveActive should find normalized code');
@@ -93,6 +104,16 @@ try {
             'type' => 'crypto',
         ]);
     }, 'PAYMENT_METHOD_TYPE_INVALID');
+
+    phase4PaymentExpectException(function () use ($service, $conn) {
+        $service->saveMethod($conn, [
+            'code' => 'bad bank drawer',
+            'name_ar' => 'بنك غير صالح',
+            'type' => 'bank',
+            'account_id' => 3003,
+            'settlement_policy' => 'cash_drawer',
+        ]);
+    }, 'PAYMENT_SETTLEMENT_POLICY_TYPE_MISMATCH');
 
     phase4PaymentExpectException(function () use ($service) {
         $service->normalizeCode('بطاقة');

@@ -24,10 +24,18 @@ export async function clickNthAddableItem(page: Page, index: number): Promise<vo
       continue;
     }
     await card.click();
+    const preparationConfirm = page.locator('#sugarSpoonsConfirm');
+    if (await preparationConfirm.waitFor({ state: 'visible', timeout: 1_000 }).then(() => true).catch(() => false)) {
+      await preparationConfirm.click();
+    }
     return;
   }
 
   await cards.nth(index).click();
+  const preparationConfirm = page.locator('#sugarSpoonsConfirm');
+  if (await preparationConfirm.waitFor({ state: 'visible', timeout: 1_000 }).then(() => true).catch(() => false)) {
+    await preparationConfirm.click();
+  }
 }
 
 export async function removeFirstCartLine(page: Page): Promise<void> {
@@ -220,20 +228,31 @@ export async function saveTableOrderAndWait(page: Page): Promise<void> {
 export async function selectDeliveryMode(page: Page): Promise<void> {
   const deliveryModal = page.locator('#deliveryModal');
   const deliveryTab = page.locator('.pos-mode-tab[data-age-target="age3"]').first();
+  await page.waitForFunction(
+    () => typeof (window as Window & { openDeliveryModal?: unknown }).openDeliveryModal === 'function',
+    null,
+    { timeout: 15_000 },
+  );
+
   if (await deliveryTab.isVisible().catch(() => false)) {
     await deliveryTab.click();
   } else {
     await deliveryModeRadio(page).check({ force: true });
   }
 
-  await expect(deliveryModal).toBeVisible({ timeout: 3_000 }).catch(async () => {
-    const addButton = page.locator('#posDeliveryAddBtn').first();
-    if (await addButton.isVisible().catch(() => false)) {
-      await addButton.click();
+  if (!(await deliveryModal.waitFor({ state: 'visible', timeout: 3_000 }).then(() => true).catch(() => false))) {
+    // A freshly unlocked POS can expose the tabs just before the delegated
+    // mode handler is bound. Retry the real tab interaction once after the
+    // delivery runtime is present; do not bypass the mode-switch contract.
+    if (await deliveryTab.isVisible().catch(() => false)) {
+      await deliveryTab.click();
+    } else {
+      await deliveryModeRadio(page).check({ force: true });
     }
-  });
+  }
 
   await expect(deliveryModal).toBeVisible({ timeout: 10_000 });
+  await expect(deliveryModeRadio(page)).toBeChecked();
 }
 
 async function isTablesModalOpen(page: Page): Promise<boolean> {

@@ -3,6 +3,8 @@
 require_once __DIR__ . '/../../Sync/SyncOutboxEventService.php';
 require_once __DIR__ . '/DeliveryCompensationService.php';
 require_once __DIR__ . '/DeliveryAccountingService.php';
+require_once __DIR__ . '/OrderEventService.php';
+require_once __DIR__ . '/../../Financial/Money.php';
 
 class OrderFulfillmentService
 {
@@ -131,7 +133,7 @@ class OrderFulfillmentService
             $deliveryClientId = $data['delivery_client_id'];
             $posCustomerId = $data['pos_customer_id'];
             $stmt->bind_param(
-                'isssssssiisdsss',
+                'isssssssiisssss',
                 $orderId,
                 $data['order_channel'],
                 $data['fulfillment_type'],
@@ -174,7 +176,7 @@ class OrderFulfillmentService
             ");
             $deliveryClientId = $data['delivery_client_id'];
             $stmt->bind_param(
-                'isssssssisdsss',
+                'issssssissssss',
                 $orderId,
                 $data['order_channel'],
                 $data['fulfillment_type'],
@@ -214,7 +216,7 @@ class OrderFulfillmentService
                     updated_at = CURRENT_TIMESTAMP
             ");
             $stmt->bind_param(
-                'issssssssdsss',
+                'issssssssssss',
                 $orderId,
                 $data['order_channel'],
                 $data['fulfillment_type'],
@@ -275,15 +277,33 @@ class OrderFulfillmentService
         }
 
         $currentStatus = (string) ($current['delivery_status'] ?? 'pending');
-        $allowed = $this->allowedDeliveryTransitions();
-        if ($currentStatus !== $newStatus) {
-            $nextAllowed = $allowed[$currentStatus] ?? [];
-            if (!in_array($newStatus, $nextAllowed, true) && !(!empty($options['force']) && $newStatus === 'cancelled')) {
-                throw new InvalidArgumentException('DELIVERY_STATUS_TRANSITION_NOT_ALLOWED');
+        if ($currentStatus === $newStatus) {
+            foreach (['cod_amount', 'driver_tip'] as $moneyField) {
+                if (
+                    array_key_exists($moneyField, $options)
+                    && $this->money($options[$moneyField])->compare($this->money($current[$moneyField] ?? '0')) !== 0
+                ) {
+                    throw new RuntimeException('DELIVERY_STATUS_REPLAY_CONFLICT');
+                }
             }
+
+            return $current;
+        }
+        $allowed = $this->allowedDeliveryTransitions();
+        $nextAllowed = $allowed[$currentStatus] ?? [];
+        $cashierPickup = $newStatus === 'picked_up'
+            && !empty($options['cashier_dispatch'])
+            && in_array($currentStatus, ['pending', 'accepted', 'preparing', 'ready'], true);
+        if (!in_array($newStatus, $nextAllowed, true)
+            && !$cashierPickup
+            && !(!empty($options['force']) && $newStatus === 'cancelled')) {
+            throw new InvalidArgumentException('DELIVERY_STATUS_TRANSITION_NOT_ALLOWED');
         }
 
-        $courierSource = (string) ($current['courier_source'] ?? 'in_house');
+        $courierSource = strtolower(trim((string) ($options['courier_source'] ?? $current['courier_source'] ?? 'in_house')));
+        if (!in_array($courierSource, ['in_house', 'external'], true)) {
+            throw new InvalidArgumentException('DELIVERY_COURIER_SOURCE_INVALID');
+        }
         if ($newStatus === 'picked_up' && $courierSource === 'in_house' && (int) ($current['delivery_worker_id'] ?? 0) < 1) {
             throw new InvalidArgumentException('DELIVERY_WORKER_REQUIRED_BEFORE_PICKUP');
         }
@@ -297,6 +317,34 @@ class OrderFulfillmentService
         }
         if (!empty($options['actor_user_id'])) {
             $metadata['last_status_actor_user_id'] = (int) $options['actor_user_id'];
+        }
+        if ($newStatus === 'picked_up') {
+            $metadata['courier_source'] = $courierSource;
+        }
+        if ($newStatus === 'failed') {
+            $failureReason = trim((string) ($options['failure_reason'] ?? ''));
+            if ($failureReason === '') {
+                throw new InvalidArgumentException('DELIVERY_FAILURE_REASON_REQUIRED');
+            }
+            $orderValue = $this->money($options['order_value'] ?? '0');
+            $failureAmount = $this->money($current['cod_amount'] ?? '0');
+            $failureOrder = $conn->prepare('SELECT fat_net, remaining_amount FROM ot_head WHERE id = ? LIMIT 1 FOR UPDATE');
+            $failureOrder->bind_param('i', $orderId);
+            $failureOrder->execute();
+            $failureOrderRow = $failureOrder->get_result()->fetch_assoc() ?: [];
+            $failureOrder->close();
+            if (!$orderValue->isPositive()) {
+                $orderValue = $this->money($failureOrderRow['fat_net'] ?? '0');
+            }
+            if (!$failureAmount->isPositive() && (string) ($current['collection_mode'] ?? 'prepaid') === 'cod') {
+                $failureAmount = $this->money($failureOrderRow['remaining_amount'] ?? '0');
+            }
+            $metadata['failure_reason'] = function_exists('mb_substr')
+                ? mb_substr($failureReason, 0, 500)
+                : substr($failureReason, 0, 500);
+            $metadata['failure_amount'] = $failureAmount->toString();
+            $metadata['failure_order_value'] = $orderValue->toString();
+            $metadata['failed_at'] = date('Y-m-d H:i:s');
         }
 
         $updated = $this->upsertForOrder($conn, $orderId, [
@@ -316,27 +364,27 @@ class OrderFulfillmentService
             'metadata_json' => $metadata,
         ], ['require_table' => true]);
 
-        $tip = max(0, (float) ($options['driver_tip'] ?? $current['driver_tip'] ?? 0));
-        $postedCod = max(0, (float) ($options['cod_amount'] ?? 0));
-        $codAmount = $postedCod > 0 ? $postedCod : max(0, (float) ($current['cod_amount'] ?? 0));
+        $tip = $this->money($options['driver_tip'] ?? $current['driver_tip'] ?? '0');
+        $postedCod = $this->money($options['cod_amount'] ?? '0');
+        $codAmount = $postedCod->isPositive() ? $postedCod : $this->money($current['cod_amount'] ?? '0');
         $resolvedCollectionMode = (string) ($current['collection_mode'] ?? 'prepaid');
         if ($newStatus === 'delivered') {
             $orderStmt = $conn->prepare('SELECT remaining_amount FROM ot_head WHERE id = ? LIMIT 1 FOR UPDATE');
             $orderStmt->bind_param('i', $orderId);
             $orderStmt->execute();
-            $remaining = (float) ($orderStmt->get_result()->fetch_assoc()['remaining_amount'] ?? 0);
+            $remaining = $this->money($orderStmt->get_result()->fetch_assoc()['remaining_amount'] ?? '0');
             $orderStmt->close();
-            if ($remaining > 0.01) {
+            if ($remaining->isPositive()) {
                 $resolvedCollectionMode = 'cod';
-                if ($codAmount <= 0) {
+                if (!$codAmount->isPositive()) {
                     $codAmount = $remaining;
                 }
-                if (abs($codAmount - $remaining) > 0.01) {
+                if ($codAmount->compare($remaining) !== 0) {
                     throw new InvalidArgumentException('DELIVERY_COD_AMOUNT_MUST_MATCH_REMAINING');
                 }
             } else {
                 $resolvedCollectionMode = 'prepaid';
-                $codAmount = 0.0;
+                $codAmount = Money::zero();
             }
         }
         $stampSql = '';
@@ -345,8 +393,10 @@ class OrderFulfillmentService
         } elseif ($newStatus === 'delivered') {
             $stampSql = ', delivered_at = COALESCE(delivered_at, NOW())';
         }
-        $financeUpdate = $conn->prepare("UPDATE order_fulfillment SET cod_amount = ?, driver_tip = ?, collection_mode = ? {$stampSql} WHERE order_id = ?");
-        $financeUpdate->bind_param('ddsi', $codAmount, $tip, $resolvedCollectionMode, $orderId);
+        $financeUpdate = $conn->prepare("UPDATE order_fulfillment SET cod_amount = ?, driver_tip = ?, collection_mode = ?, courier_source = ? {$stampSql} WHERE order_id = ?");
+        $codAmountString = $codAmount->toString();
+        $tipString = $tip->toString();
+        $financeUpdate->bind_param('ssssi', $codAmountString, $tipString, $resolvedCollectionMode, $courierSource, $orderId);
         $financeUpdate->execute();
         $financeUpdate->close();
 
@@ -356,7 +406,7 @@ class OrderFulfillmentService
                 $accounting->finalizeCodOrder(
                     $conn,
                     $orderId,
-                    number_format($codAmount, 3, '.', ''),
+                    $codAmount->toString(),
                     (int) ($options['actor_user_id'] ?? 0),
                     $options
                 );
@@ -364,7 +414,7 @@ class OrderFulfillmentService
             $accounting->postDeliveryFeeReclassification(
                 $conn,
                 $orderId,
-                number_format((float) ($current['delivery_fee'] ?? 0), 3, '.', ''),
+                $this->money($current['delivery_fee'] ?? '0')->toString(),
                 (int) ($options['actor_user_id'] ?? 0),
                 $options
             );
@@ -383,11 +433,39 @@ class OrderFulfillmentService
             }
         }
 
+        if ($currentStatus !== $newStatus) {
+            (new OrderEventService())->recordIfAvailable(
+                $conn,
+                $orderId,
+                $newStatus === 'failed' ? 'delivery.failed' : 'delivery.status_changed',
+                (string) ($options['event_source'] ?? 'pos_delivery_status'),
+                [
+                    'actor_user_id' => (int) ($options['actor_user_id'] ?? 0),
+                    'tenant' => (int) ($options['tenant'] ?? 0),
+                    'branch' => (int) ($options['branch'] ?? 0),
+                    'before_state' => ['delivery_status' => $currentStatus],
+                    'after_state' => [
+                        'delivery_status' => $newStatus,
+                        'delivery_worker_id' => $current['delivery_worker_id'] ?? null,
+                        'courier_source' => $courierSource,
+                    ],
+                    'metadata' => $newStatus === 'failed' ? [
+                        'reason' => $metadata['failure_reason'] ?? null,
+                        'cod_exposure' => $metadata['failure_amount'] ?? '0.000',
+                        'order_value' => $metadata['failure_order_value'] ?? '0.000',
+                    ] : null,
+                    'sync_config' => $options['config'] ?? null,
+                ]
+            );
+        }
+
         $config = $options['config'] ?? (function_exists('posmain_app_config') ? posmain_app_config() : []);
         if ((string) ($config['role'] ?? 'branch') === 'branch') {
             $this->syncOutbox->recordOrderSnapshot($conn, $orderId, [
                 'event_type' => (string) ($options['event_type'] ?? 'order.fulfillment_updated'),
                 'source_system' => (string) ($options['source_system'] ?? 'pos_delivery_dispatch'),
+                'source_transaction_id' => (string) ($options['source_transaction_id']
+                    ?? ('delivery-status:' . $orderId . ':' . $currentStatus . ':' . $newStatus)),
                 'config' => $config,
             ]);
         }
@@ -427,6 +505,12 @@ class OrderFulfillmentService
             $branch = max(0, (int) ($options['branch'] ?? 0));
             $scopeFilter = " AND o.tenant = {$tenant} AND o.branch = {$branch}";
         }
+        $orderDeletedFilter = $this->tableColumnExists($conn, 'ot_head', 'isdeleted')
+            ? ' AND COALESCE(o.isdeleted, 0) = 0'
+            : '';
+        $lineDeletedFilter = $this->tableColumnExists($conn, 'fat_details', 'isdeleted')
+            ? ' AND COALESCE(fd.isdeleted, 0) = 0'
+            : '';
 
         $workerColumns = $this->columnExists($conn, 'delivery_worker_id')
             ? "f.delivery_worker_id, f.delivery_zone_id, f.courier_source, f.collection_mode, f.cod_amount, f.driver_tip, f.assigned_at, f.picked_up_at, f.delivered_at, w.name AS delivery_worker_name, w.phone AS delivery_worker_phone,"
@@ -437,6 +521,7 @@ class OrderFulfillmentService
                 o.id AS order_id,
                 o.pro_id,
                 o.fat_net,
+                o.remaining_amount,
                 o.order_type,
                 o.payment_status,
                 o.order_status,
@@ -452,12 +537,12 @@ class OrderFulfillmentService
                 {$workerColumns}
                 f.delivery_client_id,
                 f.metadata_json,
-                (SELECT COUNT(*) FROM fat_details fd WHERE fd.fatid = o.id AND fd.isdeleted = 0) AS line_count
+                (SELECT COUNT(*) FROM fat_details fd WHERE fd.fatid = o.id{$lineDeletedFilter}) AS line_count
             FROM order_fulfillment f
             INNER JOIN ot_head o ON o.id = f.order_id
             {$workerJoin}
             WHERE f.fulfillment_type = 'delivery'
-              AND o.isdeleted = 0
+              {$orderDeletedFilter}
               {$statusFilter}
               {$scopeFilter}
             ORDER BY f.delivery_status ASC, order_time DESC
@@ -475,7 +560,8 @@ class OrderFulfillmentService
                 $orders[] = [
                     'order_id' => (int) $row['order_id'],
                     'pro_id' => (int) $row['pro_id'],
-                    'fat_net' => (float) $row['fat_net'],
+                    'fat_net' => Money::from($row['fat_net'] ?? '0')->toString(),
+                    'remaining_amount' => Money::from($row['remaining_amount'] ?? '0')->toString(),
                     'order_type' => (string) $row['order_type'],
                     'payment_status' => (string) $row['payment_status'],
                     'order_status' => (string) $row['order_status'],
@@ -485,7 +571,7 @@ class OrderFulfillmentService
                     'customer_phone' => (string) ($row['customer_phone'] ?? ''),
                     'customer_address' => (string) ($row['customer_address'] ?? ''),
                     'delivery_zone' => (string) ($row['delivery_zone'] ?? ''),
-                    'delivery_fee' => (float) ($row['delivery_fee'] ?? 0),
+                    'delivery_fee' => Money::from($row['delivery_fee'] ?? '0')->toString(),
                     'delivery_status' => (string) $row['delivery_status'],
                     'delivery_worker_id' => isset($row['delivery_worker_id']) ? (int) $row['delivery_worker_id'] : null,
                     'delivery_worker_name' => (string) ($row['delivery_worker_name'] ?? ''),
@@ -493,8 +579,8 @@ class OrderFulfillmentService
                     'delivery_zone_id' => isset($row['delivery_zone_id']) ? (int) $row['delivery_zone_id'] : null,
                     'courier_source' => (string) ($row['courier_source'] ?? 'in_house'),
                     'collection_mode' => (string) ($row['collection_mode'] ?? 'prepaid'),
-                    'cod_amount' => (float) ($row['cod_amount'] ?? 0),
-                    'driver_tip' => (float) ($row['driver_tip'] ?? 0),
+                    'cod_amount' => Money::from($row['cod_amount'] ?? '0')->toString(),
+                    'driver_tip' => Money::from($row['driver_tip'] ?? '0')->toString(),
                     'assigned_at' => $row['assigned_at'] ?? null,
                     'picked_up_at' => $row['picked_up_at'] ?? null,
                     'delivered_at' => $row['delivered_at'] ?? null,
@@ -519,13 +605,16 @@ class OrderFulfillmentService
             $branch = max(0, (int) ($options['branch'] ?? 0));
             $scopeFilter = " AND o.tenant = {$tenant} AND o.branch = {$branch}";
         }
+        $orderDeletedFilter = $this->tableColumnExists($conn, 'ot_head', 'isdeleted')
+            ? ' AND COALESCE(o.isdeleted, 0) = 0'
+            : '';
         $result = $conn->query("
             SELECT COUNT(*) AS pending_count
             FROM order_fulfillment f
             INNER JOIN ot_head o ON o.id = f.order_id
             WHERE f.fulfillment_type = 'delivery'
-              AND f.delivery_status = 'pending'
-              AND o.isdeleted = 0
+              AND f.delivery_status NOT IN ('delivered', 'cancelled', 'failed', 'none')
+              {$orderDeletedFilter}
               {$scopeFilter}
         ");
         if (!$result) {
@@ -882,14 +971,14 @@ class OrderFulfillmentService
             'delivery_worker_id' => isset($row['delivery_worker_id']) && $row['delivery_worker_id'] !== null ? (int) $row['delivery_worker_id'] : null,
             'courier_source' => (string) ($row['courier_source'] ?? 'in_house'),
             'collection_mode' => (string) ($row['collection_mode'] ?? 'prepaid'),
-            'cod_amount' => (float) ($row['cod_amount'] ?? 0),
-            'driver_tip' => (float) ($row['driver_tip'] ?? 0),
-            'delivery_fee' => (float) $row['delivery_fee'],
+            'cod_amount' => Money::from($row['cod_amount'] ?? '0')->toString(),
+            'driver_tip' => Money::from($row['driver_tip'] ?? '0')->toString(),
+            'delivery_fee' => Money::from($row['delivery_fee'] ?? '0')->toString(),
             'delivery_status' => (string) $row['delivery_status'],
             'assigned_at' => $row['assigned_at'] ?? null,
             'picked_up_at' => $row['picked_up_at'] ?? null,
             'delivered_at' => $row['delivered_at'] ?? null,
-            'crm_rollup_paid_amount' => isset($row['crm_rollup_paid_amount']) ? (float) $row['crm_rollup_paid_amount'] : 0.0,
+            'crm_rollup_paid_amount' => Money::from($row['crm_rollup_paid_amount'] ?? '0')->toString(),
             'crm_rollup_counted' => isset($row['crm_rollup_counted']) ? (int) $row['crm_rollup_counted'] : 0,
             'promised_at' => $row['promised_at'] !== null ? (string) $row['promised_at'] : null,
             'metadata' => $metadata,
@@ -961,13 +1050,18 @@ class OrderFulfillmentService
         return $value;
     }
 
-    private function decimal($value): float
+    private function decimal($value): string
     {
         if ($value === null || $value === '') {
-            return 0.0;
+            return '0.00';
         }
 
-        return max(0.0, round((float) $value, 3));
+        return Money::from($value)->toString();
+    }
+
+    private function money($value): Money
+    {
+        return Money::from($value);
     }
 
     private function datetimeOrNull($value): ?string

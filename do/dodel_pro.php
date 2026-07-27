@@ -18,6 +18,11 @@ if ($editpass != $edit_pass) {
         $op2 = $rowop['op2'];
         $pro_tybe = $rowop['pro_tybe'];
         }else{echo "لا توجد عمليات لهذا المعرف";}
+
+        if ((int) $pro_tybe === 9) {
+            header('Location: ../warning.php?error=pos_orders_use_cancel_or_refund');
+            exit;
+        }
     
         // التأكد من أن العملية مرتبطة بعمليات أخري
         if ($op2 > 0) {

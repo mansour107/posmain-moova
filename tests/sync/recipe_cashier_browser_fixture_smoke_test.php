@@ -50,7 +50,7 @@ recipeCashierBrowserFixtureSmokeAssert(($paidReversal['void_payment_status'] ?? 
 recipeCashierBrowserFixtureSmokeAssert(($paidReversal['void_replay_success'] ?? false) === true, 'cashier browser fixture void replay should succeed');
 recipeCashierBrowserFixtureSmokeAssert(($paidReversal['void_replay_request_id'] ?? '') === 'fixture-http-void-9002-fixed', 'cashier browser fixture void replay should return the original request id');
 recipeCashierBrowserFixtureSmokeAssert(($paidReversal['void_db_payment_status'] ?? '') === 'voided', 'cashier browser fixture void POST should mutate the temp DB order');
-recipeCashierBrowserFixtureSmokeAssert((int) ($paidReversal['void_db_isdeleted'] ?? 0) === 1, 'cashier browser fixture void should hide the temp order from active lists');
+recipeCashierBrowserFixtureSmokeAssert((int) ($paidReversal['void_db_isdeleted'] ?? 1) === 0, 'cashier browser fixture void should preserve the immutable posted order for audit');
 recipeCashierBrowserFixtureSmokeAssert((int) ($paidReversal['void_table_case'] ?? 1) === 0, 'cashier browser fixture void should free the temp table');
 recipeCashierBrowserFixtureSmokeAssert((int) ($paidReversal['void_order_event_count'] ?? 0) === 1, 'cashier browser fixture void replay should not duplicate order events');
 recipeCashierBrowserFixtureSmokeAssert((int) ($paidReversal['void_idempotency_completed_count'] ?? 0) === 1, 'cashier browser fixture void replay should keep one completed idempotency row');

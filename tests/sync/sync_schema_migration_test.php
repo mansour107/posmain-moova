@@ -117,7 +117,8 @@ class SyncSchemaMigrationTest extends TestCase
         $this->assertStringContainsString('CREATE TABLE IF NOT EXISTS sync_outbox', $sql);
         $this->assertStringContainsString('branch_uuid CHAR(36) NOT NULL', $sql);
         $this->assertStringContainsString("aggregate_id VARCHAR(191) NOT NULL DEFAULT ''", $sql);
-        $this->assertStringContainsString("status ENUM('pending','syncing','synced','failed','dead') NOT NULL DEFAULT 'pending'", $sql);
+        $this->assertStringContainsString('source_transaction_id VARCHAR(191)', $sql);
+        $this->assertStringContainsString("status ENUM('held','pending','syncing','synced','failed','dead') NOT NULL DEFAULT 'pending'", $sql);
         $this->assertStringContainsString('locked_by VARCHAR(100) NULL', $sql);
         $this->assertStringContainsString('locked_until DATETIME(6) NULL', $sql);
         $this->assertStringContainsString('next_retry_at DATETIME(6) NULL', $sql);

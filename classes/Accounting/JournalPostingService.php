@@ -77,7 +77,9 @@ final class JournalPostingService
                 $columns[] = $column;
                 if ($column === 'idempotency_key') {
                     $values[] = $idempotencyKey !== '' ? $idempotencyKey : null;
-                } elseif (in_array($column, ['tenant', 'branch', 'pro_tybe', 'source_id', 'reversal_of_journal_id'], true)) {
+                } elseif (in_array($column, ['tenant', 'branch'], true)) {
+                    $values[] = (int) ($meta[$column] ?? 0);
+                } elseif (in_array($column, ['pro_tybe', 'source_id', 'reversal_of_journal_id'], true)) {
                     $values[] = isset($meta[$column]) ? (int) $meta[$column] : null;
                 } else {
                     $values[] = $meta[$column] ?? null;
@@ -97,11 +99,19 @@ final class JournalPostingService
             $accountId = (int) ($entry['account_id'] ?? 0);
             $tybe = (int) ($entry['tybe'] ?? 0);
             $entryOp2 = (int) ($entry['op2'] ?? $op2);
-            $entryStmt = $conn->prepare('
-                INSERT INTO journal_entries (journal_id, account_id, debit, credit, tybe, op2)
-                VALUES (?, ?, ?, ?, ?, ?)
-            ');
-            $entryStmt->bind_param('iissii', $headId, $accountId, $debit, $credit, $tybe, $entryOp2);
+            $entryColumns = ['journal_id', 'account_id', 'debit', 'credit', 'tybe'];
+            $entryValues = [$headId, $accountId, $debit, $credit, $tybe];
+            foreach (['op2' => $entryOp2, 'op_id' => $opId, 'tenant' => (int) ($meta['tenant'] ?? 0), 'branch' => (int) ($meta['branch'] ?? 0)] as $column => $value) {
+                if (self::columnExists($conn, 'journal_entries', $column)) {
+                    $entryColumns[] = $column;
+                    $entryValues[] = $value;
+                }
+            }
+            $entryStmt = $conn->prepare(
+                'INSERT INTO journal_entries (`' . implode('`, `', $entryColumns) . '`) VALUES ('
+                . implode(', ', array_fill(0, count($entryValues), '?')) . ')'
+            );
+            self::bind($entryStmt, $entryValues);
             $entryStmt->execute();
             $entryStmt->close();
         }
@@ -120,12 +130,15 @@ final class JournalPostingService
         string $reason,
         array $meta = []
     ): int {
-        $stmt = $conn->prepare('
-            SELECT id, journal_id, total, jdate, details, op_id, op2, source_type, source_id, posting_kind
-            FROM journal_heads
-            WHERE id = ?
-            LIMIT 1
-        ');
+        $columns = ['id', 'journal_id', 'total', 'jdate', 'details'];
+        foreach (['op_id', 'op2', 'source_type', 'source_id', 'posting_kind', 'tenant', 'branch'] as $column) {
+            if (self::columnExists($conn, 'journal_heads', $column)) {
+                $columns[] = $column;
+            }
+        }
+        $stmt = $conn->prepare(
+            'SELECT `' . implode('`, `', $columns) . '` FROM journal_heads WHERE id = ? LIMIT 1'
+        );
         $stmt->bind_param('i', $originalJournalHeadId);
         $stmt->execute();
         $original = $stmt->get_result()->fetch_assoc();
@@ -134,12 +147,16 @@ final class JournalPostingService
             throw new InvalidArgumentException('JOURNAL_NOT_FOUND');
         }
 
-        $entriesResult = $conn->query('
-            SELECT account_id, debit, credit, tybe, op2
-            FROM journal_entries
-            WHERE journal_id = ' . (int) $originalJournalHeadId . '
-            ORDER BY id ASC
-        ');
+        $entryColumns = ['account_id', 'debit', 'credit', 'tybe'];
+        if (self::columnExists($conn, 'journal_entries', 'op2')) {
+            $entryColumns[] = 'op2';
+        }
+        $entriesResult = $conn->query(
+            'SELECT `' . implode('`, `', $entryColumns) . '`'
+            . ' FROM journal_entries'
+            . ' WHERE journal_id = ' . (int) $originalJournalHeadId
+            . ' ORDER BY id ASC'
+        );
         $entries = [];
         while ($row = $entriesResult->fetch_assoc()) {
             $entries[] = [
@@ -175,6 +192,8 @@ final class JournalPostingService
                 'posting_kind' => (string) ($meta['posting_kind'] ?? 'journal_reversal'),
                 'idempotency_key' => (string) ($meta['idempotency_key'] ?? ('reversal:' . $originalJournalHeadId)),
                 'reversal_of_journal_id' => $originalJournalHeadId,
+                'tenant' => (int) ($meta['tenant'] ?? $original['tenant'] ?? 0),
+                'branch' => (int) ($meta['branch'] ?? $original['branch'] ?? 0),
             ]
         );
     }

@@ -41,20 +41,37 @@ $pages = [];
 $ok = true;
 
 foreach ([
-    ['path' => '/index.php', 'label' => 'login_page', 'needles' => ['id="uname"', 'id="password"', 'تسجيل الدخول']],
-    ['path' => '/api/health.php', 'label' => 'health_api', 'needles' => ['"healthy"']],
-    ['path' => '/inventory_dashboard.php', 'label' => 'inventory_dashboard', 'needles' => ['inventory', 'login'], 'allow_redirect' => true],
+    [
+        'path' => '/index.php',
+        'label' => 'login_page',
+        'needle_groups' => [
+            ['id="uname"', 'id="password"', 'تسجيل الدخول'],
+            ['id="mainPinPad"', 'ajax/main_pin_login.php', 'دخول'],
+        ],
+    ],
+    ['path' => '/api/health.php', 'label' => 'health_api', 'needle_groups' => [['"healthy"']]],
+    ['path' => '/inventory_dashboard.php', 'label' => 'inventory_dashboard', 'needle_groups' => [['inventory', 'login']], 'allow_redirect' => true],
 ] as $target) {
     $result = browserEvidenceFetch($baseUrl . $target['path']);
     $body = (string) ($result['body'] ?? '');
     $passed = ($result['ok'] ?? false)
         && !preg_match('/fatal error|SQL syntax|uncaught exception/i', $body);
     if (!($target['allow_redirect'] ?? false)) {
-        foreach ($target['needles'] as $needle) {
-            if (stripos($body, $needle) === false) {
-                $passed = false;
+        $matchedNeedleGroup = false;
+        foreach (($target['needle_groups'] ?? []) as $needleGroup) {
+            $groupMatches = true;
+            foreach ($needleGroup as $needle) {
+                if (stripos($body, (string) $needle) === false) {
+                    $groupMatches = false;
+                    break;
+                }
+            }
+            if ($groupMatches) {
+                $matchedNeedleGroup = true;
+                break;
             }
         }
+        $passed = $passed && $matchedNeedleGroup;
     } elseif (($result['http_code'] ?? 0) >= 300 && ($result['http_code'] ?? 0) < 400) {
         $passed = true;
     }
@@ -131,7 +148,10 @@ function browserEvidenceFetch(string $url): array
     $context = stream_context_create(['http' => ['timeout' => 15, 'ignore_errors' => true]]);
     $body = @file_get_contents($url, false, $context);
     $code = 0;
-    if (isset($http_response_header[0]) && preg_match('/\s(\d{3})\s/', $http_response_header[0], $matches)) {
+    $responseHeaders = function_exists('http_get_last_response_headers')
+        ? http_get_last_response_headers()
+        : ($http_response_header ?? []);
+    if (isset($responseHeaders[0]) && preg_match('/\s(\d{3})\s/', (string) $responseHeaders[0], $matches)) {
         $code = (int) $matches[1];
     }
 

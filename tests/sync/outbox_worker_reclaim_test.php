@@ -52,6 +52,7 @@ class OutboxWorkerReclaimTest extends TestCase
     public function testClaimBatchClaimsRetryableAndExpiredSyncingRowsOnly(): void
     {
         $pendingId = $this->insertOutboxRow('pending');
+        $heldId = $this->insertOutboxRow('held');
         $failedDueId = $this->insertOutboxRow('failed', 'DATE_SUB(NOW(6), INTERVAL 5 SECOND)');
         $failedFutureId = $this->insertOutboxRow('failed', 'DATE_ADD(NOW(6), INTERVAL 60 SECOND)');
         $syncingExpiredId = $this->insertOutboxRow('syncing', 'NULL', 'old-worker', 'DATE_SUB(NOW(6), INTERVAL 5 SECOND)');
@@ -64,13 +65,17 @@ class OutboxWorkerReclaimTest extends TestCase
         $claimedIds = array_map('intval', array_column($claimed, 'id'));
         $this->assertSame([$pendingId, $failedDueId, $syncingExpiredId], $claimedIds);
 
-        $rows = $this->loadRows([$pendingId, $failedDueId, $failedFutureId, $syncingExpiredId, $syncingLockedId, $otherBranchId]);
+        $rows = $this->loadRows([$pendingId, $heldId, $failedDueId, $failedFutureId, $syncingExpiredId, $syncingLockedId, $otherBranchId]);
 
         foreach ([$pendingId, $failedDueId, $syncingExpiredId] as $id) {
             $this->assertSame('syncing', $rows[$id]['status']);
             $this->assertSame('phpunit-worker', $rows[$id]['locked_by']);
             $this->assertSame(1, (int) $rows[$id]['attempts']);
         }
+
+        $this->assertSame('held', $rows[$heldId]['status']);
+        $this->assertNull($rows[$heldId]['locked_by']);
+        $this->assertSame(0, (int) $rows[$heldId]['attempts']);
 
         $this->assertSame('failed', $rows[$failedFutureId]['status']);
         $this->assertNull($rows[$failedFutureId]['locked_by']);

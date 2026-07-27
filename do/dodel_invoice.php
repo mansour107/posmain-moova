@@ -95,6 +95,10 @@ if (!$invoice) {
 }
 
 $pro_tybe = intval($invoice['pro_tybe']);
+if ($pro_tybe === INVOICE_TYPES['POS']) {
+    header('Location: ../warning.php?q=' . urlencode($q) . '&error=pos_orders_use_cancel_or_refund');
+    exit;
+}
 
 /**
  * دالة الحصول على إعدادات نوع الفاتورة

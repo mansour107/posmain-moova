@@ -494,6 +494,11 @@ class CloudLegacyPosMirrorService
             return '';
         }
         $text = trim((string) $value);
+        // MySQL DATETIME columns return midnight for a date-only input. Treat
+        // the legacy wire form as the same immutable value during replay.
+        if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $text)) {
+            return $text . ' 00:00:00';
+        }
         if (preg_match('/^-?\d+(?:\.\d+)?$/', $text)) {
             $negative = str_starts_with($text, '-');
             $unsigned = ltrim($text, '+-');

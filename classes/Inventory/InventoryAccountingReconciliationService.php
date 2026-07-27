@@ -20,6 +20,47 @@ class InventoryAccountingReconciliationService
             "im.movement_type IN ('purchase','purchase_return','sale_direct','waste','adjustment','refund_reversal')",
             'COALESCE(im.total_cost, 0) > 0',
             "(im.source_type IS NULL OR im.source_type <> 'fat_details' OR im.idempotency_key IS NULL OR im.idempotency_key NOT LIKE 'migration:fat_details:%')",
+            // An explicitly linked unpaid-draft repair is a stock-state
+            // reclassification, not a commercial refund. The original
+            // unjournaled sale and its exact immutable restore intentionally
+            // net to zero; either row remains a blocker if linkage, quantity,
+            // cost, or journal state differs.
+            "NOT (
+                (
+                    im.movement_type = 'sale_direct'
+                    AND (im.accounting_journal_id IS NULL OR im.accounting_journal_id = 0)
+                    AND EXISTS (
+                        SELECT 1
+                        FROM inventory_movements unpaid_restore
+                        WHERE unpaid_restore.reversed_movement_id = im.id
+                          AND unpaid_restore.movement_type = 'refund_reversal'
+                          AND unpaid_restore.idempotency_key = CONCAT('inventory-unpaid-sale-reclass:v1:', im.id, ':restore')
+                          AND (unpaid_restore.accounting_journal_id IS NULL OR unpaid_restore.accounting_journal_id = 0)
+                          AND unpaid_restore.item_id = im.item_id
+                          AND unpaid_restore.store_id = im.store_id
+                          AND unpaid_restore.qty_in = im.qty_out
+                          AND unpaid_restore.total_cost = im.total_cost
+                    )
+                )
+                OR
+                (
+                    im.movement_type = 'refund_reversal'
+                    AND im.reversed_movement_id IS NOT NULL
+                    AND im.idempotency_key = CONCAT('inventory-unpaid-sale-reclass:v1:', im.reversed_movement_id, ':restore')
+                    AND (im.accounting_journal_id IS NULL OR im.accounting_journal_id = 0)
+                    AND EXISTS (
+                        SELECT 1
+                        FROM inventory_movements unpaid_sale
+                        WHERE unpaid_sale.id = im.reversed_movement_id
+                          AND unpaid_sale.movement_type = 'sale_direct'
+                          AND (unpaid_sale.accounting_journal_id IS NULL OR unpaid_sale.accounting_journal_id = 0)
+                          AND unpaid_sale.item_id = im.item_id
+                          AND unpaid_sale.store_id = im.store_id
+                          AND unpaid_sale.qty_out = im.qty_in
+                          AND unpaid_sale.total_cost = im.total_cost
+                    )
+                )
+            )",
         ];
         $params = [];
         foreach (['pos_tenant', 'pos_branch', 'store_id'] as $column) {

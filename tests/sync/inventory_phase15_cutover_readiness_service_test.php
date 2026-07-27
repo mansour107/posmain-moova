@@ -163,6 +163,20 @@ function inventoryPhase15ReadinessAssertSourceContracts(string $root): void
 
 function inventoryPhase15ReadinessCreateLegacyTables(mysqli $conn): void
 {
+    $conn->query("CREATE TABLE ot_head (
+      id BIGINT UNSIGNED NOT NULL PRIMARY KEY,
+      payment_status VARCHAR(30) NULL,
+      invoice_status VARCHAR(30) NULL,
+      order_status VARCHAR(30) NULL,
+      closed TINYINT(1) NOT NULL DEFAULT 0,
+      isdeleted TINYINT(1) NOT NULL DEFAULT 0
+    ) ENGINE=InnoDB");
+    $conn->query("CREATE TABLE order_payments (
+      id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+      order_id BIGINT UNSIGNED NOT NULL,
+      amount DECIMAL(18,2) NOT NULL DEFAULT 0,
+      is_voided TINYINT(1) NOT NULL DEFAULT 0
+    ) ENGINE=InnoDB");
     $conn->query("
 CREATE TABLE myitems (
   id INT NOT NULL PRIMARY KEY,

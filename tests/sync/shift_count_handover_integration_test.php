@@ -62,7 +62,7 @@ try {
 
     handoverAssert($countService->handoverEnabled($conn), 'handover should be enabled after migration');
 
-    $floatService->setOpeningBaseline($conn, 1, 2, 0.0, 55);
+    $floatService->setOpeningBaseline($conn, 1, 2, '0.000', 55);
 
     $countService->beginOpenCount($conn, 55);
     $openMatch = $countService->submitOpenCount($conn, 55, '0.000', ['sync_config' => $syncConfig]);

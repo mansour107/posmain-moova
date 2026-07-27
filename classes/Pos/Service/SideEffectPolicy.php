@@ -25,7 +25,18 @@ class SideEffectPolicy
             return false;
         }
 
-        return !empty($result['errors']);
+        if ($result === []) {
+            // No structured result means the bridge threw before it could
+            // describe a safe outcome.
+            return true;
+        }
+
+        $topLevelErrors = $result['errors'] ?? [];
+        $accountingErrors = $result['accounting']['errors'] ?? [];
+
+        return ($result['success'] ?? true) !== true
+            || (is_array($topLevelErrors) && $topLevelErrors !== [])
+            || (is_array($accountingErrors) && $accountingErrors !== []);
     }
 
     public static function orderEventShouldRollback(Throwable $exception): bool
@@ -39,6 +50,11 @@ class SideEffectPolicy
             'mode' => self::mode(),
             'success' => !empty($result['success']),
             'errors' => array_values($result['errors'] ?? []),
+            'accounting_errors' => array_values(
+                is_array($result['accounting']['errors'] ?? null)
+                    ? $result['accounting']['errors']
+                    : []
+            ),
             'exception' => $exception ? $exception->getMessage() : null,
         ];
     }
