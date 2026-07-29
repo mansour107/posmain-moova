@@ -9,6 +9,7 @@ require_once __DIR__ . '/../../classes/Sync/DatabaseBranchSecretProvider.php';
 require_once __DIR__ . '/../../classes/Sync/CloudAuthService.php';
 require_once __DIR__ . '/../../classes/Sync/CloudBranchSyncEventService.php';
 require_once __DIR__ . '/../../classes/Sync/CloudLegacyPosMirrorService.php';
+require_once __DIR__ . '/../../classes/Sync/PosOrderSnapshotBuilder.php';
 require_once __DIR__ . '/../../classes/Sync/BranchCloudSyncPollWorker.php';
 require_once __DIR__ . '/../../classes/Sync/SchemaManager.php';
 
@@ -135,7 +136,7 @@ class BranchCloudSyncPollWorkerTest extends TestCase
         $this->assertStringContainsString('local value is newer', (string) $event['last_error']);
     }
 
-    public function testPollerAppliesHostedTableOrderOnLegacyFatDetailsSchema(): void
+    public function testPollerDeniesHostedOperationalOrderAndTableEvents(): void
     {
         $orderCursor = $this->insertCloudOrderEvent('2026-01-01T11:00:00Z');
         $tableCursor = $this->insertCloudTableEvent('2026-01-01T11:00:00Z');
@@ -146,26 +147,19 @@ class BranchCloudSyncPollWorkerTest extends TestCase
             'http_post' => $this->cloudHttpPost(),
         ]);
 
-        $order = self::$conn->query('SELECT * FROM ot_head WHERE id = ' . self::ORDER_ID)->fetch_assoc();
-        $line = self::$conn->query('SELECT * FROM fat_details WHERE id = ' . self::LINE_ID)->fetch_assoc();
-        $table = self::$conn->query('SELECT * FROM tables WHERE id = ' . self::TABLE_ID)->fetch_assoc();
-
         $this->assertSame(2, $metrics['fetched']);
-        $this->assertSame(2, $metrics['applied']);
+        $this->assertSame(0, $metrics['applied']);
+        $this->assertSame(2, $metrics['denied']);
         $this->assertSame(2, $metrics['acked']);
         $this->assertSame($tableCursor, $metrics['checkpoint']);
-        $this->assertSame('ack_applied', $this->fetchCloudEvent($orderCursor)['status']);
-        $this->assertSame('ack_applied', $this->fetchCloudEvent($tableCursor)['status']);
-        $this->assertSame((string) self::TABLE_ID, (string) $order['table_id']);
-        $this->assertSame('active', $order['order_status']);
-        $this->assertSame('18.000', number_format((float) $order['fat_total'], 3, '.', ''));
-        $this->assertSame((string) self::ORDER_ID, (string) $line['fatid']);
-        $this->assertSame((string) self::ITEM_ID, (string) $line['item_id']);
-        $this->assertSame('18.000', number_format((float) $line['det_value'], 3, '.', ''));
-        $this->assertSame('1', (string) $table['table_case']);
+        $this->assertSame('ack_declined', $this->fetchCloudEvent($orderCursor)['status']);
+        $this->assertSame('ack_declined', $this->fetchCloudEvent($tableCursor)['status']);
+        $this->assertNull(self::$conn->query('SELECT id FROM ot_head WHERE id = ' . self::ORDER_ID)->fetch_assoc());
+        $this->assertNull(self::$conn->query('SELECT id FROM fat_details WHERE id = ' . self::LINE_ID)->fetch_assoc());
+        $this->assertNull(self::$conn->query('SELECT id FROM tables WHERE id = ' . self::TABLE_ID)->fetch_assoc());
     }
 
-    public function testPollerAppliesHostedFreedTableAndClosesLocalActiveOrder(): void
+    public function testPollerDeniesHostedTableReleaseWithoutChangingLocalOrder(): void
     {
         $this->insertLocalActiveTableOrder('2026-01-01 11:00:00');
         $cursor = $this->insertCloudFreedTableEvent('2026-01-01T11:10:00Z');
@@ -180,15 +174,16 @@ class BranchCloudSyncPollWorkerTest extends TestCase
         $table = self::$conn->query('SELECT * FROM tables WHERE id = ' . self::TABLE_ID)->fetch_assoc();
 
         $this->assertSame(1, $metrics['fetched']);
-        $this->assertSame(1, $metrics['applied']);
+        $this->assertSame(0, $metrics['applied']);
+        $this->assertSame(1, $metrics['denied']);
         $this->assertSame(1, $metrics['acked']);
         $this->assertSame($cursor, $metrics['checkpoint']);
-        $this->assertSame('ack_applied', $this->fetchCloudEvent($cursor)['status']);
-        $this->assertSame('0', (string) $table['table_case']);
-        $this->assertSame('cancelled', (string) $order['order_status']);
-        $this->assertSame('cancelled', (string) $order['invoice_status']);
-        $this->assertSame('voided', (string) $order['payment_status']);
-        $this->assertSame('1', (string) $order['isdeleted']);
+        $this->assertSame('ack_declined', $this->fetchCloudEvent($cursor)['status']);
+        $this->assertSame('1', (string) $table['table_case']);
+        $this->assertSame('active', (string) $order['order_status']);
+        $this->assertSame('draft', (string) $order['invoice_status']);
+        $this->assertSame('unpaid', (string) $order['payment_status']);
+        $this->assertSame('0', (string) $order['isdeleted']);
     }
 
     private function insertLocalItem(string $name, string $price, string $mdtime): void
@@ -214,12 +209,49 @@ class BranchCloudSyncPollWorkerTest extends TestCase
 
     private function insertCloudMenuEvent(string $name, string $price, string $capturedAtUtc): int
     {
-        $itemUuid = '55555555-5555-4555-8555-555555555555';
+        $itemUuid = PosOrderSnapshotBuilder::deterministicUuid(self::BRANCH_UUID, 'myitems:' . self::ITEM_ID);
+        $nameRevisionUuid = PosOrderSnapshotBuilder::deterministicUuid(
+            self::BRANCH_UUID,
+            'phpunit:menu:name:' . $name . ':' . $capturedAtUtc
+        );
+        $priceRevisionUuid = PosOrderSnapshotBuilder::deterministicUuid(
+            self::BRANCH_UUID,
+            'phpunit:menu:price:' . $price . ':' . $capturedAtUtc
+        );
         $payload = [
             'schema_version' => 1,
             'snapshot_type' => 'pos_menu_item',
             'source_system' => 'cloud_pos',
             'branch_uuid' => self::BRANCH_UUID,
+            'source_node_id' => 'cloud-admin-node',
+            'origin_clock_utc' => gmdate('Y-m-d\TH:i:s\Z'),
+            'actor' => [
+                'user_id' => 44,
+                'permissions' => ['menu.edit'],
+            ],
+            'master_data' => [
+                'schema_version' => 1,
+                'aggregate_type' => 'menu_item',
+                'aggregate_uuid' => $itemUuid,
+                'source_node_id' => 'cloud-admin-node',
+                'origin_clock_utc' => gmdate('Y-m-d\TH:i:s\Z'),
+                'actor' => [
+                    'user_id' => 44,
+                    'permissions' => ['menu.edit'],
+                ],
+                'fields' => [
+                    'item_name' => [
+                        'value' => $name,
+                        'changed_at_utc' => $capturedAtUtc,
+                        'revision_uuid' => $nameRevisionUuid,
+                    ],
+                    'price' => [
+                        'value' => $price,
+                        'changed_at_utc' => $capturedAtUtc,
+                        'revision_uuid' => $priceRevisionUuid,
+                    ],
+                ],
+            ],
             'captured_at_utc' => $capturedAtUtc,
             'item_uuid' => $itemUuid,
             'local_item_id' => self::ITEM_ID,
@@ -650,6 +682,8 @@ class BranchCloudSyncPollWorkerTest extends TestCase
         self::$conn->query("DELETE FROM cloud_sync_branch_events WHERE idempotency_key LIKE 'phpunit:branch-cloud-sync:%'");
         self::$conn->query("DELETE FROM sync_inbox WHERE branch_uuid = '" . self::BRANCH_UUID . "' AND idempotency_key LIKE 'phpunit:branch-cloud-sync:%'");
         self::$conn->query("DELETE FROM sync_checkpoints WHERE branch_uuid = '" . self::BRANCH_UUID . "' AND stream_name = 'cloud_sync'");
+        self::$conn->query("DELETE FROM sync_master_field_history WHERE branch_uuid = '" . self::BRANCH_UUID . "'");
+        self::$conn->query("DELETE FROM sync_master_field_state WHERE branch_uuid = '" . self::BRANCH_UUID . "'");
         self::$conn->query("DELETE FROM cloud_branches WHERE branch_uuid = '" . self::BRANCH_UUID . "'");
         self::$conn->query('DELETE FROM fat_details WHERE id = ' . self::LINE_ID . ' OR fatid = ' . self::ORDER_ID);
         self::$conn->query('DELETE FROM ot_head WHERE id = ' . self::ORDER_ID);

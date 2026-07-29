@@ -5,29 +5,18 @@ require_once __DIR__ . '/../classes/Financial/Money.php';
 if (!function_exists('posmain_acc_head_has_column')) {
     function posmain_acc_head_has_column(mysqli $conn, string $column): bool
     {
-        static $cache = [];
         $safeColumn = preg_replace('/[^a-z0-9_]/i', '', $column);
         if ($safeColumn === '') {
             return false;
         }
 
-        $key = spl_object_hash($conn) . ':' . $safeColumn;
-        // A false result cannot be cached because a legacy-schema guard may
-        // add the column later in this same request.
-        if (($cache[$key] ?? false) === true) {
-            return $cache[$key];
-        }
-
         $accountTable = $conn->query("SHOW TABLES LIKE 'acc_head'");
         if (!$accountTable || $accountTable->num_rows < 1) {
-            $cache[$key] = false;
-
             return false;
         }
         $result = $conn->query("SHOW COLUMNS FROM acc_head LIKE '{$safeColumn}'");
-        $cache[$key] = $result && $result->num_rows > 0;
 
-        return $cache[$key];
+        return $result && $result->num_rows > 0;
     }
 }
 
@@ -214,14 +203,20 @@ if (!function_exists('posmain_ensure_pos_default_accounts')) {
      */
     function posmain_ensure_pos_default_accounts(mysqli $conn): void
     {
+        // Legacy shops may already have a store but not the newer cashier
+        // default columns. Add the compatibility columns before resolving and
+        // persisting defaults so single-store enforcement has a stable source.
+        posmain_ensure_pos_settings_columns($conn);
         posmain_ensure_sales_account($conn);
         posmain_ensure_pos_default_suppliers($conn);
 
+        $storeId = 0;
         if (posmain_acc_head_has_column($conn, 'is_stock')) {
-            $stockCount = $conn->query('SELECT COUNT(*) AS c FROM acc_head WHERE is_stock = 1 AND isdeleted = 0');
-            $hasStock = $stockCount && (int) ($stockCount->fetch_assoc()['c'] ?? 0) > 0;
-            if ($hasStock) {
-                return;
+            $stockAccount = $conn->query(
+                'SELECT id FROM acc_head WHERE is_stock = 1 AND isdeleted = 0 ORDER BY id ASC LIMIT 1'
+            );
+            if ($stockAccount && $stockAccount->num_rows > 0) {
+                $storeId = (int) ($stockAccount->fetch_assoc()['id'] ?? 0);
             }
         }
 
@@ -233,23 +228,31 @@ if (!function_exists('posmain_ensure_pos_default_accounts')) {
             'is_basic' => 1,
         ]);
 
-        $storeId = posmain_insert_acc_head_if_missing($conn, [
-            'code' => '123001',
-            'aname' => 'المخزن الرئيسي',
-            'parent_id' => 0,
-            'is_stock' => 1,
-        ]);
-        $empId = posmain_insert_acc_head_if_missing($conn, [
-            'code' => '213001',
-            'aname' => 'الموظف 1',
-            'parent_id' => 35,
-        ]);
-        $fundId = posmain_insert_acc_head_if_missing($conn, [
-            'code' => '121001',
-            'aname' => 'الصندوق الافتراضي',
-            'parent_id' => 0,
-            'is_fund' => 1,
-        ]);
+        if ($storeId < 1) {
+            $storeId = posmain_insert_acc_head_if_missing($conn, [
+                'code' => '123001',
+                'aname' => 'المخزن الرئيسي',
+                'parent_id' => 0,
+                'is_stock' => 1,
+            ]);
+        }
+        $empId = posmain_resolve_default_account_id($conn, 0, 'parent_id = 35 AND is_basic = 0');
+        if ($empId < 1) {
+            $empId = posmain_insert_acc_head_if_missing($conn, [
+                'code' => '213001',
+                'aname' => 'الموظف 1',
+                'parent_id' => 35,
+            ]);
+        }
+        $fundId = posmain_resolve_default_account_id($conn, 0, 'is_fund = 1 AND is_basic = 0');
+        if ($fundId < 1) {
+            $fundId = posmain_insert_acc_head_if_missing($conn, [
+                'code' => '121001',
+                'aname' => 'الصندوق الافتراضي',
+                'parent_id' => 0,
+                'is_fund' => 1,
+            ]);
+        }
         $clientId = posmain_insert_acc_head_if_missing($conn, [
             'code' => '122001',
             'aname' => 'العميل الافتراضي',
@@ -383,29 +386,18 @@ if (!function_exists('posmain_resolve_invoice_order_context')) {
 if (!function_exists('posmain_settings_column_exists')) {
     function posmain_settings_column_exists(mysqli $conn, string $column): bool
     {
-        static $cache = [];
         $safeColumn = preg_replace('/[^a-z0-9_]/i', '', $column);
         if ($safeColumn === '') {
             return false;
         }
 
-        $key = spl_object_hash($conn) . ':' . $safeColumn;
-        // A false result cannot be cached: this same request may add a missing
-        // legacy column in posmain_ensure_pos_settings_columns().
-        if (($cache[$key] ?? false) === true) {
-            return $cache[$key];
-        }
-
         $settingsTable = $conn->query("SHOW TABLES LIKE 'settings'");
         if (!$settingsTable || $settingsTable->num_rows < 1) {
-            $cache[$key] = false;
-
             return false;
         }
         $result = $conn->query("SHOW COLUMNS FROM settings LIKE '{$safeColumn}'");
-        $cache[$key] = $result && $result->num_rows > 0;
 
-        return $cache[$key];
+        return $result && $result->num_rows > 0;
     }
 }
 
@@ -415,13 +407,6 @@ if (!function_exists('posmain_ensure_pos_settings_columns')) {
      */
     function posmain_ensure_pos_settings_columns(mysqli $conn): void
     {
-        static $ensured = [];
-        $key = spl_object_hash($conn);
-        if (isset($ensured[$key])) {
-            return;
-        }
-        $ensured[$key] = true;
-
         $definitions = [
             'def_pos_client' => 'INT NULL',
             'def_pos_store' => 'INT NULL',
@@ -501,7 +486,7 @@ if (!function_exists('posmain_find_sales_account_id')) {
     function posmain_find_sales_account_id(mysqli $conn, int $preferredId = 91): int
     {
         foreach (array_unique([$preferredId, 93, 91]) as $candidateId) {
-            if ($candidateId > 0 && posmain_acc_head_active_id($conn, $candidateId)) {
+            if ($candidateId > 0 && posmain_is_sales_revenue_account($conn, $candidateId)) {
                 return $candidateId;
             }
         }
@@ -523,6 +508,45 @@ if (!function_exists('posmain_find_sales_account_id')) {
         }
 
         return 0;
+    }
+}
+
+if (!function_exists('posmain_is_sales_revenue_account')) {
+    /**
+     * Never accept a numerically familiar account id as revenue without
+     * validating its chart identity. Legacy charts commonly reuse ids.
+     */
+    function posmain_is_sales_revenue_account(mysqli $conn, int $accountId): bool
+    {
+        if ($accountId < 1) {
+            return false;
+        }
+
+        $stmt = $conn->prepare('SELECT * FROM acc_head WHERE id = ? AND isdeleted = 0 LIMIT 1');
+        if (!$stmt) {
+            return false;
+        }
+        $stmt->bind_param('i', $accountId);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        if (!$row) {
+            return false;
+        }
+        if ((int) ($row['is_stock'] ?? 0) === 1
+            || (int) ($row['is_fund'] ?? 0) === 1
+            || (int) ($row['is_basic'] ?? 0) === 1) {
+            return false;
+        }
+
+        $code = trim((string) ($row['code'] ?? ''));
+        $name = strtolower(trim((string) ($row['aname'] ?? '')));
+
+        return in_array($code, ['311', '3111'], true)
+            || str_starts_with($code, '3111')
+            || str_contains($name, 'مبيع')
+            || str_contains($name, 'sales')
+            || str_contains($name, 'revenue');
     }
 }
 

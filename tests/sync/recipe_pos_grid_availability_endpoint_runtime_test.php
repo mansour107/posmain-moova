@@ -33,22 +33,20 @@ try {
         $items[(int) ($item['id'] ?? 0)] = $item;
     }
 
-    recipePosGridAvailabilityEndpointRuntimeAssert(isset($items[7001]), 'category endpoint should include unavailable recipe item');
+    recipePosGridAvailabilityEndpointRuntimeAssert(isset($items[7001]), 'category endpoint should include recipe shortage item');
     recipePosGridAvailabilityEndpointRuntimeAssert(isset($items[7002]), 'category endpoint should include low-stock recipe item');
 
-    $unavailable = $items[7001];
-    recipePosGridAvailabilityEndpointRuntimeAssert((int) ($unavailable['is_available'] ?? 1) === 0, 'recipe item with missing ingredient should be unavailable');
-    recipePosGridAvailabilityEndpointRuntimeAssert(($unavailable['availability_status'] ?? '') === 'recipe_unavailable', 'unavailable recipe item should expose recipe_unavailable status');
-    // Warn-only oversell contract (Fix 3): strict stock OFF + allow-negative-with-approval ON
-    // means an unavailable recipe item is still addable (availability_can_add=true) with a
-    // non-blocking warn toast and NO manager-approval gate.
-    recipePosGridAvailabilityEndpointRuntimeAssert(($unavailable['availability_can_add'] ?? false) === true, 'unavailable recipe item should be addable under warn-only contract');
-    recipePosGridAvailabilityEndpointRuntimeAssert(($unavailable['availability_warn_only'] ?? false) === true, 'unavailable recipe item should be flagged warn-only');
-    recipePosGridAvailabilityEndpointRuntimeAssert(($unavailable['availability_requires_manager_override'] ?? true) === false, 'unavailable recipe item should not require manager override under warn-only');
-    recipePosGridAvailabilityEndpointRuntimeAssert(($unavailable['recipe_enabled'] ?? false) === true, 'unavailable recipe item should expose recipe_enabled');
-    recipePosGridAvailabilityEndpointRuntimeAssert((int) ($unavailable['recipe_id'] ?? 0) === 101, 'unavailable recipe item should expose active recipe id');
-    recipePosGridAvailabilityEndpointRuntimeAssert(recipePosGridAvailabilityEndpointRuntimeDecimalEquals($unavailable['recipe_effective_available_qty'] ?? '', '0.000000'), 'unavailable recipe item should expose zero effective qty');
-    recipePosGridAvailabilityEndpointRuntimeAssert(($unavailable['unavailable_reason'] ?? '') === 'Required ingredient out of stock.', 'unavailable recipe item should expose cashier reason');
+    $shortage = $items[7001];
+    recipePosGridAvailabilityEndpointRuntimeAssert((int) ($shortage['is_available'] ?? 0) === 1, 'recipe item with missing ingredient must remain available for sale');
+    recipePosGridAvailabilityEndpointRuntimeAssert(($shortage['availability_status'] ?? '') === 'recipe_shortage', 'recipe shortage item should expose recipe_shortage status');
+    recipePosGridAvailabilityEndpointRuntimeAssert(($shortage['availability_can_add'] ?? false) === true, 'recipe shortage item should be addable');
+    recipePosGridAvailabilityEndpointRuntimeAssert(($shortage['availability_warn_only'] ?? false) === true, 'recipe shortage item should be flagged warn-only');
+    recipePosGridAvailabilityEndpointRuntimeAssert(($shortage['availability_requires_manager_override'] ?? true) === false, 'recipe shortage item should not require manager override');
+    recipePosGridAvailabilityEndpointRuntimeAssert(($shortage['recipe_enabled'] ?? false) === true, 'recipe shortage item should expose recipe_enabled');
+    recipePosGridAvailabilityEndpointRuntimeAssert((int) ($shortage['recipe_id'] ?? 0) === 101, 'recipe shortage item should expose active recipe id');
+    recipePosGridAvailabilityEndpointRuntimeAssert(recipePosGridAvailabilityEndpointRuntimeDecimalEquals($shortage['recipe_effective_available_qty'] ?? '', '0.000000'), 'recipe shortage item should expose zero effective qty');
+    recipePosGridAvailabilityEndpointRuntimeAssert(($shortage['recipe_cashier_available_qty'] ?? '') === '0', 'recipe shortage item should expose cashier quantity zero');
+    recipePosGridAvailabilityEndpointRuntimeAssert(($shortage['unavailable_reason'] ?? '') === 'Required ingredient out of stock.', 'recipe shortage item should expose cashier warning reason');
 
     $lowStock = $items[7002];
     recipePosGridAvailabilityEndpointRuntimeAssert((int) ($lowStock['is_available'] ?? 0) === 1, 'low-stock recipe item should remain available');
@@ -56,7 +54,7 @@ try {
     recipePosGridAvailabilityEndpointRuntimeAssert(($lowStock['availability_low_stock'] ?? false) === true, 'low-stock recipe item should expose low-stock flag');
     recipePosGridAvailabilityEndpointRuntimeAssert(recipePosGridAvailabilityEndpointRuntimeDecimalEquals($lowStock['recipe_effective_available_qty'] ?? '', '3.000000'), 'low-stock recipe item should expose makeable qty');
 
-    foreach ([$unavailable, $lowStock] as $item) {
+    foreach ([$shortage, $lowStock] as $item) {
         foreach (['cost_price', 'unit_cost', 'total_cost', 'ingredient_cost_json', 'internal_cost_per_sell_unit'] as $sensitiveKey) {
             recipePosGridAvailabilityEndpointRuntimeAssert(!array_key_exists($sensitiveKey, $item), 'POS availability payload should not expose cost key ' . $sensitiveKey);
         }
@@ -74,9 +72,10 @@ try {
     recipePosGridAvailabilityEndpointRuntimeAssert(($barcodePayload['success'] ?? false) === true, 'barcode endpoint should return success JSON');
     $barcodeItem = $barcodePayload['item'] ?? [];
     recipePosGridAvailabilityEndpointRuntimeAssert((int) ($barcodeItem['id'] ?? 0) === 7001, 'barcode endpoint should return the searched item');
-    recipePosGridAvailabilityEndpointRuntimeAssert(($barcodeItem['availability_status'] ?? '') === 'recipe_unavailable', 'barcode endpoint should expose recipe availability status');
-    recipePosGridAvailabilityEndpointRuntimeAssert(($barcodeItem['availability_can_add'] ?? false) === true, 'barcode endpoint should allow unavailable recipe item under warn-only contract');
-    recipePosGridAvailabilityEndpointRuntimeAssert(($barcodeItem['availability_warn_only'] ?? false) === true, 'barcode endpoint should flag unavailable recipe item warn-only');
+    recipePosGridAvailabilityEndpointRuntimeAssert((int) ($barcodeItem['is_available'] ?? 0) === 1, 'barcode endpoint must keep recipe shortage item available');
+    recipePosGridAvailabilityEndpointRuntimeAssert(($barcodeItem['availability_status'] ?? '') === 'recipe_shortage', 'barcode endpoint should expose recipe shortage status');
+    recipePosGridAvailabilityEndpointRuntimeAssert(($barcodeItem['availability_can_add'] ?? false) === true, 'barcode endpoint should allow recipe shortage item');
+    recipePosGridAvailabilityEndpointRuntimeAssert(($barcodeItem['availability_warn_only'] ?? false) === true, 'barcode endpoint should flag recipe shortage item warn-only');
     recipePosGridAvailabilityEndpointRuntimeAssert(($barcodeItem['unavailable_reason'] ?? '') === 'Required ingredient out of stock.', 'barcode endpoint should expose cashier unavailable reason');
     recipePosGridAvailabilityEndpointRuntimeAssert(recipePosGridAvailabilityEndpointRuntimeDecimalEquals($barcodeItem['recipe_effective_available_qty'] ?? '', '0.000000'), 'barcode endpoint should expose effective recipe quantity');
     foreach (['cost_price', 'unit_cost', 'total_cost', 'ingredient_cost_json', 'internal_cost_per_sell_unit'] as $sensitiveKey) {

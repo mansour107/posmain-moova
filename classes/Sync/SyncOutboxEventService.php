@@ -5,6 +5,8 @@ require_once __DIR__ . '/BranchIdentity.php';
 require_once __DIR__ . '/CloudBranchSyncPublisher.php';
 require_once __DIR__ . '/DocumentCounterService.php';
 require_once __DIR__ . '/PosOrderSnapshotBuilder.php';
+require_once __DIR__ . '/MasterDataRevisionService.php';
+require_once __DIR__ . '/../Financial/UnitPrice.php';
 require_once __DIR__ . '/../Pos/Service/ItemVariantService.php';
 require_once __DIR__ . '/../Recipe/RecipeFeatureFlags.php';
 require_once __DIR__ . '/../Recipe/RecipeScopeResolver.php';
@@ -413,6 +415,7 @@ class SyncOutboxEventService
             'config' => $config,
             'pos_tenant' => $posTenant,
             'pos_branch' => $posBranch,
+            'actor_user_id' => $options['actor_user_id'] ?? ($_SESSION['userid'] ?? null),
         ]);
         $baseRevision = max(1, (int) ($payload['menu_item']['menu_version'] ?? 1));
         $sourceTransactionId = $this->sourceTransactionId(
@@ -856,6 +859,42 @@ class SyncOutboxEventService
             'local_item_id' => $itemId,
             'menu_item' => $menuItem,
         ];
+        if (
+            $this->tableExists($conn, 'sync_master_field_state')
+            && $this->tableExists($conn, 'sync_master_field_history')
+        ) {
+            $actorUserId = (int) ($options['actor_user_id'] ?? $item['user'] ?? 0);
+            if ($actorUserId > 0) {
+                $master = (new MasterDataRevisionService())->captureLocalPatch(
+                    $conn,
+                    $branchUuid,
+                    'menu_item',
+                    $itemUuid,
+                    [
+                        'item_name' => (string) ($menuItem['item_name'] ?? ''),
+                        'name2' => $menuItem['name2'],
+                        'barcode' => $menuItem['barcode'],
+                        'category_id' => (int) ($menuItem['category_id'] ?? 0),
+                        'price' => (string) $menuItem['price'],
+                        'price2' => (string) $menuItem['price2'],
+                        'price3' => (string) $menuItem['price3'],
+                        'is_active' => !empty($menuItem['is_active']) ? 1 : 0,
+                        'isdeleted' => (int) ($menuItem['isdeleted'] ?? 0),
+                        'preferred_unit_id' => isset($item['preferred_unit_id'])
+                            ? (int) $item['preferred_unit_id']
+                            : null,
+                    ],
+                    'branch:' . $branchUuid,
+                    $actorUserId,
+                    (string) $payload['source_system']
+                );
+                $master['actor']['permissions'] = ['menu.edit'];
+                $payload['source_node_id'] = $master['source_node_id'];
+                $payload['origin_clock_utc'] = $master['origin_clock_utc'];
+                $payload['actor'] = $master['actor'];
+                $payload['master_data'] = $master;
+            }
+        }
         $payload['payload_hash'] = hash('sha256', $this->encodeJson($payload));
 
         return $payload;
@@ -1076,11 +1115,11 @@ class SyncOutboxEventService
 
     private function decimalString($value): string
     {
-        if ($value === null || $value === '' || !is_numeric($value)) {
-            return '0.00';
+        if ($value === null || $value === '') {
+            return '0.000000';
         }
 
-        return number_format((float) $value, 2, '.', '');
+        return UnitPrice::fromLegacy($value)->toString();
     }
 
     private function eventType($value): string

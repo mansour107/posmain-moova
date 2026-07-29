@@ -17,8 +17,8 @@ if (PHP_SAPI !== 'cli') {
 if (in_array('--help', $argv, true) || in_array('-h', $argv, true)) {
     echo "Usage: POSMAIN_TEST_MYSQL_PORT=3307 php tools/e2e_mock_online_offline_sync.php\n";
     echo "\n";
-    echo "Runs a local two-mock-server online/offline sync proof against the test database.\n";
-    echo "The harness starts a mock cloud server and a mock branch server, inserts scoped e2e rows, and cleans those rows after the run.\n";
+    echo "Runs a local two-mock-server online/offline sync proof against a generated disposable database.\n";
+    echo "The harness starts mock cloud/branch servers, creates a posmain_sync_e2e_* database, and drops the complete database after the run.\n";
     echo "\n";
     echo "Scenarios:\n";
     echo "- cloud_receive_only\n";
@@ -38,6 +38,7 @@ assertE2eRuntimeRequirements();
 
 mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
 
+$disposableDb = createE2eDisposableDatabase();
 $runId = 'e2e:' . date('YmdHis') . ':' . bin2hex(random_bytes(3));
 $branchUuid = '11111111-2222-3333-4444-555555555555';
 $branchSecret = 'local-e2e-branch-secret';
@@ -50,6 +51,7 @@ $branchLogFile = $tmpRoot . '/branch.log';
 file_put_contents($cloudStateFile, json_encode(['mode' => SyncApplyMode::SHADOW_APPLY], JSON_PRETTY_PRINT));
 
 $children = [];
+$conn = null;
 
 try {
     $cloud = startServer('cloud', function (array $request) use ($branchUuid, $branchSecret, $cloudStateFile, $cloudLogFile): array {
@@ -118,6 +120,7 @@ try {
     $children = array_values(array_filter($children, fn ($child) => $child['pid'] !== $cloud['pid']));
     $cloudDropResult = scenarioCloudDrop($conn, $runId, $branchUuid, $branchSecret, $cloud);
     $conn->close();
+    $conn = null;
     $cloud = startServer('cloud-restarted', function (array $request) use ($branchUuid, $branchSecret, $cloudStateFile, $cloudLogFile): array {
         file_put_contents($cloudStateFile, json_encode(['mode' => SyncApplyMode::LIVE_APPLY], JSON_PRETTY_PRINT));
         $headers = $request['headers'];
@@ -161,6 +164,7 @@ try {
     $children = array_values(array_filter($children, fn ($child) => $child['pid'] !== $branch['pid']));
     $branchDropResult = scenarioBranchDrop($conn, $runId, $branchUuid, $branch);
     $conn->close();
+    $conn = null;
     $branch = startServer('branch-restarted', function (array $request) use ($branchLogFile): array {
         $payload = json_decode($request['body'], true) ?: [];
         $acks = [];
@@ -203,6 +207,10 @@ try {
     foreach ($children as $child) {
         stopServer($child);
     }
+    if ($conn instanceof mysqli) {
+        $conn->close();
+    }
+    dropE2eDisposableDatabase($disposableDb);
 }
 
 function connectTestDb(): mysqli
@@ -211,7 +219,7 @@ function connectTestDb(): mysqli
     $port = (int) (getenv('POSMAIN_TEST_MYSQL_PORT') ?: 3307);
     $user = getenv('POSMAIN_TEST_MYSQL_USER') ?: 'root';
     $pass = getenv('POSMAIN_TEST_MYSQL_PASS') ?: '';
-    $db = getenv('POSMAIN_TEST_MYSQL_DB') ?: 'kody2';
+    $db = e2eDisposableDatabaseName();
 
     return new mysqli($host, $user, $pass, $db, $port);
 }
@@ -222,8 +230,62 @@ function testDbDsnForOutput(): string
         '%s:%s/%s',
         getenv('POSMAIN_TEST_MYSQL_HOST') ?: '127.0.0.1',
         getenv('POSMAIN_TEST_MYSQL_PORT') ?: '3307',
-        getenv('POSMAIN_TEST_MYSQL_DB') ?: 'kody2'
+        e2eDisposableDatabaseName()
     );
+}
+
+function createE2eDisposableDatabase(): string
+{
+    $host = getenv('POSMAIN_TEST_MYSQL_HOST') ?: '127.0.0.1';
+    if (!in_array(strtolower(trim($host)), ['127.0.0.1', 'localhost', 'mysql'], true)) {
+        throw new RuntimeException('SYNC_E2E_LOCAL_DATABASE_REQUIRED');
+    }
+
+    $port = (int) (getenv('POSMAIN_TEST_MYSQL_PORT') ?: ($host === 'mysql' ? 3306 : 3307));
+    $user = getenv('POSMAIN_TEST_MYSQL_USER') ?: 'root';
+    $pass = getenv('POSMAIN_TEST_MYSQL_PASS') ?: '';
+    $db = 'posmain_sync_e2e_' . getmypid() . '_' . random_int(1000, 999999);
+
+    $root = new mysqli($host, $user, $pass, '', $port);
+    try {
+        $root->query("CREATE DATABASE `{$db}` CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci");
+    } finally {
+        $root->close();
+    }
+
+    putenv('POSMAIN_TEST_MYSQL_DB=' . $db);
+    $_ENV['POSMAIN_TEST_MYSQL_DB'] = $db;
+    $_SERVER['POSMAIN_TEST_MYSQL_DB'] = $db;
+
+    return $db;
+}
+
+function dropE2eDisposableDatabase(string $db): void
+{
+    if (!preg_match('/^posmain_sync_e2e_[0-9]+_[0-9]+$/', $db)) {
+        throw new RuntimeException('SYNC_E2E_DISPOSABLE_DATABASE_REQUIRED');
+    }
+
+    $host = getenv('POSMAIN_TEST_MYSQL_HOST') ?: '127.0.0.1';
+    $port = (int) (getenv('POSMAIN_TEST_MYSQL_PORT') ?: ($host === 'mysql' ? 3306 : 3307));
+    $user = getenv('POSMAIN_TEST_MYSQL_USER') ?: 'root';
+    $pass = getenv('POSMAIN_TEST_MYSQL_PASS') ?: '';
+    $root = new mysqli($host, $user, $pass, '', $port);
+    try {
+        $root->query("DROP DATABASE IF EXISTS `{$db}`");
+    } finally {
+        $root->close();
+    }
+}
+
+function e2eDisposableDatabaseName(): string
+{
+    $db = (string) (getenv('POSMAIN_TEST_MYSQL_DB') ?: '');
+    if (!preg_match('/^posmain_sync_e2e_[0-9]+_[0-9]+$/', $db)) {
+        throw new RuntimeException('SYNC_E2E_DISPOSABLE_DATABASE_REQUIRED');
+    }
+
+    return $db;
 }
 
 function cleanupRows(mysqli $conn, string $runId): void

@@ -213,6 +213,8 @@ final class Phase6DemoSeeder
             'store' => ['code' => '123P6DEMO', 'aname' => 'P6-DEMO Main Store', 'parent_id' => 0, 'is_stock' => 1, 'is_fund' => 0, 'is_basic' => 0],
             'employee' => ['code' => '213P6DEMO', 'aname' => 'P6-DEMO Staff Clearing', 'parent_id' => 35, 'is_stock' => 0, 'is_fund' => 0, 'is_basic' => 0],
             'fund' => ['code' => '121P6DEMO', 'aname' => 'P6-DEMO Cash Drawer', 'parent_id' => 0, 'is_stock' => 0, 'is_fund' => 1, 'is_basic' => 0],
+            'card_clearing' => ['code' => '121P6DEMOCARD', 'aname' => 'P6-DEMO Card Clearing', 'parent_id' => 0, 'is_stock' => 0, 'is_fund' => 0, 'is_basic' => 0],
+            'wallet_clearing' => ['code' => '121P6DEMOWALLET', 'aname' => 'P6-DEMO Wallet Clearing', 'parent_id' => 0, 'is_stock' => 0, 'is_fund' => 0, 'is_basic' => 0],
         ];
 
         $supplierParentId = null;
@@ -478,19 +480,21 @@ final class Phase6DemoSeeder
         }
 
         $methods = [
-            ['p6_cash', 'P6-DEMO Cash', 'cash', 0, 1],
-            ['p6_card', 'P6-DEMO Card', 'card', 1, 2],
-            ['p6_wallet', 'P6-DEMO Wallet', 'wallet', 1, 3],
+            ['p6_cash', 'P6-DEMO Cash', 'cash', 'cash_drawer', 'fund', 1],
+            ['p6_card', 'P6-DEMO Card', 'card', 'reference_required', 'card_clearing', 2],
+            ['p6_wallet', 'P6-DEMO Wallet', 'wallet', 'reference_required', 'wallet_clearing', 3],
         ];
 
         foreach ($methods as $method) {
-            [$code, $name, $type, $requiresReference, $sort] = $method;
+            [$code, $name, $type, $settlementPolicy, $accountSlot, $sort] = $method;
             $this->upsert('payment_methods', 'code', $code, [
                 'code' => $code,
                 'name_ar' => $name,
                 'name_en' => $name,
                 'type' => $type,
-                'requires_reference' => $requiresReference,
+                'account_id' => $this->accountIds[$accountSlot] ?? null,
+                'requires_reference' => $settlementPolicy === 'reference_required' ? 1 : 0,
+                'settlement_policy' => $settlementPolicy,
                 'is_active' => 1,
                 'sort_order' => $sort,
                 'tenant' => $this->tenant(),

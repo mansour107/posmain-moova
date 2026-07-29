@@ -66,12 +66,30 @@ try {
     $conn->query("CREATE TABLE ot_head (
         id INT AUTO_INCREMENT PRIMARY KEY,
         pro_date DATE NULL,
+        payment_date DATETIME NULL,
         user VARCHAR(50) NULL,
         pro_tybe INT NULL,
+        payment_status VARCHAR(40) NULL,
         isdeleted TINYINT NULL,
         fat_total DOUBLE NULL,
         fat_disc DOUBLE NULL,
         fat_net DOUBLE NULL
+    )");
+    $conn->query("CREATE TABLE order_payments (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        order_id BIGINT UNSIGNED NOT NULL,
+        amount DECIMAL(19,2) NOT NULL DEFAULT 0.00,
+        payment_method VARCHAR(50) NULL,
+        reference_no VARCHAR(100) NULL,
+        paid_by_customer_id BIGINT UNSIGNED NULL,
+        created_by BIGINT UNSIGNED NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        is_voided TINYINT(1) NOT NULL DEFAULT 0,
+        voided_at DATETIME NULL,
+        voided_by BIGINT UNSIGNED NULL,
+        void_reason VARCHAR(255) NULL,
+        KEY idx_order_payments_order_active (order_id, is_voided),
+        KEY idx_order_payments_created (created_at)
     )");
 
     $floatService = new DrawerFloatExpectationService();
@@ -103,6 +121,72 @@ try {
         'amount' => '40.000',
         'created_by' => 88,
     ]);
+    $paymentMethods = new PaymentMethodService();
+    $cashMethod = $paymentMethods->saveMethod($conn, [
+        'code' => 'cash',
+        'name_ar' => 'Cash',
+        'type' => 'cash',
+        'account_id' => 51,
+        'settlement_policy' => 'cash_drawer',
+    ]);
+    $bankMethod = $paymentMethods->saveMethod($conn, [
+        'code' => 'bank',
+        'name_ar' => 'Bank',
+        'type' => 'bank',
+        'account_id' => 52,
+        'settlement_policy' => 'manual_external',
+    ]);
+    $today = date('Y-m-d');
+    $now = date('Y-m-d H:i:s');
+    $conn->query("
+        INSERT INTO ot_head
+            (id, pro_date, payment_date, user, pro_tybe, payment_status, isdeleted, fat_total, fat_disc, fat_net)
+        VALUES
+            (10, '{$today}', '{$now}', '88', 9, 'paid', 0, 40, 0, 40),
+            (11, '{$today}', '{$now}', '88', 9, 'refunded', 0, 20, 0, 20)
+    ");
+    $conn->query("
+        INSERT INTO order_payments (order_id, amount, payment_method, created_by, created_at)
+        VALUES
+            (10, 40, 'cash', 88, '{$now}'),
+            (11, 20, 'bank', 88, '{$now}')
+    ");
+    $bankPaymentId = (int) $conn->query(
+        "SELECT id FROM order_payments WHERE order_id = 11 LIMIT 1"
+    )->fetch_assoc()['id'];
+    $creditNoteUuid = SyncBranchIdentity::generateUuidV4();
+    $creditNoteStmt = $conn->prepare("
+        INSERT INTO credit_notes (
+            uuid, tenant, branch, business_day, drawer_session_id,
+            original_order_id, customer_account_id, total_amount,
+            refund_mode, reason, status, created_by, created_at
+        ) VALUES (?, 1, 2, ?, ?, 11, 1, '12.00', 'amount', 'atomic shift tender regression', 'posted', 88, ?)
+    ");
+    $creditNoteStmt->bind_param('ssis', $creditNoteUuid, $today, $sessionId, $now);
+    $creditNoteStmt->execute();
+    $creditNoteId = (int) $conn->insert_id;
+    $creditNoteStmt->close();
+    $bankMethodId = (int) $bankMethod['id'];
+    $refundKey = 'tx-shift-bank-refund-' . getmypid();
+    $refundStmt = $conn->prepare("
+        INSERT INTO payment_refunds (
+            credit_note_id, original_order_id, original_payment_id,
+            payment_method_id, account_id, amount, settlement_policy,
+            settlement_declared_by, settlement_declared_at, status,
+            idempotency_key, created_by, created_at
+        ) VALUES (?, 11, ?, ?, 52, '12.00', 'manual_external', 88, ?, 'settled', ?, 88, ?)
+    ");
+    $refundStmt->bind_param(
+        'iiisss',
+        $creditNoteId,
+        $bankPaymentId,
+        $bankMethodId,
+        $now,
+        $refundKey,
+        $now
+    );
+    $refundStmt->execute();
+    $refundStmt->close();
     $_SESSION['pos_drawer_session_id'] = $sessionId;
     $_SESSION['pos_shift_closed_for_session'] = false;
 
@@ -110,6 +194,38 @@ try {
     $closeCount = $countService->submitCloseCount($conn, 88, '140.000', ['drawer_session_id' => $sessionId]);
     $token = (string) ($closeCount['close_token'] ?? '');
     txAtomicAssert($token !== '', 'close token issued');
+
+    // A paid order without its matching tender must fail before any close
+    // mutation. This protects both non-cash and cash discrepancies, even when
+    // the physical drawer happens to match.
+    $conn->query("
+        INSERT INTO ot_head
+            (id, pro_date, payment_date, user, pro_tybe, payment_status, isdeleted, fat_total, fat_disc, fat_net)
+        VALUES
+            (12, '{$today}', '{$now}', '88', 9, 'paid', 0, 5, 0, 5)
+    ");
+    $integrityRejected = false;
+    try {
+        (new ShiftCloseService())->closeShift($conn, 88, [
+            'counted_cash' => '140.00',
+            'fund_after' => '140.00',
+            'cash' => '140.00',
+            'matched' => true,
+            'drawer_session_id' => $sessionId,
+        ]);
+    } catch (ShiftFinancialIntegrityException $exception) {
+        $integrityRejected = isset($exception->violations()['gross_sales_to_tenders']);
+    }
+    txAtomicAssert($integrityRejected, 'shift close rejects paid order missing its tender');
+    txAtomicAssert(
+        ($drawer->sessionById($conn, $sessionId)['status'] ?? '') === 'open',
+        'financial mismatch leaves drawer open'
+    );
+    txAtomicAssert(
+        (int) $conn->query('SELECT COUNT(*) AS c FROM drawer_session_close_summaries')->fetch_assoc()['c'] === 0,
+        'financial mismatch writes no close summary'
+    );
+    $conn->query('DELETE FROM ot_head WHERE id = 12');
 
     // Fail after money writes but before idempotency complete → full rollback.
     $_POST = [
@@ -122,6 +238,9 @@ try {
     ];
     // Use the identity already provisioned by the process-default opening
     // events so close capture does not perform provisioning inside the TX.
+    // Deliberately do not inject sync_config below: the production/default
+    // service path must queue durable outbox evidence whenever the schema
+    // supports it, even while its transport worker is disabled.
     $currentSyncIdentity = (new SyncBranchIdentity())->current($conn);
     $syncConfig['branch']['uuid'] = (string) $currentSyncIdentity['branch_uuid'];
     $baselineSessionEventCount = (int) $conn->query(
@@ -142,8 +261,7 @@ try {
             $_POST,
             [],
             88,
-            static function (array $txContext = []) use ($conn, $token, $sessionId, $syncConfig): array {
-                $txContext['sync_config'] = $syncConfig;
+            static function (array $txContext = []) use ($conn, $token, $sessionId): array {
                 (new ShiftSessionService())->closeSimpleShift($conn, 88, [
                     'close_token' => $token,
                     'counted_cash' => '140.00',
@@ -208,8 +326,7 @@ try {
         $_POST,
         [],
         88,
-        static function (array $txContext = []) use ($conn, $token2, $sessionId, $syncConfig): array {
-            $txContext['sync_config'] = $syncConfig;
+        static function (array $txContext = []) use ($conn, $token2, $sessionId): array {
             $result = (new ShiftSessionService())->closeSimpleShift($conn, 88, [
                 'close_token' => $token2,
                 'counted_cash' => '140.00',
@@ -226,6 +343,24 @@ try {
 
     $closeSummaries = (int) $conn->query('SELECT COUNT(*) AS c FROM drawer_session_close_summaries')->fetch_assoc()['c'];
     txAtomicAssert($closeSummaries === 1, 'close summary committed once');
+    $closeSummary = $conn->query(
+        'SELECT * FROM drawer_session_close_summaries WHERE drawer_session_id = ' . $sessionId . ' LIMIT 1'
+    )->fetch_assoc();
+    txAtomicAssert((int) ($closeSummary['total_orders'] ?? 0) === 2, 'close snapshot records two paid orders');
+    txAtomicAssert(
+        (string) ($closeSummary['total_sales'] ?? '') === '48.000',
+        'close net sales subtract posted refund; got ' . var_export($closeSummary['total_sales'] ?? null, true)
+    );
+    txAtomicAssert((string) ($closeSummary['cash_sales'] ?? '') === '40.000', 'opening float is not mislabeled as cash sales');
+    txAtomicAssert((string) ($closeSummary['non_cash_sales'] ?? '') === '8.000', 'settled bank refund reduces non-cash tender');
+    txAtomicAssert((string) ($closeSummary['return_total'] ?? '') === '12.000', 'close snapshot records posted returns');
+    $paymentSummary = json_decode((string) ($closeSummary['payment_summary_json'] ?? ''), true, 512, JSON_THROW_ON_ERROR);
+    txAtomicAssert(($paymentSummary['cash'] ?? '') === '40.00', 'payment snapshot stores net cash tender');
+    txAtomicAssert(($paymentSummary['non_cash'] ?? '') === '8.00', 'payment snapshot stores net non-cash tender');
+    txAtomicAssert(($paymentSummary['total'] ?? '') === '60.000', 'payment snapshot retains gross tender total');
+    txAtomicAssert(($paymentSummary['settled_refund_total'] ?? '') === '12.000', 'payment snapshot retains settled refund total');
+    txAtomicAssert(($paymentSummary['net_total'] ?? '') === '48.000', 'payment snapshot retains net tender total');
+    txAtomicAssert(($paymentSummary['counted_cash'] ?? '') === '140.00', 'payment snapshot keeps physical drawer count separately');
     $session = $drawer->sessionById($conn, $sessionId);
     txAtomicAssert(($session['status'] ?? '') === 'closed', 'drawer closed');
     txAtomicAssert(abs((float) ($session['difference'] ?? 0)) < 0.001, 'matched close difference ~0');

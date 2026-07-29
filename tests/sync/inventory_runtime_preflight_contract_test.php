@@ -8,13 +8,14 @@ $production = inventoryRuntimePreflightContractSource($root . '/tools/inventory_
 foreach ([
     'inventory_runtime_schema_missing_tables',
     'inventory_runtime_schema_pending_migrations',
-    'inventory_runtime_live_requires_accounting',
-    'inventory_runtime_live_requires_reservations',
-    'inventory_runtime_live_requires_availability',
+    'inventory_runtime_accounting_requires_quantity_tracking',
+    'inventory_runtime_reservations_require_quantity_tracking',
+    'inventory_runtime_availability_requires_quantity_tracking',
     'inventory_runtime_live_legacy_mirror_must_be_disabled',
     'inventory_runtime_account_missing_or_inactive:',
     'document_counters',
     'sync_outbox',
+    'quantity_tracking_enabled',
 ] as $needle) {
     inventoryRuntimePreflightContractAssert(
         strpos($service, $needle) !== false,

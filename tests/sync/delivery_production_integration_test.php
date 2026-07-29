@@ -474,9 +474,87 @@ try {
     deliveryProdAssert($fulfillment['customer_phone'] === $phone, 'customer phone persisted');
     deliveryProdAssert($fulfillment['delivery_zone'] === 'Maadi', 'delivery zone persisted');
     deliveryProdAssert(abs((float) $fulfillment['delivery_fee'] - $deliveryFee) < 0.01, 'delivery fee persisted');
+    deliveryProdAssert($fulfillment['collection_mode'] === 'cod', 'unpaid delivery balance must be COD');
+    deliveryProdAssert(abs((float) $fulfillment['cod_amount'] - $headNet) < 0.01, 'COD amount must equal unpaid invoice balance');
 
     $lineCount = (int) $conn->query("SELECT COUNT(*) AS c FROM fat_details WHERE fatid = {$orderId} AND isdeleted = 0")->fetch_assoc()['c'];
     deliveryProdAssert($lineCount === 2, 'two order lines expected');
+
+    // Phase 3b: an existing delivery payment is scope/version safe and clears COD atomically.
+    $savedVersion = (int) ($order['mutation_version'] ?? 0);
+    $wrongScopeRejected = false;
+    try {
+        $wrongScopeRequest = $saveRequest;
+        $wrongScopeRequest['edit_id'] = $orderId;
+        $wrongScopeRequest['mutation_version'] = $savedVersion;
+        $wrongScopeRequest['idempotency_key'] = $prefix . ':delivery:update:wrong-scope';
+        $mutation->updateCashierOrder($conn, $wrongScopeRequest, [
+            'user_id' => 7,
+            'tenant' => 99,
+            'branch' => 99,
+            'record_outbox' => false,
+        ]);
+    } catch (InvalidArgumentException $e) {
+        $wrongScopeRejected = $e->getMessage() === 'ORDER_NOT_FOUND';
+    }
+    deliveryProdAssert($wrongScopeRejected, 'delivery update must reject an order outside the operational scope');
+
+    $updateRequest = $saveRequest;
+    $updateRequest['edit_id'] = $orderId;
+    $updateRequest['mutation_version'] = $savedVersion;
+    $updateRequest['idempotency_key'] = $prefix . ':delivery:update:paid';
+    $updateRequest['submit'] = 'cash';
+    $updateRequest['paid'] = $headNet;
+    $updateRequest['paid_cash'] = $headNet;
+    $updateRequest['payment_fund_id'] = 51;
+    $updateResult = $mutation->updateCashierOrder($conn, $updateRequest, [
+        'user_id' => 7,
+        'tenant' => 0,
+        'branch' => 0,
+        'record_outbox' => false,
+    ]);
+    deliveryProdAssert(($updateResult['data']['payment_status'] ?? '') === 'paid', 'updated delivery should be paid');
+    deliveryProdAssert(($updateResult['data']['order_status'] ?? '') === 'completed', 'updated delivery should be completed');
+    deliveryProdAssert(($updateResult['data']['fulfillment']['collection_mode'] ?? '') === 'prepaid', 'paid delivery response must clear COD mode');
+    deliveryProdAssert(abs((float) ($updateResult['data']['fulfillment']['cod_amount'] ?? -1)) < 0.01, 'paid delivery response must clear COD amount');
+
+    $updatedFulfillment = $conn->query("SELECT * FROM order_fulfillment WHERE order_id = {$orderId}")->fetch_assoc();
+    deliveryProdAssert($updatedFulfillment['collection_mode'] === 'prepaid', 'paid delivery durable fulfillment must be prepaid');
+    deliveryProdAssert(abs((float) $updatedFulfillment['cod_amount']) < 0.01, 'paid delivery durable COD amount must be zero');
+    deliveryProdAssert($updatedFulfillment['delivery_status'] === 'pending', 'payment update must preserve delivery status');
+    deliveryProdAssert($updatedFulfillment['courier_source'] === 'external', 'payment update must preserve courier source');
+    $updatedOrder = $conn->query("SELECT * FROM ot_head WHERE id = {$orderId}")->fetch_assoc();
+    deliveryProdAssert($updatedOrder['payment_status'] === 'paid', 'paid delivery durable order status');
+    deliveryProdAssert(abs((float) $updatedOrder['paid_amount'] - $headNet) < 0.01, 'paid delivery durable paid amount');
+    deliveryProdAssert(abs((float) $updatedOrder['remaining_amount']) < 0.01, 'paid delivery durable remaining amount');
+    deliveryProdAssert((int) $updatedOrder['mutation_version'] === $savedVersion + 1, 'delivery update must bump mutation version once');
+    $paymentCount = (int) $conn->query("SELECT COUNT(*) AS c FROM order_payments WHERE order_id = {$orderId}")->fetch_assoc()['c'];
+    deliveryProdAssert($paymentCount === 1, 'delivery update must record exactly one payment');
+
+    $updateReplay = $mutation->updateCashierOrder($conn, $updateRequest, [
+        'user_id' => 7,
+        'tenant' => 0,
+        'branch' => 0,
+        'record_outbox' => false,
+    ]);
+    deliveryProdAssert(($updateReplay['idempotency_replayed'] ?? false) === true, 'delivery payment response-loss retry must replay');
+    $paymentCountAfterReplay = (int) $conn->query("SELECT COUNT(*) AS c FROM order_payments WHERE order_id = {$orderId}")->fetch_assoc()['c'];
+    deliveryProdAssert($paymentCountAfterReplay === 1, 'delivery payment replay must not duplicate tender');
+
+    $staleRejected = false;
+    try {
+        $staleRequest = $updateRequest;
+        $staleRequest['idempotency_key'] = $prefix . ':delivery:update:stale';
+        $mutation->updateCashierOrder($conn, $staleRequest, [
+            'user_id' => 7,
+            'tenant' => 0,
+            'branch' => 0,
+            'record_outbox' => false,
+        ]);
+    } catch (Throwable $e) {
+        $staleRejected = $e->getMessage() === 'STALE_ORDER_VERSION';
+    }
+    deliveryProdAssert($staleRejected, 'second terminal must reject stale delivery mutation version');
 
     // Phase 6: dispatch lifecycle
     $fulfillmentService = new OrderFulfillmentService();

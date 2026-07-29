@@ -128,6 +128,7 @@ try {
     posTakeawayServiceAssert(count($mixed['data']['receipt_ids']) === 2, 'mixed service should create cash and bank receipts');
     posTakeawayServiceAssertCommittedMixedSale($conn, (int) $mixed['data']['order_id']);
     posTakeawayServiceAssertRecipeConsumedOnce($conn, (int) $mixed['data']['order_id'], '6.000000');
+    posTakeawayServiceAssertScopedSale($conn, $service, $request);
     echo "pos-takeaway-order-service-ok db={$db}\n";
 } finally {
     $conn->query("DROP DATABASE IF EXISTS `{$db}`");
@@ -524,6 +525,62 @@ function posTakeawayServiceAssertCommittedMixedSale(mysqli $conn, int $orderId):
     posTakeawayServiceAssert(count($authoritativePayments) === 2, 'mixed payload should carry exactly two authoritative tender rows');
     posTakeawayServiceAssert($authoritativePayments[0]['payment_method'] === 'cash', 'mixed payload first authoritative payment method expected');
     posTakeawayServiceAssert($authoritativePayments[1]['payment_method'] === 'bank', 'mixed payload second authoritative payment method expected');
+}
+
+function posTakeawayServiceAssertScopedSale(mysqli $conn, PosOrderMutationService $service, array $baseRequest): void
+{
+    $tenant = 12;
+    $branch = 34;
+    $request = $baseRequest;
+    $request['idempotency_key'] = 'phpunit:takeaway-service:create:scoped:1';
+    $request['pro_serial'] = 'TAKEAWAY-SERVICE-SCOPED-1';
+    $request['headtotal'] = '8.00';
+    $request['headnet'] = '8.00';
+    $request['paid'] = '8.00';
+    $request['paid_cash'] = '8.00';
+    $request['itmname'] = [11];
+    $request['itmqty'] = ['1'];
+    $request['itmprice'] = ['8.00'];
+    $request['itmdisc'] = ['0.00'];
+    $request['u_val'] = ['1'];
+
+    $result = $service->createTakeawayOrder($conn, $request, [
+        'user_id' => 7,
+        'tenant' => $tenant,
+        'branch' => $branch,
+    ]);
+    $orderId = (int) ($result['data']['order_id'] ?? 0);
+    posTakeawayServiceAssert($orderId > 0, 'scoped takeaway order should be created');
+
+    $assertScope = static function (string $table, string $where, string $label) use ($conn, $tenant, $branch): void {
+        $row = $conn->query(
+            "SELECT tenant, branch FROM {$table} WHERE {$where} ORDER BY id ASC LIMIT 1"
+        )->fetch_assoc();
+        posTakeawayServiceAssert(is_array($row), "{$label} should exist");
+        posTakeawayServiceAssert(
+            (int) $row['tenant'] === $tenant && (int) $row['branch'] === $branch,
+            "{$label} should preserve tenant/branch scope actual="
+                . (int) $row['tenant'] . '/' . (int) $row['branch']
+        );
+    };
+
+    $assertScope('ot_head', 'id = ' . $orderId, 'scoped order');
+    $assertScope('fat_details', 'fatid = ' . $orderId, 'scoped order line');
+    $assertScope('journal_heads', "source_type = 'invoice' AND source_id = {$orderId}", 'scoped invoice journal');
+    $assertScope('journal_heads', "source_type = 'payment' AND op2 = {$orderId}", 'scoped payment journal');
+    $assertScope('journal_entries', "op2 = {$orderId}", 'scoped journal entry');
+    $assertScope('ot_head', "pro_tybe = 1 AND op2 = {$orderId}", 'scoped receipt');
+
+    $outbox = $conn->query(
+        "SELECT pos_tenant, pos_branch FROM sync_outbox"
+        . " WHERE aggregate_type = 'order' AND aggregate_local_id = {$orderId}"
+        . " ORDER BY id DESC LIMIT 1"
+    )->fetch_assoc();
+    posTakeawayServiceAssert(is_array($outbox), 'scoped order outbox should exist');
+    posTakeawayServiceAssert(
+        (int) $outbox['pos_tenant'] === $tenant && (int) $outbox['pos_branch'] === $branch,
+        'scoped order outbox should preserve tenant/branch scope'
+    );
 }
 
 function posTakeawayServiceAssertRecipeConsumedOnce(mysqli $conn, int $orderId, string $expectedIngredientOnHand): void

@@ -60,6 +60,7 @@ function posDefaultAccountsTestMain(): void
         posDefaultAccountsAssert((int) $defaults['client_id'] === 148, 'resolved defaults should expose repaired client id');
 
         posDefaultAccountsTestOrderContext($conn);
+        posDefaultAccountsTestRejectsMisleadingPreferredSalesId($conn);
         posDefaultAccountsTestMinimalShopSalesAccount($conn);
         posDefaultAccountsTestSupplierSeedingWithExistingStore($conn);
         posDefaultAccountsTestMinimalAccHeadSchema($host, $port, $user, $pass);
@@ -133,6 +134,18 @@ function posDefaultAccountsTestOrderContext(mysqli $conn): void
         'delivery_customer_address' => 'Cairo',
     ]);
     posDefaultAccountsAssert($delivery['order_type_db'] === 'delivery', 'delivery fields should override stale table mode');
+}
+
+function posDefaultAccountsTestRejectsMisleadingPreferredSalesId(mysqli $conn): void
+{
+    $conn->query('DELETE FROM acc_head');
+    $conn->query("INSERT INTO acc_head (id, code, aname, parent_id, is_basic, is_stock, is_fund, isdeleted) VALUES
+        (91, '41103', 'Allowed discount', 0, 0, 0, 0, 0),
+        (93, '3111', 'Sales revenue', 0, 0, 0, 0, 0)
+    ");
+
+    $salesId = posmain_find_sales_account_id($conn, 91);
+    posDefaultAccountsAssert($salesId === 93, 'a preferred numeric id must not override the actual sales-revenue account');
 }
 
 function posDefaultAccountsTestMinimalShopSalesAccount(mysqli $conn): void

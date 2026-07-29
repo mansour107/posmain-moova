@@ -12,7 +12,7 @@ require_permission('inventory.edit', $conn);
 
 $inventoryTransferFlags = new InventoryFeatureFlags();
 $inventoryTransferMode = $inventoryTransferFlags->mode();
-$inventoryTransferCanPost = $inventoryTransferFlags->canWriteLedger();
+$inventoryTransferCanPost = $inventoryTransferFlags->canWriteQuantityLedger();
 $inventoryTransferBranchConfig = function_exists('posmain_app_config') && is_array(posmain_app_config()['branch'] ?? null)
     ? posmain_app_config()['branch']
     : [];

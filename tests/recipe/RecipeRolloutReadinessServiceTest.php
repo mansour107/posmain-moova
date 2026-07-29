@@ -372,7 +372,7 @@ class RecipeRolloutReadinessServiceTest extends TestCase
         $this->assertNotContains('recipe_moova_sync_requires_outbox_or_cloud_publish', $result['blockers']);
     }
 
-    public function testLegacyStrictStockWinsWhenResolvingSinglePolicy(): void
+    public function testLegacyStrictStockMapsToPermissiveProductPolicy(): void
     {
         $result = $this->service()->check(self::$conn, $this->flags([
             'enabled' => true,
@@ -382,12 +382,12 @@ class RecipeRolloutReadinessServiceTest extends TestCase
             'allow_negative_stock_with_approval' => true,
         ]));
 
-        $this->assertSame('block', $result['checks']['configuration']['negative_stock_sale_policy']);
+        $this->assertSame('allow_with_warning', $result['checks']['configuration']['negative_stock_sale_policy']);
         $this->assertNotContains('recipe_negative_stock_approval_conflicts_with_strict_stock', $result['blockers']);
         $this->assertNotContains('strict_stock_requires_recipe_availability', $result['blockers']);
     }
 
-    public function testStrictStockRequiresEffectiveRecipeAvailabilityMode(): void
+    public function testLegacyStrictStockDoesNotRequireEffectiveRecipeAvailabilityMode(): void
     {
         $result = $this->service()->check(self::$conn, $this->flags([
             'enabled' => true,
@@ -400,8 +400,8 @@ class RecipeRolloutReadinessServiceTest extends TestCase
             ],
         ]));
 
-        $this->assertFalse($result['ready_for_recipe_rollout']);
-        $this->assertContains('strict_stock_requires_effective_recipe_availability', $result['blockers']);
+        $this->assertSame('allow_with_warning', $result['checks']['configuration']['negative_stock_sale_policy']);
+        $this->assertNotContains('strict_stock_requires_effective_recipe_availability', $result['blockers']);
         $this->assertNotContains('strict_stock_requires_recipe_availability', $result['blockers']);
     }
 

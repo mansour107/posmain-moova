@@ -35,21 +35,21 @@ try {
     $_SESSION = [
         'login' => 'p6_cashier',
         'userid' => $cashierId,
-        'pos_tenant' => 0,
-        'pos_branch' => 0,
+        'pos_tenant' => 4,
+        'pos_branch' => 5,
     ];
 
     // Orphan/day sale before any drawer open for this cashier.
     $conn->query("
-        INSERT INTO ot_head (id, pro_date, user, pro_tybe, fat_total, fat_disc, fat_net, payment_status, order_status, order_type, crtime, payment_date, completed_at, isdeleted)
+        INSERT INTO ot_head (id, pro_date, user, pro_tybe, fat_total, fat_disc, fat_net, payment_status, order_status, order_type, crtime, payment_date, completed_at, isdeleted, tenant, branch)
         VALUES (501, '{$today}', '{$cashierId}', 9, 201.00, 0.00, 201.00, 'paid', 'completed', 'takeaway',
-                '{$today} 13:28:09', '{$today} 16:28:09', '{$today} 16:28:09', 0)
+                '{$today} 13:28:09', '{$today} 16:28:09', '{$today} 16:28:09', 0, 4, 5)
     ");
 
     $shiftSessions = new ShiftSessionService();
     $opened = $shiftSessions->openForCashier($conn, $cashierId, [
-        'tenant' => 0,
-        'branch' => 0,
+        'tenant' => 4,
+        'branch' => 5,
         'opening_cash' => '50.000',
     ]);
     shiftReceiptScopeAssert($opened['status'] === 'open', 'drawer should open');
@@ -71,6 +71,26 @@ try {
     $orderTypes = $report->getOrderTypeCounts();
     shiftReceiptScopeAssert(($orderTypes['takeaway_count'] ?? -1) === 0, 'shift-scoped takeaway count must exclude pre-open sale');
 
+    // Two post-open sales by the same cashier: only the active branch belongs
+    // to this drawer report.
+    $afterOpen = $today . ' 18:01:00';
+    $conn->query("
+        INSERT INTO ot_head
+            (id, pro_date, user, pro_tybe, fat_total, fat_disc, fat_net, payment_status,
+             order_status, order_type, crtime, payment_date, completed_at, isdeleted, tenant, branch)
+        VALUES
+            (502, '{$today}', '{$cashierId}', 9, 33.00, 0.00, 33.00, 'paid',
+             'completed', 'takeaway', '{$afterOpen}', '{$afterOpen}', '{$afterOpen}', 0, 4, 5),
+            (503, '{$today}', '{$cashierId}', 9, 99.00, 0.00, 99.00, 'paid',
+             'completed', 'delivery', '{$afterOpen}', '{$afterOpen}', '{$afterOpen}', 0, 4, 6)
+    ");
+    $scopedTotals = $report->getTotals();
+    shiftReceiptScopeAssert((int) ($scopedTotals['total_orders'] ?? -1) === 1, 'shift totals must exclude another branch');
+    shiftReceiptScopeAssert(abs((float) ($scopedTotals['total_net'] ?? -1) - 33.0) < 0.01, 'shift net must retain only active branch');
+    $scopedTypes = $report->getOrderTypeCounts();
+    shiftReceiptScopeAssert(($scopedTypes['takeaway_count'] ?? -1) === 1, 'active branch order type remains visible');
+    shiftReceiptScopeAssert(($scopedTypes['delivery_count'] ?? -1) === 0, 'other branch order type is excluded');
+
     // Day-only query (old receipt behavior) still sees the orphan — proving the bug class.
     $dayOnly = $conn->query("
         SELECT COUNT(*) AS c, COALESCE(SUM(fat_net),0) AS net
@@ -81,6 +101,7 @@ try {
           AND payment_status = 'paid'
           AND order_status = 'completed'
           AND isdeleted = 0
+          AND id = 501
     ")->fetch_assoc();
     shiftReceiptScopeAssert((int) $dayOnly['c'] === 1, 'day-only query still sees orphan sale');
     shiftReceiptScopeAssert(abs((float) $dayOnly['net'] - 201.0) < 0.01, 'day-only net still includes orphan sale');
@@ -132,7 +153,9 @@ function shiftReceiptScopeCreateSchema(mysqli $conn): void
             crtime DATETIME NULL,
             payment_date DATETIME NULL,
             completed_at DATETIME NULL,
-            isdeleted TINYINT(1) NOT NULL DEFAULT 0
+            isdeleted TINYINT(1) NOT NULL DEFAULT 0,
+            tenant INT NOT NULL DEFAULT 0,
+            branch INT NOT NULL DEFAULT 0
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     ");
     $conn->query("INSERT INTO settings (id, def_pos_client, edit_pass, isdeleted) VALUES (1, 501, '1234', 0)");

@@ -4,6 +4,8 @@ require_once __DIR__ . '/ItemUnitColumnSupport.php';
 require_once __DIR__ . '/ItemInventoryUnitSync.php';
 require_once __DIR__ . '/ItemUnitConversion.php';
 require_once __DIR__ . '/../Recipe/RecipeDecimal.php';
+require_once __DIR__ . '/../Financial/UnitPrice.php';
+require_once __DIR__ . '/../Financial/Decimal.php';
 
 final class ItemUnitPersistence
 {
@@ -41,12 +43,15 @@ final class ItemUnitPersistence
             }
             $submittedUnitIds[] = $unitId;
 
-            $uVal = (float) RecipeDecimal::normalize($unit['u_val'] ?? '1', ItemUnitConversion::DISPLAY_SCALE);
+            $uVal = FinancialDecimal::normalize(
+                $unit['u_val'] ?? '1',
+                ItemUnitConversion::DISPLAY_SCALE
+            );
             $unitBarcode = mb_substr((string) ($unit['unit_barcode'] ?? ''), 0, 20);
-            $costPrice = (float) ($unit['cost_price'] ?? 0);
-            $price1 = (float) ($unit['price1'] ?? 0);
-            $price2 = (float) ($unit['price2'] ?? 0);
-            $price3 = (float) ($unit['price3'] ?? 0);
+            $costPrice = UnitPrice::from($unit['cost_price'] ?? '0')->toString();
+            $price1 = UnitPrice::from($unit['price1'] ?? '0')->toString();
+            $price2 = UnitPrice::from($unit['price2'] ?? '0')->toString();
+            $price3 = UnitPrice::from($unit['price3'] ?? '0')->toString();
             $defSale = (int) ($unit['def_sale'] ?? 0);
             $defBuy = (int) ($unit['def_buy'] ?? 0);
             $defStock = (int) ($unit['def_stock'] ?? 0);
@@ -54,7 +59,7 @@ final class ItemUnitPersistence
 
             if ($hasDefFlags && $hasConversionSwapped) {
                 $updateStmt->bind_param(
-                    'dddddsiiiiii',
+                    'ssssssiiiiii',
                     $costPrice,
                     $price1,
                     $price2,
@@ -70,7 +75,7 @@ final class ItemUnitPersistence
                 );
             } elseif ($hasDefFlags) {
                 $updateStmt->bind_param(
-                    'dddddsiiiii',
+                    'ssssssiiiii',
                     $costPrice,
                     $price1,
                     $price2,
@@ -84,7 +89,7 @@ final class ItemUnitPersistence
                     $unitId
                 );
             } else {
-                $updateStmt->bind_param('dddddsii', $costPrice, $price1, $price2, $price3, $uVal, $unitBarcode, $itemId, $unitId);
+                $updateStmt->bind_param('ssssssii', $costPrice, $price1, $price2, $price3, $uVal, $unitBarcode, $itemId, $unitId);
             }
             $updateStmt->execute();
 
@@ -94,7 +99,7 @@ final class ItemUnitPersistence
 
             if ($hasDefFlags && $hasConversionSwapped) {
                 $insertStmt->bind_param(
-                    'iidsddddiiii',
+                    'iissssssiiii',
                     $itemId,
                     $unitId,
                     $uVal,
@@ -110,7 +115,7 @@ final class ItemUnitPersistence
                 );
             } elseif ($hasDefFlags) {
                 $insertStmt->bind_param(
-                    'iidsddddiii',
+                    'iissssssiii',
                     $itemId,
                     $unitId,
                     $uVal,
@@ -124,7 +129,7 @@ final class ItemUnitPersistence
                     $defStock
                 );
             } else {
-                $insertStmt->bind_param('iidsdddd', $itemId, $unitId, $uVal, $unitBarcode, $costPrice, $price1, $price2, $price3);
+                $insertStmt->bind_param('iissssss', $itemId, $unitId, $uVal, $unitBarcode, $costPrice, $price1, $price2, $price3);
             }
             $insertStmt->execute();
         }

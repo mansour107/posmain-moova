@@ -71,6 +71,12 @@ class KdsTicketService
             $this->recomputeOrderKitchenStatus($conn, $orderId);
             return;
         }
+        $this->scopeCache = [
+            max(0, (int) ($order['tenant'] ?? 0)),
+            max(0, (int) ($order['branch'] ?? 0)),
+        ];
+        $eventMetadata['tenant'] = $this->scopeCache[0];
+        $eventMetadata['branch'] = $this->scopeCache[1];
 
         $orderStatus = strtolower((string) ($order['order_status'] ?? 'active'));
         if ($orderStatus === 'cancelled') {
@@ -1353,6 +1359,8 @@ class KdsTicketService
         $reasonSelect = $this->columnExists($conn, 'ot_head', 'cancellation_reason')
             ? 'h.cancellation_reason'
             : "'' AS cancellation_reason";
+        $tenantSelect = $this->columnExists($conn, 'ot_head', 'tenant') ? 'h.tenant' : '0 AS tenant';
+        $branchSelect = $this->columnExists($conn, 'ot_head', 'branch') ? 'h.branch' : '0 AS branch';
         $hasTableName = $this->columnExists($conn, 'ot_head', 'table_id')
             && $this->tableExistsByName($conn, 'tables')
             && $this->columnExists($conn, 'tables', 'id')
@@ -1363,7 +1371,7 @@ class KdsTicketService
             SELECT h.id, {$proIdSelect}, {$tableIdSelect}, {$orderTypeSelect},
                    {$orderStatusSelect}, {$paymentStatusSelect}, {$deletedSelect},
                    {$revisionSelect}, {$reasonSelect},
-                   {$tableNameSelect}
+                   {$tableNameSelect}, {$tenantSelect}, {$branchSelect}
             FROM ot_head h
             {$tableJoin}
             WHERE h.id = ?

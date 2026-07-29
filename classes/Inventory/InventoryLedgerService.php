@@ -67,7 +67,7 @@ class InventoryLedgerService
 
         $isShadowWrite = !empty($options['shadow_write']);
         $intendedAction = $isShadowWrite ? 'record_shadow_movement' : 'record_movement';
-        $canWrite = $isShadowWrite ? $this->flags->canWriteShadowLedger() : $this->flags->canWriteLedger();
+        $canWrite = $isShadowWrite ? $this->flags->canWriteShadowLedger() : $this->flags->canWriteQuantityLedger();
 
         if (!$canWrite) {
             return $this->result($intendedAction, $movement ?? [], [
@@ -450,6 +450,25 @@ FOR UPDATE");
         array $before,
         array $after
     ): int {
+        $warning = [
+            'item_id' => $request->itemId,
+            'required' => InventoryDecimal::isPositive($request->qtyOut) ? $request->qtyOut : $request->qtyReserved,
+            'balance' => (string) ($before['qty_on_hand'] ?? InventoryDecimal::zero()),
+            'new_on_hand' => (string) ($after['qty_on_hand'] ?? InventoryDecimal::zero()),
+            'order_id' => (string) ($request->orderId ?? ''),
+            'recipe_id' => (string) ($request->recipeId ?? ''),
+            'order_line_uuid' => (string) ($request->orderLineUuid ?? ''),
+        ];
+        if (function_exists('posmain_log_warn_event')) {
+            posmain_log_warn_event('recipe_negative_stock.log', 'recipe_negative_stock', $warning);
+        } else {
+            error_log('[recipe_negative_stock]' . implode('', array_map(
+                static fn($key, $value): string => " {$key}={$value}",
+                array_keys($warning),
+                $warning
+            )));
+        }
+
         $audit = $this->securityAudit->record($conn, 'negative_stock_sale_warning', [
             'user_id' => $request->createdBy,
             'tenant' => $request->posTenant(),
@@ -615,7 +634,7 @@ WHERE TABLE_SCHEMA = DATABASE()
     {
         return array_merge([
             'success' => true,
-            'noop' => !$this->flags->canWriteLedger(),
+            'noop' => !$this->flags->canWriteQuantityLedger(),
             'mode' => $this->flags->mode(),
             'intended_action' => $action,
             'writes' => [],

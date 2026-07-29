@@ -1,5 +1,15 @@
 <?php
 
+// This suite certifies the payment/idempotency kernel in isolation. Inventory
+// lifecycle coverage has its own save/pay suites and must not inherit the
+// application's legacy live-inventory default when orders are inserted
+// directly as payment fixtures (which intentionally bypasses reservation).
+putenv('POSMAIN_INVENTORY_LEDGER_MODE=off');
+putenv('POSMAIN_INVENTORY_QUANTITY_TRACKING=0');
+putenv('POSMAIN_INVENTORY_RESERVATIONS=0');
+putenv('POSMAIN_INVENTORY_ACCOUNTING=0');
+putenv('POSMAIN_INVENTORY_AVAILABILITY=0');
+
 require_once __DIR__ . '/../../classes/Pos/Service/PosOrderMutationService.php';
 require_once __DIR__ . '/../../classes/Pos/Service/PaymentMethodService.php';
 require_once __DIR__ . '/../../classes/Pos/Service/DrawerSessionService.php';

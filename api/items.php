@@ -1,4 +1,6 @@
 <?php
+require_once __DIR__ . '/../includes/api_entry_classification.php';
+
 header('Content-Type: application/json');
 header('Access-Control-Allow-Origin: *');
 header('Access-Control-Allow-Methods: GET');

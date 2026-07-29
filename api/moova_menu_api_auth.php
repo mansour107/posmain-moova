@@ -1,5 +1,6 @@
 <?php
 
+require_once __DIR__ . '/../includes/api_entry_classification.php';
 require_once __DIR__ . '/../classes/MoovaPosIntegration.php';
 
 function posmain_menu_api_header($name)

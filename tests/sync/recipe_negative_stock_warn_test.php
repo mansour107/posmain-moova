@@ -15,6 +15,11 @@ if (!function_exists('posmain_app_config')) {
     function posmain_app_config(): array
     {
         return [
+            'sync' => [
+                'outbox_enabled' => false,
+                'branch_sync_enabled' => false,
+                'operational_sync_enabled' => false,
+            ],
             'recipe' => [
                 'enabled' => true,
                 'mode' => 'consume_pilot',
@@ -201,6 +206,8 @@ function recipeNegativeStockWarnCreateSchema(mysqli $conn): void
             total_cost DECIMAL(18,6) NOT NULL DEFAULT 0.000000,
             accounting_journal_id BIGINT UNSIGNED NULL,
             idempotency_key VARCHAR(191) NOT NULL,
+            payload_hash CHAR(64) NULL,
+            metadata_json JSON NULL,
             reversed_movement_id BIGINT UNSIGNED NULL,
             created_by BIGINT UNSIGNED NULL,
             created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -225,6 +232,21 @@ function recipeNegativeStockWarnCreateSchema(mysqli $conn): void
             updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
             PRIMARY KEY (id),
             UNIQUE KEY uq_inventory_balance_item (pos_tenant, pos_branch, store_id, item_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+    ");
+    $conn->query("
+        CREATE TABLE security_audit_log (
+            id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+            event_type VARCHAR(80) NOT NULL,
+            user_id BIGINT UNSIGNED NULL,
+            tenant INT NOT NULL DEFAULT 0,
+            branch INT NOT NULL DEFAULT 0,
+            ip VARCHAR(64) NULL,
+            user_agent VARCHAR(255) NULL,
+            target_type VARCHAR(80) NULL,
+            target_id BIGINT UNSIGNED NULL,
+            metadata_json JSON NULL,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
     ");
 }

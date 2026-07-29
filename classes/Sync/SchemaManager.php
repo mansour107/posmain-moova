@@ -94,6 +94,8 @@ class SyncSchemaManager
             'sync_outbox' => $this->syncOutboxSql(),
             'sync_inbox' => $this->syncInboxSql(),
             'sync_projection_versions' => $this->syncProjectionVersionsSql(),
+            'sync_master_field_state' => $this->syncMasterFieldStateSql(),
+            'sync_master_field_history' => $this->syncMasterFieldHistorySql(),
             'sync_branch_restore_runs' => $this->syncBranchRestoreRunsSql(),
             'sync_checkpoints' => $this->syncCheckpointsSql(),
             'sync_conflicts' => $this->syncConflictsSql(),
@@ -849,6 +851,10 @@ class SyncSchemaManager
             return $this->cloudOrderLinesUpgradeStatements($conn);
         }
 
+        if ($table === 'cloud_menu_items') {
+            return $this->cloudMenuItemsUpgradeStatements($conn);
+        }
+
         if ($table === 'moova_pos_inbound_events') {
             return $this->moovaPosInboundEventUpgradeStatements($conn);
         }
@@ -1043,6 +1049,28 @@ ALTER TABLE sync_branch_identity
             ) {
                 $statements['cloud_order_lines.modify_' . $column . '_decimal19_' . $scale . '_nullable'] =
                     "ALTER TABLE cloud_order_lines MODIFY COLUMN {$column} DECIMAL(19,{$scale}) NULL DEFAULT NULL";
+            }
+        }
+
+        return $statements;
+    }
+
+    private function cloudMenuItemsUpgradeStatements(mysqli $conn): array
+    {
+        $statements = [];
+        foreach (['price', 'cost'] as $column) {
+            if ($this->columnExists($conn, 'cloud_menu_items', $column)
+                && $this->columnNeedsFinancialDecimalDefinition(
+                    $conn,
+                    'cloud_menu_items',
+                    $column,
+                    19,
+                    6,
+                    true
+                )
+            ) {
+                $statements['cloud_menu_items.modify_' . $column . '_decimal19_6_nullable'] =
+                    "ALTER TABLE cloud_menu_items MODIFY COLUMN {$column} DECIMAL(19,6) NULL DEFAULT NULL";
             }
         }
 
@@ -4803,6 +4831,57 @@ CREATE TABLE IF NOT EXISTS sync_projection_versions (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
     }
 
+    private function syncMasterFieldStateSql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS sync_master_field_state (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  branch_uuid CHAR(36) NOT NULL,
+  aggregate_type VARCHAR(50) NOT NULL,
+  aggregate_uuid CHAR(36) NOT NULL,
+  field_name VARCHAR(100) NOT NULL,
+  value_json LONGTEXT NOT NULL,
+  changed_at_utc DATETIME(6) NOT NULL,
+  source_node_id VARCHAR(100) NOT NULL,
+  revision_uuid CHAR(36) NOT NULL,
+  actor_user_id BIGINT UNSIGNED NULL,
+  source_system VARCHAR(40) NOT NULL,
+  created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_sync_master_field (branch_uuid, aggregate_type, aggregate_uuid, field_name),
+  UNIQUE KEY uq_sync_master_revision (branch_uuid, revision_uuid, field_name),
+  KEY idx_sync_master_aggregate (branch_uuid, aggregate_type, aggregate_uuid),
+  KEY idx_sync_master_updated (updated_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
+    private function syncMasterFieldHistorySql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS sync_master_field_history (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  branch_uuid CHAR(36) NOT NULL,
+  aggregate_type VARCHAR(50) NOT NULL,
+  aggregate_uuid CHAR(36) NOT NULL,
+  field_name VARCHAR(100) NOT NULL,
+  value_json LONGTEXT NOT NULL,
+  changed_at_utc DATETIME(6) NOT NULL,
+  source_node_id VARCHAR(100) NOT NULL,
+  revision_uuid CHAR(36) NOT NULL,
+  actor_user_id BIGINT UNSIGNED NULL,
+  source_system VARCHAR(40) NOT NULL,
+  event_uuid CHAR(36) NULL,
+  outcome ENUM('accepted','ignored','local_seed','duplicate') NOT NULL,
+  reason VARCHAR(191) NULL,
+  created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_sync_master_history_revision (branch_uuid, revision_uuid, field_name),
+  KEY idx_sync_master_history_aggregate (branch_uuid, aggregate_type, aggregate_uuid, field_name, id),
+  KEY idx_sync_master_history_created (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
     private function syncConflictsSql()
     {
         return "
@@ -5215,8 +5294,8 @@ CREATE TABLE IF NOT EXISTS cloud_menu_items (
   barcode VARCHAR(191) NULL,
   item_name VARCHAR(255) NULL,
   category_id BIGINT UNSIGNED NULL,
-  price DECIMAL(15,4) NULL,
-  cost DECIMAL(15,4) NULL,
+  price DECIMAL(19,6) NULL,
+  cost DECIMAL(19,6) NULL,
   available_online TINYINT(1) NOT NULL DEFAULT 1,
   isdeleted TINYINT(1) NOT NULL DEFAULT 0,
   menu_version BIGINT UNSIGNED NOT NULL DEFAULT 0,

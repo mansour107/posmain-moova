@@ -40,6 +40,7 @@ class CloudBranchSyncEventService
 
         return $this->response(200, [
             'ok' => true,
+            'server_time_utc' => gmdate('Y-m-d\TH:i:s\Z'),
             'branch_uuid' => $branchUuid,
             'after_cursor' => $afterCursor,
             'next_cursor' => $nextCursor,

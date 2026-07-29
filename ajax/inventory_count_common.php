@@ -1,5 +1,6 @@
 <?php
 
+require_once __DIR__ . '/../includes/api_entry_classification.php';
 require_once __DIR__ . '/../includes/pos_default_accounts.php';
 
 function inventoryCountPayload(): array
@@ -40,8 +41,12 @@ function inventoryCountJsonError(Throwable $exception): void
 
 function inventoryCountArabicError(string $code): string
 {
+    if (strpos($code, 'INVENTORY_ACCOUNTING_MAPPING_REQUIRED:') === 0) {
+        return 'المحاسبة مفعلة لكن حساب فروق الجرد غير مربوط. اطلب من المدير إكمال إعدادات حسابات المخزون ثم أعد الإغلاق';
+    }
+
     $messages = [
-        'INVENTORY_LEDGER_NOT_READY' => 'يجب تفعيل وضع الجسر أو التشغيل للمخزون قبل إغلاق الجرد',
+        'INVENTORY_LEDGER_NOT_READY' => 'يجب تفعيل تتبع كمية المخزون قبل إغلاق الجرد',
         'STORE_REQUIRED' => 'اختر المخزن',
         'COUNT_REQUIRED' => 'اختر مستند الجرد',
         'COUNT_NOT_FOUND' => 'مستند الجرد غير موجود',

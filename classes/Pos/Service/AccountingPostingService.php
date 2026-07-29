@@ -61,7 +61,9 @@ class AccountingPostingService
             $employeeId,
             $userId,
             $date,
-            $tableName
+            $tableName,
+            $tenant,
+            $branch
         );
         $journalId = $this->nextJournalId($conn, $tenant, $branch);
         $journalHeadId = JournalPostingService::postBalancedHead($conn, (string) $journalId, $amount, $date, 'سند قبض - سداد طاولة ' . $tableName, $userId, [
@@ -96,7 +98,9 @@ class AccountingPostingService
         int $employeeId,
         int $userId,
         string $date,
-        string $tableName
+        string $tableName,
+        int $tenant,
+        int $branch
     ): int {
         $infoText = 'سند قبض - سداد طاولة: ' . $tableName . ' - فاتورة رقم ' . $orderId;
         $stmt = $conn->prepare("
@@ -120,6 +124,13 @@ class AccountingPostingService
         $stmt->execute();
         $receiptId = (int) $conn->insert_id;
         $stmt->close();
+        if ($this->columnExists($conn, 'ot_head', 'tenant')
+            && $this->columnExists($conn, 'ot_head', 'branch')) {
+            $scope = $conn->prepare('UPDATE ot_head SET tenant = ?, branch = ? WHERE id = ?');
+            $scope->bind_param('iii', $tenant, $branch, $receiptId);
+            $scope->execute();
+            $scope->close();
+        }
 
         return $receiptId;
     }

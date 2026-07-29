@@ -12,7 +12,9 @@ if (!function_exists('posmain_enforce_entry_permission')) {
 
         $relative = posmain_entry_relative_path();
         $isRoute = str_starts_with($relative, 'ajax/')
+            || str_starts_with($relative, 'api/')
             || str_starts_with($relative, 'do/')
+            || str_starts_with($relative, 'get/')
             || str_starts_with($relative, 'print/');
 
         if ($isRoute) {
@@ -31,4 +33,3 @@ if (!function_exists('posmain_enforce_entry_permission')) {
         page_guard_from_manifest($page, $conn);
     }
 }
-

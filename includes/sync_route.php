@@ -1,5 +1,6 @@
 <?php
 
+require_once __DIR__ . '/api_entry_classification.php';
 require_once __DIR__ . '/db_bootstrap.php';
 
 if (!function_exists('posmain_sync_header_value')) {

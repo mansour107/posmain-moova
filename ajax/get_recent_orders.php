@@ -11,6 +11,9 @@ try {
     $limit = isset($_GET['limit']) ? max(1, min(50, (int) $_GET['limit'])) : 30;
     $offset = isset($_GET['offset']) ? max(0, (int) $_GET['offset']) : 0;
     $fetchLimit = $limit + 1;
+    $scopeTenant = max(0, (int) ($_SESSION['pos_tenant'] ?? 0));
+    $scopeBranch = max(0, (int) ($_SESSION['pos_branch'] ?? 0));
+    $scopePredicate = recentOrdersScopePredicate($conn, 'o', $scopeTenant, $scopeBranch);
 
     $defaultClientId = 0;
     $settingsResult = $conn->query('SELECT def_pos_client FROM settings ORDER BY id ASC LIMIT 1');
@@ -85,6 +88,7 @@ try {
             {$posCustomerJoin}
             WHERE o.pro_tybe = 9
             AND {$visibleOrderPredicate}
+            AND {$scopePredicate}
             ORDER BY COALESCE(o.payment_date, o.completed_at, o.crtime, o.pro_date) DESC, o.id DESC
             LIMIT {$fetchLimit} OFFSET {$offset}";
 
@@ -182,6 +186,30 @@ function recentOrdersColumnExists(mysqli $conn, string $table, string $column): 
     $result = $conn->query("SHOW COLUMNS FROM `{$escapedTable}` LIKE '{$escapedColumn}'");
 
     return $result && $result->num_rows > 0;
+}
+
+function recentOrdersScopePredicate(
+    mysqli $conn,
+    string $alias,
+    int $tenant,
+    int $branch
+): string {
+    $safeAlias = preg_replace('/[^a-zA-Z0-9_]/', '', $alias);
+    if ($safeAlias === '') {
+        throw new InvalidArgumentException('RECENT_ORDERS_SCOPE_ALIAS_INVALID');
+    }
+
+    $predicates = [];
+    if (recentOrdersColumnExists($conn, 'ot_head', 'tenant')) {
+        $predicates[] = "{$safeAlias}.tenant = " . max(0, $tenant);
+    }
+    if (recentOrdersColumnExists($conn, 'ot_head', 'branch')) {
+        $predicates[] = "{$safeAlias}.branch = " . max(0, $branch);
+    }
+
+    // Compatibility for pre-scope single-shop schemas. Current schemas always
+    // include both columns and therefore fail closed to the authenticated scope.
+    return $predicates === [] ? '1 = 1' : implode(' AND ', $predicates);
 }
 
 /**
@@ -343,6 +371,7 @@ function recentOrdersRefundContext(mysqli $conn, array $orders): array
                 'label' => (string) (($method['name_ar'] ?? '') ?: ($method['name_en'] ?? $method['code'])),
                 'type' => (string) $method['type'],
                 'requires_reference' => !empty($method['requires_reference']),
+                'settlement_policy' => (string) ($method['settlement_policy'] ?? ''),
                 'drawer_impact' => !empty($method['drawer_impact']),
             ];
         }

@@ -15,7 +15,7 @@ class InventoryAuditService
     {
         return [
             'success' => true,
-            'noop' => !$this->flags->canWriteLedger(),
+            'noop' => !$this->flags->canWriteQuantityLedger(),
             'mode' => $this->flags->mode(),
             'intended_action' => 'record_audit',
             'event' => $event,

@@ -151,7 +151,7 @@ try {
         WHERE id = ?
     ");
     $stmt->bind_param(
-        'ssissdiiidddi',
+        'ssissssiisssi',
         $iname,
         $name2,
         $code,
@@ -178,7 +178,7 @@ try {
         $changedItemIds = $variantService->saveVariantsFromPost($conn, $item_id, $_POST, ['user_id' => $usid]);
     }
     foreach ($changedItemIds as $changedItemId) {
-        posmain_record_menu_item_sync($conn, (int) $changedItemId, 'item_form');
+        posmain_record_menu_item_sync($conn, (int) $changedItemId, 'item_form', 'menu.item_saved', true);
         posmain_queue_item_images_for_item($conn, (int) $changedItemId, 'item_form');
     }
     $conn->commit();
@@ -210,124 +210,3 @@ try {
 ItemEditorFlash::set('success', 'saved');
 header('Location: ../add_item.php?edit=' . (int) $item_id);
 exit;
-
-function posmain_edit_item_needs_default_unit(array $post): bool
-{
-    $unitIds = isset($post['unit_id']) && is_array($post['unit_id']) ? $post['unit_id'] : [];
-    if (!$unitIds) {
-        return true;
-    }
-
-    foreach ($unitIds as $unitId) {
-        if ((int) $unitId > 0) {
-            return false;
-        }
-    }
-
-    return true;
-}
-
-function posmain_edit_item_default_unit_id(mysqli $conn): int
-{
-    $row = $conn->query("SELECT id FROM myunits WHERE COALESCE(isdeleted, 0) = 0 ORDER BY id LIMIT 1")->fetch_assoc();
-    if ($row !== null) {
-        return (int) $row['id'];
-    }
-
-    $unitName = 'قطعة';
-    $stmt = $conn->prepare('INSERT INTO myunits (uname) VALUES (?)');
-    $stmt->bind_param('s', $unitName);
-    $stmt->execute();
-    $unitId = (int) $conn->insert_id;
-    $stmt->close();
-
-    return $unitId;
-}
-
-function posmain_edit_item_save_units(mysqli $conn, int $itemId, array $units): void
-{
-    if ($itemId < 1 || !$units) {
-        throw new InvalidArgumentException('missing item units');
-    }
-
-    $submittedUnitIds = [];
-    $updateStmt = $conn->prepare("
-        UPDATE item_units
-        SET cost_price = ?,
-            price1 = ?,
-            price2 = ?,
-            price3 = ?,
-            u_val = ?,
-            unit_barcode = ?
-        WHERE item_id = ? AND unit_id = ?
-    ");
-    $insertStmt = $conn->prepare("
-        INSERT INTO item_units(item_id, unit_id, u_val, unit_barcode, cost_price, price1, price2, price3)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    ");
-
-    foreach ($units as $unit) {
-        $unitId = (int) ($unit['unit_id'] ?? 0);
-        if ($unitId < 1) {
-            continue;
-        }
-        $submittedUnitIds[] = $unitId;
-
-        $uVal = (float) ($unit['u_val'] ?? 1);
-        $unitBarcode = (string) ($unit['unit_barcode'] ?? '');
-        $costPrice = (float) ($unit['cost_price'] ?? 0);
-        $price1 = (float) ($unit['price1'] ?? 0);
-        $price2 = (float) ($unit['price2'] ?? 0);
-        $price3 = (float) ($unit['price3'] ?? 0);
-
-        $updateStmt->bind_param('dddddsii', $costPrice, $price1, $price2, $price3, $uVal, $unitBarcode, $itemId, $unitId);
-        $updateStmt->execute();
-        if ($updateStmt->affected_rows > 0 || posmain_edit_item_unit_exists($conn, $itemId, $unitId)) {
-            continue;
-        }
-
-        $insertStmt->bind_param('iidsdddd', $itemId, $unitId, $uVal, $unitBarcode, $costPrice, $price1, $price2, $price3);
-        $insertStmt->execute();
-    }
-
-    $updateStmt->close();
-    $insertStmt->close();
-
-    $submittedUnitIds = array_values(array_unique(array_filter($submittedUnitIds)));
-    if (!$submittedUnitIds) {
-        throw new InvalidArgumentException('missing item units');
-    }
-
-    $placeholders = implode(',', array_fill(0, count($submittedUnitIds), '?'));
-    $types = 'i' . str_repeat('i', count($submittedUnitIds));
-    $params = array_merge([$itemId], $submittedUnitIds);
-    $deleteStmt = $conn->prepare("DELETE FROM item_units WHERE item_id = ? AND unit_id NOT IN ({$placeholders})");
-    posmain_edit_item_bind_params($deleteStmt, $types, $params);
-    $deleteStmt->execute();
-    $deleteStmt->close();
-}
-
-function posmain_edit_item_unit_exists(mysqli $conn, int $itemId, int $unitId): bool
-{
-    $stmt = $conn->prepare('SELECT id FROM item_units WHERE item_id = ? AND unit_id = ? LIMIT 1');
-    $stmt->bind_param('ii', $itemId, $unitId);
-    $stmt->execute();
-    $row = $stmt->get_result()->fetch_assoc();
-    $stmt->close();
-
-    return is_array($row);
-}
-
-function posmain_edit_item_bind_params(mysqli_stmt $stmt, string $types, array $params): void
-{
-    $refs = [];
-    foreach ($params as $index => $value) {
-        $refs[$index] = $value;
-    }
-
-    $bind = [$types];
-    foreach ($refs as $index => $_) {
-        $bind[] = &$refs[$index];
-    }
-    call_user_func_array([$stmt, 'bind_param'], $bind);
-}

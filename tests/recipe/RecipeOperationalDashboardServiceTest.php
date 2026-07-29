@@ -211,12 +211,12 @@ class RecipeOperationalDashboardServiceTest extends TestCase
             ],
         ]));
 
-        $this->assertSame('block', $dashboard['config']['negative_stock_sale_policy']);
+        $this->assertSame('allow_with_warning', $dashboard['config']['negative_stock_sale_policy']);
         $this->assertSame(0, $dashboard['summary']['stock_policy_mismatches']);
         $this->assertSame('ok', $this->healthRow($dashboard, 'stock_policy_flags')['status']);
     }
 
-    public function testDashboardSurfacesStrictStockWhenAvailabilityFlagIsNotEffectiveForMode(): void
+    public function testDashboardTreatsLegacyStrictStockAsPermissiveProductPolicy(): void
     {
         $dashboard = (new RecipeOperationalDashboardService())->dashboard(self::$conn, new RecipeFeatureFlags([
             'recipe' => [
@@ -228,10 +228,10 @@ class RecipeOperationalDashboardServiceTest extends TestCase
             ],
         ]));
 
-        $this->assertSame(1, $dashboard['summary']['stock_policy_mismatches']);
+        $this->assertSame('allow_with_warning', $dashboard['config']['negative_stock_sale_policy']);
+        $this->assertSame(0, $dashboard['summary']['stock_policy_mismatches']);
         $this->assertFalse($dashboard['config']['availability_effective']);
-        $this->assertSame('mismatch', $this->healthRow($dashboard, 'stock_policy_flags')['status']);
-        $this->assertStringContainsString('strict stock requires effective recipe availability mode', $this->healthRow($dashboard, 'stock_policy_flags')['detail']);
+        $this->assertSame('ok', $this->healthRow($dashboard, 'stock_policy_flags')['status']);
     }
 
     private function seedDashboardFixture(): void

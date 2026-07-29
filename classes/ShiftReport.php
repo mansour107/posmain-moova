@@ -164,6 +164,23 @@ class ShiftReport
         return $sql;
     }
 
+    private function appendOperationalScope(string $sql, array &$params, string $tableAlias = ''): string
+    {
+        $prefix = $tableAlias !== '' ? $tableAlias . '.' : '';
+        foreach (['tenant' => $this->tenant, 'branch' => $this->branch] as $column => $value) {
+            // Scope zero is the legacy/unscoped compatibility mode. Once a
+            // concrete shop scope exists, never mix another branch's orders
+            // into the cashier's shift.
+            if ($value < 1 || !$this->columnExists('ot_head', $column)) {
+                continue;
+            }
+            $sql .= " AND {$prefix}{$column} = ?";
+            $params[] = (string) $value;
+        }
+
+        return $sql;
+    }
+
     private function shiftWindowTimestampExpression(string $tableAlias = ''): string
     {
         $cacheKey = $tableAlias === '' ? '_root' : $tableAlias;
@@ -209,6 +226,7 @@ class ShiftReport
                   AND oh.pro_tybe = 9
                   AND ' . $saleEvidence;
         $query = $this->appendShiftWindow($query, $params, 'oh');
+        $query = $this->appendOperationalScope($query, $params, 'oh');
 
         $stmt = $this->conn->prepare($query);
         $stmt->bind_param(str_repeat('s', count($params)), ...$params);
@@ -240,6 +258,7 @@ class ShiftReport
                   AND oh.pro_tybe = 9
                   AND {$saleEvidence}";
         $query = $this->appendShiftWindow($query, $params, 'oh');
+        $query = $this->appendOperationalScope($query, $params, 'oh');
 
         $stmt = $this->conn->prepare($query);
         $stmt->bind_param(str_repeat('s', count($params)), ...$params);
@@ -268,6 +287,7 @@ class ShiftReport
                   AND oh.pro_tybe = 9
                   AND {$saleEvidence}";
         $query = $this->appendShiftWindow($query, $params, 'oh');
+        $query = $this->appendOperationalScope($query, $params, 'oh');
 
         $stmt = $this->conn->prepare($query);
         $stmt->bind_param(str_repeat('s', count($params)), ...$params);
@@ -306,6 +326,7 @@ class ShiftReport
                   AND oh.pro_tybe = 1
                   AND oh.isdeleted = 0';
         $query = $this->appendShiftWindow($query, $params, 'oh');
+        $query = $this->appendOperationalScope($query, $params, 'oh');
         $query .= ' GROUP BY oh.acc1';
 
         $stmt = $this->conn->prepare($query);
@@ -333,6 +354,7 @@ class ShiftReport
                   AND pro_tybe = 11
                   AND isdeleted = 0';
         $query = $this->appendShiftWindow($query, $params);
+        $query = $this->appendOperationalScope($query, $params);
 
         $stmt = $this->conn->prepare($query);
         $stmt->bind_param(str_repeat('s', count($params)), ...$params);
@@ -382,6 +404,7 @@ class ShiftReport
                   AND pro_tybe = 2
                   AND isdeleted = 0';
         $query = $this->appendShiftWindow($query, $params);
+        $query = $this->appendOperationalScope($query, $params);
 
         $stmt = $this->conn->prepare($query);
         $stmt->bind_param(str_repeat('s', count($params)), ...$params);
@@ -403,6 +426,7 @@ class ShiftReport
                    AND ' . $saleEvidence . '
                    AND fd.isdeleted = 0';
         $saleWhere = $this->appendShiftWindow($saleWhere, $params, 'oh');
+        $saleWhere = $this->appendOperationalScope($saleWhere, $params, 'oh');
         $query = 'SELECT item_id, iname, barcode, price,
                          SUM(qty_delta) AS total_qty,
                          SUM(value_delta) AS total_value,
@@ -475,6 +499,7 @@ class ShiftReport
                   AND oh.pro_tybe = 9
                   AND oh.isdeleted = 0";
         $query = $this->appendShiftWindow($query, $params, 'oh');
+        $query = $this->appendOperationalScope($query, $params, 'oh');
         $query .= ' ORDER BY COALESCE(oh.crtime, oh.payment_date, TIMESTAMP(oh.pro_date)) DESC';
 
         $stmt = $this->conn->prepare($query);

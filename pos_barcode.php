@@ -292,14 +292,26 @@ $posdate = posmain_current_business_day(
     (int) ($_SESSION['pos_tenant'] ?? 0),
     (int) ($_SESSION['pos_branch'] ?? 0)
 );
-if(isset($_GET['edit'])){
-    $id = intval($_GET['edit']); // تأمين المدخلات
-    $stmt = $conn->prepare("SELECT * FROM ot_head WHERE id = ?");
-    $stmt->bind_param("i", $id);
-    $stmt->execute();
-    $result = $stmt->get_result();
-    $rowed = $result->fetch_assoc();
-    $stmt->close();
+$posmainEditDeliveryContext = null;
+$posmainEditLoadError = '';
+if (isset($_GET['edit'])) {
+    require_once __DIR__ . '/classes/Pos/Service/PosOrderEditContextService.php';
+    $requestedEditId = max(0, (int) $_GET['edit']);
+    $editTenant = (int) ($_SESSION['pos_tenant'] ?? 0);
+    $editBranch = (int) ($_SESSION['pos_branch'] ?? 0);
+    try {
+        $editContext = (new PosOrderEditContextService())->load(
+            $conn,
+            $requestedEditId,
+            $editTenant,
+            $editBranch
+        );
+        $rowed = $editContext['order'];
+        $posmainEditDeliveryContext = $editContext['delivery'];
+        $id = (int) $rowed['id'];
+    } catch (RuntimeException $editException) {
+        $posmainEditLoadError = $editException->getMessage();
+    }
 }
 $success_message = '';
 if(isset($_SESSION['success_message'])){

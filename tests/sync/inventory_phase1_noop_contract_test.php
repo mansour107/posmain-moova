@@ -15,6 +15,7 @@ $defaultFlags = new InventoryFeatureFlags([]);
 inventoryPhase1Assert($defaultFlags->mode() === 'off', 'inventory flags should default to off without config');
 inventoryPhase1Assert(!$defaultFlags->isEnabled(), 'inventory domain should be disabled by default');
 inventoryPhase1Assert(!$defaultFlags->canWriteLedger(), 'default inventory flags must not allow ledger writes');
+inventoryPhase1Assert(!$defaultFlags->isQuantityTrackingEnabled(), 'default inventory flags must not enable quantity tracking');
 inventoryPhase1Assert(!$defaultFlags->shouldMirrorLegacyStock(), 'legacy mirror should default off');
 inventoryPhase1Assert(!$defaultFlags->isStrictStockEnabled(), 'strict stock should default off');
 inventoryPhase1Assert(!$defaultFlags->isReservationEnabled(), 'reservations should default off');
@@ -51,6 +52,35 @@ inventoryPhase1Assert(!$shadowFlags->canExposeCostsToPayload(''), 'cost exposure
 
 $bridgeFlags = new InventoryFeatureFlags(['inventory' => ['ledger_mode' => 'bridge']]);
 inventoryPhase1Assert($bridgeFlags->canWriteLedger(), 'bridge mode is the first mode that may write the future ledger');
+inventoryPhase1Assert($bridgeFlags->isQuantityTrackingEnabled(), 'legacy bridge mode should continue enabling quantity tracking');
+
+$quantityOnlyFlags = new InventoryFeatureFlags(['inventory' => [
+    'ledger_mode' => 'off',
+    'quantity_tracking' => true,
+    'accounting' => false,
+]]);
+inventoryPhase1Assert($quantityOnlyFlags->isEnabled(), 'explicit quantity tracking should enable the inventory domain');
+inventoryPhase1Assert($quantityOnlyFlags->canWriteQuantityLedger(), 'quantity tracking should not require legacy ledger mode');
+inventoryPhase1Assert($quantityOnlyFlags->canCaptureInventoryMovements(), 'quantity-only mode should enable invoice movement capture');
+inventoryPhase1Assert(!$quantityOnlyFlags->isAccountingEnabled(), 'quantity tracking should not force accounting');
+
+$invalidAccountingFlags = new InventoryFeatureFlags(['inventory' => [
+    'ledger_mode' => 'off',
+    'quantity_tracking' => false,
+    'accounting' => true,
+]]);
+foreach (['canWriteQuantityLedger', 'canCaptureInventoryMovements'] as $writeBoundary) {
+    $dependencyFailure = null;
+    try {
+        $invalidAccountingFlags->{$writeBoundary}();
+    } catch (RuntimeException $exception) {
+        $dependencyFailure = $exception->getMessage();
+    }
+    inventoryPhase1Assert(
+        $dependencyFailure === 'INVENTORY_ACCOUNTING_REQUIRES_QUANTITY_TRACKING',
+        $writeBoundary . ' should fail closed when accounting is enabled without quantity tracking'
+    );
+}
 
 $scopeResolver = new InventoryScopeResolver([
     'branch' => [
@@ -115,6 +145,7 @@ inventoryPhase1Assert($permissions->canApprove(['permissions' => ['admin']]), 'a
 $configSource = inventoryPhase1Source($root . '/config/app_config.php');
 foreach ([
     'POSMAIN_INVENTORY_LEDGER_MODE',
+    'POSMAIN_INVENTORY_QUANTITY_TRACKING',
     'POSMAIN_INVENTORY_LEGACY_MIRROR',
     'POSMAIN_INVENTORY_STRICT_STOCK',
     'POSMAIN_INVENTORY_RESERVATIONS',

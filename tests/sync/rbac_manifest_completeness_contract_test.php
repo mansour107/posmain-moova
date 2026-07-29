@@ -3,7 +3,8 @@
 /**
  * Filesystem-derived RBAC manifest completeness.
  *
- * Scans production PHP entry points under project root, ajax/, do/, and print/.
+ * Scans production PHP entry points under project root and recursively under
+ * ajax/, api/, do/, get/, and print/.
  * Every file must appear in page manifest, route manifest, or a tiny explicit
  * allowlist of true non-entry internals. Gaps are reported in full — do not
  * expand the allowlist to hide unclassified surfaces.
@@ -20,9 +21,6 @@ rbacCompletenessAssert(is_array($routeManifest), 'route manifest must be array')
 // True bootstraps / shared internals that are not HTTP entry points.
 // Keep this list tiny; prefer classifying real entry points in manifests.
 $allowlist = [
-    // Shared helpers required by inventory ajax endpoints; not standalone routes.
-    'ajax/inventory_count_common.php' => 'internal include helper for inventory count endpoints',
-    'ajax/inventory_transfer_common.php' => 'internal include helper for inventory transfer endpoints',
     // Static analysis bootstrap; never served as an HTTP entry point.
     'phpstan-bootstrap.php' => 'PHPStan bootstrap include, not an HTTP entry point',
 ];
@@ -40,7 +38,9 @@ foreach (array_keys($routeManifest) as $path) {
 $rootRouteOnly = [];
 foreach (array_keys($routeManifest) as $path) {
     if (str_starts_with($path, 'ajax/')
+        || str_starts_with($path, 'api/')
         || str_starts_with($path, 'do/')
+        || str_starts_with($path, 'get/')
         || str_starts_with($path, 'print/')
     ) {
         continue;
@@ -56,11 +56,11 @@ rbacCompletenessAssert(
 );
 
 $scanned = [];
-foreach (rbacCompletenessListPhpFiles($root) as $relative) {
+foreach (rbacCompletenessListPhpFiles($root, '', false) as $relative) {
     $scanned[$relative] = true;
 }
-foreach (['ajax', 'do', 'print'] as $dir) {
-    foreach (rbacCompletenessListPhpFiles($root . '/' . $dir, $dir) as $relative) {
+foreach (['ajax', 'api', 'do', 'get', 'print'] as $dir) {
+    foreach (rbacCompletenessListPhpFiles($root . '/' . $dir, $dir, true) as $relative) {
         $scanned[$relative] = true;
     }
 }
@@ -118,7 +118,7 @@ echo 'rbac-manifest-completeness-ok'
 /**
  * @return list<string>
  */
-function rbacCompletenessListPhpFiles(string $dir, string $prefix = ''): array
+function rbacCompletenessListPhpFiles(string $dir, string $prefix = '', bool $recursive = true): array
 {
     $out = [];
     if (!is_dir($dir)) {
@@ -134,14 +134,21 @@ function rbacCompletenessListPhpFiles(string $dir, string $prefix = ''): array
         if ($entry === '.' || $entry === '..') {
             continue;
         }
-        if (substr($entry, -4) !== '.php') {
-            continue;
-        }
         $full = $dir . '/' . $entry;
-        if (!is_file($full)) {
+        $relative = $prefix === '' ? $entry : $prefix . '/' . $entry;
+        if (is_dir($full)) {
+            if (!$recursive) {
+                continue;
+            }
+            foreach (rbacCompletenessListPhpFiles($full, $relative, true) as $nested) {
+                $out[] = $nested;
+            }
             continue;
         }
-        $out[] = $prefix === '' ? $entry : $prefix . '/' . $entry;
+        if (!is_file($full) || substr($entry, -4) !== '.php') {
+            continue;
+        }
+        $out[] = $relative;
     }
 
     sort($out);

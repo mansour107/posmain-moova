@@ -99,13 +99,20 @@ final class RefundReversalReadService
             }
         }
 
+        $drawerSessionId = max(0, (int) ($filters['drawer_session_id'] ?? 0));
+        $scopedByDrawerSession = $drawerSessionId > 0
+            && $this->columnExists($conn, 'credit_notes', 'drawer_session_id');
         $cashierId = max(0, (int) ($filters['cashier_id'] ?? 0));
-        if ($cashierId > 0 && $this->columnExists($conn, 'credit_notes', 'created_by')) {
+        if (!$scopedByDrawerSession
+            && $cashierId > 0
+            && $this->columnExists($conn, 'credit_notes', 'created_by')) {
             $where[] = 'cn.created_by = ?';
             $params[] = $cashierId;
         }
-        $drawerSessionId = max(0, (int) ($filters['drawer_session_id'] ?? 0));
-        if ($drawerSessionId > 0 && $this->columnExists($conn, 'credit_notes', 'drawer_session_id')) {
+        if ($scopedByDrawerSession) {
+            // The drawer is the custody/reporting boundary. A manager may
+            // authorize and perform a refund against another cashier's active
+            // drawer; actor filtering must not hide that financial reversal.
             $where[] = 'cn.drawer_session_id = ?';
             $params[] = $drawerSessionId;
         }

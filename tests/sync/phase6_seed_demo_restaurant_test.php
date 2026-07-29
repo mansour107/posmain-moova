@@ -189,8 +189,11 @@ function phase6SeedCreateSchema(mysqli $conn): void
             code VARCHAR(64) NOT NULL,
             name_ar VARCHAR(120) NOT NULL,
             name_en VARCHAR(120) NOT NULL,
+            account_id INT NULL,
             type VARCHAR(40) NOT NULL DEFAULT 'cash',
             requires_reference TINYINT(1) NOT NULL DEFAULT 0,
+            settlement_policy ENUM('cash_drawer','manual_external','reference_required')
+                NOT NULL DEFAULT 'reference_required',
             is_active TINYINT(1) NOT NULL DEFAULT 1,
             sort_order INT NOT NULL DEFAULT 0,
             tenant INT NOT NULL DEFAULT 0,
@@ -363,6 +366,25 @@ function phase6SeedAssertDataset(mysqli $conn): array
         phase6SeedAssert((int)$settings[$column] > 0, "{$column} should be populated");
     }
     phase6SeedAssert((int)$settings['pos_has_password'] === 1, 'POS password setting should be enabled');
+
+    $tenders = $conn->query("
+        SELECT code, type, account_id, requires_reference, settlement_policy
+        FROM payment_methods
+        WHERE code LIKE 'p6_%'
+        ORDER BY code
+    ");
+    $byCode = [];
+    while ($row = $tenders->fetch_assoc()) {
+        $byCode[(string)$row['code']] = $row;
+    }
+    phase6SeedAssert((int)$byCode['p6_cash']['account_id'] > 0, 'demo cash tender must have a postable account');
+    phase6SeedAssert($byCode['p6_cash']['settlement_policy'] === 'cash_drawer', 'demo cash must use cash_drawer settlement');
+    phase6SeedAssert((int)$byCode['p6_cash']['requires_reference'] === 0, 'demo cash must not require an external reference');
+    foreach (['p6_card', 'p6_wallet'] as $code) {
+        phase6SeedAssert((int)$byCode[$code]['account_id'] > 0, "{$code} must have a clearing account");
+        phase6SeedAssert($byCode[$code]['settlement_policy'] === 'reference_required', "{$code} must require external settlement proof");
+        phase6SeedAssert((int)$byCode[$code]['requires_reference'] === 1, "{$code} reference flag must match its settlement policy");
+    }
 
     $password = (string)$conn->query("SELECT password FROM users WHERE uname = 'p6_admin'")->fetch_assoc()['password'];
     phase6SeedAssert($password !== 'P6demo123!', 'demo password must be hashed');

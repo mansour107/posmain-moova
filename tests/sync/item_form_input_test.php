@@ -107,6 +107,42 @@ itemFormInputExpectInvalid(function () {
     ], 1);
 }, 'zero sell price should be rejected when no variants exist');
 
+itemFormInputExpectInvalid(function () {
+    ItemFormInput::normalizeAddPayload([
+        'iname' => 'Float Price',
+        'unit_id' => ['1'],
+        'u_val' => ['1'],
+        'price1' => [12.5],
+    ], 1);
+}, 'binary floating-point catalog prices must be rejected');
+
+itemFormInputExpectInvalid(function () {
+    ItemFormInput::normalizeAddPayload([
+        'iname' => 'Exponent Price',
+        'unit_id' => ['1'],
+        'u_val' => ['1'],
+        'price1' => ['1e2'],
+    ], 1);
+}, 'exponent notation catalog prices must be rejected');
+
+itemFormInputExpectInvalid(function () {
+    ItemFormInput::normalizeAddPayload([
+        'iname' => 'Over Precision Price',
+        'unit_id' => ['1'],
+        'u_val' => ['1'],
+        'price1' => ['1.0000001'],
+    ], 1);
+}, 'catalog prices beyond six decimal places must be rejected');
+
+itemFormInputExpectInvalid(function () {
+    ItemFormInput::normalizeAddPayload([
+        'iname' => 'Float Conversion',
+        'unit_id' => ['1'],
+        'u_val' => [1.5],
+        'price1' => ['2.00'],
+    ], 1);
+}, 'binary floating-point unit conversions must be rejected');
+
 $variantParentPayload = ItemFormInput::normalizeAddPayload([
     'iname' => 'Parent With Variants',
     'unit_id' => ['1'],

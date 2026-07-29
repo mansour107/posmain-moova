@@ -149,7 +149,11 @@ class ItemAvailabilityService
                 'recipe_availability_revision',
                 'inventory_stock_tracked',
                 'inventory_qty_available',
+                'inventory_cashier_qty_available',
+                'inventory_balance_found',
                 'inventory_stock_shortage',
+                'inventory_stock_low',
+                'recipe_cashier_available_qty',
             ] as $recipeKey) {
                 if (array_key_exists($recipeKey, $availability)) {
                     $item[$recipeKey] = $availability[$recipeKey];
@@ -250,16 +254,25 @@ class ItemAvailabilityService
                 : false;
             if ($manualAvailable && !empty($availability['recipe_enabled'])) {
                 $policy = $this->negativeStockPolicy->resolve($conn);
-                $availability['availability_status'] = 'recipe_unavailable';
                 if ($policy === NegativeStockSalePolicyService::ALLOW_WITH_WARNING) {
+                    $availability['is_available'] = true;
+                    $availability['availability_status'] = 'recipe_shortage';
+                    $availability['availability_low_stock'] = true;
                     $availability['availability_warn_only'] = true;
                     $availability['availability_can_add'] = true;
+                    $availability['recipe_cashier_available_qty'] = $this->cashierQuantity(
+                        $availability['recipe_effective_available_qty'] ?? '0'
+                    );
                 }
 
                 return $availability;
             }
             if ($manualAvailable && !empty($availability['inventory_stock_shortage'])) {
-                $availability['availability_status'] = 'inventory_unavailable';
+                $availability['is_available'] = true;
+                $availability['availability_status'] = 'inventory_shortage';
+                $availability['availability_low_stock'] = true;
+                $availability['availability_warn_only'] = true;
+                $availability['availability_can_add'] = true;
 
                 return $availability;
             }
@@ -271,6 +284,9 @@ class ItemAvailabilityService
 
         if (!empty($availability['recipe_enabled'])) {
             $effectiveQty = (float) ($availability['recipe_effective_available_qty'] ?? 0);
+            $availability['recipe_cashier_available_qty'] = $this->cashierQuantity(
+                $availability['recipe_effective_available_qty'] ?? '0'
+            );
             if ($effectiveQty > 0 && $effectiveQty <= 5) {
                 $availability['availability_status'] = 'recipe_low';
                 $availability['availability_low_stock'] = true;
@@ -288,6 +304,13 @@ class ItemAvailabilityService
 
             return $availability;
         }
+        if (!empty($availability['inventory_stock_low'])) {
+            $availability['availability_status'] = 'inventory_low';
+            $availability['availability_low_stock'] = true;
+            $availability['availability_warn_only'] = true;
+
+            return $availability;
+        }
 
         $availability['availability_status'] = 'available';
 
@@ -297,7 +320,7 @@ class ItemAvailabilityService
     private function withInventoryAvailability(mysqli $conn, array $availability, array $scope): array
     {
         if (
-            !$this->inventoryFlags->canWriteLedger()
+            !$this->inventoryFlags->isQuantityTrackingEnabled()
             || !empty($availability['recipe_enabled'])
             || $this->activeRecipeUsesIngredientsInsteadOfPreparedStock(
                 $conn,
@@ -350,18 +373,23 @@ class ItemAvailabilityService
 
         $qtyAvailable = (string) ($balance['qty_available'] ?? '0.000000');
         $availability['inventory_stock_tracked'] = true;
+        $availability['inventory_balance_found'] = is_array($balance);
         $availability['inventory_qty_available'] = $qtyAvailable;
+        $availability['inventory_cashier_qty_available'] = $this->cashierQuantity($qtyAvailable);
         $availability['inventory_stock_shortage'] = (float) $qtyAvailable <= 0.0;
-        if (!$availability['inventory_stock_shortage']) {
-            return $availability;
-        }
-
-        if ($this->negativeStockPolicy->resolve($conn) === NegativeStockSalePolicyService::BLOCK) {
-            $availability['is_available'] = false;
-            $availability['unavailable_reason'] = 'Item out of stock.';
-        }
+        $availability['inventory_stock_low'] = (float) $qtyAvailable > 0.0 && (float) $qtyAvailable <= 5.0;
 
         return $availability;
+    }
+
+    private function cashierQuantity($quantity): string
+    {
+        $normalized = is_numeric($quantity) ? (float) $quantity : 0.0;
+        if ($normalized <= 0.0) {
+            return '0';
+        }
+
+        return (string) $quantity;
     }
 
     private function withRecipeAvailability(mysqli $conn, array $availability, array $scope): array

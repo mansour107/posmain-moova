@@ -34,11 +34,9 @@ include __DIR__ . '/includes/sidebar.php';
             <?= csrf_input('inventory_policy_write') ?>
             <div class="form-group">
               <label for="negative_stock_sale_policy">التصرف عند عدم كفاية المخزون المحسوب</label>
-              <select class="form-control" id="negative_stock_sale_policy" name="negative_stock_sale_policy" required>
-                <option value="block" <?= $inventoryPolicy === 'block' ? 'selected' : '' ?>>منع البيع</option>
-                <option value="allow_with_warning" <?= $inventoryPolicy === 'allow_with_warning' ? 'selected' : '' ?>>السماح مع تحذير وتسجيل الحدث</option>
-              </select>
-              <small class="form-text text-muted">العناصر المعطلة يدويا تظل ممنوعة في الحالتين.</small>
+              <input type="hidden" name="negative_stock_sale_policy" value="allow_with_warning">
+              <input class="form-control" id="negative_stock_sale_policy" value="السماح مع تحذير وتسجيل الحدث" readonly>
+              <small class="form-text text-muted">نفاد المخزون لا يمنع البيع. العناصر المعطلة يدوياً فقط تظل ممنوعة.</small>
             </div>
           </div>
           <div class="card-footer d-flex justify-content-end">

@@ -133,8 +133,12 @@ function inventoryAdjustmentDeleteStoredPhoto(string $relativePath): void
 
 function inventoryAdjustmentArabicError(string $code): string
 {
+    if (strpos($code, 'INVENTORY_ACCOUNTING_MAPPING_REQUIRED:') === 0) {
+        return 'المحاسبة مفعلة لكن حساب هذه العملية غير مربوط. اطلب من المدير إكمال إعداد الهالك أو فروق المخزون ثم أعد المحاولة';
+    }
+
     $messages = [
-        'INVENTORY_LEDGER_NOT_READY' => 'يجب تفعيل وضع الجسر أو التشغيل للمخزون قبل التسجيل',
+        'INVENTORY_LEDGER_NOT_READY' => 'يجب تفعيل تتبع كمية المخزون قبل التسجيل',
         'STORE_REQUIRED' => 'اختر المخزن',
         'ITEM_REQUIRED' => 'اختر الصنف',
         'QTY_REQUIRED' => 'أدخل الكمية',

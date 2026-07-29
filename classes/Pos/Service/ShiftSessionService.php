@@ -820,6 +820,7 @@ class ShiftSessionService
         require_once dirname(__DIR__, 3) . '/includes/db_transaction.php';
         require_once __DIR__ . '/ManagerApprovalService.php';
         require_once __DIR__ . '/DrawerSessionCloseSummaryService.php';
+        require_once __DIR__ . '/ShiftFinancialIntegrityService.php';
         require_once dirname(__DIR__, 2) . '/Security/SecurityAuditLogger.php';
 
         if (empty($payload['in_transaction'])) {
@@ -912,6 +913,23 @@ class ShiftSessionService
             'date' => $businessDay,
             'drawer_session_id' => $sessionId,
         ]);
+        $paymentSummary = (array) ($reconciliation['payments'] ?? []);
+        $financialIntegrity = (new ShiftFinancialIntegrityService())->evaluate([
+            'gross_sales' => $this->legacyReadAmount(
+                $reportTotals['total_sales_after_discount'] ?? $reportTotals['total_net'] ?? '0.00',
+                true
+            ),
+            'refund_total' => $this->legacyReadAmount($reportTotals['total_refunds'] ?? '0.00', true),
+            'net_sales' => $this->legacyReadAmount($reportTotals['total_net'] ?? '0.00', true),
+        ], $reconciliation);
+        $cashNet = CashAmount::normalize(
+            $paymentSummary['cash_net'] ?? $paymentSummary['cash'] ?? '0.00',
+            true
+        );
+        $nonCashNet = CashAmount::normalize(
+            $paymentSummary['non_cash_net'] ?? $paymentSummary['non_cash'] ?? '0.00',
+            true
+        );
         $expenseSummary = $this->shiftExpenseSummary($conn, $ownerUserId, [
             'tenant' => $sessionTenant,
             'branch' => $sessionBranch,
@@ -923,6 +941,9 @@ class ShiftSessionService
             $syncContext = ['in_transaction' => true];
             if (is_array($payload['sync_config'] ?? null)) {
                 $syncContext['sync_config'] = $payload['sync_config'];
+            } elseif ($this->syncOutboxAvailable($conn)) {
+                require_once dirname(__DIR__, 2) . '/Sync/OperationalSyncRecorder.php';
+                $syncContext['sync_config'] = posmain_operational_sync_config();
             }
             $closed = $this->drawerSessions->forceCloseSession($conn, $sessionId, [
                 'closed_by' => $actingUserId,
@@ -935,13 +956,14 @@ class ShiftSessionService
                 && in_array((string) ($session['variance_type'] ?? ''), ['opening', 'both'], true);
 
             $hasClosingVariance = CashAmount::compare($difference, '0.00') !== 0;
-            $varianceStatus = ($hasClosingVariance || $openingUnresolved) ? 'unresolved' : 'none';
+            $financialMismatch = empty($financialIntegrity['ok']);
+            $varianceStatus = ($hasClosingVariance || $openingUnresolved || $financialMismatch) ? 'unresolved' : 'none';
             $varianceType = 'none';
             if ($openingUnresolved && $hasClosingVariance) {
                 $varianceType = 'both';
             } elseif ($openingUnresolved) {
                 $varianceType = 'opening';
-            } elseif ($hasClosingVariance) {
+            } elseif ($hasClosingVariance || $financialMismatch) {
                 $varianceType = 'closing';
             }
 
@@ -977,13 +999,13 @@ class ShiftSessionService
                 'shift_number' => date('Ymd') . '_' . $ownerUserId,
                 'total_orders' => (int) ($reportTotals['total_orders'] ?? 0),
                 'total_sales' => $this->legacyReadAmount($reportTotals['total_net'] ?? '0.00', true),
-                'cash_sales' => $this->legacyReadAmount($reconciliation['payments']['cash'] ?? '0.00'),
-                'non_cash_sales' => $this->legacyReadAmount($reconciliation['payments']['non_cash'] ?? '0.00'),
+                'cash_sales' => $cashNet,
+                'non_cash_sales' => $nonCashNet,
                 'discount_total' => $this->legacyReadAmount($reportTotals['total_discount'] ?? '0.00'),
-                'return_total' => '0.00',
+                'return_total' => $this->legacyReadAmount($reportTotals['total_refunds'] ?? '0.00', true),
                 'expense_total' => CashAmount::normalize($expenseSummary['total'] ?? '0.00'),
                 'expense_notes' => (string) ($expenseSummary['notes'] ?? ''),
-                'expected_non_cash' => $this->legacyReadAmount($reconciliation['payments']['non_cash'] ?? '0.00'),
+                'expected_non_cash' => $nonCashNet,
                 'counted_non_cash' => null,
                 'non_cash_difference' => null,
                 'close_path' => !empty($payload['takeover']) ? 'drawer_takeover_force_close' : 'drawer_force_close',
@@ -994,8 +1016,14 @@ class ShiftSessionService
                     'variance_status' => $varianceStatus,
                     'variance_type' => $varianceType,
                     'manager_approval_id' => $approvalId,
+                    'financial_integrity' => $financialIntegrity,
                 ],
-                'payment_summary' => $reconciliation['payments'] ?? [],
+                'payment_summary' => array_merge($paymentSummary, [
+                    'cash' => $cashNet,
+                    'non_cash' => $nonCashNet,
+                    'counted_cash' => $countedCash,
+                    'counted_non_cash' => null,
+                ]),
             ]);
 
             require_once dirname(__DIR__, 2) . '/Sync/OperationalSyncEventService.php';
@@ -1052,6 +1080,18 @@ class ShiftSessionService
         $result = $conn->query("SHOW COLUMNS FROM drawer_sessions LIKE '" . $conn->real_escape_string($column) . "'");
 
         return $result instanceof mysqli_result && $result->num_rows > 0;
+    }
+
+    private function syncOutboxAvailable(mysqli $conn): bool
+    {
+        foreach (['sync_outbox', 'sync_branch_identity'] as $table) {
+            $result = $conn->query("SHOW TABLES LIKE '{$table}'");
+            if (!($result instanceof mysqli_result) || $result->num_rows < 1) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private function requirePayoutApprovalIfNeeded(

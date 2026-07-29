@@ -17,8 +17,10 @@ $posOrderMode = 1;
 $posEditTableId = 0;
 $posEditTableName = '';
 $posEditOrderId = '';
+$posEditMutationVersion = 0;
 if (isset($rowed) && is_array($rowed)) {
     $posEditOrderId = (string) (int) ($id ?? $rowed['id'] ?? 0);
+    $posEditMutationVersion = max(1, (int) ($rowed['mutation_version'] ?? 1));
     $orderType = (string) ($rowed['order_type'] ?? 'takeaway');
     if ($orderType === 'table') {
         $posOrderMode = 2;
@@ -39,8 +41,19 @@ if (isset($rowed) && is_array($rowed)) {
 $legacyOfflinePrototypeEnabled = !production_guard_is_production()
     || production_guard_env_bool('POSMAIN_ENABLE_LEGACY_OFFLINE_PROTOTYPE', false);
 ?>
+<script>
+window.POSMAIN_EDIT_DELIVERY = <?= json_encode(
+    is_array($posmainEditDeliveryContext ?? null) ? $posmainEditDeliveryContext : null,
+    JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT
+) ?>;
+</script>
 <!-- Main Content -->
 <form action="<?= $action_url ?>" method="post" id="posForm">
+        <?php if (($posmainEditLoadError ?? '') !== '') { ?>
+        <div class="alert alert-danger m-2" role="alert" data-pos-edit-load-error>
+            تعذر فتح الطلب للتعديل. لم يتم تحميل أو تغيير أي بيانات.
+        </div>
+        <?php } ?>
         <?php if ($posEditOrderId !== '') { ?>
         <input type="hidden" name="edit_id" value="<?= htmlspecialchars($posEditOrderId, ENT_QUOTES, 'UTF-8') ?>">
         <?php } ?>
@@ -224,7 +237,7 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                                 <input type="hidden" id="selected_table_name" name="table_name" value="<?= htmlspecialchars($posEditTableName, ENT_QUOTES, 'UTF-8') ?>">
                                 <input type="hidden" id="selected_table_case" name="selected_table_case" value="<?= $posEditTableId > 0 ? '1' : '0' ?>">
                                 <input type="hidden" id="selected_order_id" name="selected_order_id" value="<?= $posOrderMode === 2 ? htmlspecialchars($posEditOrderId, ENT_QUOTES, 'UTF-8') : '' ?>">
-                                <input type="hidden" id="order_mutation_version" name="mutation_version" value="0">
+                                <input type="hidden" id="order_mutation_version" name="mutation_version" value="<?= $posEditMutationVersion ?>">
                             </div>
 
                             <div class="collapse" id="posAdvancedSetup">
@@ -238,7 +251,7 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                                         </div>
                                         <div class="col-6 pos-date-field">
                                     <input type="date" name="accural_date" class="form-control form-control-sm"
-                                        value="<?php echo isset($_GET['edit']) ? $rowed['accural_date'] : date('Y-m-d'); ?>"
+                                        value="<?php echo $posEditOrderId !== '' ? htmlspecialchars((string) $rowed['accural_date'], ENT_QUOTES, 'UTF-8') : date('Y-m-d'); ?>"
                                         title="تاريخ الاستحقاق" style="font-size: 0.75rem;">
                                         </div>
                                     </div>
@@ -275,7 +288,7 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                                                     $selected = '';
                                                     if ((int) $rowemp['id'] === $defaultEmpId) {
                                                         $selected = "selected";
-                                                    } elseif (isset($_GET['edit']) && $rowed['emp_id'] == $rowemp['id']) {
+                                                    } elseif ($posEditOrderId !== '' && $rowed['emp_id'] == $rowemp['id']) {
                                                         $selected = "selected";
                                                     }
                                                 ?>
@@ -303,14 +316,13 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                                             <select id="pos_setup_fund_id" class="form-select form-select-sm" title="الصندوق"
                                                 style="font-size: 0.75rem;">
                                                 <?php
-                                                if(isset($_GET['edit'])){$rowed = $conn->query("SELECT * FROM ot_head where id = $id")->fetch_assoc();};
                                                 $resfund = $conn->query("SELECT * FROM `acc_head` WHERE is_fund =1 AND is_basic = 0 AND isdeleted = 0;");
                                                 $defaultFundId = (int) ($posmainPosDefaults['fund_id'] ?? 0);
                                                 while ($resfund && ($rowfund = $resfund->fetch_assoc())) {
                                                     $selected = '';
                                                     if ((int) $rowfund['id'] === $defaultFundId) {
                                                         $selected = "selected";
-                                                    } elseif((isset($_GET['edit'])) && $rowed['acc_fund'] == $rowfund['id']){
+                                                    } elseif ($posEditOrderId !== '' && $rowed['acc_fund'] == $rowfund['id']) {
                                                         $selected = "selected";
                                                     }
                                                 ?>
@@ -336,13 +348,17 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                                 <div class="pos-order-items-scroll flex-grow-1" id="itemData">
                                         <?php
                                         $pos_initial_cart_total_value = 0.0;
-                                        if (isset($_GET['edit'])){
-                                            $id = $_GET['edit'];
-                                            $sqldet = "SELECT fd.*, m.iname as item_name, m.barcode
-                                                      FROM fat_details fd
-                                                      LEFT JOIN myitems m ON m.id = fd.item_id
-	                                                      WHERE fd.fatid = $id AND fd.isdeleted = 0";
-                                            $resdet = $conn->query($sqldet);
+                                        if ($posEditOrderId !== '') {
+                                            $detailOrderId = (int) $posEditOrderId;
+                                            $detailStmt = $conn->prepare(
+                                                "SELECT fd.*, m.iname AS item_name, m.barcode
+                                                 FROM fat_details fd
+                                                 LEFT JOIN myitems m ON m.id = fd.item_id
+                                                 WHERE fd.fatid = ? AND fd.isdeleted = 0"
+                                            );
+                                            $detailStmt->bind_param('i', $detailOrderId);
+                                            $detailStmt->execute();
+                                            $resdet = $detailStmt->get_result();
                                             while ($rowdet = $resdet->fetch_assoc()) {
                                                 $item_name = $rowdet['item_name'] ?: 'صنف غير معروف';
                                                 $presentedLine = $posmainLegacyLinePresentation->presentSaleLine($rowdet);
@@ -355,7 +371,7 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                                                 $line_note = $rowdet['notes'] ?? '';
                                                 $preparation_values = $posmainPreparationSelection->fetchLineValues(
                                                     $conn,
-                                                    (int) $id,
+                                                    $detailOrderId,
                                                     (int) $rowdet['id']
                                                 );
                                                 echo pos_render_cart_row([
@@ -376,6 +392,7 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                                                     'persisted_qty' => $qty,
                                                 ]);
                                             }
+                                            $detailStmt->close();
                                         }
                                         $pos_initial_cart_total = number_format($pos_initial_cart_total_value, 2, '.', '');
                                         ?>
@@ -397,7 +414,7 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                                             <div class="mb-2">
                                                 <label class="form-label small text-muted mb-1" for="info">ملاحظات الطلب</label>
                                                 <textarea class="form-control form-control-sm" name="info" id="info" rows="2"
-                                                    placeholder="ملاحظات..."><?php echo isset($_GET['edit']) ? htmlspecialchars($rowed['info']) : ''; ?></textarea>
+                                                    placeholder="ملاحظات..."><?php echo $posEditOrderId !== '' ? htmlspecialchars((string) $rowed['info'], ENT_QUOTES, 'UTF-8') : ''; ?></textarea>
                                             </div>
                                             <input type="hidden" name="headnet" id="net_val" value="0">
                                             <input type="hidden" name="headdisc" id="discount" value="0">

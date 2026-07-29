@@ -1,5 +1,6 @@
 <?php
 
+require_once __DIR__ . '/../includes/api_entry_classification.php';
 require_once __DIR__ . '/../includes/pos_default_accounts.php';
 
 function inventoryTransferPayload(): array
@@ -56,7 +57,7 @@ function inventoryTransferJsonError(Throwable $exception): void
 function inventoryTransferArabicError(string $code): string
 {
     $messages = [
-        'INVENTORY_LEDGER_NOT_READY' => 'يجب تفعيل وضع الجسر أو التشغيل للمخزون قبل الإرسال أو الاستلام',
+        'INVENTORY_LEDGER_NOT_READY' => 'يجب تفعيل تتبع كمية المخزون قبل الإرسال أو الاستلام',
         'TRANSFER_REQUIRED' => 'اختر مستند التحويل',
         'TRANSFER_NOT_FOUND' => 'مستند التحويل غير موجود',
         'TRANSFER_STORES_REQUIRED' => 'اختر مخزن المصدر ومخزن الوجهة',

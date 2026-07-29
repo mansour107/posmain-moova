@@ -31,6 +31,16 @@ assert(deliveryJs.includes('response.success'), 'must check response.success');
 assert(deliveryJs.includes('تأكيد بيانات العميل') || posContent.includes('تأكيد بيانات العميل'), 'confirm label updated');
 assert(deliveryJs.includes('posDeliveryIsReadyForSubmit'), 'delivery readiness export required');
 assert(deliveryJs.includes('posDeliveryBar'), 'delivery bar renderer required');
+assert(deliveryJs.includes('window.posDeliveryResetAfterCommit'), 'delivery commit reset export required');
+assert(deliveryJs.includes('window.posDeliveryHydrateFromOrder'), 'saved delivery hydration export required');
+assert(deliveryJs.includes('window.POSMAIN_EDIT_DELIVERY'), 'saved delivery bootstrap must be consumed on page load');
+assert(posContent.includes('window.POSMAIN_EDIT_DELIVERY'), 'server delivery snapshot must be rendered for edit mode');
+assert(posContent.includes('$posEditMutationVersion'), 'edit mode must render the persisted mutation version');
+assert(
+  barcodeJs.includes("typeof window.posDeliveryResetAfterCommit === 'function'")
+    && barcodeJs.includes('window.posDeliveryResetAfterCommit();'),
+  'successful order reset must clear delivery customer and fee state'
+);
 assert(deliveryJs.includes('delivery_zones_list.php'), 'zones list endpoint wired');
 assert(deliveryJs.includes('loadDeliveryZones(addressRecord ? addressRecord.zone_id : null)'), 'saved customer zone should be restored into the delivery selector');
 assert(deliveryJs.includes('addressPayload.id = addressId'), 'existing default address should be updated rather than duplicated by the cashier');

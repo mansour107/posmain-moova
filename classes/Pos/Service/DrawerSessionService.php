@@ -2,7 +2,7 @@
 
 require_once dirname(__DIR__, 3) . '/includes/drawer_movement_signs.php';
 require_once __DIR__ . '/BusinessDayService.php';
-require_once __DIR__ . '/../../Sync/OperationalSyncEventService.php';
+require_once __DIR__ . '/../../Sync/OperationalSyncRecorder.php';
 require_once dirname(__DIR__) . '/Value/CashAmount.php';
 
 class DrawerSessionService
@@ -1101,6 +1101,11 @@ class DrawerSessionService
         ];
         if (isset($context['sync_config']) && is_array($context['sync_config'])) {
             $options['config'] = $context['sync_config'];
+        } elseif ($this->syncOutboxAvailable($conn)) {
+            // The outbox is a durability boundary, not a transport toggle.
+            // Queue the mutation whenever the current schema supports it; the
+            // separately configured worker still controls whether it is sent.
+            $options['config'] = posmain_operational_sync_config();
         }
 
         (new OperationalSyncEventService())->recordDrawerMovementSnapshot($conn, $movementId, $options);
@@ -1114,9 +1119,23 @@ class DrawerSessionService
         ];
         if (isset($context['sync_config']) && is_array($context['sync_config'])) {
             $options['config'] = $context['sync_config'];
+        } elseif ($this->syncOutboxAvailable($conn)) {
+            $options['config'] = posmain_operational_sync_config();
         }
 
         (new OperationalSyncEventService())->recordDrawerSessionSnapshot($conn, $sessionId, $options);
+    }
+
+    private function syncOutboxAvailable(mysqli $conn): bool
+    {
+        foreach (['sync_outbox', 'sync_branch_identity'] as $table) {
+            $result = $conn->query("SHOW TABLES LIKE '{$table}'");
+            if (!($result instanceof mysqli_result) || $result->num_rows < 1) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private function movementColumnExists(mysqli $conn, string $column): bool

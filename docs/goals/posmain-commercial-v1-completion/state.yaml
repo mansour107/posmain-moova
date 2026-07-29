@@ -1,0 +1,938 @@
+version: 2
+
+goal:
+  title: "POSMAIN Commercial V1 Completion"
+  slug: "posmain-commercial-v1-completion"
+  kind: broad
+  tranche: "Reconcile completed work, close remaining local blockers, and produce current launch evidence"
+  status: blocked_external
+
+rules:
+  pm_owns_state: true
+  one_active_task: true
+  max_write_workers: 1
+  no_implementation_without_worker_or_pm_task: true
+  no_completion_without_judge_or_pm_audit: true
+
+agents:
+  scout: installed
+  worker: installed
+  judge: installed
+
+active_task: null
+
+tasks:
+  - id: T001
+    type: scout
+    assignee: Scout
+    status: done
+    objective: "Map every plan requirement to current code, tests, release evidence, and external proof; identify contradictions, stale claims, dirty-worktree ownership, and the first bounded missing blocker."
+    inputs:
+      - "/Users/ab.mansour1agmail.com/.codex/attachments/a85e4cc7-fa2f-4bf5-b26b-4a9710626681/pasted-text.txt"
+      - "Current git worktree and history"
+      - "docs/goals"
+      - "tools"
+      - "tests"
+      - "docs/production"
+    constraints:
+      - "Read-only except this Goal Maker board."
+      - "Do not accept old hosted or pilot claims as current proof."
+      - "Separate code gaps from local proof, device proof, infrastructure proof, legal decisions, and pilot execution."
+      - "Preserve all existing worktree changes and untracked output."
+    expected_output:
+      - "Requirement-to-evidence map"
+      - "Current reproducible blockers"
+      - "First bounded Worker or PM task"
+    receipt:
+      result: done
+      summary: "Mapped the plan to the current branch. The money, refund, shift, delivery, inventory, recipe, KDS, RBAC, browser, and sync surfaces have substantial code and focused tests. Current migration dry-run is green and recipe preflight is green. The standing kody2 financial history remains red but is explicitly shop-data evidence, not a product-code repair target. The first reproducible product gap is the clean release spine: no release artifact builder or source allowlist exists, while prohibited/debug/repair web files remain in the repository behind runtime guards. Recovery-v2 exact-run resume is present in current code but its older Goal Maker board is stale and still active, so it needs fresh focused proof and board closure rather than duplicate implementation. Current browser, hardware, restore-RTO, and seven-day pilot evidence is not fresh."
+      evidence:
+        - "/Users/ab.mansour1agmail.com/.codex/attachments/a85e4cc7-fa2f-4bf5-b26b-4a9710626681/pasted-text.txt"
+        - "git status and git log at 07d2a85"
+        - "tools/financial_certification_preflight.php"
+        - "tools/audit_write_paths.php"
+        - "tools/recipe_runtime_preflight.php"
+        - "scripts/run_financial_pack.sh"
+        - "tests/e2e"
+        - "docs/goals/posmain-p0-p6-strict-verification/state.yaml"
+        - "docs/goals/posmain-online-offline-sync/state.yaml"
+        - "docs/goals/posmain-phase-6-pilot-qa/state.yaml"
+      current_checks:
+        - "node --check js/pos_auto_lock.js: pass"
+        - "git diff --check: pass"
+        - "run_migrations.php --dry-run on local kody2: 0 pending"
+        - "recipe_runtime_preflight.php on local kody2: ready_for_recipe_operator_qa=true"
+        - "financial_certification_preflight.php on local kody2: blocked by existing historical/configuration differences; no data changed"
+        - "security contract pack: first 20 checks passed; stopped when a test attempted to use the default standing database instead of a disposable fixture"
+      compatibility_risks:
+        - "Existing dirty inventory/accounting changes must remain intact."
+        - "Release packaging cannot rely on runtime guards alone; prohibited files must be absent from the artifact."
+        - "A broad directory copy would silently include future debug utilities."
+        - "The security release pack currently contains at least one test that can mutate the configured database and is unsafe as a production gate without isolation."
+        - "Old hosted and pilot receipts are historical, not current launch proof."
+      recommended_first_task: "Add a fail-closed, deterministic release artifact manifest and builder with tests proving prohibited utilities, secrets, tests, backups, local configuration, and unknown files cannot enter the artifact."
+  - id: T002
+    type: judge
+    assignee: Judge
+    status: done
+    objective: "Review the Scout map, rank only material blockers, and approve the next smallest safe tranche in dependency order."
+    receipt:
+      result: approved
+      decision: "Proceed with the deterministic release artifact spine before any further feature work."
+      summary: "The clean release spine is the first dependency. Package construction must be separated from route behavior changes: first introduce a deterministic fail-closed artifact policy and builder that reads an exact committed tree, excludes quarantined and prohibited material, rejects unclassified web entry points, emits an exact checksum manifest, and never packages dirty or untracked files. The builder may remain blocked until API/get route classification is completed; that is an intentional gate, not a reason to weaken the policy."
+      material_blockers:
+        - "No deterministic deployable artifact or exact file/checksum manifest exists."
+        - "Tracked debug, repair, SQL, office-document, screenshot, and credential-cracking artifacts are present in the repository."
+        - "API and get PHP surfaces are not covered by the existing manifest completeness test."
+        - "There is no composer.lock, so dependency reproducibility cannot yet be certified."
+      compatibility_controls:
+        - "Read only from an explicit Git commit so the existing dirty worktree cannot leak into an artifact."
+        - "Do not change runtime routes in the packaging package."
+        - "Fail closed on unclassified PHP entry points instead of silently including them."
+        - "Keep migration, test, repair, backup, debug, and operator utilities outside the web artifact."
+      approved_next_task: T003
+  - id: T003
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "Implement the deterministic fail-closed release artifact policy, builder, and focused contract tests without changing runtime behavior."
+    allowed_files:
+      - "classes/Release/ReleaseArtifactPolicy.php"
+      - "classes/Release/ReleaseArtifactBuilder.php"
+      - "config/release_artifact_policy.php"
+      - "tools/build_release_artifact.php"
+      - "tests/sync/release_artifact_policy_contract_test.php"
+      - "tests/sync/release_artifact_builder_test.php"
+      - "docs/production/release-artifact.md"
+      - "docs/goals/posmain-commercial-v1-completion/state.yaml"
+    constraints:
+      - "Do not edit runtime routes, data, configuration values, or existing inventory/accounting work."
+      - "Use only files from an explicit committed Git tree; never copy untracked or dirty working-tree content."
+      - "Exclude quarantined manifest entries and prohibited file classes."
+      - "Reject unclassified root/ajax/do/print/api/get PHP entry points."
+      - "Emit deterministic sorted file metadata, source commit, policy version, and checksums."
+      - "A missing dependency lock must be reported as a release blocker."
+    acceptance:
+      - "Policy test proves prohibited directories, utilities, secrets, backups, test fixtures, unknown root files, and quarantined routes are excluded."
+      - "Builder test proves two builds from one fixture commit have identical manifests and contents."
+      - "Builder test proves a dirty/untracked file cannot enter the artifact."
+      - "Current-tree preflight fails clearly on remaining route/dependency blockers instead of producing an uncertified artifact."
+      - "git diff --check and PHP syntax checks pass for all added files."
+    receipt:
+      result: done
+      changed_files:
+        - "classes/Release/ReleaseArtifactPolicy.php"
+        - "classes/Release/ReleaseArtifactBuilder.php"
+        - "config/release_artifact_policy.php"
+        - "tools/build_release_artifact.php"
+        - "tests/sync/release_artifact_policy_contract_test.php"
+        - "tests/sync/release_artifact_builder_test.php"
+        - "docs/production/release-artifact.md"
+      commands:
+        - "php tests/sync/release_artifact_policy_contract_test.php"
+        - "php tests/sync/release_artifact_builder_test.php"
+        - "php tools/build_release_artifact.php --preflight --ref=HEAD"
+        - "git diff --check"
+      summary: "Added a deterministic ZIP builder and exact manifest sidecar sourced only from an explicit Git commit. The policy excludes prohibited prefixes/names, quarantined endpoints, and unknown root files; rejects unclassified PHP entry points, unsupported Git entry types, and missing dependency locks; normalizes timestamps/compression; and records source commit, lock hashes, per-file hashes, and manifest hash."
+      evidence:
+        - "classes/Release/ReleaseArtifactPolicy.php"
+        - "classes/Release/ReleaseArtifactBuilder.php"
+        - "config/release_artifact_policy.php"
+        - "tools/build_release_artifact.php"
+        - "tests/sync/release_artifact_policy_contract_test.php"
+        - "tests/sync/release_artifact_builder_test.php"
+        - "docs/production/release-artifact.md"
+      verification:
+        - "PHP syntax checks: pass"
+        - "release_artifact_policy_contract_test.php: pass"
+        - "release_artifact_builder_test.php: pass; two artifacts were byte-identical"
+        - "git diff --check: pass"
+        - "Current HEAD preflight: correctly blocked by missing composer.lock and 37 unclassified API/get/nested/internal PHP files"
+      compatibility:
+        - "No runtime route or database behavior changed."
+        - "Artifact input is an exact commit, so existing dirty/untracked work is not read into release contents."
+        - "The builder fails instead of producing an incomplete artifact while route and dependency gates remain."
+  - id: T004
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "Close web-entrypoint classification coverage for api/get and nested route files, quarantine the unsafe legacy GET mutation, and prove endpoint-owned authentication remains intact."
+    allowed_files:
+      - "config/rbac_route_manifest.php"
+      - "config/release_artifact_policy.php"
+      - "includes/entry_classification_guard.php"
+      - "includes/entry_permission_guard.php"
+      - "includes/rbac_route_guard.php"
+      - "includes/api_entry_classification.php"
+      - "includes/sync_route.php"
+      - "api/health.php"
+      - "api/ready.php"
+      - "api/items.php"
+      - "api/categories.php"
+      - "api/admin/updates/_bootstrap.php"
+      - "get/reduce_remain.php"
+      - "tests/sync/rbac_manifest_completeness_contract_test.php"
+      - "tests/sync/api_entry_classification_contract_test.php"
+      - "tests/sync/get_route_classification_contract_test.php"
+      - "tests/sync/release_artifact_policy_contract_test.php"
+      - "docs/goals/posmain-commercial-v1-completion/state.yaml"
+    constraints:
+      - "Do not weaken endpoint-specific HMAC, status-token, session, permission, method, or CSRF checks."
+      - "Endpoint-owned auth may bypass session login only after manifest classification; it must still execute its existing auth mechanism."
+      - "Classify internal includes separately from HTTP entry points."
+      - "Quarantine get/reduce_remain.php because it mutates paid booking units over GET without CSRF, idempotency, locking, or audit. Do not redesign the legacy booking product in this tranche."
+      - "Do not change database data or standing-shop configuration."
+    acceptance:
+      - "Completeness scanner recursively covers root/ajax/api/do/get/print and reports no unclassified PHP."
+      - "API routes are marked public, session-authenticated, or endpoint-authenticated and the early guard handles each mode fail-closed."
+      - "Direct HTTP execution of internal include files is denied."
+      - "get/reduce_remain.php returns quarantine denial before database access."
+      - "Existing API auth contract suites and RBAC suites pass."
+      - "Release preflight route blockers are eliminated; composer.lock remains a separate dependency blocker."
+    receipt:
+      result: done
+      changed_files:
+        - "config/rbac_route_manifest.php"
+        - "config/release_artifact_policy.php"
+        - "includes/entry_classification_guard.php"
+        - "includes/entry_permission_guard.php"
+        - "includes/rbac_route_guard.php"
+        - "includes/api_entry_classification.php"
+        - "includes/sync_route.php"
+        - "api/health.php"
+        - "api/ready.php"
+        - "api/items.php"
+        - "api/categories.php"
+        - "api/admin/updates/_bootstrap.php"
+        - "get/reduce_remain.php"
+        - "tests/sync/rbac_manifest_completeness_contract_test.php"
+        - "tests/sync/api_entry_classification_contract_test.php"
+        - "tests/sync/get_route_classification_contract_test.php"
+      commands:
+        - "php tests/sync/rbac_manifest_completeness_contract_test.php"
+        - "php tests/sync/api_entry_classification_contract_test.php"
+        - "php tests/sync/get_route_classification_contract_test.php"
+        - "php tests/sync/rbac_write_surface_contract_test.php"
+        - "php tools/build_release_artifact.php --preflight --ref=HEAD"
+        - "git diff --check"
+      summary: "Extended fail-closed entry classification and recursive completeness to api/get/nested do/print paths. Classified public health, session POS API, endpoint-owned token/HMAC APIs, internal includes, legacy reads, and quarantined unsafe utilities. get/reduce_remain.php is now denied with HTTP 410 before its first database read; internal API helpers return HTTP 404."
+      evidence:
+        - "config/rbac_route_manifest.php"
+        - "includes/entry_classification_guard.php"
+        - "includes/entry_permission_guard.php"
+        - "includes/rbac_route_guard.php"
+        - "includes/api_entry_classification.php"
+        - "includes/sync_route.php"
+        - "tests/sync/rbac_manifest_completeness_contract_test.php"
+        - "tests/sync/api_entry_classification_contract_test.php"
+        - "tests/sync/get_route_classification_contract_test.php"
+      verification:
+        - "RBAC completeness: pass; 598 PHP surfaces, 338 routes, 261 pages, one non-HTTP PHPStan bootstrap allowlist"
+        - "API classification, get classification, RBAC write-surface, page coverage: pass"
+        - "Health, public-menu API auth, update auth, POS router, production error and production gate contracts: pass"
+        - "Local HTTP: get/reduce_remain.php=410, api/moova_menu_api_auth.php=404, api/ready.php=200"
+        - "Release preflight route blockers: zero"
+      compatibility:
+        - "Existing API-specific token/HMAC/session/CSRF implementations remain authoritative and their contract tests pass."
+        - "Normal API health and readiness behavior remains available."
+        - "Only unsafe/broken legacy routes were quarantined; no database records were changed."
+      remaining_risk:
+        - "The quarantined booking/rental legacy operations are not part of the commercial V1 artifact; restoring them requires a separate atomic POST/idempotency/audit redesign."
+        - "Release preflight remains blocked by missing composer.lock."
+  - id: T005
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "Create and validate the missing deterministic Composer dependency lock, then prove the release artifact can be built reproducibly from a committed fixture/tree without weakening the lock gate."
+    allowed_files:
+      - ".gitignore"
+      - "composer.lock"
+      - "docs/goals/posmain-commercial-v1-completion/state.yaml"
+    constraints:
+      - "Use the existing composer.json without changing dependency ranges in this task."
+      - "Resolve dependencies with verified Composer tooling and do not install into or package vendor/."
+      - "Do not commit or alter Git history."
+      - "Do not treat the dirty worktree as an artifact source; the real RC still requires a reviewed commit."
+    acceptance:
+      - "composer.lock is valid and consistent with composer.json."
+      - "Composer validate reports no lock inconsistency."
+      - "Release preflight reports no dependency-lock blocker when evaluated against a tree containing the lock."
+      - "No vendor or unrelated generated material is added."
+    receipt:
+      result: done
+      summary: "Generated a valid deterministic composer.lock from the unchanged composer.json using Composer 2.10.2 installed through the official signature-verified installer. Removed the application lockfile from .gitignore, kept vendor absent, and proved the current source snapshot passes the release policy with zero blockers and produces byte-identical artifacts."
+      evidence:
+        - "Official installer SHA-384: c8b085408188070d5f52bcfe4ecfbee5f727afa458b2573b8eaaf77b3419b0bf2768dc67c86944da1544f06fa544fd47"
+        - "Published installer signature: exact match"
+        - "composer validate --strict --no-check-publish: valid"
+        - "Temporary exact-tree release preflight: ok=true, blockers=0, included_count=5911"
+        - "Two artifact ZIP hashes: 94e499cc5e72b37866cc734c4ddd4129346aa00f2fcfac662e16ee26e7a796b5"
+        - "Two sidecar manifest file hashes: ecde90999524bc5b67e4997b03a43d3bde9a6b1433ae96bb3ea6ae09d5f122f5"
+      compatibility:
+        - "composer.json and all dependency ranges remained unchanged."
+        - "No vendor directory or dependency installation was created."
+        - "Certification used an isolated temporary Git repository; no shared branch, commit, ref, or history changed."
+      remaining_effect:
+        - "An official immutable RC still requires intentional review and a real committed source ref; this task proves the source can now satisfy that gate."
+  - id: T006
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "Make the security release pack incapable of mutating a standing/default shop database by moving its database-writing tests to disposable fixtures."
+    allowed_files:
+      - "scripts/run_security_contract_pack.sh"
+      - "tests/sync/user_override_deny_matrix_test.php"
+      - "tests/sync/user_lifecycle_drawer_guard_test.php"
+      - "tests/sync/role_capabilities_backfill_contract_test.php"
+      - "tests/sync/pos_item_void_override_runtime_test.php"
+      - "tests/sync/security_test_database.php"
+      - "tests/sync/security_contract_pack_isolation_test.php"
+      - "docs/goals/posmain-commercial-v1-completion/state.yaml"
+    constraints:
+      - "Never connect a mutating security test to the default application database."
+      - "Create a uniquely named local fixture database, provision only required schema/data, and drop it in finally/cleanup."
+      - "Fail before mutation if explicit disposable-test markers are absent."
+      - "Do not alter standing-shop users, roles, sessions, or permissions."
+    acceptance:
+      - "Static contract proves the release pack injects disposable database settings for every mutating test."
+      - "user_override_deny_matrix_test refuses a non-test database name."
+      - "Local Docker execution creates and removes a disposable database and leaves kody2 unchanged."
+      - "Security pack progresses past the previous user-override failure."
+    verify:
+      - "php tests/sync/security_contract_pack_isolation_test.php"
+      - "POSMAIN_SECURITY_TEST_DISPOSABLE=1 POSMAIN_SECURITY_TEST_DB_HOST=127.0.0.1 POSMAIN_SECURITY_TEST_DB_PORT=3307 php tests/sync/user_override_deny_matrix_test.php"
+      - "scripts/run_security_contract_pack.sh"
+      - "Compare standing kody2 user, role, grant, and capability counts before and after."
+      - "Confirm no posmain_security_test_* database remains."
+    stop_if:
+      - "Any database-writing test can inherit kody2 or another standing database name."
+      - "Any fixture can target a non-local database host."
+      - "The standing kody2 counts change during the security pack."
+    receipt:
+      result: done
+      summary: "All database-writing security tests now create generated posmain_security_test_* databases, refuse absent disposable markers and non-local hosts, and drop the complete fixture in cleanup. The full 36-file security/RBAC pack passed."
+      changed_files:
+        - "scripts/run_security_contract_pack.sh"
+        - "tests/sync/security_test_database.php"
+        - "tests/sync/security_contract_pack_isolation_test.php"
+        - "tests/sync/user_override_deny_matrix_test.php"
+        - "tests/sync/user_lifecycle_drawer_guard_test.php"
+        - "tests/sync/role_capabilities_backfill_contract_test.php"
+        - "tests/sync/pos_item_void_override_runtime_test.php"
+      commands:
+        - "php tests/sync/security_contract_pack_isolation_test.php"
+        - "POSMAIN_SECURITY_TEST_DISPOSABLE=1 POSMAIN_SECURITY_TEST_DB_HOST=127.0.0.1 POSMAIN_SECURITY_TEST_DB_PORT=3307 php tests/sync/user_override_deny_matrix_test.php"
+        - "POSMAIN_SECURITY_TEST_DB_HOST=127.0.0.1 POSMAIN_SECURITY_TEST_DB_PORT=3307 scripts/run_security_contract_pack.sh"
+        - "docker exec posmain-mysql mariadb -uroot -N -e <standing-count-and-fixture-check>"
+        - "git diff --check"
+      evidence:
+        - "security-contract-pack-ok"
+        - "No posmain_security_test_* schema remained after execution."
+        - "kody2 before/after: users=711 max=797; usr_pwrs=94 max=117; user_permission_grants=0; role_capabilities=2438 max=14859562."
+      compatibility:
+        - "No runtime authorization, role, drawer, or order implementation changed."
+        - "Standing shop data was not used as a fixture and remained unchanged."
+  - id: T007
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "Make the financial certification pack local/disposable and fail closed on unavailable or skipped tests, then run it to identify the next genuine financial product blocker."
+    allowed_files:
+      - "scripts/run_financial_pack.sh"
+      - "tests/sync/financial_contract_pack_isolation_test.php"
+      - "docs/goals/posmain-commercial-v1-completion/state.yaml"
+    constraints:
+      - "Refuse non-local database hosts."
+      - "Do not connect any financial test to kody2 or another standing database."
+      - "Do not convert failed or skipped database coverage into a passing gate."
+      - "Do not change financial runtime behavior in this task."
+    acceptance:
+      - "The pack forces explicit local test connection values and refuses non-local hosts."
+      - "Any skipped, unavailable, or missing test fails the certification command."
+      - "A static contract maps every database-writing test to a uniquely named disposable schema and cleanup."
+      - "The full pack runs against local Docker without changing kody2."
+      - "Any runtime/code failure is reported as the next bounded blocker rather than weakened."
+    verify:
+      - "php tests/sync/financial_contract_pack_isolation_test.php"
+      - "scripts/run_financial_pack.sh"
+      - "Compare standing kody2 financial counts before and after."
+      - "Confirm no posmain_financial_*, posmain_cash_flow_*, posmain_drawer_*, or phase4 financial fixture remains."
+    stop_if:
+      - "Any financial test can inherit a standing database name."
+      - "The pack reports success after a skipped or unavailable database test."
+      - "Standing kody2 counts change."
+    receipt:
+      result: done
+      summary: "The financial pack now refuses non-local hosts, poisons normal application DB fallback, fails on missing/skipped/unavailable tests, and maps every DB-writing test to a unique disposable schema. All 18 tests passed locally."
+      changed_files:
+        - "scripts/run_financial_pack.sh"
+        - "tests/sync/financial_contract_pack_isolation_test.php"
+      commands:
+        - "php tests/sync/financial_contract_pack_isolation_test.php"
+        - "POSMAIN_FINANCIAL_TEST_DB_HOST=127.0.0.1 POSMAIN_FINANCIAL_TEST_DB_PORT=3307 scripts/run_financial_pack.sh"
+        - "docker exec posmain-mysql mariadb -uroot -N -e <standing-financial-counts>"
+      evidence:
+        - "financial-contract-pack-isolation-ok tests=18 database_tests=12"
+        - "financial-pack-ok"
+        - "All fixture names created by this run were removed."
+        - "kody2 before/after financial counts were identical: orders=753, payments=158, refunds=27, credit_notes=25, journal_heads=725, journal_entries=1450, drawer_sessions=504, drawer_movements=718."
+      compatibility:
+        - "No financial runtime service changed."
+        - "Older unrelated fixture schemas were preserved."
+  - id: T008
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "Build and run a fail-closed local atomic-mutation certification pack covering save, pay, split, move, merge, takeaway, paid reversal, drawer/shift idempotency, stale versions, duplicate submits, and concurrent writers."
+    allowed_files:
+      - "scripts/run_atomic_mutation_pack.sh"
+      - "tests/sync/atomic_mutation_pack_isolation_test.php"
+      - "tests/sync/pos_request_keys_idempotency_service_test.php"
+      - "tests/sync/pos_payment_split_service_idempotency_test.php"
+      - "docs/goals/posmain-commercial-v1-completion/state.yaml"
+    constraints:
+      - "Use only uniquely named local disposable databases."
+      - "Poison normal application database fallback and fail on skips/unavailable tests."
+      - "Do not change runtime mutation behavior until a failing proof identifies a bounded product defect."
+      - "Do not weaken expected-version, idempotency, transaction, lock, outbox, or reconciliation assertions."
+    acceptance:
+      - "Previously standing-DB pos_request_keys test is isolated and cleaned up."
+      - "Pack covers same-key replay/conflict, stale version rejection, payment/split uniqueness, table move/merge, paid reversal, drawer/shift replay, same-table races, and duplicate payment races."
+      - "Payment-only fixtures explicitly disable inventory side effects; direct-stock reservation and consume behavior remains covered by lifecycle integration suites."
+      - "Skipped or missing coverage fails the pack."
+      - "All fixtures from the run are removed and kody2 remains unchanged."
+      - "Any failing product invariant becomes the next bounded task."
+    verify:
+      - "php tests/sync/atomic_mutation_pack_isolation_test.php"
+      - "scripts/run_atomic_mutation_pack.sh"
+      - "Compare standing kody2 financial/order counts before and after."
+      - "Confirm all fixture schemas created by the run were removed."
+    stop_if:
+      - "Any test uses kody2 or a non-local database."
+      - "Any skipped/unavailable proof is accepted."
+      - "Standing data changes."
+    receipt:
+      result: done
+      summary: "Added a fail-closed local atomic-mutation pack and isolated the remaining request-key test from standing data. All 12 tests pass with no skipped coverage. The pack proves replay/conflict semantics, stale-version rejection, table save/move/merge, takeaway, paid reversal, drawer/shift idempotency, same-table contention, and duplicate-payment races. A payment-only fixture initially inherited legacy live inventory despite seeding orders directly; it now explicitly disables inventory so payment proof does not emit a false missing-reservation warning, while real stock lifecycle behavior remains in the save/pay integration suite."
+      changed_files:
+        - "scripts/run_atomic_mutation_pack.sh"
+        - "tests/sync/atomic_mutation_pack_isolation_test.php"
+        - "tests/sync/pos_request_keys_idempotency_service_test.php"
+        - "tests/sync/pos_payment_split_service_idempotency_test.php"
+      commands:
+        - "php tests/sync/atomic_mutation_pack_isolation_test.php"
+        - "POSMAIN_ATOMIC_TEST_DB_HOST=127.0.0.1 POSMAIN_ATOMIC_TEST_DB_PORT=3307 scripts/run_atomic_mutation_pack.sh"
+        - "docker exec posmain-mysql mariadb -uroot -N -e <standing-count-and-fixture-check>"
+      evidence:
+        - "atomic-mutation-pack-isolation-ok tests=12 database_tests=10"
+        - "atomic-mutation-pack-ok"
+        - "No fixture schema created by the current run remained."
+        - "kody2 remained orders=753 max=1000010, payments=158 max=162, drawer_sessions=504, drawer_movements=718."
+      compatibility:
+        - "No runtime order, payment, inventory, drawer, shift, or outbox code changed in this task."
+        - "Payment-only direct-row fixtures can no longer inherit inventory side effects; real direct-stock reservation and consumption assertions remain active in pos_table_save_service_test.php."
+      remaining_risk:
+        - "The pre-existing posmain_paid_reversal_dump_48204 schema was not created or changed by this run and was preserved."
+  - id: T009
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "Build and run a disposable fresh-database financial certification gate that proves the reconciliation preflight is fully green without touching a standing shop."
+    allowed_files:
+      - "tools/financial_certification_seed.php"
+      - "tools/financial_certification_preflight.php"
+      - "scripts/run_financial_certification_gate.sh"
+      - "tests/sync/financial_certification_gate_isolation_test.php"
+      - "docs/production/financial-certification.md"
+      - "docs/goals/posmain-commercial-v1-completion/state.yaml"
+    constraints:
+      - "Use a generated posmain_financial_gate_* database on an explicitly local host and drop it in cleanup."
+      - "Refuse standing/default database names, non-local hosts, absent disposable markers, skipped checks, and unavailable database coverage."
+      - "Tax must remain disabled and all tax rows in the certification fixture must be zero/inactive."
+      - "Do not repair or mutate kody2 or any other standing shop."
+      - "Do not weaken reconciliation predicates to obtain a pass."
+    acceptance:
+      - "The gate seeds a fresh schema, runs migrations, runs the exact financial reconciliation preflight, and reports production_ready=true."
+      - "Every preflight check is executed and green; no skipped or missing check is accepted."
+      - "A static isolation test proves the runner cannot target a standing or non-local database and always cleans up."
+      - "The financial contract pack and certification gate both pass in local Docker."
+      - "The generated fixture is removed and standing-shop financial counts remain unchanged."
+    verify:
+      - "php tests/sync/financial_certification_gate_isolation_test.php"
+      - "POSMAIN_FINANCIAL_TEST_DB_HOST=127.0.0.1 POSMAIN_FINANCIAL_TEST_DB_PORT=3307 scripts/run_financial_certification_gate.sh"
+      - "POSMAIN_FINANCIAL_TEST_DB_HOST=127.0.0.1 POSMAIN_FINANCIAL_TEST_DB_PORT=3307 scripts/run_financial_pack.sh"
+      - "Compare standing kody2 financial counts before and after and confirm no posmain_financial_gate_* schema remains."
+    stop_if:
+      - "The preflight can pass with a skipped reconciliation."
+      - "The fixture cannot be made green without changing an invariant."
+      - "Any standing database changes."
+    receipt:
+      result: done
+      summary: "Added a generated, local-only financial certification database gate. It validates disposable naming and host boundaries, refuses reuse, applies the current schema, seeds tax-off accounts/tenders, requires every preflight check and reconciliation to be green, and drops the fixture on all exits. The gate and the 18-test financial pack passed."
+      changed_files:
+        - "tools/financial_certification_seed.php"
+        - "scripts/run_financial_certification_gate.sh"
+        - "tests/sync/financial_certification_gate_isolation_test.php"
+        - "docs/production/financial-certification.md"
+      commands:
+        - "php tests/sync/financial_certification_gate_isolation_test.php"
+        - "POSMAIN_FINANCIAL_TEST_DB_HOST=127.0.0.1 POSMAIN_FINANCIAL_TEST_DB_PORT=3307 scripts/run_financial_certification_gate.sh"
+        - "POSMAIN_FINANCIAL_TEST_DB_HOST=127.0.0.1 POSMAIN_FINANCIAL_TEST_DB_PORT=3307 scripts/run_financial_pack.sh"
+      evidence:
+        - "financial-certification-gate-isolation-ok"
+        - "financial-certification-gate-ok"
+        - "financial-pack-ok"
+        - "All ten financial reconciliation difference categories were zero; pending external refund liabilities were zero."
+        - "No posmain_financial_gate_* database remained."
+        - "kody2 stayed orders=753, payments=158, refunds=27, credit_notes=25, journal_heads=725, journal_entries=1450, drawer_sessions=504, drawer_movements=718."
+      compatibility:
+        - "Existing operator use of the certification seed remains available; strict prefix/host/reuse controls apply when disposable gate mode is selected."
+        - "No standing-shop data, financial runtime service, or tax configuration changed."
+      remaining_risk:
+        - "This proves a fresh product database. A named launch shop still requires a sanitized upgrade clone and reviewed historical treatment before its own launch."
+  - id: T010
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "Create and run a fail-closed local commercial-lifecycle pack for takeaway, dine-in save/pay, delivery, refunds, paid reversal, receipt/shift scope, and durable reporting parity."
+    allowed_files:
+      - "scripts/run_commercial_lifecycle_pack.sh"
+      - "tests/sync/commercial_lifecycle_pack_isolation_test.php"
+      - "docs/goals/posmain-commercial-v1-completion/state.yaml"
+    constraints:
+      - "Run only tests that use no database or a generated disposable local database."
+      - "Poison normal application database fallback and fail on skipped/unavailable coverage."
+      - "Do not change runtime sale, delivery, refund, reversal, receipt, or report behavior in this evidence task."
+      - "Keep inventory/recipe lifecycle proof separate from this Stage 1 financial/order lifecycle pack."
+    acceptance:
+      - "Pack covers takeaway endpoint routing and durable creation, table save and pay-without-save, dine-in/takeaway parity, delivery validation/create/dispatch/settlement, refund reconciliation/read/report surfaces, paid reversal, and shift-scoped receipts."
+      - "A static contract maps every database-writing test to a generated schema with cleanup."
+      - "Skipped, unavailable, or missing coverage fails the pack."
+      - "All selected tests pass, fixture schemas are removed, and standing-shop counts are unchanged."
+    verify:
+      - "php tests/sync/commercial_lifecycle_pack_isolation_test.php"
+      - "POSMAIN_LIFECYCLE_TEST_DB_HOST=127.0.0.1 POSMAIN_LIFECYCLE_TEST_DB_PORT=3307 scripts/run_commercial_lifecycle_pack.sh"
+      - "Confirm generated lifecycle schemas are removed and kody2 counts remain unchanged."
+    stop_if:
+      - "Any test can inherit kody2 or another standing database."
+      - "A skipped route or database test is accepted."
+      - "A runtime invariant fails."
+    receipt:
+      result: done
+      summary: "Created a 15-test fail-closed commercial lifecycle pack. It covers cashier takeaway, table save and pay-without-save, dine-in/takeaway parity, delivery validation/create/dispatch/settlement, refund reconciliation and read/report surfaces, paid reversal, and shift-scoped receipts. All tests passed."
+      changed_files:
+        - "scripts/run_commercial_lifecycle_pack.sh"
+        - "tests/sync/commercial_lifecycle_pack_isolation_test.php"
+      commands:
+        - "php tests/sync/commercial_lifecycle_pack_isolation_test.php"
+        - "POSMAIN_LIFECYCLE_TEST_DB_HOST=127.0.0.1 POSMAIN_LIFECYCLE_TEST_DB_PORT=3307 scripts/run_commercial_lifecycle_pack.sh"
+      evidence:
+        - "commercial-lifecycle-pack-isolation-ok tests=15 database_tests=9"
+        - "commercial-lifecycle-pack-ok"
+        - "Current-run fixture schemas were removed."
+        - "kody2 remained orders=753, payments=158, refunds=27, credit_notes=25, drawer_sessions=504, drawer_movements=718."
+      compatibility:
+        - "No runtime sale, delivery, refund, reversal, receipt, report, inventory, or recipe code changed."
+        - "The pack poisons normal application database fallback and rejects non-local hosts or skipped coverage."
+      remaining_risk:
+        - "Numerous older posmain_delivery_prod_* schemas predate this run; they were preserved as unrelated data."
+  - id: T011
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "Make the local online/offline sync outage harness whole-database disposable and build a fail-closed Stage 1 sync reliability pack."
+    allowed_files:
+      - "tools/e2e_mock_online_offline_sync.php"
+      - "scripts/run_sync_reliability_pack.sh"
+      - "tests/sync/e2e_mock_online_offline_sync_contract_test.php"
+      - "tests/sync/sync_reliability_pack_isolation_test.php"
+      - "docs/online_offline_mock_e2e.md"
+      - "docs/goals/posmain-commercial-v1-completion/state.yaml"
+    constraints:
+      - "Never run the outage harness against kody2 or another standing database."
+      - "Generate and drop a complete posmain_sync_e2e_* schema on an explicitly local host."
+      - "Use only local mock servers; do not contact hosted, customer, or production endpoints."
+      - "Fail on skipped/unavailable contracts or any outage/recovery scenario failure."
+      - "Do not enable automatic cloud-originated financial/operational mutation."
+    acceptance:
+      - "Harness always creates its own disposable schema and drops it in finally."
+      - "Pack proves receive-only/shadow/live response semantics, cloud outage retry, expired worker-lock reclaim, branch outage recovery, and acknowledgement."
+      - "Pack also runs outbox invariants, operational direction policy, production sync-profile, fulfillment/customer atomicity, and bidirectional-harness contract checks."
+      - "All tests pass, no posmain_sync_e2e_* schema remains, and standing data is unchanged."
+    verify:
+      - "php tests/sync/e2e_mock_online_offline_sync_contract_test.php"
+      - "php tests/sync/sync_reliability_pack_isolation_test.php"
+      - "POSMAIN_SYNC_TEST_DB_HOST=127.0.0.1 POSMAIN_SYNC_TEST_DB_PORT=3307 scripts/run_sync_reliability_pack.sh"
+      - "Confirm no posmain_sync_e2e_* or pack atomicity fixture remains."
+    stop_if:
+      - "The harness can target a standing database."
+      - "Any outage/recovery scenario is absent or false."
+      - "The pack needs a hosted endpoint."
+    receipt:
+      result: done
+      summary: "Hardened the online/offline outage harness so it always creates and drops a generated local posmain_sync_e2e_* database, never inherits the standing application database, and closes its database and mock-server resources in finally. Added a fail-closed eight-contract sync reliability pack plus live outage/recovery execution. All contracts and all six live scenarios passed."
+      changed_files:
+        - "tools/e2e_mock_online_offline_sync.php"
+        - "scripts/run_sync_reliability_pack.sh"
+        - "tests/sync/e2e_mock_online_offline_sync_contract_test.php"
+        - "tests/sync/sync_reliability_pack_isolation_test.php"
+        - "docs/online_offline_mock_e2e.md"
+      commands:
+        - "php tests/sync/e2e_mock_online_offline_sync_contract_test.php"
+        - "php tests/sync/sync_reliability_pack_isolation_test.php"
+        - "POSMAIN_SYNC_TEST_DB_HOST=127.0.0.1 POSMAIN_SYNC_TEST_DB_PORT=3307 scripts/run_sync_reliability_pack.sh"
+      evidence:
+        - "e2e-mock-online-offline-sync-contract-ok"
+        - "sync-reliability-pack-isolation-ok tests=8"
+        - "sync-reliability-pack-ok"
+        - "Cloud receive-only, shadow apply, and live apply semantics passed."
+        - "Cloud outage retried the same failed outbox event to synced with attempts=2."
+        - "Expired worker lock was reclaimed and synced once with the lock cleared."
+        - "Branch outage retained the cloud event, then delivered and acknowledged it after recovery."
+        - "The live harness used posmain_sync_e2e_38099_987093 and dropped it in finally."
+      compatibility:
+        - "Branch remains authoritative for financial and operational mutations; no automatic cloud-originated money, inventory, drawer, shift, or journal writer was enabled."
+        - "All endpoints were loopback mock servers and all database fixtures were generated local schemas."
+        - "No runtime sync direction or production profile changed; the task hardened certification isolation and proof."
+      remaining_risk:
+        - "Container-level standing-count verification could not be freshly repeated because credential inspection was correctly denied; the pack itself poisons normal DB fallback and completed only on generated schemas."
+  - id: T012
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "Implement fail-closed certification receipts that bind feature activation to an exact artifact, migrations, schema, branch/tenant identity, and passed gate versions without enabling any feature."
+    allowed_files:
+      - "classes/Release"
+      - "config"
+      - "includes"
+      - "tools"
+      - "tests/sync"
+      - "docs/production"
+      - "docs/goals/posmain-commercial-v1-completion/state.yaml"
+    constraints:
+      - "Map all current feature-activation callers before editing."
+      - "Preserve legacy configuration compatibility through an adapter, but never let a legacy boolean alone certify a money or full inventory/recipe mode."
+      - "Do not activate inventory, recipes, accounting, cloud-originated operational writes, or tax."
+      - "Do not read or mutate standing-shop data."
+      - "Receipt verification must fail closed on artifact, migration, schema, branch/tenant, expiry/revocation, or gate-version mismatch."
+    acceptance:
+      - "Receipt format and canonical signature/hash rules are deterministic and versioned."
+      - "Verifier reports exact mismatch reasons and never treats missing proof as certified."
+      - "Startup/feature adapter requires both requested configuration and the matching certification scope."
+      - "Focused tests cover valid, missing, malformed, wrong artifact, wrong migrations, wrong schema, wrong identity, missing gate, stale gate, expired/revoked, and legacy-boolean-only cases."
+      - "No existing disabled feature becomes enabled."
+    verify:
+      - "Run focused receipt and feature-adapter contract tests."
+      - "Run release artifact, production gate, sync profile, financial certification, and adjacent configuration suites."
+      - "git diff --check and syntax checks."
+    stop_if:
+      - "A receipt can certify a dirty working tree or mutable unpinned source."
+      - "A legacy environment flag can bypass certification."
+      - "Receipt validation would require changing standing-shop configuration or data."
+    receipt:
+      result: done
+      summary: "Replaced production trust in the legacy inventory/recipe certification booleans with a signed, versioned receipt boundary. Runtime verification binds the receipt to every extracted release-manifest file, source commit, applied migration ledger, actual database schema, branch UUID, tenant, branch, expiry/revocation state, and versioned gate set. Missing or mismatched evidence leaves inventory shadow/quantity disabled and recipes read-only; no feature is activated by this task."
+      changed_files:
+        - "classes/Release/CertificationReceipt.php"
+        - "classes/Release/CertificationReceiptRuntime.php"
+        - "config/app_config.php"
+        - "config/production_profile.php"
+        - "tests/sync/certification_receipt_contract_test.php"
+        - "tests/sync/certification_release_manifest_test.php"
+        - "tests/sync/certification_receipt_runtime_contract_test.php"
+        - "tests/sync/certification_receipt_runtime_integration_test.php"
+        - "tests/sync/certification_receipt_runtime_isolation_test.php"
+        - "tests/sync/production_profile_contract_test.php"
+        - "docs/production/certification-receipts.md"
+      commands:
+        - "php tests/sync/certification_receipt_contract_test.php"
+        - "php tests/sync/certification_release_manifest_test.php"
+        - "php tests/sync/certification_receipt_runtime_contract_test.php"
+        - "php tests/sync/certification_receipt_runtime_isolation_test.php"
+        - "POSMAIN_CERTIFICATION_TEST_DISPOSABLE=1 POSMAIN_CERTIFICATION_TEST_DB_HOST=127.0.0.1 POSMAIN_CERTIFICATION_TEST_DB_PORT=3307 php tests/sync/certification_receipt_runtime_integration_test.php"
+        - "scripts/run_security_contract_pack.sh"
+        - "scripts/run_financial_pack.sh"
+        - "scripts/run_atomic_mutation_pack.sh"
+        - "scripts/run_commercial_lifecycle_pack.sh"
+        - "scripts/run_financial_certification_gate.sh"
+        - "scripts/run_sync_reliability_pack.sh"
+      evidence:
+        - "certification-receipt-contract-ok cases=11"
+        - "certification-release-manifest-ok"
+        - "certification-receipt-runtime-integration-ok; schema ALTER and migration checksum drift each invalidated the receipt with exact reasons"
+        - "production-profile-contract-ok; legacy booleans alone cannot activate inventory or recipes"
+        - "security-contract-pack-ok (36 tests)"
+        - "financial-pack-ok (18 tests)"
+        - "atomic-mutation-pack-ok (12 tests)"
+        - "commercial-lifecycle-pack-ok (15 tests)"
+        - "financial-certification-gate-ok with all reconciliation differences zero"
+        - "sync-reliability-pack-ok with all outage/recovery scenarios green"
+      compatibility:
+        - "Legacy booleans remain readable and produce explicit warnings, but are no longer authorization."
+        - "Basic POS remains operational when receipt evidence is absent; optional inventory writes are shadowed/disabled and recipes remain read-only."
+        - "Tax stays off and automatic cloud-originated operational mutation stays disabled."
+        - "Receipt verification is read-only and request-cached; its integration fixture used and removed a generated local database."
+      remaining_risk:
+        - "Receipt issuance is intentionally not exposed as an operator self-attestation; it must be produced by the release process from reviewed gate evidence."
+        - "Router/cloud multi-shop activation fails closed until per-shop receipt verification is implemented."
+        - "No real receipt or RC-FIN can exist until the missing composer.lock is resolved and the reviewed source is committed into an immutable artifact."
+  - id: T013
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "Build and run a fail-closed local Stage 2 pre-certification pack for optional capability modes, inventory ledger/cost integrity, recipe lifecycle, stock/COGS refund-reversal truth tables, cutover contracts, and branch-authoritative sync."
+    allowed_files:
+      - "scripts"
+      - "tests/sync"
+      - "tests/recipe"
+      - "classes/Inventory"
+      - "classes/Recipe"
+      - "classes/Pos"
+      - "config"
+      - "docs/production"
+      - "docs/goals/posmain-commercial-v1-completion/state.yaml"
+    constraints:
+      - "Do not claim Stage 2 certification or activate any feature while RC-FIN/composer.lock/immutable-source gates remain blocked."
+      - "Use only generated local databases and fail on missing, skipped, or unavailable coverage."
+      - "Keep stock, recipes, and ledger accounting independently optional."
+      - "Quantity tracking and outbox must not require accounting; accounting-enabled operations must fail closed when their specific mapping is absent."
+      - "Never block a sale for zero or negative stock and never silently restore recipe ingredients on refund."
+      - "Do not use or repair standing-shop inventory, journals, migrations, mappings, counts, or catalog data."
+    acceptance:
+      - "Static isolation contract maps every database-writing test to a generated local schema and cleanup."
+      - "Pack proves basic POS, quantity-only stock, direct stock, optional recipes, and optional accounting modes."
+      - "Pack proves moving-average quantity/value invariants and concurrent receipt/sale/transfer safety."
+      - "Pack proves recipe sale, partial refund as waste, explicit return, full refund, paid reversal, retry, and concurrent reversal invariants across movements, COGS, accounting, outbox, and reports where applicable."
+      - "Pack proves purchase/waste/damage/shortage/adjustment mapping policy fails closed only when accounting is enabled."
+      - "Pack proves cutover/backfill/reconciliation tools are deterministic, idempotent, and non-standing-data by construction."
+    verify:
+      - "Run the Stage 2 isolation contract."
+      - "Run the complete local Stage 2 pre-certification pack."
+      - "Run adjacent financial, atomic, lifecycle, and sync packs."
+      - "git diff --check and syntax checks."
+    stop_if:
+      - "Any selected test can inherit kody2 or a non-local database."
+      - "Any required truth-table scenario is absent or skipped."
+      - "A product invariant fails and requires a bounded runtime repair."
+    receipt:
+      result: done
+      summary: "Closed the local Stage 2 inventory/recipe/COGS pre-certification gate. All active recipe quantity mutations now use the shared InventoryLedgerService path; the old production fallback that wrote balances and movements directly was removed. Added real quantity-only durable proof, a five-iteration two-process moving-average race, and a combined recipe sale/refund/reversal stock-and-accounting truth table. Added a fail-closed 39-file pack covering 26 generated local database fixtures; the pack rejects non-local hosts, poisoned/default database fallbacks, missing tests, skipped coverage, and unavailable coverage."
+      changed_files:
+        - "classes/Inventory/InventoryFeatureFlags.php"
+        - "classes/Inventory/InventoryLedgerService.php"
+        - "classes/Recipe/RecipeInventoryMovementService.php"
+        - "classes/Sync/BranchIdentity.php"
+        - "tests/sync/inventory_quantity_only_runtime_test.php"
+        - "tests/sync/inventory_moving_average_concurrency_runtime_test.php"
+        - "tests/sync/recipe_sale_refund_reversal_truth_table_runtime_test.php"
+        - "tests/sync/recipe_inventory_kernel_contract_test.php"
+        - "tests/sync/inventory_phase10_production_surface_contract_test.php"
+        - "tests/sync/inventory_phase15_cutover_contract_test.php"
+        - "tests/sync/recipe_negative_stock_warn_test.php"
+        - "scripts/run_stage2_pre_certification_pack.sh"
+        - "tests/sync/stage2_pre_certification_pack_isolation_test.php"
+      verification:
+        - "stage2-pre-certification-pack-isolation-ok tests=39 database_tests=26"
+        - "stage2-pre-certification-pack-ok tests=39"
+        - "inventory-moving-average-concurrency-runtime-ok iterations=5"
+        - "recipe-sale-refund-reversal-truth-table-runtime-ok"
+        - "security-contract-pack-ok tests=36"
+        - "financial-pack-ok tests=18"
+        - "atomic-mutation-pack-ok tests=12"
+        - "commercial-lifecycle-pack-ok tests=15"
+        - "financial-certification-gate-ok with all reconciliation differences zero"
+        - "sync-reliability-pack-ok with outage, retry, crash-reclaim, and reconnect scenarios green"
+      commands:
+        - "php tests/sync/stage2_pre_certification_pack_isolation_test.php"
+        - "scripts/run_stage2_pre_certification_pack.sh"
+        - "scripts/run_security_contract_pack.sh"
+        - "scripts/run_financial_pack.sh"
+        - "scripts/run_atomic_mutation_pack.sh"
+        - "scripts/run_commercial_lifecycle_pack.sh"
+        - "scripts/run_financial_certification_gate.sh"
+        - "scripts/run_sync_reliability_pack.sh"
+      compatibility:
+        - "Explicit inventory.quantity_tracking=false still fails active recipe writes closed; legacy write-capable recipe modes are adapted to quantity tracking so they cannot use a second ledger."
+        - "Accounting remains optional; quantity movement and outbox proofs run with accounting disabled."
+        - "Waste/damage/shortage/adjustment mapping failures roll back stock only when accounting is enabled; no fallback to COGS is permitted."
+        - "Zero and negative stock remain permissive for sale and remain exact in the ledger; cashier display clamping is presentation-only."
+        - "All database fixtures used process-scoped generated names and were dropped; no standing-shop data was read for repair or changed."
+      remaining_risk:
+        - "This is pre-certification evidence only. No Stage 2 receipt or feature activation may be issued until composer.lock, reviewed committed source, RC-FIN, and immutable release artifact gates are closed."
+        - "Standing-shop cutover mappings, physical counts, historical differences, and accounting mappings remain shop-launch work outside this product-code task."
+        - "Bidirectional catalog/recipe-master convergence remains a separate Stage 2 product gap and is assigned to T014."
+  - id: T014
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "Implement and certify deterministic bidirectional catalog and recipe-master convergence without allowing cloud-originated operational or financial writes."
+    allowed_files:
+      - "classes/Sync"
+      - "classes/Items"
+      - "classes/Recipe"
+      - "config"
+      - "do/doadd_item.php"
+      - "do/doedit_item.php"
+      - "do/update_item_price.php"
+      - "do/toggle_item_active.php"
+      - "do/dodel_item.php"
+      - "tests/sync"
+      - "tools"
+      - "docs/production"
+      - "docs/goals/posmain-commercial-v1-completion/state.yaml"
+    constraints:
+      - "Stable UUIDs and per-field revision metadata are required for mutable master records."
+      - "Use trusted server time, deterministic node-id tie-breaking, append-only conflict history, and a hard clock-drift hold."
+      - "Merge only allowed catalog/recipe fields; validate category, unit, ingredient, and account references before apply."
+      - "Existing carts/orders retain captured price; only newly created carts receive a converged price."
+      - "Cloud may never originate stock quantity, order, payment, refund, shift, drawer, journal, audit, or operational inventory mutations."
+      - "Use generated local branch/cloud databases only; do not enable reverse sync or touch standing data."
+    acceptance:
+      - "Branch and cloud edits each converge exactly once."
+      - "Different-field offline edits merge; same-field edits resolve deterministically and retain the losing revision."
+      - "Equal timestamps use stable node-id ordering and excessive clock drift holds the event visibly."
+      - "Missing dependencies hold the whole event with no partial master mutation."
+      - "Existing cart price remains captured and a new cart receives the converged price."
+      - "Unauthorized publishers and forbidden operational domains are denied."
+      - "A fail-closed disposable-database certification pack covers all required convergence cases."
+    verify:
+      - "Run the catalog convergence isolation contract."
+      - "Run the complete local catalog/recipe-master convergence certification pack."
+      - "Run adjacent sync reliability, financial, atomic, lifecycle, and Stage 2 packs."
+      - "Run syntax checks and git diff --check for all changed files."
+    stop_if:
+      - "Current transport cannot authenticate the originating administrator or trusted node."
+      - "A safe change would require enabling reverse sync on a standing or hosted system."
+      - "A master event can partially apply before dependency validation."
+    receipt:
+      result: done
+      summary: "Implemented deterministic bidirectional catalog and draft recipe-master convergence with per-field revision state/history, authenticated actor evidence, trusted server-clock enforcement, stable node tie-breaking, dependency validation, exact decimal catalog money, atomic recipe mutation/outbox recording, and an explicit boundary that denies cloud-originated operational and financial writes."
+      changed_files:
+        - "classes/Items/ItemFormInput.php"
+        - "classes/Items/ItemPersistence.php"
+        - "classes/Items/ItemUnitProfileBuilder.php"
+        - "classes/Recipe/RecipeDefinitionService.php"
+        - "classes/Recipe/RecipeEditorMutationService.php"
+        - "classes/Sync/CloudMenuProjectionService.php"
+        - "classes/Sync/CloudRecipeMasterProjectionService.php"
+        - "classes/Sync/MasterDataRevisionService.php"
+        - "classes/Sync/OperationalSyncRecorder.php"
+        - "classes/Sync/SyncOutboxEventService.php"
+        - "scripts/run_master_data_convergence_pack.sh"
+        - "tests/sync/master_data_convergence_runtime_test.php"
+        - "tests/sync/recipe_editor_atomic_outbox_runtime_test.php"
+      verification:
+        - "master-data-convergence-pack-ok tests=7"
+        - "financial-pack-ok tests=18"
+        - "atomic-mutation-pack-ok tests=12"
+        - "commercial-lifecycle-pack-ok tests=15"
+        - "sync-reliability-pack-ok including outage, retry, crash-reclaim, and reconnect"
+        - "stage2-pre-certification-pack-ok tests=39"
+        - "PHP syntax checks and git diff --check: pass"
+      durable_proof:
+        - "Same event replay created no duplicate master history."
+        - "Same-field conflicts retained ignored revisions and used stable node-id ordering."
+        - "Existing order-line price remained captured while a new cart used the converged exact price."
+        - "Recipe edit and its outbox event committed together; a missing outbox table rolled back recipe header, audit, and master-history changes."
+        - "Unauthorized catalog events, missing dependencies, active-recipe cloud edits, and cloud operational events failed closed without partial mutation."
+      compatibility:
+        - "Existing direct RecipeDefinitionService callers retain transaction ownership by default."
+        - "Legacy catalog inputs remain accepted through exact-decimal adapters while newly emitted master payloads preserve six decimal places."
+        - "No standing database, hosted target, reverse-sync setting, or shared Git history was changed."
+  - id: T015
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "Complete the remaining local operational launch proof against an isolated representative shop: real browser journeys plus durable money/order/stock/accounting assertions, role denials, receipt/KDS behavior, backup/restore, migration recovery, and observable error/retry behavior."
+    allowed_files:
+      - "ajax/get_recent_orders.php"
+      - "ajax/refund_order.php"
+      - "js/pos_barcode.js"
+      - "tests/e2e"
+      - "tests/sync"
+      - "scripts"
+      - "tools"
+      - "docs/production"
+      - "classes/Release"
+      - "classes/Backup"
+      - "classes/Observability"
+      - "config"
+      - "docs/goals/posmain-commercial-v1-completion/state.yaml"
+    constraints:
+      - "Use only generated local databases and local HTTP endpoints; never touch standing, hosted, customer, or production systems."
+      - "Do not commit, deploy, enable features on a standing shop, or alter shared Git history."
+      - "Browser success must be cross-checked against durable order, payment, tender, drawer, journal, audit, inventory, COGS, and outbox records where applicable."
+      - "Exercise cashier and denied-role paths, double-click/retry behavior, table/takeaway/delivery, mixed tender, refund tender selection, receipt/KDS, permissive zero-stock sale, shift close, and recovery behavior."
+      - "Do not claim physical printer, cash-drawer, production backup infrastructure, hosted sync, or pilot proof from simulated/local evidence."
+    acceptance:
+      - "A reproducible local browser campaign runs against an isolated shop and records exact journey outcomes plus durable assertions."
+      - "Unauthorized role attempts are visibly denied and leave no durable side effects."
+      - "Receipt and KDS payloads are proven from real order journeys; hardware execution is separately classified."
+      - "Backup/restore produces an isolated restored database with schema/row/checksum and application smoke evidence."
+      - "Migration interruption/resume/rollback and application error observability are exercised locally."
+      - "All relevant security, financial, atomic, lifecycle, sync, and Stage 2 packs remain green."
+    stop_if:
+      - "The local runtime cannot be isolated from standing data."
+      - "A required proof would contact a hosted/customer/production endpoint."
+      - "Physical device or production-infrastructure certification is the only remaining evidence."
+    receipt:
+      result: done
+      summary: "Completed the remaining safe local operational proof. Real browser takeaway, table, delivery, mixed-tender, flexible manual-bank refund, zero-stock sale, receipt, KDS, role-denial, retry, and shift-close journeys were cross-checked against durable orders, payments, refunds, drawer sessions, stock movements, print/KDS records, and outbox events. Migration interruption/resume/checksum rejection, exact restore resume, restored-clone migration dry-run, backup/restore integrity, safe error handling, readiness, and all adjacent certification packs are green. Physical hardware, immutable RC, target backup/monitoring, standing-shop cutover, and seven-day pilot remain correctly external."
+      evidence:
+        - "docs/production/commercial-v1-local-operational-proof-20260729.md"
+        - "isolated local database posmain_qa_shiftfix_20260729"
+        - "isolated restored database posmain_qa_restore_20260729"
+        - "backup sha256 cf552a35a5f0aebaa322f65e45ddf6eceaf7e1bd89b6abd5d259fbd63431d55d"
+      verification:
+        - "security-contract-pack-ok tests=36"
+        - "financial-pack-ok tests=20"
+        - "atomic-mutation-pack-ok tests=13"
+        - "commercial-lifecycle-pack-ok tests=15"
+        - "stage2-pre-certification-pack-ok tests=39"
+        - "master-data-convergence-pack-ok tests=7"
+        - "financial certification differences=0 blockers=[]"
+        - "sync-reliability-pack-ok"
+        - "schema-migration-resume-ok"
+        - "sync-migration-plan-runtime-ok"
+        - "branch-restore-safety-ok"
+        - "representative restored-clone dry-run: 0 pending"
+        - "production-error-handling-ok"
+        - "web-error-visibility-ok"
+        - "health-auth-readiness-contract-ok"
+        - "release policy and deterministic fixture builder tests pass"
+      compatibility:
+        - "All mutable proof stayed inside local disposable or isolated QA databases."
+        - "No standing-shop data, hosted endpoint, feature activation, deployment, commit, or shared Git history changed."
+        - "Legacy partial sync schemas retain prior behavior; current complete schemas automatically capture money/order drawer and shift outbox evidence."
+      remaining_external_gates:
+        - "reviewed immutable commit, deterministic artifact, and matching certification receipt"
+        - "physical receipt/kitchen printer, KDS display, cash drawer, and two-till acceptance"
+        - "target monitoring plus encrypted off-device backup, 15-minute RPO, and one-hour RTO"
+        - "launch-shop cutover/reconciliation and tax-off business/legal approval"
+        - "seven consecutive clean pilot days"
+  - id: T999
+    type: judge
+    assignee: Judge
+    status: done
+    objective: "Audit the completed local work and evidence, classify remaining external gates, and issue the final local readiness decision."
+    receipt:
+      result: production_no_go_external_gates
+      local_decision: "ready for reviewed clean-RC preparation and controlled hardware/pilot certification"
+      summary: "The complete safe local tranche is closed. Financial, atomic mutation, lifecycle, security, sync, inventory/recipe/COGS, master-data convergence, browser/durable-record, migration recovery, restore, KDS/receipt service, and observability evidence are green. The worktree cannot truthfully become a certified production artifact without a reviewed commit, and local simulation cannot certify physical devices, target backup/monitoring, a launch shop's cutover, or seven real service days."
+      evidence:
+        - "docs/production/commercial-v1-local-operational-proof-20260729.md"
+        - "docs/production/release-artifact.md"
+        - "docs/production/pilot_go_live_checklist.md"
+        - "docs/production/pilot_exit_criteria.md"
+      no_go_gates:
+        - "immutable reviewed release commit, deterministic artifact, and matching certification receipt"
+        - "exact artifact fresh-install and representative-upgrade acceptance"
+        - "physical printer, KDS display, cash drawer, and two-till network acceptance"
+        - "target encrypted backup, monitoring, 15-minute RPO, and one-hour RTO"
+        - "launch-shop reconciliation/cutover and explicit tax-off approval"
+        - "seven consecutive clean controlled-pilot days"
+      confidence:
+        local_product_code: high
+        production_environment: unverified
+        physical_operations: unverified
+        pilot_outcome: unverified

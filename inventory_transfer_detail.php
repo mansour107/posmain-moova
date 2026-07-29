@@ -9,7 +9,7 @@ require_permission('inventory.edit', $conn);
 
 $inventoryTransferId = (int) ($_GET['id'] ?? 0);
 $inventoryTransferFlags = new InventoryFeatureFlags();
-$inventoryTransferCanPost = $inventoryTransferFlags->canWriteLedger();
+$inventoryTransferCanPost = $inventoryTransferFlags->canWriteQuantityLedger();
 $inventoryTransferHasUnitTables = inventoryTransferDetailTableExists($conn, 'item_units') && inventoryTransferDetailTableExists($conn, 'myunits');
 $inventoryTransferHasDestinationBranchColumns = inventoryTransferDetailColumnExists($conn, 'inventory_transfers', 'destination_pos_branch')
     && inventoryTransferDetailColumnExists($conn, 'inventory_transfers', 'destination_branch_uuid');

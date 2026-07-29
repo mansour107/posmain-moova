@@ -6,8 +6,8 @@
  * kitchen_status rollup against a real database. Skips cleanly when no test
  * database is configured.
  *
- * Connects directly (not via connect.php) so the tenant/branch scope stays
- * at 0/0 and posmain_config is not loaded.
+ * Connects directly (not via connect.php) so ticket scope must come from the
+ * durable order header rather than process/session configuration.
  */
 
 require_once __DIR__ . '/../../classes/Sync/SchemaManager.php';
@@ -73,8 +73,11 @@ try {
     $created['items'] = [$itemA1, $itemA2, $itemB1];
 
     $conn->query("
-        INSERT INTO ot_head (pro_id, pro_tybe, order_type, order_status, payment_status, isdeleted, fat_net)
-        VALUES (999001, 9, 'takeaway', 'active', 'unpaid', 0, 0)
+        INSERT INTO ot_head (
+            pro_id, pro_tybe, order_type, order_status, payment_status,
+            isdeleted, fat_net, tenant, branch
+        )
+        VALUES (999001, 9, 'takeaway', 'active', 'unpaid', 0, 0, 12, 34)
     ");
     $orderId = (int) $conn->insert_id;
     $created['orders'] = [$orderId];
@@ -112,7 +115,7 @@ try {
     $ticketService->syncForOrder($conn, $orderId, 'new', 1);
 
     $tickets = [];
-    $res = $conn->query("SELECT id, station_id, status, item_count FROM kds_tickets WHERE order_id = {$orderId} AND status <> 'cancelled'");
+    $res = $conn->query("SELECT id, station_id, status, item_count, tenant, branch FROM kds_tickets WHERE order_id = {$orderId} AND status <> 'cancelled'");
     while ($row = $res->fetch_assoc()) {
         $tickets[(int) $row['station_id']] = $row;
     }
@@ -121,6 +124,17 @@ try {
     kdsRuntimeAssert(isset($tickets[$stationB]), 'station B ticket missing (default fallback)');
     kdsRuntimeAssert((int) $tickets[$stationA]['item_count'] === 1, 'station A should hold 1 line');
     kdsRuntimeAssert((int) $tickets[$stationB]['item_count'] === 1, 'station B should hold 1 line');
+    kdsRuntimeAssert(
+        (int) $tickets[$stationA]['tenant'] === 12 && (int) $tickets[$stationA]['branch'] === 34,
+        'ticket scope must inherit the durable order scope'
+    );
+    $scopedChange = $conn->query(
+        "SELECT tenant, branch FROM kds_changes WHERE order_id = {$orderId} ORDER BY id ASC LIMIT 1"
+    )->fetch_assoc();
+    kdsRuntimeAssert(
+        (int) ($scopedChange['tenant'] ?? 0) === 12 && (int) ($scopedChange['branch'] ?? 0) === 34,
+        'KDS change scope must inherit the durable order scope'
+    );
 
     $ticketA = (int) $tickets[$stationA]['id'];
     $ticketB = (int) $tickets[$stationB]['id'];
@@ -144,6 +158,10 @@ try {
     $eventRows = $conn->query("SELECT * FROM kds_order_events WHERE order_id = {$orderId} AND station_id = {$stationA} ORDER BY id ASC");
     kdsRuntimeAssert($eventRows->num_rows === 1, 'edit must append exactly one durable kitchen event');
     $editEvent = $eventRows->fetch_assoc();
+    kdsRuntimeAssert(
+        (int) ($editEvent['tenant'] ?? 0) === 12 && (int) ($editEvent['branch'] ?? 0) === 34,
+        'durable kitchen event scope must inherit the order scope'
+    );
     $beforeEvent = json_decode((string) $editEvent['before_snapshot_json'], true);
     $afterEvent = json_decode((string) $editEvent['after_snapshot_json'], true);
     kdsRuntimeAssert(is_array($beforeEvent) && count($beforeEvent) === 1, 'event must preserve the original station snapshot');

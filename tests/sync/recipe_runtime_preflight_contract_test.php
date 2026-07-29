@@ -20,8 +20,9 @@ recipeRuntimePreflightAssert(strpos($service, 'recipe_runtime_full_requires_reci
 recipeRuntimePreflightAssert(strpos($service, 'recipe_runtime_consume_pilot_requires_recipe_consumption') !== false, 'service should block consume_pilot preflight when consumption is disabled');
 recipeRuntimePreflightAssert(strpos($service, 'recipe_runtime_accounting_pilot_requires_recipe_accounting') !== false, 'service should block accounting_pilot preflight when accounting is disabled');
 recipeRuntimePreflightAssert(strpos($service, 'recipe_runtime_availability_pilot_requires_recipe_availability') !== false, 'service should block availability_pilot preflight when availability is disabled');
-recipeRuntimePreflightAssert(strpos($service, 'recipe_runtime_strict_stock_requires_recipe_availability') !== false, 'service should block strict stock preflight without recipe availability');
-recipeRuntimePreflightAssert(strpos($service, 'recipe_runtime_strict_stock_requires_effective_recipe_availability') !== false, 'service should block strict stock when recipe availability is configured but not effective for the mode');
+recipeRuntimePreflightAssert(strpos($service, 'InventoryFeatureFlags') !== false, 'service should resolve the inventory quantity capability');
+recipeRuntimePreflightAssert(strpos($service, 'recipe_runtime_active_mode_requires_inventory_quantity_tracking') !== false, 'service should block active recipe modes when quantity tracking is disabled');
+recipeRuntimePreflightAssert(strpos($service, "'inventory_quantity_tracking_enabled'") !== false, 'service should expose the inventory quantity dependency');
 recipeRuntimePreflightAssert(strpos($service, 'NegativeStockSalePolicyService') !== false, 'service should resolve the durable branch negative-stock policy');
 recipeRuntimePreflightAssert(strpos($service, "'negative_stock_sale_policy'") !== false, 'service should expose the resolved negative-stock policy');
 recipeRuntimePreflightAssert(strpos($service, "['reserve_only', 'consume_pilot', 'accounting_pilot', 'availability_pilot', 'full']") !== false, 'service should warn reserve_only and later active modes to use pilot evidence');

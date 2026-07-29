@@ -396,11 +396,9 @@ if ($syncDefaultCloudUrl === '' && !empty($_SERVER['HTTP_HOST'])) {
               <div class="col-lg-12">
                 <div class="form-group">
                   <label for="negative_stock_sale_policy">سياسة البيع عند عدم كفاية المخزون</label>
-                  <select class="form-control" id="negative_stock_sale_policy" name="negative_stock_sale_policy">
-                    <option value="block" <?= $settingsNegativeStockPolicy === 'block' ? 'selected' : '' ?>>منع البيع</option>
-                    <option value="allow_with_warning" <?= $settingsNegativeStockPolicy === 'allow_with_warning' ? 'selected' : '' ?>>السماح مع تحذير وتسجيل الحدث</option>
-                  </select>
-                  <small class="form-text text-muted">العناصر المعطلة يدويا تظل ممنوعة في الحالتين.</small>
+                  <input type="hidden" name="negative_stock_sale_policy" value="allow_with_warning">
+                  <input class="form-control" id="negative_stock_sale_policy" value="السماح مع تحذير وتسجيل الحدث" readonly>
+                  <small class="form-text text-muted">نفاد المخزون لا يمنع البيع. العناصر المعطلة يدوياً فقط تظل ممنوعة.</small>
                 </div>
               </div>
             </div>

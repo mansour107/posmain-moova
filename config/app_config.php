@@ -548,6 +548,10 @@ if (!function_exists('posmain_app_config')) {
         if (!in_array($inventoryLedgerMode, ['off', 'shadow', 'bridge', 'live'], true)) {
             $inventoryLedgerMode = 'live';
         }
+        $inventoryQuantityTracking = posmain_bool(
+            $branchEnv(['POSMAIN_INVENTORY_QUANTITY_TRACKING'], null),
+            in_array($inventoryLedgerMode, ['bridge', 'live'], true)
+        );
         $configRole = strtolower(trim((string) $branchEnv(['POSMAIN_ROLE'], 'branch')));
         $recipeMoovaSyncDefault = $configRole === 'cloud' ? '0' : '1';
 
@@ -615,6 +619,9 @@ if (!function_exists('posmain_app_config')) {
             ],
             'inventory' => [
                 'ledger_mode' => $inventoryLedgerMode,
+                // Explicit quantity capability. When the new setting is
+                // absent, preserve the legacy bridge/live meaning.
+                'quantity_tracking' => $inventoryQuantityTracking,
                 // Set only after the scoped cutover/readiness evidence has
                 // been reviewed for this branch database.
                 'cutover_certified' => posmain_bool($branchEnv(['POSMAIN_INVENTORY_CUTOVER_CERTIFIED'], '0'), false),
@@ -679,6 +686,14 @@ if (!function_exists('posmain_app_config')) {
                 'pos_branch' => posmain_int($branchEnv(['POSMAIN_POS_BRANCH'], null), null),
                 'cloud_base_url' => (string) $branchIdentityEnv(['POSMAIN_CLOUD_BASE_URL'], ''),
             ],
+            'certification' => [
+                'receipt_path' => (string) $branchEnv(['POSMAIN_CERTIFICATION_RECEIPT_PATH'], '', true),
+                'release_manifest_path' => (string) $branchEnv(
+                    ['POSMAIN_RELEASE_MANIFEST_PATH'],
+                    dirname(__DIR__) . '/release-manifest.json',
+                    true
+                ),
+            ],
             'features' => [
                 // Enabled by default; only explicitly assigned items/categories expose
                 // the cashier counter, so existing menu items keep their old flow.
@@ -730,6 +745,11 @@ if (!function_exists('posmain_app_config')) {
         $config = posmain_merge_config($config, posmain_runtime_file_database_overrides());
         $config = posmain_merge_config($config, posmain_runtime_db_settings_overrides($config));
         if ($productionMode) {
+            require_once dirname(__DIR__) . '/classes/Release/CertificationReceiptRuntime.php';
+            $config['certification'] = array_merge(
+                $config['certification'],
+                CertificationReceiptRuntime::evaluate($config)
+            );
             require_once __DIR__ . '/production_profile.php';
             $config = posmain_production_profile_apply($config);
         }

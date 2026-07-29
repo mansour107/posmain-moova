@@ -63,7 +63,6 @@ foreach ([
     'stock_policy_mismatches',
     'Stock policy flags',
     'availability_effective',
-    'strict stock requires effective recipe availability mode',
 ] as $signalNeedle) {
     recipeOperationalDashboardAssert(strpos($service, $signalNeedle) !== false, 'dashboard service missing rollout signal: ' . $signalNeedle);
 }

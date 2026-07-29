@@ -18,6 +18,17 @@ posOrderControllerAssert(strpos($controller, 'createTakeaway') !== false, 'contr
 posOrderControllerAssert(strpos($controller, 'payTable') !== false, 'controller should own table payment');
 posOrderControllerAssert(strpos($controller, 'resolveTableOrderIdForPayment') !== false, 'table payment should auto-save unsaved cart before pay');
 posOrderControllerAssert(strpos($controller, 'pos_customer_id') !== false, 'table save path should support pos_customer_id');
+posOrderControllerAssert(strpos($controller, 'private function operationalScope') !== false, 'controller should resolve one operational scope for certified writes');
+posOrderControllerAssert(strpos($controller, "'tenant' => 0") === false, 'controller must not hardcode idempotency or accounting tenant scope');
+posOrderControllerAssert(strpos($controller, "'branch' => 0") === false, 'controller must not hardcode idempotency or accounting branch scope');
+posOrderControllerAssert(
+    substr_count($controller, "'tenant' => \$scope['tenant']") >= 4,
+    'table save, free, payment, and split writes should propagate resolved tenant scope'
+);
+posOrderControllerAssert(
+    strpos($controller, "'tenant' => \$operationalScope['tenant']") !== false,
+    'shared idempotent write path should propagate resolved tenant scope'
+);
 
 echo "pos-order-controller-contract-ok\n";
 

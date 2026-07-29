@@ -15,6 +15,7 @@ class RecipeEditorMutationService
 {
     private $definition;
     private ?mysqli $syncConn = null;
+    private ?int $syncActorUserId = null;
 
     public function __construct(?RecipeDefinitionService $definition = null)
     {
@@ -23,10 +24,31 @@ class RecipeEditorMutationService
 
     public function handle(mysqli $conn, string $action, array $input, RecipeActorContext $actor): array
     {
+        // Branch identity reconciliation may migrate historical sync references,
+        // so it must finish before the business transaction starts.
+        (new SyncBranchIdentity())->ensure($conn, posmain_operational_sync_config());
+
         $this->syncConn = $conn;
+        $this->syncActorUserId = $actor->userId;
+        $conn->begin_transaction();
         try {
-            $action = strtolower(trim($action));
-            switch ($action) {
+            $result = $this->dispatch($conn, $action, $input, $actor);
+            $conn->commit();
+
+            return $result;
+        } catch (Throwable $exception) {
+            $conn->rollback();
+            throw $exception;
+        } finally {
+            $this->syncConn = null;
+            $this->syncActorUserId = null;
+        }
+    }
+
+    private function dispatch(mysqli $conn, string $action, array $input, RecipeActorContext $actor): array
+    {
+        $action = strtolower(trim($action));
+        switch ($action) {
             case 'create_draft':
                 return $this->createOrOpenDraft($conn, $input, $actor);
 
@@ -64,7 +86,7 @@ class RecipeEditorMutationService
 
             case 'activate':
                 $recipeId = $this->positiveInt($input['recipe_id'] ?? null, 'Recipe id is required.');
-                $this->definition->activate($conn, $recipeId, $actor);
+                $this->definition->activate($conn, $recipeId, $actor, false);
                 $this->syncAutoItemCosts($conn, $recipeId);
                 if (!empty($input['apply_item_cost_source'])) {
                     ItemCostSourceSupport::applyRecipeCostSourceForRecipe(
@@ -82,7 +104,7 @@ class RecipeEditorMutationService
 
             case 'clone_new_version':
                 $recipeId = $this->positiveInt($input['recipe_id'] ?? null, 'Recipe id is required.');
-                $draft = $this->definition->cloneAsNewVersion($conn, $recipeId, $actor);
+                $draft = $this->definition->cloneAsNewVersion($conn, $recipeId, $actor, false);
                 $this->syncAutoItemCosts($conn, (int) $draft['id']);
                 return $this->result('Recipe cloned into a new draft version.', (int) $draft['id']);
 
@@ -108,9 +130,6 @@ class RecipeEditorMutationService
         }
 
         throw new InvalidArgumentException('Unsupported recipe editor action.');
-        } finally {
-            $this->syncConn = null;
-        }
     }
 
     private function headerPayload(mysqli $conn, array $input): array
@@ -154,7 +173,7 @@ class RecipeEditorMutationService
         $recipes = new RecipeRepository();
         $active = $recipes->findActiveHeaderForItem($conn, $actor->posTenant, $actor->posBranch, $itemId);
         if ($active) {
-            $draft = $this->definition->cloneAsNewVersion($conn, (int) $active['id'], $actor);
+            $draft = $this->definition->cloneAsNewVersion($conn, (int) $active['id'], $actor, false);
             return $this->result('Recipe draft created.', (int) $draft['id']);
         }
 
@@ -505,7 +524,14 @@ LIMIT 1
     private function result(string $message, int $recipeId): array
     {
         if ($this->syncConn && $recipeId > 0) {
-            posmain_record_recipe_sync($this->syncConn, $recipeId, 'recipe_editor');
+            posmain_record_recipe_sync(
+                $this->syncConn,
+                $recipeId,
+                'recipe_editor',
+                'recipe.saved',
+                true,
+                $this->syncActorUserId
+            );
         }
 
         return [

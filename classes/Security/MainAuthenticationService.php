@@ -4,6 +4,7 @@ require_once __DIR__ . '/PinService.php';
 require_once __DIR__ . '/LoginThrottleService.php';
 require_once __DIR__ . '/SecurityAuditLogger.php';
 require_once __DIR__ . '/LocalSecurityBootstrapService.php';
+require_once __DIR__ . '/SessionOperationalScopeService.php';
 require_once __DIR__ . '/../PasswordService.php';
 require_once __DIR__ . '/../../config/app_config.php';
 
@@ -225,6 +226,7 @@ class MainAuthenticationService
         $_SESSION['posmain_bootstrap_pending'] = !empty($options['bootstrap_pending']);
         // Staff PIN changes happen in Team Hub; only bootstrap uses the login change panel.
         $_SESSION['posmain_pin_must_change'] = !empty($options['bootstrap_pending']);
+        (new SessionOperationalScopeService())->establish($conn, $userId, $options);
 
         // Local PIN main auth: acting user is the same as the session user.
         if ($_SESSION['posmain_auth_method'] === 'main_pin'
@@ -262,6 +264,7 @@ class MainAuthenticationService
 
         foreach ([
             'login', 'userid', 'usrole', 'usty', 'userrole',
+            'pos_tenant', 'pos_branch',
             'posmain_auth_version', 'posmain_auth_method',
             'posmain_bootstrap_pending', 'posmain_pin_must_change',
             'posmain_capabilities_cache', 'posmain_capabilities_version',

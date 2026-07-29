@@ -15,7 +15,7 @@ require_permission('inventory.edit', $conn);
 
 $inventoryAdjustmentFlags = new InventoryFeatureFlags();
 $inventoryAdjustmentMode = $inventoryAdjustmentFlags->mode();
-$inventoryAdjustmentCanPost = $inventoryAdjustmentFlags->canWriteLedger();
+$inventoryAdjustmentCanPost = $inventoryAdjustmentFlags->canWriteQuantityLedger();
 $inventoryAdjustmentCanViewCost = auth_guard_has_permission('accounting.view', $conn) || auth_guard_has_permission('reports.view', $conn);
 $inventoryAdjustmentScope = (new InventoryScopeResolver($inventoryAdjustmentFlags->appConfig()))->resolveForConn($conn, [
     'source' => 'inventory_adjustment',

@@ -72,11 +72,19 @@ foreach ([
 
 foreach ([
     'InventoryLedgerService',
-    'canWriteLedger',
     'recordProductionInputThroughInventoryLedger',
     'recordProductionOutputThroughInventoryLedger',
 ] as $needle) {
     inventoryPhase10ProductionSurfaceAssert(strpos($movementService, $needle) !== false, 'recipe production movement service should delegate to shared ledger: ' . $needle);
+}
+foreach ([
+    '->createMovement(',
+    '->putBalance(',
+] as $forbiddenNeedle) {
+    inventoryPhase10ProductionSurfaceAssert(
+        strpos($movementService, $forbiddenNeedle) === false,
+        'recipe production movement service must not bypass the shared inventory ledger: ' . $forbiddenNeedle
+    );
 }
 
 foreach ([

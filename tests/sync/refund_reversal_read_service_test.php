@@ -54,10 +54,15 @@ try {
         'date_to' => '2026-07-11',
         'tenant' => 1,
         'branch' => 2,
-        'cashier_id' => 8,
+        // The shift owner can differ from the authorized refund actor. Once a
+        // drawer session is supplied, custody wins over actor attribution.
+        'cashier_id' => 7,
         'drawer_session_id' => 90,
     ], true);
-    refundReadAssert($refundDay['total_amount'] === '25.00' && $refundDay['count'] === 1, 'refund-day attribution');
+    refundReadAssert(
+        $refundDay['total_amount'] === '25.00' && $refundDay['count'] === 1,
+        'drawer-scoped refund-day attribution must include an authorized manager actor'
+    );
     refundReadAssert($refundDay['rows'][0]['manager_approval_id'] === 501, 'approval drilldown attribution');
     refundReadAssert($refundDay['rows'][0]['original_order_id'] === 1, 'original sale link');
 

@@ -49,12 +49,33 @@ class SyncBranchIdentity
             INSERT INTO sync_branch_identity (
                 id, branch_uuid, branch_name, pos_tenant, pos_branch, cloud_base_url
             ) VALUES (1, ?, ?, ?, ?, ?)
+            ON DUPLICATE KEY UPDATE id = id
         ");
         $stmt->bind_param('ssiis', $branchUuid, $branchName, $posTenant, $posBranch, $cloudBaseUrl);
         $stmt->execute();
         $stmt->close();
 
-        return $this->find($conn);
+        // Another terminal may have created id=1 between find() and INSERT.
+        // Use a locking/current read here: a plain repeatable-read SELECT can
+        // retain the earlier "row missing" snapshot after the competing INSERT
+        // commits and would otherwise recurse forever.
+        $persisted = $this->findForUpdate($conn);
+        if (!$persisted) {
+            throw new RuntimeException('SYNC_BRANCH_IDENTITY_INITIALIZATION_FAILED');
+        }
+        $persistedUuid = strtolower(trim((string) ($persisted['branch_uuid'] ?? '')));
+        if ($configuredUuid !== '' && $configuredUuid !== $persistedUuid) {
+            if ($this->connectionInTransaction($conn)) {
+                throw new RuntimeException('SYNC_BRANCH_IDENTITY_ROTATION_IN_TRANSACTION');
+            }
+            $this->updateIdentity($conn, $branchConfig, $configuredUuid, $persistedUuid);
+
+            return $this->findForUpdate($conn) ?: throw new RuntimeException('SYNC_BRANCH_IDENTITY_INITIALIZATION_FAILED');
+        }
+
+        $this->updateMetadata($conn, $branchConfig, $persistedUuid);
+
+        return $this->findForUpdate($conn) ?: throw new RuntimeException('SYNC_BRANCH_IDENTITY_INITIALIZATION_FAILED');
     }
 
     public function current(mysqli $conn): array
@@ -76,6 +97,24 @@ class SyncBranchIdentity
             FROM sync_branch_identity
             WHERE id = ?
             LIMIT 1
+        ");
+        $id = self::LOCAL_ROW_ID;
+        $stmt->bind_param('i', $id);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        return $row ?: null;
+    }
+
+    private function findForUpdate(mysqli $conn): ?array
+    {
+        $stmt = $conn->prepare("
+            SELECT *
+            FROM sync_branch_identity
+            WHERE id = ?
+            LIMIT 1
+            FOR UPDATE
         ");
         $id = self::LOCAL_ROW_ID;
         $stmt->bind_param('i', $id);

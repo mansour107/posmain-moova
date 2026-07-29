@@ -127,7 +127,11 @@ try {
         'caller rollback must remove the movement after sync failure'
     );
 
-    $shadow = $ledger->recordShadowMovement(
+    $shadowConfig = $config;
+    $shadowConfig['inventory']['ledger_mode'] = 'shadow';
+    $shadowConfig['inventory']['quantity_tracking'] = false;
+    $shadowLedger = new InventoryLedgerService(new InventoryFeatureFlags($shadowConfig));
+    $shadow = $shadowLedger->recordShadowMovement(
         $conn,
         inventorySyncMovement(8104, 'atomic:shadow', '1.000000'),
         ['item_id' => 8104, 'item_type' => 'ingredient', 'track_stock' => 1]
@@ -161,7 +165,9 @@ function inventorySyncConfig(): array
             'operational_sync_enabled' => true,
         ],
         'inventory' => [
-            'ledger_mode' => 'bridge',
+            'ledger_mode' => 'off',
+            'quantity_tracking' => true,
+            'accounting' => false,
         ],
     ];
 }

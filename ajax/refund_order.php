@@ -3,6 +3,7 @@ require_once __DIR__ . '/../includes/session_bootstrap.php';
 include('../includes/connect.php');
 require_once('../includes/auth_guard.php');
 require_once('../includes/csrf.php');
+require_once('../classes/Financial/Money.php');
 require_once('../classes/Pos/Service/PosOrderMutationService.php');
 require_once('../classes/Sync/SyncOutboxEventService.php');
 
@@ -64,7 +65,12 @@ try {
         $refundLines = $decodedLines;
     } elseif ($refundMode === 'amount') {
         $refundAmount = trim((string) ($_POST['refund_amount'] ?? ''));
-        if ($refundAmount === '' || !is_numeric($refundAmount) || (float) $refundAmount <= 0) {
+        try {
+            $refundAmount = Money::from($refundAmount)->toString();
+        } catch (Throwable $exception) {
+            throw new InvalidArgumentException('REFUND_AMOUNT_INVALID', 0, $exception);
+        }
+        if (!Money::from($refundAmount)->isPositive()) {
             throw new InvalidArgumentException('REFUND_AMOUNT_INVALID');
         }
     }

@@ -1023,7 +1023,11 @@ $(document).ready(function() {
             overrideAllowed: String(item.availability_override_allowed || '0') === '1',
             overridePermission: String(item.availability_override_permission || '').trim(),
             recipeEnabled: String(item.recipe_enabled || '0') === '1',
-            recipeQty: String(item.recipe_effective_available_qty || '').trim(),
+            recipeQty: String(
+                item.recipe_cashier_available_qty !== undefined
+                    ? item.recipe_cashier_available_qty
+                    : (item.recipe_effective_available_qty || '')
+            ).trim(),
             warnOnly: String(item.availability_warn_only || '0') === '1'
         };
     }
@@ -3092,6 +3096,9 @@ $(document).ready(function() {
         if (typeof window.posCustomerDetach === 'function') {
             window.posCustomerDetach();
         }
+        if (typeof window.posDeliveryResetAfterCommit === 'function') {
+            window.posDeliveryResetAfterCommit();
+        }
 
         if (window.POSOrderDraft && typeof window.POSOrderDraft.reset === 'function') {
             window.POSOrderDraft.reset();
@@ -4654,7 +4661,11 @@ function populatePaidReversalTenderContext() {
         const code = escapeRecentOrdersHtml(tender.code || '');
         const label = escapeRecentOrdersHtml(tender.label || tender.code || '');
         const type = escapeRecentOrdersHtml(tender.type || '');
-        $select.append(`<option value="${code}" data-type="${type}">${label}</option>`);
+        const settlementPolicy = escapeRecentOrdersHtml(tender.settlement_policy || '');
+        const requiresReference = tender.requires_reference ? '1' : '0';
+        $select.append(
+            `<option value="${code}" data-type="${type}" data-settlement-policy="${settlementPolicy}" data-requires-reference="${requiresReference}">${label}</option>`
+        );
     });
     $('#paid-reversal-reference').val('');
     updatePaidReversalTenderVisibility();
@@ -4736,18 +4747,25 @@ function updatePaidReversalTenderVisibility() {
 
     const selected = $('#paid-reversal-tender option:selected');
     const type = String(selected.data('type') || '');
+    const settlementPolicy = String(selected.attr('data-settlement-policy') || '');
+    const requiresReference = String(selected.attr('data-requires-reference') || '') === '1';
     const reference = String($('#paid-reversal-reference').val() || '').trim();
     if (type === 'cash') {
         $('#paid-reversal-settlement-hint').text(
             'سيُسجل الصرف النقدي مرة واحدة كحركة استرداد نقدي على جلسة الدرج المفتوحة.'
         );
-    } else if (type && reference) {
+    } else if (settlementPolicy === 'reference_required' || requiresReference) {
+        $('#paid-reversal-settlement-hint').text(reference
+            ? 'سيُسجل الاسترداد غير النقدي كتسوية مكتملة باستخدام المرجع المدخل.'
+            : 'الاسترداد غير النقدي بدون مرجع سيُسجل كعملية معلقة حتى إدخال مرجع التسوية.'
+        );
+    } else if (settlementPolicy === 'manual_external') {
         $('#paid-reversal-settlement-hint').text(
-            'سيُسجل الاسترداد غير النقدي كتسوية مكتملة باستخدام المرجع المدخل.'
+            'سيُسجل الاسترداد فوراً كتسوية يقرّ بها الموظف المخوّل، دون حركة على درج النقدية، والمرجع اختياري.'
         );
     } else {
         $('#paid-reversal-settlement-hint').text(
-            'الاسترداد غير النقدي بدون مرجع سيُسجل كعملية معلقة حتى إدخال مرجع التسوية.'
+            type ? 'سيُطبق الخادم سياسة التسوية المعرّفة لطريقة الاسترداد المختارة.' : 'اختر طريقة صرف الاسترداد.'
         );
     }
 }

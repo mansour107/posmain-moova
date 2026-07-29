@@ -1,15 +1,9 @@
 <?php
 
-$host = getenv('POSMAIN_TEST_MYSQL_HOST') ?: '127.0.0.1';
-$port = (int) (getenv('POSMAIN_TEST_MYSQL_PORT') ?: 3307);
-$user = getenv('POSMAIN_TEST_MYSQL_USER') ?: 'root';
-$pass = getenv('POSMAIN_TEST_MYSQL_PASS') ?: '';
-$db = 'posmain_item_void_override_' . getmypid();
-putenv('POSMAIN_DB_HOST=' . $host);
-putenv('POSMAIN_DB_PORT=' . $port);
-putenv('POSMAIN_DB_USER=' . $user);
-putenv('POSMAIN_DB_PASS=' . $pass);
-putenv('POSMAIN_DB_NAME=' . $db);
+require_once __DIR__ . '/security_test_database.php';
+
+$fixture = SecurityTestDatabase::create();
+$db = $fixture->databaseName();
 putenv('POSMAIN_BRANCH_UUID=79ec8b45-6fd3-4e0b-a2f2-46cab97991ea');
 
 require_once __DIR__ . '/../../classes/Pos/Service/ManagerApprovalService.php';
@@ -17,11 +11,9 @@ require_once __DIR__ . '/../../classes/Pos/Service/PosOrderMutationService.php';
 
 mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
 
-$conn = new mysqli($host, $user, $pass, '', $port);
+$conn = $fixture->connect();
 
 try {
-    $conn->query("CREATE DATABASE `{$db}` CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci");
-    $conn->select_db($db);
     posItemVoidRuntimeCreateSchema($conn);
 
     $approvalService = new ManagerApprovalService();
@@ -119,8 +111,8 @@ try {
 
     echo "pos-item-void-override-runtime-ok db={$db}\n";
 } finally {
-    $conn->query("DROP DATABASE IF EXISTS `{$db}`");
     $conn->close();
+    $fixture->close();
 }
 
 function posItemVoidRuntimeCreateSchema(mysqli $conn): void

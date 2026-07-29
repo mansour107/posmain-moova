@@ -501,57 +501,48 @@ class RecipeOrderLifecycleServiceTest extends TestCase
         $this->assertSame('0.000000', $balanceAfterReservedPaid['qty_reserved']);
     }
 
-    public function testStrictAvailabilityBlocksOversoldReservationBeforeUsageWrites(): void
+    public function testLegacyStrictAvailabilityAllowsOversoldReservationAndRecordsUsage(): void
     {
         $setup = $this->recipeWithIngredient('1.000000');
         $service = $this->strictAvailabilityService();
-        $blocked = false;
 
-        try {
-            $service->onOrderLineAdded($this->lineContext(9018, 918, $setup['sellable_item_id'], '2.000000'));
-        } catch (RuntimeException $exception) {
-            $blocked = true;
-            $this->assertStringContainsString('Only 1.000000 can be made', $exception->getMessage());
-        }
+        $service->onOrderLineAdded($this->lineContext(9018, 918, $setup['sellable_item_id'], '2.000000'));
 
-        $this->assertTrue($blocked, 'strict stock should block order lines above computed recipe availability');
-        $this->assertSame([], $this->rows('recipe_order_line_usage', 'order_id = 9018'));
-        $this->assertSame([], $this->rows('stock_reservations', 'order_id = 9018'));
-        $this->assertSame('1.000000', $this->balance($setup['ingredient_item_id'])['qty_on_hand']);
+        $this->assertCount(1, $this->rows('recipe_order_line_usage', 'order_id = 9018'));
+        $this->assertCount(1, $this->rows('stock_reservations', 'order_id = 9018'));
+        $balance = $this->balance($setup['ingredient_item_id']);
+        $this->assertSame('1.000000', $balance['qty_on_hand']);
+        $this->assertSame('2.000000', $balance['qty_reserved']);
+        $this->assertSame('-1.000000', $balance['qty_available']);
     }
 
-    public function testStrictAvailabilityBlocksDirectPaidOrderBeforeConsumptionWrites(): void
+    public function testLegacyStrictAvailabilityAllowsDirectPaidOversellAndConsumptionWrites(): void
     {
         $setup = $this->recipeWithIngredient('1.000000');
         $service = $this->strictAvailabilityService();
-        $blocked = false;
 
-        try {
-            $service->onOrderPaid([
-                'conn' => self::$conn,
-                'order_id' => 9019,
-                'pos_tenant' => 0,
-                'pos_branch' => 0,
-                'store_id' => 0,
-                'channel' => 'pos',
-                'order_type' => 'takeaway',
-                'lines' => [
-                    [
-                        'fat_detail_id' => 919,
-                        'sellable_item_id' => $setup['sellable_item_id'],
-                        'quantity' => '2.000000',
-                    ],
+        $service->onOrderPaid([
+            'conn' => self::$conn,
+            'order_id' => 9019,
+            'pos_tenant' => 0,
+            'pos_branch' => 0,
+            'store_id' => 0,
+            'channel' => 'pos',
+            'order_type' => 'takeaway',
+            'lines' => [
+                [
+                    'fat_detail_id' => 919,
+                    'sellable_item_id' => $setup['sellable_item_id'],
+                    'quantity' => '2.000000',
                 ],
-            ]);
-        } catch (RuntimeException $exception) {
-            $blocked = true;
-            $this->assertStringContainsString('Only 1.000000 can be made', $exception->getMessage());
-        }
+            ],
+        ]);
 
-        $this->assertTrue($blocked, 'strict stock should block direct payment above computed recipe availability');
-        $this->assertSame([], $this->rows('recipe_order_line_usage', 'order_id = 9019'));
-        $this->assertSame([], $this->rows('inventory_movements', 'order_id = 9019'));
-        $this->assertSame('1.000000', $this->balance($setup['ingredient_item_id'])['qty_on_hand']);
+        $this->assertCount(1, $this->rows('recipe_order_line_usage', 'order_id = 9019'));
+        $this->assertCount(1, $this->rows('inventory_movements', 'order_id = 9019'));
+        $balance = $this->balance($setup['ingredient_item_id']);
+        $this->assertSame('-1.000000', $balance['qty_on_hand']);
+        $this->assertSame('-1.000000', $balance['qty_available']);
     }
 
     public function testLifecycleRefreshesAvailabilityCacheAfterReservationReleaseAndConsumption(): void

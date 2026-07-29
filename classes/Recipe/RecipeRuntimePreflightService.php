@@ -2,6 +2,7 @@
 
 require_once __DIR__ . '/../Sync/SchemaManager.php';
 require_once __DIR__ . '/RecipeFeatureFlags.php';
+require_once __DIR__ . '/../Inventory/InventoryFeatureFlags.php';
 require_once __DIR__ . '/../Inventory/NegativeStockSalePolicyService.php';
 
 class RecipeRuntimePreflightService
@@ -124,12 +125,22 @@ class RecipeRuntimePreflightService
         $mode = $flags->mode();
         $blockers = [];
         $warnings = [];
+        $inventoryFlags = new InventoryFeatureFlags($flags->appConfig());
+        $quantityTrackingEnabled = $inventoryFlags->isQuantityTrackingEnabled();
+        $activeMovementMode = in_array(
+            $mode,
+            ['reserve_only', 'consume_pilot', 'accounting_pilot', 'availability_pilot', 'full'],
+            true
+        );
 
         if ($mode === 'off') {
             $warnings[] = 'recipe_runtime_preflight_mode_off';
         }
-        if (in_array($mode, ['reserve_only', 'consume_pilot', 'accounting_pilot', 'availability_pilot', 'full'], true)) {
+        if ($activeMovementMode) {
             $warnings[] = 'recipe_runtime_preflight_active_mode_use_pilot_evidence_gate';
+            if (!$quantityTrackingEnabled) {
+                $blockers[] = 'recipe_runtime_active_mode_requires_inventory_quantity_tracking';
+            }
         }
         if ($this->boolValue($config['cost_public_payloads'] ?? false)) {
             $warnings[] = 'recipe_runtime_preflight_public_cost_payloads_enabled';
@@ -154,6 +165,7 @@ class RecipeRuntimePreflightService
             'availability_enabled' => $this->boolValue($config['availability'] ?? false),
             'accounting_enabled' => $this->boolValue($config['accounting'] ?? false),
             'moova_sync_enabled' => $flags->isMoovaSyncEnabled(),
+            'inventory_quantity_tracking_enabled' => $quantityTrackingEnabled,
             'negative_stock_sale_policy' => $negativeStockPolicy,
             'blockers' => $blockers,
             'warnings' => $warnings,

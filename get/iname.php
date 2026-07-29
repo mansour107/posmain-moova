@@ -1,4 +1,6 @@
 <?php
+require_once __DIR__ . '/../includes/api_entry_classification.php';
+
 if ($_SERVER["REQUEST_METHOD"] == "POST") {
     require_once __DIR__ . '/../includes/db_bootstrap.php';
 
@@ -9,6 +11,8 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         echo json_encode(['exists' => false, 'error' => 'Database connection failed']);
         exit;
     }
+    require_once __DIR__ . '/../includes/entry_permission_guard.php';
+    posmain_enforce_entry_permission($conn);
 
     // Retrieve the value from the POST request
     $inputValue = $_POST['iname'];

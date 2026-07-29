@@ -28,7 +28,7 @@ class RecipeInventoryMovementService
         $this->flags = $flags ?: new RecipeFeatureFlags();
         $this->movements = $movements ?: new InventoryMovementRepository();
         $this->balances = $balances ?: new InventoryBalanceRepository();
-        $this->inventoryFlags = $inventoryFlags ?: new InventoryFeatureFlags();
+        $this->inventoryFlags = $inventoryFlags ?: new InventoryFeatureFlags($this->flags->appConfig());
         $this->inventoryLedger = $inventoryLedger ?: new InventoryLedgerService($this->inventoryFlags);
     }
 
@@ -38,69 +38,52 @@ class RecipeInventoryMovementService
         if (!$this->flags->isConsumptionEnabledForItem($scope, $explosion->sellableItemId, $this->itemCategoryId($orderContext))) {
             return new RecipeMovementResult(['noop' => true]);
         }
+        $this->assertExplicitQuantityTrackingEnabled();
 
+        return $this->recordRecipeConsumptionThroughInventoryLedger($conn, $scope, $explosion, $orderContext);
+    }
+
+    private function recordRecipeConsumptionThroughInventoryLedger(
+        mysqli $conn,
+        RecipeScope $scope,
+        RecipeExplosionResult $explosion,
+        array $orderContext
+    ): RecipeMovementResult {
         $movementIds = [];
-        $lockedBalances = $this->lockRequirementBalances($conn, $scope, $explosion->requirements);
         foreach ($explosion->requirements as $requirement) {
-            $idempotencyKey = $this->idempotencyKey('consume', $scope, $explosion, $requirement, $orderContext);
-            $existing = $this->movements->findByIdempotencyKey(
-                $conn,
-                $scope->posTenant,
-                $scope->posBranch,
-                $scope->storeId,
-                $idempotencyKey
-            );
-            if ($existing) {
-                $movementIds[] = (int) $existing['id'];
+            if (!$requirement instanceof IngredientRequirement) {
                 continue;
             }
 
-            $balance = $lockedBalances[$requirement->ingredientItemId]
-                ?? $this->lockBalance($conn, $scope, $requirement->ingredientItemId);
-            $newOnHand = RecipeDecimal::subtract($balance['qty_on_hand'], $requirement->requiredQtyBase);
-            if (RecipeDecimal::compare($newOnHand, '0') < 0) {
-                // Warn-only (strict stock is OFF): record a tagged warning so owners have
-                // visibility into which sales drove negative ingredient stock, but still
-                // allow the sale to proceed. Do NOT throw — throwing would be strict stock.
-                // Prefer the app-level warn logger (posmain_log_warn_event) so the event lands
-                // in logs/recipe_negative_stock.log regardless of PHP-FPM error_log routing;
-                // fall back to error_log() if the helper is not loaded (e.g. some CLI paths).
-                $warnFields = [
-                    'item_id' => (int) $requirement->ingredientItemId,
-                    'required' => (string) $requirement->requiredQtyBase,
-                    'balance' => (string) ($balance['qty_on_hand'] ?? '0'),
-                    'new_on_hand' => (string) $newOnHand,
-                    'order_id' => (string) ($orderContext['order_id'] ?? ''),
-                    'recipe_id' => (string) ($explosion->recipeId ?? ''),
-                    'order_line_uuid' => (string) ($orderContext['order_line_uuid'] ?? ''),
-                ];
-                if (function_exists('posmain_log_warn_event')) {
-                    posmain_log_warn_event('recipe_negative_stock.log', 'recipe_negative_stock', $warnFields);
-                } else {
-                    error_log('[recipe_negative_stock]' . implode('', array_map(
-                        static fn($k, $v) => " {$k}={$v}",
-                        array_keys($warnFields),
-                        $warnFields,
-                    )));
-                }
+            if (!empty($orderContext['consume_reserved'])) {
+                $this->recordReservationDeltaThroughInventoryLedger(
+                    $conn,
+                    $scope,
+                    $requirement->ingredientItemId,
+                    $requirement->requiredQtyBase,
+                    'reservation_release',
+                    $this->idempotencyKey('consume-reservation-release', $scope, $explosion, $requirement, $orderContext),
+                    [
+                        'source_type' => 'recipe_order_line_usage',
+                        'source_id' => $orderContext['recipe_order_line_usage_id'] ?? null,
+                        'source_uuid' => $orderContext['order_line_uuid'] ?? null,
+                        'order_id' => $orderContext['order_id'] ?? null,
+                        'fat_detail_id' => $orderContext['fat_detail_id'] ?? null,
+                        'order_line_uuid' => $orderContext['order_line_uuid'] ?? null,
+                        'recipe_order_line_usage_id' => $orderContext['recipe_order_line_usage_id'] ?? null,
+                        'recipe_id' => $explosion->recipeId,
+                        'created_by' => $orderContext['created_by'] ?? null,
+                    ]
+                );
             }
-            $newReserved = (bool) ($orderContext['consume_reserved'] ?? false)
-                ? RecipeDecimal::subtract($balance['qty_reserved'], $requirement->requiredQtyBase)
-                : $balance['qty_reserved'];
-            if (RecipeDecimal::compare($newReserved, '0') < 0) {
-                $newReserved = RecipeDecimal::zero();
-            }
-            $newAvailable = RecipeDecimal::subtract($newOnHand, $newReserved);
-            $movementId = $this->movements->createMovement($conn, [
-                'movement_uuid' => $this->uuid(),
-                'pos_tenant' => $scope->posTenant,
-                'pos_branch' => $scope->posBranch,
-                'branch_uuid' => $scope->branchUuid,
-                'store_id' => $scope->storeId,
+
+            $movement = $this->inventoryLedger->recordMovement($conn, [
+                'scope' => $this->ledgerScope($scope),
                 'item_id' => $requirement->ingredientItemId,
                 'movement_type' => 'recipe_consumption',
                 'source_type' => 'recipe_order_line_usage',
                 'source_id' => $orderContext['recipe_order_line_usage_id'] ?? null,
+                'source_uuid' => $orderContext['order_line_uuid'] ?? null,
                 'order_id' => $orderContext['order_id'] ?? null,
                 'fat_detail_id' => $orderContext['fat_detail_id'] ?? null,
                 'order_line_uuid' => $orderContext['order_line_uuid'] ?? null,
@@ -112,25 +95,22 @@ class RecipeInventoryMovementService
                 'unit_conversion_to_base' => $requirement->unitConversionToBase,
                 'unit_cost' => $requirement->unitCost,
                 'total_cost' => $requirement->totalCost,
-                'idempotency_key' => $idempotencyKey,
+                'idempotency_key' => $this->idempotencyKey('consume', $scope, $explosion, $requirement, $orderContext),
+                'metadata' => [
+                    'source' => 'recipe_sale',
+                    'consume_reserved' => !empty($orderContext['consume_reserved']),
+                ],
                 'created_by' => $orderContext['created_by'] ?? null,
-            ]);
-            $this->balances->putBalance($conn, [
-                'pos_tenant' => $scope->posTenant,
-                'pos_branch' => $scope->posBranch,
-                'branch_uuid' => $scope->branchUuid,
-                'store_id' => $scope->storeId,
-                'item_id' => $requirement->ingredientItemId,
-                'qty_on_hand' => $newOnHand,
-                'qty_reserved' => $newReserved,
-                'qty_available' => $newAvailable,
-                'moving_average_cost' => $balance['moving_average_cost'],
-                'last_movement_id' => $movementId,
-            ]);
-            $movementIds[] = $movementId;
+            ], null, ['manage_transaction' => false]);
+            if (empty($movement['noop'])) {
+                $movementIds[] = (int) ($movement['movement_id'] ?? 0);
+            }
         }
 
-        return new RecipeMovementResult(['movement_ids' => $movementIds]);
+        return new RecipeMovementResult([
+            'movement_ids' => array_values(array_filter($movementIds)),
+            'noop' => $movementIds === [],
+        ]);
     }
 
     public function recordReservationMovement(mysqli $conn, RecipeExplosionResult $explosion, array $orderContext): RecipeMovementResult
@@ -139,60 +119,35 @@ class RecipeInventoryMovementService
         if (!$this->flags->isReservationEnabledForItem($scope, $explosion->sellableItemId, $this->itemCategoryId($orderContext))) {
             return new RecipeMovementResult(['noop' => true]);
         }
+        $this->assertExplicitQuantityTrackingEnabled();
 
         $movementIds = [];
-        $lockedBalances = $this->lockRequirementBalances($conn, $scope, $explosion->requirements);
         foreach ($explosion->requirements as $requirement) {
-            $idempotencyKey = $this->idempotencyKey('reservation', $scope, $explosion, $requirement, $orderContext);
-            $existing = $this->movements->findByIdempotencyKey(
-                $conn,
-                $scope->posTenant,
-                $scope->posBranch,
-                $scope->storeId,
-                $idempotencyKey
-            );
-            if ($existing) {
-                $movementIds[] = (int) $existing['id'];
+            if (!$requirement instanceof IngredientRequirement) {
                 continue;
             }
-
-            $balance = $lockedBalances[$requirement->ingredientItemId]
-                ?? $this->lockBalance($conn, $scope, $requirement->ingredientItemId);
-            $newReserved = RecipeDecimal::add($balance['qty_reserved'], $requirement->requiredQtyBase);
-            $newAvailable = RecipeDecimal::subtract($balance['qty_on_hand'], $newReserved);
-            $movementId = $this->movements->createMovement($conn, [
-                'movement_uuid' => $this->uuid(),
-                'pos_tenant' => $scope->posTenant,
-                'pos_branch' => $scope->posBranch,
-                'branch_uuid' => $scope->branchUuid,
-                'store_id' => $scope->storeId,
-                'item_id' => $requirement->ingredientItemId,
-                'movement_type' => 'reservation',
-                'source_type' => 'reservation',
-                'source_id' => $orderContext['recipe_order_line_usage_id'] ?? null,
-                'order_id' => $orderContext['order_id'] ?? null,
-                'fat_detail_id' => $orderContext['fat_detail_id'] ?? null,
-                'order_line_uuid' => $orderContext['order_line_uuid'] ?? null,
-                'recipe_order_line_usage_id' => $orderContext['recipe_order_line_usage_id'] ?? null,
-                'recipe_id' => $explosion->recipeId,
-                'qty_in' => '0.000000',
-                'qty_out' => '0.000000',
-                'idempotency_key' => $idempotencyKey,
-                'created_by' => $orderContext['created_by'] ?? null,
-            ]);
-            $this->balances->putBalance($conn, [
-                'pos_tenant' => $scope->posTenant,
-                'pos_branch' => $scope->posBranch,
-                'branch_uuid' => $scope->branchUuid,
-                'store_id' => $scope->storeId,
-                'item_id' => $requirement->ingredientItemId,
-                'qty_on_hand' => $balance['qty_on_hand'],
-                'qty_reserved' => $newReserved,
-                'qty_available' => $newAvailable,
-                'moving_average_cost' => $balance['moving_average_cost'],
-                'last_movement_id' => $movementId,
-            ]);
-            $movementIds[] = $movementId;
+            $movementId = $this->recordReservationDeltaThroughInventoryLedger(
+                $conn,
+                $scope,
+                $requirement->ingredientItemId,
+                $requirement->requiredQtyBase,
+                'reservation',
+                $this->idempotencyKey('reservation', $scope, $explosion, $requirement, $orderContext),
+                [
+                    'source_type' => 'reservation',
+                    'source_id' => $orderContext['recipe_order_line_usage_id'] ?? null,
+                    'source_uuid' => $orderContext['order_line_uuid'] ?? null,
+                    'order_id' => $orderContext['order_id'] ?? null,
+                    'fat_detail_id' => $orderContext['fat_detail_id'] ?? null,
+                    'order_line_uuid' => $orderContext['order_line_uuid'] ?? null,
+                    'recipe_order_line_usage_id' => $orderContext['recipe_order_line_usage_id'] ?? null,
+                    'recipe_id' => $explosion->recipeId,
+                    'created_by' => $orderContext['created_by'] ?? null,
+                ]
+            );
+            if ($movementId > 0) {
+                $movementIds[] = $movementId;
+            }
         }
 
         return new RecipeMovementResult(['movement_ids' => $movementIds]);
@@ -200,6 +155,8 @@ class RecipeInventoryMovementService
 
     public function recordReservationRelease(mysqli $conn, array $reservations, string $reason = 'release'): RecipeMovementResult
     {
+        $this->assertExplicitQuantityTrackingEnabled();
+
         $movementIds = [];
         foreach ($reservations as $reservation) {
             $scope = new RecipeScope(
@@ -214,51 +171,52 @@ class RecipeInventoryMovementService
             $itemId = (int) ($reservation['ingredient_item_id'] ?? 0);
             $qty = (string) ($reservation['qty_reserved'] ?? '0');
             $idempotencyKey = 'reservation-release:' . $scope->posTenant . ':' . $scope->posBranch . ':store:' . $scope->storeId . ':reservation:' . (int) $reservation['id'] . ':' . $reason;
-            $existing = $this->movements->findByIdempotencyKey($conn, $scope->posTenant, $scope->posBranch, $scope->storeId, $idempotencyKey);
-            if ($existing) {
-                $movementIds[] = (int) $existing['id'];
-                continue;
+            $movementId = $this->recordReservationDeltaThroughInventoryLedger(
+                $conn,
+                $scope,
+                $itemId,
+                $qty,
+                'reservation_release',
+                $idempotencyKey,
+                [
+                    'source_type' => 'reservation',
+                    'source_id' => (int) $reservation['id'],
+                    'order_id' => $reservation['order_id'] ?? null,
+                    'fat_detail_id' => $reservation['fat_detail_id'] ?? null,
+                    'order_line_uuid' => $reservation['order_line_uuid'] ?? null,
+                    'recipe_order_line_usage_id' => $reservation['recipe_order_line_usage_id'] ?? null,
+                    'recipe_id' => $reservation['recipe_id'] ?? null,
+                ]
+            );
+            if ($movementId > 0) {
+                $movementIds[] = $movementId;
             }
-
-            $balance = $this->lockBalance($conn, $scope, $itemId);
-            $newReserved = RecipeDecimal::subtract($balance['qty_reserved'], $qty);
-            if (RecipeDecimal::compare($newReserved, '0') < 0) {
-                $newReserved = RecipeDecimal::zero();
-            }
-            $newAvailable = RecipeDecimal::subtract($balance['qty_on_hand'], $newReserved);
-            $movementId = $this->movements->createMovement($conn, [
-                'movement_uuid' => $this->uuid(),
-                'pos_tenant' => $scope->posTenant,
-                'pos_branch' => $scope->posBranch,
-                'branch_uuid' => $scope->branchUuid,
-                'store_id' => $scope->storeId,
-                'item_id' => $itemId,
-                'movement_type' => 'reservation_release',
-                'source_type' => 'reservation',
-                'source_id' => (int) $reservation['id'],
-                'order_id' => $reservation['order_id'] ?? null,
-                'fat_detail_id' => $reservation['fat_detail_id'] ?? null,
-                'order_line_uuid' => $reservation['order_line_uuid'] ?? null,
-                'recipe_order_line_usage_id' => $reservation['recipe_order_line_usage_id'] ?? null,
-                'recipe_id' => $reservation['recipe_id'] ?? null,
-                'idempotency_key' => $idempotencyKey,
-            ]);
-            $this->balances->putBalance($conn, [
-                'pos_tenant' => $scope->posTenant,
-                'pos_branch' => $scope->posBranch,
-                'branch_uuid' => $scope->branchUuid,
-                'store_id' => $scope->storeId,
-                'item_id' => $itemId,
-                'qty_on_hand' => $balance['qty_on_hand'],
-                'qty_reserved' => $newReserved,
-                'qty_available' => $newAvailable,
-                'moving_average_cost' => $balance['moving_average_cost'],
-                'last_movement_id' => $movementId,
-            ]);
-            $movementIds[] = $movementId;
         }
 
         return new RecipeMovementResult(['movement_ids' => $movementIds]);
+    }
+
+    private function recordReservationDeltaThroughInventoryLedger(
+        mysqli $conn,
+        RecipeScope $scope,
+        int $itemId,
+        string $qty,
+        string $movementType,
+        string $idempotencyKey,
+        array $context
+    ): int {
+        $movement = $this->inventoryLedger->recordMovement($conn, array_merge($context, [
+            'scope' => $this->ledgerScope($scope),
+            'item_id' => $itemId,
+            'movement_type' => $movementType,
+            'qty_reserved' => $qty,
+            'idempotency_key' => $idempotencyKey,
+            'metadata' => [
+                'source' => 'recipe_reservation',
+            ],
+        ]), null, ['manage_transaction' => false]);
+
+        return empty($movement['noop']) ? (int) ($movement['movement_id'] ?? 0) : 0;
     }
 
     public function recordProductionInput(mysqli $conn, RecipeExplosionResult $explosion, array $batchContext): RecipeMovementResult
@@ -266,70 +224,10 @@ class RecipeInventoryMovementService
         if (!$this->flags->isEnabled() || in_array($this->flags->mode(), ['schema_only', 'read_only'], true)) {
             return new RecipeMovementResult(['noop' => true]);
         }
+        $this->assertExplicitQuantityTrackingEnabled();
 
         $scope = $this->scopeFromOrderContext($batchContext);
-        if ($this->inventoryFlags->canWriteLedger()) {
-            return $this->recordProductionInputThroughInventoryLedger($conn, $scope, $explosion, $batchContext);
-        }
-
-        $movementIds = [];
-        $lockedBalances = $this->lockRequirementBalances($conn, $scope, $explosion->requirements);
-        foreach ($explosion->requirements as $requirement) {
-            $idempotencyKey = $this->productionIdempotencyKey('production-input', $scope, $requirement, $batchContext);
-            $existing = $this->movements->findByIdempotencyKey(
-                $conn,
-                $scope->posTenant,
-                $scope->posBranch,
-                $scope->storeId,
-                $idempotencyKey
-            );
-            if ($existing) {
-                $movementIds[] = (int) $existing['id'];
-                continue;
-            }
-
-            $balance = $lockedBalances[$requirement->ingredientItemId]
-                ?? $this->lockBalance($conn, $scope, $requirement->ingredientItemId);
-            $newOnHand = RecipeDecimal::subtract($balance['qty_on_hand'], $requirement->requiredQtyBase);
-            $newAvailable = RecipeDecimal::subtract($newOnHand, $balance['qty_reserved']);
-            $movementId = $this->movements->createMovement($conn, [
-                'movement_uuid' => $this->uuid(),
-                'movement_group_uuid' => $batchContext['batch_uuid'] ?? null,
-                'pos_tenant' => $scope->posTenant,
-                'pos_branch' => $scope->posBranch,
-                'branch_uuid' => $scope->branchUuid,
-                'store_id' => $scope->storeId,
-                'item_id' => $requirement->ingredientItemId,
-                'movement_type' => 'production_input',
-                'source_type' => 'production_batch',
-                'source_id' => $batchContext['batch_id'] ?? null,
-                'source_uuid' => $batchContext['batch_uuid'] ?? null,
-                'recipe_id' => $explosion->recipeId,
-                'production_batch_id' => $batchContext['batch_id'] ?? null,
-                'qty_out' => $requirement->requiredQtyBase,
-                'unit_id' => $requirement->unitId,
-                'unit_conversion_to_base' => $requirement->unitConversionToBase,
-                'unit_cost' => $requirement->unitCost,
-                'total_cost' => $requirement->totalCost,
-                'idempotency_key' => $idempotencyKey,
-                'created_by' => $batchContext['created_by'] ?? null,
-            ]);
-            $this->balances->putBalance($conn, [
-                'pos_tenant' => $scope->posTenant,
-                'pos_branch' => $scope->posBranch,
-                'branch_uuid' => $scope->branchUuid,
-                'store_id' => $scope->storeId,
-                'item_id' => $requirement->ingredientItemId,
-                'qty_on_hand' => $newOnHand,
-                'qty_reserved' => $balance['qty_reserved'],
-                'qty_available' => $newAvailable,
-                'moving_average_cost' => $balance['moving_average_cost'],
-                'last_movement_id' => $movementId,
-            ]);
-            $movementIds[] = $movementId;
-        }
-
-        return new RecipeMovementResult(['movement_ids' => $movementIds]);
+        return $this->recordProductionInputThroughInventoryLedger($conn, $scope, $explosion, $batchContext);
     }
 
     public function recordProductionOutput(
@@ -342,63 +240,17 @@ class RecipeInventoryMovementService
         if (!$this->flags->isEnabled() || in_array($this->flags->mode(), ['schema_only', 'read_only'], true)) {
             return new RecipeMovementResult(['noop' => true]);
         }
+        $this->assertExplicitQuantityTrackingEnabled();
 
         $scope = $this->scopeFromOrderContext($batchContext);
-        if ($this->inventoryFlags->canWriteLedger()) {
-            return $this->recordProductionOutputThroughInventoryLedger($conn, $scope, $batchContext, $outputItemId, $outputQty, $totalCost);
-        }
-
-        $idempotencyKey = 'production-output'
-            . ':' . $scope->posTenant
-            . ':' . $scope->posBranch
-            . ':store:' . $scope->storeId
-            . ':batch:' . (string) ($batchContext['batch_uuid'] ?? $batchContext['batch_id'] ?? '0')
-            . ':item:' . $outputItemId;
-        $existing = $this->movements->findByIdempotencyKey($conn, $scope->posTenant, $scope->posBranch, $scope->storeId, $idempotencyKey);
-        if ($existing) {
-            return new RecipeMovementResult(['movement_ids' => [(int) $existing['id']]]);
-        }
-
-        $balance = $this->lockBalance($conn, $scope, $outputItemId);
-        $newOnHand = RecipeDecimal::add($balance['qty_on_hand'], $outputQty);
-        $newAvailable = RecipeDecimal::subtract($newOnHand, $balance['qty_reserved']);
-        $unitCost = RecipeDecimal::compare($outputQty, '0') > 0
-            ? RecipeDecimal::divide($totalCost, $outputQty)
-            : RecipeDecimal::zero();
-        $movementId = $this->movements->createMovement($conn, [
-            'movement_uuid' => $this->uuid(),
-            'movement_group_uuid' => $batchContext['batch_uuid'] ?? null,
-            'pos_tenant' => $scope->posTenant,
-            'pos_branch' => $scope->posBranch,
-            'branch_uuid' => $scope->branchUuid,
-            'store_id' => $scope->storeId,
-            'item_id' => $outputItemId,
-            'movement_type' => 'production_output',
-            'source_type' => 'production_batch',
-            'source_id' => $batchContext['batch_id'] ?? null,
-            'source_uuid' => $batchContext['batch_uuid'] ?? null,
-            'recipe_id' => $batchContext['recipe_id'] ?? null,
-            'production_batch_id' => $batchContext['batch_id'] ?? null,
-            'qty_in' => $outputQty,
-            'unit_cost' => $unitCost,
-            'total_cost' => $totalCost,
-            'idempotency_key' => $idempotencyKey,
-            'created_by' => $batchContext['created_by'] ?? null,
-        ]);
-        $this->balances->putBalance($conn, [
-            'pos_tenant' => $scope->posTenant,
-            'pos_branch' => $scope->posBranch,
-            'branch_uuid' => $scope->branchUuid,
-            'store_id' => $scope->storeId,
-            'item_id' => $outputItemId,
-            'qty_on_hand' => $newOnHand,
-            'qty_reserved' => $balance['qty_reserved'],
-            'qty_available' => $newAvailable,
-            'moving_average_cost' => $unitCost,
-            'last_movement_id' => $movementId,
-        ]);
-
-        return new RecipeMovementResult(['movement_ids' => [$movementId]]);
+        return $this->recordProductionOutputThroughInventoryLedger(
+            $conn,
+            $scope,
+            $batchContext,
+            $outputItemId,
+            $outputQty,
+            $totalCost
+        );
     }
 
     public function recordRefundReversal(mysqli $conn, array $originalMovements, array $refundContext): RecipeMovementResult
@@ -414,6 +266,7 @@ class RecipeInventoryMovementService
                 'warnings' => ['Refund policy does not return ingredients to stock.'],
             ]);
         }
+        $this->assertExplicitQuantityTrackingEnabled();
 
         $movementIds = [];
         foreach ($originalMovements as $movement) {
@@ -475,18 +328,11 @@ class RecipeInventoryMovementService
             }
 
             $itemId = (int) $movement['item_id'];
-            $balance = $this->lockBalance($conn, $scope, $itemId);
-            $newOnHand = RecipeDecimal::add($balance['qty_on_hand'], $qty);
-            $newAvailable = RecipeDecimal::subtract($newOnHand, $balance['qty_reserved']);
             $unitCost = RecipeDecimal::normalize($movement['unit_cost'] ?? '0');
             $totalCost = RecipeDecimal::multiply($qty, $unitCost);
-            $movementId = $this->movements->createMovement($conn, [
-                'movement_uuid' => $this->uuid(),
+            $reversal = $this->inventoryLedger->recordMovement($conn, [
+                'scope' => $this->ledgerScope($scope),
                 'movement_group_uuid' => $refundUuid !== '' ? $refundUuid : null,
-                'pos_tenant' => $scope->posTenant,
-                'pos_branch' => $scope->posBranch,
-                'branch_uuid' => $scope->branchUuid,
-                'store_id' => $scope->storeId,
                 'item_id' => $itemId,
                 'movement_type' => 'refund_reversal',
                 'source_type' => 'order_line',
@@ -505,21 +351,16 @@ class RecipeInventoryMovementService
                 'total_cost' => $totalCost,
                 'idempotency_key' => $idempotencyKey,
                 'reversed_movement_id' => $movement['id'] ?? null,
+                'metadata' => [
+                    'source' => 'recipe_refund',
+                    'refund_policy' => 'return_to_stock',
+                    'refund_uuid' => $refundUuid !== '' ? $refundUuid : null,
+                ],
                 'created_by' => $refundContext['created_by'] ?? null,
-            ]);
-            $this->balances->putBalance($conn, [
-                'pos_tenant' => $scope->posTenant,
-                'pos_branch' => $scope->posBranch,
-                'branch_uuid' => $scope->branchUuid,
-                'store_id' => $scope->storeId,
-                'item_id' => $itemId,
-                'qty_on_hand' => $newOnHand,
-                'qty_reserved' => $balance['qty_reserved'],
-                'qty_available' => $newAvailable,
-                'moving_average_cost' => $balance['moving_average_cost'],
-                'last_movement_id' => $movementId,
-            ]);
-            $movementIds[] = $movementId;
+            ], null, ['manage_transaction' => false]);
+            if (empty($reversal['noop'])) {
+                $movementIds[] = (int) ($reversal['movement_id'] ?? 0);
+            }
         }
 
         return new RecipeMovementResult([
@@ -533,6 +374,7 @@ class RecipeInventoryMovementService
         if (!$this->flags->isEnabled() || in_array($this->flags->mode(), ['schema_only', 'read_only'], true)) {
             return new RecipeMovementResult(['noop' => true]);
         }
+        $this->assertExplicitQuantityTrackingEnabled();
 
         $scope = $this->scopeFromOrderContext($wasteContext);
         $itemId = (int) ($wasteContext['item_id'] ?? 0);
@@ -550,25 +392,13 @@ class RecipeInventoryMovementService
             $idempotencyKey = 'waste:' . $scope->posTenant . ':' . $scope->posBranch . ':store:' . $scope->storeId . ':item:' . $itemId . ':source:' . $source;
         }
 
-        $existing = $this->movements->findByIdempotencyKey($conn, $scope->posTenant, $scope->posBranch, $scope->storeId, $idempotencyKey);
-        if ($existing) {
-            return new RecipeMovementResult(['movement_ids' => [(int) $existing['id']]]);
-        }
-
         $unitCost = RecipeDecimal::normalize($wasteContext['unit_cost'] ?? '0');
         $totalCost = array_key_exists('total_cost', $wasteContext)
             ? RecipeDecimal::normalize($wasteContext['total_cost'])
             : RecipeDecimal::multiply($qty, $unitCost);
-        $balance = $this->lockBalance($conn, $scope, $itemId);
-        $newOnHand = RecipeDecimal::subtract($balance['qty_on_hand'], $qty);
-        $newAvailable = RecipeDecimal::subtract($newOnHand, $balance['qty_reserved']);
-        $movementId = $this->movements->createMovement($conn, [
-            'movement_uuid' => $this->uuid(),
+        $movement = $this->inventoryLedger->recordMovement($conn, [
+            'scope' => $this->ledgerScope($scope),
             'movement_group_uuid' => $wasteContext['waste_uuid'] ?? null,
-            'pos_tenant' => $scope->posTenant,
-            'pos_branch' => $scope->posBranch,
-            'branch_uuid' => $scope->branchUuid,
-            'store_id' => $scope->storeId,
             'item_id' => $itemId,
             'movement_type' => 'waste',
             'source_type' => $wasteContext['source_type'] ?? 'manual',
@@ -582,22 +412,16 @@ class RecipeInventoryMovementService
             'unit_cost' => $unitCost,
             'total_cost' => $totalCost,
             'idempotency_key' => $idempotencyKey,
+            'metadata' => [
+                'source' => 'recipe_waste',
+            ],
             'created_by' => $wasteContext['created_by'] ?? null,
-        ]);
-        $this->balances->putBalance($conn, [
-            'pos_tenant' => $scope->posTenant,
-            'pos_branch' => $scope->posBranch,
-            'branch_uuid' => $scope->branchUuid,
-            'store_id' => $scope->storeId,
-            'item_id' => $itemId,
-            'qty_on_hand' => $newOnHand,
-            'qty_reserved' => $balance['qty_reserved'],
-            'qty_available' => $newAvailable,
-            'moving_average_cost' => $balance['moving_average_cost'],
-            'last_movement_id' => $movementId,
-        ]);
+        ], null, ['manage_transaction' => false]);
 
-        return new RecipeMovementResult(['movement_ids' => [$movementId]]);
+        return new RecipeMovementResult([
+            'movement_ids' => empty($movement['noop']) ? [(int) ($movement['movement_id'] ?? 0)] : [],
+            'noop' => !empty($movement['noop']),
+        ]);
     }
 
     public function recordAdjustment(mysqli $conn, array $adjustmentContext): RecipeMovementResult
@@ -605,6 +429,7 @@ class RecipeInventoryMovementService
         if (!$this->flags->isEnabled() || in_array($this->flags->mode(), ['schema_only', 'read_only'], true)) {
             return new RecipeMovementResult(['noop' => true]);
         }
+        $this->assertExplicitQuantityTrackingEnabled();
 
         $scope = $this->scopeFromOrderContext($adjustmentContext);
         $itemId = (int) ($adjustmentContext['item_id'] ?? 0);
@@ -639,28 +464,14 @@ class RecipeInventoryMovementService
             $idempotencyKey = 'adjustment:' . $scope->posTenant . ':' . $scope->posBranch . ':store:' . $scope->storeId . ':item:' . $itemId . ':source:' . $source;
         }
 
-        $existing = $this->movements->findByIdempotencyKey($conn, $scope->posTenant, $scope->posBranch, $scope->storeId, $idempotencyKey);
-        if ($existing) {
-            return new RecipeMovementResult(['movement_ids' => [(int) $existing['id']]]);
-        }
-
         $movementQty = $hasQtyIn ? $qtyIn : $qtyOut;
         $unitCost = RecipeDecimal::normalize($adjustmentContext['unit_cost'] ?? '0');
         $totalCost = array_key_exists('total_cost', $adjustmentContext)
             ? RecipeDecimal::normalize($adjustmentContext['total_cost'])
             : RecipeDecimal::multiply($movementQty, $unitCost);
-        $balance = $this->lockBalance($conn, $scope, $itemId);
-        $newOnHand = $hasQtyIn
-            ? RecipeDecimal::add($balance['qty_on_hand'], $qtyIn)
-            : RecipeDecimal::subtract($balance['qty_on_hand'], $qtyOut);
-        $newAvailable = RecipeDecimal::subtract($newOnHand, $balance['qty_reserved']);
-        $movementId = $this->movements->createMovement($conn, [
-            'movement_uuid' => $this->uuid(),
+        $movement = $this->inventoryLedger->recordMovement($conn, [
+            'scope' => $this->ledgerScope($scope),
             'movement_group_uuid' => $adjustmentContext['adjustment_uuid'] ?? null,
-            'pos_tenant' => $scope->posTenant,
-            'pos_branch' => $scope->posBranch,
-            'branch_uuid' => $scope->branchUuid,
-            'store_id' => $scope->storeId,
             'item_id' => $itemId,
             'movement_type' => 'adjustment',
             'source_type' => $adjustmentContext['source_type'] ?? 'manual',
@@ -675,22 +486,16 @@ class RecipeInventoryMovementService
             'unit_cost' => $unitCost,
             'total_cost' => $totalCost,
             'idempotency_key' => $idempotencyKey,
+            'metadata' => [
+                'source' => 'recipe_adjustment',
+            ],
             'created_by' => $adjustmentContext['created_by'] ?? null,
-        ]);
-        $this->balances->putBalance($conn, [
-            'pos_tenant' => $scope->posTenant,
-            'pos_branch' => $scope->posBranch,
-            'branch_uuid' => $scope->branchUuid,
-            'store_id' => $scope->storeId,
-            'item_id' => $itemId,
-            'qty_on_hand' => $newOnHand,
-            'qty_reserved' => $balance['qty_reserved'],
-            'qty_available' => $newAvailable,
-            'moving_average_cost' => $balance['moving_average_cost'],
-            'last_movement_id' => $movementId,
-        ]);
+        ], null, ['manage_transaction' => false]);
 
-        return new RecipeMovementResult(['movement_ids' => [$movementId]]);
+        return new RecipeMovementResult([
+            'movement_ids' => empty($movement['noop']) ? [(int) ($movement['movement_id'] ?? 0)] : [],
+            'noop' => !empty($movement['noop']),
+        ]);
     }
 
     private function recordProductionInputThroughInventoryLedger(
@@ -798,116 +603,18 @@ class RecipeInventoryMovementService
         ];
     }
 
-    private function lockBalance(mysqli $conn, RecipeScope $scope, int $itemId): array
+    /**
+     * Legacy recipe-only configurations predate the explicit inventory
+     * capability and keep their historical movement behavior. Once a shop
+     * declares quantity_tracking, an active recipe write may never bypass it.
+     */
+    private function assertExplicitQuantityTrackingEnabled(): void
     {
-        $this->ensureBalanceExists($conn, $scope, $itemId);
-
-        $stmt = $conn->prepare("
-SELECT *
-FROM inventory_item_balances
-WHERE pos_tenant = ?
-  AND pos_branch = ?
-  AND store_id = ?
-  AND item_id = ?
-LIMIT 1
-FOR UPDATE");
-        $stmt->bind_param('iiii', $scope->posTenant, $scope->posBranch, $scope->storeId, $itemId);
-        $stmt->execute();
-        $row = $stmt->get_result()->fetch_assoc();
-        $stmt->close();
-
-        return $row ?: [
-            'qty_on_hand' => '0.000000',
-            'qty_reserved' => '0.000000',
-            'qty_available' => '0.000000',
-            'moving_average_cost' => '0.000000',
-        ];
-    }
-
-    private function lockRequirementBalances(mysqli $conn, RecipeScope $scope, array $requirements): array
-    {
-        $itemIds = [];
-        foreach ($requirements as $requirement) {
-            if (!$requirement instanceof IngredientRequirement || $requirement->ingredientItemId < 1) {
-                continue;
-            }
-            $itemIds[$requirement->ingredientItemId] = $requirement->ingredientItemId;
+        $inventoryConfig = $this->inventoryFlags->config();
+        if (array_key_exists('quantity_tracking', $inventoryConfig)
+            && !$this->inventoryFlags->isQuantityTrackingEnabled()) {
+            throw new RuntimeException('RECIPE_QUANTITY_TRACKING_REQUIRED');
         }
-
-        return $this->lockBalances($conn, $scope, array_values($itemIds));
-    }
-
-    private function lockBalances(mysqli $conn, RecipeScope $scope, array $itemIds): array
-    {
-        $itemIds = array_values(array_unique(array_filter(array_map('intval', $itemIds), static function (int $itemId): bool {
-            return $itemId > 0;
-        })));
-        sort($itemIds, SORT_NUMERIC);
-        if (!$itemIds) {
-            return [];
-        }
-
-        foreach ($itemIds as $itemId) {
-            $this->ensureBalanceExists($conn, $scope, $itemId);
-        }
-
-        $placeholders = implode(',', array_fill(0, count($itemIds), '?'));
-        $stmt = $conn->prepare("
-SELECT *
-FROM inventory_item_balances
-WHERE pos_tenant = ?
-  AND pos_branch = ?
-  AND store_id = ?
-  AND item_id IN ({$placeholders})
-ORDER BY item_id ASC
-FOR UPDATE");
-        $params = array_merge([$scope->posTenant, $scope->posBranch, $scope->storeId], $itemIds);
-        $this->bindParams($stmt, str_repeat('i', count($params)), $params);
-        $stmt->execute();
-        $result = $stmt->get_result();
-        $balances = [];
-        while ($row = $result->fetch_assoc()) {
-            $balances[(int) $row['item_id']] = $row;
-        }
-        $stmt->close();
-
-        foreach ($itemIds as $itemId) {
-            if (!isset($balances[$itemId])) {
-                $balances[$itemId] = [
-                    'qty_on_hand' => '0.000000',
-                    'qty_reserved' => '0.000000',
-                    'qty_available' => '0.000000',
-                    'moving_average_cost' => '0.000000',
-                ];
-            }
-        }
-
-        return $balances;
-    }
-
-    private function ensureBalanceExists(mysqli $conn, RecipeScope $scope, int $itemId): void
-    {
-        $stmt = $conn->prepare("
-INSERT IGNORE INTO inventory_item_balances
-  (pos_tenant, pos_branch, branch_uuid, store_id, item_id)
-VALUES (?, ?, ?, ?, ?)");
-        $branchUuid = $scope->branchUuid;
-        $stmt->bind_param('iisii', $scope->posTenant, $scope->posBranch, $branchUuid, $scope->storeId, $itemId);
-        $stmt->execute();
-        $stmt->close();
-    }
-
-    private function bindParams(mysqli_stmt $stmt, string $types, array $params): void
-    {
-        $refs = [];
-        foreach ($params as $index => $value) {
-            $refs[$index] = $value;
-        }
-        $bind = [$types];
-        foreach ($refs as $index => $_) {
-            $bind[] = &$refs[$index];
-        }
-        call_user_func_array([$stmt, 'bind_param'], $bind);
     }
 
     private function scopeFromOrderContext(array $orderContext): RecipeScope
@@ -979,20 +686,4 @@ VALUES (?, ?, ?, ?, ?)");
             . ':item:' . $requirement->ingredientItemId;
     }
 
-    private function uuid(): string
-    {
-        $bytes = random_bytes(16);
-        $bytes[6] = chr((ord($bytes[6]) & 0x0f) | 0x40);
-        $bytes[8] = chr((ord($bytes[8]) & 0x3f) | 0x80);
-        $hex = bin2hex($bytes);
-
-        return sprintf(
-            '%s-%s-%s-%s-%s',
-            substr($hex, 0, 8),
-            substr($hex, 8, 4),
-            substr($hex, 12, 4),
-            substr($hex, 16, 4),
-            substr($hex, 20, 12)
-        );
-    }
 }
