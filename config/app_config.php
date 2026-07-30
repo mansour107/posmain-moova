@@ -552,6 +552,10 @@ if (!function_exists('posmain_app_config')) {
             $branchEnv(['POSMAIN_INVENTORY_QUANTITY_TRACKING'], null),
             in_array($inventoryLedgerMode, ['bridge', 'live'], true)
         );
+        $printMode = strtolower(trim((string) $branchEnv(['POSMAIN_PRINT_MODE'], 'legacy')));
+        if (!in_array($printMode, ['legacy', 'silent'], true)) {
+            $printMode = 'legacy';
+        }
         $configRole = strtolower(trim((string) $branchEnv(['POSMAIN_ROLE'], 'branch')));
         $recipeMoovaSyncDefault = $configRole === 'cloud' ? '0' : '1';
 
@@ -647,6 +651,28 @@ if (!function_exists('posmain_app_config')) {
                 'default_rate' => (string) $branchEnv(['POSMAIN_TAX_DEFAULT_RATE'], '0'),
                 'inclusive' => posmain_bool($branchEnv(['POSMAIN_TAX_INCLUSIVE'], '0'), false),
                 'vat_payable_account_id' => posmain_int($branchEnv(['POSMAIN_TAX_VAT_PAYABLE_ACCOUNT_ID'], 0), 0),
+            ],
+            'printing' => [
+                // Keep the browser dialog as the compatibility default. Silent
+                // delivery is activated only by deployment configuration.
+                'mode' => $printMode,
+                'simulator_directory' => (string) $branchEnv(
+                    ['POSMAIN_PRINT_SIMULATOR_DIR'],
+                    sys_get_temp_dir() . '/posmain-printer-simulator',
+                    true
+                ),
+                'network_timeout_ms' => max(
+                    500,
+                    min(15000, posmain_int($branchEnv(['POSMAIN_PRINT_NETWORK_TIMEOUT_MS'], 3000), 3000))
+                ),
+                'worker_lock_seconds' => max(
+                    10,
+                    min(300, posmain_int($branchEnv(['POSMAIN_PRINT_WORKER_LOCK_SECONDS'], 45), 45))
+                ),
+                'retry_delay_seconds' => max(
+                    1,
+                    min(3600, posmain_int($branchEnv(['POSMAIN_PRINT_RETRY_DELAY_SECONDS'], 15), 15))
+                ),
             ],
             'public_base_url' => (string) posmain_env('POSMAIN_PUBLIC_BASE_URL', ''),
             'delivery' => [

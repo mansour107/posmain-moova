@@ -169,6 +169,7 @@ if (!function_exists('auth_guard_permission_map')) {
             'pos.reprint' => ['show_sales', 'sid_sales'],
             'pos.reprint.receipt' => ['show_sales', 'sid_sales'],
             'pos.reprint.kitchen_ticket' => ['show_sales', 'sid_sales'],
+            'printers.manage' => ['__admin_only'],
             'pos.shift.force_close' => ['__admin_only'],
             'pos.shift.force_close_others' => ['edit_sales', 'sid_sales'],
             'pos.shift.override' => ['edit_sales', 'sid_sales'],

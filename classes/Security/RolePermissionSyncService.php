@@ -175,7 +175,7 @@ class RolePermissionSyncService
             'Inventory & menu' => ['menu.edit', 'inventory.edit', 'inventory.approve', 'inventory.policy.manage'],
             'Delivery & KDS' => ['moova.manage', 'moova.accept', 'delivery.dispatch', 'delivery.assign', 'delivery.zones.manage', 'delivery.workers.manage', 'delivery.compensation.manage', 'delivery.settlements.manage', 'delivery.settlements.reverse', 'delivery.reports.view', 'kds.view', 'kds.complete', 'kds.manage'],
             'Accounting & reports' => ['accounting.view', 'reports.view', 'reports.own_shift', 'reports.branch_daily', 'reports.costs', 'reports.cash_flow'],
-            'Administration' => ['users.manage', 'roles.manage', 'customers.manage', 'system.health.view', 'system.tools.run'],
+            'Administration' => ['users.manage', 'roles.manage', 'customers.manage', 'printers.manage', 'system.health.view', 'system.tools.run'],
         ];
     }
 
@@ -246,7 +246,7 @@ class RolePermissionSyncService
                     'menu.edit', 'inventory.edit', 'reports.view', 'reports.cash_flow', 'moova.manage', 'moova.accept',
                     'delivery.dispatch', 'delivery.assign', 'delivery.zones.manage', 'delivery.workers.manage',
                     'delivery.compensation.manage', 'delivery.settlements.manage', 'delivery.reports.view',
-                    'kds.view', 'kds.complete',
+                    'kds.view', 'kds.complete', 'printers.manage',
                 ],
                 'capabilities' => [
                     'pos.discount.apply' => ['limit_value' => 25.0, 'is_unlimited' => false],

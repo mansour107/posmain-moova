@@ -16,6 +16,7 @@ return [
     'role_permissions.php' => ['permission' => 'roles.manage', 'admin_or' => true],
     'setting.php' => ['permission' => 'system.tools.run', 'admin_or' => true],
     'inventory_policy.php' => ['permission' => 'inventory.policy.manage', 'admin_or' => true],
+    'printer_management.php' => ['permission' => 'printers.manage', 'admin_or' => true],
     'change_password.php' => ['permission' => null],
     'change_pin.php' => ['permission' => null],
     'workspace.php' => ['permission' => null],

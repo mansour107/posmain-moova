@@ -21,6 +21,11 @@ return [
     'ajax/move_table_order.php' => ['permission' => 'pos.table.move', 'csrf' => 'pos_browser', 'lane' => 'pos'],
     'ajax/process_split_payment.php' => ['permission' => 'pos.open', 'csrf' => 'pos_browser', 'lane' => 'pos'],
     'ajax/process_table_payment.php' => ['permission' => 'pos.open', 'csrf' => 'pos_browser', 'lane' => 'pos'],
+    'ajax/print_dispatch.php' => [
+        'any_of' => ['pos.open', 'pos.reprint', 'reports.view', 'reports.own_shift', 'pos.shift.close'],
+        'csrf' => 'print_dispatch',
+        'lane' => 'pos',
+    ],
     'ajax/team_hub.php' => ['any_of' => ['users.manage', 'roles.manage'], 'csrf' => '', 'lane' => 'erp', 'admin_or' => true],
     'ajax/pin_available.php' => ['permission' => '', 'csrf' => '', 'lane' => 'erp'],
     'ajax/main_pin_login.php' => ['permission' => '', 'csrf' => 'main_pin', 'lane' => 'erp', 'public' => true],

@@ -26,7 +26,10 @@ phase4PrintTemplateAssert(strpos($preparation, '$print_lines') !== false, 'prepa
 phase4PrintTemplateAssert(strpos($preparation, '($item[\'modifiers\'] ?? [])') !== false, 'preparation should render modifiers');
 phase4PrintTemplateAssert(strpos($preparation, '($item[\'notes\'] ?? null)') !== false, 'preparation should render Phase 4 notes');
 phase4PrintTemplateAssert(strpos($preparation, "['legacy_notes']") !== false, 'preparation should keep legacy notes fallback');
-phase4PrintTemplateAssert(strpos($preparation, 'window.print();') !== false, 'preparation should keep browser auto-print behavior');
+phase4PrintTemplateAssert(
+    strpos($preparation, 'Promise.resolve(window.print())') !== false,
+    'preparation should await either native or silent auto-print behavior'
+);
 
 echo "phase4-print-template-payload-contract-ok\n";
 

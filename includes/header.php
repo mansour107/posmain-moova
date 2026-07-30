@@ -192,6 +192,8 @@ if (isset($conn) && $conn instanceof mysqli) {
   <?php
   require_once __DIR__ . '/layout_capabilities.php';
   echo posmain_render_layout_capabilities_script($conn ?? null);
+  require_once __DIR__ . '/print_client_bootstrap.php';
+  echo posmain_render_print_client_bootstrap('');
   ?>
 </head>
 

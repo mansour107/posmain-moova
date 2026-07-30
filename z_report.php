@@ -7,6 +7,7 @@ page_guard('pos.shift.close', $conn);
 require_once __DIR__ . '/includes/auth_guard.php';
 require_once __DIR__ . '/includes/csrf.php';
 require_once __DIR__ . '/includes/pos_cache_control.php';
+require_once __DIR__ . '/includes/print_client_bootstrap.php';
 require_once __DIR__ . '/classes/Pos/Service/ShiftCountService.php';
 require_once __DIR__ . '/classes/ShiftReport.php';
 
@@ -100,8 +101,9 @@ $net_cash_expected = $has_drawer_session ? $drawer_expected_cash : $total_cash_s
     <title>إغلاق الشيفت Z-Report</title>
     <link href="dist/css/z_report.css" rel="stylesheet">
     <link href="assets/libs/fontawesome.min.css" rel="stylesheet">
+    <?= posmain_render_print_client_bootstrap('') ?>
 </head>
-<body class="z-report-page">
+<body class="z-report-page" data-print-job-type="z_report" data-print-content-selector=".ticket">
 
 <div class="ticket">
     <div class="ticket-header">

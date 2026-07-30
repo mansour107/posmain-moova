@@ -875,6 +875,10 @@ class SyncSchemaManager
             return $this->paymentRefundsUpgradeStatements($conn);
         }
 
+        if ($table === 'print_jobs') {
+            return $this->printJobsUpgradeStatements($conn);
+        }
+
         if ($table === 'pos_customers') {
             return $this->posCustomersUpgradeStatements($conn);
         }
@@ -3971,22 +3975,65 @@ CREATE TABLE IF NOT EXISTS printers (
         return "
 CREATE TABLE IF NOT EXISTS print_jobs (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-  job_type ENUM('receipt','kot','kitchen','z_report','x_report') NOT NULL,
+  job_type ENUM('receipt','kot','kitchen','z_report','x_report','report','label','document') NOT NULL,
   order_id BIGINT UNSIGNED NULL,
   drawer_session_id BIGINT UNSIGNED NULL,
   printer_id BIGINT UNSIGNED NULL,
   status ENUM('queued','printed','failed','cancelled') NOT NULL DEFAULT 'queued',
   payload_json JSON NULL,
+  idempotency_key VARCHAR(191) NULL,
+  payload_hash CHAR(64) NULL,
   attempts INT NOT NULL DEFAULT 0,
+  max_attempts INT NOT NULL DEFAULT 5,
   last_error VARCHAR(500) NULL,
+  next_retry_at DATETIME(6) NULL,
+  locked_by VARCHAR(64) NULL,
+  locked_until DATETIME(6) NULL,
+  delivery_receipt_json JSON NULL,
   created_by BIGINT UNSIGNED NULL,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   printed_at DATETIME NULL,
   PRIMARY KEY (id),
+  UNIQUE KEY uq_print_jobs_idempotency (idempotency_key),
   KEY idx_print_jobs_status (status, created_at),
+  KEY idx_print_jobs_claim (status, next_retry_at, locked_until, created_at),
   KEY idx_print_jobs_order (order_id, job_type),
   KEY idx_print_jobs_printer (printer_id, status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
+    private function printJobsUpgradeStatements(mysqli $conn): array
+    {
+        $statements = [];
+        $columns = [
+            'idempotency_key' => 'ALTER TABLE print_jobs ADD COLUMN idempotency_key VARCHAR(191) NULL AFTER payload_json',
+            'payload_hash' => 'ALTER TABLE print_jobs ADD COLUMN payload_hash CHAR(64) NULL AFTER idempotency_key',
+            'max_attempts' => 'ALTER TABLE print_jobs ADD COLUMN max_attempts INT NOT NULL DEFAULT 5 AFTER attempts',
+            'next_retry_at' => 'ALTER TABLE print_jobs ADD COLUMN next_retry_at DATETIME(6) NULL AFTER last_error',
+            'locked_by' => 'ALTER TABLE print_jobs ADD COLUMN locked_by VARCHAR(64) NULL AFTER next_retry_at',
+            'locked_until' => 'ALTER TABLE print_jobs ADD COLUMN locked_until DATETIME(6) NULL AFTER locked_by',
+            'delivery_receipt_json' => 'ALTER TABLE print_jobs ADD COLUMN delivery_receipt_json JSON NULL AFTER locked_until',
+        ];
+        foreach ($columns as $column => $sql) {
+            if (!$this->columnExists($conn, 'print_jobs', $column)) {
+                $statements['print_jobs.add_' . $column] = $sql;
+            }
+        }
+
+        if (!$this->enumColumnHasValue($conn, 'print_jobs', 'job_type', 'document')) {
+            $statements['print_jobs.expand_job_type'] =
+                "ALTER TABLE print_jobs MODIFY COLUMN job_type ENUM('receipt','kot','kitchen','z_report','x_report','report','label','document') NOT NULL";
+        }
+        if (!$this->indexExists($conn, 'print_jobs', 'uq_print_jobs_idempotency')) {
+            $statements['print_jobs.add_uq_print_jobs_idempotency'] =
+                'ALTER TABLE print_jobs ADD UNIQUE KEY uq_print_jobs_idempotency (idempotency_key)';
+        }
+        if (!$this->indexExists($conn, 'print_jobs', 'idx_print_jobs_claim')) {
+            $statements['print_jobs.add_idx_print_jobs_claim'] =
+                'ALTER TABLE print_jobs ADD KEY idx_print_jobs_claim (status, next_retry_at, locked_until, created_at)';
+        }
+
+        return $statements;
     }
 
     private function itemNutritionProfilesSql()

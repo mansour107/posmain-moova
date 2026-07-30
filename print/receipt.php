@@ -6,6 +6,7 @@ require_once __DIR__ . '/../includes/connect.php';
 include('includes/header.php');
 require_once __DIR__ . '/../classes/Pos/Service/OrderPrintPayloadService.php';
 require_once __DIR__ . '/../classes/Pos/Service/BrowserPrintAuditService.php';
+require_once __DIR__ . '/../config/app_config.php';
 
 if (!isset($_GET['id'])) {
     echo "لا يوجد فاتورة بهذا الرقم";
@@ -23,7 +24,9 @@ if ($rowfat == null) {
     } catch (Throwable $printPayloadError) {
         $print_payload = null;
     }
-    if ($print_payload !== null) {
+    $posmainPrintConfig = posmain_app_config();
+    $posmainSilentPrint = ($posmainPrintConfig['printing']['mode'] ?? 'legacy') === 'silent';
+    if ($print_payload !== null && !$posmainSilentPrint) {
         try {
             (new BrowserPrintAuditService())->recordRenderedPrint(
                 $conn,
@@ -51,6 +54,15 @@ if ($rowfat == null) {
         $back_page = ($pos_type === 'clothes') ? '../pos_clothes.php' : '../pos_barcode.php';
     }
 ?>
+
+<script>
+window.POSMAIN_PRINT_CONTEXT = {
+    jobType: 'receipt',
+    orderId: <?= (int) $id ?>,
+    title: 'Receipt <?= (int) $id ?>',
+    contentSelector: '#printed'
+};
+</script>
 
 
 

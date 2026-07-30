@@ -4,6 +4,7 @@ include('../includes/connect.php');
 require_once __DIR__ . '/../includes/auth_guard.php';
 require_once __DIR__ . '/../classes/Pos/Service/ShiftSessionService.php';
 require_once __DIR__ . '/../classes/ShiftReport.php';
+require_once __DIR__ . '/../includes/print_client_bootstrap.php';
 
 if (!isset($_SESSION['userid'])) {
     header('Location: ../index.php');
@@ -86,8 +87,9 @@ $report_day_label = $today;
             line-height: 1.35;
         }
     </style>
+    <?= posmain_render_print_client_bootstrap('../') ?>
 </head>
-<body>
+<body data-print-job-type="report" data-print-content-selector=".receipt-container">
 
 <div class="card receipt-container" id="printed">
 <div class="card-body p-2">

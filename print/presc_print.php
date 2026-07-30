@@ -1,5 +1,7 @@
 <?php include('../../includes/head.php') ?>
 <?php include('../../includes/connect.php') ?>
+<?php require_once __DIR__ . '/../includes/print_client_bootstrap.php'; ?>
+<?= posmain_render_print_client_bootstrap('../') ?>
 <style>
   .banner{
     width:100%;
@@ -11,7 +13,7 @@
   }
 
 </style>
-<body onload="window.print();">
+<body data-print-job-type="document" onload="window.print();">
   
       <div  class="invoice p-3 mb-3">
              

@@ -2,12 +2,15 @@
 include('../includes/connect.php');
 require_once __DIR__ . '/../classes/Pos/Service/OrderPrintPayloadService.php';
 require_once __DIR__ . '/../classes/Pos/Service/BrowserPrintAuditService.php';
+require_once __DIR__ . '/../config/app_config.php';
+require_once __DIR__ . '/../includes/print_client_bootstrap.php';
 
 $table_id = intval($_GET['table_id'] ?? 0);
 $order_id = intval($_GET['order_id'] ?? 0);
 $order = null;
 $table_name = '';
 $print_payload = null;
+$stmt = null;
 
 try {
     $payloadService = new OrderPrintPayloadService();
@@ -23,7 +26,9 @@ try {
 if ($print_payload !== null) {
     $order_id = (int) $print_payload['order']['id'];
     $table_name = $print_payload['table']['name'] ?? '';
-    try {
+    $posmainPrintConfig = posmain_app_config();
+    if (($posmainPrintConfig['printing']['mode'] ?? 'legacy') !== 'silent') {
+      try {
         (new BrowserPrintAuditService())->recordRenderedPrint(
             $conn,
             'kot',
@@ -35,7 +40,8 @@ if ($print_payload !== null) {
                 'reprint_reason' => $_GET['reprint_reason'] ?? null,
             ]
         );
-    } catch (Throwable $printAuditError) {
+      } catch (Throwable $printAuditError) {
+      }
     }
 } elseif ($order_id > 0) {
     $stmt = $conn->prepare("
@@ -113,8 +119,9 @@ if ($print_payload !== null || $order) {
             line-height: 1.35;
         }
     </style>
+    <?= posmain_render_print_client_bootstrap('../') ?>
 </head>
-<body>
+<body data-print-job-type="kot" data-print-order-id="<?= (int) $order_id ?>" data-print-content-selector="body">
     <div class="header">
         <h2>طلب التحضير</h2>
         <?php if ($table_name !== ''): ?>
@@ -183,8 +190,11 @@ if ($print_payload !== null || $order) {
     </table>
 
     <script>
-        window.print();
-        window.close();
+        Promise.resolve(window.print()).then(function () {
+            window.close();
+        }).catch(function () {
+            // Keep the page open so the operator can see and retry a failed route.
+        });
     </script>
 </body>
 </html>
