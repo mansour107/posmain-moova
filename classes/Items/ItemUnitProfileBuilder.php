@@ -3,6 +3,8 @@
 require_once __DIR__ . '/ItemFormInput.php';
 require_once __DIR__ . '/ItemUnitConversion.php';
 require_once __DIR__ . '/../Recipe/RecipeDecimal.php';
+require_once __DIR__ . '/../Financial/UnitPrice.php';
+require_once __DIR__ . '/../Financial/Decimal.php';
 
 final class ItemUnitProfileBuilder
 {
@@ -16,11 +18,11 @@ final class ItemUnitProfileBuilder
      *   units: list<array<string, mixed>>,
      *   preferred_unit_id: int,
      *   purchase_unit_id: int,
-     *   price1: float,
-     *   price2: float,
-     *   price3: float,
-     *   market_price: float,
-     *   cost_price: float,
+     *   price1: string,
+     *   price2: string,
+     *   price3: string,
+     *   market_price: string,
+     *   cost_price: string,
      *   barcode: string
      * }
      */
@@ -69,38 +71,53 @@ final class ItemUnitProfileBuilder
 
         $sellBarcode = trim((string) ($post['sell_barcode'] ?? $post['barcode'] ?? ''));
         $purchaseBarcode = trim((string) ($post['purchase_barcode'] ?? ''));
-        $sellPrice1 = self::decimal($post['sell_price1'] ?? $post['price1'] ?? 0);
-        $sellPrice2 = 0.0;
-        $sellMarket = 0.0;
-        $purchaseCost = self::decimal($post['purchase_cost'] ?? 0);
+        $sellPrice1 = self::money($post['sell_price1'] ?? $post['price1'] ?? '0');
+        $sellPrice2 = self::money('0');
+        $sellMarket = self::money('0');
+        $purchaseCost = self::money($post['purchase_cost'] ?? '0');
         $costSource = self::costSource($post['cost_source'] ?? 'direct');
-        $directCost = self::decimal($post['direct_cost_price'] ?? $post['cost_price'] ?? 0);
-        $recipeCost = self::decimal($post['recipe_cost_price'] ?? 0);
+        $directCost = self::money($post['direct_cost_price'] ?? $post['cost_price'] ?? '0');
+        $recipeCost = self::money($post['recipe_cost_price'] ?? '0');
 
-        if ($sellActive && !ItemFormInput::hasVariantRows($post) && $sellPrice1 <= 0) {
+        if (
+            $sellActive
+            && !ItemFormInput::hasVariantRows($post)
+            && FinancialDecimal::compare($sellPrice1, '0', UnitPrice::SCALE) <= 0
+        ) {
             throw new InvalidArgumentException('sell_price_required');
         }
 
         if (!$sellActive) {
             $sellUnitId = $storageUnitId;
             $sellBarcode = '';
-            $sellPrice1 = 0;
-            $sellPrice2 = 0;
-            $sellMarket = 0;
+            $sellPrice1 = self::money('0');
+            $sellPrice2 = self::money('0');
+            $sellMarket = self::money('0');
         }
 
-        $sellToStorage = self::decimal($post['sell_storage_factor'] ?? 1, 1.0);
-        $purchaseToStorage = self::decimal($post['purchase_storage_factor'] ?? 1, 1.0);
+        $sellToStorage = self::quantity($post['sell_storage_factor'] ?? '1', '1');
+        $purchaseToStorage = self::quantity($post['purchase_storage_factor'] ?? '1', '1');
         $sellStorageSwapped = self::isTruthy($post['sell_storage_swapped'] ?? null);
         $purchaseStorageSwapped = self::isTruthy($post['purchase_storage_swapped'] ?? null);
-        if ($sellToStorage <= 0 || $purchaseToStorage <= 0) {
+        if (
+            FinancialDecimal::compare($sellToStorage, '0', ItemUnitConversion::DISPLAY_SCALE) <= 0
+            || FinancialDecimal::compare($purchaseToStorage, '0', ItemUnitConversion::DISPLAY_SCALE) <= 0
+        ) {
             throw new InvalidArgumentException('invalid unit factor');
         }
 
-        if ($sellActive && $sellUnitId !== $storageUnitId && $sellToStorage <= 0) {
+        if (
+            $sellActive
+            && $sellUnitId !== $storageUnitId
+            && FinancialDecimal::compare($sellToStorage, '0', ItemUnitConversion::DISPLAY_SCALE) <= 0
+        ) {
             throw new InvalidArgumentException('sell_storage_factor_required');
         }
-        if ($purchaseActive && $purchaseUnitId !== $storageUnitId && $purchaseToStorage <= 0) {
+        if (
+            $purchaseActive
+            && $purchaseUnitId !== $storageUnitId
+            && FinancialDecimal::compare($purchaseToStorage, '0', ItemUnitConversion::DISPLAY_SCALE) <= 0
+        ) {
             throw new InvalidArgumentException('purchase_storage_factor_required');
         }
         if ($costSource === 'purchase' && $itemType !== 'service') {
@@ -109,22 +126,22 @@ final class ItemUnitProfileBuilder
             }
             self::assertPositive($purchaseCost, 'purchase_cost_required');
         }
-        if ($costSource === 'direct' && $directCost < 0) {
+        if ($costSource === 'direct' && FinancialDecimal::compare($directCost, '0', UnitPrice::SCALE) < 0) {
             throw new InvalidArgumentException('direct_cost_invalid');
         }
-        if ($costSource === 'recipe' && $recipeCost <= 0) {
+        if ($costSource === 'recipe' && FinancialDecimal::compare($recipeCost, '0', UnitPrice::SCALE) <= 0) {
             throw new InvalidArgumentException('recipe_cost_required');
         }
 
         $rows = [];
         $stockKey = 'u:' . $storageUnitId;
-        $rows[$stockKey] = self::blankRow($storageUnitId, 1.0, [
+        $rows[$stockKey] = self::blankRow($storageUnitId, self::quantity('1'), [
             'def_stock' => 1,
             'unit_barcode' => '',
-            'cost_price' => 0,
-            'price1' => 0,
-            'price2' => 0,
-            'price3' => 0,
+            'cost_price' => self::money('0'),
+            'price1' => self::money('0'),
+            'price2' => self::money('0'),
+            'price3' => self::money('0'),
         ]);
 
         if ($sellActive) {
@@ -178,8 +195,12 @@ final class ItemUnitProfileBuilder
         $units = array_values($rows);
         $header = self::headerFromRows($units, $sellBarcode);
         if ($costSource === 'purchase') {
-            $stockCost = self::purchaseCostPerStockUnit($purchaseCost, $purchaseToStorage, $purchaseStorageSwapped);
-            $costPrice = self::sellUnitCostFromStockCost(
+            $stockCost = self::purchaseCostPerStockUnitDecimal(
+                $purchaseCost,
+                $purchaseToStorage,
+                $purchaseStorageSwapped
+            );
+            $costPrice = self::sellUnitCostFromStockCostDecimal(
                 $stockCost,
                 $sellToStorage,
                 $sellStorageSwapped,
@@ -190,7 +211,7 @@ final class ItemUnitProfileBuilder
         } elseif ($costSource === 'recipe') {
             $costPrice = $recipeCost;
         } else {
-            $costPrice = (float) $header['cost_price'];
+            $costPrice = (string) $header['cost_price'];
         }
 
         return [
@@ -217,10 +238,10 @@ final class ItemUnitProfileBuilder
         $buy = self::findRow($units, 'def_buy');
 
         return [
-            'price1' => (float) ($sell['price1'] ?? 0),
-            'price2' => (float) ($sell['price2'] ?? 0),
-            'price3' => (float) ($sell['price3'] ?? 0),
-            'cost_price' => (float) ($buy['cost_price'] ?? ($units[0]['cost_price'] ?? 0)),
+            'price1' => self::money($sell['price1'] ?? '0'),
+            'price2' => self::money($sell['price2'] ?? '0'),
+            'price3' => self::money($sell['price3'] ?? '0'),
+            'cost_price' => self::money($buy['cost_price'] ?? ($units[0]['cost_price'] ?? '0')),
             'barcode' => (string) (($sell['unit_barcode'] ?? '') !== '' ? $sell['unit_barcode'] : $fallbackBarcode),
         ];
     }
@@ -272,8 +293,20 @@ final class ItemUnitProfileBuilder
 
     private static function purchaseCostPerStockUnit(float $purchaseCost, float $purchaseToStorage, bool $swapped): float
     {
+        return (float) self::purchaseCostPerStockUnitDecimal(
+            UnitPrice::fromLegacy($purchaseCost)->toString(),
+            FinancialDecimal::normalize((string) $purchaseToStorage, ItemUnitConversion::DISPLAY_SCALE),
+            $swapped
+        );
+    }
+
+    private static function purchaseCostPerStockUnitDecimal(
+        string $purchaseCost,
+        string $purchaseToStorage,
+        bool $swapped
+    ): string {
         $factor = ItemUnitConversion::inventoryFactorDecimal(
-            (string) $purchaseToStorage,
+            $purchaseToStorage,
             $swapped,
             'purchase',
             ItemUnitConversion::INVENTORY_SCALE
@@ -282,11 +315,11 @@ final class ItemUnitProfileBuilder
             return $purchaseCost;
         }
 
-        return (float) RecipeDecimal::divide(
-            (string) $purchaseCost,
+        return UnitPrice::from(RecipeDecimal::divide(
+            $purchaseCost,
             $factor,
-            ItemUnitConversion::INVENTORY_SCALE
-        );
+            UnitPrice::SCALE
+        ))->toString();
     }
 
     private static function sellUnitCostFromStockCost(
@@ -295,22 +328,36 @@ final class ItemUnitProfileBuilder
         bool $sellSwapped,
         bool $sellSameAsStorage
     ): float {
+        return (float) self::sellUnitCostFromStockCostDecimal(
+            UnitPrice::fromLegacy($stockCost)->toString(),
+            FinancialDecimal::normalize((string) $sellToStorage, ItemUnitConversion::DISPLAY_SCALE),
+            $sellSwapped,
+            $sellSameAsStorage
+        );
+    }
+
+    private static function sellUnitCostFromStockCostDecimal(
+        string $stockCost,
+        string $sellToStorage,
+        bool $sellSwapped,
+        bool $sellSameAsStorage
+    ): string {
         if ($sellSameAsStorage) {
             return $stockCost;
         }
 
         $factor = ItemUnitConversion::inventoryFactorDecimal(
-            (string) $sellToStorage,
+            $sellToStorage,
             $sellSwapped,
             'sell',
             ItemUnitConversion::INVENTORY_SCALE
         );
 
-        return (float) RecipeDecimal::multiply(
-            (string) $stockCost,
+        return UnitPrice::from(RecipeDecimal::multiply(
+            $stockCost,
             $factor,
-            ItemUnitConversion::INVENTORY_SCALE
-        );
+            UnitPrice::SCALE
+        ))->toString();
     }
 
     private static function findRow(array $units, string $flag): ?array
@@ -324,7 +371,7 @@ final class ItemUnitProfileBuilder
         return $units[0] ?? null;
     }
 
-    private static function blankRow(int $unitId, float $uVal, array $overrides): array
+    private static function blankRow(int $unitId, string $uVal, array $overrides): array
     {
         return array_merge([
             'unit_id' => $unitId,
@@ -334,10 +381,10 @@ final class ItemUnitProfileBuilder
             'def_stock' => 0,
             'conversion_swapped' => 0,
             'unit_barcode' => '',
-            'cost_price' => 0.0,
-            'price1' => 0.0,
-            'price2' => 0.0,
-            'price3' => 0.0,
+            'cost_price' => self::money('0'),
+            'price1' => self::money('0'),
+            'price2' => self::money('0'),
+            'price3' => self::money('0'),
         ], $overrides);
     }
 
@@ -375,18 +422,27 @@ final class ItemUnitProfileBuilder
         return (int) $value;
     }
 
-    private static function decimal($value, float $default = 0.0): float
+    private static function money($value, string $default = '0'): string
     {
         if ($value === null || $value === false || trim((string) $value) === '') {
-            return $default;
+            return UnitPrice::from($default)->toString();
         }
 
-        return (float) $value;
+        return UnitPrice::from($value)->toString();
     }
 
-    private static function assertPositive(float $value, string $message): void
+    private static function quantity($value, string $default = '0'): string
     {
-        if ($value <= 0) {
+        if ($value === null || $value === false || trim((string) $value) === '') {
+            return FinancialDecimal::normalize($default, ItemUnitConversion::DISPLAY_SCALE);
+        }
+
+        return FinancialDecimal::normalize($value, ItemUnitConversion::DISPLAY_SCALE);
+    }
+
+    private static function assertPositive(string $value, string $message): void
+    {
+        if (FinancialDecimal::compare($value, '0', UnitPrice::SCALE) <= 0) {
             throw new InvalidArgumentException($message);
         }
     }

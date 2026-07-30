@@ -153,6 +153,27 @@ class RecipeRuntimePreflightServiceTest extends TestCase
         $this->assertContains('recipe_runtime_pilot_mode_without_explicit_pilot_scope', $result['checks']['feature_flags']['blockers']);
     }
 
+    public function testPreflightBlocksActiveRecipeModeWithoutQuantityTracking(): void
+    {
+        (new SyncSchemaManager())->apply(self::$conn);
+
+        $result = $this->service()->check(self::$conn, $this->flags([
+            'enabled' => true,
+            'mode' => 'consume_pilot',
+            'consumption' => true,
+            'pilot' => [
+                'pos_branch' => '1',
+            ],
+        ], false));
+
+        $this->assertFalse($result['ready_for_recipe_operator_qa']);
+        $this->assertFalse($result['checks']['feature_flags']['inventory_quantity_tracking_enabled']);
+        $this->assertContains(
+            'recipe_runtime_active_mode_requires_inventory_quantity_tracking',
+            $result['checks']['feature_flags']['blockers']
+        );
+    }
+
     public function testPreflightResolvesLegacyStockFlagsToOnePolicy(): void
     {
         (new SyncSchemaManager())->apply(self::$conn);
@@ -168,11 +189,11 @@ class RecipeRuntimePreflightServiceTest extends TestCase
 
         $this->assertFalse($result['ready_for_recipe_operator_qa']);
         $this->assertContains('recipe_runtime_availability_pilot_requires_recipe_availability', $result['blockers']);
-        $this->assertSame('block', $result['checks']['feature_flags']['negative_stock_sale_policy']);
+        $this->assertSame('allow_with_warning', $result['checks']['feature_flags']['negative_stock_sale_policy']);
         $this->assertNotContains('recipe_runtime_negative_stock_approval_conflicts_with_strict_stock', $result['blockers']);
     }
 
-    public function testPreflightBlocksStrictStockWhenAvailabilityFlagIsNotEffectiveForMode(): void
+    public function testPreflightIgnoresLegacyStrictStockAsSaleBlocker(): void
     {
         (new SyncSchemaManager())->apply(self::$conn);
 
@@ -187,8 +208,9 @@ class RecipeRuntimePreflightServiceTest extends TestCase
             ],
         ]));
 
-        $this->assertFalse($result['ready_for_recipe_operator_qa']);
-        $this->assertContains('recipe_runtime_strict_stock_requires_effective_recipe_availability', $result['blockers']);
+        $this->assertTrue($result['ready_for_recipe_operator_qa'], implode(',', $result['blockers']));
+        $this->assertSame('allow_with_warning', $result['checks']['feature_flags']['negative_stock_sale_policy']);
+        $this->assertNotContains('recipe_runtime_strict_stock_requires_effective_recipe_availability', $result['blockers']);
         $this->assertNotContains('recipe_runtime_strict_stock_requires_recipe_availability', $result['blockers']);
     }
 
@@ -197,9 +219,13 @@ class RecipeRuntimePreflightServiceTest extends TestCase
         return new RecipeRuntimePreflightService(dirname(__DIR__, 2));
     }
 
-    private function flags(array $recipeOverrides): RecipeFeatureFlags
+    private function flags(array $recipeOverrides, bool $quantityTracking = true): RecipeFeatureFlags
     {
         return new RecipeFeatureFlags([
+            'inventory' => [
+                'ledger_mode' => $quantityTracking ? 'live' : 'off',
+                'quantity_tracking' => $quantityTracking,
+            ],
             'recipe' => array_replace_recursive([
                 'enabled' => false,
                 'mode' => 'off',

@@ -1,0 +1,510 @@
+version: 2
+
+goal:
+  title: "POSMAIN Optional Inventory and Accounting"
+  slug: "posmain-optional-inventory-accounting"
+  kind: specific
+  tranche: "Independent capability modes, conditional accounting, permissive stock sales, and cashier zero-clamped stock presentation"
+  status: done
+
+rules:
+  pm_owns_state: true
+  one_active_task: true
+  max_write_workers: 1
+  no_implementation_without_worker_or_pm_task: true
+  no_completion_without_judge_or_pm_audit: true
+
+agents:
+  scout: installed
+  worker: installed
+  judge: installed
+
+active_task: null
+
+tasks:
+  - id: T001
+    type: scout
+    assignee: Scout
+    status: done
+    objective: "Map configuration, readiness, quantity, accounting, availability, recipe, outbox, and POS caller contracts for the first safe increment."
+    inputs:
+      - "config/app_config.php"
+      - "classes/Inventory"
+      - "classes/Recipe"
+      - "classes/Pos"
+      - "includes/pos_item_card.php"
+      - "tests/sync"
+    constraints:
+      - "Read-only."
+      - "Separate product behavior from standing-shop state."
+      - "Name compatibility risks and exact focused verification."
+    expected_output:
+      - "Capability/caller map"
+      - "Compatibility risks"
+      - "First bounded Worker task"
+    receipt:
+      result: done
+      summary: "Mapped the overloaded ledger_mode contract, production-profile forcing, conditional accounting callers, direct-stock availability, and inventory outbox ownership. The first safe increment is configuration/preflight only."
+      evidence:
+        - "config/app_config.php"
+        - "config/production_profile.php"
+        - "classes/Inventory/InventoryFeatureFlags.php"
+        - "classes/Inventory/InventoryRuntimePreflightService.php"
+        - "classes/Inventory/InventoryLedgerService.php"
+        - "classes/Inventory/InventoryInvoiceBridge.php"
+        - "classes/Pos/Service/ItemAvailabilityService.php"
+        - "includes/pos_item_card.php"
+      compatibility_risks:
+        - "Legacy shadow/bridge/live modes carry rollout semantics that cannot be removed."
+        - "The production profile currently forces accounting, reservations, availability, and strict stock together."
+        - "Quantity movement outbox capture is owned by InventoryLedgerService and must remain transaction-local."
+        - "Recipe shadow behavior still relies on canWriteShadowLedger and must remain unchanged in the first increment."
+  - id: T002
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "Introduce the explicit capability adapter and tiered runtime preflight while preserving legacy configuration."
+    allowed_files:
+      - "config/app_config.php"
+      - "config/production_profile.php"
+      - "classes/Inventory/InventoryFeatureFlags.php"
+      - "classes/Inventory/InventoryRuntimePreflightService.php"
+      - "tests/sync/inventory_runtime_preflight_contract_test.php"
+      - "tests/sync/inventory_phase1_noop_contract_test.php"
+      - "tests/sync/production_profile_contract_test.php"
+      - "tests/sync/app_config_production_profile_boundary_test.php"
+    verify:
+      - "php tests/sync/inventory_runtime_preflight_contract_test.php"
+      - "php tests/sync/inventory_phase1_noop_contract_test.php"
+    stop_if:
+      - "A database migration is required."
+      - "Legacy configuration cannot be preserved."
+      - "Files outside allowed_files are required."
+    receipt:
+      result: done
+      changed_files:
+        - "config/app_config.php"
+        - "config/production_profile.php"
+        - "classes/Inventory/InventoryFeatureFlags.php"
+        - "classes/Inventory/InventoryRuntimePreflightService.php"
+        - "tests/sync/inventory_phase1_noop_contract_test.php"
+        - "tests/sync/inventory_runtime_preflight_contract_test.php"
+        - "tests/sync/production_profile_contract_test.php"
+        - "tests/sync/app_config_production_profile_boundary_test.php"
+      summary: "Added explicit authoritative quantity capability with legacy fallback, conditional readiness requirements, and production certification that no longer forces optional inventory, recipes, accounting, or reservations."
+      commands:
+        - cmd: "php syntax checks for four runtime files"
+          status: pass
+        - cmd: "php tests/sync/inventory_phase1_noop_contract_test.php"
+          status: pass
+        - cmd: "php tests/sync/inventory_runtime_preflight_contract_test.php"
+          status: pass
+        - cmd: "php tests/sync/production_profile_contract_test.php"
+          status: pass
+        - cmd: "php tests/sync/app_config_production_profile_boundary_test.php"
+          status: pass
+        - cmd: "git diff --check"
+          status: pass
+  - id: T003
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "Decouple authoritative quantity movements, balances, availability, and outbox behavior from financial accounting."
+    allowed_files:
+      - "classes/Inventory/InventoryFeatureFlags.php"
+      - "classes/Inventory/InventoryLedgerService.php"
+      - "classes/Inventory/InventoryInvoiceBridge.php"
+      - "classes/Inventory/InventoryPurchaseReceivingService.php"
+      - "classes/Inventory/InventoryCountService.php"
+      - "classes/Inventory/InventoryAdjustmentService.php"
+      - "classes/Inventory/InventoryTransferService.php"
+      - "classes/Inventory/InventoryBalanceService.php"
+      - "classes/Inventory/InventoryAuditService.php"
+      - "classes/Pos/Service/ItemAvailabilityService.php"
+      - "classes/Recipe/RecipeInventoryMovementService.php"
+      - "tests/sync/inventory_phase1_noop_contract_test.php"
+      - "tests/sync/inventory_phase3_ledger_service_test.php"
+      - "tests/sync/inventory_phase4_invoice_bridge_test.php"
+      - "tests/sync/inventory_sync_atomicity_test.php"
+      - "tests/sync/recipe_production_endpoint_runtime_test.php"
+      - "tests/sync/phase4_item_availability_service_test.php"
+    verify:
+      - "php tests/sync/inventory_phase1_noop_contract_test.php"
+      - "php tests/sync/inventory_phase3_ledger_service_test.php"
+      - "php tests/sync/inventory_phase4_invoice_bridge_test.php"
+      - "php tests/sync/inventory_sync_atomicity_test.php"
+      - "php tests/sync/recipe_production_endpoint_runtime_test.php"
+      - "php tests/sync/phase4_item_availability_service_test.php"
+    stop_if:
+      - "Callers have not been mapped."
+      - "Atomicity or outbox behavior is ambiguous."
+    receipt:
+      result: done
+      changed_files:
+        - "classes/Inventory/InventoryFeatureFlags.php"
+        - "classes/Inventory/InventoryLedgerService.php"
+        - "classes/Inventory/InventoryInvoiceBridge.php"
+        - "classes/Inventory/InventoryPurchaseReceivingService.php"
+        - "classes/Inventory/InventoryCountService.php"
+        - "classes/Inventory/InventoryAdjustmentService.php"
+        - "classes/Inventory/InventoryTransferService.php"
+        - "classes/Inventory/InventoryBalanceService.php"
+        - "classes/Inventory/InventoryAuditService.php"
+        - "classes/Pos/Service/ItemAvailabilityService.php"
+        - "classes/Recipe/RecipeInventoryMovementService.php"
+        - "tests/sync/inventory_phase1_noop_contract_test.php"
+        - "tests/sync/inventory_phase4_invoice_bridge_test.php"
+        - "tests/sync/inventory_sync_atomicity_test.php"
+      summary: "Authoritative quantity movements, balances, availability callers, and transaction-local outbox capture work with accounting disabled and ledger_mode off while legacy shadow behavior remains supported."
+      commands:
+        - cmd: "php syntax checks for eleven changed runtime files"
+          status: pass
+        - cmd: "php tests/sync/inventory_phase1_noop_contract_test.php"
+          status: pass
+        - cmd: "php tests/sync/inventory_phase3_ledger_service_test.php"
+          status: pass
+        - cmd: "php tests/sync/inventory_phase4_invoice_bridge_test.php"
+          status: pass
+        - cmd: "php tests/sync/inventory_sync_atomicity_test.php"
+          status: pass
+        - cmd: "php tests/sync/recipe_production_endpoint_runtime_test.php"
+          status: pass
+        - cmd: "php tests/sync/phase4_item_availability_service_test.php"
+          status: pass
+        - cmd: "git diff --check"
+          status: pass
+  - id: T004
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "Make accounting mappings conditional per operation and fail closed without COGS fallback."
+    allowed_files:
+      - "classes/Inventory/InventoryAccountingService.php"
+      - "classes/Inventory/InventoryPurchaseReceivingService.php"
+      - "classes/Inventory/InventoryAdjustmentService.php"
+      - "classes/Inventory/InventoryCountService.php"
+      - "classes/Inventory/InventoryInvoiceBridge.php"
+      - "classes/Inventory/InventoryRuntimePreflightService.php"
+      - "ajax/inventory_purchase_receive.php"
+      - "ajax/inventory_adjustment.php"
+      - "ajax/inventory_count_common.php"
+      - "tests/sync/inventory_phase12_accounting_service_test.php"
+      - "tests/sync/inventory_phase6_receiving_service_test.php"
+      - "tests/sync/inventory_phase9_adjustment_service_test.php"
+      - "tests/sync/inventory_phase7_count_service_test.php"
+      - "tests/sync/inventory_phase4_invoice_bridge_test.php"
+    verify:
+      - "php tests/sync/inventory_phase12_accounting_service_test.php"
+      - "php tests/sync/inventory_phase6_receiving_service_test.php"
+      - "php tests/sync/inventory_phase9_adjustment_service_test.php"
+      - "php tests/sync/inventory_phase7_count_service_test.php"
+      - "php tests/sync/inventory_phase4_invoice_bridge_test.php"
+    stop_if:
+      - "The transaction owner or rollback contract is unclear."
+    receipt:
+      result: done
+      changed_files:
+        - "classes/Inventory/InventoryAccountingService.php"
+        - "ajax/inventory_purchase_receive.php"
+        - "ajax/inventory_adjustment.php"
+        - "ajax/inventory_count_common.php"
+        - "tests/sync/inventory_phase12_accounting_service_test.php"
+      summary: "Accounting remains optional. When enabled, sale/refund use Inventory asset and COGS; supplier purchases can post directly to Inventory, while missing purchase, waste/damage, shortage/count, or adjustment mappings fail with a stable manager-facing code and roll back the entire integrated operation."
+      commands:
+        - cmd: "php syntax checks for accounting service, three endpoints, and focused test"
+          status: pass
+        - cmd: "php tests/sync/inventory_phase12_accounting_service_test.php"
+          status: pass
+        - cmd: "php tests/sync/inventory_phase6_receiving_service_test.php"
+          status: pass
+        - cmd: "php tests/sync/inventory_phase9_adjustment_service_test.php"
+          status: pass
+        - cmd: "php tests/sync/inventory_phase7_count_service_test.php"
+          status: pass
+        - cmd: "php tests/sync/inventory_phase4_invoice_bridge_test.php"
+          status: pass
+        - cmd: "php tests/sync/inventory_adjustment_endpoint_runtime_test.php"
+          status: pass
+  - id: T005
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "Make zero/negative stock permanently permissive and add the zero-clamped cashier stock badge."
+    allowed_files:
+      - "classes/Inventory/NegativeStockSalePolicyService.php"
+      - "classes/Pos/Service/ItemAvailabilityService.php"
+      - "includes/pos_item_card.php"
+      - "setting.php"
+      - "inventory_policy.php"
+      - "tests/sync/inventory_phase3_ledger_service_test.php"
+      - "tests/sync/phase4_item_availability_service_test.php"
+      - "tests/sync/recipe_pos_grid_availability_contract_test.php"
+      - "tests/sync/recipe_pos_grid_availability_endpoint_runtime_test.php"
+      - "tests/sync/recipe_runtime_preflight_contract_test.php"
+      - "tests/sync/recipe_rollout_readiness_contract_test.php"
+      - "tests/sync/recipe_operational_dashboard_contract_test.php"
+      - "tests/sync/recipe_reservation_lifecycle_runtime_test.php"
+      - "tests/recipe/RecipeItemAvailabilityDecoratorTest.php"
+      - "tests/recipe/RecipeOrderLifecycleServiceTest.php"
+      - "tests/recipe/RecipeOperationalDashboardServiceTest.php"
+      - "tests/recipe/RecipeRuntimePreflightServiceTest.php"
+      - "tests/recipe/RecipeRolloutReadinessServiceTest.php"
+    verify:
+      - "php tests/sync/inventory_phase3_ledger_service_test.php"
+      - "php tests/sync/phase4_item_availability_service_test.php"
+      - "php tests/sync/recipe_pos_grid_availability_contract_test.php"
+      - "phpunit recipe availability, lifecycle, readiness, and dashboard tests"
+    stop_if:
+      - "The change would mutate raw stock or alter manual availability."
+    receipt:
+      result: done
+      changed_files:
+        - "classes/Inventory/NegativeStockSalePolicyService.php"
+        - "classes/Pos/Service/ItemAvailabilityService.php"
+        - "includes/pos_item_card.php"
+        - "setting.php"
+        - "inventory_policy.php"
+        - "tests/sync/inventory_phase3_ledger_service_test.php"
+        - "tests/sync/phase4_item_availability_service_test.php"
+        - "tests/sync/recipe_pos_grid_availability_contract_test.php"
+        - "tests/sync/recipe_pos_grid_availability_endpoint_runtime_test.php"
+        - "tests/sync/recipe_runtime_preflight_contract_test.php"
+        - "tests/sync/recipe_rollout_readiness_contract_test.php"
+        - "tests/sync/recipe_operational_dashboard_contract_test.php"
+        - "tests/sync/recipe_reservation_lifecycle_runtime_test.php"
+        - "tests/recipe/RecipeItemAvailabilityDecoratorTest.php"
+        - "tests/recipe/RecipeOrderLifecycleServiceTest.php"
+        - "tests/recipe/RecipeOperationalDashboardServiceTest.php"
+        - "tests/recipe/RecipeRuntimePreflightServiceTest.php"
+        - "tests/recipe/RecipeRolloutReadinessServiceTest.php"
+      summary: "The only effective V1 sale policy is permissive. Legacy block/strict inputs remain readable but cannot block sale or reservation flows. Tracked direct and recipe shortages remain sellable, preserve raw negative balances, and expose a cashier-only zero clamp; positive low stock remains visible, while non-stock and inventory-disabled items remain undecorated."
+      commands:
+        - cmd: "php syntax checks for runtime and adjusted test files"
+          status: pass
+        - cmd: "php tests/sync/inventory_phase3_ledger_service_test.php"
+          status: pass
+        - cmd: "php tests/sync/phase4_item_availability_service_test.php"
+          status: pass
+        - cmd: "php tests/sync/recipe_pos_grid_availability_contract_test.php"
+          status: pass
+        - cmd: "php tests/sync/recipe_pos_grid_availability_endpoint_runtime_test.php"
+          status: pass
+        - cmd: "php tests/sync/recipe_reservation_lifecycle_runtime_test.php"
+          status: pass
+        - cmd: "php tests/sync/recipe_negative_stock_warn_test.php"
+          status: pass
+        - cmd: "php tests/sync/recipe runtime preflight, rollout, dashboard, and stock-override contracts"
+          status: pass
+      limitations:
+        - "The repository has no installed PHPUnit binary. Downloading and executing a public PHAR was safety-rejected, so the edited PHPUnit classes received syntax coverage and the same durable invariants were exercised through isolated sync/runtime tests."
+  - id: T006
+    type: pm
+    assignee: PM
+    status: done
+    objective: "Run focused and adjacent local regression suites and record current residual risk."
+    constraints:
+      - "Use only isolated/local test environments."
+      - "Do not mutate standing-shop data."
+    expected_output:
+      - "Verification matrix"
+      - "Failures and bounded recovery tasks"
+    receipt:
+      result: done
+      summary: "Focused inventory/accounting/outbox/configuration regressions and the complete isolated recipe/POS runtime proof suite are green. Browser rendering verified the real cashier card clamps negative raw stock to zero while leaving the item sellable; authenticated browser payment execution remained unavailable because the isolated fixture session could not be safely handed to the in-app browser."
+      commands:
+        - cmd: "php tools/recipe_runtime_proof_suite.php --all --json --continue-on-failure"
+          status: "pass: 17/17"
+        - cmd: "focused 16-test inventory, accounting, outbox, availability, and configuration matrix"
+          status: pass
+        - cmd: "actual pos_item_card browser renderer fixture"
+          status: "pass: positive 3, zero 0, negative raw -7 rendered 0, non-stock undecorated, all sellable"
+        - cmd: "php tests/sync/recipe_cashier_browser_fixture_smoke_test.php"
+          status: pass
+        - cmd: "git diff --check"
+          status: pass
+      limitations:
+        - "No installed PHPUnit binary; changed PHPUnit classes were syntax checked while their durable invariants were covered by sync/runtime tests."
+        - "The isolated cashier fixture session could not be transferred safely into the in-app browser, so full authenticated browser add/pay clicks were not repeated in this tranche."
+  - id: T007
+    type: pm
+    assignee: PM
+    status: done
+    objective: "Fail closed when an active recipe movement mode is explicitly configured without quantity tracking."
+    constraints:
+      - "Preserve legacy recipe configurations that predate the explicit quantity_tracking capability."
+      - "Read-only and off recipe modes must remain usable without quantity tracking."
+      - "No migration or standing-shop data changes."
+    expected_output:
+      - "Production-profile dependency downgrade"
+      - "Runtime preflight blocker"
+      - "Movement-layer fail-closed guard"
+      - "Focused compatibility and regression proof"
+    receipt:
+      result: done
+      changed_files:
+        - "classes/Recipe/RecipeRuntimePreflightService.php"
+        - "classes/Recipe/RecipeInventoryMovementService.php"
+        - "config/production_profile.php"
+        - "tests/recipe/RecipeRuntimePreflightServiceTest.php"
+        - "tests/sync/production_profile_contract_test.php"
+        - "tests/sync/recipe_runtime_preflight_contract_test.php"
+        - "tests/sync/recipe_quantity_tracking_dependency_test.php"
+      summary: "Active recipe movement modes cannot coexist with an explicitly disabled quantity capability. The production profile downgrades invalid configuration to read-only, preflight exposes a stable blocker, and the movement layer fails before balance writes. Legacy recipe-only configs and read-only recipes retain compatibility."
+      commands:
+        - cmd: "php syntax checks for changed runtime and test files"
+          status: pass
+        - cmd: "php tests/sync/recipe_quantity_tracking_dependency_test.php"
+          status: pass
+        - cmd: "php tests/sync/production_profile_contract_test.php"
+          status: pass
+        - cmd: "php tests/sync/recipe_runtime_preflight_contract_test.php"
+          status: pass
+        - cmd: "git diff --check"
+          status: pass
+  - id: T999
+    type: judge
+    assignee: PM
+    status: done
+    objective: "Audit whether every approved product decision is implemented and locally proven without scope leakage."
+    inputs:
+      - "All completed task receipts"
+      - "Current diff"
+      - "Latest verification"
+    constraints:
+      - "Do not implement."
+      - "Return not_complete if any approved invariant lacks evidence."
+    expected_output:
+      - "complete or not_complete"
+      - "Missing evidence"
+      - "Next bounded task if incomplete"
+    receipt:
+      result: complete
+      decision: complete
+      summary: "Every approved product invariant is implemented and locally evidenced: explicit capability modes preserve legacy configuration; quantity tracking and atomic outbox writes operate without accounting; accounting is optional and conditionally fail-closed; active recipe writes require quantity tracking; zero, missing, and negative tracked quantities are cashier-clamped to 0 without blocking sales; non-stock and inventory-disabled items remain undecorated; and quantity-only operator surfaces remain usable."
+      evidence:
+        - "Consolidated 19-contract/service/endpoint matrix passed."
+        - "Complete isolated recipe/POS runtime proof suite passed 17/17."
+        - "Actual pos_item_card browser renderer showed positive 3, zero 0, raw negative -7 rendered 0, non-stock no badge, and sellable item controls."
+        - "git diff --check passed."
+      scope_confirmation:
+        - "No migrations were run against standing data."
+        - "No standing-shop catalog, counts, journals, balances, or activation state were changed."
+        - "No commit, deployment, external write, or shared-history change was made."
+      remaining_limits:
+        - "Full authenticated browser add/pay clicks were not repeated in this tranche because the isolated fixture session could not be safely transferred to the in-app browser."
+        - "The repository has no installed PHPUnit binary; edited PHPUnit files received syntax coverage and their durable invariants were exercised by sync/runtime tests."
+        - "This receipt proves the revised optional inventory/accounting product tranche locally, not deployment or commercial launch certification for a particular shop."
+  - id: T008
+    type: pm
+    assignee: PM
+    status: done
+    objective: "Ensure cashier JavaScript consumes the clamped recipe quantity rather than the raw negative operational value."
+    constraints:
+      - "Keep the raw recipe quantity available in the service payload for non-cashier operational consumers."
+      - "Do not alter sellability, stock balances, or accounting."
+    expected_output:
+      - "Clamped card and payload UI contract"
+      - "Focused renderer and runtime proof"
+    receipt:
+      result: done
+      changed_files:
+        - "includes/pos_item_card.php"
+        - "js/pos_barcode.js"
+        - "tests/sync/recipe_pos_grid_availability_contract_test.php"
+      summary: "Cashier card DOM and JSON-driven item state now consume recipe_cashier_available_qty, so a negative raw operational quantity cannot leak into a warning message or modal state. The raw field remains available outside the cashier presentation contract."
+      commands:
+        - cmd: "node --check js/pos_barcode.js"
+          status: pass
+        - cmd: "php tests/sync/recipe_pos_grid_availability_contract_test.php"
+          status: pass
+        - cmd: "php tests/sync/recipe_pos_grid_availability_endpoint_runtime_test.php"
+          status: pass
+        - cmd: "php tests/sync/recipe_cashier_browser_fixture_smoke_test.php"
+          status: pass
+  - id: T009
+    type: pm
+    assignee: PM
+    status: done
+    objective: "Fail closed at the accounting service boundary when accounting is enabled without quantity tracking."
+    constraints:
+      - "Accounting-disabled calls remain no-op."
+      - "Quantity-only stock remains valid without accounting."
+      - "No journal or stock mutation may occur on invalid configuration."
+    expected_output:
+      - "Stable configuration error"
+      - "Focused durable no-journal regression proof"
+    receipt:
+      result: done
+      changed_files:
+        - "classes/Inventory/InventoryFeatureFlags.php"
+        - "classes/Inventory/InventoryAccountingService.php"
+        - "tests/sync/inventory_phase1_noop_contract_test.php"
+        - "tests/sync/inventory_phase12_accounting_service_test.php"
+      summary: "Invalid accounting-without-quantity configuration now fails with INVENTORY_ACCOUNTING_REQUIRES_QUANTITY_TRACKING at feature-flag movement capture, quantity-write, and accounting service boundaries. Accounting-disabled operations remain no-op, quantity-only stock remains supported, and the invalid path creates no journal."
+      commands:
+        - cmd: "php tests/sync/inventory_phase1_noop_contract_test.php"
+          status: pass
+        - cmd: "php tests/sync/inventory_phase12_accounting_service_test.php"
+          status: pass
+        - cmd: "php tests/sync/inventory_phase4_invoice_bridge_test.php"
+          status: pass
+        - cmd: "php tests/sync/inventory_sync_atomicity_test.php"
+          status: pass
+        - cmd: "php tests/sync/inventory_phase6_receiving_service_test.php"
+          status: pass
+        - cmd: "php tests/sync/inventory_phase9_adjustment_service_test.php"
+          status: pass
+        - cmd: "php tests/sync/inventory_phase7_count_service_test.php"
+          status: pass
+  - id: T010
+    type: pm
+    assignee: PM
+    status: done
+    objective: "Make inventory operator surfaces honor the explicit quantity capability instead of the legacy ledger mode."
+    constraints:
+      - "Do not alter permissions, accounting mappings, or service behavior."
+      - "Quantity-only shops must be able to receive, count, adjust, and transfer stock."
+      - "Inventory-disabled shops must keep posting controls disabled."
+    expected_output:
+      - "Six operator surfaces use canWriteQuantityLedger"
+      - "Focused source and capability contract"
+      - "Adjacent durable service regression proof"
+    receipt:
+      result: done
+      changed_files:
+        - "inventory_purchasing.php"
+        - "inventory_transfers.php"
+        - "inventory_transfer_detail.php"
+        - "inventory_counts.php"
+        - "inventory_count_detail.php"
+        - "inventory_adjustments.php"
+        - "ajax/inventory_purchase_receive.php"
+        - "ajax/inventory_count_common.php"
+        - "ajax/inventory_adjustment.php"
+        - "ajax/inventory_transfer_common.php"
+        - "tests/sync/inventory_quantity_only_operator_surface_contract_test.php"
+      summary: "Receiving, count, transfer, and adjustment operator pages now gate posting with the explicit quantity capability, so quantity-only shops are no longer disabled by ledger_mode=off. Inventory-disabled shops remain disabled, legacy live remains compatible, and operator errors now name quantity tracking instead of obsolete bridge/live modes."
+      commands:
+        - cmd: "php tests/sync/inventory_quantity_only_operator_surface_contract_test.php"
+          status: pass
+        - cmd: "php tests/sync/inventory_phase6_receiving_service_test.php"
+          status: pass
+        - cmd: "php tests/sync/inventory_phase7_count_service_test.php"
+          status: pass
+        - cmd: "php tests/sync/inventory_phase8_transfer_service_test.php"
+          status: pass
+        - cmd: "php tests/sync/inventory_phase9_adjustment_service_test.php"
+          status: pass
+        - cmd: "php tests/sync/inventory_phase12_accounting_service_test.php"
+          status: pass
+
+checks:
+  dirty_fingerprint: "pre-existing-untracked-output-only"
+  last_verification:
+    result: pass
+    task: T999
+    commands:
+      - "19-test consolidated capability, inventory, accounting, outbox, operator, recipe, availability, and endpoint matrix"
+      - "php tools/recipe_runtime_proof_suite.php --all --json --continue-on-failure (17/17)"
+      - "node --check js/pos_barcode.js"
+      - "git diff --check"

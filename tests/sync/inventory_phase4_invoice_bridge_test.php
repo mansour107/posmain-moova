@@ -222,6 +222,52 @@ try {
     $purchaseReturnMovement = inventoryPhase4One($conn, "SELECT movement_type FROM inventory_movements WHERE idempotency_key LIKE '%detail:507' LIMIT 1");
     inventoryPhase4Assert($purchaseReturnMovement['movement_type'] === 'purchase_return', 'purchase return should map to dedicated purchase_return movement type');
 
+    inventoryPhase4SeedItem($conn, 2500, 'Quantity only item', 'sellable', 1, '0.000000', '0.000000');
+    $quantityOnlyFlags = new InventoryFeatureFlags([
+        'role' => 'branch',
+        'inventory' => [
+            'ledger_mode' => 'off',
+            'quantity_tracking' => true,
+            'accounting' => false,
+            'legacy_mirror' => false,
+        ],
+        'branch' => [
+            'pos_tenant' => 3,
+            'pos_branch' => 5,
+            'uuid' => '00000000-0000-4000-8000-000000000005',
+        ],
+        'sync' => [
+            'outbox_enabled' => true,
+            'branch_sync_enabled' => true,
+            'operational_sync_enabled' => true,
+        ],
+    ]);
+    $quantityOnlyBridge = new InventoryInvoiceBridge($quantityOnlyFlags);
+    $quantityPurchase = $quantityOnlyBridge->recordInvoiceLines($conn, InventoryInvoiceBridge::TYPE_PURCHASE, 7050, [[
+        'id' => 550,
+        'item_id' => 2500,
+        'qty_in' => '5.000000',
+        'qty_out' => '0.000000',
+        'cost_price' => '2.000000',
+        'det_store' => 7,
+    ]]);
+    $quantitySale = $quantityOnlyBridge->recordInvoiceLines($conn, InventoryInvoiceBridge::TYPE_SALES, 7051, [[
+        'id' => 551,
+        'item_id' => 2500,
+        'qty_in' => '0.000000',
+        'qty_out' => '2.000000',
+        'cost_price' => '2.000000',
+        'det_store' => 7,
+    ]]);
+    inventoryPhase4Assert(empty($quantityPurchase['movements'][0]['shadow_write']), 'quantity-only purchase should be authoritative, not shadow');
+    inventoryPhase4Assert(!empty($quantitySale['accounting']['noop']), 'quantity-only sale must not post financial accounting');
+    $quantityBalance = inventoryPhase4One($conn, 'SELECT qty_on_hand FROM inventory_item_balances WHERE item_id = 2500 AND store_id = 7 LIMIT 1');
+    inventoryPhase4Assert(inventoryPhase4DecimalEquals($quantityBalance['qty_on_hand'], '3.000000'), 'quantity-only sale should update the durable balance');
+    inventoryPhase4Assert(
+        (int) $conn->query("SELECT COUNT(*) AS c FROM sync_outbox WHERE aggregate_type IN ('inventory_movement','inventory_balance')")->fetch_assoc()['c'] > 0,
+        'quantity-only movements should keep atomic operational outbox capture'
+    );
+
     inventoryPhase4SeedItem($conn, 3003, 'Live accounting rollback item', 'sellable', 1, '0.000000', '0.000000');
     $liveFlags = new InventoryFeatureFlags(['inventory' => [
         'ledger_mode' => 'live',
@@ -360,7 +406,7 @@ try {
         'COGS journal must debit COGS and credit inventory exactly once'
     );
 
-    inventoryPhase4SeedItem($conn, 4005, 'Accounting disabled fail-closed item', 'sellable', 1, '0.000000', '0.000000');
+    inventoryPhase4SeedItem($conn, 4005, 'Quantity-only accounting-disabled item', 'sellable', 1, '0.000000', '0.000000');
     $accountingDisabledFlags = new InventoryFeatureFlags(['inventory' => [
         'ledger_mode' => 'live',
         'strict_stock' => '1',
@@ -390,20 +436,30 @@ try {
         'cost_price' => '2.000000',
         'det_store' => 7,
     ]]);
-    inventoryPhase4Assert($accountingDisabledSale['success'] === false, 'authoritative sale must fail when inventory accounting is disabled');
+    inventoryPhase4Assert($accountingDisabledSale['success'] === true, 'quantity sale must succeed when optional inventory accounting is disabled');
     inventoryPhase4Assert(
-        ($accountingDisabledSale['accounting']['errors'][0]['message'] ?? '') === 'INVENTORY_ACCOUNTING_REQUIRED_FOR_AUTHORITATIVE_MOVEMENT',
-        'accounting-disabled failure must expose the exact precondition'
+        ($accountingDisabledSale['accounting']['noop'] ?? false) === true
+            && ($accountingDisabledSale['accounting']['reason'] ?? '') === 'inventory accounting is disabled',
+        'accounting-disabled quantity sale must explicitly report a no-op accounting result'
     );
     inventoryPhase4Assert(
-        SideEffectPolicy::inventoryBridgeShouldRollback(new RuntimeException('bridge_errors'), $accountingDisabledSale),
-        'accounting-disabled authoritative sale must require outer transaction rollback'
+        !SideEffectPolicy::inventoryBridgeShouldRollback(new RuntimeException('bridge_errors'), $accountingDisabledSale),
+        'accounting-disabled quantity sale must not request an outer transaction rollback'
     );
-    $conn->rollback();
+    $conn->commit();
     $afterDisabledSale = inventoryPhase4One($conn, 'SELECT qty_on_hand FROM inventory_item_balances WHERE item_id = 4005 AND store_id = 7 LIMIT 1');
     inventoryPhase4Assert(
-        inventoryPhase4DecimalEquals($beforeDisabledSale['qty_on_hand'], (string) $afterDisabledSale['qty_on_hand']),
-        'failed accounting-disabled sale must not change durable stock'
+        inventoryPhase4DecimalEquals($beforeDisabledSale['qty_on_hand'], '5.000000')
+            && inventoryPhase4DecimalEquals($afterDisabledSale['qty_on_hand'], '4.000000'),
+        'accounting-disabled sale must persist its quantity movement exactly once'
+    );
+    $disabledSaleMovement = inventoryPhase4One(
+        $conn,
+        "SELECT accounting_journal_id FROM inventory_movements WHERE order_id = 7301 AND movement_type = 'sale_direct' LIMIT 1"
+    );
+    inventoryPhase4Assert(
+        (int) ($disabledSaleMovement['accounting_journal_id'] ?? 0) === 0,
+        'accounting-disabled quantity sale must not create or link a financial journal'
     );
 
     echo "inventory-phase4-invoice-bridge-ok\n";

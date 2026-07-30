@@ -109,6 +109,8 @@ try {
 } catch (RuntimeException $exception) {
     if ($exception->getMessage() === 'SHIFT_ALREADY_CLOSED') {
         $_SESSION['error_message'] = 'تم إغلاق هذا الشيفت مسبقاً. أعد فتح نقطة البيع لبدء شيفت جديد.';
+    } elseif ($exception->getMessage() === 'SHIFT_FINANCIAL_RECONCILIATION_MISMATCH') {
+        $_SESSION['error_message'] = 'تعذر إغلاق الشيفت: يوجد اختلاف بين المبيعات وطرق الدفع أو حركة الدرج. اطلب من المدير مراجعة التسوية قبل الإغلاق.';
     } else {
         error_log('Shift close rejected: ' . $exception->getMessage());
         $_SESSION['error_message'] = 'حدث خطأ أثناء إغلاق الشيفت';

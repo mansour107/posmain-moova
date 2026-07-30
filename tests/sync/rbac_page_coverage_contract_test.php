@@ -31,6 +31,7 @@ $guardSnippets = [
     'includes/header.php',
     'includes/connect.php',
     'includes/session_bootstrap.php',
+    'includes/http_gone.php',
     'http_response_code(410)',
     'ENDPOINT_QUARANTINED',
 ];

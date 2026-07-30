@@ -135,6 +135,7 @@ try {
         'movement_type' => 'sale_cash',
         'amount' => '50.000',
         'created_by' => 77,
+        'idempotency_key' => 'shift-count-idempotency:sale:' . $sessionId,
     ]);
     $_SESSION['pos_drawer_session_id'] = $sessionId;
     if (function_exists('posmain_begin_pos_shift_session')) {

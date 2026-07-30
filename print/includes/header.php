@@ -1,4 +1,5 @@
-<?php 
+<?php
+require_once __DIR__ . '/../../includes/api_entry_classification.php';
 require_once __DIR__ . '/../../includes/session_bootstrap.php';
 if (!isset($_SESSION['login'])) {
   header('Location: ../index.php');
@@ -47,6 +48,10 @@ background-color:<?= $rowstg['bodycolor']?>;
   <script src="../dist/js/js.js">
 
   </script>
+  <?php
+  require_once __DIR__ . '/../../includes/print_client_bootstrap.php';
+  echo posmain_render_print_client_bootstrap('../');
+  ?>
 </head>
 
 <body class="hold-transition sidebar-mini layout-fixed">

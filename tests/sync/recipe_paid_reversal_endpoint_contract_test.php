@@ -22,6 +22,8 @@ paidReversalContractAssertContains("'refund_payment_method' => \$refundPaymentMe
 paidReversalContractAssertContains("'mutation_version' => \$_POST['mutation_version']", $endpoint, 'endpoint must pass the caller expected mutation version to the central mutation service');
 paidReversalContractAssertContains("'refund_mode' => \$refundMode", $endpoint, 'endpoint must pass the unified partial-refund mode');
 paidReversalContractAssertContains("'refund_amount' => \$refundAmount", $endpoint, 'endpoint must pass an amount selection separately from tender amount');
+paidReversalContractAssertContains('Money::from($refundAmount)', $endpoint, 'amount refund boundary must validate exact decimal money without a float conversion');
+paidReversalContractAssertNotContains('(float) $refundAmount', $endpoint, 'amount refund boundary must not use binary float validation');
 paidReversalContractAssertContains("'lines' => \$refundLines", $endpoint, 'endpoint must pass validated item/quantity selections');
 paidReversalContractAssertContains('REFUND_LINES_REQUIRED', $endpoint, 'item mode must reject an empty selection');
 paidReversalContractAssertNotContains('new RecipeOrderLifecycleService', $endpoint, 'endpoint must not instantiate recipe lifecycle directly');
@@ -74,6 +76,10 @@ paidReversalContractAssertContains('refund_amount', $posBarcodeJs, 'POS UI shoul
 paidReversalContractAssertContains('refund_lines', $posBarcodeJs, 'POS UI should submit selected line quantities');
 paidReversalContractAssertContains('original_payments', $recentOrders, 'recent orders should expose original tender context without rewriting it');
 paidReversalContractAssertContains('refund_tenders', $recentOrders, 'recent orders should expose enabled outgoing refund tenders');
+paidReversalContractAssertContains("'settlement_policy' =>", $recentOrders, 'recent orders should expose the authoritative tender settlement policy');
+paidReversalContractAssertContains("data-settlement-policy", $posBarcodeJs, 'refund tender options should carry the authoritative settlement policy');
+paidReversalContractAssertContains("settlementPolicy === 'manual_external'", $posBarcodeJs, 'manual external refunds should be described as immediately declared settlements');
+paidReversalContractAssertContains("settlementPolicy === 'reference_required'", $posBarcodeJs, 'reference-required refunds should be the only non-cash no-reference pending path');
 
 paidReversalContractAssertContains('refund_eligible', $posBarcodeJs, 'active recent-orders JS renderer should consume refund eligibility');
 paidReversalContractAssertContains('void_eligible', $posBarcodeJs, 'active recent-orders JS renderer should consume void eligibility');

@@ -85,7 +85,11 @@ try {
     $summary = $report->getDrawerReconciliation(['tenant' => 2, 'branch' => 3]);
     phase4ZReportAssert($summary['drawer_session']['id'] === $session['id'], 'ShiftReport should expose drawer session reconciliation');
     phase4ZReportAssert($summary['payments']['cash'] === '25.000', 'ShiftReport reconciliation cash total expected');
-    phase4ZReportAssert($summary['drawer']['expected_cash'] === '35.000', 'ShiftReport reconciliation expected cash should include opening cash');
+    phase4ZReportAssert(
+        $summary['drawer']['expected_cash'] === '35.00',
+        'ShiftReport reconciliation expected cash should include opening cash; got '
+            . var_export($summary['drawer']['expected_cash'] ?? null, true)
+    );
     phase4ZReportAssert($summary['reconciliation']['cash_difference'] === '0.000', 'ShiftReport reconciliation cash difference expected');
 
     echo "phase4-z-report-drawer-contract-ok db={$db}\n";

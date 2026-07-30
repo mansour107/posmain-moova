@@ -245,14 +245,17 @@ test.describe('owner: paid order reversal admin flow', () => {
       const match = options
         .map((option) => option as HTMLOptionElement)
         .find((option) =>
-          option.value !== '' && option.value !== 'cash' && option.dataset.type !== 'cash',
+          option.value !== ''
+          && option.value !== 'cash'
+          && option.dataset.type !== 'cash'
+          && option.dataset.settlementPolicy === 'manual_external',
         );
       return match?.value || '';
     });
     expect(nonCashTender).not.toBe('');
     await tenderSelect.selectOption(nonCashTender);
     await dialog.locator('#paid-reversal-reference').fill('');
-    await expect(dialog.locator('#paid-reversal-settlement-hint')).toContainText('معلقة');
+    await expect(dialog.locator('#paid-reversal-settlement-hint')).toContainText('يقرّ بها الموظف المخوّل');
     await dialog.locator('#paid-reversal-reason').fill('e2e admin amount partial refund');
 
     const amountRefundResponse = page.waitForResponse((response) =>
@@ -266,7 +269,7 @@ test.describe('owner: paid order reversal admin flow', () => {
     expect(amountBody.success, JSON.stringify(amountBody)).toBeTruthy();
     expect(amountBody.data?.refund_mode).toBe('amount');
     expect(amountBody.data?.refund_amount).toBe('1.00');
-    expect(amountBody.data?.pending_external_amount).toBe('1.00');
+    expect(amountBody.data?.pending_external_amount).toBe('0.00');
     expect(amountBody.data?.reversal_status).toBe('partial');
 
     const persisted = await fetchRecentOrders(page);

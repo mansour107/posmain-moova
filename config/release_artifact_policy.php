@@ -1,20 +1,96 @@
 <?php
 
 /**
- * Commercial V1 Step 1 release packaging policy.
+ * Commercial V1 web-artifact policy.
  *
- * Packaging starts from committed/tracked source and keeps only paths that
- * match an allow rule. Deny rules are hard failures if they would be included.
- *
- * @return array{
- *   allow_directories: list<string>,
- *   allow_root_globs: list<string>,
- *   deny_path_prefixes: list<string>,
- *   deny_path_exact: list<string>,
- *   deny_name_globs: list<string>
- * }
+ * The modern manifest-aware builder and the Step 1 compatibility gate consume
+ * the same fail-closed policy. Runtime uploads and repository-only material are
+ * never packaged.
  */
 return [
+    'version' => 1,
+    'endpoint_directories' => ['ajax', 'api', 'do', 'get', 'print'],
+    'endpoint_internal_files' => [],
+    'root_internal_files' => [
+        'phpstan-bootstrap.php',
+    ],
+    'root_runtime_files' => [
+        '.htaccess',
+        'Caddyfile',
+        'LICENSE',
+        'LICENSE.md',
+        'entrypoint.sh',
+        'php.ini',
+        'pos_config.json',
+        'pos_offline.html',
+        'pos_sw.js',
+        'qrCode.png',
+        'sw.js',
+        'version.json',
+        'version.txt',
+    ],
+    'runtime_prefixes' => [
+        'PhpSpreadsheet/',
+        'assets/',
+        'classes/',
+        'components/',
+        'config/',
+        'css/',
+        'dist/',
+        'elements/',
+        'fonts/',
+        'images/',
+        'img/',
+        'includes/',
+        'js/',
+        'lang/',
+        'language/',
+        'plugins/',
+        'src/',
+        'vendor/',
+    ],
+    'runtime_exact_files' => [
+        'barcodegr/LICENSE.md',
+    ],
+    'runtime_library_prefixes' => [
+        'barcodegr/src/',
+    ],
+    'dependency_manifests' => [
+        'composer.json' => 'composer.lock',
+        'package.json' => 'package-lock.json',
+    ],
+    'prohibited_prefixes' => [
+        '.cursor/',
+        '.git/',
+        '.github/',
+        '.vscode/',
+        'agent-transcripts/',
+        'audit-output/',
+        'backup/',
+        'cli/',
+        'db/',
+        'dbase/',
+        'deploy/',
+        'docs/',
+        'logs/',
+        'node_modules/',
+        'output/',
+        'scripts/',
+        'test-results/',
+        'tests/',
+        'tools/',
+        'update/',
+        'uploads/',
+        'var/',
+    ],
+    'prohibited_basename_patterns' => [
+        '/(^|[._-])(debug|fix|repair|setup|test|tests|example|examples|backup)([._-]|$)/i',
+        '/\.(bak|dump|log|patch|sql|sqlite|sqlite3|xls|xlsx)$/i',
+        '/(^|\/)\.env($|\.)/i',
+        '/(^|\/)(id_rsa|id_ed25519|authorized_keys)(\.|$)/i',
+    ],
+
+    // Compatibility keys retained for the Commercial V1 Step 1 gate.
     'allow_directories' => [
         'ajax',
         'api',

@@ -1,5 +1,6 @@
 <?php
 include('../includes/connect.php'); // Adjust path as necessary
+require_once __DIR__ . '/../includes/print_client_bootstrap.php';
 $company_name = $rowstg['company_name'];
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $codes = $_POST['code'];
@@ -10,7 +11,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     echo '<html><head>';
     echo '<script src="code.js"></script>'; // Include JsBarcode
-    echo '</head><body style="margin:0px;font-size:12px" onload="window.print();">';
+    echo posmain_render_print_client_bootstrap('../');
+    echo '</head><body data-print-job-type="label" style="margin:0px;font-size:12px" onload="window.print();">';
 
     foreach ($codes as $index => $code) {
         $name = htmlspecialchars($names[$index]);

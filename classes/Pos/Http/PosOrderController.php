@@ -92,12 +92,13 @@ class PosOrderController
         $posMutationService = new PosOrderMutationService();
         $sideEffects = new OrderMutationSideEffectsService();
         $sideEffects->preflightSyncIdentity($conn);
+        $scope = $this->operationalScope($data);
         $conn->begin_transaction();
 
         $idempotency = $idempotencyService->begin($conn, $idempotencyScope, $idempotencyKey, $idempotencyHash, [
             'user_id' => $userId,
-            'tenant' => 0,
-            'branch' => 0,
+            'tenant' => $scope['tenant'],
+            'branch' => $scope['branch'],
             'stale_after_seconds' => $staleAfterSeconds,
         ]);
         if (($idempotency['status'] ?? '') === 'conflict') {
@@ -147,6 +148,8 @@ class PosOrderController
             'pos_customer_id' => (int) ($data['pos_customer_id'] ?? $data['posCustomerId'] ?? 0) ?: null,
         ], [
             'user_id' => $userId,
+            'tenant' => $scope['tenant'],
+            'branch' => $scope['branch'],
             'in_transaction' => true,
             'event_source' => $eventSource,
             'record_outbox' => false,
@@ -305,8 +308,11 @@ class PosOrderController
         }
 
         $request['edit_id'] = $editId;
+        $operationalScope = $this->operationalScope($request);
         (new PosOrderMutationService())->assertCashierEditVoidApprovalIfNeeded($conn, $request, [
             'user_id' => $userId,
+            'tenant' => $operationalScope['tenant'],
+            'branch' => $operationalScope['branch'],
         ]);
         $request = $this->resolveCashierPricing($conn, $request, $userId);
         OrderCreateRequest::fromTakeawayPayload($request, $userId);
@@ -360,13 +366,14 @@ class PosOrderController
         $idempotencyKey = $idempotencyService->resolveKey($data, $server);
         $idempotencyHash = $idempotencyService->requestHashForPayload($data);
         (new OrderMutationSideEffectsService())->preflightSyncIdentity($conn);
+        $scope = $this->operationalScope($data);
         $conn->begin_transaction();
         try {
 
         $idempotency = $idempotencyService->begin($conn, PosOrderMutationService::SCOPE_TABLE_FREE, $idempotencyKey, $idempotencyHash, [
             'user_id' => $userId,
-            'tenant' => 0,
-            'branch' => 0,
+            'tenant' => $scope['tenant'],
+            'branch' => $scope['branch'],
             'stale_after_seconds' => 300,
         ]);
         if (($idempotency['status'] ?? '') === 'conflict') {
@@ -403,7 +410,14 @@ class PosOrderController
         $result = $mutationService->freeTable($conn, [
             'table_id' => $tableId,
             'user_id' => $userId,
-        ], ['user_id' => $userId, 'in_transaction' => true, 'skip_idempotency' => true, 'record_outbox' => false]);
+        ], [
+            'user_id' => $userId,
+            'tenant' => $scope['tenant'],
+            'branch' => $scope['branch'],
+            'in_transaction' => true,
+            'skip_idempotency' => true,
+            'record_outbox' => false,
+        ]);
 
         (new OrderMutationSideEffectsService())->recordTableFreed($conn, $tableId, $userId);
 
@@ -461,12 +475,13 @@ class PosOrderController
         $idempotencyKey = $idempotencyService->resolveKey($data, $server);
         $idempotencyHash = $idempotencyService->requestHashForPayload($data);
         (new OrderMutationSideEffectsService())->preflightSyncIdentity($conn);
+        $scope = $this->operationalScope($data);
         $conn->begin_transaction();
 
         $idempotency = $idempotencyService->begin($conn, PosOrderMutationService::SCOPE_TABLE_PAYMENT, $idempotencyKey, $idempotencyHash, [
             'user_id' => $userId,
-            'tenant' => 0,
-            'branch' => 0,
+            'tenant' => $scope['tenant'],
+            'branch' => $scope['branch'],
             'stale_after_seconds' => 300,
         ]);
         if (($idempotency['status'] ?? '') === 'conflict') {
@@ -550,6 +565,26 @@ class PosOrderController
             ?? ($autoCreatedMutationVersion > 0 ? $autoCreatedMutationVersion : null);
         $customerAcc = $tableOrderService->resolveDefaultCustomerId($conn, (int) ($order['acc2'] ?? 0));
         $empId = (int) ($order['emp_id'] ?? 0);
+        $accountingScope = $this->browserMutationContext($userId, [
+            'tenant' => (int) ($order['tenant'] ?? $scope['tenant']),
+            'branch' => (int) ($order['branch'] ?? $scope['branch']),
+        ]);
+        if ($accountingPostingService->shouldPostSalesRecognitionOnTablePayment($order)) {
+            $salesAccountId = posmain_ensure_sales_account(
+                $conn,
+                (int) ($data['sales_account_id'] ?? $data['revenue_account_id'] ?? 0)
+            );
+            if ($salesAccountId < 1) {
+                throw new RuntimeException('SALES_ACCOUNT_REQUIRED');
+            }
+            $accountingPostingService->postTableInvoiceFinalization(
+                $conn,
+                $order,
+                $salesAccountId,
+                $userId,
+                $accountingScope
+            );
+        }
 
         foreach ($resolvedTenders as $paymentIndex => $tender) {
             $tenderIdempotencyKey = $idempotencyKey . ':tender:' . $paymentIndex;
@@ -593,7 +628,7 @@ class PosOrderController
                     'payment_date' => date('Y-m-d'),
                     'user_id' => $userId,
                     'idempotency_key' => $tenderIdempotencyKey,
-                ], $this->browserMutationContext($userId));
+                ], $accountingScope);
                 $receiptId = $accountingResult['receipt_id'] ?? null;
                 $movementId = (int) ($paymentResult['drawer_movement_id'] ?? 0);
                 if ($receiptId && $movementId > 0) {
@@ -683,12 +718,13 @@ class PosOrderController
         $idempotencyKey = $idempotencyService->resolveKey($data, $server);
         $idempotencyHash = $idempotencyService->requestHashForPayload($data);
         (new OrderMutationSideEffectsService())->preflightSyncIdentity($conn);
+        $scope = $this->operationalScope($data);
         $conn->begin_transaction();
 
         $idempotency = $idempotencyService->begin($conn, PosOrderMutationService::SCOPE_SPLIT_PAYMENT, $idempotencyKey, $idempotencyHash, [
             'user_id' => $userId,
-            'tenant' => 0,
-            'branch' => 0,
+            'tenant' => $scope['tenant'],
+            'branch' => $scope['branch'],
             'stale_after_seconds' => 300,
         ]);
         if (($idempotency['status'] ?? '') === 'conflict') {
@@ -754,6 +790,8 @@ class PosOrderController
             'idempotency_key' => $idempotencyKey,
             'mutation_version' => $expectedMutationVersion,
         ], $this->browserMutationContext($userId, [
+            'tenant' => $scope['tenant'],
+            'branch' => $scope['branch'],
             'in_transaction' => true,
             'skip_idempotency' => true,
             'record_outbox' => false,
@@ -987,12 +1025,13 @@ class PosOrderController
         $idempotencyKey = $idempotencyService->resolveKey($data, $server);
         $idempotencyHash = $idempotencyService->requestHashForPayload($data);
         (new OrderMutationSideEffectsService())->preflightSyncIdentity($conn);
+        $operationalScope = $this->operationalScope($data);
         $conn->begin_transaction();
 
         $idempotency = $idempotencyService->begin($conn, $scope, $idempotencyKey, $idempotencyHash, [
             'user_id' => $userId,
-            'tenant' => 0,
-            'branch' => 0,
+            'tenant' => $operationalScope['tenant'],
+            'branch' => $operationalScope['branch'],
             'stale_after_seconds' => $staleAfterSeconds,
         ]);
         $gate = $this->mapIdempotencyGate($conn, $idempotency, $idempotencyKey);
@@ -1002,6 +1041,8 @@ class PosOrderController
 
         try {
             $payload = $callback($conn, $this->browserMutationContext($userId, [
+                'tenant' => $operationalScope['tenant'],
+                'branch' => $operationalScope['branch'],
                 'in_transaction' => true,
                 'skip_idempotency' => true,
                 'transaction_started' => true,
@@ -1042,6 +1083,25 @@ class PosOrderController
             'branch' => max(0, (int) ($_SESSION['pos_branch'] ?? 0)),
             'drawer_session_id' => max(0, (int) ($_SESSION['pos_drawer_session_id'] ?? 0)),
         ], $extra);
+    }
+
+    private function operationalScope(array $data = []): array
+    {
+        $tenant = (int) ($data['tenant'] ?? $data['pos_tenant'] ?? 0);
+        $branch = (int) ($data['branch'] ?? $data['pos_branch'] ?? 0);
+        if (session_status() === PHP_SESSION_ACTIVE) {
+            if ($tenant < 1) {
+                $tenant = (int) ($_SESSION['pos_tenant'] ?? 0);
+            }
+            if ($branch < 1) {
+                $branch = (int) ($_SESSION['pos_branch'] ?? 0);
+            }
+        }
+
+        return [
+            'tenant' => max(0, $tenant),
+            'branch' => max(0, $branch),
+        ];
     }
 
     private function mapIdempotencyGate(mysqli $conn, array $idempotency, string $idempotencyKey): ?array

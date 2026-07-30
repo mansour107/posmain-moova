@@ -66,6 +66,7 @@ class TeamHubService
     'kds.view' => 'عرض المطبخ',
     'kds.complete' => 'إكمال طلبات المطبخ',
     'kds.manage' => 'إدارة شاشة المطبخ',
+    'printers.manage' => 'إدارة الطابعات والتوجيه',
     'accounting.view' => 'عرض المحاسبة',
     'reports.view' => 'عرض التقارير',
     'reports.own_shift' => 'تقرير ورديتي',

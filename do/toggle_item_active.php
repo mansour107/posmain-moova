@@ -19,18 +19,36 @@ if (!ItemCatalogStatus::hasActiveColumn($conn)) {
     exit;
 }
 
-$stmt = $conn->prepare('UPDATE myitems SET is_active = ? WHERE id = ? AND COALESCE(isdeleted, 0) = 0');
-if (!$stmt) {
-    header('location:../myitems.php?active=fail');
-    exit;
-}
+try {
+    $conn->begin_transaction();
+    $stmt = $conn->prepare('SELECT id FROM myitems WHERE id = ? AND COALESCE(isdeleted, 0) = 0 LIMIT 1 FOR UPDATE');
+    $stmt->bind_param('i', $id);
+    $stmt->execute();
+    $exists = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    if (!$exists) {
+        throw new RuntimeException('ITEM_NOT_FOUND');
+    }
 
-$stmt->bind_param('ii', $active, $id);
-$ok = $stmt->execute();
-$stmt->close();
-
-if ($ok) {
-    posmain_record_menu_item_sync($conn, $id, 'item_status_toggle');
+    $stmt = $conn->prepare('UPDATE myitems SET is_active = ? WHERE id = ?');
+    $stmt->bind_param('ii', $active, $id);
+    $stmt->execute();
+    $stmt->close();
+    posmain_record_menu_item_sync(
+        $conn,
+        $id,
+        'item_status_toggle',
+        'menu.item_saved',
+        true
+    );
+    $conn->commit();
+    $ok = true;
+} catch (Throwable $exception) {
+    $conn->rollback();
+    $ok = false;
+    if (function_exists('posmain_log_exception') && function_exists('posmain_error_reference')) {
+        posmain_log_exception($exception, posmain_error_reference(), 'item_status_toggle');
+    }
 }
 
 header('location:../myitems.php?active=' . ($ok ? ($active ? 'enabled' : 'disabled') : 'fail'));

@@ -68,7 +68,7 @@ class RecipeItemAvailabilityDecoratorTest extends TestCase
         $this->assertArrayNotHasKey('recipe_enabled', $availability);
     }
 
-    public function testRecipeComputedAvailabilityDecoratesAndBlocksRecipeBackedItem(): void
+    public function testRecipeComputedShortageDecoratesRecipeBackedItemWithoutBlockingSale(): void
     {
         $itemId = $this->nextItemId();
         $ingredientId = $this->nextItemId();
@@ -86,16 +86,18 @@ class RecipeItemAvailabilityDecoratorTest extends TestCase
             'order_type' => 'takeaway',
         ]);
 
-        $this->assertFalse($availability['is_available']);
+        $this->assertTrue($availability['is_available']);
         $this->assertTrue($availability['manual_is_available']);
-        $this->assertFalse($availability['availability_can_add']);
-        $this->assertSame('recipe_unavailable', $availability['availability_status']);
+        $this->assertTrue($availability['availability_can_add']);
+        $this->assertTrue($availability['availability_warn_only']);
+        $this->assertSame('recipe_shortage', $availability['availability_status']);
         $this->assertTrue($availability['recipe_enabled']);
         $this->assertSame('0.000000', $availability['recipe_effective_available_qty']);
+        $this->assertSame('0', $availability['recipe_cashier_available_qty']);
         $this->assertSame('Required ingredient out of stock.', $availability['unavailable_reason']);
     }
 
-    public function testRecipeUnavailableIsWarnOnlyWhenNegativeApprovalIsAllowedAndStrictStockOff(): void
+    public function testLegacyNegativeApprovalFlagStillProducesPermissiveShortagePresentation(): void
     {
         $itemId = $this->nextItemId();
         $ingredientId = $this->nextItemId();
@@ -116,16 +118,15 @@ class RecipeItemAvailabilityDecoratorTest extends TestCase
             'order_type' => 'takeaway',
         ]);
 
-        // Non-strict + allow-negative-with-approval is TRUE warn-only: the sale is
-        // allowed with a non-blocking warning, and no manager-approval modal is opened.
-        $this->assertFalse($availability['is_available']);
+        $this->assertTrue($availability['is_available']);
         $this->assertTrue($availability['availability_can_add']);
         $this->assertFalse($availability['availability_requires_manager_override']);
         $this->assertTrue($availability['availability_warn_only']);
-        $this->assertSame('recipe_unavailable', $availability['availability_status']);
+        $this->assertSame('recipe_shortage', $availability['availability_status']);
+        $this->assertSame('0', $availability['recipe_cashier_available_qty']);
     }
 
-    public function testStrictStockPreventsManagerOverridePresentation(): void
+    public function testLegacyStrictStockFlagCannotBlockCashierSale(): void
     {
         $itemId = $this->nextItemId();
         $ingredientId = $this->nextItemId();
@@ -147,7 +148,11 @@ class RecipeItemAvailabilityDecoratorTest extends TestCase
             'order_type' => 'takeaway',
         ]);
 
-        $this->assertFalse($availability['availability_can_add']);
+        $this->assertTrue($availability['is_available']);
+        $this->assertTrue($availability['availability_can_add']);
+        $this->assertTrue($availability['availability_warn_only']);
+        $this->assertSame('recipe_shortage', $availability['availability_status']);
+        $this->assertSame('0', $availability['recipe_cashier_available_qty']);
         $this->assertFalse($availability['availability_requires_manager_override']);
         $this->assertFalse($availability['availability_override_allowed']);
     }
@@ -258,11 +263,13 @@ class RecipeItemAvailabilityDecoratorTest extends TestCase
                 'order_type' => 'takeaway',
             ];
 
-            $blocked = $service->availabilityForItem(self::$conn, $itemId, $scope);
-            $this->assertFalse($blocked['availability_can_add']);
-            $this->assertSame('inventory_unavailable', $blocked['availability_status']);
-            $this->assertTrue($blocked['inventory_stock_tracked']);
-            $this->assertSame('0.000000', $blocked['inventory_qty_available']);
+            $legacyBlock = $service->availabilityForItem(self::$conn, $itemId, $scope);
+            $this->assertTrue($legacyBlock['availability_can_add']);
+            $this->assertTrue($legacyBlock['availability_warn_only']);
+            $this->assertSame('inventory_shortage', $legacyBlock['availability_status']);
+            $this->assertTrue($legacyBlock['inventory_stock_tracked']);
+            $this->assertSame('0.000000', $legacyBlock['inventory_qty_available']);
+            $this->assertSame('0', $legacyBlock['inventory_cashier_qty_available']);
 
             self::$conn->query("UPDATE settings SET negative_stock_sale_policy = 'allow_with_warning' WHERE id = 1");
             $warned = $service->availabilityForItem(self::$conn, $itemId, $scope);

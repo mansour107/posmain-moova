@@ -19,7 +19,7 @@ function pos_item_card_fallback_icon(string $itemName): string
 
 function pos_item_card_quantity_label($value): string
 {
-    $number = (float) $value;
+    $number = max(0.0, (float) $value);
     if (abs($number - round($number)) < 0.000001) {
         return (string) (int) round($number);
     }
@@ -30,8 +30,15 @@ function pos_item_card_quantity_label($value): string
 function pos_item_card_availability_badge(array $rowitem): string
 {
     $status = (string) ($rowitem['availability_status'] ?? 'available');
-    if ($status === 'recipe_low') {
-        $qty = pos_item_card_quantity_label($rowitem['recipe_effective_available_qty'] ?? 0);
+    if ($status === 'recipe_low' || $status === 'recipe_shortage') {
+        $qty = pos_item_card_quantity_label(
+            $rowitem['recipe_cashier_available_qty'] ?? $rowitem['recipe_effective_available_qty'] ?? 0
+        );
+        return '<span class="badge bg-warning text-dark pos-item-availability-badge">متبقي ' . htmlspecialchars($qty, ENT_QUOTES, 'UTF-8') . '</span>';
+    }
+
+    if (!empty($rowitem['inventory_stock_tracked']) && !empty($rowitem['availability_low_stock'])) {
+        $qty = pos_item_card_quantity_label($rowitem['inventory_cashier_qty_available'] ?? 0);
         return '<span class="badge bg-warning text-dark pos-item-availability-badge">متبقي ' . htmlspecialchars($qty, ENT_QUOTES, 'UTF-8') . '</span>';
     }
 
@@ -69,8 +76,14 @@ function pos_render_item_card(array $rowitem): string
     $overridePermission = htmlspecialchars((string) ($rowitem['availability_override_permission'] ?? ''), ENT_QUOTES, 'UTF-8');
     $warnOnly = !empty($rowitem['availability_warn_only']);
     $recipeEnabled = !empty($rowitem['recipe_enabled']);
-    $recipeQty = htmlspecialchars((string) ($rowitem['recipe_effective_available_qty'] ?? ''), ENT_QUOTES, 'UTF-8');
+    $recipeQty = htmlspecialchars(
+        (string) ($rowitem['recipe_cashier_available_qty'] ?? $rowitem['recipe_effective_available_qty'] ?? ''),
+        ENT_QUOTES,
+        'UTF-8'
+    );
     $recipeRevision = htmlspecialchars((string) ($rowitem['recipe_availability_revision'] ?? ''), ENT_QUOTES, 'UTF-8');
+    $inventoryTracked = !empty($rowitem['inventory_stock_tracked']);
+    $inventoryCashierQty = htmlspecialchars((string) ($rowitem['inventory_cashier_qty_available'] ?? ''), ENT_QUOTES, 'UTF-8');
     $hasVariants = !empty($rowitem['has_variants']) || !empty($rowitem['has_active_variants']);
     $allowsSugarSpoons = !empty($rowitem['allows_sugar_spoons']);
     $variantDataAttribute = '';
@@ -120,6 +133,8 @@ function pos_render_item_card(array $rowitem): string
             data-recipe-enabled="<?= $recipeEnabled ? '1' : '0' ?>"
             data-recipe-effective-available-qty="<?= $recipeQty ?>"
             data-recipe-availability-revision="<?= $recipeRevision ?>"
+            data-inventory-stock-tracked="<?= $inventoryTracked ? '1' : '0' ?>"
+            data-inventory-cashier-qty="<?= $inventoryCashierQty ?>"
             data-has-variants="<?= $hasVariants ? '1' : '0' ?>"
             data-sugar-spoons="<?= $allowsSugarSpoons ? '1' : '0' ?>"
             <?= $variantDataAttribute ?>
@@ -196,8 +211,14 @@ function pos_render_item_card_compact(array $rowitem): string
     $overridePermission = htmlspecialchars((string) ($rowitem['availability_override_permission'] ?? ''), ENT_QUOTES, 'UTF-8');
     $warnOnly = !empty($rowitem['availability_warn_only']);
     $recipeEnabled = !empty($rowitem['recipe_enabled']);
-    $recipeQty = htmlspecialchars((string) ($rowitem['recipe_effective_available_qty'] ?? ''), ENT_QUOTES, 'UTF-8');
+    $recipeQty = htmlspecialchars(
+        (string) ($rowitem['recipe_cashier_available_qty'] ?? $rowitem['recipe_effective_available_qty'] ?? ''),
+        ENT_QUOTES,
+        'UTF-8'
+    );
     $recipeRevision = htmlspecialchars((string) ($rowitem['recipe_availability_revision'] ?? ''), ENT_QUOTES, 'UTF-8');
+    $inventoryTracked = !empty($rowitem['inventory_stock_tracked']);
+    $inventoryCashierQty = htmlspecialchars((string) ($rowitem['inventory_cashier_qty_available'] ?? ''), ENT_QUOTES, 'UTF-8');
     $hasVariants = !empty($rowitem['has_variants']) || !empty($rowitem['has_active_variants']);
     $allowsSugarSpoons = !empty($rowitem['allows_sugar_spoons']);
     $variantDataAttribute = '';
@@ -241,6 +262,8 @@ function pos_render_item_card_compact(array $rowitem): string
             data-recipe-enabled="<?= $recipeEnabled ? '1' : '0' ?>"
             data-recipe-effective-available-qty="<?= $recipeQty ?>"
             data-recipe-availability-revision="<?= $recipeRevision ?>"
+            data-inventory-stock-tracked="<?= $inventoryTracked ? '1' : '0' ?>"
+            data-inventory-cashier-qty="<?= $inventoryCashierQty ?>"
             data-has-variants="<?= $hasVariants ? '1' : '0' ?>"
             data-sugar-spoons="<?= $allowsSugarSpoons ? '1' : '0' ?>"
             <?= $variantDataAttribute ?>

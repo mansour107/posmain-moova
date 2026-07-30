@@ -94,11 +94,13 @@ try {
         'movement_type' => 'sale_cash',
         'amount' => '45.000',
         'created_by' => 501,
+        'idempotency_key' => 'shift-production:sale:' . $sessionId,
     ]);
     $drawer->recordMovement($conn, $sessionId, [
         'movement_type' => 'paid_in',
         'amount' => '10.000',
         'created_by' => 501,
+        'idempotency_key' => 'shift-production:paid-in:' . $sessionId,
     ]);
 
     $_SESSION['pos_drawer_session_id'] = $sessionId;

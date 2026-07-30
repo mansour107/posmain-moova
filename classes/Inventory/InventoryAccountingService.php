@@ -29,7 +29,7 @@ class InventoryAccountingService
 
     public function postPurchaseReceipt(mysqli $conn, array $context, array $movementIds): array
     {
-        if (!$this->flags->isAccountingEnabled()) {
+        if (!$this->accountingWriteEnabled()) {
             return $this->noop('inventory accounting is disabled');
         }
 
@@ -60,7 +60,7 @@ class InventoryAccountingService
 
     public function postPurchaseReturn(mysqli $conn, array $context, array $movementIds): array
     {
-        if (!$this->flags->isAccountingEnabled()) {
+        if (!$this->accountingWriteEnabled()) {
             return $this->noop('inventory accounting is disabled');
         }
 
@@ -102,7 +102,7 @@ class InventoryAccountingService
 
     public function postAdjustment(mysqli $conn, array $context, array $movementIds): array
     {
-        if (!$this->flags->isAccountingEnabled()) {
+        if (!$this->accountingWriteEnabled()) {
             return $this->noop('inventory accounting is disabled');
         }
 
@@ -218,7 +218,7 @@ class InventoryAccountingService
 
     public function postRefundReversal(mysqli $conn, array $context, array $movementIds): array
     {
-        if (!$this->flags->isAccountingEnabled()) {
+        if (!$this->accountingWriteEnabled()) {
             return $this->noop('inventory accounting is disabled');
         }
 
@@ -249,7 +249,7 @@ class InventoryAccountingService
 
     private function postOutboundCost(mysqli $conn, array $context, array $movementIds, array $types, string $debitAccountKey, string $label): array
     {
-        if (!$this->flags->isAccountingEnabled()) {
+        if (!$this->accountingWriteEnabled()) {
             return $this->noop('inventory accounting is disabled');
         }
 
@@ -591,10 +591,22 @@ class InventoryAccountingService
             $value = (int) ($context['inventory_account_id'] ?? $this->accounts()['inventory_account_id'] ?? 0);
         }
         if ($value < 1) {
-            throw new InvalidArgumentException('Inventory accounting account is required: ' . $key);
+            throw new InvalidArgumentException('INVENTORY_ACCOUNTING_MAPPING_REQUIRED:' . $key);
         }
 
         return $value;
+    }
+
+    private function accountingWriteEnabled(): bool
+    {
+        if (!$this->flags->isAccountingEnabled()) {
+            return false;
+        }
+        if (!$this->flags->isQuantityTrackingEnabled()) {
+            throw new RuntimeException('INVENTORY_ACCOUNTING_REQUIRES_QUANTITY_TRACKING');
+        }
+
+        return true;
     }
 
     private function accounts(): array

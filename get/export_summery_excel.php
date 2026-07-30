@@ -1,4 +1,6 @@
 <?php
+require_once __DIR__ . '/../includes/api_entry_classification.php';
+
 $sql = "SELECT * FROM acc_head";
 $result = $conn->query($sql);
 

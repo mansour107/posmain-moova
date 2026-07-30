@@ -10,8 +10,8 @@ class SecurityAuditLogger
         }
 
         $userId = array_key_exists('user_id', $options) && $options['user_id'] !== null ? (int) $options['user_id'] : $this->sessionUserId();
-        $tenant = (int) ($options['tenant'] ?? $options['pos_tenant'] ?? 0);
-        $branch = (int) ($options['branch'] ?? $options['pos_branch'] ?? 0);
+        $tenant = $this->scopeValue($options, 'tenant', 'pos_tenant');
+        $branch = $this->scopeValue($options, 'branch', 'pos_branch');
         $ip = $this->truncate((string) ($options['ip'] ?? ($_SERVER['REMOTE_ADDR'] ?? '')), 64);
         $userAgent = $this->truncate((string) ($options['user_agent'] ?? ($_SERVER['HTTP_USER_AGENT'] ?? '')), 255);
         $targetType = $this->nullableString($options['target_type'] ?? null, 80);
@@ -66,6 +66,28 @@ class SecurityAuditLogger
         }
 
         return null;
+    }
+
+    /**
+     * Use an explicit trusted event scope when supplied; otherwise inherit the
+     * authenticated operational scope so audit rows cannot silently lose branch
+     * attribution after login.
+     *
+     * @param array<string,mixed> $options
+     */
+    private function scopeValue(array $options, string $primary, string $alternate): int
+    {
+        if (array_key_exists($primary, $options)) {
+            return max(0, (int) $options[$primary]);
+        }
+        if (array_key_exists($alternate, $options)) {
+            return max(0, (int) $options[$alternate]);
+        }
+        if (session_status() === PHP_SESSION_ACTIVE) {
+            return max(0, (int) ($_SESSION[$alternate] ?? 0));
+        }
+
+        return 0;
     }
 
     private function nullableString($value, int $limit): ?string

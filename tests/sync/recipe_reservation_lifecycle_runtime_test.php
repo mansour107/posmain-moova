@@ -84,6 +84,57 @@ try {
     recipeReservationLifecycleAssert(trim((string) ($expiredReservation[0]['released_at'] ?? '')) !== '', 'expired reservation should stamp the release timestamp');
     recipeReservationLifecycleAssert($balanceAfterExpire['qty_reserved'] === '0.000000', 'expiry should clear reserved stock');
 
+    recipeReservationLifecycleSeedRecipe($conn, 51020, 51021, '1.000000');
+    $permissiveService = new RecipeOrderLifecycleService(recipeReservationLifecycleFlags([
+        'mode' => 'availability_pilot',
+        'consumption' => true,
+        'availability' => true,
+        'strict_stock' => true,
+    ]));
+    $oversoldReservation = recipeReservationLifecycleLineContext($conn, 7300, 7301, 51020, '2.000000');
+    $permissiveService->onOrderLineAdded($oversoldReservation);
+    $oversoldReservedBalance = recipeReservationLifecycleBalance($conn, 51021);
+
+    recipeReservationLifecycleAssert(
+        count(recipeReservationLifecycleRows($conn, 'recipe_order_line_usage', 'order_id = 7300')) === 1,
+        'legacy strict-stock flag must not block recipe usage capture'
+    );
+    recipeReservationLifecycleAssert(
+        count(recipeReservationLifecycleRows($conn, 'stock_reservations', 'order_id = 7300')) === 1,
+        'legacy strict-stock flag must not block an oversold reservation'
+    );
+    recipeReservationLifecycleAssert($oversoldReservedBalance['qty_on_hand'] === '1.000000', 'oversold reservation must not consume on-hand stock');
+    recipeReservationLifecycleAssert($oversoldReservedBalance['qty_reserved'] === '2.000000', 'oversold reservation should preserve requested quantity');
+    recipeReservationLifecycleAssert($oversoldReservedBalance['qty_available'] === '-1.000000', 'oversold reservation should preserve the raw negative available balance');
+
+    $permissiveService->onOrderLineCancelled($oversoldReservation, 'runtime_oversold_release');
+    $permissiveService->onOrderPaid([
+        'conn' => $conn,
+        'order_id' => 7301,
+        'pos_tenant' => 0,
+        'pos_branch' => 0,
+        'store_id' => 1,
+        'channel' => 'pos',
+        'order_type' => 'takeaway',
+        'lines' => [[
+            'fat_detail_id' => 7302,
+            'sellable_item_id' => 51020,
+            'quantity' => '2.000000',
+        ]],
+    ]);
+    $oversoldPaidBalance = recipeReservationLifecycleBalance($conn, 51021);
+
+    recipeReservationLifecycleAssert(
+        count(recipeReservationLifecycleRows($conn, 'recipe_order_line_usage', 'order_id = 7301')) === 1,
+        'direct paid oversell should preserve recipe usage'
+    );
+    recipeReservationLifecycleAssert(
+        count(recipeReservationLifecycleRows($conn, 'inventory_movements', "order_id = 7301 AND movement_type = 'recipe_consumption'")) === 1,
+        'direct paid oversell should preserve recipe consumption movement'
+    );
+    recipeReservationLifecycleAssert($oversoldPaidBalance['qty_on_hand'] === '-1.000000', 'direct paid oversell should preserve the raw negative on-hand balance');
+    recipeReservationLifecycleAssert($oversoldPaidBalance['qty_available'] === '-1.000000', 'direct paid oversell should preserve the raw negative available balance');
+
     echo "recipe-reservation-lifecycle-runtime-ok db={$db}\n";
 } finally {
     $conn->query("DROP DATABASE IF EXISTS `{$db}`");
@@ -165,10 +216,10 @@ function recipeReservationLifecycleSeedRecipe(mysqli $conn, int $sellableItemId,
     $definition->activate($conn, (int) $recipe['id'], $actor);
 }
 
-function recipeReservationLifecycleFlags(): RecipeFeatureFlags
+function recipeReservationLifecycleFlags(array $recipeOverrides = []): RecipeFeatureFlags
 {
     return new RecipeFeatureFlags([
-        'recipe' => [
+        'recipe' => array_replace_recursive([
             'enabled' => true,
             'mode' => 'reserve_only',
             'reservations' => true,
@@ -177,7 +228,7 @@ function recipeReservationLifecycleFlags(): RecipeFeatureFlags
                 'item_ids' => [],
                 'category_ids' => [],
             ],
-        ],
+        ], $recipeOverrides),
     ]);
 }
 

@@ -8,6 +8,7 @@ ini_set('display_startup_errors', 1);
 error_reporting(E_ALL);
 
 require_once __DIR__ . '/../includes/session_bootstrap.php';
+require_once __DIR__ . '/../includes/print_client_bootstrap.php';
 
 // التحقق من وجود جلسة ويتر
 $is_waiter_mode = isset($_SESSION['waiter_logged_in']) && $_SESSION['waiter_logged_in'] === true;
@@ -69,6 +70,15 @@ $rowstg = $conn->query("SELECT * FROM settings WHERE id = 1")->fetch_assoc();
             margin: 20px 0;
         }
     </style>
+    <?= posmain_render_print_client_bootstrap('../') ?>
+    <script>
+    window.POSMAIN_PRINT_CONTEXT = {
+        jobType: 'receipt',
+        orderId: <?= (int) $id ?>,
+        title: 'Receipt <?= (int) $id ?>',
+        contentSelector: '#printed'
+    };
+    </script>
 </head>
 <body>
     <div class="receipt-container" id="printed">

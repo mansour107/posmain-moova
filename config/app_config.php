@@ -548,6 +548,14 @@ if (!function_exists('posmain_app_config')) {
         if (!in_array($inventoryLedgerMode, ['off', 'shadow', 'bridge', 'live'], true)) {
             $inventoryLedgerMode = 'live';
         }
+        $inventoryQuantityTracking = posmain_bool(
+            $branchEnv(['POSMAIN_INVENTORY_QUANTITY_TRACKING'], null),
+            in_array($inventoryLedgerMode, ['bridge', 'live'], true)
+        );
+        $printMode = strtolower(trim((string) $branchEnv(['POSMAIN_PRINT_MODE'], 'legacy')));
+        if (!in_array($printMode, ['legacy', 'silent'], true)) {
+            $printMode = 'legacy';
+        }
         $configRole = strtolower(trim((string) $branchEnv(['POSMAIN_ROLE'], 'branch')));
         $recipeMoovaSyncDefault = $configRole === 'cloud' ? '0' : '1';
 
@@ -615,6 +623,9 @@ if (!function_exists('posmain_app_config')) {
             ],
             'inventory' => [
                 'ledger_mode' => $inventoryLedgerMode,
+                // Explicit quantity capability. When the new setting is
+                // absent, preserve the legacy bridge/live meaning.
+                'quantity_tracking' => $inventoryQuantityTracking,
                 // Set only after the scoped cutover/readiness evidence has
                 // been reviewed for this branch database.
                 'cutover_certified' => posmain_bool($branchEnv(['POSMAIN_INVENTORY_CUTOVER_CERTIFIED'], '0'), false),
@@ -640,6 +651,28 @@ if (!function_exists('posmain_app_config')) {
                 'default_rate' => (string) $branchEnv(['POSMAIN_TAX_DEFAULT_RATE'], '0'),
                 'inclusive' => posmain_bool($branchEnv(['POSMAIN_TAX_INCLUSIVE'], '0'), false),
                 'vat_payable_account_id' => posmain_int($branchEnv(['POSMAIN_TAX_VAT_PAYABLE_ACCOUNT_ID'], 0), 0),
+            ],
+            'printing' => [
+                // Keep the browser dialog as the compatibility default. Silent
+                // delivery is activated only by deployment configuration.
+                'mode' => $printMode,
+                'simulator_directory' => (string) $branchEnv(
+                    ['POSMAIN_PRINT_SIMULATOR_DIR'],
+                    sys_get_temp_dir() . '/posmain-printer-simulator',
+                    true
+                ),
+                'network_timeout_ms' => max(
+                    500,
+                    min(15000, posmain_int($branchEnv(['POSMAIN_PRINT_NETWORK_TIMEOUT_MS'], 3000), 3000))
+                ),
+                'worker_lock_seconds' => max(
+                    10,
+                    min(300, posmain_int($branchEnv(['POSMAIN_PRINT_WORKER_LOCK_SECONDS'], 45), 45))
+                ),
+                'retry_delay_seconds' => max(
+                    1,
+                    min(3600, posmain_int($branchEnv(['POSMAIN_PRINT_RETRY_DELAY_SECONDS'], 15), 15))
+                ),
             ],
             'public_base_url' => (string) posmain_env('POSMAIN_PUBLIC_BASE_URL', ''),
             'delivery' => [
@@ -678,6 +711,14 @@ if (!function_exists('posmain_app_config')) {
                 'pos_tenant' => posmain_int($branchEnv(['POSMAIN_POS_TENANT'], null), null),
                 'pos_branch' => posmain_int($branchEnv(['POSMAIN_POS_BRANCH'], null), null),
                 'cloud_base_url' => (string) $branchIdentityEnv(['POSMAIN_CLOUD_BASE_URL'], ''),
+            ],
+            'certification' => [
+                'receipt_path' => (string) $branchEnv(['POSMAIN_CERTIFICATION_RECEIPT_PATH'], '', true),
+                'release_manifest_path' => (string) $branchEnv(
+                    ['POSMAIN_RELEASE_MANIFEST_PATH'],
+                    dirname(__DIR__) . '/release-manifest.json',
+                    true
+                ),
             ],
             'features' => [
                 // Enabled by default; only explicitly assigned items/categories expose
@@ -730,6 +771,11 @@ if (!function_exists('posmain_app_config')) {
         $config = posmain_merge_config($config, posmain_runtime_file_database_overrides());
         $config = posmain_merge_config($config, posmain_runtime_db_settings_overrides($config));
         if ($productionMode) {
+            require_once dirname(__DIR__) . '/classes/Release/CertificationReceiptRuntime.php';
+            $config['certification'] = array_merge(
+                $config['certification'],
+                CertificationReceiptRuntime::evaluate($config)
+            );
             require_once __DIR__ . '/production_profile.php';
             $config = posmain_production_profile_apply($config);
         }

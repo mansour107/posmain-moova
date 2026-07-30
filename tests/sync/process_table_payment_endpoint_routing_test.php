@@ -14,6 +14,7 @@ processTablePaymentRoutingAssert(strpos($source, 'orders.payment') !== false, 'e
 processTablePaymentRoutingAssert(strpos($controller, '$posMutationService->payTableOrder') !== false, 'controller should route payment mutation through PosOrderMutationService');
 processTablePaymentRoutingAssert(strpos($controller, "'pos_customer_id'") !== false, 'controller should pass pos_customer_id for CRM rollup');
 processTablePaymentRoutingAssert(strpos($controller, '$accountingPostingService->postTablePaymentReceipt') !== false, 'controller should route receipt posting through OrderAccountingService');
+processTablePaymentRoutingAssert(strpos($controller, '$accountingPostingService->postTableInvoiceFinalization') !== false, 'full table payment should finalize the sales invoice through OrderAccountingService');
 processTablePaymentRoutingAssert(strpos($controller, '(new OrderMutationSideEffectsService())->recordTablePayment') !== false, 'controller should centralize table order/outbox side effects');
 processTablePaymentRoutingAssert(strpos($sideEffects, 'SyncOutboxEventService') !== false, 'central side-effect service should preserve sync outbox recording');
 processTablePaymentRoutingAssert(strpos($sideEffects, "'order.payment_recorded'") !== false, 'central side-effect service should preserve the payment lifecycle event');

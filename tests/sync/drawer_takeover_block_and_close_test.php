@@ -8,6 +8,7 @@ require_once __DIR__ . '/../../classes/Pos/Service/DrawerFloatExpectationService
 require_once __DIR__ . '/../../classes/Pos/Service/DrawerBranchBlockedException.php';
 require_once __DIR__ . '/../../classes/Pos/Service/PosRegisterService.php';
 require_once __DIR__ . '/../../classes/Pos/Service/ManagerApprovalService.php';
+require_once __DIR__ . '/../../classes/Pos/Service/PaymentMethodService.php';
 require_once __DIR__ . '/../../includes/shift_handover_idempotency.php';
 require_once __DIR__ . '/../../includes/auth_guard.php';
 
@@ -65,12 +66,30 @@ try {
         id INT AUTO_INCREMENT PRIMARY KEY,
         pro_date DATE NULL,
         crtime DATETIME NULL,
+        payment_date DATETIME NULL,
         user VARCHAR(50) NULL,
         pro_tybe INT NULL,
+        payment_status VARCHAR(40) NULL,
         isdeleted TINYINT NOT NULL DEFAULT 0,
         fat_total DECIMAL(12,3) NOT NULL DEFAULT 0,
         fat_disc DECIMAL(12,3) NOT NULL DEFAULT 0,
         fat_net DECIMAL(12,3) NOT NULL DEFAULT 0
+    )");
+    $conn->query("CREATE TABLE order_payments (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        order_id BIGINT UNSIGNED NOT NULL,
+        amount DECIMAL(19,2) NOT NULL DEFAULT 0.00,
+        payment_method VARCHAR(50) NULL,
+        reference_no VARCHAR(100) NULL,
+        paid_by_customer_id BIGINT UNSIGNED NULL,
+        created_by BIGINT UNSIGNED NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        is_voided TINYINT(1) NOT NULL DEFAULT 0,
+        voided_at DATETIME NULL,
+        voided_by BIGINT UNSIGNED NULL,
+        void_reason VARCHAR(255) NULL,
+        KEY idx_order_payments_order_active (order_id, is_voided),
+        KEY idx_order_payments_created (created_at)
     )");
 
     $_SESSION['pos_tenant'] = 3;
@@ -121,7 +140,74 @@ try {
         'movement_type' => 'sale_cash',
         'amount' => '25.000',
         'created_by' => 10,
+        'idempotency_key' => 'drawer-takeover:sale:' . $sessionA,
     ]);
+    $paymentMethods = new PaymentMethodService();
+    $paymentMethods->saveMethod($conn, [
+        'code' => 'cash',
+        'name_ar' => 'Cash',
+        'type' => 'cash',
+        'account_id' => 51,
+        'settlement_policy' => 'cash_drawer',
+    ]);
+    $bankMethod = $paymentMethods->saveMethod($conn, [
+        'code' => 'bank',
+        'name_ar' => 'Bank',
+        'type' => 'bank',
+        'account_id' => 52,
+        'settlement_policy' => 'manual_external',
+    ]);
+    $businessDay = (string) ($drawer->sessionById($conn, $sessionA)['business_day'] ?? date('Y-m-d'));
+    $now = date('Y-m-d H:i:s');
+    $conn->query("
+        INSERT INTO ot_head
+            (id, pro_date, crtime, payment_date, user, pro_tybe, payment_status, isdeleted, fat_total, fat_disc, fat_net)
+        VALUES
+            (100, '{$businessDay}', '{$now}', '{$now}', '10', 9, 'paid', 0, 25, 0, 25),
+            (101, '{$businessDay}', '{$now}', '{$now}', '10', 9, 'refunded', 0, 20, 0, 20)
+    ");
+    $conn->query("
+        INSERT INTO order_payments (order_id, amount, payment_method, created_by, created_at)
+        VALUES
+            (100, 25, 'cash', 10, '{$now}'),
+            (101, 20, 'bank', 10, '{$now}')
+    ");
+    $bankPaymentId = (int) $conn->query(
+        'SELECT id FROM order_payments WHERE order_id = 101 LIMIT 1'
+    )->fetch_assoc()['id'];
+    $creditNoteUuid = SyncBranchIdentity::generateUuidV4();
+    $creditNoteStmt = $conn->prepare("
+        INSERT INTO credit_notes (
+            uuid, tenant, branch, business_day, drawer_session_id,
+            original_order_id, customer_account_id, total_amount,
+            refund_mode, reason, status, created_by, created_at
+        ) VALUES (?, 3, 7, ?, ?, 101, 1, '12.00', 'amount', 'takeover tender regression', 'posted', 90, ?)
+    ");
+    $creditNoteStmt->bind_param('ssis', $creditNoteUuid, $businessDay, $sessionA, $now);
+    $creditNoteStmt->execute();
+    $creditNoteId = (int) $conn->insert_id;
+    $creditNoteStmt->close();
+    $bankMethodId = (int) $bankMethod['id'];
+    $refundKey = 'takeover-bank-refund-' . getmypid();
+    $refundStmt = $conn->prepare("
+        INSERT INTO payment_refunds (
+            credit_note_id, original_order_id, original_payment_id,
+            payment_method_id, account_id, amount, settlement_policy,
+            settlement_declared_by, settlement_declared_at, status,
+            idempotency_key, created_by, created_at
+        ) VALUES (?, 101, ?, ?, 52, '12.00', 'manual_external', 90, ?, 'settled', ?, 90, ?)
+    ");
+    $refundStmt->bind_param(
+        'iiisss',
+        $creditNoteId,
+        $bankPaymentId,
+        $bankMethodId,
+        $now,
+        $refundKey,
+        $now
+    );
+    $refundStmt->execute();
+    $refundStmt->close();
 
     // Cashier B is blocked with structured metadata.
     unset($_SESSION['pos_shift_open_count'], $_SESSION['pos_drawer_session_id']);
@@ -294,9 +380,22 @@ try {
     takeoverAssert(is_array($forcedShiftCloseEvent), 'forced close emits shift-close bundle');
     takeoverAssert((int) $forcedCloseSessionEvents[1]['id'] < (int) $forcedShiftCloseEvent['id'], 'final forced-close session revision is queued before shift-close bundle');
     takeoverAssert(($closedRow['open_branch_lock'] ?? null) === null || $closedRow['open_branch_lock'] === '', 'branch lock cleared');
-    $closeSummary = $conn->query('SELECT drawer_session_id, close_path FROM drawer_session_close_summaries')->fetch_assoc();
+    $closeSummary = $conn->query('SELECT * FROM drawer_session_close_summaries')->fetch_assoc();
     takeoverAssert((int) ($closeSummary['drawer_session_id'] ?? 0) === $sessionA, 'forced close creates one canonical session summary');
     takeoverAssert(($closeSummary['close_path'] ?? '') === 'drawer_takeover_force_close', 'summary records the takeover close path');
+    takeoverAssert((string) ($closeSummary['total_sales'] ?? '') === '33.000', 'forced close net sales subtract posted refund');
+    takeoverAssert((string) ($closeSummary['cash_sales'] ?? '') === '25.000', 'forced close excludes opening float from cash sales');
+    takeoverAssert((string) ($closeSummary['non_cash_sales'] ?? '') === '8.000', 'forced close reduces settled bank refund from non-cash');
+    takeoverAssert((string) ($closeSummary['return_total'] ?? '') === '12.000', 'forced close records posted return total');
+    $forcedPaymentSummary = json_decode(
+        (string) ($closeSummary['payment_summary_json'] ?? ''),
+        true,
+        512,
+        JSON_THROW_ON_ERROR
+    );
+    takeoverAssert(($forcedPaymentSummary['total'] ?? '') === '45.000', 'forced close retains gross tender evidence');
+    takeoverAssert(($forcedPaymentSummary['settled_refund_total'] ?? '') === '12.000', 'forced close retains settled refund evidence');
+    takeoverAssert(($forcedPaymentSummary['net_total'] ?? '') === '33.000', 'forced close retains net tender evidence');
 
     $conn->begin_transaction();
     $rolledBackResolution = $count->resolveSession($conn, 90, $sessionA, [

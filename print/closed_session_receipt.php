@@ -2,6 +2,7 @@
 require_once __DIR__ . '/../includes/session_bootstrap.php';
 include('../includes/connect.php');
 require_once __DIR__ . '/../includes/auth_guard.php';
+require_once __DIR__ . '/../includes/print_client_bootstrap.php';
 require_login();
 if (!auth_guard_has_permission('reports.cash_flow', $conn)
     && !auth_guard_has_permission('pos.shift.close', $conn)) {
@@ -97,8 +98,9 @@ $settings = $settings_query->fetch_assoc();
             margin-left: 15mm;
         }
     </style>
+    <?= posmain_render_print_client_bootstrap('../') ?>
 </head>
-<body class="bg-light">
+<body class="bg-light" data-print-job-type="report" data-print-content-selector="#printed">
 
 <div class="card no-print mx-auto mt-3" style="width: 78mm;">
     <div class="card-body text-center">

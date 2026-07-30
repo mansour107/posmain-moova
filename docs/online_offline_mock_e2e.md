@@ -7,7 +7,10 @@ It starts two temporary mock HTTP servers:
 - mock cloud server: receives branch `sync_outbox` pushes and returns receive-only, shadow-apply, or live-apply results;
 - mock branch server: receives cloud Moova events and returns branch acknowledgements.
 
-The harness uses the local test database, inserts rows with an `e2e:` idempotency prefix, and deletes those rows after the run. It does not use production credentials, install services, restore data, or talk to a live shop.
+The harness creates a generated `posmain_sync_e2e_*` database on an explicitly
+local MySQL host and drops the complete database in cleanup. It does not accept
+a standing database name, use production credentials, install services,
+restore data, or talk to a live shop.
 
 ## Command
 

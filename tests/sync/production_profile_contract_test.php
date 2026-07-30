@@ -65,24 +65,138 @@ if (($defaults['recipe']['mode'] ?? '') !== 'read_only') {
 $certified = posmain_production_profile_apply([
     'role' => 'branch',
     'tax' => ['enabled' => false],
-    'inventory' => ['ledger_mode' => 'live', 'legacy_mirror' => true, 'cutover_certified' => true],
-    'recipe' => ['mode' => 'full', 'rollout_certified' => true, 'moova_sync' => false],
+    'certification' => [
+        'valid' => true,
+        'requested' => true,
+        'gates' => ['financial' => 1, 'sync' => 1, 'inventory' => 1, 'recipe' => 1],
+    ],
+    'inventory' => [
+        'ledger_mode' => 'live',
+        'quantity_tracking' => true,
+        'legacy_mirror' => true,
+        'cutover_certified' => true,
+        'accounting' => false,
+        'reservations' => false,
+        'availability' => true,
+    ],
+    'recipe' => [
+        'mode' => 'consume_pilot',
+        'rollout_certified' => true,
+        'moova_sync' => false,
+        'consumption' => true,
+        'accounting' => false,
+        'availability' => true,
+    ],
 ]);
 if (($certified['inventory']['ledger_mode'] ?? '') !== 'live' || !empty($certified['inventory']['legacy_mirror'])) {
     fwrite(STDERR, "production-profile-contract-FAIL: certified inventory should activate live ledger\n");
     exit(1);
 }
-if (empty($certified['inventory']['accounting'])
-    || empty($certified['inventory']['reservations'])
+if (!empty($certified['inventory']['accounting'])
+    || !empty($certified['inventory']['reservations'])
     || empty($certified['inventory']['availability'])) {
-    fwrite(STDERR, "production-profile-contract-FAIL: certified live inventory must enable accounting, reservations, and availability\n");
+    fwrite(STDERR, "production-profile-contract-FAIL: certification must preserve independent inventory capabilities\n");
     exit(1);
 }
-if (($certified['recipe']['mode'] ?? '') !== 'full'
+if (($certified['recipe']['mode'] ?? '') !== 'consume_pilot'
     || empty($certified['recipe']['consumption'])
-    || empty($certified['recipe']['accounting'])
+    || !empty($certified['recipe']['accounting'])
     || empty($certified['recipe']['availability'])) {
-    fwrite(STDERR, "production-profile-contract-FAIL: certified recipes should activate full runtime\n");
+    fwrite(STDERR, "production-profile-contract-FAIL: certification must preserve requested recipe capabilities\n");
+    exit(1);
+}
+
+$noOptionalModules = posmain_production_profile_apply([
+    'role' => 'branch',
+    'tax' => ['enabled' => false],
+    'certification' => [
+        'valid' => true,
+        'requested' => true,
+        'gates' => ['financial' => 1, 'sync' => 1, 'inventory' => 1, 'recipe' => 1],
+    ],
+    'inventory' => [
+        'ledger_mode' => 'off',
+        'quantity_tracking' => false,
+        'cutover_certified' => true,
+        'accounting' => false,
+        'reservations' => false,
+        'availability' => false,
+    ],
+    'recipe' => ['mode' => 'off', 'rollout_certified' => true],
+]);
+if (($noOptionalModules['inventory']['ledger_mode'] ?? '') !== 'off'
+    || !empty($noOptionalModules['inventory']['quantity_tracking'])
+    || ($noOptionalModules['recipe']['mode'] ?? '') !== 'off'
+    || !empty($noOptionalModules['recipe']['enabled'])) {
+    fwrite(STDERR, "production-profile-contract-FAIL: certified basic POS must not force inventory or recipes\n");
+    exit(1);
+}
+
+$recipeWithoutQuantity = posmain_production_profile_apply([
+    'role' => 'branch',
+    'tax' => ['enabled' => false],
+    'certification' => [
+        'valid' => true,
+        'requested' => true,
+        'gates' => ['financial' => 1, 'sync' => 1, 'inventory' => 1, 'recipe' => 1],
+    ],
+    'inventory' => [
+        'ledger_mode' => 'off',
+        'quantity_tracking' => false,
+        'cutover_certified' => true,
+        'accounting' => false,
+    ],
+    'recipe' => [
+        'mode' => 'consume_pilot',
+        'rollout_certified' => true,
+        'enabled' => true,
+        'consumption' => true,
+        'pilot' => ['pos_branch' => '1'],
+    ],
+]);
+if (($recipeWithoutQuantity['recipe']['mode'] ?? '') !== 'read_only'
+    || !empty($recipeWithoutQuantity['recipe']['consumption'])
+    || empty($recipeWithoutQuantity['recipe']['shadow_ledger'])
+    || empty($recipeWithoutQuantity['production_profile']['recipe_activation_blocked'])
+    || !in_array(
+        'production_profile_active_recipe_requires_inventory_quantity_tracking',
+        $recipeWithoutQuantity['production_profile_warnings'] ?? [],
+        true
+    )) {
+    fwrite(STDERR, "production-profile-contract-FAIL: active recipes must downgrade when quantity tracking is disabled\n");
+    exit(1);
+}
+
+$legacyFlagsOnly = posmain_production_profile_apply([
+    'role' => 'branch',
+    'tax' => ['enabled' => false],
+    'certification' => ['valid' => false, 'requested' => false, 'gates' => []],
+    'inventory' => [
+        'ledger_mode' => 'live',
+        'quantity_tracking' => true,
+        'cutover_certified' => true,
+    ],
+    'recipe' => [
+        'mode' => 'full',
+        'rollout_certified' => true,
+        'consumption' => true,
+        'accounting' => true,
+    ],
+]);
+if (($legacyFlagsOnly['inventory']['ledger_mode'] ?? '') !== 'shadow'
+    || !empty($legacyFlagsOnly['inventory']['quantity_tracking'])
+    || ($legacyFlagsOnly['recipe']['mode'] ?? '') !== 'read_only'
+    || !in_array(
+        'production_profile_legacy_inventory_attestation_not_certification',
+        $legacyFlagsOnly['production_profile_warnings'] ?? [],
+        true
+    )
+    || !in_array(
+        'production_profile_legacy_recipe_attestation_not_certification',
+        $legacyFlagsOnly['production_profile_warnings'] ?? [],
+        true
+    )) {
+    fwrite(STDERR, "production-profile-contract-FAIL: legacy booleans alone must not activate certified capabilities\n");
     exit(1);
 }
 

@@ -116,23 +116,38 @@ function posmain_record_recipe_sync(
     mysqli $conn,
     int $recipeId,
     string $sourceSystem,
-    string $eventType = 'recipe.saved'
+    string $eventType = 'recipe.saved',
+    bool $failClosed = false,
+    ?int $actorUserId = null
 ): ?array {
     if ($recipeId <= 0) {
+        if ($failClosed) {
+            throw new InvalidArgumentException('RECIPE_SYNC_ID_REQUIRED');
+        }
         return null;
     }
 
     try {
-        return (new OperationalSyncEventService())->recordRecipeSnapshot($conn, $recipeId, [
+        $event = (new OperationalSyncEventService())->recordRecipeSnapshot($conn, $recipeId, [
             'event_type' => $eventType,
             'source_system' => $sourceSystem,
             'config' => posmain_operational_sync_config(),
+            'actor_user_id' => $actorUserId ?? (int) ($_SESSION['userid'] ?? 0),
         ]);
+        if ($failClosed && $event === null) {
+            throw new RuntimeException('RECIPE_SYNC_OUTBOX_NOT_RECORDED');
+        }
+
+        return $event;
     } catch (Throwable $exception) {
         if (function_exists('posmain_log_exception') && function_exists('posmain_error_reference')) {
             posmain_log_exception($exception, posmain_error_reference(), 'recipe_sync_outbox');
         } else {
             error_log('[POS Sync] Failed to record recipe snapshot: ' . $exception->getMessage());
+        }
+
+        if ($failClosed) {
+            throw $exception;
         }
 
         return null;

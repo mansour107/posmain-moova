@@ -95,6 +95,8 @@ class SyncSchemaManager
             'sync_outbox' => $this->syncOutboxSql(),
             'sync_inbox' => $this->syncInboxSql(),
             'sync_projection_versions' => $this->syncProjectionVersionsSql(),
+            'sync_master_field_state' => $this->syncMasterFieldStateSql(),
+            'sync_master_field_history' => $this->syncMasterFieldHistorySql(),
             'sync_branch_restore_runs' => $this->syncBranchRestoreRunsSql(),
             'sync_checkpoints' => $this->syncCheckpointsSql(),
             'sync_conflicts' => $this->syncConflictsSql(),
@@ -860,6 +862,10 @@ class SyncSchemaManager
             return $this->cloudOrderLinesUpgradeStatements($conn);
         }
 
+        if ($table === 'cloud_menu_items') {
+            return $this->cloudMenuItemsUpgradeStatements($conn);
+        }
+
         if ($table === 'moova_pos_inbound_events') {
             return $this->moovaPosInboundEventUpgradeStatements($conn);
         }
@@ -878,6 +884,10 @@ class SyncSchemaManager
 
         if ($table === 'payment_refunds') {
             return $this->paymentRefundsUpgradeStatements($conn);
+        }
+
+        if ($table === 'print_jobs') {
+            return $this->printJobsUpgradeStatements($conn);
         }
 
         if ($table === 'pos_customers') {
@@ -1054,6 +1064,28 @@ ALTER TABLE sync_branch_identity
             ) {
                 $statements['cloud_order_lines.modify_' . $column . '_decimal19_' . $scale . '_nullable'] =
                     "ALTER TABLE cloud_order_lines MODIFY COLUMN {$column} DECIMAL(19,{$scale}) NULL DEFAULT NULL";
+            }
+        }
+
+        return $statements;
+    }
+
+    private function cloudMenuItemsUpgradeStatements(mysqli $conn): array
+    {
+        $statements = [];
+        foreach (['price', 'cost'] as $column) {
+            if ($this->columnExists($conn, 'cloud_menu_items', $column)
+                && $this->columnNeedsFinancialDecimalDefinition(
+                    $conn,
+                    'cloud_menu_items',
+                    $column,
+                    19,
+                    6,
+                    true
+                )
+            ) {
+                $statements['cloud_menu_items.modify_' . $column . '_decimal19_6_nullable'] =
+                    "ALTER TABLE cloud_menu_items MODIFY COLUMN {$column} DECIMAL(19,6) NULL DEFAULT NULL";
             }
         }
 
@@ -3975,22 +4007,65 @@ CREATE TABLE IF NOT EXISTS printers (
         return "
 CREATE TABLE IF NOT EXISTS print_jobs (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-  job_type ENUM('receipt','kot','kitchen','z_report','x_report') NOT NULL,
+  job_type ENUM('receipt','kot','kitchen','z_report','x_report','report','label','document') NOT NULL,
   order_id BIGINT UNSIGNED NULL,
   drawer_session_id BIGINT UNSIGNED NULL,
   printer_id BIGINT UNSIGNED NULL,
   status ENUM('queued','printed','failed','cancelled') NOT NULL DEFAULT 'queued',
   payload_json JSON NULL,
+  idempotency_key VARCHAR(191) NULL,
+  payload_hash CHAR(64) NULL,
   attempts INT NOT NULL DEFAULT 0,
+  max_attempts INT NOT NULL DEFAULT 5,
   last_error VARCHAR(500) NULL,
+  next_retry_at DATETIME(6) NULL,
+  locked_by VARCHAR(64) NULL,
+  locked_until DATETIME(6) NULL,
+  delivery_receipt_json JSON NULL,
   created_by BIGINT UNSIGNED NULL,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   printed_at DATETIME NULL,
   PRIMARY KEY (id),
+  UNIQUE KEY uq_print_jobs_idempotency (idempotency_key),
   KEY idx_print_jobs_status (status, created_at),
+  KEY idx_print_jobs_claim (status, next_retry_at, locked_until, created_at),
   KEY idx_print_jobs_order (order_id, job_type),
   KEY idx_print_jobs_printer (printer_id, status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
+    private function printJobsUpgradeStatements(mysqli $conn): array
+    {
+        $statements = [];
+        $columns = [
+            'idempotency_key' => 'ALTER TABLE print_jobs ADD COLUMN idempotency_key VARCHAR(191) NULL AFTER payload_json',
+            'payload_hash' => 'ALTER TABLE print_jobs ADD COLUMN payload_hash CHAR(64) NULL AFTER idempotency_key',
+            'max_attempts' => 'ALTER TABLE print_jobs ADD COLUMN max_attempts INT NOT NULL DEFAULT 5 AFTER attempts',
+            'next_retry_at' => 'ALTER TABLE print_jobs ADD COLUMN next_retry_at DATETIME(6) NULL AFTER last_error',
+            'locked_by' => 'ALTER TABLE print_jobs ADD COLUMN locked_by VARCHAR(64) NULL AFTER next_retry_at',
+            'locked_until' => 'ALTER TABLE print_jobs ADD COLUMN locked_until DATETIME(6) NULL AFTER locked_by',
+            'delivery_receipt_json' => 'ALTER TABLE print_jobs ADD COLUMN delivery_receipt_json JSON NULL AFTER locked_until',
+        ];
+        foreach ($columns as $column => $sql) {
+            if (!$this->columnExists($conn, 'print_jobs', $column)) {
+                $statements['print_jobs.add_' . $column] = $sql;
+            }
+        }
+
+        if (!$this->enumColumnHasValue($conn, 'print_jobs', 'job_type', 'document')) {
+            $statements['print_jobs.expand_job_type'] =
+                "ALTER TABLE print_jobs MODIFY COLUMN job_type ENUM('receipt','kot','kitchen','z_report','x_report','report','label','document') NOT NULL";
+        }
+        if (!$this->indexExists($conn, 'print_jobs', 'uq_print_jobs_idempotency')) {
+            $statements['print_jobs.add_uq_print_jobs_idempotency'] =
+                'ALTER TABLE print_jobs ADD UNIQUE KEY uq_print_jobs_idempotency (idempotency_key)';
+        }
+        if (!$this->indexExists($conn, 'print_jobs', 'idx_print_jobs_claim')) {
+            $statements['print_jobs.add_idx_print_jobs_claim'] =
+                'ALTER TABLE print_jobs ADD KEY idx_print_jobs_claim (status, next_retry_at, locked_until, created_at)';
+        }
+
+        return $statements;
     }
 
     private function itemNutritionProfilesSql()
@@ -4835,6 +4910,57 @@ CREATE TABLE IF NOT EXISTS sync_projection_versions (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
     }
 
+    private function syncMasterFieldStateSql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS sync_master_field_state (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  branch_uuid CHAR(36) NOT NULL,
+  aggregate_type VARCHAR(50) NOT NULL,
+  aggregate_uuid CHAR(36) NOT NULL,
+  field_name VARCHAR(100) NOT NULL,
+  value_json LONGTEXT NOT NULL,
+  changed_at_utc DATETIME(6) NOT NULL,
+  source_node_id VARCHAR(100) NOT NULL,
+  revision_uuid CHAR(36) NOT NULL,
+  actor_user_id BIGINT UNSIGNED NULL,
+  source_system VARCHAR(40) NOT NULL,
+  created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_sync_master_field (branch_uuid, aggregate_type, aggregate_uuid, field_name),
+  UNIQUE KEY uq_sync_master_revision (branch_uuid, revision_uuid, field_name),
+  KEY idx_sync_master_aggregate (branch_uuid, aggregate_type, aggregate_uuid),
+  KEY idx_sync_master_updated (updated_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
+    private function syncMasterFieldHistorySql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS sync_master_field_history (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  branch_uuid CHAR(36) NOT NULL,
+  aggregate_type VARCHAR(50) NOT NULL,
+  aggregate_uuid CHAR(36) NOT NULL,
+  field_name VARCHAR(100) NOT NULL,
+  value_json LONGTEXT NOT NULL,
+  changed_at_utc DATETIME(6) NOT NULL,
+  source_node_id VARCHAR(100) NOT NULL,
+  revision_uuid CHAR(36) NOT NULL,
+  actor_user_id BIGINT UNSIGNED NULL,
+  source_system VARCHAR(40) NOT NULL,
+  event_uuid CHAR(36) NULL,
+  outcome ENUM('accepted','ignored','local_seed','duplicate') NOT NULL,
+  reason VARCHAR(191) NULL,
+  created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_sync_master_history_revision (branch_uuid, revision_uuid, field_name),
+  KEY idx_sync_master_history_aggregate (branch_uuid, aggregate_type, aggregate_uuid, field_name, id),
+  KEY idx_sync_master_history_created (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
     private function syncConflictsSql()
     {
         return "
@@ -5247,8 +5373,8 @@ CREATE TABLE IF NOT EXISTS cloud_menu_items (
   barcode VARCHAR(191) NULL,
   item_name VARCHAR(255) NULL,
   category_id BIGINT UNSIGNED NULL,
-  price DECIMAL(15,4) NULL,
-  cost DECIMAL(15,4) NULL,
+  price DECIMAL(19,6) NULL,
+  cost DECIMAL(19,6) NULL,
   available_online TINYINT(1) NOT NULL DEFAULT 1,
   isdeleted TINYINT(1) NOT NULL DEFAULT 0,
   menu_version BIGINT UNSIGNED NOT NULL DEFAULT 0,

@@ -138,12 +138,19 @@ class RecipeDefinitionService
         return $after;
     }
 
-    public function activate(mysqli $conn, int $recipeId, RecipeActorContext $actor): array
+    public function activate(
+        mysqli $conn,
+        int $recipeId,
+        RecipeActorContext $actor,
+        bool $manageTransaction = true
+    ): array
     {
         $this->assertRecipeManagementWritesEnabled();
         $this->permissions->assertCanApprove($actor);
 
-        $conn->begin_transaction();
+        if ($manageTransaction) {
+            $conn->begin_transaction();
+        }
         try {
             $recipe = $this->recipes->findHeaderByIdForUpdate($conn, $recipeId);
             if (!$recipe) {
@@ -163,11 +170,15 @@ class RecipeDefinitionService
             $this->recipes->updateStatus($conn, $recipeId, 'active', $actor->userId);
             $after = $this->requireRecipe($conn, $recipeId);
             $this->audit->record($conn, $actor, 'activate', 'recipe_header', $recipeId, $recipeId, $recipe, $after);
-            $conn->commit();
+            if ($manageTransaction) {
+                $conn->commit();
+            }
 
             return $after;
         } catch (Throwable $exception) {
-            $conn->rollback();
+            if ($manageTransaction) {
+                $conn->rollback();
+            }
             throw $exception;
         }
     }
@@ -185,12 +196,19 @@ class RecipeDefinitionService
         return $after;
     }
 
-    public function cloneAsNewVersion(mysqli $conn, int $activeRecipeId, RecipeActorContext $actor): array
+    public function cloneAsNewVersion(
+        mysqli $conn,
+        int $activeRecipeId,
+        RecipeActorContext $actor,
+        bool $manageTransaction = true
+    ): array
     {
         $this->assertRecipeManagementWritesEnabled();
         $this->permissions->assertCanEdit($actor);
 
-        $conn->begin_transaction();
+        if ($manageTransaction) {
+            $conn->begin_transaction();
+        }
         try {
             $active = $this->recipes->findHeaderByIdForUpdate($conn, $activeRecipeId);
             if (!$active) {
@@ -226,11 +244,15 @@ class RecipeDefinitionService
 
             $after = $this->requireRecipe($conn, $draftId);
             $this->audit->record($conn, $actor, 'clone_new_version', 'recipe_header', $draftId, $draftId, $active, $after);
-            $conn->commit();
+            if ($manageTransaction) {
+                $conn->commit();
+            }
 
             return $after;
         } catch (Throwable $exception) {
-            $conn->rollback();
+            if ($manageTransaction) {
+                $conn->rollback();
+            }
             throw $exception;
         }
     }

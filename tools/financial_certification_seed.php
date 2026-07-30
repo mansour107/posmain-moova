@@ -14,14 +14,57 @@ if (PHP_SAPI !== 'cli') {
     exit(1);
 }
 
+$options = getopt('', ['drop-disposable']);
 $host = getenv('POSMAIN_TEST_MYSQL_HOST') ?: '127.0.0.1';
 $port = (int) (getenv('POSMAIN_TEST_MYSQL_PORT') ?: 3307);
 $user = getenv('POSMAIN_TEST_MYSQL_USER') ?: 'root';
 $pass = getenv('POSMAIN_TEST_MYSQL_PASS') ?: '';
 $db = getenv('POSMAIN_MYSQL_DATABASE') ?: getenv('POSMAIN_FINANCIAL_CERT_DB') ?: 'posmain_financial_cert';
+$disposable = in_array(
+    strtolower(trim((string) (getenv('POSMAIN_FINANCIAL_GATE_DISPOSABLE') ?: ''))),
+    ['1', 'true', 'yes', 'on'],
+    true
+);
+
+if (!preg_match('/^[A-Za-z0-9_]+$/', $db)) {
+    fwrite(STDERR, "FINANCIAL_CERTIFICATION_DATABASE_NAME_INVALID\n");
+    exit(1);
+}
+if ($disposable) {
+    if (!in_array(strtolower(trim($host)), ['127.0.0.1', 'localhost', 'mysql'], true)) {
+        fwrite(STDERR, "FINANCIAL_CERTIFICATION_LOCAL_DATABASE_REQUIRED\n");
+        exit(1);
+    }
+    if (!preg_match('/^posmain_financial_gate_[0-9]+_[0-9]+$/', $db)) {
+        fwrite(STDERR, "FINANCIAL_CERTIFICATION_DISPOSABLE_DATABASE_REQUIRED\n");
+        exit(1);
+    }
+}
+if (isset($options['drop-disposable']) && !$disposable) {
+    fwrite(STDERR, "FINANCIAL_CERTIFICATION_DISPOSABLE_MARKER_REQUIRED\n");
+    exit(1);
+}
 
 mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
 $conn = new mysqli($host, $user, $pass, '', $port);
+if (isset($options['drop-disposable'])) {
+    $conn->query("DROP DATABASE IF EXISTS `{$db}`");
+    $conn->close();
+    echo "financial-certification-disposable-drop-ok db={$db}\n";
+    exit(0);
+}
+
+$existing = $conn->query("
+    SELECT COUNT(*) AS c
+    FROM INFORMATION_SCHEMA.SCHEMATA
+    WHERE SCHEMA_NAME = '" . $conn->real_escape_string($db) . "'
+")->fetch_assoc();
+if ($disposable && (int) ($existing['c'] ?? 0) !== 0) {
+    $conn->close();
+    fwrite(STDERR, "FINANCIAL_CERTIFICATION_DISPOSABLE_DATABASE_ALREADY_EXISTS\n");
+    exit(1);
+}
+
 $conn->query("CREATE DATABASE IF NOT EXISTS `{$db}` CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci");
 $conn->select_db($db);
 
@@ -157,4 +200,5 @@ $stmt->bind_param('sss', $username, $hash, $role);
 $stmt->execute();
 $stmt->close();
 
+$conn->close();
 echo "financial-certification-seed-ok db={$db}\n";

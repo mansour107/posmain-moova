@@ -252,6 +252,34 @@
         }
     }
 
+    window.posDeliveryHydrateFromOrder = function (data) {
+        if (!data || data.confirmed !== true) {
+            return false;
+        }
+
+        const zoneId = parseInt(data.zone_id, 10) || null;
+        const name = String(data.name || '').trim();
+        const phone = String(data.phone || '').trim();
+        const address = String(data.address || '').trim();
+        if (!zoneId || name === '' || phone === '' || address === '') {
+            return false;
+        }
+
+        applyConfirmedCustomer({
+            client_id: parseInt(data.client_id, 10) || null,
+            phone: phone,
+            name: name,
+            address: address,
+            zoneId: zoneId,
+            zoneName: String(data.zone_name || '').trim(),
+            fee: Math.max(0, parseFloat(data.fee || 0) || 0),
+            workerId: parseInt(data.worker_id, 10) || null,
+            collectionMode: data.collection_mode === 'cod' ? 'cod' : 'prepaid',
+            isExistingClient: (parseInt(data.client_id, 10) || 0) > 0,
+        });
+        return true;
+    };
+
     function clearDeliverySession(revertMode) {
         window.posDeliveryState = {
             confirmed: false,
@@ -276,6 +304,12 @@
             $('#age1').prop('checked', true).trigger('change');
         }
     }
+
+    // A completed save/payment starts a new cashier intent. Delivery customer and
+    // fee state must not leak into the empty cart that follows the commit.
+    window.posDeliveryResetAfterCommit = function () {
+        clearDeliverySession(false);
+    };
 
     function clearDeliveryFormFields() {
         $('#customer_phone').val('').removeClass('border-success border-info border-danger border-warning')
@@ -651,5 +685,11 @@
         $('input[name="age"]').on('change', function () {
             window.posDeliveryOnModeChange($(this).val());
         });
+
+        if (window.POSMAIN_EDIT_DELIVERY) {
+            window.posDeliveryHydrateFromOrder(window.POSMAIN_EDIT_DELIVERY);
+        } else if (isDeliveryMode()) {
+            renderDeliveryBar();
+        }
     });
 })(window, window.jQuery);

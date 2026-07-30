@@ -70,6 +70,7 @@ try {
         'movement_type' => 'sale_cash',
         'amount' => '50.000',
         'created_by' => 10,
+        'idempotency_key' => 'drawer-float-expectation:sale:' . $first['id'],
     ]);
     $drawer->closeSession($conn, (int) $first['id'], [
         'closed_by' => 10,

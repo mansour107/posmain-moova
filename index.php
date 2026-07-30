@@ -10,6 +10,7 @@ require_once __DIR__ . '/classes/Security/LoginThrottleService.php';
 require_once __DIR__ . '/classes/Security/SecurityAuditLogger.php';
 require_once __DIR__ . '/classes/Security/PostLoginRouteService.php';
 require_once __DIR__ . '/classes/Security/LocalSecurityBootstrapService.php';
+require_once __DIR__ . '/classes/Security/SessionOperationalScopeService.php';
 
 try {
     $conn = posmain_db_connect();
@@ -385,8 +386,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         }
                         if ($password_ok) {
                             login_throttle_success($conn, $loginThrottle, $user, $clientIp);
+                            posmain_session_regenerate();
+                            $_SESSION['userid'] = $row['id'];
+                            $_SESSION['usrole'] = $row['userrole'];
+                            $_SESSION['usty'] = $row['usertype'];
+                            $_SESSION['login'] = $row['uname'];
+                            $_SESSION['posmain_auth_method'] = 'password';
+                            $_SESSION['posmain_auth_version'] = login_auth_version_for_user($shopConn, $userId);
+                            $_SESSION['posmain_bootstrap_pending'] = false;
+                            $_SESSION['posmain_pin_must_change'] = false;
+                            $scopeContext = $routerEnabled && $route ? [
+                                'pos_tenant' => $route['pos_tenant'] ?? null,
+                                'pos_branch' => $route['pos_branch'] ?? null,
+                            ] : [];
+                            $operationalScope = (new SessionOperationalScopeService())->establish(
+                                $shopConn,
+                                $userId,
+                                $scopeContext
+                            );
                             login_audit($conn, $securityAuditLogger, 'login_success', [
                                 'user_id' => $userId,
+                                'tenant' => $operationalScope['pos_tenant'],
+                                'branch' => $operationalScope['pos_branch'],
                                 'ip' => $clientIp,
                                 'target_type' => 'user',
                                 'target_id' => $userId,
@@ -397,15 +418,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                     'shop_slug' => $route ? (string) $route['slug'] : null,
                                 ],
                             ]);
-                            posmain_session_regenerate();
-                            $_SESSION['userid'] = $row['id'];
-                            $_SESSION['usrole'] = $row['userrole'];
-                            $_SESSION['usty'] = $row['usertype'];
-                            $_SESSION['login'] = $row['uname'];
-                            $_SESSION['posmain_auth_method'] = 'password';
-                            $_SESSION['posmain_auth_version'] = login_auth_version_for_user($shopConn, $userId);
-                            $_SESSION['posmain_bootstrap_pending'] = false;
-                            $_SESSION['posmain_pin_must_change'] = false;
                             if ($routerEnabled && $route) {
                                 $_SESSION['posmain_shop_id'] = (int) $route['id'];
                                 $_SESSION['posmain_shop_slug'] = (string) $route['slug'];

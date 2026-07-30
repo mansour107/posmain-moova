@@ -74,8 +74,12 @@ function inventoryPurchaseReceivePayload(): array
 
 function inventoryPurchaseReceiveArabicError(string $code): string
 {
+    if (strpos($code, 'INVENTORY_ACCOUNTING_MAPPING_REQUIRED:') === 0) {
+        return 'المحاسبة مفعلة لكن حساب هذه العملية غير مربوط. اطلب من المدير إكمال إعدادات حسابات المخزون ثم أعد المحاولة';
+    }
+
     $messages = [
-        'INVENTORY_LEDGER_NOT_READY' => 'يجب تفعيل وضع الجسر أو التشغيل للمخزون قبل الاستلام من هذه الشاشة',
+        'INVENTORY_LEDGER_NOT_READY' => 'يجب تفعيل تتبع كمية المخزون قبل الاستلام من هذه الشاشة',
         'DESTINATION_STORE_REQUIRED' => 'اختر المخزن',
         'RECEIPT_LINES_REQUIRED' => 'أضف صنفاً واحداً على الأقل',
         'RETURN_LINES_REQUIRED' => 'أضف صنفاً واحداً على الأقل للمردود',

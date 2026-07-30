@@ -1,3 +1,4 @@
+#!/usr/bin/env php
 <?php
 
 /**
@@ -12,6 +13,8 @@
  */
 
 if (PHP_SAPI !== 'cli') {
+    // CLI only. Web requests are deliberately indistinguishable from a
+    // missing resource so this recovery utility cannot expose its purpose.
     require __DIR__ . '/../includes/http_gone.php';
 }
 

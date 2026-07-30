@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/../includes/session_bootstrap.php';
 require_once __DIR__ . '/../includes/connect.php';
+require_once __DIR__ . '/../includes/print_client_bootstrap.php';
 
 ?>
 <!DOCTYPE html>
@@ -90,8 +91,9 @@ require_once __DIR__ . '/../includes/connect.php';
             }
 
     </style>
+    <?= posmain_render_print_client_bootstrap('../') ?>
 </head>
-<body>
+<body data-print-job-type="label" data-print-content-selector="#printArea">
     <div class="container">
         <h2 class="mb-4">طباعة الباركود</h2>
         

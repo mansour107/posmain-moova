@@ -15,7 +15,10 @@ phase4PrintAuditContractAssert(strpos($preparation, "require_once __DIR__ . '/..
 phase4PrintAuditContractAssert(strpos($preparation, "recordRenderedPrint(\n            \$conn,\n            'kot'") !== false, 'preparation should record kot print audit');
 phase4PrintAuditContractAssert(strpos($preparation, "'source' => 'print_preparation_page'") !== false, 'preparation audit source expected');
 phase4PrintAuditContractAssert(strpos($preparation, "catch (Throwable \$printAuditError)") !== false, 'preparation audit should be best-effort');
-phase4PrintAuditContractAssert(strpos($preparation, 'window.print();') !== false, 'preparation should keep browser print');
+phase4PrintAuditContractAssert(
+    strpos($preparation, 'Promise.resolve(window.print())') !== false,
+    'preparation should await either native or silent print dispatch'
+);
 phase4PrintAuditContractAssert(strpos($receipt, 'window.print();') !== false, 'receipt should keep browser print');
 
 echo "phase4-print-template-audit-contract-ok\n";

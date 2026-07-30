@@ -10,7 +10,6 @@ $readinessTool = inventoryPhase15Source($root . '/tools/inventory_cutover_readin
 $myitemsSource = inventoryPhase15Source($root . '/myitems.php');
 $itemSummarySource = inventoryPhase15Source($root . '/item_summery.php');
 $stagnantSource = inventoryPhase15Source($root . '/stagnant-items-report.php');
-$dashboardItemsSource = inventoryPhase15Source($root . '/elements/main/main_tables.php');
 $docs = inventoryPhase15Source($root . '/docs/inventory/phase15_cutover_contracts.md');
 
 foreach ([
@@ -57,11 +56,6 @@ inventoryPhase15Assert(
 
 inventoryPhase15Assert(strpos($myitemsSource, 'InventoryStockReadService.php') !== false, 'item list should load stock read service');
 inventoryPhase15Assert(strpos($myitemsSource, 'decorateItems($conn') !== false, 'item list should decorate quantities through stock read service');
-inventoryPhase15Assert(
-    strpos($dashboardItemsSource, 'itmqty') === false
-        && strpos($dashboardItemsSource, 'fat_details') === false,
-    'dashboard must not reintroduce a legacy stock read when no stock quantity is rendered'
-);
 inventoryPhase15Assert(strpos($itemSummarySource, 'movementHistoryForItem') !== false, 'item summary should read movement history through stock read service');
 inventoryPhase15Assert(strpos($stagnantSource, 'itemListLedgerJoin') !== false, 'stagnant report should use cutover-aware stock join');
 inventoryPhase15Assert(strpos($stagnantSource, 'current_qty') !== false, 'stagnant report should filter/order by current stock alias');

@@ -1,5 +1,7 @@
 <?php
 
+require_once __DIR__ . '/../../includes/api_entry_classification.php';
+
 define('POSMAIN_BRANCH_WORKER_STATUS_LIBRARY', true);
 
 require_once __DIR__ . '/../../tools/branch_worker_status.php';

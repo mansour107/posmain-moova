@@ -101,7 +101,12 @@ try {
     phase4ShiftReconcileAssert($summary['payments']['non_cash'] === '55.000', 'non-cash payment total expected');
     phase4ShiftReconcileAssert($summary['payments']['by_type']['card'] === '40.000', 'card payment total expected');
     phase4ShiftReconcileAssert($summary['payments']['by_type']['wallet'] === '15.000', 'wallet payment total expected');
-    phase4ShiftReconcileAssert($summary['reconciliation']['cash_difference'] === '0.000', 'drawer sale cash should reconcile with cash payments');
+    phase4ShiftReconcileAssert($summary['payments']['cash_net'] === '110.000', 'cash net remains gross when no durable refund exists');
+    phase4ShiftReconcileAssert($summary['reconciliation']['drawer_cash_net'] === '108.000', 'drawer cash net subtracts refund movements');
+    phase4ShiftReconcileAssert(
+        $summary['reconciliation']['cash_difference'] === '-2.000',
+        'orphan drawer refund must be exposed instead of silently reconciling against gross cash sales'
+    );
     phase4ShiftReconcileAssert(count($summary['payments']['methods']) === 4, 'method rows should be retained');
 
     $heldConfig = posmain_app_config();

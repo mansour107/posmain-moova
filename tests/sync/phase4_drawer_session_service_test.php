@@ -70,6 +70,7 @@ try {
         'payment_id' => 400,
         'reason' => 'table payment',
         'created_by' => 99,
+        'idempotency_key' => 'phase4-drawer:sale:300:400',
         'sync_config' => $syncConfig,
     ]);
     phase4DrawerAssert($sale['amount'] === '50.25', 'sale movement amount expected');
@@ -219,21 +220,25 @@ try {
         'movement_type' => 'refund_cash',
         'amount' => '10.00',
         'created_by' => 99,
+        'idempotency_key' => 'phase4-drawer:refund:' . $session['id'],
     ]);
     $service->recordMovement($conn, $session['id'], [
         'movement_type' => 'paid_in',
         'amount' => '20.12',
         'created_by' => 99,
+        'idempotency_key' => 'phase4-drawer:paid-in:' . $session['id'],
     ]);
     $service->recordMovement($conn, $session['id'], [
         'movement_type' => 'paid_out',
         'amount' => '5.50',
         'created_by' => 99,
+        'idempotency_key' => 'phase4-drawer:paid-out:' . $session['id'],
     ]);
     $service->recordMovement($conn, $session['id'], [
         'movement_type' => 'safe_drop',
         'amount' => '30.00',
         'created_by' => 99,
+        'idempotency_key' => 'phase4-drawer:safe-drop:' . $session['id'],
     ]);
 
     phase4DrawerAssert($service->expectedCash($conn, $session['id']) === '125.00', 'expected cash should match signed movement math');

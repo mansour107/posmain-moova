@@ -12,19 +12,20 @@ if (!class_exists('CloudBranchSyncEventService')) {
 if (!class_exists('CloudLegacyPosMirrorService')) {
     require_once __DIR__ . '/CloudLegacyPosMirrorService.php';
 }
-if (!class_exists('BranchRestoreEventApplyService')) {
-    require_once __DIR__ . '/BranchRestoreEventApplyService.php';
+if (!class_exists('BranchCloudMasterApplyService')) {
+    require_once __DIR__ . '/BranchCloudMasterApplyService.php';
 }
 
 class BranchCloudSyncPollWorker
 {
     private const STREAM_NAME = 'cloud_sync';
+    private const MAX_CLOCK_DRIFT_SECONDS = 60;
 
-    private BranchRestoreEventApplyService $applyService;
+    private BranchCloudMasterApplyService $applyService;
 
-    public function __construct(?BranchRestoreEventApplyService $applyService = null)
+    public function __construct(?BranchCloudMasterApplyService $applyService = null)
     {
-        $this->applyService = $applyService ?: new BranchRestoreEventApplyService();
+        $this->applyService = $applyService ?: new BranchCloudMasterApplyService();
     }
 
     public function runOnce(mysqli $conn, array $config = [], array $options = []): array
@@ -42,6 +43,7 @@ class BranchCloudSyncPollWorker
             'stale' => 0,
             'duplicates' => 0,
             'unsupported' => 0,
+            'denied' => 0,
             'acked' => 0,
             'failed' => 0,
             'checkpoint' => null,
@@ -86,6 +88,16 @@ class BranchCloudSyncPollWorker
             $this->logWorker($conn, $runUuid, 'failed', $error, $metrics);
             return $metrics + ['http_status' => $response['status'], 'error' => $error];
         }
+        $clockError = $this->cloudClockError($response['json']);
+        if ($clockError !== null) {
+            $metrics['failed'] = 1;
+            $metrics['skipped'] = 'cloud_clock_untrusted';
+            $this->logWorker($conn, $runUuid, 'failed', $clockError, $metrics);
+            return $metrics + [
+                'http_status' => $response['status'],
+                'error' => $clockError,
+            ];
+        }
 
         $events = $response['json']['events'] ?? [];
         if (!is_array($events)) {
@@ -127,6 +139,8 @@ class BranchCloudSyncPollWorker
                 $metrics['duplicates']++;
             } elseif ($status === 'unsupported') {
                 $metrics['unsupported']++;
+            } elseif ($status === 'denied') {
+                $metrics['denied']++;
             } else {
                 $metrics['failed']++;
             }
@@ -206,6 +220,14 @@ class BranchCloudSyncPollWorker
             }
 
             $mirror = $this->applyService->apply($conn, $branchUuid, $event);
+            if (!empty($mirror['denied'])) {
+                $reason = (string) ($mirror['reason'] ?? 'cloud master event denied');
+                $result = $this->applyResult($eventUuid, $idempotencyKey, 'denied', 'ack_declined', $reason);
+                $this->updateInboxResult($conn, $inboxId, 'processed', $result + ['mirror' => $mirror], null);
+                $conn->commit();
+                return $result;
+            }
+
             if (!$mirror) {
                 $result = $this->applyResult($eventUuid, $idempotencyKey, 'unsupported', 'ack_declined', 'unsupported cloud sync event type');
                 $this->updateInboxResult($conn, $inboxId, 'processed', $result, null);
@@ -267,6 +289,19 @@ class BranchCloudSyncPollWorker
         }
 
         return $this->getWithStreams($url, $headers, $config);
+    }
+
+    private function cloudClockError(array $response): ?string
+    {
+        $serverTime = trim((string) ($response['server_time_utc'] ?? ''));
+        $serverTimestamp = $serverTime === '' ? false : strtotime($serverTime);
+        if ($serverTimestamp === false) {
+            return 'cloud server clock attestation missing or invalid';
+        }
+        if (abs(time() - $serverTimestamp) > self::MAX_CLOCK_DRIFT_SECONDS) {
+            return 'cloud server clock drift exceeds 60 seconds';
+        }
+        return null;
     }
 
     private function postAcks(

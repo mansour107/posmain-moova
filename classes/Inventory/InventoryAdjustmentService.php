@@ -255,7 +255,7 @@ class InventoryAdjustmentService
 
     private function assertCanPost(): void
     {
-        if (!$this->flags->canWriteLedger()) {
+        if (!$this->flags->canWriteQuantityLedger()) {
             throw new RuntimeException('INVENTORY_LEDGER_NOT_READY');
         }
     }

@@ -1,6 +1,8 @@
 <?php
 
 require_once __DIR__ . '/ItemUnitProfileBuilder.php';
+require_once __DIR__ . '/../Financial/UnitPrice.php';
+require_once __DIR__ . '/../Financial/Decimal.php';
 
 final class ItemFormInput
 {
@@ -16,8 +18,8 @@ final class ItemFormInput
         $price2 = self::decimalArrayValue($post, 'price2', 0);
         $costPrice = self::decimalArrayValue($post, 'cost_price', 0);
         $costSource = self::costSource($post['cost_source'] ?? 'direct');
-        $directCostPrice = self::decimalValue($post['direct_cost_price'] ?? null, 0);
-        $recipeCostPrice = self::decimalValue($post['recipe_cost_price'] ?? null, 0);
+        $directCostPrice = self::decimalValue($post['direct_cost_price'] ?? null, '0');
+        $recipeCostPrice = self::decimalValue($post['recipe_cost_price'] ?? null, '0');
         $barcode = self::text($post, 'barcode');
 
         if (ItemUnitProfileBuilder::usesProfileForm($post)) {
@@ -25,14 +27,14 @@ final class ItemFormInput
             $profileUnits = $profile['units'];
             $preferredUnitId = (int) $profile['preferred_unit_id'];
             $purchaseUnitId = (int) $profile['purchase_unit_id'];
-            $price1 = (float) $profile['price1'];
-            $price2 = (float) $profile['price2'];
-            $price3 = (float) $profile['price3'];
-            $marketPrice = (float) $profile['market_price'];
-            $costPrice = (float) $profile['cost_price'];
+            $price1 = (string) $profile['price1'];
+            $price2 = (string) $profile['price2'];
+            $price3 = (string) $profile['price3'];
+            $marketPrice = (string) $profile['market_price'];
+            $costPrice = (string) $profile['cost_price'];
             $costSource = (string) ($profile['cost_source'] ?? $costSource);
-            $directCostPrice = (float) ($profile['direct_cost_price'] ?? $directCostPrice);
-            $recipeCostPrice = (float) ($profile['recipe_cost_price'] ?? $recipeCostPrice);
+            $directCostPrice = (string) ($profile['direct_cost_price'] ?? $directCostPrice);
+            $recipeCostPrice = (string) ($profile['recipe_cost_price'] ?? $recipeCostPrice);
             if ($barcode === '' && ($profile['barcode'] ?? '') !== '') {
                 $barcode = (string) $profile['barcode'];
             }
@@ -70,13 +72,13 @@ final class ItemFormInput
 
     private static function withoutSecondaryPrices(array $payload): array
     {
-        $payload['price2'] = 0.0;
-        $payload['price3'] = 0.0;
-        $payload['market_price'] = 0.0;
+        $payload['price2'] = UnitPrice::from('0')->toString();
+        $payload['price3'] = UnitPrice::from('0')->toString();
+        $payload['market_price'] = UnitPrice::from('0')->toString();
 
         foreach ($payload['units'] as $index => $unit) {
-            $payload['units'][$index]['price2'] = 0.0;
-            $payload['units'][$index]['price3'] = 0.0;
+            $payload['units'][$index]['price2'] = UnitPrice::from('0')->toString();
+            $payload['units'][$index]['price3'] = UnitPrice::from('0')->toString();
         }
 
         return $payload;
@@ -133,7 +135,8 @@ final class ItemFormInput
     private static function assertUnitSellPrices(array $units): void
     {
         foreach ($units as $unit) {
-            if ((float) ($unit['price1'] ?? 0) <= 0) {
+            $price = UnitPrice::from($unit['price1'] ?? '0')->toString();
+            if (FinancialDecimal::compare($price, '0', UnitPrice::SCALE) <= 0) {
                 throw new InvalidArgumentException('sell_price_required');
             }
         }
@@ -192,8 +195,8 @@ final class ItemFormInput
             }
             $seen[$unitId] = true;
 
-            $uVal = self::decimalArrayValue($post, 'u_val', $index, $index === 0 ? 1.0 : 0.0);
-            if ($uVal <= 0) {
+            $uVal = self::quantityArrayValue($post, 'u_val', $index, $index === 0 ? '1' : '0');
+            if (FinancialDecimal::compare($uVal, '0', 6) <= 0) {
                 throw new InvalidArgumentException('invalid unit factor');
             }
 
@@ -255,26 +258,44 @@ final class ItemFormInput
         return (int) $value;
     }
 
-    private static function decimalValue($value, float $default = 0.0): float
+    private static function decimalValue($value, string $default = '0'): string
     {
         if ($value === null || $value === false || trim((string) $value) === '') {
-            return $default;
+            return UnitPrice::from($default)->toString();
         }
 
-        return (float) $value;
+        return UnitPrice::from($value)->toString();
     }
 
-    private static function decimalArrayValue(array $post, string $key, int $index, float $default = 0.0): float
+    private static function decimalArrayValue(array $post, string $key, int $index, string $default = '0'): string
     {
         if (!isset($post[$key]) || !is_array($post[$key])) {
-            return $default;
+            return UnitPrice::from($default)->toString();
         }
 
         $value = $post[$key][$index] ?? null;
         if ($value === null || $value === false || trim((string) $value) === '') {
-            return $default;
+            return UnitPrice::from($default)->toString();
         }
 
-        return (float) $value;
+        return UnitPrice::from($value)->toString();
+    }
+
+    private static function quantityArrayValue(
+        array $post,
+        string $key,
+        int $index,
+        string $default = '0'
+    ): string {
+        if (!isset($post[$key]) || !is_array($post[$key])) {
+            return FinancialDecimal::normalize($default, 6);
+        }
+
+        $value = $post[$key][$index] ?? null;
+        if ($value === null || $value === false || trim((string) $value) === '') {
+            return FinancialDecimal::normalize($default, 6);
+        }
+
+        return FinancialDecimal::normalize($value, 6);
     }
 }

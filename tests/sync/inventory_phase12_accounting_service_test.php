@@ -43,7 +43,11 @@ try {
             (12002, 'Accounting waste item', 5.000000, 4.000000, 'ingredient', 1),
             (12003, 'Accounting failed item', 5.000000, 4.000000, 'ingredient', 1),
             (12004, 'Accounting count gain item', 0.000000, 0.000000, 'ingredient', 1),
-            (12005, 'Accounting count loss item', 0.000000, 0.000000, 'ingredient', 1)
+            (12005, 'Accounting count loss item', 0.000000, 0.000000, 'ingredient', 1),
+            (12006, 'Core-only supplier purchase item', 0.000000, 0.000000, 'ingredient', 1),
+            (12007, 'Missing purchase mapping item', 0.000000, 0.000000, 'ingredient', 1),
+            (12008, 'Missing waste mapping item', 0.000000, 0.000000, 'ingredient', 1),
+            (12009, 'Missing count mapping item', 0.000000, 0.000000, 'ingredient', 1)
     ");
 
     $flags = new InventoryFeatureFlags([
@@ -152,6 +156,144 @@ try {
           AND item_id IN (12004, 12005)
     ")->fetch_assoc();
     inventoryPhase12Assert((int) ($countJournalLinks['journal_count'] ?? 0) === 2, 'mixed count movements should link to separate direction journals');
+
+    $coreAccountingFlags = new InventoryFeatureFlags([
+        'inventory' => [
+            'ledger_mode' => 'off',
+            'quantity_tracking' => true,
+            'accounting' => true,
+            'accounts' => [
+                'inventory_asset_account_id' => 1100,
+                'cogs_account_id' => 5100,
+            ],
+        ],
+    ]);
+
+    $journalCountBeforeInvalidConfig = (int) $conn->query('SELECT COUNT(*) AS c FROM journal_heads')->fetch_assoc()['c'];
+    try {
+        (new InventoryAccountingService(new InventoryFeatureFlags([
+            'inventory' => [
+                'ledger_mode' => 'off',
+                'quantity_tracking' => false,
+                'accounting' => true,
+            ],
+        ])))->postSaleCogs($conn, ['user_id' => 7], []);
+        inventoryPhase12Assert(false, 'accounting without quantity tracking must fail closed at the service boundary');
+    } catch (RuntimeException $exception) {
+        inventoryPhase12Assert(
+            $exception->getMessage() === 'INVENTORY_ACCOUNTING_REQUIRES_QUANTITY_TRACKING',
+            'invalid accounting capability combination should expose a stable configuration error'
+        );
+    }
+    inventoryPhase12Assert(
+        (int) $conn->query('SELECT COUNT(*) AS c FROM journal_heads')->fetch_assoc()['c'] === $journalCountBeforeInvalidConfig,
+        'invalid accounting capability combination must not create a journal'
+    );
+
+    $coreReceiving = new InventoryPurchaseReceivingService($coreAccountingFlags);
+    $supplierReceipt = $coreReceiving->receive($conn, [
+        'purchase_receipt_uuid' => '12121212-1212-4212-8212-565656565656',
+        'supplier_account_id' => 2101,
+        'destination_store_id' => 3,
+        'lines' => [
+            ['item_id' => 12006, 'qty' => '2.000000', 'unit_cost' => '7.000000'],
+        ],
+    ], ['user_id' => 7]);
+    inventoryPhase12Assert(
+        inventoryPhase12EntriesMatch($conn, (int) $supplierReceipt['accounting']['journal_head_id'], [
+            [1100, '14.000000', '0.000000'],
+            [2101, '0.000000', '14.000000'],
+        ]),
+        'core accounting should allow a purchase to post directly to its supplier without a purchase-clearing mapping'
+    );
+
+    try {
+        $coreReceiving->receive($conn, [
+            'purchase_receipt_uuid' => '12121212-1212-4212-8212-787878787878',
+            'destination_store_id' => 3,
+            'lines' => [
+                ['item_id' => 12007, 'qty' => '3.000000', 'unit_cost' => '2.000000'],
+            ],
+        ], ['user_id' => 7]);
+        inventoryPhase12Assert(false, 'purchase without supplier or clearing mapping should fail closed');
+    } catch (InvalidArgumentException $exception) {
+        inventoryPhase12Assert(
+            $exception->getMessage() === 'INVENTORY_ACCOUNTING_MAPPING_REQUIRED:purchase_clearing_account_id',
+            'purchase mapping failure should expose the missing conditional mapping'
+        );
+    }
+    inventoryPhase12Assert(
+        (int) $conn->query("SELECT COUNT(*) AS c FROM inventory_purchase_receipts WHERE purchase_receipt_uuid = '12121212-1212-4212-8212-787878787878'")->fetch_assoc()['c'] === 0,
+        'failed purchase accounting must roll back its receipt'
+    );
+    inventoryPhase12Assert(
+        (int) $conn->query('SELECT COUNT(*) AS c FROM inventory_movements WHERE item_id = 12007')->fetch_assoc()['c'] === 0,
+        'failed purchase accounting must roll back its stock movement'
+    );
+    inventoryPhase12Assert(
+        (int) $conn->query('SELECT COUNT(*) AS c FROM inventory_item_balances WHERE item_id = 12007')->fetch_assoc()['c'] === 0,
+        'failed purchase accounting must roll back its balance'
+    );
+
+    $coreLedger = new InventoryLedgerService($coreAccountingFlags);
+    inventoryPhase12SeedStock($conn, $coreLedger, 12008, '5.000000', '4.000000', 'core-only-waste-opening');
+    $coreAdjustments = new InventoryAdjustmentService($coreAccountingFlags);
+    try {
+        $coreAdjustments->recordWaste($conn, [
+            'waste_uuid' => '90909090-9090-4090-8090-909090909090',
+            'store_id' => 3,
+            'item_id' => 12008,
+            'qty' => '1.000000',
+            'reason' => 'damage write-off without mapping',
+        ], ['user_id' => 7]);
+        inventoryPhase12Assert(false, 'waste or damage without its expense mapping should fail closed');
+    } catch (InvalidArgumentException $exception) {
+        inventoryPhase12Assert(
+            $exception->getMessage() === 'INVENTORY_ACCOUNTING_MAPPING_REQUIRED:waste_expense_account_id',
+            'waste mapping failure should expose the missing conditional mapping'
+        );
+    }
+    inventoryPhase12Assert(
+        (int) $conn->query("SELECT COUNT(*) AS c FROM inventory_movements WHERE source_uuid = 'waste:90909090-9090-4090-8090-909090909090'")->fetch_assoc()['c'] === 0,
+        'failed waste accounting must roll back its movement instead of posting to COGS'
+    );
+    $failedWasteBalance = inventoryPhase12One($conn, 'SELECT qty_on_hand FROM inventory_item_balances WHERE item_id = 12008');
+    inventoryPhase12Assert(
+        number_format((float) $failedWasteBalance['qty_on_hand'], 6, '.', '') === '5.000000',
+        'failed waste accounting must preserve the stock balance'
+    );
+
+    inventoryPhase12SeedStock($conn, $coreLedger, 12009, '10.000000', '2.000000', 'core-only-count-opening');
+    $coreCountService = new InventoryCountService($coreAccountingFlags, $coreLedger);
+    $coreCount = $coreCountService->createDraft($conn, [
+        'count_uuid' => '91919191-9191-4191-8191-919191919191',
+        'store_id' => 3,
+        'lines' => [
+            ['item_id' => 12009, 'counted_qty' => '8.000000'],
+        ],
+    ], ['user_id' => 7]);
+    $coreCountService->submit($conn, (int) $coreCount['count_id'], ['user_id' => 8]);
+    $coreCountService->approve($conn, (int) $coreCount['count_id'], ['user_id' => 9]);
+    try {
+        $coreCountService->close($conn, (int) $coreCount['count_id'], ['user_id' => 10]);
+        inventoryPhase12Assert(false, 'shortage/count adjustment without gain-loss mapping should fail closed');
+    } catch (InvalidArgumentException $exception) {
+        inventoryPhase12Assert(
+            $exception->getMessage() === 'INVENTORY_ACCOUNTING_MAPPING_REQUIRED:adjustment_gain_loss_account_id',
+            'count shortage mapping failure should expose the missing conditional mapping'
+        );
+    }
+    $failedCount = inventoryPhase12One($conn, 'SELECT status FROM inventory_counts WHERE id = ' . (int) $coreCount['count_id']);
+    inventoryPhase12Assert($failedCount['status'] === 'approved', 'failed count accounting must leave the count approved rather than partially closed');
+    inventoryPhase12Assert(
+        (int) $conn->query("SELECT COUNT(*) AS c FROM inventory_movements WHERE source_type = 'inventory_count' AND item_id = 12009 AND source_uuid LIKE 'inventory-count:91919191-9191-4191-8191-919191919191:%'")->fetch_assoc()['c'] === 0,
+        'failed count accounting must roll back all shortage movements'
+    );
+    $failedCountBalance = inventoryPhase12One($conn, 'SELECT qty_on_hand FROM inventory_item_balances WHERE item_id = 12009');
+    inventoryPhase12Assert(
+        number_format((float) $failedCountBalance['qty_on_hand'], 6, '.', '') === '10.000000',
+        'failed count accounting must preserve the stock balance'
+    );
 
     $reconciliation = (new InventoryAccountingReconciliationService())->review($conn);
     inventoryPhase12Assert($reconciliation['ok'] === true, 'accountant reconciliation report should be ready');

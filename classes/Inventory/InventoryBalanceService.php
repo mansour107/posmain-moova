@@ -36,7 +36,7 @@ class InventoryBalanceService
     {
         return [
             'success' => true,
-            'noop' => !$this->flags->canWriteLedger(),
+            'noop' => !$this->flags->canWriteQuantityLedger(),
             'mode' => $this->flags->mode(),
             'intended_action' => 'refresh_balance',
             'item_id' => max(0, $itemId),

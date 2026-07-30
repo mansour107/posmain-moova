@@ -1131,7 +1131,15 @@ class PosOrderMutationService
         if ($orderId < 1) {
             return;
         }
-        $this->assertCashierOrderEditable($conn, $orderId);
+        $order = $this->loadCashierOrderForScope(
+            $conn,
+            $orderId,
+            $this->mutationAccountingScope($request, $context)
+        );
+        if (!$order) {
+            throw new InvalidArgumentException('ORDER_NOT_FOUND');
+        }
+        $this->assertCashierOrderEditable($conn, $orderId, $order);
 
         $userId = $this->contextUserId($request, $context);
         if ($userId > 0) {
@@ -1340,7 +1348,8 @@ class PosOrderMutationService
             throw new InvalidArgumentException('ORDER_ID_REQUIRED');
         }
 
-        $order = $this->tableOrderService->queryOne($conn, 'SELECT * FROM ot_head WHERE id = ? LIMIT 1 FOR UPDATE', [$orderId]);
+        $scope = $this->mutationAccountingScope($request, $context);
+        $order = $this->loadCashierOrderForScope($conn, $orderId, $scope, true);
         if (!$order) {
             throw new InvalidArgumentException('ORDER_NOT_FOUND');
         }
@@ -1532,6 +1541,17 @@ class PosOrderMutationService
             'config' => $context['config'] ?? null,
         ]);
 
+        $fulfillment = null;
+        if ($orderType === 'delivery') {
+            $fulfillment = $this->synchronizeUpdatedDeliveryFulfillment(
+                $conn,
+                $orderId,
+                $request,
+                $resolvedTotals,
+                $status
+            );
+        }
+
         $mutationVersion = $this->mutationVersionService()->bumpAndGet(
             $conn,
             $orderId,
@@ -1578,8 +1598,114 @@ class PosOrderMutationService
                 'journal_head_id' => $salesJournal['journal_head_id'],
                 'journal_id' => $salesJournal['journal_id'],
                 'receipt_ids' => array_column($receipts, 'receipt_id'),
+                'fulfillment' => $fulfillment,
             ],
         ]);
+    }
+
+    private function loadCashierOrderForScope(
+        mysqli $conn,
+        int $orderId,
+        array $scope,
+        bool $forUpdate = false
+    ): ?array {
+        $sql = 'SELECT * FROM ot_head WHERE id = ?';
+        $params = [$orderId];
+        if ($this->columnExists($conn, 'ot_head', 'tenant')) {
+            $sql .= ' AND tenant = ?';
+            $params[] = max(0, (int) ($scope['tenant'] ?? 0));
+        }
+        if ($this->columnExists($conn, 'ot_head', 'branch')) {
+            $sql .= ' AND branch = ?';
+            $params[] = max(0, (int) ($scope['branch'] ?? 0));
+        }
+        $sql .= ' LIMIT 1';
+        if ($forUpdate) {
+            $sql .= ' FOR UPDATE';
+        }
+
+        return $this->tableOrderService->queryOne($conn, $sql, $params);
+    }
+
+    private function synchronizeUpdatedDeliveryFulfillment(
+        mysqli $conn,
+        int $orderId,
+        array $request,
+        array $resolvedTotals,
+        array $status
+    ): array {
+        $fulfillmentService = new OrderFulfillmentService();
+        $existing = $fulfillmentService->fulfillmentForOrder($conn, $orderId, true);
+        if (!$existing || (string) ($existing['fulfillment_type'] ?? '') !== 'delivery') {
+            throw new RuntimeException('POS_DELIVERY_FULFILLMENT_REQUIRED');
+        }
+
+        $collectionMode = $this->moneyIsPositive($status['remaining_amount'] ?? '0')
+            ? 'cod'
+            : 'prepaid';
+        $courierSource = strtolower(trim((string) (
+            $request['courier_source']
+            ?? $existing['courier_source']
+            ?? 'in_house'
+        )));
+        if (!in_array($courierSource, ['in_house', 'external'], true)) {
+            throw new InvalidArgumentException('DELIVERY_COURIER_SOURCE_INVALID');
+        }
+
+        $deliveryName = trim((string) ($request['delivery_customer_name'] ?? ''));
+        $deliveryPhone = trim((string) ($request['delivery_customer_phone'] ?? ''));
+        $deliveryAddress = trim((string) ($request['delivery_customer_address'] ?? ''));
+        $deliveryCustomerId = max(0, (int) ($request['pos_customer_id'] ?? 0));
+        $deliveryZoneId = max(0, (int) ($resolvedTotals['delivery_zone_id'] ?? 0));
+        $deliveryZoneName = trim((string) ($resolvedTotals['delivery_zone_name'] ?? ''));
+        $deliveryFee = $this->moneyFromBoundary($resolvedTotals['delivery_fee'] ?? '0')->toString();
+        $codAmount = $collectionMode === 'cod'
+            ? $this->moneyFromBoundary($status['remaining_amount'] ?? '0')->toString()
+            : '0.00';
+
+        $stmt = $conn->prepare("
+            UPDATE order_fulfillment
+            SET customer_name = ?,
+                customer_phone = ?,
+                customer_address = ?,
+                pos_customer_id = NULLIF(?, 0),
+                delivery_zone = ?,
+                delivery_fee = ?,
+                delivery_zone_id = NULLIF(?, 0),
+                courier_source = ?,
+                collection_mode = ?,
+                cod_amount = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE order_id = ?
+              AND fulfillment_type = 'delivery'
+        ");
+        $stmt->bind_param(
+            'sssississsi',
+            $deliveryName,
+            $deliveryPhone,
+            $deliveryAddress,
+            $deliveryCustomerId,
+            $deliveryZoneName,
+            $deliveryFee,
+            $deliveryZoneId,
+            $courierSource,
+            $collectionMode,
+            $codAmount,
+            $orderId
+        );
+        $stmt->execute();
+        $affectedRows = $stmt->affected_rows;
+        $stmt->close();
+        if ($affectedRows < 0) {
+            throw new RuntimeException('POS_DELIVERY_FULFILLMENT_UPDATE_FAILED');
+        }
+
+        $updated = $fulfillmentService->fulfillmentForOrder($conn, $orderId);
+        if (!$updated) {
+            throw new RuntimeException('POS_DELIVERY_FULFILLMENT_REQUIRED');
+        }
+
+        return $updated;
     }
 
     private function assertCashierOrderEditable(mysqli $conn, int $orderId, ?array $order = null): void
@@ -1678,7 +1804,13 @@ class PosOrderMutationService
         }
 
         $status = $this->paidStatusForNet($headNet, $payment['applied']);
-        $proId = $this->nextInvoiceProId($conn, InventoryMovementService::TYPE_POS, 0, 0);
+        $scope = $this->mutationAccountingScope($request, $context);
+        $proId = $this->nextInvoiceProId(
+            $conn,
+            InventoryMovementService::TYPE_POS,
+            $scope['tenant'],
+            $scope['branch']
+        );
         $info = $this->tableOrderService->buildInfo('takeaway', '', (string) ($request['info'] ?? ''));
         $fatDiscPer = $this->percentageString($headDiscount, $headTotal);
         $fatPlusPer = $this->percentageString($headPlus, $headTotal);
@@ -1736,6 +1868,7 @@ class PosOrderMutationService
         ]);
         $orderId = (int) $conn->insert_id;
         $this->tableOrderService->assignUuidIfPresent($conn, 'ot_head', $orderId);
+        $this->assignOrderAccountingScope($conn, $orderId, $scope);
 
         $salesJournal = $this->insertTakeawaySalesJournal($conn, $orderId, $proId, $headNet, $date, $customerId, $userId, (int) ($request['sales_account_id'] ?? 0));
         $receipts = [];
@@ -1930,7 +2063,13 @@ class PosOrderMutationService
         }
 
         $status = $this->paidStatusForNet($headNet, $payment['applied']);
-        $proId = $this->nextInvoiceProId($conn, InventoryMovementService::TYPE_POS, 0, 0);
+        $scope = $this->mutationAccountingScope($request, $context);
+        $proId = $this->nextInvoiceProId(
+            $conn,
+            InventoryMovementService::TYPE_POS,
+            $scope['tenant'],
+            $scope['branch']
+        );
         $info = $this->tableOrderService->buildInfo('delivery', '', (string) ($request['info'] ?? ''));
         $fatDiscPer = $this->percentageString($headDiscount, $headTotal);
         $fatPlusPer = $this->percentageString($headPlus, $headTotal);
@@ -1988,6 +2127,7 @@ class PosOrderMutationService
         ]);
         $orderId = (int) $conn->insert_id;
         $this->tableOrderService->assignUuidIfPresent($conn, 'ot_head', $orderId);
+        $this->assignOrderAccountingScope($conn, $orderId, $scope);
 
         $salesJournal = null;
         $receipts = [];
@@ -2507,6 +2647,7 @@ class PosOrderMutationService
         }
         $detailId = (int) $conn->insert_id;
         $detailUuid = $this->tableOrderService->assignUuidIfPresent($conn, 'fat_details', $detailId);
+        $this->assignDetailAccountingScope($conn, $detailId, $this->orderAccountingScope($conn, $orderId));
         $sourceItem = is_array($line['_source_item'] ?? null) ? $line['_source_item'] : $line;
         $this->persistLineCustomizationsIfAvailable(
             $conn,
@@ -2702,7 +2843,8 @@ class PosOrderMutationService
                 $discount,
                 $net,
                 $info,
-                $userId
+                $userId,
+                $context
             );
         }
         $this->tableOrderService->assignUuidIfPresent($conn, 'ot_head', $orderId);
@@ -3272,7 +3414,16 @@ class PosOrderMutationService
         string $paymentMethod,
         int $userId
     ): int {
-        $newInvoiceNum = $this->tableOrderService->nextPosProId($conn, TableOrderService::POS_TYPE, 0, 0);
+        $scope = [
+            'tenant' => max(0, (int) ($originalOrder['tenant'] ?? 0)),
+            'branch' => max(0, (int) ($originalOrder['branch'] ?? 0)),
+        ];
+        $newInvoiceNum = $this->tableOrderService->nextPosProId(
+            $conn,
+            TableOrderService::POS_TYPE,
+            $scope['tenant'],
+            $scope['branch']
+        );
         $splitGroupId = bin2hex(random_bytes(16));
         $date = date('Y-m-d');
         $info = 'سداد جزئي من طاولة ' . $tableId . ' - أصل الطلب ' . $originalOrderId;
@@ -3317,6 +3468,7 @@ class PosOrderMutationService
 
         $orderId = (int) $conn->insert_id;
         $this->tableOrderService->assignUuidIfPresent($conn, 'ot_head', $orderId);
+        $this->assignOrderAccountingScope($conn, $orderId, $scope);
 
         return $orderId;
     }
@@ -3788,9 +3940,16 @@ class PosOrderMutationService
         $discount,
         $net,
         string $info,
-        int $userId
+        int $userId,
+        array $context = []
     ): int {
-        $proId = $this->tableOrderService->nextPosProId($conn, TableOrderService::POS_TYPE, 0, 0);
+        $scope = $this->mutationAccountingScope([], $context);
+        $proId = $this->tableOrderService->nextPosProId(
+            $conn,
+            TableOrderService::POS_TYPE,
+            $scope['tenant'],
+            $scope['branch']
+        );
         $this->tableOrderService->execute($conn, "
             INSERT INTO ot_head (
                 pro_id, pro_tybe, pro_date, accural_date, store_id, emp_id, emp2_id,
@@ -3823,7 +3982,10 @@ class PosOrderMutationService
             $userId,
         ]);
 
-        return (int) $conn->insert_id;
+        $orderId = (int) $conn->insert_id;
+        $this->assignOrderAccountingScope($conn, $orderId, $scope);
+
+        return $orderId;
     }
 
     private function insertTableOrderItems(mysqli $conn, int $orderId, int $storeId, array $items, array $context = []): array
@@ -5766,6 +5928,75 @@ class PosOrderMutationService
             'tenant' => max(0, (int) ($row['tenant'] ?? 0)),
             'branch' => max(0, (int) ($row['branch'] ?? 0)),
         ];
+    }
+
+    /**
+     * Resolve the operational accounting scope at the mutation boundary.
+     * Explicit request context wins, while the session fallback keeps the
+     * browser route compatible with legacy callers that do not yet pass scope.
+     */
+    private function mutationAccountingScope(array $request = [], array $context = []): array
+    {
+        $tenant = (int) (
+            $context['tenant']
+            ?? $context['pos_tenant']
+            ?? $request['tenant']
+            ?? $request['pos_tenant']
+            ?? 0
+        );
+        $branch = (int) (
+            $context['branch']
+            ?? $context['pos_branch']
+            ?? $request['branch']
+            ?? $request['pos_branch']
+            ?? 0
+        );
+
+        if (session_status() === PHP_SESSION_ACTIVE) {
+            if ($tenant < 1) {
+                $tenant = (int) ($_SESSION['pos_tenant'] ?? 0);
+            }
+            if ($branch < 1) {
+                $branch = (int) ($_SESSION['pos_branch'] ?? 0);
+            }
+        }
+
+        return [
+            'tenant' => max(0, $tenant),
+            'branch' => max(0, $branch),
+        ];
+    }
+
+    private function assignOrderAccountingScope(mysqli $conn, int $orderId, array $scope): void
+    {
+        if ($orderId < 1
+            || !$this->columnExists($conn, 'ot_head', 'tenant')
+            || !$this->columnExists($conn, 'ot_head', 'branch')) {
+            return;
+        }
+
+        $tenant = max(0, (int) ($scope['tenant'] ?? 0));
+        $branch = max(0, (int) ($scope['branch'] ?? 0));
+        $stmt = $conn->prepare('UPDATE ot_head SET tenant = ?, branch = ? WHERE id = ?');
+        $stmt->bind_param('iii', $tenant, $branch, $orderId);
+        $stmt->execute();
+        $stmt->close();
+    }
+
+    private function assignDetailAccountingScope(mysqli $conn, int $detailId, array $scope): void
+    {
+        if ($detailId < 1
+            || !$this->columnExists($conn, 'fat_details', 'tenant')
+            || !$this->columnExists($conn, 'fat_details', 'branch')) {
+            return;
+        }
+
+        $tenant = max(0, (int) ($scope['tenant'] ?? 0));
+        $branch = max(0, (int) ($scope['branch'] ?? 0));
+        $stmt = $conn->prepare('UPDATE fat_details SET tenant = ?, branch = ? WHERE id = ?');
+        $stmt->bind_param('iii', $tenant, $branch, $detailId);
+        $stmt->execute();
+        $stmt->close();
     }
 
     private function requiredPositiveInt(array $request, string $key, string $message): int

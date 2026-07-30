@@ -46,7 +46,11 @@ foreach ($manifest as $relativePath => $entry) {
     rbacManifestAssert(is_string($source), 'unable to read ' . $relativePath);
     $usesSharedGate = strpos($source, 'session_bootstrap.php') !== false
         || strpos($source, 'includes/connect.php') !== false
-        || strpos($source, "../includes/connect.php") !== false;
+        || strpos($source, "../includes/connect.php") !== false
+        || strpos($source, 'api_entry_classification.php') !== false
+        || strpos($source, 'sync_route.php') !== false
+        || strpos($source, 'moova_menu_api_auth.php') !== false
+        || strpos($source, '/_bootstrap.php') !== false;
 
     // Quarantined / retired endpoints are intentionally gone (HTTP 410), not live writers.
     $isGone = !empty($entry['quarantined']);

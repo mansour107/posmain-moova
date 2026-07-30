@@ -9,7 +9,7 @@ require_permission('inventory.edit', $conn);
 
 $inventoryCountId = (int) ($_GET['id'] ?? 0);
 $inventoryCountFlags = new InventoryFeatureFlags();
-$inventoryCountCanClose = $inventoryCountFlags->canWriteLedger();
+$inventoryCountCanClose = $inventoryCountFlags->canWriteQuantityLedger();
 $inventoryCountCanViewCost = auth_guard_has_permission('accounting.view', $conn) || auth_guard_has_permission('reports.view', $conn);
 $inventoryCountCanApprove = auth_guard_has_permission('inventory.approve', $conn) || auth_guard_has_permission('accounting.view', $conn);
 $inventoryCountCanReverse = $inventoryCountCanClose && $inventoryCountCanApprove;

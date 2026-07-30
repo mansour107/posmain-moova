@@ -1,0 +1,151 @@
+.printer-shell {
+  --printer-ink: #172033;
+  --printer-muted: #6b7280;
+  --printer-line: #e8edf3;
+  --printer-blue: #315efb;
+  --printer-blue-soft: #eef3ff;
+  background: #f7f9fc !important;
+  color: var(--printer-ink);
+  padding: 28px 12px 48px;
+}
+.printer-shell .container-fluid { max-width: 1440px; }
+.printer-hero {
+  align-items: center;
+  background: linear-gradient(145deg, #fff 0%, #f6f8ff 100%);
+  border: 1px solid var(--printer-line);
+  border-radius: 22px;
+  box-shadow: 0 18px 45px rgba(32, 54, 92, .07);
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 20px;
+  padding: 28px 30px;
+}
+.printer-kicker, .printer-panel-head span {
+  color: var(--printer-blue);
+  display: block;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: .08em;
+  margin-bottom: 6px;
+  text-transform: uppercase;
+}
+.printer-hero h1 { font-size: clamp(25px, 3vw, 38px); font-weight: 800; margin: 0 0 8px; }
+.printer-hero p, .printer-panel-head p { color: var(--printer-muted); margin: 0; }
+.printer-mode {
+  background: #f5f6f8;
+  border: 1px solid #e4e7ec;
+  border-radius: 16px;
+  min-width: 235px;
+  padding: 14px 18px;
+}
+.printer-mode.is-live { background: #ecfdf5; border-color: #a7f3d0; }
+.printer-mode span, .printer-mode small { color: var(--printer-muted); display: block; font-size: 11px; }
+.printer-mode strong { display: block; font-size: 17px; margin: 3px 0; }
+.printer-alert {
+  align-items: center;
+  border: 1px solid;
+  border-radius: 14px;
+  display: flex;
+  gap: 9px;
+  margin-bottom: 16px;
+  padding: 12px 15px;
+}
+.printer-alert.is-success { background: #ecfdf5; border-color: #a7f3d0; color: #065f46; }
+.printer-alert.is-error { background: #fff1f2; border-color: #fecdd3; color: #9f1239; }
+.printer-layout { display: grid; gap: 20px; grid-template-columns: minmax(330px, .9fr) minmax(420px, 1.35fr); }
+.printer-panel {
+  background: #fff;
+  border: 1px solid var(--printer-line);
+  border-radius: 20px;
+  box-shadow: 0 12px 34px rgba(32, 54, 92, .055);
+  padding: 22px;
+}
+.printer-panel-head { align-items: center; display: flex; justify-content: space-between; margin-bottom: 18px; }
+.printer-panel-head h2 { font-size: 21px; font-weight: 800; margin: 0; }
+.printer-form { display: grid; gap: 15px; }
+.printer-form label, .printer-form legend { color: #344054; font-size: 13px; font-weight: 750; }
+.printer-form input[type="text"], .printer-form input[type="number"], .printer-form select {
+  background: #fbfcfe;
+  border: 1px solid #dfe5ec;
+  border-radius: 11px;
+  color: var(--printer-ink);
+  display: block;
+  margin-top: 7px;
+  min-height: 44px;
+  padding: 9px 12px;
+  width: 100%;
+}
+.printer-form small { color: var(--printer-muted); display: block; font-size: 11px; font-weight: 500; margin-top: 5px; }
+.printer-two { display: grid; gap: 12px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.printer-form fieldset { border: 0; border-top: 1px solid var(--printer-line); margin: 2px 0 0; padding: 15px 0 0; }
+.printer-form legend { font-size: 14px; margin-bottom: 10px; width: auto; }
+.printer-check-grid, .printer-category-grid { display: grid; gap: 8px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.printer-check {
+  align-items: center;
+  background: #f8fafc;
+  border: 1px solid #e5eaf0;
+  border-radius: 10px;
+  cursor: pointer;
+  display: flex;
+  gap: 8px;
+  margin: 0;
+  padding: 9px 10px;
+}
+.printer-check input { accent-color: var(--printer-blue); }
+.printer-check-all { background: var(--printer-blue-soft); margin-bottom: 8px; }
+.printer-transport { display: none; }
+.printer-transport.is-visible { display: block; }
+.printer-transport.printer-two.is-visible { display: grid; }
+.printer-toggle { align-items: center; display: flex; justify-content: space-between; margin-top: 24px; }
+.printer-toggle span, .printer-toggle strong, .printer-toggle small { display: block; }
+.printer-toggle input { height: 1px; opacity: 0; position: absolute; width: 1px; }
+.printer-toggle i { background: #d5dbe4; border-radius: 20px; height: 24px; position: relative; width: 42px; }
+.printer-toggle i::after { background: #fff; border-radius: 50%; box-shadow: 0 1px 4px rgba(0,0,0,.2); content: ""; height: 18px; left: 3px; position: absolute; top: 3px; transition: .2s; width: 18px; }
+.printer-toggle input:checked + i { background: var(--printer-blue); }
+.printer-toggle input:checked + i::after { transform: translateX(18px); }
+.printer-primary, .printer-secondary, .printer-link {
+  border: 0;
+  border-radius: 10px;
+  cursor: pointer;
+  font-weight: 750;
+}
+.printer-primary { background: var(--printer-blue); color: #fff; min-height: 46px; padding: 10px 16px; }
+.printer-secondary { background: #f2f5f9; color: #344054; padding: 8px 11px; }
+.printer-link { background: transparent; color: var(--printer-blue); padding: 5px; }
+.is-hidden { display: none !important; }
+.printer-list { display: grid; gap: 12px; }
+.printer-card { border: 1px solid var(--printer-line); border-radius: 15px; padding: 15px; }
+.printer-card.is-disabled { opacity: .62; }
+.printer-card-top { align-items: center; display: grid; gap: 11px; grid-template-columns: auto 1fr auto; }
+.printer-card-top h3 { font-size: 16px; font-weight: 800; margin: 0 0 3px; }
+.printer-card-top p { color: var(--printer-muted); font-size: 12px; margin: 0; }
+.printer-icon { align-items: center; background: var(--printer-blue-soft); border-radius: 12px; color: var(--printer-blue); display: flex; height: 42px; justify-content: center; width: 42px; }
+.printer-status, .job-status { background: #ecfdf5; border-radius: 999px; color: #047857; font-size: 11px; font-weight: 800; padding: 5px 8px; }
+.printer-tags { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0; }
+.printer-tags span { background: #f4f6f9; border-radius: 7px; color: #556070; font-size: 11px; padding: 5px 7px; }
+.printer-card-actions { align-items: center; display: flex; gap: 8px; }
+.printer-card-actions form { margin: 0; }
+.printer-empty { color: var(--printer-muted); padding: 55px 20px; text-align: center; }
+.printer-empty i { color: #b6c2d2; font-size: 34px; }
+.printer-empty h3 { color: var(--printer-ink); font-size: 18px; margin: 13px 0 5px; }
+.printer-jobs { margin-top: 20px; }
+.printer-jobs table { border-collapse: collapse; width: 100%; }
+.printer-jobs th, .printer-jobs td { border-bottom: 1px solid var(--printer-line); padding: 12px; text-align: right; }
+.printer-jobs th { color: var(--printer-muted); font-size: 12px; }
+.printer-jobs td { font-size: 13px; }
+.printer-jobs td small { color: #b42318; display: block; margin-top: 5px; }
+.printer-retry-check { align-items: center; color: #8a3415; display: flex; font-size: 11px; gap: 6px; margin: 0 0 5px; white-space: nowrap; }
+.printer-retry-check input { accent-color: #c2410c; }
+.job-status.is-failed { background: #fff1f2; color: #be123c; }
+.job-status.is-queued { background: #fff7ed; color: #c2410c; }
+.printer-table-empty { color: var(--printer-muted); padding: 30px !important; text-align: center !important; }
+@media (max-width: 980px) {
+  .printer-layout { grid-template-columns: 1fr; }
+  .printer-hero { align-items: flex-start; flex-direction: column; gap: 18px; }
+  .printer-mode { width: 100%; }
+}
+@media (max-width: 560px) {
+  .printer-shell { padding-left: 4px; padding-right: 4px; }
+  .printer-hero, .printer-panel { border-radius: 16px; padding: 17px; }
+  .printer-two, .printer-check-grid, .printer-category-grid { grid-template-columns: 1fr; }
+}

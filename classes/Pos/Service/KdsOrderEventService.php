@@ -44,7 +44,7 @@ class KdsOrderEventService
         $afterJson = $this->encodeSnapshot($after);
         $reason = trim((string) ($metadata['reason'] ?? $metadata['cancellation_reason'] ?? ''));
         $approvalId = (int) ($metadata['manager_approval_id'] ?? $metadata['approval_id'] ?? 0);
-        $scope = $this->scope();
+        $scope = $this->scope($metadata);
         $idempotencyKey = hash('sha256', implode('|', [
             $orderId,
             $stationId,
@@ -261,11 +261,11 @@ class KdsOrderEventService
         return array_values($decoded);
     }
 
-    private function scope(): array
+    private function scope(array $metadata = []): array
     {
         return [
-            (int) ($_SESSION['pos_tenant'] ?? 0),
-            (int) ($_SESSION['pos_branch'] ?? 0),
+            max(0, (int) ($metadata['tenant'] ?? $_SESSION['pos_tenant'] ?? 0)),
+            max(0, (int) ($metadata['branch'] ?? $_SESSION['pos_branch'] ?? 0)),
         ];
     }
 

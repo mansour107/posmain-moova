@@ -12,7 +12,7 @@ require_permission('inventory.edit', $conn);
 
 $inventoryPurchaseFlags = new InventoryFeatureFlags();
 $inventoryPurchaseMode = $inventoryPurchaseFlags->mode();
-$inventoryPurchaseCanReceive = $inventoryPurchaseFlags->canWriteLedger();
+$inventoryPurchaseCanReceive = $inventoryPurchaseFlags->canWriteQuantityLedger();
 $inventoryPurchaseCanApproveOrders = auth_guard_has_permission('inventory.approve', $conn) || auth_guard_has_permission('accounting.view', $conn);
 $inventoryPurchaseHasDefaultSupplierColumn = inventoryPurchasingColumnExists($conn, 'inventory_item_stock_levels', 'default_supplier_account_id');
 $inventoryPurchaseSuppliers = inventoryPurchasingRows($conn, "

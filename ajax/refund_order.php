@@ -3,6 +3,7 @@ require_once __DIR__ . '/../includes/session_bootstrap.php';
 include('../includes/connect.php');
 require_once('../includes/auth_guard.php');
 require_once('../includes/csrf.php');
+require_once('../classes/Financial/Money.php');
 require_once('../classes/Pos/Service/PosOrderMutationService.php');
 require_once('../classes/Sync/SyncOutboxEventService.php');
 require_once('../classes/Financial/FinancialMoneyInput.php');

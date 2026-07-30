@@ -60,6 +60,7 @@ try {
         'movement_type' => 'sale_cash',
         'amount' => '20.000',
         'created_by' => 1,
+        'idempotency_key' => 'drawer-force-close:sale:' . $first['id'],
     ]);
 
     // Mirror forceCloseDrawerForUser money path without full RBAC schema.

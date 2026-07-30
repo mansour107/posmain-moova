@@ -1,15 +1,9 @@
 <?php
 
-$host = getenv('POSMAIN_TEST_MYSQL_HOST') ?: '127.0.0.1';
-$port = (int) (getenv('POSMAIN_TEST_MYSQL_PORT') ?: 3307);
-$user = getenv('POSMAIN_TEST_MYSQL_USER') ?: 'root';
-$pass = getenv('POSMAIN_TEST_MYSQL_PASS') ?: '';
-$db = 'posmain_item_void_override_' . getmypid();
-putenv('POSMAIN_DB_HOST=' . $host);
-putenv('POSMAIN_DB_PORT=' . $port);
-putenv('POSMAIN_DB_USER=' . $user);
-putenv('POSMAIN_DB_PASS=' . $pass);
-putenv('POSMAIN_DB_NAME=' . $db);
+require_once __DIR__ . '/security_test_database.php';
+
+$fixture = SecurityTestDatabase::create();
+$db = $fixture->databaseName();
 putenv('POSMAIN_BRANCH_UUID=79ec8b45-6fd3-4e0b-a2f2-46cab97991ea');
 
 require_once __DIR__ . '/../../classes/Pos/Service/ManagerApprovalService.php';
@@ -17,11 +11,9 @@ require_once __DIR__ . '/../../classes/Pos/Service/PosOrderMutationService.php';
 
 mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
 
-$conn = new mysqli($host, $user, $pass, '', $port);
+$conn = $fixture->connect();
 
 try {
-    $conn->query("CREATE DATABASE `{$db}` CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci");
-    $conn->select_db($db);
     posItemVoidRuntimeCreateSchema($conn);
 
     $approvalService = new ManagerApprovalService();
@@ -109,6 +101,13 @@ try {
             ['item_id' => 11, 'qty' => 1],
         ], ['manager_approval_id' => (int) $freshApproval['id']], ['user_id' => 99]);
     }, 'APPROVAL_ALREADY_CONSUMED');
+    $approvalOutboxCount = (int) $conn->query(
+        "SELECT COUNT(*) AS c FROM sync_outbox WHERE aggregate_type = 'manager_approval'"
+    )->fetch_assoc()['c'];
+    posItemVoidRuntimeAssert(
+        $approvalOutboxCount >= 6,
+        'manager approval request/decision writes should retain their atomic outbox evidence'
+    );
 
     $conn->query("UPDATE ot_head SET payment_status = 'paid', order_status = 'completed' WHERE id = 501");
     posItemVoidRuntimeExpectException(function () use ($requireMethod, $mutationService, $conn) {
@@ -119,8 +118,8 @@ try {
 
     echo "pos-item-void-override-runtime-ok db={$db}\n";
 } finally {
-    $conn->query("DROP DATABASE IF EXISTS `{$db}`");
     $conn->close();
+    $fixture->close();
 }
 
 function posItemVoidRuntimeCreateSchema(mysqli $conn): void
@@ -164,6 +163,42 @@ function posItemVoidRuntimeCreateSchema(mysqli $conn): void
     $conn->query("
         INSERT INTO sync_branch_identity (id, branch_uuid, branch_name)
         VALUES (1, '79ec8b45-6fd3-4e0b-a2f2-46cab97991ea', 'Item void fixture')
+    ");
+    $conn->query("
+        CREATE TABLE sync_outbox (
+            id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+            event_uuid CHAR(36) NOT NULL,
+            branch_uuid CHAR(36) NOT NULL,
+            pos_tenant INT NOT NULL DEFAULT 0,
+            pos_branch INT NOT NULL DEFAULT 0,
+            aggregate_type VARCHAR(50) NOT NULL,
+            aggregate_uuid CHAR(36) NULL,
+            aggregate_local_id BIGINT UNSIGNED NULL,
+            aggregate_id VARCHAR(191) NOT NULL DEFAULT '',
+            entity_type VARCHAR(50) NOT NULL,
+            entity_uuid CHAR(36) NULL,
+            entity_local_id BIGINT UNSIGNED NULL,
+            event_type VARCHAR(80) NOT NULL,
+            event_version INT UNSIGNED NOT NULL DEFAULT 1,
+            source_system VARCHAR(40) NOT NULL DEFAULT 'pos',
+            source_event_uuid CHAR(36) NULL,
+            source_transaction_id VARCHAR(191) NOT NULL DEFAULT '',
+            idempotency_key VARCHAR(191) NOT NULL,
+            payload_json LONGTEXT NOT NULL,
+            payload_hash CHAR(64) NOT NULL,
+            status ENUM('held','pending','syncing','synced','failed','dead') NOT NULL DEFAULT 'pending',
+            attempts INT UNSIGNED NOT NULL DEFAULT 0,
+            last_error TEXT NULL,
+            locked_by VARCHAR(100) NULL,
+            locked_until DATETIME(6) NULL,
+            next_retry_at DATETIME(6) NULL,
+            created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+            updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+            synced_at DATETIME(6) NULL,
+            PRIMARY KEY (id),
+            UNIQUE KEY uq_sync_outbox_event_uuid (event_uuid),
+            UNIQUE KEY uq_sync_outbox_idempotency (branch_uuid, idempotency_key)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
     ");
     $conn->query("
         CREATE TABLE manager_approvals (

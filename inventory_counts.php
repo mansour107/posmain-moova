@@ -12,7 +12,7 @@ require_permission('inventory.edit', $conn);
 
 $inventoryCountFlags = new InventoryFeatureFlags();
 $inventoryCountMode = $inventoryCountFlags->mode();
-$inventoryCountCanClose = $inventoryCountFlags->canWriteLedger();
+$inventoryCountCanClose = $inventoryCountFlags->canWriteQuantityLedger();
 $inventoryCountStores = posmain_inventory_store_select_options($conn);
 $inventoryCountItems = inventoryCountRows($conn, "
     SELECT id, iname, barcode

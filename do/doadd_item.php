@@ -79,7 +79,7 @@ try {
     $user = $payload['user'];
 
     $stmt->bind_param(
-        'ssissdddddiii',
+        'ssisssssssiii',
         $iname,
         $name2,
         $code,
@@ -130,7 +130,7 @@ try {
         $changedItemIds = $variantService->saveVariantsFromPost($conn, (int) $last_id, $_POST, ['user_id' => $usid]);
     }
     foreach ($changedItemIds as $changedItemId) {
-        posmain_record_menu_item_sync($conn, (int) $changedItemId, 'item_form');
+        posmain_record_menu_item_sync($conn, (int) $changedItemId, 'item_form', 'menu.item_saved', true);
         posmain_queue_item_images_for_item($conn, (int) $changedItemId, 'item_form');
     }
     $conn->commit();

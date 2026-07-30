@@ -21,6 +21,11 @@ return [
     'ajax/move_table_order.php' => ['permission' => 'pos.table.move', 'csrf' => 'pos_browser', 'lane' => 'pos'],
     'ajax/process_split_payment.php' => ['permission' => 'pos.open', 'csrf' => 'pos_browser', 'lane' => 'pos'],
     'ajax/process_table_payment.php' => ['permission' => 'pos.open', 'csrf' => 'pos_browser', 'lane' => 'pos'],
+    'ajax/print_dispatch.php' => [
+        'any_of' => ['pos.open', 'pos.reprint', 'reports.view', 'reports.own_shift', 'pos.shift.close'],
+        'csrf' => 'print_dispatch',
+        'lane' => 'pos',
+    ],
     'ajax/team_hub.php' => ['any_of' => ['users.manage', 'roles.manage'], 'csrf' => '', 'lane' => 'erp', 'admin_or' => true],
     'ajax/pin_available.php' => ['permission' => '', 'csrf' => '', 'lane' => 'erp'],
     'ajax/main_pin_login.php' => ['permission' => '', 'csrf' => 'main_pin', 'lane' => 'erp', 'public' => true],
@@ -313,4 +318,56 @@ return [
     'print/receipt.php' => ['any_of' => ['pos.open', 'pos.reprint'], 'csrf' => '', 'lane' => 'pos'],
     'print/receipt_waiter.php' => ['any_of' => ['pos.open', 'pos.reprint'], 'csrf' => '', 'lane' => 'pos'],
     'print/shift_sales_receipt.php' => ['permission' => 'pos.shift.close', 'csrf' => '', 'lane' => 'pos'],
+
+    // Shared endpoint includes. They are shipped for runtime inclusion but may
+    // never execute as standalone HTTP routes.
+    'ajax/inventory_count_common.php' => ['internal' => true, 'lane' => 'erp'],
+    'ajax/inventory_transfer_common.php' => ['internal' => true, 'lane' => 'erp'],
+    'api/admin/updates/_bootstrap.php' => ['internal' => true, 'lane' => 'erp'],
+    'api/moova_menu_api_auth.php' => ['internal' => true, 'lane' => 'erp'],
+    'print/includes/connect.php' => ['internal' => true, 'lane' => 'erp'],
+    'print/includes/footer.php' => ['internal' => true, 'lane' => 'erp'],
+    'print/includes/header.php' => ['internal' => true, 'lane' => 'erp'],
+
+    // HTTP APIs with their own token/HMAC/session authorization. The central
+    // guard classifies them; endpoint_auth does not replace their own checks.
+    'api/admin/updates/check.php' => ['endpoint_auth' => true, 'lane' => 'erp'],
+    'api/admin/updates/start.php' => ['endpoint_auth' => true, 'lane' => 'erp'],
+    'api/admin/updates/status.php' => ['endpoint_auth' => true, 'lane' => 'erp'],
+    'api/categories.php' => ['endpoint_auth' => true, 'lane' => 'erp'],
+    'api/health.php' => ['public' => true, 'lane' => 'erp'],
+    'api/items.php' => ['endpoint_auth' => true, 'lane' => 'erp'],
+    'api/moova/ack_branch_events.php' => ['endpoint_auth' => true, 'lane' => 'erp'],
+    'api/moova/branch_events.php' => ['endpoint_auth' => true, 'lane' => 'erp'],
+    'api/pos/index.php' => ['permission' => 'pos.open', 'csrf' => '', 'lane' => 'pos'],
+    'api/ready.php' => ['public' => true, 'lane' => 'erp'],
+    'api/sync/ack_branch_events.php' => ['endpoint_auth' => true, 'lane' => 'erp'],
+    'api/sync/branch_events.php' => ['endpoint_auth' => true, 'lane' => 'erp'],
+    'api/sync/export_branch_image.php' => ['endpoint_auth' => true, 'lane' => 'erp'],
+    'api/sync/export_branch_restore.php' => ['endpoint_auth' => true, 'lane' => 'erp'],
+    'api/sync/pairing_status.php' => ['endpoint_auth' => true, 'lane' => 'erp'],
+    'api/sync/receive_branch_events.php' => ['endpoint_auth' => true, 'lane' => 'erp'],
+    'api/sync/receive_branch_image.php' => ['endpoint_auth' => true, 'lane' => 'erp'],
+    'api/sync/status.php' => ['endpoint_auth' => true, 'lane' => 'erp'],
+
+    // Legacy read helpers now use the same session and named-permission guard
+    // as ajax/do/print routes.
+    'get/check_barcode.php' => ['permission' => 'reports.view', 'csrf' => '', 'lane' => 'erp'],
+    'get/chk_client.php' => ['permission' => 'reports.view', 'csrf' => '', 'lane' => 'erp'],
+    'get/get_accinfo.php' => ['permission' => 'accounting.view', 'csrf' => '', 'lane' => 'erp'],
+    'get/get_barcode_info.php' => ['permission' => 'reports.view', 'csrf' => '', 'lane' => 'erp'],
+    'get/get_bvalue.php' => ['permission' => 'reports.view', 'csrf' => '', 'lane' => 'erp'],
+    'get/get_iteminfo.php' => ['any_of' => ['pos.open', 'menu.edit'], 'csrf' => '', 'lane' => 'erp'],
+    'get/get_price1.php' => ['any_of' => ['pos.open', 'menu.edit'], 'csrf' => '', 'lane' => 'erp'],
+    'get/iname.php' => ['permission' => 'menu.edit', 'csrf' => 'menu_write', 'lane' => 'erp'],
+    'get/refresh_acc.php' => ['permission' => 'accounting.view', 'csrf' => '', 'lane' => 'erp'],
+    'get/refresh_items.php' => ['any_of' => ['pos.open', 'menu.edit'], 'csrf' => '', 'lane' => 'erp'],
+
+    // Unsafe/broken legacy utilities remain in source history but are absent
+    // from the commercial artifact.
+    'do/dbase/do_turncate.php' => ['quarantined' => true, 'lane' => 'erp'],
+    'do/start/doaddinstallment.php' => ['quarantined' => true, 'lane' => 'erp'],
+    'do/start/dodel_rent.php' => ['quarantined' => true, 'lane' => 'erp'],
+    'get/export_summery_excel.php' => ['quarantined' => true, 'lane' => 'erp'],
+    'get/reduce_remain.php' => ['quarantined' => true, 'lane' => 'erp'],
 ];

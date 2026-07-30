@@ -1,6 +1,8 @@
 <?php
 
 require_once __DIR__ . '/CloudMenuSnapshotService.php';
+require_once __DIR__ . '/CloudMenuMasterProjectionService.php';
+require_once __DIR__ . '/CloudRecipeMasterProjectionService.php';
 require_once __DIR__ . '/CloudOperationalMirrorService.php';
 require_once __DIR__ . '/CloudOrderSnapshotService.php';
 require_once __DIR__ . '/CloudLegacyPosMirrorService.php';
@@ -79,9 +81,20 @@ class SyncInboxService
                     return $result;
                 }
 
+                $masterProjection = null;
+                $masterMenuProjector = new CloudMenuMasterProjectionService();
+                if ($masterMenuProjector->supports($event)) {
+                    $masterProjection = $masterMenuProjector->apply($conn, $branchUuid, $event);
+                } else {
+                    $masterRecipeProjector = new CloudRecipeMasterProjectionService();
+                    if ($masterRecipeProjector->supports($event)) {
+                        $masterProjection = $masterRecipeProjector->apply($conn, $branchUuid, $event);
+                    }
+                }
+
                 $versionGuard = new SyncProjectionVersionGuard();
                 $versionDecision = null;
-                if ($versionGuard->supports($event)) {
+                if ($masterProjection === null && $versionGuard->supports($event)) {
                     $versionDecision = $versionGuard->evaluateAndLock($conn, $branchUuid, $event);
                     $decision = (string) ($versionDecision['decision'] ?? 'conflict');
                     if ($decision !== 'apply') {
@@ -118,41 +131,54 @@ class SyncInboxService
 
                 $legacyMirror = null;
                 $versionedProjectionApplied = false;
-                $snapshot = (new CloudOrderSnapshotService())->upsertFromBranchEvent($conn, $branchUuid, $event);
-                if ($snapshot) {
+                if ($masterProjection !== null) {
                     $versionedProjectionApplied = true;
-                    $cloudEntityId = 'cloud_order:' . (int) $snapshot['cloud_order_id'];
-                    $message = $mode . ' order snapshot';
-                    $legacyMirror = $this->mirrorLegacyPosTables($conn, $branchUuid, $event, $config);
+                    $cloudEntityId = (string) (
+                        $masterProjection['entity_id']
+                        ?? (
+                            isset($masterProjection['cloud_menu_item_id'])
+                                ? 'cloud_menu_item:' . (int) $masterProjection['cloud_menu_item_id']
+                                : 'master_projection:unchanged'
+                        )
+                    );
+                    $message = $mode . ' convergent master data';
                 } else {
-                    $tableSnapshot = (new CloudTableSnapshotService())->upsertFromBranchEvent($conn, $branchUuid, $event);
-                    if ($tableSnapshot) {
+                    $snapshot = (new CloudOrderSnapshotService())->upsertFromBranchEvent($conn, $branchUuid, $event);
+                    if ($snapshot) {
                         $versionedProjectionApplied = true;
-                        $cloudEntityId = 'cloud_table:' . (int) $tableSnapshot['cloud_table_id'];
-                        $message = $mode . ' table snapshot';
+                        $cloudEntityId = 'cloud_order:' . (int) $snapshot['cloud_order_id'];
+                        $message = $mode . ' order snapshot';
                         $legacyMirror = $this->mirrorLegacyPosTables($conn, $branchUuid, $event, $config);
                     } else {
-                        $shiftSnapshot = (new CloudShiftSnapshotService())->upsertFromBranchEvent($conn, $branchUuid, $event);
-                        if ($shiftSnapshot) {
-                            $cloudEntityId = 'cloud_shift:' . (int) $shiftSnapshot['cloud_shift_id'];
-                            $message = $mode . ' shift snapshot';
-                            $operational = (new CloudOperationalMirrorService())->applyFromBranchEvent($conn, $branchUuid, $event);
-                            if ($operational && !empty($operational['entity_id'])) {
-                                $legacyMirror = ['legacy_entity_id' => (string) $operational['entity_id']];
-                            }
+                        $tableSnapshot = (new CloudTableSnapshotService())->upsertFromBranchEvent($conn, $branchUuid, $event);
+                        if ($tableSnapshot) {
+                            $versionedProjectionApplied = true;
+                            $cloudEntityId = 'cloud_table:' . (int) $tableSnapshot['cloud_table_id'];
+                            $message = $mode . ' table snapshot';
+                            $legacyMirror = $this->mirrorLegacyPosTables($conn, $branchUuid, $event, $config);
                         } else {
-                            $menuSnapshot = (new CloudMenuSnapshotService())->upsertFromBranchEvent($conn, $branchUuid, $event);
-                            if ($menuSnapshot) {
-                                $versionedProjectionApplied = true;
-                                $cloudEntityId = 'cloud_menu_item:' . (int) $menuSnapshot['cloud_menu_item_id'];
-                                $message = $mode . ' menu snapshot';
-                                $legacyMirror = $this->mirrorLegacyPosTables($conn, $branchUuid, $event, $config);
-                            } else {
+                            $shiftSnapshot = (new CloudShiftSnapshotService())->upsertFromBranchEvent($conn, $branchUuid, $event);
+                            if ($shiftSnapshot) {
+                                $cloudEntityId = 'cloud_shift:' . (int) $shiftSnapshot['cloud_shift_id'];
+                                $message = $mode . ' shift snapshot';
                                 $operational = (new CloudOperationalMirrorService())->applyFromBranchEvent($conn, $branchUuid, $event);
                                 if ($operational && !empty($operational['entity_id'])) {
-                                    $cloudEntityId = (string) $operational['entity_id'];
-                                    $message = $mode . ' operational snapshot';
+                                    $legacyMirror = ['legacy_entity_id' => (string) $operational['entity_id']];
+                                }
+                            } else {
+                                $menuSnapshot = (new CloudMenuSnapshotService())->upsertFromBranchEvent($conn, $branchUuid, $event);
+                                if ($menuSnapshot) {
                                     $versionedProjectionApplied = true;
+                                    $cloudEntityId = 'cloud_menu_item:' . (int) $menuSnapshot['cloud_menu_item_id'];
+                                    $message = $mode . ' menu snapshot';
+                                    $legacyMirror = $this->mirrorLegacyPosTables($conn, $branchUuid, $event, $config);
+                                } else {
+                                    $operational = (new CloudOperationalMirrorService())->applyFromBranchEvent($conn, $branchUuid, $event);
+                                    if ($operational && !empty($operational['entity_id'])) {
+                                        $cloudEntityId = (string) $operational['entity_id'];
+                                        $message = $mode . ' operational snapshot';
+                                        $versionedProjectionApplied = true;
+                                    }
                                 }
                             }
                         }

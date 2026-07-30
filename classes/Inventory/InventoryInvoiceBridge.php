@@ -47,7 +47,7 @@ class InventoryInvoiceBridge
     {
         $result = [
             'success' => true,
-            'noop' => !$this->flags->canWriteShadowLedger(),
+            'noop' => !$this->flags->canCaptureInventoryMovements(),
             'mode' => $this->flags->mode(),
             'invoice_type' => $invoiceType,
             'invoice_id' => $invoiceId,
@@ -57,7 +57,7 @@ class InventoryInvoiceBridge
             'errors' => [],
         ];
 
-        if (!$this->flags->canWriteShadowLedger()) {
+        if (!$this->flags->canCaptureInventoryMovements()) {
             $result['skipped'][] = ['reason' => 'inventory_invoice_bridge_disabled'];
             return $result;
         }
@@ -97,7 +97,7 @@ class InventoryInvoiceBridge
     {
         $result = [
             'success' => true,
-            'noop' => !$this->flags->canWriteShadowLedger(),
+            'noop' => !$this->flags->canCaptureInventoryMovements(),
             'mode' => $this->flags->mode(),
             'invoice_type' => $invoiceType,
             'invoice_id' => $invoiceId,
@@ -108,7 +108,7 @@ class InventoryInvoiceBridge
             'errors' => [],
         ];
 
-        if (!$this->flags->canWriteShadowLedger()) {
+        if (!$this->flags->canCaptureInventoryMovements()) {
             $result['skipped'][] = ['reason' => 'inventory_invoice_bridge_disabled'];
             return $result;
         }
@@ -294,7 +294,7 @@ class InventoryInvoiceBridge
     ): array {
         $result = [
             'success' => true,
-            'noop' => !$this->flags->canWriteShadowLedger(),
+            'noop' => !$this->flags->canCaptureInventoryMovements(),
             'mode' => $this->flags->mode(),
             'invoice_type' => $invoiceType,
             'invoice_id' => $invoiceId,
@@ -304,7 +304,7 @@ class InventoryInvoiceBridge
             'skipped' => [],
             'errors' => [],
         ];
-        if (!$this->flags->canWriteShadowLedger()) {
+        if (!$this->flags->canCaptureInventoryMovements()) {
             $result['skipped'][] = ['reason' => 'inventory_invoice_bridge_disabled'];
             return $result;
         }
@@ -339,7 +339,7 @@ class InventoryInvoiceBridge
                         $result['movements'][] = $this->writeMovementWithSavepoint($conn, $sale, $item, $index);
                         continue;
                     }
-                    if ($action === 'consume' && $this->flags->canWriteLedger()) {
+                    if ($action === 'consume' && $this->flags->canWriteQuantityLedger()) {
                         $result['success'] = false;
                         $result['errors'][] = [
                             'line_index' => $index,
@@ -590,6 +590,12 @@ LIMIT 1");
 
     private function postAccountingForMovements(mysqli $conn, array $movements, array $context): array
     {
+        if (!$this->flags->isAccountingEnabled()) {
+            return ['noop' => true, 'reason' => 'inventory accounting is disabled'];
+        }
+        if (!$this->flags->canWriteQuantityLedger()) {
+            return ['noop' => true, 'reason' => 'inventory ledger mode is not accounting-authoritative'];
+        }
         $saleMovementIds = $this->movementIdsByType($movements, 'sale_direct');
         $refundMovementIds = $this->movementIdsByType($movements, 'refund_reversal');
         if (!$saleMovementIds && !$refundMovementIds) {
@@ -597,18 +603,6 @@ LIMIT 1");
         }
         if (!$this->flags->canWriteLedger()) {
             return ['noop' => true, 'reason' => 'inventory ledger mode is not accounting-authoritative'];
-        }
-        if (!$this->flags->isAccountingEnabled()) {
-            return [
-                'noop' => false,
-                'sale_cogs' => null,
-                'refund_reversal' => null,
-                'errors' => [[
-                    'posting' => 'inventory_accounting_precondition',
-                    'message' => 'INVENTORY_ACCOUNTING_REQUIRED_FOR_AUTHORITATIVE_MOVEMENT',
-                    'movement_ids' => array_values(array_unique(array_merge($saleMovementIds, $refundMovementIds))),
-                ]],
-            ];
         }
 
         $result = [

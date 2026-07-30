@@ -66,7 +66,7 @@ try {
             'emp_id' => 8,
             'payment_date' => '2026-05-12',
             'idempotency_key' => 'receipt-77-1',
-        ], ['user_id' => 7]);
+        ], ['user_id' => 7, 'tenant' => 12, 'branch' => 34]);
 
         posAccountingInventoryAssert($posted['receipt_id'] > 0, 'receipt id expected');
         posAccountingInventoryAssert($posted['journal_id'] === 1, 'first journal counter value expected');
@@ -77,6 +77,7 @@ try {
         posAccountingInventoryAssert((int) $receipt['pro_tybe'] === 1, 'receipt should use legacy receipt pro_tybe');
         posAccountingInventoryAssert((int) $receipt['op2'] === 77, 'receipt should link to table order through op2');
         posAccountingInventoryAssert(abs((float) $receipt['pro_value'] - 125.0) < 0.0001, 'receipt value expected');
+        posAccountingInventoryAssert((int) $receipt['tenant'] === 12 && (int) $receipt['branch'] === 34, 'receipt voucher must inherit operational scope');
 
         $journal = $conn->query("SELECT * FROM journal_heads WHERE id = {$posted['journal_head_id']}")->fetch_assoc();
         posAccountingInventoryAssert((int) $journal['journal_id'] === 1, 'journal head should store allocated journal id');
@@ -97,7 +98,7 @@ try {
             'emp_id' => 8,
             'payment_date' => '2026-05-12',
             'idempotency_key' => 'receipt-77-1',
-        ], ['user_id' => 7]);
+        ], ['user_id' => 7, 'tenant' => 12, 'branch' => 34]);
         posAccountingInventoryAssert($replayed['replayed'] === true, 'same payment idempotency key must replay');
         posAccountingInventoryAssert((int) $conn->query('SELECT COUNT(*) AS c FROM ot_head')->fetch_assoc()['c'] === 1, 'receipt replay must not create another voucher');
         posAccountingInventoryAssert((int) $conn->query('SELECT COUNT(*) AS c FROM journal_heads')->fetch_assoc()['c'] === 1, 'receipt replay must not create another journal');
@@ -165,7 +166,9 @@ function posAccountingInventoryCreateSchema(mysqli $conn): void
             cost_center INT NULL,
             profit DECIMAL(15,4) NOT NULL DEFAULT 0,
             user INT NULL,
-            op2 INT NULL
+            op2 INT NULL,
+            tenant INT NOT NULL DEFAULT 0,
+            branch INT NOT NULL DEFAULT 0
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
     ");
     $conn->query("

@@ -67,6 +67,16 @@ if (!function_exists('rbac_guard_route')) {
             deny_json_or_redirect('RBAC_ROUTE_UNCLASSIFIED', 403);
         }
 
+        if (!empty($entry['internal'])) {
+            http_response_code(404);
+            header('Content-Type: application/json; charset=utf-8');
+            echo json_encode([
+                'success' => false,
+                'error' => 'ENTRY_INTERNAL_ONLY',
+            ], JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+
         if (!empty($entry['quarantined'])) {
             http_response_code(410);
             header('Content-Type: application/json; charset=utf-8');
@@ -83,8 +93,9 @@ if (!function_exists('rbac_guard_route')) {
         $csrf = trim((string) ($entry['csrf'] ?? ''));
         $anyOf = $entry['any_of'] ?? [];
         $isPublic = !empty($entry['public']);
+        $hasEndpointAuth = !empty($entry['endpoint_auth']);
 
-        if (!$isPublic) {
+        if (!$isPublic && !$hasEndpointAuth) {
             if ($lane === 'pos') {
                 require_pos_authenticated();
             } else {
@@ -114,7 +125,7 @@ if (!function_exists('rbac_guard_current_script')) {
     {
         $script = (string) ($_SERVER['SCRIPT_NAME'] ?? $_SERVER['PHP_SELF'] ?? '');
         $script = ltrim(str_replace('\\', '/', $script), '/');
-        foreach (['ajax/', 'do/', 'print/'] as $prefix) {
+        foreach (['ajax/', 'api/', 'do/', 'get/', 'print/'] as $prefix) {
             $position = strpos($script, $prefix);
             if ($position !== false) {
                 rbac_guard_route(substr($script, $position), $conn);

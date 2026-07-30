@@ -94,6 +94,7 @@ try {
         'movement_type' => 'sale_cash',
         'amount' => '40.000',
         'created_by' => 55,
+        'idempotency_key' => 'shift-count-handover:sale:' . $sessionId,
         'sync_config' => $syncConfig,
     ]);
 

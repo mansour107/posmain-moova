@@ -16,6 +16,9 @@ $posmainCanViewKds = isset($conn) && $conn instanceof mysqli
     && auth_guard_has_permission('kds.view', $conn);
 $posmainCanManageKds = isset($conn) && $conn instanceof mysqli
     && auth_guard_has_permission('kds.manage', $conn);
+$posmainCanManagePrinters = isset($conn) && $conn instanceof mysqli
+    && (auth_guard_has_permission('printers.manage', $conn)
+        || auth_guard_is_admin_session());
 $posmainCanDispatchDelivery = isset($conn) && $conn instanceof mysqli
     && auth_guard_has_permission('delivery.dispatch', $conn);
 $posmainCanManageDelivery = isset($conn) && $conn instanceof mysqli
@@ -426,6 +429,16 @@ $posmainLegacyFlag = static function (string $flag) use ($conn): bool {
                 </li>
               <?php } ?>
             </ul>
+          </li>
+        <?php } ?>
+
+<!-- ------------------- الطابعات ومسارات المطبخ -->
+        <?php if ($posmainCanManagePrinters) { ?>
+          <li class="nav-item">
+            <a href="printer_management.php" class="nav-link">
+              <i class="nav-icon fas fa-print"></i>
+              <p>الطابعات والمسارات</p>
+            </a>
           </li>
         <?php } ?>
 

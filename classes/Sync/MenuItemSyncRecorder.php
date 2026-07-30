@@ -3,7 +3,13 @@
 require_once __DIR__ . '/SyncOutboxEventService.php';
 require_once __DIR__ . '/../MoovaPosIntegration.php';
 
-function posmain_record_menu_item_sync(mysqli $conn, int $itemId, string $sourceSystem, string $eventType = 'menu.item_saved'): ?array
+function posmain_record_menu_item_sync(
+    mysqli $conn,
+    int $itemId,
+    string $sourceSystem,
+    string $eventType = 'menu.item_saved',
+    bool $failClosed = false
+): ?array
 {
     if ($itemId <= 0) {
         return null;
@@ -28,6 +34,7 @@ function posmain_record_menu_item_sync(mysqli $conn, int $itemId, string $source
             'event_type' => $eventType,
             'source_system' => $sourceSystem,
             'config' => $config,
+            'actor_user_id' => (int) ($_SESSION['userid'] ?? 0),
         ]);
         MoovaPosIntegration::markAllCatalogLinksDirty($conn);
         return $event;
@@ -36,6 +43,9 @@ function posmain_record_menu_item_sync(mysqli $conn, int $itemId, string $source
             posmain_log_exception($exception, posmain_error_reference(), 'menu_item_sync_outbox');
         } else {
             error_log('[POS Sync] Failed to record menu item snapshot: ' . $exception->getMessage());
+        }
+        if ($failClosed) {
+            throw $exception;
         }
         return null;
     }

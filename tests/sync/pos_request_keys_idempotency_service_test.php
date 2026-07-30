@@ -9,9 +9,9 @@ $host = getenv('POSMAIN_TEST_MYSQL_HOST') ?: '127.0.0.1';
 $port = (int) (getenv('POSMAIN_TEST_MYSQL_PORT') ?: 3307);
 $user = getenv('POSMAIN_TEST_MYSQL_USER') ?: 'root';
 $pass = getenv('POSMAIN_TEST_MYSQL_PASS') ?: '';
-$db = getenv('POSMAIN_TEST_MYSQL_DB') ?: 'kody2';
+$db = 'posmain_request_keys_idem_' . getmypid();
 
-$conn = @new mysqli($host, $user, $pass, $db, $port);
+$conn = @new mysqli($host, $user, $pass, '', $port);
 if ($conn->connect_error) {
     echo "pos-request-keys-idempotency-service-skip mysql-unavailable\n";
     exit(0);
@@ -19,13 +19,19 @@ if ($conn->connect_error) {
 
 $conn->set_charset('utf8mb4');
 mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
-(new SyncSchemaManager())->apply($conn);
+try {
+    $conn->query("CREATE DATABASE `{$db}` CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci");
+    $conn->select_db($db);
+    (new SyncSchemaManager())->apply($conn);
 
-posRequestKeysCompletedReplayTest($conn);
-posRequestKeysStaleReclaimTest($conn);
+    posRequestKeysCompletedReplayTest($conn);
+    posRequestKeysStaleReclaimTest($conn);
 
-echo "pos-request-keys-idempotency-service-ok\n";
-
+    echo "pos-request-keys-idempotency-service-ok db={$db}\n";
+} finally {
+    $conn->query("DROP DATABASE IF EXISTS `{$db}`");
+    $conn->close();
+}
 function posRequestKeysCompletedReplayTest(mysqli $conn): void
 {
     $service = new IdempotencyService();

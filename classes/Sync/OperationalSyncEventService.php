@@ -15,6 +15,7 @@ require_once __DIR__ . '/PurchaseReceiptSyncPayloadService.php';
 require_once __DIR__ . '/PurchaseOrderSyncPayloadService.php';
 require_once __DIR__ . '/DocumentCounterService.php';
 require_once __DIR__ . '/CloudBranchSyncPublisher.php';
+require_once __DIR__ . '/MasterDataRevisionService.php';
 require_once __DIR__ . '/../Recipe/Repository/RecipeRepository.php';
 require_once __DIR__ . '/../Recipe/Repository/RecipeLineRepository.php';
 require_once __DIR__ . '/../Recipe/Repository/RecipeVariantLineRepository.php';
@@ -450,6 +451,43 @@ class OperationalSyncEventService
             'variant_lines' => $variantLines,
             'cost_snapshots' => $costSnapshots,
         ];
+        if (
+            $this->tableExists($conn, 'sync_master_field_state')
+            && $this->tableExists($conn, 'sync_master_field_history')
+        ) {
+            $actorUserId = (int) (
+                $options['actor_user_id']
+                ?? ($_SESSION['userid'] ?? null)
+                ?? ($header['approved_by'] ?? null)
+                ?? ($header['created_by'] ?? 0)
+            );
+            if ($actorUserId > 0) {
+                $master = (new MasterDataRevisionService())->captureLocalPatch(
+                    $conn,
+                    $branchUuid,
+                    'recipe',
+                    $recipeUuid,
+                    [
+                        'recipe_name' => (string) $header['recipe_name'],
+                        'recipe_type' => (string) $header['recipe_type'],
+                        'yield_qty' => (string) $header['yield_qty'],
+                        'yield_unit_id' => $header['yield_unit_id'] === null ? null : (int) $header['yield_unit_id'],
+                        'default_wastage_percent' => (string) $header['default_wastage_percent'],
+                        'costing_method' => (string) $header['costing_method'],
+                        'lines' => $this->masterRecipeLines($lines, false),
+                        'variant_lines' => $this->masterRecipeLines($variantLines, true),
+                    ],
+                    'branch:' . $branchUuid,
+                    $actorUserId,
+                    $sourceSystem
+                );
+                $master['actor']['permissions'] = ['recipe.manage'];
+                $payload['source_node_id'] = $master['source_node_id'];
+                $payload['origin_clock_utc'] = $master['origin_clock_utc'];
+                $payload['actor'] = $master['actor'];
+                $payload['master_data'] = $master;
+            }
+        }
         $payload['payload_hash'] = hash('sha256', $this->encodeJson($payload));
 
         return $this->insertOutbox($conn, $config, $branch, [
@@ -1113,6 +1151,61 @@ class OperationalSyncEventService
         }
 
         return $row;
+    }
+
+    private function masterRecipeLines(array $rows, bool $variant): array
+    {
+        $fields = [
+            'line_uuid',
+            'ingredient_item_id',
+            'sub_recipe_id',
+            'line_type',
+            'ingredient_item_type_snapshot',
+            'qty_per_yield',
+            'unit_id',
+            'unit_conversion_to_base',
+            'wastage_percent',
+            'is_required',
+            'order_type',
+            'channel',
+            'sort_order',
+            'notes',
+        ];
+        if ($variant) {
+            array_splice($fields, 1, 0, ['variant_item_id']);
+        } else {
+            array_splice(
+                $fields,
+                10,
+                0,
+                ['modifier_group_id', 'modifier_option_id', 'modifier_behavior', 'substitution_group']
+            );
+        }
+
+        $normalized = [];
+        foreach ($rows as $row) {
+            if (!is_array($row)) {
+                continue;
+            }
+            $line = [];
+            foreach ($fields as $field) {
+                $line[$field] = $row[$field] ?? null;
+            }
+            foreach (['ingredient_item_id', 'sub_recipe_id', 'unit_id', 'variant_item_id', 'modifier_group_id', 'modifier_option_id'] as $integerField) {
+                if (array_key_exists($integerField, $line)) {
+                    $line[$integerField] = $line[$integerField] === null ? null : (int) $line[$integerField];
+                }
+            }
+            $line['is_required'] = !empty($line['is_required']) ? 1 : 0;
+            $line['sort_order'] = (int) ($line['sort_order'] ?? 0);
+            $normalized[] = $line;
+        }
+
+        usort($normalized, static function (array $a, array $b): int {
+            $sort = ((int) $a['sort_order']) <=> ((int) $b['sort_order']);
+            return $sort !== 0 ? $sort : strcmp((string) $a['line_uuid'], (string) $b['line_uuid']);
+        });
+        return $normalized;
     }
 
     private function revisionFromRow(array $row): int

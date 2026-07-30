@@ -3,9 +3,11 @@
 require_once __DIR__ . '/DrawerSessionService.php';
 require_once __DIR__ . '/DrawerSessionCloseSummaryService.php';
 require_once __DIR__ . '/ShiftSessionService.php';
+require_once __DIR__ . '/ShiftDrawerReconciliationService.php';
+require_once __DIR__ . '/ShiftFinancialIntegrityService.php';
 require_once dirname(__DIR__) . '/Value/CashAmount.php';
 require_once __DIR__ . '/../../ShiftReport.php';
-require_once dirname(__DIR__, 2) . '/Sync/OperationalSyncEventService.php';
+require_once dirname(__DIR__, 2) . '/Sync/OperationalSyncRecorder.php';
 require_once dirname(__DIR__, 2) . '/Financial/Money.php';
 
 class ShiftCloseService
@@ -99,6 +101,25 @@ class ShiftCloseService
         // Convert that internal value exactly at this one adapter boundary;
         // client mutation payloads remain strict decimal strings.
         $totalSales = $this->legacyReportAmount($totals['total_net'] ?? '0.00', true);
+        $tenderReconciliation = $this->tableExists($conn, 'order_payments')
+            ? (new ShiftDrawerReconciliationService())->buildForUser($conn, [
+                'user_id' => $userId,
+                'tenant' => (int) ($scope['tenant'] ?? 0),
+                'branch' => (int) ($scope['branch'] ?? 0),
+                'date' => $shiftDate,
+                'drawer_session_id' => $drawerSessionId,
+            ])
+            : null;
+        if (is_array($tenderReconciliation)) {
+            (new ShiftFinancialIntegrityService())->assertCloseable([
+                'gross_sales' => $this->legacyReportAmount(
+                    $totals['total_sales_after_discount'] ?? $totals['total_net'] ?? '0.00',
+                    true
+                ),
+                'refund_total' => $this->legacyReportAmount($totals['total_refunds'] ?? '0.00', true),
+                'net_sales' => $totalSales,
+            ], $tenderReconciliation);
+        }
 
         $username = $this->cashierUsername($conn, $userId);
         $resolvedExpenses = $this->resolveCloseExpenses($conn, $userId, $scope, $payload);
@@ -170,6 +191,14 @@ class ShiftCloseService
         $syncConfig = is_array($context['sync_config'] ?? null)
             ? $context['sync_config']
             : (is_array($payload['sync_config'] ?? null) ? $payload['sync_config'] : null);
+        if ($syncConfig === null
+            && $this->tableExists($conn, 'sync_outbox')
+            && $this->tableExists($conn, 'sync_branch_identity')) {
+            // Persist the recovery event even when the transport worker is
+            // intentionally disabled. The worker setting controls delivery,
+            // not whether a committed money mutation has durable outbox proof.
+            $syncConfig = posmain_operational_sync_config();
+        }
         if ($syncConfig !== null) {
             $childContext['sync_config'] = $syncConfig;
         }
@@ -199,12 +228,28 @@ class ShiftCloseService
 
             $this->linkCountAttemptsToSession($conn, $drawerSessionId, 'close');
 
-            $cashSales = CashAmount::normalize($zRow['total_cash'] ?? $details['sys_cash'] ?? $cash);
-            if (isset($zRow['total_visa']) || isset($details['sys_visa'])) {
-                $nonCashSales = CashAmount::normalize($zRow['total_visa'] ?? $details['sys_visa']);
+            if (is_array($tenderReconciliation)) {
+                $paymentSummary = (array) ($tenderReconciliation['payments'] ?? []);
+                $cashSales = CashAmount::normalize($paymentSummary['cash_net'] ?? '0.00', true);
+                $nonCashSales = CashAmount::normalize($paymentSummary['non_cash_net'] ?? '0.00', true);
             } else {
-                $derivedNonCash = CashAmount::subtract($totalSales, $cashSales);
-                $nonCashSales = CashAmount::compare($derivedNonCash, '0.00') < 0 ? '0.00' : $derivedNonCash;
+                // Compatibility only for installations that predate the tender
+                // registry. Certified V1 closes always derive tender totals from
+                // durable order_payments/payment_refunds records.
+                $cashSales = CashAmount::normalize($zRow['total_cash'] ?? $details['sys_cash'] ?? $cash);
+                if (isset($zRow['total_visa']) || isset($details['sys_visa'])) {
+                    $nonCashSales = CashAmount::normalize($zRow['total_visa'] ?? $details['sys_visa']);
+                } else {
+                    $derivedNonCash = CashAmount::subtract($totalSales, $cashSales);
+                    $nonCashSales = CashAmount::compare($derivedNonCash, '0.00') < 0 ? '0.00' : $derivedNonCash;
+                }
+                $paymentSummary = [
+                    'cash' => $cashSales,
+                    'non_cash' => $nonCashSales,
+                    'counted_cash' => $countedCash,
+                    'counted_non_cash' => null,
+                    'source' => 'legacy_close_payload',
+                ];
             }
             $countedNonCash = array_key_exists('actual_visa', (array) $zRow)
                 ? CashAmount::normalize($zRow['actual_visa'])
@@ -218,7 +263,10 @@ class ShiftCloseService
                 'discount_total' => isset($zRow['total_discount'])
                     ? CashAmount::normalize($zRow['total_discount'])
                     : $this->legacyReportAmount($totals['total_discount'] ?? '0.00'),
-                'return_total' => CashAmount::normalize($zRow['total_returns'] ?? $details['total_returns'] ?? '0.00'),
+                'return_total' => $this->legacyReportAmount(
+                    $totals['total_refunds'] ?? $zRow['total_returns'] ?? $details['total_returns'] ?? '0.00',
+                    true
+                ),
                 'expense_total' => $expenses,
                 'expense_notes' => $expNotes,
                 'expected_non_cash' => $nonCashSales,
@@ -228,12 +276,12 @@ class ShiftCloseService
                     : CashAmount::subtract($countedNonCash, $nonCashSales),
                 'close_path' => $closePath,
                 'report_snapshot' => json_decode((string) $jsonDetails, true) ?: $details,
-                'payment_summary' => [
+                'payment_summary' => array_merge($paymentSummary, [
                     'cash' => $cashSales,
                     'non_cash' => $nonCashSales,
                     'counted_cash' => $countedCash,
                     'counted_non_cash' => $countedNonCash,
-                ],
+                ]),
             ]);
 
             $shiftCloseOptions = [];

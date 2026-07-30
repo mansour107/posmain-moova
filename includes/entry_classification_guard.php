@@ -50,7 +50,9 @@ if (!function_exists('posmain_enforce_entry_classification')) {
         }
 
         $isRoute = str_starts_with($relative, 'ajax/')
+            || str_starts_with($relative, 'api/')
             || str_starts_with($relative, 'do/')
+            || str_starts_with($relative, 'get/')
             || str_starts_with($relative, 'print/');
         $manifestPath = $isRoute
             ? dirname(__DIR__) . '/config/rbac_route_manifest.php'
@@ -66,10 +68,13 @@ if (!function_exists('posmain_enforce_entry_classification')) {
                 $isRoute
             );
         }
+        if (!empty($entry['internal'])) {
+            posmain_entry_deny_early('ENTRY_INTERNAL_ONLY', 404, $isRoute);
+        }
         if (!empty($entry['quarantined'])) {
             posmain_entry_deny_early('ENDPOINT_QUARANTINED', 410, $isRoute);
         }
-        if (!empty($entry['public'])) {
+        if (!empty($entry['public']) || !empty($entry['endpoint_auth'])) {
             return;
         }
         if ((int) ($_SESSION['userid'] ?? 0) > 0 && isset($_SESSION['login'])) {
@@ -83,4 +88,3 @@ if (!function_exists('posmain_enforce_entry_classification')) {
         exit;
     }
 }
-

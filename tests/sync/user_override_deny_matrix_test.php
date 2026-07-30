@@ -1,35 +1,37 @@
 <?php
 
-require_once __DIR__ . '/../../config/app_config.php';
-require_once __DIR__ . '/../../includes/db_bootstrap.php';
-require_once __DIR__ . '/../../includes/auth_guard.php';
-require_once __DIR__ . '/../../classes/Security/RolePermissionSyncService.php';
-require_once __DIR__ . '/../../classes/Security/PermissionService.php';
-require_once __DIR__ . '/../../classes/Security/UserPermissionGrantService.php';
+require_once __DIR__ . '/security_test_database.php';
 
-$conn = posmain_db_connect();
-$conn->set_charset('utf8mb4');
-
-$seeded = RolePermissionSyncService::seedPresetRoles($conn);
-$svc = new PermissionService($conn);
-
-/** @var array<string, string> */
-$denyCases = [
-    'owner' => 'pos.open',
-    'manager' => 'menu.edit',
-    'cashier' => 'pos.open',
-    'waiter' => 'pos.table.move',
-    'kitchen' => 'kds.view',
-];
-
-$userIds = [];
+$fixture = SecurityTestDatabase::create();
 try {
+    require_once __DIR__ . '/../../config/app_config.php';
+    require_once __DIR__ . '/../../includes/db_bootstrap.php';
+    require_once __DIR__ . '/../../includes/auth_guard.php';
+    require_once __DIR__ . '/../../classes/Security/RolePermissionSyncService.php';
+    require_once __DIR__ . '/../../classes/Security/PermissionService.php';
+    require_once __DIR__ . '/../../classes/Security/UserPermissionGrantService.php';
+
+    $conn = posmain_db_connect();
+    $conn->set_charset('utf8mb4');
+    $fixture->provisionPermissionSchema($conn, RolePermissionSyncService::allManagedLegacyColumns());
+
+    $seeded = RolePermissionSyncService::seedPresetRoles($conn);
+    $svc = new PermissionService($conn);
+
+    /** @var array<string, string> */
+    $denyCases = [
+        'owner' => 'pos.open',
+        'manager' => 'menu.edit',
+        'cashier' => 'pos.open',
+        'waiter' => 'pos.table.move',
+        'kitchen' => 'kds.view',
+    ];
+
     foreach ($denyCases as $roleKey => $permissionKey) {
         $roleId = (int) ($seeded[$roleKey] ?? 0);
         overrideMatrixAssert($roleId > 0, 'missing seeded role ' . $roleKey);
 
         $userId = overrideMatrixCreateUser($conn, $roleId);
-        $userIds[] = $userId;
 
         $roleFlags = overrideMatrixRoleFlags($conn, $roleId);
         $session = ['login' => true, 'userid' => $userId, 'usrole' => $roleId];
@@ -53,7 +55,6 @@ try {
 
     $cashierRoleId = (int) $seeded['cashier'];
     $grantUserId = overrideMatrixCreateUser($conn, $cashierRoleId);
-    $userIds[] = $grantUserId;
     $grantPermission = 'users.manage';
     overrideMatrixAssert(!$svc->check($grantUserId, $grantPermission, $cashierRoleId), 'cashier should not have users.manage by role');
 
@@ -71,7 +72,6 @@ try {
 
     $ownerRoleId = (int) $seeded['owner'];
     $ownerUserId = overrideMatrixCreateUser($conn, $ownerRoleId);
-    $userIds[] = $ownerUserId;
     overrideMatrixEnableOverrides($conn, $ownerUserId);
     $ownerFlags = overrideMatrixRoleFlags($conn, $ownerRoleId);
     $ownerSession = ['login' => true, 'userid' => $ownerUserId, 'usrole' => $ownerRoleId];
@@ -93,15 +93,13 @@ try {
             'owner deny should block session for ' . $permissionKey
         );
     }
-} finally {
-    foreach ($userIds as $userId) {
-        $conn->query('DELETE FROM user_permission_grants WHERE user_id = ' . (int) $userId);
-        $conn->query('UPDATE users SET isdeleted = 1 WHERE id = ' . (int) $userId);
-    }
-    $svc->bumpPermissionsVersion();
-}
 
-echo 'user-override-deny-matrix-ok roles=' . count($denyCases) . "\n";
+    $conn->close();
+    echo 'user-override-deny-matrix-ok roles=' . count($denyCases)
+        . ' fixture=' . $fixture->databaseName() . "\n";
+} finally {
+    $fixture->close();
+}
 
 function overrideMatrixCreateUser(mysqli $conn, int $roleId): int
 {

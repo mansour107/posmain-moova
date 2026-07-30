@@ -1,5 +1,57 @@
 <?php
 
+if (PHP_SAPI !== 'cli') {
+    require __DIR__ . '/../includes/http_gone.php';
+}
+
+$modernMode = false;
+foreach (array_slice($argv ?? [], 1) as $argument) {
+    if (
+        $argument === '--preflight'
+        || $argument === '--verbose'
+        || str_starts_with($argument, '--ref=')
+        || str_starts_with($argument, '--output=')
+    ) {
+        $modernMode = true;
+        break;
+    }
+}
+
+if ($modernMode) {
+    require_once __DIR__ . '/../classes/Release/ReleaseArtifactBuilder.php';
+
+    $modernRoot = realpath(__DIR__ . '/..');
+    if ($modernRoot === false) {
+        fwrite(STDERR, "Unable to resolve repository root.\n");
+        exit(2);
+    }
+
+    $modernOptions = getopt('', ['ref::', 'output::', 'preflight', 'verbose']);
+    $modernRef = trim((string) ($modernOptions['ref'] ?? 'HEAD'));
+    $modernOutput = trim((string) ($modernOptions['output'] ?? ''));
+
+    try {
+        $modernPolicy = ReleaseArtifactPolicy::fromRepository($modernRoot);
+        $modernBuilder = new ReleaseArtifactBuilder($modernRoot, $modernPolicy);
+        if (isset($modernOptions['preflight']) || $modernOutput === '') {
+            $modernResult = $modernBuilder->preflight($modernRef);
+            $modernPayload = $modernResult;
+            if (!isset($modernOptions['verbose'])) {
+                unset($modernPayload['included'], $modernPayload['excluded']);
+            }
+            echo json_encode($modernPayload, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n";
+            exit($modernResult['ok'] ? 0 : 3);
+        }
+
+        $modernResult = $modernBuilder->build($modernRef, $modernOutput);
+        echo json_encode($modernResult, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n";
+        exit(0);
+    } catch (Throwable $exception) {
+        fwrite(STDERR, 'release-artifact-error: ' . $exception->getMessage() . "\n");
+        exit(2);
+    }
+}
+
 /**
  * Build a Commercial V1 release artifact from tracked source using the release
  * packaging policy. Release-affecting uncommitted or untracked files are hard
@@ -9,10 +61,6 @@
  *   php tools/build_release_artifact.php --out=var/release/posmain-rc
  *   php tools/build_release_artifact.php --out=var/release/posmain-rc --json
  */
-
-if (PHP_SAPI !== 'cli') {
-    require __DIR__ . '/../includes/http_gone.php';
-}
 
 $options = getopt('', ['out:', 'json', 'help']);
 if (isset($options['help']) || empty($options['out'])) {

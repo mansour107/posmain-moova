@@ -34,10 +34,11 @@ function midshiftIdemPayIn(mysqli $conn, int $userId, string $amount, string $re
         $_POST,
         [],
         $userId,
-        static function (array $txContext = []) use ($conn, $userId, $amount, $reason): array {
+        static function (array $txContext = []) use ($conn, $userId, $amount, $reason, $key): array {
             $result = (new ShiftSessionService())->recordShiftPayIn($conn, $userId, [
                 'amount' => $amount,
                 'reason' => $reason,
+                'idempotency_key' => $key,
             ], $txContext);
 
             return ['success' => true, 'data' => $result];
@@ -59,10 +60,11 @@ function midshiftIdemPayout(mysqli $conn, int $userId, string $amount, string $r
         $_POST,
         [],
         $userId,
-        static function (array $txContext = []) use ($conn, $userId, $amount, $reason): array {
+        static function (array $txContext = []) use ($conn, $userId, $amount, $reason, $key): array {
             $result = (new ShiftSessionService())->recordShiftExpense($conn, $userId, [
                 'amount' => $amount,
                 'reason' => $reason,
+                'idempotency_key' => $key,
             ], $txContext);
 
             return ['success' => true, 'data' => $result];
@@ -84,10 +86,11 @@ function midshiftIdemSafeDrop(mysqli $conn, int $userId, string $amount, string 
         $_POST,
         [],
         $userId,
-        static function (array $txContext = []) use ($conn, $userId, $amount, $reason): array {
+        static function (array $txContext = []) use ($conn, $userId, $amount, $reason, $key): array {
             $result = (new ShiftSessionService())->recordShiftSafeDrop($conn, $userId, [
                 'amount' => $amount,
                 'reason' => $reason,
+                'idempotency_key' => $key,
             ], $txContext);
 
             return ['success' => true, 'data' => $result];

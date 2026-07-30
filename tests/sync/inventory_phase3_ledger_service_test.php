@@ -171,29 +171,33 @@ try {
         'ledger_mode' => 'bridge',
         'strict_stock' => '1',
     ]]));
-    inventoryPhase3ExpectException(static function () use ($strictLedger, $conn, $scope, $trackedItem): void {
-        $strictLedger->recordMovement($conn, [
-            'scope' => $scope,
-            'item_id' => 1001,
-            'movement_type' => 'sale_direct',
-            'source_type' => 'order_line',
-            'source_id' => 999,
-            'qty_out' => '999.000000',
-            'idempotency_key' => 'phase3:sale:strict-block',
-        ], $trackedItem);
-    }, 'strict stock should block oversell');
+    $strictSale = $strictLedger->recordMovement($conn, [
+        'scope' => $scope,
+        'item_id' => 1001,
+        'movement_type' => 'sale_direct',
+        'source_type' => 'order_line',
+        'source_id' => 999,
+        'qty_out' => '999.000000',
+        'idempotency_key' => 'phase3:sale:strict-permissive',
+    ], $trackedItem);
+    inventoryPhase3Assert(
+        InventoryDecimal::compare($strictSale['balance']['qty_on_hand'], '0') < 0,
+        'legacy strict stock must not block an otherwise valid sale'
+    );
 
-    inventoryPhase3ExpectException(static function () use ($strictLedger, $conn, $scope, $trackedItem): void {
-        $strictLedger->recordMovement($conn, [
-            'scope' => $scope,
-            'item_id' => 1001,
-            'movement_type' => 'reservation',
-            'source_type' => 'reservation',
-            'source_id' => 999,
-            'qty_reserved' => '999.000000',
-            'idempotency_key' => 'phase3:reservation:strict-block',
-        ], $trackedItem);
-    }, 'strict stock should block over-reservation');
+    $strictReservation = $strictLedger->recordMovement($conn, [
+        'scope' => $scope,
+        'item_id' => 1001,
+        'movement_type' => 'reservation',
+        'source_type' => 'reservation',
+        'source_id' => 999,
+        'qty_reserved' => '999.000000',
+        'idempotency_key' => 'phase3:reservation:strict-permissive',
+    ], $trackedItem);
+    inventoryPhase3Assert(
+        InventoryDecimal::compare($strictReservation['balance']['qty_available'], '0') < 0,
+        'legacy strict stock must not block a reservation required to complete a sale'
+    );
 
     $conn->query("CREATE TABLE settings (
         id INT NOT NULL PRIMARY KEY,
@@ -210,20 +214,18 @@ try {
             'allow_negative_stock_with_approval' => true,
         ],
     ]));
-    inventoryPhase3ExpectException(static function () use ($savedBlockLedger, $conn, $scope): void {
-        $savedBlockLedger->recordMovement($conn, [
-            'scope' => $scope,
-            'item_id' => 1101,
-            'movement_type' => 'sale_direct',
-            'source_type' => 'order_line',
-            'source_id' => 1101,
-            'qty_out' => '1.000000',
-            'idempotency_key' => 'phase3:sale:saved-policy-block',
-        ], ['item_id' => 1101, 'item_type' => 'sellable', 'track_stock' => 1]);
-    }, 'saved block policy should override legacy allow flags');
+    $savedBlockResult = $savedBlockLedger->recordMovement($conn, [
+        'scope' => $scope,
+        'item_id' => 1101,
+        'movement_type' => 'sale_direct',
+        'source_type' => 'order_line',
+        'source_id' => 1101,
+        'qty_out' => '1.000000',
+        'idempotency_key' => 'phase3:sale:saved-policy-permissive',
+    ], ['item_id' => 1101, 'item_type' => 'sellable', 'track_stock' => 1]);
     inventoryPhase3Assert(
-        (int) $conn->query("SELECT COUNT(*) AS c FROM inventory_movements WHERE idempotency_key = 'phase3:sale:saved-policy-block'")->fetch_assoc()['c'] === 0,
-        'blocked saved policy should roll back the movement'
+        inventoryPhase3DecimalEquals($savedBlockResult['balance']['qty_on_hand'], '-1.000000'),
+        'legacy saved block policy must be adapted to the permissive V1 sale policy'
     );
 
     $conn->query("UPDATE settings SET negative_stock_sale_policy = 'allow_with_warning' WHERE id = 1");
@@ -253,6 +255,9 @@ try {
     $warningAudit = inventoryPhase3One($conn, "SELECT * FROM security_audit_log WHERE event_type = 'negative_stock_sale_warning' ORDER BY id DESC LIMIT 1");
     inventoryPhase3Assert((int) $warningAudit['target_id'] === (int) $savedAllowResult['movement_id'], 'negative warning should identify the inventory movement');
     inventoryPhase3Assert(strpos((string) $warningAudit['metadata_json'], 'allow_with_warning') !== false, 'negative warning should record resolved policy');
+    $warningCountBeforeReplay = (int) $conn->query(
+        "SELECT COUNT(*) AS c FROM security_audit_log WHERE event_type = 'negative_stock_sale_warning'"
+    )->fetch_assoc()['c'];
 
     $savedAllowReplay = $savedAllowLedger->recordMovement($conn, [
         'scope' => $scope,
@@ -267,7 +272,7 @@ try {
     ], ['item_id' => 1102, 'item_type' => 'sellable', 'track_stock' => 1]);
     inventoryPhase3Assert(!empty($savedAllowReplay['idempotent_replay']), 'allowed negative sale should remain idempotent');
     inventoryPhase3Assert(
-        (int) $conn->query("SELECT COUNT(*) AS c FROM security_audit_log WHERE event_type = 'negative_stock_sale_warning'")->fetch_assoc()['c'] === 1,
+        (int) $conn->query("SELECT COUNT(*) AS c FROM security_audit_log WHERE event_type = 'negative_stock_sale_warning'")->fetch_assoc()['c'] === $warningCountBeforeReplay,
         'idempotent replay should not duplicate the negative-stock audit'
     );
 
