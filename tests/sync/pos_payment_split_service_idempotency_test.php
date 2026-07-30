@@ -178,6 +178,9 @@ function posPaymentSplitIdempotencyCreateSchema(mysqli $conn): void
             id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
             order_id INT NOT NULL,
             amount DECIMAL(15,4) NOT NULL DEFAULT 0,
+            tendered_amount DECIMAL(19,2) NULL,
+            applied_amount DECIMAL(19,2) NULL,
+            change_due DECIMAL(19,2) NULL,
             payment_method VARCHAR(50) NULL,
             reference_no VARCHAR(255) NULL,
             created_by INT NULL,
@@ -268,6 +271,13 @@ function posPaymentSplitIdempotencySeedOpenOrder(mysqli $conn, int $tableId, int
     return $session;
 }
 
+
+function posPaymentSplitIdempotencyVersion(mysqli $conn, int $orderId): int
+{
+    $row = $conn->query('SELECT mutation_version FROM ot_head WHERE id = ' . (int) $orderId)->fetch_assoc();
+    return max(1, (int) ($row['mutation_version'] ?? 1));
+}
+
 function posPaymentSplitIdempotencyAssert(bool $condition, string $message): void
 {
     if (!$condition) {
@@ -313,6 +323,7 @@ function posPaymentSplitIdempotencyPayReplayAndConflict(PosOrderMutationService 
         'paid' => 40,
         'payment_method' => 'cash',
         'notes' => 'idempotent partial',
+        'mutation_version' => posPaymentSplitIdempotencyVersion($conn, 20),
         'idempotency_key' => 'phpunit:table-pay:1',
     ];
     $context = ['user_id' => 7, 'tenant' => 0, 'branch' => 0];
@@ -355,6 +366,7 @@ function posPaymentSplitIdempotencySplitReplayAndConflict(PosOrderMutationServic
         'items' => [
             ['detail_id' => 3001, 'qty' => 1],
         ],
+        'mutation_version' => posPaymentSplitIdempotencyVersion($conn, 30),
         'idempotency_key' => 'phpunit:table-split:1',
     ];
     $context = ['user_id' => 7, 'tenant' => 0, 'branch' => 0];
@@ -414,6 +426,7 @@ function posPaymentSplitIdempotencySkipPathDoesNotTouchKeys(PosOrderMutationServ
         'order_id' => 40,
         'paid' => 20,
         'payment_method' => 'cash',
+        'mutation_version' => posPaymentSplitIdempotencyVersion($conn, 40),
         'idempotency_key' => 'phpunit:skip-should-not-write',
     ], $context);
     posPaymentSplitIdempotencyAssert(($partial['success'] ?? false) === true, 'skip path payment should succeed');
@@ -429,6 +442,7 @@ function posPaymentSplitIdempotencySkipPathDoesNotTouchKeys(PosOrderMutationServ
         'order_id' => 40,
         'paid' => 20,
         'payment_method' => 'cash',
+        'mutation_version' => posPaymentSplitIdempotencyVersion($conn, 40),
         'idempotency_key' => 'phpunit:skip-should-not-write',
     ], $context);
     posPaymentSplitIdempotencyAssert(($second['success'] ?? false) === true, 'skip path second payment should apply domain payment');
@@ -452,6 +466,7 @@ function posPaymentSplitIdempotencyTwoKeysAllowSecondIntentionalPartial(PosOrder
         'order_id' => 50,
         'paid' => 30,
         'payment_method' => 'cash',
+        'mutation_version' => posPaymentSplitIdempotencyVersion($conn, 50),
         'idempotency_key' => 'phpunit:table-pay:partial-a',
     ], $context);
     posPaymentSplitIdempotencyAssert(($first['data']['payment_status'] ?? '') === 'partial', 'first intentional partial expected');
@@ -461,6 +476,7 @@ function posPaymentSplitIdempotencyTwoKeysAllowSecondIntentionalPartial(PosOrder
         'order_id' => 50,
         'paid' => 70,
         'payment_method' => 'cash',
+        'mutation_version' => posPaymentSplitIdempotencyVersion($conn, 50),
         'idempotency_key' => 'phpunit:table-pay:partial-b',
     ], $context);
     posPaymentSplitIdempotencyAssert(($second['data']['payment_status'] ?? '') === 'paid', 'second key may complete remaining balance');
@@ -488,12 +504,14 @@ function posPaymentSplitIdempotencySkipPathRollsBackOwnedTransaction(mysqli $con
     };
     $service = new PosOrderMutationService($failingPaymentService);
 
+    posPaymentSplitIdempotencySeedOpenOrder($conn, 5, 99, 10.0, 9901);
     try {
         $service->payTableOrder($conn, [
-            'table_id' => 99,
+            'table_id' => 5,
             'order_id' => 99,
             'paid' => 1,
             'payment_method' => 'cash',
+            'mutation_version' => posPaymentSplitIdempotencyVersion($conn, 99),
         ], [
             'user_id' => 7,
             'skip_idempotency' => true,

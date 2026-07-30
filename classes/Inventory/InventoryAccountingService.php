@@ -291,6 +291,7 @@ class InventoryAccountingService
         try {
             $this->assertJournalTables($conn);
             $this->assertBalancedEntries($journal['entries'] ?? []);
+            $this->assertActiveEntryAccounts($conn, $journal['entries'] ?? []);
 
             $tenant = (int) ($context['pos_tenant'] ?? $context['tenant'] ?? 0);
             $branch = (int) ($context['pos_branch'] ?? $context['branch'] ?? 0);
@@ -526,7 +527,7 @@ class InventoryAccountingService
 
     private function assertJournalTables(mysqli $conn): void
     {
-        foreach (['journal_heads', 'journal_entries', 'document_counters'] as $table) {
+        foreach (['journal_heads', 'journal_entries', 'document_counters', 'acc_head'] as $table) {
             if (!$this->tableExists($conn, $table)) {
                 throw new RuntimeException('Inventory accounting requires table: ' . $table);
             }
@@ -535,6 +536,36 @@ class InventoryAccountingService
             $type = strtolower($this->columnType($conn, $column[0], $column[1]));
             if (!preg_match('/\b(decimal|numeric)\b/', $type)) {
                 throw new RuntimeException('Inventory accounting requires decimal-safe journal entry columns before posting.');
+            }
+        }
+    }
+
+    private function assertActiveEntryAccounts(mysqli $conn, array $entries): void
+    {
+        $accountIds = [];
+        foreach ($entries as $entry) {
+            $accountId = (int) ($entry['account_id'] ?? 0);
+            if ($accountId < 1) {
+                throw new RuntimeException('Inventory accounting journal account is required.');
+            }
+            $accountIds[$accountId] = $accountId;
+        }
+        if ($accountIds === []) {
+            throw new RuntimeException('Inventory accounting journal entries are required.');
+        }
+
+        $active = [];
+        $result = $conn->query(
+            'SELECT id FROM acc_head'
+            . ' WHERE id IN (' . implode(', ', array_values($accountIds)) . ')'
+            . ' AND COALESCE(isdeleted, 0) = 0'
+        );
+        while ($row = $result->fetch_assoc()) {
+            $active[(int) $row['id']] = true;
+        }
+        foreach ($accountIds as $accountId) {
+            if (empty($active[$accountId])) {
+                throw new RuntimeException('Inventory accounting account is missing or inactive: ' . $accountId);
             }
         }
     }

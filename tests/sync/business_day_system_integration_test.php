@@ -82,6 +82,7 @@ try {
         'amount' => '40.000',
         'order_id' => 501,
         'created_by' => 41,
+        'idempotency_key' => 'business-day:sale:501',
     ]);
 
     $sessions = $period->sessions($conn, [

@@ -371,6 +371,7 @@ function inventoryPhase2PhpFiles(string $root): array
         'tools',
         'docs',
         'dbase',
+        'var/release',
         'classes/Sync',
     ];
     $files = [];

@@ -18,8 +18,8 @@ phase4MoveEndpointAssert(strpos($source, '$idempotencyService->begin($conn, $sco
 phase4MoveEndpointAssert(strpos($source, 'new TableTransferService()') !== false, 'endpoint should instantiate TableTransferService');
 phase4MoveEndpointAssert(strpos($source, '->moveOrder($conn') !== false, 'endpoint should delegate to moveOrder');
 phase4MoveEndpointAssert(strpos($source, "'in_transaction' => true") !== false, 'endpoint should call service inside endpoint transaction');
-phase4MoveEndpointAssert(substr_count($source, 'recordTableSnapshot') >= 2, 'endpoint should record source and destination table snapshots');
-phase4MoveEndpointAssert(strpos($source, 'recordOrderSnapshot') !== false, 'endpoint should record moved order snapshot');
+phase4MoveEndpointAssert(substr_count($source, 'recordRequiredTableSnapshot') >= 2, 'endpoint should require source and destination table snapshots');
+phase4MoveEndpointAssert(strpos($source, 'recordRequiredOrderSnapshot') !== false, 'endpoint should require moved order snapshot');
 phase4MoveEndpointAssert(strpos($source, "'source_table_id' => \$sourceTableId") !== false, 'response should include source_table_id');
 phase4MoveEndpointAssert(strpos($source, "'destination_table_id' => \$destinationTableId") !== false, 'response should include destination_table_id');
 phase4MoveEndpointAssert(strpos($source, "'order_id' => (int) \$transfer['order_id']") !== false, 'response should include moved order_id');

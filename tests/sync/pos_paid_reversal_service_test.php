@@ -131,6 +131,7 @@ try {
     paidReversalSeedOrder($conn, 501, 'takeaway');
     paidReversalSeedInventorySale($conn, $inventoryBridge, 501);
     $refund = $service->reversePaidOrder($conn, [
+        'mutation_version' => paidReversalVersion($conn, 501),
         'order_id' => 501,
         'action' => 'refund',
         'refund_stock_policy' => 'return_to_stock',
@@ -151,7 +152,8 @@ try {
 
     try {
         $service->reversePaidOrder($conn, [
-            'order_id' => 501,
+            'mutation_version' => paidReversalVersion($conn, 501),
+        'order_id' => 501,
             'action' => 'refund',
         ], ['user_id' => 7]);
         throw new RuntimeException('second refund should fail');
@@ -163,6 +165,7 @@ try {
     paidReversalSeedInventorySale($conn, $inventoryBridge, 503);
     $partialRequest = [
         'order_id' => 503,
+        'mutation_version' => paidReversalVersion($conn, 503),
         'action' => 'refund',
         'idempotency_key' => 'paid-reversal-partial-503-a',
         'refund_stock_policy' => 'return_to_stock',
@@ -204,6 +207,7 @@ try {
     $finalPartialRequest = $partialRequest;
     $finalPartialRequest['idempotency_key'] = 'paid-reversal-partial-503-b';
     $finalPartialRequest['reason'] = 'remaining item refund';
+    $finalPartialRequest['mutation_version'] = paidReversalVersion($conn, 503);
     $fullFromPartials = $service->reversePaidOrder($conn, $finalPartialRequest, ['user_id' => 7]);
     $fullyRefundedOrder = $conn->query('SELECT * FROM ot_head WHERE id = 503')->fetch_assoc();
     paidReversalAssert($fullFromPartials['data']['reversal_status'] === 'full', 'second half refund must reach full state');
@@ -219,6 +223,7 @@ try {
     $approvalCountBeforeAmount = count($approvalStub->amounts);
     $recipeCountBeforeAmount = count($recipeSpy->refunded);
     $amountPartial = $service->reversePaidOrder($conn, [
+        'mutation_version' => paidReversalVersion($conn, 505),
         'order_id' => 505,
         'action' => 'refund',
         'idempotency_key' => 'paid-reversal-amount-505',
@@ -276,6 +281,7 @@ try {
     paidReversalSeedOrder($conn, 504, 'takeaway');
     paidReversalSeedInventorySale($conn, $inventoryBridge, 504);
     $fixedWasteRecipeService->reversePaidOrder($conn, [
+        'mutation_version' => paidReversalVersion($conn, 504),
         'order_id' => 504,
         'action' => 'refund',
         'refund_stock_policy' => 'return_to_stock',
@@ -287,6 +293,7 @@ try {
 
     paidReversalSeedOrder($conn, 502, 'table');
     $void = $service->reversePaidOrder($conn, [
+        'mutation_version' => paidReversalVersion($conn, 502),
         'order_id' => 502,
         'action' => 'void',
         'refund_stock_policy' => 'waste',
@@ -304,6 +311,13 @@ try {
 } finally {
     $conn->query("DROP DATABASE IF EXISTS `{$db}`");
     $conn->close();
+}
+
+
+function paidReversalVersion(mysqli $conn, int $orderId): int
+{
+    $row = $conn->query('SELECT mutation_version FROM ot_head WHERE id = ' . (int) $orderId)->fetch_assoc();
+    return max(1, (int) ($row['mutation_version'] ?? 1));
 }
 
 function paidReversalCreateSchema(mysqli $conn): void
@@ -412,6 +426,7 @@ function paidReversalCreateSchema(mysqli $conn): void
     $conn->query("
         CREATE TABLE tables (
             id INT NOT NULL PRIMARY KEY,
+            tname VARCHAR(191) NULL,
             table_case INT NOT NULL DEFAULT 0,
             isdeleted TINYINT(1) NOT NULL DEFAULT 0
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
@@ -422,7 +437,7 @@ function paidReversalSeedOrder(mysqli $conn, int $orderId, string $orderType): v
 {
     $tableId = $orderType === 'table' ? 12 : 0;
     if ($tableId > 0) {
-        $conn->query("INSERT INTO tables (id, table_case, isdeleted) VALUES ({$tableId}, 1, 0) ON DUPLICATE KEY UPDATE table_case = 1");
+        $conn->query("INSERT INTO tables (id, tname, table_case, isdeleted) VALUES ({$tableId}, 'T{$tableId}', 1, 0) ON DUPLICATE KEY UPDATE table_case = 1");
     }
 
     $conn->query("

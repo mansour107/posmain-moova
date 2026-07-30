@@ -5,7 +5,10 @@ Options -Indexes
     RewriteEngine On
 
     # Private source, data, tooling, and operator-only directories.
-    RewriteRule ^(\.git|backup|logs|var|db|dbase|update|tools|tests|cli|deploy|docs)(/|$) - [F,L]
+    RewriteRule ^(\.git|backup|logs|var|db|dbase|update|tools|tests|cli|deploy|docs|scripts|output)(/|$) - [F,L]
+
+    # Commercial V1 Step 1: prohibit known repair/debug/setup utilities at the edge.
+    RewriteRule ^(fix_passwords|delete_fix_file|fix_database|fix_journal_entries|quick_fix|repair_database_jal|run_migrations|run_payment_updates|run_table_updates|setup_demo_data|pre_start|check_db_structure|check_orders|check_payments|check_table_structure|debug_bank|debug_db|debug_delivery|debug_jal|debug_tasks|logs_viewer|view_logs|crud_tables|create_acc_head_table|list_columns|generate-examples|generate-verified-files|index2|indexmop|fat1|example|blogcontent|conectedmachines|machinelog)\.php$ - [R=404,L]
 
     # Runtime secrets and non-public project metadata.
     RewriteRule (^|/)\.env(\.|$) - [F,L]

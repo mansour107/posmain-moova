@@ -4,8 +4,7 @@ require_once __DIR__ . '/../includes/db_bootstrap.php';
 require_once __DIR__ . '/../classes/PasswordService.php';
 
 if (PHP_SAPI !== 'cli') {
-    fwrite(STDERR, "This report must be run from the command line.\n");
-    exit(1);
+    require __DIR__ . '/../includes/http_gone.php';
 }
 
 $conn = posmain_db_connect();

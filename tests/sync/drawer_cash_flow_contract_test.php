@@ -11,7 +11,7 @@ drawerCashFlowContractAssert(strpos($mutation, 'insertOrderPaymentRecordIfAvaila
 drawerCashFlowContractAssert(strpos($mutation, 'insertCashRefundVoucher') !== false, 'mutation service should keep legacy voucher method banned');
 drawerCashFlowContractAssert(strpos($mutation, 'LEGACY_CASH_REFUND_FORBIDDEN_USE_CREDIT_NOTE') !== false, 'cash refund vouchers must be forbidden');
 drawerCashFlowContractAssert(strpos($mutation, 'FinancialRefundService') !== false, 'paid reversal must use FinancialRefundService');
-drawerCashFlowContractAssert(strpos($mutation, 'recordOrderCashCollected($conn, $orderId, $payment[\'cash\']') !== false, 'takeaway create should record cash');
+drawerCashFlowContractAssert(strpos($mutation, 'takeaway_cash_payment') !== false, 'takeaway create should record cash');
 drawerCashFlowContractAssert(strpos($mutation, 'delivery_cash_payment') !== false, 'delivery create should record cash');
 drawerCashFlowContractAssert(strpos($mutation, 'order_update_cash_payment') !== false, 'order update should record cash delta');
 drawerCashFlowContractAssert(strpos($mutation, 'resolveRefundableCashForOrder') !== false, 'refund path should resolve refundable cash');
@@ -31,6 +31,20 @@ drawerCashFlowContractAssert(strpos($payment, 'recordUnassignedMovement') === fa
 drawerCashFlowContractAssert(strpos($payment, 'recordCashRefundMovementForPayment') !== false, 'PaymentService should record refund_cash movements');
 drawerCashFlowContractAssert(strpos($payment, 'recordCollectedOrderPayments') !== false, 'PaymentService should expose collection helper');
 drawerCashFlowContractAssert(strpos($payment, 'resolveOpenSessionForUser') !== false, 'PaymentService should resolve drawer session for cash payments');
+drawerCashFlowContractAssert(strpos($payment, 'requireActiveOverrideForWrite') !== false, 'PaymentService should honor an active approved drawer override for cash writes');
+
+$controller = file_get_contents(__DIR__ . '/../../classes/Pos/Http/PosOrderController.php');
+drawerCashFlowContractAssert(strpos($controller, 'browserMutationContext') !== false, 'POS controller should carry authenticated drawer context into cashier mutations');
+drawerCashFlowContractAssert(strpos($controller, "'drawer_session_id' => max(0, (int) (\$_SESSION['pos_drawer_session_id'] ?? 0))") !== false, 'POS controller should retain the drawer binding after the AJAX session lock is released');
+
+$authGuard = file_get_contents(__DIR__ . '/../../includes/auth_guard.php');
+drawerCashFlowContractAssert(strpos($authGuard, 'auditPosAuthorization') !== false, 'POS auth guard should record authorization rather than claiming operation success');
+drawerCashFlowContractAssert(strpos($authGuard, '$overrideAuthorizationAudited') !== false, 'POS auth guard should deduplicate override authorization within one request');
+drawerCashFlowContractAssert(strpos($authGuard, 'auditPosWrite') === false, 'POS auth guard must not record a pre-mutation write outcome');
+
+$cashFlow = file_get_contents(__DIR__ . '/../../classes/Pos/Service/CashFlowPeriodService.php');
+drawerCashFlowContractAssert(strpos($cashFlow, 'drawer_override_authorization') !== false, 'cash-flow audit view should include override authorization events');
+drawerCashFlowContractAssert(strpos($cashFlow, 'authorization_granted') !== false, 'cash-flow audit view should label authorization separately from operation outcome');
 
 $shiftReport = file_get_contents(__DIR__ . '/../../classes/ShiftReport.php');
 drawerCashFlowContractAssert(strpos($shiftReport, 'shiftWindowTimestampExpression') !== false, 'ShiftReport should use coalesced shift timestamps');

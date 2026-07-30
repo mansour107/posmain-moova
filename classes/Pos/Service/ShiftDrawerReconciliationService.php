@@ -3,6 +3,7 @@
 require_once __DIR__ . '/DrawerSessionService.php';
 require_once __DIR__ . '/PaymentMethodService.php';
 require_once __DIR__ . '/BusinessDayService.php';
+require_once dirname(__DIR__, 2) . '/Financial/Decimal.php';
 
 class ShiftDrawerReconciliationService
 {
@@ -56,8 +57,8 @@ class ShiftDrawerReconciliationService
 
         $payments = $this->paymentSummary($conn, $userId, $date, $openedAt, $tenant, $branch);
         $drawer = $this->drawerSummary($conn, $session);
-        $cashPayments = (float) $payments['by_type']['cash'];
-        $drawerSaleCash = (float) $drawer['movement_totals']['sale_cash'];
+        $cashPayments = $payments['by_type']['cash'];
+        $drawerSaleCash = $drawer['movement_totals']['sale_cash'];
 
         return [
             'user_id' => $userId,
@@ -70,7 +71,7 @@ class ShiftDrawerReconciliationService
             'reconciliation' => [
                 'cash_payments' => $this->decimal($cashPayments),
                 'drawer_sale_cash' => $this->decimal($drawerSaleCash),
-                'cash_difference' => $this->decimal($drawerSaleCash - $cashPayments),
+                'cash_difference' => $this->subtract($drawerSaleCash, $cashPayments),
                 'pre_close_expected_cash' => $drawer['pre_close_expected_cash'],
                 'close_variance' => $drawer['close_variance'],
                 'expected_cash' => $drawer['post_close_expected_cash'],
@@ -124,15 +125,15 @@ class ShiftDrawerReconciliationService
         $sql .= " ORDER BY paid_at, op.id";
 
         foreach ($this->queryAll($conn, $sql, $params) as $row) {
-            $amount = (float) ($row['amount'] ?? 0);
-            if (abs($amount) < 0.0001) {
+            $amount = $this->decimal($row['amount'] ?? '0');
+            if (FinancialDecimal::compare($amount, '0.000', 3) === 0) {
                 continue;
             }
 
             $method = trim((string) ($row['payment_method'] ?? ''));
             $type = $this->paymentTypeForMethod($method, $methodTypes);
-            $summary['by_type'][$type] = $this->decimal((float) $summary['by_type'][$type] + $amount);
-            $summary['total'] = $this->decimal((float) $summary['total'] + $amount);
+            $summary['by_type'][$type] = $this->add($summary['by_type'][$type], $amount);
+            $summary['total'] = $this->add($summary['total'], $amount);
             if (!isset($summary['methods'][$method])) {
                 $summary['methods'][$method] = [
                     'payment_method' => $method,
@@ -141,12 +142,12 @@ class ShiftDrawerReconciliationService
                     'count' => 0,
                 ];
             }
-            $summary['methods'][$method]['total'] = $this->decimal((float) $summary['methods'][$method]['total'] + $amount);
+            $summary['methods'][$method]['total'] = $this->add($summary['methods'][$method]['total'], $amount);
             $summary['methods'][$method]['count']++;
         }
 
         $summary['cash'] = $summary['by_type']['cash'];
-        $summary['non_cash'] = $this->decimal((float) $summary['total'] - (float) $summary['cash']);
+        $summary['non_cash'] = $this->subtract($summary['total'], $summary['cash']);
         $summary['methods'] = array_values($summary['methods']);
 
         return $summary;
@@ -185,17 +186,21 @@ class ShiftDrawerReconciliationService
                 continue;
             }
 
-            $amount = (float) $movement['amount'];
-            $summary['movement_totals'][$type] = $this->decimal((float) $summary['movement_totals'][$type] + $amount);
+            $amount = $this->decimal($movement['amount']);
+            $summary['movement_totals'][$type] = $this->add($summary['movement_totals'][$type], $amount);
             $summary['movement_count']++;
         }
 
         $breakdown = $this->drawerSessionService->sessionCashBreakdown($conn, (int) $session['id']);
-        $summary['pre_close_expected_cash'] = $breakdown['pre_close_expected_cash'];
-        $summary['close_variance'] = $breakdown['close_variance'];
-        $summary['post_close_expected_cash'] = $breakdown['post_close_expected_cash'];
-        $summary['counted_cash'] = $breakdown['counted_cash'];
-        $summary['expected_cash'] = $breakdown['post_close_expected_cash'];
+        $summary['pre_close_expected_cash'] = $this->decimal($breakdown['pre_close_expected_cash']);
+        $summary['close_variance'] = $breakdown['close_variance'] === null
+            ? null
+            : $this->decimal($breakdown['close_variance']);
+        $summary['post_close_expected_cash'] = $this->decimal($breakdown['post_close_expected_cash']);
+        $summary['counted_cash'] = $breakdown['counted_cash'] === null
+            ? null
+            : $this->decimal($breakdown['counted_cash']);
+        $summary['expected_cash'] = $summary['post_close_expected_cash'];
 
         return $summary;
     }
@@ -298,7 +303,17 @@ class ShiftDrawerReconciliationService
 
     private function decimal($value): string
     {
-        return number_format((float) $value, 3, '.', '');
+        return FinancialDecimal::normalize($value, 3, true);
+    }
+
+    private function add(string $left, string $right): string
+    {
+        return FinancialDecimal::add($left, $right, 3);
+    }
+
+    private function subtract(string $left, string $right): string
+    {
+        return FinancialDecimal::subtract($left, $right, 3);
     }
 
     private function tableExists(mysqli $conn, string $tableName): bool

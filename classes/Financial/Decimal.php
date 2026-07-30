@@ -9,6 +9,20 @@
  */
 final class FinancialDecimal
 {
+    /**
+     * Compatibility adapter for trusted database/read-model values only.
+     * Certified request and write paths must call normalize() directly so
+     * binary floating-point input is rejected at the boundary.
+     */
+    public static function normalizeLegacy($value, int $scale, bool $allowNegative = false): string
+    {
+        if (is_float($value)) {
+            $value = sprintf('%.' . $scale . 'F', $value);
+        }
+
+        return self::normalize($value, $scale, $allowNegative);
+    }
+
     public static function normalize($value, int $scale, bool $allowNegative = false): string
     {
         if ($scale < 0 || $scale > 12) {

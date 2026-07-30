@@ -76,25 +76,27 @@ try {
         'destination_table_id' => $destinationTableId,
         'order_id' => $orderId,
         'user_id' => $userId,
+        'mutation_version' => $data['mutation_version'] ?? $data['order_version'] ?? null,
     ], [
         'user_id' => $userId,
         'tenant' => 0,
         'branch' => 0,
         'event_source' => 'pos_table_move',
         'in_transaction' => true,
+        'record_outbox' => false,
     ]);
 
     $syncOutbox = new SyncOutboxEventService();
-    $syncOutbox->recordOrderSnapshot($conn, (int) $transfer['order_id'], [
+    $syncOutbox->recordRequiredOrderSnapshot($conn, (int) $transfer['order_id'], [
         'event_type' => 'order.table_moved',
         'source_system' => 'pos_table_move',
     ]);
-    $syncOutbox->recordTableSnapshot($conn, $sourceTableId, [
+    $syncOutbox->recordRequiredTableSnapshot($conn, $sourceTableId, [
         'event_type' => 'table.updated',
         'source_system' => 'pos_table_move',
         'active_order_id' => null,
     ]);
-    $syncOutbox->recordTableSnapshot($conn, $destinationTableId, [
+    $syncOutbox->recordRequiredTableSnapshot($conn, $destinationTableId, [
         'event_type' => 'table.updated',
         'source_system' => 'pos_table_move',
         'active_order_id' => (int) $transfer['order_id'],
@@ -108,6 +110,7 @@ try {
         'source_table_id' => $sourceTableId,
         'destination_table_id' => $destinationTableId,
         'source_freed' => (bool) ($transfer['source_freed'] ?? false),
+        'mutation_version' => (int) ($transfer['mutation_version'] ?? 0),
         'request_id' => $idempotencyKey,
     ];
     $idempotencyService->complete($conn, $scope, $idempotencyKey, $idempotencyHash, $response);

@@ -146,7 +146,8 @@ function selectTable(tableId) {
         console.log('استجابة الخادم:', data);
         if (data.success) {
             document.getElementById('payment_table').value = 'طاولة رقم ' + tableId;
-            const amount = data.remaining > 0 ? data.remaining : data.total;
+            const remaining = Number(data.remaining || 0);
+            const amount = remaining > 0 ? remaining : Number(data.total || 0);
             document.getElementById('payment_amount').value = amount.toFixed(2);
             
             // فتح المودال باستخدام Bootstrap

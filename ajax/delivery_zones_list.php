@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/../includes/session_bootstrap.php';
 include(__DIR__ . '/../includes/ajax_header.php');
+require_once __DIR__ . '/../classes/Financial/Money.php';
 
 header('Content-Type: application/json; charset=utf-8');
 
@@ -23,7 +24,7 @@ if ($tableCheck && $tableCheck->num_rows > 0) {
             $zones[] = [
                 'id' => (int) $row['id'],
                 'name' => (string) $row['name'],
-                'fee' => (float) $row['fee'],
+                'fee' => Money::from($row['fee'] ?? '0')->toString(),
             ];
         }
     }

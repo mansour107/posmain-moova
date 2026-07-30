@@ -237,6 +237,12 @@ final class FinancialRefundService
                             'amount' => $payment['amount'],
                             'order_id' => $orderId,
                             'payment_id' => $refundId,
+                            'idempotency_key' => $this->boundedDrawerIdempotencyKey(
+                                $idempotencyKey,
+                                $creditNoteId,
+                                $refundId,
+                                (int) $index
+                            ),
                             'created_by' => $userId,
                             'reason' => 'credit_note_refund:' . $creditNoteId,
                         ]);
@@ -307,6 +313,25 @@ final class FinancialRefundService
         }
 
         return $this->existingResult($conn, $existing);
+    }
+
+    private function boundedDrawerIdempotencyKey(
+        string $requestKey,
+        int $creditNoteId,
+        int $refundId,
+        int $index
+    ): string {
+        $requestKey = trim($requestKey);
+        if ($requestKey === '') {
+            throw new InvalidArgumentException('REFUND_IDEMPOTENCY_KEY_REQUIRED');
+        }
+
+        $key = $requestKey . ':drawer:refund:' . $creditNoteId . ':' . $refundId . ':' . $index;
+        if (strlen($key) <= 191) {
+            return $key;
+        }
+
+        return substr($requestKey, 0, 96) . ':drawer-sha256:' . hash('sha256', $key);
     }
 
     /**

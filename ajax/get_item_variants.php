@@ -1,7 +1,8 @@
 <?php
-require_once __DIR__ . '/../includes/session_bootstrap.php';
-require_once __DIR__ . '/../includes/connect.php';
+require_once __DIR__ . '/../includes/rbac_route_guard.php';
+rbac_guard_route('ajax/get_item_variants.php');
 require_once __DIR__ . '/../classes/Pos/Service/ItemVariantService.php';
+require_once __DIR__ . '/../classes/Pos/Service/PreparationSelectionService.php';
 
 header('Content-Type: application/json; charset=UTF-8');
 header('Cache-Control: no-store, max-age=0');
@@ -18,10 +19,12 @@ if ($itemId <= 0) {
 
 try {
     $service = new ItemVariantService();
+    $variants = $service->variantsForParent($conn, $itemId, true);
+    $variants = (new PreparationSelectionService())->decorateItems($conn, $variants);
     echo json_encode([
         'success' => true,
         'item_id' => $itemId,
-        'variants' => $service->variantsForParent($conn, $itemId, true),
+        'variants' => $variants,
     ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 } catch (Throwable $exception) {
     http_response_code(500);

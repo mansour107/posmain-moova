@@ -25,6 +25,7 @@ try {
         'source_table_id' => 1,
         'destination_table_id' => 2,
         'order_id' => 100,
+        'mutation_version' => 1,
     ], [
         'user_id' => 77,
         'tenant' => 5,
@@ -61,7 +62,11 @@ try {
     phase4TableTransferAssert($metadata['source_table_name'] === 'T1' && $metadata['destination_table_name'] === 'T2', 'event metadata table names expected');
 
     phase4TableTransferExpectException(function () use ($service, $conn) {
-        $service->moveOrder($conn, ['source_table_id' => 2, 'destination_table_id' => 3]);
+        $service->moveOrder($conn, [
+            'source_table_id' => 2,
+            'destination_table_id' => 3,
+            'mutation_version' => max(1, (int) $conn->query('SELECT mutation_version FROM ot_head WHERE id = 100')->fetch_assoc()['mutation_version']),
+        ]);
     }, 'DESTINATION_TABLE_OCCUPIED');
     phase4TableTransferAssert((int) $conn->query("SELECT table_id FROM ot_head WHERE id = 100")->fetch_assoc()['table_id'] === 2, 'failed occupied move should roll back order table');
 

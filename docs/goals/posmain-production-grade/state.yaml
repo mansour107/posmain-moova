@@ -6,8 +6,10 @@ goal:
   title: "POSMAIN Production Grade"
   slug: "posmain-production-grade"
   kind: open_ended
-  tranche: "Gate 3 certified — all shop DBs production_ready with browser QA evidence"
-  status: completed
+  tranche: "HISTORICAL ONLY — not Commercial V1 launch authority"
+  status: historical_not_v1_authority
+  superseded_by: "docs/goals/posmain-commercial-v1/state.yaml"
+  note: "Prior completed claims remain as historical receipts. Commercial V1 readiness is tracked exclusively by posmain-commercial-v1."
 
 rules:
   pm_owns_state: true

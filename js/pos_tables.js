@@ -1,12 +1,82 @@
 // متغيرات عامة
 let currentOrder = {
     items: [],
-    total: 0,
-    discount: 0,
-    net: 0,
+    total: '0.00',
+    discount: '0.00',
+    net: '0.00',
     mutation_version: 0
 };
 let posTableRequestKeys = {};
+let pendingTablePreparation = null;
+
+function posTableMoneyApi() {
+    if (!window.POSOrderApi
+        || typeof window.POSOrderApi.decimalString !== 'function'
+        || typeof window.POSOrderApi.lineTotalFromQuantityAndUnitPrice !== 'function') {
+        throw new Error('POS_MONEY_API_UNAVAILABLE');
+    }
+    return window.POSOrderApi;
+}
+
+function posTableDecimalString(value, scale, fallback) {
+    let raw = value === null || value === undefined || value === ''
+        ? String(fallback === undefined ? '0' : fallback)
+        : String(value);
+    raw = raw.trim();
+    if (/^\d+\.\d+$/.test(raw)) {
+        raw = raw.replace(/0+$/, '').replace(/\.$/, '');
+    }
+
+    return posTableMoneyApi().decimalString(raw, scale, fallback === undefined ? '0' : fallback);
+}
+
+function posTableQuantity(value, fallback) {
+    return posTableDecimalString(value, 6, fallback === undefined ? '0' : fallback);
+}
+
+function posTableUnitPrice(value) {
+    return posTableDecimalString(value, 6, '0');
+}
+
+function posTableMoney(value) {
+    return posTableDecimalString(value, 2, '0');
+}
+
+function posTableLineTotal(quantity, unitPrice) {
+    return posTableMoneyApi().lineTotalFromQuantityAndUnitPrice(
+        posTableQuantity(quantity),
+        posTableUnitPrice(unitPrice)
+    );
+}
+
+function posTableEscapeHtml(value) {
+    return String(value === null || value === undefined ? '' : value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+}
+
+function posTableSerializableItems(items) {
+    return items.map(function(item) {
+        const serialized = {
+            id: parseInt(item.id, 10) || 0,
+            qty: posTableQuantity(item.qty, '1'),
+            price: posTableUnitPrice(item.price),
+            discount: posTableDecimalString(item.discount || '0', 6, '0'),
+            note: String(item.note || '')
+        };
+        if (Array.isArray(item.modifiers)) {
+            serialized.modifiers = item.modifiers;
+        }
+        if (Array.isArray(item.preparation_values)) {
+            serialized.preparation_values = item.preparation_values;
+        }
+
+        return serialized;
+    });
+}
 
 function touchTableOrderDraft() {
     if (window.POSOrderDraft && typeof window.POSOrderDraft.markDirty === 'function') {
@@ -18,10 +88,11 @@ function buildTableOrderFingerprint() {
     const lines = currentOrder.items.map(function(item) {
         return {
             id: parseInt(item.id, 10) || 0,
-            qty: parseFloat(item.qty) || 0,
-            price: parseFloat(item.price) || 0,
-            discount: 0,
-            note: String(item.note || '')
+            qty: posTableQuantity(item.qty, '1'),
+            price: posTableUnitPrice(item.price),
+            discount: posTableDecimalString(item.discount || '0', 6, '0'),
+            note: String(item.note || ''),
+            preparation_values: Array.isArray(item.preparation_values) ? item.preparation_values : []
         };
     }).sort(function(a, b) {
         if (a.id !== b.id) {
@@ -32,9 +103,9 @@ function buildTableOrderFingerprint() {
 
     return JSON.stringify({
         lines: lines,
-        headdisc: parseFloat(currentOrder.discount) || 0,
-        headplus: 0,
-        headnet: parseFloat(currentOrder.net) || 0,
+        headdisc: posTableDecimalString(currentOrder.discount, 2, '0'),
+        headplus: '0.00',
+        headnet: posTableDecimalString(currentOrder.net, 2, '0'),
         age: 0,
         table_id: parseInt($('#selected_table_id').val() || 0, 10) || 0,
         order_id: parseInt($('#current_order_id').val() || 0, 10) || 0
@@ -107,6 +178,22 @@ $(document).ready(function() {
     $('#print-order').on('click', printOrder);
     $('#cancel-order').on('click', cancelOrder);
     $('#item-search').on('input', searchItems);
+    $(document).on('click', '.table-btn', function() {
+        selectTable(
+            parseInt($(this).attr('data-table-id') || '0', 10) || 0,
+            String($(this).attr('data-table-name') || '')
+        );
+    });
+    $(document).on('click', '.item-card', function() {
+        addItemToOrder(
+            parseInt($(this).attr('data-item-id') || '0', 10) || 0,
+            String($(this).attr('data-item-name') || ''),
+            String($(this).attr('data-item-price') || '0'),
+            String($(this).attr('data-item-barcode') || ''),
+            String($(this).attr('data-has-variants') || '') === '1',
+            String($(this).attr('data-sugar-spoons') || '') === '1'
+        );
+    });
     
     // دعم الباركود
     $('#barcode-input').on('keypress', function(e) {
@@ -153,9 +240,11 @@ function displayTables(tables) {
     let html = '';
     tables.forEach(function(table) {
         const statusClass = table.table_case == 0 ? 'table-available' : 'table-occupied';
+        const tableId = parseInt(table.id || 0, 10) || 0;
+        const tableName = posTableEscapeHtml(table.tname || '');
         html += `
-            <button class="btn table-btn ${statusClass}" data-table-id="${table.id}" data-table-name="${table.tname}" onclick="selectTable(${table.id}, '${table.tname}')">
-                ${table.tname}
+            <button type="button" class="btn table-btn ${statusClass}" data-table-id="${tableId}" data-table-name="${tableName}">
+                ${tableName}
             </button>
         `;
     });
@@ -190,7 +279,13 @@ function loadTableOrder(tableId, tableName) {
                 // تحميل الطلب الموجود
                 $('#current_order_id').val(response.order.id);
                 currentOrder.mutation_version = parseInt(response.order.mutation_version || 1, 10) || 1;
-                currentOrder.items = response.items || [];
+                currentOrder.items = (response.items || []).map(function(item) {
+                    return Object.assign({}, item, {
+                        qty: posTableQuantity(item.qty, '1'),
+                        price: posTableUnitPrice(item.price),
+                        subtotal: posTableMoney(item.subtotal)
+                    });
+                });
                 displayOrderItems();
                 calculateTotal();
                 bootstrapTableOrderDraft(response);
@@ -226,13 +321,28 @@ function loadItems() {
 function displayItems(items) {
     let html = '';
     items.forEach(function(item) {
+        const price = posTableUnitPrice(item.price1 || '0');
+        const displayedPrice = posTableLineTotal('1.000000', price);
+        const itemId = parseInt(item.id || 0, 10) || 0;
+        const itemName = posTableEscapeHtml(item.iname || '');
+        const barcode = posTableEscapeHtml(item.barcode || '');
+        const category = posTableEscapeHtml(item.group1 || '');
+        const hasVariants = item.has_variants ? '1' : '0';
+        const allowsSugarSpoons = item.allows_sugar_spoons ? '1' : '0';
         html += `
             <div class="col-md-4 col-lg-3 mb-3">
-                <div class="card item-card" data-category="${item.group1}" onclick="addItemToOrder(${item.id}, '${item.iname}', ${item.price1}, '${item.barcode}', ${item.has_variants ? 'true' : 'false'})">
+                <div class="card item-card"
+                    data-category="${category}"
+                    data-item-id="${itemId}"
+                    data-item-name="${itemName}"
+                    data-item-price="${price}"
+                    data-item-barcode="${barcode}"
+                    data-has-variants="${hasVariants}"
+                    data-sugar-spoons="${allowsSugarSpoons}">
                     <div class="card-body text-center">
                         <i class="fas fa-utensils fa-2x mb-2"></i>
-                        <h6>${item.iname}</h6>
-                        <p class="mb-0 text-success font-weight-bold">${item.has_variants ? 'اختيارات' : parseFloat(item.price1).toFixed(2) + ' ج'}</p>
+                        <h6>${itemName}</h6>
+                        <p class="mb-0 text-success font-weight-bold">${item.has_variants ? 'اختيارات' : displayedPrice + ' ج'}</p>
                     </div>
                 </div>
             </div>
@@ -242,10 +352,10 @@ function displayItems(items) {
 }
 
 // إضافة صنف للطلب
-function addItemToOrder(itemId, itemName, price, barcode, hasVariants) {
+function addItemToOrder(itemId, itemName, price, barcode, hasVariants, sugarAllowed) {
     const hasKnownNormalHint = hasVariants === false || hasVariants === 0 || String(hasVariants || '') === '0' || String(hasVariants || '').toLowerCase() === 'false';
     if (hasKnownNormalHint) {
-        addSellableItemToOrder(itemId, itemName, price, barcode);
+        addSellableItemToOrder(itemId, itemName, price, barcode, { sugarAllowed: !!sugarAllowed });
         return;
     }
 
@@ -260,26 +370,28 @@ function addItemToOrder(itemId, itemName, price, barcode, hasVariants) {
                 showTableVariantPicker(itemName, variants);
                 return;
             }
-            addSellableItemToOrder(itemId, itemName, price, barcode);
+            addSellableItemToOrder(itemId, itemName, price, barcode, { sugarAllowed: !!sugarAllowed });
         },
         error: function() {
-            addSellableItemToOrder(itemId, itemName, price, barcode);
+            addSellableItemToOrder(itemId, itemName, price, barcode, { sugarAllowed: !!sugarAllowed });
         }
     });
 }
 
 function showTableVariantPicker(parentName, variants) {
     let html = variants.map(function(variant) {
-        const name = variant.name || variant.iname || variant.variant_label;
-        const label = variant.variant_label || name;
-        const price = parseFloat(variant.price1 || variant.price || 0) || 0;
+        const name = String(variant.name || variant.iname || variant.variant_label || '');
+        const label = String(variant.variant_label || name);
+        const price = posTableUnitPrice(variant.price1 || variant.price || '0');
+        const displayedPrice = posTableLineTotal('1.000000', price);
         return `<button type="button" class="btn btn-outline-primary btn-block text-right mb-2 tableVariantChoice"
-                    data-item-id="${variant.item_id || variant.variant_item_id}"
-                    data-item-name="${name}"
+                    data-item-id="${parseInt(variant.item_id || variant.variant_item_id || 0, 10) || 0}"
+                    data-item-name="${posTableEscapeHtml(name)}"
                     data-item-price="${price}"
-                    data-item-barcode="${variant.barcode || ''}">
-                    <span class="font-weight-bold">${label}</span>
-                    <span class="float-left text-success">${price.toFixed(2)} ج</span>
+                    data-item-barcode="${posTableEscapeHtml(variant.barcode || '')}"
+                    data-sugar-spoons="${variant.allows_sugar_spoons ? '1' : '0'}">
+                    <span class="font-weight-bold">${posTableEscapeHtml(label)}</span>
+                    <span class="float-left text-success">${displayedPrice} ج</span>
                 </button>`;
     }).join('');
 
@@ -307,30 +419,151 @@ function showTableVariantPicker(parentName, variants) {
 $(document).on('click', '.tableVariantChoice', function() {
     addSellableItemToOrder(
         $(this).data('item-id'),
-        $(this).data('item-name'),
-        $(this).data('item-price'),
-        $(this).data('item-barcode')
+        $(this).attr('data-item-name'),
+        $(this).attr('data-item-price'),
+        $(this).attr('data-item-barcode'),
+        { sugarAllowed: String($(this).attr('data-sugar-spoons') || '') === '1' }
     );
     $('#tableVariantModal').modal('hide');
 });
 
-function addSellableItemToOrder(itemId, itemName, price, barcode) {
+function normalizeTableSugarSpoons(value) {
+    const raw = String(value === null || value === undefined ? '' : value).trim();
+    if (!/^\d+$/.test(raw)) {
+        throw new Error('PREPARATION_VALUE_INVALID');
+    }
+    const normalized = parseInt(raw, 10);
+    if (normalized < 0 || normalized > 999) {
+        throw new Error('PREPARATION_VALUE_OUT_OF_RANGE');
+    }
+    return normalized;
+}
+
+function tablePreparationLabel(values) {
+    if (!Array.isArray(values)) {
+        return '';
+    }
+    const sugar = values.find(function(value) {
+        return String(value.code || value.field_code || '') === 'sugar_spoons';
+    });
+    if (!sugar) {
+        return '';
+    }
+    const count = normalizeTableSugarSpoons(
+        sugar.value !== undefined ? sugar.value : sugar.selected_value
+    );
+    return '<small class="d-block text-muted">السكر: '
+        + (count === 0 ? 'بدون' : count + ' ملعقة')
+        + '</small>';
+}
+
+function ensureTablePreparationModal() {
+    if ($('#tablePreparationModal').length > 0) {
+        return;
+    }
+    $('body').append(`
+        <div class="modal" id="tablePreparationModal" tabindex="-1" aria-labelledby="tablePreparationTitle" aria-hidden="true">
+            <div class="modal-dialog modal-dialog-centered">
+                <div class="modal-content">
+                    <div class="modal-header bg-primary text-white">
+                        <h5 class="modal-title" id="tablePreparationTitle">عدد ملاعق السكر</h5>
+                        <button type="button" class="close text-white" data-dismiss="modal">&times;</button>
+                    </div>
+                    <div class="modal-body text-center">
+                        <div id="tablePreparationItemName" class="font-weight-bold mb-3"></div>
+                        <label for="tableSugarSpoonsValue">اختر العدد صراحة، ويُسمح بصفر</label>
+                        <input type="number" id="tableSugarSpoonsValue" class="form-control form-control-lg text-center"
+                               value="0" min="0" max="999" step="1" inputmode="numeric">
+                        <div id="tablePreparationError" class="text-danger mt-2" aria-live="polite"></div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-light" data-dismiss="modal">إلغاء</button>
+                        <button type="button" class="btn btn-success" id="tablePreparationConfirm">إضافة للصنف</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `);
+}
+
+function openTablePreparationModal(context) {
+    ensureTablePreparationModal();
+    pendingTablePreparation = context;
+    $('#tablePreparationItemName').text(context.itemName || '');
+    $('#tableSugarSpoonsValue').val('0');
+    $('#tablePreparationError').text('');
+    $('#tablePreparationModal').modal('show');
+}
+
+$(document).on('click', '#tablePreparationConfirm', function() {
+    if (!pendingTablePreparation) {
+        return;
+    }
+    let sugarSpoons;
+    try {
+        sugarSpoons = normalizeTableSugarSpoons($('#tableSugarSpoonsValue').val());
+    } catch (error) {
+        $('#tablePreparationError').text('أدخل عدداً صحيحاً من صفر إلى 999.');
+        $('#tableSugarSpoonsValue').focus();
+        return;
+    }
+    const context = pendingTablePreparation;
+    pendingTablePreparation = null;
+    $('#tablePreparationModal').modal('hide');
+    addSellableItemToOrder(
+        context.itemId,
+        context.itemName,
+        context.price,
+        context.barcode,
+        Object.assign({}, context.options, { sugarSpoons: sugarSpoons })
+    );
+});
+
+$(document).on('hidden.bs.modal', '#tablePreparationModal', function() {
+    pendingTablePreparation = null;
+});
+
+function addSellableItemToOrder(itemId, itemName, price, barcode, options) {
+    options = options || {};
+    if (options.sugarAllowed && !Object.prototype.hasOwnProperty.call(options, 'sugarSpoons')) {
+        openTablePreparationModal({
+            itemId: itemId,
+            itemName: itemName,
+            price: price,
+            barcode: barcode,
+            options: options
+        });
+        return;
+    }
+    const preparationValues = Object.prototype.hasOwnProperty.call(options, 'sugarSpoons')
+        ? [{ code: 'sugar_spoons', value: normalizeTableSugarSpoons(options.sugarSpoons) }]
+        : [];
+    const preparationFingerprint = JSON.stringify(preparationValues);
     // التحقق من وجود الصنف
-    const existingItem = currentOrder.items.find(item => item.id == itemId);
+    const existingItem = currentOrder.items.find(function(item) {
+        return item.id == itemId
+            && JSON.stringify(Array.isArray(item.preparation_values) ? item.preparation_values : []) === preparationFingerprint;
+    });
     
     if (existingItem) {
         // زيادة الكمية
-        existingItem.qty++;
-        existingItem.subtotal = existingItem.qty * existingItem.price;
+        existingItem.qty = posTableMoneyApi().addDecimalStrings(
+            posTableQuantity(existingItem.qty),
+            '1.000000',
+            6
+        );
+        existingItem.subtotal = posTableLineTotal(existingItem.qty, existingItem.price);
     } else {
         // إضافة صنف جديد
+        const unitPrice = posTableUnitPrice(price);
         currentOrder.items.push({
             id: itemId,
             name: itemName,
-            price: parseFloat(price),
-            qty: 1,
-            subtotal: parseFloat(price),
-            barcode: barcode
+            price: unitPrice,
+            qty: '1.000000',
+            subtotal: posTableLineTotal('1.000000', unitPrice),
+            barcode: barcode,
+            preparation_values: preparationValues
         });
     }
     
@@ -347,18 +580,24 @@ function displayOrderItems() {
     
     let html = '';
     currentOrder.items.forEach(function(item, index) {
+        const quantity = posTableQuantity(item.qty, '1');
+        const unitPrice = posTableUnitPrice(item.price);
+        const subtotal = posTableMoney(item.subtotal);
         html += `
             <tr>
-                <td>${item.name}</td>
                 <td>
-                    <input type="number" class="form-control form-control-sm" value="${item.qty}" 
-                           onchange="updateItemQty(${index}, this.value)" min="1" style="width:60px">
+                    ${posTableEscapeHtml(item.name || '')}
+                    ${tablePreparationLabel(item.preparation_values)}
                 </td>
                 <td>
-                    <input type="number" class="form-control form-control-sm" value="${item.price.toFixed(2)}" 
-                           onchange="updateItemPrice(${index}, this.value)" min="0" step="0.01" style="width:80px">
+                    <input type="number" class="form-control form-control-sm" value="${quantity}"
+                           onchange="updateItemQty(${index}, this.value)" min="0.000001" step="0.000001" style="width:90px">
                 </td>
-                <td>${item.subtotal.toFixed(2)}</td>
+                <td>
+                    <input type="number" class="form-control form-control-sm" value="${unitPrice}"
+                           onchange="updateItemPrice(${index}, this.value)" min="0" step="0.000001" style="width:100px">
+                </td>
+                <td>${subtotal}</td>
                 <td>
                     <button class="btn btn-sm btn-danger" onclick="removeItem(${index})">
                         <i class="fas fa-trash"></i>
@@ -372,18 +611,21 @@ function displayOrderItems() {
 
 // تحديث كمية الصنف
 function updateItemQty(index, qty) {
-    qty = parseInt(qty) || 1;
+    qty = posTableQuantity(qty, '1');
+    if (posTableMoneyApi().compareDecimalStrings(qty, '0.000000', 6) <= 0) {
+        qty = '1.000000';
+    }
     currentOrder.items[index].qty = qty;
-    currentOrder.items[index].subtotal = qty * currentOrder.items[index].price;
+    currentOrder.items[index].subtotal = posTableLineTotal(qty, currentOrder.items[index].price);
     displayOrderItems();
     calculateTotal();
 }
 
 // تحديث سعر الصنف
 function updateItemPrice(index, price) {
-    price = parseFloat(price) || 0;
+    price = posTableUnitPrice(price);
     currentOrder.items[index].price = price;
-    currentOrder.items[index].subtotal = currentOrder.items[index].qty * price;
+    currentOrder.items[index].subtotal = posTableLineTotal(currentOrder.items[index].qty, price);
     displayOrderItems();
     calculateTotal();
 }
@@ -397,33 +639,41 @@ function removeItem(index) {
 
 // حساب الإجمالي
 function calculateTotal() {
-    let total = 0;
+    let total = '0.00';
     currentOrder.items.forEach(function(item) {
-        total += item.subtotal;
+        total = posTableMoneyApi().addDecimalStrings(total, posTableMoney(item.subtotal), 2);
     });
     
     currentOrder.total = total;
-    $('#total').val(total.toFixed(2));
+    $('#total').val(currentOrder.total);
     calculateNet();
 }
 
 // حساب الخصم
 function calculateDiscount() {
-    const total = parseFloat($('#total').val()) || 0;
-    const discPercent = parseFloat($('#disc_percent').val()) || 0;
-    const discount = (total * discPercent / 100).toFixed(2);
+    const total = posTableMoney($('#total').val());
+    let discPercent = posTableDecimalString($('#disc_percent').val(), 6, '0');
+    if (posTableMoneyApi().compareDecimalStrings(discPercent, '100.000000', 6) > 0) {
+        discPercent = '100.000000';
+        $('#disc_percent').val(discPercent);
+    }
+    const discount = posTableMoneyApi().moneyFromPercentage(total, discPercent);
     $('#discount').val(discount);
     calculateNet();
 }
 
 // حساب الصافي
 function calculateNet() {
-    const total = parseFloat($('#total').val()) || 0;
-    const discount = parseFloat($('#discount').val()) || 0;
-    const net = (total - discount).toFixed(2);
+    const total = posTableMoney($('#total').val());
+    let discount = posTableMoney($('#discount').val());
+    if (posTableMoneyApi().compareDecimalStrings(discount, total, 2) > 0) {
+        discount = total;
+        $('#discount').val(discount);
+    }
+    const net = posTableMoneyApi().subtractDecimalStrings(total, discount, 2);
     $('#net').val(net);
-    currentOrder.net = parseFloat(net);
-    currentOrder.discount = discount;
+    currentOrder.net = posTableDecimalString(net, 2, '0');
+    currentOrder.discount = posTableDecimalString(discount, 2, '0');
     touchTableOrderDraft();
 }
 
@@ -456,10 +706,10 @@ function saveOrder() {
         store_id: $('#store_id').val(),
         emp_id: $('#emp_id').val(),
         fund_id: $('#fund_id').val(),
-        items: currentOrder.items,
-        total: currentOrder.total,
-        discount: currentOrder.discount,
-        net: currentOrder.net,
+        items: posTableSerializableItems(currentOrder.items),
+        total: posTableDecimalString(currentOrder.total, 2, '0'),
+        discount: posTableDecimalString(currentOrder.discount, 2, '0'),
+        net: posTableDecimalString(currentOrder.net, 2, '0'),
         idempotency_key: ''
     };
 
@@ -518,28 +768,33 @@ function saveOrder() {
 function openPayment() {
     const tableId = $('#selected_table_id').val();
     const tableName = $('#table_name').val();
+    const orderId = $('#current_order_id').val();
+    const draft = window.POSOrderDraft;
     
     if (!tableId) {
         alert('الرجاء اختيار طاولة');
         return;
     }
     
-    // حفظ الطلب أولاً قبل السداد
-    if (currentOrder.items.length > 0) {
+    // Save only a new or dirty order. Calling saveOrder() for a clean saved
+    // draft is intentionally rejected by POSOrderDraft and would otherwise
+    // leave the payment button doing nothing.
+    const needsSave = currentOrder.items.length > 0
+        && (!orderId || !draft || (typeof draft.isDirty === 'function' && draft.isDirty()));
+    if (needsSave) {
         saveOrder().done(function(response) {
             if (response && response.success) {
                 openPaymentModal(tableId, tableName);
             }
         });
-    } else {
-        // التحقق من وجود طلب محفوظ للطاولة
-        const orderId = $('#current_order_id').val();
-        if (orderId) {
-            openPaymentModal(tableId, tableName);
-        } else {
-            alert('لا توجد أصناف للسداد');
-        }
+        return;
     }
+    if (orderId) {
+        openPaymentModal(tableId, tableName);
+        return;
+    }
+
+    alert('لا توجد أصناف للسداد');
 }
 
 // طباعة الطلب
@@ -571,6 +826,7 @@ function cancelOrder() {
             data: { 
                 order_id: orderId,
                 table_id: tableId,
+                mutation_version: currentOrder.mutation_version || null,
                 idempotency_key: getPOSTableIdempotencyKey('pos.order.cancel')
             },
             dataType: 'json',

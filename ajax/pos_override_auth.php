@@ -4,6 +4,7 @@ require_once __DIR__ . '/../includes/write_bootstrap.php';
 require_once __DIR__ . '/../classes/Pos/Service/ManagerApprovalService.php';
 require_once __DIR__ . '/../classes/Security/SecurityAuditLogger.php';
 require_once __DIR__ . '/../classes/Security/PinService.php';
+require_once __DIR__ . '/../classes/Financial/FinancialMoneyInput.php';
 
 header('Content-Type: application/json; charset=utf-8');
 
@@ -31,10 +32,7 @@ if ($pin === '' || $permissionKey === '') {
     exit;
 }
 
-$amount = null;
-if (isset($_POST['amount']) && $_POST['amount'] !== '') {
-    $amount = (float) $_POST['amount'];
-}
+$amountInput = isset($_POST['amount']) && $_POST['amount'] !== '' ? $_POST['amount'] : null;
 $limitPermissionKey = trim((string) ($_POST['limit_permission_key'] ?? ''));
 
 $ip = (string) ($_SERVER['REMOTE_ADDR'] ?? 'unknown');
@@ -42,6 +40,7 @@ $pinService = new PinService();
 $auditLogger = new SecurityAuditLogger();
 
 try {
+    $amount = $amountInput === null ? null : FinancialMoneyInput::moneyString($amountInput);
     if ($pinService->isTerminalFrozen($conn, $ip)) {
         http_response_code(429);
         echo json_encode(['success' => false, 'code' => 'PIN_TERMINAL_FROZEN'], JSON_UNESCAPED_UNICODE);
@@ -59,7 +58,7 @@ try {
             'permission_key' => $permissionKey,
         ],
     ];
-    if ($amount !== null && $amount > 0) {
+    if ($amount !== null && FinancialMoneyInput::money($amount)->isPositive()) {
         $overrideContext['amount'] = $amount;
     }
     if ($limitPermissionKey !== '') {

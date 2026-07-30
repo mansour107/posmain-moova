@@ -3,6 +3,7 @@ require_once __DIR__ . '/production_guard.php';
 require_once __DIR__ . '/pos_default_accounts.php';
 require_once __DIR__ . '/../classes/Pos/Service/LegacyOrderLinePresentationService.php';
 require_once __DIR__ . '/../classes/Pos/Service/PreparationSelectionService.php';
+require_once __DIR__ . '/../classes/Financial/Money.php';
 require_once __DIR__ . '/pos_cart_row.php';
 
 if (!isset($action_url)) {
@@ -335,7 +336,7 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                                 </div>
                                 <div class="pos-order-items-scroll flex-grow-1" id="itemData">
                                         <?php
-                                        $pos_initial_cart_total_value = 0.0;
+                                        $pos_initial_cart_total_value = '0.00';
                                         if (isset($_GET['edit'])){
                                             $id = $_GET['edit'];
                                             $sqldet = "SELECT fd.*, m.iname as item_name, m.barcode
@@ -347,10 +348,12 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                                                 $item_name = $rowdet['item_name'] ?: 'صنف غير معروف';
                                                 $presentedLine = $posmainLegacyLinePresentation->presentSaleLine($rowdet);
                                                 $qty = $posmainLegacyLinePresentation->inputValue($presentedLine['qty']);
-                                                $price = floatval($presentedLine['price']);
+                                                $price = $presentedLine['price'];
                                                 $u_val = $posmainLegacyLinePresentation->inputValue($presentedLine['u_val']);
-                                                $subtotal = floatval($rowdet['det_value']);
-                                                $pos_initial_cart_total_value += $subtotal;
+                                                $subtotal = Money::from($rowdet['det_value'] ?? '0')->toString();
+                                                $pos_initial_cart_total_value = Money::from($pos_initial_cart_total_value)
+                                                    ->add(Money::from($subtotal))
+                                                    ->toString();
                                                 $barcode = $rowdet['barcode'] ?: $rowdet['item_id'];
                                                 $line_note = $rowdet['notes'] ?? '';
                                                 $preparation_values = $posmainPreparationSelection->fetchLineValues(
@@ -377,7 +380,7 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                                                 ]);
                                             }
                                         }
-                                        $pos_initial_cart_total = number_format($pos_initial_cart_total_value, 2, '.', '');
+                                        $pos_initial_cart_total = $pos_initial_cart_total_value;
                                         ?>
                                 </div>
                             </div>
@@ -602,7 +605,7 @@ $legacyOfflinePrototypeEnabled = !production_guard_is_production()
                                 <div class="pos-payment-discount-field">
                                     <label class="pos-payment-field-label" for="modal_discperc">الخصم %</label>
                                     <input class="form-control pos-payment-input" type="number"
-                                        id="modal_discperc" value="0" min="0" max="100" step="0.1">
+                                        id="modal_discperc" value="0" min="0" max="100" step="0.000001">
                                 </div>
                                 <div class="pos-payment-discount-field">
                                     <label class="pos-payment-field-label" for="modal_discount">قيمة الخصم</label>

@@ -4,7 +4,9 @@ require_once __DIR__ . '/../../Sync/SyncOutboxEventService.php';
 require_once __DIR__ . '/DeliveryCompensationService.php';
 require_once __DIR__ . '/DeliveryAccountingService.php';
 require_once __DIR__ . '/OrderEventService.php';
+require_once __DIR__ . '/OrderMutationVersionService.php';
 require_once __DIR__ . '/../../Financial/Money.php';
+require_once dirname(__DIR__, 3) . '/includes/db_transaction.php';
 
 class OrderFulfillmentService
 {
@@ -12,10 +14,12 @@ class OrderFulfillmentService
     private const FULFILLMENT_TYPES = ['takeaway', 'table', 'delivery', 'pickup', 'staff_meal', 'waste'];
     private const DELIVERY_STATUSES = ['none', 'pending', 'accepted', 'preparing', 'ready', 'picked_up', 'delivered', 'cancelled', 'failed'];
     private SyncOutboxEventService $syncOutbox;
+    private OrderMutationVersionService $mutationVersionService;
 
     public function __construct(?SyncOutboxEventService $syncOutbox = null)
     {
         $this->syncOutbox = $syncOutbox ?: new SyncOutboxEventService();
+        $this->mutationVersionService = new OrderMutationVersionService();
     }
 
     public function upsertMoovaFulfillment(mysqli $conn, int $orderId, array $payload, array $options = []): array
@@ -240,10 +244,10 @@ class OrderFulfillmentService
 
     public function transitionDeliveryStatus(mysqli $conn, int $orderId, string $newStatus, array $options = []): array
     {
-        $ownsTransaction = empty($options['in_transaction']) && empty($options['transaction_started']);
-        if ($ownsTransaction) {
-            $conn->begin_transaction();
-        }
+        $ownsTransaction = posmain_tx_begin_if_needed(
+            $conn,
+            posmain_tx_context_in_transaction($options)
+        );
         try {
             $result = $this->transitionDeliveryStatusInsideTransaction($conn, $orderId, $newStatus, $options);
             if ($ownsTransaction) {
@@ -271,6 +275,8 @@ class OrderFulfillmentService
             throw new InvalidArgumentException('INVALID_DELIVERY_STATUS');
         }
 
+        // Lock the order before fulfillment to keep the global order->child lock order.
+        $currentMutationVersion = $this->mutationVersionService->lockAndAssert($conn, $orderId, null, false);
         $current = $this->fulfillmentForOrder($conn, $orderId, true);
         if (!$current) {
             throw new RuntimeException('FULFILLMENT_NOT_FOUND');
@@ -287,7 +293,15 @@ class OrderFulfillmentService
                 }
             }
 
-            return $current;
+            return $current + ['mutation_version' => $currentMutationVersion];
+        }
+
+        $expectedMutationVersion = $this->expectedMutationVersion($options);
+        if (!empty($options['require_mutation_version']) && $expectedMutationVersion === null) {
+            throw new InvalidArgumentException('MUTATION_VERSION_REQUIRED');
+        }
+        if ($expectedMutationVersion !== null && $expectedMutationVersion !== $currentMutationVersion) {
+            throw new RuntimeException('STALE_ORDER_VERSION');
         }
         $allowed = $this->allowedDeliveryTransitions();
         $nextAllowed = $allowed[$currentStatus] ?? [];
@@ -459,18 +473,31 @@ class OrderFulfillmentService
             );
         }
 
+        $newMutationVersion = $this->mutationVersionService->bumpAndGet(
+            $conn,
+            $orderId,
+            $currentMutationVersion
+        );
         $config = $options['config'] ?? (function_exists('posmain_app_config') ? posmain_app_config() : []);
         if ((string) ($config['role'] ?? 'branch') === 'branch') {
-            $this->syncOutbox->recordOrderSnapshot($conn, $orderId, [
+            $outboxOptions = [
                 'event_type' => (string) ($options['event_type'] ?? 'order.fulfillment_updated'),
                 'source_system' => (string) ($options['source_system'] ?? 'pos_delivery_dispatch'),
                 'source_transaction_id' => (string) ($options['source_transaction_id']
                     ?? ('delivery-status:' . $orderId . ':' . $currentStatus . ':' . $newStatus)),
                 'config' => $config,
-            ]);
+            ];
+            if (!empty($options['require_outbox'])) {
+                $this->syncOutbox->recordRequiredOrderSnapshot($conn, $orderId, $outboxOptions);
+            } else {
+                $this->syncOutbox->recordOrderSnapshot($conn, $orderId, $outboxOptions);
+            }
         }
 
-        return $this->fulfillmentForOrder($conn, $orderId) ?: $updated;
+        $result = $this->fulfillmentForOrder($conn, $orderId) ?: $updated;
+        $result['mutation_version'] = $newMutationVersion;
+
+        return $result;
     }
 
     private function allowedDeliveryTransitions(): array
@@ -515,6 +542,9 @@ class OrderFulfillmentService
         $workerColumns = $this->columnExists($conn, 'delivery_worker_id')
             ? "f.delivery_worker_id, f.delivery_zone_id, f.courier_source, f.collection_mode, f.cod_amount, f.driver_tip, f.assigned_at, f.picked_up_at, f.delivered_at, w.name AS delivery_worker_name, w.phone AS delivery_worker_phone,"
             : "NULL AS delivery_worker_id, NULL AS delivery_zone_id, 'in_house' AS courier_source, 'prepaid' AS collection_mode, 0 AS cod_amount, 0 AS driver_tip, NULL AS assigned_at, NULL AS picked_up_at, NULL AS delivered_at, NULL AS delivery_worker_name, NULL AS delivery_worker_phone,";
+        $mutationVersionColumn = $this->tableColumnExists($conn, 'ot_head', 'mutation_version')
+            ? 'o.mutation_version'
+            : '1 AS mutation_version';
         $workerJoin = $this->columnExists($conn, 'delivery_worker_id') ? 'LEFT JOIN delivery_workers w ON w.id = f.delivery_worker_id' : '';
         $sql = "
             SELECT
@@ -525,6 +555,7 @@ class OrderFulfillmentService
                 o.order_type,
                 o.payment_status,
                 o.order_status,
+                {$mutationVersionColumn},
                 COALESCE(o.mdtime, o.crtime, o.pro_date) AS order_time,
                 f.order_channel,
                 f.fulfillment_type,
@@ -565,6 +596,7 @@ class OrderFulfillmentService
                     'order_type' => (string) $row['order_type'],
                     'payment_status' => (string) $row['payment_status'],
                     'order_status' => (string) $row['order_status'],
+                    'mutation_version' => max(1, (int) ($row['mutation_version'] ?? 1)),
                     'order_time' => (string) $row['order_time'],
                     'order_channel' => (string) $row['order_channel'],
                     'customer_name' => (string) ($row['customer_name'] ?? ''),
@@ -1062,6 +1094,19 @@ class OrderFulfillmentService
     private function money($value): Money
     {
         return Money::from($value);
+    }
+
+    private function expectedMutationVersion(array $options): ?int
+    {
+        $raw = $options['mutation_version'] ?? $options['order_version'] ?? null;
+        if ($raw === null || $raw === '') {
+            return null;
+        }
+        if (is_bool($raw) || is_float($raw) || !preg_match('/^[1-9]\d*$/', trim((string) $raw))) {
+            throw new InvalidArgumentException('MUTATION_VERSION_INVALID');
+        }
+
+        return (int) $raw;
     }
 
     private function datetimeOrNull($value): ?string

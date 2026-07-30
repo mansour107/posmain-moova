@@ -24,6 +24,9 @@ try {
     $result = pos_api_dispatch($conn, $route);
     PosResponse::json($result['payload'], (int) ($result['http_status'] ?? 200));
 } catch (InvalidArgumentException $e) {
+    if (isset($conn) && $conn instanceof mysqli) {
+        $conn->rollback();
+    }
     $payload = pos_api_dispatch_exception_payload($e, $route);
     PosResponse::json($payload['payload'], (int) $payload['http_status']);
 } catch (Throwable $e) {

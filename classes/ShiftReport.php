@@ -4,6 +4,7 @@ require_once __DIR__ . '/Pos/Service/ShiftDrawerReconciliationService.php';
 require_once __DIR__ . '/Pos/Service/DrawerSessionService.php';
 require_once __DIR__ . '/Pos/Service/BusinessDayService.php';
 require_once __DIR__ . '/Financial/RefundReversalReadService.php';
+require_once __DIR__ . '/Financial/Money.php';
 
 class ShiftReport
 {
@@ -217,11 +218,16 @@ class ShiftReport
         $row = $result->fetch_assoc();
         $stmt->close();
 
-        $originalNet = (float) ($row['total_net'] ?? 0);
+        // These are trusted read-model values. Depending on the mysqli driver,
+        // DECIMAL/SUM results can arrive as PHP floats, so normalize through
+        // the database compatibility adapter. Request/write boundaries still
+        // reject floats through FinancialMoneyInput.
+        $originalNet = Money::fromLegacy($row['total_net'] ?? '0');
         $returns = $this->canonicalReturns();
-        $row['total_sales_after_discount'] = $originalNet;
-        $row['total_refunds'] = (float) $returns['total'];
-        $row['total_net'] = $originalNet - (float) $returns['total'];
+        $refundTotal = Money::fromLegacy($returns['total']);
+        $row['total_sales_after_discount'] = $originalNet->toString();
+        $row['total_refunds'] = $refundTotal->toString();
+        $row['total_net'] = $originalNet->subtract($refundTotal)->toString();
 
         return $row;
     }
@@ -344,7 +350,7 @@ class ShiftReport
         return $row;
     }
 
-    /** @return array{count:int,total:float} */
+    /** @return array{count:int,total:string} */
     private function canonicalReturns(): array
     {
         $summary = $this->refundReversalReadService->periodSummary($this->conn, [
@@ -358,7 +364,7 @@ class ShiftReport
 
         return [
             'count' => (int) $summary['count'],
-            'total' => (float) $summary['total_amount'],
+            'total' => Money::fromLegacy($summary['total_amount'] ?? '0')->toString(),
         ];
     }
 

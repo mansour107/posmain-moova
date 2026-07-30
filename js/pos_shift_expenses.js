@@ -43,6 +43,17 @@
         return false;
     }
 
+    function money(value) {
+        if (!window.POSOrderApi || typeof window.POSOrderApi.decimalString !== 'function') {
+            throw new Error('POS_MONEY_API_REQUIRED');
+        }
+        return window.POSOrderApi.decimalString(value, 2, '0');
+    }
+
+    function moneyIsPositive(value) {
+        return window.POSOrderApi.compareDecimalStrings(money(value), '0.00', 2) > 0;
+    }
+
     function cashRecordingEnabled(summary) {
         if (!summary) {
             return false;
@@ -50,7 +61,7 @@
 
         return summary.mid_shift_enabled === true
             || summary.drawer_active === true
-            || Number(summary.total || 0) > 0;
+            || moneyIsPositive(summary.total || '0');
     }
 
     function formatMovementList(summary, emptyLabel, emptyMutedLabel) {
@@ -88,7 +99,7 @@
     function updateSummaryCard(summary, cardSelector, totalSelector, metaSelector, singularLabel, pluralLabel) {
         var card = $(cardSelector);
         var enabled = cashRecordingEnabled(summary);
-        var total = Number(summary && summary.total ? summary.total : 0);
+        var total = money(summary && summary.total ? summary.total : '0');
         var count = Number(summary && summary.count ? summary.count : 0);
 
         if (!enabled) {
@@ -97,7 +108,7 @@
         }
 
         card.removeClass('d-none');
-        $(totalSelector).text((summary.total_formatted || total.toFixed(2)) + ' ج.م');
+        $(totalSelector).text((summary.total_formatted || total) + ' ج.م');
         $(metaSelector).text(count + (count === 1 ? (' ' + singularLabel) : (' ' + pluralLabel)));
     }
 
@@ -224,6 +235,17 @@
         return String(amount) + '|' + String(reason || '');
     }
 
+    function positiveCashAmountString(value) {
+        var amount = String(value || '').trim();
+        if (!/^(?:0|[1-9]\d*)(?:\.\d{1,3})?$/.test(amount)) {
+            return null;
+        }
+        if (!/[1-9]/.test(amount)) {
+            return null;
+        }
+        return amount;
+    }
+
     function getShiftCashIdempotencyKey(scope, amount, reason) {
         var fingerprint = cashPayloadFingerprint(amount, reason);
         var pending = pendingCashKeys[scope];
@@ -244,7 +266,7 @@
     }
 
     function saveShiftExpense() {
-        var amount = parseFloat($('#shift_expense_amount').val() || '0');
+        var amount = positiveCashAmountString($('#shift_expense_amount').val());
         var reason = ($('#shift_expense_reason').val() || '').trim();
         var cashScope = 'pos.shift.payout';
 
@@ -252,7 +274,7 @@
             return;
         }
 
-        if (!(amount > 0)) {
+        if (amount === null) {
             showPaneAlert('#shiftExpenseFormAlert', 'أدخل مبلغاً أكبر من صفر.', 'warning');
             $('#shift_expense_amount').trigger('focus');
             return;
@@ -370,7 +392,7 @@
     }
 
     function saveShiftPayIn() {
-        var amount = parseFloat($('#shift_payin_amount').val() || '0');
+        var amount = positiveCashAmountString($('#shift_payin_amount').val());
         var reason = ($('#shift_payin_reason').val() || '').trim();
         var cashScope = 'pos.shift.payin';
 
@@ -378,7 +400,7 @@
             return;
         }
 
-        if (!(amount > 0)) {
+        if (amount === null) {
             showPaneAlert('#shiftPayinFormAlert', 'أدخل مبلغاً أكبر من صفر.', 'warning');
             $('#shift_payin_amount').trigger('focus');
             return;
@@ -490,7 +512,7 @@
     }
 
     function saveShiftSafeDrop() {
-        var amount = parseFloat($('#shift_safe_drop_amount').val() || '0');
+        var amount = positiveCashAmountString($('#shift_safe_drop_amount').val());
         var reason = ($('#shift_safe_drop_reason').val() || '').trim();
         var cashScope = 'pos.shift.safe_drop';
 
@@ -498,7 +520,7 @@
             return;
         }
 
-        if (!(amount > 0)) {
+        if (amount === null) {
             showPaneAlert('#shiftSafeDropFormAlert', 'أدخل مبلغاً أكبر من صفر.', 'warning');
             $('#shift_safe_drop_amount').trigger('focus');
             return;

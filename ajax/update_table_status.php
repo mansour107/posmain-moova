@@ -40,6 +40,8 @@ try {
     $tableOrderService = new TableOrderService();
     $posMutationService = new PosOrderMutationService();
     $syncOutbox = new SyncOutboxEventService();
+    $cancelRecordedOutbox = false;
+    $mutationVersion = 0;
     $conn->begin_transaction();
     $idempotency = $idempotencyService->begin($conn, PosOrderMutationService::SCOPE_ORDER_CANCEL, $idempotencyKey, $idempotencyHash, [
         'user_id' => $user_id,
@@ -77,12 +79,20 @@ try {
         }
 
         if ($order_id > 0) {
-            $posMutationService->cancelTableOrder($conn, [
+            $cancelResult = $posMutationService->cancelTableOrder($conn, [
                 'table_id' => $table_id,
                 'order_id' => $order_id,
                 'reason' => $reason,
                 'user_id' => $user_id,
-            ], ['user_id' => $user_id]);
+                'mutation_version' => $_POST['mutation_version'] ?? $_POST['order_version'] ?? null,
+            ], [
+                'user_id' => $user_id,
+                'in_transaction' => true,
+                'skip_idempotency' => true,
+            ]);
+            $cancelData = is_array($cancelResult['data'] ?? null) ? $cancelResult['data'] : [];
+            $mutationVersion = (int) ($cancelData['mutation_version'] ?? 0);
+            $cancelRecordedOutbox = true;
         } else {
             $tableOrderService->setTableFreeIfNoActiveOrder($conn, $table_id);
         }
@@ -100,17 +110,19 @@ try {
         throw new Exception('عملية غير صحيحة');
     }
 
-    if ($order_id > 0) {
-        $syncOutbox->recordOrderSnapshot($conn, $order_id, [
+    if (!$cancelRecordedOutbox && $order_id > 0) {
+        $syncOutbox->recordRequiredOrderSnapshot($conn, $order_id, [
             'event_type' => $action === 'clear' ? 'order.cancelled' : 'order.table_status_updated',
             'source_system' => 'pos_table_status',
         ]);
     }
-    $syncOutbox->recordTableSnapshot($conn, $table_id, [
-        'event_type' => 'table.updated',
-        'source_system' => 'pos_table_status',
-        'active_order_id' => $action === 'activate' ? $order_id : null,
-    ]);
+    if (!$cancelRecordedOutbox) {
+        $syncOutbox->recordRequiredTableSnapshot($conn, $table_id, [
+            'event_type' => 'table.updated',
+            'source_system' => 'pos_table_status',
+            'active_order_id' => $action === 'activate' ? $order_id : null,
+        ]);
+    }
 
     $response = [
         'success' => true,
@@ -118,6 +130,7 @@ try {
         'message' => $message,
         'table_id' => $table_id,
         'order_id' => $order_id,
+        'mutation_version' => $mutationVersion,
         'request_id' => $idempotencyKey,
     ];
     $idempotencyService->complete($conn, PosOrderMutationService::SCOPE_ORDER_CANCEL, $idempotencyKey, $idempotencyHash, $response);

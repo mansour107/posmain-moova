@@ -409,18 +409,20 @@ class PosOrderSnapshotBuilder
 
     private function linePayloads(mysqli $conn, string $branchUuid, int $orderId, string $orderUuid): array
     {
-        $itemNameSelect = $this->columnExists($conn, 'myitems', 'iname')
+        $hasItemsTable = $this->tableExists($conn, 'myitems');
+        $itemNameSelect = $hasItemsTable && $this->columnExists($conn, 'myitems', 'iname')
             ? 'mi.iname AS item_name'
             : 'NULL AS item_name';
-        $itemBarcodeSelect = $this->columnExists($conn, 'myitems', 'barcode')
+        $itemBarcodeSelect = $hasItemsTable && $this->columnExists($conn, 'myitems', 'barcode')
             ? 'mi.barcode AS item_barcode'
             : 'NULL AS item_barcode';
+        $itemJoin = $hasItemsTable ? 'LEFT JOIN myitems mi ON mi.id = fd.item_id' : '';
         $stmt = $conn->prepare("
             SELECT fd.*,
                    {$itemNameSelect},
                    {$itemBarcodeSelect}
             FROM fat_details fd
-            LEFT JOIN myitems mi ON mi.id = fd.item_id
+            {$itemJoin}
             WHERE fd.fatid = ?
             ORDER BY fd.id ASC
         ");
@@ -766,6 +768,13 @@ class PosOrderSnapshotBuilder
 
     private function receiptRows(mysqli $conn, int $orderId): array
     {
+        // Legacy receipt rows share ot_head and are linked through op2. Newer
+        // minimal/cutover schemas may have only order_payments; absence of the
+        // legacy column means there are no legacy receipt rows to collect.
+        if (!$this->columnExists($conn, 'ot_head', 'op2')) {
+            return [];
+        }
+
         $stmt = $conn->prepare("
             SELECT *
             FROM ot_head
@@ -943,6 +952,10 @@ class PosOrderSnapshotBuilder
 
     private function columnExists(mysqli $conn, string $table, string $column): bool
     {
+        if (!$this->tableExists($conn, $table)) {
+            return false;
+        }
+
         $escapedTable = $conn->real_escape_string($table);
         $escapedColumn = $conn->real_escape_string($column);
         $result = $conn->query("SHOW COLUMNS FROM `{$escapedTable}` LIKE '{$escapedColumn}'");

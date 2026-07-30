@@ -4,6 +4,7 @@ require_once __DIR__ . '/../../Recipe/RecipeDecimal.php';
 require_once __DIR__ . '/../../Items/ItemUnitResolver.php';
 require_once __DIR__ . '/../../Items/ItemUnitConversion.php';
 require_once __DIR__ . '/../../Items/ItemUnitConversionFeatureFlags.php';
+require_once __DIR__ . '/../../Financial/Money.php';
 
 class InventoryMovementService
 {
@@ -20,19 +21,19 @@ class InventoryMovementService
     {
         $normalized = [];
         $totals = [
-            'det_value' => 0.0,
-            'profit' => 0.0,
-            'qty_in' => 0.0,
-            'qty_out' => 0.0,
+            'det_value' => Money::zero()->toString(),
+            'profit' => Money::zero()->toString(),
+            'qty_in' => RecipeDecimal::zero(ItemUnitConversion::INVENTORY_SCALE),
+            'qty_out' => RecipeDecimal::zero(ItemUnitConversion::INVENTORY_SCALE),
         ];
 
         foreach ($lines as $line) {
             $detail = $this->normalizeInvoiceLine($conn, $invoiceType, $line, $context);
             $normalized[] = $detail;
-            $totals['det_value'] += $detail['det_value'];
-            $totals['profit'] += $detail['profit'];
-            $totals['qty_in'] += $detail['qty_in'];
-            $totals['qty_out'] += $detail['qty_out'];
+            $totals['det_value'] = RecipeDecimal::add($totals['det_value'], $detail['det_value'], Money::SCALE);
+            $totals['profit'] = RecipeDecimal::add($totals['profit'], $detail['profit'], Money::SCALE);
+            $totals['qty_in'] = RecipeDecimal::add($totals['qty_in'], $detail['qty_in'], ItemUnitConversion::INVENTORY_SCALE);
+            $totals['qty_out'] = RecipeDecimal::add($totals['qty_out'], $detail['qty_out'], ItemUnitConversion::INVENTORY_SCALE);
         }
 
         return [
@@ -59,27 +60,32 @@ class InventoryMovementService
         if (RecipeDecimal::compare($unitValueDecimal, '0', $scale) <= 0) {
             $unitValueDecimal = RecipeDecimal::normalize('1', $scale);
         }
-        $unitValue = (float) RecipeDecimal::normalize($unitValueDecimal, ItemUnitConversion::DISPLAY_SCALE);
+        $unitValue = RecipeDecimal::normalize($unitValueDecimal, ItemUnitConversion::DISPLAY_SCALE);
 
         $item = $this->loadItem($conn, $itemId);
         $movement = $this->movementQuantities($invoiceType, $qty, $unitValueDecimal, $resolved['unit_row'], $scale);
-        $detValue = (float) RecipeDecimal::multiply(
+        $detValue = RecipeDecimal::multiply(
             $qty,
             RecipeDecimal::subtract($price, $discount, $scale),
-            $scale
+            Money::SCALE
         );
-        $unitPrice = (float) RecipeDecimal::divide($price, $unitValueDecimal, $scale);
-        $oldCost = (float) ($item['cost_price'] ?? 0);
-        $oldQty = (float) ($item['itmqty'] ?? 0);
+        $unitPrice = RecipeDecimal::divide($price, $unitValueDecimal, $scale);
+        $oldCost = RecipeDecimal::normalize($item['cost_price'] ?? '0', $scale);
+        $oldQty = RecipeDecimal::normalize($item['itmqty'] ?? '0', $scale);
         $costPrice = $oldCost;
-        $profit = 0.0;
+        $profit = Money::zero()->toString();
         $itemUpdate = null;
 
         if (in_array($invoiceType, [self::TYPE_PURCHASE, self::TYPE_PURCHASE_ORDER], true)) {
-            $newBalance = (float) RecipeDecimal::multiply($movement['qty_in_decimal'], (string) $unitPrice, $scale);
-            $totalQty = $oldQty + (float) $movement['qty_in_decimal'];
-            if ($totalQty > 0) {
-                $costPrice = (($oldCost * $oldQty) + $newBalance) / $totalQty;
+            $newBalance = RecipeDecimal::multiply($movement['qty_in_decimal'], $unitPrice, $scale);
+            $totalQty = RecipeDecimal::add($oldQty, $movement['qty_in_decimal'], $scale);
+            if (RecipeDecimal::compare($totalQty, '0', $scale) > 0) {
+                $existingBalance = RecipeDecimal::multiply($oldCost, $oldQty, $scale);
+                $costPrice = RecipeDecimal::divide(
+                    RecipeDecimal::add($existingBalance, $newBalance, $scale),
+                    $totalQty,
+                    $scale
+                );
             }
             $itemUpdate = [
                 'last_price' => $unitPrice,
@@ -89,10 +95,10 @@ class InventoryMovementService
             $stockQty = $movement['qty_out_decimal'] !== '0'
                 ? $movement['qty_out_decimal']
                 : $movement['qty_in_decimal'];
-            $profit = (float) RecipeDecimal::multiply(
+            $profit = RecipeDecimal::multiply(
                 $stockQty,
-                RecipeDecimal::subtract((string) $unitPrice, (string) $oldCost, $scale),
-                $scale
+                RecipeDecimal::subtract($unitPrice, $oldCost, $scale),
+                Money::SCALE
             );
         }
 
@@ -100,10 +106,10 @@ class InventoryMovementService
             'item_id' => $itemId,
             'u_val' => $unitValue,
             'u_val_decimal' => RecipeDecimal::normalize($unitValueDecimal, ItemUnitConversion::DISPLAY_SCALE),
-            'qty_in' => (float) $movement['qty_in_decimal'],
-            'qty_out' => (float) $movement['qty_out_decimal'],
+            'qty_in' => $movement['qty_in_decimal'],
+            'qty_out' => $movement['qty_out_decimal'],
             'price' => $unitPrice,
-            'discount' => (float) $discount,
+            'discount' => $discount,
             'det_value' => $detValue,
             'det_store' => (int) ($line['store_id'] ?? $context['store_id'] ?? 0),
             'cost_price' => $costPrice,

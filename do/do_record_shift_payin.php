@@ -66,20 +66,12 @@ try {
         if ($approvalId < 1) {
             throw new ManagerApprovalRequiredException('pos.drawer.payin');
         }
-        $approvalService = new ManagerApprovalService();
-        $approval = $approvalService->validateApprovedPermissionOverride(
-            $conn,
-            $approvalId,
-            'pos.drawer.payin',
-            $userId
-        );
-        $approvalService->consumeApproval($conn, (int) $approval['id'], $userId);
-        $payload['manager_approval_id'] = (int) $approval['id'];
+        $payload['manager_approval_id'] = $approvalId;
+        $payload['requires_permission_override'] = true;
     }
 
-    if (empty($_POST['idempotency_key']) && empty($payload['idempotency_key'])) {
-        $_POST['idempotency_key'] = 'pos.shift.payin:' . bin2hex(random_bytes(8));
-        $payload['idempotency_key'] = $_POST['idempotency_key'];
+    if (trim((string) ($payload['idempotency_key'] ?? '')) === '') {
+        throw new RuntimeException('IDEMPOTENCY_KEY_REQUIRED');
     }
 
     $response = pos_shift_handover_idempotent(
@@ -89,9 +81,20 @@ try {
         $_SERVER,
         $userId,
         static function (array $txContext = []) use ($conn, $userId, $payload, $shiftService): array {
+            if (!empty($payload['requires_permission_override'])) {
+                $approvalService = new ManagerApprovalService();
+                $approval = $approvalService->validateApprovedPermissionOverride(
+                    $conn,
+                    (int) $payload['manager_approval_id'],
+                    'pos.drawer.payin',
+                    $userId
+                );
+                $approvalService->consumeApproval($conn, (int) $approval['id'], $userId);
+            }
             $result = $shiftService->recordShiftPayIn($conn, $userId, [
                 'amount' => $payload['amount'] ?? 0,
                 'reason' => $payload['reason'] ?? '',
+                'idempotency_key' => $payload['idempotency_key'],
                 'manager_approval_id' => $payload['manager_approval_id'] ?? null,
             ], $txContext);
 

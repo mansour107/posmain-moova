@@ -104,6 +104,13 @@ $jsExpectations = [
         'idempotency_key: getPOSTablePageIdempotencyKey(requestScope)',
         "'pos.payment.split'",
         'clearPOSTablePageIdempotencyKey(requestScope)',
+        'posTablePageMutationActive[requestScope]',
+        'mutation_version: currentSplitMutationVersion',
+    ],
+    'elements/pos/payment_modal.php' => [
+        'posTablePaymentRequestActive',
+        'idempotency_key: getPOSTableIdempotencyKey(requestScope)',
+        'mutation_version: mutationVersion',
     ],
 ];
 

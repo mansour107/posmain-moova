@@ -5,6 +5,7 @@ require_once __DIR__ . '/PaymentMethodService.php';
 require_once __DIR__ . '/ShiftDrawerReconciliationService.php';
 require_once __DIR__ . '/BusinessDayService.php';
 require_once __DIR__ . '/../../Financial/Money.php';
+require_once __DIR__ . '/../../Financial/Decimal.php';
 
 class CashFlowPeriodService
 {
@@ -71,41 +72,47 @@ class CashFlowPeriodService
 
         $normalized = $this->normalizeFilters($filters);
         $totals = $this->zeroMovementTotals();
-        $unassignedTotal = 0.0;
+        $unassignedTotal = '0.000';
         $sessionCount = 0;
-        $expectedRollup = 0.0;
-        $countedRollup = 0.0;
-        $closeVarianceRollup = 0.0;
+        $expectedRollup = '0.000';
+        $countedRollup = '0.000';
+        $closeVarianceRollup = '0.000';
         $pendingCountSessionCount = 0;
-        $pendingCountExpectedCash = 0.0;
+        $pendingCountExpectedCash = '0.000';
 
         foreach ($this->sessions($conn, $filters) as $session) {
             $sessionCount++;
             foreach ($session['movement_totals'] as $type => $amount) {
                 if (array_key_exists($type, $totals)) {
-                    $totals[$type] += (float) $amount;
+                    $totals[$type] = $this->add($totals[$type], $amount);
                 }
             }
-            $expectedRollup += (float) ($session['expected_cash'] ?? 0);
+            $expectedRollup = $this->add($expectedRollup, $session['expected_cash'] ?? '0');
             if (!empty($session['count_pending'])) {
                 $pendingCountSessionCount++;
-                $pendingCountExpectedCash += (float) ($session['expected_cash'] ?? 0);
+                $pendingCountExpectedCash = $this->add(
+                    $pendingCountExpectedCash,
+                    $session['expected_cash'] ?? '0'
+                );
             }
             if ($session['counted_cash'] !== null) {
-                $countedRollup += (float) $session['counted_cash'];
+                $countedRollup = $this->add($countedRollup, $session['counted_cash']);
             }
             if ($session['close_variance'] !== null) {
-                $closeVarianceRollup += (float) $session['close_variance'];
+                $closeVarianceRollup = $this->add($closeVarianceRollup, $session['close_variance']);
             }
             if (array_key_exists('closing_adjustment', $totals) && $session['close_variance'] !== null) {
-                $totals['closing_adjustment'] += (float) ($session['close_variance'] ?? 0);
+                $totals['closing_adjustment'] = $this->add(
+                    $totals['closing_adjustment'],
+                    $session['close_variance']
+                );
             }
         }
 
         if ($sessionCount === 0) {
             foreach ($this->movementTotalsForPeriod($conn, $normalized) as $type => $amount) {
                 if (array_key_exists($type, $totals)) {
-                    $totals[$type] = (float) $amount;
+                    $totals[$type] = $this->decimal($amount);
                 }
             }
         }
@@ -118,11 +125,11 @@ class CashFlowPeriodService
         ]));
         foreach ($unassignedRows['rows'] as $row) {
             $type = (string) ($row['movement_type'] ?? '');
-            $amount = (float) ($row['amount'] ?? 0);
+            $amount = $this->decimal($row['amount'] ?? '0');
             if ($type === 'sale_cash') {
-                $unassignedTotal += $amount;
+                $unassignedTotal = $this->add($unassignedTotal, $amount);
             } elseif ($type === 'refund_cash') {
-                $unassignedTotal -= $amount;
+                $unassignedTotal = $this->subtract($unassignedTotal, $amount);
             }
         }
 
@@ -134,17 +141,17 @@ class CashFlowPeriodService
             'branch' => $normalized['branch'],
             'session_count' => $sessionCount,
             'movement_totals' => $this->formatTotals($totals),
-            'unassigned_total' => $this->formatDecimal($unassignedTotal),
+            'unassigned_total' => $this->decimal($unassignedTotal),
             'unassigned_count' => (int) ($unassignedRows['total'] ?? 0),
             'unassigned_note' => (int) ($unassignedRows['total'] ?? 0) > 0
                 ? 'Unassigned cash is physically in the drawer but excluded from per-session expected cash; it inflates close variance until linked.'
                 : '',
-            'expected_cash_rollup' => $this->formatDecimal($expectedRollup),
-            'counted_cash_rollup' => $this->formatDecimal($countedRollup),
-            'close_variance_rollup' => $this->formatDecimal($closeVarianceRollup),
-            'difference_rollup' => $this->formatDecimal($closeVarianceRollup),
+            'expected_cash_rollup' => $this->decimal($expectedRollup),
+            'counted_cash_rollup' => $this->decimal($countedRollup),
+            'close_variance_rollup' => $this->decimal($closeVarianceRollup),
+            'difference_rollup' => $this->decimal($closeVarianceRollup),
             'count_pending_session_count' => $pendingCountSessionCount,
-            'count_pending_expected_cash' => $this->formatDecimal($pendingCountExpectedCash),
+            'count_pending_expected_cash' => $this->decimal($pendingCountExpectedCash),
         ];
     }
 
@@ -242,19 +249,19 @@ class CashFlowPeriodService
                 'status' => (string) $session['status'],
                 'variance_status' => (string) ($session['variance_status'] ?? 'none'),
                 'variance_type' => (string) ($session['variance_type'] ?? 'none'),
-                'opening_cash' => (float) ($recon['drawer']['opening_cash'] ?? 0),
-                'expected_cash' => (float) ($breakdown['pre_close_expected_cash'] ?? 0),
+                'opening_cash' => $this->decimal($recon['drawer']['opening_cash'] ?? '0'),
+                'expected_cash' => $this->decimal($breakdown['pre_close_expected_cash'] ?? '0'),
                 'close_variance' => $breakdown['close_variance'] !== null
-                    ? (float) $breakdown['close_variance']
+                    ? $this->decimal($breakdown['close_variance'])
                     : null,
                 'counted_cash' => $breakdown['counted_cash'] !== null
-                    ? (float) $breakdown['counted_cash']
+                    ? $this->decimal($breakdown['counted_cash'])
                     : null,
                 'difference' => $breakdown['close_variance'] !== null
-                    ? (float) $breakdown['close_variance']
+                    ? $this->decimal($breakdown['close_variance'])
                     : null,
                 'count_pending' => !empty($breakdown['count_pending']),
-                'movement_totals' => array_map('floatval', $recon['drawer']['movement_totals'] ?? []),
+                'movement_totals' => $this->formatTotals($recon['drawer']['movement_totals'] ?? []),
                 'movement_count' => (int) ($recon['drawer']['movement_count'] ?? 0),
                 'shift_owner_user_id' => (int) $session['user_id'],
                 'shift_owner_name' => (string) (($row['display_name'] ?? '') ?: ($row['uname'] ?? '')),
@@ -379,7 +386,7 @@ class CashFlowPeriodService
                 'id' => (int) $row['id'],
                 'drawer_session_id' => $row['drawer_session_id'] !== null ? (int) $row['drawer_session_id'] : null,
                 'movement_type' => (string) $row['movement_type'],
-                'amount' => (float) $row['amount'],
+                'amount' => $this->decimal($row['amount'] ?? '0'),
                 'order_id' => $row['order_id'] !== null ? (int) $row['order_id'] : null,
                 'payment_id' => $row['payment_id'] !== null ? (int) $row['payment_id'] : null,
                 'ref_ot_head_id' => isset($row['ref_ot_head_id'])
@@ -440,7 +447,7 @@ class CashFlowPeriodService
 
         $normalized = $this->normalizeFilters($filters);
         $methodTypes = $this->activePaymentMethodTypes($conn);
-        $byType = array_fill_keys(['cash', 'card', 'wallet', 'bank', 'gift_card', 'other'], 0.0);
+        $byType = array_fill_keys(['cash', 'card', 'wallet', 'bank', 'gift_card', 'other'], '0.000');
 
         $joinOrders = $this->tableExists($conn, 'ot_head');
         $paidAtExpr = 'op.created_at';
@@ -512,37 +519,40 @@ class CashFlowPeriodService
             }
         }
 
-        $total = 0.0;
+        $total = '0.000';
         $byMethod = [];
         foreach ($this->queryAll($conn, $sql, $params) as $row) {
             $money = Money::fromLegacy($row['amount'] ?? 0);
             if (!$money->isPositive() && !$money->isNegative()) {
                 continue;
             }
-            $amount = (float) $money->toString();
+            $amount = $this->decimal($money->toString());
             $method = trim((string) ($row['payment_method'] ?? ''));
             $type = $this->paymentTypeForMethod($method, $methodTypes);
-            $byType[$type] = ($byType[$type] ?? 0) + $amount;
-            $total += $amount;
+            $byType[$type] = $this->add($byType[$type] ?? '0', $amount);
+            $total = $this->add($total, $amount);
             $methodKey = $method !== '' ? $method : 'unknown';
             if (!isset($byMethod[$methodKey])) {
                 $byMethod[$methodKey] = [
                     'code' => $methodKey,
                     'label' => $method !== '' ? $method : 'Unknown',
                     'type' => $type,
-                    'collected' => 0.0,
-                    'refunded' => 0.0,
-                    'settled_refunded' => 0.0,
-                    'pending_refund' => 0.0,
+                    'collected' => '0.000',
+                    'refunded' => '0.000',
+                    'settled_refunded' => '0.000',
+                    'pending_refund' => '0.000',
                 ];
             }
-            $byMethod[$methodKey]['collected'] += $amount;
+            $byMethod[$methodKey]['collected'] = $this->add(
+                $byMethod[$methodKey]['collected'],
+                $amount
+            );
         }
 
-        $refundsByType = array_fill_keys(array_keys($byType), 0.0);
-        $settledRefundsByType = array_fill_keys(array_keys($byType), 0.0);
-        $refundTotal = 0.0;
-        $pendingExternalRefundTotal = 0.0;
+        $refundsByType = array_fill_keys(array_keys($byType), '0.000');
+        $settledRefundsByType = array_fill_keys(array_keys($byType), '0.000');
+        $refundTotal = '0.000';
+        $pendingExternalRefundTotal = '0.000';
         if ($this->tableExists($conn, 'payment_refunds')) {
             $refundWhere = ['pr.created_at >= ?', 'pr.created_at < ?'];
             $refundParams = [$fromBounds['start_at'], $toBounds['end_at']];
@@ -574,56 +584,78 @@ class CashFlowPeriodService
                 if ($refundMoney->compare(Money::zero()) === 0) {
                     continue;
                 }
-                $amount = (float) $refundMoney->toString();
+                $amount = $this->decimal($refundMoney->toString());
                 $method = trim((string) ($row['method_code'] ?? ''));
                 $methodKey = $method !== '' ? $method : 'method_' . (int) ($row['payment_method_id'] ?? 0);
                 $type = trim((string) ($row['method_type'] ?? ''));
                 if (!array_key_exists($type, $refundsByType)) {
                     $type = $this->paymentTypeForMethod($method, $methodTypes);
                 }
-                $refundsByType[$type] = ($refundsByType[$type] ?? 0) + $amount;
-                $refundTotal += $amount;
+                $refundsByType[$type] = $this->add($refundsByType[$type] ?? '0', $amount);
+                $refundTotal = $this->add($refundTotal, $amount);
                 $status = (string) ($row['status'] ?? 'posted');
                 $custodyReversed = $status === 'settled' || ($status === 'posted' && $type === 'cash');
                 if ($status === 'pending_external') {
-                    $pendingExternalRefundTotal += $amount;
+                    $pendingExternalRefundTotal = $this->add($pendingExternalRefundTotal, $amount);
                 }
                 if ($custodyReversed) {
-                    $settledRefundsByType[$type] = ($settledRefundsByType[$type] ?? 0) + $amount;
+                    $settledRefundsByType[$type] = $this->add(
+                        $settledRefundsByType[$type] ?? '0',
+                        $amount
+                    );
                 }
                 if (!isset($byMethod[$methodKey])) {
                     $byMethod[$methodKey] = [
                         'code' => $methodKey,
                         'label' => (string) (($row['method_label'] ?? '') ?: ($method !== '' ? $method : 'Payment method')),
                         'type' => $type,
-                        'collected' => 0.0,
-                        'refunded' => 0.0,
-                        'settled_refunded' => 0.0,
-                        'pending_refund' => 0.0,
+                        'collected' => '0.000',
+                        'refunded' => '0.000',
+                        'settled_refunded' => '0.000',
+                        'pending_refund' => '0.000',
                     ];
                 }
-                $byMethod[$methodKey]['refunded'] += $amount;
+                $byMethod[$methodKey]['refunded'] = $this->add(
+                    $byMethod[$methodKey]['refunded'],
+                    $amount
+                );
                 if ($custodyReversed) {
-                    $byMethod[$methodKey]['settled_refunded'] += $amount;
+                    $byMethod[$methodKey]['settled_refunded'] = $this->add(
+                        $byMethod[$methodKey]['settled_refunded'],
+                        $amount
+                    );
                 }
                 if ($status === 'pending_external') {
-                    $byMethod[$methodKey]['pending_refund'] += $amount;
+                    $byMethod[$methodKey]['pending_refund'] = $this->add(
+                        $byMethod[$methodKey]['pending_refund'],
+                        $amount
+                    );
                 }
             }
         }
 
         $netByType = [];
         foreach ($byType as $type => $amount) {
-            $netByType[$type] = (float) $amount - (float) ($settledRefundsByType[$type] ?? 0);
+            $netByType[$type] = $this->subtract($amount, $settledRefundsByType[$type] ?? '0');
         }
         foreach ($byMethod as &$methodRow) {
-            $methodRow['net'] = (float) $methodRow['collected'] - (float) $methodRow['settled_refunded'];
+            $methodRow['net'] = $this->subtract(
+                $methodRow['collected'],
+                $methodRow['settled_refunded']
+            );
             foreach (['collected', 'refunded', 'settled_refunded', 'pending_refund', 'net'] as $moneyKey) {
-                $methodRow[$moneyKey] = $this->formatDecimal((float) $methodRow[$moneyKey]);
+                $methodRow[$moneyKey] = $this->decimal($methodRow[$moneyKey]);
             }
         }
         unset($methodRow);
-        uasort($byMethod, static fn (array $a, array $b): int => (float) $b['collected'] <=> (float) $a['collected']);
+        uasort(
+            $byMethod,
+            static fn (array $a, array $b): int => FinancialDecimal::compare(
+                (string) $b['collected'],
+                (string) $a['collected'],
+                3
+            )
+        );
 
         // A deployed drawer subsystem is not enough for historical periods:
         // only compare the two cash sources when drawer coverage exists for
@@ -631,11 +663,13 @@ class CashFlowPeriodService
         // would be presented as a false mismatch.
         $cashReconciliationAvailable = $this->drawerSubsystemAvailable($conn)
             && $this->drawerCoversPeriod($conn, $filters);
-        $drawerCashNet = $cashReconciliationAvailable ? $this->drawerCashNetForPeriod($conn, $normalized) : 0.0;
-        $cashCollected = (float) ($byType['cash'] ?? 0);
-        $cashRefunds = (float) ($settledRefundsByType['cash'] ?? 0);
-        $cashNet = $cashCollected - $cashRefunds;
-        $custodyRefundTotal = array_sum($settledRefundsByType);
+        $drawerCashNet = $cashReconciliationAvailable
+            ? $this->drawerCashNetForPeriod($conn, $normalized)
+            : '0.000';
+        $cashCollected = $this->decimal($byType['cash'] ?? '0');
+        $cashRefunds = $this->decimal($settledRefundsByType['cash'] ?? '0');
+        $cashNet = $this->subtract($cashCollected, $cashRefunds);
+        $custodyRefundTotal = $this->sumDecimals($settledRefundsByType);
 
         return [
             'source' => $cashReconciliationAvailable ? 'drawer' : 'legacy',
@@ -644,26 +678,26 @@ class CashFlowPeriodService
             'settled_refunds_by_type' => $this->formatTotals($settledRefundsByType),
             'net_by_type' => $this->formatTotals($netByType),
             'by_method' => array_values($byMethod),
-            'total' => $this->formatDecimal($total),
-            'refund_total' => $this->formatDecimal($refundTotal),
-            'custody_refund_total' => $this->formatDecimal($custodyRefundTotal),
-            'net_total' => $this->formatDecimal($total - $custodyRefundTotal),
-            'cash_collected' => $this->formatDecimal($cashCollected),
-            'cash_refunds' => $this->formatDecimal($cashRefunds),
-            'cash_net' => $this->formatDecimal($cashNet),
-            'pending_external_refund_total' => $this->formatDecimal($pendingExternalRefundTotal),
-            'drawer_cash_net' => $this->formatDecimal($drawerCashNet),
+            'total' => $this->decimal($total),
+            'refund_total' => $this->decimal($refundTotal),
+            'custody_refund_total' => $this->decimal($custodyRefundTotal),
+            'net_total' => $this->subtract($total, $custodyRefundTotal),
+            'cash_collected' => $this->decimal($cashCollected),
+            'cash_refunds' => $this->decimal($cashRefunds),
+            'cash_net' => $this->decimal($cashNet),
+            'pending_external_refund_total' => $this->decimal($pendingExternalRefundTotal),
+            'drawer_cash_net' => $this->decimal($drawerCashNet),
             'cash_reconciliation_available' => $cashReconciliationAvailable,
             'cash_reconciliation_diff' => $cashReconciliationAvailable
-                ? $this->formatDecimal($drawerCashNet - $cashNet)
+                ? $this->subtract($drawerCashNet, $cashNet)
                 : '0.000',
         ];
     }
 
-    private function drawerCashNetForPeriod(mysqli $conn, array $normalized): float
+    private function drawerCashNetForPeriod(mysqli $conn, array $normalized): string
     {
         if (!$this->drawerSubsystemAvailable($conn)) {
-            return 0.0;
+            return '0.000';
         }
 
         $filters = [
@@ -674,11 +708,11 @@ class CashFlowPeriodService
             'cashier_id' => $normalized['cashier_id'],
             'include_unassigned' => true,
         ];
-        $sale = 0.0;
-        $refund = 0.0;
+        $sale = '0.000';
+        $refund = '0.000';
         foreach ($this->sessions($conn, $filters) as $session) {
-            $sale += (float) ($session['movement_totals']['sale_cash'] ?? 0);
-            $refund += (float) ($session['movement_totals']['refund_cash'] ?? 0);
+            $sale = $this->add($sale, $session['movement_totals']['sale_cash'] ?? '0');
+            $refund = $this->add($refund, $session['movement_totals']['refund_cash'] ?? '0');
         }
 
         $unassigned = $this->movements($conn, array_merge($filters, [
@@ -688,20 +722,20 @@ class CashFlowPeriodService
         ]));
         foreach ($unassigned['rows'] as $row) {
             if (($row['movement_type'] ?? '') === 'sale_cash') {
-                $sale += (float) ($row['amount'] ?? 0);
+                $sale = $this->add($sale, $row['amount'] ?? '0');
             } elseif (($row['movement_type'] ?? '') === 'refund_cash') {
-                $refund += (float) ($row['amount'] ?? 0);
+                $refund = $this->add($refund, $row['amount'] ?? '0');
             }
         }
 
-        return round($sale - $refund, 3);
+        return $this->subtract($sale, $refund);
     }
 
     private function legacySummary(mysqli $conn, array $filters): array
     {
         $normalized = $this->normalizeFilters($filters);
-        $cashReceipts = 0.0;
-        $expenses = 0.0;
+        $cashReceipts = '0.000';
+        $expenses = '0.000';
 
         if ($this->tableExists($conn, 'ot_head')) {
             $sql = "
@@ -717,7 +751,7 @@ class CashFlowPeriodService
                 $sql .= ' AND user = ?';
                 $params[] = (string) $normalized['cashier_id'];
             }
-            $cashReceipts = (float) ($this->queryOne($conn, $sql, $params)['total'] ?? 0);
+            $cashReceipts = $this->decimal($this->queryOne($conn, $sql, $params)['total'] ?? '0');
 
             $sql = "
                 SELECT COALESCE(SUM(pro_value), 0) AS total
@@ -732,7 +766,7 @@ class CashFlowPeriodService
                 $sql .= ' AND user = ?';
                 $params[] = (string) $normalized['cashier_id'];
             }
-            $expenses = (float) ($this->queryOne($conn, $sql, $params)['total'] ?? 0);
+            $expenses = $this->decimal($this->queryOne($conn, $sql, $params)['total'] ?? '0');
         }
 
         $payments = $this->paymentBreakdown($conn, $filters);
@@ -774,10 +808,13 @@ class CashFlowPeriodService
         foreach ($this->sessions($conn, $filters) as $session) {
             foreach ($session['movement_totals'] as $type => $amount) {
                 if (array_key_exists($type, $totals)) {
-                    $totals[$type] += (float) $amount;
+                    $totals[$type] = $this->add($totals[$type], $amount);
                 }
             }
-            $totals['closing_adjustment'] += (float) ($session['close_variance'] ?? 0);
+            $totals['closing_adjustment'] = $this->add(
+                $totals['closing_adjustment'],
+                $session['close_variance'] ?? '0'
+            );
         }
 
         foreach ($this->movements($conn, array_merge($filters, [
@@ -787,7 +824,7 @@ class CashFlowPeriodService
         ]))['rows'] as $row) {
             $type = (string) ($row['movement_type'] ?? '');
             if (array_key_exists($type, $totals)) {
-                $totals[$type] += (float) ($row['amount'] ?? 0);
+                $totals[$type] = $this->add($totals[$type], $row['amount'] ?? '0');
             }
         }
 
@@ -911,7 +948,7 @@ class CashFlowPeriodService
     {
         $totals = [];
         foreach (self::MOVEMENT_TYPES as $type) {
-            $totals[$type] = 0.0;
+            $totals[$type] = '0.000';
         }
 
         return $totals;
@@ -921,15 +958,36 @@ class CashFlowPeriodService
     {
         $formatted = [];
         foreach ($totals as $key => $value) {
-            $formatted[$key] = $this->formatDecimal((float) $value);
+            $formatted[$key] = $this->decimal($value);
         }
 
         return $formatted;
     }
 
-    private function formatDecimal(float $value): string
+    private function decimal($value): string
     {
-        return number_format($value, 3, '.', '');
+        return FinancialDecimal::normalize($value, 3, true);
+    }
+
+    private function add($left, $right): string
+    {
+        return FinancialDecimal::add($this->decimal($left), $this->decimal($right), 3);
+    }
+
+    private function subtract($left, $right): string
+    {
+        return FinancialDecimal::subtract($this->decimal($left), $this->decimal($right), 3);
+    }
+
+    /** @param array<int|string, int|string> $values */
+    private function sumDecimals(array $values): string
+    {
+        $total = '0.000';
+        foreach ($values as $value) {
+            $total = $this->add($total, $value);
+        }
+
+        return $total;
     }
 
     private function activePaymentMethodTypes(mysqli $conn): array
@@ -1139,6 +1197,7 @@ class CashFlowPeriodService
 
         $eventTypes = [
             'drawer_override_started',
+            'drawer_override_authorization',
             'drawer_override_operation',
             'drawer_override_ended',
             'drawer_override_expired',
@@ -1178,7 +1237,9 @@ class CashFlowPeriodService
                 continue;
             }
             $summaryParts = [];
-            if (array_key_exists('success', $metadata)) {
+            if (array_key_exists('authorization_granted', $metadata)) {
+                $summaryParts[] = !empty($metadata['authorization_granted']) ? 'تم التفويض' : 'رُفض التفويض';
+            } elseif (array_key_exists('success', $metadata)) {
                 $summaryParts[] = !empty($metadata['success']) ? 'نجحت' : 'مرفوضة';
             }
             if (!empty($metadata['reason'])) {

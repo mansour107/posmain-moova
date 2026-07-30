@@ -4,6 +4,7 @@ require_once __DIR__ . '/../includes/session_bootstrap.php';
 include(__DIR__ . '/../includes/ajax_header.php');
 require_once(__DIR__ . '/../includes/auth_guard.php');
 require_once(__DIR__ . '/../classes/Pos/Service/PaymentMethodService.php');
+require_once(__DIR__ . '/../classes/Financial/Decimal.php');
 
 header('Content-Type: application/json; charset=utf-8');
 
@@ -43,6 +44,7 @@ try {
                 o.order_status,
                 o.payment_status,
                 o.paid_amount,
+                o.mutation_version,
                 {$refundSelect} AS refunded_amount,
                 CASE
                     WHEN o.table_id IS NOT NULL
@@ -97,13 +99,14 @@ try {
             $editEligible = intval($row['edit_eligible'] ?? 0) === 1;
             $paidCompleted = (string) ($row['payment_status'] ?? '') === 'paid'
                 && (string) ($row['order_status'] ?? '') === 'completed';
-            $originalAmount = max(0.0, (float) ($row['total'] ?? 0));
-            $refundedAmount = max(0.0, (float) ($row['refunded_amount'] ?? 0));
-            $remainingRefundable = max(0.0, $originalAmount - $refundedAmount);
-            $reversalStatus = $refundedAmount <= 0.005
+            $originalAmount = recentOrdersNonNegativeDecimal($row['total'] ?? '0', 2);
+            $refundedAmount = recentOrdersNonNegativeDecimal($row['refunded_amount'] ?? '0', 2);
+            $remainingRefundable = recentOrdersSubtractFloorZero($originalAmount, $refundedAmount, 2);
+            $reversalStatus = FinancialDecimal::compare($refundedAmount, '0.00', 2) === 0
                 ? 'none'
-                : ($remainingRefundable <= 0.005 ? 'full' : 'partial');
-            $refundEligible = $paidCompleted && $remainingRefundable > 0.005;
+                : (FinancialDecimal::compare($remainingRefundable, '0.00', 2) === 0 ? 'full' : 'partial');
+            $refundEligible = $paidCompleted
+                && FinancialDecimal::compare($remainingRefundable, '0.00', 2) > 0;
             $voidEligible = $refundEligible;
             $status = $reversalStatus === 'full'
                 ? 'مسترد بالكامل'
@@ -120,12 +123,13 @@ try {
                 'can_refund' => $refundEligible,
                 'can_void' => $voidEligible,
                 'payment_status' => (string) ($row['payment_status'] ?? ''),
+                'mutation_version' => max(1, (int) ($row['mutation_version'] ?? 1)),
                 'order_status' => (string) ($row['order_status'] ?? ''),
                 'date' => $row['date'],
                 'customer_name' => recentOrdersResolveCustomerName($row, $defaultClientId),
                 'pos_customer_id' => $hasPosCustomers ? max(0, (int) ($row['pos_customer_id'] ?? 0)) : 0,
                 'type' => $row['type'],
-                'total' => floatval($row['total'] ?? 0),
+                'total' => $originalAmount,
                 'refunded_amount' => $refundedAmount,
                 'remaining_refundable_amount' => $remainingRefundable,
                 'reversal_status' => $reversalStatus,
@@ -233,16 +237,16 @@ function recentOrdersRefundContext(mysqli $conn, array $orders): array
         ");
         while ($row = $result->fetch_assoc()) {
             $orderId = (int) $row['order_id'];
-            $original = max(0.0, (float) $row['original_amount']);
-            $refunded = max(0.0, (float) $row['refunded_amount']);
+            $original = recentOrdersNonNegativeDecimal($row['original_amount'] ?? '0', 2);
+            $refunded = recentOrdersNonNegativeDecimal($row['refunded_amount'] ?? '0', 2);
             $paymentsByOrder[$orderId][] = [
                 'id' => (int) $row['id'],
                 'payment_method' => (string) $row['payment_method'],
                 'label' => (string) $row['method_label'],
                 'type' => (string) ($row['method_type'] ?? ''),
-                'original_amount' => number_format($original, 2, '.', ''),
-                'refunded_amount' => number_format($refunded, 2, '.', ''),
-                'refundable_amount' => number_format(max(0.0, $original - $refunded), 2, '.', ''),
+                'original_amount' => $original,
+                'refunded_amount' => $refunded,
+                'refundable_amount' => recentOrdersSubtractFloorZero($original, $refunded, 2),
             ];
         }
     }
@@ -307,29 +311,32 @@ function recentOrdersRefundContext(mysqli $conn, array $orders): array
         ");
         while ($row = $result->fetch_assoc()) {
             $orderId = (int) $row['order_id'];
-            $originalQty = max(0.0, (float) $row['original_quantity']);
-            $refundedQty = max(0.0, (float) $row['refunded_quantity']);
-            $originalAmount = max(0.0, (float) $row['original_amount']);
-            $refundedAmount = max(0.0, (float) $row['refunded_amount']);
-            $originalTax = max(0.0, (float) $row['original_tax']);
-            $refundedTax = max(0.0, (float) $row['refunded_tax']);
-            $remainingQty = max(0.0, $originalQty - $refundedQty);
-            $remainingAmount = max(0.0, $originalAmount - $refundedAmount);
-            if ($remainingQty <= 0.0000005 || $remainingAmount <= 0.005) {
+            $originalQty = recentOrdersNonNegativeDecimal($row['original_quantity'] ?? '0', 6);
+            $refundedQty = recentOrdersNonNegativeDecimal($row['refunded_quantity'] ?? '0', 6);
+            $originalAmount = recentOrdersNonNegativeDecimal($row['original_amount'] ?? '0', 2);
+            $refundedAmount = recentOrdersNonNegativeDecimal($row['refunded_amount'] ?? '0', 2);
+            $originalTax = recentOrdersNonNegativeDecimal($row['original_tax'] ?? '0', 2);
+            $refundedTax = recentOrdersNonNegativeDecimal($row['refunded_tax'] ?? '0', 2);
+            $remainingQty = recentOrdersSubtractFloorZero($originalQty, $refundedQty, 6);
+            $remainingAmount = recentOrdersSubtractFloorZero($originalAmount, $refundedAmount, 2);
+            if (
+                FinancialDecimal::compare($remainingQty, '0.000000', 6) === 0
+                || FinancialDecimal::compare($remainingAmount, '0.00', 2) === 0
+            ) {
                 continue;
             }
             $linesByOrder[$orderId][] = [
                 'original_detail_id' => (int) $row['original_detail_id'],
                 'item_id' => (int) $row['item_id'],
                 'label' => (string) $row['item_label'],
-                'original_quantity' => number_format($originalQty, 6, '.', ''),
-                'refunded_quantity' => number_format($refundedQty, 6, '.', ''),
-                'remaining_quantity' => number_format($remainingQty, 6, '.', ''),
-                'original_amount' => number_format($originalAmount, 2, '.', ''),
-                'refunded_amount' => number_format($refundedAmount, 2, '.', ''),
-                'remaining_amount' => number_format($remainingAmount, 2, '.', ''),
-                'remaining_tax' => number_format(max(0.0, $originalTax - $refundedTax), 2, '.', ''),
-                'original_discount' => number_format(max(0.0, (float) $row['original_discount']), 2, '.', ''),
+                'original_quantity' => $originalQty,
+                'refunded_quantity' => $refundedQty,
+                'remaining_quantity' => $remainingQty,
+                'original_amount' => $originalAmount,
+                'refunded_amount' => $refundedAmount,
+                'remaining_amount' => $remainingAmount,
+                'remaining_tax' => recentOrdersSubtractFloorZero($originalTax, $refundedTax, 2),
+                'original_discount' => recentOrdersNonNegativeDecimal($row['original_discount'] ?? '0', 2),
             ];
         }
     }
@@ -353,6 +360,24 @@ function recentOrdersRefundContext(mysqli $conn, array $orders): array
         'lines_by_order' => $linesByOrder,
         'refund_tenders' => $refundTenders,
     ];
+}
+
+function recentOrdersNonNegativeDecimal($value, int $scale): string
+{
+    $normalized = FinancialDecimal::normalize($value, $scale, true);
+
+    return FinancialDecimal::compare($normalized, FinancialDecimal::normalize('0', $scale), $scale) < 0
+        ? FinancialDecimal::normalize('0', $scale)
+        : $normalized;
+}
+
+function recentOrdersSubtractFloorZero(string $left, string $right, int $scale): string
+{
+    $difference = FinancialDecimal::subtract($left, $right, $scale);
+
+    return FinancialDecimal::compare($difference, FinancialDecimal::normalize('0', $scale), $scale) < 0
+        ? FinancialDecimal::normalize('0', $scale)
+        : $difference;
 }
 
 function recentOrdersResolveCustomerName(array $row, int $defaultClientId): string

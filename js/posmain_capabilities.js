@@ -17,7 +17,23 @@
         if (row.limit_value === null || row.limit_value === undefined || row.limit_value === '') {
             return true;
         }
-        return parseFloat(amount) <= parseFloat(row.limit_value);
+        var decimal = global.POSOrderApi;
+        if (!decimal
+            || typeof decimal.decimalString !== 'function'
+            || typeof decimal.compareDecimalStrings !== 'function') {
+            return false;
+        }
+        try {
+            return decimal.compareDecimalStrings(
+                decimal.decimalString(amount, 6, '0'),
+                decimal.decimalString(row.limit_value, 6, '0'),
+                6
+            ) <= 0;
+        } catch (ignored) {
+            // Invalid policy/input values must request an override instead of
+            // silently granting a money-affecting action.
+            return false;
+        }
     }
 
     function amountExceedsLimit(permissionKey, amount) {

@@ -4,6 +4,7 @@ require_once __DIR__ . '/../../TableOrderService.php';
 require_once __DIR__ . '/PaymentMethodService.php';
 require_once __DIR__ . '/DrawerSessionService.php';
 require_once __DIR__ . '/../../Financial/Money.php';
+require_once __DIR__ . '/../../Financial/FinancialMoneyInput.php';
 
 class PaymentService
 {
@@ -32,8 +33,10 @@ class PaymentService
         $paymentMethod = $tender['code'];
         $notes = (string) ($tender['reference_no'] ?? '');
         $userId = $this->contextUserId($request, $context);
-        $discount = $this->optionalMoney($request, ['discount', 'fat_disc']);
-        $netOverride = $this->optionalMoney($request, ['net', 'fat_net']);
+        // A payment request may not rewrite pricing. The locked order remains
+        // the only source of truth for discount and net at settlement time.
+        $discount = null;
+        $netOverride = null;
         $drawerContext = array_merge($request, $context, ['drawer_reason' => 'table_payment']);
         $drawerSession = $this->preflightCashDrawerForPayment($conn, $paymentMethod, $amountPaid, $userId, $drawerContext);
 
@@ -46,7 +49,11 @@ class PaymentService
             $notes,
             $userId,
             $discount,
-            $netOverride
+            $netOverride,
+            [
+                'type' => (string) ($tender['type'] ?? ''),
+                'require_cash_fact_columns' => true,
+            ]
         );
 
         $movement = $this->recordCashDrawerMovementForPayment(
@@ -72,7 +79,7 @@ class PaymentService
 
     public function preflightCashDrawerForPayment(mysqli $conn, string $paymentMethod, $amount, int $userId, array $context = []): ?array
     {
-        if (!Money::fromLegacy($amount)->isPositive() || !$this->isCashPaymentMethod($conn, $paymentMethod)) {
+        if (!FinancialMoneyInput::money($amount)->isPositive() || !$this->isCashPaymentMethod($conn, $paymentMethod)) {
             return null;
         }
 
@@ -81,7 +88,7 @@ class PaymentService
 
     public function recordCashDrawerMovementForPayment(mysqli $conn, string $paymentMethod, $amount, int $orderId, int $userId, array $context = [], ?array $preflightSession = null, ?int $paymentId = null, ?int $refOtHeadId = null): ?array
     {
-        if (!Money::fromLegacy($amount)->isPositive() || !$this->isCashPaymentMethod($conn, $paymentMethod)) {
+        if (!FinancialMoneyInput::money($amount)->isPositive() || !$this->isCashPaymentMethod($conn, $paymentMethod)) {
             return null;
         }
 
@@ -98,7 +105,7 @@ class PaymentService
         ?int $paymentId = null,
         ?int $refOtHeadId = null
     ): ?array {
-        if (!Money::fromLegacy($amount)->isPositive()) {
+        if (!FinancialMoneyInput::money($amount)->isPositive()) {
             return null;
         }
 
@@ -126,6 +133,13 @@ class PaymentService
             'amount' => $amount,
             'order_id' => $orderId,
             'payment_id' => $paymentId,
+            'idempotency_key' => $this->drawerIdempotencyKey(
+                $context,
+                $movementType,
+                $orderId,
+                $paymentId,
+                $refOtHeadId
+            ),
             'reason' => $reason,
             'created_by' => $userId,
             'tenant' => $this->contextNonNegativeInt($context, ['tenant', 'pos_tenant']),
@@ -146,6 +160,38 @@ class PaymentService
         return $this->drawerSessionService->recordMovement($conn, (int) $session['id'], $movementPayload);
     }
 
+    private function drawerIdempotencyKey(
+        array $context,
+        string $movementType,
+        int $orderId,
+        ?int $paymentId,
+        ?int $refOtHeadId
+    ): string {
+        $requestKey = trim((string) (
+            $context['drawer_idempotency_key']
+            ?? $context['idempotency_key']
+            ?? $context['request_id']
+            ?? ''
+        ));
+        if ($requestKey === '') {
+            throw new InvalidArgumentException('DRAWER_IDEMPOTENCY_REQUIRED');
+        }
+
+        $identity = implode(':', [
+            'drawer',
+            $movementType,
+            $orderId,
+            (int) ($paymentId ?? 0),
+            (int) ($refOtHeadId ?? 0),
+        ]);
+        $key = $requestKey . ':' . $identity;
+        if (strlen($key) <= 191) {
+            return $key;
+        }
+
+        return substr($requestKey, 0, 96) . ':drawer-sha256:' . hash('sha256', $key);
+    }
+
     public function netCashRecordedForOrder(mysqli $conn, int $orderId): string
     {
         return $this->drawerSessionService->netCashRecordedForOrder($conn, $orderId);
@@ -160,8 +206,8 @@ class PaymentService
         array $context = [],
         string $reason = 'pos_cash_payment'
     ): void {
-        $cashAmount = Money::fromLegacy($cashAmount);
-        $bankAmount = Money::fromLegacy($bankAmount);
+        $cashAmount = FinancialMoneyInput::money($cashAmount);
+        $bankAmount = FinancialMoneyInput::money($bankAmount);
         if ($cashAmount->isPositive()) {
             $drawerContext = array_merge($context, ['drawer_reason' => $reason]);
             if (session_status() === PHP_SESSION_ACTIVE) {
@@ -175,7 +221,17 @@ class PaymentService
                     $drawerContext['branch'] = (int) ($_SESSION['pos_branch'] ?? 0);
                 }
             }
-            $paymentId = $this->insertOrderPaymentRecordIfAvailable($conn, $orderId, $cashAmount->toString(), 'cash', $userId);
+            $paymentId = $this->insertOrderPaymentRecordIfAvailable(
+                $conn,
+                $orderId,
+                $cashAmount->toString(),
+                'cash',
+                $userId,
+                [
+                    'tendered_amount' => (string) ($context['cash_tendered'] ?? $context['tendered_amount'] ?? $cashAmount->toString()),
+                    'change_due' => (string) ($context['change_due'] ?? $context['change'] ?? '0.00'),
+                ]
+            );
             $this->recordCashDrawerMovementForPayment(
                 $conn,
                 'cash',
@@ -249,7 +305,7 @@ class PaymentService
     {
         foreach ($keys as $key) {
             if (array_key_exists($key, $request)) {
-                $amount = Money::fromLegacy($request[$key]);
+                $amount = FinancialMoneyInput::money($request[$key]);
                 if (!$amount->isPositive()) {
                     throw new InvalidArgumentException('PAYMENT_AMOUNT_INVALID');
                 }
@@ -279,7 +335,7 @@ class PaymentService
     {
         foreach ($keys as $key) {
             if (array_key_exists($key, $request) && $request[$key] !== '' && $request[$key] !== null) {
-                return Money::fromLegacy($request[$key])->toString();
+                return FinancialMoneyInput::money($request[$key])->toString();
             }
         }
 
@@ -319,6 +375,19 @@ class PaymentService
 
         $session = $this->drawerSessionService->resolveOpenSessionForUser($conn, $userId, $context);
         if (!$session) {
+            $sessionId = (int) ($context['drawer_session_id'] ?? 0);
+            if ($sessionId > 0) {
+                require_once __DIR__ . '/DrawerOverrideService.php';
+                try {
+                    $override = (new DrawerOverrideService($this->drawerSessionService))
+                        ->requireActiveOverrideForWrite($conn, $userId, $sessionId);
+                    $session = $override['drawer_session'] ?? null;
+                } catch (RuntimeException $exception) {
+                    $session = null;
+                }
+            }
+        }
+        if (!$session) {
             throw new RuntimeException('DRAWER_SESSION_REQUIRED');
         }
 
@@ -344,20 +413,50 @@ class PaymentService
         return $result && $result->num_rows > 0;
     }
 
-    private function insertOrderPaymentRecordIfAvailable(mysqli $conn, int $orderId, $amount, string $paymentMethod, int $userId): ?int
-    {
-        $amount = Money::fromLegacy($amount)->toString();
+    private function insertOrderPaymentRecordIfAvailable(
+        mysqli $conn,
+        int $orderId,
+        $amount,
+        string $paymentMethod,
+        int $userId,
+        array $cashFacts = []
+    ): ?int {
+        $applied = FinancialMoneyInput::money($amount)->toString();
         if (!$this->tableExists($conn, 'order_payments')) {
             return null;
         }
 
-        $this->tableOrderService->execute($conn, "
-            INSERT INTO order_payments (order_id, amount, payment_method, created_by, created_at)
-            VALUES (?, ?, ?, ?, NOW())
-        ", [$orderId, $amount, $paymentMethod, $userId]);
+        $tendered = FinancialMoneyInput::moneyString($cashFacts['tendered_amount'] ?? $applied);
+        $changeDue = FinancialMoneyInput::moneyString($cashFacts['change_due'] ?? '0.00');
+        $hasCashFacts = $this->columnExists($conn, 'order_payments', 'tendered_amount')
+            && $this->columnExists($conn, 'order_payments', 'applied_amount')
+            && $this->columnExists($conn, 'order_payments', 'change_due');
+
+        if ($hasCashFacts) {
+            $this->tableOrderService->execute($conn, "
+                INSERT INTO order_payments (
+                    order_id, amount, tendered_amount, applied_amount, change_due,
+                    payment_method, created_by, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, NOW())
+            ", [$orderId, $applied, $tendered, $applied, $changeDue, $paymentMethod, $userId]);
+        } else {
+            $this->tableOrderService->execute($conn, "
+                INSERT INTO order_payments (order_id, amount, payment_method, created_by, created_at)
+                VALUES (?, ?, ?, ?, NOW())
+            ", [$orderId, $applied, $paymentMethod, $userId]);
+        }
         $paymentId = (int) $conn->insert_id;
         $this->tableOrderService->assignUuidIfPresent($conn, 'order_payments', $paymentId);
 
         return $paymentId > 0 ? $paymentId : null;
+    }
+
+    private function columnExists(mysqli $conn, string $tableName, string $columnName): bool
+    {
+        $tableName = $conn->real_escape_string($tableName);
+        $columnName = $conn->real_escape_string($columnName);
+        $result = $conn->query("SHOW COLUMNS FROM `{$tableName}` LIKE '{$columnName}'");
+
+        return $result instanceof mysqli_result && $result->num_rows > 0;
     }
 }

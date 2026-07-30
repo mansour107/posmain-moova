@@ -41,10 +41,15 @@ try {
         $paymentService->recordCashDrawerMovementForPayment(
             $conn,
             'cash',
-            45.0,
+            '45.00',
             501,
             7,
-            ['tenant' => 2, 'branch' => 3, 'drawer_reason' => 'test_unassigned'],
+            [
+                'tenant' => 2,
+                'branch' => 3,
+                'drawer_reason' => 'test_unassigned',
+                'idempotency_key' => 'cash-flow-unassigned:order:501',
+            ],
             null,
             null,
             null

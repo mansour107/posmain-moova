@@ -72,6 +72,8 @@ foreach ([
     'legacy_pos_sync_stock_replay_still_present',
     'specialized_invoice_stock_writer_still_present',
     'InventoryLegacyMirrorService.php',
+    "strpos(\$path, '/var/')",
+    "strpos(\$path, '/output/')",
 ] as $needle) {
     inventoryPhase16Assert(strpos($tool . $readinessService, $needle) !== false, 'retirement readiness should contain: ' . $needle);
 }

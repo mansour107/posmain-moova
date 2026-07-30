@@ -349,7 +349,18 @@ class TableOrderService
         return $order;
     }
 
-    public function payTableOrder(mysqli $conn, $tableId, $orderId, $amountPaid, $paymentMethod, $notes = '', $userId = 1, $discount = null, $netOverride = null)
+    public function payTableOrder(
+        mysqli $conn,
+        $tableId,
+        $orderId,
+        $amountPaid,
+        $paymentMethod,
+        $notes = '',
+        $userId = 1,
+        $discount = null,
+        $netOverride = null,
+        array $tenderFacts = []
+    )
     {
         $order = $this->findActiveOrderByTableAndOrderId($conn, $tableId, $orderId, true);
         if (!$order) {
@@ -388,9 +399,22 @@ class TableOrderService
         }
 
         $existingPaid = Money::from((string) ($order['paid_amount'] ?? '0'));
+        $outstanding = $netAmount->subtract($existingPaid);
+        if (!$outstanding->isPositive()) {
+            throw new RuntimeException('ORDER_ALREADY_PAID');
+        }
+        $tenderType = strtolower(trim((string) ($tenderFacts['type'] ?? '')));
+        $isCashTender = $tenderType === 'cash';
+        if (!$isCashTender && $amountPaid->compare($outstanding) > 0) {
+            throw new InvalidArgumentException('NON_CASH_TENDER_EXCEEDS_REMAINING');
+        }
+
         $candidatePaid = $existingPaid->add($amountPaid);
         $newPaid = $candidatePaid->compare($netAmount) > 0 ? $netAmount : $candidatePaid;
         $appliedAmount = $newPaid->subtract($existingPaid);
+        $changeDue = $isCashTender && $amountPaid->compare($appliedAmount) > 0
+            ? $amountPaid->subtract($appliedAmount)
+            : Money::zero();
         $remaining = $netAmount->subtract($newPaid);
         $isPaid = !$remaining->isPositive();
         $paymentStatus = $isPaid ? 'paid' : 'partial';
@@ -426,7 +450,19 @@ class TableOrderService
             self::POS_TYPE,
         ]);
 
-        $paymentId = $this->insertPaymentRecord($conn, $orderId, $appliedAmount->toString(), $paymentMethod, $userId, $notes);
+        $paymentId = $this->insertPaymentRecord(
+            $conn,
+            $orderId,
+            $appliedAmount->toString(),
+            $paymentMethod,
+            $userId,
+            $notes,
+            [
+                'tendered_amount' => $amountPaid->toString(),
+                'change_due' => $changeDue->toString(),
+                'require_cash_fact_columns' => !empty($tenderFacts['require_cash_fact_columns']),
+            ]
+        );
 
         if ($isPaid) {
             $this->setTableFreeIfNoActiveOrder($conn, $tableId);
@@ -438,7 +474,9 @@ class TableOrderService
             'order_id' => (int) $orderId,
             'table_id' => (int) $tableId,
             'paid_amount' => $newPaid->toString(),
+            'tendered_amount' => $amountPaid->toString(),
             'applied_amount' => $appliedAmount->toString(),
+            'change_due' => $changeDue->toString(),
             'payment_id' => $paymentId,
             'remaining_amount' => $remaining->toString(),
             'payment_status' => $paymentStatus,
@@ -448,23 +486,62 @@ class TableOrderService
         ];
     }
 
-    private function insertPaymentRecord(mysqli $conn, $orderId, $amount, $paymentMethod, $userId, $notes): ?int
+    private function insertPaymentRecord(
+        mysqli $conn,
+        $orderId,
+        $amount,
+        $paymentMethod,
+        $userId,
+        $notes,
+        array $tenderFacts = []
+    ): ?int
     {
         if (!$this->tableExists($conn, 'order_payments')) {
+            if (!empty($tenderFacts['require_cash_fact_columns'])) {
+                throw new RuntimeException('PAYMENT_RECORD_SCHEMA_REQUIRED');
+            }
             return null;
         }
 
-        $this->execute($conn, "
-            INSERT INTO order_payments (
-                order_id, amount, payment_method, reference_no, created_by, created_at
-            ) VALUES (?, ?, ?, ?, ?, NOW())
-        ", [
-            (int) $orderId,
-            Money::from($amount)->toString(),
-            trim((string) $paymentMethod),
-            trim((string) $notes),
-            (int) $userId,
-        ]);
+        $appliedAmount = Money::from($amount)->toString();
+        $tenderedAmount = Money::from((string) ($tenderFacts['tendered_amount'] ?? $appliedAmount))->toString();
+        $changeDue = Money::from((string) ($tenderFacts['change_due'] ?? '0'))->toString();
+        $hasCashFacts = $this->columnExists($conn, 'order_payments', 'tendered_amount')
+            && $this->columnExists($conn, 'order_payments', 'applied_amount')
+            && $this->columnExists($conn, 'order_payments', 'change_due');
+        if (!empty($tenderFacts['require_cash_fact_columns']) && !$hasCashFacts) {
+            throw new RuntimeException('PAYMENT_CASH_FACT_SCHEMA_REQUIRED');
+        }
+
+        if ($hasCashFacts) {
+            $this->execute($conn, "
+                INSERT INTO order_payments (
+                    order_id, amount, tendered_amount, applied_amount, change_due,
+                    payment_method, reference_no, created_by, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())
+            ", [
+                (int) $orderId,
+                $appliedAmount,
+                $tenderedAmount,
+                $appliedAmount,
+                $changeDue,
+                trim((string) $paymentMethod),
+                trim((string) $notes),
+                (int) $userId,
+            ]);
+        } else {
+            $this->execute($conn, "
+                INSERT INTO order_payments (
+                    order_id, amount, payment_method, reference_no, created_by, created_at
+                ) VALUES (?, ?, ?, ?, ?, NOW())
+            ", [
+                (int) $orderId,
+                $appliedAmount,
+                trim((string) $paymentMethod),
+                trim((string) $notes),
+                (int) $userId,
+            ]);
+        }
         $paymentId = (int) $conn->insert_id;
         $this->assignUuidIfPresent($conn, 'order_payments', $paymentId);
 

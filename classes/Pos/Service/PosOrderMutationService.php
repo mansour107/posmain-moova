@@ -43,6 +43,7 @@ require_once __DIR__ . '/../../Accounting/PaymentReconciliationService.php';
 require_once __DIR__ . '/DrawerSessionService.php';
 require_once __DIR__ . '/PaymentMethodService.php';
 require_once __DIR__ . '/../../Financial/Money.php';
+require_once __DIR__ . '/../../Financial/FinancialMoneyInput.php';
 require_once __DIR__ . '/../../Financial/DecimalQuantity.php';
 require_once __DIR__ . '/../../Financial/UnitPrice.php';
 require_once __DIR__ . '/../../Financial/RoundingPolicy.php';
@@ -172,8 +173,18 @@ class PosOrderMutationService
 
     private function payTableOrderInsideTransaction(mysqli $conn, array $request, array $context): array
     {
+        $orderId = (int) ($request['order_id'] ?? $request['edit_id'] ?? 0);
+        if ($orderId > 0) {
+            $this->mutationVersionService()->lockAndAssert(
+                $conn,
+                $orderId,
+                $this->expectedMutationVersion($request),
+                true
+            );
+        }
+
         $result = $this->paymentService->payTableOrder($conn, $request, $context);
-        $orderId = (int) ($result['data']['order_id'] ?? 0);
+        $orderId = (int) ($result['data']['order_id'] ?? $orderId);
         if ($orderId > 0 && !empty($result['data']['fully_paid'])) {
             $lines = $this->loadRecipeOrderLineContexts($conn, $orderId, 'table', 'dine_in', $request, $context);
             $inventoryLines = $this->loadInventoryInvoiceBridgeLines($conn, $orderId);
@@ -192,6 +203,7 @@ class PosOrderMutationService
             $this->customerSideEffects()->afterOrderSaved($conn, $orderId, $request, 'table', [
                 'paid_amount' => $this->moneyFromBoundary($result['data']['paid_amount'] ?? '0')->toString(),
                 'payment_status' => (string) ($result['data']['payment_status'] ?? 'unpaid'),
+                'in_transaction' => true,
                 'config' => $context['config'] ?? null,
             ]);
             $this->recordOrderEvent($conn, $orderId, 'order.payment_recorded', $context['event_source'] ?? 'pos_table_payment', $context, [
@@ -201,7 +213,26 @@ class PosOrderMutationService
                 'remaining_amount' => $result['data']['remaining_amount'] ?? null,
                 'applied_amount' => $result['data']['applied_amount'] ?? null,
             ]);
-            $result['data']['mutation_version'] = $this->mutationVersionService()->bumpAndGet($conn, $orderId);
+            $result['data']['mutation_version'] = $this->mutationVersionService()->bumpAndGet(
+                $conn,
+                $orderId,
+                $this->expectedMutationVersion($request)
+            );
+            if ($this->shouldRecordOutbox($context)) {
+                $syncOutbox = new SyncOutboxEventService();
+                $syncOutbox->recordRequiredOrderSnapshot($conn, $orderId, [
+                    'event_type' => 'order.payment_recorded',
+                    'source_system' => 'pos_table_payment',
+                ]);
+                $paymentTableId = (int) ($result['data']['table_id'] ?? $request['table_id'] ?? 0);
+                if ($paymentTableId > 0) {
+                    $syncOutbox->recordRequiredTableSnapshot($conn, $paymentTableId, [
+                        'event_type' => 'table.updated',
+                        'source_system' => 'pos_table_payment',
+                        'active_order_id' => !empty($result['data']['fully_paid']) ? null : $orderId,
+                    ]);
+                }
+            }
         }
 
         return $result;
@@ -209,8 +240,60 @@ class PosOrderMutationService
 
     public function cancelTableOrder(mysqli $conn, array $request, array $context = []): array
     {
+        if (!empty($context['skip_idempotency'])) {
+            return $this->cancelTableOrderInsideTransaction($conn, $request, $context);
+        }
+
+        $ownsTransaction = empty($context['in_transaction']) && empty($context['transaction_started']);
+        if ($ownsTransaction) {
+            $conn->begin_transaction();
+        }
+
+        try {
+            $idempotency = $this->beginIdempotency($conn, self::SCOPE_ORDER_CANCEL, $request, $context);
+            if ($idempotency['status'] === 'completed') {
+                if ($ownsTransaction) {
+                    $conn->commit();
+                }
+                $response = is_array($idempotency['response'] ?? null) ? $idempotency['response'] : [];
+                $response['idempotency_replayed'] = true;
+
+                return $response;
+            }
+
+            $result = $this->cancelTableOrderInsideTransaction($conn, $request, $context);
+            $this->idempotencyService->complete(
+                $conn,
+                self::SCOPE_ORDER_CANCEL,
+                $idempotency['key'],
+                $idempotency['hash'],
+                $result
+            );
+            if ($ownsTransaction) {
+                $conn->commit();
+            }
+
+            return $result;
+        } catch (Throwable $exception) {
+            if ($ownsTransaction) {
+                $conn->rollback();
+            }
+            throw $exception;
+        }
+    }
+
+    private function cancelTableOrderInsideTransaction(mysqli $conn, array $request, array $context): array
+    {
         $orderId = (int) ($request['order_id'] ?? 0);
         $tableId = (int) ($request['table_id'] ?? 0);
+        if ($orderId > 0) {
+            $this->mutationVersionService()->lockAndAssert(
+                $conn,
+                $orderId,
+                $this->expectedMutationVersion($request),
+                true
+            );
+        }
         $order = ($orderId > 0 && $tableId > 0)
             ? $this->tableOrderService->findActiveOrderByTableAndOrderId($conn, $tableId, $orderId, true)
             : null;
@@ -248,6 +331,26 @@ class PosOrderMutationService
                 'reason' => $request['reason'] ?? $request['cancellation_reason'] ?? '',
                 'manager_approval_id' => $request['manager_approval_id'] ?? null,
             ]);
+            $result['data']['mutation_version'] = $this->mutationVersionService()->bumpAndGet(
+                $conn,
+                $orderId,
+                $this->expectedMutationVersion($request)
+            );
+            if ($this->shouldRecordOutbox($context)) {
+                $syncOutbox = new SyncOutboxEventService();
+                $syncOutbox->recordRequiredOrderSnapshot($conn, $orderId, [
+                    'event_type' => 'order.cancelled',
+                    'source_system' => 'pos_order_cancel',
+                ]);
+                $cancelledTableId = (int) ($result['data']['table_id'] ?? $tableId);
+                if ($cancelledTableId > 0) {
+                    $syncOutbox->recordRequiredTableSnapshot($conn, $cancelledTableId, [
+                        'event_type' => 'table.updated',
+                        'source_system' => 'pos_order_cancel',
+                        'active_order_id' => null,
+                    ]);
+                }
+            }
         }
 
         return $result;
@@ -255,21 +358,85 @@ class PosOrderMutationService
 
     public function cancelDeliveryOrder(mysqli $conn, array $request, array $context = []): array
     {
+        if (!empty($context['skip_idempotency'])) {
+            return $this->cancelDeliveryOrderWithTransaction($conn, $request, $context);
+        }
+
         $ownsTransaction = empty($context['in_transaction']) && empty($context['transaction_started']);
         if ($ownsTransaction) {
             $conn->begin_transaction();
         }
 
         try {
-            $orderId = $this->requiredPositiveInt($request, 'order_id', 'ORDER_ID_REQUIRED');
-            $userId = $this->contextUserId($request, $context);
-            $reason = trim((string) ($request['reason'] ?? $request['cancellation_reason'] ?? ''));
-            if ($reason === '') {
-                $reason = 'delivery_cancelled';
-            }
-            $force = !empty($request['force']) || !empty($context['force']);
+            $idempotency = $this->beginIdempotency($conn, self::SCOPE_DELIVERY_CANCEL, $request, $context);
+            if ($idempotency['status'] === 'completed') {
+                if ($ownsTransaction) {
+                    $conn->commit();
+                }
+                $response = is_array($idempotency['response'] ?? null) ? $idempotency['response'] : [];
+                $response['idempotency_replayed'] = true;
 
-            $order = $this->tableOrderService->queryOne($conn, "
+                return $response;
+            }
+
+            $result = $this->cancelDeliveryOrderInsideTransaction($conn, $request, $context);
+            $this->idempotencyService->complete(
+                $conn,
+                self::SCOPE_DELIVERY_CANCEL,
+                $idempotency['key'],
+                $idempotency['hash'],
+                $result
+            );
+            if ($ownsTransaction) {
+                $conn->commit();
+            }
+
+            return $result;
+        } catch (Throwable $exception) {
+            if ($ownsTransaction) {
+                $conn->rollback();
+            }
+            throw $exception;
+        }
+    }
+
+    private function cancelDeliveryOrderWithTransaction(mysqli $conn, array $request, array $context): array
+    {
+        $ownsTransaction = empty($context['in_transaction']) && empty($context['transaction_started']);
+        if ($ownsTransaction) {
+            $conn->begin_transaction();
+        }
+        try {
+            $result = $this->cancelDeliveryOrderInsideTransaction($conn, $request, $context);
+            if ($ownsTransaction) {
+                $conn->commit();
+            }
+            return $result;
+        } catch (Throwable $exception) {
+            if ($ownsTransaction) {
+                $conn->rollback();
+            }
+            throw $exception;
+        }
+    }
+
+    private function cancelDeliveryOrderInsideTransaction(mysqli $conn, array $request, array $context): array
+    {
+        $orderId = $this->requiredPositiveInt($request, 'order_id', 'ORDER_ID_REQUIRED');
+        $this->mutationVersionService()->lockAndAssert(
+            $conn,
+            $orderId,
+            $this->expectedMutationVersion($request),
+            true
+        );
+        $userId = $this->contextUserId($request, $context);
+        $reason = trim((string) ($request['reason'] ?? $request['cancellation_reason'] ?? ''));
+        if ($reason === '') {
+            $reason = 'delivery_cancelled';
+        }
+        $force = !empty($request['force']) || !empty($context['force']);
+
+        $order = $this->tableOrderService->queryOne($conn, "
                 SELECT id, pro_tybe, order_type, payment_status, invoice_status, order_status,
                        paid_amount, remaining_amount, isdeleted
                 FROM ot_head
@@ -278,125 +445,146 @@ class PosOrderMutationService
                 LIMIT 1
                 FOR UPDATE
             ", [$orderId]);
-            if (!$order || (int) ($order['isdeleted'] ?? 0) === 1) {
-                throw new RuntimeException('ORDER_NOT_FOUND');
-            }
-            if (strtolower(trim((string) ($order['order_type'] ?? ''))) !== 'delivery') {
-                throw new InvalidArgumentException('ORDER_NOT_DELIVERY');
-            }
-
-            $paymentStatus = strtolower(trim((string) ($order['payment_status'] ?? 'unpaid')));
-            if (in_array($paymentStatus, ['refunded', 'voided'], true)) {
-                throw new RuntimeException('ORDER_ALREADY_CANCELLED');
-            }
-            if ($paymentStatus === 'paid' || $this->moneyIsPositive($order['paid_amount'] ?? '0')) {
-                throw new RuntimeException('DELIVERY_CANCEL_PAID_NOT_ALLOWED');
-            }
-
-            $fulfillmentService = new OrderFulfillmentService();
-            $fulfillment = $fulfillmentService->fulfillmentForOrder($conn, $orderId);
-            if (!$fulfillment) {
-                throw new RuntimeException('FULFILLMENT_NOT_FOUND');
-            }
-
-            $currentStatus = (string) ($fulfillment['delivery_status'] ?? 'pending');
-            if ($currentStatus !== 'cancelled') {
-                $allowed = ['pending', 'accepted', 'preparing', 'ready'];
-                if (!in_array($currentStatus, $allowed, true) && !$force) {
-                    throw new InvalidArgumentException('DELIVERY_STATUS_TRANSITION_NOT_ALLOWED');
-                }
-            }
-
-            $channel = strtolower(trim((string) ($fulfillment['order_channel'] ?? '')));
-            $externalOrderId = trim((string) ($fulfillment['external_order_id'] ?? ''));
-            if ($channel === 'moova_delivery' && $externalOrderId !== '') {
-                $scope = [
-                    'tenant' => (int) ($context['tenant'] ?? $request['tenant'] ?? 0),
-                    'branch' => (int) ($context['branch'] ?? $request['branch'] ?? 0),
-                    'user_id' => $userId,
-                ];
-                (new PosOrderService())->cancelMoovaDeliveryOrder($conn, $scope, $orderId, $externalOrderId);
-                $this->finalizeDeliveryOrderVoid($conn, $orderId, $userId, $reason);
-            } else {
-                $recipeLines = $this->loadRecipeOrderLineContexts($conn, $orderId, 'pos', 'delivery', $request, $context);
-                $this->recordRecipeOrderLinesCancelled($conn, $recipeLines, 'delivery_cancelled');
-                $inventoryLines = $this->loadInventoryInvoiceBridgeLines($conn, $orderId);
-                if ($inventoryLines) {
-                    $this->releaseInventoryInvoiceBridgeReservations(
-                        $conn,
-                        $orderId,
-                        $inventoryLines,
-                        'delivery_cancelled',
-                        'pos',
-                        'delivery',
-                        $request,
-                        $context
-                    );
-                    $this->recordInventoryInvoiceBridgeReversalLines(
-                        $conn,
-                        $orderId,
-                        $inventoryLines,
-                        'delivery_cancelled',
-                        'pos',
-                        'delivery',
-                        $request,
-                        $context
-                    );
-                }
-                $this->voidDeliveryOrderHeaderAndLines($conn, $orderId, $userId, $reason);
-            }
-
-            $fulfillmentResult = $fulfillmentService->upsertForOrder($conn, $orderId, [
-                'order_channel' => $fulfillment['order_channel'],
-                'fulfillment_type' => $fulfillment['fulfillment_type'],
-                'external_provider' => $fulfillment['external_provider'],
-                'external_order_id' => $fulfillment['external_order_id'],
-                'customer_name' => $fulfillment['customer_name'],
-                'customer_phone' => $fulfillment['customer_phone'],
-                'customer_address' => $fulfillment['customer_address'],
-                'pos_customer_id' => $fulfillment['pos_customer_id'] ?? null,
-                'delivery_zone' => $fulfillment['delivery_zone'],
-                'delivery_fee' => $fulfillment['delivery_fee'],
-                'delivery_status' => 'cancelled',
-                'promised_at' => $fulfillment['promised_at'],
-                'metadata_json' => is_array($fulfillment['metadata'] ?? null) ? $fulfillment['metadata'] : [],
-            ], ['require_table' => false]);
-
-            $this->recordOrderEvent($conn, $orderId, 'order.cancelled', $context['event_source'] ?? 'delivery_dispatch', $context, [
-                'order_type' => 'delivery',
-                'delivery_status_before' => $currentStatus,
-                'delivery_status_after' => 'cancelled',
-                'reason' => $reason,
-                'order_channel' => $channel,
-            ]);
-            (new KdsTicketService())->syncForOrder($conn, $orderId, 'cancelled', $userId, [
-                'reason' => $reason,
-                'manager_approval_id' => $request['manager_approval_id'] ?? null,
-            ]);
-
-            if ($ownsTransaction) {
-                $conn->commit();
-            }
-
-            return [
-                'success' => true,
-                'code' => 'OK',
-                'message' => 'DELIVERY_ORDER_CANCELLED',
-                'data' => [
-                    'order_id' => $orderId,
-                    'fulfillment' => $fulfillmentResult,
-                    'payment_status' => 'voided',
-                    'invoice_status' => 'cancelled',
-                    'order_status' => 'cancelled',
-                ],
-            ];
-        } catch (Throwable $exception) {
-            if ($ownsTransaction) {
-                $conn->rollback();
-            }
-
-            throw $exception;
+        if (!$order || (int) ($order['isdeleted'] ?? 0) === 1) {
+            throw new RuntimeException('ORDER_NOT_FOUND');
         }
+        if (strtolower(trim((string) ($order['order_type'] ?? ''))) !== 'delivery') {
+            throw new InvalidArgumentException('ORDER_NOT_DELIVERY');
+        }
+
+        $paymentStatus = strtolower(trim((string) ($order['payment_status'] ?? 'unpaid')));
+        if (in_array($paymentStatus, ['refunded', 'voided'], true)) {
+            throw new RuntimeException('ORDER_ALREADY_CANCELLED');
+        }
+        if ($paymentStatus === 'paid' || $this->moneyIsPositive($order['paid_amount'] ?? '0')) {
+            throw new RuntimeException('DELIVERY_CANCEL_PAID_NOT_ALLOWED');
+        }
+
+        // Continue with the remainder of the previous cancelDeliveryOrder body via extracted logic.
+        return $this->finishCancelDeliveryOrder($conn, $request, $context, $order, $orderId, $userId, $reason, $force);
+    }
+
+    /**
+     * @param array<string,mixed> $order
+     * @param array<string,mixed> $request
+     * @param array<string,mixed> $context
+     * @return array<string,mixed>
+     */
+    private function finishCancelDeliveryOrder(
+        mysqli $conn,
+        array $request,
+        array $context,
+        array $order,
+        int $orderId,
+        int $userId,
+        string $reason,
+        bool $force
+    ): array {
+        $fulfillmentService = new OrderFulfillmentService();
+        $fulfillment = $fulfillmentService->fulfillmentForOrder($conn, $orderId);
+        if (!$fulfillment) {
+            throw new RuntimeException('FULFILLMENT_NOT_FOUND');
+        }
+
+        $currentStatus = (string) ($fulfillment['delivery_status'] ?? 'pending');
+        if ($currentStatus !== 'cancelled') {
+            $allowed = ['pending', 'accepted', 'preparing', 'ready'];
+            if (!in_array($currentStatus, $allowed, true) && !$force) {
+                throw new InvalidArgumentException('DELIVERY_STATUS_TRANSITION_NOT_ALLOWED');
+            }
+        }
+
+        $channel = strtolower(trim((string) ($fulfillment['order_channel'] ?? '')));
+        $externalOrderId = trim((string) ($fulfillment['external_order_id'] ?? ''));
+        if ($channel === 'moova_delivery' && $externalOrderId !== '') {
+            $scope = [
+                'tenant' => (int) ($context['tenant'] ?? $request['tenant'] ?? 0),
+                'branch' => (int) ($context['branch'] ?? $request['branch'] ?? 0),
+                'user_id' => $userId,
+            ];
+            (new PosOrderService())->cancelMoovaDeliveryOrder($conn, $scope, $orderId, $externalOrderId);
+            $this->finalizeDeliveryOrderVoid($conn, $orderId, $userId, $reason);
+        } else {
+            $recipeLines = $this->loadRecipeOrderLineContexts($conn, $orderId, 'pos', 'delivery', $request, $context);
+            $this->recordRecipeOrderLinesCancelled($conn, $recipeLines, 'delivery_cancelled');
+            $inventoryLines = $this->loadInventoryInvoiceBridgeLines($conn, $orderId);
+            if ($inventoryLines) {
+                $this->releaseInventoryInvoiceBridgeReservations(
+                    $conn,
+                    $orderId,
+                    $inventoryLines,
+                    'delivery_cancelled',
+                    'pos',
+                    'delivery',
+                    $request,
+                    $context
+                );
+                $this->recordInventoryInvoiceBridgeReversalLines(
+                    $conn,
+                    $orderId,
+                    $inventoryLines,
+                    'delivery_cancelled',
+                    'pos',
+                    'delivery',
+                    $request,
+                    $context
+                );
+            }
+            $this->voidDeliveryOrderHeaderAndLines($conn, $orderId, $userId, $reason);
+        }
+
+        $fulfillmentResult = $fulfillmentService->upsertForOrder($conn, $orderId, [
+            'order_channel' => $fulfillment['order_channel'],
+            'fulfillment_type' => $fulfillment['fulfillment_type'],
+            'external_provider' => $fulfillment['external_provider'],
+            'external_order_id' => $fulfillment['external_order_id'],
+            'customer_name' => $fulfillment['customer_name'],
+            'customer_phone' => $fulfillment['customer_phone'],
+            'customer_address' => $fulfillment['customer_address'],
+            'pos_customer_id' => $fulfillment['pos_customer_id'] ?? null,
+            'delivery_zone' => $fulfillment['delivery_zone'],
+            'delivery_fee' => $fulfillment['delivery_fee'],
+            'delivery_status' => 'cancelled',
+            'promised_at' => $fulfillment['promised_at'],
+            'metadata_json' => is_array($fulfillment['metadata'] ?? null) ? $fulfillment['metadata'] : [],
+        ], ['require_table' => false]);
+
+        $this->recordOrderEvent($conn, $orderId, 'order.cancelled', $context['event_source'] ?? 'delivery_dispatch', $context, [
+            'order_type' => 'delivery',
+            'delivery_status_before' => $currentStatus,
+            'delivery_status_after' => 'cancelled',
+            'reason' => $reason,
+            'order_channel' => $channel,
+        ]);
+        (new KdsTicketService())->syncForOrder($conn, $orderId, 'cancelled', $userId, [
+            'reason' => $reason,
+            'manager_approval_id' => $request['manager_approval_id'] ?? null,
+        ]);
+        $mutationVersion = $this->mutationVersionService()->bumpAndGet(
+            $conn,
+            $orderId,
+            $this->expectedMutationVersion($request)
+        );
+        if ($this->shouldRecordOutbox($context)) {
+            (new SyncOutboxEventService())->recordRequiredOrderSnapshot($conn, $orderId, [
+                'event_type' => 'order.cancelled',
+                'source_system' => 'pos_delivery_cancel',
+            ]);
+        }
+
+        return [
+            'success' => true,
+            'code' => 'OK',
+            'message' => 'DELIVERY_ORDER_CANCELLED',
+            'data' => [
+                'order_id' => $orderId,
+                'fulfillment' => $fulfillmentResult,
+                'payment_status' => 'voided',
+                'invoice_status' => 'cancelled',
+                'order_status' => 'cancelled',
+                'mutation_version' => $mutationVersion,
+            ],
+        ];
     }
 
     public function resolveDeliveryPostedTotals(mysqli $conn, array $request): array
@@ -500,6 +688,13 @@ class PosOrderMutationService
                 throw new RuntimeException('ORDER_NOT_PAID');
             }
 
+            $this->mutationVersionService()->lockAndAssert(
+                $conn,
+                $orderId,
+                $this->expectedMutationVersion($request),
+                true
+            );
+
             $userId = $this->contextUserId($request, $context);
             $scope = $this->orderAccountingScope($conn, $orderId);
             $tenant = max(0, (int) ($context['tenant'] ?? $context['pos_tenant'] ?? $request['tenant'] ?? $request['pos_tenant'] ?? $scope['tenant']));
@@ -509,7 +704,7 @@ class PosOrderMutationService
                 : null;
             $amount = $refundPreview !== null
                 ? $this->moneyFromBoundary($refundPreview['total_amount'])->toString()
-                : $this->moneyFromBoundary($order['paid_amount'] ?? $order['fat_net'] ?? '0')->toString();
+                : $this->moneyFromStored($order['paid_amount'] ?? $order['fat_net'] ?? '0')->toString();
             $limitKey = $action === 'void' ? 'pos.void.paid' : 'pos.refund.limit';
             $escalationKey = $action === 'void' ? 'pos.void.paid' : 'pos.refund';
             $approval = $this->managerApprovalService->requireApprovedIfNeeded(
@@ -682,7 +877,25 @@ class PosOrderMutationService
                 $this->managerApprovalService->consumeApproval($conn, (int) $approval['id'], $userId);
             }
 
-            $order['mutation_version'] = $this->mutationVersionService()->bumpAndGet($conn, $orderId);
+            $order['mutation_version'] = $this->mutationVersionService()->bumpAndGet(
+                $conn,
+                $orderId,
+                $this->expectedMutationVersion($request)
+            );
+            if ($this->shouldRecordOutbox($context)) {
+                $syncOutbox = new SyncOutboxEventService();
+                $syncOutbox->recordRequiredOrderSnapshot($conn, $orderId, [
+                    'event_type' => $eventType,
+                    'source_system' => 'pos_paid_reversal',
+                ]);
+                if ($isFull && $tableId > 0) {
+                    $syncOutbox->recordRequiredTableSnapshot($conn, $tableId, [
+                        'event_type' => 'table.updated',
+                        'source_system' => 'pos_paid_reversal',
+                        'active_order_id' => null,
+                    ]);
+                }
+            }
             if ($ownsTransaction) {
                 $conn->commit();
             }
@@ -1093,7 +1306,7 @@ class PosOrderMutationService
         if (!array_key_exists('record_outbox', $context) || $context['record_outbox']) {
             try {
                 $syncOutbox = new SyncOutboxEventService();
-                $syncOutbox->recordTableSnapshot($conn, $tableId, [
+                $syncOutbox->recordRequiredTableSnapshot($conn, $tableId, [
                     'event_type' => 'table.updated',
                     'source_system' => 'pos_cashier_empty_table',
                     'active_order_id' => null,
@@ -1319,11 +1532,15 @@ class PosOrderMutationService
             'config' => $context['config'] ?? null,
         ]);
 
-        $mutationVersion = $this->mutationVersionService()->bumpAndGet($conn, $orderId);
+        $mutationVersion = $this->mutationVersionService()->bumpAndGet(
+            $conn,
+            $orderId,
+            $this->expectedMutationVersion($request)
+        );
         if (!array_key_exists('record_outbox', $context) || $context['record_outbox']) {
             try {
                 $syncOutbox = new SyncOutboxEventService();
-                $syncOutbox->recordOrderSnapshot($conn, $orderId, [
+                $syncOutbox->recordRequiredOrderSnapshot($conn, $orderId, [
                     'event_type' => 'order.updated',
                     'source_system' => $orderType === 'delivery' ? 'pos_cashier_delivery' : 'pos_cashier',
                 ]);
@@ -1531,7 +1748,20 @@ class PosOrderMutationService
         if ($this->moneyIsPositive($payment['bank'])) {
             $receipts[] = $this->insertTakeawayReceipt($conn, $orderId, $proId, $info, $date, $empId, $paymentBankId, $customerId, $payment['bank'], 'صرافة', $userId);
         }
-        $this->recordOrderCashCollected($conn, $orderId, $payment['cash'], $request, $context, 'takeaway_cash_payment', $cashReceiptId);
+        $this->recordOrderCashCollected(
+            $conn,
+            $orderId,
+            $payment['cash'],
+            $request,
+            $context,
+            'takeaway_cash_payment',
+            $cashReceiptId,
+            [
+                'tendered_amount' => $payment['cash_tendered'] ?? $payment['tendered_amount'] ?? $payment['cash'],
+                'applied_amount' => $payment['cash'],
+                'change_due' => $payment['change_due'] ?? $payment['change'] ?? '0.00',
+            ]
+        );
         $this->recordOrderBankCollected($conn, $orderId, $payment['bank'], $request, $context);
 
         $lineResult = $this->inventoryMovementService->normalizeInvoiceLines($conn, InventoryMovementService::TYPE_POS, $items, [
@@ -1584,7 +1814,7 @@ class PosOrderMutationService
                 } elseif ($branchConfig) {
                     $options['config'] = ['branch' => $branchConfig];
                 }
-                $outboxResult = $syncOutbox->recordOrderSnapshot($conn, $orderId, $options);
+                $outboxResult = $syncOutbox->recordRequiredOrderSnapshot($conn, $orderId, $options);
             } catch (Throwable $exception) {
                 if (SideEffectPolicy::orderEventShouldRollback($exception)) {
                     throw $exception;
@@ -1617,6 +1847,11 @@ class PosOrderMutationService
                 'order_status' => $status['order_status'],
                 'paid_amount' => $status['paid_amount'],
                 'remaining_amount' => $status['remaining_amount'],
+                'tendered_amount' => $payment['tendered_amount'] ?? null,
+                'applied_amount' => $payment['applied_amount'] ?? $payment['applied'] ?? null,
+                'change_due' => $payment['change_due'] ?? $payment['change'] ?? null,
+                'cash_tendered' => $payment['cash_tendered'] ?? null,
+                'bank_tendered' => $payment['bank_tendered'] ?? null,
                 'profit' => $this->moneyFromBoundary($lineResult['totals']['profit'])->toString(),
                 'journal_head_id' => $salesJournal['journal_head_id'],
                 'journal_id' => $salesJournal['journal_id'],
@@ -1767,7 +2002,20 @@ class PosOrderMutationService
             if ($this->moneyIsPositive($payment['bank'])) {
                 $receipts[] = $this->insertTakeawayReceipt($conn, $orderId, $proId, $info, $date, $empId, $paymentBankId, $customerId, $payment['bank'], 'صرافة', $userId);
             }
-            $this->recordOrderCashCollected($conn, $orderId, $payment['cash'], $request, $context, 'delivery_cash_payment', $cashReceiptId);
+            $this->recordOrderCashCollected(
+                $conn,
+                $orderId,
+                $payment['cash'],
+                $request,
+                $context,
+                'delivery_cash_payment',
+                $cashReceiptId,
+                [
+                    'tendered_amount' => $payment['cash_tendered'] ?? $payment['tendered_amount'] ?? $payment['cash'],
+                    'applied_amount' => $payment['cash'],
+                    'change_due' => $payment['change_due'] ?? $payment['change'] ?? '0.00',
+                ]
+            );
             $this->recordOrderBankCollected($conn, $orderId, $payment['bank'], $request, $context);
         }
 
@@ -1862,7 +2110,7 @@ class PosOrderMutationService
                 } elseif ($branchConfig) {
                     $options['config'] = ['branch' => $branchConfig];
                 }
-                $outboxResult = $syncOutbox->recordOrderSnapshot($conn, $orderId, $options);
+                $outboxResult = $syncOutbox->recordRequiredOrderSnapshot($conn, $orderId, $options);
             } catch (Throwable $exception) {
                 if (SideEffectPolicy::orderEventShouldRollback($exception)) {
                     throw $exception;
@@ -2013,29 +2261,35 @@ class PosOrderMutationService
         $head = $this->moneyFromBoundary($headNet);
         $cashTendered = $this->moneyFromBoundary($paidCash);
         $bankTendered = $this->moneyFromBoundary($paidBank);
-        $totalPaid = $cashTendered->add($bankTendered);
-        $change = $totalPaid->compare($head) > 0 ? $totalPaid->subtract($head) : Money::zero();
-        $cash = $cashTendered;
-        $bank = $bankTendered;
 
-        if ($change->compare($cashTendered) <= 0) {
-            $cash = $cashTendered->subtract($change);
-        } else {
-            $remainingChange = $change->subtract($cashTendered);
-            $cash = Money::zero();
-            $bank = $remainingChange->compare($bankTendered) >= 0
-                ? Money::zero()
-                : $bankTendered->subtract($remainingChange);
+        // Only cash may exceed the outstanding balance.
+        if ($bankTendered->compare($head) > 0) {
+            throw new InvalidArgumentException('NON_CASH_TENDER_EXCEEDS_REMAINING');
         }
 
-        $collected = $cash->add($bank);
-        $applied = $collected->compare($head) > 0 ? $head : $collected;
+        $bankApplied = $bankTendered;
+        $remainingAfterBank = $head->subtract($bankApplied);
+        if ($cashTendered->compare($remainingAfterBank) > 0) {
+            $cashApplied = $remainingAfterBank;
+            $change = $cashTendered->subtract($remainingAfterBank);
+        } else {
+            $cashApplied = $cashTendered;
+            $change = Money::zero();
+        }
+
+        $applied = $cashApplied->add($bankApplied);
+        $tendered = $cashTendered->add($bankTendered);
 
         return [
-            'cash' => $cash->toString(),
-            'bank' => $bank->toString(),
+            'cash' => $cashApplied->toString(),
+            'bank' => $bankApplied->toString(),
+            'cash_tendered' => $cashTendered->toString(),
+            'bank_tendered' => $bankTendered->toString(),
+            'tendered_amount' => $tendered->toString(),
             'applied' => $applied->toString(),
+            'applied_amount' => $applied->toString(),
             'change' => $change->toString(),
+            'change_due' => $change->toString(),
         ];
     }
 
@@ -2388,7 +2642,7 @@ class PosOrderMutationService
             if (!$activeOrder) {
                 throw new RuntimeException('الطلب المحدد لا يخص هذه الطاولة أو لم يعد نشطاً');
             }
-            $existingPaid = $this->moneyFromBoundary($activeOrder['paid_amount'] ?? '0')->toString();
+            $existingPaid = $this->moneyFromStored($activeOrder['paid_amount'] ?? '0')->toString();
             if ($this->moneyFromBoundary($existingPaid)->compare($this->moneyFromBoundary($net)) > 0) {
                 throw new RuntimeException('ORDER_TOTAL_BELOW_PAID_AMOUNT_USE_REFUND');
             }
@@ -2480,7 +2734,7 @@ class PosOrderMutationService
             'invoice_status' => $status['invoice_status'],
             'paid_amount' => $status['paid_amount'],
             'remaining_amount' => $status['remaining_amount'],
-            'net' => $this->moneyFromBoundary($totals['net'])->toString(),
+            'net' => $this->moneyFromStored($totals['net'])->toString(),
         ]);
 
         $this->customerSideEffects()->afterOrderSaved($conn, $orderId, $request, 'table', [
@@ -2491,7 +2745,11 @@ class PosOrderMutationService
         ]);
 
         $mutationVersion = $isUpdate
-            ? $this->mutationVersionService()->bumpAndGet($conn, $orderId)
+            ? $this->mutationVersionService()->bumpAndGet(
+                $conn,
+                $orderId,
+                $this->expectedMutationVersion($request)
+            )
             : $this->mutationVersionService()->current($conn, $orderId);
 
         return $this->attachKitchenRevision($conn, $orderId, [
@@ -2520,13 +2778,19 @@ class PosOrderMutationService
         $tableId = (int) ($request['table_id'] ?? 0);
         $splitRequests = $this->normalizeSplitRequests($request['items'] ?? []);
         $selectedItems = array_keys($splitRequests);
-        $paidAmount = Money::fromLegacy($request['paid_amount'] ?? $request['paid'] ?? '0');
-        $paymentMethod = trim((string) ($request['payment_method'] ?? 'cash'));
+        $paidAmount = FinancialMoneyInput::money($request['paid_amount'] ?? $request['paid'] ?? '0');
         $userId = $this->contextUserId($request, $context);
 
         if ($originalOrderId <= 0 || $tableId <= 0 || !$selectedItems || !$paidAmount->isPositive()) {
             throw new InvalidArgumentException('بيانات السداد المقسم غير صحيحة');
         }
+
+        $this->mutationVersionService()->lockAndAssert(
+            $conn,
+            $originalOrderId,
+            $this->expectedMutationVersion($request),
+            true
+        );
 
         $this->tableOrderService->requireTable($conn, $tableId);
         $originalOrder = $this->tableOrderService->findActiveOrderByTableAndOrderId($conn, $tableId, $originalOrderId, true);
@@ -2540,26 +2804,48 @@ class PosOrderMutationService
         }
 
         $splitLines = $this->buildSplitLines($selectedItems, $splitRequests, $details);
-        $childTotal = Money::zero();
+        $childGross = Money::zero();
         foreach ($splitLines as $line) {
-            $childTotal = $childTotal->add(Money::fromLegacy($line['value']));
+            $childGross = $childGross->add(FinancialMoneyInput::money($line['value']));
         }
-        if (!$childTotal->isPositive()) {
+        if (!$childGross->isPositive()) {
             throw new RuntimeException('قيمة الأصناف المختارة غير صحيحة');
         }
-        if ($paidAmount->compare($childTotal) < 0) {
+        $originalGross = $this->lockedOrderGross($conn, $originalOrderId);
+        $headerGross = FinancialMoneyInput::money($originalOrder['fat_total'] ?? $originalOrder['pro_value'] ?? '0');
+        if ($originalGross->compare($headerGross) !== 0) {
+            throw new RuntimeException('ORDER_TOTAL_DIVERGENCE');
+        }
+        $originalDiscount = FinancialMoneyInput::money($originalOrder['fat_disc'] ?? '0');
+        if ($originalDiscount->compare($originalGross) > 0) {
+            throw new RuntimeException('ORDER_DISCOUNT_EXCEEDS_TOTAL');
+        }
+        $childDiscount = $this->allocateSplitHeaderDiscount($originalDiscount, $childGross, $originalGross);
+        $childNet = $childGross->subtract($childDiscount);
+        if (!$childNet->isPositive()) {
+            throw new RuntimeException('SPLIT_NET_NOT_POSITIVE');
+        }
+        if ($paidAmount->compare($childNet) < 0) {
             throw new RuntimeException('المبلغ المدفوع أقل من قيمة الأصناف المختارة');
         }
 
-        $tender = (new PaymentMethodService())->resolveTender(
-            $conn,
-            $paymentMethod,
-            $request['reference_no'] ?? $request['notes'] ?? null
-        );
-        $paymentMethod = (string) $tender['code'];
-
+        $splitTenders = $this->resolveSplitTenders($conn, $request, $childNet);
+        $paymentMethod = count($splitTenders) === 1
+            ? (string) $splitTenders[0]['code']
+            : 'mixed';
         $drawerContext = array_merge($request, $context, ['drawer_reason' => 'split_payment']);
-        $drawerSession = $this->paymentService->preflightCashDrawerForPayment($conn, $paymentMethod, $childTotal->toString(), $userId, $drawerContext);
+        foreach ($splitTenders as $index => $splitTender) {
+            if (($splitTender['type'] ?? '') !== 'cash') {
+                continue;
+            }
+            $splitTenders[$index]['drawer_session'] = $this->paymentService->preflightCashDrawerForPayment(
+                $conn,
+                (string) $splitTender['code'],
+                (string) $splitTender['applied_amount'],
+                $userId,
+                $drawerContext
+            );
+        }
         $originalInventoryLines = $this->loadInventoryInvoiceBridgeLines($conn, $originalOrderId);
         $legacyDirectStockAlreadyConsumed = $this->hasInventorySaleMovementsForOrder($conn, $originalOrderId);
         if (!$legacyDirectStockAlreadyConsumed) {
@@ -2574,16 +2860,69 @@ class PosOrderMutationService
                 $context
             );
         }
-        $newHeadId = $this->insertSplitChildOrder($conn, $originalOrder, $tableId, $originalOrderId, $childTotal->toString(), $paymentMethod, $userId);
+        $newHeadId = $this->insertSplitChildOrder(
+            $conn,
+            $originalOrder,
+            $tableId,
+            $originalOrderId,
+            $childGross->toString(),
+            $childDiscount->toString(),
+            $childNet->toString(),
+            $paymentMethod,
+            $userId
+        );
         foreach ($splitLines as $line) {
             $this->moveOrCopySplitLine($conn, $newHeadId, $line);
         }
 
         $recipeSplitAdjustments = $this->recipeSplitOriginalAdjustments($conn, $originalOrderId, $splitLines, 'table', 'dine_in', $request, $context);
+        $remainingDiscount = $originalDiscount->subtract($childDiscount);
+        $this->tableOrderService->execute(
+            $conn,
+            'UPDATE ot_head SET fat_disc = ? WHERE id = ?',
+            [$remainingDiscount->toString(), $originalOrderId]
+        );
         $remainingTotals = $this->tableOrderService->recalculateOrderTotals($conn, $originalOrderId);
         $activeTableOrderId = $this->refreshOriginalAfterSplit($conn, $originalOrder, $originalOrderId, $tableId, (string) $remainingTotals['net']);
-        $paymentId = $this->insertSplitPaymentRecordIfAvailable($conn, $newHeadId, $childTotal->toString(), $paymentMethod, $userId);
-        $this->paymentService->recordCashDrawerMovementForPayment($conn, $paymentMethod, $childTotal->toString(), $newHeadId, $userId, $drawerContext, $drawerSession, $paymentId);
+        $splitPaymentResults = [];
+        foreach ($splitTenders as $splitTender) {
+            $paymentId = $this->insertSplitPaymentRecordIfAvailable(
+                $conn,
+                $newHeadId,
+                (string) $splitTender['applied_amount'],
+                (string) $splitTender['code'],
+                $userId,
+                [
+                    'tendered_amount' => (string) $splitTender['tendered_amount'],
+                    'applied_amount' => (string) $splitTender['applied_amount'],
+                    'change_due' => (string) $splitTender['change_due'],
+                    'reference_no' => $splitTender['reference_no'] ?? null,
+                    'require_cash_fact_columns' => true,
+                ]
+            );
+            $drawerMovement = $this->paymentService->recordCashDrawerMovementForPayment(
+                $conn,
+                (string) $splitTender['code'],
+                (string) $splitTender['applied_amount'],
+                $newHeadId,
+                $userId,
+                $drawerContext,
+                $splitTender['drawer_session'] ?? null,
+                $paymentId
+            );
+            $splitPaymentResults[] = [
+                'payment_id' => $paymentId,
+                'payment_method_id' => (int) $splitTender['id'],
+                'payment_method' => (string) $splitTender['code'],
+                'payment_type' => (string) $splitTender['type'],
+                'account_id' => (int) $splitTender['account_id'],
+                'reference_no' => $splitTender['reference_no'] ?? null,
+                'tendered_amount' => (string) $splitTender['tendered_amount'],
+                'applied_amount' => (string) $splitTender['applied_amount'],
+                'change_due' => (string) $splitTender['change_due'],
+                'drawer_movement_id' => $drawerMovement ? (int) ($drawerMovement['id'] ?? 0) : null,
+            ];
+        }
         $splitRecipeLines = $this->loadRecipeOrderLineContexts($conn, $newHeadId, 'table', 'dine_in', $request, $context);
         $this->recordRecipeOrderSplit(
             $conn,
@@ -2623,13 +2962,15 @@ class PosOrderMutationService
         $this->recordOrderEvent($conn, $originalOrderId, 'order.updated', $context['event_source'] ?? 'pos_split_payment', $context, [
             'table_id' => $tableId,
             'split_child_order_id' => $newHeadId,
-            'remaining_total' => Money::fromLegacy($remainingTotals['net'])->toString(),
+            'remaining_total' => FinancialMoneyInput::money($remainingTotals['net'])->toString(),
             'active_order_id' => $activeTableOrderId,
         ]);
         $this->recordOrderEvent($conn, $newHeadId, 'order.split_paid', $context['event_source'] ?? 'pos_split_payment', $context, [
             'table_id' => $tableId,
             'original_order_id' => $originalOrderId,
-            'paid_amount' => $childTotal->toString(),
+            'gross_amount' => $childGross->toString(),
+            'discount_amount' => $childDiscount->toString(),
+            'paid_amount' => $childNet->toString(),
             'payment_method' => $paymentMethod,
         ]);
 
@@ -2639,14 +2980,34 @@ class PosOrderMutationService
             $crmRequest['pos_customer_id'] = (int) $parentFulfillment['pos_customer_id'];
         }
         $this->customerSideEffects()->afterOrderSaved($conn, $newHeadId, $crmRequest, 'table', [
-            'paid_amount' => $childTotal->toString(),
+            'paid_amount' => $childNet->toString(),
             'payment_status' => 'paid',
             'in_transaction' => true,
             'config' => $context['config'] ?? null,
         ]);
 
-        $originalMutationVersion = $this->mutationVersionService()->bumpAndGet($conn, $originalOrderId);
+        $originalMutationVersion = $this->mutationVersionService()->bumpAndGet(
+            $conn,
+            $originalOrderId,
+            $this->expectedMutationVersion($request)
+        );
         $childMutationVersion = $this->mutationVersionService()->current($conn, $newHeadId);
+        if ($this->shouldRecordOutbox($context)) {
+            $syncOutbox = new SyncOutboxEventService();
+            $syncOutbox->recordRequiredOrderSnapshot($conn, $originalOrderId, [
+                'event_type' => 'order.updated',
+                'source_system' => 'pos_split_payment',
+            ]);
+            $syncOutbox->recordRequiredOrderSnapshot($conn, $newHeadId, [
+                'event_type' => 'order.split_paid',
+                'source_system' => 'pos_split_payment',
+            ]);
+            $syncOutbox->recordRequiredTableSnapshot($conn, $tableId, [
+                'event_type' => 'table.updated',
+                'source_system' => 'pos_split_payment',
+                'active_order_id' => $activeTableOrderId,
+            ]);
+        }
 
         return [
             'success' => true,
@@ -2658,13 +3019,111 @@ class PosOrderMutationService
                 'original_order_id' => $originalOrderId,
                 'table_id' => $tableId,
                 'split_group_id' => $this->splitGroupIdForOrder($conn, $newHeadId),
-                'remaining_total' => Money::fromLegacy($remainingTotals['net'])->toString(),
+                'remaining_total' => FinancialMoneyInput::money($remainingTotals['net'])->toString(),
                 'active_order_id' => $activeTableOrderId,
-                'paid_amount' => $childTotal->toString(),
+                'gross_amount' => $childGross->toString(),
+                'discount_amount' => $childDiscount->toString(),
+                'paid_amount' => $childNet->toString(),
+                'tendered_amount' => $paidAmount->toString(),
+                'change_due' => $this->sumPaymentFact($splitPaymentResults, 'change_due'),
+                'payments' => $splitPaymentResults,
                 'original_mutation_version' => $originalMutationVersion,
                 'mutation_version' => $childMutationVersion,
             ],
         ];
+    }
+
+    private function resolveSplitTenders(mysqli $conn, array $request, Money $childTotal): array
+    {
+        $rawTenders = $request['tenders'] ?? null;
+        if (!is_array($rawTenders) || $rawTenders === []) {
+            $rawTenders = [[
+                'payment_method' => $request['payment_method'] ?? 'cash',
+                'amount' => $request['paid_amount'] ?? $request['paid'] ?? '0',
+                'reference_no' => $request['reference_no'] ?? $request['notes'] ?? null,
+            ]];
+        }
+        if (count($rawTenders) > 8) {
+            throw new InvalidArgumentException('TOO_MANY_TENDERS');
+        }
+
+        $paymentMethodService = new PaymentMethodService();
+        $resolved = [];
+        $declaredTotal = Money::zero();
+        foreach ($rawTenders as $index => $rawTender) {
+            if (!is_array($rawTender)) {
+                throw new InvalidArgumentException('PAYMENT_TENDER_INVALID');
+            }
+            $amount = FinancialMoneyInput::money($rawTender['amount'] ?? $rawTender['paid'] ?? '0');
+            if (!$amount->isPositive()) {
+                throw new InvalidArgumentException('PAYMENT_AMOUNT_INVALID');
+            }
+            $tender = $paymentMethodService->resolveTender(
+                $conn,
+                $rawTender['payment_method_id']
+                    ?? $rawTender['payment_method']
+                    ?? $rawTender['method']
+                    ?? '',
+                $rawTender['reference_no']
+                    ?? $rawTender['reference']
+                    ?? $request['reference_no']
+                    ?? $request['notes']
+                    ?? null
+            );
+            $tender['tendered_amount'] = $amount->toString();
+            $tender['input_index'] = (int) $index;
+            $resolved[] = $tender;
+            $declaredTotal = $declaredTotal->add($amount);
+        }
+
+        $requestTotal = FinancialMoneyInput::money($request['paid_amount'] ?? $request['paid'] ?? '0');
+        if ($declaredTotal->compare($requestTotal) !== 0) {
+            throw new InvalidArgumentException('TENDER_TOTAL_MISMATCH');
+        }
+
+        usort($resolved, static function (array $left, array $right): int {
+            $leftCash = ($left['type'] ?? '') === 'cash' ? 1 : 0;
+            $rightCash = ($right['type'] ?? '') === 'cash' ? 1 : 0;
+            if ($leftCash !== $rightCash) {
+                return $leftCash <=> $rightCash;
+            }
+
+            return ((int) ($left['input_index'] ?? 0)) <=> ((int) ($right['input_index'] ?? 0));
+        });
+
+        $remaining = $childTotal;
+        foreach ($resolved as $index => $tender) {
+            $tendered = Money::from((string) $tender['tendered_amount']);
+            $isCash = ($tender['type'] ?? '') === 'cash';
+            if (!$isCash && $tendered->compare($remaining) > 0) {
+                throw new InvalidArgumentException('NON_CASH_TENDER_EXCEEDS_REMAINING');
+            }
+            $applied = $tendered->compare($remaining) > 0 ? $remaining : $tendered;
+            if (!$applied->isPositive()) {
+                throw new InvalidArgumentException('TENDER_EXCEEDS_REMAINING');
+            }
+            $changeDue = $isCash && $tendered->compare($applied) > 0
+                ? $tendered->subtract($applied)
+                : Money::zero();
+            $remaining = $remaining->subtract($applied);
+            $resolved[$index]['applied_amount'] = $applied->toString();
+            $resolved[$index]['change_due'] = $changeDue->toString();
+        }
+        if ($remaining->isPositive()) {
+            throw new InvalidArgumentException('PAYMENT_AMOUNT_BELOW_SPLIT_TOTAL');
+        }
+
+        return $resolved;
+    }
+
+    private function sumPaymentFact(array $payments, string $field): string
+    {
+        $total = Money::zero();
+        foreach ($payments as $payment) {
+            $total = $total->add(Money::from((string) ($payment[$field] ?? '0')));
+        }
+
+        return $total->toString();
     }
 
     private function normalizeSplitRequests($items): array
@@ -2762,8 +3221,57 @@ class PosOrderMutationService
         return $splitLines;
     }
 
-    private function insertSplitChildOrder(mysqli $conn, array $originalOrder, int $tableId, int $originalOrderId, string $childTotal, string $paymentMethod, int $userId): int
+    private function lockedOrderGross(mysqli $conn, int $orderId): Money
     {
+        $row = $this->tableOrderService->queryOne($conn, "
+            SELECT COALESCE(SUM(det_value), 0) AS gross
+            FROM fat_details
+            WHERE fatid = ?
+              AND isdeleted = 0
+        ", [$orderId]);
+
+        return FinancialMoneyInput::money($row['gross'] ?? '0');
+    }
+
+    private function allocateSplitHeaderDiscount(Money $discount, Money $selectedGross, Money $orderGross): Money
+    {
+        if (!$discount->isPositive()) {
+            return Money::zero();
+        }
+        if (!$orderGross->isPositive() || $selectedGross->compare($orderGross) > 0) {
+            throw new RuntimeException('SPLIT_GROSS_INVALID');
+        }
+        if ($selectedGross->compare($orderGross) === 0) {
+            return $discount;
+        }
+
+        $working = bcdiv(
+            bcmul($discount->toString(), $selectedGross->toString(), 8),
+            $orderGross->toString(),
+            8
+        );
+        $allocated = Money::from(RoundingPolicy::halfUp($working));
+        if ($allocated->compare($discount) > 0) {
+            $allocated = $discount;
+        }
+        if ($allocated->compare($selectedGross) > 0) {
+            $allocated = $selectedGross;
+        }
+
+        return $allocated;
+    }
+
+    private function insertSplitChildOrder(
+        mysqli $conn,
+        array $originalOrder,
+        int $tableId,
+        int $originalOrderId,
+        string $childGross,
+        string $childDiscount,
+        string $childNet,
+        string $paymentMethod,
+        int $userId
+    ): int {
         $newInvoiceNum = $this->tableOrderService->nextPosProId($conn, TableOrderService::POS_TYPE, 0, 0);
         $splitGroupId = bin2hex(random_bytes(16));
         $date = date('Y-m-d');
@@ -2779,7 +3287,7 @@ class PosOrderMutationService
                 split_group_id, info, user
             ) VALUES (
                 ?, ?, ?, 'table', 9, ?, ?,
-                ?, ?, ?, ?, ?, ?, ?, 0,
+                ?, ?, ?, ?, ?, ?, ?, ?,
                 ?, ?, 0, 'paid', 'completed',
                 'completed', ?, NOW(), NOW(), ?,
                 ?, ?, ?
@@ -2795,10 +3303,11 @@ class PosOrderMutationService
             $emp2Id,
             (int) ($originalOrder['acc1'] ?? 0),
             (int) ($originalOrder['acc2'] ?? 0),
-            $childTotal,
-            $childTotal,
-            $childTotal,
-            $childTotal,
+            $childGross,
+            $childGross,
+            $childDiscount,
+            $childNet,
+            $childNet,
             $paymentMethod,
             $originalOrderId,
             $splitGroupId,
@@ -2862,7 +3371,7 @@ class PosOrderMutationService
               AND qty_out > qty_in
         ", [$originalOrderId]);
 
-        $remainingNet = Money::fromLegacy($remainingNet);
+        $remainingNet = FinancialMoneyInput::money($remainingNet);
         if ((int) ($remainingLines['c'] ?? 0) > 0 && $remainingNet->isPositive()) {
             $existingPaid = Money::from((string) ($originalOrder['paid_amount'] ?? '0'));
             $originalPaid = $existingPaid->compare($remainingNet) > 0 ? $remainingNet : $existingPaid;
@@ -2917,36 +3426,121 @@ class PosOrderMutationService
         return null;
     }
 
-    private function insertOrderPaymentRecordIfAvailable(mysqli $conn, int $orderId, $amount, string $paymentMethod, int $userId): ?int
-    {
-        $amount = Money::fromLegacy($amount, true)->toString();
+    private function insertOrderPaymentRecordIfAvailable(
+        mysqli $conn,
+        int $orderId,
+        $amount,
+        string $paymentMethod,
+        int $userId,
+        array $cashFacts = []
+    ): ?int {
+        $amount = FinancialMoneyInput::money($amount, true)->toString();
         if (Money::from($amount, true)->compare(Money::zero()) === 0) {
             return null;
         }
 
         $tableCheck = $conn->query("SHOW TABLES LIKE 'order_payments'");
-        if ($tableCheck && $tableCheck->num_rows > 0) {
+        if (!($tableCheck && $tableCheck->num_rows > 0)) {
+            if (!empty($cashFacts['require_cash_fact_columns'])) {
+                throw new RuntimeException('PAYMENT_RECORD_SCHEMA_REQUIRED');
+            }
+            return null;
+        }
+
+        $hasCashFacts = $this->orderPaymentCashFactColumnsAvailable($conn);
+        if (!empty($cashFacts['require_cash_fact_columns']) && !$hasCashFacts) {
+            throw new RuntimeException('PAYMENT_CASH_FACT_SCHEMA_REQUIRED');
+        }
+        $tendered = FinancialMoneyInput::moneyString(
+            $cashFacts['tendered_amount'] ?? (strncmp($amount, '-', 1) === 0 ? ltrim($amount, '-') : $amount),
+            true
+        );
+        $applied = FinancialMoneyInput::moneyString($cashFacts['applied_amount'] ?? $amount, true);
+        $changeDue = FinancialMoneyInput::moneyString($cashFacts['change_due'] ?? '0.00');
+        $referenceNo = trim((string) ($cashFacts['reference_no'] ?? ''));
+        $hasReferenceNo = $this->orderPaymentColumnAvailable($conn, 'reference_no');
+
+        if ($hasCashFacts && $hasReferenceNo) {
+            $this->tableOrderService->execute($conn, "
+                INSERT INTO order_payments (
+                    order_id, amount, tendered_amount, applied_amount, change_due,
+                    payment_method, reference_no, created_by, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())
+            ", [$orderId, $amount, $tendered, $applied, $changeDue, $paymentMethod, $referenceNo, $userId]);
+        } elseif ($hasCashFacts) {
+            $this->tableOrderService->execute($conn, "
+                INSERT INTO order_payments (
+                    order_id, amount, tendered_amount, applied_amount, change_due,
+                    payment_method, created_by, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, NOW())
+            ", [$orderId, $amount, $tendered, $applied, $changeDue, $paymentMethod, $userId]);
+        } elseif ($hasReferenceNo) {
+            $this->tableOrderService->execute($conn, "
+                INSERT INTO order_payments (
+                    order_id, amount, payment_method, reference_no, created_by, created_at
+                ) VALUES (?, ?, ?, ?, ?, NOW())
+            ", [$orderId, $amount, $paymentMethod, $referenceNo, $userId]);
+        } else {
             $this->tableOrderService->execute($conn, "
                 INSERT INTO order_payments (order_id, amount, payment_method, created_by, created_at)
                 VALUES (?, ?, ?, ?, NOW())
             ", [$orderId, $amount, $paymentMethod, $userId]);
-            $paymentId = (int) $conn->insert_id;
-            $this->tableOrderService->assignUuidIfPresent($conn, 'order_payments', $paymentId);
+        }
+        $paymentId = (int) $conn->insert_id;
+        $this->tableOrderService->assignUuidIfPresent($conn, 'order_payments', $paymentId);
 
-            return $paymentId;
+        return $paymentId;
+    }
+
+    private function orderPaymentCashFactColumnsAvailable(mysqli $conn): bool
+    {
+        foreach (['tendered_amount', 'applied_amount', 'change_due'] as $column) {
+            $result = $conn->query("SHOW COLUMNS FROM order_payments LIKE '" . $conn->real_escape_string($column) . "'");
+            if (!($result instanceof mysqli_result) || $result->num_rows < 1) {
+                return false;
+            }
         }
 
-        return null;
+        return true;
     }
 
-    private function insertSplitPaymentRecordIfAvailable(mysqli $conn, int $newHeadId, $childTotal, string $paymentMethod, int $userId): ?int
+    private function orderPaymentColumnAvailable(mysqli $conn, string $column): bool
     {
-        return $this->insertOrderPaymentRecordIfAvailable($conn, $newHeadId, $childTotal, $paymentMethod, $userId);
+        $result = $conn->query("SHOW COLUMNS FROM order_payments LIKE '" . $conn->real_escape_string($column) . "'");
+
+        return $result instanceof mysqli_result && $result->num_rows > 0;
     }
 
-    private function recordOrderCashCollected(mysqli $conn, int $orderId, $cashAmount, array $request, array $context, string $reason, ?int $refOtHeadId = null): void
+    private function insertSplitPaymentRecordIfAvailable(
+        mysqli $conn,
+        int $newHeadId,
+        $childTotal,
+        string $paymentMethod,
+        int $userId,
+        array $tenderFacts = []
+    ): ?int
     {
-        $cashAmount = Money::fromLegacy($cashAmount);
+        return $this->insertOrderPaymentRecordIfAvailable(
+            $conn,
+            $newHeadId,
+            $childTotal,
+            $paymentMethod,
+            $userId,
+            $tenderFacts
+        );
+    }
+
+    private function recordOrderCashCollected(
+        mysqli $conn,
+        int $orderId,
+        $cashAmount,
+        array $request,
+        array $context,
+        string $reason,
+        ?int $refOtHeadId = null,
+        array $cashFacts = []
+    ): void {
+        $cashAmount = FinancialMoneyInput::money($cashAmount);
         if (!$cashAmount->isPositive()) {
             return;
         }
@@ -2964,7 +3558,14 @@ class PosOrderMutationService
                 $drawerContext['branch'] = (int) ($_SESSION['pos_branch'] ?? 0);
             }
         }
-        $paymentId = $this->insertOrderPaymentRecordIfAvailable($conn, $orderId, $cashAmount->toString(), 'cash', $userId);
+        $paymentId = $this->insertOrderPaymentRecordIfAvailable(
+            $conn,
+            $orderId,
+            $cashAmount->toString(),
+            'cash',
+            $userId,
+            $cashFacts
+        );
         $this->paymentService->recordCashDrawerMovementForPayment(
             $conn,
             'cash',
@@ -2991,7 +3592,7 @@ class PosOrderMutationService
 
     private function recordOrderCashRefunded(mysqli $conn, int $orderId, $cashAmount, array $request, array $context, string $reason, ?int $refOtHeadId = null): void
     {
-        $cashAmount = Money::fromLegacy($cashAmount);
+        $cashAmount = FinancialMoneyInput::money($cashAmount);
         if (!$cashAmount->isPositive()) {
             return;
         }
@@ -3014,7 +3615,7 @@ class PosOrderMutationService
     private function recordOrderCashPaymentDelta(mysqli $conn, int $orderId, $targetCashAmount, array $request, array $context, string $reason): void
     {
         $netRecorded = Money::from($this->drawerSessionService->netCashRecordedForOrder($conn, $orderId), true);
-        $target = Money::fromLegacy($targetCashAmount);
+        $target = FinancialMoneyInput::money($targetCashAmount);
         $delta = $target->subtract($netRecorded);
         if ($delta->isPositive()) {
             $this->recordOrderCashCollected($conn, $orderId, $delta->toString(), $request, $context, $reason);
@@ -3026,8 +3627,8 @@ class PosOrderMutationService
 
     private function recordOrderBankPaymentDelta(mysqli $conn, int $orderId, $targetBankAmount, array $request, array $context): void
     {
-        $netRecorded = Money::fromLegacy($this->netPaymentRecordedForOrder($conn, $orderId, 'bank'));
-        $target = Money::fromLegacy($targetBankAmount);
+        $netRecorded = FinancialMoneyInput::money($this->netPaymentRecordedForOrder($conn, $orderId, 'bank'));
+        $target = FinancialMoneyInput::money($targetBankAmount);
         $delta = $target->subtract($netRecorded);
         if ($delta->compare(Money::zero()) === 0) {
             return;
@@ -3055,7 +3656,7 @@ class PosOrderMutationService
               AND payment_method = ?
         ", [$orderId, $paymentMethod]);
 
-        return $this->moneyFromBoundary($row['total_amount'] ?? '0', true)->toString();
+        return $this->moneyFromStored($row['total_amount'] ?? '0', true)->toString();
     }
 
     private function resolveRefundableCashForOrder(mysqli $conn, int $orderId, $paidAmount): string
@@ -3106,7 +3707,7 @@ class PosOrderMutationService
               AND acc1 IN ({$placeholders})
         ", $params);
 
-        return $this->moneyFromBoundary($row['total_amount'] ?? '0', true)->toString();
+        return $this->moneyFromStored($row['total_amount'] ?? '0', true)->toString();
     }
 
     private function splitGroupIdForOrder(mysqli $conn, int $orderId): ?string
@@ -3482,13 +4083,14 @@ class PosOrderMutationService
             return;
         }
 
+        $result = [];
         try {
             $result = $this->inventoryInvoiceBridge->recordInvoiceLines(
                 $conn,
                 InventoryInvoiceBridge::TYPE_POS,
                 $orderId,
                 $lines,
-                $this->inventoryInvoiceBridgeContext($request, $context, $channel, $orderType)
+                $this->inventoryInvoiceBridgeContext($orderId, $request, $context, $channel, $orderType)
             );
             if (!empty($result['errors'])) {
                 error_log('POS inventory invoice bridge shadow errors: ' . json_encode($result['errors'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
@@ -3498,7 +4100,7 @@ class PosOrderMutationService
             }
         } catch (Throwable $exception) {
             error_log('POS inventory invoice bridge shadow failed: ' . $exception->getMessage());
-            if (SideEffectPolicy::inventoryBridgeShouldRollback($exception)) {
+            if (SideEffectPolicy::inventoryBridgeShouldRollback($exception, $result)) {
                 throw $exception;
             }
         }
@@ -3586,8 +4188,9 @@ class PosOrderMutationService
             return;
         }
 
+        $result = [];
         try {
-            $bridgeContext = $this->inventoryInvoiceBridgeContext($request, $context, $channel, $orderType);
+            $bridgeContext = $this->inventoryInvoiceBridgeContext($orderId, $request, $context, $channel, $orderType);
             if ($action === 'reserve') {
                 $result = $this->inventoryInvoiceBridge->reserveInvoiceLines(
                     $conn,
@@ -3623,7 +4226,7 @@ class PosOrderMutationService
             }
         } catch (Throwable $exception) {
             error_log('POS direct-stock ' . $action . ' failed: ' . $exception->getMessage());
-            if (SideEffectPolicy::inventoryBridgeShouldRollback($exception)) {
+            if (SideEffectPolicy::inventoryBridgeShouldRollback($exception, $result)) {
                 throw $exception;
             }
         }
@@ -3643,6 +4246,7 @@ class PosOrderMutationService
             return;
         }
 
+        $result = [];
         try {
             $result = $this->inventoryInvoiceBridge->recordInvoiceReversalLines(
                 $conn,
@@ -3650,7 +4254,7 @@ class PosOrderMutationService
                 $orderId,
                 $lines,
                 $reason,
-                $this->inventoryInvoiceBridgeContext($request, $context, $channel, $orderType)
+                $this->inventoryInvoiceBridgeContext($orderId, $request, $context, $channel, $orderType)
             );
             if (!empty($result['errors'])) {
                 error_log('POS inventory invoice bridge reversal shadow errors: ' . json_encode($result['errors'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
@@ -3660,20 +4264,60 @@ class PosOrderMutationService
             }
         } catch (Throwable $exception) {
             error_log('POS inventory invoice bridge reversal shadow failed: ' . $exception->getMessage());
-            if (SideEffectPolicy::inventoryBridgeShouldRollback($exception)) {
+            if (SideEffectPolicy::inventoryBridgeShouldRollback($exception, $result)) {
                 throw $exception;
             }
         }
     }
 
-    private function inventoryInvoiceBridgeContext(array $request, array $context, string $channel, string $orderType): array
+    private function inventoryInvoiceBridgeContext(
+        int $orderId,
+        array $request,
+        array $context,
+        string $channel,
+        string $orderType
+    ): array
     {
+        $config = is_array($context['config'] ?? null)
+            ? $context['config']
+            : (function_exists('posmain_app_config') ? posmain_app_config() : []);
+        $branchConfig = is_array($config['branch'] ?? null) ? $config['branch'] : [];
+        $tenant = max(0, (int) (
+            $context['tenant']
+            ?? $context['pos_tenant']
+            ?? $request['tenant']
+            ?? $request['pos_tenant']
+            ?? $branchConfig['pos_tenant']
+            ?? 0
+        ));
+        $branch = max(0, (int) (
+            $context['branch']
+            ?? $context['pos_branch']
+            ?? $request['branch']
+            ?? $request['pos_branch']
+            ?? $branchConfig['pos_branch']
+            ?? 0
+        ));
+
         return [
+            'order_id' => $orderId,
+            'tenant' => $tenant,
+            'pos_tenant' => $tenant,
+            'branch' => $branch,
+            'pos_branch' => $branch,
+            'branch_uuid' => $this->nullableString(
+                $context['branch_uuid']
+                ?? $request['branch_uuid']
+                ?? $branchConfig['uuid']
+                ?? null
+            ),
             'store_id' => (int) ($request['store_id'] ?? $context['store_id'] ?? 0),
             'user_id' => $this->contextUserId($request, $context),
             'channel' => $channel,
             'order_type' => $orderType,
             'source_system' => $context['event_source'] ?? $context['source_system'] ?? 'pos_order_mutation_service',
+            'config' => $config,
+            'sync_config' => $config,
         ];
     }
 
@@ -4132,23 +4776,46 @@ class PosOrderMutationService
 
     private function moneyFromBoundary($value, bool $allowNegative = false): Money
     {
-        return is_float($value)
-            ? Money::fromLegacy($value, $allowNegative)
-            : Money::from($value === null || $value === '' ? '0' : $value, $allowNegative);
+        require_once dirname(__DIR__, 2) . '/Financial/FinancialMoneyInput.php';
+
+        return FinancialMoneyInput::money($value, $allowNegative);
     }
 
     private function quantityStringFromBoundary($value): string
     {
-        return is_float($value)
-            ? DecimalQuantity::fromLegacy($value)->toString()
-            : DecimalQuantity::from($value === null || $value === '' ? '0' : $value)->toString();
+        require_once dirname(__DIR__, 2) . '/Financial/FinancialMoneyInput.php';
+
+        return FinancialMoneyInput::quantityString($value);
     }
 
     private function unitPriceStringFromBoundary($value): string
     {
-        return is_float($value)
-            ? UnitPrice::fromLegacy($value)->toString()
-            : UnitPrice::from($value === null || $value === '' ? '0' : $value)->toString();
+        require_once dirname(__DIR__, 2) . '/Financial/FinancialMoneyInput.php';
+
+        return FinancialMoneyInput::unitPriceString($value);
+    }
+
+    /**
+     * Explicit adapters for trusted database/read-model numerics.
+     *
+     * mysqli may materialize DECIMAL expressions as PHP floats when native
+     * numeric conversion is enabled. These adapters are deliberately separate
+     * from the certified request boundary above, which must continue rejecting
+     * PHP floats.
+     */
+    private function moneyFromStored($value, bool $allowNegative = false): Money
+    {
+        return Money::fromLegacy($value, $allowNegative);
+    }
+
+    private function quantityStringFromStored($value): string
+    {
+        return DecimalQuantity::fromLegacy($value)->toString();
+    }
+
+    private function unitPriceStringFromStored($value): string
+    {
+        return UnitPrice::fromLegacy($value)->toString();
     }
 
     private function moneyIsPositive($value): bool
@@ -4240,7 +4907,7 @@ class PosOrderMutationService
     private function recordOrderEvent(mysqli $conn, int $orderId, string $eventType, string $eventSource, array $context, array $metadata = []): ?array
     {
         try {
-            return $this->orderEventService->recordIfAvailable($conn, $orderId, $eventType, $eventSource, [
+            return $this->orderEventService->recordRequired($conn, $orderId, $eventType, $eventSource, [
                 'actor_user_id' => $context['user_id'] ?? null,
                 'tenant' => $context['tenant'] ?? $context['pos_tenant'] ?? 0,
                 'branch' => $context['branch'] ?? $context['pos_branch'] ?? 0,
@@ -4254,6 +4921,11 @@ class PosOrderMutationService
 
             return null;
         }
+    }
+
+    private function shouldRecordOutbox(array $context): bool
+    {
+        return !array_key_exists('record_outbox', $context) || (bool) $context['record_outbox'];
     }
 
     private function syncBranchConfig(array $request = [], array $context = []): array
@@ -4789,7 +5461,7 @@ class PosOrderMutationService
         $reductions = [];
         foreach ($existing as $itemId => $existingQty) {
             $newQty = $this->quantityStringFromBoundary($incoming[$itemId] ?? '0');
-            $oldQty = $this->quantityStringFromBoundary($existingQty);
+            $oldQty = $this->quantityStringFromStored($existingQty);
             if (FinancialDecimal::compare($newQty, $oldQty, DecimalQuantity::SCALE) < 0) {
                 $reductions[] = [
                     'item_id' => $itemId,
@@ -4819,7 +5491,7 @@ class PosOrderMutationService
             if ($itemId < 1) {
                 continue;
             }
-            $map[$itemId] = $this->quantityStringFromBoundary($row['qty'] ?? '0');
+            $map[$itemId] = $this->quantityStringFromStored($row['qty'] ?? '0');
         }
 
         return $map;
@@ -4891,7 +5563,7 @@ class PosOrderMutationService
             $stmt->execute();
             $row = $stmt->get_result()->fetch_assoc();
             $stmt->close();
-            $catalogPrice = $this->unitPriceStringFromBoundary($row['price1'] ?? '0');
+            $catalogPrice = $this->unitPriceStringFromStored($row['price1'] ?? '0');
             if (
                 FinancialDecimal::compare($catalogPrice, '0', UnitPrice::SCALE) > 0
                 && FinancialDecimal::compare($submittedPrice, $catalogPrice, UnitPrice::SCALE) !== 0

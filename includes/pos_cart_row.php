@@ -1,5 +1,9 @@
 <?php
 
+require_once __DIR__ . '/../classes/Financial/Money.php';
+require_once __DIR__ . '/../classes/Financial/RoundingPolicy.php';
+require_once __DIR__ . '/../classes/Recipe/RecipeDecimal.php';
+
 /**
  * Shared cart row markup for POS premium dark UI.
  */
@@ -7,9 +11,12 @@ function pos_render_cart_row(array $row): string
 {
     $itemId = (int) ($row['item_id'] ?? 0);
     $itemName = htmlspecialchars((string) ($row['item_name'] ?? 'صنف غير معروف'), ENT_QUOTES, 'UTF-8');
-    $qty = htmlspecialchars((string) ($row['qty'] ?? '1'), ENT_QUOTES, 'UTF-8');
-    $price = (float) ($row['price'] ?? 0);
-    $subtotal = (float) ($row['subtotal'] ?? ($price * (float) $qty));
+    $qtyDecimal = RecipeDecimal::normalize($row['qty'] ?? '1');
+    $qty = htmlspecialchars($qtyDecimal, ENT_QUOTES, 'UTF-8');
+    $price = RecipeDecimal::normalize($row['price'] ?? '0');
+    $subtotal = array_key_exists('subtotal', $row)
+        ? Money::from($row['subtotal'])->toString()
+        : Money::from(RoundingPolicy::halfUp(bcmul($price, $qtyDecimal, 12)))->toString();
     $barcode = htmlspecialchars((string) ($row['barcode'] ?? (string) $itemId), ENT_QUOTES, 'UTF-8');
     $lineNote = htmlspecialchars((string) ($row['line_note'] ?? ''), ENT_QUOTES, 'UTF-8');
     $preparationValues = is_array($row['preparation_values'] ?? null) ? $row['preparation_values'] : [];
@@ -35,8 +42,8 @@ function pos_render_cart_row(array $row): string
         'UTF-8'
     );
     $uVal = htmlspecialchars((string) ($row['u_val'] ?? '1'), ENT_QUOTES, 'UTF-8');
-    $priceFormatted = number_format($price, 2, '.', '');
-    $subtotalFormatted = number_format($subtotal, 2, '.', '');
+    $priceFormatted = rtrim(rtrim($price, '0'), '.') ?: '0';
+    $subtotalFormatted = $subtotal;
     $persisted = !empty($row['persisted']);
     $persistedQty = htmlspecialchars((string) ($row['persisted_qty'] ?? $qty), ENT_QUOTES, 'UTF-8');
     $persistedAttrs = $persisted

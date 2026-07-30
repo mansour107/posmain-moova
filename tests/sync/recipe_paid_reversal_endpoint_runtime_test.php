@@ -41,6 +41,7 @@ try {
     recipePaidReversalEndpointRuntimeSeedOrder($conn, 701, 'takeaway');
     $refund = recipePaidReversalEndpointRuntimeRunChild($db, [
         'order_id' => 701,
+        'mutation_version' => 1,
         'action' => 'refund',
         'refund_stock_policy' => 'return_to_stock',
         'refund_payment_method' => 'cash',
@@ -68,6 +69,21 @@ try {
         (int) $conn->query("SELECT COUNT(*) AS c FROM drawer_movements WHERE order_id = 701 AND movement_type = 'refund_cash'")->fetch_assoc()['c'] === 1,
         'cashier-selected cash refund must write one drawer movement'
     );
+    recipePaidReversalEndpointRuntimeAssert(
+        (int) $conn->query("SELECT COUNT(*) AS c FROM sync_outbox WHERE aggregate_type = 'order' AND aggregate_local_id = 701 AND event_type = 'order.refunded'")->fetch_assoc()['c'] === 1,
+        'refund endpoint must atomically persist one order outbox snapshot'
+    );
+    recipePaidReversalEndpointRuntimeAssert(
+        (int) $conn->query("
+            SELECT COUNT(*) AS c
+            FROM sync_outbox so
+            INNER JOIN drawer_movements dm ON dm.id = so.aggregate_local_id
+            WHERE so.aggregate_type = 'drawer_movement'
+              AND dm.order_id = 701
+              AND dm.movement_type = 'refund_cash'
+        ")->fetch_assoc()['c'] === 1,
+        'cash refund must atomically persist one drawer movement outbox snapshot'
+    );
     $cashTender = $conn->query("
         SELECT pm.code, pr.status
         FROM payment_refunds pr
@@ -79,6 +95,7 @@ try {
 
     $refundReplay = recipePaidReversalEndpointRuntimeRunChild($db, [
         'order_id' => 701,
+        'mutation_version' => 1,
         'action' => 'refund',
         'refund_stock_policy' => 'return_to_stock',
         'refund_payment_method' => 'cash',
@@ -94,11 +111,16 @@ try {
         (int) $conn->query("SELECT COUNT(*) AS c FROM drawer_movements WHERE order_id = 701 AND movement_type = 'refund_cash'")->fetch_assoc()['c'] === 1,
         'refund idempotency replay should not duplicate the cash drawer movement'
     );
+    recipePaidReversalEndpointRuntimeAssert(
+        (int) $conn->query("SELECT COUNT(*) AS c FROM sync_outbox WHERE aggregate_type = 'order' AND aggregate_local_id = 701 AND event_type = 'order.refunded'")->fetch_assoc()['c'] === 1,
+        'refund idempotency replay should not duplicate the order outbox snapshot'
+    );
 
     $conn->query("UPDATE drawer_sessions SET status = 'closed', closed_at = NOW() WHERE id = 1");
     recipePaidReversalEndpointRuntimeSeedOrder($conn, 703, 'takeaway');
     $pendingCard = recipePaidReversalEndpointRuntimeRunChild($db, [
         'order_id' => 703,
+        'mutation_version' => 1,
         'action' => 'refund',
         'refund_stock_policy' => 'waste',
         'refund_payment_method' => 'card_terminal',
@@ -118,11 +140,16 @@ try {
         (int) $conn->query("SELECT COUNT(*) AS c FROM drawer_movements WHERE order_id = 703")->fetch_assoc()['c'] === 0,
         'non-cash pending refund must not affect the cash drawer'
     );
+    recipePaidReversalEndpointRuntimeAssert(
+        (int) $conn->query("SELECT COUNT(*) AS c FROM sync_outbox WHERE aggregate_type = 'order' AND aggregate_local_id = 703 AND event_type = 'order.refunded'")->fetch_assoc()['c'] === 1,
+        'pending external refund must still atomically persist its order snapshot'
+    );
 
     $conn->query("UPDATE drawer_sessions SET status = 'open', closed_at = NULL WHERE id = 1");
     recipePaidReversalEndpointRuntimeSeedOrder($conn, 704, 'takeaway');
     $itemPartialPayload = [
         'order_id' => 704,
+        'mutation_version' => 1,
         'action' => 'refund',
         'refund_mode' => 'items',
         'refund_lines' => [[
@@ -162,9 +189,14 @@ try {
         (int) $conn->query("SELECT COUNT(*) AS c FROM drawer_movements WHERE order_id = 704 AND movement_type = 'refund_cash'")->fetch_assoc()['c'] === 1,
         'item partial retry must not duplicate drawer movements'
     );
+    recipePaidReversalEndpointRuntimeAssert(
+        (int) $conn->query("SELECT COUNT(*) AS c FROM sync_outbox WHERE aggregate_type = 'order' AND aggregate_local_id = 704 AND event_type = 'order.partially_refunded'")->fetch_assoc()['c'] === 1,
+        'item partial retry must not duplicate the first partial-refund outbox snapshot'
+    );
 
     $amountPartialPayload = [
         'order_id' => 704,
+        'mutation_version' => 2,
         'action' => 'refund',
         'refund_mode' => 'amount',
         'refund_amount' => '5.00',
@@ -206,9 +238,14 @@ try {
         (int) $conn->query("SELECT COUNT(*) AS c FROM order_events WHERE order_id = 704 AND event_type = 'order.partially_refunded'")->fetch_assoc()['c'] === 2,
         'amount partial retry must not duplicate audit events'
     );
+    recipePaidReversalEndpointRuntimeAssert(
+        (int) $conn->query("SELECT COUNT(*) AS c FROM sync_outbox WHERE aggregate_type = 'order' AND aggregate_local_id = 704 AND event_type = 'order.partially_refunded'")->fetch_assoc()['c'] === 2,
+        'distinct partial refunds must each persist exactly one order outbox snapshot'
+    );
 
     $overPartial = recipePaidReversalEndpointRuntimeRunChild($db, [
         'order_id' => 704,
+        'mutation_version' => 3,
         'action' => 'refund',
         'refund_mode' => 'amount',
         'refund_amount' => '5.01',
@@ -227,6 +264,7 @@ try {
     recipePaidReversalEndpointRuntimeSeedOrder($conn, 702, 'table');
     $void = recipePaidReversalEndpointRuntimeRunChild($db, [
         'order_id' => 702,
+        'mutation_version' => 1,
         'action' => 'void',
         'refund_stock_policy' => 'waste',
         'reason' => 'endpoint smoke void',
@@ -243,6 +281,14 @@ try {
     recipePaidReversalEndpointRuntimeAssert(
         (int) $conn->query("SELECT COUNT(*) AS c FROM order_events WHERE order_id = 702 AND event_type = 'order.voided'")->fetch_assoc()['c'] === 1,
         'void endpoint should write one order event'
+    );
+    recipePaidReversalEndpointRuntimeAssert(
+        (int) $conn->query("SELECT COUNT(*) AS c FROM sync_outbox WHERE aggregate_type = 'order' AND aggregate_local_id = 702 AND event_type = 'order.voided'")->fetch_assoc()['c'] === 1,
+        'void endpoint must atomically persist one order outbox snapshot'
+    );
+    recipePaidReversalEndpointRuntimeAssert(
+        (int) $conn->query("SELECT COUNT(*) AS c FROM sync_outbox WHERE aggregate_type = 'table' AND aggregate_local_id = 12 AND event_type = 'table.updated'")->fetch_assoc()['c'] === 1,
+        'table void must atomically persist the released-table outbox snapshot'
     );
 
     echo "recipe-paid-reversal-endpoint-runtime-ok db={$db}\n";
@@ -269,6 +315,7 @@ function recipePaidReversalEndpointRuntimeChild(string $json): void
     $_SERVER['HTTP_X_POSMAIN_CSRF_TOKEN'] = $csrf;
     $_POST = [
         'order_id' => (int) ($payload['order_id'] ?? 0),
+        'mutation_version' => (int) ($payload['mutation_version'] ?? 0),
         'action' => (string) ($payload['action'] ?? ''),
         'refund_stock_policy' => (string) ($payload['refund_stock_policy'] ?? ''),
         'refund_payment_method' => (string) ($payload['refund_payment_method'] ?? ''),
@@ -316,7 +363,10 @@ function recipePaidReversalEndpointRuntimeRunChild(string $db, array $payload): 
         'POSMAIN_DB_PASS' => getenv('POSMAIN_TEST_MYSQL_PASS') ?: '',
         'POSMAIN_DB_NAME' => $db,
         'POSMAIN_SESSION_DRIVER' => 'file',
-        'POSMAIN_SYNC_OUTBOX_ENABLED' => '0',
+        'POSMAIN_SYNC_OUTBOX_ENABLED' => '1',
+        'POSMAIN_BRANCH_SYNC_ENABLED' => '0',
+        'POSMAIN_OPERATIONAL_SYNC_ENABLED' => '1',
+        'POSMAIN_INVENTORY_LEDGER_MODE' => 'off',
         'POSMAIN_RECIPE_MODE' => 'off',
         'POSMAIN_RECIPE_MODE' => 'off',
         'POSMAIN_ROUTER_ENABLED' => '0',
@@ -553,6 +603,7 @@ function recipePaidReversalEndpointRuntimeInstallFinancialSchema(mysqli $conn): 
         'drawer_sessions',
         'drawer_movements',
         'recipe_order_line_usage',
+        'sync_branch_identity',
         'sync_outbox',
     ] as $table) {
         $conn->query($planned[$table]);

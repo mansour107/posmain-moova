@@ -1,7 +1,8 @@
 <?php
-require_once __DIR__ . '/../includes/session_bootstrap.php';
+require_once __DIR__ . '/../includes/rbac_route_guard.php';
+rbac_guard_route('ajax/get_items.php');
 require_once __DIR__ . '/../classes/Items/ItemCatalogStatus.php';
-include('../includes/connect.php');
+require_once __DIR__ . '/../classes/Pos/Service/PreparationSelectionService.php';
 
 header('Content-Type: application/json');
 
@@ -31,6 +32,7 @@ try {
             $items[] = $row;
         }
     }
+    $items = (new PreparationSelectionService())->decorateItems($conn, $items);
     
     echo json_encode([
         'success' => true,

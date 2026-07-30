@@ -6,6 +6,8 @@ final class MoovaDirectStockLifecycleSpy extends InventoryInvoiceBridge
 {
     public array $reserved = [];
     public array $released = [];
+    public array $reserveResult = ['success' => true, 'movements' => [], 'errors' => []];
+    public array $releaseResult = ['success' => true, 'movements' => [], 'errors' => []];
 
     public function __construct()
     {
@@ -15,14 +17,14 @@ final class MoovaDirectStockLifecycleSpy extends InventoryInvoiceBridge
     {
         $this->reserved[] = compact('invoiceType', 'invoiceId', 'lines', 'context');
 
-        return ['success' => true, 'movements' => [], 'errors' => []];
+        return $this->reserveResult;
     }
 
     public function releaseInvoiceReservations(mysqli $conn, int $invoiceType, int $invoiceId, array $lines, string $reason, array $context = []): array
     {
         $this->released[] = compact('invoiceType', 'invoiceId', 'lines', 'reason', 'context');
 
-        return ['success' => true, 'movements' => [], 'errors' => []];
+        return $this->releaseResult;
     }
 }
 
@@ -57,6 +59,30 @@ moovaDirectStockAssert(count($bridge->released) === 1, 'Moova edit/cancel must r
 moovaDirectStockAssert($bridge->released[0]['reason'] === 'moova_order_replaced', 'reservation release must retain lifecycle reason');
 moovaDirectStockAssert($bridge->released[0]['lines'][0]['qty_out'] === '2.000000', 'release quantity must match reserved quantity');
 
+$bridge->reserveResult = [
+    'success' => false,
+    'mode' => 'live',
+    'movements' => [],
+    'errors' => ['accounting_required'],
+];
+moovaDirectStockAssertThrows(
+    static fn () => $reserve->invoke($service, $conn, 3, 5, $scope, $payload, 'moova-order-2', 7002, $mapped),
+    'MOOVA_INVENTORY_RESERVATION_FAILED',
+    'authoritative reservation failure must escape the catch and roll back the caller transaction'
+);
+
+$bridge->releaseResult = [
+    'success' => false,
+    'mode' => 'bridge',
+    'movements' => [],
+    'errors' => ['movement_reversal_failed'],
+];
+moovaDirectStockAssertThrows(
+    static fn () => $release->invoke($service, $conn, 3, 5, $scope, $payload, 'moova-order-2', 7002, $mapped, 'moova_order_cancelled'),
+    'MOOVA_INVENTORY_RESERVATION_RELEASE_FAILED',
+    'authoritative release failure must escape the catch and roll back the caller transaction'
+);
+
 echo "moova-direct-stock-lifecycle-contract-ok\n";
 
 function moovaDirectStockAssert(bool $condition, string $message): void
@@ -64,4 +90,19 @@ function moovaDirectStockAssert(bool $condition, string $message): void
     if (!$condition) {
         throw new RuntimeException($message);
     }
+}
+
+function moovaDirectStockAssertThrows(callable $callback, string $expectedMessage, string $message): void
+{
+    try {
+        $callback();
+    } catch (Throwable $exception) {
+        $actual = $exception instanceof ReflectionException && $exception->getPrevious()
+            ? $exception->getPrevious()
+            : $exception;
+        moovaDirectStockAssert($actual->getMessage() === $expectedMessage, $message . ': ' . $actual->getMessage());
+        return;
+    }
+
+    throw new RuntimeException($message . ': no exception');
 }

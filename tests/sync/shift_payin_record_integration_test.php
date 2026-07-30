@@ -32,8 +32,9 @@ try {
     shiftPayinIntegrationAssert((int) ($opened['fund_account_id'] ?? 0) > 0, 'drawer session should resolve fund account');
 
     $recorded = $service->recordShiftPayIn($conn, $cashierId, [
-        'amount' => 25,
+        'amount' => '25.00',
         'reason' => 'تعبئة صندوق',
+        'idempotency_key' => 'shift-payin-record-25',
     ]);
     shiftPayinIntegrationAssert($recorded['movement']['movement_type'] === 'paid_in', 'movement should be paid_in');
     shiftPayinIntegrationAssert(abs((float) $recorded['summary']['total'] - 25.0) < 0.01, 'payin total expected');
@@ -63,7 +64,11 @@ try {
     shiftPayinIntegrationAssert((int) ($details['payin_count'] ?? 0) === 1, 'close json should include payin count');
 
     shiftPayinIntegrationExpectException(function () use ($service, $conn, $cashierId) {
-        $service->recordShiftPayIn($conn, $cashierId, ['amount' => 1, 'reason' => 'late']);
+        $service->recordShiftPayIn($conn, $cashierId, [
+            'amount' => '1.00',
+            'reason' => 'late',
+            'idempotency_key' => 'shift-payin-late',
+        ]);
     }, 'SHIFT_WRITE_BLOCKED');
 
     echo "shift-payin-record-integration-ok db={$db}\n";

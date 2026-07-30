@@ -11,8 +11,10 @@ require_once __DIR__ . '/../../classes/Pos/Service/ShiftSessionService.php';
 require_once __DIR__ . '/../../classes/Pos/Service/ShiftEntryService.php';
 require_once __DIR__ . '/../../classes/Pos/Service/DrawerSessionService.php';
 require_once __DIR__ . '/../../classes/Pos/Service/DrawerOverrideService.php';
+require_once __DIR__ . '/../../classes/Pos/Service/CashFlowPeriodService.php';
 require_once __DIR__ . '/../../classes/Pos/Service/DrawerFloatExpectationService.php';
 require_once __DIR__ . '/../../classes/Pos/Service/ManagerApprovalService.php';
+require_once __DIR__ . '/../../classes/Pos/Service/PaymentService.php';
 require_once __DIR__ . '/../../classes/Pos/Service/PosRegisterService.php';
 require_once __DIR__ . '/../../classes/Security/SecurityAuditLogger.php';
 require_once __DIR__ . '/../../includes/auth_guard.php';
@@ -299,15 +301,37 @@ try {
     $current = $shifts->currentDrawerSession($conn, 80, ['tenant' => 3, 'branch' => 7]);
     overrideAssert($current !== null && (int) $current['id'] === $sessionA, 'override operator sees drawer');
 
+    // Cash payment/refund preflight must use the same approved drawer override.
+    $paymentService = new PaymentService(null, null, $drawer);
+    $paymentDrawer = $paymentService->preflightCashDrawerForPayment(
+        $conn,
+        'cash',
+        '1.00',
+        80,
+        ['tenant' => 3, 'branch' => 7, 'drawer_session_id' => $sessionA]
+    );
+    overrideAssert(
+        $paymentDrawer !== null && (int) ($paymentDrawer['id'] ?? 0) === $sessionA,
+        'override operator may settle cash against the approved cashier drawer'
+    );
+    overrideAssert(
+        (int) ($paymentDrawer['user_id'] ?? 0) === 10,
+        'payment preflight must not transfer drawer ownership to override operator'
+    );
+
     // Attribute a cash movement to the manager operator.
     $movement = $drawer->recordMovement($conn, $sessionA, [
         'movement_type' => 'paid_out',
         'amount' => '5.000',
         'reason' => 'override expense',
         'created_by' => 80,
+        'idempotency_key' => 'drawer-override-paid-out-1',
     ]);
     overrideAssert((int) ($movement['created_by'] ?? 0) === 80, 'movement attributed to manager');
 
+    $overrides->auditPosAuthorization($conn, 'do/do_record_shift_expense.php', true, [
+        'target_id' => (int) ($movement['id'] ?? 0),
+    ]);
     $overrides->auditPosWrite($conn, 'do/do_record_shift_expense.php', true, [
         'target_id' => (int) ($movement['id'] ?? 0),
     ]);
@@ -319,6 +343,22 @@ try {
     $opMeta = json_decode((string) ($opAudit['metadata_json'] ?? ''), true);
     overrideAssert((int) ($opMeta['override_period_id'] ?? 0) === (int) $period['id'], 'operation correlated to period');
     overrideAssert((int) ($opMeta['original_owner_user_id'] ?? 0) === 10, 'operation retains original owner');
+    $authorizationAudit = $conn->query("SELECT metadata_json FROM security_audit_log WHERE event_type = 'drawer_override_authorization' ORDER BY id DESC LIMIT 1")->fetch_assoc();
+    overrideAssert($authorizationAudit !== null, 'authorization audit present');
+    $authorizationMeta = json_decode((string) ($authorizationAudit['metadata_json'] ?? ''), true);
+    overrideAssert(($authorizationMeta['authorization_granted'] ?? null) === true, 'authorization outcome is explicit');
+    overrideAssert(!array_key_exists('success', $authorizationMeta), 'authorization must not claim business-operation success');
+    overrideAssert(($authorizationMeta['operation_outcome'] ?? '') === 'not_recorded', 'authorization distinguishes unknown operation outcome');
+    $overrideEvents = (new CashFlowPeriodService())->overrideAuditEvents($conn, $sessionA);
+    $authorizationEvent = null;
+    foreach ($overrideEvents as $event) {
+        if (($event['event_type'] ?? '') === 'drawer_override_authorization') {
+            $authorizationEvent = $event;
+            break;
+        }
+    }
+    overrideAssert($authorizationEvent !== null, 'cash-flow audit view includes override authorization');
+    overrideAssert(strpos((string) ($authorizationEvent['summary'] ?? ''), 'تم التفويض') !== false, 'cash-flow audit view labels authorization without claiming operation success');
 
     // Entry while override active resumes selling_ready.
     $activeEntry = $entry->resolveForUser($conn, 80);
@@ -336,6 +376,19 @@ try {
     unset($_SESSION['pos_override_period_id'], $_SESSION['pos_override_drawer_session_id']);
     $afterEnd = $shifts->currentDrawerSession($conn, 80, ['tenant' => 3, 'branch' => 7, 'drawer_session_id' => $sessionA]);
     overrideAssert($afterEnd === null, 'manager cannot use drawer after override ends');
+    $paymentAfterEndBlocked = false;
+    try {
+        $paymentService->preflightCashDrawerForPayment(
+            $conn,
+            'cash',
+            '1.00',
+            80,
+            ['tenant' => 3, 'branch' => 7, 'drawer_session_id' => $sessionA]
+        );
+    } catch (RuntimeException $exception) {
+        $paymentAfterEndBlocked = $exception->getMessage() === 'DRAWER_SESSION_REQUIRED';
+    }
+    overrideAssert($paymentAfterEndBlocked, 'cash settlement must fail after the drawer override ends');
 
     // Inactivity expiry.
     $approval3 = $approvals->requestApproval($conn, [

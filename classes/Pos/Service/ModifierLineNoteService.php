@@ -1,5 +1,8 @@
 <?php
 
+require_once __DIR__ . '/../../Recipe/RecipeDecimal.php';
+require_once __DIR__ . '/../../Financial/Decimal.php';
+
 class ModifierLineNoteService
 {
     public function saveLineCustomizations(
@@ -71,7 +74,7 @@ class ModifierLineNoteService
             'enabled' => true,
             'item_id' => $itemId,
             'modifiers' => $validated,
-            'modifier_total' => $this->formatDecimal($this->modifierTotal($validated)),
+            'modifier_total' => $this->modifierTotal($validated),
         ];
     }
 
@@ -175,7 +178,7 @@ class ModifierLineNoteService
                 'group_id' => (int) $row['group_id'],
                 'name_ar' => (string) $row['name_ar'],
                 'name_en' => $row['name_en'] !== null ? (string) $row['name_en'] : null,
-                'price_delta' => (float) $row['price_delta'],
+                'price_delta' => $this->formatDecimal($row['price_delta']),
             ];
         }
         $stmt->close();
@@ -192,13 +195,13 @@ class ModifierLineNoteService
                 $qty = $this->positiveDecimal($selection['qty'] ?? $selection['quantity'] ?? 1, 'MODIFIER_QTY_INVALID');
             } else {
                 $optionId = $this->positiveInt($selection, 'MODIFIER_OPTION_REQUIRED');
-                $qty = 1.0;
+                $qty = '1.000';
             }
 
             if (!isset($normalized[$optionId])) {
-                $normalized[$optionId] = 0.0;
+                $normalized[$optionId] = '0.000';
             }
-            $normalized[$optionId] += $qty;
+            $normalized[$optionId] = RecipeDecimal::add($normalized[$optionId], $qty, 3);
         }
 
         return $normalized;
@@ -218,21 +221,21 @@ class ModifierLineNoteService
             }
 
             if (!isset($countsByGroup[$groupId])) {
-                $countsByGroup[$groupId] = 0.0;
+                $countsByGroup[$groupId] = '0.000';
             }
-            $countsByGroup[$groupId] += $qty;
+            $countsByGroup[$groupId] = RecipeDecimal::add($countsByGroup[$groupId], $qty, 3);
         }
 
         foreach ($groups as $groupId => $group) {
-            $selectedQty = $countsByGroup[$groupId] ?? 0.0;
+            $selectedQty = $countsByGroup[$groupId] ?? '0.000';
             $minimum = $group['is_required'] ? max(1, $group['selection_min']) : $group['selection_min'];
             $maximum = $group['selection_max'];
 
-            if ($selectedQty < $minimum) {
+            if (RecipeDecimal::compare($selectedQty, (string) $minimum, 3) < 0) {
                 throw new InvalidArgumentException('MODIFIER_SELECTION_MIN');
             }
 
-            if ($maximum > 0 && $selectedQty > $maximum) {
+            if ($maximum > 0 && RecipeDecimal::compare($selectedQty, (string) $maximum, 3) > 0) {
                 throw new InvalidArgumentException('MODIFIER_SELECTION_MAX');
             }
         }
@@ -240,13 +243,13 @@ class ModifierLineNoteService
         $validated = [];
         foreach ($selections as $optionId => $qty) {
             $option = $options[$optionId];
-            $priceDelta = (float) $option['price_delta'];
+            $priceDelta = $this->formatDecimal($option['price_delta']);
             $validated[] = [
                 'modifier_group_id' => (int) $option['group_id'],
                 'modifier_option_id' => (int) $optionId,
                 'qty' => $this->formatDecimal($qty),
                 'price_delta' => $this->formatDecimal($priceDelta),
-                'line_delta' => $this->formatDecimal($qty * $priceDelta),
+                'line_delta' => RecipeDecimal::multiply($qty, $priceDelta, 3),
                 'name_ar' => $option['name_ar'],
                 'name_en' => $option['name_en'],
             ];
@@ -357,14 +360,14 @@ class ModifierLineNoteService
 
         $modifiers = [];
         while ($row = $result->fetch_assoc()) {
-            $qty = (float) $row['qty'];
-            $priceDelta = (float) $row['price_delta'];
+            $qty = $this->formatDecimal($row['qty']);
+            $priceDelta = $this->formatDecimal($row['price_delta']);
             $modifiers[] = [
                 'modifier_group_id' => (int) $row['modifier_group_id'],
                 'modifier_option_id' => (int) $row['modifier_option_id'],
                 'qty' => $this->formatDecimal($qty),
                 'price_delta' => $this->formatDecimal($priceDelta),
-                'line_delta' => $this->formatDecimal($qty * $priceDelta),
+                'line_delta' => RecipeDecimal::multiply($qty, $priceDelta, 3),
                 'name_ar' => $row['name_ar'] !== null ? (string) $row['name_ar'] : null,
                 'name_en' => $row['name_en'] !== null ? (string) $row['name_en'] : null,
             ];
@@ -400,11 +403,11 @@ class ModifierLineNoteService
         return $notes;
     }
 
-    private function modifierTotal(array $modifiers): float
+    private function modifierTotal(array $modifiers): string
     {
-        $total = 0.0;
+        $total = '0.000';
         foreach ($modifiers as $modifier) {
-            $total += (float) $modifier['line_delta'];
+            $total = RecipeDecimal::add($total, $modifier['line_delta'], 3);
         }
 
         return $total;
@@ -440,10 +443,13 @@ class ModifierLineNoteService
         return $value > 0 ? $value : null;
     }
 
-    private function positiveDecimal($value, string $code): float
+    private function positiveDecimal($value, string $code): string
     {
-        $value = (float) $value;
-        if ($value <= 0) {
+        if (is_float($value) || is_bool($value) || is_array($value) || is_object($value)) {
+            throw new InvalidArgumentException($code);
+        }
+        $value = $this->formatDecimal($value);
+        if (RecipeDecimal::compare($value, '0', 3) <= 0) {
             throw new InvalidArgumentException($code);
         }
 
@@ -466,6 +472,10 @@ class ModifierLineNoteService
 
     private function formatDecimal($value): string
     {
-        return number_format((float) $value, 3, '.', '');
+        if (is_float($value) || is_bool($value) || is_array($value) || is_object($value)) {
+            throw new InvalidArgumentException('MODIFIER_DECIMAL_STRING_REQUIRED');
+        }
+
+        return FinancialDecimal::normalize($value, 3, true);
     }
 }

@@ -41,6 +41,7 @@ $helperSource = legacyOrderLinePresentationSource($root . '/classes/Pos/Service/
 $loadOrder = legacyOrderLinePresentationSource($root . '/ajax/load_order.php');
 $getTableOrder = legacyOrderLinePresentationSource($root . '/ajax/get_table_order.php');
 $posContent = legacyOrderLinePresentationSource($root . '/includes/pos_content.php');
+$posCartRow = legacyOrderLinePresentationSource($root . '/includes/pos_cart_row.php');
 $posBarcode = legacyOrderLinePresentationSource($root . '/js/pos_barcode.js');
 $posJs = legacyOrderLinePresentationSource($root . '/js/pos.js');
 
@@ -60,10 +61,13 @@ foreach ([
     legacyOrderLinePresentationAssert(strpos($source, "floatval(\$rowdet['qty_out']) - floatval(\$rowdet['qty_in'])") === false, $file . ' should not display raw stock-unit quantity');
 }
 
-legacyOrderLinePresentationAssert(strpos($loadOrder, "'u_val' => (float) \$presentedLine['u_val']") !== false, 'load_order should expose preserved u_val');
-legacyOrderLinePresentationAssert(strpos($getTableOrder, "'u_val' => (float) \$presentedLine['u_val']") !== false, 'get_table_order should expose preserved u_val');
-legacyOrderLinePresentationAssert(strpos($posContent, 'name="u_val[]" value="<?= htmlspecialchars($u_val') !== false, 'edit-mode cashier HTML should post preserved u_val');
-legacyOrderLinePresentationAssert(strpos($posBarcode, '{ uVal: item.u_val || 1 }') !== false, 'loaded barcode POS rows should pass u_val to cart rows');
+legacyOrderLinePresentationAssert(strpos($loadOrder, "'u_val' => RecipeDecimal::normalize(\$presentedLine['u_val'])") !== false, 'load_order should expose preserved exact u_val');
+legacyOrderLinePresentationAssert(strpos($loadOrder, '(float)') === false, 'load_order must not cast quantity or money to binary floats');
+legacyOrderLinePresentationAssert(strpos($getTableOrder, "'u_val' => RecipeDecimal::normalize(\$presentedLine['u_val'])") !== false, 'get_table_order should expose preserved exact u_val');
+legacyOrderLinePresentationAssert(strpos($getTableOrder, '(float)') === false, 'get_table_order must not cast quantity or money to binary floats');
+legacyOrderLinePresentationAssert(strpos($posContent, "'u_val' => \$u_val") !== false, 'edit-mode cashier HTML should pass preserved u_val to the shared cart renderer');
+legacyOrderLinePresentationAssert(strpos($posCartRow, 'name="u_val[]" value="<?= $uVal ?>"') !== false, 'shared cart renderer should post preserved u_val');
+legacyOrderLinePresentationAssert(strpos($posBarcode, 'uVal: item.u_val || 1') !== false, 'loaded barcode POS rows should pass u_val to cart rows');
 legacyOrderLinePresentationAssert(strpos($posBarcode, 'name="u_val[]" value="${escapeHtml(String(unitValue))}"') !== false, 'barcode POS cart rows should post preserved u_val');
 legacyOrderLinePresentationAssert(strpos($posJs, 'value="${item.u_val || 1}"') !== false, 'legacy POS table loader should post preserved u_val');
 

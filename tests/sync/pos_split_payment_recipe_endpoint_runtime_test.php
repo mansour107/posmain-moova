@@ -79,6 +79,8 @@ try {
     posSplitRecipeEndpointAssert((int) ($saved['status'] ?? 0) === 200 && is_array($savedPayload) && ($savedPayload['success'] ?? false) === true, 'table save setup should succeed: ' . (string) ($saved['body'] ?? ''));
     $orderId = (int) ($savedPayload['order_id'] ?? 0);
     posSplitRecipeEndpointAssert($orderId > 0, 'table save setup should return order id');
+    $mutationVersion = (int) (($savedPayload['updated_state']['mutation_version'] ?? $savedPayload['mutation_version'] ?? 0));
+    posSplitRecipeEndpointAssert($mutationVersion > 0, 'table save setup should return mutation version');
     $detailId = (int) $conn->query("SELECT id FROM fat_details WHERE fatid = {$orderId} AND item_id = 10 AND isdeleted = 0 ORDER BY id LIMIT 1")->fetch_assoc()['id'];
     posSplitRecipeEndpointAssert($detailId > 0, 'saved order should have one splittable detail row');
     posSplitRecipeEndpointAssertReserved($conn, $orderId, '3.000000');
@@ -86,6 +88,7 @@ try {
     $splitPayload = [
         'table_id' => 1,
         'order_id' => $orderId,
+        'mutation_version' => $mutationVersion,
         'split_items' => [
             ['detail_id' => $detailId, 'qty' => 1],
         ],

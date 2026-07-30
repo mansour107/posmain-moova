@@ -4,6 +4,7 @@ include('../includes/connect.php');
 require_once('../includes/pos_default_accounts.php');
 require_once('../classes/Pos/Service/ItemAvailabilityService.php');
 require_once('../classes/Items/ItemCatalogStatus.php');
+require_once('../classes/Financial/Decimal.php');
 
 if (!isset($_GET['category_id'])) {
     echo json_encode(['success' => false, 'error' => 'معرف التصنيف مطلوب']);
@@ -23,7 +24,7 @@ if ($result && $result->num_rows > 0) {
         $items[] = [
             'id' => intval($row['id']),
             'name' => $row['name'],
-            'price' => floatval($row['price'] ?: 0)
+            'price' => FinancialDecimal::normalize($row['price'] ?: '0', 6)
         ];
     }
     $items = (new ItemAvailabilityService())->decorateItems($conn, $items, posmain_pos_availability_scope($conn));

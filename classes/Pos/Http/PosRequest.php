@@ -1,6 +1,7 @@
 <?php
 
 require_once __DIR__ . '/../../../config/app_config.php';
+require_once __DIR__ . '/../../Financial/FinancialMoneyInput.php';
 
 class PosRequest
 {
@@ -9,6 +10,7 @@ class PosRequest
 
     public function __construct(array $payload, array $server = [])
     {
+        FinancialMoneyInput::assertNoPhpFloats($payload);
         $this->payload = $payload;
         $this->server = $server ?: $_SERVER;
     }
@@ -21,7 +23,7 @@ class PosRequest
             $decoded = $_POST;
         }
 
-        return new self($decoded, $_SERVER);
+        return new self(is_array($decoded) ? $decoded : [], $_SERVER);
     }
 
     public function payload(): array

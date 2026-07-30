@@ -5,6 +5,7 @@ require_once('../includes/auth_guard.php');
 require_once('../includes/csrf.php');
 require_once('../classes/Pos/Service/PosOrderMutationService.php');
 require_once('../classes/Sync/SyncOutboxEventService.php');
+require_once('../classes/Financial/FinancialMoneyInput.php');
 
 header('Content-Type: application/json; charset=utf-8');
 
@@ -64,9 +65,10 @@ try {
         $refundLines = $decodedLines;
     } elseif ($refundMode === 'amount') {
         $refundAmount = trim((string) ($_POST['refund_amount'] ?? ''));
-        if ($refundAmount === '' || !is_numeric($refundAmount) || (float) $refundAmount <= 0) {
+        if ($refundAmount === '' || !FinancialMoneyInput::money($refundAmount)->isPositive()) {
             throw new InvalidArgumentException('REFUND_AMOUNT_INVALID');
         }
+        $refundAmount = FinancialMoneyInput::moneyString($refundAmount);
     }
 
     $idempotencyKey = $idempotencyService->resolveKey($_POST, $_SERVER);
@@ -106,6 +108,7 @@ try {
 
     $result = $posMutationService->reversePaidOrder($conn, [
         'order_id' => $orderId,
+        'mutation_version' => $_POST['mutation_version'] ?? $_POST['order_version'] ?? null,
         'action' => $action,
         'reason' => $_POST['reason'] ?? '',
         'refund_mode' => $refundMode,
@@ -125,18 +128,19 @@ try {
         'require_drawer_session' => true,
         'event_source' => $action === 'void' ? 'pos_paid_void' : 'pos_paid_refund',
         'in_transaction' => true,
+        'record_outbox' => false,
     ]);
 
     $data = $result['data'] ?? [];
     $reversalStatus = (string) ($data['reversal_status'] ?? 'full');
-    $syncOutbox->recordOrderSnapshot($conn, $orderId, [
+    $syncOutbox->recordRequiredOrderSnapshot($conn, $orderId, [
         'event_type' => $action === 'void'
             ? 'order.voided'
             : ($reversalStatus === 'full' ? 'order.refunded' : 'order.partially_refunded'),
         'source_system' => 'pos_paid_reversal',
     ]);
     if ($reversalStatus === 'full' && (int) ($data['table_id'] ?? 0) > 0) {
-        $syncOutbox->recordTableSnapshot($conn, (int) $data['table_id'], [
+        $syncOutbox->recordRequiredTableSnapshot($conn, (int) $data['table_id'], [
             'event_type' => 'table.updated',
             'source_system' => 'pos_paid_reversal',
             'active_order_id' => null,

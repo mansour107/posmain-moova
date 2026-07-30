@@ -197,11 +197,70 @@ class DrawerSessionService
             $refOtHeadId = $this->optionalPositiveInt($request['ref_ot_head_id'] ?? null);
             $tenant = (int) ($session['tenant'] ?? 0);
             $branch = (int) ($session['branch'] ?? 0);
+            $idempotencyRequired = in_array($type, [
+                'sale_cash',
+                'refund_cash',
+                'paid_in',
+                'paid_out',
+                'safe_drop',
+                'no_sale',
+            ], true);
+            $idempotencyKey = trim((string) ($request['idempotency_key'] ?? ''));
+            if ($idempotencyRequired && $idempotencyKey === '') {
+                throw new InvalidArgumentException('DRAWER_IDEMPOTENCY_REQUIRED');
+            }
+            if (strlen($idempotencyKey) > 191) {
+                throw new InvalidArgumentException('DRAWER_IDEMPOTENCY_KEY_INVALID');
+            }
+            $hasIdempotencyColumns = $this->movementColumnExists($conn, 'idempotency_key')
+                && $this->movementColumnExists($conn, 'idempotency_hash');
+            if ($idempotencyRequired && !$hasIdempotencyColumns) {
+                throw new RuntimeException('DRAWER_IDEMPOTENCY_SCHEMA_REQUIRED');
+            }
+            $idempotencyHash = $idempotencyKey === '' ? null : hash('sha256', json_encode([
+                'drawer_session_id' => $sessionId,
+                'movement_type' => $type,
+                'amount' => $amount,
+                'order_id' => $orderId,
+                'payment_id' => $paymentId,
+                'reason' => $reason,
+                'created_by' => $createdBy,
+                'manager_approval_id' => $managerApprovalId,
+                'ref_ot_head_id' => $refOtHeadId,
+                'tenant' => $tenant,
+                'branch' => $branch,
+            ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+            if ($idempotencyKey !== '' && $hasIdempotencyColumns) {
+                $existing = $this->movementByIdempotencyKey($conn, $sessionId, $idempotencyKey);
+                if ($existing) {
+                    if (!hash_equals((string) ($existing['idempotency_hash'] ?? ''), (string) $idempotencyHash)) {
+                        throw new RuntimeException('DRAWER_IDEMPOTENCY_CONFLICT');
+                    }
+                    $movement = $this->formatMovement($existing);
+                    $movement['idempotency_replayed'] = true;
+                    if ($ownsTransaction) {
+                        $conn->commit();
+                    }
+
+                    return $movement;
+                }
+            }
 
             $columns = ['drawer_session_id', 'movement_type', 'amount', 'order_id', 'payment_id', 'reason', 'created_by'];
             $placeholders = ['?', '?', '?', '?', '?', '?', '?'];
             $types = 'issiisi';
             $values = [$sessionId, $type, $amount, $orderId, $paymentId, $reason, $createdBy];
+
+            if ($idempotencyKey !== '' && $hasIdempotencyColumns) {
+                $columns[] = 'idempotency_key';
+                $placeholders[] = '?';
+                $types .= 's';
+                $values[] = $idempotencyKey;
+                $columns[] = 'idempotency_hash';
+                $placeholders[] = '?';
+                $types .= 's';
+                $values[] = $idempotencyHash;
+            }
 
             if ($this->movementColumnExists($conn, 'tenant')) {
                 $columns[] = 'tenant';
@@ -940,12 +999,35 @@ class DrawerSessionService
 
     private function requireOpenSession(mysqli $conn, int $sessionId): array
     {
-        $session = $this->sessionById($conn, $sessionId);
+        $stmt = $conn->prepare('SELECT * FROM drawer_sessions WHERE id = ? LIMIT 1 FOR UPDATE');
+        $stmt->bind_param('i', $sessionId);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        if (!$row) {
+            throw new RuntimeException('DRAWER_SESSION_NOT_FOUND');
+        }
+        $session = $this->formatSession($row);
         if ($session['status'] !== 'open') {
             throw new RuntimeException('DRAWER_SESSION_NOT_OPEN');
         }
 
         return $session;
+    }
+
+    private function movementByIdempotencyKey(mysqli $conn, int $sessionId, string $idempotencyKey): ?array
+    {
+        $stmt = $conn->prepare(
+            'SELECT * FROM drawer_movements
+             WHERE drawer_session_id = ? AND idempotency_key = ?
+             LIMIT 1'
+        );
+        $stmt->bind_param('is', $sessionId, $idempotencyKey);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        return $row ?: null;
     }
 
     private function movementById(mysqli $conn, int $movementId): array
@@ -1060,6 +1142,11 @@ class DrawerSessionService
         if (array_key_exists('branch', $row)) {
             $movement['branch'] = (int) $row['branch'];
         }
+        if (array_key_exists('idempotency_key', $row)) {
+            $movement['idempotency_key'] = $row['idempotency_key'] !== null
+                ? (string) $row['idempotency_key']
+                : null;
+        }
 
         if (array_key_exists('manager_approval_id', $row)) {
             $movement['manager_approval_id'] = $row['manager_approval_id'] !== null
@@ -1103,7 +1190,7 @@ class DrawerSessionService
             $options['config'] = $context['sync_config'];
         }
 
-        (new OperationalSyncEventService())->recordDrawerMovementSnapshot($conn, $movementId, $options);
+        (new OperationalSyncEventService())->recordRequiredDrawerMovementSnapshot($conn, $movementId, $options);
     }
 
     private function recordSessionSyncSnapshot(mysqli $conn, int $sessionId, array $context): void

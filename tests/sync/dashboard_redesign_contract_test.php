@@ -81,8 +81,10 @@ dashboardContractAssert(
     'false tasks-based order card removed'
 );
 dashboardContractAssert(
-    strpos($service, 'pro_tybe IN (3, 9) AND isdeleted = 0') !== false,
-    'service uses safe sales filter'
+    strpos($service, 'pro_tybe = 9') !== false
+    && strpos($service, 'COALESCE(isdeleted, 0) = 0') !== false
+    && strpos($service, "payment_status IN ('paid', 'refunded')") !== false,
+    'service uses the canonical completed POS-sales filter'
 );
 dashboardContractAssert(
     strpos($service, 'SELECT COUNT(*) AS c FROM reservations WHERE duration IS NULL') !== false,

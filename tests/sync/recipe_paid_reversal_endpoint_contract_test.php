@@ -16,9 +16,10 @@ paidReversalContractAssertContains('require_pos_authenticated()', $endpoint, 'pa
 paidReversalContractAssertContains('require_pos_lane_permission', $endpoint, 'paid reversal endpoint should enforce action-specific POS lane permission');
 paidReversalContractAssertContains('reversePaidOrder', $endpoint, 'paid reversal endpoint should delegate to the POS mutation service');
 paidReversalContractAssertNotContains("require_permission(\$action === 'void' ? 'pos.void.paid' : 'pos.refund'", $endpoint, 'paid reversal endpoint should defer permission to manager approval service');
-paidReversalContractAssertContains('recordOrderSnapshot', $endpoint, 'paid reversal endpoint should emit order sync snapshot');
+paidReversalContractAssertContains('recordRequiredOrderSnapshot', $endpoint, 'paid reversal endpoint should emit a required atomic order sync snapshot');
 paidReversalContractAssertContains('REFUND_TENDER_REQUIRED', $endpoint, 'cashier refund endpoint must require an explicit outgoing tender');
 paidReversalContractAssertContains("'refund_payment_method' => \$refundPaymentMethod", $endpoint, 'endpoint must pass the selected tender to the central mutation service');
+paidReversalContractAssertContains("'mutation_version' => \$_POST['mutation_version']", $endpoint, 'endpoint must pass the caller expected mutation version to the central mutation service');
 paidReversalContractAssertContains("'refund_mode' => \$refundMode", $endpoint, 'endpoint must pass the unified partial-refund mode');
 paidReversalContractAssertContains("'refund_amount' => \$refundAmount", $endpoint, 'endpoint must pass an amount selection separately from tender amount');
 paidReversalContractAssertContains("'lines' => \$refundLines", $endpoint, 'endpoint must pass validated item/quantity selections');
@@ -55,6 +56,7 @@ paidReversalContractAssertContains("COALESCE(o.payment_status, 'unpaid') = 'unpa
 paidReversalContractAssertContains('reversal_status', $recentOrders, 'recent orders must expose authoritative full or partial reversal state');
 paidReversalContractAssertContains('refundable_lines', $recentOrders, 'recent orders must expose remaining immutable sale-line snapshots');
 paidReversalContractAssertContains('remaining_quantity', $recentOrders, 'recent orders line context must expose remaining refundable quantity');
+paidReversalContractAssertContains("'mutation_version' => max(1, (int) (\$row['mutation_version']", $recentOrders, 'recent orders must expose the expected mutation version used by refund and void');
 paidReversalContractAssertContains('can_refund', $recentOrders, 'recent orders payload should keep refund capability alias');
 paidReversalContractAssertContains('can_void', $recentOrders, 'recent orders payload should keep void capability alias');
 paidReversalContractAssertContains('COALESCE(o.payment_date, o.completed_at, o.crtime, o.pro_date)', $recentOrders, 'recent orders must preserve the original sale time after refund metadata updates');
@@ -64,6 +66,7 @@ paidReversalContractAssertContains('reversePaidOrder', $posBarcodeJs, 'POS recen
 paidReversalContractAssertContains('ajax/refund_order.php', $posBarcodeJs, 'POS UI should call the paid reversal endpoint');
 paidReversalContractAssertContains('refund_stock_policy', $posBarcodeJs, 'POS UI should send selected recipe stock policy');
 paidReversalContractAssertContains('refund_payment_method', $posBarcodeJs, 'POS UI should send the cashier-selected refund tender');
+paidReversalContractAssertContains('mutation_version: paidReversalState.mutationVersion', $posBarcodeJs, 'POS UI should send the recent-order mutation version');
 paidReversalContractAssertContains('refund_external_reference', $posBarcodeJs, 'POS UI should preserve explicit external settlement references');
 paidReversalContractAssertContains('pending_external_amount', $posBarcodeJs, 'POS UI should distinguish pending external settlement from completed settlement');
 paidReversalContractAssertContains('refund_mode', $posBarcodeJs, 'POS UI should submit full, item, or amount selection mode');
@@ -85,7 +88,7 @@ paidReversalContractAssertContains('HTTP_X_CSRF_TOKEN', $runtimeTest, 'runtime t
 paidReversalContractAssertContains("'pos_browser' => \$csrf", $runtimeTest, 'runtime test should seed the POS browser CSRF namespace');
 paidReversalContractAssertContains('pos_request_keys', $runtimeTest, 'runtime test should verify endpoint idempotency storage');
 paidReversalContractAssertContains('order_events', $runtimeTest, 'runtime test should verify endpoint order event writes');
-paidReversalContractAssertContains("'POSMAIN_SYNC_OUTBOX_ENABLED' => '0'", $runtimeTest, 'runtime test should disable sync outbox for isolated endpoint smoke');
+paidReversalContractAssertContains("'POSMAIN_SYNC_OUTBOX_ENABLED' => '1'", $runtimeTest, 'runtime test should prove required reversal and drawer outbox writes');
 
 echo "recipe-paid-reversal-endpoint-contract-ok\n";
 

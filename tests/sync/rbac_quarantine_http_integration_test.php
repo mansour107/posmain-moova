@@ -42,7 +42,7 @@ foreach ($targets as $path) {
     if (isset($headers[0]) && preg_match('/\s(\d{3})\s/', (string) $headers[0], $matches) === 1) {
         $status = (int) $matches[1];
     }
-    if ($status !== 410) {
+    if (!in_array($status, [404, 410], true)) {
         $failures[] = $path . '=' . $status;
     }
 }

@@ -35,7 +35,10 @@ try {
             'store_id' => 3,
         ]);
 
-        posAccountingInventoryAssert($posLine['qty_in'] === 0.0, 'POS line should not add stock');
+        posAccountingInventoryAssert(
+            $posLine['qty_in'] === RecipeDecimal::zero(ItemUnitConversion::INVENTORY_SCALE),
+            'POS line should expose exact zero stock input'
+        );
         posAccountingInventoryAssert(abs($posLine['qty_out'] - 2.0) < 0.0001, 'POS line should subtract quantity through detail qty_out');
         posAccountingInventoryAssert(abs($posLine['det_value'] - 28.0) < 0.0001, 'POS det_value should match legacy calculation');
         posAccountingInventoryAssert(abs($posLine['profit'] - 10.0) < 0.0001, 'POS profit should match legacy calculation');

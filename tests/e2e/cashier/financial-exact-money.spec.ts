@@ -68,16 +68,24 @@ test.describe('financial: exact-money browser flow', () => {
     ]);
     const paymentBody = await (await paymentResponse).json();
     const orderId = Number(paymentBody.order_id || paymentBody.data?.order_id || 0);
+    const mutationVersion = Number(
+      paymentBody.mutation_version
+      || paymentBody.data?.mutation_version
+      || paymentBody.updated_state?.mutation_version
+      || 0,
+    );
     expect(orderId).toBeGreaterThan(0);
+    expect(mutationVersion).toBeGreaterThan(0);
 
     await page.goto('/pos_barcode.php');
     await expect(page.locator('#posForm')).toBeVisible({ timeout: 20_000 });
 
-    const refund = await page.evaluate(async (id) => {
+    const refund = await page.evaluate(async ({ id, version }) => {
       const tokenEl = document.querySelector('meta[name="posmain-csrf-token"]');
       const csrf = tokenEl?.getAttribute('content') || '';
       const body = new URLSearchParams({
         order_id: String(id),
+        mutation_version: String(version),
         action: 'refund',
         refund_stock_policy: 'waste',
         refund_payment_method: 'cash',
@@ -95,7 +103,7 @@ test.describe('financial: exact-money browser flow', () => {
         body: body.toString(),
       });
       return { status: response.status, body: await response.json().catch(() => null) };
-    }, orderId);
+    }, { id: orderId, version: mutationVersion });
 
     expect(refund.status, JSON.stringify(refund.body)).toBeLessThan(500);
     expect(refund.body?.success, JSON.stringify(refund.body)).toBeTruthy();

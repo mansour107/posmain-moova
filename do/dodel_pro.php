@@ -1,4 +1,7 @@
 <?php
+require_once __DIR__ . '/../classes/Inventory/InventoryRetiredLegacyEndpoint.php';
+InventoryRetiredLegacyEndpoint::respond('LEGACY_OPERATION_DELETE_RETIRED', 'html');
+
 require_once __DIR__ . '/../includes/rbac_route_guard.php';
 rbac_guard_route('do/dodel_pro.php');
 

@@ -68,5 +68,6 @@ window.DELIVERY_OPERATIONS_CSRF = <?= json_encode($deliveryOperationsCsrf) ?>;
 window.DELIVERY_STATUS_COLUMNS = <?= json_encode($statusColumns, JSON_UNESCAPED_UNICODE) ?>;
 window.DELIVERY_NEXT_STATUS = <?= json_encode($nextStatus, JSON_UNESCAPED_UNICODE) ?>;
 </script>
+<script src="js/pos_order_api.js?v=<?= (int) (@filemtime(__DIR__ . '/js/pos_order_api.js') ?: 1) ?>"></script>
 <script src="js/delivery_board.js?v=<?= (int) (@filemtime(__DIR__ . '/js/delivery_board.js') ?: 1) ?>"></script>
 <?php include('includes/footer.php'); ?>

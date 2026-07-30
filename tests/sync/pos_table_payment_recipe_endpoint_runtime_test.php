@@ -63,12 +63,16 @@ try {
     $orderId = (int) ($saved['data']['order_id'] ?? 0);
     posTableRecipePaymentAssert($orderId > 0, 'table order save should return order id');
     posTableRecipePaymentAssert(($saved['data']['payment_status'] ?? '') === 'unpaid', 'saved table order should be unpaid before endpoint payment');
+    $savedOrder = $conn->query("SELECT mutation_version FROM ot_head WHERE id = {$orderId}")->fetch_assoc();
+    $orderMutationVersion = (int) ($savedOrder['mutation_version'] ?? 0);
+    posTableRecipePaymentAssert($orderMutationVersion > 0, 'saved table order should expose an expected mutation version');
     posTableRecipePaymentAssert((int) $conn->query("SELECT table_case FROM tables WHERE id = 1")->fetch_assoc()['table_case'] === 1, 'saved table order should occupy the table');
     posTableRecipePaymentAssertRecipeReserved($conn, $orderId);
 
     $payload = [
         'table_id' => 1,
         'order_id' => $orderId,
+        'mutation_version' => (string) $orderMutationVersion,
         'discount' => '0',
         'net' => '20',
         'paid' => '20',
@@ -84,6 +88,7 @@ try {
 
     $replay = posTableRecipePaymentEndpointRunChild($db, $payload);
     posTableRecipePaymentAssert(($replay['success'] ?? false) === true, 'table payment endpoint idempotency replay should succeed');
+    posTableRecipePaymentAssert(!empty($replay['idempotency_replayed']), 'table payment replay should be explicitly identified');
     posTableRecipePaymentAssert(($replay['request_id'] ?? '') === $payload['idempotency_key'], 'table payment replay should return original request id');
     posTableRecipePaymentAssert((int) ($replay['order_id'] ?? 0) === $orderId, 'table payment replay should return original order id');
 
@@ -142,6 +147,7 @@ function posTableRecipePaymentEndpointChild(string $json): void
     $_POST = [
         'table_id' => (int) ($payload['table_id'] ?? 0),
         'order_id' => (int) ($payload['order_id'] ?? 0),
+        'mutation_version' => (string) ($payload['mutation_version'] ?? ''),
         'discount' => (string) ($payload['discount'] ?? '0'),
         'net' => (string) ($payload['net'] ?? ''),
         'paid' => (string) ($payload['paid'] ?? ''),

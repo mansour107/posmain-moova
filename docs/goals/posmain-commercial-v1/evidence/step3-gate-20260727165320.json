@@ -1,0 +1,59 @@
+{
+    "gate": "commercial_v1_step3",
+    "created_at": "2026-07-27T16:53:20+00:00",
+    "ok": false,
+    "failures": [
+        "run:commercial_v1_step3_atomic_contract_test.php: PHP Fatal error:  Uncaught RuntimeException: refund/void must lockAndAssert expected mutation_version in /Users/ab.mansour1agmail.com/Desktop/projects/posmain/tests/sync/commercial_v1_step3_atomic_contract_test.php:12\nStack trace:\n#0 /Users/ab.mansour1agmail.com/Desktop/projects/posmain/tests/sync/commercial_v1_step3_atomic_contract_test.php(52): step3ContractAssert(false, 'refund/void mus...')\n#1"
+    ],
+    "checks": [
+        {
+            "name": "run:commercial_v1_step3_atomic_contract_test.php",
+            "ok": false,
+            "detail": "PHP Fatal error:  Uncaught RuntimeException: refund/void must lockAndAssert expected mutation_version in /Users/ab.mansour1agmail.com/Desktop/projects/posmain/tests/sync/commercial_v1_step3_atomic_contract_test.php:12\nStack trace:\n#0 /Users/ab.mansour1agmail.com/Desktop/projects/posmain/tests/sync/commercial_v1_step3_atomic_contract_test.php(52): step3ContractAssert(false, 'refund/void mus...')\n#1"
+        },
+        {
+            "name": "run:commercial_v1_step3_atomic_runtime_test.php",
+            "ok": true,
+            "detail": "commercial-v1-step3-atomic-runtime-ok db=posmain_c1_step3_atomic_50706"
+        },
+        {
+            "name": "run:pos_payment_split_service_idempotency_test.php",
+            "ok": true,
+            "detail": "POS direct-stock consume errors: [{\"line_index\":0,\"fat_detail_id\":5001,\"phase\":\"direct_stock_consume\",\"message\":\"DIRECT_STOCK_RESERVATION_MISSING\"}]\npos-payment-split-service-idempotency-ok db=posmain_payment_split_idemp_50708"
+        },
+        {
+            "name": "run:phase4_table_transfer_service_test.php",
+            "ok": true,
+            "detail": "phase4-table-transfer-service-ok db=posmain_phase4_table_transfer_50710"
+        },
+        {
+            "name": "run:phase4_table_merge_service_test.php",
+            "ok": true,
+            "detail": "[Recipe] Failed to record menu availability sync snapshot: Table 'posmain_phase4_table_merge_50712.myitems' doesn't exist\n[Recipe] Failed to record menu availability sync snapshot: Table 'posmain_phase4_table_merge_50712.myitems' doesn't exist\nphase4-table-merge-service-ok db=posmain_phase4_table_merge_50712"
+        },
+        {
+            "name": "run:commercial_v1_step1_gate.php",
+            "ok": true,
+            "detail": "OK commercial-v1-step1 checks=95 failures=0 receipt=/Users/ab.mansour1agmail.com/Desktop/projects/posmain/docs/goals/posmain-commercial-v1/evidence/step1-gate-20260727165320.json"
+        },
+        {
+            "name": "run:commercial_v1_step2_gate.php",
+            "ok": true,
+            "detail": "OK commercial-v1-step2 checks=9 failures=0 receipt=/Users/ab.mansour1agmail.com/Desktop/projects/posmain/docs/goals/posmain-commercial-v1/evidence/step2-gate-20260727165320.json"
+        },
+        {
+            "name": "pay_locks_version",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "cancel_idempotent_scope",
+            "ok": true,
+            "detail": ""
+        }
+    ],
+    "identity": {
+        "git_commit": "07d2a856fa1cda09303f9d36e60e962c11847797",
+        "git_branch": "codex/posmain-commercial-v1-rc"
+    }
+}

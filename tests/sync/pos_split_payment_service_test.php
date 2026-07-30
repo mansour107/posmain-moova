@@ -69,8 +69,14 @@ try {
             ['detail_id' => 1000],
             ['detail_id' => 1001, 'qty' => 1],
         ],
-        'paid_amount' => 30,
-        'payment_method' => 'cash',
+        'paid_amount' => '32.00',
+        'payment_method' => 'mixed',
+        'tenders' => [
+            ['payment_method' => 'bank', 'amount' => '12.00', 'reference_no' => 'BANK-SPLIT-100'],
+            ['payment_method' => 'cash', 'amount' => '20.00'],
+        ],
+        'mutation_version' => 1,
+        'idempotency_key' => 'split-payment-mixed-100',
     ], ['user_id' => 7, 'skip_idempotency' => true]);
 
     $newOrderId = (int) $split['data']['new_invoice_id'];
@@ -107,8 +113,12 @@ try {
     posSplitPaymentAssert(abs((float) $original['remaining_amount'] - 20.0) < 0.0001, 'original remaining should match recalculated net');
     posSplitPaymentAssert((int) $conn->query("SELECT table_case FROM tables WHERE id = 1")->fetch_assoc()['table_case'] === 1, 'table should stay occupied while original remains active');
 
-    $payment = $conn->query("SELECT * FROM order_payments WHERE order_id = {$newOrderId}")->fetch_assoc();
-    posSplitPaymentAssert(abs((float) $payment['amount'] - 30.0) < 0.0001, 'child payment row should be inserted');
+    $payments = $conn->query("SELECT * FROM order_payments WHERE order_id = {$newOrderId} ORDER BY id")->fetch_all(MYSQLI_ASSOC);
+    posSplitPaymentAssert(count($payments) === 2, 'mixed split should persist one payment row per tender');
+    posSplitPaymentAssert($payments[0]['payment_method'] === 'bank' && $payments[0]['applied_amount'] === '12.00', 'bank split tender must remain distinct');
+    posSplitPaymentAssert($payments[1]['payment_method'] === 'cash' && $payments[1]['tendered_amount'] === '20.00', 'cash tendered must be preserved');
+    posSplitPaymentAssert($payments[1]['applied_amount'] === '18.00' && $payments[1]['change_due'] === '2.00', 'cash split tender must persist applied amount and change');
+    posSplitPaymentAssert(($split['data']['change_due'] ?? null) === '2.00', 'split response must expose exact aggregate change');
 
     $conn->query("INSERT INTO tables (id, tname, table_case, isdeleted) VALUES (2, 'T2', 1, 0)");
     $conn->query("
@@ -139,10 +149,81 @@ try {
         'items' => [
             ['detail_id' => 2000, 'qty' => 1],
         ],
-        'paid_amount' => 3.33,
+        'paid_amount' => '3.33',
         'payment_method' => 'cash',
+        'mutation_version' => 1,
+        'idempotency_key' => 'split-payment-rounding-200',
     ], ['user_id' => 7, 'skip_idempotency' => true]);
     posSplitPaymentAssert($roundingSplit['success'] === true, 'split should accept cashier cent-rounded partial item amounts');
+
+    $conn->query("INSERT INTO tables (id, tname, table_case, isdeleted) VALUES (5, 'T5', 1, 0)");
+    $conn->query("
+        INSERT INTO ot_head (
+            id, pro_id, branch_id, table_id, order_type, pro_tybe, pro_date, accural_date,
+            store_id, emp_id, emp2_id, acc1, acc2, pro_value, fat_total, fat_disc,
+            fat_net, paid_amount, remaining_amount, payment_status, invoice_status,
+            order_status, isdeleted, tenant, branch
+        ) VALUES (
+            500, 15, 0, 5, 'table', 9, '2026-05-12', '2026-05-12',
+            3, 4, 4, 51, 501, 50, 50, 5,
+            45, 0, 45, 'unpaid', 'draft',
+            'active', 0, 0, 0
+        )
+    ");
+    $conn->query("
+        INSERT INTO fat_details (
+            id, pro_tybe, det_store, pro_id, item_id, u_val, qty_in, qty_out,
+            price, cost_price, stock_value, discount, plus, det_value,
+            profit, fatid, fat_tybe, tenant, branch, isdeleted
+        ) VALUES
+            (5000, 9, 3, 500, 20, 1, 0, 2, 10, 5, 0, 0, 0, 20, 10, 500, 9, 0, 0, 0),
+            (5001, 9, 3, 500, 21, 1, 0, 3, 10, 5, 0, 0, 0, 30, 15, 500, 9, 0, 0, 0)
+    ");
+
+    $discountedSplit = $service->splitTablePayment($conn, [
+        'order_id' => 500,
+        'table_id' => 5,
+        'items' => [
+            ['detail_id' => 5000],
+            ['detail_id' => 5001, 'qty' => '1.000000'],
+        ],
+        'paid_amount' => '30.00',
+        'payment_method' => 'cash',
+        'mutation_version' => 1,
+        'idempotency_key' => 'split-payment-discount-500',
+    ], ['user_id' => 7, 'skip_idempotency' => true]);
+
+    $discountChildId = (int) $discountedSplit['data']['new_invoice_id'];
+    $discountChild = $conn->query("SELECT fat_total, fat_disc, fat_net, paid_amount FROM ot_head WHERE id = {$discountChildId}")->fetch_assoc();
+    $discountParent = $conn->query("SELECT fat_total, fat_disc, fat_net, remaining_amount FROM ot_head WHERE id = 500")->fetch_assoc();
+    posSplitPaymentAssert($discountedSplit['data']['gross_amount'] === '30.00', 'discounted split response should expose exact selected gross');
+    posSplitPaymentAssert($discountedSplit['data']['discount_amount'] === '3.00', 'discounted split should allocate the exact proportional header discount');
+    posSplitPaymentAssert($discountedSplit['data']['paid_amount'] === '27.00', 'discounted split should apply payment to child net, not gross');
+    posSplitPaymentAssert($discountedSplit['data']['change_due'] === '3.00', 'cash tender over discounted child net should persist exact change');
+    posSplitPaymentAssert(
+        Money::from($discountChild['fat_total'])->toString() === '30.00'
+            && Money::from($discountChild['fat_disc'])->toString() === '3.00',
+        'child invoice should retain gross and allocated discount facts'
+    );
+    posSplitPaymentAssert(
+        Money::from($discountChild['fat_net'])->toString() === '27.00'
+            && Money::from($discountChild['paid_amount'])->toString() === '27.00',
+        'child invoice should be paid at exact discounted net'
+    );
+    posSplitPaymentAssert(
+        Money::from($discountParent['fat_total'])->toString() === '20.00'
+            && Money::from($discountParent['fat_disc'])->toString() === '2.00',
+        'parent should retain only the remaining gross and discount'
+    );
+    posSplitPaymentAssert(
+        Money::from($discountParent['fat_net'])->toString() === '18.00'
+            && Money::from($discountParent['remaining_amount'])->toString() === '18.00',
+        'parent remaining balance should reconcile after discount allocation'
+    );
+    posSplitPaymentAssert(
+        Money::from($discountChild['fat_net'])->add(Money::from($discountParent['fat_net']))->toString() === '45.00',
+        'child and parent net must reconcile exactly to the pre-split order net'
+    );
 
     $shadowBridge = new InventoryInvoiceBridge(new InventoryFeatureFlags([
         'inventory' => [
@@ -209,8 +290,10 @@ try {
             ['detail_id' => 4000],
             ['detail_id' => 4001, 'qty' => 1],
         ],
-        'paid_amount' => 30,
+        'paid_amount' => '30.00',
         'payment_method' => 'cash',
+        'mutation_version' => 1,
+        'idempotency_key' => 'split-payment-shadow-400',
     ], ['user_id' => 7, 'skip_idempotency' => true]);
     $afterSplitDirectMovements = (int) $conn->query("SELECT COUNT(*) AS c FROM inventory_movements WHERE movement_type = 'sale_direct' AND item_id IN (4010, 4011)")->fetch_assoc()['c'];
     $splitBridgeBalanceA = (new InventoryBalanceRepository())->findBalance($conn, 0, 0, 3, 4010);
@@ -222,7 +305,37 @@ try {
 
     $recipeFlags = posSplitPaymentRecipeFlags();
     $recipeLifecycle = new RecipeOrderLifecycleService($recipeFlags);
-    $recipeAwareService = new PosOrderMutationService(null, null, null, null, null, null, null, null, null, $recipeLifecycle);
+    $recipeAwareBridge = new InventoryInvoiceBridge(
+        new InventoryFeatureFlags([
+            'inventory' => [
+                'ledger_mode' => 'shadow',
+                'strict_stock' => '1',
+            ],
+            'branch' => [
+                'pos_tenant' => 0,
+                'pos_branch' => 0,
+            ],
+        ]),
+        null,
+        null,
+        null,
+        $recipeFlags
+    );
+    $recipeAwareService = new PosOrderMutationService(
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        $recipeLifecycle,
+        null,
+        null,
+        $recipeAwareBridge
+    );
     posSplitPaymentCreateRecipeFixture($conn, 30010, 30011, '10.000000', 3);
     $conn->query("INSERT INTO tables (id, tname, table_case, isdeleted) VALUES (3, 'T3', 1, 0)");
     $conn->query("
@@ -263,8 +376,10 @@ try {
         'items' => [
             ['detail_id' => 3000, 'qty' => 2],
         ],
-        'paid_amount' => 10,
+        'paid_amount' => '10.00',
         'payment_method' => 'cash',
+        'mutation_version' => 1,
+        'idempotency_key' => 'split-payment-recipe-300',
     ], ['user_id' => 7, 'skip_idempotency' => true]);
     $recipeChildOrderId = (int) $recipeSplit['data']['new_invoice_id'];
     $afterSplitBalance = (new InventoryBalanceRepository())->findBalance($conn, 0, 0, 3, 30011);
@@ -328,7 +443,7 @@ function posSplitPaymentSeedCashDrawer(mysqli $conn): void
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
     ");
     $conn->query("INSERT IGNORE INTO settings (id, def_pos_client, def_pos_store, isdeleted) VALUES (1, 501, 3, 0)");
-    $conn->query("INSERT IGNORE INTO acc_head (id, code, aname, is_stock, isdeleted) VALUES (3, 'ST001', 'Main Store', 1, 0), (51, '101001', 'Cash', 0, 0), (501, '122001', 'Customer', 0, 0)");
+    $conn->query("INSERT IGNORE INTO acc_head (id, code, aname, is_stock, isdeleted) VALUES (3, 'ST001', 'Main Store', 1, 0), (51, '101001', 'Cash', 0, 0), (52, '102001', 'Bank', 0, 0), (501, '122001', 'Customer', 0, 0)");
 
     $paymentMethods = new PaymentMethodService();
     try {
@@ -338,6 +453,13 @@ function posSplitPaymentSeedCashDrawer(mysqli $conn): void
             'name_en' => 'Cash',
             'type' => 'cash',
             'account_id' => 51,
+        ]);
+        $paymentMethods->saveMethod($conn, [
+            'code' => 'bank',
+            'name_ar' => 'Bank',
+            'name_en' => 'Bank',
+            'type' => 'bank',
+            'account_id' => 52,
         ]);
     } catch (Throwable $exception) {
         // Already seeded in this disposable DB.
@@ -444,7 +566,11 @@ function posSplitPaymentCreateSchema(mysqli $conn): void
             id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
             order_id INT NOT NULL,
             amount DECIMAL(15,4) NOT NULL DEFAULT 0,
+            tendered_amount DECIMAL(19,2) NULL,
+            applied_amount DECIMAL(19,2) NULL,
+            change_due DECIMAL(19,2) NULL,
             payment_method VARCHAR(50) NULL,
+            reference_no VARCHAR(255) NULL,
             created_by INT NULL,
             created_at DATETIME NULL
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci

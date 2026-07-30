@@ -28,6 +28,10 @@ $pageExpectations = [
         'attachPOSTableCsrfHeader',
         'beforeSend: attachPOSTableCsrfHeader',
     ],
+    'elements/pos/payment_modal.php' => [
+        "url: 'ajax/process_table_payment.php'",
+        'beforeSend: attachPOSTableCsrfHeader',
+    ],
 ];
 
 foreach ($pageExpectations as $path => $snippets) {

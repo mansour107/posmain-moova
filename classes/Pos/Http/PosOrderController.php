@@ -8,6 +8,7 @@ require_once __DIR__ . '/../Service/OrderAccountingService.php';
 require_once __DIR__ . '/../Service/DrawerSessionService.php';
 require_once __DIR__ . '/../Service/PaymentMethodService.php';
 require_once __DIR__ . '/../../../classes/Financial/Money.php';
+require_once __DIR__ . '/../../../classes/Financial/FinancialMoneyInput.php';
 require_once __DIR__ . '/../../../classes/Financial/DecimalQuantity.php';
 require_once __DIR__ . '/../../../classes/Financial/UnitPrice.php';
 require_once __DIR__ . '/../../../classes/Financial/RoundingPolicy.php';
@@ -36,17 +37,10 @@ class PosOrderController
         $data['order_id'] = (int) ($data['order_id'] ?? $data['original_order_id'] ?? 0);
         $data['action'] = 'refund';
 
-        $drawerSessionId = session_status() === PHP_SESSION_ACTIVE
-            ? (int) ($_SESSION['pos_drawer_session_id'] ?? 0)
-            : 0;
-        $result = (new PosOrderMutationService())->reversePaidOrder($conn, $data, [
-            'user_id' => $userId,
-            'tenant' => session_status() === PHP_SESSION_ACTIVE ? (int) ($_SESSION['pos_tenant'] ?? 0) : 0,
-            'branch' => session_status() === PHP_SESSION_ACTIVE ? (int) ($_SESSION['pos_branch'] ?? 0) : 0,
-            'drawer_session_id' => $drawerSessionId,
+        $result = (new PosOrderMutationService())->reversePaidOrder($conn, $data, $this->browserMutationContext($userId, [
             'require_drawer_session' => true,
             'event_source' => 'pos_api_refund',
-        ]);
+        ]));
         $refundData = $result['data'] ?? [];
         $replayed = !empty($refundData['replayed']);
 
@@ -151,7 +145,12 @@ class PosOrderController
             'mutation_version' => $data['mutation_version'] ?? $data['order_version'] ?? null,
             'user_id' => $userId,
             'pos_customer_id' => (int) ($data['pos_customer_id'] ?? $data['posCustomerId'] ?? 0) ?: null,
-        ], ['user_id' => $userId, 'in_transaction' => true, 'event_source' => $eventSource]);
+        ], [
+            'user_id' => $userId,
+            'in_transaction' => true,
+            'event_source' => $eventSource,
+            'record_outbox' => false,
+        ]);
 
         $saveData = $saveEnvelope['data'] ?? [];
         $orderId = (int) ($saveData['order_id'] ?? 0);
@@ -447,11 +446,8 @@ class PosOrderController
 
         $tableId = (int) ($paymentInput['table_id'] ?? 0);
         $orderId = (int) ($paymentInput['order_id'] ?? 0);
-        $discount = $paymentInput['discount'];
-        $net = $paymentInput['net'];
-        $paid = Money::fromLegacy($paymentInput['paid'] ?? '0');
-        $paymentMethod = (string) ($paymentInput['payment_method'] ?? 'cash');
-        $referenceNo = (string) ($paymentInput['reference_no'] ?? $paymentInput['notes'] ?? '');
+        $paid = FinancialMoneyInput::money($paymentInput['paid'] ?? '0');
+        $paymentInputs = is_array($paymentInput['tenders'] ?? null) ? $paymentInput['tenders'] : [];
 
         if ($tableId <= 0 || !$paid->isPositive()) {
             throw new InvalidArgumentException('بيانات غير صحيحة');
@@ -504,8 +500,7 @@ class PosOrderController
         }
 
         $table = $tableOrderService->requireTable($conn, $tableId);
-        $tender = $paymentMethodService->resolveTender($conn, $paymentMethod, $referenceNo);
-        $orderId = $this->resolveTableOrderIdForPayment(
+        $resolvedPaymentOrder = $this->resolveTableOrderIdForPayment(
             $conn,
             $data,
             $tableId,
@@ -514,58 +509,113 @@ class PosOrderController
             $posMutationService,
             $tableOrderService
         );
-
-        $paymentEnvelope = $posMutationService->payTableOrder($conn, [
-            'table_id' => $tableId,
-            'order_id' => $orderId,
-            'paid' => $paid->toString(),
-            'payment_method_id' => $tender['id'],
-            'payment_method' => $tender['code'],
-            'reference_no' => $tender['reference_no'],
-            'user_id' => $userId,
-            'discount' => $discount,
-            'net' => $net,
-            'pos_customer_id' => (int) ($data['pos_customer_id'] ?? 0),
-            'idempotency_key' => $idempotencyKey,
-        ], [
-            'user_id' => $userId,
-            'in_transaction' => true,
-            'skip_idempotency' => true,
-        ]);
-        $paymentResult = $paymentEnvelope['data'] ?? [];
+        $orderId = (int) ($resolvedPaymentOrder['order_id'] ?? 0);
+        $autoCreatedMutationVersion = !empty($resolvedPaymentOrder['created'])
+            ? (int) ($resolvedPaymentOrder['mutation_version'] ?? 0)
+            : 0;
 
         $order = $tableOrderService->queryOne($conn, 'SELECT * FROM ot_head WHERE id = ? LIMIT 1', [$orderId]);
         if (!$order) {
             throw new InvalidArgumentException('الطلب غير موجود');
         }
-
-        $receiptId = null;
-        $actualPaid = Money::from((string) ($paymentResult['applied_amount'] ?? '0'));
-        if ($actualPaid->isPositive()) {
-            $date = date('Y-m-d');
-            $customerAcc = $tableOrderService->resolveDefaultCustomerId($conn, (int) ($order['acc2'] ?? 0));
-            $empId = (int) ($order['emp_id'] ?? 0);
-            $accountingResult = $accountingPostingService->postTablePaymentReceipt($conn, [
-                'order_id' => $orderId,
-                'table_name' => $table['tname'] ?? '',
-                'amount' => $actualPaid->toString(),
-                'safe_account_id' => (int) $tender['account_id'],
-                'payment_method_id' => (int) $tender['id'],
-                'payment_method_code' => (string) $tender['code'],
-                'reference_no' => $tender['reference_no'],
-                'customer_account_id' => $customerAcc,
-                'emp_id' => $empId,
-                'payment_date' => $date,
-                'user_id' => $userId,
-                'idempotency_key' => $idempotencyKey,
-            ], ['user_id' => $userId, 'tenant' => 0, 'branch' => 0]);
-            $receiptId = $accountingResult['receipt_id'] ?? null;
-            $movementId = (int) ($paymentResult['drawer_movement_id'] ?? 0);
-            if ($receiptId && $movementId > 0) {
-                (new DrawerSessionService())->linkMovementToVoucher($conn, $movementId, (int) $receiptId);
-            } elseif ($receiptId) {
-                (new DrawerSessionService())->linkLatestSaleMovementToVoucher($conn, $orderId, (int) $receiptId);
+        $resolvedTenders = [];
+        foreach ($paymentInputs as $paymentIndex => $inputTender) {
+            $resolved = $paymentMethodService->resolveTender(
+                $conn,
+                $inputTender['payment_method'] ?? '',
+                $inputTender['reference_no'] ?? null
+            );
+            $resolved['amount'] = FinancialMoneyInput::moneyString($inputTender['amount'] ?? '0');
+            $resolved['input_index'] = (int) $paymentIndex;
+            $resolvedTenders[] = $resolved;
+        }
+        usort($resolvedTenders, static function (array $left, array $right): int {
+            $leftCash = ($left['type'] ?? '') === 'cash' ? 1 : 0;
+            $rightCash = ($right['type'] ?? '') === 'cash' ? 1 : 0;
+            if ($leftCash !== $rightCash) {
+                return $leftCash <=> $rightCash;
             }
+
+            return ((int) ($left['input_index'] ?? 0)) <=> ((int) ($right['input_index'] ?? 0));
+        });
+
+        $receiptIds = [];
+        $paymentResults = [];
+        $totalTendered = Money::zero();
+        $totalApplied = Money::zero();
+        $totalChange = Money::zero();
+        $expectedVersion = $data['mutation_version']
+            ?? $data['order_version']
+            ?? $paymentInput['mutation_version']
+            ?? ($autoCreatedMutationVersion > 0 ? $autoCreatedMutationVersion : null);
+        $customerAcc = $tableOrderService->resolveDefaultCustomerId($conn, (int) ($order['acc2'] ?? 0));
+        $empId = (int) ($order['emp_id'] ?? 0);
+
+        foreach ($resolvedTenders as $paymentIndex => $tender) {
+            $tenderIdempotencyKey = $idempotencyKey . ':tender:' . $paymentIndex;
+            $paymentEnvelope = $posMutationService->payTableOrder($conn, [
+                'table_id' => $tableId,
+                'order_id' => $orderId,
+                'paid' => (string) $tender['amount'],
+                'payment_method_id' => $tender['id'],
+                'payment_method' => $tender['code'],
+                'reference_no' => $tender['reference_no'],
+                'user_id' => $userId,
+                'pos_customer_id' => (int) ($data['pos_customer_id'] ?? 0),
+                'idempotency_key' => $tenderIdempotencyKey,
+                'mutation_version' => $expectedVersion,
+            ], $this->browserMutationContext($userId, [
+                'in_transaction' => true,
+                'skip_idempotency' => true,
+                'record_outbox' => false,
+            ]));
+            $paymentResult = $paymentEnvelope['data'] ?? [];
+            $expectedVersion = $paymentResult['mutation_version'] ?? $expectedVersion;
+            $actualPaid = Money::from((string) ($paymentResult['applied_amount'] ?? '0'));
+            $tenderedAmount = Money::from((string) ($paymentResult['tendered_amount'] ?? $tender['amount']));
+            $changeDue = Money::from((string) ($paymentResult['change_due'] ?? '0'));
+            $totalTendered = $totalTendered->add($tenderedAmount);
+            $totalApplied = $totalApplied->add($actualPaid);
+            $totalChange = $totalChange->add($changeDue);
+
+            $receiptId = null;
+            if ($actualPaid->isPositive()) {
+                $accountingResult = $accountingPostingService->postTablePaymentReceipt($conn, [
+                    'order_id' => $orderId,
+                    'table_name' => $table['tname'] ?? '',
+                    'amount' => $actualPaid->toString(),
+                    'safe_account_id' => (int) $tender['account_id'],
+                    'payment_method_id' => (int) $tender['id'],
+                    'payment_method_code' => (string) $tender['code'],
+                    'reference_no' => $tender['reference_no'],
+                    'customer_account_id' => $customerAcc,
+                    'emp_id' => $empId,
+                    'payment_date' => date('Y-m-d'),
+                    'user_id' => $userId,
+                    'idempotency_key' => $tenderIdempotencyKey,
+                ], $this->browserMutationContext($userId));
+                $receiptId = $accountingResult['receipt_id'] ?? null;
+                $movementId = (int) ($paymentResult['drawer_movement_id'] ?? 0);
+                if ($receiptId && $movementId > 0) {
+                    (new DrawerSessionService())->linkMovementToVoucher($conn, $movementId, (int) $receiptId);
+                } elseif ($receiptId) {
+                    (new DrawerSessionService())->linkLatestSaleMovementToVoucher($conn, $orderId, (int) $receiptId);
+                }
+                if ($receiptId) {
+                    $receiptIds[] = (int) $receiptId;
+                }
+            }
+            $paymentResult['receipt_id'] = $receiptId;
+            $paymentResult['payment_method'] = (string) $tender['code'];
+            $paymentResults[] = $paymentResult;
+        }
+        $paymentResult = $paymentResults[count($paymentResults) - 1] ?? [];
+        if (count($paymentResults) > 1) {
+            $tableOrderService->execute(
+                $conn,
+                "UPDATE ot_head SET payment_method = 'mixed' WHERE id = ? AND table_id = ?",
+                [$orderId, $tableId]
+            );
         }
 
         (new OrderMutationSideEffectsService())->recordTablePayment(
@@ -579,8 +629,13 @@ class PosOrderController
         $response = [
             'success' => true,
             'code' => 'OK',
-            'message' => $paymentResult['fully_paid'] ? 'تم السداد بالكامل' : 'تم تسجيل دفعة جزئية',
-            'receipt_id' => $receiptId,
+            'message' => !empty($paymentResult['fully_paid']) ? 'تم السداد بالكامل' : 'تم تسجيل دفعة جزئية',
+            'receipt_id' => $receiptIds ? $receiptIds[count($receiptIds) - 1] : null,
+            'receipt_ids' => $receiptIds,
+            'payments' => $paymentResults,
+            'tendered_amount' => $totalTendered->toString(),
+            'applied_amount' => $totalApplied->toString(),
+            'change_due' => $totalChange->toString(),
             'order_id' => $orderId,
             'invoice_id' => $orderId,
             'payment_status' => $paymentResult['payment_status'] ?? null,
@@ -609,13 +664,14 @@ class PosOrderController
     public function splitPayment(mysqli $conn, array $data, array $server, int $userId): array
     {
         $data['idempotency_key'] = $this->requireIdempotencyKey($data, $server);
+        $expectedMutationVersion = $data['mutation_version'] ?? $data['order_version'] ?? null;
         $splitRows = $this->extractSplitPaymentRows($data);
         $tableId = (int) ($data['table_id'] ?? $data['selected_table_id'] ?? 0);
         $orderId = (int) ($data['order_id'] ?? $data['edit_id'] ?? $data['selected_order_id'] ?? 0);
-        $paidAmount = Money::fromLegacy($data['paid_amount'] ?? $data['paid'] ?? 0);
+        $paidAmount = FinancialMoneyInput::money($data['paid_amount'] ?? $data['paid'] ?? '0');
         $paymentMethod = trim((string) ($data['payment_method'] ?? $data['pos_split_payment_method'] ?? ''));
         if ($paymentMethod === '') {
-            $paymentMethod = Money::fromLegacy($data['paid_bank'] ?? 0)->isPositive() ? 'bank' : 'cash';
+            $paymentMethod = FinancialMoneyInput::money($data['paid_bank'] ?? '0')->isPositive() ? 'bank' : 'cash';
         }
 
         if ($tableId <= 0 || !$paidAmount->isPositive() || !$splitRows) {
@@ -673,6 +729,8 @@ class PosOrderController
                 'items' => $resolvedItems,
                 'paid_amount' => $paidAmount->toString(),
                 'payment_method' => $paymentMethod,
+                'tenders' => $data['tenders'] ?? null,
+                'reference_no' => $data['reference_no'] ?? $data['notes'] ?? '',
             ]);
         } catch (Exception $e) {
             $conn->rollback();
@@ -691,18 +749,61 @@ class PosOrderController
             'items' => $rawItems,
             'paid_amount' => $paidAmount,
             'payment_method' => $paymentMethod,
+            'tenders' => $data['tenders'] ?? [],
             'user_id' => $userId,
             'idempotency_key' => $idempotencyKey,
-        ], [
-            'user_id' => $userId,
+            'mutation_version' => $expectedMutationVersion,
+        ], $this->browserMutationContext($userId, [
             'in_transaction' => true,
             'skip_idempotency' => true,
-        ]);
+            'record_outbox' => false,
+        ]));
         $splitData = $splitEnvelope['data'] ?? [];
         $newHeadId = (int) ($splitData['new_invoice_id'] ?? 0);
         $splitGroupId = (string) ($splitData['split_group_id'] ?? '');
-        $remainingTotal = Money::fromLegacy($splitData['remaining_total'] ?? '0.00')->toString();
+        $remainingTotal = FinancialMoneyInput::moneyString($splitData['remaining_total'] ?? '0.00');
         $activeTableOrderId = $splitData['active_order_id'] ?? null;
+        $splitPayments = is_array($splitData['payments'] ?? null) ? $splitData['payments'] : [];
+        $receiptIds = [];
+        if ($newHeadId > 0 && $splitPayments !== []) {
+            $tableOrderService = new TableOrderService();
+            $table = $tableOrderService->requireTable($conn, $tableId);
+            $childOrder = $tableOrderService->queryOne($conn, 'SELECT * FROM ot_head WHERE id = ? LIMIT 1', [$newHeadId]);
+            if (!$childOrder) {
+                throw new RuntimeException('SPLIT_CHILD_ORDER_NOT_FOUND');
+            }
+            $customerAcc = $tableOrderService->resolveDefaultCustomerId($conn, (int) ($childOrder['acc2'] ?? 0));
+            $accountingPostingService = new OrderAccountingService();
+            foreach ($splitPayments as $paymentIndex => $splitPayment) {
+                $applied = FinancialMoneyInput::money($splitPayment['applied_amount'] ?? '0');
+                if (!$applied->isPositive()) {
+                    continue;
+                }
+                $tenderKey = $idempotencyKey . ':tender:' . $paymentIndex;
+                $accountingResult = $accountingPostingService->postTablePaymentReceipt($conn, [
+                    'order_id' => $newHeadId,
+                    'table_name' => $table['tname'] ?? '',
+                    'amount' => $applied->toString(),
+                    'safe_account_id' => (int) ($splitPayment['account_id'] ?? 0),
+                    'payment_method_id' => (int) ($splitPayment['payment_method_id'] ?? 0),
+                    'payment_method_code' => (string) ($splitPayment['payment_method'] ?? ''),
+                    'reference_no' => $splitPayment['reference_no'] ?? null,
+                    'customer_account_id' => $customerAcc,
+                    'emp_id' => (int) ($childOrder['emp_id'] ?? 0),
+                    'payment_date' => date('Y-m-d'),
+                    'user_id' => $userId,
+                    'idempotency_key' => $tenderKey,
+                ], $this->browserMutationContext($userId));
+                $receiptId = (int) ($accountingResult['receipt_id'] ?? 0);
+                if ($receiptId > 0) {
+                    $receiptIds[] = $receiptId;
+                    $movementId = (int) ($splitPayment['drawer_movement_id'] ?? 0);
+                    if ($movementId > 0) {
+                        (new DrawerSessionService())->linkMovementToVoucher($conn, $movementId, $receiptId);
+                    }
+                }
+            }
+        }
 
         (new OrderMutationSideEffectsService())->recordSplitPayment(
             $conn,
@@ -725,6 +826,12 @@ class PosOrderController
             'active_order_id' => $activeTableOrderId !== null ? (int) $activeTableOrderId : null,
             'original_mutation_version' => (int) ($splitData['original_mutation_version'] ?? 0),
             'mutation_version' => (int) ($splitData['mutation_version'] ?? 0),
+            'receipt_id' => $receiptIds ? $receiptIds[count($receiptIds) - 1] : null,
+            'receipt_ids' => $receiptIds,
+            'payments' => $splitPayments,
+            'tendered_amount' => $splitData['tendered_amount'] ?? null,
+            'paid_amount' => $splitData['paid_amount'] ?? null,
+            'change_due' => $splitData['change_due'] ?? null,
             'request_id' => $idempotencyKey,
             'print_url' => $newHeadId > 0 ? 'print/receipt.php?id=' . $newHeadId : null,
             'redirect_url' => 'pos_barcode.php',
@@ -894,12 +1001,11 @@ class PosOrderController
         }
 
         try {
-            $payload = $callback($conn, [
-                'user_id' => $userId,
+            $payload = $callback($conn, $this->browserMutationContext($userId, [
                 'in_transaction' => true,
                 'skip_idempotency' => true,
                 'transaction_started' => true,
-            ]);
+            ]));
             if (!is_array($payload)) {
                 throw new RuntimeException('INVALID_IDEMPOTENT_CALLBACK_RESPONSE');
             }
@@ -920,6 +1026,22 @@ class PosOrderController
     private function requireIdempotencyKey(array $data, array $server): string
     {
         return (new IdempotencyService())->resolveKey($data, $server);
+    }
+
+    /**
+     * The AJAX bootstrap releases the PHP session lock before controller work,
+     * but the authenticated session snapshot remains readable in $_SESSION.
+     * Carry the drawer and branch scope explicitly into every cashier mutation
+     * so cash settlement can validate owned drawers or approved overrides.
+     */
+    private function browserMutationContext(int $userId, array $extra = []): array
+    {
+        return array_merge([
+            'user_id' => $userId,
+            'tenant' => max(0, (int) ($_SESSION['pos_tenant'] ?? 0)),
+            'branch' => max(0, (int) ($_SESSION['pos_branch'] ?? 0)),
+            'drawer_session_id' => max(0, (int) ($_SESSION['pos_drawer_session_id'] ?? 0)),
+        ], $extra);
     }
 
     private function mapIdempotencyGate(mysqli $conn, array $idempotency, string $idempotencyKey): ?array
@@ -1057,6 +1179,9 @@ class PosOrderController
         return $data;
     }
 
+    /**
+     * @return array{order_id:int,mutation_version:int,created:bool}
+     */
     private function resolveTableOrderIdForPayment(
         mysqli $conn,
         array $data,
@@ -1065,14 +1190,22 @@ class PosOrderController
         int $userId,
         PosOrderMutationService $posMutationService,
         TableOrderService $tableOrderService
-    ): int {
+    ): array {
         if ($orderId > 0) {
-            return $orderId;
+            return [
+                'order_id' => $orderId,
+                'mutation_version' => 0,
+                'created' => false,
+            ];
         }
 
         $activeOrder = $tableOrderService->findActiveOrderByTableId($conn, $tableId, true);
         if ($activeOrder) {
-            return (int) $activeOrder['id'];
+            return [
+                'order_id' => (int) $activeOrder['id'],
+                'mutation_version' => max(1, (int) ($activeOrder['mutation_version'] ?? 1)),
+                'created' => false,
+            ];
         }
 
         $normalized = $this->normalizeCashierMutationRequest($conn, $data);
@@ -1128,7 +1261,11 @@ class PosOrderController
             (int) ($saveData['kitchen_revision'] ?? 0)
         );
 
-        return $newOrderId;
+        return [
+            'order_id' => $newOrderId,
+            'mutation_version' => max(1, (int) ($saveData['mutation_version'] ?? 1)),
+            'created' => true,
+        ];
     }
 
     private function extractItemsFromCashierPayload(array $data): array

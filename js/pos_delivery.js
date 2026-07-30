@@ -17,12 +17,25 @@
         addressId: null,
         zoneId: null,
         zoneName: '',
-        fee: 0,
+        fee: '0.00',
         workerId: null,
         workerName: '',
         collectionMode: 'prepaid',
         isExistingClient: false,
     };
+
+    function deliveryMoney(value) {
+        if (!window.POSOrderApi || typeof window.POSOrderApi.decimalString !== 'function') {
+            throw new Error('POS_MONEY_API_REQUIRED');
+        }
+        return window.POSOrderApi.decimalString(value, 2, '0');
+    }
+
+    function deliveryMoneyIsPositive(value) {
+        return window.POSOrderApi.compareDecimalStrings(deliveryMoney(value), '0.00', 2) > 0;
+    }
+
+    window.posDeliveryState.fee = deliveryMoney(window.posDeliveryState.fee);
 
     let searchTimeout = null;
     let lastSearchedPhone = '';
@@ -62,7 +75,7 @@
         return {
             id: parseInt($select.val(), 10) || null,
             name: ($option.data('name') || $option.text() || '').trim(),
-            fee: parseFloat($option.data('fee') || 0) || 0,
+            fee: deliveryMoney($option.attr('data-fee') || '0'),
         };
     }
 
@@ -104,7 +117,7 @@
             delivery_customer_address: state.address,
             delivery_zone_id: state.zoneId || '',
             delivery_zone_name: state.zoneName || '',
-            delivery_fee: state.fee || 0,
+            delivery_fee: deliveryMoney(state.fee),
             delivery_worker_id: state.workerId || '',
             collection_mode: state.collectionMode || 'prepaid',
             courier_source: 'in_house',
@@ -143,7 +156,7 @@
                 ? state.phone.slice(0, 4) + '…' + state.phone.slice(-2)
                 : state.phone;
             const zoneLabel = state.zoneName ? ' — ' + escapeHtml(state.zoneName) : '';
-            const feeLabel = state.fee > 0 ? ' — رسوم: ' + Number(state.fee).toFixed(2) : '';
+            const feeLabel = deliveryMoneyIsPositive(state.fee) ? ' — رسوم: ' + deliveryMoney(state.fee) : '';
             const workerLabel = state.workerName ? ' — ' + escapeHtml(state.workerName) : ' — التعيين لاحقاً';
             const collectionLabel = state.collectionMode === 'cod' ? ' — تحصيل عند التسليم' : '';
             $bar.html(
@@ -173,13 +186,13 @@
 
     function renderDeliveryFeeRow() {
         $('#posDeliveryFeeRow').remove();
-        if (!isDeliveryMode() || !window.posDeliveryState.confirmed || !(window.posDeliveryState.fee > 0)) {
+        if (!isDeliveryMode() || !window.posDeliveryState.confirmed || !deliveryMoneyIsPositive(window.posDeliveryState.fee)) {
             if (typeof window.recalculateOrderTotals === 'function') {
                 window.recalculateOrderTotals();
             }
             return;
         }
-        const fee = Number(window.posDeliveryState.fee).toFixed(2);
+        const fee = deliveryMoney(window.posDeliveryState.fee);
         const row = $(
             '<div id="posDeliveryFeeRow" class="item-card-order pos-delivery-fee-row border-top pt-2 mt-2" data-delivery-fee="1">' +
             '<div class="d-flex justify-content-between align-items-center">' +
@@ -204,7 +217,7 @@
             addressId: data.addressId || window.posDeliveryState.addressId || null,
             zoneId: data.zoneId || zone.id || window.posDeliveryState.zoneId || null,
             zoneName: data.zoneName || zone.name || window.posDeliveryState.zoneName || '',
-            fee: parseFloat(data.fee != null ? data.fee : (zone.fee || window.posDeliveryState.fee || 0)) || 0,
+            fee: deliveryMoney(data.fee != null ? data.fee : (zone.fee || window.posDeliveryState.fee || '0')),
             workerId: null,
             workerName: '',
             collectionMode: data.collectionMode || window.posDeliveryState.collectionMode || 'prepaid',
@@ -249,7 +262,7 @@
             addressId: null,
             zoneId: null,
             zoneName: '',
-            fee: 0,
+            fee: '0.00',
             workerId: null,
             workerName: '',
             collectionMode: 'prepaid',
@@ -287,8 +300,9 @@
                 const zones = (response && response.zones) || [];
                 let html = '<option value=""></option>';
                 zones.forEach(function (zone) {
-                    html += '<option value="' + zone.id + '" data-name="' + escapeHtml(zone.name) + '" data-fee="' + zone.fee + '">' +
-                        escapeHtml(zone.name) + ' (' + Number(zone.fee).toFixed(2) + ' ج.م)</option>';
+                    const fee = deliveryMoney(zone.fee);
+                    html += '<option value="' + zone.id + '" data-name="' + escapeHtml(zone.name) + '" data-fee="' + fee + '">' +
+                        escapeHtml(zone.name) + ' (' + fee + ' ج.م)</option>';
                 });
                 $select.html(html);
                 const wantedZoneId = parseInt(selectedZoneId, 10) || null;
@@ -308,7 +322,7 @@
         window.posDeliveryState.addressId = null;
         window.posDeliveryState.zoneId = null;
         window.posDeliveryState.zoneName = '';
-        window.posDeliveryState.fee = 0;
+        window.posDeliveryState.fee = '0.00';
         window.posDeliveryState.isExistingClient = false;
         $('#customer_result').html(
             '<div class="alert alert-info mb-3"><i class="fas fa-user-plus me-2"></i>عميل جديد - يرجى إدخال بياناته</div>' +
@@ -344,7 +358,7 @@
         window.posDeliveryState.addressId = addressRecord ? addressRecord.id : null;
         window.posDeliveryState.zoneId = addressRecord ? addressRecord.zone_id : null;
         window.posDeliveryState.zoneName = '';
-        window.posDeliveryState.fee = 0;
+        window.posDeliveryState.fee = '0.00';
         window.posDeliveryState.isExistingClient = true;
         $('#saveCustomerBtn').html('<i class="fas fa-save me-1"></i>حفظ التعديل');
         loadDeliveryZones(addressRecord ? addressRecord.zone_id : null);
@@ -552,9 +566,10 @@
     };
 
     window.posDeliveryGetFee = function () {
-        return isDeliveryMode() && window.posDeliveryState.confirmed
-            ? (parseFloat(window.posDeliveryState.fee) || 0)
-            : 0;
+        const rawFee = isDeliveryMode() && window.posDeliveryState.confirmed
+            ? String(window.posDeliveryState.fee || '0')
+            : '0';
+        return deliveryMoney(rawFee);
     };
 
     window.posDeliveryOnModeChange = function (modeValue) {
@@ -578,7 +593,7 @@
     $(document).ready(function () {
         $(document).on('input', '#customer_name, #customer_address, #customer_phone', updateConfirmButtonVisibility);
         $(document).on('change', '#delivery_zone_id', function () {
-            const fee = parseFloat($(this).find('option:selected').data('fee') || 0) || 0;
+            const fee = deliveryMoney($(this).find('option:selected').attr('data-fee') || '0');
             window.posDeliveryState.zoneId = $(this).val() || null;
             window.posDeliveryState.zoneName = $(this).find('option:selected').data('name')
                 || $(this).find('option:selected').text()

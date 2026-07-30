@@ -98,7 +98,12 @@ try {
         'order_id' => $order_id,
         'reason' => $reason,
         'user_id' => $user_id,
-    ], ['user_id' => $user_id]);
+        'mutation_version' => $_POST['mutation_version'] ?? $_POST['order_version'] ?? null,
+    ], [
+        'user_id' => $user_id,
+        'in_transaction' => true,
+        'skip_idempotency' => true,
+    ]);
     $order = $cancelResult['data']['cancelled_order'] ?? [];
     $syncOutbox->recordOrderSnapshot($conn, $order_id, [
         'event_type' => 'order.cancelled',

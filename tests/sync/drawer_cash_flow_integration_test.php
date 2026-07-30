@@ -61,18 +61,34 @@ try {
     ]);
     $service = new PosOrderMutationService();
     $payments = new PaymentService();
-    $context = ['user_id' => 7, 'tenant' => 2, 'branch' => 3, 'skip_idempotency' => true];
+    $context = [
+        'user_id' => 7,
+        'tenant' => 2,
+        'branch' => 3,
+        'skip_idempotency' => true,
+        'idempotency_key' => 'drawer-cash-flow-table-100',
+    ];
 
     $tableCash = $service->payTableOrder($conn, [
         'table_id' => 1,
         'order_id' => 100,
         'paid' => '100.00',
         'payment_method' => 'cash_drawer',
+        'mutation_version' => 1,
+        'idempotency_key' => 'drawer-cash-flow-table-100',
     ], $context);
     drawerCashFlowIntegrationAssert($tableCash['success'] === true, 'table cash payment should succeed');
     drawerCashFlowIntegrationAssert($drawer->expectedCash($conn, (int) $session['id']) === '200.00', 'expected cash should include opening and table cash sale');
 
-    $payments->recordCollectedOrderPayments($conn, 150, '35.00', '18.00', 7, $context, 'legacy_mixed_payment');
+    $payments->recordCollectedOrderPayments(
+        $conn,
+        150,
+        '35.00',
+        '18.00',
+        7,
+        array_merge($context, ['idempotency_key' => 'drawer-cash-flow-legacy-150']),
+        'legacy_mixed_payment'
+    );
     drawerCashFlowIntegrationAssert(drawerCashFlowIntegrationNetCashForOrder($conn, 150) === '35.00', 'legacy mixed path should record only cash in drawer');
     drawerCashFlowIntegrationAssert(drawerCashFlowIntegrationOrderPaymentTotal($conn, 150, 'bank') === '18.00', 'legacy mixed path should record bank payment row');
     drawerCashFlowIntegrationAssert($drawer->expectedCash($conn, (int) $session['id']) === '235.00', 'expected cash should include legacy cash portion');
@@ -82,6 +98,8 @@ try {
         'order_id' => 101,
         'paid' => '70.00',
         'payment_method' => 'cash_drawer',
+        'mutation_version' => 1,
+        'idempotency_key' => 'drawer-cash-flow-table-101',
     ], $context);
     drawerCashFlowIntegrationAssert($overpay['data']['applied_amount'] === '50.00', 'overpay should apply remaining amount only');
     $movement = drawerCashFlowIntegrationLatestMovement($conn);
@@ -89,9 +107,20 @@ try {
     drawerCashFlowIntegrationAssert($drawer->expectedCash($conn, (int) $session['id']) === '285.00', 'expected cash should include partial overpay applied amount');
 
     drawerCashFlowIntegrationSeedPaidOrderForRefund($conn, 501, '40.00');
-    $payments->recordCollectedOrderPayments($conn, 501, '40.00', '0.00', 7, $context, 'refund_seed_sale');
+    $payments->recordCollectedOrderPayments(
+        $conn,
+        501,
+        '40.00',
+        '0.00',
+        7,
+        array_merge($context, ['idempotency_key' => 'drawer-cash-flow-sale-501']),
+        'refund_seed_sale'
+    );
     drawerCashFlowIntegrationAssert($drawer->expectedCash($conn, (int) $session['id']) === '325.00', 'expected cash should include seeded sale before refund');
-    $payments->recordCashRefundMovementForPayment($conn, '40.00', 501, 7, array_merge($context, ['drawer_reason' => 'drawer_refund_test']));
+    $payments->recordCashRefundMovementForPayment($conn, '40.00', 501, 7, array_merge($context, [
+        'drawer_reason' => 'drawer_refund_test',
+        'idempotency_key' => 'drawer-cash-flow-refund-501',
+    ]));
     drawerCashFlowIntegrationAssert(drawerCashFlowIntegrationMovementCount($conn, 'refund_cash', 501) === 1, 'refund should record refund_cash');
     drawerCashFlowIntegrationAssert($drawer->expectedCash($conn, (int) $session['id']) === '285.00', 'expected cash should return to pre-refund-sale total after refund');
 

@@ -231,45 +231,9 @@ switch ($q) {
                                                 طلب كاشير محفوظ — الاسترداد من شاشة الكاشير
                                             </span>
                                             <?php else: ?>
-                                            <!-- زر الحذف للعمليات غير التابعة للكاشير -->
-                                            <a href="#" class="btn btn-sm btn-danger" data-toggle="modal" data-target="#deleteModal<?= $rowop['id']?>" data-id="<?= $id; ?>">
-                                                <i class="fa fa-trash"></i>
-                                            </a>
-
-                                            <form action="do/dodel_invoice.php?id=<?= $rowop['id'] ?>" method="post">
-                                                <input type="hidden" name="q" value="<?= $q ?>">
-                                            
-                                            <div class="modal fade" id="deleteModal<?= $rowop['id']?>" tabindex="-1" role="dialog" aria-labelledby="deleteModalLabel" aria-hidden="true">
-                                                <div class="modal-dialog" role="document">
-                                                    <div class="modal-content">
-                                                        <div class="modal-header">
-                                                            <h5 class="modal-title" id="deleteModalLabel">تأكيد الحذف <?= $rowop['id']?></h5>
-                                                            <button type="button" class="close" data-dismiss="modal" aria-label="إغلاق">
-                                                                <span aria-hidden="true">&times;</span>
-                                                            </button>
-                                                        </div>
-                                                        <div class="modal-body">
-                                                            <p>هل أنت متأكد من أنك تريد حذف هذه الفاتورة؟</p>
-                                                            <p><strong>رقم الفاتورة:</strong> <?= $rowop['id'] ?></p>
-                                                            <p><strong>نوع العملية:</strong> <?= $conn->query("SELECT pname FROM pro_tybes WHERE id = $tybe")->fetch_assoc()['pname'] ?></p>
-                                                            <label for="pass">كلمة المرور:</label>
-                                                            <input type="password" name="pass" class="form-control" placeholder="أدخل كلمة مرور الحذف" required>
-                                                            
-                                                            <div class="form-check mt-3">
-                                                                <input type="checkbox" class="form-check-input" id="forceDelete<?= $rowop['id']?>" name="force_delete" value="1">
-                                                                <label class="form-check-label text-warning" for="forceDelete<?= $rowop['id']?>">
-                                                                    <small>حذف قسري (تجاهل العمليات المرتبطة)</small>
-                                                                </label>
-                                                            </div>
-                                                        </div>
-                                                        <div class="modal-footer">
-                                                            <button type="button" class="btn btn-secondary" data-dismiss="modal">إلغاء</button>
-                                                            <button type="submit" class="btn btn-danger">حذف</button>
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                            </form>
+                                            <span class="badge badge-warning border" title="الحذف المادي متوقف لحماية قيود المخزون والمحاسبة. استخدم مسار العكس أو التسوية المعتمد.">
+                                                الحذف متوقف — يلزم عكس أو تسوية معتمدة
+                                            </span>
                                             <?php endif; ?>
 
                                         </td>

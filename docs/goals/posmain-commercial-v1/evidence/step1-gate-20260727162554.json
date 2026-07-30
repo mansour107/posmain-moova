@@ -1,0 +1,229 @@
+{
+    "gate": "commercial_v1_step1",
+    "created_at": "2026-07-27T16:25:54+00:00",
+    "ok": true,
+    "failures": [],
+    "checks": [
+        {
+            "name": "prohibited_safe:fix_passwords.php",
+            "ok": true,
+            "detail": "safe_stub"
+        },
+        {
+            "name": "prohibited_safe:delete_fix_file.php",
+            "ok": true,
+            "detail": "safe_stub"
+        },
+        {
+            "name": "prohibited_safe:fix_database.php",
+            "ok": true,
+            "detail": "safe_stub"
+        },
+        {
+            "name": "prohibited_safe:fix_journal_entries.php",
+            "ok": true,
+            "detail": "safe_stub"
+        },
+        {
+            "name": "prohibited_safe:quick_fix.php",
+            "ok": true,
+            "detail": "safe_stub"
+        },
+        {
+            "name": "prohibited_safe:repair_database_jal.php",
+            "ok": true,
+            "detail": "safe_stub"
+        },
+        {
+            "name": "prohibited_safe:run_migrations.php",
+            "ok": true,
+            "detail": "safe_stub"
+        },
+        {
+            "name": "prohibited_safe:run_payment_updates.php",
+            "ok": true,
+            "detail": "safe_stub"
+        },
+        {
+            "name": "prohibited_safe:run_table_updates.php",
+            "ok": true,
+            "detail": "safe_stub"
+        },
+        {
+            "name": "prohibited_safe:setup_demo_data.php",
+            "ok": true,
+            "detail": "safe_stub"
+        },
+        {
+            "name": "prohibited_safe:pre_start.php",
+            "ok": true,
+            "detail": "safe_stub"
+        },
+        {
+            "name": "prohibited_safe:check_db_structure.php",
+            "ok": true,
+            "detail": "safe_stub"
+        },
+        {
+            "name": "prohibited_safe:check_orders.php",
+            "ok": true,
+            "detail": "safe_stub"
+        },
+        {
+            "name": "prohibited_safe:check_payments.php",
+            "ok": true,
+            "detail": "safe_stub"
+        },
+        {
+            "name": "prohibited_safe:check_table_structure.php",
+            "ok": true,
+            "detail": "safe_stub"
+        },
+        {
+            "name": "prohibited_safe:debug_bank.php",
+            "ok": true,
+            "detail": "safe_stub"
+        },
+        {
+            "name": "prohibited_safe:debug_db.php",
+            "ok": true,
+            "detail": "safe_stub"
+        },
+        {
+            "name": "prohibited_safe:debug_delivery.php",
+            "ok": true,
+            "detail": "safe_stub"
+        },
+        {
+            "name": "prohibited_safe:debug_jal.php",
+            "ok": true,
+            "detail": "safe_stub"
+        },
+        {
+            "name": "prohibited_safe:debug_tasks.php",
+            "ok": true,
+            "detail": "safe_stub"
+        },
+        {
+            "name": "prohibited_safe:logs_viewer.php",
+            "ok": true,
+            "detail": "safe_stub"
+        },
+        {
+            "name": "prohibited_safe:view_logs.php",
+            "ok": true,
+            "detail": "safe_stub"
+        },
+        {
+            "name": "prohibited_safe:crud_tables.php",
+            "ok": true,
+            "detail": "safe_stub"
+        },
+        {
+            "name": "prohibited_safe:create_acc_head_table.php",
+            "ok": true,
+            "detail": "safe_stub"
+        },
+        {
+            "name": "prohibited_safe:list_columns.php",
+            "ok": true,
+            "detail": "safe_stub"
+        },
+        {
+            "name": "prohibited_safe:generate-examples.php",
+            "ok": true,
+            "detail": "safe_stub"
+        },
+        {
+            "name": "prohibited_safe:generate-verified-files.php",
+            "ok": true,
+            "detail": "safe_stub"
+        },
+        {
+            "name": "prohibited_safe:index2.php",
+            "ok": true,
+            "detail": "safe_stub"
+        },
+        {
+            "name": "prohibited_safe:indexmop.php",
+            "ok": true,
+            "detail": "safe_stub"
+        },
+        {
+            "name": "prohibited_safe:fat1.php",
+            "ok": true,
+            "detail": "safe_stub"
+        },
+        {
+            "name": "prohibited_safe:example.php",
+            "ok": true,
+            "detail": "safe_stub"
+        },
+        {
+            "name": "prohibited_safe:blogcontent.php",
+            "ok": true,
+            "detail": "safe_stub"
+        },
+        {
+            "name": "prohibited_safe:about.php",
+            "ok": true,
+            "detail": "safe_stub"
+        },
+        {
+            "name": "prohibited_safe:conectedmachines.php",
+            "ok": true,
+            "detail": "safe_stub"
+        },
+        {
+            "name": "prohibited_safe:machinelog.php",
+            "ok": true,
+            "detail": "safe_stub"
+        },
+        {
+            "name": "prohibited_safe:aa",
+            "ok": true,
+            "detail": "safe_stub"
+        },
+        {
+            "name": "password_service_denies_legacy_when_forced",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "password_reset_service_source_exists",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "http_denied:fix_passwords.php",
+            "ok": true,
+            "detail": "status=404"
+        },
+        {
+            "name": "http_denied:fix_passwords.php?key=HORSTEC_SECURE_2024",
+            "ok": true,
+            "detail": "status=404"
+        },
+        {
+            "name": "http_denied:delete_fix_file.php",
+            "ok": true,
+            "detail": "status=410"
+        },
+        {
+            "name": "http_denied:debug_db.php",
+            "ok": true,
+            "detail": "status=404"
+        },
+        {
+            "name": "http_denied:check_db_structure.php",
+            "ok": true,
+            "detail": "status=404"
+        },
+        {
+            "name": "http_denied:tools/issue_password_reset.php",
+            "ok": true,
+            "detail": "status=404"
+        }
+    ],
+    "artifact": null
+}

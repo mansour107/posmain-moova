@@ -34,6 +34,10 @@ final class FinancialInvoicePostingService
     ): array {
         $net = Money::from($totals['net'] ?? '0')->toString();
         $tax = Money::from($totals['tax'] ?? '0')->toString();
+        if (Money::from($tax)->isPositive()) {
+            // Commercial V1 tax-off profile: never post VAT from invoice finalization.
+            throw new InvalidArgumentException('TAX_DISABLED_NONZERO_TAX_REJECTED');
+        }
         $vatAccountId = (int) ($context['vat_payable_account_id'] ?? 0);
         $tenant = max(0, (int) ($context['tenant'] ?? 0));
         $branch = max(0, (int) ($context['branch'] ?? 0));

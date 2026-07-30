@@ -46,31 +46,83 @@ try {
     $sessionId = (int) $opened['id'];
     cashFlowFullDayAssert(abs((float) $drawer->expectedCash($conn, $sessionId) - 100.0) < 0.01, 'opening expected cash');
 
-    $payment->recordCashDrawerMovementForPayment($conn, 'cash', '50.00', 201, $cashierId, [
+    $saleMovement = $payment->recordCashDrawerMovementForPayment($conn, 'cash', '50.00', 201, $cashierId, [
         'tenant' => 1,
         'branch' => 2,
         'drawer_session_id' => $sessionId,
         'drawer_reason' => 'takeaway_cash_payment',
+        'idempotency_key' => 'cash-flow-full-day-sale-201',
     ], $opened, null, 9001);
+    $saleReplay = $payment->recordCashDrawerMovementForPayment($conn, 'cash', '50.00', 201, $cashierId, [
+        'tenant' => 1,
+        'branch' => 2,
+        'drawer_session_id' => $sessionId,
+        'drawer_reason' => 'takeaway_cash_payment',
+        'idempotency_key' => 'cash-flow-full-day-sale-201',
+    ], $opened, null, 9001);
+    cashFlowFullDayAssert((int) $saleReplay['id'] === (int) $saleMovement['id'], 'response-loss retry should reuse sale movement');
+    cashFlowFullDayAssert(!empty($saleReplay['idempotency_replayed']), 'response-loss retry should be marked replayed');
     cashFlowFullDayAssert(abs((float) $drawer->expectedCash($conn, $sessionId) - 150.0) < 0.01, 'after sale');
 
-    $shift->recordShiftPayIn($conn, $cashierId, ['amount' => '25.00', 'reason' => 'float top-up']);
+    $payInRequest = [
+        'amount' => '25.00',
+        'reason' => 'float top-up',
+        'idempotency_key' => 'cash-flow-full-day-payin',
+    ];
+    $payIn = $shift->recordShiftPayIn($conn, $cashierId, $payInRequest);
+    $payInReplay = $shift->recordShiftPayIn($conn, $cashierId, $payInRequest);
+    cashFlowFullDayAssert((int) $payInReplay['movement']['id'] === (int) $payIn['movement']['id'], 'payin retry should reuse movement');
+    cashFlowFullDayAssert(!empty($payInReplay['movement']['idempotency_replayed']), 'payin retry should be marked replayed');
     cashFlowFullDayAssert(abs((float) $drawer->expectedCash($conn, $sessionId) - 175.0) < 0.01, 'after payin');
 
-    $shift->recordShiftExpense($conn, $cashierId, ['amount' => '15.00', 'reason' => 'supplies']);
+    $payOutRequest = [
+        'amount' => '15.00',
+        'reason' => 'supplies',
+        'idempotency_key' => 'cash-flow-full-day-payout',
+    ];
+    $payOut = $shift->recordShiftExpense($conn, $cashierId, $payOutRequest);
+    $payOutReplay = $shift->recordShiftExpense($conn, $cashierId, $payOutRequest);
+    cashFlowFullDayAssert((int) $payOutReplay['movement']['id'] === (int) $payOut['movement']['id'], 'payout retry should reuse movement');
+    cashFlowFullDayAssert(!empty($payOutReplay['movement']['idempotency_replayed']), 'payout retry should be marked replayed');
     cashFlowFullDayAssert(abs((float) $drawer->expectedCash($conn, $sessionId) - 160.0) < 0.01, 'after payout');
 
-    $shift->recordShiftSafeDrop($conn, $cashierId, ['amount' => '100.00', 'reason' => 'vault']);
+    $safeDropRequest = [
+        'amount' => '100.00',
+        'reason' => 'vault',
+        'idempotency_key' => 'cash-flow-full-day-safe-drop',
+    ];
+    $safeDrop = $shift->recordShiftSafeDrop($conn, $cashierId, $safeDropRequest);
+    $safeDropReplay = $shift->recordShiftSafeDrop($conn, $cashierId, $safeDropRequest);
+    cashFlowFullDayAssert((int) $safeDropReplay['movement']['id'] === (int) $safeDrop['movement']['id'], 'safe-drop retry should reuse movement');
+    cashFlowFullDayAssert(!empty($safeDropReplay['movement']['idempotency_replayed']), 'safe-drop retry should be marked replayed');
     cashFlowFullDayAssert(abs((float) $drawer->expectedCash($conn, $sessionId) - 60.0) < 0.01, 'after safe drop');
 
-    $drawer->recordMovement($conn, $sessionId, [
+    $noSaleRequest = [
         'movement_type' => 'no_sale',
         'amount' => '0.00',
         'allow_zero_amount' => true,
         'reason' => 'audit open',
         'created_by' => $cashierId,
-    ]);
+        'idempotency_key' => 'cash-flow-full-day-no-sale',
+    ];
+    $noSale = $drawer->recordMovement($conn, $sessionId, $noSaleRequest);
+    $noSaleReplay = $drawer->recordMovement($conn, $sessionId, $noSaleRequest);
+    cashFlowFullDayAssert((int) $noSaleReplay['id'] === (int) $noSale['id'], 'no-sale retry should reuse movement');
+    cashFlowFullDayAssert(!empty($noSaleReplay['idempotency_replayed']), 'no-sale retry should be marked replayed');
     cashFlowFullDayAssert(abs((float) $drawer->expectedCash($conn, $sessionId) - 60.0) < 0.01, 'no_sale should not change expected');
+
+    $conflictRejected = false;
+    try {
+        $shift->recordShiftPayIn($conn, $cashierId, [
+            'amount' => '26.00',
+            'reason' => 'float top-up',
+            'idempotency_key' => 'cash-flow-full-day-payin',
+        ]);
+    } catch (RuntimeException $exception) {
+        $conflictRejected = $exception->getMessage() === 'DRAWER_IDEMPOTENCY_CONFLICT';
+    }
+    cashFlowFullDayAssert($conflictRejected, 'same drawer key with changed amount must conflict');
+    cashFlowFullDayAssert(abs((float) $drawer->expectedCash($conn, $sessionId) - 60.0) < 0.01, 'conflict must leave expected cash unchanged');
 
     $closed = $drawer->closeSession($conn, $sessionId, [
         'closed_by' => $cashierId,

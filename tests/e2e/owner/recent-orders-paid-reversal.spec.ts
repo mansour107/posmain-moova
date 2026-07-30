@@ -38,8 +38,9 @@ type RecentOrdersPayload = {
     void_eligible?: boolean;
     payment_status?: string;
     order_status?: string;
-    refunded_amount?: number;
-    remaining_refundable_amount?: number;
+    mutation_version?: string | number;
+    refunded_amount?: string | number;
+    remaining_refundable_amount?: string | number;
     reversal_status?: string;
     refundable_lines?: Array<{
       original_detail_id: string | number;
@@ -119,6 +120,7 @@ test.describe('owner: paid order reversal access control', () => {
 
     const denied = await postRefundOrder(page, {
       order_id: String(payload.orders?.[0]?.id || '1'),
+      mutation_version: String(payload.orders?.[0]?.mutation_version || '1'),
       action: 'refund',
       refund_stock_policy: 'waste',
       reason: 'cashier should require approval',
@@ -143,6 +145,7 @@ test.describe('owner: paid order reversal access control', () => {
 
     const denied = await postRefundOrder(page, {
       order_id: String(payload.orders?.[0]?.id || '1'),
+      mutation_version: String(payload.orders?.[0]?.mutation_version || '1'),
       action: 'refund',
       refund_stock_policy: 'waste',
       reason: 'manager should require approval',

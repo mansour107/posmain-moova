@@ -27,7 +27,14 @@
     }
 
     function money(value) {
-        return Number(value || 0).toFixed(2);
+        if (!window.POSOrderApi || typeof window.POSOrderApi.decimalString !== 'function') {
+            throw new Error('POS_MONEY_API_REQUIRED');
+        }
+        return window.POSOrderApi.decimalString(value, 2, '0');
+    }
+
+    function moneyIsPositive(value) {
+        return window.POSOrderApi.compareDecimalStrings(money(value), '0.00', 2) > 0;
     }
 
     function orderNumber(order) {
@@ -141,9 +148,9 @@
             ? '<span class="pos-delivery-order__courier"><i class="fas fa-motorcycle"></i>' + escapeHtml(courier) + '</span>'
             : '';
         const actions = isOut
-            ? '<button type="button" class="pos-delivery-order__action is-delivered" data-delivery-action="delivered" data-order-id="' + order.order_id + '"><i class="fas fa-check"></i> تم التسليم</button>'
-                + '<button type="button" class="pos-delivery-order__icon-action" data-delivery-action="failed" data-order-id="' + order.order_id + '" title="تعذر التسليم" aria-label="تعذر التسليم"><i class="fas fa-exclamation"></i></button>'
-            : '<button type="button" class="pos-delivery-order__action is-dispatch" data-delivery-action="dispatch" data-order-id="' + order.order_id + '"><i class="fas fa-motorcycle"></i> خرج للتوصيل</button>';
+            ? '<button type="button" class="pos-delivery-order__action is-delivered" data-delivery-action="delivered" data-order-id="' + order.order_id + '" data-mutation-version="' + Number(order.mutation_version || 1) + '"><i class="fas fa-check"></i> تم التسليم</button>'
+                + '<button type="button" class="pos-delivery-order__icon-action" data-delivery-action="failed" data-order-id="' + order.order_id + '" data-mutation-version="' + Number(order.mutation_version || 1) + '" title="تعذر التسليم" aria-label="تعذر التسليم"><i class="fas fa-exclamation"></i></button>'
+            : '<button type="button" class="pos-delivery-order__action is-dispatch" data-delivery-action="dispatch" data-order-id="' + order.order_id + '" data-mutation-version="' + Number(order.mutation_version || 1) + '"><i class="fas fa-motorcycle"></i> خرج للتوصيل</button>';
 
         return '<article class="pos-delivery-order" data-status-group="' + statusGroup(order) + '">'
             + '<div class="pos-delivery-order__top">'
@@ -265,7 +272,7 @@
             const result = await window.Swal.fire({
                 icon: 'question',
                 title: 'تأكيد تسليم الطلب #' + orderNumber(order),
-                text: Number(order.remaining_amount || 0) > 0
+                text: moneyIsPositive(order.remaining_amount || '0')
                     ? 'سيتم إثبات التحصيل وتحديث حساب المندوب.'
                     : 'سيتم إغلاق طلب التوصيل وتحديث حساب المندوب.',
                 showCancelButton: true,
@@ -280,7 +287,12 @@
         if (!confirmed) return;
         button.disabled = true;
         try {
-            await post({ action: 'delivered', order_id: orderId });
+            await post({
+                action: 'delivered',
+                order_id: orderId,
+                mutation_version: order.mutation_version,
+                idempotency_key: 'delivery:delivered:' + orderId + ':v' + order.mutation_version
+            });
             await refresh({ showLoading: false });
         } catch (error) {
             notifyError(error.message);
@@ -331,6 +343,9 @@
                 event.preventDefault();
                 const data = Object.fromEntries(new FormData(dispatchForm).entries());
                 data.action = 'dispatch';
+                const order = findOrder(data.order_id);
+                data.mutation_version = order ? order.mutation_version : '';
+                data.idempotency_key = 'delivery:dispatch:' + data.order_id + ':v' + data.mutation_version;
                 setFormBusy(dispatchForm, true);
                 try {
                     await post(data);
@@ -351,6 +366,9 @@
                 event.preventDefault();
                 const data = Object.fromEntries(new FormData(failureForm).entries());
                 data.action = 'failed';
+                const order = findOrder(data.order_id);
+                data.mutation_version = order ? order.mutation_version : '';
+                data.idempotency_key = 'delivery:failed:' + data.order_id + ':v' + data.mutation_version;
                 setFormBusy(failureForm, true);
                 try {
                     await post(data);

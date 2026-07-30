@@ -32,6 +32,7 @@ class SyncSchemaManager
             'delivery_settlement_lines' => $this->deliverySettlementLinesSql(),
             'security_audit_log' => $this->securityAuditLogSql(),
             'security_bootstrap_state' => $this->securityBootstrapStateSql(),
+            'password_reset_tokens' => $this->passwordResetTokensSql(),
             'failed_login_attempts' => $this->failedLoginAttemptsSql(),
             'user_permission_grants' => $this->userPermissionGrantsSql(),
             'role_capabilities' => $this->roleCapabilitiesSql(),
@@ -226,6 +227,9 @@ class SyncSchemaManager
                     'voided_at' => "ALTER TABLE order_payments ADD COLUMN voided_at DATETIME NULL AFTER is_voided",
                     'voided_by' => "ALTER TABLE order_payments ADD COLUMN voided_by BIGINT UNSIGNED NULL AFTER voided_at",
                     'void_reason' => "ALTER TABLE order_payments ADD COLUMN void_reason VARCHAR(255) NULL AFTER voided_by",
+                    'tendered_amount' => "ALTER TABLE order_payments ADD COLUMN tendered_amount DECIMAL(19,2) NULL AFTER amount",
+                    'applied_amount' => "ALTER TABLE order_payments ADD COLUMN applied_amount DECIMAL(19,2) NULL AFTER tendered_amount",
+                    'change_due' => "ALTER TABLE order_payments ADD COLUMN change_due DECIMAL(19,2) NULL AFTER applied_amount",
                 ],
                 'indexes' => [
                     'idx_order_payments_order_active' => [
@@ -310,8 +314,15 @@ class SyncSchemaManager
                     'ref_ot_head_id' => "ALTER TABLE drawer_movements ADD COLUMN ref_ot_head_id BIGINT UNSIGNED NULL",
                     'tenant' => "ALTER TABLE drawer_movements ADD COLUMN tenant INT NOT NULL DEFAULT 0 AFTER drawer_session_id",
                     'branch' => "ALTER TABLE drawer_movements ADD COLUMN branch INT NOT NULL DEFAULT 0 AFTER tenant",
+                    'idempotency_key' => "ALTER TABLE drawer_movements ADD COLUMN idempotency_key VARCHAR(191) NULL AFTER branch",
+                    'idempotency_hash' => "ALTER TABLE drawer_movements ADD COLUMN idempotency_hash CHAR(64) NULL AFTER idempotency_key",
                 ],
                 'indexes' => [
+                    'uq_drawer_movement_session_key' => [
+                        'columns' => ['drawer_session_id', 'idempotency_key'],
+                        'unique' => true,
+                        'sql' => "ALTER TABLE drawer_movements ADD UNIQUE KEY uq_drawer_movement_session_key (drawer_session_id, idempotency_key)",
+                    ],
                     'idx_drawer_movements_voucher' => [
                         'columns' => ['ref_ot_head_id'],
                         'sql' => "ALTER TABLE drawer_movements ADD KEY idx_drawer_movements_voucher (ref_ot_head_id)",
@@ -3213,6 +3224,24 @@ CREATE TABLE IF NOT EXISTS security_bootstrap_state (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
     }
 
+    private function passwordResetTokensSql()
+    {
+        return "
+CREATE TABLE IF NOT EXISTS password_reset_tokens (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  user_id BIGINT UNSIGNED NOT NULL,
+  token_hash CHAR(64) NOT NULL,
+  expires_at DATETIME NOT NULL,
+  used_at DATETIME NULL,
+  created_by VARCHAR(120) NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_password_reset_token_hash (token_hash),
+  KEY idx_password_reset_user (user_id),
+  KEY idx_password_reset_expires (expires_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    }
+
     private function posRegistersSql()
     {
         return "
@@ -3724,6 +3753,8 @@ CREATE TABLE IF NOT EXISTS drawer_movements (
   drawer_session_id BIGINT UNSIGNED NULL,
   tenant INT NOT NULL DEFAULT 0,
   branch INT NOT NULL DEFAULT 0,
+  idempotency_key VARCHAR(191) NULL,
+  idempotency_hash CHAR(64) NULL,
   movement_type ENUM('sale_cash','refund_cash','paid_in','paid_out','safe_drop','opening','closing_adjustment','no_sale') NOT NULL,
   amount DECIMAL(12,3) NOT NULL,
   order_id BIGINT UNSIGNED NULL,
@@ -3736,6 +3767,7 @@ CREATE TABLE IF NOT EXISTS drawer_movements (
   manager_approval_id BIGINT UNSIGNED NULL,
   ref_ot_head_id BIGINT UNSIGNED NULL,
   PRIMARY KEY (id),
+  UNIQUE KEY uq_drawer_movement_session_key (drawer_session_id, idempotency_key),
   KEY idx_drawer_movements_session (drawer_session_id, created_at),
   KEY idx_drawer_movements_branch_period (tenant, branch, created_at),
   KEY idx_drawer_movements_order (order_id, payment_id),

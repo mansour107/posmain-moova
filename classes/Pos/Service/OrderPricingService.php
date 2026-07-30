@@ -1,6 +1,7 @@
 <?php
 
 require_once __DIR__ . '/../../Financial/FinancialPricingService.php';
+require_once __DIR__ . '/../../Financial/FinancialMoneyInput.php';
 require_once __DIR__ . '/../../Items/ItemUnitResolver.php';
 require_once __DIR__ . '/ManagerApprovalService.php';
 
@@ -29,7 +30,7 @@ class OrderPricingService
             $canonicalPrice = UnitPrice::from(
                 ItemUnitResolver::sellPriceForItem($conn, $itemId, $unitId > 0 ? $unitId : null)
             )->toString();
-            $submittedPrice = UnitPrice::fromLegacy($item['price'] ?? '0')->toString();
+            $submittedPrice = FinancialMoneyInput::unitPriceString($item['price'] ?? '0');
             if (FinancialDecimal::compare($canonicalPrice, '0', UnitPrice::SCALE) <= 0) {
                 throw new InvalidArgumentException('CATALOG_PRICE_NOT_CONFIGURED');
             }
@@ -48,16 +49,16 @@ class OrderPricingService
 
             $item['id'] = $itemId;
             $item['item_id'] = $itemId;
-            $item['qty'] = DecimalQuantity::fromLegacy($item['qty'] ?? '0')->toString();
+            $item['qty'] = FinancialMoneyInput::quantityString($item['qty'] ?? '0');
             $item['price'] = $price;
-            $item['discount'] = UnitPrice::fromLegacy($item['discount'] ?? '0')->toString();
+            $item['discount'] = FinancialMoneyInput::unitPriceString($item['discount'] ?? '0');
             $item['catalog_price'] = $canonicalPrice;
             $resolvedItems[] = $item;
         }
 
         $pricing = (new FinancialPricingService())->price(
             $resolvedItems,
-            Money::fromLegacy($data['discount'] ?? '0')->toString(),
+            FinancialMoneyInput::moneyString($data['discount'] ?? '0'),
             [
                 'enabled' => false,
                 'rate' => '0.00',
@@ -121,7 +122,7 @@ class OrderPricingService
             'pos.price.override',
             'pos_order',
             (int) ($data['order_id'] ?? 0) ?: null,
-            1.0,
+            '1.000000',
             ['price_override_approval_id' => $approvalId],
             [
                 'user_id' => $userId,

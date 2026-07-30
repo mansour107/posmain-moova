@@ -286,8 +286,8 @@ function loadTableOrder(tableName, tableId) {
                                 <td class="barcode" hidden>${item.barcode || item.id}</td>
                                 <td class="iname"><input hidden value='${item.id}' name="itmname[]">${item.name}</td>
                                 <td class="qty"><input type="number" class="cashInput quantityInput select-all nozero bg-slate-100" value="${item.qty}" name="itmqty[]"><input type="text" name="u_val[]" value="${item.u_val || 1}" hidden></td>
-                                <td class="price"><input type="number" class="cashInput priceInput select-all nozero bg-slate-100" value="${item.price.toFixed(2)}" name="itmprice[]"> ج</td>
-                                <td><input hidden name="itmdisc[]"><input type="text" class="subtotal cashInput" readonly value="${item.subtotal.toFixed(2)}" name="itmval[]"></td>
+                                <td class="price"><input type="number" class="cashInput priceInput select-all nozero bg-slate-100" value="${Number(item.price).toFixed(2)}" name="itmprice[]"> ج</td>
+                                <td><input hidden name="itmdisc[]"><input type="text" class="subtotal cashInput" readonly value="${Number(item.subtotal).toFixed(2)}" name="itmval[]"></td>
                                 <td class="delRow"><button class="btn btn-danger">X</button></td>
                             </tr>
                         `;

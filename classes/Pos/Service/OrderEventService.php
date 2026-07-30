@@ -14,6 +14,20 @@ class OrderEventService
         return $this->record($conn, $orderId, $eventType, $eventSource, $options);
     }
 
+    public function recordRequired(mysqli $conn, int $orderId, string $eventType, string $eventSource, array $options = []): array
+    {
+        if (!$this->tableExists($conn, 'order_events')) {
+            throw new RuntimeException('ORDER_EVENT_SCHEMA_REQUIRED');
+        }
+
+        $result = $this->record($conn, $orderId, $eventType, $eventSource, $options);
+        if ((int) ($result['id'] ?? 0) < 1) {
+            throw new RuntimeException('ORDER_EVENT_REQUIRED');
+        }
+
+        return $result;
+    }
+
     public function record(mysqli $conn, int $orderId, string $eventType, string $eventSource, array $options = []): array
     {
         if ($orderId <= 0) {

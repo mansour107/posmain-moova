@@ -274,8 +274,8 @@ if ($tables_count == 0) {
                             </div>
                             <div class="row mb-2">
                                 <div class="col-6"><strong>خصم %:</strong></div>
-                                <div class="col-3"><input type="number" class="form-control form-control-sm" id="disc_percent" value="0"></div>
-                                <div class="col-3"><input type="number" class="form-control form-control-sm" id="discount" value="0.00"></div>
+                                <div class="col-3"><input type="number" class="form-control form-control-sm" id="disc_percent" value="0" min="0" max="100" step="0.000001"></div>
+                                <div class="col-3"><input type="number" class="form-control form-control-sm" id="discount" value="0.00" min="0" step="0.01"></div>
                             </div>
                             <div class="row mb-2">
                                 <div class="col-6"><strong>الصافي:</strong></div>

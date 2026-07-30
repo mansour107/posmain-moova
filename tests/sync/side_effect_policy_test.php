@@ -4,12 +4,22 @@ require_once __DIR__ . '/../../classes/Pos/Service/SideEffectPolicy.php';
 
 sideEffectPolicyAssert(SideEffectPolicy::mode() === SideEffectPolicy::MODE_SHADOW, 'side effects run in shadow mode');
 sideEffectPolicyAssert(
-    SideEffectPolicy::inventoryBridgeShouldRollback(new RuntimeException('x'), ['success' => false]) === false,
-    'inventory bridge failures should not rollback orders'
+    SideEffectPolicy::inventoryBridgeShouldRollback(
+        new RuntimeException('x'),
+        ['mode' => 'shadow', 'success' => false, 'errors' => ['shadow evidence']]
+    ) === false,
+    'non-authoritative shadow inventory evidence should not rollback orders'
 );
 sideEffectPolicyAssert(
-    SideEffectPolicy::orderEventShouldRollback(new RuntimeException('x')) === false,
-    'order event failures should not rollback orders'
+    SideEffectPolicy::inventoryBridgeShouldRollback(
+        new RuntimeException('x'),
+        ['mode' => 'live', 'success' => false, 'errors' => ['authoritative failure']]
+    ) === true,
+    'authoritative inventory failures must rollback even when generic side effects are shadowed'
+);
+sideEffectPolicyAssert(
+    SideEffectPolicy::orderEventShouldRollback(new RuntimeException('x')) === true,
+    'certified order event failures must rollback orders'
 );
 
 $previousMode = getenv('POSMAIN_SIDE_EFFECT_MODE');

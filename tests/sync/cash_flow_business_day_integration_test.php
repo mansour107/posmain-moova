@@ -72,6 +72,7 @@ try {
         'amount' => '20.000',
         'created_by' => 31,
         'reason' => 'late night sale',
+        'idempotency_key' => 'cash-flow-business-day:sale:late-session',
     ]);
     $closed = $drawer->closeSession($conn, $lateSessionId, [
         'closed_by' => 31,

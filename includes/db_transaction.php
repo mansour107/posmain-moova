@@ -5,9 +5,18 @@
  * MySQL cannot nest START TRANSACTION — a second begin implicitly commits the outer TX.
  * Callers that may run inside an outer TX must use these helpers.
  */
+function posmain_tx_connection_in_transaction(mysqli $conn): bool
+{
+    if (!defined('MYSQLI_SERVER_STATUS_IN_TRANS')) {
+        return false;
+    }
+
+    return (((int) $conn->server_status) & MYSQLI_SERVER_STATUS_IN_TRANS) !== 0;
+}
+
 function posmain_tx_begin_if_needed(mysqli $conn, bool $alreadyInTransaction = false): bool
 {
-    if ($alreadyInTransaction) {
+    if ($alreadyInTransaction || posmain_tx_connection_in_transaction($conn)) {
         return false;
     }
 

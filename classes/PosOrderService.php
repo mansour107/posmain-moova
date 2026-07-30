@@ -1627,6 +1627,7 @@ class PosOrderService
             return;
         }
 
+        $result = [];
         try {
             $result = $this->inventoryInvoiceBridge->reserveInvoiceLines(
                 $conn,
@@ -1643,7 +1644,7 @@ class PosOrderService
             }
         } catch (Throwable $exception) {
             error_log('Moova direct-stock reservation failed: ' . $exception->getMessage());
-            if (SideEffectPolicy::inventoryBridgeShouldRollback($exception)) {
+            if (SideEffectPolicy::inventoryBridgeShouldRollback($exception, $result)) {
                 throw $exception;
             }
         }
@@ -1656,6 +1657,7 @@ class PosOrderService
             return;
         }
 
+        $result = [];
         try {
             $result = $this->inventoryInvoiceBridge->releaseInvoiceReservations(
                 $conn,
@@ -1673,7 +1675,7 @@ class PosOrderService
             }
         } catch (Throwable $exception) {
             error_log('Moova direct-stock reservation release failed: ' . $exception->getMessage());
-            if (SideEffectPolicy::inventoryBridgeShouldRollback($exception)) {
+            if (SideEffectPolicy::inventoryBridgeShouldRollback($exception, $result)) {
                 throw $exception;
             }
         }

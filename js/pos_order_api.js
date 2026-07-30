@@ -128,6 +128,216 @@
         return null;
     }
 
+    function decimalString(value, scale, fallback) {
+        const fallbackValue = fallback !== undefined ? fallback : '0';
+        let raw = value === null || value === undefined || value === ''
+            ? String(fallbackValue)
+            : String(value);
+        raw = raw.trim();
+        if (!/^\d+(?:\.\d+)?$/.test(raw)) {
+            throw new Error('INVALID_DECIMAL_INPUT');
+        }
+
+        const parts = raw.split('.');
+        let whole = parts[0].replace(/^0+(?=\d)/, '');
+        let fraction = parts[1] || '';
+        if (fraction.length > scale) {
+            throw new Error('DECIMAL_SCALE_EXCEEDED');
+        }
+        fraction = fraction.padEnd(scale, '0');
+
+        return scale > 0 ? whole + '.' + fraction : whole;
+    }
+
+    function addDecimalStrings(left, right, scale) {
+        const normalizedLeft = decimalString(left, scale, '0');
+        const normalizedRight = decimalString(right, scale, '0');
+        const leftDigits = normalizedLeft.replace('.', '');
+        const rightDigits = normalizedRight.replace('.', '');
+        const width = Math.max(leftDigits.length, rightDigits.length);
+        const a = leftDigits.padStart(width, '0');
+        const b = rightDigits.padStart(width, '0');
+        let carry = 0;
+        let result = '';
+
+        for (let index = width - 1; index >= 0; index -= 1) {
+            const sum = Number(a[index]) + Number(b[index]) + carry;
+            result = String(sum % 10) + result;
+            carry = Math.floor(sum / 10);
+        }
+        if (carry > 0) {
+            result = String(carry) + result;
+        }
+        result = result.padStart(scale + 1, '0');
+        if (scale > 0) {
+            result = result.slice(0, -scale) + '.' + result.slice(-scale);
+        }
+
+        return decimalString(result, scale, '0');
+    }
+
+    function decimalToScaledInteger(value, scale) {
+        return BigInt(decimalString(value, scale, '0').replace('.', ''));
+    }
+
+    function scaledIntegerToDecimal(value, scale) {
+        const negative = value < 0n;
+        let digits = (negative ? -value : value).toString().padStart(scale + 1, '0');
+        if (scale > 0) {
+            digits = digits.slice(0, -scale) + '.' + digits.slice(-scale);
+        }
+
+        return (negative ? '-' : '') + digits;
+    }
+
+    function compareDecimalStrings(left, right, scale) {
+        const leftInteger = decimalToScaledInteger(left, scale);
+        const rightInteger = decimalToScaledInteger(right, scale);
+        return leftInteger === rightInteger ? 0 : (leftInteger < rightInteger ? -1 : 1);
+    }
+
+    function subtractDecimalStrings(left, right, scale) {
+        return scaledIntegerToDecimal(
+            decimalToScaledInteger(left, scale) - decimalToScaledInteger(right, scale),
+            scale
+        );
+    }
+
+    function roundedIntegerRatio(numerator, denominator) {
+        if (denominator <= 0n || numerator < 0n) {
+            throw new Error('INVALID_DECIMAL_RATIO');
+        }
+        const quotient = numerator / denominator;
+        const remainder = numerator % denominator;
+
+        return remainder * 2n >= denominator ? quotient + 1n : quotient;
+    }
+
+    function prorateMoneyByQuantity(lineAmount, selectedQuantity, availableQuantity) {
+        const lineInteger = decimalToScaledInteger(lineAmount, 2);
+        const selectedInteger = decimalToScaledInteger(selectedQuantity, 6);
+        const availableInteger = decimalToScaledInteger(availableQuantity, 6);
+        if (availableInteger <= 0n || selectedInteger < 0n || selectedInteger > availableInteger) {
+            throw new Error('INVALID_PRORATED_QUANTITY');
+        }
+
+        return scaledIntegerToDecimal(
+            roundedIntegerRatio(lineInteger * selectedInteger, availableInteger),
+            2
+        );
+    }
+
+    function lineTotalFromQuantityAndUnitPrice(quantity, unitPrice) {
+        const quantityInteger = decimalToScaledInteger(quantity, 6);
+        const unitPriceInteger = decimalToScaledInteger(unitPrice, 6);
+        if (quantityInteger < 0n || unitPriceInteger < 0n) {
+            throw new Error('INVALID_LINE_AMOUNT');
+        }
+
+        return scaledIntegerToDecimal(
+            roundedIntegerRatio(quantityInteger * unitPriceInteger, 10000000000n),
+            2
+        );
+    }
+
+    function allocateProportionalMoney(amount, selectedGross, orderGross) {
+        const amountInteger = decimalToScaledInteger(amount, 2);
+        const selectedInteger = decimalToScaledInteger(selectedGross, 2);
+        const orderInteger = decimalToScaledInteger(orderGross, 2);
+        if (orderInteger <= 0n || selectedInteger < 0n || selectedInteger > orderInteger) {
+            throw new Error('INVALID_MONEY_ALLOCATION');
+        }
+        if (selectedInteger === orderInteger) {
+            return scaledIntegerToDecimal(amountInteger, 2);
+        }
+
+        return scaledIntegerToDecimal(
+            roundedIntegerRatio(amountInteger * selectedInteger, orderInteger),
+            2
+        );
+    }
+
+    function quantityFromIntegerRatio(numerator, denominator) {
+        const numeratorRaw = String(numerator === null || numerator === undefined ? '' : numerator).trim();
+        const denominatorRaw = String(denominator === null || denominator === undefined ? '' : denominator).trim();
+        if (!/^\d+$/.test(numeratorRaw) || !/^\d+$/.test(denominatorRaw)) {
+            throw new Error('INVALID_QUANTITY_RATIO');
+        }
+        const numeratorInteger = BigInt(numeratorRaw);
+        const denominatorInteger = BigInt(denominatorRaw);
+        if (denominatorInteger <= 0n) {
+            throw new Error('INVALID_QUANTITY_RATIO');
+        }
+
+        return scaledIntegerToDecimal(
+            roundedIntegerRatio(numeratorInteger * 1000000n, denominatorInteger),
+            6
+        );
+    }
+
+    function moneyFromPercentage(amount, percentage) {
+        const amountInteger = decimalToScaledInteger(amount, 2);
+        const percentageInteger = decimalToScaledInteger(percentage, 6);
+        if (amountInteger < 0n || percentageInteger < 0n || percentageInteger > 100000000n) {
+            throw new Error('INVALID_PERCENTAGE');
+        }
+
+        return scaledIntegerToDecimal(
+            roundedIntegerRatio(amountInteger * percentageInteger, 100000000n),
+            2
+        );
+    }
+
+    function percentageFromMoney(amount, total) {
+        const amountInteger = decimalToScaledInteger(amount, 2);
+        const totalInteger = decimalToScaledInteger(total, 2);
+        if (amountInteger < 0n || totalInteger < 0n || amountInteger > totalInteger) {
+            throw new Error('INVALID_PERCENTAGE_AMOUNT');
+        }
+        if (totalInteger === 0n) {
+            return '0.000000';
+        }
+
+        return scaledIntegerToDecimal(
+            roundedIntegerRatio(amountInteger * 100000000n, totalInteger),
+            6
+        );
+    }
+
+    function isPositiveDecimal(value, scale) {
+        return decimalString(value, scale, '0').replace('.', '').replace(/^0+/, '') !== '';
+    }
+
+    function paymentTenders(form) {
+        const cash = decimalString(fieldValue(form, 'paid_cash', '0'), 2, '0');
+        const bank = decimalString(fieldValue(form, 'paid_bank', '0'), 2, '0');
+        const notes = String(fieldValue(form, 'info', '') || '');
+        const tenders = [];
+
+        // Apply non-cash first so cash is the only tender that can produce change.
+        if (isPositiveDecimal(bank, 2)) {
+            tenders.push({
+                payment_method: 'bank',
+                amount: bank,
+                reference_no: notes
+            });
+        }
+        if (isPositiveDecimal(cash, 2)) {
+            tenders.push({
+                payment_method: 'cash',
+                amount: cash,
+                reference_no: notes
+            });
+        }
+
+        return {
+            cash: cash,
+            bank: bank,
+            total: addDecimalStrings(cash, bank, 2),
+            tenders: tenders
+        };
+    }
+
     function collectLineItems(form) {
         const items = [];
         const names = form.querySelectorAll('[name="itmname[]"], [name="itmname"]');
@@ -160,9 +370,9 @@
             }
             items.push({
                 id: id,
-                qty: parseFloat((qtyFields[index] || {}).value || 1),
-                price: parseFloat((priceFields[index] || {}).value || 0),
-                discount: parseFloat((discFields[index] || {}).value || 0),
+                qty: decimalString((qtyFields[index] || {}).value, 6, '1'),
+                price: decimalString((priceFields[index] || {}).value, 6, '0'),
+                discount: decimalString((discFields[index] || {}).value, 6, '0'),
                 note: String((noteFields[index] || {}).value || ''),
                 preparation_values: preparationValues
             });
@@ -253,21 +463,26 @@
                 payload.order_id = parseInt(fieldValue(form, 'edit_id', fieldValue(form, 'selected_order_id', 0)), 10);
             }
             payload.order_date = fieldValue(form, 'pro_date', new Date().toISOString().slice(0, 10));
-            payload.total = parseFloat(fieldValue(form, 'headtotal', 0));
-            payload.discount = parseFloat(fieldValue(form, 'headdisc', 0));
-            payload.net = parseFloat(fieldValue(form, 'headnet', 0));
+            payload.total = decimalString(fieldValue(form, 'headtotal', '0'), 2, '0');
+            payload.discount = decimalString(fieldValue(form, 'headdisc', '0'), 2, '0');
+            payload.net = decimalString(fieldValue(form, 'headnet', '0'), 2, '0');
         }
 
         if (route === 'orders.payment') {
+            const payment = paymentTenders(form);
             payload.table_id = parseInt(fieldValue(form, 'selected_table_id', fieldValue(form, 'table_id', 0)), 10);
             payload.order_id = parseInt(fieldValue(form, 'edit_id', fieldValue(form, 'selected_order_id', 0)), 10);
-            payload.paid = parseFloat(fieldValue(form, 'paid', 0))
-                || (parseFloat(fieldValue(form, 'paid_cash', 0)) + parseFloat(fieldValue(form, 'paid_bank', 0)));
-            payload.net = parseFloat(fieldValue(form, 'headnet', 0));
-            payload.discount = parseFloat(fieldValue(form, 'headdisc', 0));
-            payload.total = parseFloat(fieldValue(form, 'headtotal', 0));
+            payload.paid_cash = payment.cash;
+            payload.paid_bank = payment.bank;
+            payload.paid = payment.total;
+            payload.tenders = payment.tenders;
+            payload.net = decimalString(fieldValue(form, 'headnet', '0'), 2, '0');
+            payload.discount = decimalString(fieldValue(form, 'headdisc', '0'), 2, '0');
+            payload.total = decimalString(fieldValue(form, 'headtotal', '0'), 2, '0');
             payload.order_date = fieldValue(form, 'pro_date', new Date().toISOString().slice(0, 10));
-            payload.payment_method = parseFloat(fieldValue(form, 'paid_bank', 0)) > 0 ? 'bank' : 'cash';
+            payload.payment_method = payment.tenders.length === 1
+                ? payment.tenders[0].payment_method
+                : 'mixed';
             payload.notes = fieldValue(form, 'info', '');
             if (!payload.items || !payload.items.length) {
                 payload.items = collectLineItems(form);
@@ -279,6 +494,7 @@
         }
 
         if (action === 'split_cash') {
+            const payment = paymentTenders(form);
             let splitPayload = payload.pos_split_payment_payload || '';
             if (!splitPayload && typeof window.POSMainGetSplitPaymentPayload === 'function') {
                 splitPayload = window.POSMainGetSplitPaymentPayload();
@@ -309,17 +525,21 @@
                 fieldValue(form, 'selected_table_id', fieldValue(form, 'table_id', 0)),
                 10
             );
-            payload.paid_amount = parseFloat(
-                fieldValue(form, 'pos_split_payment_total', 0)
-                    || fieldValue(form, 'paid', 0)
-                    || (parseFloat(fieldValue(form, 'paid_cash', 0)) + parseFloat(fieldValue(form, 'paid_bank', 0)))
+            payload.paid_cash = payment.cash;
+            payload.paid_bank = payment.bank;
+            payload.paid_amount = decimalString(
+                fieldValue(form, 'pos_split_payment_total', '')
+                    || payment.total,
+                2,
+                '0'
             );
+            payload.tenders = payment.tenders;
             payload.payment_method = fieldValue(form, 'pos_split_payment_method', '')
-                || (parseFloat(fieldValue(form, 'paid_bank', 0)) > 0 ? 'bank' : 'cash');
+                || (payment.tenders.length === 1 ? payment.tenders[0].payment_method : 'mixed');
             payload.order_date = fieldValue(form, 'pro_date', new Date().toISOString().slice(0, 10));
-            payload.total = parseFloat(fieldValue(form, 'headtotal', 0));
-            payload.discount = parseFloat(fieldValue(form, 'headdisc', 0));
-            payload.net = parseFloat(fieldValue(form, 'headnet', 0));
+            payload.total = decimalString(fieldValue(form, 'headtotal', '0'), 2, '0');
+            payload.discount = decimalString(fieldValue(form, 'headdisc', '0'), 2, '0');
+            payload.net = decimalString(fieldValue(form, 'headnet', '0'), 2, '0');
         }
 
         return payload;
@@ -813,6 +1033,17 @@
         handleOrderResponse: handleOrderResponse,
         submitFromForm: submitFromForm,
         createIdempotencyKey: createIdempotencyKey,
+        decimalString: decimalString,
+        addDecimalStrings: addDecimalStrings,
+        compareDecimalStrings: compareDecimalStrings,
+        subtractDecimalStrings: subtractDecimalStrings,
+        prorateMoneyByQuantity: prorateMoneyByQuantity,
+        lineTotalFromQuantityAndUnitPrice: lineTotalFromQuantityAndUnitPrice,
+        allocateProportionalMoney: allocateProportionalMoney,
+        quantityFromIntegerRatio: quantityFromIntegerRatio,
+        moneyFromPercentage: moneyFromPercentage,
+        percentageFromMoney: percentageFromMoney,
+        paymentTenders: paymentTenders,
         applyOrderSuccessState: applyOrderSuccessState,
         showOrderSuccess: showOrderSuccess,
         userFacingOrderError: userFacingOrderError,

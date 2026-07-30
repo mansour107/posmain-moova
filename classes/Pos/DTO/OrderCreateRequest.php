@@ -1,19 +1,21 @@
 <?php
 
+require_once dirname(__DIR__, 2) . '/Financial/FinancialMoneyInput.php';
+
 class OrderLineRequest
 {
     public int $itemId;
-    public float $qty;
-    public float $price;
-    public float $discount;
+    public string $qty;
+    public string $price;
+    public string $discount;
     public array $raw;
 
     public function __construct(array $line)
     {
         $this->itemId = (int) ($line['item_id'] ?? $line['id'] ?? 0);
-        $this->qty = (float) ($line['qty'] ?? 0);
-        $this->price = (float) ($line['price'] ?? 0);
-        $this->discount = (float) ($line['discount'] ?? 0);
+        $this->qty = FinancialMoneyInput::quantityString($line['qty'] ?? 0);
+        $this->price = FinancialMoneyInput::unitPriceString($line['price'] ?? 0);
+        $this->discount = FinancialMoneyInput::unitPriceString($line['discount'] ?? 0);
         $this->raw = $line;
     }
 
@@ -38,9 +40,9 @@ class OrderCreateRequest
     public int $storeId;
     public int $empId;
     public int $fundId;
-    public float $total;
-    public float $discount;
-    public float $net;
+    public string $total;
+    public string $discount;
+    public string $net;
     public int $userId;
     public string $idempotencyKey;
     public ?int $posCustomerId;
@@ -58,9 +60,15 @@ class OrderCreateRequest
         $request->storeId = (int) ($data['store_id'] ?? 0);
         $request->empId = (int) ($data['emp_id'] ?? 0);
         $request->fundId = (int) ($data['fund_id'] ?? 0);
-        $request->total = (float) ($data['total'] ?? 0);
-        $request->discount = (float) ($data['discount'] ?? 0);
-        $request->net = (float) ($data['net'] ?? max(0, $request->total - $request->discount));
+        $request->total = FinancialMoneyInput::moneyString($data['total'] ?? 0);
+        $request->discount = FinancialMoneyInput::moneyString($data['discount'] ?? 0);
+        if (array_key_exists('net', $data)) {
+            $request->net = FinancialMoneyInput::moneyString($data['net']);
+        } else {
+            $computedNet = FinancialMoneyInput::money($request->total)
+                ->subtract(FinancialMoneyInput::money($request->discount));
+            $request->net = $computedNet->isNegative() ? '0.00' : $computedNet->toString();
+        }
         $request->userId = $userId;
         $request->idempotencyKey = trim((string) ($data['idempotency_key'] ?? $data['idempotencyKey'] ?? ''));
         $request->posCustomerId = self::resolvePosCustomerId($data);
@@ -99,7 +107,7 @@ class OrderCreateRequest
         $request->raw = $data;
         $request->orderId = (int) ($data['order_id'] ?? $data['edit_id'] ?? 0);
         $request->tableId = (int) ($data['table_id'] ?? 0);
-        $request->net = (float) ($data['amount'] ?? $data['net'] ?? 0);
+        $request->net = FinancialMoneyInput::moneyString($data['amount'] ?? $data['net'] ?? 0);
         $request->userId = $userId;
         $request->idempotencyKey = trim((string) ($data['idempotency_key'] ?? ''));
         $request->lines = [];

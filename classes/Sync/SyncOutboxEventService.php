@@ -205,6 +205,21 @@ class SyncOutboxEventService
         ];
     }
 
+    /**
+     * Certified POS mutations must never commit without a durable local outbox
+     * row. Sync delivery may be held, but persistence of the mutation envelope
+     * is mandatory.
+     */
+    public function recordRequiredOrderSnapshot(mysqli $conn, int $orderId, array $options = []): array
+    {
+        $result = $this->recordOrderSnapshot($conn, $orderId, $options);
+        if (!is_array($result) || (int) ($result['outbox_id'] ?? 0) < 1) {
+            throw new RuntimeException('ORDER_OUTBOX_REQUIRED');
+        }
+
+        return $result;
+    }
+
     private function highestOrderEventVersion(mysqli $conn, string $orderUuid): int
     {
         $stmt = $conn->prepare("
@@ -382,6 +397,16 @@ class SyncOutboxEventService
             'status' => $deliveryStatus,
             'cloud_branch_events' => $cloudBranchEvents,
         ];
+    }
+
+    public function recordRequiredTableSnapshot(mysqli $conn, int $tableId, array $options = []): array
+    {
+        $result = $this->recordTableSnapshot($conn, $tableId, $options);
+        if (!is_array($result) || (int) ($result['outbox_id'] ?? 0) < 1) {
+            throw new RuntimeException('TABLE_OUTBOX_REQUIRED');
+        }
+
+        return $result;
     }
 
     public function recordMenuItemSnapshot(mysqli $conn, int $itemId, array $options = []): ?array

@@ -1,0 +1,270 @@
+version: 3
+
+goal:
+  title: "POSMAIN Commercial V1"
+  slug: "posmain-commercial-v1"
+  kind: specific
+  tranche: "Step 5 — inventory cutover + recipe concurrency + COGS truth"
+  status: in_progress
+
+packages:
+  - id: step1_release_spine
+    title: "Clean release spine / security baseline"
+    status: evidence_pass
+    exit_gate: "Dangerous web utilities absent or gone; private CLI password reset; artifact excludes prohibited paths; secrets/session/CSRF/uploads checks; write-surface receipt; Step 1 gate green"
+    evidence:
+      - path: docs/goals/posmain-commercial-v1/evidence/step1-bundle-latest.json
+        result: pass
+      - path: docs/goals/posmain-commercial-v1/evidence/write-surface-classification-latest.json
+        result: pass
+      - path: tests/sync/commercial_v1_step1_security_contract_test.php
+        result: pass
+      - path: tests/sync/commercial_v1_step1_password_reset_runtime_test.php
+        result: pass
+      - path: docs/goals/posmain-commercial-v1/notes/step1-release-spine.md
+        result: pass
+  - id: step2_money_kernel
+    title: "Exact money / tax-off / tender control"
+    status: evidence_pass
+    depends_on: [step1_release_spine]
+    exit_gate: "JSON floats rejected; tax-off fail-closed on invoice posting; cash tendered/applied/change_due modeled; non-cash cannot over-tender; Step 2 gate green"
+    evidence:
+      - path: docs/goals/posmain-commercial-v1/evidence/step2-bundle-latest.json
+        result: pass
+      - path: tests/sync/commercial_v1_step2_money_contract_test.php
+        result: pass
+      - path: tests/sync/commercial_v1_step2_money_runtime_test.php
+        result: pass
+      - path: tests/sync/order_pricing_service_test.php
+        result: pass
+  - id: step3_atomic_mutations
+    title: "Idempotency + version locking + atomic outbox"
+    status: evidence_pass
+    depends_on: [step2_money_kernel]
+    exit_gate: "mutation_version required on pay/split/cancel/refund/move/merge; idempotent replay/conflict; transactional rollback proof; Step 3 gate green (includes Steps 1+2)"
+    evidence:
+      - path: docs/goals/posmain-commercial-v1/evidence/step3-bundle-latest.json
+        result: pass
+      - path: tests/sync/commercial_v1_step3_atomic_contract_test.php
+        result: pass
+      - path: tests/sync/commercial_v1_step3_atomic_runtime_test.php
+        result: pass
+      - path: tests/sync/pos_payment_split_service_idempotency_test.php
+        result: pass
+      - path: tests/sync/phase4_table_transfer_service_test.php
+        result: pass
+      - path: tests/sync/phase4_table_merge_service_test.php
+        result: pass
+  - id: step4_commercial_day_close
+    title: "Lifecycle + refunds + shift/drawer recon"
+    status: evidence_pass
+    depends_on: [step3_atomic_mutations]
+    evidence:
+      - path: tests/sync/drawer_cash_flow_integration_test.php
+        result: pass
+      - path: tests/sync/cash_flow_full_day_integration_test.php
+        result: pass
+      - path: tests/sync/drawer_override_lifecycle_test.php
+        result: pass
+  - id: step5_stock_truth
+    title: "Inventory cutover + recipe concurrency + COGS truth"
+    status: in_progress
+    depends_on: [step4_commercial_day_close]
+  - id: step6_launch_proof
+    title: "Install/browser/hardware/pilot proof"
+    status: pending
+    depends_on: [step5_stock_truth]
+
+active_task: T506
+
+tasks:
+  - id: T501
+    type: scout
+    assignee: Scout
+    status: done
+    objective: "Map current inventory cutover, recipe sale/refund/reversal, and COGS/accounting invariants; identify the smallest material red gate."
+    inputs:
+      - "Current source and dirty diff"
+      - "Inventory/recipe readiness tools and focused tests"
+      - "Local test database only"
+    constraints:
+      - "Read-only discovery; no source or data mutations"
+      - "Preserve unrelated work"
+      - "Treat stock or COGS divergence after paid-order reversal as a launch blocker"
+    expected_output:
+      - "Evidence-backed red gates"
+      - "Cross-effect map"
+      - "One bounded worker package"
+    receipt:
+      verdict: "Material red gate confirmed: an authoritative direct-stock sale can commit its payment, order, stock movement, balance, and sync facts while inventory/COGS accounting is disabled or fails, because rollback currently depends on POSMAIN_SIDE_EFFECT_MODE rather than inventory ledger authority."
+      evidence:
+        - "tools/inventory_runtime_preflight.php: local kody2 is ledger_mode=live but accounting/reservations/availability are disabled, legacy_mirror is enabled, all five required account mappings are zero, and 30 schema migrations are pending."
+        - "tools/inventory_accounting_reconciliation.php: 11 missing-journal rows, including direct-sale movements and a refund reversal; the latest browser-paid direct-stock line has stock cost but no COGS journal."
+        - "tools/inventory_reconciliation_check.php: 306 unaccepted stock differences, including 305 legacy-summary mismatches and 267 missing bridge movements."
+        - "classes/Pos/Service/SideEffectPolicy.php: inventory bridge errors roll back only when the independent POS side-effect mode is live."
+        - "classes/Pos/Service/PosOrderMutationService.php: bridge accounting context omits order_id, tenant, branch, and branch_uuid."
+        - "classes/Inventory/InventoryInvoiceBridge.php: direct-stock consume invokes the same reservation-release write twice and treats accounting-disabled as a harmless noop even in authoritative inventory mode."
+      cross_effects:
+        - "Payments/tenders and orders can report success while COGS and inventory-asset journals are absent."
+        - "Refund stock restoration can commit without the corresponding COGS reversal."
+        - "Drawer/shift cash can reconcile while accrual and inventory valuation reports diverge."
+        - "Inventory movements and sync outbox facts can exist in a different tenant/branch journal scope when caller context is incomplete."
+        - "Legacy mirror plus live ledger creates dual stock authorities while current reconciliation is red."
+      bounded_worker: "Make authoritative inventory sale/refund accounting fail closed independent of generic side-effect mode, derive journal scope from durable movements, validate active accounts, carry POS order scope explicitly, and remove duplicate release invocation."
+  - id: T502
+    type: judge
+    assignee: Judge
+    status: done
+    objective: "Select the first inventory/COGS repair by business-loss risk, dependency order, and verification strength."
+    inputs:
+      - "T501 receipt"
+    constraints:
+      - "Do not select cosmetic or reporting-only work while a stock/accounting invariant is red"
+    expected_output:
+      - "Chosen repair and explicit non-go scope"
+    receipt:
+      decision: "Select the authoritative inventory-accounting atomicity repair before cutover/backfill or negative-stock policy work."
+      rationale:
+        - "It prevents new financial and stock divergence immediately without inventing account IDs or altering historical data."
+        - "It is dependency-safe: historical reconciliation and cutover cannot be trusted while new writes can still create missing journals."
+        - "Account selection, negative-stock policy, migration application, and historical repair remain explicit later gates."
+      non_go_scope:
+        - "Do not choose or configure chart-of-account mappings."
+        - "Do not apply migrations, repair reconciliation rows, backfill history, or retire legacy triggers."
+        - "Do not change negative-stock policy."
+  - id: T503
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "Implement the bounded repair selected by T502."
+    allowed_files:
+      - "classes/Pos/Service/SideEffectPolicy.php"
+      - "classes/Inventory/InventoryInvoiceBridge.php"
+      - "classes/Inventory/InventoryAccountingService.php"
+      - "classes/Pos/Service/PosOrderMutationService.php"
+      - "tests/sync/side_effect_policy_test.php"
+      - "tests/sync/inventory_phase4_invoice_bridge_test.php"
+      - "tests/sync/inventory_phase12_accounting_service_test.php"
+      - "tests/sync/pos_split_payment_service_test.php"
+      - "docs/goals/posmain-commercial-v1/state.yaml"
+    verify:
+      - "php tests/sync/side_effect_policy_test.php"
+      - "php tests/sync/inventory_phase4_invoice_bridge_test.php"
+      - "php tests/sync/inventory_phase12_accounting_service_test.php"
+      - "php tests/sync/pos_table_payment_recipe_endpoint_runtime_test.php"
+    stop_if:
+      - "The repair needs a business policy decision."
+      - "The repair needs files outside allowed_files."
+      - "Focused verification fails twice."
+    receipt:
+      outcome: "Closed the new-write POS inventory/COGS atomicity gap without selecting accounts or changing historical data."
+      changes:
+        - "Authoritative bridge/live inventory errors now require rollback independently of POSMAIN_SIDE_EFFECT_MODE; shadow inventory remains non-blocking."
+        - "Authoritative sale/refund movements fail when inventory accounting is disabled."
+        - "Inventory journals derive tenant, branch, and order identity from durable movement rows and reject caller-scope conflicts."
+        - "Inventory journals reject missing or inactive configured accounts."
+        - "Canonical POS bridge calls preserve structured results through exception handling and carry explicit order/scope/sync context."
+      verification:
+        - "side-effect-policy-ok"
+        - "inventory-phase4-invoice-bridge-ok"
+        - "inventory-phase12-accounting-service-ok"
+        - "pos-table-payment-recipe-endpoint-runtime-ok"
+        - "pos-split-payment-service-ok"
+        - "pos-paid-reversal-service-ok"
+      remaining_red:
+        - "Local kody2 inventory runtime configuration is still invalid: live ledger with accounting/reservations/availability off, legacy mirror on, zero account mappings, and pending migrations."
+        - "Historical inventory and accounting reconciliation remain red and untouched."
+  - id: T504
+    type: scout
+    assignee: Scout
+    status: done
+    objective: "Map authoritative inventory failure handling in legacy invoice add/edit/delete and Moova order reservation paths before inventory cutover."
+    inputs:
+      - "T503 fail-closed bridge contract"
+      - "All non-canonical InventoryInvoiceBridge callers"
+      - "Existing transaction boundaries and focused tests"
+    constraints:
+      - "Read-only discovery before selecting the next repair"
+      - "Do not alter historical data or configure account mappings"
+      - "Preserve shadow-mode compatibility"
+    expected_output:
+      - "Caller-by-caller atomicity map"
+      - "Bounded next repair with affected tests"
+    receipt:
+      verdict: "The live Moova reservation/release wrappers could swallow an authoritative bridge failure after their inner guard threw, because the catch re-evaluated rollback without the structured live/bridge result. Legacy invoice add/edit writers are already forbidden on the web; the two remaining physical-delete routes were still artifact-publishable and exposed destructive stock/journal behavior."
+      changes:
+        - "Moova reservation and release wrappers now preserve structured bridge results through catch handling, so authoritative failures escape and roll back the owning transaction."
+        - "Legacy invoice and operation physical-delete routes now return HTTP 410, are quarantined in RBAC, are excluded from commercial release artifacts, and are no longer advertised by operations_summary.php."
+      verification:
+        - "moova-direct-stock-lifecycle-contract-ok"
+        - "inventory-phase4-invoice-bridge-ok"
+        - "recipe-moova-replay-runtime-ok"
+        - "commercial-v1-step1-security-contract-ok"
+        - "rbac-write-surface-contract-ok count=298"
+        - "recipe-paid-reversal-endpoint-contract-ok"
+      adjacent_baseline_red:
+        - "rbac_manifest_completeness_contract_test reports pre-existing unclassified debug.php and router.php."
+        - "recipe_lifecycle_wiring_contract_test reports the existing Cofe controller source-contract mismatch."
+        - "inventory_write_path_map_contract_test scans pre-existing var/release copies and reports them as unmapped writers."
+  - id: T505
+    type: scout
+    assignee: Scout
+    status: done
+    objective: "Separate deterministic inventory migration/backfill work from business-owned account, item-classification, opening-balance, and negative-stock decisions; prove the migration/reconciliation tools on isolated data."
+    inputs:
+      - "Current local inventory runtime preflight"
+      - "Inventory migration, reconciliation, accounting repair, and recipe proof tooling"
+      - "Temporary/local test databases only"
+    constraints:
+      - "Do not invent chart-of-account mappings or item recipes."
+      - "Do not apply historical repairs to the standing local shop."
+      - "Use reversible rehearsal or isolated databases for mutation proof."
+    expected_output:
+      - "Deterministic repair/proof package"
+      - "Exact business-decision blockers"
+    receipt:
+      outcome: "Closed the deterministic migration/cutover proof package without changing the standing local shop."
+      implementation:
+        - "Paid reversal and table-cancel endpoints now carry required mutation versions and rely on the central mutation service for single required outbox ownership."
+        - "Recipe endpoint fixtures explicitly select authoritative inventory/outbox modes instead of inheriting unsafe local .env combinations."
+        - "Generated release copies are excluded from the Phase 2 source-writer scan; the dashboard cutover contract now matches the current non-stock-bearing dashboard."
+      isolated_proof:
+        - "recipe-runtime-proof-suite: 17/17 pass"
+        - "inventory-phase14-migration-service-ok"
+        - "inventory-phase15-cutover-service-ok"
+        - "inventory-historical-accounting-repair-service-ok"
+        - "inventory-valuation-cutover-service-ok"
+        - "recipe-partial-refund-reversal-ok"
+        - "inventory-accounting-sync-atomicity-ok"
+        - "branch-restore-inventory-accounting-ok"
+        - "schema-migration-resume-ok"
+        - "sync-schema-migration: 13 tests, 276 assertions"
+      standing_shop_read_only_findings:
+        - "30 pending schema migrations."
+        - "306 unaccepted inventory differences; 267 include missing bridge movement."
+        - "11 inventory movements lack required accounting journals."
+        - "5 safe legacy backfill candidates, 56 unpaid-sale reclassifications, 2 non-stock neutralizations, and 18 unaccepted cost rebuild candidates."
+        - "All five configured inventory account mappings are zero; active candidates include account 27 inventory store and account 16 COGS, but no mapping was inferred."
+        - "359 tracked sellables but only 2 active recipes; catalog classification and opening stock require business signoff."
+        - "Negative-stock policy remains allow_with_warning."
+      standing_shop_mutations: "none"
+  - id: T506
+    type: decision
+    assignee: User
+    status: blocked
+    objective: "Approve the accounting, catalog/opening-stock, and negative-stock policy inputs required before a backup-backed standing-shop cutover rehearsal."
+    decisions_required:
+      - "Confirm the five account mappings: inventory asset, purchase clearing, COGS, waste expense, and adjustment gain/loss."
+      - "Approve an item-by-item catalog classification/opening-count source for the 359 tracked sellables, including which are recipe products, direct-stock products, or non-stock."
+      - "Choose negative-stock sale policy; production recommendation is block, with any override separately role-gated and audited."
+      - "Approve historical disposition rules for 56 unpaid-sale movements, 2 non-stock ledger balances, 18 cost rebuild rows, and 11 missing accounting journals after reviewed manifests are generated."
+    constraints:
+      - "Do not apply migrations, backfills, journals, valuation, or feature-flag cutover before these decisions and a verified backup."
+      - "Tax remains disabled per business decision."
+      - "Refund-authorized users may select the payout tender; substitution remains audited."
+
+notes:
+  - "Prior goal docs that claimed completed production-grade status are historical_not_v1_authority and are not V1 launch authority."
+  - "Step 1 preserves broader historical evidence; this branch is the curated commercial V1 release spine."
+  - "Step 3 blocks clients that omit mutation_version on money/order writes; UI now forwards versions on pay/split/cancel/move/merge."
+  - "Steps 1–4 have local evidence but remain evidence_pass, not done, until a clean immutable RC binds the receipts to a reviewed commit."

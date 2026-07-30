@@ -70,6 +70,7 @@ try {
         'amount' => '25.000',
         'order_id' => 100,
         'created_by' => 7,
+        'idempotency_key' => 'z-report:sale:100',
     ]);
     $conn->query("
         INSERT INTO ot_head (id, table_id, pro_date, payment_date, user, pro_tybe, payment_status, isdeleted)

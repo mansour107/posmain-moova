@@ -223,6 +223,7 @@ class ShiftSessionService
         if ($reason === '') {
             throw new RuntimeException('EXPENSE_REASON_REQUIRED');
         }
+        $idempotencyKey = $this->requiredIdempotencyKey($payload);
 
         $scope = $this->resolveScope($payload);
         $drawerSession = $this->currentDrawerSession($conn, $userId, $scope);
@@ -230,20 +231,28 @@ class ShiftSessionService
             throw new RuntimeException('DRAWER_SESSION_REQUIRED');
         }
 
-        $managerApprovalId = $this->requirePayoutApprovalIfNeeded(
-            $conn,
-            $userId,
-            $amount,
-            (int) $drawerSession['id'],
-            $payload
-        );
-
         $ownsTransaction = posmain_tx_begin_if_needed($conn, posmain_tx_context_in_transaction($context));
 
         try {
+            $managerApprovalId = $this->requirePayoutApprovalIfNeeded(
+                $conn,
+                $userId,
+                $amount,
+                (int) $drawerSession['id'],
+                $payload
+            );
+            $movement = $this->drawerSessions->recordMovement($conn, (int) $drawerSession['id'], [
+                'movement_type' => 'paid_out',
+                'amount' => $amount,
+                'reason' => $reason,
+                'created_by' => $userId,
+                'idempotency_key' => $idempotencyKey,
+                'manager_approval_id' => $managerApprovalId,
+            ]);
+
             $fundAccountId = $this->ledgerPosting->resolveFundAccountId($conn, $drawerSession);
             $refOtHeadId = null;
-            if ($this->ledgerPosting->canPost($conn)) {
+            if (empty($movement['idempotency_replayed']) && $this->ledgerPosting->canPost($conn)) {
                 $refOtHeadId = $this->ledgerPosting->postPayOut(
                     $conn,
                     $amount,
@@ -252,16 +261,14 @@ class ShiftSessionService
                     $fundAccountId,
                     (int) $drawerSession['id']
                 );
+                $this->drawerSessions->linkMovementToVoucher(
+                    $conn,
+                    (int) $movement['id'],
+                    $refOtHeadId,
+                    ['sync_config' => $context['sync_config'] ?? null]
+                );
+                $movement['ref_ot_head_id'] = $refOtHeadId;
             }
-
-            $movement = $this->drawerSessions->recordMovement($conn, (int) $drawerSession['id'], [
-                'movement_type' => 'paid_out',
-                'amount' => $amount,
-                'reason' => $reason,
-                'created_by' => $userId,
-                'manager_approval_id' => $managerApprovalId,
-                'ref_ot_head_id' => $refOtHeadId,
-            ]);
 
             posmain_tx_commit_if_owned($conn, $ownsTransaction);
         } catch (Throwable $exception) {
@@ -292,6 +299,7 @@ class ShiftSessionService
         if ($reason === '') {
             throw new RuntimeException('PAYIN_REASON_REQUIRED');
         }
+        $idempotencyKey = $this->requiredIdempotencyKey($payload);
 
         $scope = $this->resolveScope($payload);
         $drawerSession = $this->currentDrawerSession($conn, $userId, $scope);
@@ -304,9 +312,18 @@ class ShiftSessionService
         $ownsTransaction = posmain_tx_begin_if_needed($conn, posmain_tx_context_in_transaction($context));
 
         try {
+            $movement = $this->drawerSessions->recordMovement($conn, (int) $drawerSession['id'], [
+                'movement_type' => 'paid_in',
+                'amount' => $amount,
+                'reason' => $reason,
+                'created_by' => $userId,
+                'idempotency_key' => $idempotencyKey,
+                'manager_approval_id' => $managerApprovalId,
+            ]);
+
             $fundAccountId = $this->ledgerPosting->resolveFundAccountId($conn, $drawerSession);
             $refOtHeadId = null;
-            if ($this->ledgerPosting->canPost($conn)) {
+            if (empty($movement['idempotency_replayed']) && $this->ledgerPosting->canPost($conn)) {
                 $refOtHeadId = $this->ledgerPosting->postPayIn(
                     $conn,
                     $amount,
@@ -315,16 +332,14 @@ class ShiftSessionService
                     $fundAccountId,
                     (int) $drawerSession['id']
                 );
+                $this->drawerSessions->linkMovementToVoucher(
+                    $conn,
+                    (int) $movement['id'],
+                    $refOtHeadId,
+                    ['sync_config' => $context['sync_config'] ?? null]
+                );
+                $movement['ref_ot_head_id'] = $refOtHeadId;
             }
-
-            $movement = $this->drawerSessions->recordMovement($conn, (int) $drawerSession['id'], [
-                'movement_type' => 'paid_in',
-                'amount' => $amount,
-                'reason' => $reason,
-                'created_by' => $userId,
-                'manager_approval_id' => $managerApprovalId,
-                'ref_ot_head_id' => $refOtHeadId,
-            ]);
 
             posmain_tx_commit_if_owned($conn, $ownsTransaction);
         } catch (Throwable $exception) {
@@ -355,6 +370,7 @@ class ShiftSessionService
         if ($reason === '') {
             throw new RuntimeException('SAFE_DROP_REASON_REQUIRED');
         }
+        $idempotencyKey = $this->requiredIdempotencyKey($payload);
 
         $scope = $this->resolveScope($payload);
         $drawerSession = $this->currentDrawerSession($conn, $userId, $scope);
@@ -367,9 +383,18 @@ class ShiftSessionService
         $ownsTransaction = posmain_tx_begin_if_needed($conn, posmain_tx_context_in_transaction($context));
 
         try {
+            $movement = $this->drawerSessions->recordMovement($conn, (int) $drawerSession['id'], [
+                'movement_type' => 'safe_drop',
+                'amount' => $amount,
+                'reason' => $reason,
+                'created_by' => $userId,
+                'idempotency_key' => $idempotencyKey,
+                'manager_approval_id' => $managerApprovalId,
+            ]);
+
             $fundAccountId = $this->ledgerPosting->resolveFundAccountId($conn, $drawerSession);
             $refOtHeadId = null;
-            if ($this->ledgerPosting->canPost($conn)) {
+            if (empty($movement['idempotency_replayed']) && $this->ledgerPosting->canPost($conn)) {
                 $refOtHeadId = $this->ledgerPosting->postSafeDrop(
                     $conn,
                     $amount,
@@ -378,16 +403,14 @@ class ShiftSessionService
                     $fundAccountId,
                     (int) $drawerSession['id']
                 );
+                $this->drawerSessions->linkMovementToVoucher(
+                    $conn,
+                    (int) $movement['id'],
+                    $refOtHeadId,
+                    ['sync_config' => $context['sync_config'] ?? null]
+                );
+                $movement['ref_ot_head_id'] = $refOtHeadId;
             }
-
-            $movement = $this->drawerSessions->recordMovement($conn, (int) $drawerSession['id'], [
-                'movement_type' => 'safe_drop',
-                'amount' => $amount,
-                'reason' => $reason,
-                'created_by' => $userId,
-                'manager_approval_id' => $managerApprovalId,
-                'ref_ot_head_id' => $refOtHeadId,
-            ]);
 
             posmain_tx_commit_if_owned($conn, $ownsTransaction);
         } catch (Throwable $exception) {
@@ -1116,6 +1139,16 @@ class ShiftSessionService
         }
 
         return $normalized;
+    }
+
+    private function requiredIdempotencyKey(array $payload): string
+    {
+        $key = trim((string) ($payload['idempotency_key'] ?? ''));
+        if ($key === '' || strlen($key) > 191) {
+            throw new RuntimeException('IDEMPOTENCY_KEY_REQUIRED');
+        }
+
+        return $key;
     }
 
     /**

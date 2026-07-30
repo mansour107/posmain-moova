@@ -99,27 +99,24 @@ try {
         throw new Exception('طلب سابق بنفس المفتاح لا يزال قيد المعالجة');
     }
 
-    $posMutationService->cancelTableOrder($conn, [
+    $cancelResult = $posMutationService->cancelTableOrder($conn, [
         'table_id' => $table_id,
         'order_id' => $order_id,
         'reason' => $reason,
         'user_id' => $user_id,
-    ], ['user_id' => $user_id]);
-    $syncOutbox = new SyncOutboxEventService();
-    $syncOutbox->recordOrderSnapshot($conn, $order_id, [
-        'event_type' => 'order.cancelled',
-        'source_system' => 'pos_table_cancel',
+        'mutation_version' => $_POST['mutation_version'] ?? $_POST['order_version'] ?? null,
+    ], [
+        'user_id' => $user_id,
+        'in_transaction' => true,
+        'skip_idempotency' => true,
     ]);
-    $syncOutbox->recordTableSnapshot($conn, $table_id, [
-        'event_type' => 'table.updated',
-        'source_system' => 'pos_table_cancel',
-        'active_order_id' => null,
-    ]);
+    $cancelData = is_array($cancelResult['data'] ?? null) ? $cancelResult['data'] : [];
     $response = [
         'success' => true,
         'code' => 'OK',
         'message' => 'تم إلغاء الطلب بنجاح',
         'order_id' => $order_id,
+        'mutation_version' => (int) ($cancelData['mutation_version'] ?? 0),
         'request_id' => $idempotencyKey,
     ];
     $idempotencyService->complete($conn, PosOrderMutationService::SCOPE_ORDER_CANCEL, $idempotencyKey, $idempotencyHash, $response);

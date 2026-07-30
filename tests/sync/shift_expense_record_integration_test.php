@@ -33,6 +33,7 @@ try {
     $recorded = $service->recordShiftExpense($conn, $cashierId, [
         'amount' => '15.50',
         'reason' => 'توصيل طلب',
+        'idempotency_key' => 'shift-expense-record-15-50',
     ]);
     shiftExpenseIntegrationAssert($recorded['movement']['movement_type'] === 'paid_out', 'movement should be paid_out');
     shiftExpenseIntegrationAssert(abs((float) $recorded['summary']['total'] - 15.5) < 0.01, 'expense total expected');
@@ -43,6 +44,7 @@ try {
     $service->recordShiftExpense($conn, $cashierId, [
         'amount' => '4.50',
         'reason' => 'مشتريات صغيرة',
+        'idempotency_key' => 'shift-expense-record-4-50',
     ]);
 
     $summary = $service->shiftExpenseSummary($conn, $cashierId);
@@ -66,7 +68,11 @@ try {
     shiftExpenseIntegrationAssert($row['expense_notes'] === 'ignored when drawer active', 'close should keep provided notes when present');
 
     shiftExpenseIntegrationExpectException(function () use ($service, $conn, $cashierId) {
-        $service->recordShiftExpense($conn, $cashierId, ['amount' => '1.00', 'reason' => 'late']);
+        $service->recordShiftExpense($conn, $cashierId, [
+            'amount' => '1.00',
+            'reason' => 'late',
+            'idempotency_key' => 'shift-expense-late',
+        ]);
     }, 'SHIFT_WRITE_BLOCKED');
 
     echo "shift-expense-record-integration-ok db={$db}\n";

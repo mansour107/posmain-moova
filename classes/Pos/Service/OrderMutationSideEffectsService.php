@@ -31,14 +31,7 @@ class OrderMutationSideEffectsService
 
     public function preflightSyncIdentity(mysqli $conn): void
     {
-        try {
-            $this->syncOutbox->prepareBranchIdentity($conn);
-        } catch (Throwable $exception) {
-            if (SideEffectPolicy::orderEventShouldRollback($exception)) {
-                throw $exception;
-            }
-            error_log('POS sync identity preflight skipped: ' . $exception->getMessage());
-        }
+        $this->syncOutbox->prepareBranchIdentity($conn);
     }
 
     public function recordTableSave(
@@ -171,19 +164,10 @@ class OrderMutationSideEffectsService
             return;
         }
 
-        try {
-            $this->syncOutbox->recordTableSnapshot($conn, $tableId, [
-                'event_type' => 'table.updated',
-                'source_system' => $sourceSystem,
-                'active_order_id' => null,
-            ]);
-        } catch (Throwable $exception) {
-            error_log('POS table free outbox skipped: ' . $exception->getMessage());
-        }
-
-        $this->orderEvents->recordIfAvailable($conn, 0, 'table.freed', $eventSource, [
-            'actor_user_id' => $userId,
-            'metadata' => ['table_id' => $tableId],
+        $this->syncOutbox->recordRequiredTableSnapshot($conn, $tableId, [
+            'event_type' => 'table.updated',
+            'source_system' => $sourceSystem,
+            'active_order_id' => null,
         ]);
     }
 
@@ -234,31 +218,17 @@ class OrderMutationSideEffectsService
         ?int $activeOrderId = null,
         int $tableId = 0
     ): void {
-        try {
-            $this->syncOutbox->recordOrderSnapshot($conn, $orderId, [
-                'event_type' => $eventType,
-                'source_system' => $sourceSystem,
-            ]);
-        } catch (Throwable $exception) {
-            if (SideEffectPolicy::orderEventShouldRollback($exception)) {
-                throw $exception;
-            }
-            error_log('POS order outbox skipped: ' . $exception->getMessage());
-        }
+        $this->syncOutbox->recordRequiredOrderSnapshot($conn, $orderId, [
+            'event_type' => $eventType,
+            'source_system' => $sourceSystem,
+        ]);
 
         if ($tableId > 0) {
-            try {
-                $this->syncOutbox->recordTableSnapshot($conn, $tableId, [
-                    'event_type' => 'table.updated',
-                    'source_system' => $sourceSystem,
-                    'active_order_id' => $activeOrderId,
-                ]);
-            } catch (Throwable $exception) {
-                if (SideEffectPolicy::orderEventShouldRollback($exception)) {
-                    throw $exception;
-                }
-                error_log('POS table outbox skipped: ' . $exception->getMessage());
-            }
+            $this->syncOutbox->recordRequiredTableSnapshot($conn, $tableId, [
+                'event_type' => 'table.updated',
+                'source_system' => $sourceSystem,
+                'active_order_id' => $activeOrderId,
+            ]);
         }
 
         // PosOrderMutationService owns the durable order_events write inside the

@@ -58,21 +58,25 @@ try {
         'amount' => '110.00',
         'order_id' => 10,
         'created_by' => 7,
+        'idempotency_key' => 'shift-reconcile:sale:10',
     ]);
     $drawer->recordMovement($conn, $session['id'], [
         'movement_type' => 'refund_cash',
         'amount' => '2.00',
         'created_by' => 7,
+        'idempotency_key' => 'shift-reconcile:refund:1',
     ]);
     $drawer->recordMovement($conn, $session['id'], [
         'movement_type' => 'paid_out',
         'amount' => '10.00',
         'created_by' => 7,
+        'idempotency_key' => 'shift-reconcile:paid-out:1',
     ]);
     $drawer->recordMovement($conn, $session['id'], [
         'movement_type' => 'safe_drop',
         'amount' => '5.00',
         'created_by' => 7,
+        'idempotency_key' => 'shift-reconcile:safe-drop:1',
     ]);
 
     phase4ShiftReconcileSeedPayments($conn);
@@ -88,7 +92,7 @@ try {
     phase4ShiftReconcileAssert($summary['drawer']['opening_cash'] === '100.000', 'opening cash expected');
     phase4ShiftReconcileAssert($summary['drawer']['movement_totals']['sale_cash'] === '110.000', 'sale cash movement total expected');
     phase4ShiftReconcileAssert($summary['drawer']['movement_totals']['refund_cash'] === '2.000', 'refund movement total expected');
-    phase4ShiftReconcileAssert($summary['drawer']['expected_cash'] === '193.00', 'expected cash should use signed drawer movement math');
+    phase4ShiftReconcileAssert($summary['drawer']['expected_cash'] === '193.000', 'expected cash should use signed drawer movement math');
     // opening + sale_cash + refund_cash + paid_out + safe_drop
     phase4ShiftReconcileAssert($summary['drawer']['movement_count'] === 5, 'drawer movement count includes opening movement');
 
@@ -99,6 +103,29 @@ try {
     phase4ShiftReconcileAssert($summary['payments']['by_type']['wallet'] === '15.000', 'wallet payment total expected');
     phase4ShiftReconcileAssert($summary['reconciliation']['cash_difference'] === '0.000', 'drawer sale cash should reconcile with cash payments');
     phase4ShiftReconcileAssert(count($summary['payments']['methods']) === 4, 'method rows should be retained');
+
+    $heldConfig = posmain_app_config();
+    $heldConfig['sync']['branch_sync_enabled'] = false;
+    $heldConfig['sync']['worker_enabled'] = false;
+    $heldMovement = $drawer->recordMovement($conn, $session['id'], [
+        'movement_type' => 'no_sale',
+        'amount' => '0.00',
+        'allow_zero_amount' => true,
+        'created_by' => 7,
+        'idempotency_key' => 'shift-reconcile:no-sale:held',
+        'sync_config' => $heldConfig,
+    ]);
+    $heldOutbox = $conn->query(
+        "SELECT status FROM sync_outbox
+         WHERE aggregate_type = 'drawer_movement'
+           AND aggregate_local_id = " . (int) $heldMovement['id'] . "
+         ORDER BY id DESC
+         LIMIT 1"
+    )->fetch_assoc();
+    phase4ShiftReconcileAssert(
+        ($heldOutbox['status'] ?? '') === 'held',
+        'drawer outbox must persist locally as held when remote delivery is disabled'
+    );
 
     $specific = $service->buildForUser($conn, [
         'user_id' => 7,

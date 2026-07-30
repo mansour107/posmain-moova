@@ -81,11 +81,16 @@ try {
     ]);
     orderPricingAssert($discountRegression['net'] === '23.00', 'line discounts must be per-unit and applied consistently');
 
-    $floatCoerced = $service->resolveTableSaveRequest($conn, [
-        'items' => [['id' => 10, 'qty' => 2.0, 'price' => 12.5, 'discount' => 0.0]],
-        'discount' => 0.0,
-    ]);
-    orderPricingAssert($floatCoerced['net'] === '25.00', 'HTTP boundary must coerce JSON floats into exact decimal strings');
+    $floatRejected = false;
+    try {
+        $service->resolveTableSaveRequest($conn, [
+            'items' => [['id' => 10, 'qty' => 2.0, 'price' => 12.5, 'discount' => 0.0]],
+            'discount' => 0.0,
+        ]);
+    } catch (InvalidArgumentException $e) {
+        $floatRejected = str_contains($e->getMessage(), 'FINANCIAL_DECIMAL_STRING_REQUIRED');
+    }
+    orderPricingAssert($floatRejected, 'HTTP/service boundary must reject PHP floats for money and quantity');
 
     $kernelRejectsFloat = false;
     try {

@@ -590,17 +590,25 @@ LIMIT 1");
 
     private function postAccountingForMovements(mysqli $conn, array $movements, array $context): array
     {
-        if (!$this->flags->isAccountingEnabled()) {
-            return ['noop' => true, 'reason' => 'inventory accounting is disabled'];
-        }
-        if (!$this->flags->canWriteLedger()) {
-            return ['noop' => true, 'reason' => 'inventory ledger mode is not accounting-authoritative'];
-        }
-
         $saleMovementIds = $this->movementIdsByType($movements, 'sale_direct');
         $refundMovementIds = $this->movementIdsByType($movements, 'refund_reversal');
         if (!$saleMovementIds && !$refundMovementIds) {
             return ['noop' => true, 'reason' => 'no sale or refund movements to post'];
+        }
+        if (!$this->flags->canWriteLedger()) {
+            return ['noop' => true, 'reason' => 'inventory ledger mode is not accounting-authoritative'];
+        }
+        if (!$this->flags->isAccountingEnabled()) {
+            return [
+                'noop' => false,
+                'sale_cogs' => null,
+                'refund_reversal' => null,
+                'errors' => [[
+                    'posting' => 'inventory_accounting_precondition',
+                    'message' => 'INVENTORY_ACCOUNTING_REQUIRED_FOR_AUTHORITATIVE_MOVEMENT',
+                    'movement_ids' => array_values(array_unique(array_merge($saleMovementIds, $refundMovementIds))),
+                ]],
+            ];
         }
 
         $result = [
@@ -609,6 +617,22 @@ LIMIT 1");
             'refund_reversal' => null,
             'errors' => [],
         ];
+
+        try {
+            $context = $this->accountingContextFromMovements(
+                $conn,
+                array_values(array_unique(array_merge($saleMovementIds, $refundMovementIds))),
+                $context
+            );
+        } catch (Throwable $exception) {
+            $result['errors'][] = [
+                'posting' => 'inventory_accounting_scope',
+                'message' => $exception->getMessage(),
+                'movement_ids' => array_values(array_unique(array_merge($saleMovementIds, $refundMovementIds))),
+            ];
+
+            return $result;
+        }
 
         if ($saleMovementIds) {
             try {
@@ -635,6 +659,61 @@ LIMIT 1");
         }
 
         return $result;
+    }
+
+    /**
+     * Journals inherit scope from the durable movements they account for.
+     * Caller context may add metadata, but it cannot redirect a movement into
+     * a different tenant or branch journal.
+     */
+    private function accountingContextFromMovements(mysqli $conn, array $movementIds, array $context): array
+    {
+        $movementIds = array_values(array_unique(array_filter(
+            array_map('intval', $movementIds),
+            static fn(int $id): bool => $id > 0
+        )));
+        if ($movementIds === []) {
+            throw new RuntimeException('INVENTORY_ACCOUNTING_MOVEMENTS_REQUIRED');
+        }
+
+        $result = $conn->query(
+            'SELECT DISTINCT pos_tenant, pos_branch, order_id'
+            . ' FROM inventory_movements'
+            . ' WHERE id IN (' . implode(', ', $movementIds) . ')'
+        );
+        $scopes = [];
+        while ($row = $result->fetch_assoc()) {
+            $scopes[] = [
+                'pos_tenant' => max(0, (int) ($row['pos_tenant'] ?? 0)),
+                'pos_branch' => max(0, (int) ($row['pos_branch'] ?? 0)),
+                'order_id' => max(0, (int) ($row['order_id'] ?? 0)),
+            ];
+        }
+        if (count($scopes) !== 1) {
+            throw new RuntimeException('INVENTORY_ACCOUNTING_MOVEMENT_SCOPE_CONFLICT');
+        }
+
+        $scope = $scopes[0];
+        foreach (['pos_tenant' => 'tenant', 'pos_branch' => 'branch'] as $scopeKey => $alias) {
+            $declared = (int) ($context[$scopeKey] ?? $context[$alias] ?? 0);
+            if ($declared > 0 && $declared !== $scope[$scopeKey]) {
+                throw new RuntimeException('INVENTORY_ACCOUNTING_CALLER_SCOPE_CONFLICT:' . $scopeKey);
+            }
+        }
+        $declaredOrderId = (int) ($context['order_id'] ?? 0);
+        if ($declaredOrderId > 0 && $scope['order_id'] > 0 && $declaredOrderId !== $scope['order_id']) {
+            throw new RuntimeException('INVENTORY_ACCOUNTING_CALLER_SCOPE_CONFLICT:order_id');
+        }
+
+        $context['pos_tenant'] = $scope['pos_tenant'];
+        $context['tenant'] = $scope['pos_tenant'];
+        $context['pos_branch'] = $scope['pos_branch'];
+        $context['branch'] = $scope['pos_branch'];
+        if ($scope['order_id'] > 0) {
+            $context['order_id'] = $scope['order_id'];
+        }
+
+        return $context;
     }
 
     /**

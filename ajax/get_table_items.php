@@ -3,7 +3,11 @@ error_reporting(0);
 ini_set('display_errors', 0);
 ob_start();
 
-include('../includes/connect.php');
+require_once __DIR__ . '/../includes/rbac_route_guard.php';
+rbac_guard_route('ajax/get_table_items.php');
+require_once('../classes/Financial/Money.php');
+require_once('../classes/Pos/Service/LegacyOrderLinePresentationService.php');
+require_once('../classes/TableOrderService.php');
 ob_clean(); // Clean any headers/whitespace from includes
 
 header('Content-Type: application/json');
@@ -16,7 +20,21 @@ if (!isset($_GET['order_id'])) {
 $order_id = intval($_GET['order_id']);
 
 try {
-    $query = "SELECT fd.id, fd.item_id, m.iname, fd.qty_out, fd.price, fd.fatid
+    $tableOrderService = new TableOrderService();
+    $order = $tableOrderService->queryOne(
+        $conn,
+        'SELECT id, fat_total, fat_disc, fat_net, mutation_version
+         FROM ot_head
+         WHERE id = ?
+           AND isdeleted = 0
+         LIMIT 1',
+        [$order_id]
+    );
+    if (!$order) {
+        throw new RuntimeException('ORDER_NOT_FOUND');
+    }
+
+    $query = "SELECT fd.id, fd.item_id, m.iname, fd.qty_in, fd.qty_out, fd.u_val, fd.price, fd.det_value, fd.fatid
 	              FROM fat_details fd
 	              JOIN myitems m ON fd.item_id = m.id
 	              WHERE fd.fatid = ? AND fd.isdeleted = 0";
@@ -27,18 +45,27 @@ try {
     $result = $stmt->get_result();
 
     $items = [];
+    $linePresentation = new LegacyOrderLinePresentationService();
     while ($row = $result->fetch_assoc()) {
+        $presentedLine = $linePresentation->presentSaleLine($row);
         $items[] = [
             'id' => $row['id'], // detail id
             'item_id' => $row['item_id'],
             'name' => $row['iname'],
-            'qty' => floatval($row['qty_out']),
-            'price' => floatval($row['price']),
-            'total' => floatval($row['qty_out']) * floatval($row['price'])
+            'qty' => $presentedLine['qty'],
+            'price' => $presentedLine['price'],
+            'total' => Money::from($row['det_value'] ?? '0')->toString()
         ];
     }
 
-    echo json_encode(['success' => true, 'items' => $items]);
+    echo json_encode([
+        'success' => true,
+        'items' => $items,
+        'order_total' => Money::from($order['fat_total'] ?? '0')->toString(),
+        'order_discount' => Money::from($order['fat_disc'] ?? '0')->toString(),
+        'order_net' => Money::from($order['fat_net'] ?? '0')->toString(),
+        'mutation_version' => max(1, (int) ($order['mutation_version'] ?? 1)),
+    ]);
 } catch (Exception $e) {
     echo json_encode(['success' => false, 'message' => $e->getMessage()]);
 }

@@ -31,6 +31,11 @@ posOrderDraftContractAssert(strpos($posSupermarket, 'touchOrderDraft') !== false
 posOrderDraftContractAssert(strpos($posTables, 'buildTableOrderFingerprint') !== false, 'pos_tables should define table fingerprint builder');
 posOrderDraftContractAssert(strpos($posTables, 'getStandaloneIdempotencyKey') !== false, 'pos_tables should use draft standalone idempotency key');
 posOrderDraftContractAssert(strpos($posTables, 'markSaved') !== false, 'pos_tables should mark draft saved after table save');
+posOrderDraftContractAssert(
+    strpos($posTables, "typeof draft.isDirty === 'function' && draft.isDirty()") !== false
+        && strpos($posTables, 'if (orderId) {') !== false,
+    'table payment must open directly for a clean saved draft instead of retrying a deliberately blocked unchanged save'
+);
 
 posOrderDraftContractAssert(strpos($posContent, 'pos_order_draft.js') !== false, 'pos_content should include pos_order_draft.js');
 posOrderDraftContractAssert(strpos($supermarketContent, 'pos_order_draft.js') !== false, 'pos_supermarket_content should include pos_order_draft.js');

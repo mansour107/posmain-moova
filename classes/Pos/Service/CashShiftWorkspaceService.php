@@ -2,6 +2,7 @@
 
 require_once __DIR__ . '/CashFlowPeriodService.php';
 require_once __DIR__ . '/ShiftCountService.php';
+require_once __DIR__ . '/../../Financial/Decimal.php';
 
 /**
  * One query context for the cash-and-shifts workspace.
@@ -314,17 +315,21 @@ class CashShiftWorkspaceService
         return $found;
     }
 
-    private function varianceAmount(array $row): float
+    private function varianceAmount(array $row): string
     {
         $type = (string) ($row['variance_type'] ?? 'closing');
         if ($type === 'opening') {
-            return (float) ($row['opening_variance'] ?? 0);
+            return FinancialDecimal::normalize($row['opening_variance'] ?? '0', 3, true);
         }
         if ($type === 'both') {
-            return (float) ($row['opening_variance'] ?? 0) + (float) ($row['difference'] ?? 0);
+            return FinancialDecimal::add(
+                FinancialDecimal::normalize($row['opening_variance'] ?? '0', 3, true),
+                FinancialDecimal::normalize($row['difference'] ?? '0', 3, true),
+                3
+            );
         }
 
-        return (float) ($row['difference'] ?? 0);
+        return FinancialDecimal::normalize($row['difference'] ?? '0', 3, true);
     }
 
     /** @return array<string, mixed> */

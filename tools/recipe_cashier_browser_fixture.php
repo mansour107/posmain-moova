@@ -475,6 +475,7 @@ function recipeCashierBrowserFixtureAssessPaidReversalSurface(mysqli $conn, stri
 
     $refundPayload = [
         'order_id' => 9001,
+        'mutation_version' => 1,
         'action' => 'refund',
         'refund_stock_policy' => 'return_to_stock',
         'refund_payment_method' => 'cash',
@@ -507,6 +508,7 @@ function recipeCashierBrowserFixtureAssessPaidReversalSurface(mysqli $conn, stri
 
     $voidPayload = [
         'order_id' => 9002,
+        'mutation_version' => 1,
         'action' => 'void',
         'refund_stock_policy' => 'waste',
         'refund_payment_method' => 'cash',

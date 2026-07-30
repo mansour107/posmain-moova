@@ -582,9 +582,37 @@ class DrawerOverrideService
     }
 
     /**
-     * Central POS-write audit for active override periods.
+     * Record the final outcome of a POS write performed under an override.
      */
     public function auditPosWrite(mysqli $conn, string $route, bool $success, array $extra = []): void
+    {
+        $this->auditOverrideEvent($conn, 'drawer_override_operation', $route, [
+            'success' => $success,
+        ], $extra);
+    }
+
+    /**
+     * Record authorization separately from the eventual business outcome.
+     *
+     * Authentication guards run before a controller or legacy handler performs
+     * its mutation, so they must not describe an authorized request as a
+     * successful sale/refund/drawer operation.
+     */
+    public function auditPosAuthorization(mysqli $conn, string $route, bool $granted, array $extra = []): void
+    {
+        $this->auditOverrideEvent($conn, 'drawer_override_authorization', $route, [
+            'authorization_granted' => $granted,
+            'operation_outcome' => 'not_recorded',
+        ], $extra);
+    }
+
+    private function auditOverrideEvent(
+        mysqli $conn,
+        string $eventType,
+        string $route,
+        array $eventMetadata,
+        array $extra
+    ): void
     {
         $periodId = $this->sessionOverridePeriodId();
         if ($periodId < 1 || !$this->tableExists($conn)) {
@@ -597,7 +625,7 @@ class DrawerOverrideService
                 return;
             }
             $this->touch($conn, $periodId);
-            $this->audit->record($conn, 'drawer_override_operation', [
+            $this->audit->record($conn, $eventType, [
                 'user_id' => (int) ($period['operator_user_id'] ?? 0),
                 'tenant' => (int) ($period['tenant'] ?? 0),
                 'branch' => (int) ($period['branch'] ?? 0),
@@ -609,9 +637,8 @@ class DrawerOverrideService
                     'original_owner_user_id' => (int) ($period['original_owner_user_id'] ?? 0),
                     'operator_user_id' => (int) ($period['operator_user_id'] ?? 0),
                     'route' => $route,
-                    'success' => $success,
                     'http_method' => (string) ($_SERVER['REQUEST_METHOD'] ?? ''),
-                ], $extra),
+                ], $eventMetadata, $extra),
             ]);
         } catch (Throwable $ignored) {
         }

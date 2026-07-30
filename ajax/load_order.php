@@ -11,6 +11,8 @@ require_once($root_path . '/classes/TableOrderService.php');
 require_once($root_path . '/classes/Pos/Service/ModifierLineNoteService.php');
 require_once($root_path . '/classes/Pos/Service/LegacyOrderLinePresentationService.php');
 require_once($root_path . '/classes/Pos/Service/PreparationSelectionService.php');
+require_once($root_path . '/classes/Financial/Money.php');
+require_once($root_path . '/classes/Recipe/RecipeDecimal.php');
 
 try {
     if (!isset($_POST['order_id']) || empty($_POST['order_id'])) {
@@ -36,7 +38,7 @@ try {
 
     foreach ($loaded['items'] as $item) {
         $presentedLine = $linePresentation->presentSaleLine($item);
-        $qty = (float) $presentedLine['qty'];
+        $qty = RecipeDecimal::normalize($presentedLine['qty']);
         $customizations = ['modifiers' => [], 'notes' => []];
         try {
             $customizations = $customizationService->fetchLineCustomizations($conn, (int) $order['id'], (int) $item['id']);
@@ -54,14 +56,23 @@ try {
                 return (string) ($note['note_text'] ?? '');
             }, $customizations['notes'])));
         }
-        $modifierLineTotal = 0.0;
+        $modifierLineTotal = RecipeDecimal::zero();
         foreach ($customizations['modifiers'] as $modifier) {
-            $modifierLineTotal += (float) ($modifier['line_delta'] ?? 0);
+            $modifierLineTotal = RecipeDecimal::add(
+                $modifierLineTotal,
+                RecipeDecimal::normalize($modifier['line_delta'] ?? '0')
+            );
         }
-        $price = (float) $presentedLine['price'];
+        $price = RecipeDecimal::normalize($presentedLine['price']);
         $basePrice = $price;
-        if ($qty > 0 && $modifierLineTotal > 0) {
-            $basePrice = max(0, $basePrice - ($modifierLineTotal / $qty));
+        if (RecipeDecimal::compare($qty, '0') > 0 && RecipeDecimal::compare($modifierLineTotal, '0') > 0) {
+            $basePrice = RecipeDecimal::subtract(
+                $basePrice,
+                RecipeDecimal::divide($modifierLineTotal, $qty)
+            );
+            if (RecipeDecimal::compare($basePrice, '0') < 0) {
+                $basePrice = RecipeDecimal::zero();
+            }
         }
         $items[] = [
             'detail_id' => (int) ($item['id'] ?? 0),
@@ -72,8 +83,8 @@ try {
             'qty' => $qty,
             'price' => $price,
             'base_price' => $basePrice,
-            'u_val' => (float) $presentedLine['u_val'],
-            'subtotal' => floatval($item['det_value']),
+            'u_val' => RecipeDecimal::normalize($presentedLine['u_val']),
+            'subtotal' => Money::from($item['det_value'] ?? '0')->toString(),
             'note' => $lineNote,
             'kitchen_note' => $lineNote,
             'modifiers' => $customizations['modifiers'],
@@ -96,11 +107,11 @@ try {
             'acc1' => $order['acc1'],
             'store_id' => $order['store_id'],
             'fund_id' => $order['acc_fund'] ?? 0,
-            'total' => floatval($order['fat_total']),
-            'discount' => floatval($order['fat_disc']),
-            'net' => floatval($order['fat_net']),
-            'paid' => floatval($order['paid_amount'] ?? 0),
-            'remaining' => floatval($order['remaining_amount'] ?? 0)
+            'total' => Money::from($order['fat_total'] ?? '0')->toString(),
+            'discount' => Money::from($order['fat_disc'] ?? '0')->toString(),
+            'net' => Money::from($order['fat_net'] ?? '0')->toString(),
+            'paid' => Money::from($order['paid_amount'] ?? '0')->toString(),
+            'remaining' => Money::from($order['remaining_amount'] ?? '0')->toString()
         ],
         'items' => $items
     ]);

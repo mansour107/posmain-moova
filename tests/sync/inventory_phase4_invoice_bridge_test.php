@@ -32,6 +32,8 @@ try {
     $manager->apply($conn);
     inventoryPhase4CreateLegacyItemTable($conn);
     inventoryPhase4CreateOperationalStore($conn, 7);
+    inventoryPhase4SeedAccountingAccounts($conn);
+    inventoryPhase4CreateJournalTables($conn);
     inventoryPhase4SeedItem($conn, 1001, 'Shadow stock item', 'sellable', 1, '20.000000', '2.000000');
     inventoryPhase4SeedItem($conn, 2002, 'Shadow service item', 'service', 1, '0.000000', '0.000000');
 
@@ -244,36 +246,26 @@ try {
     ]], ['user_id' => 9]);
     $conn->commit();
 
-    $previousSideEffectMode = getenv('POSMAIN_SIDE_EFFECT_MODE');
-    putenv('POSMAIN_SIDE_EFFECT_MODE=live');
-    try {
-        $conn->begin_transaction();
-        $failedSale = $liveBridge->recordInvoiceLines($conn, InventoryInvoiceBridge::TYPE_SALES, 7101, [[
-            'id' => 602,
-            'item_id' => 3003,
-            'qty_in' => '0.000000',
-            'qty_out' => '1.000000',
-            'u_val' => '1.000000',
-            'cost_price' => '2.000000',
-            'det_store' => 7,
-        ]], ['user_id' => 9]);
-        inventoryPhase4Assert($failedSale['success'] === false, 'live accounting failure must fail the bridge result');
-        inventoryPhase4Assert(
-            ($failedSale['errors'][0]['phase'] ?? '') === 'accounting',
-            'live accounting failure must be promoted to the top-level error contract'
-        );
-        inventoryPhase4Assert(
-            SideEffectPolicy::inventoryBridgeShouldRollback(new RuntimeException('bridge_errors'), $failedSale),
-            'live accounting failure must require rollback of the caller transaction'
-        );
-        $conn->rollback();
-    } finally {
-        if ($previousSideEffectMode === false) {
-            putenv('POSMAIN_SIDE_EFFECT_MODE');
-        } else {
-            putenv('POSMAIN_SIDE_EFFECT_MODE=' . $previousSideEffectMode);
-        }
-    }
+    $conn->begin_transaction();
+    $failedSale = $liveBridge->recordInvoiceLines($conn, InventoryInvoiceBridge::TYPE_SALES, 7101, [[
+        'id' => 602,
+        'item_id' => 3003,
+        'qty_in' => '0.000000',
+        'qty_out' => '1.000000',
+        'u_val' => '1.000000',
+        'cost_price' => '2.000000',
+        'det_store' => 7,
+    ]], ['user_id' => 9]);
+    inventoryPhase4Assert($failedSale['success'] === false, 'live accounting failure must fail the bridge result');
+    inventoryPhase4Assert(
+        ($failedSale['errors'][0]['phase'] ?? '') === 'accounting',
+        'live accounting failure must be promoted to the top-level error contract'
+    );
+    inventoryPhase4Assert(
+        SideEffectPolicy::inventoryBridgeShouldRollback(new RuntimeException('bridge_errors'), $failedSale),
+        'authoritative accounting failure must require rollback independently of generic side-effect mode'
+    );
+    $conn->rollback();
     $liveBalance = inventoryPhase4One($conn, 'SELECT qty_on_hand FROM inventory_item_balances WHERE item_id = 3003 AND store_id = 7 LIMIT 1');
     inventoryPhase4Assert(inventoryPhase4DecimalEquals($liveBalance['qty_on_hand'], '10.000000'), 'rolled-back accounting failure must preserve stock');
     inventoryPhase4Assert(
@@ -286,7 +278,16 @@ try {
         'ledger_mode' => 'live',
         'strict_stock' => '1',
         'legacy_mirror' => '0',
-        'accounting' => '0',
+        'reservations' => '1',
+        'availability' => '1',
+        'accounting' => '1',
+        'accounts' => [
+            'inventory_asset_account_id' => 1100,
+            'purchase_clearing_account_id' => 2100,
+            'cogs_account_id' => 5100,
+            'waste_expense_account_id' => 5200,
+            'adjustment_gain_loss_account_id' => 5300,
+        ],
     ], 'branch' => [
         'pos_tenant' => 3,
         'pos_branch' => 5,
@@ -328,16 +329,82 @@ try {
     $paidLine[0]['qty_out'] = '2.000000';
     $lifecycleBridge->reserveInvoiceLines($conn, InventoryInvoiceBridge::TYPE_POS, 7202, $paidLine);
     $consumed = $lifecycleBridge->consumeInvoiceReservations($conn, InventoryInvoiceBridge::TYPE_POS, 7202, $paidLine);
-    inventoryPhase4Assert($consumed['success'] === true, 'paid direct-stock transition should succeed');
+    inventoryPhase4Assert(
+        $consumed['success'] === true,
+        'paid direct-stock transition should succeed: ' . json_encode($consumed, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
+    );
     inventoryPhase4Assert(
         count(array_filter($consumed['movements'], static fn(array $movement): bool => ($movement['movement_type'] ?? '') === 'sale_direct')) === 1,
         'paid direct-stock transition should create exactly one sale movement'
+    );
+    inventoryPhase4Assert(
+        count(array_filter($consumed['movements'], static fn(array $movement): bool => ($movement['movement_type'] ?? '') === 'reservation_release')) === 1,
+        'paid direct-stock transition should release its reservation exactly once'
     );
     $paidReplay = $lifecycleBridge->consumeInvoiceReservations($conn, InventoryInvoiceBridge::TYPE_POS, 7202, $paidLine);
     inventoryPhase4Assert($paidReplay['success'] === true, 'paid direct-stock retry should replay safely');
     $paidBalance = inventoryPhase4One($conn, 'SELECT qty_on_hand, qty_reserved, qty_available FROM inventory_item_balances WHERE item_id = 4004 AND store_id = 7 LIMIT 1');
     inventoryPhase4Assert(inventoryPhase4DecimalEquals($paidBalance['qty_on_hand'], '8.000000'), 'paid direct-stock transition must consume on-hand exactly once');
     inventoryPhase4Assert(inventoryPhase4DecimalEquals($paidBalance['qty_reserved'], '0.000000'), 'paid direct-stock transition must release reservation exactly once');
+    $paidMovement = inventoryPhase4One($conn, "SELECT id, accounting_journal_id FROM inventory_movements WHERE order_id = 7202 AND movement_type = 'sale_direct' LIMIT 1");
+    inventoryPhase4Assert((int) ($paidMovement['accounting_journal_id'] ?? 0) > 0, 'paid direct-stock movement must be linked to its COGS journal');
+    $paidJournal = inventoryPhase4One($conn, 'SELECT tenant, branch, op_id FROM journal_heads WHERE id = ' . (int) $paidMovement['accounting_journal_id']);
+    inventoryPhase4Assert((int) $paidJournal['tenant'] === 3 && (int) $paidJournal['branch'] === 5, 'COGS journal scope must come from the durable movement');
+    inventoryPhase4Assert((int) $paidJournal['op_id'] === 7202, 'COGS journal must retain the paid order identity');
+    inventoryPhase4Assert(
+        (int) $conn->query(
+            'SELECT COUNT(*) AS c FROM journal_entries'
+            . ' WHERE journal_id = ' . (int) $paidMovement['accounting_journal_id']
+            . ' AND account_id IN (1100, 5100)'
+        )->fetch_assoc()['c'] === 2,
+        'COGS journal must debit COGS and credit inventory exactly once'
+    );
+
+    inventoryPhase4SeedItem($conn, 4005, 'Accounting disabled fail-closed item', 'sellable', 1, '0.000000', '0.000000');
+    $accountingDisabledFlags = new InventoryFeatureFlags(['inventory' => [
+        'ledger_mode' => 'live',
+        'strict_stock' => '1',
+        'legacy_mirror' => '0',
+        'accounting' => '0',
+    ], 'branch' => [
+        'pos_tenant' => 3,
+        'pos_branch' => 5,
+        'uuid' => '00000000-0000-4000-8000-000000000005',
+    ]]);
+    $accountingDisabledBridge = new InventoryInvoiceBridge($accountingDisabledFlags);
+    $accountingDisabledBridge->recordInvoiceLines($conn, InventoryInvoiceBridge::TYPE_PURCHASE, 7300, [[
+        'id' => 801,
+        'item_id' => 4005,
+        'qty_in' => '5.000000',
+        'qty_out' => '0.000000',
+        'cost_price' => '2.000000',
+        'det_store' => 7,
+    ]]);
+    $beforeDisabledSale = inventoryPhase4One($conn, 'SELECT qty_on_hand FROM inventory_item_balances WHERE item_id = 4005 AND store_id = 7 LIMIT 1');
+    $conn->begin_transaction();
+    $accountingDisabledSale = $accountingDisabledBridge->recordInvoiceLines($conn, InventoryInvoiceBridge::TYPE_SALES, 7301, [[
+        'id' => 802,
+        'item_id' => 4005,
+        'qty_in' => '0.000000',
+        'qty_out' => '1.000000',
+        'cost_price' => '2.000000',
+        'det_store' => 7,
+    ]]);
+    inventoryPhase4Assert($accountingDisabledSale['success'] === false, 'authoritative sale must fail when inventory accounting is disabled');
+    inventoryPhase4Assert(
+        ($accountingDisabledSale['accounting']['errors'][0]['message'] ?? '') === 'INVENTORY_ACCOUNTING_REQUIRED_FOR_AUTHORITATIVE_MOVEMENT',
+        'accounting-disabled failure must expose the exact precondition'
+    );
+    inventoryPhase4Assert(
+        SideEffectPolicy::inventoryBridgeShouldRollback(new RuntimeException('bridge_errors'), $accountingDisabledSale),
+        'accounting-disabled authoritative sale must require outer transaction rollback'
+    );
+    $conn->rollback();
+    $afterDisabledSale = inventoryPhase4One($conn, 'SELECT qty_on_hand FROM inventory_item_balances WHERE item_id = 4005 AND store_id = 7 LIMIT 1');
+    inventoryPhase4Assert(
+        inventoryPhase4DecimalEquals($beforeDisabledSale['qty_on_hand'], (string) $afterDisabledSale['qty_on_hand']),
+        'failed accounting-disabled sale must not change durable stock'
+    );
 
     echo "inventory-phase4-invoice-bridge-ok\n";
 } finally {
@@ -394,6 +461,11 @@ function inventoryPhase4AssertSourceContracts(string $root): void
         'loadInventoryInvoiceBridgeLines',
         'POS inventory invoice bridge shadow errors',
         'POS inventory invoice bridge reversal shadow errors',
+        "'order_id' => \$orderId",
+        "'pos_tenant' => \$tenant",
+        "'pos_branch' => \$branch",
+        "'sync_config' => \$config",
+        'inventoryBridgeShouldRollback($exception, $result)',
     ] as $needle) {
         inventoryPhase4Assert(strpos($posMutationSource, $needle) !== false, 'POS mutation service should contain guarded phase4 bridge hook: ' . $needle);
     }
@@ -475,6 +547,56 @@ function inventoryPhase4CreateOperationalStore(mysqli $conn, int $storeId): void
     $conn->query("INSERT INTO acc_head (id, code, aname, is_stock, isdeleted)
         VALUES ({$storeId}, 'STORE-{$storeId}', 'Operational store', 1, 0)");
     $conn->query("INSERT INTO settings (def_pos_store) VALUES ({$storeId})");
+}
+
+function inventoryPhase4SeedAccountingAccounts(mysqli $conn): void
+{
+    $conn->query("INSERT INTO acc_head (id, code, aname, is_stock, isdeleted) VALUES
+        (1100, '1230', 'Inventory asset', 0, 0),
+        (2100, '2110', 'Purchase clearing', 0, 0),
+        (5100, '5110', 'Cost of goods sold', 0, 0),
+        (5200, '5120', 'Inventory waste', 0, 0),
+        (5300, '5130', 'Inventory adjustment', 0, 0)");
+}
+
+function inventoryPhase4CreateJournalTables(mysqli $conn): void
+{
+    $conn->query("
+CREATE TABLE journal_heads (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  journal_id INT NOT NULL,
+  op_id BIGINT UNSIGNED NULL,
+  total DECIMAL(18,6) NOT NULL DEFAULT 0,
+  jdate DATE NULL,
+  pro_tybe INT NULL,
+  details VARCHAR(255) NULL,
+  op2 BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  isdeleted TINYINT(1) NOT NULL DEFAULT 0,
+  user BIGINT UNSIGNED NULL,
+  tenant INT NULL,
+  branch INT NULL,
+  source_type VARCHAR(64) NULL,
+  source_id BIGINT UNSIGNED NULL,
+  posting_kind VARCHAR(64) NULL,
+  idempotency_key VARCHAR(191) NULL,
+  reversal_of_journal_id BIGINT UNSIGNED NULL,
+  UNIQUE KEY uq_phase4_journal_idempotency (idempotency_key)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
+    $conn->query("
+CREATE TABLE journal_entries (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  journal_id BIGINT UNSIGNED NOT NULL,
+  account_id BIGINT UNSIGNED NOT NULL,
+  debit DECIMAL(18,6) NOT NULL DEFAULT 0,
+  credit DECIMAL(18,6) NOT NULL DEFAULT 0,
+  tybe INT NOT NULL DEFAULT 0,
+  info VARCHAR(255) NULL,
+  op_id BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  op2 BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  isdeleted TINYINT(1) NOT NULL DEFAULT 0,
+  tenant INT NULL,
+  branch INT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
 }
 
 function inventoryPhase4SeedItem(mysqli $conn, int $id, string $name, string $itemType, int $trackStock, string $qty, string $cost): void

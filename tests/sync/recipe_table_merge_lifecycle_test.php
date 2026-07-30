@@ -44,6 +44,8 @@ try {
         'source_table_id' => 1,
         'destination_table_id' => 2,
         'source_order_id' => 100,
+        'source_mutation_version' => 1,
+        'destination_mutation_version' => 1,
         'destination_order_id' => 200,
     ], [
         'user_id' => 77,

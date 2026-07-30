@@ -17,7 +17,12 @@ try {
     $conn->select_db($db);
     $manager = new SyncSchemaManager();
     $conn->query($manager->plannedStatements()['order_fulfillment']);
-    $conn->query("CREATE TABLE ot_head (id BIGINT NOT NULL PRIMARY KEY, fat_net DECIMAL(19,2) NOT NULL DEFAULT 0, remaining_amount DECIMAL(19,2) NOT NULL DEFAULT 0) ENGINE=InnoDB");
+    $conn->query("CREATE TABLE ot_head (
+        id BIGINT NOT NULL PRIMARY KEY,
+        fat_net DECIMAL(19,2) NOT NULL DEFAULT 0,
+        remaining_amount DECIMAL(19,2) NOT NULL DEFAULT 0,
+        mutation_version BIGINT UNSIGNED NOT NULL DEFAULT 1
+    ) ENGINE=InnoDB");
     $conn->query("INSERT INTO ot_head (id, fat_net, remaining_amount) VALUES (501, 120.00, 120.00), (502, 240.00, 240.00), (503, 80.00, 80.00)");
 
     $service = new OrderFulfillmentService();

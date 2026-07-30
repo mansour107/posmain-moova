@@ -1,0 +1,497 @@
+{
+    "gate": "commercial_v1_step1",
+    "created_at": "2026-07-27T16:53:20+00:00",
+    "ok": true,
+    "failures": [],
+    "checks": [
+        {
+            "name": "prohibited_safe:fix_passwords.php",
+            "ok": true,
+            "detail": "safe_stub"
+        },
+        {
+            "name": "prohibited_safe:delete_fix_file.php",
+            "ok": true,
+            "detail": "safe_stub"
+        },
+        {
+            "name": "prohibited_safe:fix_database.php",
+            "ok": true,
+            "detail": "safe_stub"
+        },
+        {
+            "name": "prohibited_safe:fix_journal_entries.php",
+            "ok": true,
+            "detail": "safe_stub"
+        },
+        {
+            "name": "prohibited_safe:quick_fix.php",
+            "ok": true,
+            "detail": "safe_stub"
+        },
+        {
+            "name": "prohibited_safe:repair_database_jal.php",
+            "ok": true,
+            "detail": "safe_stub"
+        },
+        {
+            "name": "prohibited_safe:run_migrations.php",
+            "ok": true,
+            "detail": "safe_stub"
+        },
+        {
+            "name": "prohibited_safe:run_payment_updates.php",
+            "ok": true,
+            "detail": "safe_stub"
+        },
+        {
+            "name": "prohibited_safe:run_table_updates.php",
+            "ok": true,
+            "detail": "safe_stub"
+        },
+        {
+            "name": "prohibited_safe:setup_demo_data.php",
+            "ok": true,
+            "detail": "safe_stub"
+        },
+        {
+            "name": "prohibited_safe:pre_start.php",
+            "ok": true,
+            "detail": "safe_stub"
+        },
+        {
+            "name": "prohibited_safe:check_db_structure.php",
+            "ok": true,
+            "detail": "safe_stub"
+        },
+        {
+            "name": "prohibited_safe:check_orders.php",
+            "ok": true,
+            "detail": "safe_stub"
+        },
+        {
+            "name": "prohibited_safe:check_payments.php",
+            "ok": true,
+            "detail": "safe_stub"
+        },
+        {
+            "name": "prohibited_safe:check_table_structure.php",
+            "ok": true,
+            "detail": "safe_stub"
+        },
+        {
+            "name": "prohibited_safe:debug_bank.php",
+            "ok": true,
+            "detail": "safe_stub"
+        },
+        {
+            "name": "prohibited_safe:debug_db.php",
+            "ok": true,
+            "detail": "safe_stub"
+        },
+        {
+            "name": "prohibited_safe:debug_delivery.php",
+            "ok": true,
+            "detail": "safe_stub"
+        },
+        {
+            "name": "prohibited_safe:debug_jal.php",
+            "ok": true,
+            "detail": "safe_stub"
+        },
+        {
+            "name": "prohibited_safe:debug_tasks.php",
+            "ok": true,
+            "detail": "safe_stub"
+        },
+        {
+            "name": "prohibited_safe:logs_viewer.php",
+            "ok": true,
+            "detail": "safe_stub"
+        },
+        {
+            "name": "prohibited_safe:view_logs.php",
+            "ok": true,
+            "detail": "safe_stub"
+        },
+        {
+            "name": "prohibited_safe:crud_tables.php",
+            "ok": true,
+            "detail": "safe_stub"
+        },
+        {
+            "name": "prohibited_safe:create_acc_head_table.php",
+            "ok": true,
+            "detail": "safe_stub"
+        },
+        {
+            "name": "prohibited_safe:list_columns.php",
+            "ok": true,
+            "detail": "safe_stub"
+        },
+        {
+            "name": "prohibited_safe:generate-examples.php",
+            "ok": true,
+            "detail": "safe_stub"
+        },
+        {
+            "name": "prohibited_safe:generate-verified-files.php",
+            "ok": true,
+            "detail": "safe_stub"
+        },
+        {
+            "name": "prohibited_safe:index2.php",
+            "ok": true,
+            "detail": "safe_stub"
+        },
+        {
+            "name": "prohibited_safe:indexmop.php",
+            "ok": true,
+            "detail": "safe_stub"
+        },
+        {
+            "name": "prohibited_safe:fat1.php",
+            "ok": true,
+            "detail": "safe_stub"
+        },
+        {
+            "name": "prohibited_safe:example.php",
+            "ok": true,
+            "detail": "safe_stub"
+        },
+        {
+            "name": "prohibited_safe:blogcontent.php",
+            "ok": true,
+            "detail": "safe_stub"
+        },
+        {
+            "name": "prohibited_safe:about.php",
+            "ok": true,
+            "detail": "safe_stub"
+        },
+        {
+            "name": "prohibited_safe:conectedmachines.php",
+            "ok": true,
+            "detail": "safe_stub"
+        },
+        {
+            "name": "prohibited_safe:machinelog.php",
+            "ok": true,
+            "detail": "safe_stub"
+        },
+        {
+            "name": "prohibited_safe:aa",
+            "ok": true,
+            "detail": "safe_stub"
+        },
+        {
+            "name": "password_service_denies_legacy_when_forced",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "password_reset_service_source_exists",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "release_artifact_build",
+            "ok": true,
+            "detail": "checksum=dbdcd71ab1b1d40f5d912d8057d0ffce63213e1bbe7df44502e3b5bac18c0e86"
+        },
+        {
+            "name": "artifact_excludes:fix_passwords.php",
+            "ok": true,
+            "detail": "excluded"
+        },
+        {
+            "name": "artifact_excludes:delete_fix_file.php",
+            "ok": true,
+            "detail": "excluded"
+        },
+        {
+            "name": "artifact_excludes:fix_database.php",
+            "ok": true,
+            "detail": "excluded"
+        },
+        {
+            "name": "artifact_excludes:fix_journal_entries.php",
+            "ok": true,
+            "detail": "excluded"
+        },
+        {
+            "name": "artifact_excludes:quick_fix.php",
+            "ok": true,
+            "detail": "excluded"
+        },
+        {
+            "name": "artifact_excludes:repair_database_jal.php",
+            "ok": true,
+            "detail": "excluded"
+        },
+        {
+            "name": "artifact_excludes:run_migrations.php",
+            "ok": true,
+            "detail": "excluded"
+        },
+        {
+            "name": "artifact_excludes:run_payment_updates.php",
+            "ok": true,
+            "detail": "excluded"
+        },
+        {
+            "name": "artifact_excludes:run_table_updates.php",
+            "ok": true,
+            "detail": "excluded"
+        },
+        {
+            "name": "artifact_excludes:setup_demo_data.php",
+            "ok": true,
+            "detail": "excluded"
+        },
+        {
+            "name": "artifact_excludes:pre_start.php",
+            "ok": true,
+            "detail": "excluded"
+        },
+        {
+            "name": "artifact_excludes:check_db_structure.php",
+            "ok": true,
+            "detail": "excluded"
+        },
+        {
+            "name": "artifact_excludes:check_orders.php",
+            "ok": true,
+            "detail": "excluded"
+        },
+        {
+            "name": "artifact_excludes:check_payments.php",
+            "ok": true,
+            "detail": "excluded"
+        },
+        {
+            "name": "artifact_excludes:check_table_structure.php",
+            "ok": true,
+            "detail": "excluded"
+        },
+        {
+            "name": "artifact_excludes:debug_bank.php",
+            "ok": true,
+            "detail": "excluded"
+        },
+        {
+            "name": "artifact_excludes:debug_db.php",
+            "ok": true,
+            "detail": "excluded"
+        },
+        {
+            "name": "artifact_excludes:debug_delivery.php",
+            "ok": true,
+            "detail": "excluded"
+        },
+        {
+            "name": "artifact_excludes:debug_jal.php",
+            "ok": true,
+            "detail": "excluded"
+        },
+        {
+            "name": "artifact_excludes:debug_tasks.php",
+            "ok": true,
+            "detail": "excluded"
+        },
+        {
+            "name": "artifact_excludes:logs_viewer.php",
+            "ok": true,
+            "detail": "excluded"
+        },
+        {
+            "name": "artifact_excludes:view_logs.php",
+            "ok": true,
+            "detail": "excluded"
+        },
+        {
+            "name": "artifact_excludes:crud_tables.php",
+            "ok": true,
+            "detail": "excluded"
+        },
+        {
+            "name": "artifact_excludes:create_acc_head_table.php",
+            "ok": true,
+            "detail": "excluded"
+        },
+        {
+            "name": "artifact_excludes:list_columns.php",
+            "ok": true,
+            "detail": "excluded"
+        },
+        {
+            "name": "artifact_excludes:generate-examples.php",
+            "ok": true,
+            "detail": "excluded"
+        },
+        {
+            "name": "artifact_excludes:generate-verified-files.php",
+            "ok": true,
+            "detail": "excluded"
+        },
+        {
+            "name": "artifact_excludes:index2.php",
+            "ok": true,
+            "detail": "excluded"
+        },
+        {
+            "name": "artifact_excludes:indexmop.php",
+            "ok": true,
+            "detail": "excluded"
+        },
+        {
+            "name": "artifact_excludes:fat1.php",
+            "ok": true,
+            "detail": "excluded"
+        },
+        {
+            "name": "artifact_excludes:example.php",
+            "ok": true,
+            "detail": "excluded"
+        },
+        {
+            "name": "artifact_excludes:blogcontent.php",
+            "ok": true,
+            "detail": "excluded"
+        },
+        {
+            "name": "artifact_excludes:about.php",
+            "ok": true,
+            "detail": "excluded"
+        },
+        {
+            "name": "artifact_excludes:conectedmachines.php",
+            "ok": true,
+            "detail": "excluded"
+        },
+        {
+            "name": "artifact_excludes:machinelog.php",
+            "ok": true,
+            "detail": "excluded"
+        },
+        {
+            "name": "artifact_excludes:aa",
+            "ok": true,
+            "detail": "excluded"
+        },
+        {
+            "name": "artifact_excludes_tools",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "http_denied:fix_passwords.php",
+            "ok": true,
+            "detail": "status=404"
+        },
+        {
+            "name": "http_denied:fix_passwords.php?key=HORSTEC_SECURE_2024",
+            "ok": true,
+            "detail": "status=404"
+        },
+        {
+            "name": "http_denied:delete_fix_file.php",
+            "ok": true,
+            "detail": "status=404"
+        },
+        {
+            "name": "http_denied:debug_db.php",
+            "ok": true,
+            "detail": "status=404"
+        },
+        {
+            "name": "http_denied:check_db_structure.php",
+            "ok": true,
+            "detail": "status=404"
+        },
+        {
+            "name": "http_denied:tools/issue_password_reset.php",
+            "ok": true,
+            "detail": "status=404"
+        },
+        {
+            "name": "http_denied:scripts/recover_owner_pin.php",
+            "ok": true,
+            "detail": "status=404"
+        },
+        {
+            "name": "http_denied:docs/goals/posmain-commercial-v1/goal.md",
+            "ok": true,
+            "detail": "status=404"
+        },
+        {
+            "name": "session_httponly_samesite",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "session_regenerate_helper",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "csrf_helper_exists",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "production_error_suppression",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "uploads_non_executable",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "router_exists",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "docker_uses_router",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "write_surface_scan_json",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "write_surface_receipt_written",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "git_commit_identity",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "composer_lock_present",
+            "ok": true,
+            "detail": ""
+        }
+    ],
+    "artifact": {
+        "ok": true,
+        "artifact_root": "/Users/ab.mansour1agmail.com/Desktop/projects/posmain/var/release/step1-gate-20260727165315",
+        "file_count": 5904,
+        "checksum_sha256": "dbdcd71ab1b1d40f5d912d8057d0ffce63213e1bbe7df44502e3b5bac18c0e86",
+        "manifest": "/Users/ab.mansour1agmail.com/Desktop/projects/posmain/var/release/step1-gate-20260727165315/RELEASE_MANIFEST.json",
+        "prohibited_present_in_artifact": []
+    },
+    "identity": {
+        "git_commit": "07d2a856fa1cda09303f9d36e60e962c11847797",
+        "git_branch": "codex/posmain-commercial-v1-rc",
+        "composer_lock_sha256": "4f2be8eda48fde273ab4ad0708c1f6957bec463445c8d3fb86d59adfa1cdedb3"
+    },
+    "write_surface_receipt": "docs/goals/posmain-commercial-v1/evidence/write-surface-classification-latest.json"
+}

@@ -21,18 +21,20 @@ class SideEffectPolicy
 
     public static function inventoryBridgeShouldRollback(Throwable $exception, array $result = []): bool
     {
-        if (self::mode() !== self::MODE_LIVE) {
-            return false;
-        }
-
         if ($result === []) {
             // No structured result means the bridge threw before it could
-            // describe a safe outcome.
-            return true;
+            // describe a safe outcome. Preserve shadow-mode compatibility,
+            // while the explicit live side-effect profile remains fail-closed.
+            return self::mode() === self::MODE_LIVE;
         }
 
         $topLevelErrors = $result['errors'] ?? [];
         $accountingErrors = $result['accounting']['errors'] ?? [];
+        $inventoryMode = strtolower(trim((string) ($result['mode'] ?? '')));
+        $inventoryAuthoritative = in_array($inventoryMode, ['bridge', 'live'], true);
+        if (!$inventoryAuthoritative && self::mode() !== self::MODE_LIVE) {
+            return false;
+        }
 
         return ($result['success'] ?? true) !== true
             || (is_array($topLevelErrors) && $topLevelErrors !== [])
@@ -41,7 +43,10 @@ class SideEffectPolicy
 
     public static function orderEventShouldRollback(Throwable $exception): bool
     {
-        return self::mode() === self::MODE_LIVE;
+        // Order/audit/outbox facts are part of the certified mutation. Allowing
+        // the business write to commit without them creates silent divergence,
+        // including in local certification where production mode is not set.
+        return true;
     }
 
     public static function inventoryBridgeDiagnostic(array $result, ?Throwable $exception = null): array

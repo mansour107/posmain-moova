@@ -78,7 +78,7 @@
                                 <div class="row mb-2">
                                     <div class="col-6"><strong>الخصم:</strong></div>
                                     <div class="col-6">
-                                        <input type="number" class="form-control" id="payment_discount" step="0.01">
+                                        <input type="number" class="form-control" id="payment_discount" step="0.01" readonly>
                                     </div>
                                 </div>
                                 <div class="row mb-2">
@@ -97,6 +97,12 @@
                                     <div class="col-6"><strong>المتبقي:</strong></div>
                                     <div class="col-6">
                                         <input type="number" class="form-control bg-danger text-white" id="payment_remaining" readonly>
+                                    </div>
+                                </div>
+                                <div class="row mb-2">
+                                    <div class="col-6"><strong>الباقي للعميل:</strong></div>
+                                    <div class="col-6">
+                                        <input type="number" class="form-control bg-light" id="payment_change" readonly>
                                     </div>
                                 </div>
                             </div>
@@ -180,6 +186,28 @@
 </div>
 
 <script>
+let posTablePaymentRequestActive = false;
+
+function tablePaymentMoneyApi() {
+    if (!window.POSOrderApi || typeof window.POSOrderApi.decimalString !== 'function') {
+        throw new Error('POS_MONEY_KERNEL_UNAVAILABLE');
+    }
+
+    return window.POSOrderApi;
+}
+
+function tablePaymentMoney(value) {
+    return tablePaymentMoneyApi().decimalString(
+        value === null || value === undefined || value === '' ? '0' : value,
+        2,
+        '0'
+    );
+}
+
+function tablePaymentIsPositive(value) {
+    return tablePaymentMoneyApi().compareDecimalStrings(tablePaymentMoney(value), '0.00', 2) > 0;
+}
+
 $(document).ready(function() {
     // إظهار/إخفاء تفاصيل الدفع المختلط
     $('input[name="payment_method"]').change(function() {
@@ -199,9 +227,9 @@ $(document).ready(function() {
     
     // حساب المبالغ في الدفع المختلط
     $('#cash_amount, #card_amount').on('input', function() {
-        const cash = parseFloat($('#cash_amount').val()) || 0;
-        const card = parseFloat($('#card_amount').val()) || 0;
-        $('#payment_paid').val((cash + card).toFixed(2));
+        const cash = tablePaymentMoney($('#cash_amount').val());
+        const card = tablePaymentMoney($('#card_amount').val());
+        $('#payment_paid').val(tablePaymentMoneyApi().addDecimalStrings(cash, card, 2));
         calculatePaymentTotals();
     });
     
@@ -217,18 +245,26 @@ $(document).ready(function() {
 });
 
 function calculatePaymentTotals() {
-    const total = parseFloat($('#payment_total').val()) || 0;
-    const discount = parseFloat($('#payment_discount').val()) || 0;
-    const paid = parseFloat($('#payment_paid').val()) || 0;
+    const money = tablePaymentMoneyApi();
+    const total = tablePaymentMoney($('#payment_total').val());
+    const discount = tablePaymentMoney($('#payment_discount').val());
+    const paid = tablePaymentMoney($('#payment_paid').val());
+    const amountDue = tablePaymentMoney($('#payment_amount_due').val());
+    const net = money.subtractDecimalStrings(total, discount, 2);
+    const paidCoversDue = money.compareDecimalStrings(paid, amountDue, 2) >= 0;
+    const remaining = paidCoversDue
+        ? '0.00'
+        : money.subtractDecimalStrings(amountDue, paid, 2);
+    const change = paidCoversDue
+        ? money.subtractDecimalStrings(paid, amountDue, 2)
+        : '0.00';
     
-    const net = total - discount;
-    const remaining = net - paid;
-    
-    $('#payment_net').val(net.toFixed(2));
-    $('#payment_remaining').val(remaining.toFixed(2));
+    $('#payment_net').val(net);
+    $('#payment_remaining').val(remaining);
+    $('#payment_change').val(change);
     
     // تغيير لون المتبقي
-    if (remaining > 0) {
+    if (money.compareDecimalStrings(remaining, '0.00', 2) > 0) {
         $('#payment_remaining').removeClass('bg-success').addClass('bg-danger');
     } else {
         $('#payment_remaining').removeClass('bg-danger').addClass('bg-success');
@@ -247,9 +283,9 @@ function openPaymentModal(tableId, tableName) {
                 $('#payment_table_name').val(tableName);
                 $('#payment_date').val(new Date().toLocaleDateString('ar-EG'));
                 $('#payment_order_id').val(response.order_id || '');
-                $('#payment_total').val(response.total.toFixed(2));
-                $('#payment_discount').val(response.discount.toFixed(2));
-                $('#payment_paid').val(response.paid.toFixed(2));
+                $('#payment_total').val(tablePaymentMoney(response.total));
+                $('#payment_discount').val(tablePaymentMoney(response.discount));
+                $('#payment_paid').val(tablePaymentMoney(response.remaining));
                 
                 // حفظ معرف الطاولة في حقل مخفي
                 if (!$('#hidden_table_id').length) {
@@ -260,6 +296,14 @@ function openPaymentModal(tableId, tableName) {
                     $('#paymentModal .modal-body').append('<input type="hidden" id="hidden_order_id">');
                 }
                 $('#hidden_order_id').val(response.order_id || '');
+                if (!$('#payment_mutation_version').length) {
+                    $('#paymentModal .modal-body').append('<input type="hidden" id="payment_mutation_version">');
+                }
+                $('#payment_mutation_version').val(parseInt(response.mutation_version || '0', 10) || '');
+                if (!$('#payment_amount_due').length) {
+                    $('#paymentModal .modal-body').append('<input type="hidden" id="payment_amount_due">');
+                }
+                $('#payment_amount_due').val(tablePaymentMoney(response.remaining));
                 
                 calculatePaymentTotals();
                 $('#paymentModal').modal('show');
@@ -274,42 +318,89 @@ function openPaymentModal(tableId, tableName) {
 }
 
 function processPayment(printInvoice) {
+    if (posTablePaymentRequestActive) {
+        return;
+    }
+    const requestScope = 'pos.payment.table';
     const orderId = $('#hidden_order_id').val() || $('#payment_order_id').val();
     const tableId = $('#hidden_table_id').val();
-    const total = parseFloat($('#payment_total').val()) || 0;
-    const discount = parseFloat($('#payment_discount').val()) || 0;
-    const net = parseFloat($('#payment_net').val()) || 0;
-    const paid = parseFloat($('#payment_paid').val()) || 0;
+    const mutationVersion = parseInt($('#payment_mutation_version').val() || '0', 10) || 0;
+    const total = tablePaymentMoney($('#payment_total').val());
+    const discount = tablePaymentMoney($('#payment_discount').val());
+    const net = tablePaymentMoney($('#payment_net').val());
+    const amountDue = tablePaymentMoney($('#payment_amount_due').val());
     const paymentMethod = $('input[name="payment_method"]:checked').val();
     const notes = $('#payment_notes').val();
+    const cashAmount = paymentMethod === 'mixed'
+        ? tablePaymentMoney($('#cash_amount').val())
+        : (paymentMethod === 'cash' ? tablePaymentMoney($('#payment_paid').val()) : '0.00');
+    const cardAmount = paymentMethod === 'mixed'
+        ? tablePaymentMoney($('#card_amount').val())
+        : (paymentMethod === 'card' ? tablePaymentMoney($('#payment_paid').val()) : '0.00');
+    const paid = paymentMethod === 'mixed'
+        ? tablePaymentMoneyApi().addDecimalStrings(cashAmount, cardAmount, 2)
+        : tablePaymentMoney($('#payment_paid').val());
     
-    if (!tableId || !orderId) {
+    if (!tableId || !orderId || mutationVersion < 1) {
         alert('خطأ: لم يتم تحديد الطاولة أو الطلب');
         return;
     }
     
-    if (paid <= 0) {
+    if (!tablePaymentIsPositive(paid)) {
         alert('يجب إدخال مبلغ الدفع');
+        return;
+    }
+
+    if (paymentMethod !== 'cash'
+        && paymentMethod !== 'mixed'
+        && tablePaymentMoneyApi().compareDecimalStrings(paid, amountDue, 2) > 0) {
+        alert('لا يمكن أن تتجاوز الدفعة غير النقدية المبلغ المتبقي');
+        return;
+    }
+    if (paymentMethod === 'mixed'
+        && tablePaymentMoneyApi().compareDecimalStrings(cardAmount, amountDue, 2) > 0) {
+        alert('لا يمكن أن يتجاوز جزء البطاقة المبلغ المتبقي');
         return;
     }
     
     // تعطيل الأزرار أثناء المعالجة
+    posTablePaymentRequestActive = true;
     $('#save_without_print, #save_and_print').prop('disabled', true).addClass('loading');
     
     const paymentData = {
         table_id: tableId,
         order_id: orderId,
+        mutation_version: mutationVersion,
         total: total,
         discount: discount,
         net: net,
         paid: paid,
         payment_method: paymentMethod,
-        notes: notes
+        notes: notes,
+        idempotency_key: getPOSTableIdempotencyKey(requestScope)
     };
     
     if (paymentMethod === 'mixed') {
-        paymentData.cash_amount = parseFloat($('#cash_amount').val()) || 0;
-        paymentData.card_amount = parseFloat($('#card_amount').val()) || 0;
+        paymentData.tenders = [];
+        if (tablePaymentIsPositive(cardAmount)) {
+            paymentData.tenders.push({
+                payment_method: 'card',
+                amount: cardAmount,
+                reference_no: notes
+            });
+        }
+        if (tablePaymentIsPositive(cashAmount)) {
+            paymentData.tenders.push({
+                payment_method: 'cash',
+                amount: cashAmount
+            });
+        }
+    } else {
+        paymentData.tenders = [{
+            payment_method: paymentMethod,
+            amount: paid,
+            reference_no: paymentMethod === 'cash' ? '' : notes
+        }];
     }
     
     $.ajax({
@@ -317,8 +408,10 @@ function processPayment(printInvoice) {
         method: 'POST',
         data: paymentData,
         dataType: 'json',
+        beforeSend: attachPOSTableCsrfHeader,
         success: function(response) {
             if (response.success) {
+                clearPOSTableIdempotencyKey(requestScope);
                 alert('تم السداد بنجاح');
                 $('#paymentModal').modal('hide');
                 
@@ -345,10 +438,12 @@ function processPayment(printInvoice) {
                     location.reload();
                 }, 1000);
             } else {
+                posTablePaymentRequestActive = false;
                 alert('خطأ: ' + response.message);
             }
         },
         error: function() {
+            posTablePaymentRequestActive = false;
             alert('خطأ في معالجة السداد');
         },
         complete: function() {
@@ -368,9 +463,12 @@ function resetPaymentModal() {
     $('#payment_net').val('0.00');
     $('#payment_paid').val('0.00');
     $('#payment_remaining').val('0.00');
+    $('#payment_change').val('0.00');
     $('#payment_notes').val('');
     $('#hidden_order_id').val('');
     $('#hidden_table_id').val('');
+    $('#payment_mutation_version').val('');
+    $('#payment_amount_due').val('0.00');
     $('#cash_amount').val('0');
     $('#card_amount').val('0');
     $('input[name="payment_method"][value="cash"]').prop('checked', true);

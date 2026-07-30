@@ -1,0 +1,57 @@
+{
+    "gate": "commercial_v1_step2",
+    "created_at": "2026-07-27T16:36:24+00:00",
+    "ok": true,
+    "failures": [],
+    "checks": [
+        {
+            "name": "run:commercial_v1_step2_money_contract_test.php",
+            "ok": true,
+            "detail": "commercial-v1-step2-money-contract-ok"
+        },
+        {
+            "name": "run:commercial_v1_step2_money_runtime_test.php",
+            "ok": true,
+            "detail": "PHP Deprecated:  Method ReflectionMethod::setAccessible() is deprecated since 8.5, as it has no effect since PHP 8.1 in /Users/ab.mansour1agmail.com/Desktop/projects/posmain/tests/sync/commercial_v1_step2_money_runtime_test.php on line 39\n\n"
+        },
+        {
+            "name": "run:order_pricing_service_test.php",
+            "ok": true,
+            "detail": "order-pricing-service-ok db=posmain_order_pricing_47783"
+        },
+        {
+            "name": "run:commercial_v1_step1_security_contract_test.php",
+            "ok": true,
+            "detail": "commercial-v1-step1-security-contract-ok"
+        },
+        {
+            "name": "float_money_rejected",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "pos_request_rejects_floats",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "invoice_tax_fail_closed",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "cash_change_facts",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "non_cash_over_tender_guard",
+            "ok": true,
+            "detail": ""
+        }
+    ],
+    "identity": {
+        "git_commit": "07d2a856fa1cda09303f9d36e60e962c11847797",
+        "git_branch": "codex/posmain-commercial-v1-rc"
+    }
+}

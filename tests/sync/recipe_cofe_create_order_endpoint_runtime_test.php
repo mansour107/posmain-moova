@@ -85,6 +85,12 @@ try {
            AND idempotency_key = '" . $conn->real_escape_string($payload['idempotencyKey']) . "'
            AND status = 'completed'"
     )->fetch_assoc()['c'];
+    $orderOutboxCount = (int) $conn->query(
+        "SELECT COUNT(*) AS c FROM sync_outbox
+         WHERE aggregate_type = 'order'
+           AND aggregate_local_id = {$orderId}
+           AND event_type = 'order.saved'"
+    )->fetch_assoc()['c'];
     $usageRows = recipeCofeEndpointRows($conn, 'recipe_order_line_usage', "order_id = {$orderId}");
     $movementRows = recipeCofeEndpointRows($conn, 'inventory_movements', "order_id = {$orderId} AND movement_type = 'reservation'");
     $mapRows = recipeCofeEndpointRows($conn, 'external_order_line_map', "external_order_id = '" . $conn->real_escape_string($payload['cofeOrderId']) . "'");
@@ -95,6 +101,7 @@ try {
     recipeCofeEndpointAssert($detailCount === 1, 'replay should not create duplicate fat_details rows');
     recipeCofeEndpointAssert($storedKey === '', 'canonical Cofe order should not depend on the legacy header idempotency column');
     recipeCofeEndpointAssert($requestKeyCount === 1, 'canonical Cofe replay should keep one completed scoped idempotency record');
+    recipeCofeEndpointAssert($orderOutboxCount === 1, 'canonical Cofe replay should keep one atomic order outbox snapshot');
     recipeCofeEndpointAssert(count($usageRows) === 1, 'recipe usage should be created once');
     recipeCofeEndpointAssert((string) $usageRows[0]['status'] === 'reserved', 'unpaid Cofe table order recipe usage should remain reserved');
     recipeCofeEndpointAssert(
@@ -381,7 +388,14 @@ function recipeCofeEndpointStartServer(string $root, string $db, string $session
         'POSMAIN_SESSION_DRIVER' => 'file',
         'POSMAIN_SESSION_SAVE_PATH' => $sessionDir,
         'POSMAIN_ROUTER_ENABLED' => '0',
-        'POSMAIN_SYNC_OUTBOX_ENABLED' => '0',
+        'POSMAIN_SYNC_OUTBOX_ENABLED' => '1',
+        'POSMAIN_BRANCH_SYNC_ENABLED' => '0',
+        'POSMAIN_OPERATIONAL_SYNC_ENABLED' => '1',
+        'POSMAIN_BRANCH_UUID' => '99999999-9999-4999-8999-999999999999',
+        'POSMAIN_BRANCH_NAME' => 'Cofe Endpoint Fixture',
+        'POSMAIN_POS_TENANT' => '0',
+        'POSMAIN_POS_BRANCH' => '0',
+        'POSMAIN_INVENTORY_LEDGER_MODE' => 'off',
         'POSMAIN_MENU_SYNC_ENABLED' => '0',
         'POSMAIN_RECIPE_MODE' => 'consume_pilot',
         'POSMAIN_RECIPE_MODE' => 'consume_pilot',

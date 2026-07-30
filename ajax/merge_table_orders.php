@@ -83,29 +83,32 @@ try {
         'destination_table_id' => $destinationTableId,
         'source_order_id' => $sourceOrderId,
         'destination_order_id' => $destinationOrderId,
+        'source_mutation_version' => $data['source_mutation_version'] ?? $data['mutation_version'] ?? null,
+        'destination_mutation_version' => $data['destination_mutation_version'] ?? null,
     ], [
         'user_id' => $userId,
         'tenant' => 0,
         'branch' => 0,
         'event_source' => 'pos_table_merge',
         'in_transaction' => true,
+        'record_outbox' => false,
     ]);
 
     $syncOutbox = new SyncOutboxEventService();
-    $syncOutbox->recordOrderSnapshot($conn, (int) $merge['source_order_id'], [
+    $syncOutbox->recordRequiredOrderSnapshot($conn, (int) $merge['source_order_id'], [
         'event_type' => 'order.table_merged_source',
         'source_system' => 'pos_table_merge',
     ]);
-    $syncOutbox->recordOrderSnapshot($conn, (int) $merge['destination_order_id'], [
+    $syncOutbox->recordRequiredOrderSnapshot($conn, (int) $merge['destination_order_id'], [
         'event_type' => 'order.table_merged_destination',
         'source_system' => 'pos_table_merge',
     ]);
-    $syncOutbox->recordTableSnapshot($conn, $sourceTableId, [
+    $syncOutbox->recordRequiredTableSnapshot($conn, $sourceTableId, [
         'event_type' => 'table.updated',
         'source_system' => 'pos_table_merge',
         'active_order_id' => null,
     ]);
-    $syncOutbox->recordTableSnapshot($conn, $destinationTableId, [
+    $syncOutbox->recordRequiredTableSnapshot($conn, $destinationTableId, [
         'event_type' => 'table.updated',
         'source_system' => 'pos_table_merge',
         'active_order_id' => (int) $merge['destination_order_id'],
@@ -122,7 +125,10 @@ try {
         'merged_detail_count' => (int) $merge['merged_detail_count'],
         'source_freed' => (bool) ($merge['source_freed'] ?? false),
         'payment_status' => (string) ($merge['payment_status'] ?? ''),
-        'remaining_amount' => (float) ($merge['remaining_amount'] ?? 0),
+        'remaining_amount' => (string) ($merge['remaining_amount'] ?? '0.00'),
+        'source_mutation_version' => (int) ($merge['source_mutation_version'] ?? 0),
+        'destination_mutation_version' => (int) ($merge['destination_mutation_version'] ?? 0),
+        'mutation_version' => (int) ($merge['mutation_version'] ?? 0),
         'request_id' => $idempotencyKey,
     ];
     $idempotencyService->complete($conn, $scope, $idempotencyKey, $idempotencyHash, $response);

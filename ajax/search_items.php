@@ -6,6 +6,7 @@ include('../includes/connect.php');
 require_once('../includes/pos_default_accounts.php');
 require_once('../classes/Pos/Service/ItemAvailabilityService.php');
 require_once('../classes/Items/ItemCatalogStatus.php');
+require_once('../classes/Financial/Decimal.php');
 
 // مسح أي output buffer
 ob_end_clean();
@@ -52,7 +53,7 @@ try {
         $items[] = [
             'id' => (int)$row['id'],
             'name' => $row['name'],
-            'price' => (float)$row['price']
+            'price' => FinancialDecimal::normalize($row['price'] ?? '0', 6)
         ];
     }
     $stmt->close();

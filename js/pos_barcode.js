@@ -177,15 +177,18 @@ function posmainParkedCartStorageKey(userId) {
 }
 
 function posmainSerializeCartState() {
+    if (!window.POSOrderApi) {
+        throw new Error('POS_MONEY_API_REQUIRED');
+    }
     const rows = [];
     $('#itemData .item-card-order').each(function () {
         const $row = $(this);
         rows.push({
             barcode: String($row.attr('data-itemid') || $row.data('itemid') || ''),
             name: String($row.find('.pos-cart-name').text() || '').trim(),
-            qty: parseFloat($row.find('.quantityInput').val()) || 0,
-            price: parseFloat($row.find('.itemprice').val() || $row.find('.subtotal').val()) || 0,
-            note: String($row.find('.line-note-input').val() || '').trim(),
+            qty: window.POSOrderApi.decimalString($row.find('.quantityInput').val(), 6, '0'),
+            price: window.POSOrderApi.decimalString($row.find('.priceInput').val(), 6, '0'),
+            note: String($row.find('.lineNoteInput').val() || '').trim(),
         });
     });
     return { rows: rows, saved_at: Date.now() };
@@ -236,7 +239,7 @@ window.POSMAIN.restoreParkedCartForActingUser = function (actingUserId) {
             return;
         }
         if (typeof addItemToCart === 'function') {
-            addItemToCart(row.barcode, row.qty || 1, row.price || null);
+            addItemToCart(row.barcode, row.qty || '1.000000', row.price || null);
         }
     });
     try {
@@ -578,29 +581,39 @@ function posmainPersistedLineNeedsVoidApproval($card, nextQty) {
     if (posmainCanVoidPersistedItem()) {
         return false;
     }
-    const persistedQty = parseFloat($card.attr('data-persisted-qty')) || 0;
     if (nextQty === undefined || nextQty === null) {
         return true;
     }
-    return nextQty + 0.0001 < persistedQty;
+    if (!window.POSOrderApi) {
+        throw new Error('POS_MONEY_API_REQUIRED');
+    }
+    const persistedQty = window.POSOrderApi.decimalString($card.attr('data-persisted-qty'), 6, '0');
+    const proposedQty = window.POSOrderApi.decimalString(nextQty, 6, '0');
+    return window.POSOrderApi.compareDecimalStrings(proposedQty, persistedQty, 6) < 0;
 }
 
 function posmainCurrentDiscountPct() {
-    const total = parseFloat($('#total').val()) || 0;
-    const discount = parseFloat($('#discount').val()) || 0;
-    if ($('#modal_discperc').val()) {
-        return parseFloat($('#modal_discperc').val()) || 0;
+    const money = window.POSOrderApi;
+    if (!money) {
+        throw new Error('POS_MONEY_API_REQUIRED');
     }
-    return total > 0 ? (discount / total) * 100 : 0;
+    const total = money.decimalString($('#total').val(), 2, '0');
+    const discount = money.decimalString($('#discount').val(), 2, '0');
+    return money.percentageFromMoney(discount, total);
 }
 
 function posmainCartHasPriceOverride() {
+    const money = window.POSOrderApi;
+    if (!money) {
+        throw new Error('POS_MONEY_API_REQUIRED');
+    }
     let overridden = false;
     $('#itemData .item-card-order').each(function () {
         const $card = $(this);
-        const price = parseFloat($card.find('.priceInput').val()) || 0;
-        const catalog = parseFloat($card.attr('data-catalog-price')) || 0;
-        if (catalog > 0 && Math.abs(price - catalog) > 0.01) {
+        const price = money.decimalString($card.find('.priceInput').val(), 6, '0');
+        const catalog = money.decimalString($card.attr('data-catalog-price'), 6, '0');
+        if (money.compareDecimalStrings(catalog, '0.000000', 6) > 0
+            && money.compareDecimalStrings(price, catalog, 6) !== 0) {
             overridden = true;
         }
     });
@@ -620,8 +633,12 @@ function posmainCollectPreSubmitEscalations(form, action) {
     let priceApprovalId = null;
     let creditApprovalId = null;
 
+    const money = window.POSOrderApi;
+    if (!money) {
+        return $.Deferred().reject({ code: 'POS_MONEY_API_REQUIRED' }).promise();
+    }
     const discountPct = posmainCurrentDiscountPct();
-    if (discountPct > 0) {
+    if (money.compareDecimalStrings(discountPct, '0.000000', 6) > 0) {
         tasks.push(window.POSMAIN.ensureEscalationForAmount(
             'pos.discount.apply',
             'pos.discount.manual_pct.limit',
@@ -642,8 +659,8 @@ function posmainCollectPreSubmitEscalations(form, action) {
             }
         }));
     }
-    const jalAmount = parseFloat($('[name="jal_amount"]').val() || '0') || 0;
-    if (jalAmount > 0) {
+    const jalAmount = money.decimalString($('[name="jal_amount"]').val(), 2, '0');
+    if (money.compareDecimalStrings(jalAmount, '0.00', 2) > 0) {
         tasks.push(window.POSMAIN.ensurePermissionOrOverride('pos.credit.sale', {
             message: 'بيع آجل يتطلب اعتماد مدير',
         }).then(function (approval) {
@@ -680,8 +697,21 @@ $(document).ready(function() {
     // Initialize on page load - Update totals if items exist (edit mode)
     // ========================================
     $(document).on('click', '#posDrawerNoSaleBtn', function () {
+        const noSaleRequestKey = (
+            typeof window.createPOSIdempotencyKey === 'function'
+                ? window.createPOSIdempotencyKey('pos.drawer.no_sale')
+                : 'pos.drawer.no_sale:' + (
+                    window.crypto && typeof window.crypto.randomUUID === 'function'
+                        ? window.crypto.randomUUID()
+                        : Date.now().toString(36) + ':' + Math.random().toString(36).slice(2)
+                )
+        );
         const runNoSale = function (approvalId) {
-            const data = { reason: 'فتح درج بدون بيع', csrf_token: posmainOverrideCsrfToken() };
+            const data = {
+                reason: 'فتح درج بدون بيع',
+                csrf_token: posmainOverrideCsrfToken(),
+                idempotency_key: noSaleRequestKey,
+            };
             if (approvalId) {
                 data.manager_approval_id = approvalId;
             }
@@ -864,19 +894,29 @@ $(document).ready(function() {
             return;
         }
 
-        const net = Math.max(0, parseFloat(netAmount) || paymentAmountDue());
+        const money = window.POSOrderApi;
+        if (!money) {
+            throw new Error('POS_MONEY_API_REQUIRED');
+        }
+        const net = money.decimalString(
+            netAmount === undefined || netAmount === null || netAmount === ''
+                ? paymentAmountDue()
+                : netAmount,
+            2,
+            '0'
+        );
         const mode = getPosPaymentMethod();
         if (mode === 'cash') {
-            $('#modal_paid_cash').val(net.toFixed(2));
+            $('#modal_paid_cash').val(net);
             $('#modal_paid_bank').val('0.00');
         } else if (mode === 'bank') {
             $('#modal_paid_cash').val('0.00');
-            $('#modal_paid_bank').val(net.toFixed(2));
+            $('#modal_paid_bank').val(net);
         } else {
-            const paidCash = parseFloat($('#modal_paid_cash').val()) || 0;
-            const paidBank = parseFloat($('#modal_paid_bank').val()) || 0;
-            if (paidCash + paidBank <= 0.001) {
-                $('#modal_paid_cash').val(net.toFixed(2));
+            const paidCash = money.decimalString($('#modal_paid_cash').val(), 2, '0');
+            const paidBank = money.decimalString($('#modal_paid_bank').val(), 2, '0');
+            if (money.compareDecimalStrings(money.addDecimalStrings(paidCash, paidBank, 2), '0.00', 2) === 0) {
+                $('#modal_paid_cash').val(net);
                 $('#modal_paid_bank').val('0.00');
             }
         }
@@ -1654,7 +1694,7 @@ $(document).ready(function() {
     // Item Search & Add Functions
     // ========================================
     function searchItemByBarcode(barcode) {
-        let qty = 1;
+        let qty = '1.000000';
         let searchCode = barcode;
 
         // Check if it's a scale barcode using config
@@ -1667,9 +1707,12 @@ $(document).ready(function() {
                 searchCode = barcode.substring(cfg.item_code_start,
                                                cfg.item_code_start + cfg.item_code_length);
 
-                let weightStr = barcode.substring(cfg.weight_start,
-                                                  cfg.weight_start + cfg.weight_length);
-                qty = parseFloat(weightStr) / cfg.weight_divisor;
+                const weightStr = barcode.substring(cfg.weight_start,
+                                                    cfg.weight_start + cfg.weight_length);
+                if (!window.POSOrderApi) {
+                    throw new Error('POS_MONEY_API_REQUIRED');
+                }
+                qty = window.POSOrderApi.quantityFromIntegerRatio(weightStr, cfg.weight_divisor);
                 searchCode = parseInt(searchCode).toString();
 
                 console.log('🔢 Scale Barcode Detected:', {
@@ -1724,7 +1767,7 @@ $(document).ready(function() {
         let card = $(this);
         let itemId = card.data('item-id');
         let itemName = card.data('item-name');
-        let itemPrice = parseFloat(card.data('item-price')) || 0;
+        let itemPrice = String(card.attr('data-item-price') || '0');
         let itemBarcode = card.data('item-barcode');
         let imageHtml = card.find('.item-image-container').html();
         let hasVariants = itemHasVariantsValue(card.attr('data-has-variants'));
@@ -1765,7 +1808,7 @@ $(document).ready(function() {
         let card = $(this).closest('.item-card');
         let itemId = card.data('item-id');
         let itemName = card.data('item-name');
-        let itemPrice = card.data('item-price');
+        let itemPrice = String(card.attr('data-item-price') || '0');
         let itemBarcode = card.data('item-barcode');
         let itemDesc = card.data('item-desc') || 'لا يوجد وصف';
         let hasVariants = itemHasVariantsValue(card.attr('data-has-variants'));
@@ -1777,7 +1820,7 @@ $(document).ready(function() {
 
         $('#modal_item_name').text(itemName);
         $('#modal_item_barcode').text(itemBarcode || '-');
-        $('#modal_item_price').text(itemPrice.toFixed(2) + ' ج.م');
+        $('#modal_item_price').text(Number(itemPrice).toFixed(2) + ' ج.م');
         $('#modal_item_desc').text(itemDesc);
         $('#modal_item_image').html(imageHtml);
         $('#modal_add_item')
@@ -1818,7 +1861,7 @@ $(document).ready(function() {
             }, data.name);
             return;
         }
-        let itemPrice = parseFloat(data.price) || 0;
+        let itemPrice = String(data.price || '0');
         const warnOnly = data.warnOnly === true || String(data.warnOnly) === 'true';
         const availability = {
             isAvailable: data.isAvailable === true || String(data.isAvailable) === 'true',
@@ -2046,9 +2089,9 @@ $(document).ready(function() {
             openVariantModal({
                 id: id,
                 name: name,
-                price: parseFloat(price) || 0,
+                price: String(price || '0'),
                 barcode: barcode,
-                qty: parseFloat(qty) || 1,
+                qty: String(qty || '1'),
                 imageHtml: imageHtml || '',
                 lineNote: lineNote || '',
                 sugarAllowed: !!(options && options.sugarAllowed),
@@ -2067,9 +2110,9 @@ $(document).ready(function() {
             openVariantModal({
                 id: id,
                 name: name,
-                price: parseFloat(price) || 0,
+                price: String(price || '0'),
                 barcode: barcode,
-                qty: parseFloat(qty) || 1,
+                qty: String(qty || '1'),
                 imageHtml: imageHtml || '',
                 lineNote: lineNote || '',
                 sugarAllowed: !!(options && options.sugarAllowed),
@@ -2240,7 +2283,7 @@ $(document).ready(function() {
             const variantName = String(variant.name || variant.iname || variant.variant_label || '').trim();
             const variantLabel = String(variant.variant_label || variant.label || '').trim();
             const variantBarcode = String(variant.barcode || '');
-            const variantPrice = parseFloat(variant.price1 || variant.price || 0) || 0;
+            const variantPrice = window.POSOrderApi.decimalString(variant.price1 || variant.price || '0', 6, '0');
             return `
                 <div class="col-md-6">
                     <button type="button"
@@ -2251,7 +2294,7 @@ $(document).ready(function() {
                             data-item-barcode="${escapeHtml(variantBarcode)}">
                         <div class="d-flex justify-content-between align-items-center gap-2">
                             <span class="fw-bold">${escapeHtml(variantLabel || variantName)}</span>
-                            <span class="text-success fw-bold">${variantPrice.toFixed(2)} ج.م</span>
+                            <span class="text-success fw-bold">${Number(variantPrice).toFixed(2)} ج.م</span>
                         </div>
                         <small class="text-muted d-block">${escapeHtml(variantName)}</small>
                     </button>
@@ -2270,10 +2313,19 @@ $(document).ready(function() {
 
     // Compatibility call form: addItemToOrder(id, name, price, barcode, qty = 1, imageHtml = '', lineNote = '')
     function addItemToOrder(id, name, price, barcode, qty = 1, imageHtml = '', lineNote = '', options = {}) {
+        const money = window.POSOrderApi;
+        if (!money) {
+            throw new Error('POS_MONEY_API_REQUIRED');
+        }
         const managerApprovalId = parseInt(options && options.managerApprovalId ? options.managerApprovalId : 0, 10) || 0;
-        const unitValue = parseFloat(options && options.uVal ? options.uVal : 1) || 1;
+        const unitValue = money.decimalString(options && options.uVal ? options.uVal : '1', 6, '1');
+        const quantity = money.decimalString(qty, 6, '1');
         const persisted = !!(options && options.persisted);
-        const persistedQty = parseFloat(options && options.persistedQty !== undefined ? options.persistedQty : qty) || qty;
+        const persistedQty = money.decimalString(
+            options && options.persistedQty !== undefined ? options.persistedQty : quantity,
+            6,
+            quantity
+        );
         const hasSugarSelection = Object.prototype.hasOwnProperty.call(options || {}, 'sugarSpoons')
             && options.sugarSpoons !== null
             && options.sugarSpoons !== undefined;
@@ -2291,15 +2343,15 @@ $(document).ready(function() {
 
         if (existingItem.length > 0) {
             let qtyInput = existingItem.find('.quantityInput');
-            let currentQty = parseFloat(qtyInput.val()) || 0;
-            let newQty = currentQty + qty;
+            const currentQty = money.decimalString(qtyInput.val(), 6, '0');
+            const newQty = money.addDecimalStrings(currentQty, quantity, 6);
             qtyInput.val(newQty);
 
             let priceInput = existingItem.find('.priceInput');
-            let itemPrice = parseFloat(priceInput.val()) || 0;
-            let subtotal = newQty * itemPrice;
-            existingItem.find('.subtotal').val(subtotal.toFixed(2));
-            existingItem.find('.pos-cart-price-display').html(subtotal.toFixed(2) + ' <span class="pos-currency">ج.م</span>');
+            const itemPrice = money.decimalString(priceInput.val(), 6, '0');
+            const subtotal = money.lineTotalFromQuantityAndUnitPrice(newQty, itemPrice);
+            existingItem.find('.subtotal').val(subtotal);
+            existingItem.find('.pos-cart-price-display').html(subtotal + ' <span class="pos-currency">ج.م</span>');
             if (managerApprovalId > 0) {
                 existingItem.find('.managerApprovalInput').val(managerApprovalId);
             }
@@ -2309,9 +2361,8 @@ $(document).ready(function() {
             return;
         }
 
-        const unitPrice = parseFloat(price) || 0;
-        let subtotal = unitPrice * qty;
-        let itemNumber = $('#itemData .item-card-order').length + 1;
+        const unitPrice = money.decimalString(price, 6, '0');
+        const subtotal = money.lineTotalFromQuantityAndUnitPrice(quantity, unitPrice);
         const noteValue = String(lineNote || '').trim() || getLineNoteDraft(id, barcode);
         const safeName = escapeHtml(name);
         const safeLineNote = escapeHtmlAttribute(noteValue);
@@ -2321,20 +2372,20 @@ $(document).ready(function() {
             : `<small class="pos-cart-preparation text-muted">السكر: ${sugarSpoons === 0 ? 'بدون' : sugarSpoons + ' ملعقة'}</small>`;
 
         let itemCard = `
-            <div class="item-card-order pos-cart-row" data-itemid="${escapeHtml(barcode)}" data-catalog-price="${unitPrice.toFixed(4)}"${persisted ? ` data-persisted-line="1" data-persisted-qty="${escapeHtml(String(persistedQty))}"` : ''}>
+            <div class="item-card-order pos-cart-row" data-itemid="${escapeHtml(barcode)}" data-catalog-price="${unitPrice}"${persisted ? ` data-persisted-line="1" data-persisted-qty="${escapeHtml(persistedQty)}"` : ''}>
                 <div class="pos-cart-row-inner">
-                    <div class="pos-cart-price-display" aria-hidden="true">${subtotal.toFixed(2)} <span class="pos-currency">ج.م</span></div>
+                    <div class="pos-cart-price-display" aria-hidden="true">${subtotal} <span class="pos-currency">ج.م</span></div>
                     <div class="pos-cart-qty">
                         <button type="button" class="btn qty-step qty-decrease" title="تقليل">−</button>
                         <input type="number"
                                class="form-control form-control-sm text-center quantityInput nozero fw-bold"
-                               value="${qty}"
+                               value="${quantity}"
                                name="itmqty[]"
                                min="1"
                                step="1"
                                title="الكمية">
                         <button type="button" class="btn qty-step qty-increase" title="زيادة">+</button>
-                        <input type="hidden" name="u_val[]" value="${escapeHtml(String(unitValue))}">
+                        <input type="hidden" name="u_val[]" value="${escapeHtml(unitValue)}">
                     </div>
                     <div class="pos-cart-main">
                         <input type="hidden" value='${id}' name="itmname[]">
@@ -2367,16 +2418,16 @@ $(document).ready(function() {
                         <input type="text"
                                class="form-control form-control-sm text-center subtotal fw-bold"
                                readonly
-                               value="${subtotal.toFixed(2)}"
+                               value="${subtotal}"
                                name="itmval[]"
                                title="القيمة">
                     </div>
                     <div class="pos-cart-price d-none">
                         <input type="number"
                                class="form-control form-control-sm text-center priceInput nozero"
-                               value="${unitPrice.toFixed(2)}"
+                               value="${unitPrice}"
                                name="itmprice[]"
-                               step="0.01"
+                               step="0.000001"
                                title="السعر">
                     </div>
                 </div>
@@ -2419,25 +2470,41 @@ $(document).ready(function() {
     };
 
     function updateTotal() {
-        let total = 0;
-        $('.subtotal').each(function() {
-            total += parseFloat($(this).val()) || 0;
-        });
-        const deliveryFee = (typeof window.posDeliveryGetFee === 'function') ? window.posDeliveryGetFee() : 0;
-        if (deliveryFee > 0) {
-            total += deliveryFee;
+        const money = window.POSOrderApi;
+        if (!money) {
+            throw new Error('POS_MONEY_API_REQUIRED');
         }
-        $('#total').val(total.toFixed(2));
-        $('#total_display').text(total.toFixed(2) + ' ج.م');
-        $('#total_display_btn').text(total.toFixed(2) + ' ج.م');
-        $('#modal_total').text(total.toFixed(2) + ' ج.م');
+        let total = '0.00';
+        $('.subtotal').each(function() {
+            total = money.addDecimalStrings(
+                total,
+                money.decimalString($(this).val(), 2, '0'),
+                2
+            );
+        });
+        const deliveryFee = money.decimalString(
+            typeof window.posDeliveryGetFee === 'function' ? window.posDeliveryGetFee() : '0',
+            2,
+            '0'
+        );
+        if (money.compareDecimalStrings(deliveryFee, '0.00', 2) > 0) {
+            total = money.addDecimalStrings(total, deliveryFee, 2);
+        }
+        $('#total').val(total);
+        $('#total_display').text(total + ' ج.م');
+        $('#total_display_btn').text(total + ' ج.م');
+        $('#modal_total').text(total + ' ج.م');
 
-        let discount = parseFloat($('#discount').val()) || 0;
-        let net = total - discount;
-        $('#net_val').val(net.toFixed(2));
-        $('#net_display').text(net.toFixed(2) + ' ج.م');
-        $('#modal_net').text(net.toFixed(2) + ' ج.م');
-        $('#headplus').val(deliveryFee > 0 ? deliveryFee.toFixed(2) : ($('#headplus').val() || '0'));
+        let discount = money.decimalString($('#discount').val(), 2, '0');
+        if (money.compareDecimalStrings(discount, total, 2) > 0) {
+            discount = total;
+            $('#discount, #modal_discount').val(discount);
+        }
+        const net = money.subtractDecimalStrings(total, discount, 2);
+        $('#net_val').val(net);
+        $('#net_display').text(net + ' ج.م');
+        $('#modal_net').text(net + ' ج.م');
+        $('#headplus').val(money.compareDecimalStrings(deliveryFee, '0.00', 2) > 0 ? deliveryFee : '0.00');
 
         setDefaultCashPaymentToNet(net);
         updatePayOrderButtonState();
@@ -2504,12 +2571,6 @@ $(document).ready(function() {
         $amount.show();
     }
 
-    function currentOrderDiscountRate() {
-        const total = Math.max(0, parseFloat($('#total').val()) || 0);
-        const discount = Math.min(total, Math.max(0, parseFloat($('#discount').val()) || 0));
-        return total > 0 ? discount / total : 0;
-    }
-
     function updateTransferTableButton() {
         const hasActiveTableOrder = getSelectedTableId() > 0 && getActiveTableOrderId() !== '';
         $('#transferTableBtn').toggle(hasActiveTableOrder);
@@ -2517,19 +2578,19 @@ $(document).ready(function() {
 
     function selectedSplitPaymentRows() {
         const rows = [];
-        const discountRate = currentOrderDiscountRate();
+        const money = window.POSOrderApi;
+        if (!money) {
+            throw new Error('POS_MONEY_API_REQUIRED');
+        }
         $('#itemData .item-card-order').each(function(index) {
             const $row = $(this);
-            const qty = parseFloat($row.find('.quantityInput').val()) || 0;
-            const subtotal = parseFloat($row.find('.subtotal').val()) || 0;
-            const discountedAmount = Math.max(0, subtotal * (1 - discountRate));
-            const unitAmount = qty > 0 ? discountedAmount / qty : 0;
+            const qty = money.decimalString($row.find('.quantityInput').val(), 6, '0');
+            const grossAmount = money.decimalString($row.find('.subtotal').val(), 2, '0');
             rows.push({
                 row_index: index,
                 name: String($row.find('.pos-cart-name').text() || '').trim() || 'صنف',
                 qty: qty,
-                unit_amount: unitAmount,
-                amount: discountedAmount
+                gross_amount: grossAmount
             });
         });
 
@@ -2550,10 +2611,11 @@ $(document).ready(function() {
         }
 
         const html = rows.map(function(row) {
-            const qty = Number(row.qty || 0);
-            const amount = Number(row.amount || 0);
             return `
-                <div class="pos-split-line-item" data-row-index="${row.row_index}" data-unit-amount="${row.unit_amount}">
+                <div class="pos-split-line-item"
+                     data-row-index="${row.row_index}"
+                     data-available-qty="${row.qty}"
+                     data-line-gross="${row.gross_amount}">
                     <label class="pos-split-line-select">
                         <input type="checkbox" class="pos-split-line-check">
                         <span class="pos-split-line-check-ui" aria-hidden="true"></span>
@@ -2565,16 +2627,16 @@ $(document).ready(function() {
                                 <span class="pos-split-line-qty-label">الكمية</span>
                                 <input type="number"
                                        class="pos-split-line-qty"
-                                       value="${qty}"
+                                       value="${row.qty}"
                                        min="0"
-                                       max="${qty}"
+                                       max="${row.qty}"
                                        step="1"
                                        inputmode="numeric"
-                                       data-max-qty="${qty}">
+                                       data-max-qty="${row.qty}">
                             </div>
                             <div class="pos-split-line-amount-wrap">
                                 <span class="pos-split-line-amount-label">القيمة</span>
-                                <span class="pos-split-line-total">${amount.toFixed(2)}</span>
+                                <span class="pos-split-line-total">${row.gross_amount}</span>
                             </div>
                         </div>
                     </div>
@@ -2600,35 +2662,58 @@ $(document).ready(function() {
                 return;
             }
 
-            $row.data('unit-amount', sourceRow.unit_amount);
-            $row.attr('data-unit-amount', sourceRow.unit_amount);
+            $row.attr('data-available-qty', sourceRow.qty);
+            $row.attr('data-line-gross', sourceRow.gross_amount);
+            $row.find('.pos-split-line-qty').attr('max', sourceRow.qty).attr('data-max-qty', sourceRow.qty);
         });
 
         updateSplitPaymentTotal();
     }
 
     function updateSplitPaymentTotal() {
-        let selectedTotal = 0;
+        const money = window.POSOrderApi;
+        if (!money) {
+            throw new Error('POS_MONEY_API_REQUIRED');
+        }
         $('#pos_split_payment_rows .pos-split-line-item').each(function() {
             const $row = $(this);
             const checked = $row.find('.pos-split-line-check').prop('checked');
             $row.toggleClass('is-selected', checked);
-            const maxQty = parseFloat($row.find('.pos-split-line-qty').data('max-qty')) || 0;
-            let qty = parseFloat($row.find('.pos-split-line-qty').val()) || 0;
-            qty = Math.max(0, Math.min(qty, maxQty));
-            $row.find('.pos-split-line-qty').val(qty || '');
-            const unitAmount = parseFloat($row.data('unit-amount')) || 0;
-            const lineTotal = qty * unitAmount;
-            $row.find('.pos-split-line-total').text(lineTotal.toFixed(2));
-            if (checked) {
-                selectedTotal += lineTotal;
+            const maxQty = money.decimalString($row.attr('data-available-qty'), 6, '0');
+            let qty = money.decimalString($row.find('.pos-split-line-qty').val(), 6, '0');
+            if (money.compareDecimalStrings(qty, maxQty, 6) > 0) {
+                qty = maxQty;
             }
+            $row.find('.pos-split-line-qty').val(qty);
+            const lineTotal = money.prorateMoneyByQuantity(
+                $row.attr('data-line-gross'),
+                qty,
+                maxQty
+            );
+            $row.find('.pos-split-line-total').text(lineTotal);
         });
 
-        $('#pos_split_payment_total').text(selectedTotal.toFixed(2) + ' ج.م');
+        const payload = splitPaymentPayloadFromModal();
+        $('#pos_split_payment_total').text(payload.total + ' ج.م');
         if ($('#pos_split_payment_enabled').prop('checked')) {
-            $('#modal_paid_cash').val(selectedTotal.toFixed(2));
-            $('#modal_paid_bank').val('0.00');
+            const mode = getPosPaymentMethod();
+            if (mode === 'bank') {
+                $('#modal_paid_cash').val('0.00');
+                $('#modal_paid_bank').val(payload.total);
+            } else if (mode === 'mixed') {
+                const current = money.addDecimalStrings(
+                    money.decimalString($('#modal_paid_cash').val(), 2, '0'),
+                    money.decimalString($('#modal_paid_bank').val(), 2, '0'),
+                    2
+                );
+                if (money.compareDecimalStrings(current, payload.total, 2) !== 0) {
+                    $('#modal_paid_cash').val(payload.total);
+                    $('#modal_paid_bank').val('0.00');
+                }
+            } else {
+                $('#modal_paid_cash').val(payload.total);
+                $('#modal_paid_bank').val('0.00');
+            }
             calculateChange();
         }
     }
@@ -2640,25 +2725,51 @@ $(document).ready(function() {
     }
 
     function splitPaymentPayloadFromModal() {
+        const money = window.POSOrderApi;
+        if (!money) {
+            throw new Error('POS_MONEY_API_REQUIRED');
+        }
         const rows = [];
-        let selectedTotal = 0;
+        let selectedGross = '0.00';
         $('#pos_split_payment_rows .pos-split-line-item').each(function() {
             const $row = $(this);
             if (!$row.find('.pos-split-line-check').prop('checked')) {
                 return;
             }
             const rowIndex = parseInt($row.data('row-index'), 10);
-            const maxQty = parseFloat($row.find('.pos-split-line-qty').data('max-qty')) || 0;
-            const qty = parseFloat($row.find('.pos-split-line-qty').val()) || 0;
-            const unitAmount = parseFloat($row.data('unit-amount')) || 0;
-            if (Number.isNaN(rowIndex) || qty <= 0 || qty > maxQty + 0.0001) {
+            const maxQty = money.decimalString($row.attr('data-available-qty'), 6, '0');
+            const qty = money.decimalString($row.find('.pos-split-line-qty').val(), 6, '0');
+            if (
+                Number.isNaN(rowIndex)
+                || money.compareDecimalStrings(qty, '0.000000', 6) <= 0
+                || money.compareDecimalStrings(qty, maxQty, 6) > 0
+            ) {
                 return;
             }
             rows.push({ row_index: rowIndex, qty: qty });
-            selectedTotal += qty * unitAmount;
+            selectedGross = money.addDecimalStrings(
+                selectedGross,
+                money.prorateMoneyByQuantity($row.attr('data-line-gross'), qty, maxQty),
+                2
+            );
         });
 
-        return { rows: rows, total: selectedTotal };
+        const orderGross = money.decimalString($('#total').val(), 2, '0');
+        let discount = money.decimalString($('#discount').val(), 2, '0');
+        if (money.compareDecimalStrings(discount, orderGross, 2) > 0) {
+            discount = orderGross;
+        }
+        const allocatedDiscount = money.compareDecimalStrings(selectedGross, '0.00', 2) > 0
+            ? money.allocateProportionalMoney(discount, selectedGross, orderGross)
+            : '0.00';
+        const selectedNet = money.subtractDecimalStrings(selectedGross, allocatedDiscount, 2);
+
+        return {
+            rows: rows,
+            gross: selectedGross,
+            discount: allocatedDiscount,
+            total: selectedNet
+        };
     }
 
     function ensureHiddenFormInput(form, name) {
@@ -2685,27 +2796,27 @@ $(document).ready(function() {
         }
 
         const payload = splitPaymentPayloadFromModal();
-        if (!payload.rows.length || payload.total <= 0) {
+        const money = window.POSOrderApi;
+        if (!payload.rows.length || money.compareDecimalStrings(payload.total, '0.00', 2) <= 0) {
             alert('اختر صنف واحد على الأقل وكمية صحيحة للسداد');
             return false;
         }
 
-        const paidCash = parseFloat(paymentState.paidCash) || 0;
-        const paidBank = parseFloat(paymentState.paidBank) || 0;
-        if (paidCash > 0 && paidBank > 0) {
-            alert('سداد الأصناف المحددة يستخدم طريقة دفع واحدة في كل مرة');
-            return false;
-        }
-
-        const totalPaid = paidCash + paidBank;
-        if (Math.abs(totalPaid - payload.total) > 0.01) {
+        const paidCash = money.decimalString(paymentState.paidCash, 2, '0');
+        const paidBank = money.decimalString(paymentState.paidBank, 2, '0');
+        const totalPaid = money.addDecimalStrings(paidCash, paidBank, 2);
+        if (money.compareDecimalStrings(totalPaid, payload.total, 2) !== 0) {
             alert('مبلغ الدفع يجب أن يساوي إجمالي الأصناف المحددة');
             return false;
         }
 
         ensureHiddenFormInput(form, 'pos_split_payment_payload').value = JSON.stringify(payload.rows);
-        ensureHiddenFormInput(form, 'pos_split_payment_total').value = payload.total.toFixed(2);
-        ensureHiddenFormInput(form, 'pos_split_payment_method').value = paidBank > 0 ? 'bank' : 'cash';
+        ensureHiddenFormInput(form, 'pos_split_payment_total').value = payload.total;
+        ensureHiddenFormInput(form, 'pos_split_payment_method').value =
+            money.compareDecimalStrings(paidCash, '0.00', 2) > 0
+            && money.compareDecimalStrings(paidBank, '0.00', 2) > 0
+                ? 'mixed'
+                : (money.compareDecimalStrings(paidBank, '0.00', 2) > 0 ? 'bank' : 'cash');
         return true;
     };
 
@@ -2716,7 +2827,11 @@ $(document).ready(function() {
             order_id: getActiveTableOrderId() || parseInt($('#selected_order_id').val() || '0', 10) || 0,
             table_id: getSelectedTableId(),
             paid_amount: payload.total,
-            payment_method: (parseFloat($('#modal_paid_bank').val()) || 0) > 0 ? 'bank' : 'cash'
+            payment_method: window.POSOrderApi.compareDecimalStrings(
+                window.POSOrderApi.decimalString($('#modal_paid_bank').val(), 2, '0'),
+                '0.00',
+                2
+            ) > 0 ? 'bank' : 'cash'
         };
     };
 
@@ -2803,6 +2918,7 @@ $(document).ready(function() {
         const tableName = String(table.tname || table.table_name || '');
         const tableCase = parseInt(table.table_case || table.has_active_order || 0, 10) ? 1 : 0;
         const orderId = table.order_id ? parseInt(table.order_id, 10) : '';
+        const mutationVersion = table.mutation_version ? Math.max(1, parseInt(table.mutation_version, 10) || 1) : '';
         const orderTotal = parseFloat(table.fat_net || 0) || 0;
         let statusClass = tableCase ? 'btn-danger' : 'btn-success';
         let statusIcon = tableCase ? 'fa-utensils' : 'fa-check-circle';
@@ -2845,9 +2961,11 @@ $(document).ready(function() {
                     data-table-name="${escapeHtml(tableName)}"
                     data-table-case="${tableCase}"
                     data-order-id="${orderId}"
+                    data-mutation-version="${mutationVersion}"
                     data-has-active-order="${tableCase}"
                     data-transfer-action="${transferAction}"
                     data-destination-order-id="${orderId}"
+                    data-destination-mutation-version="${mutationVersion}"
                     ${disabledAttr}
                     style="min-height: 120px; font-size: 1.1rem;">
                     <div class="d-flex flex-column align-items-center justify-content-center">
@@ -3285,9 +3403,11 @@ $(document).ready(function() {
             performTableTransfer(transferAction, {
                 sourceTableId: sourceTableId,
                 sourceOrderId: sourceOrderId,
+                sourceMutationVersion: parseInt($('#order_mutation_version').val() || '0', 10) || 0,
                 destinationTableId: destinationTableId,
                 destinationTableName: destinationName,
-                destinationOrderId: destinationOrderId
+                destinationOrderId: destinationOrderId,
+                destinationMutationVersion: parseInt($button.data('destination-mutation-version') || $button.data('mutation-version') || '0', 10) || 0
             });
         });
     }
@@ -3305,8 +3425,15 @@ $(document).ready(function() {
         if (isMerge) {
             ajaxData.source_order_id = transferData.sourceOrderId;
             ajaxData.destination_order_id = transferData.destinationOrderId;
+            ajaxData.source_mutation_version = transferData.sourceMutationVersion
+                || parseInt($('#order_mutation_version').val() || '0', 10)
+                || '';
+            ajaxData.destination_mutation_version = transferData.destinationMutationVersion || '';
         } else {
             ajaxData.order_id = transferData.sourceOrderId;
+            ajaxData.mutation_version = transferData.sourceMutationVersion
+                || parseInt($('#order_mutation_version').val() || '0', 10)
+                || '';
         }
 
         $('.pos-transfer-target').prop('disabled', true).addClass('disabled');
@@ -3375,15 +3502,15 @@ $(document).ready(function() {
                             addItemToOrder(
                                 item.item_id,
                                 item.item_name || 'Unknown Item',
-                                parseFloat(item.price) || 0,
+                                item.price || '0.000000',
                                 item.barcode || item.item_desc || item.item_id, // Use explicit barcode first
-                                parseFloat(item.qty) || 1,
+                                item.qty || '1.000000',
                                 '',
                                 item.note || item.kitchen_note || item.notes || '',
                                 {
                                     uVal: item.u_val || 1,
                                     persisted: true,
-                                    persistedQty: parseFloat(item.qty) || 1,
+                                    persistedQty: item.qty || '1.000000',
                                     sugarSpoons: persistedSugarSpoons === null && item.allows_sugar_spoons
                                         ? 0
                                         : persistedSugarSpoons,
@@ -3446,11 +3573,25 @@ $(document).ready(function() {
     // Modal Calculations
     // ========================================
     $('#modal_discperc').on('input', function() {
-        let total = parseFloat($('#total').val()) || 0;
-        let discount = (total * (parseFloat($(this).val()) || 0) / 100).toFixed(2);
+        const money = window.POSOrderApi;
+        if (!money) {
+            throw new Error('POS_MONEY_API_REQUIRED');
+        }
+        const total = money.decimalString($('#total').val(), 2, '0');
+        let percentage;
+        try {
+            percentage = money.decimalString($(this).val(), 6, '0');
+        } catch (error) {
+            return;
+        }
+        if (money.compareDecimalStrings(percentage, '100.000000', 6) > 0) {
+            percentage = '100.000000';
+            $(this).val(percentage);
+        }
+        const discount = money.moneyFromPercentage(total, percentage);
         $('#modal_discount').val(discount);
         $('#discount').val(discount);
-        let net = (total - discount).toFixed(2);
+        const net = money.subtractDecimalStrings(total, discount, 2);
         $('#modal_net').text(net + ' ج.م');
         $('#net_val').val(net);
         $('#net_display').text(net + ' ج.م');
@@ -3460,12 +3601,25 @@ $(document).ready(function() {
     });
 
     $('#modal_discount').on('input', function() {
-        let total = parseFloat($('#total').val()) || 0;
-        let discount = parseFloat($(this).val()) || 0;
+        const money = window.POSOrderApi;
+        if (!money) {
+            throw new Error('POS_MONEY_API_REQUIRED');
+        }
+        const total = money.decimalString($('#total').val(), 2, '0');
+        let discount;
+        try {
+            discount = money.decimalString($(this).val(), 2, '0');
+        } catch (error) {
+            return;
+        }
+        if (money.compareDecimalStrings(discount, total, 2) > 0) {
+            discount = total;
+            $(this).val(discount);
+        }
         $('#discount').val(discount);
-        let percentage = total > 0 ? ((discount / total) * 100).toFixed(2) : 0;
+        const percentage = money.percentageFromMoney(discount, total);
         $('#modal_discperc').val(percentage);
-        let net = (total - discount).toFixed(2);
+        const net = money.subtractDecimalStrings(total, discount, 2);
         $('#modal_net').text(net + ' ج.م');
         $('#net_val').val(net);
         $('#net_display').text(net + ' ج.م');
@@ -3528,26 +3682,33 @@ $(document).ready(function() {
     });
 
     function paymentAmountDue() {
+        const money = window.POSOrderApi;
+        if (!money) {
+            throw new Error('POS_MONEY_API_REQUIRED');
+        }
         if ($('#pos_split_payment_enabled').prop('checked')) {
-            return Math.max(0, splitPaymentPayloadFromModal().total || 0);
+            return splitPaymentPayloadFromModal().total;
         }
 
-        return Math.max(0, parseFloat($('#net_val').val()) || 0);
+        return money.decimalString($('#net_val').val(), 2, '0');
     }
 
     function updateModalChangeDisplay(change) {
         const $change = $('#modal_change');
-        const formatted = change.toFixed(2) + ' ج.م';
-        $change.text(formatted);
-        $change.toggleClass('is-short', change < 0);
+        $change.text(change + ' ج.م');
+        $change.toggleClass('is-short', String(change).charAt(0) === '-');
     }
 
     function calculateChange() {
+        const money = window.POSOrderApi;
+        if (!money) {
+            throw new Error('POS_MONEY_API_REQUIRED');
+        }
         const amountDue = paymentAmountDue();
-        const paidCash = parseFloat($('#modal_paid_cash').val()) || 0;
-        const paidBank = parseFloat($('#modal_paid_bank').val()) || 0;
-        const totalPaid = paidCash + paidBank;
-        const change = totalPaid - amountDue;
+        const paidCash = money.decimalString($('#modal_paid_cash').val(), 2, '0');
+        const paidBank = money.decimalString($('#modal_paid_bank').val(), 2, '0');
+        const totalPaid = money.addDecimalStrings(paidCash, paidBank, 2);
+        const change = money.subtractDecimalStrings(totalPaid, amountDue, 2);
 
         // الباقي = المدفوع - المستحق (كامل الصافي أو إجمالي المحدد في سداد الأصناف)
         updateModalChangeDisplay(change);
@@ -3578,26 +3739,28 @@ $(document).ready(function() {
     });
 
     $(document).on('click', '.qty-increase', function() {
-        let card = $(this).closest('.item-card-order');
-        let qtyInput = card.find('.quantityInput');
-        let currentQty = parseFloat(qtyInput.val()) || 0;
-        qtyInput.val(Math.max(1, Math.round(currentQty + 1))).trigger('input');
+        const money = window.POSOrderApi;
+        const card = $(this).closest('.item-card-order');
+        const qtyInput = card.find('.quantityInput');
+        const currentQty = money.decimalString(qtyInput.val(), 6, '0');
+        qtyInput.val(money.addDecimalStrings(currentQty, '1.000000', 6)).trigger('input');
         touchOrderDraft();
     });
 
     $(document).on('click', '.qty-decrease', function(e) {
-        let card = $(this).closest('.item-card-order');
-        let qtyInput = card.find('.quantityInput');
-        let currentQty = parseFloat(qtyInput.val()) || 0;
-        let nextQty = currentQty - 1;
+        const money = window.POSOrderApi;
+        const card = $(this).closest('.item-card-order');
+        const qtyInput = card.find('.quantityInput');
+        const currentQty = money.decimalString(qtyInput.val(), 6, '0');
 
-        if (nextQty < 1) {
+        if (money.compareDecimalStrings(currentQty, '1.000000', 6) <= 0) {
             card.find('.delRow').trigger('click');
             return;
         }
+        const nextQty = money.subtractDecimalStrings(currentQty, '1.000000', 6);
 
         const applyQty = function () {
-            qtyInput.val(Math.max(1, Math.round(nextQty))).trigger('input');
+            qtyInput.val(nextQty).trigger('input');
             touchOrderDraft();
         };
 
@@ -3614,12 +3777,13 @@ $(document).ready(function() {
     });
 
     $(document).on('input', '.quantityInput, .priceInput', function() {
-        let card = $(this).closest('.item-card-order');
-        let qty = parseFloat(card.find('.quantityInput').val()) || 0;
-        let price = parseFloat(card.find('.priceInput').val()) || 0;
-        let subtotal = qty * price;
-        card.find('.subtotal').val(subtotal.toFixed(2));
-        card.find('.pos-cart-price-display').html(subtotal.toFixed(2) + ' <span class="pos-currency">ج.م</span>');
+        const money = window.POSOrderApi;
+        const card = $(this).closest('.item-card-order');
+        const qty = money.decimalString(card.find('.quantityInput').val(), 6, '0');
+        const price = money.decimalString(card.find('.priceInput').val(), 6, '0');
+        const subtotal = money.lineTotalFromQuantityAndUnitPrice(qty, price);
+        card.find('.subtotal').val(subtotal);
+        card.find('.pos-cart-price-display').html(subtotal + ' <span class="pos-currency">ج.م</span>');
         updateTotal();
     });
 
@@ -3635,7 +3799,7 @@ $(document).ready(function() {
             completeAddItemToOrder(
             parseInt($choice.data('item-id'), 10) || 0,
             String($choice.data('item-name') || ''),
-            parseFloat($choice.data('item-price')) || 0,
+            String($choice.attr('data-item-price') || '0'),
             String($choice.data('item-barcode') || ''),
             variantContext.qty || 1,
             variantContext.imageHtml || '',
@@ -3797,17 +3961,22 @@ $(document).ready(function() {
         }
 
         const isSplitLinePayment = action === 'split_cash';
-        let paidCash = parseFloat($('#modal_paid_cash').val()) || 0;
-        let paidBank = parseFloat($('#modal_paid_bank').val()) || 0;
+        const money = window.POSOrderApi;
+        if (!money) {
+            alert('تعذر تحميل وحدة الحساب المالي. يرجى تحديث الصفحة والمحاولة مرة أخرى.');
+            return false;
+        }
+        let paidCash = money.decimalString($('#modal_paid_cash').val(), 2, '0');
+        let paidBank = money.decimalString($('#modal_paid_bank').val(), 2, '0');
         if (isSaveOnly || isPrintReceiptOnly || isFreeTableOnly) {
-            paidCash = 0;
-            paidBank = 0;
+            paidCash = '0.00';
+            paidBank = '0.00';
         }
         syncPaymentFundOptions();
         window.POSMainEnsurePaymentAccountDefaults();
         let fundId = $('#payment_fund_id').val();
         let bankId = $('#payment_bank_id').val();
-        let net = parseFloat($('#net_val').val()) || 0;
+        const net = money.decimalString($('#net_val').val(), 2, '0');
 
         console.log('=== PAYMENT DATA DEBUG ===');
         console.log('modal_paid_cash value:', $('#modal_paid_cash').val());
@@ -3824,7 +3993,14 @@ $(document).ready(function() {
         console.log('==========================');
 
         // التحقق من صحة البيانات
-        if (!isSaveOnly && !isPrintReceiptOnly && !isFreeTableOnly && !isSplitLinePayment && net > 0 && paidCash + paidBank <= 0) {
+        if (
+            !isSaveOnly
+            && !isPrintReceiptOnly
+            && !isFreeTableOnly
+            && !isSplitLinePayment
+            && money.compareDecimalStrings(net, '0.00', 2) > 0
+            && money.compareDecimalStrings(money.addDecimalStrings(paidCash, paidBank, 2), '0.00', 2) <= 0
+        ) {
             alert('يجب إدخال مبلغ الدفع قبل تأكيد الدفع');
             return false;
         }
@@ -3838,8 +4014,8 @@ $(document).ready(function() {
             })) {
                 return false;
             }
-            paidCash = parseFloat($('#modal_paid_cash').val()) || 0;
-            paidBank = parseFloat($('#modal_paid_bank').val()) || 0;
+            paidCash = money.decimalString($('#modal_paid_cash').val(), 2, '0');
+            paidBank = money.decimalString($('#modal_paid_bank').val(), 2, '0');
         }
 
         // إضافة حقول الدفع المخفية
@@ -3888,7 +4064,7 @@ $(document).ready(function() {
         console.log('Set payment_bank_id =', bankId || '');
 
         // إضافة المدفوع الإجمالي (للتوافق مع الكود القديم)
-        let totalPaid = paidCash + paidBank;
+        const totalPaid = money.addDecimalStrings(paidCash, paidBank, 2);
         let paidInput = form.querySelector('input[name="paid"]');
         if (!paidInput) {
             paidInput = document.createElement('input');
@@ -4582,6 +4758,7 @@ function createPOSIdempotencyKey(scope) {
 
 const paidReversalState = {
     orderId: 0,
+    mutationVersion: 0,
     canRefund: false,
     canVoid: false,
     submitting: false,
@@ -4591,10 +4768,24 @@ const paidReversalState = {
     originalPayments: [],
     refundTenders: [],
     refundableLines: [],
-    originalTotal: 0,
-    refundedAmount: 0,
-    remainingRefundableAmount: 0,
+    originalTotal: '0.00',
+    refundedAmount: '0.00',
+    remainingRefundableAmount: '0.00',
 };
+
+function paidReversalMoney(value) {
+    if (!window.POSOrderApi) {
+        throw new Error('POS_MONEY_API_REQUIRED');
+    }
+    return window.POSOrderApi.decimalString(value, 2, '0');
+}
+
+function paidReversalQuantity(value) {
+    if (!window.POSOrderApi) {
+        throw new Error('POS_MONEY_API_REQUIRED');
+    }
+    return window.POSOrderApi.decimalString(value, 6, '0');
+}
 
 function resetPaidReversalValidation() {
     $('#paidReversalValidationAlert').addClass('d-none').text('');
@@ -4632,7 +4823,7 @@ function populatePaidReversalTenderContext() {
     const originalHtml = payments.length > 0
         ? payments.map((payment) => {
             const label = escapeRecentOrdersHtml(payment.label || payment.payment_method || '-');
-            const amount = parseFloat(payment.refundable_amount || payment.original_amount || 0).toFixed(2);
+            const amount = paidReversalMoney(payment.refundable_amount || payment.original_amount || '0');
             return `<span class="badge bg-light text-dark border me-1">${label}: ${amount} ج.م</span>`;
         }).join('')
         : '<span class="text-danger">تعذر تحميل طرق الدفع الأصلية لهذا الطلب.</span>';
@@ -4641,11 +4832,11 @@ function populatePaidReversalTenderContext() {
     );
     $('#paid-reversal-balance-summary').html(
         `<strong class="d-block mb-1">رصيد الاسترداد</strong>
-         إجمالي البيع: ${paidReversalState.originalTotal.toFixed(2)} ج.م
+         إجمالي البيع: ${paidReversalState.originalTotal} ج.م
          <span class="mx-1">•</span>
-         المسترد سابقاً: ${paidReversalState.refundedAmount.toFixed(2)} ج.م
+         المسترد سابقاً: ${paidReversalState.refundedAmount} ج.م
          <span class="mx-1">•</span>
-         <strong>المتبقي: ${paidReversalState.remainingRefundableAmount.toFixed(2)} ج.م</strong>`
+         <strong>المتبقي: ${paidReversalState.remainingRefundableAmount} ج.م</strong>`
     );
 
     const $select = $('#paid-reversal-tender');
@@ -4661,7 +4852,7 @@ function populatePaidReversalTenderContext() {
 }
 
 function formatPaidReversalQuantity(value) {
-    return parseFloat(value || 0).toFixed(6).replace(/\.?0+$/, '');
+    return paidReversalQuantity(value).replace(/\.?0+$/, '');
 }
 
 function populatePaidReversalRefundLines() {
@@ -4671,8 +4862,9 @@ function populatePaidReversalRefundLines() {
     const html = lines.length > 0
         ? lines.map((line) => {
             const detailId = parseInt(line.original_detail_id || 0, 10);
-            const remainingQty = parseFloat(line.remaining_quantity || 0);
-            const remainingAmount = parseFloat(line.remaining_amount || 0);
+            const remainingQty = paidReversalQuantity(line.remaining_quantity || '0');
+            const remainingAmount = paidReversalMoney(line.remaining_amount || '0');
+            const originalDiscount = paidReversalMoney(line.original_discount || '0');
             return `<tr data-refund-detail-id="${detailId}" data-remaining-amount="${remainingAmount}">
                 <td>
                     <input class="form-check-input paid-reversal-line-check" type="checkbox"
@@ -4680,17 +4872,17 @@ function populatePaidReversalRefundLines() {
                 </td>
                 <td>
                     <strong>${escapeRecentOrdersHtml(line.label || `#${line.item_id || detailId}`)}</strong>
-                    ${parseFloat(line.original_discount || 0) > 0
-                        ? `<small class="d-block text-muted">يشمل خصماً ${parseFloat(line.original_discount).toFixed(2)} ج.م</small>`
+                    ${window.POSOrderApi.compareDecimalStrings(originalDiscount, '0.00', 2) > 0
+                        ? `<small class="d-block text-muted">يشمل خصماً ${originalDiscount} ج.م</small>`
                         : ''}
                 </td>
                 <td class="text-nowrap">${formatPaidReversalQuantity(remainingQty)}</td>
                 <td style="min-width: 8rem">
                     <input class="form-control form-control-sm paid-reversal-line-qty" type="number"
-                        min="0.000001" max="${remainingQty.toFixed(6)}" step="0.000001"
-                        value="${remainingQty.toFixed(6)}" disabled>
+                        min="0.000001" max="${remainingQty}" step="0.000001"
+                        value="${remainingQty}" disabled>
                 </td>
-                <td class="text-nowrap paid-reversal-line-estimate">${remainingAmount.toFixed(2)} ج.م</td>
+                <td class="text-nowrap paid-reversal-line-estimate">${remainingAmount} ج.م</td>
             </tr>`;
         }).join('')
         : '<tr><td colspan="5" class="text-center text-muted py-3">لا توجد سطور قابلة للاسترداد.</td></tr>';
@@ -4699,21 +4891,35 @@ function populatePaidReversalRefundLines() {
 }
 
 function updatePaidReversalItemsTotal() {
-    let total = 0;
+    const money = window.POSOrderApi;
+    if (!money) {
+        throw new Error('POS_MONEY_API_REQUIRED');
+    }
+    let total = '0.00';
     $('#paid-reversal-items-list tr[data-refund-detail-id]').each(function() {
         const $row = $(this);
         const selected = $row.find('.paid-reversal-line-check').is(':checked');
         const $qty = $row.find('.paid-reversal-line-qty');
-        const maxQty = parseFloat($qty.attr('max') || 0);
-        const qty = Math.max(0, Math.min(maxQty, parseFloat($qty.val() || 0)));
-        const remainingAmount = parseFloat($row.data('remaining-amount') || 0);
-        const estimate = maxQty > 0 ? (remainingAmount * qty / maxQty) : 0;
-        $row.find('.paid-reversal-line-estimate').text(`${estimate.toFixed(2)} ج.م`);
+        const maxQty = paidReversalQuantity($qty.attr('max') || '0');
+        let qty = '0.000000';
+        try {
+            qty = paidReversalQuantity($qty.val() || '0');
+        } catch (ignored) {
+            qty = '0.000000';
+        }
+        if (money.compareDecimalStrings(qty, maxQty, 6) > 0) {
+            qty = maxQty;
+        }
+        const remainingAmount = paidReversalMoney($row.attr('data-remaining-amount') || '0');
+        const estimate = money.compareDecimalStrings(maxQty, '0.000000', 6) > 0
+            ? money.prorateMoneyByQuantity(remainingAmount, qty, maxQty)
+            : '0.00';
+        $row.find('.paid-reversal-line-estimate').text(`${estimate} ج.م`);
         if (selected) {
-            total += estimate;
+            total = money.addDecimalStrings(total, estimate, 2);
         }
     });
-    $('#paid-reversal-items-total').text(`الإجمالي التقريبي المحدد: ${total.toFixed(2)} ج.م — الخادم يحسب القيمة النهائية من لقطة البيع.`);
+    $('#paid-reversal-items-total').text(`الإجمالي التقريبي المحدد: ${total} ج.م — الخادم يحسب القيمة النهائية من لقطة البيع.`);
 }
 
 function updatePaidReversalRefundModeVisibility() {
@@ -4765,6 +4971,10 @@ function openPaidOrderReversalModal(orderId, refundEligible, voidEligible, optio
     }
 
     paidReversalState.orderId = parseInt(orderId || 0, 10);
+    paidReversalState.mutationVersion = Math.max(
+        1,
+        parseInt(options && options.mutationVersion || 1, 10) || 1
+    );
     paidReversalState.canRefund = refundEligible;
     paidReversalState.canVoid = voidEligible;
     paidReversalState.submitting = false;
@@ -4779,11 +4989,10 @@ function openPaidOrderReversalModal(orderId, refundEligible, voidEligible, optio
     paidReversalState.refundableLines = Array.isArray(options && options.refundableLines)
         ? options.refundableLines
         : [];
-    paidReversalState.originalTotal = Math.max(0, parseFloat(options && options.originalTotal || 0));
-    paidReversalState.refundedAmount = Math.max(0, parseFloat(options && options.refundedAmount || 0));
-    paidReversalState.remainingRefundableAmount = Math.max(
-        0,
-        parseFloat(options && options.remainingRefundableAmount || 0)
+    paidReversalState.originalTotal = paidReversalMoney(options && options.originalTotal || '0');
+    paidReversalState.refundedAmount = paidReversalMoney(options && options.refundedAmount || '0');
+    paidReversalState.remainingRefundableAmount = paidReversalMoney(
+        options && options.remainingRefundableAmount || '0'
     );
     if (!options || !options.keepApproval) {
         paidReversalState.pendingApprovalId = 0;
@@ -4795,7 +5004,7 @@ function openPaidOrderReversalModal(orderId, refundEligible, voidEligible, optio
     populatePaidReversalRefundLines();
     $('#paid-reversal-amount')
         .val('')
-        .attr('max', paidReversalState.remainingRefundableAmount.toFixed(2));
+        .attr('max', paidReversalState.remainingRefundableAmount);
     $('#paid-reversal-policy').val('waste');
     $('#paid-reversal-reason').val('');
     resetPaidReversalValidation();
@@ -4841,11 +5050,18 @@ function submitPaidOrderReversal(approvalId) {
     let refundAmount = '';
     let refundLines = [];
     if (action === 'refund' && refundMode === 'amount') {
-        refundAmount = String($('#paid-reversal-amount').val() || '').trim();
-        const parsedAmount = parseFloat(refundAmount);
-        if (!Number.isFinite(parsedAmount) || parsedAmount <= 0
-            || parsedAmount - paidReversalState.remainingRefundableAmount > 0.005
-        ) {
+        try {
+            refundAmount = paidReversalMoney($('#paid-reversal-amount').val());
+        } catch (ignored) {
+            refundAmount = '';
+        }
+        if (refundAmount === ''
+            || window.POSOrderApi.compareDecimalStrings(refundAmount, '0.00', 2) <= 0
+            || window.POSOrderApi.compareDecimalStrings(
+                refundAmount,
+                paidReversalState.remainingRefundableAmount,
+                2
+            ) > 0) {
             showPaidReversalValidation('أدخل مبلغاً صحيحاً لا يتجاوز الرصيد القابل للاسترداد.');
             $('#paid-reversal-amount').trigger('focus');
             return;
@@ -4857,12 +5073,20 @@ function submitPaidOrderReversal(approvalId) {
                 return;
             }
             const $qty = $row.find('.paid-reversal-line-qty');
-            const quantity = parseFloat($qty.val() || 0);
-            const maxQuantity = parseFloat($qty.attr('max') || 0);
-            if (Number.isFinite(quantity) && quantity > 0 && quantity <= maxQuantity + 0.0000005) {
+            let quantity = '';
+            let maxQuantity = '';
+            try {
+                quantity = paidReversalQuantity($qty.val());
+                maxQuantity = paidReversalQuantity($qty.attr('max'));
+            } catch (ignored) {
+                quantity = '';
+            }
+            if (quantity !== ''
+                && window.POSOrderApi.compareDecimalStrings(quantity, '0.000000', 6) > 0
+                && window.POSOrderApi.compareDecimalStrings(quantity, maxQuantity, 6) <= 0) {
                 refundLines.push({
                     original_detail_id: parseInt($row.data('refund-detail-id') || 0, 10),
-                    quantity: quantity.toFixed(6),
+                    quantity: quantity,
                     stock_disposition: policy === 'return_to_stock' ? 'restock' : 'waste',
                 });
             }
@@ -4885,6 +5109,7 @@ function submitPaidOrderReversal(approvalId) {
 
     const postData = {
         order_id: orderId,
+        mutation_version: paidReversalState.mutationVersion,
         action: action,
         refund_stock_policy: policy,
         reason: reason,
@@ -4948,14 +5173,14 @@ function submitPaidOrderReversal(approvalId) {
                         }
                     }
                     if (window.Swal && typeof window.Swal.fire === 'function') {
-                        const pendingExternal = parseFloat(
-                            (response.data && response.data.pending_external_amount) || 0
+                        const pendingExternal = paidReversalMoney(
+                            (response.data && response.data.pending_external_amount) || '0'
                         );
                         Swal.fire({
                             icon: 'success',
                             title: action === 'void'
                                 ? 'تم إلغاء الطلب المدفوع'
-                                : (pendingExternal > 0
+                                : (window.POSOrderApi.compareDecimalStrings(pendingExternal, '0.00', 2) > 0
                                     ? 'تم تسجيل الاسترداد وهو بانتظار التسوية الخارجية'
                                     : 'تم استرداد مبلغ الطلب وحفظ المرتجع'),
                             timer: 1800,
@@ -5053,9 +5278,11 @@ function editOrder(orderId) {
 
 function deleteOrder(orderId, tableId, approvalId) {
     const runDelete = function () {
+        const order = recentOrdersState.ordersById[String(orderId)] || {};
         const postData = {
             order_id: orderId,
             table_id: parseInt(tableId || 0, 10),
+            mutation_version: Math.max(1, parseInt(order.mutation_version || 1, 10) || 1),
             idempotency_key: createPOSIdempotencyKey('pos.order.cancel'),
         };
         if (approvalId) {
@@ -5166,6 +5393,7 @@ $(document).ready(function() {
         // Open the modal first; PIN is requested on submit for the selected action
         // (refund vs void) so the approval permission key always matches.
         openPaidOrderReversalModal(orderId, refundEligible, voidEligible, {
+            mutationVersion: order.mutation_version,
             originalPayments: Array.isArray(order.original_payments) ? order.original_payments : [],
             refundTenders: recentOrdersState.refundTenders,
             refundableLines: Array.isArray(order.refundable_lines) ? order.refundable_lines : [],

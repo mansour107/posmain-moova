@@ -12,11 +12,14 @@ class PaymentInputValidator
         $data['order_id'] = TableInputValidator::optionalPositiveInt($data['order_id'] ?? 0, 'معرف الطلب غير صحيح');
         $data['discount'] = self::optionalMoney($data['discount'] ?? null, 'قيمة الخصم غير صحيحة');
         $data['net'] = self::optionalMoney($data['net'] ?? null, 'صافي الطلب غير صحيح');
-        $data['paid'] = self::money($data['paid'] ?? $data['amount_paid'] ?? 0, 'بيانات غير صحيحة');
-        $data['payment_method'] = self::paymentMethod($data['payment_method_id'] ?? $data['payment_method'] ?? 'cash');
-        $data['payment_method_id'] = $data['payment_method'];
         $data['notes'] = self::notes($data['notes'] ?? '');
         $data['reference_no'] = self::notes($data['reference_no'] ?? $data['notes'] ?? '');
+        $data['tenders'] = self::tenders($data, 'بيانات غير صحيحة');
+        $data['paid'] = self::sumTenderAmounts($data['tenders']);
+        $data['payment_method'] = count($data['tenders']) === 1
+            ? $data['tenders'][0]['payment_method']
+            : 'mixed';
+        $data['payment_method_id'] = $data['payment_method'];
 
         return $data;
     }
@@ -26,10 +29,76 @@ class PaymentInputValidator
         $data['order_id'] = TableInputValidator::positiveInt($data['order_id'] ?? $data['original_order_id'] ?? 0, 'بيانات السداد المقسم غير صحيحة');
         $data['table_id'] = TableInputValidator::positiveInt($data['table_id'] ?? 0, 'بيانات السداد المقسم غير صحيحة');
         $data['items'] = self::splitItems($data['items'] ?? null);
-        $data['paid_amount'] = self::money($data['paid_amount'] ?? $data['paid'] ?? 0, 'بيانات السداد المقسم غير صحيحة');
-        $data['payment_method'] = self::paymentMethod($data['payment_method'] ?? 'cash');
+        $data['notes'] = self::notes($data['notes'] ?? '');
+        $data['reference_no'] = self::notes($data['reference_no'] ?? $data['notes'] ?? '');
+        $data['tenders'] = self::tenders($data, 'بيانات السداد المقسم غير صحيحة');
+        $data['paid_amount'] = self::sumTenderAmounts($data['tenders']);
+        $data['payment_method'] = count($data['tenders']) === 1
+            ? $data['tenders'][0]['payment_method']
+            : 'mixed';
 
         return $data;
+    }
+
+    private static function tenders(array $data, string $message): array
+    {
+        $rawTenders = $data['tenders'] ?? null;
+        if ($rawTenders === null || $rawTenders === []) {
+            $method = self::paymentMethod($data['payment_method_id'] ?? $data['payment_method'] ?? 'cash');
+            if ($method === 'mixed') {
+                throw new InvalidArgumentException($message);
+            }
+
+            return [[
+                'payment_method' => $method,
+                'amount' => self::money($data['paid_amount'] ?? $data['paid'] ?? $data['amount_paid'] ?? 0, $message),
+                'reference_no' => self::notes($data['reference_no'] ?? $data['notes'] ?? ''),
+            ]];
+        }
+        if (!is_array($rawTenders) || count($rawTenders) > 8) {
+            throw new InvalidArgumentException($message);
+        }
+
+        $normalized = [];
+        foreach ($rawTenders as $rawTender) {
+            if (!is_array($rawTender)) {
+                throw new InvalidArgumentException($message);
+            }
+            $normalized[] = [
+                'payment_method' => self::paymentMethod(
+                    $rawTender['payment_method_id']
+                    ?? $rawTender['payment_method']
+                    ?? $rawTender['method']
+                    ?? ''
+                ),
+                'amount' => self::money(
+                    $rawTender['amount'] ?? $rawTender['paid'] ?? $rawTender['tendered_amount'] ?? 0,
+                    $message
+                ),
+                'reference_no' => self::notes(
+                    $rawTender['reference_no']
+                    ?? $rawTender['reference']
+                    ?? $data['reference_no']
+                    ?? $data['notes']
+                    ?? ''
+                ),
+            ];
+        }
+        if ($normalized === []) {
+            throw new InvalidArgumentException($message);
+        }
+
+        return $normalized;
+    }
+
+    private static function sumTenderAmounts(array $tenders): string
+    {
+        $total = Money::zero();
+        foreach ($tenders as $tender) {
+            $total = $total->add(Money::from((string) ($tender['amount'] ?? '0')));
+        }
+
+        return $total->toString();
     }
 
     public static function paymentMethod($value): string

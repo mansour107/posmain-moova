@@ -8,6 +8,8 @@ if (!isset($_SESSION['login']) || !isset($_SESSION['userid'])) {
 }
 
 include('includes/connect.php');
+require_once __DIR__ . '/classes/Financial/Money.php';
+require_once __DIR__ . '/classes/Pos/Service/LegacyOrderLinePresentationService.php';
 
 if (
     !isset($_SESSION['pos_authenticated']) ||
@@ -339,19 +341,36 @@ if ($selected_table) {
         $items_result = $conn->query($items_query);
         
         if ($items_result) {
+            $tableLinePresentation = new LegacyOrderLinePresentationService();
             while ($item = $items_result->fetch_assoc()) {
+                $presentedLine = $tableLinePresentation->presentSaleLine($item);
+                $item['presented_qty'] = $tableLinePresentation->inputValue($presentedLine['qty']);
+                $item['presented_total'] = Money::from($item['det_value'] ?? '0')->toString();
                 $order_items[] = $item;
             }
         }
         
         // حساب الإجماليات
-        $order_totals['total'] = floatval($order_data['fat_total'] ?? 0);
-        $order_totals['discount'] = floatval($order_data['fat_disc'] ?? 0);
-        $order_totals['extra'] = floatval($order_data['fat_plus'] ?? 0);
-        $net = $order_totals['total'] - $order_totals['discount'] + $order_totals['extra'];
-        $order_totals['net'] = $net;
-        $order_totals['paid'] = floatval($order_data['paid_amount'] ?? 0);
-        $order_totals['remaining'] = floatval($order_data['remaining_amount'] ?? max(0, $net - $order_totals['paid']));
+        $order_totals['total'] = Money::from($order_data['fat_total'] ?? '0')->toString();
+        $order_totals['discount'] = Money::from($order_data['fat_disc'] ?? '0')->toString();
+        $order_totals['extra'] = Money::from($order_data['fat_plus'] ?? '0')->toString();
+        $netMoney = Money::from($order_totals['total'])
+            ->subtract(Money::from($order_totals['discount']))
+            ->add(Money::from($order_totals['extra']));
+        if ($netMoney->isNegative()) {
+            $netMoney = Money::zero();
+        }
+        $order_totals['net'] = $netMoney->toString();
+        $order_totals['paid'] = Money::from($order_data['paid_amount'] ?? '0')->toString();
+        if (array_key_exists('remaining_amount', $order_data) && $order_data['remaining_amount'] !== null) {
+            $remainingMoney = Money::from($order_data['remaining_amount']);
+        } else {
+            $remainingMoney = $netMoney->subtract(Money::from($order_totals['paid']));
+            if ($remainingMoney->isNegative()) {
+                $remainingMoney = Money::zero();
+            }
+        }
+        $order_totals['remaining'] = $remainingMoney->toString();
 
         $move_stmt = $conn->prepare("
             SELECT t.id, t.tname
@@ -378,7 +397,7 @@ if ($selected_table) {
         $move_stmt->close();
 
         $merge_stmt = $conn->prepare("
-            SELECT t.id, t.tname, oh.id AS order_id
+            SELECT t.id, t.tname, oh.id AS order_id, oh.mutation_version
             FROM tables t
             INNER JOIN ot_head oh ON oh.table_id = t.id
                 AND oh.pro_tybe = 9
@@ -471,13 +490,13 @@ if ($selected_table) {
                         <div class="col-6">
                             <div class="p-3 bg-light rounded-3 text-center border">
                                 <small class="text-muted d-block mb-1">الإجمالي</small>
-                                <h4 class="mb-0 fw-bold text-primary"><?= number_format($order_totals['total'], 2) ?></h4>
+                                <h4 class="mb-0 fw-bold text-primary"><?= htmlspecialchars($order_totals['total']) ?></h4>
                             </div>
                         </div>
                         <div class="col-6">
                             <div class="p-3 bg-light rounded-3 text-center border">
                                 <small class="text-muted d-block mb-1">الصافي</small>
-                                <h4 class="mb-0 fw-bold text-success"><?= number_format($order_totals['net'], 2) ?></h4>
+                                <h4 class="mb-0 fw-bold text-success"><?= htmlspecialchars($order_totals['net']) ?></h4>
                             </div>
                         </div>
                     </div>
@@ -533,7 +552,7 @@ if ($selected_table) {
                                     <select class="form-select" id="merge_destination_table" aria-label="دمج الطلب مع طاولة">
                                         <option value="">دمج مع طاولة مشغولة...</option>
                                         <?php foreach ($merge_table_options as $merge_table): ?>
-                                            <option value="<?= (int) $merge_table['id'] ?>" data-order-id="<?= (int) $merge_table['order_id'] ?>">
+                                            <option value="<?= (int) $merge_table['id'] ?>" data-order-id="<?= (int) $merge_table['order_id'] ?>" data-mutation-version="<?= max(1, (int) ($merge_table['mutation_version'] ?? 1)) ?>">
                                                 <?= htmlspecialchars($merge_table['tname']) ?> - طلب #<?= (int) $merge_table['order_id'] ?>
                                             </option>
                                         <?php endforeach; ?>
@@ -556,10 +575,10 @@ if ($selected_table) {
                                 <div class="list-group-item d-flex justify-content-between align-items-center p-3">
                                     <div>
                                         <h6 class="mb-0 fw-bold"><?= htmlspecialchars($item['iname'] ?? 'غير محدد') ?></h6>
-                                        <small class="text-muted">الكمية: <?= number_format($item['actual_qty'] ?? 0, 2) ?></small>
+                                        <small class="text-muted">الكمية: <?= htmlspecialchars((string) ($item['presented_qty'] ?? '0')) ?></small>
                                     </div>
                                     <div class="text-end">
-                                        <span class="fw-bold text-primary"><?= number_format(($item['actual_qty'] ?? 0) * ($item['price'] ?? 0), 2) ?></span>
+                                        <span class="fw-bold text-primary"><?= htmlspecialchars((string) ($item['presented_total'] ?? '0.00')) ?></span>
                                     </div>
                                 </div>
                             <?php endforeach; ?>
@@ -600,7 +619,9 @@ if ($selected_table) {
             </div>
             <div class="modal-body">
                 <input type="hidden" id="currentTableId">
-                <input type="hidden" id="currentOrderId">
+                <input type="hidden" id="currentOrderId" value="<?= !empty($order_data['id']) ? (int) $order_data['id'] : '' ?>">
+                <input type="hidden" id="currentOrderMutationVersion" value="<?= !empty($order_data) ? max(1, (int) ($order_data['mutation_version'] ?? 1)) : '' ?>">
+                <input type="hidden" id="currentOrderRemainingAmount" value="0.00">
                 <div class="row g-3">
                     <!-- الإجمالي -->
                     <div class="col-12">
@@ -634,7 +655,7 @@ if ($selected_table) {
                                         <label class="form-label fw-bold">الخصم %</label>
                                         <div class="input-group">
                                             <input class="form-control text-center" 
-                                                   type="number" id="modal_discperc" value="0" min="0" max="100" step="0.1">
+                                                   type="number" id="modal_discperc" value="0" min="0" max="100" step="0.000001" readonly>
                                             <span class="input-group-text">%</span>
                                         </div>
                                     </div>
@@ -642,7 +663,7 @@ if ($selected_table) {
                                         <label class="form-label fw-bold">قيمة الخصم</label>
                                         <div class="input-group">
                                             <input class="form-control text-center" 
-                                                   type="number" id="modal_discount" value="0" step="0.01">
+                                                   type="number" id="modal_discount" value="0" min="0" step="0.01" readonly>
                                             <span class="input-group-text bg-primary text-white">ج.م</span>
                                         </div>
                                     </div>
@@ -730,8 +751,12 @@ if ($selected_table) {
                     </table>
                 </div>
                 <div class="row mt-3 border-top pt-3">
-                    <div class="col-6">
-                        <h5>الإجمالي المحدد: <span id="splitTotal" class="text-success">0.00</span> ج.م</h5>
+                    <div class="col-12">
+                        <div class="small text-muted">
+                            الإجمالي: <span id="splitGross">0.00</span> ج.م
+                            · الخصم الموزع: <span id="splitDiscount">0.00</span> ج.م
+                        </div>
+                        <h5>المطلوب سداده: <span id="splitTotal" class="text-success">0.00</span> ج.م</h5>
                     </div>
                 </div>
             </div>
@@ -749,6 +774,7 @@ if ($selected_table) {
 
 <!-- Scripts are located after footer to ensure jQuery is loaded -->
 <?= csrf_meta_tag('pos_browser', 'posmain-csrf-token') ?>
+<script src="js/pos_order_api.js?v=<?= (int) (@filemtime(__DIR__ . '/js/pos_order_api.js') ?: 1) ?>"></script>
 <script>
 const posTableCsrfTokenElement = document.querySelector('meta[name="posmain-csrf-token"]');
 window.POSMAIN_CSRF_TOKEN = posTableCsrfTokenElement ? posTableCsrfTokenElement.getAttribute('content') : '';
@@ -768,6 +794,36 @@ if (window.jQuery && typeof window.jQuery.ajaxSetup === 'function') {
 }
 
 const posTablePageRequestKeys = {};
+const posTablePageMutationActive = {};
+
+function posTablePageMoneyApi() {
+    if (!window.POSOrderApi || typeof window.POSOrderApi.decimalString !== 'function') {
+        throw new Error('POS_MONEY_KERNEL_UNAVAILABLE');
+    }
+
+    return window.POSOrderApi;
+}
+
+function posTablePageMoney(value) {
+    return posTablePageMoneyApi().decimalString(value === null || value === undefined || value === '' ? '0' : value, 2, '0');
+}
+
+function posTablePagePercentage(value) {
+    return posTablePageMoneyApi().decimalString(value === null || value === undefined || value === '' ? '0' : value, 6, '0');
+}
+
+function posTablePageEscapeHtml(value) {
+    return String(value === null || value === undefined ? '' : value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+}
+
+function posTablePageIsPositive(value) {
+    return posTablePageMoneyApi().compareDecimalStrings(posTablePageMoney(value), '0.00', 2) > 0;
+}
 
 function createPOSTablePageIdempotencyKey(scope) {
     if (window.crypto && typeof window.crypto.randomUUID === 'function') {
@@ -789,27 +845,7 @@ function clearPOSTablePageIdempotencyKey(scope) {
     delete posTablePageRequestKeys[scope];
 }
 
-// حساب الخصم والصافي
 $(document).ready(function() {
-    $(document).on('input', '#modal_discperc, #modal_discount', function() {
-        const total = parseFloat($('#modal_total').text().replace(' ج.م', '')) || 0;
-        let discount = 0;
-        
-        if ($(this).attr('id') === 'modal_discperc') {
-            const discPerc = parseFloat($(this).val()) || 0;
-            discount = (total * discPerc) / 100;
-            $('#modal_discount').val(discount.toFixed(2));
-        } else {
-            discount = parseFloat($(this).val()) || 0;
-            const discPerc = total > 0 ? (discount / total) * 100 : 0;
-            $('#modal_discperc').val(discPerc.toFixed(1));
-        }
-        
-        const net = total - discount;
-        $('#modal_net').text(net.toFixed(2) + ' ج.م');
-        calculateChange();
-    });
-
     // حساب الباقي
     $(document).on('input', '#modal_paid', calculateChange);
 
@@ -828,16 +864,20 @@ $(document).ready(function() {
 });
 
 function calculateChange() {
-    const net = parseFloat($('#modal_net').text().replace(' ج.م', '')) || 0;
-    const paid = parseFloat($('#modal_paid').val()) || 0;
-    const change = paid - net;
-    $('#modal_change').val(change.toFixed(2));
+    const money = posTablePageMoneyApi();
+    const due = posTablePageMoney($('#currentOrderRemainingAmount').val());
+    const paid = posTablePageMoney($('#modal_paid').val());
+    const sufficient = money.compareDecimalStrings(paid, due, 2) >= 0;
+    const change = sufficient
+        ? money.subtractDecimalStrings(paid, due, 2)
+        : '-' + money.subtractDecimalStrings(due, paid, 2);
+    $('#modal_change').val(change);
     
     // تغيير لون الباقي
     const changeInput = $('#modal_change');
     const changeSpan = changeInput.next('.input-group-text');
     
-    if (change >= 0) {
+    if (sufficient) {
         changeInput.removeClass('bg-danger text-white').addClass('bg-success text-white');
         changeSpan.removeClass('bg-danger text-white').addClass('bg-success text-white');
     } else {
@@ -847,41 +887,52 @@ function calculateChange() {
 }
 
 function processAdvancedPayment() {
-    console.log('تم استدعاء processAdvancedPayment');
     const requestScope = 'pos.payment.table';
+    if (posTablePageMutationActive[requestScope]) {
+        return;
+    }
     
     const tableId = $('#currentTableId').val();
-    const total = parseFloat($('#modal_total').text().replace(' ج.م', '')) || 0;
-    const discount = parseFloat($('#modal_discount').val()) || 0;
-    const net = parseFloat($('#modal_net').text().replace(' ج.م', '')) || 0;
-    const paid = parseFloat($('#modal_paid').val()) || 0;
-    
-    console.log('بيانات الدفع:', { tableId, total, discount, net, paid });
+    const orderId = $('#currentOrderId').val();
+    const mutationVersion = parseInt($('#currentOrderMutationVersion').val() || '0', 10) || 0;
+    const total = posTablePageMoney($('#modal_total').attr('data-money') || '0');
+    const discount = posTablePageMoney($('#modal_discount').val());
+    const net = posTablePageMoney($('#modal_net').attr('data-money') || '0');
+    const paid = posTablePageMoney($('#modal_paid').val());
     
     if (!tableId) {
         alert('يرجى اختيار طاولة');
         return;
     }
     
-    if (paid <= 0) {
+    if (!orderId || mutationVersion < 1) {
+        alert('تعذر تحديد نسخة الطلب الحالية. أعد تحميل الطاولة وحاول مرة أخرى.');
+        return;
+    }
+
+    if (!posTablePageIsPositive(paid)) {
         alert('يرجى إدخال مبلغ صحيح');
         return;
     }
-    
+
+    posTablePageMutationActive[requestScope] = true;
+    $('#paymentConfirmBtn').prop('disabled', true);
     $.ajax({
         url: 'ajax/process_table_payment.php',
         method: 'POST',
         data: { 
             table_id: tableId,
+            order_id: orderId,
+            mutation_version: mutationVersion,
             total: total,
             discount: discount,
             net: net,
             paid: paid,
+            payment_method: 'cash',
             idempotency_key: getPOSTablePageIdempotencyKey(requestScope)
         },
         dataType: 'json',
         success: function(data) {
-            console.log('استجابة الخادم:', data);
             if (data.success) {
                 clearPOSTablePageIdempotencyKey(requestScope);
                 closeModal();
@@ -889,15 +940,14 @@ function processAdvancedPayment() {
                 // التحويل مباشرة إلى صفحة الفاتورة
                 window.location.href = 'print/receipt.php?id=' + orderId;
             } else {
+                posTablePageMutationActive[requestScope] = false;
+                $('#paymentConfirmBtn').prop('disabled', false);
                 alert('حدث خطأ: ' + (data.message || 'خطأ غير محدد'));
             }
         },
         error: function(xhr, status, error) {
-            console.error('Ajax error:', {
-                status: status,
-                error: error,
-                responseText: xhr.responseText
-            });
+            posTablePageMutationActive[requestScope] = false;
+            $('#paymentConfirmBtn').prop('disabled', false);
             alert('حدث خطأ في الاتصال: ' + error);
         }
     });
@@ -911,16 +961,20 @@ function processTablePayment(tableId) {
         data: { table_id: tableId },
         dataType: 'json',
         success: function(data) {
-            console.log('بيانات الطاولة:', data);
             if (data.success) {
                 $('#currentTableId').val(tableId);
                 $('#currentOrderId').val(data.order_id); // حفظ معرف الطلب
-                $('#modal_total').text(data.total.toFixed(2) + ' ج.م');
-                $('#modal_discount').val(data.discount || 0);
-                const net = data.total - (data.discount || 0);
-                $('#modal_net').text(net.toFixed(2) + ' ج.م');
-                $('#modal_paid').val(net.toFixed(2));
-                $('#modal_discperc').val('0.0');
+                $('#currentOrderMutationVersion').val(parseInt(data.mutation_version || '0', 10) || '');
+                const total = posTablePageMoney(data.total);
+                const discount = posTablePageMoney(data.discount);
+                const net = posTablePageMoney(data.net);
+                const remaining = posTablePageMoney(data.remaining);
+                $('#currentOrderRemainingAmount').val(remaining);
+                $('#modal_total').attr('data-money', total).text(total + ' ج.م');
+                $('#modal_discount').val(discount);
+                $('#modal_net').attr('data-money', net).text(net + ' ج.م');
+                $('#modal_paid').val(remaining);
+                $('#modal_discperc').val(posTablePageMoneyApi().percentageFromMoney(discount, total));
                 
                 // حساب الباقي
                 calculateChange();
@@ -940,6 +994,7 @@ function processTablePayment(tableId) {
 function clearTableNormal(tableId) {
     if (!tableId) { alert('خطأ: رقم الطاولة غير موجود'); return; }
     const requestScope = 'pos.order.cancel';
+    const mutationVersion = parseInt($('#currentOrderMutationVersion').val() || '0', 10) || 0;
     if(confirm('هل تريد تفريغ الطاولة تفريغ عادي؟\nسيتم حفظ الطلب في النظام وتفريغ الطاولة')) {
         $.ajax({
             url: 'ajax/clear_table_normal.php',
@@ -947,6 +1002,8 @@ function clearTableNormal(tableId) {
             data: {
                 table_id: tableId,
                 table_name: 'Table ' + tableId,
+                order_id: $('#currentOrderId').val() || '',
+                mutation_version: mutationVersion > 0 ? mutationVersion : '',
                 idempotency_key: getPOSTablePageIdempotencyKey(requestScope)
             },
             success: function(data) {
@@ -975,6 +1032,7 @@ function clearTableNormal(tableId) {
 function clearTableDirect(tableId) {
     if (!tableId) { alert('خطأ: رقم الطاولة غير موجود'); return; }
     const requestScope = 'pos.order.cancel';
+    const mutationVersion = parseInt($('#currentOrderMutationVersion').val() || '0', 10) || 0;
     if(confirm('هل تريد تفريغ الطاولة مباشرة بدون سداد؟')) {
         $.ajax({
             url: 'ajax/update_table_status.php',
@@ -982,6 +1040,8 @@ function clearTableDirect(tableId) {
             data: {
                 table_id: tableId,
                 action: 'clear',
+                order_id: $('#currentOrderId').val() || '',
+                mutation_version: mutationVersion > 0 ? mutationVersion : '',
                 idempotency_key: getPOSTablePageIdempotencyKey(requestScope)
             },
             success: function(data) {
@@ -1034,6 +1094,7 @@ function moveTableOrder(sourceTableId, orderId) {
             source_table_id: sourceTableId,
             destination_table_id: destinationTableId,
             order_id: orderId,
+            mutation_version: parseInt($('#currentOrderMutationVersion').val() || '0', 10) || '',
             idempotency_key: getPOSTablePageIdempotencyKey(requestScope)
         },
         success: function(response) {
@@ -1055,6 +1116,8 @@ function moveTableOrder(sourceTableId, orderId) {
 function mergeTableOrders(sourceTableId, sourceOrderId) {
     const destinationTableId = $('#merge_destination_table').val();
     const destinationOrderId = $('#merge_destination_table option:selected').data('order-id') || '';
+    const destinationMutationVersion = parseInt($('#merge_destination_table option:selected').data('mutation-version') || '0', 10) || 0;
+    const sourceMutationVersion = parseInt($('#currentOrderMutationVersion').val() || '0', 10) || 0;
     const requestScope = 'pos.table.merge';
     if (!sourceTableId || !sourceOrderId) {
         alert('لا يوجد طلب نشط لدمجه');
@@ -1081,6 +1144,8 @@ function mergeTableOrders(sourceTableId, sourceOrderId) {
             destination_table_id: destinationTableId,
             source_order_id: sourceOrderId,
             destination_order_id: destinationOrderId,
+            source_mutation_version: sourceMutationVersion > 0 ? sourceMutationVersion : '',
+            destination_mutation_version: destinationMutationVersion > 0 ? destinationMutationVersion : '',
             idempotency_key: getPOSTablePageIdempotencyKey(requestScope)
         },
         success: function(response) {
@@ -1129,6 +1194,9 @@ function closeModal() {
 
 let currentSplitTableId = 0;
 let currentSplitOrderId = 0;
+let currentSplitMutationVersion = 0;
+let currentSplitOrderGross = '0.00';
+let currentSplitOrderDiscount = '0.00';
 
 function openSplitPaymentModal(tableId, orderId) {
     currentSplitTableId = tableId;
@@ -1138,24 +1206,31 @@ function openSplitPaymentModal(tableId, orderId) {
     $.get('ajax/get_table_items.php', { order_id: orderId }, function(data) {
         let response = (typeof data === 'string') ? JSON.parse(data) : data;
         if (response.success) {
+            currentSplitMutationVersion = parseInt(response.mutation_version || '0', 10) || 0;
+            currentSplitOrderGross = posTablePageMoney(response.order_total);
+            currentSplitOrderDiscount = posTablePageMoney(response.order_discount);
             let html = '';
             response.items.forEach(item => {
+                const detailId = parseInt(item.id || '0', 10) || 0;
+                const amount = posTablePageMoney(item.total);
                 html += `
                     <tr>
                         <td>
                             <input type="checkbox" class="split-item-check" 
-                                   value="${item.id}" 
-                                   data-amount="${item.total}"
+                                   value="${detailId}"
+                                   data-amount="${posTablePageEscapeHtml(amount)}"
                                    onchange="updateSplitTotal()">
                         </td>
-                        <td>${item.name}</td>
-                        <td>${item.qty}</td>
-                        <td>${item.price.toFixed(2)}</td>
-                        <td>${item.total.toFixed(2)}</td>
+                        <td>${posTablePageEscapeHtml(item.name)}</td>
+                        <td>${posTablePageEscapeHtml(item.qty)}</td>
+                        <td>${posTablePageMoney(item.price)}</td>
+                        <td>${amount}</td>
                     </tr>
                 `;
             });
             $('#splitItemsBody').html(html);
+            $('#splitGross').text('0.00');
+            $('#splitDiscount').text('0.00');
             $('#splitTotal').text('0.00');
             $('#splitPaymentModal').modal('show');
         } else {
@@ -1170,15 +1245,29 @@ $('#selectAllItems').change(function() {
 });
 
 function updateSplitTotal() {
-    let total = 0;
+    const money = posTablePageMoneyApi();
+    let selectedGross = '0.00';
     $('.split-item-check:checked').each(function() {
-        total += parseFloat($(this).data('amount'));
+        selectedGross = money.addDecimalStrings(
+            selectedGross,
+            posTablePageMoney($(this).attr('data-amount')),
+            2
+        );
     });
-    $('#splitTotal').text(total.toFixed(2));
+    const selectedDiscount = money.compareDecimalStrings(selectedGross, '0.00', 2) > 0
+        ? money.allocateProportionalMoney(currentSplitOrderDiscount, selectedGross, currentSplitOrderGross)
+        : '0.00';
+    const payable = money.subtractDecimalStrings(selectedGross, selectedDiscount, 2);
+    $('#splitGross').text(selectedGross);
+    $('#splitDiscount').text(selectedDiscount);
+    $('#splitTotal').text(payable);
 }
 
 function confirmSplitPayment() {
     const requestScope = 'pos.payment.split';
+    if (posTablePageMutationActive[requestScope]) {
+        return;
+    }
     let selectedItems = [];
     $('.split-item-check:checked').each(function() {
         selectedItems.push($(this).val());
@@ -1189,9 +1278,15 @@ function confirmSplitPayment() {
         return;
     }
     
-    let amount = parseFloat($('#splitTotal').text());
+    const amount = posTablePageMoney($('#splitTotal').text());
+    if (currentSplitMutationVersion < 1 || !posTablePageIsPositive(amount)) {
+        alert('تعذر تحديد قيمة الطلب أو نسخته الحالية. أعد فتح نافذة السداد.');
+        return;
+    }
     
     if (confirm('هل أنت متأكد من سداد الأصناف المختارة بقيمة ' + amount + ' ج.م؟')) {
+        posTablePageMutationActive[requestScope] = true;
+        $('#splitPaymentModal .btn-success').prop('disabled', true);
         $.ajax({
             url: 'ajax/process_split_payment.php',
             method: 'POST',
@@ -1201,6 +1296,8 @@ function confirmSplitPayment() {
                 table_id: currentSplitTableId,
                 items: selectedItems,
                 paid_amount: amount,
+                payment_method: 'cash',
+                mutation_version: currentSplitMutationVersion,
                 idempotency_key: getPOSTablePageIdempotencyKey(requestScope)
             }),
             success: function(data) {
@@ -1214,10 +1311,14 @@ function confirmSplitPayment() {
                     }
                     location.reload();
                 } else {
+                    posTablePageMutationActive[requestScope] = false;
+                    $('#splitPaymentModal .btn-success').prop('disabled', false);
                     alert('خطأ: ' + response.message);
                 }
             },
             error: function() {
+                posTablePageMutationActive[requestScope] = false;
+                $('#splitPaymentModal .btn-success').prop('disabled', false);
                 alert('حدث خطأ في الاتصال');
             }
         });

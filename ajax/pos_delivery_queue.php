@@ -55,6 +55,7 @@ try {
     require_csrf('pos_browser');
     $action = trim((string) ($_POST['action'] ?? ''));
     $orderId = max(0, (int) ($_POST['order_id'] ?? 0));
+    $mutationVersion = max(0, (int) ($_POST['mutation_version'] ?? 0));
     if ($orderId < 1) {
         throw new InvalidArgumentException('ORDER_ID_REQUIRED');
     }
@@ -70,6 +71,9 @@ try {
         'branch' => $scope['branch'],
         'event_source' => 'pos_cashier_delivery_queue',
         'source_system' => 'pos_cashier_delivery_queue',
+        'mutation_version' => $mutationVersion,
+        'require_mutation_version' => true,
+        'require_outbox' => true,
     ];
 
     if ($action === 'dispatch') {

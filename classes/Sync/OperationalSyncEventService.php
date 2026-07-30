@@ -1,5 +1,6 @@
 <?php
 
+require_once __DIR__ . '/../../config/app_config.php';
 require_once __DIR__ . '/BranchIdentity.php';
 require_once __DIR__ . '/OperationalSyncDomains.php';
 require_once __DIR__ . '/PosOrderSnapshotBuilder.php';
@@ -689,6 +690,16 @@ class OperationalSyncEventService
         ]);
     }
 
+    public function recordRequiredDrawerMovementSnapshot(mysqli $conn, int $movementId, array $options = []): array
+    {
+        $result = $this->recordDrawerMovementSnapshot($conn, $movementId, $options);
+        if (!is_array($result) || (int) ($result['outbox_id'] ?? 0) < 1) {
+            throw new RuntimeException('DRAWER_MOVEMENT_OUTBOX_REQUIRED');
+        }
+
+        return $result;
+    }
+
     public function recordDrawerSessionSnapshot(mysqli $conn, int $sessionId, array $options = []): ?array
     {
         if (!$this->enabled($options['config'] ?? null) || $sessionId <= 0) {
@@ -895,6 +906,7 @@ class OperationalSyncEventService
         $aggregateLocalId = (int) $event['aggregate_local_id'];
         $idempotencyKey = 'pos:' . $event['aggregate_type'] . ':' . $aggregateLocalId . ':' . $event['idempotency_suffix'] . ':' . substr(hash('sha256', $branchUuid . ':' . $payloadHash), 0, 32);
         $role = (string) ($config['role'] ?? 'branch');
+        $deliveryStatus = $this->deliveryStatus($config);
 
         if (in_array($role, ['cloud', 'fake_cloud'], true) && !empty($config['sync']['cloud_to_branch_publish_enabled'])) {
             return [
@@ -952,7 +964,7 @@ class OperationalSyncEventService
                 payload_hash,
                 status,
                 attempts
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, 'pending', 0)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, 0)
             ON DUPLICATE KEY UPDATE
                 id = LAST_INSERT_ID(id),
                 payload_json = VALUES(payload_json),
@@ -978,6 +990,7 @@ class OperationalSyncEventService
             $idempotencyKey,
             $payloadJson,
             $payloadHash,
+            $deliveryStatus,
         ];
         $this->bindParams($stmt, str_repeat('s', count($params)), $params);
         $stmt->execute();
@@ -990,6 +1003,7 @@ class OperationalSyncEventService
             'branch_uuid' => $branchUuid,
             'idempotency_key' => $idempotencyKey,
             'payload_hash' => $payloadHash,
+            'status' => $deliveryStatus,
             'cloud_branch_events' => [],
         ];
     }
@@ -1006,8 +1020,7 @@ class OperationalSyncEventService
 
         $role = (string) ($config['role'] ?? 'branch');
         if ($role === 'branch') {
-            return !empty($config['sync']['outbox_enabled'])
-                && !empty($config['sync']['branch_sync_enabled']);
+            return !empty($config['sync']['outbox_enabled']);
         }
 
         if (in_array($role, ['cloud', 'fake_cloud'], true)) {
@@ -1015,6 +1028,13 @@ class OperationalSyncEventService
         }
 
         return false;
+    }
+
+    private function deliveryStatus(array $config): string
+    {
+        return !empty($config['sync']['branch_sync_enabled']) && !empty($config['sync']['worker_enabled'])
+            ? 'pending'
+            : 'held';
     }
 
     private function fetchRow(mysqli $conn, string $table, int $rowId): ?array

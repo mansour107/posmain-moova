@@ -4,6 +4,9 @@ require_once __DIR__ . '/../../TableOrderService.php';
 require_once __DIR__ . '/../../Recipe/RecipeDecimal.php';
 require_once __DIR__ . '/../../Recipe/RecipeOrderLifecycleService.php';
 require_once __DIR__ . '/OrderEventService.php';
+require_once __DIR__ . '/OrderMutationVersionService.php';
+require_once __DIR__ . '/../../Financial/FinancialMoneyInput.php';
+require_once __DIR__ . '/../../Sync/SyncOutboxEventService.php';
 
 class TableMergeService
 {
@@ -53,13 +56,14 @@ class TableMergeService
 
     private function mergeInsideTransaction(mysqli $conn, int $sourceTableId, int $destinationTableId, array $request, array $context): array
     {
-        $sourceTable = $this->tableById($conn, $sourceTableId, true);
-        $destinationTable = $this->tableById($conn, $destinationTableId, true);
-        $sourceOrder = $this->activeOrderForTable($conn, $sourceTableId, (int) ($request['source_order_id'] ?? $request['order_id'] ?? 0));
+        $lockedTables = $this->lockTablesInCanonicalOrder($conn, $sourceTableId, $destinationTableId);
+        $sourceTable = $lockedTables[$sourceTableId];
+        $destinationTable = $lockedTables[$destinationTableId];
+        $sourceOrder = $this->activeOrderForTable($conn, $sourceTableId, (int) ($request['source_order_id'] ?? $request['order_id'] ?? 0), false);
         if (!$sourceOrder) {
             throw new RuntimeException('SOURCE_ORDER_NOT_ACTIVE');
         }
-        $destinationOrder = $this->activeOrderForTable($conn, $destinationTableId, (int) ($request['destination_order_id'] ?? 0));
+        $destinationOrder = $this->activeOrderForTable($conn, $destinationTableId, (int) ($request['destination_order_id'] ?? 0), false);
         if (!$destinationOrder) {
             throw new RuntimeException('DESTINATION_ORDER_NOT_ACTIVE');
         }
@@ -68,6 +72,17 @@ class TableMergeService
         $destinationOrderId = (int) $destinationOrder['id'];
         if ($sourceOrderId === $destinationOrderId) {
             throw new InvalidArgumentException('TABLE_MERGE_SAME_ORDER');
+        }
+
+        $versionService = new OrderMutationVersionService();
+        $lockPairs = [
+            $sourceOrderId => $request['source_mutation_version'] ?? $request['mutation_version'] ?? null,
+            $destinationOrderId => $request['destination_mutation_version'] ?? null,
+        ];
+        $lockOrderIds = array_keys($lockPairs);
+        sort($lockOrderIds, SORT_NUMERIC);
+        foreach ($lockOrderIds as $lockOrderId) {
+            $versionService->lockAndAssert($conn, (int) $lockOrderId, $lockPairs[$lockOrderId], true);
         }
 
         $detailCount = $this->activeDetailCount($conn, $sourceOrderId);
@@ -81,8 +96,8 @@ class TableMergeService
             'destination_table_id' => $destinationTableId,
             'source_order_id' => $sourceOrderId,
             'destination_order_id' => $destinationOrderId,
-            'source_paid_amount' => (float) ($sourceOrder['paid_amount'] ?? 0),
-            'destination_paid_amount' => (float) ($destinationOrder['paid_amount'] ?? 0),
+            'source_paid_amount' => FinancialMoneyInput::moneyString($sourceOrder['paid_amount'] ?? '0'),
+            'destination_paid_amount' => FinancialMoneyInput::moneyString($destinationOrder['paid_amount'] ?? '0'),
         ];
 
         $this->tableOrderService->execute($conn, "
@@ -95,8 +110,13 @@ class TableMergeService
         $this->recordRecipeMergedLines($conn, $movedRecipeLines, $destinationOrder, $destinationOrderId);
 
         $totals = $this->tableOrderService->recalculateOrderTotals($conn, $destinationOrderId);
-        $combinedPaid = min((float) $totals['net'], max(0, (float) ($sourceOrder['paid_amount'] ?? 0) + (float) ($destinationOrder['paid_amount'] ?? 0)));
-        $status = $this->paidStatus((float) $totals['net'], $combinedPaid);
+        $netMoney = FinancialMoneyInput::money($totals['net'] ?? '0');
+        $combinedPaid = FinancialMoneyInput::money($sourceOrder['paid_amount'] ?? '0')
+            ->add(FinancialMoneyInput::money($destinationOrder['paid_amount'] ?? '0'));
+        if ($combinedPaid->compare($netMoney) > 0) {
+            $combinedPaid = $netMoney;
+        }
+        $status = $this->paidStatus($netMoney, $combinedPaid);
         $this->tableOrderService->execute($conn, "
             UPDATE ot_head
             SET paid_amount = ?,
@@ -137,7 +157,7 @@ class TableMergeService
             'order_status' => $status['order_status'],
             'paid_amount' => $status['paid_amount'],
             'remaining_amount' => $status['remaining_amount'],
-            'net' => (float) $totals['net'],
+            'net' => $netMoney->toString(),
         ];
 
         $metadata = [
@@ -147,6 +167,38 @@ class TableMergeService
         ];
         $this->recordEvent($conn, $destinationOrderId, 'table_merged', $context, $beforeState, $afterState, $metadata);
         $this->recordEvent($conn, $sourceOrderId, 'order_merged_into', $context, $beforeState, $afterState, $metadata);
+
+        $destinationMutationVersion = $versionService->bumpAndGet(
+            $conn,
+            $destinationOrderId,
+            $lockPairs[$destinationOrderId]
+        );
+        $sourceMutationVersion = $versionService->bumpAndGet(
+            $conn,
+            $sourceOrderId,
+            $lockPairs[$sourceOrderId]
+        );
+        if (!array_key_exists('record_outbox', $context) || (bool) $context['record_outbox']) {
+            $syncOutbox = new SyncOutboxEventService();
+            $syncOutbox->recordRequiredOrderSnapshot($conn, $sourceOrderId, [
+                'event_type' => 'order.table_merged_source',
+                'source_system' => 'pos_table_merge',
+            ]);
+            $syncOutbox->recordRequiredOrderSnapshot($conn, $destinationOrderId, [
+                'event_type' => 'order.table_merged_destination',
+                'source_system' => 'pos_table_merge',
+            ]);
+            $syncOutbox->recordRequiredTableSnapshot($conn, $sourceTableId, [
+                'event_type' => 'table.updated',
+                'source_system' => 'pos_table_merge',
+                'active_order_id' => null,
+            ]);
+            $syncOutbox->recordRequiredTableSnapshot($conn, $destinationTableId, [
+                'event_type' => 'table.updated',
+                'source_system' => 'pos_table_merge',
+                'active_order_id' => $destinationOrderId,
+            ]);
+        }
 
         return [
             'success' => true,
@@ -161,7 +213,10 @@ class TableMergeService
             'order_status' => $status['order_status'],
             'paid_amount' => $status['paid_amount'],
             'remaining_amount' => $status['remaining_amount'],
-            'net' => (float) $totals['net'],
+            'net' => $netMoney->toString(),
+            'source_mutation_version' => $sourceMutationVersion,
+            'destination_mutation_version' => $destinationMutationVersion,
+            'mutation_version' => $destinationMutationVersion,
         ];
     }
 
@@ -182,8 +237,21 @@ class TableMergeService
         return $row;
     }
 
-    private function activeOrderForTable(mysqli $conn, int $tableId, int $orderId = 0): ?array
+    private function lockTablesInCanonicalOrder(mysqli $conn, int $firstTableId, int $secondTableId): array
     {
+        $tableIds = [$firstTableId, $secondTableId];
+        sort($tableIds, SORT_NUMERIC);
+        $rows = [];
+        foreach ($tableIds as $tableId) {
+            $rows[$tableId] = $this->tableById($conn, $tableId, true);
+        }
+
+        return $rows;
+    }
+
+    private function activeOrderForTable(mysqli $conn, int $tableId, int $orderId = 0, bool $lock = true): ?array
+    {
+        $lockSql = $lock ? ' FOR UPDATE' : '';
         if ($orderId > 0) {
             return $this->tableOrderService->queryOne($conn, "
                 SELECT *
@@ -195,7 +263,7 @@ class TableMergeService
                   AND COALESCE(order_status, 'active') = 'active'
                   AND COALESCE(payment_status, 'unpaid') IN ('unpaid', 'partial')
                 LIMIT 1
-                FOR UPDATE
+                {$lockSql}
             ", [$orderId, $tableId]);
         }
 
@@ -209,7 +277,7 @@ class TableMergeService
               AND COALESCE(payment_status, 'unpaid') IN ('unpaid', 'partial')
             ORDER BY id DESC
             LIMIT 1
-            FOR UPDATE
+            {$lockSql}
         ", [$tableId]);
     }
 
@@ -333,15 +401,20 @@ class TableMergeService
         return $text === '' ? null : $text;
     }
 
-    private function paidStatus(float $net, float $paid): array
+    private function paidStatus(Money $net, Money $paid): array
     {
-        $paid = min(max(0, $paid), max(0, $net));
-        $remaining = max(0, $net - $paid);
-        if ($paid <= 0) {
+        if ($paid->isNegative()) {
+            $paid = Money::zero();
+        }
+        if ($paid->compare($net) > 0) {
+            $paid = $net;
+        }
+        $remaining = $net->subtract($paid);
+        if (!$paid->isPositive()) {
             $paymentStatus = 'unpaid';
             $invoiceStatus = 'draft';
             $orderStatus = 'active';
-        } elseif ($remaining <= 0.0001) {
+        } elseif (!$remaining->isPositive()) {
             $paymentStatus = 'paid';
             $invoiceStatus = 'completed';
             $orderStatus = 'completed';
@@ -352,8 +425,8 @@ class TableMergeService
         }
 
         return [
-            'paid_amount' => $paid,
-            'remaining_amount' => $remaining,
+            'paid_amount' => $paid->toString(),
+            'remaining_amount' => $remaining->toString(),
             'payment_status' => $paymentStatus,
             'invoice_status' => $invoiceStatus,
             'order_status' => $orderStatus,
@@ -387,7 +460,7 @@ class TableMergeService
 
     private function recordEvent(mysqli $conn, int $orderId, string $type, array $context, array $beforeState, array $afterState, array $metadata): void
     {
-        $this->orderEventService->recordIfAvailable($conn, $orderId, $type, $context['event_source'] ?? 'pos_table_merge', [
+        $this->orderEventService->recordRequired($conn, $orderId, $type, $context['event_source'] ?? 'pos_table_merge', [
             'actor_user_id' => $context['user_id'] ?? null,
             'tenant' => $context['tenant'] ?? 0,
             'branch' => $context['branch'] ?? 0,

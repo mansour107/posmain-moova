@@ -1,4 +1,3 @@
-#!/usr/bin/env php
 <?php
 
 /**
@@ -13,8 +12,7 @@
  */
 
 if (PHP_SAPI !== 'cli') {
-    fwrite(STDERR, "CLI only\n");
-    exit(1);
+    require __DIR__ . '/../includes/http_gone.php';
 }
 
 require_once __DIR__ . '/../includes/db_bootstrap.php';

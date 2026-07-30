@@ -4,6 +4,7 @@ require_once __DIR__ . '/../includes/csrf.php';
 require_once __DIR__ . '/../includes/auth_guard.php';
 require_once __DIR__ . '/../classes/Pos/Service/OrderFulfillmentService.php';
 require_once __DIR__ . '/../classes/Pos/Service/PosOrderMutationService.php';
+require_once __DIR__ . '/../classes/Financial/FinancialMoneyInput.php';
 
 header('Content-Type: application/json; charset=utf-8');
 
@@ -27,8 +28,9 @@ $orderId = (int) ($_POST['order_id'] ?? 0);
 $newStatus = trim((string) ($_POST['delivery_status'] ?? ''));
 $driverName = trim((string) ($_POST['driver_name'] ?? ''));
 $driverPhone = trim((string) ($_POST['driver_phone'] ?? ''));
-$codAmount = max(0, (float) ($_POST['cod_amount'] ?? 0));
-$driverTip = max(0, (float) ($_POST['driver_tip'] ?? 0));
+$codAmountInput = $_POST['cod_amount'] ?? '0';
+$driverTipInput = $_POST['driver_tip'] ?? '0';
+$mutationVersion = (int) ($_POST['mutation_version'] ?? 0);
 
 if ($orderId < 1 || $newStatus === '') {
     http_response_code(422);
@@ -37,6 +39,8 @@ if ($orderId < 1 || $newStatus === '') {
 }
 
 try {
+    $codAmount = FinancialMoneyInput::moneyString($codAmountInput);
+    $driverTip = FinancialMoneyInput::moneyString($driverTipInput);
     if ($newStatus === 'cancelled') {
         $mutation = new PosOrderMutationService();
         $conn->begin_transaction();
@@ -46,6 +50,8 @@ try {
                 'reason' => trim((string) ($_POST['reason'] ?? '')) ?: 'delivery_dispatch_cancelled',
                 'user_id' => (int) ($_SESSION['userid'] ?? 0),
                 'force' => !empty($_POST['force']),
+                'mutation_version' => $mutationVersion,
+                'idempotency_key' => trim((string) ($_POST['idempotency_key'] ?? '')),
             ], [
                 'in_transaction' => true,
                 'force' => !empty($_POST['force']),
@@ -73,6 +79,9 @@ try {
         'driver_phone' => $driverPhone,
         'cod_amount' => $codAmount,
         'driver_tip' => $driverTip,
+        'mutation_version' => $mutationVersion,
+        'require_mutation_version' => true,
+        'require_outbox' => true,
         'force' => !empty($_POST['force']),
         'tenant' => (int) ($_SESSION['pos_tenant'] ?? 0),
         'branch' => (int) ($_SESSION['pos_branch'] ?? 0),

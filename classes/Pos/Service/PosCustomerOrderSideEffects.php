@@ -58,7 +58,7 @@ class PosCustomerOrderSideEffects
      */
     public function applyPaymentRollup(mysqli $conn, int $orderId, array $options = []): array
     {
-        $ownsTransaction = $this->ownsTransaction($options);
+        $ownsTransaction = $this->ownsTransaction($conn, $options);
         if ($ownsTransaction) {
             $conn->begin_transaction();
         }
@@ -171,7 +171,7 @@ class PosCustomerOrderSideEffects
         string $fulfillmentType,
         array $options = []
     ): array {
-        $ownsTransaction = $this->ownsTransaction($options);
+        $ownsTransaction = $this->ownsTransaction($conn, $options);
         if ($ownsTransaction) {
             $conn->begin_transaction();
         }
@@ -210,7 +210,7 @@ class PosCustomerOrderSideEffects
 
         $hasRollupColumns = $this->columnExists($conn, 'order_fulfillment', 'crm_rollup_paid_amount');
 
-        $ownsTransaction = $this->ownsTransaction($options);
+        $ownsTransaction = $this->ownsTransaction($conn, $options);
         if ($ownsTransaction) {
             $conn->begin_transaction();
         }
@@ -483,8 +483,12 @@ class PosCustomerOrderSideEffects
         return $exists;
     }
 
-    private function ownsTransaction(array $options): bool
+    private function ownsTransaction(mysqli $conn, array $options): bool
     {
-        return empty($options['in_transaction']) && empty($options['transaction_started']);
+        if (!empty($options['in_transaction']) || !empty($options['transaction_started'])) {
+            return false;
+        }
+
+        return ($conn->server_status & MYSQLI_SERVER_STATUS_IN_TRANS) === 0;
     }
 }

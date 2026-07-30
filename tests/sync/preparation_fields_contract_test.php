@@ -123,6 +123,10 @@ preparation_contract_assert(strpos($editorSource, 'item-preparation-section') ==
 $cardSource = file_get_contents(__DIR__ . '/../../includes/pos_item_card.php');
 $cashierSource = file_get_contents(__DIR__ . '/../../js/pos_barcode.js');
 $apiSource = file_get_contents(__DIR__ . '/../../js/pos_order_api.js');
+$tableCatalogSource = file_get_contents(__DIR__ . '/../../ajax/get_items.php');
+$tableVariantSource = file_get_contents(__DIR__ . '/../../ajax/get_item_variants.php');
+$tableOrderSource = file_get_contents(__DIR__ . '/../../ajax/get_table_order.php');
+$tablePosSource = file_get_contents(__DIR__ . '/../../js/pos_tables.js');
 preparation_contract_assert(strpos($cardSource, 'data-sugar-spoons') !== false, 'cashier item cards must carry sugar eligibility');
 preparation_contract_assert(strpos($cashierSource, 'بدون سكر') !== false, 'cashier must be able to explicitly choose zero sugar');
 preparation_contract_assert(strpos($cashierSource, 'id="sugarSpoonsDecrease"') !== false, 'cashier sugar quantity must have a decrement control');
@@ -135,6 +139,16 @@ preparation_contract_assert(strpos($cashierSource, 'const safePreparationJson = 
 preparation_contract_assert(strpos($cashierSource, "find('.preparationValuesInput').val() || '[]'") !== false, 'cart line grouping must include preparation values so different spoon counts remain separate');
 preparation_contract_assert(strpos($apiSource, 'payload.itmpreparation') !== false, 'POS API payload must carry preparation values');
 preparation_contract_assert(strpos($apiSource, "PREPARATION_VALUE_REQUIRED: 'اختر عدد ملاعق السكر") !== false, 'cashier must see an actionable Arabic message instead of an internal preparation error code');
+preparation_contract_assert(strpos($tableCatalogSource, 'decorateItems(') !== false, 'table catalog must expose sugar eligibility');
+preparation_contract_assert(strpos($tableVariantSource, 'decorateItems(') !== false, 'table variants must expose sugar eligibility');
+preparation_contract_assert(strpos($tableOrderSource, 'fetchLineValues(') !== false, 'table order reload must restore persisted preparation values');
+preparation_contract_assert(strpos($tablePosSource, 'data-sugar-spoons') !== false, 'table item cards must carry sugar eligibility');
+preparation_contract_assert(strpos($tablePosSource, 'id="tablePreparationModal"') !== false, 'table ordering must request an explicit preparation selection');
+preparation_contract_assert(strpos($tablePosSource, 'ويُسمح بصفر') !== false, 'table ordering must visibly support explicit zero sugar');
+preparation_contract_assert(strpos($tablePosSource, 'preparation_values: preparationValues') !== false, 'table order lines must retain preparation values');
+preparation_contract_assert(strpos($tablePosSource, 'preparation_values: Array.isArray(item.preparation_values)') !== false, 'table save payload must serialize preparation values');
+preparation_contract_assert(strpos($tablePosSource, 'preparation_values: Array.isArray(item.preparation_values) ? item.preparation_values : []') !== false, 'table idempotency fingerprint must include preparation values');
+preparation_contract_assert(strpos($tablePosSource, 'preparationFingerprint') !== false, 'table line grouping must separate different preparation values');
 
 $kdsSource = file_get_contents(__DIR__ . '/../../classes/Pos/Service/KdsTicketService.php');
 $kdsBoardSource = file_get_contents(__DIR__ . '/../../js/kds_board.js');

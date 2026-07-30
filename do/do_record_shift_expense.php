@@ -60,9 +60,8 @@ try {
     $userId = function_exists('pos_acting_user_id') ? pos_acting_user_id() : (int) $_SESSION['userid'];
     $payload = $_POST;
 
-    if (empty($_POST['idempotency_key']) && empty($payload['idempotency_key'])) {
-        $_POST['idempotency_key'] = 'pos.shift.payout:' . bin2hex(random_bytes(8));
-        $payload['idempotency_key'] = $_POST['idempotency_key'];
+    if (trim((string) ($payload['idempotency_key'] ?? '')) === '') {
+        throw new RuntimeException('IDEMPOTENCY_KEY_REQUIRED');
     }
 
     $response = pos_shift_handover_idempotent(
@@ -75,6 +74,7 @@ try {
             $result = (new ShiftSessionService())->recordShiftExpense($conn, $userId, [
                 'amount' => $payload['amount'] ?? 0,
                 'reason' => $payload['reason'] ?? '',
+                'idempotency_key' => $payload['idempotency_key'],
                 'manager_approval_id' => $payload['manager_approval_id'] ?? null,
             ], $txContext);
 

@@ -57,9 +57,11 @@ inventoryPhase15Assert(
 
 inventoryPhase15Assert(strpos($myitemsSource, 'InventoryStockReadService.php') !== false, 'item list should load stock read service');
 inventoryPhase15Assert(strpos($myitemsSource, 'decorateItems($conn') !== false, 'item list should decorate quantities through stock read service');
-inventoryPhase15Assert(strpos($dashboardItemsSource, 'InventoryStockReadService.php') !== false, 'dashboard recent items should load stock read service');
-inventoryPhase15Assert(strpos($dashboardItemsSource, 'decorateItems($conn') !== false, 'dashboard recent items should decorate quantities through stock read service');
-inventoryPhase15Assert(strpos($dashboardItemsSource, 'data-stock-source') !== false, 'dashboard recent items should expose stock source for smoke checks');
+inventoryPhase15Assert(
+    strpos($dashboardItemsSource, 'itmqty') === false
+        && strpos($dashboardItemsSource, 'fat_details') === false,
+    'dashboard must not reintroduce a legacy stock read when no stock quantity is rendered'
+);
 inventoryPhase15Assert(strpos($itemSummarySource, 'movementHistoryForItem') !== false, 'item summary should read movement history through stock read service');
 inventoryPhase15Assert(strpos($stagnantSource, 'itemListLedgerJoin') !== false, 'stagnant report should use cutover-aware stock join');
 inventoryPhase15Assert(strpos($stagnantSource, 'current_qty') !== false, 'stagnant report should filter/order by current stock alias');

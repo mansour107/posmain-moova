@@ -100,6 +100,13 @@ class InventoryLegacyRetirementReadinessService
                 strpos($path, '/vendor/') !== false
                 || strpos($path, '/PhpSpreadsheet/') !== false
                 || strpos($path, '/tests/') !== false
+                || strpos($path, '/var/') !== false
+                || strpos($path, '/output/') !== false
+                || strpos($path, '/docs/') !== false
+                || strpos($path, '/node_modules/') !== false
+                || strpos($path, '/.git/') !== false
+                || strpos($path, '/.codex/') !== false
+                || strpos($path, '/.agents/') !== false
             ) {
                 continue;
             }

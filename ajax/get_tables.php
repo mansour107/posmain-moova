@@ -3,6 +3,7 @@ require_once __DIR__ . '/../includes/rbac_route_guard.php';
 rbac_guard_route('ajax/get_tables.php');
 
 require_once __DIR__ . '/../classes/Sync/SyncOutboxEventService.php';
+require_once __DIR__ . '/../classes/Financial/Money.php';
 
 header('Content-Type: application/json');
 
@@ -13,6 +14,7 @@ try {
             t.*,
             o.id AS order_id,
             o.fat_net,
+            o.mutation_version AS mutation_version,
             CASE WHEN o.id IS NULL THEN 0 ELSE 1 END AS has_active_order
         FROM tables t
         LEFT JOIN (
@@ -61,7 +63,8 @@ try {
 
             $row['table_case'] = $tableCase;
             $row['order_id'] = isset($row['order_id']) ? (int) $row['order_id'] : null;
-            $row['fat_net'] = isset($row['fat_net']) ? (float) $row['fat_net'] : 0;
+            $row['fat_net'] = Money::from($row['fat_net'] ?? '0')->toString();
+            $row['mutation_version'] = isset($row['mutation_version']) ? max(1, (int) $row['mutation_version']) : null;
             $row['has_active_order'] = $activeOrderCase;
             $tables[] = $row;
         }

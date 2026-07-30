@@ -180,6 +180,24 @@ try {
                 'accounting' => '1',
                 'accounts' => [
                     'inventory_asset_account_id' => 1100,
+                    'waste_expense_account_id' => 9999,
+                ],
+            ],
+        ])))->postWaste($conn, ['user_id' => 7], [(int) $movement['movement_id']]);
+        inventoryPhase12Assert(false, 'inactive or missing configured account should fail');
+    } catch (RuntimeException $exception) {
+        inventoryPhase12Assert(
+            strpos($exception->getMessage(), 'missing or inactive: 9999') !== false,
+            'active-account enforcement should identify the invalid configured account'
+        );
+    }
+    try {
+        (new InventoryAccountingService(new InventoryFeatureFlags([
+            'inventory' => [
+                'ledger_mode' => 'bridge',
+                'accounting' => '1',
+                'accounts' => [
+                    'inventory_asset_account_id' => 1100,
                 ],
             ],
         ])))->postWaste($conn, ['user_id' => 7], [(int) $movement['movement_id']]);

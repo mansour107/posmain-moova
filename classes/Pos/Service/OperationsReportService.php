@@ -3,6 +3,8 @@
 require_once __DIR__ . '/BusinessDayService.php';
 require_once __DIR__ . '/CashFlowPeriodService.php';
 require_once __DIR__ . '/../../Financial/RefundReversalReadService.php';
+require_once __DIR__ . '/../../Financial/Decimal.php';
+require_once __DIR__ . '/../../Financial/RoundingPolicy.php';
 
 /**
  * Canonical read model for the first-version POS operating reports.
@@ -39,18 +41,18 @@ class OperationsReportService
         $scope = $this->normalizeFilters($filters);
         $empty = [
             'available' => false,
-            'gross_sales' => 0.0,
-            'discounts' => 0.0,
-            'service_plus' => 0.0,
-            'tax' => 0.0,
-            'sales_after_discount' => 0.0,
-            'refunds' => 0.0,
-            'net_sales' => 0.0,
+            'gross_sales' => '0.00',
+            'discounts' => '0.00',
+            'service_plus' => '0.00',
+            'tax' => '0.00',
+            'sales_after_discount' => '0.00',
+            'refunds' => '0.00',
+            'net_sales' => '0.00',
             'order_count' => 0,
             'refunded_order_count' => 0,
             'refund_count' => 0,
             'discounted_order_count' => 0,
-            'average_order_value' => 0.0,
+            'average_order_value' => '0.00',
         ];
         if (!$this->tableExists($conn, 'ot_head')) {
             return $empty + $scope;
@@ -93,16 +95,16 @@ class OperationsReportService
 
         $refunds = $this->refundSummary($conn, $scope);
         $orderCount = (int) ($row['order_count'] ?? 0);
-        $salesAfterDiscount = (float) ($row['sales_after_discount'] ?? 0);
-        $refundTotal = (float) ($refunds['total'] ?? 0);
-        $netSales = $salesAfterDiscount - $refundTotal;
+        $salesAfterDiscount = $this->money($row['sales_after_discount'] ?? '0');
+        $refundTotal = $this->money($refunds['total'] ?? '0');
+        $netSales = $this->subtractMoney($salesAfterDiscount, $refundTotal);
 
         return [
             'available' => true,
-            'gross_sales' => (float) ($row['gross_sales'] ?? 0),
-            'discounts' => (float) ($row['discounts'] ?? 0),
-            'service_plus' => (float) ($row['service_plus'] ?? 0),
-            'tax' => (float) ($row['tax'] ?? 0),
+            'gross_sales' => $this->money($row['gross_sales'] ?? '0'),
+            'discounts' => $this->money($row['discounts'] ?? '0'),
+            'service_plus' => $this->money($row['service_plus'] ?? '0'),
+            'tax' => $this->money($row['tax'] ?? '0'),
             'sales_after_discount' => $salesAfterDiscount,
             'refunds' => $refundTotal,
             'net_sales' => $netSales,
@@ -110,7 +112,9 @@ class OperationsReportService
             'refunded_order_count' => (int) ($row['refunded_order_count'] ?? 0),
             'refund_count' => (int) ($refunds['count'] ?? 0),
             'discounted_order_count' => (int) ($row['discounted_order_count'] ?? 0),
-            'average_order_value' => $orderCount > 0 ? $netSales / $orderCount : 0.0,
+            'average_order_value' => $orderCount > 0
+                ? RoundingPolicy::halfUp(bcdiv($netSales, (string) $orderCount, 6), 2, 6)
+                : '0.00',
         ] + $scope;
     }
 
@@ -169,9 +173,9 @@ class OperationsReportService
             $row['public_order_number'] = trim((string) ($row['receipt_number'] ?: $row['public_order_number'] ?: $row['id']));
             $row['cashier_id'] = (int) ($row['cashier_id'] ?? 0);
             $row['cashier_name'] = trim((string) ($row['cashier_name'] ?? '')) ?: 'User #' . $row['cashier_id'];
-            $row['fat_total'] = (float) ($row['fat_total'] ?? $row['fat_net'] ?? 0);
-            $row['fat_disc'] = (float) ($row['fat_disc'] ?? 0);
-            $row['fat_net'] = (float) ($row['fat_net'] ?? 0);
+            $row['fat_total'] = $this->money($row['fat_total'] ?? $row['fat_net'] ?? '0');
+            $row['fat_disc'] = $this->money($row['fat_disc'] ?? '0');
+            $row['fat_net'] = $this->money($row['fat_net'] ?? '0');
             $row['isdeleted'] = (int) ($row['isdeleted'] ?? 0);
             $row['payments'] = $orderPayments;
             $row['payment_methods'] = $orderPayments === []
@@ -179,8 +183,8 @@ class OperationsReportService
                 : array_values(array_unique(array_column($orderPayments, 'label')));
             $reversal = $this->refunds->stateForOrder($conn, $row['id']);
             $row['reversal_status'] = $reversal['reversal_status'];
-            $row['cumulative_refunded_amount'] = (float) $reversal['cumulative_refunded_amount'];
-            $row['remaining_refundable_amount'] = (float) $reversal['remaining_refundable_amount'];
+            $row['cumulative_refunded_amount'] = $this->money($reversal['cumulative_refunded_amount']);
+            $row['remaining_refundable_amount'] = $this->money($reversal['remaining_refundable_amount']);
             $row['refund_count'] = $reversal['refund_count'];
         }
         unset($row);
@@ -223,7 +227,7 @@ class OperationsReportService
                        FROM payment_refunds WHERE credit_note_id = ?",
                     [(int) $row['credit_note_id']]
                 ) ?: [];
-                $row['pending_external_amount'] = number_format((float) ($settlement['pending'] ?? 0), 2, '.', '');
+                $row['pending_external_amount'] = $this->money($settlement['pending'] ?? '0');
                 $row['settlement_status'] = (int) ($settlement['pending_count'] ?? 0) > 0
                     ? 'pending_external'
                     : 'settled';
@@ -266,12 +270,12 @@ class OperationsReportService
             $items[$itemId] = [
                 'item_id' => $itemId,
                 'item_name' => (string) ($row['item_name'] ?? ('Item #' . $itemId)),
-                'sold_qty' => (float) ($row['sold_qty'] ?? 0),
-                'returned_qty' => 0.0,
-                'net_qty' => (float) ($row['sold_qty'] ?? 0),
-                'sold_value' => (float) ($row['sold_value'] ?? 0),
-                'refund_value' => 0.0,
-                'net_value' => (float) ($row['sold_value'] ?? 0),
+                'sold_qty' => $this->quantity($row['sold_qty'] ?? '0'),
+                'returned_qty' => '0.000000',
+                'net_qty' => $this->quantity($row['sold_qty'] ?? '0'),
+                'sold_value' => $this->money($row['sold_value'] ?? '0'),
+                'refund_value' => '0.00',
+                'net_value' => $this->money($row['sold_value'] ?? '0'),
                 'order_count' => (int) ($row['order_count'] ?? 0),
             ];
         }
@@ -282,24 +286,38 @@ class OperationsReportService
                 $items[$itemId] = [
                     'item_id' => $itemId,
                     'item_name' => (string) ($row['item_name'] ?? ('Item #' . $itemId)),
-                    'sold_qty' => 0.0,
-                    'returned_qty' => 0.0,
-                    'net_qty' => 0.0,
-                    'sold_value' => 0.0,
-                    'refund_value' => 0.0,
-                    'net_value' => 0.0,
+                    'sold_qty' => '0.000000',
+                    'returned_qty' => '0.000000',
+                    'net_qty' => '0.000000',
+                    'sold_value' => '0.00',
+                    'refund_value' => '0.00',
+                    'net_value' => '0.00',
                     'order_count' => 0,
                 ];
             }
-            $items[$itemId]['returned_qty'] += (float) ($row['returned_qty'] ?? 0);
-            $items[$itemId]['refund_value'] += (float) ($row['refund_value'] ?? 0);
-            $items[$itemId]['net_qty'] = $items[$itemId]['sold_qty'] - $items[$itemId]['returned_qty'];
-            $items[$itemId]['net_value'] = $items[$itemId]['sold_value'] - $items[$itemId]['refund_value'];
+            $items[$itemId]['returned_qty'] = FinancialDecimal::add(
+                $items[$itemId]['returned_qty'],
+                $this->quantity($row['returned_qty'] ?? '0'),
+                6
+            );
+            $items[$itemId]['refund_value'] = $this->addMoney(
+                $items[$itemId]['refund_value'],
+                $row['refund_value'] ?? '0'
+            );
+            $items[$itemId]['net_qty'] = FinancialDecimal::subtract(
+                $items[$itemId]['sold_qty'],
+                $items[$itemId]['returned_qty'],
+                6
+            );
+            $items[$itemId]['net_value'] = $this->subtractMoney(
+                $items[$itemId]['sold_value'],
+                $items[$itemId]['refund_value']
+            );
         }
 
         $items = array_values($items);
         usort($items, static function (array $a, array $b): int {
-            $qty = (float) $b['net_qty'] <=> (float) $a['net_qty'];
+            $qty = FinancialDecimal::compare((string) $b['net_qty'], (string) $a['net_qty'], 6);
             return $qty !== 0 ? $qty : strcasecmp((string) $a['item_name'], (string) $b['item_name']);
         });
 
@@ -332,18 +350,32 @@ class OperationsReportService
         $pendingRefunds = $this->pendingExternalRefunds($conn, $scope);
         $openShifts = $includeShiftControls ? $this->openShiftCount($conn, $scope) : 0;
         $unresolvedShifts = $includeShiftControls ? $this->unresolvedShiftCount($conn, $scope) : 0;
-        $cashDiff = (float) ($payments['cash_reconciliation_diff'] ?? 0);
+        $cashDiff = $this->drawerMoney($payments['cash_reconciliation_diff'] ?? '0');
 
         $rows = [];
-        if ((float) ($sales['refunds'] ?? 0) > 0) {
-            $rows[] = $this->attentionRow('refunds', 'review', 'Refunds processed', (int) ($sales['refund_count'] ?? 0), (float) $sales['refunds'], 'payments');
+        if (FinancialDecimal::compare($this->money($sales['refunds'] ?? '0'), '0.00', 2) > 0) {
+            $rows[] = $this->attentionRow(
+                'refunds',
+                'review',
+                'Refunds processed',
+                (int) ($sales['refund_count'] ?? 0),
+                $this->money($sales['refunds']),
+                'payments'
+            );
         }
         $reversals = $this->countOrdersByFocus($conn, $scope, 'order_cancelled');
         if ($reversals > 0) {
             $rows[] = $this->attentionRow('reversals', 'review', 'Voids and cancellations', $reversals, null, 'orders');
         }
         if ((int) ($sales['discounted_order_count'] ?? 0) > 0) {
-            $rows[] = $this->attentionRow('discounts', 'info', 'Discounted orders', (int) $sales['discounted_order_count'], (float) ($sales['discounts'] ?? 0), 'orders');
+            $rows[] = $this->attentionRow(
+                'discounts',
+                'info',
+                'Discounted orders',
+                (int) $sales['discounted_order_count'],
+                $this->money($sales['discounts'] ?? '0'),
+                'orders'
+            );
         }
         if ($unresolvedShifts > 0) {
             $rows[] = $this->attentionRow('drawer_variance', 'critical', 'Unresolved drawer differences', $unresolvedShifts, null, 'shifts');
@@ -352,23 +384,34 @@ class OperationsReportService
             $rows[] = $this->attentionRow('open_shifts', 'review', 'Open shifts', $openShifts, null, 'shifts');
         }
         if ((int) ($cash['unassigned_count'] ?? 0) > 0) {
-            $rows[] = $this->attentionRow('unassigned_cash', 'critical', 'Unassigned cash movements', (int) $cash['unassigned_count'], (float) ($cash['unassigned_total'] ?? 0), 'movements');
+            $rows[] = $this->attentionRow(
+                'unassigned_cash',
+                'critical',
+                'Unassigned cash movements',
+                (int) $cash['unassigned_count'],
+                $this->drawerMoney($cash['unassigned_total'] ?? '0'),
+                'movements'
+            );
         }
         if ($pendingRefunds['count'] > 0) {
             $rows[] = $this->attentionRow('pending_refunds', 'critical', 'Pending external refunds', $pendingRefunds['count'], $pendingRefunds['total'], 'payments');
         }
-        if ($includeCashControls && !empty($payments['cash_reconciliation_available']) && abs($cashDiff) >= 0.01) {
+        if (
+            $includeCashControls
+            && !empty($payments['cash_reconciliation_available'])
+            && $this->absoluteAtLeast($cashDiff, '0.010', 3)
+        ) {
             $rows[] = $this->attentionRow('cash_mismatch', 'critical', 'Cash ledger and tender mismatch', 1, $cashDiff, 'payments');
         }
 
         return $rows;
     }
 
-    /** @return array{total:float,count:int} */
+    /** @return array{total:string,count:int} */
     private function refundSummary(mysqli $conn, array $scope): array
     {
         $summary = $this->refunds->periodSummary($conn, $scope);
-        return ['total' => (float) $summary['total_amount'], 'count' => $summary['count']];
+        return ['total' => $this->money($summary['total_amount']), 'count' => $summary['count']];
     }
 
     /** @return list<array<string, mixed>> */
@@ -413,7 +456,7 @@ class OperationsReportService
         );
     }
 
-    /** @return array<int, list<array{code:string,label:string,type:string,amount:float}>> */
+    /** @return array<int, list<array{code:string,label:string,type:string,amount:string}>> */
     private function paymentsForOrders(mysqli $conn, array $orderIds): array
     {
         if ($orderIds === [] || !$this->tableExists($conn, 'order_payments')) {
@@ -433,18 +476,18 @@ class OperationsReportService
                 'code' => (string) ($row['payment_method'] ?? ''),
                 'label' => (string) (($row['method_label'] ?? '') ?: ($row['payment_method'] ?? 'Unknown')),
                 'type' => (string) (($row['type'] ?? '') ?: $this->fallbackPaymentType((string) ($row['payment_method'] ?? ''))),
-                'amount' => (float) ($row['amount'] ?? 0),
+                'amount' => $this->money($row['amount'] ?? '0'),
             ];
         }
 
         return $grouped;
     }
 
-    /** @return array{voided:int,cancelled:int,amount:float} */
+    /** @return array{voided:int,cancelled:int,amount:string} */
     private function eventCounts(mysqli $conn, array $scope): array
     {
         if (!$this->tableExists($conn, 'order_events')) {
-            return ['voided' => 0, 'cancelled' => 0, 'amount' => 0.0];
+            return ['voided' => 0, 'cancelled' => 0, 'amount' => '0.00'];
         }
         $bounds = $this->periodBounds($conn, $scope);
         $where = ["oe.event_type IN ('order.voided', 'order.cancelled')", 'oe.created_at >= ?', 'oe.created_at < ?'];
@@ -469,14 +512,14 @@ class OperationsReportService
             $params
         ) ?: [];
 
-        return ['voided' => (int) ($row['voided'] ?? 0), 'cancelled' => (int) ($row['cancelled'] ?? 0), 'amount' => 0.0];
+        return ['voided' => (int) ($row['voided'] ?? 0), 'cancelled' => (int) ($row['cancelled'] ?? 0), 'amount' => '0.00'];
     }
 
-    /** @return array{count:int,total:float} */
+    /** @return array{count:int,total:string} */
     private function pendingExternalRefunds(mysqli $conn, array $scope): array
     {
         if (!$this->tableExists($conn, 'payment_refunds')) {
-            return ['count' => 0, 'total' => 0.0];
+            return ['count' => 0, 'total' => '0.00'];
         }
         $bounds = $this->periodBounds($conn, $scope);
         $where = ["pr.status = 'pending_external'", 'pr.created_at >= ?', 'pr.created_at < ?'];
@@ -498,7 +541,7 @@ class OperationsReportService
             $params
         ) ?: [];
 
-        return ['count' => (int) ($row['c'] ?? 0), 'total' => (float) ($row['total'] ?? 0)];
+        return ['count' => (int) ($row['c'] ?? 0), 'total' => $this->money($row['total'] ?? '0')];
     }
 
     private function openShiftCount(mysqli $conn, array $scope): int
@@ -687,9 +730,40 @@ class OperationsReportService
     }
 
     /** @return array<string, mixed> */
-    private function attentionRow(string $key, string $severity, string $label, int $count, ?float $amount, string $tab): array
+    private function attentionRow(string $key, string $severity, string $label, int $count, ?string $amount, string $tab): array
     {
         return compact('key', 'severity', 'label', 'count', 'amount', 'tab');
+    }
+
+    private function money($value): string
+    {
+        return FinancialDecimal::normalizeLegacy($value, 2, true);
+    }
+
+    private function drawerMoney($value): string
+    {
+        return FinancialDecimal::normalizeLegacy($value, 3, true);
+    }
+
+    private function quantity($value): string
+    {
+        return FinancialDecimal::normalizeLegacy($value, 6, true);
+    }
+
+    private function addMoney($left, $right): string
+    {
+        return FinancialDecimal::add($this->money($left), $this->money($right), 2);
+    }
+
+    private function subtractMoney($left, $right): string
+    {
+        return FinancialDecimal::subtract($this->money($left), $this->money($right), 2);
+    }
+
+    private function absoluteAtLeast(string $value, string $threshold, int $scale): bool
+    {
+        return FinancialDecimal::compare($value, $threshold, $scale) >= 0
+            || FinancialDecimal::compare($value, '-' . ltrim($threshold, '-'), $scale) <= 0;
     }
 
     private function selectColumn(mysqli $conn, string $table, string $column, string $alias, ?string $as = null): string

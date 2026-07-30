@@ -1,6 +1,8 @@
 <?php
 
 require_once __DIR__ . '/OrderEventService.php';
+require_once __DIR__ . '/OrderMutationVersionService.php';
+require_once __DIR__ . '/../../Sync/SyncOutboxEventService.php';
 
 class TableTransferService
 {
@@ -35,8 +37,9 @@ class TableTransferService
 
     private function moveOrderInsideTransaction(mysqli $conn, int $sourceTableId, int $destinationTableId, array $request, array $context): array
     {
-        $sourceTable = $this->tableById($conn, $sourceTableId, true);
-        $destinationTable = $this->tableById($conn, $destinationTableId, true);
+        $lockedTables = $this->lockTablesInCanonicalOrder($conn, $sourceTableId, $destinationTableId);
+        $sourceTable = $lockedTables[$sourceTableId];
+        $destinationTable = $lockedTables[$destinationTableId];
         $order = $this->activeOrderForSource($conn, $sourceTableId, $request);
         if (!$order) {
             throw new RuntimeException('ORDER_NOT_ACTIVE');
@@ -47,6 +50,14 @@ class TableTransferService
         }
 
         $orderId = (int) $order['id'];
+        $versionService = new OrderMutationVersionService();
+        $versionService->lockAndAssert(
+            $conn,
+            $orderId,
+            $request['mutation_version'] ?? $request['order_version'] ?? null,
+            true
+        );
+
         $beforeState = [
             'order_id' => $orderId,
             'source_table_id' => $sourceTableId,
@@ -68,6 +79,11 @@ class TableTransferService
 
         $sourceFreed = $this->setTableFreeIfNoActiveOrder($conn, $sourceTableId);
         $this->markTableOccupied($conn, $destinationTableId);
+        $mutationVersion = $versionService->bumpAndGet(
+            $conn,
+            $orderId,
+            $request['mutation_version'] ?? $request['order_version'] ?? null
+        );
         $movedOrder = $this->orderById($conn, $orderId);
         $afterState = [
             'order_id' => $orderId,
@@ -77,9 +93,10 @@ class TableTransferService
             'destination_table_case' => (int) $this->tableById($conn, $destinationTableId, false)['table_case'],
             'payment_status' => $movedOrder['payment_status'] ?? null,
             'order_status' => $movedOrder['order_status'] ?? null,
+            'mutation_version' => $mutationVersion,
         ];
 
-        $event = (new OrderEventService())->recordIfAvailable(
+        $event = (new OrderEventService())->recordRequired(
             $conn,
             $orderId,
             'table_moved',
@@ -97,6 +114,23 @@ class TableTransferService
                 ],
             ]
         );
+        if (!array_key_exists('record_outbox', $context) || (bool) $context['record_outbox']) {
+            $syncOutbox = new SyncOutboxEventService();
+            $syncOutbox->recordRequiredOrderSnapshot($conn, $orderId, [
+                'event_type' => 'order.table_moved',
+                'source_system' => 'pos_table_move',
+            ]);
+            $syncOutbox->recordRequiredTableSnapshot($conn, $sourceTableId, [
+                'event_type' => 'table.updated',
+                'source_system' => 'pos_table_move',
+                'active_order_id' => null,
+            ]);
+            $syncOutbox->recordRequiredTableSnapshot($conn, $destinationTableId, [
+                'event_type' => 'table.updated',
+                'source_system' => 'pos_table_move',
+                'active_order_id' => $orderId,
+            ]);
+        }
 
         return [
             'success' => true,
@@ -107,6 +141,7 @@ class TableTransferService
             'source_freed' => $sourceFreed,
             'payment_status' => $movedOrder['payment_status'] ?? null,
             'order_status' => $movedOrder['order_status'] ?? null,
+            'mutation_version' => $mutationVersion,
             'event_id' => $event['id'] ?? null,
         ];
     }
@@ -131,6 +166,18 @@ class TableTransferService
         }
 
         return $row;
+    }
+
+    private function lockTablesInCanonicalOrder(mysqli $conn, int $firstTableId, int $secondTableId): array
+    {
+        $tableIds = [$firstTableId, $secondTableId];
+        sort($tableIds, SORT_NUMERIC);
+        $rows = [];
+        foreach ($tableIds as $tableId) {
+            $rows[$tableId] = $this->tableById($conn, $tableId, true);
+        }
+
+        return $rows;
     }
 
     private function activeOrderForSource(mysqli $conn, int $sourceTableId, array $request): ?array

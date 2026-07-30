@@ -331,7 +331,7 @@ try {
         'headdisc' => 0,
         'headplus' => 0,
         'headnet' => 35,
-        'delivery_fee' => 15.0,
+        'delivery_fee' => '15.00',
         'delivery_zone_name' => 'Maadi',
         'delivery_customer_name' => 'Tampered Net User',
         'delivery_customer_phone' => $tamperedPhone,
@@ -423,9 +423,9 @@ try {
     deliveryProdAssert(abs((float) $discHead['fat_net'] - 38.0) < 0.01, 'header net should match discounted line subtotal plus authoritative zone fee');
 
     // Phase 3/5: save-only delivery with zone fee
-    $deliveryFee = 15.0;
-    $itemTotal = 35.0;
-    $headNet = $itemTotal + $deliveryFee;
+    $deliveryFee = '15.00';
+    $itemTotal = '35.00';
+    $headNet = '50.00';
     $saveRequest = [
         'idempotency_key' => $prefix . ':delivery:save',
         'store_id' => 3,
@@ -563,6 +563,8 @@ try {
         'user_id' => 7,
         'reason' => 'integration cancel test',
         'force' => true,
+        'mutation_version' => (int) ($cancelCreate['data']['mutation_version'] ?? 1),
+        'idempotency_key' => $prefix . ':delivery:cancel',
     ], ['record_outbox' => false]);
     deliveryProdAssert(($cancelResult['data']['payment_status'] ?? '') === 'voided', 'cancel should return voided payment status');
     $voidedOrder = $conn->query("SELECT isdeleted, payment_status, order_status, invoice_status FROM ot_head WHERE id = {$cancelOrderId}")->fetch_assoc();
@@ -586,12 +588,12 @@ try {
     $paidRequest['delivery_customer_name'] = 'Paid Delivery User';
     $paidRequest['delivery_customer_address'] = 'Nasr City Block 3';
     $paidRequest['delivery_zone_name'] = 'Nasr City';
-    $paidRequest['delivery_fee'] = 20.0;
-    $paidRequest['headplus'] = 20.0;
-    $paidRequest['headnet'] = 55.0;
+    $paidRequest['delivery_fee'] = '20.00';
+    $paidRequest['headplus'] = '20.00';
+    $paidRequest['headnet'] = '55.00';
     $paidRequest['submit'] = 'cash';
-    $paidRequest['paid'] = 55.0;
-    $paidRequest['paid_cash'] = 55.0;
+    $paidRequest['paid'] = '55.00';
+    $paidRequest['paid_cash'] = '55.00';
     $paidRequest['payment_fund_id'] = 51;
 
     $paidResult = $mutation->createDeliveryOrder($conn, $paidRequest, ['user_id' => 7, 'record_outbox' => false]);

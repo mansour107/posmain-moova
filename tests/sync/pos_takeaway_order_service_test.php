@@ -29,6 +29,9 @@ putenv('POSMAIN_INVENTORY_CUTOVER_CERTIFIED=1');
 putenv('POSMAIN_RECIPE_ROLLOUT_CERTIFIED=1');
 putenv('POSMAIN_RECIPE_PILOT_POS_BRANCH=0');
 putenv('POSMAIN_RECIPE_PILOT_ITEM_IDS=10');
+// This proof owns the recipe accounting path. Direct-item inventory bridge
+// accounting is covered separately and must not inherit the developer .env.
+putenv('POSMAIN_INVENTORY_LEDGER_MODE=off');
 
 // app_config.php resolves environment-backed branch identity when it is first
 // included. Seed the isolated runtime profile before loading POS services so

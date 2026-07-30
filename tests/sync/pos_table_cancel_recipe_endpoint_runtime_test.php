@@ -55,11 +55,14 @@ try {
     posTableCancelRecipeAssert((int) ($saved['status'] ?? 0) === 200 && is_array($savedPayload) && ($savedPayload['success'] ?? false) === true, 'table save setup should succeed: ' . (string) ($saved['body'] ?? ''));
     $orderId = (int) ($savedPayload['order_id'] ?? 0);
     posTableCancelRecipeAssert($orderId > 0, 'table save setup should return order id');
+    $mutationVersion = (int) (($savedPayload['updated_state']['mutation_version'] ?? $savedPayload['mutation_version'] ?? 0));
+    posTableCancelRecipeAssert($mutationVersion > 0, 'table save setup should return mutation version');
     posTableCancelRecipeAssertReserved($conn, $orderId);
 
     $cancelPayload = [
         'table_id' => 1,
         'order_id' => $orderId,
+        'mutation_version' => $mutationVersion,
         'reason' => 'recipe endpoint cancel smoke',
         'idempotency_key' => 'recipe-table-cancel-endpoint-' . getmypid(),
     ];
@@ -88,10 +91,14 @@ try {
     posTableCancelRecipeAssert((int) ($clearSaved['status'] ?? 0) === 200 && is_array($clearSavedPayload) && ($clearSavedPayload['success'] ?? false) === true, 'table clear setup save should succeed: ' . (string) ($clearSaved['body'] ?? ''));
     $clearOrderId = (int) ($clearSavedPayload['order_id'] ?? 0);
     posTableCancelRecipeAssert($clearOrderId > 0, 'table clear setup should return order id');
+    $clearMutationVersion = (int) (($clearSavedPayload['updated_state']['mutation_version'] ?? $clearSavedPayload['mutation_version'] ?? 0));
+    posTableCancelRecipeAssert($clearMutationVersion > 0, 'table clear setup should return mutation version');
     posTableCancelRecipeAssertReserved($conn, $clearOrderId);
 
     $clearPayload = [
         'table_id' => 2,
+        'order_id' => $clearOrderId,
+        'mutation_version' => $clearMutationVersion,
         'reason' => 'recipe endpoint clear smoke',
         'idempotency_key' => 'recipe-table-clear-endpoint-' . getmypid(),
     ];
@@ -120,10 +127,14 @@ try {
     posTableCancelRecipeAssert((int) ($statusSaved['status'] ?? 0) === 200 && is_array($statusSavedPayload) && ($statusSavedPayload['success'] ?? false) === true, 'table status setup save should succeed: ' . (string) ($statusSaved['body'] ?? ''));
     $statusOrderId = (int) ($statusSavedPayload['order_id'] ?? 0);
     posTableCancelRecipeAssert($statusOrderId > 0, 'table status setup should return order id');
+    $statusMutationVersion = (int) (($statusSavedPayload['updated_state']['mutation_version'] ?? $statusSavedPayload['mutation_version'] ?? 0));
+    posTableCancelRecipeAssert($statusMutationVersion > 0, 'table status setup should return mutation version');
     posTableCancelRecipeAssertReserved($conn, $statusOrderId);
 
     $statusPayload = [
         'table_id' => 3,
+        'order_id' => $statusOrderId,
+        'mutation_version' => $statusMutationVersion,
         'action' => 'clear',
         'reason' => 'recipe endpoint status clear smoke',
         'idempotency_key' => 'recipe-table-status-clear-endpoint-' . getmypid(),

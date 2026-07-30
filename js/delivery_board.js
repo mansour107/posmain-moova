@@ -26,8 +26,17 @@
         return element.innerHTML;
     }
 
+    function moneyApi() {
+        if (!window.POSOrderApi
+            || typeof window.POSOrderApi.decimalString !== 'function'
+            || typeof window.POSOrderApi.addDecimalStrings !== 'function') {
+            throw new Error('POS_MONEY_API_REQUIRED');
+        }
+        return window.POSOrderApi;
+    }
+
     function money(value) {
-        return Number(value || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        return moneyApi().decimalString(value, 2, '0');
     }
 
     function channelLabel(channel) {
@@ -98,7 +107,7 @@
         const codBadge = isCod
             ? '<span class="delivery-chip delivery-chip--cod"><i class="fas fa-wallet"></i> تحصيل ' + money(order.cod_amount || order.fat_net) + '</span>'
             : '<span class="delivery-chip delivery-chip--paid"><i class="fas fa-check"></i> مدفوع</span>';
-        return '<article class="delivery-order-card" data-order-id="' + order.order_id + '" data-status="' + escapeHtml(order.delivery_status) + '">'
+        return '<article class="delivery-order-card" data-order-id="' + order.order_id + '" data-mutation-version="' + Number(order.mutation_version || 1) + '" data-status="' + escapeHtml(order.delivery_status) + '">'
             + '<div class="delivery-order-card__top"><div><strong>#' + escapeHtml(order.pro_id) + '</strong><span>' + escapeHtml(channelLabel(order.order_channel)) + '</span></div><time>' + escapeHtml(timeLabel(order.order_time)) + '</time></div>'
             + '<div class="delivery-order-card__customer"><div class="delivery-customer-mark">' + escapeHtml((order.customer_name || 'ع').trim().charAt(0)) + '</div><div><h3>' + escapeHtml(order.customer_name || 'بدون اسم') + '</h3><a class="delivery-phone" href="tel:' + escapeHtml(order.customer_phone) + '">' + escapeHtml(order.customer_phone || 'لا يوجد هاتف') + '</a></div></div>'
             + '<p class="delivery-address"><i class="fas fa-map-marker-alt" aria-hidden="true"></i><span>' + escapeHtml(order.customer_address || 'لم يُسجل عنوان') + '</span></p>'
@@ -122,8 +131,10 @@
     function renderSummary(counts) {
         if (!summaryRoot) return;
         const codTotal = orders.reduce(function (sum, order) {
-            return sum + (order.collection_mode === 'cod' ? Number(order.cod_amount || order.fat_net || 0) : 0);
-        }, 0);
+            return order.collection_mode === 'cod'
+                ? moneyApi().addDecimalStrings(sum, money(order.cod_amount || order.fat_net || '0'), 2)
+                : sum;
+        }, '0.00');
         const metrics = [
             ['كل الطلبات', counts.all, 'fas fa-layer-group'],
             ['بانتظار القبول', counts.pending || 0, 'far fa-clock'],
@@ -241,11 +252,19 @@
         const cancel = event.target.closest('.delivery-cancel');
         if (!advance && !cancel) return;
         const button = advance || cancel;
-        const data = { order_id: button.dataset.orderId, delivery_status: advance ? advance.dataset.next : 'cancelled', csrf_token: dispatchCsrf };
+        const orderCard = button.closest('.delivery-order-card');
+        const mutationVersion = Number(orderCard ? orderCard.dataset.mutationVersion : 0);
+        const targetStatus = advance ? advance.dataset.next : 'cancelled';
+        const data = {
+            order_id: button.dataset.orderId,
+            delivery_status: targetStatus,
+            mutation_version: mutationVersion,
+            idempotency_key: 'delivery:' + targetStatus + ':' + button.dataset.orderId + ':v' + mutationVersion,
+            csrf_token: dispatchCsrf
+        };
         if (cancel && !window.confirm('إلغاء طلب التوصيل؟')) return;
         if (cancel) data.force = '1';
         if (advance && advance.dataset.next === 'delivered') {
-            const orderCard = advance.closest('.delivery-order-card');
             const codChip = orderCard.querySelector('.delivery-chip--cod');
             if (codChip) {
                 const suggested = (codChip.textContent.match(/[\d.,]+/) || ['0'])[0].replace(',', '.');

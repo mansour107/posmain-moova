@@ -778,6 +778,8 @@ if (!function_exists('require_pos_authenticated')) {
     function require_pos_authenticated(): void
     {
         global $conn;
+        static $overrideAuthorizationAudited = [];
+
         if (isset($conn) && $conn instanceof mysqli) {
             pos_enforce_active_pos_lane($conn);
         }
@@ -786,7 +788,7 @@ if (!function_exists('require_pos_authenticated')) {
             if (isset($conn) && $conn instanceof mysqli && !empty($_SESSION['pos_override_period_id'])) {
                 try {
                     require_once dirname(__DIR__) . '/classes/Pos/Service/DrawerOverrideService.php';
-                    (new DrawerOverrideService())->auditPosWrite($conn, basename((string) ($_SERVER['SCRIPT_NAME'] ?? '')), false, [
+                    (new DrawerOverrideService())->auditPosAuthorization($conn, basename((string) ($_SERVER['SCRIPT_NAME'] ?? '')), false, [
                         'deny_code' => 'POS_AUTH_REQUIRED',
                     ]);
                 } catch (Throwable $ignored) {
@@ -815,9 +817,22 @@ if (!function_exists('require_pos_authenticated')) {
                     $overrides->clearSessionBinding($period);
                     deny_json_or_redirect('OVERRIDE_ENDED', 403, 'pos_barcode.php');
                 }
-                $overrides->auditPosWrite($conn, basename((string) ($_SERVER['SCRIPT_NAME'] ?? '')), true, [
-                    'target_id' => isset($_POST['id']) ? (int) $_POST['id'] : (isset($_POST['order_id']) ? (int) $_POST['order_id'] : null),
+                $route = basename((string) ($_SERVER['SCRIPT_NAME'] ?? ''));
+                $targetId = isset($_POST['id']) ? (int) $_POST['id'] : (isset($_POST['order_id']) ? (int) $_POST['order_id'] : null);
+                $auditKey = implode(':', [
+                    spl_object_id($conn),
+                    $periodId,
+                    $operatorId,
+                    (string) ($_SERVER['REQUEST_METHOD'] ?? ''),
+                    $route,
+                    $targetId === null ? '' : $targetId,
                 ]);
+                if (!isset($overrideAuthorizationAudited[$auditKey])) {
+                    $overrides->auditPosAuthorization($conn, $route, true, [
+                        'target_id' => $targetId,
+                    ]);
+                    $overrideAuthorizationAudited[$auditKey] = true;
+                }
             } catch (Throwable $exception) {
                 if ($exception instanceof RuntimeException && str_starts_with($exception->getMessage(), 'OVERRIDE_')) {
                     deny_json_or_redirect($exception->getMessage(), 403, 'pos_barcode.php');
