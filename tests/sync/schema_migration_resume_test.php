@@ -24,9 +24,22 @@ if (!is_string($backup) || file_put_contents($backup, '-- verified test backup')
 try {
     $conn->query("CREATE DATABASE `{$db}` CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci");
     $conn->select_db($db);
+    $conn->query("
+        CREATE TABLE schema_migrations (
+            id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+            version VARCHAR(191) NOT NULL,
+            filename VARCHAR(255) NOT NULL,
+            checksum CHAR(64) NOT NULL,
+            applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            applied_by VARCHAR(100) NULL,
+            UNIQUE KEY uq_schema_migrations_version (version)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ");
     $runner = new PosmainSchemaMigrationRunner();
     $applied = $runner->apply($conn, $backup);
     migrationResumeAssert($applied !== [], 'empty database must be provisioned');
+    migrationResumeAssert($conn->query("SHOW COLUMNS FROM schema_migrations LIKE 'status'")->num_rows === 1, 'older tracking table must gain status');
+    migrationResumeAssert($conn->query("SHOW COLUMNS FROM schema_migrations LIKE 'metadata_json'")->num_rows === 1, 'older tracking table must gain metadata_json');
     $ledgerCount = (int) $conn->query("SELECT COUNT(*) AS c FROM schema_migrations WHERE status = 'applied'")->fetch_assoc()['c'];
     migrationResumeAssert($ledgerCount === count($applied), 'every applied statement must have its own completed ledger row');
 

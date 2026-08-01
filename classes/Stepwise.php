@@ -73,9 +73,14 @@ class Stepwise
     /**
      * @return array<string, array{checksum:string,applied_at:string,applied_by:?string}>
      */
-    public function applied(): array
+    public function applied(bool $createLedger = true): array
     {
-        $this->ensureLedger();
+        if (!$this->tableExists($this->ledgerTable)) {
+            if (!$createLedger) {
+                return [];
+            }
+            $this->ensureLedger();
+        }
 
         $table = $this->quotedIdentifier($this->ledgerTable);
         $result = $this->conn->query("SELECT step_key, checksum, applied_at, applied_by FROM {$table}");
@@ -99,13 +104,15 @@ class Stepwise
      *   drift:array<int, array{step_key:string,source_file:string,checksum:string,recorded_checksum:string}>
      * }
      */
-    public function plan(): array
+    public function plan(bool $createLedger = true): array
     {
-        $applied = $this->applied();
+        $ledgerReady = $this->tableExists($this->ledgerTable);
+        $applied = $this->applied($createLedger);
+        $discovered = $this->discover();
         $pending = [];
         $drift = [];
 
-        foreach ($this->discover() as $step) {
+        foreach ($discovered as $step) {
             $key = $step['step_key'];
             if (!isset($applied[$key])) {
                 $step['changed'] = false;
@@ -124,8 +131,8 @@ class Stepwise
         }
 
         return [
-            'ledger_ready' => true,
-            'discovered' => count($this->discover()),
+            'ledger_ready' => $ledgerReady || $createLedger,
+            'discovered' => count($discovered),
             'pending' => $pending,
             'drift' => $drift,
         ];

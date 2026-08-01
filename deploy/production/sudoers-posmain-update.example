@@ -1,7 +1,13 @@
-# Allow the web user to start update workers as the deploy user.
+# Allow the web user to check releases and start update/recovery workers as the deploy user.
 # Install:
+#   install -m 0755 deploy/production/posmain-update-check.sh /usr/local/bin/posmain-update-check
 #   install -m 0755 deploy/production/posmain-update-worker.sh /usr/local/bin/posmain-update-worker
+#   install -m 0755 deploy/production/posmain-update-recovery-worker.sh /usr/local/bin/posmain-update-recovery-worker
+#   install -m 0755 deploy/production/posmain-update-runtime-reload.sh /usr/local/bin/posmain-update-runtime-reload
 #   visudo -cf /etc/sudoers.d/posmain-update
 #   install -m 0440 deploy/production/sudoers-posmain-update.example /etc/sudoers.d/posmain-update
 
+www-data ALL=(posmain) NOPASSWD: /usr/local/bin/posmain-update-check ""
 www-data ALL=(posmain) NOPASSWD: /usr/local/bin/posmain-update-worker *
+www-data ALL=(posmain) NOPASSWD: /usr/local/bin/posmain-update-recovery-worker *
+posmain ALL=(root) NOPASSWD: /usr/local/bin/posmain-update-runtime-reload ""

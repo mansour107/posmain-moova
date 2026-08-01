@@ -35,7 +35,7 @@ if ($lang == null) {
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <!-- Font Awesome -->
   <link rel="stylesheet" href="plugins/fontawesome-free/css/all.min.css">
-  <link rel="icon" href="assets/favicon/favicon.png" type="image/ico">
+  <link rel="icon" href="assets/logo/moova.png" type="image/png">
 
   <link rel="stylesheet" href="plugins/datatables-bs4/css/dataTables.bootstrap4.min.css">
   <link rel="stylesheet" href="plugins/datatables-responsive/css/responsive.bootstrap4.min.css">
@@ -97,7 +97,7 @@ background-color:<?= $rowstg['bodycolor']?>;
 <!-- 
 <div class="loader">
 <center>
-<div class="hazaz">HORSTEC<div class="spinner-grow" role="status">
+<div class="hazaz">Moova<div class="spinner-grow" role="status">
   <span class="sr-only">Loading...</span>
   </div>
   </div>

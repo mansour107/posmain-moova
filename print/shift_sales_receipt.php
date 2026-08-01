@@ -97,7 +97,7 @@ $report_day_label = $today;
 <!-- رأس الشركة -->
 <div class="company-header text-center">
     <?php
-    $logo_path = '../assets/logo/logo.jpg';
+    $logo_path = '../assets/logo/moova.png';
     if (file_exists($logo_path)) {
         echo '<img src="' . $logo_path . '" alt="" class="img-fluid mb-2" style="max-height: 60px;">';
     }

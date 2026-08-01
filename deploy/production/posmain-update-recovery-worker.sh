@@ -2,7 +2,7 @@
 set -euo pipefail
 
 if [[ $# -ne 1 ]]; then
-  echo "Usage: posmain-update-worker.sh <job-id>" >&2
+  echo "Usage: posmain-update-recovery-worker.sh <job-id>" >&2
   exit 64
 fi
 
@@ -14,4 +14,4 @@ if [[ ! "$JOB_ID" =~ ^upd_[0-9]{8}_[0-9]{6}_[a-f0-9]{6}$ ]]; then
 fi
 
 cd "$APP_ROOT"
-exec /usr/bin/php "$APP_ROOT/cli/update_worker.php" --job-id="$JOB_ID"
+exec /usr/bin/php "$APP_ROOT/cli/update_recovery_worker.php" --job-id="$JOB_ID"

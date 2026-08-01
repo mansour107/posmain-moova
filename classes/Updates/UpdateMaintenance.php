@@ -46,15 +46,20 @@ class PosmainUpdateMaintenance
         ], $context);
 
         $json = json_encode($payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-        if (!is_string($json) || file_put_contents($this->flagPath, $json . PHP_EOL, LOCK_EX) === false) {
+        $temporary = $this->flagPath . '.tmp';
+        if (!is_string($json) || file_put_contents($temporary, $json . PHP_EOL, LOCK_EX) === false) {
             throw new RuntimeException('MAINTENANCE_FLAG_WRITE_FAILED');
+        }
+        if (!rename($temporary, $this->flagPath)) {
+            @unlink($temporary);
+            throw new RuntimeException('MAINTENANCE_FLAG_COMMIT_FAILED');
         }
     }
 
     public function disable(): void
     {
-        if (is_file($this->flagPath)) {
-            unlink($this->flagPath);
+        if (is_file($this->flagPath) && !unlink($this->flagPath) && is_file($this->flagPath)) {
+            throw new RuntimeException('MAINTENANCE_FLAG_REMOVE_FAILED');
         }
     }
 

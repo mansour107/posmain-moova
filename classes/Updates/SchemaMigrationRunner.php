@@ -57,8 +57,19 @@ class PosmainSchemaMigrationRunner
                 UNIQUE KEY uq_schema_migrations_version (version)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
         ");
+        $requiredColumns = ['version', 'filename', 'checksum', 'applied_at', 'applied_by'];
+        foreach ($requiredColumns as $requiredColumn) {
+            if (!$this->columnExists($conn, 'schema_migrations', $requiredColumn)) {
+                throw new RuntimeException(
+                    'SCHEMA_MIGRATION_TRACKING_INCOMPATIBLE:missing_' . $requiredColumn
+                );
+            }
+        }
         if (!$this->columnExists($conn, 'schema_migrations', 'status')) {
             $conn->query("ALTER TABLE schema_migrations ADD COLUMN status VARCHAR(20) NOT NULL DEFAULT 'applied' AFTER applied_by");
+        }
+        if (!$this->columnExists($conn, 'schema_migrations', 'metadata_json')) {
+            $conn->query('ALTER TABLE schema_migrations ADD COLUMN metadata_json JSON NULL AFTER status');
         }
     }
 

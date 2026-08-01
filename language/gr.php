@@ -25,13 +25,13 @@ $lang_warningmsg5 = "Möchten Sie diese Aufgabe löschen?";
 $sittingpass = "hadi@1234";
 
 // KOPFZEILE
-$lang_title = "HORS TECH";
+$lang_title = "Moova";
 
 // NAVIGATIONSBAR
 $lang_navlogout = "Abmelden";
 
 // SEITENLEISTE
-$lang_sidename = "HORS TECH";
+$lang_sidename = "Moova";
 $lang_sidemain = "Haupt";
 $lang_sideentry = "Dateneingabe";
 $lang_sideemployees = "Mitarbeiter";

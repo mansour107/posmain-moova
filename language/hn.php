@@ -24,13 +24,13 @@ $lang_warningmsg5 = "क्या आप इस कार्य को हटा
 $sittingpass = "hadi@1234";
 
 // हेडर
-$lang_title = "HORS TECH";
+$lang_title = "Moova";
 
 // नेवबार
 $lang_navlogout = "लॉगआउट";
 
 // साइडबार
-$lang_sidename = "HORS TECH";
+$lang_sidename = "Moova";
 $lang_sidemain = "मुख्य";
 $lang_sideentry = "डेटा प्रविष्टि";
 $lang_sideemployees = "कर्मचारी";

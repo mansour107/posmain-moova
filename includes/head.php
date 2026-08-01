@@ -30,7 +30,7 @@ if ($lang == null) {
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <!-- Font Awesome -->
   <link rel="stylesheet" href="../plugins/fontawesome-free/css/all.min.css">
-  <link rel="icon" href="../uploads/22947314.png" type="image/ico">
+  <link rel="icon" href="../assets/logo/moova.png" type="image/png">
   <!-- Ionicons -->
   <link rel="stylesheet" href="../dist/css/ionicons.min.css">
   <!-- Tempusdominus Bbootstrap 4 -->

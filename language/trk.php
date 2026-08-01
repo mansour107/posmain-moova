@@ -26,13 +26,13 @@ $lang_warningmsg5 = "Bu görevi silmek istiyor musunuz? ";
 $sittingpass = "hadi@1234";
 
 // BAŞLIK
-$lang_title = "HORS TECH";
+$lang_title = "Moova";
 
 // NAVBAR
 $lang_navlogout = "Çıkış Yap";
 
 // YAN PANEL
-$lang_sidename = "HORS TECH";
+$lang_sidename = "Moova";
 $lang_sidemain = "Ana";
 $lang_sideentry = "Veri Girişi";
 $lang_sideemployees = "Çalışanlar";

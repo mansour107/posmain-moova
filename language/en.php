@@ -24,13 +24,13 @@ $lang_warningmsg5 = "Do you want to delete this task? ";
 $sittingpass = "hadi@1234";
 
 // HEADER
-$lang_title = "HORS TECH";
+$lang_title = "Moova";
 
 // NAVBAR
 $lang_navlogout = "Logout";
 
 // SIDEBAR
-$lang_sidename = "HORS TECH";
+$lang_sidename = "Moova";
 $lang_sidemain = "Main";
 $lang_sideentry = "Data Entry";
 $lang_sideemployees = "Employees";

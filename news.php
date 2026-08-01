@@ -39,7 +39,7 @@ page_guard('reports.view', $conn);
             <a href="blogcontent.php?name=<?= $rownew['title'] ?>&id=<?= $rownew['id'] ?>">
 
                 <div class="card-body">
-                    <img src="uploads/<?= $rownew['img'] ?>" title="<?= $rownew['content'] ?>" class="news_cover" onerror="this.src='assets/favicon/favicon.png';">
+                    <img src="uploads/<?= $rownew['img'] ?>" title="<?= $rownew['content'] ?>" class="news_cover" onerror="this.src='assets/logo/moova.png';">
                     
                 </div>
                 <center>

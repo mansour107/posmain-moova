@@ -15,8 +15,12 @@ $conn = posmainUpdateRequireAdmin();
 try {
     $jobId = (string) ($_GET['id'] ?? '');
     $store = new PosmainUpdateJobStore();
+    $store->activeJob();
     $job = $store->find($jobId);
 
+    if (is_array($job)) {
+        $job = posmainMaybeDispatchUpdateRecovery($store, $job);
+    }
     if ($job === null) {
         posmainUpdateJson(404, [
             'ok' => false,

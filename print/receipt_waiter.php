@@ -84,7 +84,7 @@ $rowstg = $conn->query("SELECT * FROM settings WHERE id = 1")->fetch_assoc();
     <div class="receipt-container" id="printed">
         <div class="card-body">
             <?php 
-            $logo_path = '../assets/logo/logo.jpg';
+            $logo_path = '../assets/logo/moova.png';
             if (file_exists($logo_path)) {
                 echo '<img src="' . $logo_path . '" alt="" style="width: 90px; height: auto; display: block; margin: 0 auto;">';
             }

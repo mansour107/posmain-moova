@@ -14,9 +14,13 @@ $conn = posmainUpdateRequireAdmin();
 
 try {
     $availability = posmainUpdateAvailability();
-    $activeJob = (new PosmainUpdateJobStore())->activeJob();
+    $store = new PosmainUpdateJobStore();
+    $activeJob = $store->activeJob();
+    if (is_array($activeJob)) {
+        $activeJob = posmainMaybeDispatchUpdateRecovery($store, $activeJob);
+    }
 
-    posmainUpdateJson(200, [
+    posmainUpdateJson(!empty($availability['ok']) ? 200 : 503, [
         'ok' => (bool) ($availability['ok'] ?? false),
         'installed_version' => $availability['installed_version'] ?? null,
         'published_version' => $availability['published_version'] ?? null,

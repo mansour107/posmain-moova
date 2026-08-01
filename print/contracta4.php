@@ -27,7 +27,7 @@ $id = $_GET['id'];
 <div class="a4">
 <center>
 
-<h1>HORSTEC</h1>
+<h1>Moova</h1>
 <h3>Lorem ipsum dolor sit amet consectetur adipisicing elit. Vitae ipsam cupiditate possimus illo quibusdam odit, accusamus delectus, expedita reiciendis odio velit harum molestiae dolorem magni eveniet aliquam adipisci ea nulla.</h3>
 
 <h2>الاسم: <?= $rowcnt['name']?></h2>
@@ -60,4 +60,3 @@ $id = $_GET['id'];
 </html>
 <?php include('../includes/connect.php'); ?>
 <?php $id = $_GET['id'];?>
-

@@ -285,8 +285,8 @@ if ($mainAuthMode === 'pin') {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Kody POS | تسجيل الدخول</title>
-  <link rel="icon" href="assets/favicon/favicon.png" type="image/png">
+  <title>Moova POS | تسجيل الدخول</title>
+  <link rel="icon" href="assets/logo/moova.png" type="image/png">
   <link rel="stylesheet" href="assets/fonts/fonts.css">
   <?php include __DIR__ . '/includes/pin_pad_styles.php'; ?>
   <?= csrf_meta_tag('main_pin', 'main-pin-csrf-token') ?>
@@ -294,7 +294,7 @@ if ($mainAuthMode === 'pin') {
 <body class="ppm-page">
   <div class="ppm-shell">
     <div style="text-align:center;margin-bottom:1rem;">
-      <img src="assets/favicon/favicon.png" alt="Logo" class="ppm-brand">
+      <img src="assets/logo/moova.png" alt="Moova logo" class="ppm-brand">
     </div>
     <?php include __DIR__ . '/includes/pin_pad_fragment.php'; ?>
     <div style="text-align:center;margin-top:1rem;color:rgba(255,255,255,.55);font-size:.8rem;">
@@ -483,9 +483,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <head>
   <meta charset="utf-8">
   <meta http-equiv="X-UA-Compatible" content="IE=edge">
-  <title>Kody POS | تسجيل الدخول</title>
+  <title>Moova POS | تسجيل الدخول</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <link rel="icon" href="assets/favicon/favicon.png" type="image/png">
+  <link rel="icon" href="assets/logo/moova.png" type="image/png">
   <link rel="stylesheet" href="assets/fonts/fonts.css">
   <link rel="stylesheet" href="plugins/fontawesome-free/css/all.min.css">
   <link href="assets/libs/bootstrap5/css/bootstrap.min.css" rel="stylesheet">
@@ -528,7 +528,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <body>
 <div class="login-container">
   <div class="login-card">
-    <img src="assets/favicon/favicon.png" alt="Logo" class="brand-logo">
+    <img src="assets/logo/moova.png" alt="Moova logo" class="brand-logo">
     <h2 class="login-title">مرحباً بك مجدداً</h2>
     <p class="login-subtitle">سجل الدخول للمتابعة إلى النظام</p>
     <?php if (!empty($error_message)): ?>

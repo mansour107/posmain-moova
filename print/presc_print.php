@@ -5,11 +5,23 @@
 <style>
   .banner{
     width:100%;
+    text-align:center;
+    padding:12px 0 20px;
+  }
+  .banner img{
+    width:160px;
+    height:auto;
   }
   .bannerfooter{
     width:100%;
     position:fixed;
     bottom:0px;
+    text-align:center;
+  }
+  .bannerfooter img,
+  .bannerfotter img{
+    width:100px;
+    height:auto;
   }
 
 </style>
@@ -19,7 +31,7 @@
              
               <div class="row">
                 <div class="banner" >
-                <img src="../assets/print/header.jpeg" alt="" class="" style="width:90%;border:1px solid black;">
+                <img src="../assets/logo/moova.png" alt="Moova logo" class="">
                 </div>
               </div>
               <div class="row">
@@ -64,7 +76,7 @@
                 <?php }?>
                </ul>
                <div class="bannerfooter" >
-                <img src="../assets/print/footer.jpeg" alt="" class="" style="width:90%;border:1px solid black;">
+                <img src="../assets/logo/moova.png" alt="Moova logo" class="">
                 </div>
                    
               <!-- this row will not appear when printing -->
@@ -77,7 +89,7 @@
 
 
             <div class="bannerfotter">
-              <img src="assets/footer.jpeg" alt="">
+              <img src="../assets/logo/moova.png" alt="Moova logo">
             </div>
 </body>
 

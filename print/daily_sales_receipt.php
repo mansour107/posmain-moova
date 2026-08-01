@@ -87,9 +87,9 @@ $shift_number = ($reportContext['drawer_session']['id'] ?? null)
 <div class="card-body">
 
 <?php
-$logo_path = '../assets/logo/logo.jpg';
+$logo_path = '../assets/logo/moova.png';
 if (file_exists($logo_path)) {
-    echo '<img src="' . $logo_path . '" alt="" class="img-fluid">';
+    echo '<img src="' . $logo_path . '" alt="Moova logo" class="img-fluid">';
 } else {
     echo '<div class="text-center p-2">لوجو الشركة</div>';
 }

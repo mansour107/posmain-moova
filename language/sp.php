@@ -24,13 +24,13 @@ $lang_warningmsg5 = "¿Desea eliminar esta tarea? ";
 $sittingpass = "hadi@1234";
 
 // ENCABEZADO
-$lang_title = "HORS TECH";
+$lang_title = "Moova";
 
 // BARRA DE NAVEGACIÓN
 $lang_navlogout = "Cerrar sesión";
 
 // BARRA LATERAL
-$lang_sidename = "HORS TECH";
+$lang_sidename = "Moova";
 $lang_sidemain = "Principal";
 $lang_sideentry = "Entrada de datos";
 $lang_sideemployees = "Empleados";

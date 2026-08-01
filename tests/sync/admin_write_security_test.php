@@ -93,6 +93,16 @@ foreach ($handlerExpectations as $path => $snippets) {
     }
 }
 
+$settingsSource = file_get_contents(__DIR__ . '/../../setting.php');
+adminWriteAssert(is_string($settingsSource), 'setting.php should be readable');
+$headerIncludeAt = strpos($settingsSource, "include('includes/header.php')");
+adminWriteAssert($headerIncludeAt !== false, 'setting.php should include the shared header');
+foreach (["csrf_token('settings_gate')", "csrf_token('system_update')", "csrf_token('settings_write')", "csrf_token('sync_credentials')"] as $tokenCall) {
+    $tokenCallAt = strpos($settingsSource, $tokenCall);
+    adminWriteAssert($tokenCallAt !== false, 'setting.php missing ' . $tokenCall);
+    adminWriteAssert($tokenCallAt < $headerIncludeAt, 'setting.php must mint ' . $tokenCall . ' before the header releases the session lock');
+}
+
 echo "admin-write-security-ok\n";
 
 function adminWriteAssert(bool $condition, string $message): void

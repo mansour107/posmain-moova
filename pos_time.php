@@ -249,7 +249,7 @@
     <button title="<?= $rowitem['info']?>" class="itemButton cat border-2 border-red shadow align-middle p-0 m-0 min-h-20 rounded bg-slate-100 transition duration-300 ease-in-out hover:bg-pink-600 hover:text-slate-50" itemid="<?= $rowitem['barcode']?>" data-category="<?= $rowitem['group1']?>">
         <div class="itemlogo">
             <center>
-                <img class="max-h-10 max-w-10" src="assets/logo/hors.png" alt="" onerror="this.onerror=null;this.src='assets/logo/hors.png';">
+                <img class="max-h-10 max-w-10" src="assets/logo/moova.png" alt="Moova logo" onerror="this.onerror=null;this.src='assets/logo/moova.png';">
             </center>
         </div>
         <div class="itemname">

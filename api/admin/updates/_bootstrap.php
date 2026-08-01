@@ -162,6 +162,81 @@ if (!function_exists('posmainCompareVersions')) {
     }
 }
 
+if (!function_exists('posmainUpdatePrivilegedGitSyncState')) {
+    function posmainUpdatePrivilegedGitSyncState(): ?array
+    {
+        $wrapper = trim((string) (getenv('POSMAIN_UPDATE_GIT_CHECK_WRAPPER') ?: ''));
+        $runAs = trim((string) (getenv('POSMAIN_UPDATE_RUN_AS') ?: ''));
+        if ($wrapper === '' && $runAs === '') {
+            return null;
+        }
+        if (
+            $wrapper === ''
+            || $runAs === ''
+            || preg_match('/^[A-Za-z_][A-Za-z0-9_-]{0,31}$/', $runAs) !== 1
+            || $wrapper[0] !== '/'
+            || !is_file($wrapper)
+            || !is_executable($wrapper)
+        ) {
+            return [
+                'ok' => false,
+                'git_behind' => false,
+                'state' => 'unavailable',
+                'error' => 'git_check_wrapper_invalid',
+                'message' => 'The privileged Git check wrapper is not configured correctly.',
+            ];
+        }
+
+        $disabled = array_map('trim', explode(',', (string) ini_get('disable_functions')));
+        if (!function_exists('proc_open') || in_array('proc_open', $disabled, true)) {
+            return [
+                'ok' => false,
+                'git_behind' => false,
+                'state' => 'unavailable',
+                'error' => 'git_check_process_unavailable',
+                'message' => 'The PHP runtime cannot start the privileged Git check.',
+            ];
+        }
+
+        $command = ['/usr/bin/sudo', '-n', '-u', $runAs, $wrapper];
+        $descriptors = [
+            0 => ['file', '/dev/null', 'r'],
+            1 => ['pipe', 'w'],
+            2 => ['pipe', 'w'],
+        ];
+        $process = proc_open($command, $descriptors, $pipes);
+        if (!is_resource($process)) {
+            return [
+                'ok' => false,
+                'git_behind' => false,
+                'state' => 'unavailable',
+                'error' => 'git_check_process_failed',
+                'message' => 'The privileged Git check could not be started.',
+            ];
+        }
+
+        $stdout = (string) stream_get_contents($pipes[1]);
+        $stderr = (string) stream_get_contents($pipes[2]);
+        fclose($pipes[1]);
+        fclose($pipes[2]);
+        $exitCode = proc_close($process);
+        $payload = json_decode($stdout, true);
+        if ($exitCode !== 0 || !is_array($payload)) {
+            return [
+                'ok' => false,
+                'git_behind' => false,
+                'state' => 'unavailable',
+                'error' => 'git_check_wrapper_failed',
+                'message' => trim($stderr) !== ''
+                    ? trim($stderr)
+                    : 'The privileged Git check returned an invalid response.',
+            ];
+        }
+
+        return $payload;
+    }
+}
+
 if (!function_exists('posmainUpdateAvailability')) {
     function posmainUpdateAvailability(): array
     {
@@ -169,15 +244,7 @@ if (!function_exists('posmainUpdateAvailability')) {
         $installed = posmainInstalledVersion($root);
         $published = posmainFetchPublishedVersion();
         $versionUrl = posmainUpdateVersionUrl();
-        $gitSync = posmainUpdateGitSyncState($root);
-        $gitPublished = is_array($gitSync['remote_version'] ?? null) ? $gitSync['remote_version'] : null;
-
-        if ($gitPublished !== null) {
-            if ($published === null || posmainCompareVersions((string) ($published['version'] ?? ''), (string) $gitPublished['version']) < 0) {
-                $published = $gitPublished;
-            }
-        }
-
+        $gitSync = posmainUpdatePrivilegedGitSyncState() ?? posmainUpdateGitSyncState($root);
         if ($installed === null) {
             return [
                 'ok' => false,
@@ -187,22 +254,60 @@ if (!function_exists('posmainUpdateAvailability')) {
                 'git_sync' => $gitSync,
             ];
         }
-
-        if ($published === null && empty($gitSync['git_behind'])) {
+        if (empty($gitSync['ok'])) {
             return [
                 'ok' => false,
-                'error' => 'published_version_unavailable',
-                'message' => 'Published version.json could not be loaded.',
+                'error' => (string) ($gitSync['error'] ?? 'git_unavailable'),
+                'message' => (string) ($gitSync['message'] ?? 'Release repository could not be checked.'),
                 'installed_version' => $installed,
                 'version_url' => $versionUrl,
                 'update_available' => false,
                 'git_sync' => $gitSync,
             ];
         }
+        $gitPublished = is_array($gitSync['remote_version'] ?? null) ? $gitSync['remote_version'] : null;
+        if ($gitPublished === null) {
+            return [
+                'ok' => false,
+                'error' => 'published_version_unavailable',
+                'message' => 'The fetched release has no valid version.json.',
+                'installed_version' => $installed,
+                'version_url' => $versionUrl,
+                'update_available' => false,
+                'git_sync' => $gitSync,
+            ];
+        }
+        if (
+            $published !== null
+            && !hash_equals((string) ($gitPublished['version'] ?? ''), (string) ($published['version'] ?? ''))
+        ) {
+            return [
+                'ok' => false,
+                'error' => 'release_sources_mismatch',
+                'message' => 'Hosted version metadata does not match the fetched Git release.',
+                'installed_version' => $installed,
+                'published_version' => (string) ($gitPublished['version'] ?? ''),
+                'version_url' => $versionUrl,
+                'update_available' => false,
+                'git_sync' => $gitSync,
+            ];
+        }
+        if (($gitSync['blockers'] ?? []) !== []) {
+            return [
+                'ok' => false,
+                'error' => (string) (($gitSync['blockers'][0] ?? '') ?: 'git_update_blocked'),
+                'message' => 'The local checkout is not safe for automatic update.',
+                'installed_version' => $installed,
+                'published_version' => (string) ($gitPublished['version'] ?? ''),
+                'version_url' => $versionUrl,
+                'update_available' => false,
+                'git_sync' => $gitSync,
+            ];
+        }
 
-        $targetVersion = (string) ($published['version'] ?? $installed);
-        $versionUpdateAvailable = $published !== null && posmainCompareVersions($installed, $targetVersion) > 0;
-        $updateAvailable = $versionUpdateAvailable || !empty($gitSync['git_behind']);
+        $targetVersion = (string) ($gitPublished['version'] ?? $installed);
+        $versionUpdateAvailable = posmainCompareVersions($installed, $targetVersion) > 0;
+        $updateAvailable = !empty($gitSync['git_behind']);
 
         return [
             'ok' => true,
@@ -210,7 +315,7 @@ if (!function_exists('posmainUpdateAvailability')) {
             'published_version' => $targetVersion,
             'update_available' => $updateAvailable,
             'version_url' => $versionUrl,
-            'published' => $published,
+            'published' => $gitPublished,
             'git_sync' => $gitSync,
             'update_reason' => $versionUpdateAvailable
                 ? 'version'
@@ -268,9 +373,17 @@ if (!function_exists('posmainUpdateWorkerDispatchCommand')) {
         $runAs = trim((string) (getenv('POSMAIN_UPDATE_RUN_AS') ?: ''));
         $wrapper = trim((string) (getenv('POSMAIN_UPDATE_WORKER_WRAPPER') ?: '/usr/local/bin/posmain-update-worker'));
 
-        if ($runAs !== '' && is_file($wrapper)) {
+        if ($runAs !== '') {
+            if (
+                preg_match('/^[A-Za-z_][A-Za-z0-9_-]{0,31}$/', $runAs) !== 1
+                || $wrapper === ''
+                || $wrapper[0] !== '/'
+                || !is_file($wrapper)
+                || !is_executable($wrapper)
+            ) {
+                return null;
+            }
             $inner = escapeshellarg($wrapper) . ' ' . escapeshellarg($jobId);
-
             return 'nohup sudo -n -u ' . escapeshellarg($runAs) . ' ' . $inner
                 . ' >> ' . escapeshellarg($logFile) . ' 2>&1 &';
         }
@@ -311,5 +424,101 @@ if (!function_exists('posmainDispatchUpdateWorker')) {
         exec($command, $output, $exitCode);
 
         return $exitCode === 0;
+    }
+}
+
+if (!function_exists('posmainUpdateRecoveryWorkerDispatchCommand')) {
+    function posmainUpdateRecoveryWorkerDispatchCommand(string $jobId): ?string
+    {
+        $root = realpath(dirname(__DIR__, 3));
+        if ($root === false) {
+            return null;
+        }
+
+        $php = posmainUpdatePhpBinary();
+        $script = $root . DIRECTORY_SEPARATOR . 'cli' . DIRECTORY_SEPARATOR . 'update_recovery_worker.php';
+        if (!is_file($script)) {
+            return null;
+        }
+
+        $custom = trim((string) (getenv('POSMAIN_UPDATE_RECOVERY_DISPATCH_CMD') ?: ''));
+        if ($custom !== '') {
+            return strtr($custom, [
+                '{php}' => $php,
+                '{script}' => $script,
+                '{job_id}' => $jobId,
+                '{root}' => $root,
+            ]);
+        }
+
+        $logDir = $root . '/var/update_jobs';
+        if (!is_dir($logDir) && !mkdir($logDir, 0750, true) && !is_dir($logDir)) {
+            return null;
+        }
+        $logFile = $logDir . '/recovery-' . $jobId . '.log';
+        $runAs = trim((string) (getenv('POSMAIN_UPDATE_RUN_AS') ?: ''));
+        $wrapper = trim((string) (
+            getenv('POSMAIN_UPDATE_RECOVERY_WORKER_WRAPPER')
+            ?: '/usr/local/bin/posmain-update-recovery-worker'
+        ));
+        if ($runAs !== '') {
+            if (
+                preg_match('/^[A-Za-z_][A-Za-z0-9_-]{0,31}$/', $runAs) !== 1
+                || $wrapper === ''
+                || $wrapper[0] !== '/'
+                || !is_file($wrapper)
+                || !is_executable($wrapper)
+            ) {
+                return null;
+            }
+            return 'nohup sudo -n -u ' . escapeshellarg($runAs)
+                . ' ' . escapeshellarg($wrapper)
+                . ' ' . escapeshellarg($jobId)
+                . ' >> ' . escapeshellarg($logFile) . ' 2>&1 &';
+        }
+
+        return 'nohup ' . escapeshellarg($php)
+            . ' ' . escapeshellarg($script)
+            . ' --job-id=' . escapeshellarg($jobId)
+            . ' >> ' . escapeshellarg($logFile) . ' 2>&1 &';
+    }
+}
+
+if (!function_exists('posmainDispatchUpdateRecoveryWorker')) {
+    function posmainDispatchUpdateRecoveryWorker(string $jobId): bool
+    {
+        $command = posmainUpdateRecoveryWorkerDispatchCommand($jobId);
+        if ($command === null || !function_exists('exec')) {
+            return false;
+        }
+        $disabled = array_map('trim', explode(',', (string) ini_get('disable_functions')));
+        if (in_array('exec', $disabled, true)) {
+            return false;
+        }
+        exec($command, $output, $exitCode);
+
+        return $exitCode === 0;
+    }
+}
+
+if (!function_exists('posmainMaybeDispatchUpdateRecovery')) {
+    function posmainMaybeDispatchUpdateRecovery(PosmainUpdateJobStore $store, array $job): array
+    {
+        if ((string) ($job['status'] ?? '') !== 'recovery_required') {
+            return $job;
+        }
+
+        $jobId = (string) ($job['id'] ?? '');
+        try {
+            $job = $store->markRecoveryDispatching($jobId);
+        } catch (RuntimeException $exception) {
+            return $store->find($jobId) ?: $job;
+        }
+
+        if (!posmainDispatchUpdateRecoveryWorker($jobId)) {
+            return $store->markRecoveryDispatchFailed($jobId, 'UPDATE_RECOVERY_WORKER_DISPATCH_FAILED');
+        }
+
+        return $store->find($jobId) ?: $job;
     }
 }

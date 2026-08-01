@@ -28,18 +28,28 @@ try {
         'target_version' => $payload['target_version'] ?? null,
         'requested_by_user_id' => current_user_id(),
     ]);
-
+    $job = $store->markDispatching((string) $job['id']);
     $workerStarted = posmainDispatchUpdateWorker((string) $job['id']);
+    if (!$workerStarted) {
+        $job = $store->markDispatchFailed((string) $job['id'], 'UPDATE_WORKER_DISPATCH_FAILED');
+        posmainUpdateJson(503, [
+            'ok' => false,
+            'error' => 'update_worker_dispatch_failed',
+            'job_id' => $job['id'],
+            'status' => $job['status'],
+            'status_url' => posmainUpdateStatusUrl((string) $job['id']),
+            'worker_started' => false,
+            'message' => 'Update job was not started. No update steps were applied.',
+        ]);
+    }
 
     posmainUpdateJson(202, [
         'ok' => true,
         'job_id' => $job['id'],
         'status' => $job['status'],
         'status_url' => posmainUpdateStatusUrl((string) $job['id']),
-        'worker_started' => $workerStarted,
-        'message' => $workerStarted
-            ? 'Update job created and worker dispatched.'
-            : 'Update job created, but worker dispatch failed.',
+        'worker_started' => true,
+        'message' => 'Update job created and worker dispatched.',
     ]);
 } catch (RuntimeException $e) {
     $message = $e->getMessage();

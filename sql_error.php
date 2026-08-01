@@ -207,7 +207,7 @@ $error_code = isset($_GET['code']) ? htmlspecialchars($_GET['code']) : 'DB_ERR';
         <!-- بيانات التواصل -->
         <div class="contact-box">
             <p>للدعم الفني والمساعدة تواصل مع</p>
-            <div class="vendor-name">KODY</div>
+            <div class="vendor-name">Moova</div>
             <div class="vendor-info">فريق الدعم الفني — متاح على مدار الساعة</div>
         </div>
 

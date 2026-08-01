@@ -54,9 +54,9 @@ $posmainLegacyFlag = static function (string $flag) use ($conn): bool {
     <div class="user-panel d-flex flex-column">
       <div class="d-flex align-items-center mb-2">
         <div class="image-user me-2">
-          <img src="assets/logo/hors.png" alt="User Image"
+          <img src="assets/logo/moova.png" alt="Moova logo"
             style="height: 45px; width: 45px; border-radius: 10px; object-fit: cover; box-shadow: 0 2px 8px rgba(0,0,0,0.2);"
-            onerror="this.onerror=null; this.src='assets/logo/hors.png';">
+            onerror="this.onerror=null; this.src='assets/logo/moova.png';">
         </div>
         <div class="info flex-grow-1">
           <?php

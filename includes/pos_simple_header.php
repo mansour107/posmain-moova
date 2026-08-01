@@ -80,7 +80,7 @@ if (!$language_file_found || $lang == null || $lang == '') {
     <title><?= isset($lang_title) ? $lang_title : 'نظام نقاط البيع' ?></title>
     
     <!-- Favicon -->
-    <link rel="icon" href="assets/favicon/favicon.png" type="image/png">
+    <link rel="icon" href="assets/logo/moova.png" type="image/png">
     
     <!-- Font Awesome -->
     <link rel="stylesheet" href="plugins/fontawesome-free/css/all.min.css">

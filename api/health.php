@@ -3,6 +3,8 @@
 require_once __DIR__ . '/../includes/api_entry_classification.php';
 require_once __DIR__ . '/../includes/db_bootstrap.php';
 require_once __DIR__ . '/../classes/Pos/Service/SideEffectPolicy.php';
+require_once __DIR__ . '/../classes/Stepwise.php';
+require_once __DIR__ . '/../classes/Updates/SchemaMigrationRunner.php';
 
 if (PHP_SAPI === 'cli' && empty($_GET) && getenv('QUERY_STRING')) {
     parse_str((string) getenv('QUERY_STRING'), $_GET);
@@ -269,6 +271,14 @@ function posmainHealthMigrationCheck(): array
 {
     try {
         $conn = posmain_db_connect();
+        $stepwise = (new Stepwise($conn, __DIR__ . '/../update', [
+            'ledger_table' => 'stepwise_ledger',
+        ]))->plan(false);
+        $schemaPending = (new PosmainSchemaMigrationRunner())->pending($conn);
+        $stepwisePending = array_map(
+            static fn(array $step): string => (string) $step['step_key'],
+            $stepwise['pending']
+        );
         $dbName = (string) ($conn->query('SELECT DATABASE() AS db_name')->fetch_assoc()['db_name'] ?? '');
         $stmt = $conn->prepare("
             SELECT COUNT(*) AS table_count
@@ -281,9 +291,13 @@ function posmainHealthMigrationCheck(): array
         $stmt->close();
         $conn->close();
 
+        $ok = $stepwisePending === [] && $stepwise['drift'] === [] && $schemaPending === [];
         return [
-            'ok' => true,
+            'ok' => $ok,
             'schema_migrations_exists' => ((int) ($row['table_count'] ?? 0)) > 0,
+            'stepwise_pending' => $stepwisePending,
+            'stepwise_drift' => $stepwise['drift'],
+            'schema_pending' => array_keys($schemaPending),
         ];
     } catch (Throwable $e) {
         return [

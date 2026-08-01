@@ -41,7 +41,7 @@ $redirectReason = trim((string) ($_GET['reason'] ?? $_GET['error'] ?? ''));
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>إعداد قاعدة البيانات | كودي 2</title>
+    <title>إعداد قاعدة البيانات | Moova</title>
     <!-- Local Fonts -->
     <link rel="stylesheet" href="assets/fonts/fonts.css">
     <!-- Local Font Awesome -->
@@ -310,7 +310,7 @@ $redirectReason = trim((string) ($_GET['reason'] ?? $_GET['error'] ?? ''));
             <?php endif; ?>
 
             <div class="footer-text">
-                نظام كودي 2 &copy; <?= date('Y') ?> - جميع الحقوق محفوظة
+                نظام Moova &copy; <?= date('Y') ?> - جميع الحقوق محفوظة
             </div>
         </div>
     </div>

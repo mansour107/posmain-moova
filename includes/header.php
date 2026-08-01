@@ -64,7 +64,7 @@ if (isset($conn) && $conn instanceof mysqli) {
   <meta name="viewport" content="width=device-width, initial-scale=1">
 
   <link rel="stylesheet" href="plugins/fontawesome-free/css/all.min.css">
-  <link rel="icon" href="assets/favicon/favicon.png" type="image/png">
+  <link rel="icon" href="assets/logo/moova.png" type="image/png">
 
   <link rel="stylesheet" href="plugins/datatables-bs4/css/dataTables.bootstrap4.min.css">
   <link rel="stylesheet" href="plugins/datatables-responsive/css/responsive.bootstrap4.min.css">

@@ -24,13 +24,13 @@ $lang_warningmsg5 = "کیا آپ اس کام کو حذف کرنا چاہتے ہ�
 $sittingpass = "hadi@1234";
 
 // ہیڈر
-$lang_title = "ہورس ٹیک";
+$lang_title = "Moova";
 
 // نیویگیشن بار
 $lang_navlogout = "لاگ آوٹ";
 
 // سائیڈ بار
-$lang_sidename = "ہورس ٹیک";
+$lang_sidename = "Moova";
 $lang_sidemain = "مین";
 $lang_sideentry = "ڈیٹا انٹری";
 $lang_sideemployees = "ملازمین";

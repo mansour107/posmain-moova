@@ -24,13 +24,13 @@ $lang_warningmsg5 = "您要删除此任务吗？";
 $sittingpass = "hadi@1234";
 
 // 页眉
-$lang_title = "HORS TECH";
+$lang_title = "Moova";
 
 // 导航栏
 $lang_navlogout = "登出";
 
 // 侧边栏
-$lang_sidename = "HORS TECH";
+$lang_sidename = "Moova";
 $lang_sidemain = "主要";
 $lang_sideentry = "数据录入";
 $lang_sideemployees = "员工";

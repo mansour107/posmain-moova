@@ -70,9 +70,9 @@ window.POSMAIN_PRINT_CONTEXT = {
 <div class="card-body">
 
 <?php 
-$logo_path = '../assets/logo/logo.jpg';
+$logo_path = '../assets/logo/moova.png';
 if (file_exists($logo_path)) {
-    echo '<img src="' . $logo_path . '" alt="" style="width: 90px; height: auto; display: block; margin: 0 auto;">';
+    echo '<img src="' . $logo_path . '" alt="Moova logo" style="width: 90px; height: auto; display: block; margin: 0 auto;">';
 } else {
     echo '<div class="text-center p-2">لوجو الشركة</div>';
 }

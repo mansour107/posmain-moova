@@ -34,7 +34,7 @@ $csrf = csrf_token('change_pin');
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>تغيير رمز الدخول</title>
-  <link rel="icon" href="assets/favicon/favicon.png" type="image/png">
+  <link rel="icon" href="assets/logo/moova.png" type="image/png">
   <link rel="stylesheet" href="assets/fonts/fonts.css">
   <?php include __DIR__ . '/includes/pin_pad_styles.php'; ?>
   <?= csrf_meta_tag('change_pin', 'change-pin-csrf-token') ?>

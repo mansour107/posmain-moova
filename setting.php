@@ -46,6 +46,14 @@ if ($settingsStockResult) {
 $settingsCurrentPosStore = (int) ($rowstg['def_pos_store'] ?? 0);
 $settingsNegativeStockPolicy = (new NegativeStockSalePolicyService($appConfig ?? []))->resolve($conn);
 
+// Mint every token used by this page while the session is still locked. The
+// shared header releases the lock before rendering the body; creating tokens
+// after that point can race with background requests and lose the new token.
+csrf_token('settings_gate');
+$systemUpdateCsrf = csrf_token('system_update');
+csrf_token('settings_write');
+csrf_token('sync_credentials');
+
 include('includes/header.php');
 ?>
 
@@ -100,11 +108,8 @@ include('includes/header.php');
 
 <?php
 require_once __DIR__ . '/api/admin/updates/_bootstrap.php';
-$updateAvailability = posmainUpdateAvailability();
-$systemUpdateCsrf = csrf_token('system_update');
-$systemUpdateAvailable = !empty($updateAvailability['update_available']);
-$systemUpdateInstalledVersion = (string) ($updateAvailability['installed_version'] ?? 'غير معروف');
-$systemUpdatePublishedVersion = (string) ($updateAvailability['published_version'] ?? 'غير متاح');
+$systemUpdateAvailable = false;
+$systemUpdateInstalledVersion = (string) (posmainInstalledVersion(__DIR__) ?? 'غير معروف');
 require_once __DIR__ . '/classes/Sync/BranchIdentity.php';
 require_once __DIR__ . '/classes/Sync/BranchPairingService.php';
 require_once __DIR__ . '/classes/Sync/CloudBranchRegistryService.php';
@@ -287,20 +292,17 @@ if ($syncDefaultCloudUrl === '' && !empty($_SERVER['HTTP_HOST'])) {
       </div>
       <div class="d-flex align-items-center justify-content-end mb-3">
         <div class="d-flex align-items-center flex-shrink-0">
-          <?php if ($systemUpdateAvailable): ?>
-          <span class="badge badge-success ml-2" style="font-size:.75rem;padding:.4em .7em;">
+          <span id="system-update-available-badge" class="badge badge-success ml-2" style="display:none;font-size:.75rem;padding:.4em .7em;">
             <i class="fas fa-circle" style="font-size:.5em;vertical-align:middle;"></i> تحديث جديد متاح
           </span>
-          <?php endif; ?>
           <button
             type="button"
-            class="btn <?= $systemUpdateAvailable ? 'btn-primary' : 'btn-outline-secondary' ?> btn-sm"
+            class="btn btn-outline-secondary btn-sm"
             id="system-update-action-btn"
-            data-update-available="<?= $systemUpdateAvailable ? '1' : '0' ?>"
-            data-target-version="<?= htmlspecialchars((string) ($updateAvailability['published_version'] ?? ''), ENT_QUOTES, 'UTF-8') ?>"
+            data-update-available="0"
+            data-target-version=""
           >
-            <i class="fas <?= $systemUpdateAvailable ? 'fa-sync-alt' : 'fa-search' ?> ml-1"></i>
-            <?= $systemUpdateAvailable ? 'تحديث النظام' : 'البحث عن تحديث' ?>
+            <i class="fas fa-search ml-1"></i> البحث عن تحديث
           </button>
         </div>
       </div>
@@ -1977,30 +1979,68 @@ document.addEventListener('DOMContentLoaded', function () {
 document.addEventListener('DOMContentLoaded', function () {
   const updateButton = document.getElementById('system-update-action-btn');
   const toast = document.getElementById('system-update-toast');
+  const availableBadge = document.getElementById('system-update-available-badge');
   if (!updateButton || !toast) return;
 
   const csrfToken = <?= json_encode($systemUpdateCsrf, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>;
   let toastTimer = null;
+  let polling = false;
+
+  const phaseLabels = {
+    worker_dispatch: 'تشغيل عامل التحديث',
+    version_check: 'التحقق من النسخة',
+    preflight: 'فحوصات الأمان',
+    database_migrations_plan: 'فحص ترحيلات قواعد البيانات',
+    maintenance_on: 'تفعيل وضع الصيانة',
+    drain_requests: 'إنهاء الطلبات الجارية',
+    backup: 'إنشاء النسخ الاحتياطية',
+    code_activation: 'تحديث الكود',
+    database_migrations: 'تطبيق ترحيلات قواعد البيانات',
+    runtime_restart: 'إعادة تشغيل الخدمة',
+    database_verification: 'التحقق من قواعد البيانات',
+    release_verification: 'التحقق من نسخة الكود',
+    health_check: 'فحص سلامة النظام',
+    maintenance_off: 'إنهاء وضع الصيانة',
+    backup_cleanup: 'حذف النسخ الاحتياطية المؤقتة',
+    stale_recovery: 'بدء الاستعادة التلقائية',
+    stale_recovery_dispatch: 'تشغيل عامل الاستعادة',
+    rollback: 'استعادة النظام',
+    failed: 'فشل التحديث',
+    completed: 'اكتمل التحديث'
+  };
 
   function showToast(message, type, statusUrl) {
     const colors = { success: '#28a745', error: '#dc3545', info: '#17a2b8', muted: '#6c757d' };
     const color = colors[type] || colors.muted;
-    let html = '<div style="background:#fff;border-radius:12px;box-shadow:0 4px 24px rgba(0,0,0,.15);padding:1rem 1.25rem;display:flex;align-items:center;gap:.75rem;direction:rtl;border-right:4px solid ' + color + ';">'
-      + '<span style="color:' + color + ';font-size:1.2rem;">' + (type === 'success' ? '✓' : type === 'error' ? '✕' : '⟳') + '</span>'
-      + '<span style="flex:1;font-size:.9rem;">' + message + '</span>';
+    const card = document.createElement('div');
+    card.style.cssText = 'background:#fff;border-radius:12px;box-shadow:0 4px 24px rgba(0,0,0,.15);padding:1rem 1.25rem;display:flex;align-items:center;gap:.75rem;direction:rtl;border-right:4px solid ' + color + ';';
+    const icon = document.createElement('span');
+    icon.style.cssText = 'color:' + color + ';font-size:1.2rem;';
+    icon.textContent = type === 'success' ? '✓' : type === 'error' ? '✕' : '⟳';
+    const text = document.createElement('span');
+    text.style.cssText = 'flex:1;font-size:.9rem;';
+    text.textContent = String(message || '');
+    card.appendChild(icon);
+    card.appendChild(text);
     if (statusUrl) {
-      html += '<a href="' + statusUrl + '" target="_blank" style="color:' + color + ';font-size:.82rem;white-space:nowrap;">عرض الحالة</a>';
+      const link = document.createElement('a');
+      link.href = statusUrl;
+      link.target = '_blank';
+      link.rel = 'noopener';
+      link.style.cssText = 'color:' + color + ';font-size:.82rem;white-space:nowrap;';
+      link.textContent = 'عرض الحالة';
+      card.appendChild(link);
     }
-    html += '</div>';
-    toast.innerHTML = html;
+    toast.replaceChildren(card);
     toast.style.display = 'block';
     if (toastTimer) clearTimeout(toastTimer);
     if (type !== 'info') {
-      toastTimer = setTimeout(function () { toast.style.display = 'none'; }, 5000);
+      toastTimer = setTimeout(function () { toast.style.display = 'none'; }, 8000);
     }
   }
 
   function setUpdateState(available, targetVersion) {
+    if (availableBadge) availableBadge.style.display = available ? 'inline-block' : 'none';
     updateButton.dataset.updateAvailable = available ? '1' : '0';
     updateButton.dataset.targetVersion = targetVersion || '';
     updateButton.innerHTML = available
@@ -2009,12 +2049,85 @@ document.addEventListener('DOMContentLoaded', function () {
     updateButton.className = 'btn btn-sm ' + (available ? 'btn-primary' : 'btn-outline-secondary');
   }
 
+  function wait(milliseconds) {
+    return new Promise(function (resolve) { window.setTimeout(resolve, milliseconds); });
+  }
+
+  async function responseJson(response) {
+    try {
+      return await response.json();
+    } catch (e) {
+      return { ok: false, message: 'استجابة التحديث غير صالحة.' };
+    }
+  }
+
+  async function pollUpdate(statusUrl) {
+    if (!statusUrl || polling) return;
+    polling = true;
+    updateButton.disabled = true;
+    let failures = 0;
+    try {
+      while (true) {
+        await wait(1200);
+        try {
+          const response = await fetch(statusUrl, {
+            headers: { Accept: 'application/json' },
+            credentials: 'same-origin',
+            cache: 'no-store'
+          });
+          const data = await responseJson(response);
+          if (!response.ok || !data.ok || !data.job) {
+            throw new Error(data.message || 'تعذر قراءة حالة التحديث.');
+          }
+          failures = 0;
+          const job = data.job;
+          const status = String(job.status || '');
+          const phase = phaseLabels[job.phase] || job.phase || 'التحديث';
+          if (status === 'completed') {
+            setUpdateState(false, '');
+            showToast('اكتمل تحديث النظام والتحقق منه بنجاح.', 'success');
+            return;
+          }
+          if (status === 'failed') {
+            if (job.recovery_status === 'recovered') {
+              showToast('فشل التحديث، وتمت استعادة النظام والبيانات والتحقق منهما تلقائياً. راجع تفاصيل الحالة.', 'error', statusUrl);
+            } else if (job.recovery_status === 'recovery_failed') {
+              showToast('فشل التحديث ولم تكتمل الاستعادة. النظام ما زال في وضع الصيانة ويحتاج تدخلاً فورياً.', 'error', statusUrl);
+            } else {
+              showToast('فشل التحديث قبل تعديل النظام. راجع تفاصيل الحالة.', 'error', statusUrl);
+            }
+            return;
+          }
+          showToast('التحديث جارٍ: ' + phase + '…', 'info', statusUrl);
+        } catch (error) {
+          failures++;
+          if (failures >= 20) {
+            showToast('تعذر متابعة حالة التحديث. افتح تفاصيل الحالة أو أعد تحميل الصفحة.', 'error', statusUrl);
+            return;
+          }
+          showToast('الاتصال مؤقتاً غير متاح أثناء التحديث. ستتم إعادة المحاولة…', 'info', statusUrl);
+        }
+      }
+    } finally {
+      polling = false;
+      updateButton.disabled = false;
+    }
+  }
+
   async function checkForUpdates() {
     updateButton.disabled = true;
     showToast('جاري البحث عن تحديث…', 'info');
     try {
       const res = await fetch('/api/admin/updates/check.php', { headers: { Accept: 'application/json' }, credentials: 'same-origin' });
-      const data = await res.json();
+      const data = await responseJson(res);
+      if (data.active_job && data.active_job.id) {
+        showToast('يوجد تحديث أو استعادة قيد التنفيذ. جاري متابعة الحالة…', 'info');
+        pollUpdate('/api/admin/updates/status.php?id=' + encodeURIComponent(data.active_job.id));
+        return;
+      }
+      if (!res.ok || !data.ok) {
+        throw new Error(data.message || 'تعذر التحقق من التحديثات.');
+      }
       if (data.update_available) {
         setUpdateState(true, data.published_version);
         const reason = data.update_reason === 'git'
@@ -2025,15 +2138,16 @@ document.addEventListener('DOMContentLoaded', function () {
         setUpdateState(false, '');
         showToast('النظام محدث. لا توجد نسخة جديدة حالياً.', 'muted');
       }
-    } catch (e) {
-      showToast('تعذر التحقق من التحديثات.', 'error');
+    } catch (error) {
+      setUpdateState(false, '');
+      showToast(error.message || 'تعذر التحقق من التحديثات.', 'error');
     } finally {
-      updateButton.disabled = false;
+      if (!polling) updateButton.disabled = false;
     }
   }
 
   async function startUpdate() {
-    if (!window.confirm('سيتم إيقاف النظام مؤقتاً أثناء التحديث. هل تريد المتابعة؟')) return;
+    if (!window.confirm('سيتم إنشاء نسخة احتياطية ثم إيقاف النظام مؤقتاً أثناء التحديث. هل تريد المتابعة؟')) return;
     updateButton.disabled = true;
     showToast('جاري بدء التحديث…', 'info');
     try {
@@ -2042,12 +2156,20 @@ document.addEventListener('DOMContentLoaded', function () {
         headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'X-CSRF-Token': csrfToken },
         body: JSON.stringify({ action: 'apply', target_version: updateButton.dataset.targetVersion || null }),
       });
-      const data = await res.json();
-      if (!res.ok || !data.ok) throw new Error(data.message || 'تعذر بدء التحديث.');
-      showToast('بدأ التحديث بنجاح.', 'success', data.status_url || null);
-    } catch (e) {
-      showToast(e.message || 'تعذر بدء التحديث.', 'error');
-      updateButton.disabled = false;
+      const data = await responseJson(res);
+      if (res.status === 409 && data.status_url) {
+        showToast('يوجد تحديث آخر قيد التنفيذ. جاري متابعة حالته…', 'info', data.status_url);
+        pollUpdate(data.status_url);
+        return;
+      }
+      if (!res.ok || !data.ok || !data.status_url) {
+        throw new Error(data.message || 'تعذر بدء التحديث.');
+      }
+      showToast('بدأ التحديث. ستظهر المراحل هنا حتى اكتماله.', 'info', data.status_url);
+      pollUpdate(data.status_url);
+    } catch (error) {
+      showToast(error.message || 'تعذر بدء التحديث.', 'error');
+      if (!polling) updateButton.disabled = false;
     }
   }
 
