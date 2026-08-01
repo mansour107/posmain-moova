@@ -31,21 +31,23 @@ silentPrintingContractAssert(
     strpos($routing, 'PRINT_KOT_LINE_UNROUTED') !== false
     && strpos($routing, "'all_categories'") !== false
     && strpos($routing, "'category_ids'") !== false
-    && strpos($routing, "['file', 'network']") !== false,
+    && strpos($routing, "['network', 'usb']") !== false,
     'kitchen routing must fail closed and silent routing must exclude legacy browser printers'
 );
 
 $transport = file_get_contents($root . '/classes/Pos/Service/PrinterTransportService.php');
+$bridgeClient = file_get_contents($root . '/classes/Pos/Service/PrintBridgeClient.php');
+$networkTransport = file_get_contents($root . '/classes/Pos/Service/LocalNetworkPrinterService.php');
 silentPrintingContractAssert(
-    strpos($transport, 'PRINT_NETWORK_DELIVERY_UNCERTAIN') !== false
+    strpos($networkTransport, 'PRINT_NETWORK_DELIVERY_UNCERTAIN') !== false
     && strpos($transport, 'false);') !== false
-    && strpos($transport, 'PRINT_SIMULATOR_IDEMPOTENCY_CONFLICT') !== false,
-    'transport must distinguish uncertain physical delivery and idempotent simulator replay'
+    && strpos($bridgeClient, 'PRINT_BRIDGE_DELIVERY_UNCERTAIN') !== false,
+    'transport must distinguish uncertain network and cable delivery'
 );
 silentPrintingContractAssert(
-    strpos($transport, "['printing']['simulator_directory']") !== false
-    && strpos(file_get_contents($root . '/printer_management.php'), 'name="simulator_directory"') === false,
-    'operators must not be able to provide an arbitrary simulator filesystem path'
+    strpos($transport, "['network', 'usb']") !== false
+    && strpos(file_get_contents($root . '/printer_management.php'), 'simulator_key') === false,
+    'cable printing must use the host bridge and production settings must not expose a simulator transport'
 );
 
 $worker = file_get_contents($root . '/classes/Pos/Service/PrintWorkerService.php');
@@ -58,7 +60,7 @@ $jobService = file_get_contents($root . '/classes/Pos/Service/PrintJobService.ph
 silentPrintingContractAssert(
     strpos($jobService, "'PRINT_JOB_NOT_QUEUED'") !== false
     && strpos($jobService, 'normal contention') !== false
-    && strpos($jobService, "printer.connection_type IN ('file', 'network')") !== false,
+    && strpos($jobService, "printer.connection_type IN ('network', 'usb')") !== false,
     'worker claims must handle contention and exclude legacy browser-only jobs'
 );
 
@@ -83,7 +85,7 @@ $page = file_get_contents($root . '/printer_management.php');
 silentPrintingContractAssert(
     strpos($page, "require_permission('printers.manage'") !== false
     && strpos($page, "require_csrf('printer_manage')") !== false
-    && strpos($page, 'POSMAIN_PRINT_MODE') !== false
+    && strpos($page, 'وضع التشغيل الحالي') !== false
     && strpos($page, 'physical_output_checked') !== false,
     'printer page must enforce permission/CSRF, expose the mode read-only, and guard uncertain retries'
 );

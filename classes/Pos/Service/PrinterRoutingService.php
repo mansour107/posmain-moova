@@ -26,7 +26,7 @@ class PrinterRoutingService
             // Browser records belong to the legacy dialog path. They remain in
             // the database for rollback compatibility but can never become a
             // silent-delivery target.
-            if (!in_array((string) ($printer['connection_type'] ?? ''), ['file', 'network'], true)) {
+            if (!in_array((string) ($printer['connection_type'] ?? ''), ['network', 'usb'], true)) {
                 continue;
             }
             $routing = $this->normalizeRouting($printer['config']['routing'] ?? []);
@@ -124,7 +124,10 @@ class PrinterRoutingService
 
     public function buildPrinterConfig(array $input): array
     {
-        $connectionType = strtolower(trim((string) ($input['connection_type'] ?? 'file')));
+        $connectionType = strtolower(trim((string) ($input['connection_type'] ?? 'network')));
+        if (!in_array($connectionType, ['network', 'usb', 'browser'], true)) {
+            throw new InvalidArgumentException('PRINT_CONNECTION_INVALID');
+        }
         $paperWidth = (int) ($input['paper_width'] ?? 80);
         $config = [
             'paper_width' => in_array($paperWidth, [58, 80], true) ? $paperWidth : 80,
@@ -146,18 +149,7 @@ class PrinterRoutingService
             throw new InvalidArgumentException('PRINT_ROUTE_CATEGORY_REQUIRED');
         }
 
-        if ($connectionType === 'file') {
-            $simulatorKey = preg_replace(
-                '/[^a-zA-Z0-9_-]+/',
-                '-',
-                trim((string) ($input['simulator_key'] ?? ''))
-            );
-            $simulatorKey = trim((string) $simulatorKey, '-');
-            if ($simulatorKey === '') {
-                throw new InvalidArgumentException('PRINT_SIMULATOR_KEY_REQUIRED');
-            }
-            $config['simulator_key'] = substr($simulatorKey, 0, 64);
-        } elseif ($connectionType === 'network') {
+        if ($connectionType === 'network') {
             $host = trim((string) ($input['host'] ?? ''));
             if (
                 $host === ''
@@ -172,6 +164,12 @@ class PrinterRoutingService
             }
             $config['host'] = $host;
             $config['port'] = $port;
+        } elseif ($connectionType === 'usb') {
+            $queue = trim((string) ($input['queue_name'] ?? ''));
+            if ($queue === '' || strlen($queue) > 128 || preg_match('/[\x00-\x1F\x7F]/', $queue) === 1) {
+                throw new InvalidArgumentException('PRINT_CABLE_QUEUE_INVALID');
+            }
+            $config['queue_name'] = $queue;
         }
 
         return $config;

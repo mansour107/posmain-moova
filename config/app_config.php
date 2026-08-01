@@ -656,14 +656,25 @@ if (!function_exists('posmain_app_config')) {
                 // Keep the browser dialog as the compatibility default. Silent
                 // delivery is activated only by deployment configuration.
                 'mode' => $printMode,
-                'simulator_directory' => (string) $branchEnv(
-                    ['POSMAIN_PRINT_SIMULATOR_DIR'],
-                    sys_get_temp_dir() . '/posmain-printer-simulator',
-                    true
-                ),
                 'network_timeout_ms' => max(
                     500,
                     min(15000, posmain_int($branchEnv(['POSMAIN_PRINT_NETWORK_TIMEOUT_MS'], 3000), 3000))
+                ),
+                // Cable printers are reached through the authenticated local
+                // host service. The secret is installed outside the UI.
+                'bridge_url' => (string) $branchEnv(
+                    ['POSMAIN_PRINT_BRIDGE_URL'],
+                    'http://127.0.0.1:17981',
+                    true
+                ),
+                'bridge_secret' => (string) $branchEnv(
+                    ['POSMAIN_PRINT_BRIDGE_SECRET'],
+                    '',
+                    true
+                ),
+                'bridge_timeout_ms' => max(
+                    500,
+                    min(15000, posmain_int($branchEnv(['POSMAIN_PRINT_BRIDGE_TIMEOUT_MS'], 3000), 3000))
                 ),
                 'worker_lock_seconds' => max(
                     10,

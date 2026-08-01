@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "https://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.posmain.print-bridge</string>
+  <key>WorkingDirectory</key><string>__POSMAIN_ROOT__</string>
+  <key>ProgramArguments</key><array><string>__PHP_BINARY__</string><string>__POSMAIN_ROOT__/tools/print_bridge.php</string><string>--listen=__BRIDGE_LISTEN__</string><string>--secret-file=__BRIDGE_SECRET_FILE__</string><string>--state-dir=__BRIDGE_STATE_DIR__</string></array>
+  <key>RunAtLoad</key><true/><key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>__LOG_DIR__/print-bridge.out.log</string>
+  <key>StandardErrorPath</key><string>__LOG_DIR__/print-bridge.err.log</string>
+</dict></plist>

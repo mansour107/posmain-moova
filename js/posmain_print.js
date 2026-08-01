@@ -89,10 +89,10 @@
       body: JSON.stringify(context)
     }).then(function (response) {
       return response.json().catch(function () {
-        throw new Error('PRINT_RESPONSE_INVALID');
+        throw new Error('لم يصل رد واضح من خدمة الطباعة. حاول مرة أخرى.');
       }).then(function (payload) {
         if (!response.ok || payload.success !== true) {
-          throw new Error(payload.error || 'PRINT_DISPATCH_FAILED');
+          throw new Error(payload.message || 'تعذر إرسال الطباعة. تحقق من حالة الطابعة ثم حاول مرة أخرى.');
         }
         return payload;
       });
@@ -109,7 +109,7 @@
     }).catch(function (error) {
       // Keep the same request key after a lost/failed HTTP response. A user
       // retry therefore resolves to the original durable jobs, not duplicates.
-      showStatus('تعذر تأكيد الطباعة: ' + error.message, 'error');
+      showStatus(error.message || 'تعذر تأكيد الطباعة. تحقق من حالة الطابعة ثم حاول مرة أخرى.', 'error');
       throw error;
     }).finally(function () {
       activePromise = null;

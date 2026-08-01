@@ -121,10 +121,10 @@ class SilentPrintDispatchService
             throw new RuntimeException('PRINT_JOB_PRINTER_REQUIRED');
         }
         $this->jobs->getPrinterInScope($conn, $existing['printer_id'], $scope, false);
-        if (
-            str_starts_with((string) ($existing['last_error'] ?? ''), 'PRINT_NETWORK_DELIVERY_UNCERTAIN')
-            && !$uncertainOutputChecked
-        ) {
+        $lastError = (string) ($existing['last_error'] ?? '');
+        $uncertainDelivery = str_starts_with($lastError, 'PRINT_NETWORK_DELIVERY_UNCERTAIN')
+            || str_starts_with($lastError, 'PRINT_BRIDGE_DELIVERY_UNCERTAIN');
+        if ($uncertainDelivery && !$uncertainOutputChecked) {
             throw new RuntimeException('PRINT_UNCERTAIN_RETRY_CONFIRMATION_REQUIRED');
         }
         $job = $this->jobs->releaseForRetry($conn, $jobId);

@@ -26,6 +26,7 @@ return [
         'csrf' => 'print_dispatch',
         'lane' => 'pos',
     ],
+    'ajax/printer_health.php' => ['permission' => 'printers.manage', 'csrf' => '', 'lane' => 'erp', 'admin_or' => true],
     'ajax/team_hub.php' => ['any_of' => ['users.manage', 'roles.manage'], 'csrf' => '', 'lane' => 'erp', 'admin_or' => true],
     'ajax/pin_available.php' => ['permission' => '', 'csrf' => '', 'lane' => 'erp'],
     'ajax/main_pin_login.php' => ['permission' => '', 'csrf' => 'main_pin', 'lane' => 'erp', 'public' => true],
