@@ -4,6 +4,7 @@ require_once __DIR__ . '/../includes/rbac_route_guard.php';
 rbac_guard_route('ajax/print_dispatch.php', $conn ?? null);
 
 require_once __DIR__ . '/../classes/Pos/Service/SilentPrintDispatchService.php';
+require_once __DIR__ . '/../classes/Pos/Service/PrintUserMessageService.php';
 require_once __DIR__ . '/../config/app_config.php';
 
 header('Content-Type: application/json; charset=utf-8');
@@ -76,13 +77,14 @@ try {
         'result' => $result,
     ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 } catch (Throwable $exception) {
-    $code = $exception->getMessage() !== '' ? $exception->getMessage() : 'PRINT_DISPATCH_FAILED';
+    $code = PrintUserMessageService::code((string) $exception->getMessage());
+    PrintUserMessageService::log($exception, 'print-dispatch');
     $status = in_array($code, ['PERMISSION_DENIED'], true)
         ? 403
         : (in_array($code, ['METHOD_NOT_ALLOWED'], true) ? 405 : 422);
     http_response_code($status);
     echo json_encode([
         'success' => false,
-        'error' => $code,
-    ], JSON_UNESCAPED_UNICODE);
+        'message' => PrintUserMessageService::forCode($code),
+    ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 }

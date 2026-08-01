@@ -1,92 +1,67 @@
-# Silent printing operations
+# POSMAIN silent printing operations
 
-## Release switch
+Silent printing is a durable, unattended delivery path for customer receipts, kitchen tickets, reports, labels, and other documents. Keep `legacy` browser printing as the rollback setting until the actual printers at the shop pass acceptance.
 
-Silent printing is intentionally disabled by default.
+## Runtime components
 
-- `POSMAIN_PRINT_MODE=legacy` keeps the existing browser print dialog.
-- `POSMAIN_PRINT_MODE=silent` replaces `window.print()` with durable server-side dispatch.
-- The mode is deployment configuration only. It is displayed read-only in the printer center and cannot be changed from the UI.
+- The web application creates one durable print job per routed printer with an idempotency key.
+- The print worker claims queued jobs and renders ESC/POS bytes.
+- Network printers receive bytes directly over their configured address and port, normally TCP 9100.
+- Cable printers receive bytes through the authenticated local print bridge and an operating-system printer queue. POSMAIN never accepts a device path or shell command from the browser.
+- The bridge stores a delivery receipt before acknowledging success. A repeated delivery key replays the receipt rather than printing a second copy.
 
-Do not enable silent mode until printer routes are configured, the reliable print-job schema is installed, and the physical-printer acceptance gate below has passed.
+The bridge and worker are supervised services. They restart automatically after a crash or device reboot. Do not run either from a browser request.
 
-## Printer center
+## Installation
 
-Owners and managers with `printers.manage` use **Printers and order routes** from the main sidebar.
+### macOS local installation
 
-Each active printer has:
-
-- a role: receipt, kitchen, label, or other;
-- a transport: local file simulator or direct network;
-- one or more functions: receipt, kitchen ticket, report, label, or document;
-- for kitchen tickets, either all categories or an explicit category list;
-- a paper width of 58 mm or 80 mm.
-
-Kitchen routing is fail-closed. Every line in a kitchen ticket must match at least one active route before any print job is created. A category may intentionally be assigned to multiple printers when duplicate kitchen copies are required.
-
-The simulator key is a safe folder name, not an arbitrary filesystem path. The base simulator directory is controlled only by `POSMAIN_PRINT_SIMULATOR_DIR`.
-
-## Delivery model
-
-One user print intent receives one browser request key. The server derives one idempotency key per target printer and function. Repeated delivery of the same request returns the existing durable jobs.
-
-The browser collapses simultaneous clicks. If the HTTP response is lost, it retains the request key so the cashier retry resolves to the original jobs. The file simulator also recognizes an already accepted job and returns its existing delivery receipt instead of writing another artifact.
-
-Jobs move through `queued`, `printed`, `failed`, or `cancelled`. A worker claim has a bounded lease so two terminals cannot deliver the same queued job concurrently.
-
-Direct dispatch attempts delivery during the user request. Retry-safe failures that occurred before any network bytes were written remain queued. Run the worker regularly to process those jobs:
+Run once from the POSMAIN application folder:
 
 ```sh
-php tools/print_worker.php --limit=50
+deploy/printing/install-macos.sh /absolute/path/to/posmain
 ```
 
-Production must run that command through a supervised scheduler or service and alert when queued or failed jobs exceed the operating threshold.
+The installer creates a protected bridge secret, updates the local application environment with a backup, installs two per-user launch services, and starts them. It does not configure a printer driver: install the actual receipt or kitchen printer in macOS first.
 
-## Simulator proof
+If the web application runs inside a container, install with separate app and worker addresses. For Docker Desktop on macOS, use `POSMAIN_PRINT_BRIDGE_LISTEN=0.0.0.0:17981`, `POSMAIN_PRINT_BRIDGE_APP_URL=http://host.docker.internal:17981`, and keep `POSMAIN_PRINT_BRIDGE_WORKER_URL=http://127.0.0.1:17981`. The installer writes the container-reachable URL to the application environment while the host worker keeps loopback. The HMAC secret remains mandatory; restrict port `17981` to the local machine/private container network and never expose it publicly.
 
-For local testing:
+### Linux and Windows
 
-1. Set `POSMAIN_PRINT_MODE=silent`.
-2. Set `POSMAIN_PRINT_SIMULATOR_DIR` to a writable, test-only directory.
-3. Create file printers in the printer center.
-4. Assign receipt and kitchen routes. Divide kitchen categories between at least two simulator printers.
-5. Use each printer card's test action.
-6. Print a real local test receipt and a kitchen order containing lines from both category groups.
-7. Confirm one `.txt`, one `.bin`, and one `.json` delivery receipt per durable print job.
-8. Confirm each kitchen text artifact contains only the categories assigned to that printer.
-9. Double-click Print and confirm only one durable job and one artifact per target printer.
-10. Repeat a claimed job after simulated response loss and confirm the simulator reports `replayed: true` without another artifact.
+Production service templates are under `deploy/printing/systemd` and the Windows raw spool helper is under `deploy/printing/windows`. Before a customer installation, package these templates with the local POSMAIN installer and provide the PHP runtime used by the application. The service account must have access to the selected CUPS or Windows printer queues and to the POSMAIN database for the worker.
 
-Simulator acceptance proves routing, rendering, persistence, idempotency, and worker behavior. It does not prove a physical printer's character encoding, paper width, cutter, cash-drawer pulse, network stability, or firmware behavior.
+## Operator setup
 
-## Physical-printer acceptance gate
+Owners and managers with `printers.manage` open **الطابعات ومسارات الطلبات**.
 
-Network delivery uses raw ESC/POS over TCP, normally port 9100. Before silent mode is enabled at a shop:
+1. Add a clear printer name and select its business role.
+2. Select a real connection method: network or cable.
+3. For network, enter the printer address and port. Saving the address does not claim the printer is online; the card performs a separate live check.
+4. For cable, select only from printer queues discovered by the local bridge. If the list is empty, install/connect the printer in the operating system and ensure the local print service is running.
+5. Select document functions. For kitchen printing, route every preparation category to at least one printer. Unrouted kitchen lines fail closed rather than disappearing.
+6. Save, wait for the connectivity badge, then use **اختبار**. A successful save confirms configuration only; a successful test confirms that the current delivery path accepted the job.
 
-1. Test every configured printer on the shop LAN from the actual POS host.
-2. Print Arabic and English item names, modifiers, notes, quantities, totals, and long receipts.
-3. Verify 58/80 mm layout, wrapping, cutter behavior, and any required cash-drawer pulse.
-4. Disconnect the printer before connect, during delivery, and immediately after delivery.
-5. Confirm a pre-connect failure queues one safe retry.
-6. Confirm a partial/uncertain write is marked failed for manager review and is never automatically reprinted.
-7. Verify receipt, food, drinks, report, and label routes with the exact production printer models.
-8. Run at least 100 mixed prints, including rapid double-clicks and two terminals printing simultaneously, with no duplicate or missing output.
-9. Record the printer model, firmware, IP, route configuration, test order IDs, job IDs, and operator sign-off.
+“مفعلة” and “متصلة” are different facts. A printer may be enabled for routing while disconnected. The page always reports live connectivity separately and gives Arabic recovery guidance.
 
-Any failed step is a no-go for silent mode. Leave `POSMAIN_PRINT_MODE=legacy` until corrected.
+## Failure and duplicate-safety policy
 
-## Failure handling
+- A connection failure before any network bytes are sent is retryable.
+- If a network or cable response is lost after submission may have started, the job fails closed. The manager must inspect physical output before explicitly retrying.
+- A duplicate click, repeated HTTP request, or worker replay uses the original durable job and delivery key.
+- Cable submission validates the selected queue against queues reported by the operating system. No arbitrary command, file, or device path can be submitted.
+- Internal diagnostic codes remain in logs and durable records. Restaurant staff see short Arabic explanations and recovery actions, never backend identifiers.
 
-- `PRINT_ROUTE_NOT_CONFIGURED`: no active printer serves the requested function.
-- `PRINT_KOT_LINE_UNROUTED`: at least one kitchen line has no category route. No kitchen job is created.
-- `PRINT_NETWORK_CONNECT_FAILED`: no bytes were accepted; the job may retry.
-- `PRINT_NETWORK_DELIVERY_UNCERTAIN`: delivery may have partially reached the device. The job fails closed and requires a manager to inspect the printer before choosing Retry.
-- `SILENT_PRINT_BROWSER_PRINTER_UNSUPPORTED`: a legacy browser printer cannot be used as a silent transport.
+## Required shop acceptance before enabling silent mode
 
-The printer center shows recent jobs, attempts, and retry actions. Operators must compare any uncertain job with physical output before retrying it.
+1. Install the exact production printer drivers and paper sizes.
+2. Power-cycle the POS device, bridge, network switch, and printers; verify the services start without a manual command.
+3. Print ten customer receipts and ten kitchen tickets from real browser journeys.
+4. Route food and drinks to different physical printers and prove every line appears exactly once at the intended station.
+5. Double-click print and prove one physical output.
+6. Disconnect each network cable and USB cable, confirm the page shows disconnected, reconnect, and confirm recovery.
+7. Interrupt the response after submission and prove the operator is required to inspect paper before retry.
+8. Reboot during queued work and prove jobs recover without loss or duplication.
+9. Confirm manager access and cashier denial for printer configuration.
+10. Preserve job records, worker logs, and bridge receipts for incident reconciliation.
 
-## Compatibility and rollback
-
-Changing back to `POSMAIN_PRINT_MODE=legacy` restores native browser dialogs without deleting printer configuration or print history. Existing print buttons and templates remain the entry points in both modes.
-
-Do not delete print-job history during an incident. Preserve the database, simulator delivery receipts where used, application logs, and the affected physical output for reconciliation.
+No software-only test can certify the final electrical, driver, cutter, code-page, cash-drawer pulse, or paper-width behavior of customer hardware. Keep browser printing available until this physical acceptance is signed off.

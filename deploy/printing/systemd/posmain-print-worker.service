@@ -1,0 +1,19 @@
+[Unit]
+Description=POSMAIN durable print job worker
+After=network-online.target mariadb.service mysql.service posmain-print-bridge.service
+Wants=network-online.target posmain-print-bridge.service
+
+[Service]
+Type=simple
+WorkingDirectory=__POSMAIN_ROOT__
+EnvironmentFile=__APP_ENV_FILE__
+Environment=POSMAIN_PRINT_BRIDGE_URL=__BRIDGE_WORKER_URL__
+ExecStart=__PHP_BINARY__ __POSMAIN_ROOT__/tools/print_worker_daemon.php --sleep=2 --pid-file=__WORKER_PID_FILE__ --status-file=__WORKER_STATUS_FILE__
+Restart=always
+RestartSec=3
+User=__SERVICE_USER__
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

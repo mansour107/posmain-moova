@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "https://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.posmain.print-worker</string>
+  <key>WorkingDirectory</key><string>__POSMAIN_ROOT__</string>
+  <key>ProgramArguments</key><array><string>__PHP_BINARY__</string><string>__POSMAIN_ROOT__/tools/print_worker_daemon.php</string><string>--sleep=2</string><string>--pid-file=__WORKER_PID_FILE__</string><string>--status-file=__WORKER_STATUS_FILE__</string></array>
+  <key>EnvironmentVariables</key><dict><key>POSMAIN_PRINT_BRIDGE_URL</key><string>__BRIDGE_WORKER_URL__</string><key>POSMAIN_PRINT_BRIDGE_SECRET</key><string>__BRIDGE_SECRET__</string></dict>
+  <key>RunAtLoad</key><true/><key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>__LOG_DIR__/print-worker.out.log</string>
+  <key>StandardErrorPath</key><string>__LOG_DIR__/print-worker.err.log</string>
+</dict></plist>

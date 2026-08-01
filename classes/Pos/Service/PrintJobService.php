@@ -352,7 +352,7 @@ class PrintJobService
             FROM print_jobs jobs
             INNER JOIN printers printer ON printer.id = jobs.printer_id
             WHERE jobs.status = 'queued'
-              AND printer.connection_type IN ('file', 'network')
+              AND printer.connection_type IN ('network', 'usb')
               AND (jobs.next_retry_at IS NULL OR jobs.next_retry_at <= NOW(6))
               AND (jobs.locked_until IS NULL OR jobs.locked_until <= NOW(6))
             ORDER BY jobs.created_at, jobs.id

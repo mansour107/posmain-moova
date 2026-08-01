@@ -121,6 +121,10 @@
 .printer-card-top p { color: var(--printer-muted); font-size: 12px; margin: 0; }
 .printer-icon { align-items: center; background: var(--printer-blue-soft); border-radius: 12px; color: var(--printer-blue); display: flex; height: 42px; justify-content: center; width: 42px; }
 .printer-status, .job-status { background: #ecfdf5; border-radius: 999px; color: #047857; font-size: 11px; font-weight: 800; padding: 5px 8px; }
+.printer-status.is-checking { background: #f3f4f6; color: #667085; }
+.printer-status.is-connected { background: #ecfdf5; color: #047857; }
+.printer-status.is-offline { background: #fff1f2; color: #be123c; }
+.printer-health-guidance { color: var(--printer-muted); font-size: 11px; margin: 9px 0 0; }
 .printer-tags { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0; }
 .printer-tags span { background: #f4f6f9; border-radius: 7px; color: #556070; font-size: 11px; padding: 5px 7px; }
 .printer-card-actions { align-items: center; display: flex; gap: 8px; }
