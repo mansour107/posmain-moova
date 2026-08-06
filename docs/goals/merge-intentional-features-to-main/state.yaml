@@ -1,0 +1,225 @@
+# Goal Maker v2 state.yaml
+version: 2
+
+goal:
+  title: "Merge Intentional Features To Main"
+  slug: "merge-intentional-features-to-main"
+  kind: recovery
+  tranche: "Integrate committed client-facing feature branches into local main and verify affected systems."
+  status: active
+
+rules:
+  pm_owns_state: true
+  one_active_task: true
+  max_write_workers: 1
+  no_implementation_without_worker_or_pm_task: true
+  no_completion_without_judge_or_pm_audit: true
+
+agents:
+  scout: installed
+  worker: installed
+  judge: installed
+
+active_task: T006
+
+tasks:
+  - id: T001
+    type: scout
+    assignee: Scout
+    status: done
+    objective: "Map unique intentional features, overlap, conflict risks, and verification commands for the two unmerged branches."
+    inputs:
+      - "main at 665b815"
+      - "agent/production-update-safety at 1fbaf72"
+      - "codex/main-worktree-safety-20260727 at 7cb4638"
+      - "Existing tests and scripts"
+    constraints:
+      - "Read-only."
+      - "Treat stashes as recovery snapshots, not integration inputs."
+      - "Distinguish unique feature intent from obsolete or superseded implementation."
+    expected_output:
+      - "Feature and surface map"
+      - "Conflict-resolution guidance"
+      - "Verification command set"
+    receipt:
+      result: done
+      summary: "1fbaf72 is a direct child of main with unique production-update, database backup/recovery, health/operator, and Moova-branding features. Every path touched by 7cb4638 is already present on main, has a newer main implementation, or is deleted on both; no safety-branch-only path was found."
+      evidence:
+        - "1fbaf72: 61 files, unique client feature bundle"
+        - "7cb4638: 68 paths match main, 71 have newer main versions, 5 are deleted on both"
+        - "Stashes f43da4a8 and 45b2c249 remain recovery-only"
+      spawned_tasks:
+        - T002
+        - T003
+        - T004
+
+  - id: T002
+    type: judge
+    assignee: Judge
+    status: done
+    objective: "Review the feature map and approve a merge strategy that preserves newer main behavior without dropping intentional features."
+    inputs:
+      - "T001 receipt"
+    constraints:
+      - "Read-only."
+      - "Reject blind ours/theirs conflict resolution."
+    expected_output:
+      - "Approved integration policy"
+      - "Required verification gates"
+      - "Known deferred or unsafe content"
+    receipt:
+      result: done
+      decision: "Fast-forward to 1fbaf72, then record 7cb4638 with a documented no-content ancestry merge using the ours strategy."
+      rationale:
+        - "1fbaf72 is a direct child of main and contains the unique feature bundle."
+        - "7cb4638 has no branch-only paths and a content merge would risk restoring superseded behavior."
+        - "A no-content merge closes ancestry while preserving the verified newer tree exactly."
+      next_allowed_task: T003
+      blocked_tasks:
+        - "Any content replay from 7cb4638"
+        - "Any stash replay"
+        - "Any push to origin/main"
+
+  - id: T003
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "Merge agent/production-update-safety into the integration branch."
+    allowed_files:
+      - "Files changed by commit 1fbaf72"
+      - "docs/goals/merge-intentional-features-to-main/state.yaml"
+    verify:
+      - "git status --short --branch"
+      - "git diff --check"
+    stop_if:
+      - "The merge is not a clean fast-forward or introduces unexpected files."
+    receipt:
+      result: done
+      changed_files:
+        - "Expected 61-file delta from commit 1fbaf72"
+      commands:
+        - cmd: "git merge --ff-only agent/production-update-safety"
+          status: pass
+        - cmd: "git diff --check 665b815..HEAD"
+          status: pass
+      summary: "Integration branch fast-forwarded exactly from 665b815 to 1fbaf72; goal-control files remain the only untracked content."
+
+  - id: T004
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "Record codex/main-worktree-safety-20260727 as superseded using a no-content ancestry merge that leaves the verified tree unchanged."
+    allowed_files:
+      - "Git merge metadata only"
+      - "docs/goals/merge-intentional-features-to-main/state.yaml"
+      - "docs/goals/merge-intentional-features-to-main/notes"
+    verify:
+      - "Merge commit has two parents"
+      - "git diff --exit-code HEAD^1 HEAD"
+      - "git merge-base --is-ancestor 7cb4638 HEAD"
+    stop_if:
+      - "The merge changes the tree."
+      - "The merge does not record 7cb4638 as an ancestor."
+      - "Any stash or remote ref would be modified."
+    receipt:
+      result: done
+      summary: "Created merge commit 4099369 with parents 1fbaf72 and 7cb4638 using the ours strategy; the tree is byte-for-byte unchanged from first parent and 7cb4638 is now an ancestor."
+      changed_files:
+        - "None; merge metadata only"
+      commands:
+        - cmd: "git diff --exit-code HEAD^1 HEAD"
+          status: pass
+        - cmd: "git merge-base --is-ancestor 7cb4638 HEAD"
+          status: pass
+      evidence:
+        - "Stash OIDs f43da4a8 and 45b2c249 unchanged"
+
+  - id: T005
+    type: worker
+    assignee: Worker
+    status: done
+    objective: "Run the complete affected regression suite and repair integration-only regressions within branch scope."
+    allowed_files:
+      - "Files changed by the integration merge"
+      - "Focused tests for affected behavior"
+      - "docs/goals/merge-intentional-features-to-main/state.yaml"
+    verify:
+      - "Focused update, backup, orchestrator, coordinator, endpoint, Git-safety, schema-resume, admin-security, and branding tests"
+      - "Financial, POS mutation, sync/outbox, security/RBAC, KDS, delivery, and operations-report regression tests"
+      - "PHP lint for changed PHP files and bash -n for changed deployment scripts"
+      - "git diff --check"
+    stop_if:
+      - "A failure indicates an unrelated pre-existing defect."
+      - "A fix requires product behavior not established by either branch or tests."
+    receipt:
+      result: done
+      changed_files:
+        - "None; verification only"
+      summary: "Integrated tree passed focused update/branding tests, PHP and shell lint, financial and atomic-mutation packs, sync reliability, KDS, delivery, reporting, RBAC/security runtime, Docker smoke, HTTP reachability, and disposable update-database integration."
+      commands:
+        - cmd: "Focused update, backup, coordinator, endpoint, Git-safety, schema-resume, admin-security, branding, and recovery tests"
+          status: "8 passed"
+        - cmd: "PHP lint and bash -n for the 1fbaf72 delta"
+          status: pass
+        - cmd: "bash scripts/run_financial_pack.sh"
+          status: "20 passed"
+        - cmd: "bash scripts/run_atomic_mutation_pack.sh"
+          status: "13 passed"
+        - cmd: "bash scripts/run_sync_reliability_pack.sh"
+          status: pass
+        - cmd: "Focused refund, KDS, delivery, sync mirror, cloud/operations reporting, and delivery JS tests"
+          status: pass
+        - cmd: "Security/RBAC pack coverage"
+          status: "35 passed; unchanged zero-diff lint wrapper failed due grep under pipefail"
+        - cmd: "Focused Playwright flows"
+          status: "7 passed; one unchanged fixture test expects manual_external while seeded p6_card is reference_required"
+        - cmd: "docker exec -e POSMAIN_ALLOW_UPDATE_INTEGRATION=1 posmain-php php /app/tests/sync/update_live_database_integration_test.php"
+          status: pass
+        - cmd: "./scripts/posmain-test-env.sh smoke and curl -I http://127.0.0.1:8010/"
+          status: "pass; HTTP/1.1 200 OK"
+      evidence:
+        - "No observed integration regression"
+        - "Two pre-existing test-harness/fixture mismatches are unchanged from 665b815"
+
+  - id: T006
+    type: pm
+    assignee: PM
+    status: active
+    objective: "Fast-forward local main to the verified integration commit and prove branch/worktree status."
+    inputs:
+      - "T005 receipt"
+    constraints:
+      - "Do not push origin/main."
+      - "Keep stashes and unrelated branch refs untouched."
+    expected_output:
+      - "Local main contains both intentional feature branches"
+      - "Clean worktree evidence"
+      - "Remote divergence evidence"
+    receipt: null
+
+  - id: T999
+    type: judge
+    assignee: Judge
+    status: queued
+    objective: "Audit whether all intentional committed features are on local main with adequate regression evidence."
+    inputs:
+      - "All completed task receipts"
+      - "Final git status and ancestry checks"
+      - "Verification results"
+    constraints:
+      - "Read-only."
+    expected_output:
+      - "complete or not_complete"
+      - "Missing evidence"
+      - "Next task if incomplete"
+    receipt: null
+
+checks:
+  dirty_fingerprint: "goal control files only"
+  last_verification:
+    result: pass_with_preexisting_test_issues
+    task: T005
+    commands:
+      - "Focused and adjacent regression packs"
+      - "Docker smoke and HTTP reachability"
+      - "Disposable update-database integration"
