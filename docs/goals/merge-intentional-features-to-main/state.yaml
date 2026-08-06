@@ -6,7 +6,7 @@ goal:
   slug: "merge-intentional-features-to-main"
   kind: recovery
   tranche: "Integrate committed client-facing feature branches into local main and verify affected systems."
-  status: active
+  status: done
 
 rules:
   pm_owns_state: true
@@ -20,7 +20,7 @@ agents:
   worker: installed
   judge: installed
 
-active_task: T006
+active_task: null
 
 tasks:
   - id: T001
@@ -184,7 +184,7 @@ tasks:
   - id: T006
     type: pm
     assignee: PM
-    status: active
+    status: done
     objective: "Fast-forward local main to the verified integration commit and prove branch/worktree status."
     inputs:
       - "T005 receipt"
@@ -195,12 +195,22 @@ tasks:
       - "Local main contains both intentional feature branches"
       - "Clean worktree evidence"
       - "Remote divergence evidence"
-    receipt: null
+    receipt:
+      result: done
+      summary: "Local main fast-forwarded from 665b815 to verified integration commit 30c73cb without modifying origin/main, stashes, or unrelated worktree refs."
+      commands:
+        - cmd: "git switch main"
+          status: pass
+        - cmd: "git merge --ff-only codex/merge-intentional-features-20260806"
+          status: pass
+      evidence:
+        - "main at 30c73cb"
+        - "main ahead of origin/main by 11 commits"
 
   - id: T999
     type: judge
     assignee: Judge
-    status: queued
+    status: done
     objective: "Audit whether all intentional committed features are on local main with adequate regression evidence."
     inputs:
       - "All completed task receipts"
@@ -212,7 +222,17 @@ tasks:
       - "complete or not_complete"
       - "Missing evidence"
       - "Next task if incomplete"
-    receipt: null
+    receipt:
+      result: complete
+      decision: complete
+      summary: "All intentional committed client-facing features are on local main with adequate regression evidence."
+      evidence:
+        - "Local main is 30c73cb and all local branches are merged."
+        - "Both 1fbaf72 and 7cb4638 are ancestors of main."
+        - "Merge 4099369 preserved the 1fbaf72 tree exactly."
+        - "Focused and adjacent regression packs, disposable database integration, Docker smoke, and HTTP 200 passed."
+        - "Recovery stashes and origin/main remain unchanged."
+      missing_evidence: none
 
 checks:
   dirty_fingerprint: "goal control files only"
